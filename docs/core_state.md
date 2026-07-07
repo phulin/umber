@@ -177,8 +177,13 @@ cells[i] = new
   compacts it below the marker (the analogue of e-TeX's sparse-register
   compaction). "Survives the group" and "survives rollback to page 12" are
   different lifetimes; only the journal serves the second.
-- Epoch bumps happen at: group entry, checkpoint, and (optionally) paragraph
-  boundaries while interactive. Monotonic; never reused within a session.
+- Epoch bumps happen at: group entry, group exit, checkpoint, and
+  (optionally) paragraph boundaries while interactive. Monotonic; never
+  reused within a session. The group-exit bump is load-bearing: restoration
+  rolls values back but deliberately leaves epoch stamps high, so without a
+  fresh epoch the next write to a restored cell would match the current
+  stamp, skip its journal push, and silently corrupt the *enclosing*
+  group's undo slice.
 
 ## 7. Content: token store and node arenas
 
@@ -248,6 +253,9 @@ pub struct Snapshot {
 - **Rollback**: replay journal to marker (restoring cells and old code-table
   roots); truncate arenas to watermarks; refcount-release survivor boxes
   recorded in the journal slice; discard effect-log suffix; restore scalars.
+  The epoch counter is never rewound — rollback bumps it past its previous
+  maximum (stale high stamps on restored cells would otherwise bypass the
+  barrier's journal push, same failure as skipping the group-exit bump).
 - **Atomicity rule (hard invariant)**: meaning cells contain content ids, so
   the journal and the arena watermarks restore **as one tuple, never
   independently** — otherwise every box register dangles. Enforce by making
