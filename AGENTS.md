@@ -21,6 +21,7 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 ## Directory Map
 
 - `.agents/`: project-local agent skills and coordination workflow guidance.
+- `crates/`: Rust workspace crates for the engine, state layer, CLI, and shared support.
 - `tools/`: Rust workspace tools for reference execution and corpus synchronization.
 - `tests/`: committed fixtures and parity test definitions.
 - `docs/`: architecture, phase, and design documents.

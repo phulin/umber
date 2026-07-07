@@ -1,12 +1,18 @@
 [workspace]
 members = [
+    "crates/*",
+    "tools/*",
 ]
 resolver = "3"
 
 [workspace.package]
-name = "umber"
 edition = "2024"
 version = "0.1.0"
+
+[workspace.dependencies]
+anyhow = "1"
+tempfile = "3"
+similar = "2"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
