@@ -166,14 +166,15 @@ impl Env {
     }
 
     /// Returns the current journal end position.
+    #[cfg(test)]
     #[must_use]
-    pub fn journal_pos(&self) -> JournalPos {
+    pub(crate) fn journal_pos(&self) -> JournalPos {
         self.journal.pos()
     }
 
     /// Records a checkpoint position and starts a fresh epoch for later writes.
     #[must_use]
-    pub fn checkpoint(&mut self) -> JournalPos {
+    pub(crate) fn checkpoint(&mut self) -> JournalPos {
         let pos = self.journal.pos();
         self.epoch.bump();
         pos
@@ -181,7 +182,7 @@ impl Env {
 
     /// Returns journal entries appended since `pos`.
     #[must_use]
-    pub fn journal_entries_since(&self, pos: JournalPos) -> &[Entry] {
+    pub(crate) fn journal_entries_since(&self, pos: JournalPos) -> &[Entry] {
         self.journal.entries_since(pos)
     }
 
@@ -260,11 +261,7 @@ impl Env {
     }
 
     /// Rolls back all journaled environment writes after `pos`.
-    ///
-    /// This restores global assignments too. The public atomic rollback will
-    /// live on `Universe`; this hook exists only until that M3 owner is built.
-    #[doc(hidden)]
-    pub fn rollback_to(&mut self, pos: JournalPos) {
+    pub(crate) fn rollback_to(&mut self, pos: JournalPos) {
         let entries = self.journal.entries_since(pos).to_vec();
         for entry in entries.iter().rev() {
             if let Entry::Undo(rec) = *entry {

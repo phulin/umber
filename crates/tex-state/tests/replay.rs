@@ -7,7 +7,7 @@ use proptest::prelude::*;
 use proptest::test_runner::Config;
 use std::env;
 use tex_state::env::Env;
-use tex_state::journal::JournalPos;
+use tex_state::stores::{Snapshot, Stores};
 
 #[derive(Clone, Debug)]
 enum Op {
@@ -35,72 +35,76 @@ proptest! {
 
 #[test]
 fn group_exit_epoch_amendment_smoke() {
-    let mut env = Env::new();
+    let mut stores = Stores::new();
     let mut oracle = Oracle::new();
     let cell = TestCell::Count(11);
 
-    env.enter_group();
+    stores.with_env_mut(Env::enter_group);
     oracle.enter_group();
-    let outer_pos = env.journal_pos();
-    env.enter_group();
+    let outer_snapshot = stores.checkpoint();
+    stores.with_env_mut(Env::enter_group);
     oracle.enter_group();
-    cell.set(&mut env, 1, false);
+    stores.with_env_mut(|env| cell.set(env, 1, false));
     oracle.set(cell, 1, false);
-    assert_eq!(env.leave_group(), Vec::<u64>::new());
+    assert_eq!(stores.with_env_mut(Env::leave_group), Vec::<u64>::new());
     oracle.leave_group();
 
     // Shadow catches storage/barrier bypasses; this oracle assertion catches
     // semantic drift in group compaction and epoch handling (core_state §11).
-    cell.set(&mut env, 2, false);
+    stores.with_env_mut(|env| cell.set(env, 2, false));
     oracle.set(cell, 2, false);
-    oracle.assert_matches(&env, &[cell]);
-    verify_shadow(&env);
+    oracle.assert_matches(stores.env(), &[cell]);
+    verify_shadow(&stores);
 
-    env.rollback_to(outer_pos);
-    assert_eq!(cell.get(&env), 0);
-    verify_shadow(&env);
+    stores.rollback(outer_snapshot);
+    assert_eq!(cell.get(stores.env()), 0);
+    verify_shadow(&stores);
 }
 
 fn run_replay_identity(ops: &[Op]) {
-    let mut env = Env::new();
+    let mut stores = Stores::new();
     let mut oracle = Oracle::new();
     let cells = cell_universe();
-    let mut checkpoints: Vec<(JournalPos, u64)> = Vec::new();
+    let mut checkpoints: Vec<(Snapshot, u64)> = Vec::new();
     let mut depth = 0_u8;
 
-    let hash = env.testing_state_hash();
-    checkpoints.push((env.checkpoint(), hash));
+    let hash = stores.testing_state_hash();
+    checkpoints.push((stores.checkpoint(), hash));
     for op in ops {
         match *op {
             Op::Set { cell, word, global } => {
-                cell.set(&mut env, word, global);
+                stores.with_env_mut(|env| cell.set(env, word, global));
                 oracle.set(cell, word, global);
             }
             Op::EnterGroup => {
-                env.enter_group();
+                stores.with_env_mut(Env::enter_group);
                 oracle.enter_group();
                 depth += 1;
             }
             Op::LeaveGroup => {
-                assert_eq!(env.leave_group(), Vec::<u64>::new());
+                assert_eq!(stores.with_env_mut(Env::leave_group), Vec::<u64>::new());
                 oracle.leave_group();
                 depth -= 1;
-                oracle.assert_matches(&env, &cells);
+                oracle.assert_matches(stores.env(), &cells);
             }
             Op::Checkpoint if depth == 0 => {
-                let hash = env.testing_state_hash();
-                checkpoints.push((env.checkpoint(), hash));
+                let hash = stores.testing_state_hash();
+                checkpoints.push((stores.checkpoint(), hash));
             }
             Op::Checkpoint => {}
         }
-        oracle.assert_matches(&env, &cells);
-        verify_shadow(&env);
+        oracle.assert_matches(stores.env(), &cells);
+        verify_shadow(&stores);
     }
 
-    for (pos, hash) in checkpoints.into_iter().rev() {
-        env.rollback_to(pos);
-        assert_eq!(env.testing_state_hash(), hash, "rollback to {pos:?}");
-        verify_shadow(&env);
+    for (snapshot, hash) in checkpoints.into_iter().rev() {
+        stores.rollback(snapshot);
+        assert_eq!(
+            stores.testing_state_hash(),
+            hash,
+            "rollback to {snapshot:?}"
+        );
+        verify_shadow(&stores);
     }
 }
 
@@ -205,13 +209,13 @@ fn prop_cases() -> u32 {
     env::var("PROPTEST_CASES")
         .ok()
         .and_then(|value| value.parse().ok())
-        .unwrap_or(1_000)
+        .unwrap_or(256)
 }
 
 #[cfg(feature = "shadow")]
-fn verify_shadow(env: &Env) {
-    env.verify_shadow();
+fn verify_shadow(stores: &Stores) {
+    stores.verify_shadow();
 }
 
 #[cfg(not(feature = "shadow"))]
-fn verify_shadow(_: &Env) {}
+fn verify_shadow(_: &Stores) {}

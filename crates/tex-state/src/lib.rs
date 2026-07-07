@@ -8,6 +8,7 @@ pub mod interner;
 pub mod journal;
 pub mod meaning;
 pub mod scaled;
+pub mod stores;
 
 #[cfg(test)]
 mod tests {

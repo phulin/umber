@@ -277,7 +277,10 @@ pub struct Snapshot {
   the journal and the arena watermarks restore **as one tuple, never
   independently** — otherwise every box register dangles. Enforce by making
   rollback a single method on the top-level `Universe` (§10.6); no partial
-  rollback API exists.
+  rollback API exists. In M1, `Stores` is the implemented subset of that
+  boundary (`Env` + interner); `Env` journal positions, journal walks, and raw
+  rollback are crate-private implementation details behind `Stores::checkpoint`
+  and `Stores::rollback`.
 - **Commit barrier = shipout**: page artifact serialized, effects flushed,
   snapshots older than the last live editing anchor dropped. History is
   bounded.
@@ -361,7 +364,9 @@ pub struct Universe { env: Env, tokens: TokenStore, nodes: NodeArenas,
 One owned value = one isolated timeline. Speculation = move a rolled-back
 clone to another thread. No locks or atomics in the hot loop; `&mut
 Universe` *is* the isolation. `rollback(&mut self, &Snapshot)` is a method
-on `Universe` only (atomicity rule, §9).
+on `Universe` only (atomicity rule, §9). Until the full `Universe` exists,
+`tex-state::stores::Stores` provides the same public checkpoint/rollback
+boundary for the M1 store tuple.
 
 ### 10.7 The JIT bypass, contained
 

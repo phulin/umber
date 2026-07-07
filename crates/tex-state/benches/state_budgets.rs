@@ -1,8 +1,8 @@
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
-use std::mem;
 use tex_state::env::Env;
 use tex_state::interner::Interner;
 use tex_state::meaning::Meaning;
+use tex_state::stores::Stores;
 
 const GROUP_SIZES: [usize; 3] = [4, 64, 512];
 const PAGE_DISTINCT_CELLS: usize = 500;
@@ -115,18 +115,20 @@ fn synthetic_page_symbols() -> Vec<tex_state::interner::Symbol> {
 }
 
 fn write_synthetic_page(symbols: &[tex_state::interner::Symbol]) -> usize {
-    let mut env = Env::new();
-    let start = env.journal_pos();
+    let mut stores = Stores::new();
+    let snapshot = stores.checkpoint();
 
     for write_index in 0..PAGE_TOTAL_WRITES {
         let symbol = symbols[write_index % symbols.len()];
-        env.set(
-            black_box(symbol),
-            black_box(raw_meaning(write_index as u64)),
-        );
+        stores.with_env_mut(|env| {
+            env.set(
+                black_box(symbol),
+                black_box(raw_meaning(write_index as u64)),
+            );
+        });
     }
 
-    mem::size_of_val(env.journal_entries_since(start))
+    stores.env_journal_bytes_since(snapshot)
 }
 
 fn raw_meaning(operand: u64) -> Meaning {
