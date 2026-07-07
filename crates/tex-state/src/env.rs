@@ -309,14 +309,26 @@ impl Env {
         Meaning::decode_stored(word)
     }
 
-    /// Sets the local meaning for `symbol`.
-    pub fn set(&mut self, symbol: Symbol, meaning: Meaning) {
+    /// Sets the local meaning for a symbol validated by the owning store.
+    pub(crate) fn set(&mut self, symbol: Symbol, meaning: Meaning) {
         self.set_meaning_word(symbol, meaning.encode(), false);
     }
 
-    /// Sets the global meaning for `symbol`.
-    pub fn set_global(&mut self, symbol: Symbol, meaning: Meaning) {
+    /// Sets the global meaning for a symbol validated by the owning store.
+    pub(crate) fn set_global(&mut self, symbol: Symbol, meaning: Meaning) {
         self.set_meaning_word(symbol, meaning.encode(), true);
+    }
+
+    /// Test-only local meaning write for isolated `Env` barrier coverage.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn testing_set_meaning(&mut self, symbol: Symbol, meaning: Meaning) {
+        self.set(symbol, meaning);
+    }
+
+    /// Test-only global meaning write for isolated `Env` barrier coverage.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn testing_set_meaning_global(&mut self, symbol: Symbol, meaning: Meaning) {
+        self.set_global(symbol, meaning);
     }
 
     register_accessors!(

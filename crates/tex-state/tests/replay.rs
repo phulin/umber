@@ -6,7 +6,6 @@ use common::{Oracle, TestCell};
 use proptest::prelude::*;
 use proptest::test_runner::Config;
 use std::env;
-use tex_state::env::Env;
 use tex_state::stores::{Snapshot, Stores};
 
 #[derive(Clone, Debug)]
@@ -39,19 +38,19 @@ fn group_exit_epoch_amendment_smoke() {
     let mut oracle = Oracle::new();
     let cell = TestCell::Count(11);
 
-    stores.with_env_mut(Env::enter_group);
+    stores.enter_group();
     oracle.enter_group();
     let outer_snapshot = stores.checkpoint();
-    stores.with_env_mut(Env::enter_group);
+    stores.enter_group();
     oracle.enter_group();
-    stores.with_env_mut(|env| cell.set(env, 1, false));
+    cell.set(&mut stores, 1, false);
     oracle.set(cell, 1, false);
-    assert_eq!(stores.with_env_mut(Env::leave_group), Vec::<u64>::new());
+    assert_eq!(stores.leave_group(), Vec::<u64>::new());
     oracle.leave_group();
 
     // Shadow catches storage/barrier bypasses; this oracle assertion catches
     // semantic drift in group compaction and epoch handling (core_state §11).
-    stores.with_env_mut(|env| cell.set(env, 2, false));
+    cell.set(&mut stores, 2, false);
     oracle.set(cell, 2, false);
     oracle.assert_matches(stores.env(), &[cell]);
     verify_shadow(&stores);
@@ -65,6 +64,7 @@ fn run_replay_identity(ops: &[Op]) {
     let mut stores = Stores::new();
     let mut oracle = Oracle::new();
     let cells = cell_universe();
+    TestCell::prepare_stores(&mut stores, &cells);
     let mut checkpoints: Vec<(Snapshot, u64)> = Vec::new();
     let mut depth = 0_u8;
 
@@ -73,16 +73,16 @@ fn run_replay_identity(ops: &[Op]) {
     for op in ops {
         match *op {
             Op::Set { cell, word, global } => {
-                stores.with_env_mut(|env| cell.set(env, word, global));
+                cell.set(&mut stores, word, global);
                 oracle.set(cell, word, global);
             }
             Op::EnterGroup => {
-                stores.with_env_mut(Env::enter_group);
+                stores.enter_group();
                 oracle.enter_group();
                 depth += 1;
             }
             Op::LeaveGroup => {
-                assert_eq!(stores.with_env_mut(Env::leave_group), Vec::<u64>::new());
+                assert_eq!(stores.leave_group(), Vec::<u64>::new());
                 oracle.leave_group();
                 depth -= 1;
                 oracle.assert_matches(stores.env(), &cells);

@@ -119,11 +119,13 @@ Rules:
   opaque raw-meaning value whose fields can be read and re-encoded after
   `Env::get`, but downstream crates cannot decode arbitrary raw words or
   construct arbitrary raw meanings in production builds.
-- **Writes**: `set(&mut self, Symbol, Meaning)` — the *only* mutation path;
-  runs the barrier (§6). Same for every register bank and parameter table.
-  Journal restore walks use a crate-private `Env::restore_raw(CellId, u64)`
-  primitive that bypasses the barrier; it is restore-only, not a semantic
-  assignment API.
+- **Writes**: symbol-keyed meaning writes are exposed through the owning
+  `Stores`/`Universe` facade, which validates that the `Symbol` is live in the
+  same interner timeline before calling Env's crate-private barriered setter.
+  Same for every register bank and parameter table: semantic assignment runs
+  the barrier (§6). Journal restore walks use a crate-private
+  `Env::restore_raw(CellId, u64)` primitive that bypasses the barrier; it is
+  restore-only, not a semantic assignment API.
 - **The epoch stamp is the workhorse**: journal coalescing filter, JIT
   inline-cache guard, and memoizer read-set timestamp. One counter, three
   consumers. Do not add a second versioning scheme for any of these.
@@ -284,9 +286,10 @@ pub struct Snapshot {
   independently** — otherwise every box register dangles. Enforce by making
   rollback a single method on the top-level `Universe` (§10.6); no partial
   rollback API exists. In M1, `Stores` is the implemented subset of that
-  boundary (`Env` + interner); `Env` journal positions, journal walks, and raw
-  rollback are crate-private implementation details behind `Stores::checkpoint`
-  and `Stores::rollback`.
+  boundary (`Env` + interner); `Env` journal positions, journal walks, raw
+  rollback, and symbol-keyed meaning writes are crate-private implementation
+  details behind `Stores::checkpoint`, `Stores::rollback`, and the
+  liveness-checking `Stores` meaning-write facade.
 - **Commit barrier = shipout**: page artifact serialized, effects flushed,
   snapshots older than the last live editing anchor dropped. History is
   bounded.
@@ -376,7 +379,10 @@ clone to another thread. No locks or atomics in the hot loop; `&mut
 Universe` *is* the isolation. `rollback(&mut self, &Snapshot)` is a method
 on `Universe` only (atomicity rule, §9). Until the full `Universe` exists,
 `tex-state::stores::Stores` provides the same public checkpoint/rollback
-boundary for the M1 store tuple.
+boundary for the M1 store tuple. Because `Symbol` dense ids can be reused after
+interner rollback, public meaning writes also live on `Stores`; the facade
+rejects symbols that are no longer live in its owned interner before mutating
+Env cells.
 
 ### 10.7 The JIT bypass, contained
 

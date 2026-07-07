@@ -100,6 +100,12 @@ impl Interner {
         }
     }
 
+    /// Returns whether `symbol` names a currently-live interner slot.
+    #[must_use]
+    pub fn contains(&self, symbol: Symbol) -> bool {
+        (symbol.raw() as usize) < self.spans.len()
+    }
+
     /// Returns the number of live interned names.
     #[must_use]
     pub fn len(&self) -> usize {

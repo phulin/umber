@@ -5,6 +5,7 @@ use tex_state::ids::{GlueId, NodeListId, TokenListId};
 use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, RawMeaning};
 use tex_state::scaled::Scaled;
+use tex_state::stores::Stores;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum TestCell {
@@ -21,86 +22,99 @@ pub(crate) enum TestCell {
 }
 
 impl TestCell {
-    pub(crate) fn set(self, env: &mut Env, word: u64, global: bool) {
+    pub(crate) fn prepare_stores(stores: &mut Stores, cells: &[Self]) {
+        let max_meaning = cells.iter().filter_map(|cell| match *cell {
+            Self::Meaning(index) => Some(index),
+            _ => None,
+        });
+        if let Some(max_meaning) = max_meaning.max() {
+            for index in 0..=max_meaning {
+                stores.intern(&format!("test-cell-{index}"));
+            }
+        }
+    }
+
+    pub(crate) fn set(self, stores: &mut Stores, word: u64, global: bool) {
         match self {
             Self::Meaning(index) => {
                 let value = meaning(word);
+                let symbol = Symbol::testing_new(index);
                 if global {
-                    env.set_global(Symbol::testing_new(index), value);
+                    stores.set_meaning_global(symbol, value);
                 } else {
-                    env.set(Symbol::testing_new(index), value);
+                    stores.set_meaning(symbol, value);
                 }
             }
             Self::Count(index) => {
                 let value = word as u32 as i32;
                 if global {
-                    env.set_count_global(index, value);
+                    stores.set_count_global(index, value);
                 } else {
-                    env.set_count(index, value);
+                    stores.set_count(index, value);
                 }
             }
             Self::Dimen(index) => {
                 let value = Scaled::from_raw(word as u32 as i32);
                 if global {
-                    env.set_dimen_global(index, value);
+                    stores.set_dimen_global(index, value);
                 } else {
-                    env.set_dimen(index, value);
+                    stores.set_dimen(index, value);
                 }
             }
             Self::Skip(index) => {
                 let value = GlueId::testing_new(word as u32);
                 if global {
-                    env.set_skip_global(index, value);
+                    stores.set_skip_global(index, value);
                 } else {
-                    env.set_skip(index, value);
+                    stores.set_skip(index, value);
                 }
             }
             Self::Toks(index) => {
                 let value = TokenListId::testing_new(word as u32);
                 if global {
-                    env.set_toks_global(index, value);
+                    stores.set_toks_global(index, value);
                 } else {
-                    env.set_toks(index, value);
+                    stores.set_toks(index, value);
                 }
             }
             Self::Box(index) => {
                 let value = NodeListId::testing_new(word as u32);
                 if global {
-                    env.set_box_reg_global(index, value);
+                    stores.set_box_reg_global(index, value);
                 } else {
-                    env.set_box_reg(index, value);
+                    stores.set_box_reg(index, value);
                 }
             }
             Self::IntParam(index) => {
                 let value = word as u32 as i32;
                 if global {
-                    env.set_int_param_global(IntParam::new(index), value);
+                    stores.set_int_param_global(IntParam::new(index), value);
                 } else {
-                    env.set_int_param(IntParam::new(index), value);
+                    stores.set_int_param(IntParam::new(index), value);
                 }
             }
             Self::DimenParam(index) => {
                 let value = Scaled::from_raw(word as u32 as i32);
                 if global {
-                    env.set_dimen_param_global(DimenParam::new(index), value);
+                    stores.set_dimen_param_global(DimenParam::new(index), value);
                 } else {
-                    env.set_dimen_param(DimenParam::new(index), value);
+                    stores.set_dimen_param(DimenParam::new(index), value);
                 }
             }
             Self::GlueParam(index) => {
                 let value = GlueId::testing_new(word as u32);
                 if global {
-                    env.set_glue_param_global(GlueParam::new(index), value);
+                    stores.set_glue_param_global(GlueParam::new(index), value);
                 } else {
-                    env.set_glue_param(GlueParam::new(index), value);
+                    stores.set_glue_param(GlueParam::new(index), value);
                 }
             }
             Self::TokParam(index) => {
                 let value = TokenListId::testing_new(word as u32);
                 if global {
-                    env.set_tok_param_global(TokParam::new(index), value);
+                    stores.set_tok_param_global(TokParam::new(index), value);
                 } else {
-                    env.set_tok_param(TokParam::new(index), value);
+                    stores.set_tok_param(TokParam::new(index), value);
                 }
             }
         }
