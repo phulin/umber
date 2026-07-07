@@ -1,5 +1,11 @@
 //! Core TeX state layer. See `docs/core_state.md` for the design.
 
+pub mod cell;
+pub mod epoch;
+pub mod ids;
+pub mod meaning;
+pub mod scaled;
+
 #[cfg(test)]
 mod tests {
     #[test]
