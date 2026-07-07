@@ -11,6 +11,8 @@ use crate::ids::{GlueId, NodeListId, TokenListId};
 use crate::interner::{Interner, InternerMark, Symbol};
 use crate::meaning::Meaning;
 use crate::scaled::Scaled;
+use crate::token::Token;
+use crate::token_store::{TokenListBuilder, TokenStore, TokenStoreMark};
 #[cfg(any(test, feature = "testing", feature = "shadow"))]
 use std::hash::{Hash, Hasher};
 use std::mem;
@@ -20,6 +22,7 @@ use std::mem;
 pub struct Snapshot {
     env_snapshot: EnvSnapshot,
     interner_mark: InternerMark,
+    token_mark: TokenStoreMark,
 }
 
 /// Top-level owner for rollback-coupled state stores.
@@ -27,6 +30,7 @@ pub struct Snapshot {
 pub struct Stores {
     env: Env,
     interner: Interner,
+    tokens: TokenStore,
 }
 
 impl Stores {
@@ -36,6 +40,7 @@ impl Stores {
         Self {
             env: Env::new(),
             interner: Interner::new(),
+            tokens: TokenStore::new(),
         }
     }
 
@@ -55,12 +60,14 @@ impl Stores {
     /// Sets the local meaning for a live control-sequence symbol.
     pub fn set_meaning(&mut self, symbol: Symbol, meaning: Meaning) {
         self.assert_live_symbol(symbol);
+        self.assert_live_token_list_in_meaning(meaning);
         self.env.set(symbol, meaning);
     }
 
     /// Sets the global meaning for a live control-sequence symbol.
     pub fn set_meaning_global(&mut self, symbol: Symbol, meaning: Meaning) {
         self.assert_live_symbol(symbol);
+        self.assert_live_token_list_in_meaning(meaning);
         self.env.set_global(symbol, meaning);
     }
 
@@ -74,6 +81,24 @@ impl Stores {
     pub fn resolve(&self, symbol: Symbol) -> &str {
         self.assert_live_symbol(symbol);
         self.interner.resolve(symbol)
+    }
+
+    /// Creates a fresh owned scratch token-list builder.
+    #[must_use]
+    pub fn token_list_builder(&self) -> TokenListBuilder {
+        self.tokens.builder()
+    }
+
+    /// Interns a frozen token-list value in the owned token store.
+    pub fn intern_token_list(&mut self, tokens: &[Token]) -> TokenListId {
+        self.tokens.intern(tokens)
+    }
+
+    /// Reads a live frozen token list.
+    #[must_use]
+    pub fn tokens(&self, id: TokenListId) -> &[Token] {
+        self.assert_live_token_list(id);
+        self.tokens.get(id)
     }
 
     /// Enters a TeX group.
@@ -117,10 +142,12 @@ impl Stores {
     }
 
     pub fn set_toks(&mut self, index: u16, value: TokenListId) {
+        self.assert_live_token_list(value);
         self.env.set_toks(index, value);
     }
 
     pub fn set_toks_global(&mut self, index: u16, value: TokenListId) {
+        self.assert_live_token_list(value);
         self.env.set_toks_global(index, value);
     }
 
@@ -157,10 +184,12 @@ impl Stores {
     }
 
     pub fn set_tok_param(&mut self, param: TokParam, value: TokenListId) {
+        self.assert_live_token_list(value);
         self.env.set_tok_param(param, value);
     }
 
     pub fn set_tok_param_global(&mut self, param: TokParam, value: TokenListId) {
+        self.assert_live_token_list(value);
         self.env.set_tok_param_global(param, value);
     }
 
@@ -170,6 +199,7 @@ impl Stores {
         Snapshot {
             env_snapshot: self.env.checkpoint(),
             interner_mark: self.interner.watermark(),
+            token_mark: self.tokens.watermark(),
         }
     }
 
@@ -177,6 +207,7 @@ impl Stores {
     pub fn rollback(&mut self, snapshot: Snapshot) {
         self.env.rollback_to(snapshot.env_snapshot);
         self.interner.truncate_to(snapshot.interner_mark);
+        self.tokens.truncate_to(snapshot.token_mark);
     }
 
     /// Returns the number of journal bytes appended since `snapshot`.
@@ -206,6 +237,7 @@ impl Stores {
                 .resolve(Symbol::new(raw as u32))
                 .hash(&mut hasher);
         }
+        self.tokens.testing_state_hash().hash(&mut hasher);
         hasher.finish()
     }
 
@@ -214,6 +246,19 @@ impl Stores {
             self.interner.contains(symbol),
             "symbol is not live in this Stores timeline"
         );
+    }
+
+    fn assert_live_token_list(&self, id: TokenListId) {
+        assert!(
+            self.tokens.contains(id),
+            "token list is not live in this Stores timeline"
+        );
+    }
+
+    fn assert_live_token_list_in_meaning(&self, meaning: Meaning) {
+        if let Meaning::Macro { token_list, .. } = meaning {
+            self.assert_live_token_list(token_list);
+        }
     }
 }
 
@@ -245,6 +290,30 @@ mod tests {
         let reused = stores.intern("temporary");
         assert_eq!(reused.raw(), temporary.raw());
         assert_eq!(stores.meaning(reused), Meaning::Undefined);
+    }
+
+    #[test]
+    fn rollback_restores_token_store_as_part_of_snapshot_tuple() {
+        let mut stores = Stores::new();
+        let snapshot = stores.checkpoint();
+        let stale = stores.intern_token_list(&[crate::token::Token::param(1)]);
+
+        stores.rollback(snapshot);
+        let reused = stores.intern_token_list(&[crate::token::Token::param(2)]);
+
+        assert_eq!(reused.raw(), stale.raw());
+        assert_eq!(stores.tokens(reused), &[crate::token::Token::param(2)]);
+    }
+
+    #[test]
+    #[should_panic(expected = "token list is not live in this Stores timeline")]
+    fn stale_rolled_back_token_list_cannot_mutate_toks_register() {
+        let mut stores = Stores::new();
+        let snapshot = stores.checkpoint();
+        let stale = stores.intern_token_list(&[crate::token::Token::param(1)]);
+
+        stores.rollback(snapshot);
+        stores.set_toks(0, stale);
     }
 
     #[test]

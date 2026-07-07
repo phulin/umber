@@ -352,14 +352,16 @@ verification instrumentation and must not expose raw handle minting.
 ### 10.4 Builder-then-freeze for content
 
 ```rust
-let mut b = tokens.builder();  // exclusive, unfinished, has no id
+let mut b = TokenListBuilder::new();  // owned scratch buffer, unfinished, has no id
 b.push(tok);
-let id = b.finish();           // hash-cons; thereafter &[Token] only
+let id = b.finish(&mut tokens);       // hash-cons; thereafter &[Token] only
 ```
 
 A `Builder` is not a `TokenListId`; nothing half-built can be stored into
-the environment because no API accepts it. Node lists likewise; promotion is
-expressed as the *only* signature for storing into a box register.
+the environment because no API accepts it. Builders are reusable owned scratch
+buffers so the gullet can read frozen lists while building new argument lists.
+Node lists likewise; promotion is expressed as the *only* signature for storing
+into a box register.
 
 ### 10.5 Effects as capability
 

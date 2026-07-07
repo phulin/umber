@@ -6,6 +6,7 @@ use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, RawMeaning};
 use tex_state::scaled::Scaled;
 use tex_state::stores::Stores;
+use tex_state::token::{Catcode, Token};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum TestCell {
@@ -30,6 +31,20 @@ impl TestCell {
         if let Some(max_meaning) = max_meaning.max() {
             for index in 0..=max_meaning {
                 stores.intern(&format!("test-cell-{index}"));
+            }
+        }
+
+        if cells
+            .iter()
+            .any(|cell| matches!(cell, Self::Toks(_) | Self::TokParam(_)))
+        {
+            for raw in 1..64 {
+                let ch = char::from_u32(0xE000 + raw).expect("private-use scalar value");
+                let id = stores.intern_token_list(&[Token::Char {
+                    ch,
+                    cat: Catcode::Other,
+                }]);
+                assert_eq!(id.raw(), raw);
             }
         }
     }

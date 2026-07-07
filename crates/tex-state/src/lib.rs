@@ -9,6 +9,8 @@ pub(crate) mod journal;
 pub mod meaning;
 pub mod scaled;
 pub mod stores;
+pub mod token;
+pub mod token_store;
 
 #[cfg(test)]
 mod tests {
