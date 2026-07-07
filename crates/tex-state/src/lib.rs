@@ -4,6 +4,7 @@ pub mod cell;
 pub mod epoch;
 pub mod ids;
 pub mod interner;
+pub mod journal;
 pub mod meaning;
 pub mod scaled;
 
