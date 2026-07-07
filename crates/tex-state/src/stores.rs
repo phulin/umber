@@ -96,7 +96,7 @@ impl Stores {
         self.interner.len().hash(&mut hasher);
         for raw in 0..self.interner.len() {
             self.interner
-                .resolve(Symbol::testing_new(raw as u32))
+                .resolve(Symbol::new(raw as u32))
                 .hash(&mut hasher);
         }
         hasher.finish()

@@ -114,7 +114,10 @@ Rules:
   registers. Dense register banks and parameter tables follow the same
   discipline: storage is raw `u64` words, and typed accessors encode/decode
   `i32`, `Scaled`, and content ids at the API boundary. Meaning words and
-  register values are `Copy`; no references into the array escape.
+  register values are `Copy`; no references into the array escape. Unknown
+  opcode words decode to an opaque raw-meaning value whose fields can be read
+  and re-encoded, but downstream crates cannot construct arbitrary raw
+  meanings in production builds.
 - **Writes**: `set(&mut self, Symbol, Meaning)` — the *only* mutation path;
   runs the barrier (§6). Same for every register bank and parameter table.
   Journal restore walks use a crate-private `Env::restore_raw(CellId, u64)`
@@ -336,7 +339,10 @@ The type system is the write barrier's bodyguard. The rules:
 `Symbol`, `TokenListId`, `NodeListId`, `FontId`, `GlueId`, `SnapshotId` are
 newtypes with private constructors; only their owning store mints them.
 Packed operand fields are decoded back into typed ids *inside* `tex-state`;
-raw integers never cross the crate boundary.
+raw integers never cross the crate boundary. Test-only constructor escape
+hatches are compiled only for crate tests or the explicit `testing` feature.
+The `shadow` feature is production-like verification instrumentation and must
+not expose raw handle minting.
 
 ### 10.4 Builder-then-freeze for content
 
@@ -394,7 +400,8 @@ Compiled code emits raw loads/stores; it cannot call `Env::set`. Containment:
    under cargo-fuzz/proptest from day one; this test *is* the invariant.
 2. **Shadow mode.** Build flag: every `set` also updates a shadow
    `HashMap<CellId, u64>`; periodic full comparison localizes divergence to
-   the offending op.
+   the offending op. Shadow mode must not enable test-only raw constructors;
+   combine it with the explicit `testing` feature only for replay/fuzz tests.
 3. **mprotect tripwire.** Paranoid debug build: arenas in `mmap` regions
    held `PROT_READ` except during barrier methods; rogue stores — including
    from `unsafe` arena internals or future FFI (fonts/ICU) — fault at the

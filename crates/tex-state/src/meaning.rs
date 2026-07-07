@@ -59,10 +59,39 @@ pub enum Meaning {
         token_list: TokenListId,
     },
     CharGiven(char),
-    Raw {
-        op: u8,
-        operand: u64,
-    },
+    Unknown(RawMeaning),
+}
+
+/// An unknown raw meaning word decoded from environment storage.
+///
+/// The fields are intentionally private so downstream code can preserve and
+/// re-encode unknown meanings without minting arbitrary meaning words.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RawMeaning {
+    op: u8,
+    operand: u64,
+}
+
+impl RawMeaning {
+    /// Creates a raw meaning for tests that cover the word codec directly.
+    #[cfg(any(test, feature = "testing"))]
+    #[must_use]
+    pub const fn testing_new(op: u8, operand: u64) -> Self {
+        assert!(operand <= OPERAND_MASK, "meaning operand exceeds 48 bits");
+        Self { op, operand }
+    }
+
+    /// Returns the raw opcode.
+    #[must_use]
+    pub const fn op(self) -> u8 {
+        self.op
+    }
+
+    /// Returns the raw operand.
+    #[must_use]
+    pub const fn operand(self) -> u64 {
+        self.operand
+    }
 }
 
 impl Meaning {
@@ -74,7 +103,7 @@ impl Meaning {
             Self::Relax => pack(OP_RELAX, MeaningFlags::EMPTY, 0),
             Self::Macro { flags, token_list } => pack(OP_MACRO, flags, token_list.raw() as u64),
             Self::CharGiven(ch) => pack(OP_CHAR_GIVEN, MeaningFlags::EMPTY, ch as u64),
-            Self::Raw { op, operand } => pack(op, MeaningFlags::EMPTY, operand),
+            Self::Unknown(raw) => pack(raw.op, MeaningFlags::EMPTY, raw.operand),
         }
     }
 
@@ -94,9 +123,9 @@ impl Meaning {
             },
             OP_CHAR_GIVEN => match char::from_u32(operand as u32) {
                 Some(ch) => Self::CharGiven(ch),
-                None => Self::Raw { op, operand },
+                None => Self::Unknown(RawMeaning { op, operand }),
             },
-            _ => Self::Raw { op, operand },
+            _ => Self::Unknown(RawMeaning { op, operand }),
         }
     }
 }
@@ -108,7 +137,7 @@ const fn pack(op: u8, flags: MeaningFlags, operand: u64) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{Meaning, MeaningFlags, OPERAND_MASK};
+    use super::{Meaning, MeaningFlags, OPERAND_MASK, RawMeaning};
     use crate::ids::TokenListId;
 
     fn round_trip(meaning: Meaning) {
@@ -140,13 +169,22 @@ mod tests {
         });
         round_trip(Meaning::CharGiven('\0'));
         round_trip(Meaning::CharGiven(char::MAX));
-        round_trip(Meaning::Raw {
-            op: u8::MAX,
-            operand: 0,
-        });
-        round_trip(Meaning::Raw {
-            op: u8::MAX,
-            operand: OPERAND_MASK,
-        });
+        round_trip(Meaning::Unknown(RawMeaning::testing_new(u8::MAX, 0)));
+        round_trip(Meaning::Unknown(RawMeaning::testing_new(
+            u8::MAX,
+            OPERAND_MASK,
+        )));
+    }
+
+    #[test]
+    fn unknown_meaning_exposes_raw_parts_without_public_fields() {
+        let word = Meaning::Unknown(RawMeaning::testing_new(200, 42)).encode();
+        let Meaning::Unknown(raw) = Meaning::decode(word) else {
+            panic!("expected unknown meaning");
+        };
+
+        assert_eq!(raw.op(), 200);
+        assert_eq!(raw.operand(), 42);
+        assert_eq!(Meaning::Unknown(raw).encode(), word);
     }
 }

@@ -5,7 +5,11 @@ edition.workspace = true
 
 [features]
 default = []
+# Mirrors every environment write into an independent map for verification.
+# This must remain production-like: it does not expose handle constructors.
 shadow = []
+# Test-only escape hatches for replay/fuzz coverage of raw storage words.
+# Engine production builds must not enable this feature.
 testing = []
 
 [lints]

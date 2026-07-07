@@ -19,7 +19,7 @@ impl Symbol {
     }
 
     /// Creates a symbol for tests that need direct cell-level state coverage.
-    #[cfg(any(test, feature = "testing", feature = "shadow"))]
+    #[cfg(any(test, feature = "testing"))]
     #[must_use]
     pub const fn testing_new(raw: u32) -> Self {
         Self(raw)

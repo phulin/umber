@@ -3,7 +3,7 @@ use tex_state::env::Env;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::ids::{GlueId, NodeListId, TokenListId};
 use tex_state::interner::Symbol;
-use tex_state::meaning::Meaning;
+use tex_state::meaning::{Meaning, RawMeaning};
 use tex_state::scaled::Scaled;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -188,9 +188,6 @@ fn meaning(word: u64) -> Meaning {
         0 => Meaning::Undefined,
         1 => Meaning::Relax,
         2 => Meaning::CharGiven(char::from_u32(32 + (word as u32 % 95)).expect("ASCII graphic")),
-        _ => Meaning::Raw {
-            op: 200,
-            operand: word & ((1_u64 << 48) - 1),
-        },
+        _ => Meaning::Unknown(RawMeaning::testing_new(200, word & ((1_u64 << 48) - 1))),
     }
 }

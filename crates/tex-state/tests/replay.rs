@@ -1,4 +1,4 @@
-#![cfg(any(feature = "testing", feature = "shadow"))]
+#![cfg(feature = "testing")]
 
 mod common;
 

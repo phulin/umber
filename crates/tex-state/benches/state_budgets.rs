@@ -132,7 +132,7 @@ fn write_synthetic_page(symbols: &[tex_state::interner::Symbol]) -> usize {
 }
 
 fn raw_meaning(operand: u64) -> Meaning {
-    Meaning::Raw { op: 8, operand }
+    Meaning::CharGiven(char::from_u32(32 + (operand as u32 % 95)).expect("ASCII graphic"))
 }
 
 criterion_group!(
