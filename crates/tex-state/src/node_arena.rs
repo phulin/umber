@@ -71,7 +71,7 @@ impl NodeArena {
 
     /// Creates a fresh owned scratch builder.
     #[must_use]
-    pub fn builder(&self) -> NodeListBuilder {
+    pub fn builder() -> NodeListBuilder {
         NodeListBuilder::new()
     }
 
@@ -137,7 +137,7 @@ impl NodeArena {
         self.nodes.len()
     }
 
-    fn append(&mut self, nodes: &[Node]) -> NodeListId {
+    pub(crate) fn append(&mut self, nodes: &[Node]) -> NodeListId {
         let start = u32_len(self.nodes.len(), "node arena exceeds u32 entries");
         let len = u32_len(nodes.len(), "node list exceeds u32 entries");
         self.debug_assert_bottom_up(nodes, start);

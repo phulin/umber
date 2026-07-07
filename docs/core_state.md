@@ -387,9 +387,9 @@ verification instrumentation and must not expose raw handle minting.
 ### 10.4 Builder-then-freeze for content
 
 ```rust
-let mut b = TokenListBuilder::new();  // owned scratch buffer, unfinished, has no id
+let mut b = stores.token_list_builder(); // owned scratch buffer, unfinished, has no id
 b.push(tok);
-let id = b.finish(&mut tokens);       // hash-cons; thereafter &[Token] only
+let id = stores.finish_token_list(&mut b); // hash-cons; thereafter &[Token] only
 ```
 
 A `Builder` is not a `TokenListId`; nothing half-built can be stored into

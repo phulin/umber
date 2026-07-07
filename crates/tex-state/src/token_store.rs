@@ -88,7 +88,7 @@ impl TokenStore {
 
     /// Creates a fresh owned scratch builder.
     #[must_use]
-    pub fn builder(&self) -> TokenListBuilder {
+    pub fn builder() -> TokenListBuilder {
         TokenListBuilder::new()
     }
 

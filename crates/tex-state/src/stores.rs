@@ -118,12 +118,17 @@ impl Stores {
     /// Creates a fresh owned scratch token-list builder.
     #[must_use]
     pub fn token_list_builder(&self) -> TokenListBuilder {
-        self.tokens.builder()
+        TokenStore::builder()
     }
 
     /// Interns a frozen token-list value in the owned token store.
     pub fn intern_token_list(&mut self, tokens: &[Token]) -> TokenListId {
         self.tokens.intern(tokens)
+    }
+
+    /// Interns the current token-list builder value and clears it for reuse.
+    pub fn finish_token_list(&mut self, builder: &mut TokenListBuilder) -> TokenListId {
+        builder.finish(&mut self.tokens)
     }
 
     /// Reads a live frozen token list.
@@ -148,15 +153,16 @@ impl Stores {
     /// Creates a fresh owned scratch node-list builder.
     #[must_use]
     pub fn node_list_builder(&self) -> NodeListBuilder {
-        self.nodes.builder()
+        NodeArena::builder()
     }
 
     /// Appends and freezes a node list in the owned epoch arena.
     pub fn freeze_node_list(&mut self, nodes: &[Node]) -> NodeListId {
-        let mut builder = NodeListBuilder::new();
-        for node in nodes {
-            builder.push(node.clone());
-        }
+        self.nodes.append(nodes)
+    }
+
+    /// Freezes the current node-list builder value and clears it for reuse.
+    pub fn finish_node_list(&mut self, builder: &mut NodeListBuilder) -> NodeListId {
         builder.finish(&mut self.nodes)
     }
 
@@ -645,6 +651,30 @@ mod tests {
     }
 
     #[test]
+    fn token_list_builder_finishes_through_stores_boundary() {
+        let mut stores = Stores::new();
+        let symbol = stores.intern("macro");
+        let mut builder = stores.token_list_builder();
+        builder.push(crate::token::Token::Cs(symbol));
+        builder.push(crate::token::Token::param(1));
+
+        let id = stores.finish_token_list(&mut builder);
+
+        assert!(builder.is_empty());
+        assert_eq!(
+            stores.tokens(id),
+            &[
+                crate::token::Token::Cs(symbol),
+                crate::token::Token::param(1)
+            ]
+        );
+
+        builder.push(crate::token::Token::param(2));
+        let reused = stores.finish_token_list(&mut builder);
+        assert_eq!(stores.tokens(reused), &[crate::token::Token::param(2)]);
+    }
+
+    #[test]
     fn rollback_restores_glue_store_as_part_of_snapshot_tuple() {
         let mut stores = Stores::new();
         let snapshot = stores.checkpoint();
@@ -656,6 +686,32 @@ mod tests {
         assert_eq!(reused.raw(), stale.raw());
         assert_eq!(stores.glue(reused), glue_spec(2));
         assert_eq!(stores.glue(crate::ids::GlueId::ZERO), GlueSpec::ZERO);
+    }
+
+    #[test]
+    fn node_list_builder_finishes_through_stores_boundary() {
+        let mut stores = Stores::new();
+        let mut builder = stores.node_list_builder();
+        builder.push(Node::MathOn);
+        builder.push(Node::MathOff);
+
+        let id = stores.finish_node_list(&mut builder);
+
+        assert!(builder.is_empty());
+        assert_eq!(stores.nodes(id), &[Node::MathOn, Node::MathOff]);
+
+        builder.push(Node::Char {
+            font: FontId::testing_new(1),
+            ch: 'x',
+        });
+        let reused = stores.finish_node_list(&mut builder);
+        assert_eq!(
+            stores.nodes(reused),
+            &[Node::Char {
+                font: FontId::testing_new(1),
+                ch: 'x'
+            }]
+        );
     }
 
     #[test]
