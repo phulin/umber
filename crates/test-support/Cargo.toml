@@ -1,0 +1,14 @@
+[package]
+name = "test-support"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+similar.workspace = true
+
+[dev-dependencies]
+refexec = { path = "../../tools/refexec" }
+
+[lints]
+workspace = true

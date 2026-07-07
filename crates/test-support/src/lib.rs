@@ -1,0 +1,164 @@
+//! Shared host-side support for parity and fixture tests.
+
+#[allow(clippy::disallowed_methods)] // host tool, not engine code
+mod imp {
+    use std::env;
+    use std::fs;
+    use std::path::PathBuf;
+
+    use anyhow::{Context, Result};
+    use similar::TextDiff;
+
+    pub fn corpus_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus")
+    }
+
+    pub fn assert_matches_fixture(area: &str, case: &str, kind: &str, actual: &str) {
+        if let Err(error) = assert_matches_fixture_inner(area, case, kind, actual) {
+            panic!("{error:#}");
+        }
+    }
+
+    fn assert_matches_fixture_inner(
+        area: &str,
+        case: &str,
+        kind: &str,
+        actual: &str,
+    ) -> Result<()> {
+        let fixture_path = corpus_root()
+            .join(area)
+            .join(format!("{case}.expected.{kind}"));
+
+        let expected = match fs::read_to_string(&fixture_path) {
+            Ok(expected) => expected,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return update_or_missing_fixture(&fixture_path, actual);
+            }
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("failed to read fixture {}", fixture_path.display()));
+            }
+        };
+
+        if expected == actual {
+            return Ok(());
+        }
+
+        if should_update_fixtures() {
+            write_fixture(&fixture_path, actual)?;
+            panic!("fixture updated -- rerun without UPDATE_FIXTURES");
+        }
+
+        let diff = unified_diff(&expected, actual);
+        panic!("fixture mismatch for {}\n{diff}", fixture_path.display());
+    }
+
+    fn update_or_missing_fixture(fixture_path: &std::path::Path, actual: &str) -> Result<()> {
+        if should_update_fixtures() {
+            write_fixture(fixture_path, actual)?;
+            panic!("fixture updated -- rerun without UPDATE_FIXTURES");
+        }
+
+        panic!(
+            "missing fixture {}; rerun with UPDATE_FIXTURES=1 to create it",
+            fixture_path.display()
+        );
+    }
+
+    fn should_update_fixtures() -> bool {
+        env::var_os("UPDATE_FIXTURES").is_some_and(|value| value == "1")
+    }
+
+    fn write_fixture(fixture_path: &std::path::Path, actual: &str) -> Result<()> {
+        if let Some(parent) = fixture_path.parent() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!("failed to create fixture directory {}", parent.display())
+            })?;
+        }
+
+        fs::write(fixture_path, actual)
+            .with_context(|| format!("failed to write fixture {}", fixture_path.display()))
+    }
+
+    fn unified_diff(expected: &str, actual: &str) -> String {
+        TextDiff::from_lines(expected, actual)
+            .unified_diff()
+            .header("expected", "actual")
+            .to_string()
+    }
+
+    pub mod normalize {
+        pub fn tex_log(log: &str) -> String {
+            let mut lines: Vec<&str> = log.lines().filter(|line| !is_banner_line(line)).collect();
+
+            while lines.last().is_some_and(|line| line.is_empty()) {
+                lines.pop();
+            }
+
+            let normalized = lines
+                .into_iter()
+                .map(normalize_stats_line)
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            if normalized.is_empty() {
+                normalized
+            } else {
+                format!("{normalized}\n")
+            }
+        }
+
+        fn is_banner_line(line: &str) -> bool {
+            line.starts_with("This is ")
+                || line.starts_with(" restricted \\write18")
+                || line.starts_with(" %&-line parsing enabled")
+                || line.starts_with("entering extended mode")
+                || line.starts_with("**")
+        }
+
+        fn normalize_stats_line(line: &str) -> String {
+            if line.starts_with("Output written") || line.starts_with("No pages of output") {
+                normalize_byte_counts(line)
+            } else {
+                line.to_owned()
+            }
+        }
+
+        fn normalize_byte_counts(line: &str) -> String {
+            let mut normalized = String::with_capacity(line.len());
+            let mut chars = line.chars().peekable();
+
+            while let Some(ch) = chars.next() {
+                if ch.is_ascii_digit() {
+                    let mut digits = String::from(ch);
+                    loop {
+                        match chars.peek() {
+                            Some(next) if next.is_ascii_digit() => {
+                                digits.push(*next);
+                                chars.next();
+                            }
+                            _ => break,
+                        }
+                    }
+
+                    if chars.peek() == Some(&' ') && digits.len() > 1 {
+                        let mut clone = chars.clone();
+                        clone.next();
+                        if clone.next() == Some('b') {
+                            normalized.push_str("<N>");
+                            continue;
+                        }
+                    }
+
+                    normalized.push_str(&digits);
+                } else {
+                    normalized.push(ch);
+                }
+            }
+
+            normalized
+        }
+    }
+}
+
+pub use imp::{assert_matches_fixture, corpus_root, normalize};
