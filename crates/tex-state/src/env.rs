@@ -210,10 +210,8 @@ impl Env {
         self.journal.entries_since(pos)
     }
 
-    /// Returns all journal entries currently retained by the environment.
-    #[must_use]
-    pub(crate) fn journal_entries(&self) -> &[Entry] {
-        self.journal.entries_since(JournalPos::from_raw(0))
+    pub(crate) fn last_group_marker_pos(&self) -> Option<JournalPos> {
+        self.journal.find_last_group_marker().map(|(pos, _)| pos)
     }
 
     /// Enters a TeX group.
@@ -405,64 +403,57 @@ impl Env {
     }
 
     /// Sets a local box register value validated by the owning store.
-    pub(crate) fn set_box_reg(&mut self, index: u16, value: Option<NodeListId>) {
+    pub(crate) fn set_box_reg(&mut self, index: u16, value: Option<NodeListId>) -> Option<UndoRec> {
         if is_dense_register(index) {
-            self.boxes.set(
+            self.boxes.set_always_journal(
                 index,
                 value,
                 &mut self.journal,
                 #[cfg(feature = "shadow")]
                 &mut self.shadow,
-                self.epoch,
                 BankTag::Box,
                 false,
-            );
+            )
         } else {
-            self.overflow_boxes.set(
+            self.overflow_boxes.set_always_journal(
                 index,
                 value,
                 &mut self.journal,
                 #[cfg(feature = "shadow")]
                 &mut self.shadow,
-                self.epoch,
                 BankTag::Box,
                 false,
-            );
+            )
         }
     }
 
     /// Sets a global box register value validated by the owning store.
-    pub(crate) fn set_box_reg_global(&mut self, index: u16, value: Option<NodeListId>) {
+    pub(crate) fn set_box_reg_global(
+        &mut self,
+        index: u16,
+        value: Option<NodeListId>,
+    ) -> Option<UndoRec> {
         if is_dense_register(index) {
-            self.boxes.set(
+            self.boxes.set_always_journal(
                 index,
                 value,
                 &mut self.journal,
                 #[cfg(feature = "shadow")]
                 &mut self.shadow,
-                self.epoch,
                 BankTag::Box,
                 true,
-            );
+            )
         } else {
-            self.overflow_boxes.set(
+            self.overflow_boxes.set_always_journal(
                 index,
                 value,
                 &mut self.journal,
                 #[cfg(feature = "shadow")]
                 &mut self.shadow,
-                self.epoch,
                 BankTag::Box,
                 true,
-            );
+            )
         }
-    }
-
-    /// Clears a local box register through the normal barrier.
-    pub(crate) fn take_box_reg(&mut self, index: u16) -> Option<NodeListId> {
-        let old = self.box_reg(index);
-        self.set_box_reg(index, None);
-        old
     }
 
     /// Returns an integer parameter value.
@@ -634,7 +625,7 @@ impl Env {
     /// Verifies the shadow mirror against real environment storage.
     #[cfg(feature = "shadow")]
     pub fn verify_shadow(&self) {
-        let real = self.testing_non_default_words();
+        let real = self.semantic_non_default_words();
         for (cell, real_word) in &real {
             let shadow_word = self.shadow.get(cell).copied().unwrap_or(0);
             assert_eq!(
@@ -661,7 +652,7 @@ impl Env {
     #[cfg(any(test, feature = "testing", feature = "shadow"))]
     #[must_use]
     pub fn testing_state_hash(&self) -> u64 {
-        let mut pairs = self.testing_non_default_words();
+        let mut pairs = self.semantic_non_default_words();
         pairs.sort_by_key(|(cell, _)| *cell);
 
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -673,7 +664,8 @@ impl Env {
         hasher.finish()
     }
 
-    pub(crate) fn testing_non_default_words(&self) -> Vec<(CellId, u64)> {
+    #[cfg(any(test, feature = "testing", feature = "shadow"))]
+    pub(crate) fn semantic_non_default_words(&self) -> Vec<(CellId, u64)> {
         let mut out = Vec::new();
         for (segment_index, segment) in self.meaning_cells.iter().enumerate() {
             for (offset, &word) in segment.iter().enumerate() {
@@ -822,7 +814,7 @@ pub(crate) fn barrier(
 }
 
 #[cfg(feature = "shadow")]
-fn shadow_set(shadow: &mut HashMap<CellId, u64>, cell: CellId, word: u64) {
+pub(crate) fn shadow_set(shadow: &mut HashMap<CellId, u64>, cell: CellId, word: u64) {
     if word == 0 {
         shadow.remove(&cell);
     } else {

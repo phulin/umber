@@ -4,7 +4,7 @@ use crate::cell::{BankTag, CellId};
 use crate::env::banks::{BankCodec, DENSE_REGISTER_COUNT};
 use crate::env::barrier;
 use crate::epoch::Epoch;
-use crate::journal::Journal;
+use crate::journal::{Journal, UndoRec};
 use core::array;
 use core::marker::PhantomData;
 
@@ -74,6 +74,35 @@ where
         );
     }
 
+    pub(crate) fn set_always_journal(
+        &mut self,
+        index: u16,
+        value: C::Value,
+        journal: &mut Journal,
+        #[cfg(feature = "shadow")] shadow: &mut std::collections::HashMap<CellId, u64>,
+        bank: BankTag,
+        global: bool,
+    ) -> Option<UndoRec> {
+        let (page, offset) = sparse_location(index);
+        let page = self.pages[page].get_or_insert_with(|| Box::new(Page::default()));
+        let cell_id = if global {
+            CellId::new_global(bank, u32::from(index))
+        } else {
+            CellId::new(bank, u32::from(index))
+        };
+        let old = page.values[offset];
+        let new = C::encode(value);
+        if old == new && !global {
+            return None;
+        }
+        let rec = UndoRec::new(cell_id, old, new);
+        journal.push_undo(rec);
+        page.values[offset] = new;
+        #[cfg(feature = "shadow")]
+        crate::env::shadow_set(shadow, CellId::new(bank, u32::from(index)), new);
+        Some(rec)
+    }
+
     #[allow(dead_code)]
     pub(crate) fn restore_word(&mut self, index: u16, word: u64) {
         let (page, offset) = sparse_location(index);
@@ -92,6 +121,7 @@ where
         }
     }
 
+    #[cfg(any(test, feature = "testing", feature = "shadow"))]
     pub(crate) fn non_default_words(&self, bank: BankTag, out: &mut Vec<(CellId, u64)>) {
         for (page_index, page) in self.pages.iter().enumerate() {
             let Some(page) = page else {

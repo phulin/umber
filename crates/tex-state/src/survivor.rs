@@ -6,7 +6,6 @@
 use crate::ids::{ArenaRef, NodeListId, SurvivorRootId};
 use crate::node::Node;
 use crate::node_arena::NodeArena;
-use std::collections::HashMap;
 
 /// Arena for promoted node-list roots.
 #[derive(Clone, Debug, Default)]
@@ -69,20 +68,19 @@ impl SurvivorArena {
             .expect("survivor root refcount overflow");
     }
 
-    pub(crate) fn reconcile_refcounts(&mut self, refs: &HashMap<SurvivorRootId, u32>) {
-        self.free.clear();
-        for raw in 0..self.slots.len() {
-            let slot = &mut self.slots[raw];
-            let root = SurvivorRootId::new(raw as u32);
-            let count = refs.get(&root).copied().unwrap_or(0);
-            match slot {
-                Some(_) if count == 0 => {
-                    *slot = None;
-                    self.free.push(root);
-                }
-                Some(root_slot) => root_slot.refcount = count,
-                None => self.free.push(root),
-            }
+    /// Decrements the root refcount for a survivor list, freeing the root at zero.
+    pub(crate) fn dec_ref(&mut self, id: NodeListId) {
+        let ArenaRef::Survivor(root) = id.arena() else {
+            panic!("only survivor node-list ids are refcounted");
+        };
+        let slot = self.root_mut(root);
+        slot.refcount = slot
+            .refcount
+            .checked_sub(1)
+            .expect("survivor root refcount underflow");
+        if slot.refcount == 0 {
+            self.slots[root.raw() as usize] = None;
+            self.free.push(root);
         }
     }
 

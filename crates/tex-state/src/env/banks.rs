@@ -4,7 +4,7 @@ use crate::cell::{BankTag, CellId};
 use crate::env::barrier;
 use crate::epoch::Epoch;
 use crate::ids::{GlueId, NodeListId, TokenListId};
-use crate::journal::Journal;
+use crate::journal::{Journal, UndoRec};
 use crate::scaled::Scaled;
 use core::marker::PhantomData;
 
@@ -111,11 +111,36 @@ where
         );
     }
 
+    pub(crate) fn set_always_journal(
+        &mut self,
+        index: u16,
+        value: C::Value,
+        journal: &mut Journal,
+        #[cfg(feature = "shadow")] shadow: &mut std::collections::HashMap<CellId, u64>,
+        bank: BankTag,
+        global: bool,
+    ) -> Option<UndoRec> {
+        let offset = checked_index::<N>(index);
+        let cell_id = cell_id(bank, index, global);
+        let old = self.values[offset];
+        let new = C::encode(value);
+        if old == new && !global {
+            return None;
+        }
+        let rec = UndoRec::new(cell_id, old, new);
+        journal.push_undo(rec);
+        self.values[offset] = new;
+        #[cfg(feature = "shadow")]
+        crate::env::shadow_set(shadow, CellId::new(bank, u32::from(index)), new);
+        Some(rec)
+    }
+
     #[allow(dead_code)]
     pub(crate) fn restore_word(&mut self, index: u16, word: u64) {
         self.values[checked_index::<N>(index)] = word;
     }
 
+    #[cfg(any(test, feature = "testing", feature = "shadow"))]
     pub(crate) fn non_default_words(&self, bank: BankTag, out: &mut Vec<(CellId, u64)>) {
         for (index, &word) in self.values.iter().enumerate() {
             if word != 0 {
