@@ -5,9 +5,8 @@
 //! node arenas; callers still use this boundary instead of rolling back `Env`
 //! or any content store independently.
 
-use crate::env::Env;
+use crate::env::{Env, EnvSnapshot};
 use crate::interner::{Interner, InternerMark, Symbol};
-use crate::journal::JournalPos;
 #[cfg(any(test, feature = "testing", feature = "shadow"))]
 use std::hash::{Hash, Hasher};
 use std::mem;
@@ -15,7 +14,7 @@ use std::mem;
 /// A rollback snapshot for all currently implemented state stores.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Snapshot {
-    env_journal_pos: JournalPos,
+    env_snapshot: EnvSnapshot,
     interner_mark: InternerMark,
 }
 
@@ -62,21 +61,24 @@ impl Stores {
     #[must_use]
     pub fn checkpoint(&mut self) -> Snapshot {
         Snapshot {
-            env_journal_pos: self.env.checkpoint(),
+            env_snapshot: self.env.checkpoint(),
             interner_mark: self.interner.watermark(),
         }
     }
 
     /// Rolls all stores back to `snapshot` as one atomic tuple.
     pub fn rollback(&mut self, snapshot: Snapshot) {
-        self.env.rollback_to(snapshot.env_journal_pos);
+        self.env.rollback_to(snapshot.env_snapshot);
         self.interner.truncate_to(snapshot.interner_mark);
     }
 
     /// Returns the number of journal bytes appended since `snapshot`.
     #[must_use]
     pub fn env_journal_bytes_since(&self, snapshot: Snapshot) -> usize {
-        mem::size_of_val(self.env.journal_entries_since(snapshot.env_journal_pos))
+        mem::size_of_val(
+            self.env
+                .journal_entries_since(snapshot.env_snapshot.journal_pos()),
+        )
     }
 
     /// Verifies the shadow mirror against real environment storage.
@@ -132,6 +134,21 @@ mod tests {
         assert_eq!(
             stores.env().get(Symbol::testing_new(reused.raw())),
             Meaning::Undefined
+        );
+    }
+
+    #[test]
+    fn rollback_discards_aftergroup_payloads_pushed_after_snapshot() {
+        let mut stores = Stores::new();
+        stores.with_env_mut(|env| env.enter_group());
+        let snapshot = stores.checkpoint();
+
+        stores.with_env_mut(|env| env.push_aftergroup(99));
+        stores.rollback(snapshot);
+
+        assert_eq!(
+            stores.with_env_mut(|env| env.leave_group()),
+            Vec::<u64>::new()
         );
     }
 }

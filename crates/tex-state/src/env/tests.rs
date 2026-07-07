@@ -501,7 +501,7 @@ fn group_exit_bumps_epoch_so_outer_undo_slice_records_rewrite() {
     let mut env = Env::new();
 
     env.enter_group();
-    let outer_pos = env.journal_pos();
+    let outer_pos = env.checkpoint();
     env.enter_group();
     env.set_count(11, 1);
     assert_eq!(env.leave_group(), Vec::<u64>::new());
@@ -518,7 +518,7 @@ fn group_exit_bumps_epoch_so_outer_undo_slice_records_rewrite() {
 #[test]
 fn rollback_to_restores_globals_across_group_markers() {
     let mut env = Env::new();
-    let pos = env.journal_pos();
+    let pos = env.checkpoint();
 
     env.enter_group();
     env.set_count_global(1, 10);
@@ -531,7 +531,7 @@ fn rollback_to_restores_globals_across_group_markers() {
     assert_eq!(env.count(1), 0);
     assert_eq!(env.count(2), 0);
     assert_eq!(env.count(300), 0);
-    assert!(env.journal_entries_since(pos).is_empty());
+    assert!(env.journal_entries_since(pos.journal_pos()).is_empty());
 }
 
 fn undo(bank: BankTag, index: u32, old: u64, new: u64) -> Entry {

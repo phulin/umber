@@ -34,6 +34,24 @@ const SEGMENT_MASK: u32 = (SEGMENT_LEN as u32) - 1;
 type MeaningSegment = Box<[u64; SEGMENT_LEN]>;
 type StampSegment = Box<[Epoch; SEGMENT_LEN]>;
 
+/// Crate-private environment rollback mark.
+///
+/// The public rollback boundary is `Stores`; this token exists only so that
+/// `Stores` can restore all Env-owned rollback-coupled state atomically.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct EnvSnapshot {
+    journal_pos: JournalPos,
+    aftergroup_len: u32,
+}
+
+impl EnvSnapshot {
+    /// Returns the journal position captured by this snapshot.
+    #[must_use]
+    pub(crate) const fn journal_pos(self) -> JournalPos {
+        self.journal_pos
+    }
+}
+
 macro_rules! register_accessors {
     ($get:ident, $set:ident, $set_global:ident, $value:ty, $bank:ident, $dense:ident, $sparse:ident) => {
         #[must_use]
@@ -174,10 +192,16 @@ impl Env {
 
     /// Records a checkpoint position and starts a fresh epoch for later writes.
     #[must_use]
-    pub(crate) fn checkpoint(&mut self) -> JournalPos {
-        let pos = self.journal.pos();
+    pub(crate) fn checkpoint(&mut self) -> EnvSnapshot {
+        let snapshot = EnvSnapshot {
+            journal_pos: self.journal.pos(),
+            aftergroup_len: u32_len(
+                self.aftergroup.len(),
+                "aftergroup payload list exceeds u32 entries",
+            ),
+        };
         self.epoch.bump();
-        pos
+        snapshot
     }
 
     /// Returns journal entries appended since `pos`.
@@ -260,15 +284,19 @@ impl Env {
         payloads
     }
 
-    /// Rolls back all journaled environment writes after `pos`.
-    pub(crate) fn rollback_to(&mut self, pos: JournalPos) {
-        let entries = self.journal.entries_since(pos).to_vec();
+    /// Rolls back all environment state after `snapshot`.
+    pub(crate) fn rollback_to(&mut self, snapshot: EnvSnapshot) {
+        let entries = self.journal.entries_since(snapshot.journal_pos).to_vec();
         for entry in entries.iter().rev() {
             if let Entry::Undo(rec) = *entry {
                 self.restore_raw(rec.cell(), rec.old());
             }
         }
-        self.journal.truncate_to(pos);
+        self.journal.truncate_to(snapshot.journal_pos);
+        self.aftergroup.truncate(checked_aftergroup_start(
+            snapshot.aftergroup_len,
+            self.aftergroup.len(),
+        ));
         self.epoch.bump();
     }
 
@@ -526,7 +554,7 @@ impl Env {
         }
     }
 
-    /// Returns a content-only hash of all non-default environment cells.
+    /// Returns a content-only hash of environment semantic state.
     ///
     /// The hash intentionally excludes allocation lengths, capacities, and
     /// epoch stamps; replay identity is about semantic state.
@@ -541,6 +569,7 @@ impl Env {
             cell.hash(&mut hasher);
             word.hash(&mut hasher);
         }
+        self.aftergroup.hash(&mut hasher);
         hasher.finish()
     }
 

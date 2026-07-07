@@ -254,7 +254,7 @@ Rollback discards the uncommitted suffix of the effect log.
 pub struct Snapshot {
     journal_pos: JournalPos,
     epoch: Epoch,
-    watermarks: Watermarks,        // tokens, nodes, strings, interner
+    watermarks: Watermarks,        // tokens, nodes, strings, interner, aftergroup
     code_roots: [PageRoot; 6],     // + generation vector
     overflow_roots: PageRoots,
     effect_pos: EffectPos,
@@ -270,7 +270,9 @@ pub struct Snapshot {
 - **Rollback**: replay journal to marker (restoring cells and old code-table
   roots); truncate arenas to watermarks; refcount-release survivor boxes
   recorded in the journal slice; discard effect-log suffix; restore scalars.
-  The epoch counter is never rewound — rollback bumps it past its previous
+  Pending `\aftergroup` payloads are part of the Env rollback tuple: snapshots
+  carry an aftergroup length and rollback truncates payloads pushed after the
+  snapshot. The epoch counter is never rewound — rollback bumps it past its previous
   maximum (stale high stamps on restored cells would otherwise bypass the
   barrier's journal push, same failure as skipping the group-exit bump).
 - **Atomicity rule (hard invariant)**: meaning cells contain content ids, so
@@ -387,7 +389,8 @@ Compiled code emits raw loads/stores; it cannot call `Env::set`. Containment:
 
 1. **Replay identity (the defining property, fuzzed).** Snapshot → random
    op sequence → rollback → assert state-hash equality with pre-snapshot
-   hash. Any unlogged write survives rollback and diverges the hash. Run
+   hash. Any unlogged semantic mutation, including pending `\aftergroup`
+   payloads, survives rollback and diverges the hash. Run
    under cargo-fuzz/proptest from day one; this test *is* the invariant.
 2. **Shadow mode.** Build flag: every `set` also updates a shadow
    `HashMap<CellId, u64>`; periodic full comparison localizes divergence to
