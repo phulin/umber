@@ -419,9 +419,12 @@ on `Universe` only (atomicity rule, §9). Until the full `Universe` exists,
 boundary for the M1 store tuple. Because `Symbol` dense ids can be reused after
 interner rollback, public meaning writes also live on `Stores`; the facade
 rejects symbols that are no longer live in its owned interner before mutating
-Env cells. M2 `Stores` snapshots also carry an owning store id and group depth:
-rollback rejects snapshots from another store timeline and snapshots invalidated
-by exiting the group that enclosed their checkpoint.
+Env cells. M2 `Stores` snapshots also carry an owning store identity and group
+depth: rollback rejects snapshots from another store timeline and snapshots
+invalidated by exiting the group that enclosed their checkpoint. The owning
+store identity is derived from a private per-`Stores` owner token, not from a
+global counter, lock, or atomic; cloning a store allocates a fresh token and
+therefore creates a distinct snapshot timeline.
 
 ### 10.7 The JIT bypass, contained
 

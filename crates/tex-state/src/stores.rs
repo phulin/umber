@@ -20,14 +20,11 @@ use crate::token_store::{TokenListBuilder, TokenStore, TokenStoreMark};
 #[cfg(any(test, feature = "testing", feature = "shadow"))]
 use std::hash::{Hash, Hasher};
 use std::mem;
-use std::sync::atomic::{AtomicU64, Ordering};
-
-static NEXT_STORE_ID: AtomicU64 = AtomicU64::new(1);
 
 /// A rollback snapshot for all currently implemented state stores.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Snapshot {
-    store_id: u64,
+    owner: SnapshotOwner,
     env_snapshot: EnvSnapshot,
     interner_mark: InternerMark,
     token_mark: TokenStoreMark,
@@ -35,10 +32,31 @@ pub struct Snapshot {
     node_mark: NodeArenaMark,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SnapshotOwner(usize);
+
+#[derive(Debug)]
+struct StoreOwner(Box<StoreOwnerToken>);
+
+#[derive(Debug)]
+struct StoreOwnerToken {
+    _private: u8,
+}
+
+impl StoreOwner {
+    fn new() -> Self {
+        Self(Box::new(StoreOwnerToken { _private: 0 }))
+    }
+
+    fn snapshot_owner(&self) -> SnapshotOwner {
+        SnapshotOwner(self.0.as_ref() as *const StoreOwnerToken as usize)
+    }
+}
+
 /// Top-level owner for rollback-coupled state stores.
 #[derive(Debug)]
 pub struct Stores {
-    store_id: u64,
+    owner: StoreOwner,
     env: Env,
     interner: Interner,
     tokens: TokenStore,
@@ -50,7 +68,7 @@ pub struct Stores {
 impl Clone for Stores {
     fn clone(&self) -> Self {
         Self {
-            store_id: next_store_id(),
+            owner: StoreOwner::new(),
             env: self.env.clone(),
             interner: self.interner.clone(),
             tokens: self.tokens.clone(),
@@ -66,7 +84,7 @@ impl Stores {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            store_id: next_store_id(),
+            owner: StoreOwner::new(),
             env: Env::new(),
             interner: Interner::new(),
             tokens: TokenStore::new(),
@@ -291,7 +309,7 @@ impl Stores {
     #[must_use]
     pub fn checkpoint(&mut self) -> Snapshot {
         Snapshot {
-            store_id: self.store_id,
+            owner: self.owner.snapshot_owner(),
             env_snapshot: self.env.checkpoint(),
             interner_mark: self.interner.watermark(),
             token_mark: self.tokens.watermark(),
@@ -362,7 +380,8 @@ impl Stores {
 
     fn assert_valid_snapshot(&self, snapshot: Snapshot) {
         assert_eq!(
-            snapshot.store_id, self.store_id,
+            snapshot.owner,
+            self.owner.snapshot_owner(),
             "Stores snapshot belongs to a different Stores instance"
         );
         assert_eq!(
@@ -597,10 +616,6 @@ impl Stores {
             self.survivors.dec_ref(id);
         }
     }
-}
-
-fn next_store_id() -> u64 {
-    NEXT_STORE_ID.fetch_add(1, Ordering::Relaxed)
 }
 
 impl Default for Stores {
