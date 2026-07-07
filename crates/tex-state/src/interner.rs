@@ -1,10 +1,8 @@
 //! Control-sequence name interning.
 //!
-//! Symbols are dense indexes into a span table. Interner rollback truncates
-//! the span table and UTF-8 arena to a watermark, which invalidates every
-//! symbol minted above that watermark. Holding such symbols across rollback is
-//! a caller contract; the later `Universe` layer will enforce atomic rollback
-//! across all stores that can contain symbols.
+//! Symbols are dense indexes into a span table. The arena can be truncated to
+//! a watermark, but that rollback machinery is crate-private so the live
+//! interner rolls back only as part of the aggregate `Stores` tuple.
 
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
@@ -36,9 +34,9 @@ impl Symbol {
 
 /// A rollback watermark for the interner.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct InternerMark {
-    pub spans: u32,
-    pub bytes: u32,
+pub(crate) struct InternerMark {
+    spans: u32,
+    bytes: u32,
 }
 
 /// Interned UTF-8 string arena.
@@ -114,17 +112,17 @@ impl Interner {
         self.spans.is_empty()
     }
 
-    /// Takes a rollback watermark.
+    /// Takes a rollback watermark for `Stores`-owned aggregate snapshots.
     #[must_use]
-    pub fn watermark(&self) -> InternerMark {
+    pub(crate) fn watermark(&self) -> InternerMark {
         InternerMark {
             spans: u32_len(self.spans.len(), "interner spans exceed u32 entries"),
             bytes: u32_len(self.arena.len(), "interner arena exceeds u32 bytes"),
         }
     }
 
-    /// Truncates to a previously-taken watermark.
-    pub fn truncate_to(&mut self, mark: InternerMark) {
+    /// Truncates to a previously-taken aggregate snapshot watermark.
+    pub(crate) fn truncate_to(&mut self, mark: InternerMark) {
         let spans = mark.spans as usize;
         let bytes = mark.bytes as usize;
         assert!(
