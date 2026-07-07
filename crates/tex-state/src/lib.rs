@@ -12,6 +12,7 @@ pub mod node;
 pub mod node_arena;
 pub mod scaled;
 pub mod stores;
+pub mod survivor;
 pub mod token;
 pub mod token_store;
 

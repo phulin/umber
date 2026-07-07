@@ -184,7 +184,6 @@ impl Env {
     }
 
     /// Returns the current journal end position.
-    #[cfg(test)]
     #[must_use]
     pub(crate) fn journal_pos(&self) -> JournalPos {
         self.journal.pos()
@@ -208,6 +207,16 @@ impl Env {
     #[must_use]
     pub(crate) fn journal_entries_since(&self, pos: JournalPos) -> &[Entry] {
         self.journal.entries_since(pos)
+    }
+
+    /// Returns the journal entries in the innermost group body.
+    #[must_use]
+    pub(crate) fn current_group_entries(&self) -> &[Entry] {
+        let Some((marker_pos, _)) = self.journal.find_last_group_marker() else {
+            panic!("leave_group without matching group marker");
+        };
+        self.journal
+            .entries_since(JournalPos::from_raw(marker_pos.raw() as usize + 1))
     }
 
     /// Enters a TeX group.
@@ -388,15 +397,76 @@ impl Env {
         toks,
         overflow_toks
     );
-    register_accessors!(
-        box_reg,
-        set_box_reg,
-        set_box_reg_global,
-        NodeListId,
-        Box,
-        boxes,
-        overflow_boxes
-    );
+    /// Returns a box register value; `None` is TeX's void box.
+    #[must_use]
+    pub fn box_reg(&self, index: u16) -> Option<NodeListId> {
+        if is_dense_register(index) {
+            self.boxes.get(index)
+        } else {
+            self.overflow_boxes.get(index)
+        }
+    }
+
+    /// Sets a local box register value validated by the owning store.
+    pub(crate) fn set_box_reg(&mut self, index: u16, value: Option<NodeListId>) {
+        if is_dense_register(index) {
+            self.boxes.set(
+                index,
+                value,
+                &mut self.journal,
+                #[cfg(feature = "shadow")]
+                &mut self.shadow,
+                self.epoch,
+                BankTag::Box,
+                false,
+            );
+        } else {
+            self.overflow_boxes.set(
+                index,
+                value,
+                &mut self.journal,
+                #[cfg(feature = "shadow")]
+                &mut self.shadow,
+                self.epoch,
+                BankTag::Box,
+                false,
+            );
+        }
+    }
+
+    /// Sets a global box register value validated by the owning store.
+    pub(crate) fn set_box_reg_global(&mut self, index: u16, value: Option<NodeListId>) {
+        if is_dense_register(index) {
+            self.boxes.set(
+                index,
+                value,
+                &mut self.journal,
+                #[cfg(feature = "shadow")]
+                &mut self.shadow,
+                self.epoch,
+                BankTag::Box,
+                true,
+            );
+        } else {
+            self.overflow_boxes.set(
+                index,
+                value,
+                &mut self.journal,
+                #[cfg(feature = "shadow")]
+                &mut self.shadow,
+                self.epoch,
+                BankTag::Box,
+                true,
+            );
+        }
+    }
+
+    /// Clears a local box register through the normal barrier.
+    pub(crate) fn take_box_reg(&mut self, index: u16) -> Option<NodeListId> {
+        let old = self.box_reg(index);
+        self.set_box_reg(index, None);
+        old
+    }
 
     /// Returns an integer parameter value.
     #[must_use]

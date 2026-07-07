@@ -135,11 +135,16 @@ impl NodeListId {
         match self.arena {
             ArenaRef::Epoch => u64::from(self.start) | (u64::from(self.len) << 32),
             ArenaRef::Survivor(root) => {
+                assert!(root.raw() < (1 << 20), "survivor root id exceeds encoding");
                 assert!(
-                    self.len == 0,
-                    "survivor node-list word encoding awaits umber2-2zl.4"
+                    self.start < (1 << 21),
+                    "survivor span start exceeds encoding"
                 );
-                (1_u64 << 63) | u64::from(root.raw())
+                assert!(self.len < (1 << 22), "survivor span len exceeds encoding");
+                (1_u64 << 63)
+                    | (u64::from(root.raw()) << 43)
+                    | (u64::from(self.start) << 22)
+                    | u64::from(self.len)
             }
         }
     }
@@ -150,9 +155,23 @@ impl NodeListId {
             let len = (word >> 32) as u32;
             Self::new_epoch(start, len)
         } else {
-            // TODO(umber2-2zl.4): decode full survivor node-list register words.
-            Self::new_survivor(SurvivorRootId::new(word as u32), 0, 0)
+            let root = ((word >> 43) & ((1 << 20) - 1)) as u32;
+            let start = ((word >> 22) & ((1 << 21) - 1)) as u32;
+            let len = (word & ((1 << 22) - 1)) as u32;
+            Self::new_survivor(SurvivorRootId::new(root), start, len)
         }
+    }
+
+    pub(crate) fn encode_box_word(value: Option<Self>) -> u64 {
+        value.map_or(0, |id| {
+            id.encode_word()
+                .checked_add(1)
+                .expect("node-list box-register word cannot encode u64::MAX")
+        })
+    }
+
+    pub(crate) fn decode_box_word(word: u64) -> Option<Self> {
+        (word != 0).then(|| Self::decode_word(word - 1))
     }
 }
 

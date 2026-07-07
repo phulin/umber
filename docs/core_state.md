@@ -241,14 +241,15 @@ cells[i] = new
   `NodeListId { arena, start, len }` spans minted only by
   `NodeListBuilder::finish(&mut NodeArena)`. Builders are owned scratch
   buffers; finishing appends and clears them. Child lists inside newly-frozen
-  nodes must already be frozen lower in the same epoch arena; debug builds
-  assert this bottom-up discipline. Survivor `NodeListId`s are shaped now, but
-  survivor access and promotion intentionally land in the survivor-arena task.
+  epoch nodes must already be frozen lower in the same epoch arena; debug
+  builds assert this bottom-up discipline. Survivor ids name a root slot plus a
+  root-relative span and are read through the aggregate-owned survivor arena.
 - **Promotion on escape**: storing a node list into a box register, mark,
   or insertion is a barriered write, so the engine sees it and copies the
-  list into a **survivor arena** with per-box refcounts. `\unhbox`/`\vsplit`
-  operate on survivors. The rare escaping box pays a copy; every epoch arena
-  earns the right to be truncated blindly.
+  list into a **survivor arena** with per-box refcounts. The promoted root is
+  one contiguous allocation; child `NodeListId`s are remapped to root-relative
+  survivor spans. `\unhbox`/`\vsplit` operate on survivors. The rare escaping
+  box pays a copy; every epoch arena earns the right to be truncated blindly.
 - Shipped pages serialize into content-addressed artifacts (the memo/extern
   store) and their nodes are released.
 

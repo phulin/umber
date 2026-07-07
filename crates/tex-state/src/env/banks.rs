@@ -199,14 +199,14 @@ impl BankCodec for TokenListIdCodec {
 pub(crate) struct NodeListIdCodec;
 
 impl BankCodec for NodeListIdCodec {
-    type Value = NodeListId;
+    type Value = Option<NodeListId>;
 
     fn encode(value: Self::Value) -> u64 {
-        value.encode_word()
+        NodeListId::encode_box_word(value)
     }
 
     fn decode(word: u64) -> Self::Value {
-        NodeListId::decode_word(word)
+        NodeListId::decode_box_word(word)
     }
 }
 

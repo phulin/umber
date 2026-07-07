@@ -5,6 +5,7 @@
 
 use crate::ids::{ArenaRef, NodeListId};
 use crate::node::Node;
+use crate::survivor::SurvivorArena;
 
 /// A rollback watermark for the epoch node arena.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -76,7 +77,7 @@ impl NodeArena {
 
     /// Reads a live frozen epoch node list.
     #[must_use]
-    pub fn get(&self, id: NodeListId) -> &[Node] {
+    pub fn get<'a>(&'a self, id: NodeListId, survivors: &'a SurvivorArena) -> &'a [Node] {
         match id.arena() {
             ArenaRef::Epoch => {
                 let start = id.start() as usize;
@@ -84,11 +85,21 @@ impl NodeArena {
                 assert!(end <= self.nodes.len(), "node-list id is not live");
                 &self.nodes[start..end]
             }
-            ArenaRef::Survivor(_) => {
-                // TODO(umber2-2zl.4): route survivor node-list access through SurvivorArena.
-                panic!("survivor node-list access awaits umber2-2zl.4")
-            }
+            ArenaRef::Survivor(_) => survivors.get(id),
         }
+    }
+
+    /// Reads a live frozen epoch node list.
+    #[must_use]
+    pub(crate) fn get_epoch(&self, id: NodeListId) -> &[Node] {
+        assert!(
+            matches!(id.arena(), ArenaRef::Epoch),
+            "expected epoch node-list id"
+        );
+        let start = id.start() as usize;
+        let end = start + id.len() as usize;
+        assert!(end <= self.nodes.len(), "node-list id is not live");
+        &self.nodes[start..end]
     }
 
     /// Returns whether `id` names a currently-live epoch span in this arena.
@@ -151,12 +162,7 @@ impl NodeArena {
                         "child node-list id is not live in this epoch arena"
                     );
                 }
-                ArenaRef::Survivor(_) => {
-                    debug_assert!(
-                        false,
-                        "survivor child node-list root does not exist until umber2-2zl.4"
-                    );
-                }
+                ArenaRef::Survivor(_) => {}
             }
         }
     }
@@ -183,6 +189,7 @@ mod tests {
     #[test]
     fn nested_lists_build_bottom_up_and_read_back() {
         let mut arena = NodeArena::new();
+        let survivors = crate::survivor::SurvivorArena::new();
 
         let mut inner = NodeListBuilder::new();
         inner.push(Node::Char {
@@ -218,18 +225,18 @@ mod tests {
         let outer_id = outer.finish(&mut arena);
 
         assert_eq!(
-            arena.get(inner_id),
+            arena.get(inner_id, &survivors),
             &[Node::Char {
                 font: FontId::testing_new(1),
                 ch: 'x'
             }]
         );
-        let [Node::HList(middle_box)] = arena.get(middle_id) else {
+        let [Node::HList(middle_box)] = arena.get(middle_id, &survivors) else {
             panic!("middle list should contain one hlist")
         };
         assert_eq!(middle_box.children, inner_id);
         assert_eq!(middle_box.glue_set.to_bits(), 0.0_f64.to_bits());
-        let [Node::VList(outer_box)] = arena.get(outer_id) else {
+        let [Node::VList(outer_box)] = arena.get(outer_id, &survivors) else {
             panic!("outer list should contain one vlist")
         };
         assert_eq!(outer_box.children, middle_id);
@@ -251,19 +258,20 @@ mod tests {
     #[test]
     fn watermark_truncation_drops_exactly_the_suffix() {
         let mut arena = NodeArena::new();
+        let survivors = crate::survivor::SurvivorArena::new();
         let kept = one_char(&mut arena, 'a');
         let mark = arena.watermark();
         let dropped = one_char(&mut arena, 'b');
 
-        assert_eq!(arena.get(dropped).len(), 1);
+        assert_eq!(arena.get(dropped, &survivors).len(), 1);
         arena.truncate_to(mark);
 
-        assert_eq!(arena.get(kept).len(), 1);
+        assert_eq!(arena.get(kept, &survivors).len(), 1);
         assert!(!arena.contains(dropped));
         let replacement = one_char(&mut arena, 'c');
         assert_eq!(replacement.start(), dropped.start());
         assert_eq!(
-            arena.get(replacement)[0],
+            arena.get(replacement, &survivors)[0],
             Node::Char {
                 font: FontId::testing_new(1),
                 ch: 'c',
@@ -274,6 +282,7 @@ mod tests {
     #[test]
     fn builder_reuse_after_finish_leaves_buffer_empty() {
         let mut arena = NodeArena::new();
+        let survivors = crate::survivor::SurvivorArena::new();
         let mut builder = NodeListBuilder::new();
 
         builder.push(Node::MathOn);
@@ -283,8 +292,8 @@ mod tests {
         builder.push(Node::MathOff);
         let second = builder.finish(&mut arena);
 
-        assert_eq!(arena.get(first), &[Node::MathOn]);
-        assert_eq!(arena.get(second), &[Node::MathOff]);
+        assert_eq!(arena.get(first, &survivors), &[Node::MathOn]);
+        assert_eq!(arena.get(second, &survivors), &[Node::MathOff]);
         assert!(builder.is_empty());
     }
 
