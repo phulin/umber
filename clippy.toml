@@ -1,0 +1,11 @@
+disallowed-methods = [
+    { path = "std::fs::read", reason = "I/O and clocks must go through tex-state::World (docs/core_state.md §8, §10.5)" },
+    { path = "std::fs::read_to_string", reason = "I/O and clocks must go through tex-state::World (docs/core_state.md §8, §10.5)" },
+    { path = "std::fs::write", reason = "I/O and clocks must go through tex-state::World (docs/core_state.md §8, §10.5)" },
+    { path = "std::fs::File::open", reason = "I/O and clocks must go through tex-state::World (docs/core_state.md §8, §10.5)" },
+    { path = "std::fs::File::create", reason = "I/O and clocks must go through tex-state::World (docs/core_state.md §8, §10.5)" },
+    { path = "std::io::stdin", reason = "I/O and clocks must go through tex-state::World (docs/core_state.md §8, §10.5)" },
+    { path = "std::io::stdout", reason = "I/O and clocks must go through tex-state::World (docs/core_state.md §8, §10.5)" },
+    { path = "std::time::SystemTime::now", reason = "I/O and clocks must go through tex-state::World (docs/core_state.md §8, §10.5)" },
+    { path = "std::time::Instant::now", reason = "I/O and clocks must go through tex-state::World (docs/core_state.md §8, §10.5)" },
+]
