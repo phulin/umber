@@ -1,7 +1,11 @@
 [package]
-name = "workspace-placeholder"
+name = "refexec"
 version.workspace = true
 edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true
