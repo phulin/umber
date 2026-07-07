@@ -14,6 +14,7 @@ anyhow = "1"
 tempfile = "3"
 similar = "2"
 proptest = "1"
+criterion = "0.5"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
