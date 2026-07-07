@@ -42,6 +42,7 @@ type StampSegment = Box<[Epoch; SEGMENT_LEN]>;
 pub(crate) struct EnvSnapshot {
     journal_pos: JournalPos,
     aftergroup_len: u32,
+    group_depth: u32,
 }
 
 impl EnvSnapshot {
@@ -49,6 +50,12 @@ impl EnvSnapshot {
     #[must_use]
     pub(crate) const fn journal_pos(self) -> JournalPos {
         self.journal_pos
+    }
+
+    /// Returns the group depth captured by this snapshot.
+    #[must_use]
+    pub(crate) const fn group_depth(self) -> u32 {
+        self.group_depth
     }
 }
 
@@ -138,6 +145,7 @@ pub struct Env {
     tok_params: FixedBank<TokenListIdCodec, PARAMETER_COUNT>,
     journal: Journal,
     aftergroup: Vec<u64>,
+    group_depth: u32,
     epoch: Epoch,
     #[cfg(feature = "shadow")]
     shadow: HashMap<CellId, u64>,
@@ -166,6 +174,7 @@ impl Env {
             tok_params: FixedBank::new(),
             journal: Journal::new(),
             aftergroup: Vec::new(),
+            group_depth: 0,
             epoch: Epoch::START,
             #[cfg(feature = "shadow")]
             shadow: HashMap::new(),
@@ -199,6 +208,7 @@ impl Env {
                 self.aftergroup.len(),
                 "aftergroup payload list exceeds u32 entries",
             ),
+            group_depth: self.group_depth,
         };
         self.epoch.bump();
         snapshot
@@ -214,6 +224,16 @@ impl Env {
         self.journal.find_last_group_marker().map(|(pos, _)| pos)
     }
 
+    #[must_use]
+    pub(crate) fn current_journal_pos(&self) -> JournalPos {
+        self.journal.pos()
+    }
+
+    #[must_use]
+    pub(crate) const fn group_depth(&self) -> u32 {
+        self.group_depth
+    }
+
     /// Enters a TeX group.
     pub fn enter_group(&mut self) {
         let aftergroup_start = u32_len(
@@ -221,6 +241,10 @@ impl Env {
             "aftergroup payload list exceeds u32 entries",
         );
         self.journal.push_marker(Marker::Group { aftergroup_start });
+        self.group_depth = self
+            .group_depth
+            .checked_add(1)
+            .expect("group depth exceeds u32 entries");
         self.epoch.bump();
     }
 
@@ -238,6 +262,10 @@ impl Env {
         let Some((marker_pos, aftergroup_start)) = self.journal.find_last_group_marker() else {
             panic!("leave_group without matching group marker");
         };
+        self.group_depth = self
+            .group_depth
+            .checked_sub(1)
+            .expect("leave_group without matching group marker");
         let marker_index = marker_pos.raw() as usize;
         let group_end = self.journal.len();
         let has_globals = (marker_index + 1..group_end).any(
@@ -318,6 +346,7 @@ impl Env {
             }
         }
         self.journal.truncate_to(snapshot.journal_pos);
+        self.group_depth = snapshot.group_depth;
         self.aftergroup.truncate(checked_aftergroup_start(
             snapshot.aftergroup_len,
             self.aftergroup.len(),

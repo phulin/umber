@@ -282,7 +282,9 @@ Rollback discards the uncommitted suffix of the effect log.
 
 ```rust
 pub struct Snapshot {
+    owner: SnapshotOwner,          // rejects cross-Universe/Stores misuse
     journal_pos: JournalPos,
+    group_depth: u32,              // group exits invalidate enclosed snapshots
     epoch: Epoch,
     watermarks: Watermarks,        // tokens, nodes, strings, interner, aftergroup
     code_roots: [PageRoot; 6],     // + generation vector
@@ -296,7 +298,11 @@ pub struct Snapshot {
 ```
 
 - **Take**: O(1) — record positions/roots, copy scalars. Frequency: every
-  shipout; every paragraph while an editor session is hot.
+  shipout; every paragraph while an editor session is hot. A snapshot belongs
+  to the `Universe`/`Stores` instance that created it. In M2, snapshots taken
+  inside a TeX group are valid only while that enclosing group is still open;
+  leaving the group truncates the journal below the checkpoint position and
+  invalidates those snapshots instead of permitting partial rollback.
 - **Rollback**: replay journal to marker (restoring cells and old code-table
   roots); truncate arenas to watermarks; release survivor owners held by the
   truncated box-register journal records while restored registers reclaim
@@ -409,7 +415,9 @@ on `Universe` only (atomicity rule, §9). Until the full `Universe` exists,
 boundary for the M1 store tuple. Because `Symbol` dense ids can be reused after
 interner rollback, public meaning writes also live on `Stores`; the facade
 rejects symbols that are no longer live in its owned interner before mutating
-Env cells.
+Env cells. M2 `Stores` snapshots also carry an owning store id and group depth:
+rollback rejects snapshots from another store timeline and snapshots invalidated
+by exiting the group that enclosed their checkpoint.
 
 ### 10.7 The JIT bypass, contained
 

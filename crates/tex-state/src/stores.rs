@@ -20,10 +20,14 @@ use crate::token_store::{TokenListBuilder, TokenStore, TokenStoreMark};
 #[cfg(any(test, feature = "testing", feature = "shadow"))]
 use std::hash::{Hash, Hasher};
 use std::mem;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT_STORE_ID: AtomicU64 = AtomicU64::new(1);
 
 /// A rollback snapshot for all currently implemented state stores.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Snapshot {
+    store_id: u64,
     env_snapshot: EnvSnapshot,
     interner_mark: InternerMark,
     token_mark: TokenStoreMark,
@@ -32,8 +36,9 @@ pub struct Snapshot {
 }
 
 /// Top-level owner for rollback-coupled state stores.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Stores {
+    store_id: u64,
     env: Env,
     interner: Interner,
     tokens: TokenStore,
@@ -42,11 +47,26 @@ pub struct Stores {
     survivors: SurvivorArena,
 }
 
+impl Clone for Stores {
+    fn clone(&self) -> Self {
+        Self {
+            store_id: next_store_id(),
+            env: self.env.clone(),
+            interner: self.interner.clone(),
+            tokens: self.tokens.clone(),
+            glue: self.glue.clone(),
+            nodes: self.nodes.clone(),
+            survivors: self.survivors.clone(),
+        }
+    }
+}
+
 impl Stores {
     /// Creates an empty state-store tuple.
     #[must_use]
     pub fn new() -> Self {
         Self {
+            store_id: next_store_id(),
             env: Env::new(),
             interner: Interner::new(),
             tokens: TokenStore::new(),
@@ -257,9 +277,15 @@ impl Stores {
     }
 
     /// Takes an O(1) checkpoint for the rollback-coupled store tuple.
+    ///
+    /// A `Snapshot` belongs only to the `Stores` instance that created it.
+    /// Leaving a TeX group invalidates snapshots taken inside that group:
+    /// rollback may only target a snapshot whose captured group depth still
+    /// matches the current group depth.
     #[must_use]
     pub fn checkpoint(&mut self) -> Snapshot {
         Snapshot {
+            store_id: self.store_id,
             env_snapshot: self.env.checkpoint(),
             interner_mark: self.interner.watermark(),
             token_mark: self.tokens.watermark(),
@@ -270,6 +296,7 @@ impl Stores {
 
     /// Rolls all stores back to `snapshot` as one atomic tuple.
     pub fn rollback(&mut self, snapshot: Snapshot) {
+        self.assert_valid_snapshot(snapshot);
         self.account_rollback_box_refs(snapshot.env_snapshot);
         self.env.rollback_to(snapshot.env_snapshot);
         self.interner.truncate_to(snapshot.interner_mark);
@@ -281,6 +308,7 @@ impl Stores {
     /// Returns the number of journal bytes appended since `snapshot`.
     #[must_use]
     pub fn env_journal_bytes_since(&self, snapshot: Snapshot) -> usize {
+        self.assert_valid_snapshot(snapshot);
         mem::size_of_val(
             self.env
                 .journal_entries_since(snapshot.env_snapshot.journal_pos()),
@@ -324,6 +352,22 @@ impl Stores {
             }
         }
         self.env.testing_aftergroup_payloads().hash(hasher);
+    }
+
+    fn assert_valid_snapshot(&self, snapshot: Snapshot) {
+        assert_eq!(
+            snapshot.store_id, self.store_id,
+            "Stores snapshot belongs to a different Stores instance"
+        );
+        assert_eq!(
+            snapshot.env_snapshot.group_depth(),
+            self.env.group_depth(),
+            "Stores snapshots are invalidated by exiting a group that encloses them"
+        );
+        assert!(
+            snapshot.env_snapshot.journal_pos() <= self.env.current_journal_pos(),
+            "Stores snapshots are invalidated by journal truncation before their checkpoint position"
+        );
     }
 
     #[cfg(any(test, feature = "testing", feature = "shadow"))]
@@ -549,6 +593,10 @@ impl Stores {
     }
 }
 
+fn next_store_id() -> u64 {
+    NEXT_STORE_ID.fetch_add(1, Ordering::Relaxed)
+}
+
 impl Default for Stores {
     fn default() -> Self {
         Self::new()
@@ -608,6 +656,54 @@ mod tests {
         assert_eq!(reused.raw(), stale.raw());
         assert_eq!(stores.glue(reused), glue_spec(2));
         assert_eq!(stores.glue(crate::ids::GlueId::ZERO), GlueSpec::ZERO);
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "Stores snapshots are invalidated by exiting a group that encloses them"
+    )]
+    fn rollback_rejects_snapshot_taken_inside_exited_group() {
+        let mut stores = Stores::new();
+        stores.enter_group();
+        let snapshot = stores.checkpoint();
+
+        assert_eq!(stores.leave_group(), Vec::<u64>::new());
+
+        stores.rollback(snapshot);
+    }
+
+    #[test]
+    fn rollback_allows_snapshot_before_balanced_inner_group() {
+        let mut stores = Stores::new();
+        let symbol = stores.intern("kept");
+        let snapshot = stores.checkpoint();
+
+        stores.enter_group();
+        stores.set_meaning(symbol, Meaning::CharGiven('x'));
+        assert_eq!(stores.leave_group(), Vec::<u64>::new());
+
+        stores.rollback(snapshot);
+        assert_eq!(stores.meaning(symbol), Meaning::Undefined);
+    }
+
+    #[test]
+    #[should_panic(expected = "Stores snapshot belongs to a different Stores instance")]
+    fn rollback_rejects_snapshot_from_different_store() {
+        let mut first = Stores::new();
+        let mut second = Stores::new();
+        let snapshot = first.checkpoint();
+
+        second.rollback(snapshot);
+    }
+
+    #[test]
+    #[should_panic(expected = "Stores snapshot belongs to a different Stores instance")]
+    fn rollback_rejects_snapshot_from_cloned_store() {
+        let mut first = Stores::new();
+        let mut second = first.clone();
+        let snapshot = first.checkpoint();
+
+        second.rollback(snapshot);
     }
 
     #[test]
