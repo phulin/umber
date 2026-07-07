@@ -13,6 +13,7 @@ version = "0.1.0"
 anyhow = "1"
 tempfile = "3"
 similar = "2"
+proptest = "1"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
