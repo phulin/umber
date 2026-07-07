@@ -21,12 +21,21 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 ## Directory Map
 
 - `.agents/`: project-local agent skills and coordination workflow guidance.
-- `crates/`: Rust workspace crates for the engine, state layer, CLI, and shared support.
-- `tools/`: Rust workspace tools for reference execution and corpus synchronization.
+- `crates/`: Rust workspace crates.
+- `crates/tex-state`: engine state layer substrate.
+- `crates/umber`: CLI driver.
+- `crates/test-support`: shared fixture and parity-test helpers.
+- `tools/`: Rust workspace tools, including `refexec` for reference TeX execution.
 - `tests/`: committed fixtures and parity test definitions.
 - `docs/`: architecture, phase, and design documents.
 - `scripts/`: local development scripts and versioned git hook templates.
 - `third_party/`: ignored reference downloads and external source archives.
+
+## Development
+
+- Run `scripts/install-hooks.sh` once after clone to enable the versioned pre-commit hook.
+- Use `scripts/check.sh` as the local gate before committing.
+- For `UPDATE_FIXTURES=1` fixture regeneration, follow `tests/AGENTS.md`.
 
 ## Beads Issue Tracker
 
