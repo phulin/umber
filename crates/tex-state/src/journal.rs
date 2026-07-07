@@ -69,9 +69,15 @@ pub(crate) enum Marker {
 pub(crate) struct JournalPos(u32);
 
 impl JournalPos {
+    /// Creates a journal position from a previously validated entry offset.
+    #[must_use]
+    pub(crate) fn from_raw(raw: usize) -> Self {
+        JournalPos(u32_len(raw, "journal exceeds u32 entries"))
+    }
+
     /// Returns the raw entry offset.
     #[must_use]
-    const fn raw(self) -> u32 {
+    pub(crate) const fn raw(self) -> u32 {
         self.0
     }
 }
@@ -103,6 +109,18 @@ impl Journal {
     #[must_use]
     pub(crate) fn pos(&self) -> JournalPos {
         JournalPos(u32_len(self.entries.len(), "journal exceeds u32 entries"))
+    }
+
+    /// Returns the number of entries currently held by the journal.
+    #[must_use]
+    pub(crate) fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Returns one journal entry by absolute entry offset.
+    #[must_use]
+    pub(crate) fn entry(&self, index: usize) -> Entry {
+        self.entries[index]
     }
 
     /// Returns entries appended since `pos`.

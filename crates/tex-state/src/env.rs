@@ -234,44 +234,21 @@ impl Env {
         let Some((marker_pos, aftergroup_start)) = self.journal.find_last_group_marker() else {
             panic!("leave_group without matching group marker");
         };
-        let entries = self.journal.entries_since(marker_pos).to_vec();
-        let mut globals = Vec::new();
-        let mut globally_reassigned = HashSet::new();
-        let mut first_old = HashMap::new();
+        let marker_index = marker_pos.raw() as usize;
+        let group_end = self.journal.len();
+        let has_globals = (marker_index + 1..group_end).any(
+            |index| matches!(self.journal.entry(index), Entry::Undo(rec) if rec.cell().is_global()),
+        );
 
-        for entry in &entries {
-            if let Entry::Undo(rec) = *entry {
-                first_old
-                    .entry(cell_key(rec.cell()))
-                    .or_insert_with(|| rec.old());
-            }
-        }
-
-        for entry in entries.iter().rev() {
-            match *entry {
-                Entry::Undo(rec) if rec.cell().is_global() => {
-                    globally_reassigned.insert(cell_key(rec.cell()));
-                    globals.push(rec);
+        if has_globals {
+            self.leave_group_with_globals(marker_index, group_end);
+        } else {
+            for index in (marker_index + 1..group_end).rev() {
+                if let Entry::Undo(rec) = self.journal.entry(index) {
+                    self.restore_raw(rec.cell(), rec.old());
                 }
-                Entry::Undo(rec) if globally_reassigned.contains(&cell_key(rec.cell())) => {}
-                Entry::Undo(rec) => self.restore_raw(rec.cell(), rec.old()),
-                Entry::Marker(Marker::Group { .. }) => break,
-                Entry::Marker(Marker::Checkpoint(_)) => {}
             }
-        }
-
-        self.journal.truncate_to(marker_pos);
-        let mut refiled_globals = HashSet::new();
-        for rec in globals.into_iter().rev() {
-            self.restore_raw(rec.cell(), rec.new_value());
-            let key = cell_key(rec.cell());
-            let old = if refiled_globals.insert(key) {
-                first_old[&key]
-            } else {
-                rec.old()
-            };
-            self.journal
-                .push_undo(UndoRec::new(rec.cell(), old, rec.new_value()));
+            self.journal.truncate_to(marker_pos);
         }
 
         let aftergroup_start = checked_aftergroup_start(aftergroup_start, self.aftergroup.len());
@@ -284,11 +261,55 @@ impl Env {
         payloads
     }
 
+    fn leave_group_with_globals(&mut self, marker_index: usize, group_end: usize) {
+        let mut globals = Vec::new();
+        let mut globally_reassigned = HashSet::new();
+        let mut first_old = HashMap::new();
+
+        for index in marker_index + 1..group_end {
+            if let Entry::Undo(rec) = self.journal.entry(index) {
+                first_old
+                    .entry(cell_key(rec.cell()))
+                    .or_insert_with(|| rec.old());
+            }
+        }
+
+        for index in (marker_index + 1..group_end).rev() {
+            match self.journal.entry(index) {
+                Entry::Undo(rec) if rec.cell().is_global() => {
+                    globally_reassigned.insert(cell_key(rec.cell()));
+                    globals.push(rec);
+                }
+                Entry::Undo(rec) if globally_reassigned.contains(&cell_key(rec.cell())) => {}
+                Entry::Undo(rec) => self.restore_raw(rec.cell(), rec.old()),
+                Entry::Marker(Marker::Checkpoint(_)) => {}
+                Entry::Marker(Marker::Group { .. }) => {
+                    unreachable!("group slice starts after the marker")
+                }
+            }
+        }
+
+        self.journal.truncate_to(JournalPos::from_raw(marker_index));
+        let mut refiled_globals = HashSet::new();
+        for rec in globals.into_iter().rev() {
+            self.restore_raw(rec.cell(), rec.new_value());
+            let key = cell_key(rec.cell());
+            let old = if refiled_globals.insert(key) {
+                first_old[&key]
+            } else {
+                rec.old()
+            };
+            self.journal
+                .push_undo(UndoRec::new(rec.cell(), old, rec.new_value()));
+        }
+    }
+
     /// Rolls back all environment state after `snapshot`.
     pub(crate) fn rollback_to(&mut self, snapshot: EnvSnapshot) {
-        let entries = self.journal.entries_since(snapshot.journal_pos).to_vec();
-        for entry in entries.iter().rev() {
-            if let Entry::Undo(rec) = *entry {
+        let snapshot_index = snapshot.journal_pos.raw() as usize;
+        let rollback_end = self.journal.len();
+        for index in (snapshot_index..rollback_end).rev() {
+            if let Entry::Undo(rec) = self.journal.entry(index) {
                 self.restore_raw(rec.cell(), rec.old());
             }
         }

@@ -81,6 +81,30 @@ fn group_cycle(c: &mut Criterion) {
     group.finish();
 }
 
+fn group_global_compaction(c: &mut Criterion) {
+    let mut group = c.benchmark_group("group_global_compaction");
+
+    group.bench_function("mixed_global_local_same_cell", |b| {
+        let mut stores = Stores::new();
+        let symbol = stores.intern("global-compaction-cell");
+        let mut operand = 0_u64;
+
+        b.iter(|| {
+            operand = operand.wrapping_add(1);
+            stores.enter_group();
+            stores.set_meaning(black_box(symbol), black_box(raw_meaning(operand)));
+            stores.set_meaning_global(black_box(symbol), black_box(raw_meaning(operand + 1)));
+            stores.set_meaning(black_box(symbol), black_box(raw_meaning(operand + 2)));
+            stores.set_meaning_global(black_box(symbol), black_box(raw_meaning(operand + 3)));
+            black_box(stores.leave_group());
+        });
+
+        black_box(stores);
+    });
+
+    group.finish();
+}
+
 fn synthetic_page_journal_volume(c: &mut Criterion) {
     let bytes = synthetic_page_journal_bytes();
     let mut group = c.benchmark_group("synthetic_page");
@@ -131,6 +155,7 @@ criterion_group!(
     meaning_lookup,
     barrier_write,
     group_cycle,
+    group_global_compaction,
     synthetic_page_journal_volume
 );
 criterion_main!(benches);

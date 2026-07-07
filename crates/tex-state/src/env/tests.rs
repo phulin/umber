@@ -461,6 +461,51 @@ fn same_value_global_after_local_still_survives_group_exit() {
 }
 
 #[test]
+fn large_local_only_group_exit_restores_without_compaction_records() {
+    let mut env = Env::new();
+    let start = env.checkpoint();
+
+    env.enter_group();
+    for index in 0..1024_u16 {
+        env.set_count(index, i32::from(index) + 1);
+    }
+
+    assert_eq!(env.leave_group(), Vec::<u64>::new());
+
+    for index in 0..1024_u16 {
+        assert_eq!(env.count(index), 0, "count register {index}");
+    }
+    assert!(env.journal_entries_since(start.journal_pos()).is_empty());
+}
+
+#[test]
+fn mixed_global_local_same_cell_compacts_first_old_for_rollback() {
+    let mut env = Env::new();
+    env.set_count(7, 70);
+    let start = env.checkpoint();
+
+    env.enter_group();
+    env.set_count(7, 71);
+    env.set_count_global(7, 72);
+    env.set_count(7, 73);
+    env.set_count_global(7, 74);
+
+    assert_eq!(env.leave_group(), Vec::<u64>::new());
+
+    assert_eq!(env.count(7), 74);
+    assert_eq!(
+        env.journal_entries_since(start.journal_pos()),
+        &[
+            Entry::Undo(UndoRec::new(CellId::new_global(BankTag::Count, 7), 70, 72,)),
+            Entry::Undo(UndoRec::new(CellId::new_global(BankTag::Count, 7), 73, 74,)),
+        ]
+    );
+
+    env.rollback_to(start);
+    assert_eq!(env.count(7), 70);
+}
+
+#[test]
 fn aftergroup_payloads_are_fifo_per_group_across_nesting() {
     let mut env = Env::new();
 
