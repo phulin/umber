@@ -117,6 +117,9 @@ Rules:
   register values are `Copy`; no references into the array escape.
 - **Writes**: `set(&mut self, Symbol, Meaning)` — the *only* mutation path;
   runs the barrier (§6). Same for every register bank and parameter table.
+  Journal restore walks use a crate-private `Env::restore_raw(CellId, u64)`
+  primitive that bypasses the barrier; it is restore-only, not a semantic
+  assignment API.
 - **The epoch stamp is the workhorse**: journal coalescing filter, JIT
   inline-cache guard, and memoizer read-set timestamp. One counter, three
   consumers. Do not add a second versioning scheme for any of these.

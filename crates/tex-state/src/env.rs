@@ -9,11 +9,13 @@
 //! `&mut Env` and passing through the write barrier.
 
 pub mod banks;
+pub(crate) mod overflow;
 
 use self::banks::{
     DENSE_REGISTER_COUNT, DimenParam, FixedBank, GlueIdCodec, GlueParam, I32Codec, IntParam,
     NodeListIdCodec, PARAMETER_COUNT, ScaledCodec, TokParam, TokenListIdCodec,
 };
+use self::overflow::{REGISTER_COUNT, SparseBank};
 use crate::cell::{BankTag, CellId};
 use crate::epoch::Epoch;
 use crate::ids::{GlueId, NodeListId, TokenListId};
@@ -29,6 +31,63 @@ const SEGMENT_MASK: u32 = (SEGMENT_LEN as u32) - 1;
 type MeaningSegment = Box<[u64; SEGMENT_LEN]>;
 type StampSegment = Box<[Epoch; SEGMENT_LEN]>;
 
+macro_rules! register_accessors {
+    ($get:ident, $set:ident, $set_global:ident, $value:ty, $bank:ident, $dense:ident, $sparse:ident) => {
+        #[must_use]
+        pub fn $get(&self, index: u16) -> $value {
+            if is_dense_register(index) {
+                self.$dense.get(index)
+            } else {
+                self.$sparse.get(index)
+            }
+        }
+
+        pub fn $set(&mut self, index: u16, value: $value) {
+            if is_dense_register(index) {
+                self.$dense.set(
+                    index,
+                    value,
+                    &mut self.journal,
+                    self.epoch,
+                    BankTag::$bank,
+                    false,
+                );
+            } else {
+                self.$sparse.set(
+                    index,
+                    value,
+                    &mut self.journal,
+                    self.epoch,
+                    BankTag::$bank,
+                    false,
+                );
+            }
+        }
+
+        pub fn $set_global(&mut self, index: u16, value: $value) {
+            if is_dense_register(index) {
+                self.$dense.set(
+                    index,
+                    value,
+                    &mut self.journal,
+                    self.epoch,
+                    BankTag::$bank,
+                    true,
+                );
+            } else {
+                self.$sparse.set(
+                    index,
+                    value,
+                    &mut self.journal,
+                    self.epoch,
+                    BankTag::$bank,
+                    true,
+                );
+            }
+        }
+    };
+}
+
 /// TeX environment cells plus the journal that makes mutation replayable.
 #[derive(Clone, Debug)]
 pub struct Env {
@@ -39,6 +98,11 @@ pub struct Env {
     skips: FixedBank<GlueIdCodec, DENSE_REGISTER_COUNT>,
     toks: FixedBank<TokenListIdCodec, DENSE_REGISTER_COUNT>,
     boxes: FixedBank<NodeListIdCodec, DENSE_REGISTER_COUNT>,
+    overflow_counts: SparseBank<I32Codec>,
+    overflow_dimens: SparseBank<ScaledCodec>,
+    overflow_skips: SparseBank<GlueIdCodec>,
+    overflow_toks: SparseBank<TokenListIdCodec>,
+    overflow_boxes: SparseBank<NodeListIdCodec>,
     int_params: FixedBank<I32Codec, PARAMETER_COUNT>,
     dimen_params: FixedBank<ScaledCodec, PARAMETER_COUNT>,
     glue_params: FixedBank<GlueIdCodec, PARAMETER_COUNT>,
@@ -59,6 +123,11 @@ impl Env {
             skips: FixedBank::new(),
             toks: FixedBank::new(),
             boxes: FixedBank::new(),
+            overflow_counts: SparseBank::new(),
+            overflow_dimens: SparseBank::new(),
+            overflow_skips: SparseBank::new(),
+            overflow_toks: SparseBank::new(),
+            overflow_boxes: SparseBank::new(),
             int_params: FixedBank::new(),
             dimen_params: FixedBank::new(),
             glue_params: FixedBank::new(),
@@ -110,155 +179,51 @@ impl Env {
         self.set_meaning_word(symbol, meaning.encode(), true);
     }
 
-    /// Returns the dense count register value at `index`.
-    #[must_use]
-    pub fn count(&self, index: u16) -> i32 {
-        self.counts.get(index)
-    }
-
-    /// Sets the local dense count register value at `index`.
-    pub fn set_count(&mut self, index: u16, value: i32) {
-        self.counts.set(
-            index,
-            value,
-            &mut self.journal,
-            self.epoch,
-            BankTag::Count,
-            false,
-        );
-    }
-
-    /// Sets the global dense count register value at `index`.
-    pub fn set_count_global(&mut self, index: u16, value: i32) {
-        self.counts.set(
-            index,
-            value,
-            &mut self.journal,
-            self.epoch,
-            BankTag::Count,
-            true,
-        );
-    }
-
-    /// Returns the dense dimension register value at `index`.
-    #[must_use]
-    pub fn dimen(&self, index: u16) -> Scaled {
-        self.dimens.get(index)
-    }
-
-    /// Sets the local dense dimension register value at `index`.
-    pub fn set_dimen(&mut self, index: u16, value: Scaled) {
-        self.dimens.set(
-            index,
-            value,
-            &mut self.journal,
-            self.epoch,
-            BankTag::Dimen,
-            false,
-        );
-    }
-
-    /// Sets the global dense dimension register value at `index`.
-    pub fn set_dimen_global(&mut self, index: u16, value: Scaled) {
-        self.dimens.set(
-            index,
-            value,
-            &mut self.journal,
-            self.epoch,
-            BankTag::Dimen,
-            true,
-        );
-    }
-
-    /// Returns the dense skip register value at `index`.
-    #[must_use]
-    pub fn skip(&self, index: u16) -> GlueId {
-        self.skips.get(index)
-    }
-
-    /// Sets the local dense skip register value at `index`.
-    pub fn set_skip(&mut self, index: u16, value: GlueId) {
-        self.skips.set(
-            index,
-            value,
-            &mut self.journal,
-            self.epoch,
-            BankTag::Skip,
-            false,
-        );
-    }
-
-    /// Sets the global dense skip register value at `index`.
-    pub fn set_skip_global(&mut self, index: u16, value: GlueId) {
-        self.skips.set(
-            index,
-            value,
-            &mut self.journal,
-            self.epoch,
-            BankTag::Skip,
-            true,
-        );
-    }
-
-    /// Returns the dense token-list register value at `index`.
-    #[must_use]
-    pub fn toks(&self, index: u16) -> TokenListId {
-        self.toks.get(index)
-    }
-
-    /// Sets the local dense token-list register value at `index`.
-    pub fn set_toks(&mut self, index: u16, value: TokenListId) {
-        self.toks.set(
-            index,
-            value,
-            &mut self.journal,
-            self.epoch,
-            BankTag::Toks,
-            false,
-        );
-    }
-
-    /// Sets the global dense token-list register value at `index`.
-    pub fn set_toks_global(&mut self, index: u16, value: TokenListId) {
-        self.toks.set(
-            index,
-            value,
-            &mut self.journal,
-            self.epoch,
-            BankTag::Toks,
-            true,
-        );
-    }
-
-    /// Returns the dense box register value at `index`.
-    #[must_use]
-    pub fn box_reg(&self, index: u16) -> NodeListId {
-        self.boxes.get(index)
-    }
-
-    /// Sets the local dense box register value at `index`.
-    pub fn set_box_reg(&mut self, index: u16, value: NodeListId) {
-        self.boxes.set(
-            index,
-            value,
-            &mut self.journal,
-            self.epoch,
-            BankTag::Box,
-            false,
-        );
-    }
-
-    /// Sets the global dense box register value at `index`.
-    pub fn set_box_reg_global(&mut self, index: u16, value: NodeListId) {
-        self.boxes.set(
-            index,
-            value,
-            &mut self.journal,
-            self.epoch,
-            BankTag::Box,
-            true,
-        );
-    }
+    register_accessors!(
+        count,
+        set_count,
+        set_count_global,
+        i32,
+        Count,
+        counts,
+        overflow_counts
+    );
+    register_accessors!(
+        dimen,
+        set_dimen,
+        set_dimen_global,
+        Scaled,
+        Dimen,
+        dimens,
+        overflow_dimens
+    );
+    register_accessors!(
+        skip,
+        set_skip,
+        set_skip_global,
+        GlueId,
+        Skip,
+        skips,
+        overflow_skips
+    );
+    register_accessors!(
+        toks,
+        set_toks,
+        set_toks_global,
+        TokenListId,
+        Toks,
+        toks,
+        overflow_toks
+    );
+    register_accessors!(
+        box_reg,
+        set_box_reg,
+        set_box_reg_global,
+        NodeListId,
+        Box,
+        boxes,
+        overflow_boxes
+    );
 
     /// Returns an integer parameter value.
     #[must_use]
@@ -380,6 +345,30 @@ impl Env {
         );
     }
 
+    /// Restore-only raw write primitive for journal rollback and group walks.
+    ///
+    /// This deliberately bypasses the write barrier and does not append to the
+    /// journal. It must only be used while replaying existing journal records;
+    /// semantic assignments must go through the typed `set*` APIs so the
+    /// single write path records history.
+    #[allow(dead_code)]
+    pub(crate) fn restore_raw(&mut self, cell: CellId, word: u64) {
+        match cell.bank() {
+            BankTag::Meaning => self.restore_meaning_word(cell.index(), word),
+            BankTag::Count => self.restore_register(cell.index(), word, RegisterBank::Count),
+            BankTag::Dimen => self.restore_register(cell.index(), word, RegisterBank::Dimen),
+            BankTag::Skip => self.restore_register(cell.index(), word, RegisterBank::Skip),
+            BankTag::Toks => self.restore_register(cell.index(), word, RegisterBank::Toks),
+            BankTag::Box => self.restore_register(cell.index(), word, RegisterBank::Box),
+            BankTag::IntParam => self.int_params.restore_word(u16_index(cell.index()), word),
+            BankTag::DimenParam => self
+                .dimen_params
+                .restore_word(u16_index(cell.index()), word),
+            BankTag::GlueParam => self.glue_params.restore_word(u16_index(cell.index()), word),
+            BankTag::TokParam => self.tok_params.restore_word(u16_index(cell.index()), word),
+        }
+    }
+
     fn meaning_word(&self, index: u32) -> Option<u64> {
         let segment = segment_index(index);
         let offset = segment_offset(index);
@@ -415,6 +404,36 @@ impl Env {
                 .push(Box::new([Epoch::ZERO; SEGMENT_LEN]));
         }
     }
+
+    #[allow(dead_code)]
+    fn restore_meaning_word(&mut self, index: u32, word: u64) {
+        self.ensure_meaning_segment(index);
+        let segment = segment_index(index);
+        let offset = segment_offset(index);
+        self.meaning_cells[segment][offset] = word;
+    }
+
+    #[allow(dead_code)]
+    fn restore_register(&mut self, index: u32, word: u64, bank: RegisterBank) {
+        let index = register_index(index);
+        if is_dense_register(index) {
+            match bank {
+                RegisterBank::Count => self.counts.restore_word(index, word),
+                RegisterBank::Dimen => self.dimens.restore_word(index, word),
+                RegisterBank::Skip => self.skips.restore_word(index, word),
+                RegisterBank::Toks => self.toks.restore_word(index, word),
+                RegisterBank::Box => self.boxes.restore_word(index, word),
+            }
+        } else {
+            match bank {
+                RegisterBank::Count => self.overflow_counts.restore_word(index, word),
+                RegisterBank::Dimen => self.overflow_dimens.restore_word(index, word),
+                RegisterBank::Skip => self.overflow_skips.restore_word(index, word),
+                RegisterBank::Toks => self.overflow_toks.restore_word(index, word),
+                RegisterBank::Box => self.overflow_boxes.restore_word(index, word),
+            }
+        }
+    }
 }
 
 impl Default for Env {
@@ -447,218 +466,35 @@ fn segment_offset(index: u32) -> usize {
     (index & SEGMENT_MASK) as usize
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{Env, SEGMENT_LEN};
-    use crate::cell::{BankTag, CellId};
-    use crate::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
-    use crate::ids::{GlueId, NodeListId, TokenListId};
-    use crate::interner::Symbol;
-    use crate::journal::{Entry, UndoRec};
-    use crate::meaning::Meaning;
-    use crate::scaled::Scaled;
+#[derive(Clone, Copy, Debug)]
+enum RegisterBank {
+    Count,
+    Dimen,
+    Skip,
+    Toks,
+    Box,
+}
 
-    #[test]
-    fn default_get_before_any_set_is_undefined() {
-        let env = Env::new();
+fn is_dense_register(index: u16) -> bool {
+    assert!(index < REGISTER_COUNT, "register index out of range");
+    usize::from(index) < DENSE_REGISTER_COUNT
+}
 
-        assert_eq!(env.get(Symbol::new(10)), Meaning::Undefined);
-    }
-
-    #[test]
-    fn first_write_per_epoch_coalesces_and_keeps_first_new_value() {
-        let mut env = Env::new();
-        let symbol = Symbol::new(3);
-        let start = env.journal_pos();
-
-        env.set(symbol, Meaning::Relax);
-        env.set(symbol, Meaning::CharGiven('x'));
-
-        assert_eq!(env.get(symbol), Meaning::CharGiven('x'));
-        assert_eq!(
-            env.journal_entries_since(start),
-            &[Entry::Undo(UndoRec::new(
-                CellId::new(BankTag::Meaning, 3),
-                Meaning::Undefined.encode(),
-                Meaning::Relax.encode(),
-            ))]
-        );
-    }
-
-    #[test]
-    fn write_in_later_epoch_records_again() {
-        let mut env = Env::new();
-        let symbol = Symbol::new(8);
-        let start = env.journal_pos();
-
-        env.set(symbol, Meaning::Relax);
-        env.bump_epoch();
-        env.set(symbol, Meaning::CharGiven('y'));
-
-        assert_eq!(
-            env.journal_entries_since(start),
-            &[
-                Entry::Undo(UndoRec::new(
-                    CellId::new(BankTag::Meaning, 8),
-                    Meaning::Undefined.encode(),
-                    Meaning::Relax.encode(),
-                )),
-                Entry::Undo(UndoRec::new(
-                    CellId::new(BankTag::Meaning, 8),
-                    Meaning::Relax.encode(),
-                    Meaning::CharGiven('y').encode(),
-                )),
-            ]
-        );
-    }
-
-    #[test]
-    fn global_set_tags_cell_id_in_journal() {
-        let mut env = Env::new();
-        let symbol = Symbol::new(4);
-        let start = env.journal_pos();
-
-        env.set_global(symbol, Meaning::Relax);
-
-        assert_eq!(
-            env.journal_entries_since(start),
-            &[Entry::Undo(UndoRec::new(
-                CellId::new_global(BankTag::Meaning, 4),
-                Meaning::Undefined.encode(),
-                Meaning::Relax.encode(),
-            ))]
-        );
-    }
-
-    #[test]
-    fn segment_growth_keeps_earlier_segment_addresses_stable() {
-        let mut env = Env::new();
-        let first = Symbol::new(0);
-        let second_segment = Symbol::new(SEGMENT_LEN as u32);
-
-        env.set(first, Meaning::Relax);
-        let cells_ptr = env.meaning_cells[0].as_ptr();
-        let stamps_ptr = env.meaning_stamps[0].as_ptr();
-
-        env.set(second_segment, Meaning::CharGiven('z'));
-
-        assert_eq!(env.meaning_cells[0].as_ptr(), cells_ptr);
-        assert_eq!(env.meaning_stamps[0].as_ptr(), stamps_ptr);
-        assert_eq!(env.get(first), Meaning::Relax);
-        assert_eq!(env.get(second_segment), Meaning::CharGiven('z'));
-    }
-
-    #[test]
-    fn dense_register_typed_api_round_trips_boundary_and_signed_values() {
-        let mut env = Env::new();
-
-        env.set_count(255, i32::MIN);
-        env.set_dimen(255, Scaled::MIN);
-        env.set_skip(255, GlueId::new(u32::MAX));
-        env.set_toks(255, TokenListId::new(u32::MAX - 1));
-        env.set_box_reg(255, NodeListId::new(u32::MAX - 2));
-
-        assert_eq!(env.count(255), i32::MIN);
-        assert_eq!(env.dimen(255), Scaled::MIN);
-        assert_eq!(env.skip(255), GlueId::new(u32::MAX));
-        assert_eq!(env.toks(255), TokenListId::new(u32::MAX - 1));
-        assert_eq!(env.box_reg(255), NodeListId::new(u32::MAX - 2));
-    }
-
-    #[test]
-    fn dense_register_journal_records_use_bank_tags_and_encoded_words() {
-        let mut env = Env::new();
-        let start = env.journal_pos();
-
-        env.set_count(1, -1);
-        env.set_dimen(2, Scaled::from_raw(-2));
-        env.set_skip(3, GlueId::new(33));
-        env.set_toks(4, TokenListId::new(44));
-        env.set_box_reg(5, NodeListId::new(55));
-
-        assert_eq!(
-            env.journal_entries_since(start),
-            &[
-                undo(BankTag::Count, 1, 0, u64::from((-1_i32) as u32)),
-                undo(BankTag::Dimen, 2, 0, u64::from((-2_i32) as u32)),
-                undo(BankTag::Skip, 3, 0, 33),
-                undo(BankTag::Toks, 4, 0, 44),
-                undo(BankTag::Box, 5, 0, 55),
-            ]
-        );
-    }
-
-    #[test]
-    fn dense_register_global_sets_tag_journal_records() {
-        let mut env = Env::new();
-        let start = env.journal_pos();
-
-        env.set_count_global(255, 7);
-
-        assert_eq!(
-            env.journal_entries_since(start),
-            &[Entry::Undo(UndoRec::new(
-                CellId::new_global(BankTag::Count, 255),
-                0,
-                7,
-            ))]
-        );
-    }
-
-    #[test]
-    fn parameter_typed_api_round_trips_values() {
-        let mut env = Env::new();
-
-        env.set_int_param(IntParam::new(127), i32::MIN);
-        env.set_dimen_param(DimenParam::new(127), Scaled::MIN);
-        env.set_glue_param(GlueParam::new(127), GlueId::new(77));
-        env.set_tok_param(TokParam::new(127), TokenListId::new(88));
-
-        assert_eq!(env.int_param(IntParam::new(127)), i32::MIN);
-        assert_eq!(env.dimen_param(DimenParam::new(127)), Scaled::MIN);
-        assert_eq!(env.glue_param(GlueParam::new(127)), GlueId::new(77));
-        assert_eq!(env.tok_param(TokParam::new(127)), TokenListId::new(88));
-    }
-
-    #[test]
-    fn parameter_journal_records_use_parameter_bank_tags() {
-        let mut env = Env::new();
-        let start = env.journal_pos();
-
-        env.set_int_param(IntParam::new(1), -9);
-        env.set_dimen_param(DimenParam::new(2), Scaled::from_raw(-10));
-        env.set_glue_param(GlueParam::new(3), GlueId::new(90));
-        env.set_tok_param(TokParam::new(4), TokenListId::new(100));
-
-        assert_eq!(
-            env.journal_entries_since(start),
-            &[
-                undo(BankTag::IntParam, 1, 0, u64::from((-9_i32) as u32)),
-                undo(BankTag::DimenParam, 2, 0, u64::from((-10_i32) as u32)),
-                undo(BankTag::GlueParam, 3, 0, 90),
-                undo(BankTag::TokParam, 4, 0, 100),
-            ]
-        );
-    }
-
-    #[test]
-    fn parameter_global_sets_tag_journal_records() {
-        let mut env = Env::new();
-        let start = env.journal_pos();
-
-        env.set_tok_param_global(TokParam::new(7), TokenListId::new(11));
-
-        assert_eq!(
-            env.journal_entries_since(start),
-            &[Entry::Undo(UndoRec::new(
-                CellId::new_global(BankTag::TokParam, 7),
-                0,
-                11,
-            ))]
-        );
-    }
-
-    fn undo(bank: BankTag, index: u32, old: u64, new: u64) -> Entry {
-        Entry::Undo(UndoRec::new(CellId::new(bank, index), old, new))
+#[allow(dead_code)]
+fn register_index(index: u32) -> u16 {
+    match u16::try_from(index) {
+        Ok(index) if index < REGISTER_COUNT => index,
+        _ => panic!("register cell index out of range"),
     }
 }
+
+#[allow(dead_code)]
+fn u16_index(index: u32) -> u16 {
+    match u16::try_from(index) {
+        Ok(index) => index,
+        Err(_) => panic!("cell index exceeds u16 range"),
+    }
+}
+
+#[cfg(test)]
+mod tests;

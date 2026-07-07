@@ -107,6 +107,11 @@ where
             C::encode(value),
         );
     }
+
+    #[allow(dead_code)]
+    pub(crate) fn restore_word(&mut self, index: u16, word: u64) {
+        self.values[checked_index::<N>(index)] = word;
+    }
 }
 
 impl<C, const N: usize> Default for FixedBank<C, N>
