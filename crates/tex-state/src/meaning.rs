@@ -107,9 +107,9 @@ impl Meaning {
         }
     }
 
-    /// Decodes `opcode:8 | flags:8 | operand:48` into a typed meaning.
+    /// Decodes a stored `opcode:8 | flags:8 | operand:48` word.
     #[must_use]
-    pub const fn decode(word: u64) -> Self {
+    pub(crate) const fn decode_stored(word: u64) -> Self {
         let op = (word >> OPCODE_SHIFT) as u8;
         let flags = MeaningFlags::from_bits((word >> FLAGS_SHIFT) as u8);
         let operand = word & OPERAND_MASK;
@@ -128,6 +128,13 @@ impl Meaning {
             _ => Self::Unknown(RawMeaning { op, operand }),
         }
     }
+
+    /// Decodes a raw meaning word for explicit testing/fuzzing builds.
+    #[cfg(feature = "testing")]
+    #[must_use]
+    pub const fn testing_decode(word: u64) -> Self {
+        Self::decode_stored(word)
+    }
 }
 
 const fn pack(op: u8, flags: MeaningFlags, operand: u64) -> u64 {
@@ -141,7 +148,7 @@ mod tests {
     use crate::ids::TokenListId;
 
     fn round_trip(meaning: Meaning) {
-        assert_eq!(Meaning::decode(meaning.encode()), meaning);
+        assert_eq!(Meaning::decode_stored(meaning.encode()), meaning);
     }
 
     #[test]
@@ -149,7 +156,7 @@ mod tests {
         // Fresh zeroed meaning segments decode as Undefined, so this exact
         // encoding is required for fresh-segment correctness.
         assert_eq!(Meaning::Undefined.encode(), 0);
-        assert_eq!(Meaning::decode(0), Meaning::Undefined);
+        assert_eq!(Meaning::decode_stored(0), Meaning::Undefined);
     }
 
     #[test]
@@ -179,7 +186,7 @@ mod tests {
     #[test]
     fn unknown_meaning_exposes_raw_parts_without_public_fields() {
         let word = Meaning::Unknown(RawMeaning::testing_new(200, 42)).encode();
-        let Meaning::Unknown(raw) = Meaning::decode(word) else {
+        let Meaning::Unknown(raw) = Meaning::decode_stored(word) else {
             panic!("expected unknown meaning");
         };
 

@@ -115,9 +115,10 @@ Rules:
   discipline: storage is raw `u64` words, and typed accessors encode/decode
   `i32`, `Scaled`, and content ids at the API boundary. Meaning words and
   register values are `Copy`; no references into the array escape. Unknown
-  opcode words decode to an opaque raw-meaning value whose fields can be read
-  and re-encoded, but downstream crates cannot construct arbitrary raw
-  meanings in production builds.
+  opcode words decode through a crate-private stored-word codec into an
+  opaque raw-meaning value whose fields can be read and re-encoded after
+  `Env::get`, but downstream crates cannot decode arbitrary raw words or
+  construct arbitrary raw meanings in production builds.
 - **Writes**: `set(&mut self, Symbol, Meaning)` — the *only* mutation path;
   runs the barrier (§6). Same for every register bank and parameter table.
   Journal restore walks use a crate-private `Env::restore_raw(CellId, u64)`
@@ -339,10 +340,11 @@ The type system is the write barrier's bodyguard. The rules:
 `Symbol`, `TokenListId`, `NodeListId`, `FontId`, `GlueId`, `SnapshotId` are
 newtypes with private constructors; only their owning store mints them.
 Packed operand fields are decoded back into typed ids *inside* `tex-state`;
-raw integers never cross the crate boundary. Test-only constructor escape
-hatches are compiled only for crate tests or the explicit `testing` feature.
-The `shadow` feature is production-like verification instrumentation and must
-not expose raw handle minting.
+raw integers never cross the crate boundary. Stored-word decoders that can
+mint handles from packed operands are crate-private; downstream raw decode and
+test-only constructor escape hatches are compiled only for crate tests or the
+explicit `testing` feature. The `shadow` feature is production-like
+verification instrumentation and must not expose raw handle minting.
 
 ### 10.4 Builder-then-freeze for content
 

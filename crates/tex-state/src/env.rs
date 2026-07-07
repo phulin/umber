@@ -306,7 +306,7 @@ impl Env {
         let Some(word) = self.meaning_word(symbol.raw()) else {
             return Meaning::Undefined;
         };
-        Meaning::decode(word)
+        Meaning::decode_stored(word)
     }
 
     /// Sets the local meaning for `symbol`.
