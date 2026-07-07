@@ -131,6 +131,7 @@ fn rollback_keeps_box_register_ids_resolvable() {
     }
 }
 
+#[allow(clippy::disallowed_methods)]
 fn run_replay_identity(ops: &[Op]) {
     let started = Instant::now();
     let mut stores = Stores::new();

@@ -127,6 +127,10 @@ Rules:
   the barrier (§6). Journal restore walks use a crate-private
   `Env::restore_raw(CellId, u64)` primitive that bypasses the barrier; it is
   restore-only, not a semantic assignment API.
+- **Public boundary**: downstream crates may read `Env` through the owning
+  aggregate, but they cannot construct or mutate a standalone `Env`; raw Env
+  construction, group control, epoch advancement, and typed setters are
+  crate-private or test-only.
 - **The epoch stamp is the workhorse**: journal coalescing filter, JIT
   inline-cache guard, and memoizer read-set timestamp. One counter, three
   consumers. Do not add a second versioning scheme for any of these.

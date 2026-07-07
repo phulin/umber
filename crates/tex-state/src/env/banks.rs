@@ -87,6 +87,7 @@ where
         C::decode(self.values[checked_index::<N>(index)])
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn set(
         &mut self,
         index: u16,

@@ -70,7 +70,7 @@ macro_rules! register_accessors {
             }
         }
 
-        pub fn $set(&mut self, index: u16, value: $value) {
+        pub(crate) fn $set(&mut self, index: u16, value: $value) {
             if is_dense_register(index) {
                 self.$dense.set(
                     index,
@@ -96,7 +96,7 @@ macro_rules! register_accessors {
             }
         }
 
-        pub fn $set_global(&mut self, index: u16, value: $value) {
+        pub(crate) fn $set_global(&mut self, index: u16, value: $value) {
             if is_dense_register(index) {
                 self.$dense.set(
                     index,
@@ -154,7 +154,7 @@ pub struct Env {
 impl Env {
     /// Creates an empty environment in the first session epoch.
     #[must_use]
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             meaning_cells: Vec::new(),
             meaning_stamps: Vec::new(),
@@ -188,7 +188,8 @@ impl Env {
     }
 
     /// Advances to the next epoch.
-    pub fn bump_epoch(&mut self) {
+    #[cfg(test)]
+    pub(crate) fn bump_epoch(&mut self) {
         self.epoch.bump();
     }
 
@@ -235,7 +236,7 @@ impl Env {
     }
 
     /// Enters a TeX group.
-    pub fn enter_group(&mut self) {
+    pub(crate) fn enter_group(&mut self) {
         let aftergroup_start = u32_len(
             self.aftergroup.len(),
             "aftergroup payload list exceeds u32 entries",
@@ -249,7 +250,7 @@ impl Env {
     }
 
     /// Pushes an opaque `\aftergroup` payload for the current group.
-    pub fn push_aftergroup(&mut self, payload: u64) {
+    pub(crate) fn push_aftergroup(&mut self, payload: u64) {
         self.aftergroup.push(payload);
     }
 
@@ -258,7 +259,7 @@ impl Env {
     /// Payloads are returned FIFO. Global assignments in the group survive by
     /// being compacted into the enclosing journal slice.
     #[must_use]
-    pub fn leave_group(&mut self) -> Vec<u64> {
+    pub(crate) fn leave_group(&mut self) -> Vec<u64> {
         let Some((marker_pos, aftergroup_start)) = self.journal.find_last_group_marker() else {
             panic!("leave_group without matching group marker");
         };
@@ -492,7 +493,7 @@ impl Env {
     }
 
     /// Sets a local integer parameter value.
-    pub fn set_int_param(&mut self, param: IntParam, value: i32) {
+    pub(crate) fn set_int_param(&mut self, param: IntParam, value: i32) {
         self.int_params.set(
             param.raw(),
             value,
@@ -506,7 +507,7 @@ impl Env {
     }
 
     /// Sets a global integer parameter value.
-    pub fn set_int_param_global(&mut self, param: IntParam, value: i32) {
+    pub(crate) fn set_int_param_global(&mut self, param: IntParam, value: i32) {
         self.int_params.set(
             param.raw(),
             value,
@@ -526,7 +527,7 @@ impl Env {
     }
 
     /// Sets a local dimension parameter value.
-    pub fn set_dimen_param(&mut self, param: DimenParam, value: Scaled) {
+    pub(crate) fn set_dimen_param(&mut self, param: DimenParam, value: Scaled) {
         self.dimen_params.set(
             param.raw(),
             value,
@@ -540,7 +541,7 @@ impl Env {
     }
 
     /// Sets a global dimension parameter value.
-    pub fn set_dimen_param_global(&mut self, param: DimenParam, value: Scaled) {
+    pub(crate) fn set_dimen_param_global(&mut self, param: DimenParam, value: Scaled) {
         self.dimen_params.set(
             param.raw(),
             value,
@@ -560,7 +561,7 @@ impl Env {
     }
 
     /// Sets a local glue parameter value.
-    pub fn set_glue_param(&mut self, param: GlueParam, value: GlueId) {
+    pub(crate) fn set_glue_param(&mut self, param: GlueParam, value: GlueId) {
         self.glue_params.set(
             param.raw(),
             value,
@@ -574,7 +575,7 @@ impl Env {
     }
 
     /// Sets a global glue parameter value.
-    pub fn set_glue_param_global(&mut self, param: GlueParam, value: GlueId) {
+    pub(crate) fn set_glue_param_global(&mut self, param: GlueParam, value: GlueId) {
         self.glue_params.set(
             param.raw(),
             value,
@@ -594,7 +595,7 @@ impl Env {
     }
 
     /// Sets a local token-list parameter value.
-    pub fn set_tok_param(&mut self, param: TokParam, value: TokenListId) {
+    pub(crate) fn set_tok_param(&mut self, param: TokParam, value: TokenListId) {
         self.tok_params.set(
             param.raw(),
             value,
@@ -608,7 +609,7 @@ impl Env {
     }
 
     /// Sets a global token-list parameter value.
-    pub fn set_tok_param_global(&mut self, param: TokParam, value: TokenListId) {
+    pub(crate) fn set_tok_param_global(&mut self, param: TokParam, value: TokenListId) {
         self.tok_params.set(
             param.raw(),
             value,

@@ -45,6 +45,7 @@ where
         C::decode(word)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn set(
         &mut self,
         index: u16,
