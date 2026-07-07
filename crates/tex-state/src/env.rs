@@ -23,7 +23,9 @@ use crate::interner::Symbol;
 use crate::journal::{Entry, Journal, JournalPos, Marker, UndoRec};
 use crate::meaning::Meaning;
 use crate::scaled::Scaled;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+#[cfg(any(test, feature = "testing", feature = "shadow"))]
+use std::hash::{Hash, Hasher};
 
 const SEGMENT_BITS: u32 = 16;
 const SEGMENT_LEN: usize = 1 << SEGMENT_BITS;
@@ -49,6 +51,8 @@ macro_rules! register_accessors {
                     index,
                     value,
                     &mut self.journal,
+                    #[cfg(feature = "shadow")]
+                    &mut self.shadow,
                     self.epoch,
                     BankTag::$bank,
                     false,
@@ -58,6 +62,8 @@ macro_rules! register_accessors {
                     index,
                     value,
                     &mut self.journal,
+                    #[cfg(feature = "shadow")]
+                    &mut self.shadow,
                     self.epoch,
                     BankTag::$bank,
                     false,
@@ -71,6 +77,8 @@ macro_rules! register_accessors {
                     index,
                     value,
                     &mut self.journal,
+                    #[cfg(feature = "shadow")]
+                    &mut self.shadow,
                     self.epoch,
                     BankTag::$bank,
                     true,
@@ -80,6 +88,8 @@ macro_rules! register_accessors {
                     index,
                     value,
                     &mut self.journal,
+                    #[cfg(feature = "shadow")]
+                    &mut self.shadow,
                     self.epoch,
                     BankTag::$bank,
                     true,
@@ -111,6 +121,8 @@ pub struct Env {
     journal: Journal,
     aftergroup: Vec<u64>,
     epoch: Epoch,
+    #[cfg(feature = "shadow")]
+    shadow: HashMap<CellId, u64>,
 }
 
 impl Env {
@@ -137,6 +149,8 @@ impl Env {
             journal: Journal::new(),
             aftergroup: Vec::new(),
             epoch: Epoch::START,
+            #[cfg(feature = "shadow")]
+            shadow: HashMap::new(),
         }
     }
 
@@ -155,6 +169,14 @@ impl Env {
     #[must_use]
     pub fn journal_pos(&self) -> JournalPos {
         self.journal.pos()
+    }
+
+    /// Records a checkpoint position and starts a fresh epoch for later writes.
+    #[must_use]
+    pub fn checkpoint(&mut self) -> JournalPos {
+        let pos = self.journal.pos();
+        self.epoch.bump();
+        pos
     }
 
     /// Returns journal entries appended since `pos`.
@@ -190,6 +212,15 @@ impl Env {
         let entries = self.journal.entries_since(marker_pos).to_vec();
         let mut globals = Vec::new();
         let mut globally_reassigned = HashSet::new();
+        let mut first_old = HashMap::new();
+
+        for entry in &entries {
+            if let Entry::Undo(rec) = *entry {
+                first_old
+                    .entry(cell_key(rec.cell()))
+                    .or_insert_with(|| rec.old());
+            }
+        }
 
         for entry in entries.iter().rev() {
             match *entry {
@@ -205,9 +236,17 @@ impl Env {
         }
 
         self.journal.truncate_to(marker_pos);
+        let mut refiled_globals = HashSet::new();
         for rec in globals.into_iter().rev() {
             self.restore_raw(rec.cell(), rec.new_value());
-            self.journal.push_undo(rec);
+            let key = cell_key(rec.cell());
+            let old = if refiled_globals.insert(key) {
+                first_old[&key]
+            } else {
+                rec.old()
+            };
+            self.journal
+                .push_undo(UndoRec::new(rec.cell(), old, rec.new_value()));
         }
 
         let aftergroup_start = checked_aftergroup_start(aftergroup_start, self.aftergroup.len());
@@ -313,6 +352,8 @@ impl Env {
             param.raw(),
             value,
             &mut self.journal,
+            #[cfg(feature = "shadow")]
+            &mut self.shadow,
             self.epoch,
             BankTag::IntParam,
             false,
@@ -325,6 +366,8 @@ impl Env {
             param.raw(),
             value,
             &mut self.journal,
+            #[cfg(feature = "shadow")]
+            &mut self.shadow,
             self.epoch,
             BankTag::IntParam,
             true,
@@ -343,6 +386,8 @@ impl Env {
             param.raw(),
             value,
             &mut self.journal,
+            #[cfg(feature = "shadow")]
+            &mut self.shadow,
             self.epoch,
             BankTag::DimenParam,
             false,
@@ -355,6 +400,8 @@ impl Env {
             param.raw(),
             value,
             &mut self.journal,
+            #[cfg(feature = "shadow")]
+            &mut self.shadow,
             self.epoch,
             BankTag::DimenParam,
             true,
@@ -373,6 +420,8 @@ impl Env {
             param.raw(),
             value,
             &mut self.journal,
+            #[cfg(feature = "shadow")]
+            &mut self.shadow,
             self.epoch,
             BankTag::GlueParam,
             false,
@@ -385,6 +434,8 @@ impl Env {
             param.raw(),
             value,
             &mut self.journal,
+            #[cfg(feature = "shadow")]
+            &mut self.shadow,
             self.epoch,
             BankTag::GlueParam,
             true,
@@ -403,6 +454,8 @@ impl Env {
             param.raw(),
             value,
             &mut self.journal,
+            #[cfg(feature = "shadow")]
+            &mut self.shadow,
             self.epoch,
             BankTag::TokParam,
             false,
@@ -415,6 +468,8 @@ impl Env {
             param.raw(),
             value,
             &mut self.journal,
+            #[cfg(feature = "shadow")]
+            &mut self.shadow,
             self.epoch,
             BankTag::TokParam,
             true,
@@ -443,6 +498,90 @@ impl Env {
             BankTag::GlueParam => self.glue_params.restore_word(u16_index(cell.index()), word),
             BankTag::TokParam => self.tok_params.restore_word(u16_index(cell.index()), word),
         }
+        #[cfg(feature = "shadow")]
+        shadow_set(
+            &mut self.shadow,
+            CellId::new(cell.bank(), cell.index()),
+            word,
+        );
+    }
+
+    /// Verifies the shadow mirror against real environment storage.
+    #[cfg(feature = "shadow")]
+    pub fn verify_shadow(&self) {
+        let real = self.non_default_words();
+        for (cell, real_word) in &real {
+            let shadow_word = self.shadow.get(cell).copied().unwrap_or(0);
+            assert_eq!(
+                shadow_word, *real_word,
+                "shadow mismatch at {cell:?}: shadow={shadow_word} real={real_word}"
+            );
+        }
+        for (&cell, &shadow_word) in &self.shadow {
+            let real_word = real
+                .iter()
+                .find_map(|(real_cell, real_word)| (*real_cell == cell).then_some(*real_word))
+                .unwrap_or(0);
+            assert_eq!(
+                shadow_word, real_word,
+                "shadow mismatch at {cell:?}: shadow={shadow_word} real={real_word}"
+            );
+        }
+    }
+
+    /// Returns a content-only hash of all non-default environment cells.
+    ///
+    /// The hash intentionally excludes allocation lengths, capacities, and
+    /// epoch stamps; replay identity is about semantic state.
+    #[cfg(any(test, feature = "testing", feature = "shadow"))]
+    #[must_use]
+    pub fn testing_state_hash(&self) -> u64 {
+        let mut pairs = self.non_default_words();
+        pairs.sort_by_key(|(cell, _)| *cell);
+
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        for (cell, word) in pairs {
+            cell.hash(&mut hasher);
+            word.hash(&mut hasher);
+        }
+        hasher.finish()
+    }
+
+    #[cfg(any(test, feature = "testing", feature = "shadow"))]
+    fn non_default_words(&self) -> Vec<(CellId, u64)> {
+        let mut out = Vec::new();
+        for (segment_index, segment) in self.meaning_cells.iter().enumerate() {
+            for (offset, &word) in segment.iter().enumerate() {
+                if word != 0 {
+                    let index = ((segment_index as u32) << SEGMENT_BITS) | offset as u32;
+                    out.push((CellId::new(BankTag::Meaning, index), word));
+                }
+            }
+        }
+        self.counts.non_default_words(BankTag::Count, &mut out);
+        self.dimens.non_default_words(BankTag::Dimen, &mut out);
+        self.skips.non_default_words(BankTag::Skip, &mut out);
+        self.toks.non_default_words(BankTag::Toks, &mut out);
+        self.boxes.non_default_words(BankTag::Box, &mut out);
+        self.overflow_counts
+            .non_default_words(BankTag::Count, &mut out);
+        self.overflow_dimens
+            .non_default_words(BankTag::Dimen, &mut out);
+        self.overflow_skips
+            .non_default_words(BankTag::Skip, &mut out);
+        self.overflow_toks
+            .non_default_words(BankTag::Toks, &mut out);
+        self.overflow_boxes
+            .non_default_words(BankTag::Box, &mut out);
+        self.int_params
+            .non_default_words(BankTag::IntParam, &mut out);
+        self.dimen_params
+            .non_default_words(BankTag::DimenParam, &mut out);
+        self.glue_params
+            .non_default_words(BankTag::GlueParam, &mut out);
+        self.tok_params
+            .non_default_words(BankTag::TokParam, &mut out);
+        out
     }
 
     fn meaning_word(&self, index: u32) -> Option<u64> {
@@ -466,6 +605,8 @@ impl Env {
             &mut self.meaning_cells[segment][offset],
             &mut self.meaning_stamps[segment][offset],
             &mut self.journal,
+            #[cfg(feature = "shadow")]
+            &mut self.shadow,
             self.epoch,
             cell,
             word,
@@ -523,10 +664,18 @@ pub(crate) fn barrier(
     cell_slot: &mut u64,
     stamp_slot: &mut Epoch,
     journal: &mut Journal,
+    #[cfg(feature = "shadow")] shadow: &mut HashMap<CellId, u64>,
     epoch: Epoch,
     cell_id: CellId,
     new_word: u64,
 ) {
+    if *cell_slot == new_word {
+        if cell_id.is_global() {
+            journal.push_undo(UndoRec::new(cell_id, *cell_slot, new_word));
+        }
+        return;
+    }
+
     if *stamp_slot < epoch {
         journal.push_undo(UndoRec::new(cell_id, *cell_slot, new_word));
         *stamp_slot = epoch;
@@ -534,6 +683,21 @@ pub(crate) fn barrier(
         journal.push_undo(UndoRec::new(cell_id, *cell_slot, new_word));
     }
     *cell_slot = new_word;
+    #[cfg(feature = "shadow")]
+    shadow_set(
+        shadow,
+        CellId::new(cell_id.bank(), cell_id.index()),
+        new_word,
+    );
+}
+
+#[cfg(feature = "shadow")]
+fn shadow_set(shadow: &mut HashMap<CellId, u64>, cell: CellId, word: u64) {
+    if word == 0 {
+        shadow.remove(&cell);
+    } else {
+        shadow.insert(cell, word);
+    }
 }
 
 fn segment_index(index: u32) -> usize {

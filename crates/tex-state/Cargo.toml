@@ -3,6 +3,11 @@ name = "tex-state"
 version.workspace = true
 edition.workspace = true
 
+[features]
+default = []
+shadow = []
+testing = []
+
 [lints]
 workspace = true
 

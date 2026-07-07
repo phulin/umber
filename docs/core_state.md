@@ -176,6 +176,11 @@ cells[i] = new
 - **First-write-per-epoch coalescing**: journal growth is bounded by
   distinct cells touched per epoch (typically a few hundred per page,
   single-digit KB), not by write count.
+- **No-op local writes do not consume the epoch**: assigning the word already
+  in the cell skips the local barrier record and leaves the stamp alone, so a
+  later same-epoch real change still records its pre-change value. A same-word
+  `\global` assignment still records a global undo record, because it can
+  change which group owns the value even when the current word is unchanged.
 - **Undo+redo coalescing note for M1**: because only the first write to a
   cell in an epoch appends an `UndoRec`, the record's `new` value is the
   first written value and may be stale after later same-epoch writes. This is

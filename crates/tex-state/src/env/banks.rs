@@ -92,6 +92,7 @@ where
         index: u16,
         value: C::Value,
         journal: &mut Journal,
+        #[cfg(feature = "shadow")] shadow: &mut std::collections::HashMap<CellId, u64>,
         epoch: Epoch,
         bank: BankTag,
         global: bool,
@@ -102,6 +103,8 @@ where
             &mut self.values[offset],
             &mut self.stamps[offset],
             journal,
+            #[cfg(feature = "shadow")]
+            shadow,
             epoch,
             cell_id,
             C::encode(value),
@@ -111,6 +114,15 @@ where
     #[allow(dead_code)]
     pub(crate) fn restore_word(&mut self, index: u16, word: u64) {
         self.values[checked_index::<N>(index)] = word;
+    }
+
+    #[cfg(any(test, feature = "testing", feature = "shadow"))]
+    pub(crate) fn non_default_words(&self, bank: BankTag, out: &mut Vec<(CellId, u64)>) {
+        for (index, &word) in self.values.iter().enumerate() {
+            if word != 0 {
+                out.push((CellId::new(bank, index as u32), word));
+            }
+        }
     }
 }
 

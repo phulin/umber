@@ -20,6 +20,13 @@ impl Symbol {
         Self(raw)
     }
 
+    /// Creates a symbol for tests that need direct cell-level state coverage.
+    #[cfg(any(test, feature = "testing", feature = "shadow"))]
+    #[must_use]
+    pub const fn testing_new(raw: u32) -> Self {
+        Self(raw)
+    }
+
     /// Returns the dense symbol index.
     #[must_use]
     pub const fn raw(self) -> u32 {

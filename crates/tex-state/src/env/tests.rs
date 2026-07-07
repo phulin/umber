@@ -422,6 +422,45 @@ fn repeated_same_epoch_globals_keep_last_global_after_exit() {
 }
 
 #[test]
+fn local_noop_does_not_consume_first_write_for_epoch() {
+    let mut env = Env::new();
+    let pos = env.checkpoint();
+
+    env.set_count(12, 0);
+    env.set_count(12, 1);
+    env.rollback_to(pos);
+
+    assert_eq!(env.count(12), 0);
+}
+
+#[test]
+fn compacted_global_after_local_rolls_back_to_pre_group_value() {
+    let mut env = Env::new();
+    let pos = env.checkpoint();
+
+    env.enter_group();
+    env.set_count(12, 1);
+    env.set_count_global(12, 0);
+    assert_eq!(env.leave_group(), Vec::<u64>::new());
+
+    assert_eq!(env.count(12), 0);
+    env.rollback_to(pos);
+    assert_eq!(env.count(12), 0);
+}
+
+#[test]
+fn same_value_global_after_local_still_survives_group_exit() {
+    let mut env = Env::new();
+
+    env.enter_group();
+    env.set_count(12, 1);
+    env.set_count_global(12, 1);
+    assert_eq!(env.leave_group(), Vec::<u64>::new());
+
+    assert_eq!(env.count(12), 1);
+}
+
+#[test]
 fn aftergroup_payloads_are_fifo_per_group_across_nesting() {
     let mut env = Env::new();
 

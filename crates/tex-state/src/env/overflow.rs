@@ -50,6 +50,7 @@ where
         index: u16,
         value: C::Value,
         journal: &mut Journal,
+        #[cfg(feature = "shadow")] shadow: &mut std::collections::HashMap<CellId, u64>,
         epoch: Epoch,
         bank: BankTag,
         global: bool,
@@ -65,6 +66,8 @@ where
             &mut page.values[offset],
             &mut page.stamps[offset],
             journal,
+            #[cfg(feature = "shadow")]
+            shadow,
             epoch,
             cell_id,
             C::encode(value),
@@ -76,6 +79,23 @@ where
         let (page, offset) = sparse_location(index);
         let page = self.pages[page].get_or_insert_with(|| Box::new(Page::default()));
         page.values[offset] = word;
+    }
+
+    #[cfg(any(test, feature = "testing", feature = "shadow"))]
+    pub(crate) fn non_default_words(&self, bank: BankTag, out: &mut Vec<(CellId, u64)>) {
+        for (page_index, page) in self.pages.iter().enumerate() {
+            let Some(page) = page else {
+                continue;
+            };
+            for (offset, &word) in page.values.iter().enumerate() {
+                if word != 0 {
+                    let index = DENSE_REGISTER_COUNT as u32
+                        + (page_index as u32 * PAGE_LEN as u32)
+                        + offset as u32;
+                    out.push((CellId::new(bank, index), word));
+                }
+            }
+        }
     }
 
     #[cfg(test)]

@@ -15,6 +15,13 @@ macro_rules! opaque_id {
                 Self(raw)
             }
 
+            /// Creates a placeholder id for tests that cover raw Env storage.
+            #[cfg(any(test, feature = "testing", feature = "shadow"))]
+            #[must_use]
+            pub const fn testing_new(raw: u32) -> Self {
+                Self(raw)
+            }
+
             #[must_use]
             pub const fn raw(self) -> u32 {
                 self.0
