@@ -3,6 +3,7 @@
 pub mod cell;
 pub mod env;
 pub mod epoch;
+pub mod glue;
 pub mod ids;
 pub mod interner;
 pub(crate) mod journal;

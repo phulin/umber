@@ -1,8 +1,8 @@
 //! Opaque store handles.
 //!
-//! `TokenListId` is minted by the token store. `GlueId` and `NodeListId`
-//! become real glue/node arena handles in State M2. `FontId` becomes real in
-//! the fonts epic. `SnapshotId` becomes real in State M3.
+//! `TokenListId` is minted by the token store. `GlueId` is minted by the glue
+//! store. `NodeListId` becomes a real node arena handle in State M2. `FontId`
+//! becomes real in the fonts epic. `SnapshotId` becomes real in State M3.
 
 macro_rules! opaque_id {
     ($name:ident) => {
@@ -35,6 +35,11 @@ opaque_id!(GlueId);
 opaque_id!(NodeListId);
 opaque_id!(FontId);
 opaque_id!(SnapshotId);
+
+impl GlueId {
+    /// The canonical zero-glue id, pre-interned by every glue store.
+    pub const ZERO: Self = Self(0);
+}
 
 #[cfg(test)]
 mod tests {

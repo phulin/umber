@@ -1,12 +1,13 @@
 //! Aggregate state stores and atomic rollback boundary.
 //!
 //! `Stores` is the M1 aggregate owner for state that must checkpoint and
-//! roll back together. Later milestones extend the tuple with token, glue, and
-//! node arenas; callers still use this boundary instead of rolling back `Env`
-//! or any content store independently.
+//! roll back together. Later milestones extend the tuple with node arenas;
+//! callers still use this boundary instead of rolling back `Env` or any
+//! content store independently.
 
 use crate::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use crate::env::{Env, EnvSnapshot};
+use crate::glue::{GlueSpec, GlueStore, GlueStoreMark};
 use crate::ids::{GlueId, NodeListId, TokenListId};
 use crate::interner::{Interner, InternerMark, Symbol};
 use crate::meaning::Meaning;
@@ -23,6 +24,7 @@ pub struct Snapshot {
     env_snapshot: EnvSnapshot,
     interner_mark: InternerMark,
     token_mark: TokenStoreMark,
+    glue_mark: GlueStoreMark,
 }
 
 /// Top-level owner for rollback-coupled state stores.
@@ -31,6 +33,7 @@ pub struct Stores {
     env: Env,
     interner: Interner,
     tokens: TokenStore,
+    glue: GlueStore,
 }
 
 impl Stores {
@@ -41,6 +44,7 @@ impl Stores {
             env: Env::new(),
             interner: Interner::new(),
             tokens: TokenStore::new(),
+            glue: GlueStore::new(),
         }
     }
 
@@ -101,6 +105,18 @@ impl Stores {
         self.tokens.get(id)
     }
 
+    /// Interns a frozen glue specification in the owned glue store.
+    pub fn intern_glue(&mut self, spec: GlueSpec) -> GlueId {
+        self.glue.intern(spec)
+    }
+
+    /// Reads a live frozen glue specification.
+    #[must_use]
+    pub fn glue(&self, id: GlueId) -> GlueSpec {
+        self.assert_live_glue(id);
+        self.glue.get(id)
+    }
+
     /// Enters a TeX group.
     pub fn enter_group(&mut self) {
         self.env.enter_group();
@@ -134,10 +150,12 @@ impl Stores {
     }
 
     pub fn set_skip(&mut self, index: u16, value: GlueId) {
+        self.assert_live_glue(value);
         self.env.set_skip(index, value);
     }
 
     pub fn set_skip_global(&mut self, index: u16, value: GlueId) {
+        self.assert_live_glue(value);
         self.env.set_skip_global(index, value);
     }
 
@@ -176,10 +194,12 @@ impl Stores {
     }
 
     pub fn set_glue_param(&mut self, param: GlueParam, value: GlueId) {
+        self.assert_live_glue(value);
         self.env.set_glue_param(param, value);
     }
 
     pub fn set_glue_param_global(&mut self, param: GlueParam, value: GlueId) {
+        self.assert_live_glue(value);
         self.env.set_glue_param_global(param, value);
     }
 
@@ -200,6 +220,7 @@ impl Stores {
             env_snapshot: self.env.checkpoint(),
             interner_mark: self.interner.watermark(),
             token_mark: self.tokens.watermark(),
+            glue_mark: self.glue.watermark(),
         }
     }
 
@@ -208,6 +229,7 @@ impl Stores {
         self.env.rollback_to(snapshot.env_snapshot);
         self.interner.truncate_to(snapshot.interner_mark);
         self.tokens.truncate_to(snapshot.token_mark);
+        self.glue.truncate_to(snapshot.glue_mark);
     }
 
     /// Returns the number of journal bytes appended since `snapshot`.
@@ -238,6 +260,7 @@ impl Stores {
                 .hash(&mut hasher);
         }
         self.tokens.testing_state_hash().hash(&mut hasher);
+        self.glue.testing_state_hash().hash(&mut hasher);
         hasher.finish()
     }
 
@@ -252,6 +275,13 @@ impl Stores {
         assert!(
             self.tokens.contains(id),
             "token list is not live in this Stores timeline"
+        );
+    }
+
+    fn assert_live_glue(&self, id: GlueId) {
+        assert!(
+            self.glue.contains(id),
+            "glue id is not live in this Stores timeline"
         );
     }
 
@@ -271,7 +301,9 @@ impl Default for Stores {
 #[cfg(test)]
 mod tests {
     use super::Stores;
+    use crate::glue::{GlueSpec, Order};
     use crate::meaning::Meaning;
+    use crate::scaled::Scaled;
 
     #[test]
     fn rollback_restores_env_and_interner_as_one_tuple() {
@@ -306,6 +338,20 @@ mod tests {
     }
 
     #[test]
+    fn rollback_restores_glue_store_as_part_of_snapshot_tuple() {
+        let mut stores = Stores::new();
+        let snapshot = stores.checkpoint();
+        let stale = stores.intern_glue(glue_spec(1));
+
+        stores.rollback(snapshot);
+        let reused = stores.intern_glue(glue_spec(2));
+
+        assert_eq!(reused.raw(), stale.raw());
+        assert_eq!(stores.glue(reused), glue_spec(2));
+        assert_eq!(stores.glue(crate::ids::GlueId::ZERO), GlueSpec::ZERO);
+    }
+
+    #[test]
     #[should_panic(expected = "token list is not live in this Stores timeline")]
     fn stale_rolled_back_token_list_cannot_mutate_toks_register() {
         let mut stores = Stores::new();
@@ -314,6 +360,17 @@ mod tests {
 
         stores.rollback(snapshot);
         stores.set_toks(0, stale);
+    }
+
+    #[test]
+    #[should_panic(expected = "glue id is not live in this Stores timeline")]
+    fn stale_rolled_back_glue_cannot_mutate_skip_register() {
+        let mut stores = Stores::new();
+        let snapshot = stores.checkpoint();
+        let stale = stores.intern_glue(glue_spec(1));
+
+        stores.rollback(snapshot);
+        stores.set_skip(0, stale);
     }
 
     #[test]
@@ -337,5 +394,15 @@ mod tests {
 
         stores.rollback(snapshot);
         stores.set_meaning(stale, Meaning::Relax);
+    }
+
+    fn glue_spec(width: i32) -> GlueSpec {
+        GlueSpec {
+            width: Scaled::from_raw(width),
+            stretch: Scaled::from_raw(2),
+            stretch_order: Order::Fil,
+            shrink: Scaled::from_raw(3),
+            shrink_order: Order::Fill,
+        }
     }
 }

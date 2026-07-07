@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use tex_state::env::Env;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
+use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::{GlueId, NodeListId, TokenListId};
 use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, RawMeaning};
@@ -44,6 +45,16 @@ impl TestCell {
                     ch,
                     cat: Catcode::Other,
                 }]);
+                assert_eq!(id.raw(), raw);
+            }
+        }
+
+        if cells
+            .iter()
+            .any(|cell| matches!(cell, Self::Skip(_) | Self::GlueParam(_)))
+        {
+            for raw in 1..64 {
+                let id = stores.intern_glue(glue_spec(raw as i32));
                 assert_eq!(id.raw(), raw);
             }
         }
@@ -218,5 +229,15 @@ fn meaning(word: u64) -> Meaning {
         1 => Meaning::Relax,
         2 => Meaning::CharGiven(char::from_u32(32 + (word as u32 % 95)).expect("ASCII graphic")),
         _ => Meaning::Unknown(RawMeaning::testing_new(200, word & ((1_u64 << 48) - 1))),
+    }
+}
+
+fn glue_spec(raw: i32) -> GlueSpec {
+    GlueSpec {
+        width: Scaled::from_raw(raw),
+        stretch: Scaled::from_raw(raw * 2),
+        stretch_order: Order::Fil,
+        shrink: Scaled::from_raw(raw * 3),
+        shrink_order: Order::Fill,
     }
 }

@@ -59,6 +59,7 @@ supporting untracked mutation "for performance" anywhere, ever.
 | Register overflow | e-TeX sparse registers (256..32767) | barriered writes | journal + page roots |
 | Code tables | catcode/lccode/uccode/sfcode/mathcode/delcode over Unicode | copy-on-write pages | root pointer + generation |
 | Token store | immutable, hash-consed token lists | frozen at birth | watermark |
+| Glue store | immutable, hash-consed glue specs (`GlueId`) | frozen at birth | watermark |
 | Node arenas | per-epoch bump arenas + survivor arena | frozen at birth; promotion on escape | watermark; refcounts (survivors) |
 | Journal | undo records + group/checkpoint markers | append-only | position |
 | Effect log | deferred writes, aux/toc/idx, shell escape, PDF objects | append-only, committed at shipout | position + stream buffers |
@@ -220,6 +221,16 @@ cells[i] = new
   across snapshots automatically.
 - Backing: bump arena + hash index; rollback = watermark truncation + lazy
   index repair (same policy as interner).
+
+### Glue store
+
+- Glue specs are immutable five-field values: width, stretch amount and order,
+  shrink amount and order. `GlueId` is hash-consed over those fields, so equal
+  specs share identity across snapshots and field-order differences remain
+  observable.
+- `GlueId::ZERO` is the canonical pre-interned zero-glue spec in every store.
+  Watermark truncation has a floor at that canonical entry, so rollback never
+  removes it.
 
 ### Node arenas
 
@@ -472,9 +483,8 @@ later features need already exists in the state layer by the time they land.
 - **Hash-index rewind** for interner/token store: lazy rebuild vs
   insertion-ordered rewindable table. Start lazy; revisit if editor-loop
   profiles show rebuild cost.
-- **Glue representation**: hash-consed immutable glue specs (`GlueId`,
-  mirroring Knuth's ref-counted glue) vs inline 4-word values. Leaning
-  hash-consed for snapshot sharing.
+- **Glue representation**: resolved in M2 as hash-consed immutable glue specs
+  (`GlueId`, mirroring Knuth's ref-counted glue) for snapshot sharing.
 - **Marks/inserts/penalties interaction with survivor arena** — spec the
   promotion rules precisely at M2.
 - **Lua/scripting state** (if ever): must live behind the same
