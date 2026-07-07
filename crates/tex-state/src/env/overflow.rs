@@ -92,7 +92,6 @@ where
         }
     }
 
-    #[cfg(any(test, feature = "testing", feature = "shadow"))]
     pub(crate) fn non_default_words(&self, bank: BankTag, out: &mut Vec<(CellId, u64)>) {
         for (page_index, page) in self.pages.iter().enumerate() {
             let Some(page) = page else {

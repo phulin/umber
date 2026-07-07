@@ -2,10 +2,9 @@ use std::collections::HashMap;
 use tex_state::env::Env;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
-use tex_state::ids::{GlueId, NodeListId, TokenListId};
+use tex_state::ids::{GlueId, TokenListId};
 use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, RawMeaning};
-use tex_state::node::Node;
 use tex_state::scaled::Scaled;
 use tex_state::stores::Stores;
 use tex_state::token::{Catcode, Token};
@@ -17,7 +16,6 @@ pub(crate) enum TestCell {
     Dimen(u16),
     Skip(u16),
     Toks(u16),
-    Box(u16),
     IntParam(u16),
     DimenParam(u16),
     GlueParam(u16),
@@ -57,14 +55,6 @@ impl TestCell {
             for raw in 1..64 {
                 let id = stores.intern_glue(glue_spec(raw as i32));
                 assert_eq!(id.raw(), raw);
-            }
-        }
-
-        if cells.iter().any(|cell| matches!(cell, Self::Box(_))) {
-            for raw in 0..64 {
-                let id = stores.freeze_node_list(&[Node::MathOn]);
-                assert_eq!(id.start(), raw);
-                assert_eq!(id.len(), 1);
             }
         }
     }
@@ -112,14 +102,6 @@ impl TestCell {
                     stores.set_toks(index, value);
                 }
             }
-            Self::Box(index) => {
-                let value = NodeListId::testing_epoch(word as u32 % 64, 1);
-                if global {
-                    stores.set_box_reg_global(index, value);
-                } else {
-                    stores.set_box_reg(index, value);
-                }
-            }
             Self::IntParam(index) => {
                 let value = word as u32 as i32;
                 if global {
@@ -162,7 +144,6 @@ impl TestCell {
             Self::Dimen(index) => u64::from(env.dimen(index).raw() as u32),
             Self::Skip(index) => u64::from(env.skip(index).raw()),
             Self::Toks(index) => u64::from(env.toks(index).raw()),
-            Self::Box(index) => u64::from(env.box_reg(index).is_some()),
             Self::IntParam(index) => u64::from(env.int_param(IntParam::new(index)) as u32),
             Self::DimenParam(index) => {
                 u64::from(env.dimen_param(DimenParam::new(index)).raw() as u32)
@@ -228,7 +209,6 @@ fn set_word(scope: &mut HashMap<TestCell, u64>, cell: TestCell, word: u64) {
 fn canonical_word(cell: TestCell, word: u64) -> u64 {
     match cell {
         TestCell::Meaning(_) => meaning(word).encode(),
-        TestCell::Box(_) => 1,
         _ => u64::from(word as u32),
     }
 }

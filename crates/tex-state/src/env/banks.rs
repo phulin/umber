@@ -116,7 +116,6 @@ where
         self.values[checked_index::<N>(index)] = word;
     }
 
-    #[cfg(any(test, feature = "testing", feature = "shadow"))]
     pub(crate) fn non_default_words(&self, bank: BankTag, out: &mut Vec<(CellId, u64)>) {
         for (index, &word) in self.values.iter().enumerate() {
             if word != 0 {

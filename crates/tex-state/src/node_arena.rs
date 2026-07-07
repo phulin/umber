@@ -131,6 +131,12 @@ impl NodeArena {
         self.nodes.truncate(nodes);
     }
 
+    #[cfg(any(test, feature = "testing", feature = "shadow"))]
+    #[must_use]
+    pub(crate) fn testing_node_count(&self) -> usize {
+        self.nodes.len()
+    }
+
     fn append(&mut self, nodes: &[Node]) -> NodeListId {
         let start = u32_len(self.nodes.len(), "node arena exceeds u32 entries");
         let len = u32_len(nodes.len(), "node list exceeds u32 entries");

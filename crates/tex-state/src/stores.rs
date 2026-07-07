@@ -8,7 +8,7 @@ use crate::cell::BankTag;
 use crate::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use crate::env::{Env, EnvSnapshot};
 use crate::glue::{GlueSpec, GlueStore, GlueStoreMark};
-use crate::ids::{ArenaRef, GlueId, NodeListId, TokenListId};
+use crate::ids::{ArenaRef, GlueId, NodeListId, SurvivorRootId, TokenListId};
 use crate::interner::{Interner, InternerMark, Symbol};
 use crate::meaning::Meaning;
 use crate::node::Node;
@@ -17,6 +17,7 @@ use crate::scaled::Scaled;
 use crate::survivor::SurvivorArena;
 use crate::token::Token;
 use crate::token_store::{TokenListBuilder, TokenStore, TokenStoreMark};
+use std::collections::HashMap;
 #[cfg(any(test, feature = "testing", feature = "shadow"))]
 use std::hash::{Hash, Hasher};
 use std::mem;
@@ -160,9 +161,8 @@ impl Stores {
     /// Leaves the innermost TeX group and returns its `\aftergroup` payloads.
     #[must_use]
     pub fn leave_group(&mut self) -> Vec<u64> {
-        let entries = self.env.current_group_entries().to_vec();
         let payloads = self.env.leave_group();
-        self.adjust_box_refs_for_group_exit(&entries);
+        self.reconcile_box_refs();
         payloads
     }
 
@@ -204,20 +204,16 @@ impl Stores {
 
     pub fn set_box_reg(&mut self, index: u16, value: NodeListId) {
         let value = self.prepare_box_value(value);
-        let old = self.env.box_reg(index);
-        let start = self.env.journal_pos();
+        self.env.bump_epoch();
         self.env.set_box_reg(index, Some(value));
-        self.hold_new_box_journal_refs(start);
-        self.dec_if_survivor(old);
+        self.reconcile_box_refs();
     }
 
     pub fn set_box_reg_global(&mut self, index: u16, value: NodeListId) {
         let value = self.prepare_box_value(value);
-        let old = self.env.box_reg(index);
-        let start = self.env.journal_pos();
+        self.env.bump_epoch();
         self.env.set_box_reg_global(index, Some(value));
-        self.hold_new_box_journal_refs(start);
-        self.dec_if_survivor(old);
+        self.reconcile_box_refs();
     }
 
     #[must_use]
@@ -226,10 +222,9 @@ impl Stores {
     }
 
     pub fn take_box_reg(&mut self, index: u16) -> Option<NodeListId> {
-        let start = self.env.journal_pos();
+        self.env.bump_epoch();
         let old = self.env.take_box_reg(index);
-        self.hold_new_box_journal_refs(start);
-        self.dec_if_survivor(old);
+        self.reconcile_box_refs();
         old
     }
 
@@ -283,16 +278,12 @@ impl Stores {
 
     /// Rolls all stores back to `snapshot` as one atomic tuple.
     pub fn rollback(&mut self, snapshot: Snapshot) {
-        let entries = self
-            .env
-            .journal_entries_since(snapshot.env_snapshot.journal_pos())
-            .to_vec();
         self.env.rollback_to(snapshot.env_snapshot);
-        self.adjust_box_refs_for_restore(&entries);
         self.interner.truncate_to(snapshot.interner_mark);
         self.tokens.truncate_to(snapshot.token_mark);
         self.glue.truncate_to(snapshot.glue_mark);
         self.nodes.truncate_to(snapshot.node_mark);
+        self.reconcile_box_refs();
     }
 
     /// Returns the number of journal bytes appended since `snapshot`.
@@ -315,7 +306,7 @@ impl Stores {
     #[must_use]
     pub fn testing_state_hash(&self) -> u64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        self.env.testing_state_hash().hash(&mut hasher);
+        self.testing_hash_env_by_content(&mut hasher);
         self.interner.len().hash(&mut hasher);
         for raw in 0..self.interner.len() {
             self.interner
@@ -324,7 +315,90 @@ impl Stores {
         }
         self.tokens.testing_state_hash().hash(&mut hasher);
         self.glue.testing_state_hash().hash(&mut hasher);
+        self.testing_hash_all_epoch_nodes(&mut hasher);
         hasher.finish()
+    }
+
+    #[cfg(any(test, feature = "testing", feature = "shadow"))]
+    fn testing_hash_env_by_content(&self, hasher: &mut impl Hasher) {
+        let mut pairs = self.env.testing_non_default_words();
+        pairs.sort_by_key(|(cell, _)| *cell);
+        for (cell, word) in pairs {
+            cell.hash(hasher);
+            if cell.bank() == BankTag::Box {
+                self.testing_hash_box_word(word, hasher);
+            } else {
+                word.hash(hasher);
+            }
+        }
+        self.env.testing_aftergroup_payloads().hash(hasher);
+    }
+
+    #[cfg(any(test, feature = "testing", feature = "shadow"))]
+    fn testing_hash_box_word(&self, word: u64, hasher: &mut impl Hasher) {
+        match NodeListId::decode_box_word(word) {
+            Some(id) => self.testing_hash_node_list_content(id, hasher),
+            None => 0_u8.hash(hasher),
+        }
+    }
+
+    #[cfg(any(test, feature = "testing", feature = "shadow"))]
+    fn testing_hash_all_epoch_nodes(&self, hasher: &mut impl Hasher) {
+        let len = u32::try_from(self.nodes.testing_node_count())
+            .expect("node arena test hash cannot cover more than u32 entries");
+        for node in self.nodes.get_epoch(NodeListId::new_epoch(0, len)) {
+            self.testing_hash_node_content(node, hasher);
+        }
+    }
+
+    #[cfg(any(test, feature = "testing", feature = "shadow"))]
+    pub fn testing_hash_node_list_content(&self, id: NodeListId, hasher: &mut impl Hasher) {
+        1_u8.hash(hasher);
+        for node in self.nodes(id) {
+            self.testing_hash_node_content(node, hasher);
+        }
+    }
+
+    #[cfg(any(test, feature = "testing", feature = "shadow"))]
+    fn testing_hash_node_content(&self, node: &Node, hasher: &mut impl Hasher) {
+        std::mem::discriminant(node).hash(hasher);
+        match node {
+            Node::Char { font, ch } => {
+                font.raw().hash(hasher);
+                ch.hash(hasher);
+            }
+            Node::Kern { amount, kind } => {
+                amount.raw().hash(hasher);
+                kind.hash(hasher);
+            }
+            Node::Glue { spec, kind } => {
+                self.glue(*spec).hash(hasher);
+                kind.hash(hasher);
+            }
+            Node::Penalty(value) => value.hash(hasher),
+            Node::HList(box_node) | Node::VList(box_node) => {
+                box_node.width.raw().hash(hasher);
+                box_node.height.raw().hash(hasher);
+                box_node.depth.raw().hash(hasher);
+                box_node.shift.raw().hash(hasher);
+                box_node.glue_set.to_bits().hash(hasher);
+                box_node.glue_sign.hash(hasher);
+                box_node.glue_order.hash(hasher);
+                self.testing_hash_node_list_content(box_node.children, hasher);
+            }
+            Node::MathOn
+            | Node::MathOff
+            | Node::Lig { .. }
+            | Node::Rule { .. }
+            | Node::Unset
+            | Node::Disc { .. }
+            | Node::Mark { .. }
+            | Node::Ins { .. }
+            | Node::Whatsit(_)
+            | Node::Adjust(_) => {
+                format!("{node:?}").hash(hasher);
+            }
+        }
     }
 
     #[cfg(any(test, feature = "testing"))]
@@ -385,59 +459,33 @@ impl Stores {
         }
     }
 
-    fn adjust_box_refs_for_restore(&mut self, entries: &[crate::journal::Entry]) {
-        for entry in entries.iter().rev() {
-            let crate::journal::Entry::Undo(rec) = entry else {
-                continue;
-            };
-            if rec.cell().bank() != BankTag::Box {
-                continue;
+    fn reconcile_box_refs(&mut self) {
+        let mut refs = HashMap::new();
+        for (cell, word) in self.env.testing_non_default_words() {
+            if cell.bank() == BankTag::Box {
+                self.count_survivor_ref(NodeListId::decode_box_word(word), &mut refs);
             }
-            self.inc_if_survivor(NodeListId::decode_box_word(rec.old()));
-            self.dec_if_survivor(NodeListId::decode_box_word(rec.new_value()));
-            self.dec_if_survivor(NodeListId::decode_box_word(rec.old()));
         }
-    }
-
-    fn adjust_box_refs_for_group_exit(&mut self, entries: &[crate::journal::Entry]) {
-        for entry in entries.iter().rev() {
-            let crate::journal::Entry::Undo(rec) = entry else {
-                continue;
-            };
-            if rec.cell().bank() != BankTag::Box || rec.cell().is_global() {
-                continue;
-            }
-            self.inc_if_survivor(NodeListId::decode_box_word(rec.old()));
-            self.dec_if_survivor(NodeListId::decode_box_word(rec.new_value()));
-            self.dec_if_survivor(NodeListId::decode_box_word(rec.old()));
-        }
-    }
-
-    fn hold_new_box_journal_refs(&mut self, start: crate::journal::JournalPos) {
-        let entries = self.env.journal_entries_since(start).to_vec();
-        for entry in entries {
+        for entry in self.env.journal_entries() {
             let crate::journal::Entry::Undo(rec) = entry else {
                 continue;
             };
             if rec.cell().bank() == BankTag::Box {
-                self.inc_if_survivor(NodeListId::decode_box_word(rec.old()));
+                self.count_survivor_ref(NodeListId::decode_box_word(rec.old()), &mut refs);
             }
         }
+        self.survivors.reconcile_refcounts(&refs);
     }
 
-    fn inc_if_survivor(&mut self, value: Option<NodeListId>) {
+    fn count_survivor_ref(
+        &self,
+        value: Option<NodeListId>,
+        refs: &mut HashMap<SurvivorRootId, u32>,
+    ) {
         if let Some(id) = value
-            && matches!(id.arena(), ArenaRef::Survivor(_))
+            && let ArenaRef::Survivor(root) = id.arena()
         {
-            self.survivors.inc_ref(id);
-        }
-    }
-
-    fn dec_if_survivor(&mut self, value: Option<NodeListId>) {
-        if let Some(id) = value
-            && matches!(id.arena(), ArenaRef::Survivor(_))
-        {
-            self.survivors.dec_ref(id);
+            *refs.entry(root).or_insert(0) += 1;
         }
     }
 }
@@ -577,11 +625,13 @@ mod tests {
         assert_eq!(stores.testing_survivor_refcount(survivor), 2);
 
         assert_eq!(stores.take_box_reg(0), Some(survivor));
-        assert_eq!(stores.testing_survivor_refcount(survivor), 1);
+        // Register 1 and the take journal entry both hold the survivor until a
+        // rollback/commit boundary drops the journal record.
+        assert_eq!(stores.testing_survivor_refcount(survivor), 2);
 
         let replacement = one_char(&mut stores, 'b');
         stores.set_box_reg(1, replacement);
-        assert_eq!(stores.testing_live_survivor_slot_count(), 1);
+        assert_eq!(stores.testing_live_survivor_slot_count(), 2);
     }
 
     #[test]

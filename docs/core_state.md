@@ -244,6 +244,9 @@ cells[i] = new
   epoch nodes must already be frozen lower in the same epoch arena; debug
   builds assert this bottom-up discipline. Survivor ids name a root slot plus a
   root-relative span and are read through the aggregate-owned survivor arena.
+  Survivor refcounts are reconciled at the aggregate boundary from live box
+  registers plus retained journal old-values, so stale redo words never decide
+  survivor liveness.
 - **Promotion on escape**: storing a node list into a box register, mark,
   or insertion is a barriered write, so the engine sees it and copies the
   list into a **survivor arena** with per-box refcounts. The promoted root is
@@ -293,8 +296,9 @@ pub struct Snapshot {
 - **Take**: O(1) — record positions/roots, copy scalars. Frequency: every
   shipout; every paragraph while an editor session is hot.
 - **Rollback**: replay journal to marker (restoring cells and old code-table
-  roots); truncate arenas to watermarks; refcount-release survivor boxes
-  recorded in the journal slice; discard effect-log suffix; restore scalars.
+  roots); truncate arenas to watermarks; reconcile survivor box refcounts from
+  the restored registers plus retained journal old-values; discard effect-log
+  suffix; restore scalars.
   Pending `\aftergroup` payloads are part of the Env rollback tuple: snapshots
   carry an aftergroup length and rollback truncates payloads pushed after the
   snapshot. The epoch counter is never rewound — rollback bumps it past its previous

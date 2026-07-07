@@ -185,6 +185,7 @@ impl Env {
 
     /// Returns the current journal end position.
     #[must_use]
+    #[cfg(test)]
     pub(crate) fn journal_pos(&self) -> JournalPos {
         self.journal.pos()
     }
@@ -209,14 +210,10 @@ impl Env {
         self.journal.entries_since(pos)
     }
 
-    /// Returns the journal entries in the innermost group body.
+    /// Returns all journal entries currently retained by the environment.
     #[must_use]
-    pub(crate) fn current_group_entries(&self) -> &[Entry] {
-        let Some((marker_pos, _)) = self.journal.find_last_group_marker() else {
-            panic!("leave_group without matching group marker");
-        };
-        self.journal
-            .entries_since(JournalPos::from_raw(marker_pos.raw() as usize + 1))
+    pub(crate) fn journal_entries(&self) -> &[Entry] {
+        self.journal.entries_since(JournalPos::from_raw(0))
     }
 
     /// Enters a TeX group.
@@ -637,7 +634,7 @@ impl Env {
     /// Verifies the shadow mirror against real environment storage.
     #[cfg(feature = "shadow")]
     pub fn verify_shadow(&self) {
-        let real = self.non_default_words();
+        let real = self.testing_non_default_words();
         for (cell, real_word) in &real {
             let shadow_word = self.shadow.get(cell).copied().unwrap_or(0);
             assert_eq!(
@@ -664,7 +661,7 @@ impl Env {
     #[cfg(any(test, feature = "testing", feature = "shadow"))]
     #[must_use]
     pub fn testing_state_hash(&self) -> u64 {
-        let mut pairs = self.non_default_words();
+        let mut pairs = self.testing_non_default_words();
         pairs.sort_by_key(|(cell, _)| *cell);
 
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -676,8 +673,7 @@ impl Env {
         hasher.finish()
     }
 
-    #[cfg(any(test, feature = "testing", feature = "shadow"))]
-    fn non_default_words(&self) -> Vec<(CellId, u64)> {
+    pub(crate) fn testing_non_default_words(&self) -> Vec<(CellId, u64)> {
         let mut out = Vec::new();
         for (segment_index, segment) in self.meaning_cells.iter().enumerate() {
             for (offset, &word) in segment.iter().enumerate() {
@@ -711,6 +707,11 @@ impl Env {
         self.tok_params
             .non_default_words(BankTag::TokParam, &mut out);
         out
+    }
+
+    #[cfg(any(test, feature = "testing", feature = "shadow"))]
+    pub(crate) fn testing_aftergroup_payloads(&self) -> &[u64] {
+        &self.aftergroup
     }
 
     fn meaning_word(&self, index: u32) -> Option<u64> {
