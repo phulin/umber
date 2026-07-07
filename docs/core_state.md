@@ -1,0 +1,431 @@
+# Core Engine State — Design Plan
+
+Status: draft for implementation
+Scope: the state layer (`tex-state` crate) of a modern TeX engine — storage,
+mutation discipline, snapshots, and the enforcement architecture.
+Out of scope: expansion/typesetting algorithms, JIT codegen strategy, output
+drivers. Those are *consumers* of this layer and are referenced only where
+they constrain it.
+
+---
+
+## 1. Goals and non-goals
+
+The state layer must simultaneously serve four consumers:
+
+1. **Interpreter throughput.** State reads are the hottest operations in the
+   engine (meaning lookup per control sequence; code-table lookup per input
+   character). Reads must be one indexed load from flat memory. The write
+   barrier must be a few straight-line, branch-predictable instructions.
+2. **A future JIT.** Compiled code needs stable cell addresses for the
+   lifetime of the process, and per-cell version stamps usable as inline-cache
+   / deoptimization guards.
+3. **Snapshots and rollback.** Taking a checkpoint must be O(1); we take one
+   per shipped page and (while interactively editing) per paragraph. Rolling
+   back must cost proportional to what changed, not to total state size.
+4. **Memoization, convergence detection, and speculative parallelism.**
+   These must be expressible as *queries over existing bookkeeping* (read
+   sets from epoch stamps, write sets from the journal, effect replay from
+   the effect log) — not as separate instrumentation.
+
+Non-goals: bit-compatibility with Knuth's memory layout (we keep the
+*semantics*, including grouping and `\global`, not the representation);
+supporting untracked mutation "for performance" anywhere, ever.
+
+### Design principles
+
+- **Separate identity, meaning, content, and history.** Each gets the
+  representation its access pattern wants.
+- **Mutable state in flat arrays; immutable content in hash-consed arenas;
+  history in one append-only journal.** Persistence is a property of data
+  that is genuinely persistent; arrays for data that is genuinely mutable.
+- **One write barrier.** Every semantic mutation flows through a single
+  method on a single struct that owns its own history. The journal *is* the
+  write-set; epoch stamps *are* the read-set timestamps; every advanced
+  feature is a query over these.
+- **Completeness over cleverness.** The lesson of prior art (SwiftLaTeX's
+  in-engine checkpointing, which "breaks certain projects"): any state not
+  captured by the snapshot machinery is a future heisenbug. Enumerate
+  everything; virtualize all effects; verify dynamically (§9).
+
+---
+
+## 2. Store overview
+
+| Store | Contents | Mutation discipline | Snapshot mechanism |
+|---|---|---|---|
+| Interner | csnames, key strings → `Symbol` | append-only | watermark |
+| Environment | meaning word + epoch per symbol; parameters; dense registers | barriered in-place writes | journal |
+| Register overflow | e-TeX sparse registers (256..32767) | barriered writes | journal + page roots |
+| Code tables | catcode/lccode/uccode/sfcode/mathcode/delcode over Unicode | copy-on-write pages | root pointer + generation |
+| Token store | immutable, hash-consed token lists | frozen at birth | watermark |
+| Node arenas | per-epoch bump arenas + survivor arena | frozen at birth; promotion on escape | watermark; refcounts (survivors) |
+| Journal | undo records + group/checkpoint markers | append-only | position |
+| Effect log | deferred writes, aux/toc/idx, shell escape, PDF objects | append-only, committed at shipout | position + stream buffers |
+| Misc scalars | RNG state, interaction mode, current epoch, input-stack summary | barriered / snapshot-owned | copied into snapshot tuple |
+
+A **snapshot is a tuple of positions and roots** into these stores — a few
+dozen words, O(1) to take (§7).
+
+---
+
+## 3. Identity: the interner
+
+- All names intern to dense `Symbol(u32)`. Backing: bump-allocated UTF-8
+  arena + open-addressing hash index.
+- Append-only: nothing is un-interned. Rollback = truncate arena to
+  watermark. The hash index either records insertion order (rewindable) or
+  is rebuilt lazily on first intern after a rollback — interning after
+  rollback is rare, so lazy rebuild is acceptable v1.
+- Dense ids make every downstream lookup an array index; stable ids are what
+  compiled code embeds.
+- `\csname`-manufactured names go through the same interner (expl3 does this
+  constantly; the interner must be fast and its growth must be watermarked
+  like everything else).
+
+## 4. Meaning: the environment
+
+Successor to the eqtb. Struct-of-arrays keyed by `Symbol`:
+
+```rust
+// One 64-bit meaning word per symbol.
+// opcode : 8   — dispatch case ("macro", "\relax", "chardef", "font", ...)
+// flags  : 8   — \long, \outer, \protected, frozen
+// operand: 48  — TokenListId | FontId | char+catcode | register index | ...
+pub struct Env {
+    cells:   Box<[u64]>,       // meaning words
+    epochs:  Box<[Epoch]>,     // parallel stamp per cell (Epoch = u32/u64)
+    // dense classical registers, one bank per class:
+    counts:  Box<[i32; 256]>, dimens: Box<[Scaled; 256]>,
+    skips:   Box<[GlueId; 256]>, toks: Box<[TokenListId; 256]>,
+    boxes:   Box<[NodeListId; 256]>,
+    reg_epochs: /* parallel stamps per bank */,
+    int_params: Box<[i32; N_INT]>,   dimen_params: Box<[Scaled; N_DIM]>,
+    glue_params: Box<[GlueId; N_GLUE]>, tok_params: Box<[TokenListId; N_TOK]>,
+    overflow: SparseRegisters,   // e-TeX 256..32767, radix pages, mostly empty
+    journal: Journal,
+    epoch: Epoch,
+}
+```
+
+Rules:
+
+- **Reads**: `get(&self, Symbol) -> Meaning` — one load, decode in
+  registers. Meaning words are `Copy`; no references into the array escape.
+- **Writes**: `set(&mut self, Symbol, Meaning)` — the *only* mutation path;
+  runs the barrier (§6). Same for every register bank and parameter table.
+- **The epoch stamp is the workhorse**: journal coalescing filter, JIT
+  inline-cache guard, and memoizer read-set timestamp. One counter, three
+  consumers. Do not add a second versioning scheme for any of these.
+- Macro bodies are **not** stored here — the operand is a `TokenListId` into
+  the token store. The environment holds dispatch, never content.
+- Addresses of `cells` are stable for the process lifetime (no reallocation:
+  size the array to the interner's max, grow by chunked segments if needed —
+  segments never move).
+
+### Register overflow (e-TeX sparse tier)
+
+Registers 256..32767 per class: two-level radix pages (page = 256 slots),
+default-page shared, cloned on first write, entries barriered like dense
+registers. This unifies what e-TeX bolted on as separate save-stack
+machinery: **one write path for all registers**.
+
+## 5. Meaning, sparse tier: the code tables
+
+Six tables over ~1.1M codepoints; overwhelmingly default-valued; writes are
+rare and bursty (verbatim, `\makeatletter`, babel shorthands).
+
+- Representation: two-level paged radix tree; root of page pointers →
+  pages of 256 entries. All-default pages alias canonical shared constants.
+- **Copy-on-write at page granularity**: first write to a shared page clones
+  it. Old snapshots keep the old root; no journaling of individual entries
+  needed (the root swap is the undo record — the journal stores old roots).
+- Each table carries a **generation counter**, bumped on any write. The
+  lexer's SIMD fast path is compiled/validated against a generation vector
+  and never touches the tree until a generation bump forces reclassification.
+  This is the storage-level grounding of catcode speculation.
+- Rationale for structural persistence *here only*: the read path that
+  matters bypasses the tree; the domain is huge and default-dominated; and
+  per-snapshot roots make history free. Everywhere else, flat arrays win.
+
+## 6. History: the journal and the write barrier
+
+One append-only log for all barriered state:
+
+```rust
+struct UndoRec { cell: CellId, old: u64 }   // 16 bytes; CellId spans all banks
+enum Marker { Group, Checkpoint(SnapshotId) }
+```
+
+**Barrier** (the same ~5 instructions whether emitted by `Env::set` or by
+the JIT):
+
+```text
+if epochs[i] < current_epoch:
+    journal.push(UndoRec { cell: i, old: cells[i] })
+    epochs[i] = current_epoch
+cells[i] = new
+```
+
+- **First-write-per-epoch coalescing**: journal growth is bounded by
+  distinct cells touched per epoch (typically a few hundred per page,
+  single-digit KB), not by write count.
+- **Groups are journal markers.** This *replaces* Knuth's save stack: group
+  entry pushes `Marker::Group` and bumps the epoch; group exit walks back to
+  the marker restoring records. Same records, same log, one mechanism.
+- **`\global` is logged too**, tagged so group-exit restoration skips it and
+  compacts it below the marker (the analogue of e-TeX's sparse-register
+  compaction). "Survives the group" and "survives rollback to page 12" are
+  different lifetimes; only the journal serves the second.
+- Epoch bumps happen at: group entry, checkpoint, and (optionally) paragraph
+  boundaries while interactive. Monotonic; never reused within a session.
+
+## 7. Content: token store and node arenas
+
+### Token store
+
+- Token lists are **immutable after construction** (hard invariant; Knuth
+  already ref-shares macro bodies — we make it structural).
+- Built via builder-then-freeze (§8.4); on `finish()`, **hash-consed**:
+  identical lists get identical `TokenListId`s. Benefits: `\ifx` on bodies is
+  an id compare; memo keys are hashes; identical expansions share storage
+  across snapshots automatically.
+- Backing: bump arena + hash index; rollback = watermark truncation + lazy
+  index repair (same policy as interner).
+
+### Node arenas
+
+- Nodes are born into a **per-epoch bump arena**. The overwhelming common
+  case — node dies within its page — is freed by arena truncation (rollback)
+  or wholesale release (after shipout). No free lists, no tracing GC.
+- **Promotion on escape**: storing a node list into a box register, mark,
+  or insertion is a barriered write, so the engine sees it and copies the
+  list into a **survivor arena** with per-box refcounts. `\unhbox`/`\vsplit`
+  operate on survivors. The rare escaping box pays a copy; every epoch arena
+  earns the right to be truncated blindly.
+- Shipped pages serialize into content-addressed artifacts (the memo/extern
+  store) and their nodes are released.
+
+## 8. External effects: the virtualized world
+
+Nothing in the engine touches the OS directly. A single `World` object owns:
+
+- **Output streams** (`\openout`/`\write`, aux/toc/idx): writes append to an
+  effect log; stream buffer state *including partial lines* is snapshot
+  state. TeX's own defer-`\write`-to-shipout semantics is the model —
+  extended to every effect.
+- **Deferred-write token lists** are expanded at shipout against the state
+  *at the commit barrier*; read-set tracking must therefore cover
+  shipout-time expansion, not just mainline execution.
+- **Shell escape, PDF object stream, log file**: same discipline — buffered,
+  committed at shipout, discarded on rollback.
+- **RNG state and clock reads**: owned by `World`, journaled/snapshotted.
+- **Inputs** (file reads) are content-addressed and recorded, so a snapshot
+  pins exactly what it read (needed for cross-run memo sharing).
+
+Effects **materialize only when the producing page commits** (shipout).
+Rollback discards the uncommitted suffix of the effect log.
+
+## 9. Snapshots, rollback, commit
+
+```rust
+pub struct Snapshot {
+    journal_pos: JournalPos,
+    epoch: Epoch,
+    watermarks: Watermarks,        // tokens, nodes, strings, interner
+    code_roots: [PageRoot; 6],     // + generation vector
+    overflow_roots: PageRoots,
+    effect_pos: EffectPos,
+    stream_bufs: StreamBufState,
+    rng: RngState,
+    input_stack: InputSummary,     // enough to resume the mouth
+    state_hash: u64,               // for convergence detection
+}
+```
+
+- **Take**: O(1) — record positions/roots, copy scalars. Frequency: every
+  shipout; every paragraph while an editor session is hot.
+- **Rollback**: replay journal to marker (restoring cells and old code-table
+  roots); truncate arenas to watermarks; refcount-release survivor boxes
+  recorded in the journal slice; discard effect-log suffix; restore scalars.
+- **Atomicity rule (hard invariant)**: meaning cells contain content ids, so
+  the journal and the arena watermarks restore **as one tuple, never
+  independently** — otherwise every box register dangles. Enforce by making
+  rollback a single method on the top-level `Universe` (§10.6); no partial
+  rollback API exists.
+- **Commit barrier = shipout**: page artifact serialized, effects flushed,
+  snapshots older than the last live editing anchor dropped. History is
+  bounded.
+- **Convergence detection**: after re-executing from an edit, compare
+  `state_hash` at each checkpoint with the prior run's hash at the same
+  input position; on match, splice the old suffix and stop. `state_hash`
+  covers: cells touched since the previous checkpoint (from the journal
+  slice), code-table generations, arena content hashes of the epoch slice,
+  effect-log slice, RNG. It must be a pure function of semantic state —
+  never of addresses or allocation order.
+
+Derived queries (these fall out; do not build separate instrumentation):
+
+- **Write-set** of a region = journal slice between markers.
+- **Read-set** = cells whose epoch stamps were observed (the interpreter/JIT
+  records observed `(cell, epoch)` pairs when memoizing).
+- **Memo effect replay** = replay the journal slice (forward, using new
+  values — see Open Questions on redo records) + effect-log slice.
+- **Speculation conflict check** = speculated page's read-set ∩ preceding
+  page's journal slice.
+
+---
+
+## 10. Rust enforcement architecture
+
+The type system is the write barrier's bodyguard. The rules:
+
+### 10.1 Crate boundary
+
+- All of the above lives in a `tex-state` crate. `#![forbid(unsafe_code)]`
+  crate-wide, with the sole exception of one audited `arena` module (and, if
+  needed, the mprotect tripwire in a test-only module).
+- Every field of every store is private. Downstream crates (interpreter,
+  JIT, drivers) interact only through the public API, which **does not
+  contain** any unjournaled mutation.
+
+### 10.2 API shape (the whole invariant in four absences)
+
+- No `get_mut`, no `IndexMut`, no `iter_mut`, no method returning `&mut`
+  into any store. Meaning words and scalars are `Copy`; content reads return
+  `&[T]` only.
+- No interior mutability in state types — no `Cell`, `RefCell`, `Mutex`,
+  atomics. `&Env` ⇒ *cannot change* must remain a theorem (memoization
+  soundness depends on it), and atomics would poison the barrier's cost.
+- Journal lives inside `Env` (and its siblings inside `Universe`), so
+  mutating cells and mutating history require the same `&mut` — the borrow
+  checker makes bypass unrepresentable in safe code.
+
+### 10.3 Unforgeable handles
+
+`Symbol`, `TokenListId`, `NodeListId`, `FontId`, `GlueId`, `SnapshotId` are
+newtypes with private constructors; only their owning store mints them.
+Packed operand fields are decoded back into typed ids *inside* `tex-state`;
+raw integers never cross the crate boundary.
+
+### 10.4 Builder-then-freeze for content
+
+```rust
+let mut b = tokens.builder();  // exclusive, unfinished, has no id
+b.push(tok);
+let id = b.finish();           // hash-cons; thereafter &[Token] only
+```
+
+A `Builder` is not a `TokenListId`; nothing half-built can be stored into
+the environment because no API accepts it. Node lists likewise; promotion is
+expressed as the *only* signature for storing into a box register.
+
+### 10.5 Effects as capability
+
+Only `World` owns file handles, RNG, clock. Backed by CI lints:
+clippy `disallowed_methods` / `disallowed_types` denying `std::fs`,
+`std::io::stdout`, `std::time`, `rand` outside the effects module.
+
+### 10.6 `Universe` and concurrency
+
+```rust
+pub struct Universe { env: Env, tokens: TokenStore, nodes: NodeArenas,
+                      world: World, /* scalars */ }   // Send, no shared internals
+```
+
+One owned value = one isolated timeline. Speculation = move a rolled-back
+clone to another thread. No locks or atomics in the hot loop; `&mut
+Universe` *is* the isolation. `rollback(&mut self, &Snapshot)` is a method
+on `Universe` only (atomicity rule, §9).
+
+### 10.7 The JIT bypass, contained
+
+Compiled code emits raw loads/stores; it cannot call `Env::set`. Containment:
+
+- `tex-state` exports a sealed `layout` module: `#[repr(C)]` guarantees,
+  field offsets, and the barrier as a specified instruction sequence
+  (identical to what `Env::set` compiles to — verify by inspecting asm).
+- The codegen crate is the one privileged consumer, inside the workspace
+  trust boundary, `unsafe` confined there.
+- The contract is enforced **differentially**: fuzzed programs under
+  interpreter and JIT must produce byte-identical journals and state hashes
+  (§11). A JIT that skips a barrier fails replay identity immediately.
+
+---
+
+## 11. Verification plan
+
+1. **Replay identity (the defining property, fuzzed).** Snapshot → random
+   op sequence → rollback → assert state-hash equality with pre-snapshot
+   hash. Any unlogged write survives rollback and diverges the hash. Run
+   under cargo-fuzz/proptest from day one; this test *is* the invariant.
+2. **Shadow mode.** Build flag: every `set` also updates a shadow
+   `HashMap<CellId, u64>`; periodic full comparison localizes divergence to
+   the offending op.
+3. **mprotect tripwire.** Paranoid debug build: arenas in `mmap` regions
+   held `PROT_READ` except during barrier methods; rogue stores — including
+   from `unsafe` arena internals or future FFI (fonts/ICU) — fault at the
+   guilty instruction. This is the net under the failure class the type
+   system cannot see.
+4. **Differential JIT replay** (once codegen exists): identical journals and
+   hashes vs. the interpreter on fuzzed programs.
+5. **Semantics conformance**: grouping/`\global`/`\aftergroup` behavior
+   validated against pdfTeX on targeted micro-suites before anything is
+   built on top (the journal replaces the save stack; it must be
+   *indistinguishable*).
+
+## 12. Performance budgets (regressions here are bugs)
+
+- Environment read: 1 indexed load; no branches beyond decode.
+- Write barrier: ≤ ~5 straight-line instructions; skip path (already
+  stamped this epoch) = compare + branch-not-taken.
+- Snapshot take: O(1), < 1 µs.
+- Journal growth: ≤ tens of KB per typical page (coalesced).
+- Rollback: proportional to journal slice + arena truncation; target < 1 ms
+  per page of history for typical documents.
+- Lexer fast path: no code-table tree access while generations unchanged.
+- Zero atomics/locks on the single-threaded hot path.
+
+Benchmarks to stand up early: meaning-lookup microbench, barrier microbench,
+snapshot/rollback cycle, and a macro-expansion torture loop (expl3-style
+`\csname` churn) to keep the interner honest.
+
+## 13. Milestones
+
+1. **M1 — Environment + journal.** Interner, `Env`, barrier, groups as
+   journal markers, `\global` tagging/compaction. Exit: conformance
+   micro-suite vs pdfTeX semantics + replay-identity fuzzing green.
+2. **M2 — Content.** Token store (builder/freeze, hash-consing), node
+   epoch arenas + survivor promotion. Exit: replay identity across content
+   watermarks; `\ifx`-as-id-compare correct.
+3. **M3 — Snapshots.** `Universe`, snapshot tuple, rollback, code tables
+   with CoW pages + generations, `World` virtualization + effect log,
+   commit-at-shipout. Exit: rollback/replay fuzzing including effects;
+   convergence hashes stable across identical runs.
+4. **M4 — Fast paths.** SIMD lexer under generation guards; read-set
+   recording; first memoization consumer (box-level). Exit: budgets in §12
+   met under benchmark suite.
+5. **M5 — Privileged consumers.** JIT layout contract + differential
+   replay; speculative page execution using snapshot forks.
+
+Milestone order is deliberate: every guard, version, and stable address the
+later features need already exists in the state layer by the time they land.
+
+## 14. Open questions
+
+- **Undo-only vs undo+redo records.** `(cell, old)` suffices for rollback;
+  `(cell, old, new)` (one extra word) enables forward replay for memo-effect
+  application and jumping forward between retained checkpoints without
+  re-execution. Leaning undo+redo; decide at M1 by measuring journal volume.
+- **Epoch width.** u32 epochs overflow in pathological sessions; u64 doubles
+  the stamp arrays. Likely u32 + session re-stamping at a safe point.
+- **Hash-index rewind** for interner/token store: lazy rebuild vs
+  insertion-ordered rewindable table. Start lazy; revisit if editor-loop
+  profiles show rebuild cost.
+- **Glue representation**: hash-consed immutable glue specs (`GlueId`,
+  mirroring Knuth's ref-counted glue) vs inline 4-word values. Leaning
+  hash-consed for snapshot sharing.
+- **Marks/inserts/penalties interaction with survivor arena** — spec the
+  promotion rules precisely at M2.
+- **Lua/scripting state** (if ever): must live behind the same
+  snapshot/effect discipline or be excluded by construction. Deferred.
