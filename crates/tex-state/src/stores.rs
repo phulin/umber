@@ -11,6 +11,8 @@ use crate::glue::{GlueSpec, GlueStore, GlueStoreMark};
 use crate::ids::{GlueId, NodeListId, TokenListId};
 use crate::interner::{Interner, InternerMark, Symbol};
 use crate::meaning::Meaning;
+use crate::node::Node;
+use crate::node_arena::{NodeArena, NodeArenaMark, NodeListBuilder};
 use crate::scaled::Scaled;
 use crate::token::Token;
 use crate::token_store::{TokenListBuilder, TokenStore, TokenStoreMark};
@@ -25,6 +27,7 @@ pub struct Snapshot {
     interner_mark: InternerMark,
     token_mark: TokenStoreMark,
     glue_mark: GlueStoreMark,
+    node_mark: NodeArenaMark,
 }
 
 /// Top-level owner for rollback-coupled state stores.
@@ -34,6 +37,7 @@ pub struct Stores {
     interner: Interner,
     tokens: TokenStore,
     glue: GlueStore,
+    nodes: NodeArena,
 }
 
 impl Stores {
@@ -45,6 +49,7 @@ impl Stores {
             interner: Interner::new(),
             tokens: TokenStore::new(),
             glue: GlueStore::new(),
+            nodes: NodeArena::new(),
         }
     }
 
@@ -115,6 +120,28 @@ impl Stores {
     pub fn glue(&self, id: GlueId) -> GlueSpec {
         self.assert_live_glue(id);
         self.glue.get(id)
+    }
+
+    /// Creates a fresh owned scratch node-list builder.
+    #[must_use]
+    pub fn node_list_builder(&self) -> NodeListBuilder {
+        self.nodes.builder()
+    }
+
+    /// Appends and freezes a node list in the owned epoch arena.
+    pub fn freeze_node_list(&mut self, nodes: &[Node]) -> NodeListId {
+        let mut builder = NodeListBuilder::new();
+        for node in nodes {
+            builder.push(node.clone());
+        }
+        builder.finish(&mut self.nodes)
+    }
+
+    /// Reads a live frozen epoch node list.
+    #[must_use]
+    pub fn nodes(&self, id: NodeListId) -> &[Node] {
+        self.assert_live_node_list(id);
+        self.nodes.get(id)
     }
 
     /// Enters a TeX group.
@@ -221,6 +248,7 @@ impl Stores {
             interner_mark: self.interner.watermark(),
             token_mark: self.tokens.watermark(),
             glue_mark: self.glue.watermark(),
+            node_mark: self.nodes.watermark(),
         }
     }
 
@@ -230,6 +258,7 @@ impl Stores {
         self.interner.truncate_to(snapshot.interner_mark);
         self.tokens.truncate_to(snapshot.token_mark);
         self.glue.truncate_to(snapshot.glue_mark);
+        self.nodes.truncate_to(snapshot.node_mark);
     }
 
     /// Returns the number of journal bytes appended since `snapshot`.
@@ -282,6 +311,13 @@ impl Stores {
         assert!(
             self.glue.contains(id),
             "glue id is not live in this Stores timeline"
+        );
+    }
+
+    fn assert_live_node_list(&self, id: NodeListId) {
+        assert!(
+            self.nodes.contains(id),
+            "node list is not live in this Stores timeline"
         );
     }
 

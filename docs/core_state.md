@@ -237,6 +237,13 @@ cells[i] = new
 - Nodes are born into a **per-epoch bump arena**. The overwhelming common
   case — node dies within its page — is freed by arena truncation (rollback)
   or wholesale release (after shipout). No free lists, no tracing GC.
+- In M2, the epoch arena is one growing `Vec<Node>` plus immutable
+  `NodeListId { arena, start, len }` spans minted only by
+  `NodeListBuilder::finish(&mut NodeArena)`. Builders are owned scratch
+  buffers; finishing appends and clears them. Child lists inside newly-frozen
+  nodes must already be frozen lower in the same epoch arena; debug builds
+  assert this bottom-up discipline. Survivor `NodeListId`s are shaped now, but
+  survivor access and promotion intentionally land in the survivor-arena task.
 - **Promotion on escape**: storing a node list into a box register, mark,
   or insertion is a barriered write, so the engine sees it and copies the
   list into a **survivor arena** with per-box refcounts. `\unhbox`/`\vsplit`

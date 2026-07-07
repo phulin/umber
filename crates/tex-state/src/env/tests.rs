@@ -106,13 +106,13 @@ fn dense_register_typed_api_round_trips_boundary_and_signed_values() {
     env.set_dimen(255, Scaled::MIN);
     env.set_skip(255, GlueId::new(u32::MAX));
     env.set_toks(255, TokenListId::new(u32::MAX - 1));
-    env.set_box_reg(255, NodeListId::new(u32::MAX - 2));
+    env.set_box_reg(255, NodeListId::testing_epoch(u32::MAX - 2, 0));
 
     assert_eq!(env.count(255), i32::MIN);
     assert_eq!(env.dimen(255), Scaled::MIN);
     assert_eq!(env.skip(255), GlueId::new(u32::MAX));
     assert_eq!(env.toks(255), TokenListId::new(u32::MAX - 1));
-    assert_eq!(env.box_reg(255), NodeListId::new(u32::MAX - 2));
+    assert_eq!(env.box_reg(255), NodeListId::testing_epoch(u32::MAX - 2, 0));
 }
 
 #[test]
@@ -124,7 +124,7 @@ fn dense_register_journal_records_use_bank_tags_and_encoded_words() {
     env.set_dimen(2, Scaled::from_raw(-2));
     env.set_skip(3, GlueId::new(33));
     env.set_toks(4, TokenListId::new(44));
-    env.set_box_reg(5, NodeListId::new(55));
+    env.set_box_reg(5, NodeListId::testing_epoch(55, 0));
 
     assert_eq!(
         env.journal_entries_since(start),

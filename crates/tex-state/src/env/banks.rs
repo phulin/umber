@@ -202,11 +202,11 @@ impl BankCodec for NodeListIdCodec {
     type Value = NodeListId;
 
     fn encode(value: Self::Value) -> u64 {
-        u64::from(value.raw())
+        value.encode_word()
     }
 
     fn decode(word: u64) -> Self::Value {
-        NodeListId::new(decode_u32(word))
+        NodeListId::decode_word(word)
     }
 }
 

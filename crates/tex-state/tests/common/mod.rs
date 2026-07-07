@@ -104,7 +104,7 @@ impl TestCell {
                 }
             }
             Self::Box(index) => {
-                let value = NodeListId::testing_new(word as u32);
+                let value = NodeListId::testing_epoch(word as u32, 0);
                 if global {
                     stores.set_box_reg_global(index, value);
                 } else {
@@ -153,7 +153,7 @@ impl TestCell {
             Self::Dimen(index) => u64::from(env.dimen(index).raw() as u32),
             Self::Skip(index) => u64::from(env.skip(index).raw()),
             Self::Toks(index) => u64::from(env.toks(index).raw()),
-            Self::Box(index) => u64::from(env.box_reg(index).raw()),
+            Self::Box(index) => u64::from(env.box_reg(index).start()),
             Self::IntParam(index) => u64::from(env.int_param(IntParam::new(index)) as u32),
             Self::DimenParam(index) => {
                 u64::from(env.dimen_param(DimenParam::new(index)).raw() as u32)

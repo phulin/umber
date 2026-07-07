@@ -8,6 +8,8 @@ pub mod ids;
 pub mod interner;
 pub(crate) mod journal;
 pub mod meaning;
+pub mod node;
+pub mod node_arena;
 pub mod scaled;
 pub mod stores;
 pub mod token;
