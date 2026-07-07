@@ -497,6 +497,36 @@ fn sparse_register_local_restores_on_group_exit() {
 }
 
 #[test]
+fn sparse_first_write_group_exit_prunes_restored_default_page() {
+    let mut env = Env::new();
+
+    env.enter_group();
+    env.set_count(300, 100);
+    assert_eq!(env.count(300), 100);
+    assert!(env.overflow_counts.has_page_for(300));
+
+    assert_eq!(env.leave_group(), Vec::<u64>::new());
+
+    assert_eq!(env.count(300), 0);
+    assert!(!env.overflow_counts.has_page_for(300));
+}
+
+#[test]
+fn sparse_first_write_rollback_prunes_restored_default_page() {
+    let mut env = Env::new();
+    let pos = env.checkpoint();
+
+    env.set_count(300, 100);
+    assert_eq!(env.count(300), 100);
+    assert!(env.overflow_counts.has_page_for(300));
+
+    env.rollback_to(pos);
+
+    assert_eq!(env.count(300), 0);
+    assert!(!env.overflow_counts.has_page_for(300));
+}
+
+#[test]
 fn group_exit_bumps_epoch_so_outer_undo_slice_records_rewrite() {
     let mut env = Env::new();
 

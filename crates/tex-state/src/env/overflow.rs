@@ -77,8 +77,19 @@ where
     #[allow(dead_code)]
     pub(crate) fn restore_word(&mut self, index: u16, word: u64) {
         let (page, offset) = sparse_location(index);
-        let page = self.pages[page].get_or_insert_with(|| Box::new(Page::default()));
-        page.values[offset] = word;
+        let Some(sparse_page) = self.pages[page].as_mut() else {
+            if word != 0 {
+                let mut sparse_page = Box::new(Page::default());
+                sparse_page.values[offset] = word;
+                self.pages[page] = Some(sparse_page);
+            }
+            return;
+        };
+
+        sparse_page.values[offset] = word;
+        if sparse_page.is_all_default() {
+            self.pages[page] = None;
+        }
     }
 
     #[cfg(any(test, feature = "testing", feature = "shadow"))]
@@ -120,6 +131,12 @@ impl Default for Page {
             values: [0; PAGE_LEN],
             stamps: [Epoch::ZERO; PAGE_LEN],
         }
+    }
+}
+
+impl Page {
+    fn is_all_default(&self) -> bool {
+        self.values.iter().all(|&word| word == 0)
     }
 }
 
