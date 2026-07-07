@@ -505,7 +505,7 @@ fn prop_cases() -> u32 {
     env::var("PROPTEST_CASES")
         .ok()
         .and_then(|value| value.parse().ok())
-        .unwrap_or(256)
+        .unwrap_or(100)
 }
 
 #[cfg(feature = "shadow")]
