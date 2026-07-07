@@ -1,0 +1,387 @@
+# TeX Primitive Checklist
+
+This checklist tracks the original TeX82 primitive set, grouped by subsystem. Engine extensions from e-TeX, pdfTeX, XeTeX, LuaTeX, and other descendants should be tracked separately.
+
+Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after the description when behavior is partial or deliberately differs.
+
+## Boxes And Rules
+
+- [ ] `\badness` - Reports the badness of the glue setting in the last box made.
+- [ ] `\box` - Appends a box register's contents and clears that register.
+- [ ] `\boxmaxdepth` - Sets the maximum depth allowed when building vertical boxes.
+- [ ] `\cleaders` - Builds centered leaders across glue.
+- [ ] `\copy` - Appends a copy of a box register without clearing it.
+- [ ] `\dp` - Reads or assigns the depth of a box register.
+- [ ] `\everyhbox` - Token list inserted at the start of every `\hbox`.
+- [ ] `\everyvbox` - Token list inserted at the start of every `\vbox`.
+- [ ] `\hbadness` - Threshold above which underfull or loose hboxes are reported.
+- [ ] `\hbox` - Builds a horizontal box.
+- [ ] `\hfuzz` - Tolerance before overfull hboxes are reported.
+- [ ] `\hrule` - Adds a horizontal rule in vertical mode.
+- [ ] `\ht` - Reads or assigns the height of a box register.
+- [ ] `\lastbox` - Removes and returns the last box from the current list when allowed.
+- [ ] `\leaders` - Repeats a box or rule across glue.
+- [ ] `\overfullrule` - Width of the diagnostic rule added to overfull boxes.
+- [ ] `\prevdepth` - Depth of the previous box on the current vertical list.
+- [ ] `\setbox` - Assigns a box register from an `\hbox`, `\vbox`, or `\vtop`.
+- [ ] `\unhbox` - Unpacks an hbox register into the current list and clears it.
+- [ ] `\unhcopy` - Unpacks a copy of an hbox register into the current list.
+- [ ] `\unvbox` - Unpacks a vbox register into the current list and clears it.
+- [ ] `\unvcopy` - Unpacks a copy of a vbox register into the current list.
+- [ ] `\vbadness` - Threshold above which underfull or loose vboxes are reported.
+- [ ] `\vbox` - Builds a vertical box with normal baseline positioning.
+- [ ] `\vfuzz` - Tolerance before overfull vboxes are reported.
+- [ ] `\vrule` - Adds a vertical rule in horizontal mode.
+- [ ] `\vtop` - Builds a vertical box aligned by its first item.
+- [ ] `\wd` - Reads or assigns the width of a box register.
+- [ ] `\xleaders` - Builds expanded leaders across glue.
+
+## Characters And Case
+
+- [ ] `\ ` - Inserts an explicit control space.
+- [ ] `\accent` - Places a text accent over the following character.
+- [ ] `\catcode` - Reads or assigns a character's category code.
+- [ ] `\char` - Produces a character token by numeric character code.
+- [ ] `\chardef` - Defines a control sequence as a character-code command.
+- [ ] `\endlinechar` - Character appended when TeX tokenizes an input line.
+- [ ] `\escapechar` - Character used when printing control sequence names.
+- [ ] `\lccode` - Reads or assigns a character's lowercase mapping.
+- [ ] `\lowercase` - Converts character tokens using `\lccode`.
+- [ ] `\newlinechar` - Character that starts a new line in terminal or log output.
+- [ ] `\number` - Expands an integer as decimal character tokens.
+- [ ] `\romannumeral` - Expands an integer as lowercase roman numeral tokens.
+- [ ] `\sfcode` - Reads or assigns a character's space-factor code.
+- [ ] `\string` - Expands a token into its character representation.
+- [ ] `\uccode` - Reads or assigns a character's uppercase mapping.
+- [ ] `\uppercase` - Converts character tokens using `\uccode`.
+
+## Diagnostics And Interaction
+
+- [ ] `\batchmode` - Suppresses terminal interaction and most terminal output.
+- [ ] `\errhelp` - Token list shown as help for a following `\errmessage`.
+- [ ] `\errmessage` - Issues an error with expanded message text.
+- [ ] `\errorcontextlines` - Number of context lines shown for errors.
+- [ ] `\errorstopmode` - Restores interactive stopping on errors.
+- [ ] `\meaning` - Expands to a textual description of a token's meaning.
+- [ ] `\message` - Writes an expanded message to the terminal and log.
+- [ ] `\nonstopmode` - Continues past errors without stopping for input.
+- [ ] `\pausing` - Prompts after input lines when positive.
+- [ ] `\scrollmode` - Scrolls past errors while still showing diagnostics.
+- [ ] `\show` - Displays the meaning of the next token.
+- [ ] `\showbox` - Writes a box register's contents to the log.
+- [ ] `\showboxbreadth` - Maximum number of list items shown per level.
+- [ ] `\showboxdepth` - Maximum nesting depth shown for box diagnostics.
+- [ ] `\showlists` - Writes the current semantic lists to the log.
+- [ ] `\showthe` - Displays the value produced by `\the`.
+- [ ] `\tracingcommands` - Logs command execution when positive.
+- [ ] `\tracinglostchars` - Logs missing font characters when positive.
+- [ ] `\tracingmacros` - Logs macro expansion and arguments when positive.
+- [ ] `\tracingonline` - Mirrors diagnostic log output to the terminal when positive.
+- [ ] `\tracingoutput` - Logs shipped-out box contents when positive.
+- [ ] `\tracingpages` - Logs page builder calculations when positive.
+- [ ] `\tracingparagraphs` - Logs line-breaking calculations when positive.
+- [ ] `\tracingrestores` - Logs save-stack restoration when positive.
+- [ ] `\tracingstats` - Logs memory statistics at job end when positive.
+
+## File I/O And Output
+
+- [ ] `\closein` - Closes an input stream.
+- [ ] `\closeout` - Closes an output stream.
+- [ ] `\endinput` - Stops reading the current input file after the current line.
+- [ ] `\immediate` - Executes the following output operation immediately.
+- [ ] `\input` - Reads another file at the current input position.
+- [ ] `\inputlineno` - Current line number in the active input file.
+- [ ] `\openin` - Opens a file for input.
+- [ ] `\openout` - Opens a file for output.
+- [ ] `\output` - Token list invoked by the page builder for output routine processing.
+- [ ] `\read` - Reads a line from an input stream into a control sequence.
+- [ ] `\shipout` - Writes a completed box to the DVI output.
+- [ ] `\special` - Emits backend-specific material into the DVI stream.
+- [ ] `\write` - Writes expanded material to an output stream, normally delayed until shipout.
+
+## Fonts
+
+- [ ] `\/` - Inserts italic correction for the preceding character or ligature.
+- [ ] `\font` - Defines a font control sequence and loads font metrics.
+- [ ] `\fontdimen` - Reads or assigns a font dimension parameter.
+- [ ] `\fontname` - Expands to the external name of a font.
+- [ ] `\nullfont` - Predefined empty font used when no real font is selected.
+
+## Glue And Skips
+
+- [ ] `\hfil` - Inserts first-order infinitely stretchable horizontal glue.
+- [ ] `\hfill` - Inserts second-order infinitely stretchable horizontal glue.
+- [ ] `\hfilneg` - Inserts negative first-order horizontal stretch.
+- [ ] `\hskip` - Inserts horizontal glue.
+- [ ] `\hss` - Inserts horizontal glue with infinite stretch and shrink.
+- [ ] `\lastskip` - Reports the last glue or muglue on the current list, or zero.
+- [ ] `\unskip` - Removes the last glue item from the current list when allowed.
+- [ ] `\vfil` - Inserts first-order infinitely stretchable vertical glue.
+- [ ] `\vfill` - Inserts second-order infinitely stretchable vertical glue.
+- [ ] `\vfilneg` - Inserts negative first-order vertical stretch.
+- [ ] `\vskip` - Inserts vertical glue.
+- [ ] `\vss` - Inserts vertical glue with infinite stretch and shrink.
+
+## Hyphenation And Languages
+
+- [ ] `\-` - Inserts a discretionary hyphen.
+- [ ] `\defaulthyphenchar` - Default `\hyphenchar` value for newly loaded fonts.
+- [ ] `\discretionary` - Adds an explicit discretionary break with pre, post, and replacement text.
+- [ ] `\hyphenation` - Adds hyphenation exceptions for the current language.
+- [ ] `\hyphenchar` - Reads or assigns the hyphenation character for a font.
+- [ ] `\language` - Selects the current hyphenation language.
+- [ ] `\lefthyphenmin` - Minimum characters before the first automatic hyphen.
+- [ ] `\patterns` - Adds INITEX hyphenation patterns for the current language.
+- [ ] `\righthyphenmin` - Minimum characters after the last automatic hyphen.
+- [ ] `\setlanguage` - Inserts a language whatsit into the current horizontal list.
+- [ ] `\uchyph` - Enables hyphenation of words beginning with uppercase letters when positive.
+
+## Insertions And Splits
+
+- [ ] `\holdinginserts` - Keeps insertions on the page list during output routine processing when positive.
+- [ ] `\insert` - Adds material to an insertion class.
+- [ ] `\insertpenalties` - Reports penalties accumulated for split or held insertions.
+- [ ] `\splitbotmark` - Last mark found by the most recent `\vsplit`.
+- [ ] `\splitfirstmark` - First mark found by the most recent `\vsplit`.
+- [ ] `\splitmaxdepth` - Maximum depth allowed in boxes produced by `\vsplit`.
+- [ ] `\splittopskip` - Top glue inserted in boxes produced by `\vsplit`.
+- [ ] `\vsplit` - Splits vertical material from a box register to a target height.
+
+## Job Control
+
+- [ ] `\day` - Current day of the month.
+- [ ] `\deadcycles` - Number of output routine calls since the last `\shipout`.
+- [ ] `\dump` - Writes a format file in INITEX; otherwise ends the job.
+- [ ] `\end` - Finishes the current job.
+- [ ] `\everyjob` - Token list inserted at the start of every job.
+- [ ] `\jobname` - Expands to the base name of the main input file.
+- [ ] `\mag` - Magnification ratio, scaled by 1000.
+- [ ] `\maxdeadcycles` - Maximum allowed output routine cycles without shipout.
+- [ ] `\month` - Current month number.
+- [ ] `\time` - Current minutes after midnight.
+- [ ] `\year` - Current year.
+
+## Kerns And Box Motion
+
+- [ ] `\kern` - Adds an explicit kern to the current list.
+- [ ] `\lastkern` - Reports the last kern on the current list, or zero.
+- [ ] `\lower` - Lowers a box in horizontal or math mode.
+- [ ] `\moveleft` - Moves a box left in vertical mode.
+- [ ] `\moveright` - Moves a box right in vertical mode.
+- [ ] `\raise` - Raises a box in horizontal or math mode.
+- [ ] `\unkern` - Removes the last kern from the current list when allowed.
+
+## Conditionals
+
+- [ ] `\else` - Starts the false branch of a conditional.
+- [ ] `\fi` - Ends a conditional.
+- [ ] `\if` - Compares two character tokens by character code.
+- [ ] `\ifcase` - Selects among numeric conditional branches.
+- [ ] `\ifcat` - Compares two tokens by category code.
+- [ ] `\ifdim` - Compares two dimensions.
+- [ ] `\ifeof` - Tests whether an input stream is at end of file.
+- [ ] `\iffalse` - Starts a conditional that is always false.
+- [ ] `\ifhbox` - Tests whether a box register contains an hbox.
+- [ ] `\ifhmode` - Tests whether TeX is in horizontal mode.
+- [ ] `\ifinner` - Tests whether TeX is in an internal mode.
+- [ ] `\ifmmode` - Tests whether TeX is in math mode.
+- [ ] `\ifnum` - Compares two integers.
+- [ ] `\ifodd` - Tests whether an integer is odd.
+- [ ] `\iftrue` - Starts a conditional that is always true.
+- [ ] `\ifvbox` - Tests whether a box register contains a vbox.
+- [ ] `\ifvmode` - Tests whether TeX is in vertical mode.
+- [ ] `\ifvoid` - Tests whether a box register is void.
+- [ ] `\ifx` - Compares two tokens by meaning.
+- [ ] `\or` - Separates branches in `\ifcase`.
+
+## Macros, Expansion, And Grouping
+
+- [ ] `\afterassignment` - Saves a token to insert after the next assignment.
+- [ ] `\aftergroup` - Saves a token to insert after the current group ends.
+- [ ] `\begingroup` - Starts an explicit group.
+- [ ] `\csname` - Builds a control sequence from expanded character tokens.
+- [ ] `\def` - Defines a macro without expanding replacement text.
+- [ ] `\edef` - Defines a macro after expanding replacement text.
+- [ ] `\endcsname` - Terminates a `\csname` name scan.
+- [ ] `\endgroup` - Ends an explicit group.
+- [ ] `\expandafter` - Expands the token after the next token before continuing.
+- [ ] `\futurelet` - Assigns a control sequence to the following token while preserving input.
+- [ ] `\gdef` - Globally defines a macro without expanding replacement text.
+- [ ] `\global` - Prefix that makes the following assignment global.
+- [ ] `\globaldefs` - Overrides local or global assignment behavior by sign.
+- [ ] `\let` - Gives a control sequence the current meaning of another token.
+- [ ] `\long` - Prefix allowing a macro parameter to contain `\par`.
+- [ ] `\noexpand` - Suppresses expansion of the next token during expansion-only contexts.
+- [ ] `\outer` - Prefix marking a macro invalid in restricted scanning contexts.
+- [ ] `\relax` - No-op command that can terminate scans or absorb expansion.
+- [ ] `\the` - Expands an internal quantity or token register value.
+- [ ] `\xdef` - Globally defines a macro after expanding replacement text.
+
+## Marks
+
+- [ ] `\botmark` - Last mark found on the current page.
+- [ ] `\firstmark` - First mark found on the current page.
+- [ ] `\mark` - Adds mark text to the current vertical list.
+- [ ] `\topmark` - Mark inherited from the previous page.
+
+## Math
+
+- [ ] `\above` - Builds a fraction with explicit rule thickness and no delimiters.
+- [ ] `\abovedisplayshortskip` - Glue above a display when the preceding line is short.
+- [ ] `\abovedisplayskip` - Normal glue above a display.
+- [ ] `\abovewithdelims` - Builds a generalized fraction with delimiters and explicit rule thickness.
+- [ ] `\atop` - Builds a fraction-like stack with no rule and no delimiters.
+- [ ] `\atopwithdelims` - Builds a fraction-like stack with delimiters and no rule.
+- [ ] `\belowdisplayshortskip` - Glue below a display when short-display spacing is used.
+- [ ] `\belowdisplayskip` - Normal glue below a display.
+- [ ] `\binoppenalty` - Penalty for line breaks after binary operators in math.
+- [ ] `\defaultskewchar` - Default `\skewchar` value for newly loaded fonts.
+- [ ] `\delcode` - Reads or assigns a character's delimiter code.
+- [ ] `\delimiter` - Adds a delimiter by numeric delimiter code.
+- [ ] `\delimiterfactor` - Scaling factor used to choose delimiter sizes.
+- [ ] `\delimitershortfall` - Allowed shortfall when choosing delimiter sizes.
+- [ ] `\displayindent` - Indentation applied to the current display.
+- [ ] `\displaylimits` - Uses default limit placement for large operators.
+- [ ] `\displaystyle` - Selects display math style.
+- [ ] `\displaywidowpenalty` - Penalty before a display after the penultimate paragraph line.
+- [ ] `\displaywidth` - Line width available to the current display.
+- [ ] `\eqno` - Adds a right-side equation number to a display.
+- [ ] `\everydisplay` - Token list inserted when entering display math.
+- [ ] `\everymath` - Token list inserted when entering inline math.
+- [ ] `\fam` - Current math family for variable-family math characters.
+- [ ] `\left` - Starts a delimited math subformula with scalable left delimiter.
+- [ ] `\leqno` - Adds a left-side equation number to a display.
+- [ ] `\limits` - Forces limits above and below a large operator.
+- [ ] `\mathaccent` - Adds a math accent atom.
+- [ ] `\mathbin` - Treats the following item as a binary operator atom.
+- [ ] `\mathchar` - Adds a math character by numeric math code.
+- [ ] `\mathchardef` - Defines a control sequence as a math character command.
+- [ ] `\mathchoice` - Provides alternatives for display, text, script, and scriptscript styles.
+- [ ] `\mathclose` - Treats the following item as a closing atom.
+- [ ] `\mathcode` - Reads or assigns a character's math code.
+- [ ] `\mathinner` - Treats the following subformula as an inner atom.
+- [ ] `\mathop` - Treats the following item as a large-operator atom.
+- [ ] `\mathopen` - Treats the following item as an opening atom.
+- [ ] `\mathord` - Treats the following item as an ordinary atom.
+- [ ] `\mathpunct` - Treats the following item as a punctuation atom.
+- [ ] `\mathrel` - Treats the following item as a relation atom.
+- [ ] `\mathsurround` - Extra space inserted around inline math.
+- [ ] `\medmuskip` - Medium math glue between math atoms.
+- [ ] `\mkern` - Adds a math kern.
+- [ ] `\mskip` - Adds math glue.
+- [ ] `\muskip` - Reads or assigns a math glue register.
+- [ ] `\muskipdef` - Defines a symbolic name for a math glue register.
+- [ ] `\nolimits` - Forces limits to the side of a large operator.
+- [ ] `\nonscript` - Suppresses following glue or kern in script styles.
+- [ ] `\nulldelimiterspace` - Width reserved for missing delimiters.
+- [ ] `\over` - Builds a normal fraction with no delimiters.
+- [ ] `\overline` - Places a rule over the following math item.
+- [ ] `\overwithdelims` - Builds a normal fraction with delimiters.
+- [ ] `\postdisplaypenalty` - Penalty inserted after a display.
+- [ ] `\predisplaypenalty` - Penalty inserted before a display.
+- [ ] `\predisplaysize` - Effective width of the line preceding a display.
+- [ ] `\radical` - Builds a radical atom from a delimiter code and nucleus.
+- [ ] `\relpenalty` - Penalty for line breaks after relation atoms in math.
+- [ ] `\right` - Ends a delimited math subformula with scalable right delimiter.
+- [ ] `\scriptfont` - Font used for a family in script style.
+- [ ] `\scriptscriptfont` - Font used for a family in scriptscript style.
+- [ ] `\scriptscriptstyle` - Selects scriptscript math style.
+- [ ] `\scriptspace` - Extra space after subscripts and superscripts.
+- [ ] `\scriptstyle` - Selects script math style.
+- [ ] `\skewchar` - Font-specific character used to position math accents.
+- [ ] `\textfont` - Font used for a family in text style.
+- [ ] `\textstyle` - Selects text math style.
+- [ ] `\thickmuskip` - Thick math glue between math atoms.
+- [ ] `\thinmuskip` - Thin math glue between math atoms.
+- [ ] `\underline` - Places a rule under the following math item.
+- [ ] `\vcenter` - Builds a vertically centered box for math formulas.
+
+## Page Builder
+
+- [ ] `\hoffset` - Horizontal offset added to the default one-inch origin.
+- [ ] `\maxdepth` - Maximum depth allowed on the main vertical page.
+- [ ] `\pagedepth` - Depth of the last box on the current page.
+- [ ] `\pagefilllstretch` - Third-order infinite stretch currently on the page.
+- [ ] `\pagefillstretch` - Second-order infinite stretch currently on the page.
+- [ ] `\pagefilstretch` - First-order infinite stretch currently on the page.
+- [ ] `\pagegoal` - Target height for the current page.
+- [ ] `\pageshrink` - Finite shrink currently on the page.
+- [ ] `\pagestretch` - Finite stretch currently on the page.
+- [ ] `\pagetotal` - Natural height accumulated on the current page.
+- [ ] `\topskip` - Glue inserted before the first box on a page.
+- [ ] `\voffset` - Vertical offset added to the default one-inch origin.
+- [ ] `\vsize` - Target page body height.
+
+## Paragraphs And Line Breaking
+
+- [ ] `\adjdemerits` - Demerits for adjacent visually incompatible lines.
+- [ ] `\baselineskip` - Preferred glue between adjacent baselines.
+- [ ] `\doublehyphendemerits` - Demerits for consecutive hyphenated lines.
+- [ ] `\emergencystretch` - Extra stretch used during emergency line-breaking pass.
+- [ ] `\everypar` - Token list inserted at the start of each paragraph.
+- [ ] `\finalhyphendemerits` - Demerits when the penultimate line is hyphenated.
+- [ ] `\hangafter` - Line number where hanging indentation changes.
+- [ ] `\hangindent` - Hanging indentation amount for paragraphs.
+- [ ] `\hsize` - Line width for normal paragraph building.
+- [ ] `\ignorespaces` - Skips expandable tokens and spaces until a nonspace token appears.
+- [ ] `\indent` - Starts an indented paragraph.
+- [ ] `\leftskip` - Glue added to the left of every line.
+- [ ] `\lineskip` - Fallback interline glue when baseline glue would be too small.
+- [ ] `\lineskiplimit` - Threshold for using `\lineskip` instead of `\baselineskip`.
+- [ ] `\looseness` - Requests more or fewer lines than the optimal paragraph.
+- [ ] `\noboundary` - Suppresses ligature and kern boundary processing.
+- [ ] `\noindent` - Starts an unindented paragraph.
+- [ ] `\par` - Ends the current paragraph.
+- [ ] `\parfillskip` - Glue appended to the final line of a paragraph.
+- [ ] `\parindent` - Width of paragraph indentation.
+- [ ] `\parshape` - Defines per-line indentation and width.
+- [ ] `\parskip` - Glue inserted between paragraphs.
+- [ ] `\pretolerance` - Badness threshold for the no-hyphenation line-breaking pass.
+- [ ] `\prevgraf` - Number of lines in the most recent paragraph contribution.
+- [ ] `\rightskip` - Glue added to the right of every line.
+- [ ] `\spacefactor` - Current space factor used for interword spacing.
+- [ ] `\spaceskip` - Explicit interword glue override.
+- [ ] `\tolerance` - Badness threshold for line breaking with hyphenation.
+- [ ] `\vadjust` - Inserts vertical material associated with the current line.
+- [ ] `\xspaceskip` - Explicit intersentence glue override.
+
+## Penalties
+
+- [ ] `\brokenpenalty` - Penalty after a page break at a hyphenated line.
+- [ ] `\clubpenalty` - Penalty after the first line of a paragraph.
+- [ ] `\exhyphenpenalty` - Penalty for line breaks after explicit hyphens.
+- [ ] `\floatingpenalty` - Penalty for insertions split between pages.
+- [ ] `\hyphenpenalty` - Penalty for line breaks at discretionary hyphens.
+- [ ] `\interlinepenalty` - Penalty inserted between paragraph lines.
+- [ ] `\lastpenalty` - Reports the last penalty on the current list, or zero.
+- [ ] `\linepenalty` - Base demerit contribution for each broken line.
+- [ ] `\outputpenalty` - Penalty value that triggered the current output routine.
+- [ ] `\penalty` - Adds a penalty node to the current list.
+- [ ] `\unpenalty` - Removes the last penalty from the current list when allowed.
+- [ ] `\widowpenalty` - Penalty after the penultimate line of a paragraph.
+
+## Registers And Arithmetic
+
+- [ ] `\advance` - Adds to an integer, dimension, glue, or muglue quantity.
+- [ ] `\count` - Reads or assigns an integer register.
+- [ ] `\countdef` - Defines a symbolic name for an integer register.
+- [ ] `\dimen` - Reads or assigns a dimension register.
+- [ ] `\dimendef` - Defines a symbolic name for a dimension register.
+- [ ] `\divide` - Divides a register by an integer.
+- [ ] `\multiply` - Multiplies a register by an integer.
+- [ ] `\skip` - Reads or assigns a glue register.
+- [ ] `\skipdef` - Defines a symbolic name for a glue register.
+- [ ] `\toks` - Reads or assigns a token-list register.
+- [ ] `\toksdef` - Defines a symbolic name for a token-list register.
+
+## Alignments
+
+- [ ] `\cr` - Ends an alignment row.
+- [ ] `\crcr` - Ends an alignment row unless a row just ended.
+- [ ] `\everycr` - Token list inserted after `\cr` or nonredundant `\crcr`.
+- [ ] `\halign` - Builds a horizontal alignment.
+- [ ] `\noalign` - Inserts vertical material between alignment rows.
+- [ ] `\omit` - Ignores the current alignment entry template.
+- [ ] `\span` - Combines adjacent alignment columns.
+- [ ] `\tabskip` - Glue inserted between alignment columns.
+- [ ] `\valign` - Builds a vertical alignment.
