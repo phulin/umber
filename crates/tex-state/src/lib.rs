@@ -5,7 +5,7 @@ pub mod env;
 pub mod epoch;
 pub mod ids;
 pub mod interner;
-pub mod journal;
+pub(crate) mod journal;
 pub mod meaning;
 pub mod scaled;
 pub mod stores;

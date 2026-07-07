@@ -9,7 +9,7 @@ use crate::ids::SnapshotId;
 
 /// A journal entry.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Entry {
+pub(crate) enum Entry {
     Undo(UndoRec),
     Marker(Marker),
 }
@@ -22,7 +22,7 @@ pub enum Entry {
 /// epoch advances. M1 accepts that behavior: rollback uses `old`, while later
 /// forward-replay consumers must re-derive final values from live cells.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct UndoRec {
+pub(crate) struct UndoRec {
     cell: CellId,
     old: u64,
     new: u64,
@@ -31,93 +31,96 @@ pub struct UndoRec {
 impl UndoRec {
     /// Creates a journal record for `cell`, replacing `old` with `new`.
     #[must_use]
-    pub const fn new(cell: CellId, old: u64, new: u64) -> Self {
+    pub(crate) const fn new(cell: CellId, old: u64, new: u64) -> Self {
         Self { cell, old, new }
     }
 
     /// Returns the recorded cell id.
     #[must_use]
-    pub const fn cell(self) -> CellId {
+    pub(crate) const fn cell(self) -> CellId {
         self.cell
     }
 
     /// Returns the value to restore when walking the journal backward.
     #[must_use]
-    pub const fn old(self) -> u64 {
+    pub(crate) const fn old(self) -> u64 {
         self.old
     }
 
     /// Returns the value written by the barrier.
     #[must_use]
-    pub const fn new_value(self) -> u64 {
+    pub(crate) const fn new_value(self) -> u64 {
         self.new
     }
 }
 
 /// Structural journal markers.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Marker {
-    Group { aftergroup_start: u32 },
+pub(crate) enum Marker {
+    Group {
+        aftergroup_start: u32,
+    },
+    #[allow(dead_code)]
     Checkpoint(SnapshotId),
 }
 
 /// A stable position between journal entries.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct JournalPos(u32);
+pub(crate) struct JournalPos(u32);
 
 impl JournalPos {
     /// Returns the raw entry offset.
     #[must_use]
-    pub const fn raw(self) -> u32 {
+    const fn raw(self) -> u32 {
         self.0
     }
 }
 
 /// Append/truncate journal storage.
 #[derive(Clone, Debug, Default)]
-pub struct Journal {
+pub(crate) struct Journal {
     entries: Vec<Entry>,
 }
 
 impl Journal {
     /// Creates an empty journal.
     #[must_use]
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
     /// Appends an undo+redo record.
-    pub fn push_undo(&mut self, rec: UndoRec) {
+    pub(crate) fn push_undo(&mut self, rec: UndoRec) {
         self.entries.push(Entry::Undo(rec));
     }
 
     /// Appends a structural marker.
-    pub fn push_marker(&mut self, marker: Marker) {
+    pub(crate) fn push_marker(&mut self, marker: Marker) {
         self.entries.push(Entry::Marker(marker));
     }
 
     /// Returns the current end position.
     #[must_use]
-    pub fn pos(&self) -> JournalPos {
+    pub(crate) fn pos(&self) -> JournalPos {
         JournalPos(u32_len(self.entries.len(), "journal exceeds u32 entries"))
     }
 
     /// Returns entries appended since `pos`.
     #[must_use]
-    pub fn entries_since(&self, pos: JournalPos) -> &[Entry] {
+    pub(crate) fn entries_since(&self, pos: JournalPos) -> &[Entry] {
         let start = checked_pos(pos, self.entries.len());
         &self.entries[start..]
     }
 
     /// Truncates the journal to `pos`.
-    pub fn truncate_to(&mut self, pos: JournalPos) {
+    pub(crate) fn truncate_to(&mut self, pos: JournalPos) {
         let len = checked_pos(pos, self.entries.len());
         self.entries.truncate(len);
     }
 
     /// Finds the last group marker, skipping checkpoint markers.
     #[must_use]
-    pub fn find_last_group_marker(&self) -> Option<(JournalPos, u32)> {
+    pub(crate) fn find_last_group_marker(&self) -> Option<(JournalPos, u32)> {
         for (index, entry) in self.entries.iter().enumerate().rev() {
             if let Entry::Marker(Marker::Group { aftergroup_start }) = entry {
                 return Some((
