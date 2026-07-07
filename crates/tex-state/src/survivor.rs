@@ -71,7 +71,8 @@ impl SurvivorArena {
 
     pub(crate) fn reconcile_refcounts(&mut self, refs: &HashMap<SurvivorRootId, u32>) {
         self.free.clear();
-        for (raw, slot) in self.slots.iter_mut().enumerate() {
+        for raw in 0..self.slots.len() {
+            let slot = &mut self.slots[raw];
             let root = SurvivorRootId::new(raw as u32);
             let count = refs.get(&root).copied().unwrap_or(0);
             match slot {
@@ -134,9 +135,10 @@ impl SurvivorArena {
     }
 
     fn root_mut(&mut self, root: SurvivorRootId) -> &mut SurvivorRoot {
-        self.slots
-            .get_mut(root.raw() as usize)
-            .and_then(Option::as_mut)
+        let index = root.raw() as usize;
+        assert!(index < self.slots.len(), "survivor root is not live");
+        self.slots[index]
+            .as_mut()
             .expect("survivor root is not live")
     }
 
