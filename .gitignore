@@ -1,0 +1,21 @@
+/target/
+**/*.rs.bk
+
+/third_party/reference/
+/third_party/downloads/
+
+.codex
+.claude
+
+# Parallel subagent worktrees
+.worktrees/
+
+notes.md
+
+.env
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+.beads/proxieddb/
