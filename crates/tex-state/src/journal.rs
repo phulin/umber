@@ -1,8 +1,8 @@
 //! Append-only journal storage for barriered environment writes.
 //!
-//! The journal records undo+redo words and structural markers. Group exit and
-//! rollback semantics are implemented by later Env tasks; this module only
-//! owns positions, append, slicing, truncation, and marker lookup.
+//! The journal records undo+redo words and structural markers. `Env` owns the
+//! group-exit and rollback walks; this module owns positions, append, slicing,
+//! truncation, and marker lookup.
 
 use crate::cell::CellId;
 use crate::ids::SnapshotId;

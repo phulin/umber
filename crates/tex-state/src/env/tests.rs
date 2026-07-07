@@ -6,6 +6,7 @@ use crate::interner::Symbol;
 use crate::journal::{Entry, UndoRec};
 use crate::meaning::Meaning;
 use crate::scaled::Scaled;
+use std::collections::HashMap;
 
 #[test]
 fn default_get_before_any_set_is_undefined() {
@@ -320,6 +321,233 @@ fn sparse_register_classes_are_independent() {
     assert!(env.overflow_dimens.has_page_for(300));
 }
 
+#[test]
+fn nested_groups_follow_naive_oracle_three_deep() {
+    let mut env = Env::new();
+    let mut oracle = Oracle::new();
+
+    oracle.set_local(1, 10);
+    env.set_count(1, 10);
+    assert_oracle(&env, &oracle, &[1, 2, 300]);
+
+    env.enter_group();
+    oracle.enter_group();
+    oracle.set_local(1, 11);
+    oracle.set_local(2, 20);
+    env.set_count(1, 11);
+    env.set_count(2, 20);
+    assert_oracle(&env, &oracle, &[1, 2, 300]);
+
+    env.enter_group();
+    oracle.enter_group();
+    oracle.set_local(1, 12);
+    oracle.set_global(2, 21);
+    env.set_count(1, 12);
+    env.set_count_global(2, 21);
+    assert_oracle(&env, &oracle, &[1, 2, 300]);
+
+    env.enter_group();
+    oracle.enter_group();
+    oracle.set_local(300, 30);
+    env.set_count(300, 30);
+    assert_oracle(&env, &oracle, &[1, 2, 300]);
+
+    assert_eq!(env.leave_group(), Vec::<u64>::new());
+    oracle.leave_group();
+    assert_oracle(&env, &oracle, &[1, 2, 300]);
+
+    assert_eq!(env.leave_group(), Vec::<u64>::new());
+    oracle.leave_group();
+    assert_oracle(&env, &oracle, &[1, 2, 300]);
+
+    assert_eq!(env.leave_group(), Vec::<u64>::new());
+    oracle.leave_group();
+    assert_oracle(&env, &oracle, &[1, 2, 300]);
+}
+
+#[test]
+fn local_write_shadowed_by_global_same_cell_survives_group_exit() {
+    let mut env = Env::new();
+    let mut oracle = Oracle::new();
+
+    env.enter_group();
+    oracle.enter_group();
+    env.set_count(7, 1);
+    oracle.set_local(7, 1);
+    env.set_count_global(7, 2);
+    oracle.set_global(7, 2);
+
+    assert_oracle(&env, &oracle, &[7]);
+    assert_eq!(env.leave_group(), Vec::<u64>::new());
+    oracle.leave_group();
+
+    assert_oracle(&env, &oracle, &[7]);
+    assert_eq!(env.count(7), 2);
+}
+
+#[test]
+fn global_then_local_same_cell_local_wins_inside_global_after_exit() {
+    let mut env = Env::new();
+    let mut oracle = Oracle::new();
+
+    env.enter_group();
+    oracle.enter_group();
+    env.set_count_global(9, 5);
+    oracle.set_global(9, 5);
+    env.set_count(9, 6);
+    oracle.set_local(9, 6);
+
+    assert_eq!(env.count(9), 6);
+    assert_oracle(&env, &oracle, &[9]);
+
+    assert_eq!(env.leave_group(), Vec::<u64>::new());
+    oracle.leave_group();
+
+    assert_eq!(env.count(9), 5);
+    assert_oracle(&env, &oracle, &[9]);
+}
+
+#[test]
+fn repeated_same_epoch_globals_keep_last_global_after_exit() {
+    let mut env = Env::new();
+
+    env.enter_group();
+    env.set_count_global(10, 1);
+    env.set_count_global(10, 2);
+    env.set_count(10, 3);
+
+    assert_eq!(env.count(10), 3);
+    assert_eq!(env.leave_group(), Vec::<u64>::new());
+    assert_eq!(env.count(10), 2);
+}
+
+#[test]
+fn aftergroup_payloads_are_fifo_per_group_across_nesting() {
+    let mut env = Env::new();
+
+    env.enter_group();
+    env.push_aftergroup(1);
+    env.enter_group();
+    env.push_aftergroup(2);
+    env.push_aftergroup(3);
+
+    assert_eq!(env.leave_group(), vec![2, 3]);
+
+    env.push_aftergroup(4);
+    assert_eq!(env.leave_group(), vec![1, 4]);
+}
+
+#[test]
+fn sparse_register_local_restores_on_group_exit() {
+    let mut env = Env::new();
+    let mut oracle = Oracle::new();
+
+    env.set_count(300, 100);
+    oracle.set_local(300, 100);
+    env.enter_group();
+    oracle.enter_group();
+    env.set_count(300, 200);
+    oracle.set_local(300, 200);
+    assert_oracle(&env, &oracle, &[300]);
+
+    assert_eq!(env.leave_group(), Vec::<u64>::new());
+    oracle.leave_group();
+
+    assert_oracle(&env, &oracle, &[300]);
+    assert_eq!(env.count(300), 100);
+}
+
+#[test]
+fn group_exit_bumps_epoch_so_outer_undo_slice_records_rewrite() {
+    let mut env = Env::new();
+
+    env.enter_group();
+    let outer_pos = env.journal_pos();
+    env.enter_group();
+    env.set_count(11, 1);
+    assert_eq!(env.leave_group(), Vec::<u64>::new());
+
+    // Regression for core_state.md §6 / 97a3c1d: without the group-exit epoch
+    // bump, this write sees the restored cell's high stamp and skips journaling,
+    // so the enclosing rollback would fail to restore the pre-inner value.
+    env.set_count(11, 2);
+    env.rollback_to(outer_pos);
+
+    assert_eq!(env.count(11), 0);
+}
+
+#[test]
+fn rollback_to_restores_globals_across_group_markers() {
+    let mut env = Env::new();
+    let pos = env.journal_pos();
+
+    env.enter_group();
+    env.set_count_global(1, 10);
+    env.enter_group();
+    env.set_count_global(300, 20);
+    env.set_count(2, 30);
+
+    env.rollback_to(pos);
+
+    assert_eq!(env.count(1), 0);
+    assert_eq!(env.count(2), 0);
+    assert_eq!(env.count(300), 0);
+    assert!(env.journal_entries_since(pos).is_empty());
+}
+
 fn undo(bank: BankTag, index: u32, old: u64, new: u64) -> Entry {
     Entry::Undo(UndoRec::new(CellId::new(bank, index), old, new))
+}
+
+#[derive(Debug)]
+struct Oracle {
+    scopes: Vec<HashMap<u16, i32>>,
+}
+
+impl Oracle {
+    fn new() -> Self {
+        Self {
+            scopes: vec![HashMap::new()],
+        }
+    }
+
+    fn enter_group(&mut self) {
+        self.scopes.push(HashMap::new());
+    }
+
+    fn leave_group(&mut self) {
+        assert!(self.scopes.len() > 1, "oracle group underflow");
+        self.scopes.pop();
+    }
+
+    fn set_local(&mut self, index: u16, value: i32) {
+        self.scopes
+            .last_mut()
+            .expect("oracle always has a root scope")
+            .insert(index, value);
+    }
+
+    fn set_global(&mut self, index: u16, value: i32) {
+        for scope in &mut self.scopes {
+            scope.insert(index, value);
+        }
+    }
+
+    fn get(&self, index: u16) -> i32 {
+        self.scopes
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(&index).copied())
+            .unwrap_or(0)
+    }
+}
+
+fn assert_oracle(env: &Env, oracle: &Oracle, indices: &[u16]) {
+    for &index in indices {
+        assert_eq!(
+            env.count(index),
+            oracle.get(index),
+            "count register {index}"
+        );
+    }
 }

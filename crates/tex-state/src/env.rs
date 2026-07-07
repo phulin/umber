@@ -20,9 +20,10 @@ use crate::cell::{BankTag, CellId};
 use crate::epoch::Epoch;
 use crate::ids::{GlueId, NodeListId, TokenListId};
 use crate::interner::Symbol;
-use crate::journal::{Entry, Journal, JournalPos, UndoRec};
+use crate::journal::{Entry, Journal, JournalPos, Marker, UndoRec};
 use crate::meaning::Meaning;
 use crate::scaled::Scaled;
+use std::collections::HashSet;
 
 const SEGMENT_BITS: u32 = 16;
 const SEGMENT_LEN: usize = 1 << SEGMENT_BITS;
@@ -108,6 +109,7 @@ pub struct Env {
     glue_params: FixedBank<GlueIdCodec, PARAMETER_COUNT>,
     tok_params: FixedBank<TokenListIdCodec, PARAMETER_COUNT>,
     journal: Journal,
+    aftergroup: Vec<u64>,
     epoch: Epoch,
 }
 
@@ -133,6 +135,7 @@ impl Env {
             glue_params: FixedBank::new(),
             tok_params: FixedBank::new(),
             journal: Journal::new(),
+            aftergroup: Vec::new(),
             epoch: Epoch::START,
         }
     }
@@ -158,6 +161,79 @@ impl Env {
     #[must_use]
     pub fn journal_entries_since(&self, pos: JournalPos) -> &[Entry] {
         self.journal.entries_since(pos)
+    }
+
+    /// Enters a TeX group.
+    pub fn enter_group(&mut self) {
+        let aftergroup_start = u32_len(
+            self.aftergroup.len(),
+            "aftergroup payload list exceeds u32 entries",
+        );
+        self.journal.push_marker(Marker::Group { aftergroup_start });
+        self.epoch.bump();
+    }
+
+    /// Pushes an opaque `\aftergroup` payload for the current group.
+    pub fn push_aftergroup(&mut self, payload: u64) {
+        self.aftergroup.push(payload);
+    }
+
+    /// Leaves the innermost TeX group and returns its `\aftergroup` payloads.
+    ///
+    /// Payloads are returned FIFO. Global assignments in the group survive by
+    /// being compacted into the enclosing journal slice.
+    #[must_use]
+    pub fn leave_group(&mut self) -> Vec<u64> {
+        let Some((marker_pos, aftergroup_start)) = self.journal.find_last_group_marker() else {
+            panic!("leave_group without matching group marker");
+        };
+        let entries = self.journal.entries_since(marker_pos).to_vec();
+        let mut globals = Vec::new();
+        let mut globally_reassigned = HashSet::new();
+
+        for entry in entries.iter().rev() {
+            match *entry {
+                Entry::Undo(rec) if rec.cell().is_global() => {
+                    globally_reassigned.insert(cell_key(rec.cell()));
+                    globals.push(rec);
+                }
+                Entry::Undo(rec) if globally_reassigned.contains(&cell_key(rec.cell())) => {}
+                Entry::Undo(rec) => self.restore_raw(rec.cell(), rec.old()),
+                Entry::Marker(Marker::Group { .. }) => break,
+                Entry::Marker(Marker::Checkpoint(_)) => {}
+            }
+        }
+
+        self.journal.truncate_to(marker_pos);
+        for rec in globals.into_iter().rev() {
+            self.restore_raw(rec.cell(), rec.new_value());
+            self.journal.push_undo(rec);
+        }
+
+        let aftergroup_start = checked_aftergroup_start(aftergroup_start, self.aftergroup.len());
+        let payloads = self.aftergroup.drain(aftergroup_start..).collect();
+
+        // core_state.md §6 / 97a3c1d: restore leaves stamps high, so group
+        // exit must start a fresh epoch or the enclosing undo slice can be
+        // corrupted by a later write to the same restored cell.
+        self.epoch.bump();
+        payloads
+    }
+
+    /// Rolls back all journaled environment writes after `pos`.
+    ///
+    /// This restores global assignments too. The public atomic rollback will
+    /// live on `Universe`; this hook exists only until that M3 owner is built.
+    #[doc(hidden)]
+    pub fn rollback_to(&mut self, pos: JournalPos) {
+        let entries = self.journal.entries_since(pos).to_vec();
+        for entry in entries.iter().rev() {
+            if let Entry::Undo(rec) = *entry {
+                self.restore_raw(rec.cell(), rec.old());
+            }
+        }
+        self.journal.truncate_to(pos);
+        self.epoch.bump();
     }
 
     /// Returns the meaning for `symbol`, defaulting to `Undefined`.
@@ -454,6 +530,8 @@ pub(crate) fn barrier(
     if *stamp_slot < epoch {
         journal.push_undo(UndoRec::new(cell_id, *cell_slot, new_word));
         *stamp_slot = epoch;
+    } else if cell_id.is_global() {
+        journal.push_undo(UndoRec::new(cell_id, *cell_slot, new_word));
     }
     *cell_slot = new_word;
 }
@@ -494,6 +572,23 @@ fn u16_index(index: u32) -> u16 {
         Ok(index) => index,
         Err(_) => panic!("cell index exceeds u16 range"),
     }
+}
+
+fn checked_aftergroup_start(start: u32, len: usize) -> usize {
+    let start = start as usize;
+    assert!(start <= len, "aftergroup start is past the end");
+    start
+}
+
+fn u32_len(value: usize, message: &str) -> u32 {
+    match u32::try_from(value) {
+        Ok(value) => value,
+        Err(_) => panic!("{message}"),
+    }
+}
+
+fn cell_key(cell: CellId) -> (BankTag, u32) {
+    (cell.bank(), cell.index())
 }
 
 #[cfg(test)]
