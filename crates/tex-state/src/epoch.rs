@@ -5,6 +5,9 @@
 pub struct Epoch(u32);
 
 impl Epoch {
+    /// The epoch stamp for never-written cells.
+    pub(crate) const ZERO: Self = Self(0);
+
     /// The first epoch in a session.
     pub const START: Self = Self(1);
 

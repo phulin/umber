@@ -15,6 +15,12 @@ pub enum Entry {
 }
 
 /// A barrier undo+redo record for one environment cell.
+///
+/// The write barrier records only the first write to a cell in each epoch.
+/// With undo+redo records, that means `new` is the value from the first
+/// barrier hit and can be stale if the same cell is written again before the
+/// epoch advances. M1 accepts that behavior: rollback uses `old`, while later
+/// forward-replay consumers must re-derive final values from live cells.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct UndoRec {
     cell: CellId,

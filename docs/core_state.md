@@ -170,6 +170,12 @@ cells[i] = new
 - **First-write-per-epoch coalescing**: journal growth is bounded by
   distinct cells touched per epoch (typically a few hundred per page,
   single-digit KB), not by write count.
+- **Undo+redo coalescing note for M1**: because only the first write to a
+  cell in an epoch appends an `UndoRec`, the record's `new` value is the
+  first written value and may be stale after later same-epoch writes. This is
+  intentional for M1: rollback consumes `old`, and future redo-replay /
+  memo consumers must re-derive final values from the live cells when they
+  need them.
 - **Groups are journal markers.** This *replaces* Knuth's save stack: group
   entry pushes `Marker::Group` and bumps the epoch; group exit walks back to
   the marker restoring records. Same records, same log, one mechanism.
