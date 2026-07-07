@@ -96,12 +96,12 @@ pub struct Env {
     cells:   Box<[u64]>,       // meaning words
     epochs:  Box<[Epoch]>,     // parallel stamp per cell (Epoch = u32/u64)
     // dense classical registers, one bank per class:
-    counts:  Box<[i32; 256]>, dimens: Box<[Scaled; 256]>,
-    skips:   Box<[GlueId; 256]>, toks: Box<[TokenListId; 256]>,
-    boxes:   Box<[NodeListId; 256]>,
+    counts:  Box<[u64; 256]>, dimens: Box<[u64; 256]>,
+    skips:   Box<[u64; 256]>, toks: Box<[u64; 256]>,
+    boxes:   Box<[u64; 256]>,
     reg_epochs: /* parallel stamps per bank */,
-    int_params: Box<[i32; N_INT]>,   dimen_params: Box<[Scaled; N_DIM]>,
-    glue_params: Box<[GlueId; N_GLUE]>, tok_params: Box<[TokenListId; N_TOK]>,
+    int_params: Box<[u64; N_INT]>,   dimen_params: Box<[u64; N_DIM]>,
+    glue_params: Box<[u64; N_GLUE]>, tok_params: Box<[u64; N_TOK]>,
     overflow: SparseRegisters,   // e-TeX 256..32767, radix pages, mostly empty
     journal: Journal,
     epoch: Epoch,
@@ -111,7 +111,10 @@ pub struct Env {
 Rules:
 
 - **Reads**: `get(&self, Symbol) -> Meaning` — one load, decode in
-  registers. Meaning words are `Copy`; no references into the array escape.
+  registers. Dense register banks and parameter tables follow the same
+  discipline: storage is raw `u64` words, and typed accessors encode/decode
+  `i32`, `Scaled`, and content ids at the API boundary. Meaning words and
+  register values are `Copy`; no references into the array escape.
 - **Writes**: `set(&mut self, Symbol, Meaning)` — the *only* mutation path;
   runs the barrier (§6). Same for every register bank and parameter table.
 - **The epoch stamp is the workhorse**: journal coalescing filter, JIT

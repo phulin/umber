@@ -7,6 +7,9 @@ use core::ops::{Add, Neg, Sub};
 pub struct Scaled(i32);
 
 impl Scaled {
+    /// The smallest representable scaled value for the M1 substrate.
+    pub const MIN: Self = Self(i32::MIN);
+
     /// The largest representable scaled value for the M1 substrate.
     pub const MAX: Self = Self(i32::MAX);
 
@@ -95,6 +98,7 @@ mod tests {
         assert_eq!((a + b).raw(), 13);
         assert_eq!((a - b).raw(), 7);
         assert_eq!((-b).raw(), -3);
+        assert_eq!(Scaled::MIN.raw(), i32::MIN);
         assert_eq!(Scaled::MAX.raw(), i32::MAX);
 
         assert_eq!(Scaled::MAX.checked_add(Scaled::from_raw(1)), None);
