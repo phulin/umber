@@ -88,11 +88,11 @@ impl Interner {
     #[must_use]
     pub fn resolve(&self, symbol: Symbol) -> &str {
         let index = symbol.raw() as usize;
-        debug_assert!(index < self.spans.len(), "symbol is not live");
+        assert!(index < self.spans.len(), "symbol is not live");
         let (start, len) = self.spans[index];
         let start = start as usize;
         let end = start + len as usize;
-        debug_assert!(end <= self.arena.len(), "symbol span exceeds arena");
+        assert!(end <= self.arena.len(), "symbol span exceeds arena");
 
         match str::from_utf8(&self.arena[start..end]) {
             Ok(name) => name,
@@ -224,7 +224,7 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "symbol is not live")]
-    fn stale_symbol_panics_after_truncation_in_debug_builds() {
+    fn stale_symbol_panics_after_truncation() {
         let mut interner = Interner::new();
         let mark = interner.watermark();
         let stale = interner.intern("rolled-back");

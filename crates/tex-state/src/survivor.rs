@@ -37,8 +37,7 @@ impl SurvivorArena {
             "only epoch node lists are promoted"
         );
 
-        let mut nodes = Vec::new();
-        let (start, len) = copy_list(id, epoch, &mut nodes);
+        let (nodes, start, len) = copy_list_iterative(id, epoch);
         let root = self.allocate_root(nodes.into_boxed_slice());
         self.rewrite_root_ids(root);
         let promoted = NodeListId::new_survivor(root, start, len);
@@ -160,32 +159,57 @@ impl SurvivorArena {
     fn debug_assert_no_epoch_ids(&self, _id: NodeListId) {}
 }
 
-fn copy_list(id: NodeListId, epoch: &NodeArena, out: &mut Vec<Node>) -> (u32, u32) {
+fn copy_list_iterative(id: NodeListId, epoch: &NodeArena) -> (Vec<Node>, u32, u32) {
+    let mut out = Vec::new();
+    let (root_start, root_len) = append_list(id, epoch, &mut out);
+    let mut pending: Vec<usize> = (root_start as usize..root_start as usize + root_len as usize)
+        .rev()
+        .collect();
+
+    while let Some(index) = pending.pop() {
+        remap_node_children(index, epoch, &mut out, &mut pending);
+    }
+
+    (out, root_start, root_len)
+}
+
+fn append_list(id: NodeListId, epoch: &NodeArena, out: &mut Vec<Node>) -> (u32, u32) {
     let start = u32_len(out.len(), "promoted node root exceeds u32 entries");
     out.extend_from_slice(epoch.get_epoch(id));
     let len = id.len();
-    for offset in 0..len as usize {
-        remap_node_children(start as usize + offset, epoch, out);
-    }
     (start, len)
 }
 
-fn remap_node_children(index: usize, epoch: &NodeArena, out: &mut Vec<Node>) {
+fn queue_children(start: u32, len: u32, pending: &mut Vec<usize>) {
+    pending.extend((start as usize..start as usize + len as usize).rev());
+}
+
+fn remap_node_children(
+    index: usize,
+    epoch: &NodeArena,
+    out: &mut Vec<Node>,
+    pending: &mut Vec<usize>,
+) {
     match out[index].clone() {
         Node::HList(mut box_node) => {
-            let (start, len) = copy_list(box_node.children, epoch, out);
+            let (start, len) = append_list(box_node.children, epoch, out);
+            queue_children(start, len, pending);
             box_node.children = NodeListId::new_survivor(SurvivorRootId::new(0), start, len);
             out[index] = Node::HList(box_node);
         }
         Node::VList(mut box_node) => {
-            let (start, len) = copy_list(box_node.children, epoch, out);
+            let (start, len) = append_list(box_node.children, epoch, out);
+            queue_children(start, len, pending);
             box_node.children = NodeListId::new_survivor(SurvivorRootId::new(0), start, len);
             out[index] = Node::VList(box_node);
         }
         Node::Disc { pre, post, replace } => {
-            let (pre_start, pre_len) = copy_list(pre, epoch, out);
-            let (post_start, post_len) = copy_list(post, epoch, out);
-            let (replace_start, replace_len) = copy_list(replace, epoch, out);
+            let (pre_start, pre_len) = append_list(pre, epoch, out);
+            queue_children(pre_start, pre_len, pending);
+            let (post_start, post_len) = append_list(post, epoch, out);
+            queue_children(post_start, post_len, pending);
+            let (replace_start, replace_len) = append_list(replace, epoch, out);
+            queue_children(replace_start, replace_len, pending);
             out[index] = Node::Disc {
                 pre: NodeListId::new_survivor(SurvivorRootId::new(0), pre_start, pre_len),
                 post: NodeListId::new_survivor(SurvivorRootId::new(0), post_start, post_len),
@@ -197,14 +221,16 @@ fn remap_node_children(index: usize, epoch: &NodeArena, out: &mut Vec<Node>) {
             };
         }
         Node::Ins { class, content } => {
-            let (start, len) = copy_list(content, epoch, out);
+            let (start, len) = append_list(content, epoch, out);
+            queue_children(start, len, pending);
             out[index] = Node::Ins {
                 class,
                 content: NodeListId::new_survivor(SurvivorRootId::new(0), start, len),
             };
         }
         Node::Adjust(content) => {
-            let (start, len) = copy_list(content, epoch, out);
+            let (start, len) = append_list(content, epoch, out);
+            queue_children(start, len, pending);
             out[index] = Node::Adjust(NodeListId::new_survivor(SurvivorRootId::new(0), start, len));
         }
         Node::Char { .. }

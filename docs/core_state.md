@@ -273,8 +273,12 @@ cells[i] = new
   or insertion is a barriered write, so the engine sees it and copies the
   list into a **survivor arena** with per-box refcounts. The promoted root is
   one contiguous allocation; child `NodeListId`s are remapped to root-relative
-  survivor spans. `\unhbox`/`\vsplit` operate on survivors. The rare escaping
-  box pays a copy; every epoch arena earns the right to be truncated blindly.
+  survivor spans by an explicit worklist, so deeply nested boxes do not
+  recurse through the Rust call stack during promotion. `\unhbox`/`\vsplit`
+  operate on survivors. The rare escaping box pays a copy; every epoch arena
+  earns the right to be truncated blindly. Test-only replay/hash helpers that
+  still walk node trees recursively carry explicit depth bounds until M3
+  replaces them with convergence-grade semantic hashing.
 - Shipped pages serialize into content-addressed artifacts (the memo/extern
   store) and their nodes are released.
 

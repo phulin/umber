@@ -25,6 +25,9 @@ use crate::token_store::{TokenListBuilder, TokenStore, TokenStoreMark};
 use std::hash::{Hash, Hasher};
 use std::mem;
 
+#[cfg(any(test, feature = "testing", feature = "shadow"))]
+const TESTING_NODE_HASH_MAX_DEPTH: usize = 4096;
+
 /// A rollback snapshot for all currently implemented state stores.
 #[derive(Clone, Debug)]
 pub struct Snapshot {
@@ -482,7 +485,7 @@ impl Stores {
     #[cfg(any(test, feature = "testing", feature = "shadow"))]
     fn testing_hash_box_word(&self, word: u64, hasher: &mut impl Hasher) {
         match NodeListId::decode_box_word(word) {
-            Some(id) => self.testing_hash_node_list_content(id, hasher),
+            Some(id) => self.testing_hash_node_list_content_bounded(id, hasher, 0),
             None => 0_u8.hash(hasher),
         }
     }
@@ -492,20 +495,39 @@ impl Stores {
         let len = u32::try_from(self.nodes.testing_node_count())
             .expect("node arena test hash cannot cover more than u32 entries");
         for node in self.nodes.get_epoch(NodeListId::new_epoch(0, len)) {
-            self.testing_hash_node_content(node, hasher);
+            self.testing_hash_node_content_bounded(node, hasher, 0);
         }
     }
 
     #[cfg(any(test, feature = "testing", feature = "shadow"))]
     pub fn testing_hash_node_list_content(&self, id: NodeListId, hasher: &mut impl Hasher) {
+        self.testing_hash_node_list_content_bounded(id, hasher, 0);
+    }
+
+    #[cfg(any(test, feature = "testing", feature = "shadow"))]
+    fn testing_hash_node_list_content_bounded(
+        &self,
+        id: NodeListId,
+        hasher: &mut impl Hasher,
+        depth: usize,
+    ) {
+        assert!(
+            depth <= TESTING_NODE_HASH_MAX_DEPTH,
+            "testing node hash exceeded maximum node-list nesting depth"
+        );
         1_u8.hash(hasher);
         for node in self.nodes(id) {
-            self.testing_hash_node_content(node, hasher);
+            self.testing_hash_node_content_bounded(node, hasher, depth);
         }
     }
 
     #[cfg(any(test, feature = "testing", feature = "shadow"))]
-    fn testing_hash_node_content(&self, node: &Node, hasher: &mut impl Hasher) {
+    fn testing_hash_node_content_bounded(
+        &self,
+        node: &Node,
+        hasher: &mut impl Hasher,
+        depth: usize,
+    ) {
         std::mem::discriminant(node).hash(hasher);
         match node {
             Node::Char { font, ch } => {
@@ -529,7 +551,7 @@ impl Stores {
                 box_node.glue_set.to_bits().hash(hasher);
                 box_node.glue_sign.hash(hasher);
                 box_node.glue_order.hash(hasher);
-                self.testing_hash_node_list_content(box_node.children, hasher);
+                self.testing_hash_node_list_content_bounded(box_node.children, hasher, depth + 1);
             }
             Node::MathOn
             | Node::MathOff
@@ -541,6 +563,10 @@ impl Stores {
             | Node::Ins { .. }
             | Node::Whatsit(_)
             | Node::Adjust(_) => {
+                // TODO(M3): replace this test/shadow fallback before using
+                // node content hashes for convergence. Debug formatting
+                // includes child NodeListId spans for some variants, which is
+                // deterministic under replay but not semantic content.
                 format!("{node:?}").hash(hasher);
             }
         }
@@ -1230,6 +1256,41 @@ mod tests {
         assert_same_root(promoted_outer, middle_box.children);
         assert_eq!(
             stores.nodes(middle_box.children),
+            &[Node::Char {
+                font: FontId::testing_new(1),
+                ch: 'x'
+            }]
+        );
+    }
+
+    #[test]
+    fn promotion_handles_pathologically_deep_box_nesting() {
+        let mut stores = Stores::new();
+        let mut current = one_char(&mut stores, 'x');
+        for _ in 0..4096 {
+            current = stores.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
+                width: scaled(1),
+                height: scaled(1),
+                depth: scaled(0),
+                shift: scaled(0),
+                glue_set: 0.0,
+                glue_sign: Sign::Normal,
+                glue_order: Order::Normal,
+                children: current,
+            }))]);
+        }
+
+        stores.set_box_reg(0, current);
+        let mut promoted = stores.box_reg(0).expect("box should be promoted");
+        for _ in 0..4096 {
+            let [Node::HList(box_node)] = stores.nodes(promoted) else {
+                panic!("deep promoted chain should remain hlist nodes");
+            };
+            assert_same_root(promoted, box_node.children);
+            promoted = box_node.children;
+        }
+        assert_eq!(
+            stores.nodes(promoted),
             &[Node::Char {
                 font: FontId::testing_new(1),
                 ch: 'x'

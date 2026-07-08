@@ -15,6 +15,8 @@ use tex_state::scaled::Scaled;
 use tex_state::stores::{Snapshot, Stores};
 use tex_state::token::{Catcode, Token};
 
+const TREE_FROM_STORE_MAX_DEPTH: usize = 4096;
+
 #[derive(Clone, Debug)]
 enum Op {
     Set {
@@ -485,6 +487,14 @@ impl BoxOracle {
 }
 
 fn tree_from_store(stores: &Stores, id: NodeListId) -> TreeList {
+    tree_from_store_bounded(stores, id, 0)
+}
+
+fn tree_from_store_bounded(stores: &Stores, id: NodeListId, depth: usize) -> TreeList {
+    assert!(
+        depth <= TREE_FROM_STORE_MAX_DEPTH,
+        "replay oracle exceeded maximum node-list nesting depth"
+    );
     stores
         .nodes(id)
         .iter()
@@ -495,7 +505,11 @@ fn tree_from_store(stores: &Stores, id: NodeListId) -> TreeList {
             },
             Node::Kern { amount, .. } => TreeNode::Kern(amount.raw()),
             Node::Glue { spec, kind } => TreeNode::Glue(stores.glue(*spec), *kind),
-            Node::HList(box_node) => TreeNode::HList(tree_from_store(stores, box_node.children)),
+            Node::HList(box_node) => TreeNode::HList(tree_from_store_bounded(
+                stores,
+                box_node.children,
+                depth + 1,
+            )),
             Node::MathOn => TreeNode::MathOn,
             other => panic!("unexpected replay node: {other:?}"),
         })
