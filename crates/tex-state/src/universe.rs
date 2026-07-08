@@ -1402,7 +1402,7 @@ mod tests {
         crate::font::LoadedFont::new(
             name,
             format!("{name}.tfm"),
-            ContentHash::from_bytes(bytes),
+            ContentHash::from_bytes(bytes).bytes(),
             0,
             Scaled::from_raw(10 * Scaled::UNITY),
             Scaled::from_raw(10 * Scaled::UNITY),

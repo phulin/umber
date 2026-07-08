@@ -22,6 +22,7 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 
 - `.agents/`: project-local agent skills and coordination workflow guidance.
 - `crates/`: Rust workspace crates.
+- `crates/tex-arith`: shared TeX scaled-point and TFM arithmetic.
 - `crates/tex-state`: engine state layer substrate.
 - `crates/tex-fonts`: immutable font metric parsing and TFM data.
 - `crates/tex-exec`: stomach execution scaffold, mode nest, and main-control dispatch.

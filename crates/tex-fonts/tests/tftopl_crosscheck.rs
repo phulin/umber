@@ -9,9 +9,9 @@ use refexec::RefTftopl;
 use test_support::pl::{
     PlCharacter, PlExtensibleRecipe, PlFont, PlLigCommand, PlLigLabel, PlNumber,
 };
+use tex_arith::{FontSizeSpec, Scaled, tfm_fix_word_to_scaled};
 use tex_fonts::tfm::Character;
 use tex_fonts::{CharacterTag, FontParameterKind, LigKernAction, TfmFont};
-use tex_state::scaled::{FontSizeSpec, Scaled, tfm_fix_word_to_scaled};
 
 const CORPUS_FONTS: &[&str] = &["cmr10", "cmmi10", "cmsy10", "cmex10", "cmtt10"];
 const VARIANTS: &[(&str, FontSizeSpec)] = &[

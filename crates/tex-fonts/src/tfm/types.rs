@@ -1,6 +1,10 @@
-use tex_state::scaled::{FontSizeSpec, Scaled};
+use tex_arith::{FontSizeSpec, Scaled};
 
 use super::ParseError;
+use crate::metrics::{
+    CharMetrics, CharTag as MetricCharTag, ExtensibleRecipe as MetricExtensibleRecipe, FontMetrics,
+    LigKernCommand, LigKernInstruction, LigatureCommand,
+};
 
 /// A fully parsed, immutable TeX Font Metric file.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -40,27 +44,25 @@ impl TfmFont {
             .and_then(Option::as_ref)
     }
 
-    /// Converts parsed TFM data into the backend-neutral metric record stored by `tex-state`.
+    /// Converts parsed TFM data into the backend-neutral immutable metric record.
     #[must_use]
-    pub fn font_metrics(&self) -> tex_state::font::FontMetrics {
-        tex_state::font::FontMetrics::new(
+    pub fn font_metrics(&self) -> FontMetrics {
+        FontMetrics::new(
             self.characters
                 .iter()
                 .map(|character| {
-                    character
-                        .as_ref()
-                        .map(|character| tex_state::font::CharMetrics {
-                            width: character.width,
-                            height: character.height,
-                            depth: character.depth,
-                            italic_correction: character.italic_correction,
-                            tag: character.tag.into(),
-                        })
+                    character.as_ref().map(|character| CharMetrics {
+                        width: character.width,
+                        height: character.height,
+                        depth: character.depth,
+                        italic_correction: character.italic_correction,
+                        tag: character.tag.into(),
+                    })
                 })
                 .collect(),
             self.lig_kern_program
                 .iter()
-                .map(|step| tex_state::font::LigKernInstruction {
+                .map(|step| LigKernInstruction {
                     skip_byte: step.skip_byte,
                     next_char: step.next_char,
                     command: step.action.map(Into::into),
@@ -77,7 +79,7 @@ impl TfmFont {
     }
 }
 
-impl From<CharacterTag> for tex_state::font::CharTag {
+impl From<CharacterTag> for MetricCharTag {
     fn from(value: CharacterTag) -> Self {
         match value {
             CharacterTag::None => Self::None,
@@ -94,10 +96,10 @@ impl From<CharacterTag> for tex_state::font::CharTag {
     }
 }
 
-impl From<LigKernAction> for tex_state::font::LigKernCommand {
+impl From<LigKernAction> for LigKernCommand {
     fn from(value: LigKernAction) -> Self {
         match value {
-            LigKernAction::Ligature(ligature) => Self::Ligature(tex_state::font::LigatureCommand {
+            LigKernAction::Ligature(ligature) => Self::Ligature(LigatureCommand {
                 replacement: ligature.replacement,
                 delete_current: ligature.deletes.current,
                 delete_next: ligature.deletes.next,
@@ -108,7 +110,7 @@ impl From<LigKernAction> for tex_state::font::LigKernCommand {
     }
 }
 
-impl From<ExtensibleRecipe> for tex_state::font::ExtensibleRecipe {
+impl From<ExtensibleRecipe> for MetricExtensibleRecipe {
     fn from(value: ExtensibleRecipe) -> Self {
         Self {
             top: value.top,

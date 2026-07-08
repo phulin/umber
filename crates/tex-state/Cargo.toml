@@ -12,6 +12,10 @@ shadow = []
 # Engine production builds must not enable this feature.
 testing = []
 
+[dependencies]
+tex-arith = { path = "../tex-arith" }
+tex-fonts = { path = "../tex-fonts" }
+
 [lints]
 workspace = true
 

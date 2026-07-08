@@ -406,7 +406,7 @@ impl Stores {
 
     #[must_use]
     pub fn missing_font_character(&self, font: FontId, code: u8) -> Option<MissingCharacter> {
-        self.font(font).metrics().missing_character(font, code)
+        (!self.font_char_exists(font, code)).then_some(MissingCharacter { font, code })
     }
 
     #[must_use]

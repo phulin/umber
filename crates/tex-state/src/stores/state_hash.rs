@@ -420,7 +420,7 @@ impl Stores {
         FontSemanticKey {
             name: font.name().to_owned(),
             path: font.path().to_string_lossy().into_owned(),
-            content_hash: font.content_hash().bytes(),
+            content_hash: font.content_hash(),
             checksum: font.checksum(),
             design_size: font.design_size().raw(),
             size: font.size().raw(),

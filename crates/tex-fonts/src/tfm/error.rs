@@ -1,6 +1,6 @@
 use core::fmt;
 
-use tex_state::scaled::TfmConversionError;
+use tex_arith::TfmConversionError;
 
 use super::types::TfmTable;
 

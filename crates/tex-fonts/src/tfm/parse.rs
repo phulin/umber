@@ -1,4 +1,4 @@
-use tex_state::scaled::{
+use tex_arith::{
     FontSizeSpec, Scaled, tfm_design_size_from_fix_word, tfm_fix_word_to_scaled, tfm_font_size,
 };
 

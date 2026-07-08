@@ -683,6 +683,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "tex-arith"
+version = "0.1.0"
+
+[[package]]
 name = "tex-exec"
 version = "0.1.0"
 dependencies = [
@@ -710,7 +714,7 @@ dependencies = [
  "refexec",
  "tempfile",
  "test-support",
- "tex-state",
+ "tex-arith",
 ]
 
 [[package]]
@@ -728,6 +732,8 @@ dependencies = [
  "criterion",
  "proptest",
  "tempfile",
+ "tex-arith",
+ "tex-fonts",
 ]
 
 [[package]]

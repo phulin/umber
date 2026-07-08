@@ -1,6 +1,6 @@
+use tex_arith::Scaled;
 use tex_fonts::{CharacterTag, FontParameterKind, LigKernAction, ParseError, TfmFont, TfmTable};
-use tex_state::font::{LigKernChar, LigKernCommand};
-use tex_state::scaled::Scaled;
+use tex_fonts::{LigKernChar, LigKernCommand};
 
 const CMR10: &[u8] = include_bytes!("fixtures/cm/cmr10.tfm");
 const CMMI10: &[u8] = include_bytes!("fixtures/cm/cmmi10.tfm");

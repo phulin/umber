@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-tex-state = { path = "../tex-state" }
+tex-arith = { path = "../tex-arith" }
 
 [dev-dependencies]
 anyhow.workspace = true

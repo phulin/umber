@@ -1,4 +1,4 @@
-use crate::scaled::{
+use crate::{
     ArithmeticError, DimensionError, FontSizeSpec, PhysicalUnit, Scaled, TfmConversionError,
     XOverN, XnOverD, half, mult_and_add, nx_plus_y, round_decimal_fraction,
     scaled_from_decimal_parts, tfm_design_size_from_fix_word, tfm_fix_word_to_scaled,

@@ -378,12 +378,17 @@ Responsibility: accumulate the main vertical list, fire `\output`, commit.
   drivers and the incremental engine: a page artifact = (serialized node
   tree, resources used (fonts/images by content hash), effect slice).
 
-## 9. Fonts and metrics (`tex-fonts`)
+## 9. Fonts and metrics (`tex-arith`, `tex-fonts`, `tex-state`)
 
 Responsibility: every question about glyphs, loaded once, answered from
-immutable tables.
+immutable tables, with mutable font state kept behind the state timeline.
 
-- Loading: TFM for classic compatibility; OpenType/TrueType via a
+- `tex-arith` owns TeX fixed-point arithmetic shared across scanners, state,
+  and font parsing: `Scaled`, physical-unit conversion, `xn_over_d`/
+  `nx_plus_y`, `FontSizeSpec`, and TFM fix_word/font-size scaling helpers.
+  It has no dependency on state, fonts, or I/O.
+- Loading and immutable font-domain data live in `tex-fonts`: TFM for classic
+  compatibility; OpenType/TrueType via a
   vendored shaper for the modern path. All file access through `World`
   (fonts are inputs; cross-run memo sharing needs them pinned).
 - A loaded font is an immutable object; `FontId` is the state-layer handle
@@ -391,7 +396,12 @@ immutable tables.
   ordinary barriered `Env` write. Per-font mutable parameters
   (`\fontdimen`) live in `Env`-side banks, *not* in the font object —
   loaded fonts stay immutable and shareable across snapshots and threads.
-- Loaded fonts carry backend-neutral immutable metrics: character
+- `tex-state` stores loaded `tex-fonts` records in its `FontStore`, but only
+  owns stateful concerns: `FontId` minting/liveness, rollback, current-font
+  selectors, hyphenchar/skewchar, `\fontdimen` banks, and read-only `Universe`
+  facades. `tex-fonts` must not depend on `tex-state`.
+- Loaded fonts carry backend-neutral immutable metrics owned by `tex-fonts`:
+  character
   width/height/depth/italic, TFM-style ligature/kern pair answers including
   boundary programs and ligature retention/pass-over bits, and extensible
   recipes. Kernels consume these through read-only `Universe` methods keyed by

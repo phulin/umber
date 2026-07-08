@@ -1,6 +1,6 @@
 use super::*;
 use std::path::PathBuf;
-use tex_state::font::LoadedFont;
+use tex_fonts::LoadedFont;
 use tex_state::ids::FontId;
 use tex_state::scaled::FontSizeSpec;
 
@@ -31,7 +31,7 @@ where
     let loaded = LoadedFont::new(
         font_display_name(&font_name),
         content.path().to_owned(),
-        content.hash(),
+        content.hash().bytes(),
         tfm.header.checksum,
         tfm.header.design_size,
         tfm.font_size,
