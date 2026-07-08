@@ -1,0 +1,237 @@
+use super::*;
+use tex_state::StreamSlot;
+use tex_state::macro_store::MacroMeaning;
+
+pub(in crate::assignments) fn execute_stream_command<S, H>(
+    primitive: UnexpandablePrimitive,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    hooks: &mut H,
+) -> Result<(), ExecError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    let slot = scan_stream_slot(input, stores, hooks)?;
+    match primitive {
+        UnexpandablePrimitive::OpenIn => {
+            skip_optional_equals_x(input, stores, hooks)?;
+            let name = scan_file_name(input, stores, hooks, "\\openin")?;
+            if stores.world_mut().open_in(slot, name).is_err() {
+                stores.world_mut().close_in(slot);
+            }
+        }
+        UnexpandablePrimitive::CloseIn => stores.world_mut().close_in(slot),
+        UnexpandablePrimitive::OpenOut => {
+            skip_optional_equals_x(input, stores, hooks)?;
+            let name = scan_file_name(input, stores, hooks, "\\openout")?;
+            stores.world_mut().open_out(slot, name);
+        }
+        UnexpandablePrimitive::CloseOut => stores.world_mut().close_out(slot),
+        _ => unreachable!("caller restricts stream primitive"),
+    }
+    Ok(())
+}
+
+pub(in crate::assignments) fn execute_read<S, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    hooks: &mut H,
+) -> Result<(), ExecError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    let slot = scan_stream_slot(input, stores, hooks)?;
+    if !scan_optional_keyword_x(input, stores, hooks, "to")? {
+        return Err(ExecError::ReadNeedsTo);
+    }
+    let target = scan_control_sequence(input, stores, "\\read")?;
+    let tokens = scan_read_tokens(slot, target, stores)?;
+    let replacement_text = stores.intern_token_list(&tokens);
+    let parameter_text = stores.intern_token_list(&[]);
+    stores.set_macro_meaning(
+        target,
+        MacroMeaning::new(MeaningFlags::EMPTY, parameter_text, replacement_text),
+    );
+    Ok(())
+}
+
+pub(in crate::assignments) fn execute_write<S, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    hooks: &mut H,
+) -> Result<(), ExecError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    let slot = scan_stream_slot(input, stores, hooks)?;
+    let scanned = scan_toks(input, stores, MeaningFlags::EMPTY)?;
+    stores
+        .world_mut()
+        .record_deferred_write(slot, scanned.meaning().replacement_text());
+    Ok(())
+}
+
+fn scan_read_tokens(
+    slot: StreamSlot,
+    target: Symbol,
+    stores: &mut Universe,
+) -> Result<Vec<Token>, ExecError> {
+    let mut tokens = Vec::new();
+    let mut depth = 0usize;
+    let mut terminal_prompt = Some(read_prompt(stores, target));
+    loop {
+        let had_open_stream = stores
+            .world()
+            .stream_bufs()
+            .read_stream_target(slot)
+            .is_some();
+        let line = if had_open_stream {
+            stores.world_mut().read_stream_line(slot)?
+        } else {
+            read_terminal_read_line(stores, terminal_prompt.take())?
+        };
+        let Some(line) = line else {
+            return Err(ExecError::ReadNotImplemented);
+        };
+        scan_read_line_tokens(&line, stores, &mut tokens, &mut depth)?;
+        if depth == 0 {
+            return Ok(tokens);
+        }
+        if had_open_stream
+            && stores
+                .world()
+                .stream_bufs()
+                .read_stream_target(slot)
+                .is_none()
+        {
+            return Err(ExecError::FileEndedWithinRead);
+        }
+    }
+}
+
+fn read_terminal_read_line(
+    stores: &mut Universe,
+    prompt: Option<String>,
+) -> Result<Option<String>, ExecError> {
+    match stores.interaction_mode() {
+        InteractionMode::Batch | InteractionMode::Nonstop => {
+            return Err(ExecError::ReadNotImplemented);
+        }
+        InteractionMode::Scroll | InteractionMode::ErrorStop => {}
+    }
+    stores.world_mut().write_text(
+        tex_state::PrintSink::TerminalAndLog,
+        prompt.as_deref().unwrap_or(""),
+    );
+    stores
+        .world_mut()
+        .read_terminal_line()?
+        .map_or(Err(ExecError::TerminalReadEof), |line| Ok(Some(line)))
+}
+
+fn read_prompt(stores: &Universe, target: Symbol) -> String {
+    format!("\n\\{}=", stores.resolve(target))
+}
+
+fn scan_read_line_tokens(
+    line: &str,
+    stores: &mut Universe,
+    tokens: &mut Vec<Token>,
+    depth: &mut usize,
+) -> Result<(), ExecError> {
+    for token in tokenize_read_line(line, stores)? {
+        match token {
+            Token::Char {
+                cat: Catcode::BeginGroup,
+                ..
+            } => {
+                *depth += 1;
+                tokens.push(token);
+            }
+            Token::Char {
+                cat: Catcode::EndGroup,
+                ..
+            } => {
+                if *depth == 0 {
+                    return Ok(());
+                }
+                *depth -= 1;
+                tokens.push(token);
+            }
+            _ => tokens.push(token),
+        }
+    }
+    Ok(())
+}
+
+fn scan_stream_slot<S, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    hooks: &mut H,
+) -> Result<StreamSlot, ExecError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    let value = scan_i32(input, stores, hooks)?;
+    if !(0..tex_state::world::STREAM_SLOT_COUNT as i32).contains(&value) {
+        return Err(ExecError::RegisterNumberOutOfRange(value));
+    }
+    Ok(StreamSlot::new(value as u8))
+}
+
+fn scan_file_name<S, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    hooks: &mut H,
+    context: &'static str,
+) -> Result<String, ExecError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    let mut name = String::new();
+    let Some(first) = next_non_space_x(input, stores, hooks)? else {
+        return Err(ExecError::MissingToken { context });
+    };
+    append_file_name_token(&mut name, first, context)?;
+    let mut recorder = NoopRecorder;
+    while let Some(token) =
+        get_x_token_with_recorder_and_hooks(input, stores, &mut recorder, hooks)?
+    {
+        match token {
+            Token::Char {
+                cat: Catcode::Space,
+                ..
+            } => break,
+            token => append_file_name_token(&mut name, token, context)?,
+        }
+    }
+    Ok(name)
+}
+
+fn append_file_name_token(
+    name: &mut String,
+    token: Token,
+    context: &'static str,
+) -> Result<(), ExecError> {
+    match token {
+        Token::Char { ch, .. } => {
+            name.push(ch);
+            Ok(())
+        }
+        Token::Cs(_) | Token::Param(_) => Err(ExecError::MissingToken { context }),
+    }
+}
+
+fn tokenize_read_line(line: &str, stores: &mut Universe) -> Result<Vec<Token>, ExecError> {
+    let mut input = InputStack::new(tex_lex::MemoryInput::new(format!("{line}\n")));
+    let mut tokens = Vec::new();
+    while let Some(token) = input.next_token(stores)? {
+        tokens.push(token);
+    }
+    Ok(tokens)
+}
