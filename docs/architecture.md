@@ -113,7 +113,16 @@ supply.
   Frames are small and `Copy`-ish by design — resuming from a snapshot
   reopens sources by content hash and seeks.
 - Line-oriented details TeX cares about (`\endlinechar`, trailing-space
-  trimming, `%` line ends) live here, driven by parameters read from `Env`.
+  trimming, `%` line ends) live here, driven by parameters read through the
+  aggregate state API. The implemented `tex-lex` input layer exposes a local
+  `InputSource` trait for memory buffers and files, normalizes each physical
+  line by trimming trailing spaces and appending the current `\endlinechar`
+  when valid, reports blank/all-space lines as a structured paragraph
+  boundary event for the semantic lexer to turn into `\par`, and owns an
+  `InputStack` whose `InputSummary` records source coordinates, lexer state,
+  and token-list replay progress. Token-list frames read frozen content only
+  through `Stores::tokens`; source reopening by content hash remains future
+  `World` integration.
 
 ## 4. Lexer (the eyes)
 

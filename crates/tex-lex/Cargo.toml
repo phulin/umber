@@ -1,0 +1,13 @@
+[package]
+name = "tex-lex"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tex-state = { path = "../tex-state" }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
