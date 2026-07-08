@@ -1,9 +1,19 @@
 //! TeX scaled-point arithmetic substrate.
+//!
+//! TFM metric scaling stays in this module alongside the core scaled routines:
+//! the z/alpha/beta conversion is pure fixed-point arithmetic, while TFM file
+//! parsing and font-object ownership belong to later font crates.
 
 use core::fmt;
 use core::ops::{Add, Neg, Sub};
 
 const XN_OVER_D_RADIX: i32 = 32_768;
+const TFM_STORE_SCALED_LIMIT: i32 = 0o40000000;
+const TFM_FIX_WORD_RADIX: i32 = 0o400;
+const TFM_SIZE_LIMIT: i32 = 1 << 27;
+const TFM_MAX_SCALE: i32 = 32_768;
+
+const NX_PLUS_Y_MAX: Scaled = Scaled::MAX_DIMEN;
 
 /// A TeX scaled-point value.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -88,6 +98,55 @@ impl fmt::Display for DimensionError {
 
 impl std::error::Error for DimensionError {}
 
+/// Errors produced by TeX's arithmetic helper routines.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ArithmeticError {
+    /// TeX's arithmetic error flag would have been set by overflow.
+    Overflow,
+    /// TeX's arithmetic error flag would have been set by division by zero.
+    DivisionByZero,
+}
+
+impl fmt::Display for ArithmeticError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Overflow => f.write_str("Arithmetic overflow"),
+            Self::DivisionByZero => f.write_str("Division by zero"),
+        }
+    }
+}
+
+impl std::error::Error for ArithmeticError {}
+
+/// Errors produced while converting TFM fixed-point metric values.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TfmConversionError {
+    /// A TFM fix_word used a sign byte other than 0 or 255.
+    InvalidFixWord,
+    /// The TFM design size is outside TeX's accepted range.
+    InvalidDesignSize,
+    /// A `\font ... at` size is outside TeX's accepted range.
+    InvalidAtSize,
+    /// A `\font ... scaled` factor is outside TeX's accepted range.
+    InvalidScale,
+    /// TeX's arithmetic error flag would have been set while scaling.
+    ArithmeticOverflow,
+}
+
+impl fmt::Display for TfmConversionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidFixWord => f.write_str("invalid TFM fix_word"),
+            Self::InvalidDesignSize => f.write_str("invalid TFM design size"),
+            Self::InvalidAtSize => f.write_str("invalid font at-size"),
+            Self::InvalidScale => f.write_str("invalid font scaled factor"),
+            Self::ArithmeticOverflow => f.write_str("TFM scaling arithmetic overflow"),
+        }
+    }
+}
+
+impl std::error::Error for TfmConversionError {}
+
 /// The physical units accepted by TeX's dimension scanner.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PhysicalUnit {
@@ -109,6 +168,17 @@ pub enum PhysicalUnit {
     Dd,
     /// Ciceros.
     Cc,
+}
+
+/// Size override from a TeX `\font` definition.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FontSizeSpec {
+    /// Use the design size from the TFM header.
+    Design,
+    /// Use an explicit `at` size.
+    At(Scaled),
+    /// Scale the TFM design size by a per-mille `scaled` factor.
+    Scale(i32),
 }
 
 impl PhysicalUnit {
@@ -138,10 +208,104 @@ pub struct XnOverD {
     pub remainder: i32,
 }
 
+/// Result of TeX's `x_over_n` scaled division.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct XOverN {
+    /// The quotient `x / n`, rounded toward zero.
+    pub quotient: Scaled,
+    /// The signed remainder TeX stores after the division.
+    pub remainder: Scaled,
+}
+
+/// TeX's signed halving convention.
+///
+/// Odd values are adjusted before division, so `half(-1) == 0` and
+/// `half(-3) == -1`.
+#[must_use]
+pub const fn half(x: i32) -> i32 {
+    if x % 2 != 0 && x > 0 {
+        x / 2 + 1
+    } else {
+        x / 2
+    }
+}
+
+/// Computes TeX's `mult_and_add(n, x, y, max_answer)` routine.
+pub fn mult_and_add(
+    n: i32,
+    x: Scaled,
+    y: Scaled,
+    max_answer: Scaled,
+) -> Result<Scaled, ArithmeticError> {
+    let mut n = i64::from(n);
+    let mut x = i64::from(x.raw());
+    let y = i64::from(y.raw());
+    let max_answer = i64::from(max_answer.raw());
+
+    if n < 0 {
+        x = -x;
+        n = -n;
+    }
+
+    if n == 0 {
+        return Ok(Scaled::from_raw(
+            i32::try_from(y).expect("scaled y starts as i32"),
+        ));
+    }
+
+    if x <= (max_answer - y) / n && -x <= (max_answer + y) / n {
+        let value = n * x + y;
+        let value = i32::try_from(value).map_err(|_| ArithmeticError::Overflow)?;
+        Ok(Scaled::from_raw(value))
+    } else {
+        Err(ArithmeticError::Overflow)
+    }
+}
+
+/// Computes TeX's `nx_plus_y(n, x, y)` macro.
+pub fn nx_plus_y(n: i32, x: Scaled, y: Scaled) -> Result<Scaled, ArithmeticError> {
+    mult_and_add(n, x, y, NX_PLUS_Y_MAX)
+}
+
+/// Computes TeX's `x_over_n(x, n)` routine.
+pub fn x_over_n(x: Scaled, n: i32) -> Result<XOverN, ArithmeticError> {
+    if n == 0 {
+        return Err(ArithmeticError::DivisionByZero);
+    }
+
+    let mut x = i64::from(x.raw());
+    let mut n = i64::from(n);
+    let mut negative = false;
+
+    if n < 0 {
+        x = -x;
+        n = -n;
+        negative = true;
+    }
+
+    let (quotient, mut remainder) = if x >= 0 {
+        (x / n, x % n)
+    } else {
+        let abs_x = -x;
+        (-(abs_x / n), -(abs_x % n))
+    };
+
+    if negative {
+        remainder = -remainder;
+    }
+
+    let quotient = i32::try_from(quotient).map_err(|_| ArithmeticError::Overflow)?;
+    let remainder = i32::try_from(remainder).map_err(|_| ArithmeticError::Overflow)?;
+    Ok(XOverN {
+        quotient: Scaled::from_raw(quotient),
+        remainder: Scaled::from_raw(remainder),
+    })
+}
+
 /// Computes TeX's `xn_over_d(x, n, d)` routine.
 ///
 /// `n` and `d` must be nonnegative 16-bit conversion factors, with `d > 0`.
-/// The result preserves TeX's 1.5-precision arithmetic and overflow test.
+/// The result preserves TeX's one-and-a-half-precision arithmetic and overflow test.
 pub fn xn_over_d(x: Scaled, n: i32, d: i32) -> Result<XnOverD, DimensionError> {
     assert!(
         (0..=Scaled::UNITY).contains(&n),
@@ -232,6 +396,99 @@ pub fn scaled_from_decimal_parts(
     Scaled::from_raw(cur * Scaled::UNITY + frac).check_dimension()
 }
 
+/// Applies TeX's TFM font-size rule for design/default, `at`, and `scaled`.
+pub fn tfm_font_size(
+    design_size: Scaled,
+    spec: FontSizeSpec,
+) -> Result<Scaled, TfmConversionError> {
+    validate_tfm_design_size(design_size)?;
+
+    match spec {
+        FontSizeSpec::Design => Ok(design_size),
+        FontSizeSpec::At(size) => {
+            if size.raw() <= 0 || size.raw() >= TFM_SIZE_LIMIT {
+                Err(TfmConversionError::InvalidAtSize)
+            } else {
+                Ok(size)
+            }
+        }
+        FontSizeSpec::Scale(scale) => {
+            if !(1..=TFM_MAX_SCALE).contains(&scale) {
+                return Err(TfmConversionError::InvalidScale);
+            }
+            xn_over_d(design_size, scale, 1000)
+                .map(|value| value.quotient)
+                .map_err(|_| TfmConversionError::ArithmeticOverflow)
+        }
+    }
+}
+
+/// Converts a TFM metric `fix_word` to scaled points at the selected font size.
+pub fn tfm_fix_word_to_scaled(
+    bytes: [u8; 4],
+    font_size: Scaled,
+) -> Result<Scaled, TfmConversionError> {
+    validate_tfm_metric_size(font_size)?;
+
+    let [a, b, c, d] = bytes;
+    let mut z = font_size.raw();
+    let mut alpha = 16;
+    while z >= TFM_STORE_SCALED_LIMIT {
+        z /= 2;
+        alpha += alpha;
+    }
+
+    let beta = 256 / alpha;
+    alpha *= z;
+
+    let z = i64::from(z);
+    let beta = i64::from(beta);
+    let alpha = i64::from(alpha);
+    let sw = (((((i64::from(d) * z) / i64::from(TFM_FIX_WORD_RADIX)) + i64::from(c) * z)
+        / i64::from(TFM_FIX_WORD_RADIX))
+        + i64::from(b) * z)
+        / beta;
+
+    let value = match a {
+        0 => sw,
+        255 => sw - alpha,
+        _ => return Err(TfmConversionError::InvalidFixWord),
+    };
+
+    let value = i32::try_from(value).map_err(|_| TfmConversionError::ArithmeticOverflow)?;
+    Ok(Scaled::from_raw(value))
+}
+
+/// Converts TFM header word 1, the design-size fix_word, to TeX scaled points.
+pub fn tfm_design_size_from_fix_word(bytes: [u8; 4]) -> Result<Scaled, TfmConversionError> {
+    if bytes[0] > 127 {
+        return Err(TfmConversionError::InvalidDesignSize);
+    }
+
+    let mut z = i32::from(bytes[0]) * TFM_FIX_WORD_RADIX + i32::from(bytes[1]);
+    z = z * TFM_FIX_WORD_RADIX + i32::from(bytes[2]);
+    z = z * 16 + i32::from(bytes[3] / 16);
+    let design_size = Scaled::from_raw(z);
+    validate_tfm_design_size(design_size)?;
+    Ok(design_size)
+}
+
+const fn validate_tfm_design_size(size: Scaled) -> Result<(), TfmConversionError> {
+    if size.0 < Scaled::UNITY || size.0 >= TFM_SIZE_LIMIT {
+        Err(TfmConversionError::InvalidDesignSize)
+    } else {
+        Ok(())
+    }
+}
+
+const fn validate_tfm_metric_size(size: Scaled) -> Result<(), TfmConversionError> {
+    if size.0 <= 0 || size.0 >= TFM_SIZE_LIMIT {
+        Err(TfmConversionError::InvalidAtSize)
+    } else {
+        Ok(())
+    }
+}
+
 impl Add for Scaled {
     type Output = Self;
 
@@ -266,165 +523,5 @@ impl Neg for Scaled {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{
-        DimensionError, PhysicalUnit, Scaled, round_decimal_fraction, scaled_from_decimal_parts,
-        xn_over_d,
-    };
-
-    #[test]
-    fn scaled_add_sub_neg_and_checked_variants() {
-        let a = Scaled::from_raw(10);
-        let b = Scaled::from_raw(3);
-
-        assert_eq!((a + b).raw(), 13);
-        assert_eq!((a - b).raw(), 7);
-        assert_eq!((-b).raw(), -3);
-        assert_eq!(Scaled::MIN.raw(), i32::MIN);
-        assert_eq!(Scaled::MAX.raw(), i32::MAX);
-        assert_eq!(Scaled::MAX_DIMEN.raw(), (1 << 30) - 1);
-
-        assert_eq!(Scaled::MAX.checked_add(Scaled::from_raw(1)), None);
-        assert_eq!(Scaled::from_raw(i32::MIN).checked_neg(), None);
-    }
-
-    #[test]
-    fn xn_over_d_matches_tex_remainder_and_overflow_rules() {
-        assert_eq!(
-            xn_over_d(Scaled::from_raw(1), 7_227, 100).expect("1in integer conversion fits"),
-            super::XnOverD {
-                quotient: Scaled::from_raw(72),
-                remainder: 27,
-            }
-        );
-        assert_eq!(
-            xn_over_d(Scaled::from_raw(-1), 7_227, 100)
-                .expect("negative 1in integer conversion fits"),
-            super::XnOverD {
-                quotient: Scaled::from_raw(-72),
-                remainder: -27,
-            }
-        );
-        assert_eq!(
-            xn_over_d(Scaled::MAX_DIMEN, Scaled::UNITY, 1),
-            Err(DimensionError::TooLarge)
-        );
-    }
-
-    #[test]
-    fn decimal_fraction_rounding_matches_tex_edges() {
-        assert_eq!(round_decimal_fraction(&[]), 0);
-        assert_eq!(round_decimal_fraction(&[5]), Scaled::UNITY / 2);
-        assert_eq!(round_decimal_fraction(&[9, 9, 9, 9, 9]), 65_535);
-        assert_eq!(round_decimal_fraction(&[0, 0, 0, 0, 7, 6]), 5);
-        assert_eq!(
-            round_decimal_fraction(&[9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9]),
-            Scaled::UNITY
-        );
-    }
-
-    #[test]
-    fn physical_unit_table_matches_tex_web() {
-        assert_eq!(PhysicalUnit::Sp.point_ratio(), (1, 65_536));
-        assert_eq!(PhysicalUnit::Pt.point_ratio(), (1, 1));
-        assert_eq!(PhysicalUnit::In.point_ratio(), (7_227, 100));
-        assert_eq!(PhysicalUnit::Pc.point_ratio(), (12, 1));
-        assert_eq!(PhysicalUnit::Cm.point_ratio(), (7_227, 254));
-        assert_eq!(PhysicalUnit::Mm.point_ratio(), (7_227, 2_540));
-        assert_eq!(PhysicalUnit::Bp.point_ratio(), (7_227, 7_200));
-        assert_eq!(PhysicalUnit::Dd.point_ratio(), (1_238, 1_157));
-        assert_eq!(PhysicalUnit::Cc.point_ratio(), (14_856, 1_157));
-    }
-
-    #[test]
-    fn converts_physical_unit_edge_values() {
-        assert_eq!(
-            scaled_from_decimal_parts(
-                0,
-                round_decimal_fraction(&[9, 9, 9, 9, 9]),
-                PhysicalUnit::Pt
-            )
-            .expect("0.99999pt fits")
-            .raw(),
-            65_535
-        );
-        assert_eq!(
-            scaled_from_decimal_parts(
-                16_383,
-                round_decimal_fraction(&[9, 9, 9, 9, 8]),
-                PhysicalUnit::Pt
-            )
-            .expect("16383.99998pt fits exactly at max_dimen"),
-            Scaled::MAX_DIMEN
-        );
-        assert_eq!(
-            scaled_from_decimal_parts(Scaled::MAX_DIMEN.raw(), 0, PhysicalUnit::Sp)
-                .expect("max_dimen sp fits"),
-            Scaled::MAX_DIMEN
-        );
-    }
-
-    #[test]
-    fn converts_unit_fractions_with_tex_rounding() {
-        assert_eq!(
-            scaled_from_decimal_parts(1, 0, PhysicalUnit::In)
-                .expect("1in fits")
-                .raw(),
-            4_736_286
-        );
-        assert_eq!(
-            scaled_from_decimal_parts(1, 0, PhysicalUnit::Pc)
-                .expect("1pc fits")
-                .raw(),
-            786_432
-        );
-        assert_eq!(
-            scaled_from_decimal_parts(1, 0, PhysicalUnit::Cm)
-                .expect("1cm fits")
-                .raw(),
-            1_864_679
-        );
-        assert_eq!(
-            scaled_from_decimal_parts(1, 0, PhysicalUnit::Mm)
-                .expect("1mm fits")
-                .raw(),
-            186_467
-        );
-        assert_eq!(
-            scaled_from_decimal_parts(1, 0, PhysicalUnit::Bp)
-                .expect("1bp fits")
-                .raw(),
-            65_781
-        );
-        assert_eq!(
-            scaled_from_decimal_parts(1, 0, PhysicalUnit::Dd)
-                .expect("1dd fits")
-                .raw(),
-            70_124
-        );
-        assert_eq!(
-            scaled_from_decimal_parts(1, 0, PhysicalUnit::Cc)
-                .expect("1cc fits")
-                .raw(),
-            841_489
-        );
-        assert_eq!(
-            scaled_from_decimal_parts(1, round_decimal_fraction(&[5]), PhysicalUnit::Sp)
-                .expect("fractional sp truncates to integer sp")
-                .raw(),
-            1
-        );
-    }
-
-    #[test]
-    fn dimension_overflow_reports_tex_error_text() {
-        let error = scaled_from_decimal_parts(16_384, 0, PhysicalUnit::Pt)
-            .expect_err("16384pt exceeds max_dimen");
-        assert_eq!(error, DimensionError::TooLarge);
-        assert_eq!(error.to_string(), "Dimension too large");
-
-        let error = scaled_from_decimal_parts(Scaled::MAX_DIMEN.raw() + 1, 0, PhysicalUnit::Sp)
-            .expect_err("max_dimen plus 1sp exceeds max_dimen");
-        assert_eq!(error.to_string(), "Dimension too large");
-    }
-}
+#[path = "scaled_tests.rs"]
+mod scaled_tests;
