@@ -1,8 +1,8 @@
-//! Aggregate state stores and atomic rollback boundary.
+//! Internal aggregate state stores and atomic rollback machinery.
 //!
-//! `Stores` is hidden M3 scaffolding for state that must checkpoint and roll
-//! back together until `Universe` subsumes this aggregate boundary. Callers use
-//! this boundary instead of rolling back `Env` or content stores independently.
+//! `Stores` is the private composition owned by `Universe`. Public callers use
+//! `Universe` for checkpointing and rollback so the whole timeline tuple is
+//! restored atomically.
 
 use crate::code_tables::{
     CodeTableGenerations, CodeTables, CodeTablesSnapshot, DelCode, LcCode, MathCode, SfCode, UcCode,
@@ -34,7 +34,7 @@ const TESTING_NODE_HASH_MAX_DEPTH: usize = 4096;
 
 /// A rollback snapshot for all currently implemented state stores.
 #[derive(Clone, Debug)]
-pub struct Snapshot {
+pub(crate) struct StoreSnapshot {
     owner: SnapshotOwner,
     env_snapshot: EnvSnapshot,
     interner_mark: InternerMark,
@@ -44,6 +44,13 @@ pub struct Snapshot {
     node_mark: NodeArenaMark,
     code_tables_snapshot: CodeTablesSnapshot,
     prepared_mag: Option<i32>,
+}
+
+impl StoreSnapshot {
+    #[must_use]
+    pub(crate) const fn epoch(&self) -> crate::epoch::Epoch {
+        self.env_snapshot.epoch()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -67,7 +74,7 @@ impl StoreOwner {
     }
 }
 
-/// Top-level owner for rollback-coupled state stores.
+/// Internal owner for rollback-coupled state stores.
 #[derive(Debug)]
 pub struct Stores {
     owner: StoreOwner,
@@ -616,14 +623,9 @@ impl Stores {
     }
 
     /// Takes an O(1) checkpoint for the rollback-coupled store tuple.
-    ///
-    /// A `Snapshot` belongs only to the `Stores` instance that created it.
-    /// Leaving a TeX group invalidates snapshots taken inside that group:
-    /// rollback may only target a snapshot whose captured group depth still
-    /// matches the current group depth.
     #[must_use]
-    pub fn checkpoint(&mut self) -> Snapshot {
-        Snapshot {
+    pub(crate) fn checkpoint(&mut self) -> StoreSnapshot {
+        StoreSnapshot {
             owner: self.owner.snapshot_owner(),
             env_snapshot: self.env.checkpoint(),
             interner_mark: self.interner.watermark(),
@@ -637,8 +639,8 @@ impl Stores {
     }
 
     /// Rolls all stores back to `snapshot` as one atomic tuple.
-    pub fn rollback(&mut self, snapshot: Snapshot) {
-        self.assert_valid_snapshot(&snapshot);
+    pub(crate) fn rollback(&mut self, snapshot: &StoreSnapshot) {
+        self.assert_valid_snapshot(snapshot);
         self.account_rollback_box_refs(snapshot.env_snapshot);
         self.env.rollback_to(snapshot.env_snapshot);
         self.interner.truncate_to(snapshot.interner_mark);
@@ -646,14 +648,15 @@ impl Stores {
         self.macros.truncate_to(snapshot.macro_mark);
         self.glue.truncate_to(snapshot.glue_mark);
         self.nodes.truncate_to(snapshot.node_mark);
-        self.code_tables.rollback_to(snapshot.code_tables_snapshot);
+        self.code_tables
+            .rollback_to(snapshot.code_tables_snapshot.clone());
         self.prepared_mag = snapshot.prepared_mag;
     }
 
     /// Returns the number of journal bytes appended since `snapshot`.
     #[must_use]
-    pub fn env_journal_bytes_since(&self, snapshot: Snapshot) -> usize {
-        self.assert_valid_snapshot(&snapshot);
+    pub(crate) fn env_journal_bytes_since(&self, snapshot: &StoreSnapshot) -> usize {
+        self.assert_valid_snapshot(snapshot);
         mem::size_of_val(
             self.env
                 .journal_entries_since(snapshot.env_snapshot.journal_pos()),
@@ -702,7 +705,7 @@ impl Stores {
         self.env.testing_afterassignment().hash(hasher);
     }
 
-    fn assert_valid_snapshot(&self, snapshot: &Snapshot) {
+    fn assert_valid_snapshot(&self, snapshot: &StoreSnapshot) {
         assert_eq!(
             snapshot.owner,
             self.owner.snapshot_owner(),

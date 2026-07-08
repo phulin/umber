@@ -6,7 +6,7 @@ use refexec::{RefTex, RunOpts};
 use tempfile::tempdir;
 use tex_exec::{Executor, install_unexpandable_primitives};
 use tex_lex::{InputStack, MemoryInput};
-use tex_state::stores::Stores;
+use tex_state::Universe;
 
 #[test]
 fn grouping_after_tokens_match_pdftex_micro_suite() {
@@ -115,8 +115,8 @@ fn run_pdftex(dir: &std::path::Path, stem: &str, input: &str) -> refexec::RunOut
         .expect("run pdftex")
 }
 
-fn run_umber_exec(input: &str) -> Stores {
-    let mut stores = Stores::new();
+fn run_umber_exec(input: &str) -> Universe {
+    let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(input));
     Executor::new()

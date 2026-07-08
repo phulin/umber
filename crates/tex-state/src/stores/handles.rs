@@ -10,28 +10,28 @@ impl Stores {
     pub(super) fn assert_live_symbol(&self, symbol: Symbol) {
         assert!(
             self.interner.contains(symbol),
-            "symbol is not live in this Stores timeline"
+            "symbol is not live in this Universe timeline"
         );
     }
 
     pub(super) fn assert_live_token_list(&self, id: TokenListId) {
         assert!(
             self.tokens.contains(id),
-            "token list is not live in this Stores timeline"
+            "token list is not live in this Universe timeline"
         );
     }
 
     pub(super) fn assert_live_glue(&self, id: GlueId) {
         assert!(
             self.glue.contains(id),
-            "glue id is not live in this Stores timeline"
+            "glue id is not live in this Universe timeline"
         );
     }
 
     pub(super) fn assert_live_macro_definition(&self, id: MacroDefinitionId) {
         assert!(
             self.macros.contains(id),
-            "macro definition id is not live in this Stores timeline"
+            "macro definition id is not live in this Universe timeline"
         );
     }
 
@@ -40,7 +40,7 @@ impl Stores {
             ArenaRef::Epoch => self.nodes.contains(id),
             ArenaRef::Survivor(_) => self.survivors.contains(id),
         };
-        assert!(live, "node list is not live in this Stores timeline");
+        assert!(live, "node list is not live in this Universe timeline");
     }
 
     pub(super) fn assert_live_macro_definition_in_meaning(&self, meaning: Meaning) {
@@ -89,13 +89,13 @@ impl Stores {
             ArenaRef::Epoch => {
                 assert!(
                     self.nodes.contains(id),
-                    "child node-list id is not live in this Stores timeline"
+                    "child node-list id is not live in this Universe timeline"
                 );
             }
             ArenaRef::Survivor(_) => {
                 assert!(
                     self.survivors.contains(id),
-                    "child node-list id is not live in this Stores timeline"
+                    "child node-list id is not live in this Universe timeline"
                 );
             }
         }

@@ -13,8 +13,8 @@ use tex_state::ids::GlueId;
 use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::scaled::Scaled;
-use tex_state::stores::{GroupKind, Stores};
 use tex_state::token::{Catcode, Token};
+use tex_state::{GroupKind, Universe};
 
 use crate::{
     DispatchAction, ExecError, LogSink, Mode, NoopLogSink, diagnostics, dispatch_delivered_token,
@@ -39,7 +39,7 @@ use variables::*;
 pub fn try_execute_assignment<S, H>(
     token: Token,
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     hooks: &mut H,
 ) -> Result<bool, ExecError>
 where
@@ -63,7 +63,7 @@ where
 pub(crate) fn execute_unexpandable<S, H, L>(
     primitive: UnexpandablePrimitive,
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     hooks: &mut H,
     log: &mut L,
 ) -> Result<DispatchAction, ExecError>
@@ -93,7 +93,7 @@ where
 pub(crate) fn execute_assignment_meaning<S, H>(
     meaning: Meaning,
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     hooks: &mut H,
 ) -> Result<DispatchAction, ExecError>
 where
@@ -140,7 +140,7 @@ fn accumulate_prefixes<S>(
     mut command: PrefixedCommand,
     prefixes: &mut Prefixes,
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
 ) -> Result<PrefixedCommand, ExecError>
 where
     S: InputSource,
@@ -175,7 +175,7 @@ fn execute_prefixed_command<S, H, L>(
     command: PrefixedCommand,
     prefixes: Prefixes,
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     hooks: &mut H,
     log: &mut L,
 ) -> Result<bool, ExecError>

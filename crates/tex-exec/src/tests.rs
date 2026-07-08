@@ -2,9 +2,9 @@ use super::*;
 use crate::executor::NoopExecHooks;
 use tex_expand::{EngineMode, ExpansionHooks, NoopRecorder};
 use tex_lex::{InputStack, MemoryInput};
+use tex_state::Universe;
 use tex_state::env::banks::IntParam;
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
-use tex_state::stores::Stores;
 use tex_state::token::{Catcode, Token};
 
 #[test]
@@ -76,7 +76,7 @@ fn mode_queries_are_backed_by_current_nest_level() {
 
 #[test]
 fn dispatch_relax_continues_without_state_mutation() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let relax = stores.intern("relax");
     stores.set_meaning(relax, Meaning::Relax);
     let mut input = InputStack::new(MemoryInput::new(""));
@@ -97,7 +97,7 @@ fn dispatch_relax_continues_without_state_mutation() {
 
 #[test]
 fn dispatch_character_hits_loud_typesetting_stub() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let token = Token::Char {
         ch: 'x',
         cat: Catcode::Letter,
@@ -114,7 +114,7 @@ fn dispatch_character_hits_loud_typesetting_stub() {
 
 #[test]
 fn main_control_uses_get_x_token_and_expands_macros_before_dispatch() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let relax = stores.intern("relax");
     stores.set_meaning(relax, Meaning::Relax);
     let mut input = InputStack::new(MemoryInput::new("\\relax"));
@@ -127,7 +127,7 @@ fn main_control_uses_get_x_token_and_expands_macros_before_dispatch() {
 
 #[test]
 fn def_and_gdef_assign_macro_meanings_through_group_barrier() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\def\\a{A}\\gdef\\b{B}"));
     stores.enter_group();
@@ -147,7 +147,7 @@ fn def_and_gdef_assign_macro_meanings_through_group_barrier() {
 
 #[test]
 fn edef_omits_noexpand_command_and_freezes_the_output() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
     install_expandable(&mut stores, "noexpand", ExpandablePrimitive::NoExpand);
     install_expandable(&mut stores, "the", ExpandablePrimitive::The);
@@ -173,7 +173,7 @@ fn edef_omits_noexpand_command_and_freezes_the_output() {
 
 #[test]
 fn edef_expansion_uses_active_input_hooks() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
     install_expandable(&mut stores, "input", ExpandablePrimitive::Input);
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);
@@ -203,7 +203,7 @@ fn edef_expansion_uses_active_input_hooks() {
 
 #[test]
 fn let_assigns_control_sequence_and_implicit_character_meanings() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
     let a = stores.intern("a");
     stores.set_meaning(a, Meaning::CharGiven('Q'));
@@ -224,7 +224,7 @@ fn let_assigns_control_sequence_and_implicit_character_meanings() {
 
 #[test]
 fn futurelet_assigns_second_token_meaning_and_preserves_order() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
     let futurelet = stores.symbol("futurelet").expect("futurelet");
     let mut input = InputStack::new(MemoryInput::new("\\n\\first x"));
@@ -256,7 +256,7 @@ fn futurelet_assigns_second_token_meaning_and_preserves_order() {
 
 #[test]
 fn long_prefix_on_let_reports_tex_prefix_error() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\long\\let\\a=b"));
 
@@ -268,7 +268,7 @@ fn long_prefix_on_let_reports_tex_prefix_error() {
 
 #[test]
 fn globaldefs_forces_and_suppresses_global_assignments() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
     stores.enter_group();
     let mut input = InputStack::new(MemoryInput::new(
@@ -290,7 +290,7 @@ fn globaldefs_forces_and_suppresses_global_assignments() {
 
 #[test]
 fn brace_and_begingroup_groups_restore_local_assignments() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "{\\count0=1\\global\\count1=2}\\begingroup\\count2=3\\endgroup",
@@ -307,7 +307,7 @@ fn brace_and_begingroup_groups_restore_local_assignments() {
 
 #[test]
 fn aftergroup_replays_tokens_fifo_on_group_exit() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\def\\A{\\count0=1}\\def\\B{\\count0=2}{\\aftergroup\\A\\aftergroup\\B}",
@@ -322,7 +322,7 @@ fn aftergroup_replays_tokens_fifo_on_group_exit() {
 
 #[test]
 fn afterassignment_fires_before_aftergroup_tokens() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\def\\A{\\global\\count0=1}\\def\\B{\\global\\count0=2}{\\aftergroup\\B\\afterassignment\\A\\count1=7}",
@@ -338,7 +338,7 @@ fn afterassignment_fires_before_aftergroup_tokens() {
 
 #[test]
 fn afterassignment_slot_is_single_token_and_overwrites_previous() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\def\\A{\\count0=1}\\def\\B{\\count0=2}\\afterassignment\\A\\afterassignment\\B\\count1=7",
@@ -354,7 +354,7 @@ fn afterassignment_slot_is_single_token_and_overwrites_previous() {
 
 #[test]
 fn group_mismatch_errors_use_tex_primary_text() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("}"));
 
@@ -363,7 +363,7 @@ fn group_mismatch_errors_use_tex_primary_text() {
         .expect_err("extra right brace is an error");
     assert_eq!(err.to_string(), "Too many }'s.");
 
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\begingroup}"));
     let err = Executor::new()
@@ -371,7 +371,7 @@ fn group_mismatch_errors_use_tex_primary_text() {
         .expect_err("right brace cannot close begingroup");
     assert_eq!(err.to_string(), "Extra }, or forgotten \\endgroup.");
 
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\endgroup"));
     let err = Executor::new()
@@ -379,7 +379,7 @@ fn group_mismatch_errors_use_tex_primary_text() {
         .expect_err("extra endgroup is an error");
     assert_eq!(err.to_string(), "Extra \\endgroup.");
 
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("{\\endgroup"));
     let err = Executor::new()
@@ -390,7 +390,7 @@ fn group_mismatch_errors_use_tex_primary_text() {
 
 #[test]
 fn register_assignments_cover_sparse_aliases_and_arithmetic() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\count300 = 7 \\countdef\\foo=300 \\advance\\foo by 5 \\multiply\\foo 3 \\divide\\foo by 2",
@@ -405,7 +405,7 @@ fn register_assignments_cover_sparse_aliases_and_arithmetic() {
 
 #[test]
 fn chardef_and_mathchardef_are_internal_integers() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\chardef\\A=65 \\mathchardef\\M=\"7132 \\count0=\\A \\count1=\\M",
@@ -421,7 +421,7 @@ fn chardef_and_mathchardef_are_internal_integers() {
 
 #[test]
 fn token_register_assignments_scan_balanced_text_and_copy_variables() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\toks0={a{b}c}\\toksdef\\T=1 \\T=\\toks0",
@@ -437,7 +437,7 @@ fn token_register_assignments_scan_balanced_text_and_copy_variables() {
 
 #[test]
 fn glue_arithmetic_preserves_fil_order_rules() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\skip0=1pt plus 2fil minus 6pt \\advance\\skip0 by 3pt plus 4fill minus 1pt \\divide\\skip0 by 2",
@@ -457,7 +457,7 @@ fn glue_arithmetic_preserves_fil_order_rules() {
 
 #[test]
 fn arithmetic_overflow_reports_tex_error_text() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\count0=2147483647 \\advance\\count0 by 1",
@@ -472,7 +472,7 @@ fn arithmetic_overflow_reports_tex_error_text() {
 
 #[test]
 fn code_table_assignment_validates_and_bumps_generation_on_same_value() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
     let before = stores.code_table_generations();
     let mut input = InputStack::new(MemoryInput::new("\\catcode`\\@=12 \\catcode`\\@=12"));
@@ -486,7 +486,7 @@ fn code_table_assignment_validates_and_bumps_generation_on_same_value() {
     assert_eq!(after.catcode, before.catcode + 2);
 }
 
-fn install_expandable(stores: &mut Stores, name: &str, primitive: ExpandablePrimitive) {
+fn install_expandable(stores: &mut Universe, name: &str, primitive: ExpandablePrimitive) {
     let symbol = stores.intern(name);
     stores.set_meaning(symbol, Meaning::ExpandablePrimitive(primitive));
 }

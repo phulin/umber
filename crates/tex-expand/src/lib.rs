@@ -9,9 +9,9 @@
 use std::fmt;
 
 use tex_lex::{InputSource, InputStack, LexError, MacroArguments, TokenListReplayKind};
+use tex_state::Universe;
 use tex_state::interner::Symbol;
 use tex_state::meaning::Meaning;
-use tex_state::stores::Stores;
 use tex_state::token::Token;
 
 pub mod args;
@@ -34,7 +34,7 @@ pub use values::{meaning_text, scan_the_text_with_hooks, token_text};
 
 /// Installs the expandable TeX82 primitives currently implemented by this
 /// crate into the provided state facade.
-pub fn install_expandable_primitives(stores: &mut Stores) {
+pub fn install_expandable_primitives(stores: &mut Universe) {
     for (name, primitive) in [
         (
             "expandafter",
@@ -324,9 +324,9 @@ pub trait CsNameInterner {
     fn intern_relaxed_control_sequence(&mut self, name: &str) -> Symbol;
 }
 
-impl CsNameInterner for Stores {
+impl CsNameInterner for Universe {
     fn intern_relaxed_control_sequence(&mut self, name: &str) -> Symbol {
-        Stores::intern_relaxed_control_sequence(self, name)
+        Universe::intern_relaxed_control_sequence(self, name)
     }
 }
 
@@ -357,7 +357,7 @@ impl From<scan_dimen::ScanDimenError> for ExpandError {
 /// Pulls the next fully expanded token.
 pub fn get_x_token<S>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
 ) -> Result<Option<Token>, ExpandError>
 where
     S: InputSource,
@@ -368,7 +368,7 @@ where
 /// Pulls the next fully expanded token while recording meaning reads.
 pub fn get_x_token_with_recorder<S, R>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
 ) -> Result<Option<Token>, ExpandError>
 where
@@ -381,7 +381,7 @@ where
 /// Pulls the next fully expanded token using driver-provided expansion hooks.
 pub fn get_x_token_with_hooks<S, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     hooks: &mut H,
 ) -> Result<Option<Token>, ExpandError>
 where
@@ -394,7 +394,7 @@ where
 /// Pulls the next fully expanded token while recording reads and using hooks.
 pub fn get_x_token_with_recorder_and_hooks<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<Option<Token>, ExpandError>
@@ -431,7 +431,7 @@ where
 pub(crate) fn dispatch_one_raw_token_with_hooks<S, R, H>(
     token: Token,
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<Dispatch, ExpandError>
@@ -451,7 +451,7 @@ where
 
 pub(crate) fn push_dispatch_result<S>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     dispatch: Dispatch,
 ) {
     match dispatch {
@@ -479,12 +479,20 @@ pub(crate) fn apply_dispatch_push<S>(input: &mut InputStack<S>, dispatch: Dispat
     }
 }
 
-pub(crate) fn push_inserted_token<S>(input: &mut InputStack<S>, stores: &mut Stores, token: Token) {
+pub(crate) fn push_inserted_token<S>(
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    token: Token,
+) {
     let token_list = stores.intern_token_list(&[token]);
     input.push_token_list(token_list, TokenListReplayKind::Inserted);
 }
 
-pub(crate) fn push_noexpand_token<S>(input: &mut InputStack<S>, stores: &mut Stores, token: Token) {
+pub(crate) fn push_noexpand_token<S>(
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    token: Token,
+) {
     let token_list = stores.intern_token_list(&[token]);
     input.push_token_list(token_list, TokenListReplayKind::NoExpand);
 }

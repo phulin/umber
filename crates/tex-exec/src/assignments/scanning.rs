@@ -78,7 +78,7 @@ pub(super) fn variable_from_meaning(meaning: Meaning) -> Option<Variable> {
 
 pub(super) fn scan_variable_target<S, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     hooks: &mut H,
 ) -> Result<Variable, ExecError>
 where
@@ -125,7 +125,7 @@ where
 
 pub(super) fn scan_register_index<S, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     hooks: &mut H,
 ) -> Result<u16, ExecError>
 where
@@ -137,7 +137,7 @@ where
 
 pub(super) fn scan_register_index_with_recorder<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<u16, ExecError>
@@ -157,7 +157,7 @@ where
 
 pub(super) fn scan_i32<S, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     hooks: &mut H,
 ) -> Result<i32, ExecError>
 where
@@ -174,7 +174,7 @@ where
 
 pub(super) fn scan_nonzero_i32<S, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     hooks: &mut H,
 ) -> Result<i32, ExecError>
 where
@@ -191,7 +191,7 @@ where
 
 pub(super) fn scan_scaled<S, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     hooks: &mut H,
 ) -> Result<Scaled, ExecError>
 where
@@ -212,7 +212,7 @@ where
 
 pub(super) fn scan_glue_id<S, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     hooks: &mut H,
     mu: bool,
 ) -> Result<GlueId, ExecError>
@@ -230,7 +230,7 @@ where
 
 pub(super) fn scan_token_list_assignment<S, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     hooks: &mut H,
 ) -> Result<tex_state::ids::TokenListId, ExecError>
 where
@@ -261,7 +261,7 @@ where
 
 fn scan_balanced_text_after_open_group<S>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
 ) -> Result<tex_state::ids::TokenListId, ExecError>
 where
     S: InputSource,
@@ -291,7 +291,7 @@ where
 
 pub(super) fn next_non_space_x<S, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     hooks: &mut H,
 ) -> Result<Option<Token>, ExecError>
 where
@@ -312,7 +312,7 @@ where
 
 pub(super) fn scan_optional_keyword_x<S, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     hooks: &mut H,
     keyword: &str,
 ) -> Result<bool, ExecError>

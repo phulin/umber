@@ -1,5 +1,5 @@
 use tex_lex::{InputSource, InputStack, TokenListReplayKind};
-use tex_state::stores::Stores;
+use tex_state::Universe;
 use tex_state::token::{Catcode, Token};
 
 use crate::{
@@ -9,7 +9,7 @@ use crate::{
 
 pub(crate) fn next_non_space_x_token<S>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
 ) -> Result<Option<Token>, ExpandError>
 where
     S: InputSource,
@@ -32,7 +32,7 @@ where
 
 pub(crate) fn next_non_space_x_token_with_hooks<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<Option<Token>, ExpandError>
@@ -60,7 +60,7 @@ where
 
 pub(crate) fn scan_register_index<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<u16, ExpandError>
@@ -85,7 +85,7 @@ pub enum ExpandedKeywordMatch {
 
 pub fn scan_optional_keyword_with_hooks<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
     keyword: &str,
@@ -110,7 +110,7 @@ where
 
 pub fn scan_keyword_after_first_with_hooks<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
     first: Token,
@@ -148,14 +148,14 @@ where
     Ok(ExpandedKeywordMatch::Matched)
 }
 
-fn unread_token<S>(input: &mut InputStack<S>, stores: &mut Stores, token: Token)
+fn unread_token<S>(input: &mut InputStack<S>, stores: &mut Universe, token: Token)
 where
     S: InputSource,
 {
     unread_tokens(input, stores, [token]);
 }
 
-fn unread_tokens<S, I>(input: &mut InputStack<S>, stores: &mut Stores, tokens: I)
+fn unread_tokens<S, I>(input: &mut InputStack<S>, stores: &mut Universe, tokens: I)
 where
     S: InputSource,
     I: IntoIterator<Item = Token>,

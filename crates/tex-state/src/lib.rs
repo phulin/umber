@@ -13,10 +13,16 @@ pub mod meaning;
 pub mod node;
 pub mod node_arena;
 pub mod scaled;
-pub mod stores;
+mod stores;
 pub mod survivor;
 pub mod token;
 pub mod token_store;
+mod universe;
+
+pub use stores::{GroupKind, GroupMismatch, PrepareMagDiagnostic};
+pub use universe::{
+    EffectPos, InputSummary, InteractionMode, RngState, Snapshot, StreamBufState, Universe, World,
+};
 
 #[cfg(test)]
 mod tests {

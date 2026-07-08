@@ -1,26 +1,26 @@
 use crate::args::{MacroCallError, match_macro_call};
 use tex_lex::{InputStack, MemoryInput, TokenListReplayKind};
+use tex_state::Universe;
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::MeaningFlags;
-use tex_state::stores::Stores;
 use tex_state::token::{Catcode, Token};
 
 fn char_token(ch: char, cat: Catcode) -> Token {
     Token::Char { ch, cat }
 }
 
-fn cs_token(stores: &mut Stores, name: &str) -> Token {
+fn cs_token(stores: &mut Universe, name: &str) -> Token {
     Token::Cs(stores.intern(name))
 }
 
-fn macro_meaning(stores: &mut Stores, flags: MeaningFlags, params: &[Token]) -> MacroMeaning {
+fn macro_meaning(stores: &mut Universe, flags: MeaningFlags, params: &[Token]) -> MacroMeaning {
     let params = stores.intern_token_list(params);
     let body = stores.intern_token_list(&[]);
     MacroMeaning::new(flags, params, body)
 }
 
 fn match_from_list(
-    stores: &mut Stores,
+    stores: &mut Universe,
     meaning: MacroMeaning,
     input_tokens: &[Token],
 ) -> Result<Vec<Vec<Token>>, MacroCallError> {
@@ -40,7 +40,7 @@ fn match_from_list(
 
 #[test]
 fn matches_undelimited_single_token_argument_after_optional_spaces() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let meaning = macro_meaning(&mut stores, MeaningFlags::EMPTY, &[Token::param(1)]);
 
     let args = match_from_list(
@@ -58,7 +58,7 @@ fn matches_undelimited_single_token_argument_after_optional_spaces() {
 
 #[test]
 fn matches_undelimited_balanced_group_without_outer_braces() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let meaning = macro_meaning(&mut stores, MeaningFlags::EMPTY, &[Token::param(1)]);
 
     let args = match_from_list(
@@ -88,7 +88,7 @@ fn matches_undelimited_balanced_group_without_outer_braces() {
 
 #[test]
 fn matches_delimited_argument_runs() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let meaning = macro_meaning(
         &mut stores,
         MeaningFlags::EMPTY,
@@ -125,7 +125,7 @@ fn matches_delimited_argument_runs() {
 
 #[test]
 fn delimited_argument_matching_handles_overlapping_prefixes() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let meaning = macro_meaning(
         &mut stores,
         MeaningFlags::EMPTY,
@@ -152,7 +152,7 @@ fn delimited_argument_matching_handles_overlapping_prefixes() {
 
 #[test]
 fn delimiter_inside_nested_braces_does_not_end_argument() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let meaning = macro_meaning(
         &mut stores,
         MeaningFlags::EMPTY,
@@ -176,7 +176,7 @@ fn delimiter_inside_nested_braces_does_not_end_argument() {
 
 #[test]
 fn delimited_argument_strips_one_outer_balanced_group() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let meaning = macro_meaning(
         &mut stores,
         MeaningFlags::EMPTY,
@@ -209,7 +209,7 @@ fn delimited_argument_strips_one_outer_balanced_group() {
 
 #[test]
 fn leading_parameter_text_mismatch_reports_tex_message() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let meaning = macro_meaning(
         &mut stores,
         MeaningFlags::EMPTY,
@@ -228,7 +228,7 @@ fn leading_parameter_text_mismatch_reports_tex_message() {
 
 #[test]
 fn non_long_macro_rejects_paragraph_token_in_argument() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let par = stores.intern("par");
     let meaning = macro_meaning(&mut stores, MeaningFlags::EMPTY, &[Token::param(1)]);
 
@@ -244,7 +244,7 @@ fn non_long_macro_rejects_paragraph_token_in_argument() {
 
 #[test]
 fn long_macro_accepts_paragraph_token_in_argument() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let par = stores.intern("par");
     let meaning = macro_meaning(&mut stores, MeaningFlags::LONG, &[Token::param(1)]);
 
@@ -256,7 +256,7 @@ fn long_macro_accepts_paragraph_token_in_argument() {
 
 #[test]
 fn rejects_outer_control_sequence_while_scanning_argument() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let outer = stores.intern("outer");
     let params = stores.intern_token_list(&[]);
     let body = stores.intern_token_list(&[]);

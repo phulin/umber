@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use tex_state::Universe;
 use tex_state::env::Env;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
@@ -6,7 +7,6 @@ use tex_state::ids::{GlueId, TokenListId};
 use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, RawMeaning};
 use tex_state::scaled::Scaled;
-use tex_state::stores::Stores;
 use tex_state::token::{Catcode, Token};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -24,7 +24,7 @@ pub(crate) enum TestCell {
 }
 
 impl TestCell {
-    pub(crate) fn prepare_stores(stores: &mut Stores, cells: &[Self]) {
+    pub(crate) fn prepare_stores(stores: &mut Universe, cells: &[Self]) {
         let max_meaning = cells.iter().filter_map(|cell| match *cell {
             Self::Meaning(index) => Some(index),
             _ => None,
@@ -60,7 +60,7 @@ impl TestCell {
         }
     }
 
-    pub(crate) fn set(self, stores: &mut Stores, word: u64, global: bool) {
+    pub(crate) fn set(self, stores: &mut Universe, word: u64, global: bool) {
         match self {
             Self::Meaning(index) => {
                 let value = meaning(word);

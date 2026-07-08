@@ -1,6 +1,6 @@
 use super::*;
 
-pub fn install_unexpandable_primitives(stores: &mut Stores) {
+pub fn install_unexpandable_primitives(stores: &mut Universe) {
     for (name, primitive) in [
         ("def", UnexpandablePrimitive::Def),
         ("edef", UnexpandablePrimitive::Edef),
@@ -58,7 +58,7 @@ pub fn install_unexpandable_primitives(stores: &mut Stores) {
     install_parameter_meanings(stores);
 }
 
-fn install_parameter_meanings(stores: &mut Stores) {
+fn install_parameter_meanings(stores: &mut Universe) {
     for &(name, index) in INT_PARAMS {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::IntParam(index));

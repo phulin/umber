@@ -19,7 +19,7 @@ fn rollback_restores_env_and_interner_as_one_tuple() {
     let temporary = stores.intern("temporary");
     stores.set_meaning(temporary, Meaning::CharGiven('x'));
 
-    stores.rollback(snapshot);
+    stores.rollback(&snapshot);
 
     assert_eq!(stores.resolve(kept), "kept");
     assert_eq!(stores.meaning(kept), Meaning::Relax);
@@ -34,7 +34,7 @@ fn rollback_restores_token_store_as_part_of_snapshot_tuple() {
     let snapshot = stores.checkpoint();
     let stale = stores.intern_token_list(&[crate::token::Token::param(1)]);
 
-    stores.rollback(snapshot);
+    stores.rollback(&snapshot);
     let reused = stores.intern_token_list(&[crate::token::Token::param(2)]);
 
     assert_eq!(reused.raw(), stale.raw());
@@ -141,7 +141,7 @@ fn rollback_restores_macro_store_as_part_of_snapshot_tuple() {
     let stale_body = stores.intern_token_list(&[Token::param(2)]);
     let stale = stores.intern_macro(MacroMeaning::new(MeaningFlags::OUTER, params, stale_body));
 
-    stores.rollback(snapshot);
+    stores.rollback(&snapshot);
     let reused_body = stores.intern_token_list(&[Token::Cs(symbol)]);
     let reused = stores.intern_macro(MacroMeaning::new(
         MeaningFlags::PROTECTED,
@@ -163,7 +163,7 @@ fn rollback_restores_glue_store_as_part_of_snapshot_tuple() {
     let snapshot = stores.checkpoint();
     let stale = stores.intern_glue(glue_spec(1));
 
-    stores.rollback(snapshot);
+    stores.rollback(&snapshot);
     let reused = stores.intern_glue(glue_spec(2));
 
     assert_eq!(reused.raw(), stale.raw());
@@ -198,13 +198,13 @@ fn node_list_builder_finishes_through_stores_boundary() {
 }
 
 #[test]
-#[should_panic(expected = "glue id is not live in this Stores timeline")]
+#[should_panic(expected = "glue id is not live in this Universe timeline")]
 fn freeze_node_list_rejects_stale_rolled_back_glue_id() {
     let mut stores = Stores::new();
     let snapshot = stores.checkpoint();
     let stale = stores.intern_glue(glue_spec(1));
 
-    stores.rollback(snapshot);
+    stores.rollback(&snapshot);
     stores.freeze_node_list(&[Node::Glue {
         spec: stale,
         kind: crate::node::GlueKind::Normal,
@@ -212,7 +212,7 @@ fn freeze_node_list_rejects_stale_rolled_back_glue_id() {
 }
 
 #[test]
-#[should_panic(expected = "glue id is not live in this Stores timeline")]
+#[should_panic(expected = "glue id is not live in this Universe timeline")]
 fn finish_node_list_rejects_foreign_glue_id() {
     let mut stores = Stores::new();
     let mut foreign = stores.clone();
@@ -227,13 +227,13 @@ fn finish_node_list_rejects_foreign_glue_id() {
 }
 
 #[test]
-#[should_panic(expected = "token list is not live in this Stores timeline")]
+#[should_panic(expected = "token list is not live in this Universe timeline")]
 fn freeze_node_list_rejects_stale_rolled_back_mark_token_list() {
     let mut stores = Stores::new();
     let snapshot = stores.checkpoint();
     let stale = stores.intern_token_list(&[crate::token::Token::param(1)]);
 
-    stores.rollback(snapshot);
+    stores.rollback(&snapshot);
     stores.freeze_node_list(&[Node::Mark {
         class: 0,
         tokens: stale,
@@ -241,7 +241,7 @@ fn freeze_node_list_rejects_stale_rolled_back_mark_token_list() {
 }
 
 #[test]
-#[should_panic(expected = "token list is not live in this Stores timeline")]
+#[should_panic(expected = "token list is not live in this Universe timeline")]
 fn finish_node_list_rejects_foreign_whatsit_token_list() {
     let mut stores = Stores::new();
     let mut foreign = stores.clone();
@@ -256,18 +256,18 @@ fn finish_node_list_rejects_foreign_whatsit_token_list() {
 }
 
 #[test]
-#[should_panic(expected = "child node-list id is not live in this Stores timeline")]
+#[should_panic(expected = "child node-list id is not live in this Universe timeline")]
 fn freeze_node_list_rejects_stale_rolled_back_child_node_list() {
     let mut stores = Stores::new();
     let snapshot = stores.checkpoint();
     let stale = one_char(&mut stores, 'x');
 
-    stores.rollback(snapshot);
+    stores.rollback(&snapshot);
     stores.freeze_node_list(&[Node::Adjust(stale)]);
 }
 
 #[test]
-#[should_panic(expected = "child node-list id is not live in this Stores timeline")]
+#[should_panic(expected = "child node-list id is not live in this Universe timeline")]
 fn finish_node_list_rejects_foreign_child_node_list() {
     let mut stores = Stores::new();
     let mut foreign = Stores::new();
@@ -296,7 +296,7 @@ fn rollback_rejects_snapshot_taken_inside_exited_group() {
 
     assert_eq!(stores.leave_group(), Vec::<Token>::new());
 
-    stores.rollback(snapshot);
+    stores.rollback(&snapshot);
 }
 
 #[test]
@@ -309,7 +309,7 @@ fn rollback_allows_snapshot_before_balanced_inner_group() {
     stores.set_meaning(symbol, Meaning::CharGiven('x'));
     assert_eq!(stores.leave_group(), Vec::<Token>::new());
 
-    stores.rollback(snapshot);
+    stores.rollback(&snapshot);
     assert_eq!(stores.meaning(symbol), Meaning::Undefined);
 }
 
@@ -320,7 +320,7 @@ fn rollback_rejects_snapshot_from_different_store() {
     let mut second = Stores::new();
     let snapshot = first.checkpoint();
 
-    second.rollback(snapshot);
+    second.rollback(&snapshot);
 }
 
 #[test]
@@ -330,22 +330,22 @@ fn rollback_rejects_snapshot_from_cloned_store() {
     let mut second = first.clone();
     let snapshot = first.checkpoint();
 
-    second.rollback(snapshot);
+    second.rollback(&snapshot);
 }
 
 #[test]
-#[should_panic(expected = "token list is not live in this Stores timeline")]
+#[should_panic(expected = "token list is not live in this Universe timeline")]
 fn stale_rolled_back_token_list_cannot_mutate_toks_register() {
     let mut stores = Stores::new();
     let snapshot = stores.checkpoint();
     let stale = stores.intern_token_list(&[crate::token::Token::param(1)]);
 
-    stores.rollback(snapshot);
+    stores.rollback(&snapshot);
     stores.set_toks(0, stale);
 }
 
 #[test]
-#[should_panic(expected = "macro definition id is not live in this Stores timeline")]
+#[should_panic(expected = "macro definition id is not live in this Universe timeline")]
 fn stale_rolled_back_macro_definition_cannot_mutate_meaning() {
     let mut stores = Stores::new();
     let symbol = stores.intern("macro");
@@ -354,7 +354,7 @@ fn stale_rolled_back_macro_definition_cannot_mutate_meaning() {
     let body = stores.intern_token_list(&[Token::param(1)]);
     let stale = stores.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, params, body));
 
-    stores.rollback(snapshot);
+    stores.rollback(&snapshot);
     stores.set_meaning(
         symbol,
         Meaning::Macro {
@@ -365,24 +365,24 @@ fn stale_rolled_back_macro_definition_cannot_mutate_meaning() {
 }
 
 #[test]
-#[should_panic(expected = "glue id is not live in this Stores timeline")]
+#[should_panic(expected = "glue id is not live in this Universe timeline")]
 fn stale_rolled_back_glue_cannot_mutate_skip_register() {
     let mut stores = Stores::new();
     let snapshot = stores.checkpoint();
     let stale = stores.intern_glue(glue_spec(1));
 
-    stores.rollback(snapshot);
+    stores.rollback(&snapshot);
     stores.set_skip(0, stale);
 }
 
 #[test]
-#[should_panic(expected = "glue id is not live in this Stores timeline")]
+#[should_panic(expected = "glue id is not live in this Universe timeline")]
 fn stale_rolled_back_glue_cannot_mutate_muskip_register() {
     let mut stores = Stores::new();
     let snapshot = stores.checkpoint();
     let stale = stores.intern_glue(glue_spec(1));
 
-    stores.rollback(snapshot);
+    stores.rollback(&snapshot);
     stores.set_muskip(0, stale);
 }
 
@@ -395,7 +395,7 @@ fn checkpoint_rollback_restores_muskip_register_and_glue_tuple() {
     let replacement = stores.intern_glue(glue_spec(2));
 
     stores.set_muskip(7, replacement);
-    stores.rollback(snapshot);
+    stores.rollback(&snapshot);
 
     assert_eq!(stores.muskip(7), original);
     assert_eq!(stores.glue(stores.muskip(7)), glue_spec(1));
@@ -411,7 +411,7 @@ fn rollback_discards_aftergroup_payloads_pushed_after_snapshot() {
         ch: 'x',
         cat: Catcode::Letter,
     });
-    stores.rollback(snapshot);
+    stores.rollback(&snapshot);
 
     assert_eq!(stores.leave_group(), Vec::<Token>::new());
 }
@@ -431,20 +431,20 @@ fn rollback_restores_afterassignment_slot() {
     let snapshot = stores.checkpoint();
 
     stores.set_afterassignment(replacement);
-    stores.rollback(snapshot);
+    stores.rollback(&snapshot);
 
     assert_eq!(stores.take_afterassignment(), Some(original));
     assert_eq!(stores.take_afterassignment(), None);
 }
 
 #[test]
-#[should_panic(expected = "symbol is not live in this Stores timeline")]
+#[should_panic(expected = "symbol is not live in this Universe timeline")]
 fn stale_rolled_back_symbol_cannot_write_reused_meaning_cell() {
     let mut stores = Stores::new();
     let snapshot = stores.checkpoint();
     let stale = stores.intern("rolled-back");
 
-    stores.rollback(snapshot);
+    stores.rollback(&snapshot);
     stores.set_meaning(stale, Meaning::Relax);
 }
 
@@ -504,7 +504,7 @@ fn group_exit_and_rollback_restore_box_refs_once() {
     assert_eq!(stores.testing_live_survivor_slot_count(), 1);
     assert_eq!(stores.testing_survivor_refcount(baseline), 1);
 
-    stores.rollback(snapshot);
+    stores.rollback(&snapshot);
     assert_eq!(stores.box_reg(0), Some(baseline));
     assert_eq!(stores.testing_live_survivor_slot_count(), 1);
     assert_eq!(stores.testing_survivor_refcount(baseline), 1);
@@ -528,7 +528,7 @@ fn global_box_assignment_survives_group_and_journal_owner_survives_rollback() {
     assert_eq!(stores.testing_survivor_refcount(global), 1);
     assert_eq!(stores.testing_survivor_refcount(baseline), 1);
 
-    stores.rollback(snapshot);
+    stores.rollback(&snapshot);
     assert_eq!(stores.box_reg(0), Some(baseline));
     assert_eq!(stores.testing_live_survivor_slot_count(), 1);
     assert_eq!(stores.testing_survivor_refcount(baseline), 1);
@@ -548,7 +548,7 @@ fn same_value_global_box_adds_only_journal_owner() {
     assert_eq!(stores.leave_group(), Vec::<Token>::new());
     assert_eq!(stores.testing_survivor_refcount(survivor), 2);
 
-    stores.rollback(snapshot);
+    stores.rollback(&snapshot);
     assert_eq!(stores.box_reg(0), Some(survivor));
     assert_eq!(stores.testing_survivor_refcount(survivor), 1);
 }
@@ -595,7 +595,7 @@ fn local_box_after_global_drops_local_survivor_on_group_exit() {
     assert_eq!(stores.testing_survivor_refcount(global), 1);
     assert_eq!(stores.testing_survivor_refcount(baseline), 1);
 
-    stores.rollback(snapshot);
+    stores.rollback(&snapshot);
     assert_eq!(stores.box_reg(0), Some(baseline));
     assert_eq!(stores.testing_live_survivor_slot_count(), 1);
     assert_eq!(stores.testing_survivor_refcount(baseline), 1);
@@ -655,7 +655,7 @@ fn mag_parameter_defaults_and_rolls_back_through_stores() {
     stores.set_mag(2000);
     assert_eq!(stores.mag(), 2000);
 
-    stores.rollback(snapshot);
+    stores.rollback(&snapshot);
     assert_eq!(stores.mag(), 1000);
 }
 
@@ -675,7 +675,7 @@ fn prepare_mag_coerces_illegal_values_and_rolls_back_freeze() {
         Some(PrepareMagDiagnostic::IllegalMagnification { attempted: 0 })
     );
 
-    stores.rollback(snapshot);
+    stores.rollback(&snapshot);
     assert_eq!(stores.mag(), 1000);
     assert_eq!(stores.prepared_mag(), None);
 }

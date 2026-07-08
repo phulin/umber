@@ -1,6 +1,6 @@
 use tex_lex::{InputSource, InputStack};
+use tex_state::Universe;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
-use tex_state::stores::Stores;
 use tex_state::token::Token;
 
 use crate::{
@@ -13,7 +13,7 @@ use crate::{
 pub fn dispatch<S, R>(
     token: Token,
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     meaning: Meaning,
 ) -> Result<Dispatch, ExpandError>
@@ -34,7 +34,7 @@ where
 pub fn dispatch_with_hooks<S, R, H>(
     token: Token,
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
     meaning: Meaning,

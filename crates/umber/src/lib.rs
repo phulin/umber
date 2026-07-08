@@ -1,11 +1,11 @@
 use tex_exec::{Executor, StringLogSink};
 use tex_expand::{ExpansionHooks, NoopRecorder};
 use tex_lex::{InputSource, InputStack, MemoryInput};
+use tex_state::Universe;
 use tex_state::env::banks::IntParam;
-use tex_state::stores::Stores;
 
 /// Installs the primitive/state setup used by `umber run`.
-pub fn prepare_run_stores(stores: &mut Stores) {
+pub fn prepare_run_stores(stores: &mut Universe) {
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
     tex_expand::install_expandable_primitives(stores);
     tex_exec::install_unexpandable_primitives(stores);
@@ -15,7 +15,7 @@ pub fn prepare_run_stores(stores: &mut Stores) {
 /// Runs an already-open input stack through the same executor path as `umber run`.
 pub fn run_input_with_hooks<S, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     hooks: &mut H,
 ) -> Result<String, tex_exec::ExecError>
 where
@@ -37,7 +37,7 @@ where
 /// Runs in-memory TeX through the `umber run` executor setup.
 pub fn run_memory_with_stores(
     source: &str,
-    stores: &mut Stores,
+    stores: &mut Universe,
 ) -> Result<String, tex_exec::ExecError> {
     let mut input = InputStack::new(MemoryInput::new(source));
     let mut hooks = MemoryRunHooks;

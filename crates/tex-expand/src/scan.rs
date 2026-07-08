@@ -2,16 +2,16 @@
 //!
 //! This module implements the reusable `scan_toks`-style part of `\def` and
 //! `\edef`: scan the parameter text, then scan the brace-balanced replacement
-//! text. It freezes the resulting token lists through `Stores`, but it does
+//! text. It freezes the resulting token lists through `Universe`, but it does
 //! not assign the macro meaning to `Env`.
 
 use std::{fmt, marker::PhantomData};
 
 use tex_lex::{InputSource, InputStack, LexError, MemoryInput, TokenListReplayKind};
+use tex_state::Universe;
 use tex_state::ids::TokenListId;
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
-use tex_state::stores::Stores;
 use tex_state::token::{Catcode, Token};
 
 use crate::{
@@ -117,7 +117,7 @@ impl From<ExpandError> for ScanToksError {
 /// a `MacroMeaning`; callers decide whether, where, and how to assign it.
 pub fn scan_toks<S>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     flags: MeaningFlags,
 ) -> Result<ScannedMacro, ScanToksError>
 where
@@ -133,7 +133,7 @@ where
 /// Scans a macro definition and expands the replacement text as for `\edef`.
 pub fn scan_toks_expanded<S, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     flags: MeaningFlags,
     hooks: &mut H,
 ) -> Result<ScannedMacro, ScanToksError>
@@ -150,7 +150,7 @@ where
 }
 
 fn expand_replacement_text<S, H>(
-    stores: &mut Stores,
+    stores: &mut Universe,
     replacement_text: TokenListId,
     hooks: &mut H,
 ) -> Result<TokenListId, ScanToksError>
@@ -298,7 +298,7 @@ where
 
 fn scan_parameter_text<S>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
 ) -> Result<TokenListId, ScanToksError>
 where
     S: InputSource,
@@ -360,7 +360,7 @@ where
 
 fn scan_replacement_text<S>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
 ) -> Result<TokenListId, ScanToksError>
 where
     S: InputSource,
@@ -437,12 +437,12 @@ fn token_digit(token: Token) -> Option<u8> {
 mod tests {
     use super::{ScanToksError, scan_toks};
     use tex_lex::{InputStack, MemoryInput};
+    use tex_state::Universe;
     use tex_state::meaning::MeaningFlags;
-    use tex_state::stores::Stores;
     use tex_state::token::{Catcode, Token};
 
-    fn scan(input: &str) -> (Stores, Vec<Token>, Vec<Token>) {
-        let mut stores = Stores::new();
+    fn scan(input: &str) -> (Universe, Vec<Token>, Vec<Token>) {
+        let mut stores = Universe::new();
         let mut input = InputStack::new(MemoryInput::new(input));
         let scanned =
             scan_toks(&mut input, &mut stores, MeaningFlags::EMPTY).expect("scan should succeed");
@@ -480,7 +480,7 @@ mod tests {
 
     #[test]
     fn rejects_out_of_order_parameter_numbers() {
-        let mut stores = Stores::new();
+        let mut stores = Universe::new();
         let mut input = InputStack::new(MemoryInput::new("#2{}"));
 
         let err = scan_toks(&mut input, &mut stores, MeaningFlags::EMPTY)

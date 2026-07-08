@@ -1,17 +1,17 @@
 //! Macro-call argument matching.
 //!
 //! This is the TeX gullet scanner for macro parameter text. It consumes the
-//! call-site input, freezes matched arguments through `Stores`, and leaves body
+//! call-site input, freezes matched arguments through `Universe`, and leaves body
 //! replay/substitution to the expansion-frame work.
 
 use std::collections::VecDeque;
 use std::fmt;
 
 use tex_lex::{InputSource, InputStack, LexError, MACRO_ARGUMENT_SLOTS, MacroArguments};
+use tex_state::Universe;
 use tex_state::ids::TokenListId;
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{Meaning, MeaningFlags};
-use tex_state::stores::Stores;
 use tex_state::token::{Catcode, Token};
 
 use crate::{NoopRecorder, ReadRecorder};
@@ -120,7 +120,7 @@ struct ParameterPattern {
 /// Matches one macro call and freezes each argument token list.
 pub fn match_macro_call<S>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     call_token: Token,
     meaning: MacroMeaning,
 ) -> Result<MatchedArguments, MacroCallError>
@@ -132,7 +132,7 @@ where
 
 pub(crate) fn match_macro_call_with_recorder<S, R>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     call_token: Token,
     meaning: MacroMeaning,
@@ -205,7 +205,7 @@ fn parse_parameter_text(tokens: &[Token]) -> ParameterPattern {
 
 fn match_exact_tokens<S, R>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     flags: MeaningFlags,
     macro_name: &str,
@@ -228,7 +228,7 @@ where
 
 fn scan_undelimited_argument<S, R>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     flags: MeaningFlags,
     macro_name: &str,
@@ -253,7 +253,7 @@ where
 
 fn scan_balanced_group<S, R>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     flags: MeaningFlags,
     macro_name: &str,
@@ -291,7 +291,7 @@ where
 
 fn scan_delimited_argument<S, R>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     flags: MeaningFlags,
     macro_name: &str,
@@ -343,7 +343,7 @@ where
 
 fn next_or_pending_token<S, R>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     flags: MeaningFlags,
     macro_name: &str,
@@ -362,7 +362,7 @@ where
 
 fn next_checked_token<S, R>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     flags: MeaningFlags,
     macro_name: &str,
@@ -446,7 +446,7 @@ fn strip_outer_group(tokens: &[Token]) -> &[Token] {
     &tokens[1..tokens.len() - 1]
 }
 
-fn freeze_tokens(stores: &mut Stores, tokens: &[Token]) -> TokenListId {
+fn freeze_tokens(stores: &mut Universe, tokens: &[Token]) -> TokenListId {
     let mut builder = stores.token_list_builder();
     for &token in tokens {
         builder.push(token);
@@ -484,11 +484,11 @@ fn is_end_group(token: Token) -> bool {
     )
 }
 
-fn is_par_token(stores: &Stores, token: Token) -> bool {
+fn is_par_token(stores: &Universe, token: Token) -> bool {
     matches!(token, Token::Cs(symbol) if stores.symbol("par") == Some(symbol))
 }
 
-fn macro_name(stores: &Stores, token: Token) -> String {
+fn macro_name(stores: &Universe, token: Token) -> String {
     match token {
         Token::Cs(symbol) => format!("\\{}", stores.resolve(symbol)),
         _ => format!("{token:?}"),

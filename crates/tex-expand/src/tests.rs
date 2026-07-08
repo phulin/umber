@@ -4,13 +4,13 @@ use crate::{
 };
 use std::collections::HashMap;
 use tex_lex::{InputStack, MemoryInput, TokenListReplayKind};
+use tex_state::Universe;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::interner::Symbol;
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
 use tex_state::node::{BoxNode, BoxNodeFields, Node, Sign};
 use tex_state::scaled::Scaled;
-use tex_state::stores::Stores;
 use tex_state::token::{Catcode, Token};
 
 #[derive(Default)]
@@ -31,7 +31,7 @@ fn noop_recorder_has_no_state() {
 
 #[test]
 fn dispatch_delivers_unexpandable_tokens() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let token = Token::Char {
         ch: 'x',
         cat: Catcode::Letter,
@@ -77,7 +77,7 @@ fn expandable_dispatch_table_covers_epic_opcode_families() {
 
 #[test]
 fn get_x_token_delivers_unexpandable_control_sequence() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let relax = stores.intern("relax");
     stores.set_meaning(relax, Meaning::Relax);
     let mut input = InputStack::new(MemoryInput::new(""));
@@ -92,7 +92,7 @@ fn get_x_token_delivers_unexpandable_control_sequence() {
 
 #[test]
 fn get_x_token_pulls_from_source_frames_with_interner_access() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let relax = stores.intern("relax");
     stores.set_meaning(relax, Meaning::Relax);
     let mut input = InputStack::new(MemoryInput::new("x\\relax"));
@@ -112,7 +112,7 @@ fn get_x_token_pulls_from_source_frames_with_interner_access() {
 
 #[test]
 fn get_x_token_pushes_macro_body_frame_and_continues() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let macro_cs = stores.intern("m");
     let body = stores.intern_token_list(&[
         Token::Char {
@@ -160,7 +160,7 @@ fn get_x_token_pushes_macro_body_frame_and_continues() {
 
 #[test]
 fn recorder_observes_one_meaning_read_per_control_sequence_token() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let relax = stores.intern("relax");
     stores.set_meaning(relax, Meaning::Relax);
     let list = stores.intern_token_list(&[Token::Cs(relax)]);
@@ -178,7 +178,7 @@ fn recorder_observes_one_meaning_read_per_control_sequence_token() {
 
 #[test]
 fn expandafter_expands_second_token_then_replays_saved_token_first() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let expandafter =
         expandable_primitive(&mut stores, "expandafter", ExpandablePrimitive::ExpandAfter);
     let macro_cs = stores.intern("m");
@@ -199,7 +199,7 @@ fn expandafter_expands_second_token_then_replays_saved_token_first() {
 
 #[test]
 fn expandafter_chains_match_tex_pushback_order() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let expandafter =
         expandable_primitive(&mut stores, "expandafter", ExpandablePrimitive::ExpandAfter);
     let first = stores.intern("first");
@@ -231,7 +231,7 @@ fn expandafter_chains_match_tex_pushback_order() {
 
 #[test]
 fn noexpand_suppresses_next_control_sequence_for_one_get_x_token() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let noexpand = expandable_primitive(&mut stores, "noexpand", ExpandablePrimitive::NoExpand);
     let macro_cs = stores.intern("m");
     let params = stores.intern_token_list(&[]);
@@ -260,7 +260,7 @@ fn noexpand_suppresses_next_control_sequence_for_one_get_x_token() {
 
 #[test]
 fn expandafter_preserves_noexpand_for_later_frame_step() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let expandafter =
         expandable_primitive(&mut stores, "expandafter", ExpandablePrimitive::ExpandAfter);
     let noexpand = expandable_primitive(&mut stores, "noexpand", ExpandablePrimitive::NoExpand);
@@ -297,7 +297,7 @@ fn expandafter_preserves_noexpand_for_later_frame_step() {
 
 #[test]
 fn csname_interns_undefined_name_and_assigns_relax() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let (csname, endcsname) = csname_primitives(&mut stores);
     let input_list = stores.intern_token_list(&[
         Token::Cs(csname),
@@ -324,7 +324,7 @@ fn csname_interns_undefined_name_and_assigns_relax() {
 
 #[test]
 fn csname_expands_name_pieces_before_interning() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let (csname, endcsname) = csname_primitives(&mut stores);
     let macro_cs = stores.intern("piece");
     let params = stores.intern_token_list(&[]);
@@ -354,7 +354,7 @@ fn csname_expands_name_pieces_before_interning() {
 
 #[test]
 fn csname_reports_non_character_material_after_expansion() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let (csname, endcsname) = csname_primitives(&mut stores);
     let relax = stores.intern("relax");
     stores.set_meaning(relax, Meaning::Relax);
@@ -371,7 +371,7 @@ fn csname_reports_non_character_material_after_expansion() {
 
 #[test]
 fn csname_preserves_existing_meaning_for_ifx_relax_comparison() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let (csname, endcsname) = csname_primitives(&mut stores);
     let existing = stores.intern("known");
     stores.set_meaning(existing, Meaning::CharGiven('K'));
@@ -396,7 +396,7 @@ fn csname_preserves_existing_meaning_for_ifx_relax_comparison() {
 
 #[test]
 fn csname_created_undefined_name_is_meaning_equal_to_relax() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let (csname, endcsname) = csname_primitives(&mut stores);
     let relax = stores.intern("relax");
     stores.set_meaning(relax, Meaning::Relax);
@@ -421,7 +421,7 @@ fn csname_created_undefined_name_is_meaning_equal_to_relax() {
 
 #[test]
 fn macro_body_replay_substitutes_frozen_argument_lists() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let macro_cs = stores.intern("m");
     let params = stores.intern_token_list(&[Token::param(1)]);
     let body = stores.intern_token_list(&[char_token('a'), Token::param(1), char_token('b')]);
@@ -444,7 +444,7 @@ fn macro_body_replay_substitutes_frozen_argument_lists() {
 
 #[test]
 fn nested_macro_calls_replay_arguments_from_outer_frozen_frame() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let wrap = stores.intern("wrap");
     let wrap_params = stores.intern_token_list(&[Token::param(1)]);
     let wrap_body = stores.intern_token_list(&[char_token('['), Token::param(1), char_token(']')]);
@@ -481,7 +481,7 @@ fn nested_macro_calls_replay_arguments_from_outer_frozen_frame() {
 
 #[test]
 fn identical_macro_bodies_keep_shared_body_identity_with_distinct_arguments() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let left = stores.intern("left");
     let right = stores.intern("right");
     let params = stores.intern_token_list(&[Token::param(1)]);
@@ -563,7 +563,7 @@ fn identical_macro_bodies_keep_shared_body_identity_with_distinct_arguments() {
 
 #[test]
 fn string_respects_escapechar_and_renders_other_catcodes() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let string = expandable_primitive(&mut stores, "string", ExpandablePrimitive::String);
     let target = stores.intern("foo");
     let list = stores.intern_token_list(&[
@@ -607,7 +607,7 @@ fn string_respects_escapechar_and_renders_other_catcodes() {
 
 #[test]
 fn string_omits_invalid_escapechar() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     stores.set_int_param(tex_state::env::banks::IntParam::ESCAPE_CHAR, -1);
     let string = expandable_primitive(&mut stores, "string", ExpandablePrimitive::String);
     let target = stores.intern("foo");
@@ -620,7 +620,7 @@ fn string_omits_invalid_escapechar() {
 
 #[test]
 fn number_and_romannumeral_scan_expanded_integer_edge_cases() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let number = expandable_primitive(&mut stores, "number", ExpandablePrimitive::Number);
     let roman = expandable_primitive(
         &mut stores,
@@ -677,7 +677,7 @@ fn number_and_romannumeral_scan_expanded_integer_edge_cases() {
 
 #[test]
 fn the_renders_assignable_registers_parameters_and_code_tables() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     expandable_primitive(&mut stores, "the", ExpandablePrimitive::The);
     let count = stores.intern("count");
     stores.set_meaning(
@@ -718,7 +718,7 @@ fn the_renders_assignable_registers_parameters_and_code_tables() {
 
 #[test]
 fn number_scanner_preserves_driver_hooks_during_nested_expansion() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let number = expandable_primitive(&mut stores, "number", ExpandablePrimitive::Number);
     let input_primitive = expandable_primitive(&mut stores, "input", ExpandablePrimitive::Input);
     let digits = stores.intern("digits");
@@ -749,7 +749,7 @@ fn number_scanner_preserves_driver_hooks_during_nested_expansion() {
 
 #[test]
 fn meaning_renders_macro_text_and_output_catcodes() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let meaning = expandable_primitive(&mut stores, "meaning", ExpandablePrimitive::Meaning);
     let macro_cs = stores.intern("m");
     let params = stores.intern_token_list(&[Token::param(1)]);
@@ -783,7 +783,7 @@ fn meaning_renders_macro_text_and_output_catcodes() {
 
 #[test]
 fn the_renders_supported_registers_and_token_registers() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let the = expandable_primitive(&mut stores, "the", ExpandablePrimitive::The);
     let count = stores.intern("count");
     let dimen = stores.intern("dimen");
@@ -831,8 +831,8 @@ fn the_renders_supported_registers_and_token_registers() {
 
 #[test]
 fn rendered_output_is_frozen_and_rollback_removes_it() {
-    let mut stores = Stores::new();
-    let snapshot = stores.checkpoint();
+    let mut stores = Universe::new();
+    let snapshot = stores.snapshot();
     let number = expandable_primitive(&mut stores, "number", ExpandablePrimitive::Number);
     let list = stores.intern_token_list(&[Token::Cs(number), char_token('7')]);
     let mut input = InputStack::new(MemoryInput::new(""));
@@ -850,7 +850,7 @@ fn rendered_output_is_frozen_and_rollback_removes_it() {
         other => panic!("expected rendered token-list frame, got {other:?}"),
     };
 
-    stores.rollback(snapshot);
+    stores.rollback(&snapshot);
     let err = std::panic::catch_unwind(|| stores.tokens(rendered));
     assert!(
         err.is_err(),
@@ -860,7 +860,7 @@ fn rendered_output_is_frozen_and_rollback_removes_it() {
 
 #[test]
 fn input_pushes_driver_source_and_returns_to_calling_source() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     stores.set_int_param(tex_state::env::banks::IntParam::END_LINE_CHAR, 13);
     expandable_primitive(&mut stores, "input", ExpandablePrimitive::Input);
     let mut input = InputStack::new(MemoryInput::new("\\input{inc}z"));
@@ -875,7 +875,7 @@ fn input_pushes_driver_source_and_returns_to_calling_source() {
 
 #[test]
 fn endinput_finishes_current_line_then_pops_source() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     stores.set_int_param(tex_state::env::banks::IntParam::END_LINE_CHAR, 13);
     expandable_primitive(&mut stores, "input", ExpandablePrimitive::Input);
     expandable_primitive(&mut stores, "endinput", ExpandablePrimitive::EndInput);
@@ -890,7 +890,7 @@ fn endinput_finishes_current_line_then_pops_source() {
 
 #[test]
 fn jobname_expands_from_driver_hook_as_rendered_tokens() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     expandable_primitive(&mut stores, "jobname", ExpandablePrimitive::JobName);
     let mut input = InputStack::new(MemoryInput::new("\\jobname"));
     let mut hooks = MemoryHooks::new("paper");
@@ -916,7 +916,7 @@ fn jobname_expands_from_driver_hook_as_rendered_tokens() {
 
 #[test]
 fn fontname_stub_consumes_selector_and_expands_empty() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     expandable_primitive(&mut stores, "fontname", ExpandablePrimitive::FontName);
     let nullfont = stores.intern("nullfont");
     stores.set_meaning(nullfont, Meaning::Relax);
@@ -933,7 +933,7 @@ fn fontname_stub_consumes_selector_and_expands_empty() {
 
 #[test]
 fn mark_family_stubs_expand_empty() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     for (name, primitive) in [
         ("topmark", ExpandablePrimitive::TopMark),
         ("firstmark", ExpandablePrimitive::FirstMark),
@@ -959,7 +959,7 @@ fn mark_family_stubs_expand_empty() {
 
 #[test]
 fn iftrue_and_iffalse_select_expected_two_limb_branches() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let (iftrue, iffalse, else_cs, fi) = conditional_primitives(&mut stores);
     let list = stores.intern_token_list(&[
         Token::Cs(iftrue),
@@ -981,7 +981,7 @@ fn iftrue_and_iffalse_select_expected_two_limb_branches() {
 
 #[test]
 fn if_expands_to_two_unexpandable_character_tokens_before_comparing_charcodes() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let (_, _, else_cs, fi) = conditional_primitives(&mut stores);
     let if_cs = expandable_primitive(&mut stores, "if", ExpandablePrimitive::If);
     let left = stores.intern("left");
@@ -1017,7 +1017,7 @@ fn if_expands_to_two_unexpandable_character_tokens_before_comparing_charcodes() 
 
 #[test]
 fn ifcat_compares_category_codes_after_expansion() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let (_, _, else_cs, fi) = conditional_primitives(&mut stores);
     let ifcat = expandable_primitive(&mut stores, "ifcat", ExpandablePrimitive::IfCat);
     let macro_cs = stores.intern("letter");
@@ -1054,7 +1054,7 @@ fn ifcat_compares_category_codes_after_expansion() {
 
 #[test]
 fn ifx_compares_identical_macro_definitions_by_flags_and_hash_consed_ids() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let (_, _, else_cs, fi) = conditional_primitives(&mut stores);
     let ifx = expandable_primitive(&mut stores, "ifx", ExpandablePrimitive::IfX);
     let left = stores.intern("left");
@@ -1100,7 +1100,7 @@ fn ifx_compares_identical_macro_definitions_by_flags_and_hash_consed_ids() {
 
 #[test]
 fn ifx_uses_meaning_word_equality_for_non_macros_without_expansion() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let (_, _, else_cs, fi) = conditional_primitives(&mut stores);
     let ifx = expandable_primitive(&mut stores, "ifx", ExpandablePrimitive::IfX);
     let first = stores.intern("first");
@@ -1138,7 +1138,7 @@ fn ifx_uses_meaning_word_equality_for_non_macros_without_expansion() {
 
 #[test]
 fn ifnum_and_ifdim_compare_scanned_values() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let (_, _, else_cs, fi) = conditional_primitives(&mut stores);
     let ifnum = expandable_primitive(&mut stores, "ifnum", ExpandablePrimitive::IfNum);
     let ifdim = expandable_primitive(&mut stores, "ifdim", ExpandablePrimitive::IfDim);
@@ -1176,7 +1176,7 @@ fn ifnum_and_ifdim_compare_scanned_values() {
 
 #[test]
 fn ifodd_and_ifcase_select_expected_limb() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let (_, _, else_cs, fi) = conditional_primitives(&mut stores);
     let or_cs = expandable_primitive(&mut stores, "or", ExpandablePrimitive::Or);
     let ifodd = expandable_primitive(&mut stores, "ifodd", ExpandablePrimitive::IfOdd);
@@ -1210,7 +1210,7 @@ fn ifodd_and_ifcase_select_expected_limb() {
 
 #[test]
 fn mode_predicates_use_driver_hook() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let (_, _, else_cs, fi) = conditional_primitives(&mut stores);
     for (name, primitive) in [
         ("ifvmode", ExpandablePrimitive::IfVMode),
@@ -1251,7 +1251,7 @@ fn mode_predicates_use_driver_hook() {
 
 #[test]
 fn box_predicates_read_box_register_state() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let (_, _, else_cs, fi) = conditional_primitives(&mut stores);
     let ifvoid = expandable_primitive(&mut stores, "ifvoid", ExpandablePrimitive::IfVoid);
     let ifhbox = expandable_primitive(&mut stores, "ifhbox", ExpandablePrimitive::IfHBox);
@@ -1294,7 +1294,7 @@ fn box_predicates_read_box_register_state() {
 
 #[test]
 fn ifeof_uses_hook_and_noop_hook_reports_eof_stub() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let (_, _, else_cs, fi) = conditional_primitives(&mut stores);
     let ifeof = expandable_primitive(&mut stores, "ifeof", ExpandablePrimitive::IfEof);
     let list = stores.intern_token_list(&[
@@ -1338,7 +1338,7 @@ fn ifeof_uses_hook_and_noop_hook_reports_eof_stub() {
 
 #[test]
 fn skipped_false_limb_tracks_nested_conditionals() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let (iftrue, iffalse, else_cs, fi) = conditional_primitives(&mut stores);
     let list = stores.intern_token_list(&[
         Token::Cs(iffalse),
@@ -1360,7 +1360,7 @@ fn skipped_false_limb_tracks_nested_conditionals() {
 
 #[test]
 fn ifcase_selects_selected_limb_and_else_fallback() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let (_, _, else_cs, fi) = conditional_primitives(&mut stores);
     let ifcase = expandable_primitive(&mut stores, "ifcase", ExpandablePrimitive::IfCase);
     let or_cs = expandable_primitive(&mut stores, "or", ExpandablePrimitive::Or);
@@ -1396,7 +1396,7 @@ fn else_or_fi_report_extra_without_open_conditional() {
         ("or", ExpandablePrimitive::Or, "or"),
         ("fi", ExpandablePrimitive::Fi, "fi"),
     ] {
-        let mut stores = Stores::new();
+        let mut stores = Universe::new();
         let control = expandable_primitive(&mut stores, name, primitive);
         let list = stores.intern_token_list(&[Token::Cs(control)]);
         let mut input = InputStack::new(MemoryInput::new(""));
@@ -1411,7 +1411,7 @@ fn else_or_fi_report_extra_without_open_conditional() {
 
 #[test]
 fn skipped_conditional_reports_incomplete_if_at_eof() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let (_, iffalse, _, _) = conditional_primitives(&mut stores);
     let list = stores.intern_token_list(&[Token::Cs(iffalse), char_token('x')]);
     let mut input = InputStack::new(MemoryInput::new(""));
@@ -1425,7 +1425,7 @@ fn skipped_conditional_reports_incomplete_if_at_eof() {
 
 #[test]
 fn skipped_conditional_rejects_outer_macro_tokens() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let (_, iffalse, else_cs, fi) = conditional_primitives(&mut stores);
     let outer = stores.intern("outer");
     let params = stores.intern_token_list(&[]);
@@ -1450,7 +1450,7 @@ fn skipped_conditional_rejects_outer_macro_tokens() {
 
 #[test]
 fn skipped_source_text_is_lexed_with_current_catcodes() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     stores.set_int_param(tex_state::env::banks::IntParam::END_LINE_CHAR, -1);
     stores.set_catcode('@', Catcode::Escape);
     conditional_primitives(&mut stores);
@@ -1459,7 +1459,7 @@ fn skipped_source_text_is_lexed_with_current_catcodes() {
     assert_eq!(next_expanded_chars(&mut input, &mut stores), "good");
 }
 
-fn next_expanded_chars(input: &mut InputStack<MemoryInput>, stores: &mut Stores) -> String {
+fn next_expanded_chars(input: &mut InputStack<MemoryInput>, stores: &mut Universe) -> String {
     let mut out = String::new();
     while let Some(token) = get_x_token(input, stores).expect("expansion should succeed") {
         let Token::Char { ch, .. } = token else {
@@ -1470,7 +1470,7 @@ fn next_expanded_chars(input: &mut InputStack<MemoryInput>, stores: &mut Stores)
     out
 }
 
-fn collect_expanded(input: &mut InputStack<MemoryInput>, stores: &mut Stores) -> Vec<Token> {
+fn collect_expanded(input: &mut InputStack<MemoryInput>, stores: &mut Universe) -> Vec<Token> {
     let mut out = Vec::new();
     while let Some(token) = get_x_token(input, stores).expect("expansion should succeed") {
         out.push(token);
@@ -1480,7 +1480,7 @@ fn collect_expanded(input: &mut InputStack<MemoryInput>, stores: &mut Stores) ->
 
 fn next_expanded_chars_with_hooks(
     input: &mut InputStack<MemoryInput>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     hooks: &mut MemoryHooks,
 ) -> String {
     let mut out = String::new();
@@ -1497,7 +1497,7 @@ fn next_expanded_chars_with_hooks(
 
 fn collect_expanded_with_hooks(
     input: &mut InputStack<MemoryInput>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     hooks: &mut MemoryHooks,
 ) -> Vec<Token> {
     let mut out = Vec::new();
@@ -1525,7 +1525,7 @@ enum BoxKindForTest {
     VBox,
 }
 
-fn boxed_list(stores: &mut Stores, kind: BoxKindForTest) -> tex_state::ids::NodeListId {
+fn boxed_list(stores: &mut Universe, kind: BoxKindForTest) -> tex_state::ids::NodeListId {
     let empty = stores.freeze_node_list(&[]);
     let box_node = BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(0),
@@ -1543,20 +1543,24 @@ fn boxed_list(stores: &mut Stores, kind: BoxKindForTest) -> tex_state::ids::Node
     }
 }
 
-fn expandable_primitive(stores: &mut Stores, name: &str, primitive: ExpandablePrimitive) -> Symbol {
+fn expandable_primitive(
+    stores: &mut Universe,
+    name: &str,
+    primitive: ExpandablePrimitive,
+) -> Symbol {
     let symbol = stores.intern(name);
     stores.set_meaning(symbol, Meaning::ExpandablePrimitive(primitive));
     symbol
 }
 
-fn csname_primitives(stores: &mut Stores) -> (Symbol, Symbol) {
+fn csname_primitives(stores: &mut Universe) -> (Symbol, Symbol) {
     (
         expandable_primitive(stores, "csname", ExpandablePrimitive::CsName),
         expandable_primitive(stores, "endcsname", ExpandablePrimitive::EndCsName),
     )
 }
 
-fn conditional_primitives(stores: &mut Stores) -> (Symbol, Symbol, Symbol, Symbol) {
+fn conditional_primitives(stores: &mut Universe) -> (Symbol, Symbol, Symbol, Symbol) {
     (
         expandable_primitive(stores, "iftrue", ExpandablePrimitive::IfTrue),
         expandable_primitive(stores, "iffalse", ExpandablePrimitive::IfFalse),

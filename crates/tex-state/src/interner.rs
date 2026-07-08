@@ -2,7 +2,7 @@
 //!
 //! Symbols are dense indexes into a span table. The arena can be truncated to
 //! a watermark, but that rollback machinery is crate-private so the live
-//! interner rolls back only as part of the aggregate `Stores` tuple.
+//! interner rolls back only as part of the aggregate `Universe` tuple.
 
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
@@ -130,7 +130,7 @@ impl Interner {
         self.spans.is_empty()
     }
 
-    /// Takes a rollback watermark for `Stores`-owned aggregate snapshots.
+    /// Takes a rollback watermark for `Universe`-owned aggregate snapshots.
     #[must_use]
     pub(crate) fn watermark(&self) -> InternerMark {
         InternerMark {

@@ -1,31 +1,90 @@
+use tex_state::Universe;
 use tex_state::meaning::Meaning;
-use tex_state::stores::Stores;
 
 use std::fs;
 use std::process::Command;
 
 #[test]
-#[should_panic(expected = "symbol is not live in this Stores timeline")]
+#[should_panic(expected = "symbol is not live in this Universe timeline")]
 fn stale_rolled_back_symbol_cannot_mutate_reused_meaning_cell() {
-    let mut stores = Stores::new();
-    let snapshot = stores.checkpoint();
+    let mut stores = Universe::new();
+    let snapshot = stores.snapshot();
     let stale = stores.intern("rolled-back");
 
-    stores.rollback(snapshot);
+    stores.rollback(&snapshot);
     stores.set_meaning(stale, Meaning::Relax);
 }
 
 #[test]
 fn rollback_reuse_starts_with_undefined_meaning() {
-    let mut stores = Stores::new();
-    let snapshot = stores.checkpoint();
+    let mut stores = Universe::new();
+    let snapshot = stores.snapshot();
     let stale = stores.intern("rolled-back");
 
-    stores.rollback(snapshot);
+    stores.rollback(&snapshot);
     let reused = stores.intern("reused");
 
     assert_eq!(reused.raw(), stale.raw());
     assert_eq!(stores.meaning(reused), Meaning::Undefined);
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)]
+fn downstream_crate_cannot_import_private_stores() {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let probe_workspace = tempfile::tempdir().expect("create stores boundary probe workspace");
+    let probe_dir = probe_workspace.path().join("stores-boundary-probe");
+    let src_dir = probe_dir.join("src");
+
+    fs::create_dir_all(&src_dir).expect("create stores boundary probe src dir");
+    fs::write(
+        probe_dir.join("Cargo.toml"),
+        format!(
+            r#"[package]
+name = "stores-boundary-probe"
+version = "0.0.0"
+edition = "2024"
+
+[workspace]
+
+[dependencies]
+tex-state = {{ path = "{manifest_dir}" }}
+"#
+        ),
+    )
+    .expect("write stores boundary probe manifest");
+    fs::write(
+        src_dir.join("main.rs"),
+        r#"use tex_state::stores::Stores;
+
+fn main() {
+    let mut stores = Stores::new();
+    let snapshot = stores.checkpoint();
+    stores.rollback(snapshot);
+}
+"#,
+    )
+    .expect("write stores boundary probe main");
+
+    let output = Command::new(env!("CARGO"))
+        .arg("check")
+        .arg("--quiet")
+        .arg("--manifest-path")
+        .arg(probe_dir.join("Cargo.toml"))
+        .arg("--target-dir")
+        .arg(probe_dir.join("target"))
+        .output()
+        .expect("run stores boundary probe");
+
+    assert!(
+        !output.status.success(),
+        "downstream Stores probe unexpectedly compiled"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("module `stores` is private"),
+        "probe failed for an unexpected reason:\n{stderr}"
+    );
 }
 
 #[test]

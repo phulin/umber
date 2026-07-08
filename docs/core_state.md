@@ -121,7 +121,7 @@ Rules:
   `Env::get`, but downstream crates cannot decode arbitrary raw words or
   construct arbitrary raw meanings in production builds.
 - **Writes**: symbol-keyed meaning writes are exposed through the owning
-  `Stores`/`Universe` facade, which validates that the `Symbol` is live in the
+  `Universe` facade, which validates that the `Symbol` is live in the
   same interner timeline before calling Env's crate-private barriered setter.
   Same for every register bank and parameter table: semantic assignment runs
   the barrier (§6). Journal restore walks use a crate-private
@@ -138,7 +138,7 @@ Rules:
   `macro`, the public flag byte (`\long`, `\outer`, `\protected`, plus the
   reserved frozen bit), and a 48-bit operand naming an immutable
   `MacroDefinitionId`. That definition is owned by the aggregate
-  `Stores`/future `Universe` boundary and contains two frozen token-list ids:
+  `Universe` boundary and contains two frozen token-list ids:
   parameter text and replacement text. Downstream code may decode macro
   meanings through public aggregate facades into the `MacroMeaning` aggregate,
   but it cannot mint live macro-definition ids or inspect the raw store.
@@ -174,11 +174,11 @@ rare and bursty (verbatim, `\makeatletter`, babel shorthands).
   represent assignment activity, not effective value changes: a same-value
   code-table assignment still bumps the table generation, though it need not
   copy a page because the table content is unchanged.
-- In the implemented `tex-state` API, code tables live behind `Stores`:
-  reads and writes go through `Stores::{catcode,set_catcode,...}` and
-  `Stores::code_table_generations`. `Stores::checkpoint` captures the
+- In the implemented `tex-state` API, code tables live behind `Universe`:
+  reads and writes go through `Universe::{catcode,set_catcode,...}` and
+  `Universe::code_table_generations`. `Universe::snapshot` captures the
   structurally shared root pointers and generation counters, and
-  `Stores::rollback` restores them atomically with the Env/content tuple.
+  `Universe::rollback` restores them atomically with the Env/content tuple.
   Each implemented table root starts at a canonical shared default root whose
   pages are also canonical shared pages; the first effective write detaches
   the root and then copy-on-writes only the touched page.
@@ -316,7 +316,7 @@ Rollback discards the uncommitted suffix of the effect log.
 
 ```rust
 pub struct Snapshot {
-    owner: SnapshotOwner,          // rejects cross-Universe/Stores misuse
+    owner: SnapshotOwner,          // rejects cross-Universe misuse
     journal_pos: JournalPos,
     group_depth: u32,              // group exits invalidate enclosed snapshots
     epoch: Epoch,
@@ -333,7 +333,7 @@ pub struct Snapshot {
 
 - **Take**: O(1) — record positions/roots, copy scalars. Frequency: every
   shipout; every paragraph while an editor session is hot. A snapshot belongs
-  to the `Universe`/`Stores` instance that created it. In M2, snapshots taken
+  to the `Universe` instance that created it. Snapshots taken
   inside a TeX group are valid only while that enclosing group is still open;
   leaving the group truncates the journal below the checkpoint position and
   invalidates those snapshots instead of permitting partial rollback.
@@ -362,12 +362,12 @@ pub struct Snapshot {
   the journal and the arena watermarks restore **as one tuple, never
   independently** — otherwise every box register dangles. Enforce by making
   rollback a single method on the top-level `Universe` (§10.6); no partial
-  rollback API exists. In M1, `Stores` is the implemented subset of that
-  boundary (`Env`, interner, content stores, survivor roots, and code-table
-  roots); `Env` journal positions, journal walks, raw rollback, and raw root
-  restoration are crate-private implementation details behind
-  `Stores::checkpoint`, `Stores::rollback`, and the liveness-checking
-  `Stores` write facades.
+  rollback API exists. In the implementation, `Universe` owns a private
+  `Stores` composition for the Env/interner/content/survivor/code-table tuple;
+  `Env` journal positions, journal walks, raw rollback, raw root restoration,
+  and `Stores` checkpoint/rollback remain crate-private implementation details
+  behind `Universe::snapshot`, `Universe::rollback`, and the liveness-checking
+  `Universe` write facades.
 - **Commit barrier = shipout**: page artifact serialized, effects flushed,
   snapshots older than the last live editing anchor dropped. History is
   bounded.
@@ -441,16 +441,16 @@ buffers so the gullet can read frozen lists while building new argument lists.
 Node lists likewise; promotion is expressed as the *only* signature for storing
 into a box register.
 
-In M2, raw content substores are implementation details of `Stores`: downstream
+Raw content substores are implementation details of `Universe`: downstream
 crates cannot construct `TokenStore`, `GlueStore`, `NodeArena`, or
 `SurvivorArena`, cannot call their raw `intern`/append/read APIs, and cannot
 freeze a builder by passing `&mut` to a raw substore. Public content creation
-and reading instead go through `Stores::intern_token_list`,
-`Stores::finish_token_list`, `Stores::intern_glue`, `Stores::freeze_node_list`,
-`Stores::finish_node_list`, `Stores::tokens`, `Stores::glue`, and
-`Stores::nodes`, which keep handle liveness and rollback watermarks on the
+and reading instead go through `Universe::intern_token_list`,
+`Universe::finish_token_list`, `Universe::intern_glue`, `Universe::freeze_node_list`,
+`Universe::finish_node_list`, `Universe::tokens`, `Universe::glue`, and
+`Universe::nodes`, which keep handle liveness and rollback watermarks on the
 aggregate timeline. Public modules may still expose immutable value types,
-handles, and the builder types returned by `Stores`; their constructors and
+handles, and the builder types returned by `Universe`; their constructors and
 raw store-finish hooks are crate-private unless compiled for crate-local tests.
 
 ### 10.5 Effects as capability
@@ -469,17 +469,18 @@ pub struct Universe { env: Env, tokens: TokenStore, nodes: NodeArenas,
 One owned value = one isolated timeline. Speculation = move a rolled-back
 clone to another thread. No locks or atomics in the hot loop; `&mut
 Universe` *is* the isolation. `rollback(&mut self, &Snapshot)` is a method
-on `Universe` only (atomicity rule, §9). Until the full `Universe` exists,
-`tex-state::stores::Stores` provides the same public checkpoint/rollback
-boundary for the M1 store tuple. Because `Symbol` dense ids can be reused after
-interner rollback, public meaning writes also live on `Stores`; the facade
-rejects symbols that are no longer live in its owned interner before mutating
-Env cells. M2 `Stores` snapshots also carry an owning store identity and group
-depth: rollback rejects snapshots from another store timeline and snapshots
-invalidated by exiting the group that enclosed their checkpoint. The owning
-store identity is derived from a private per-`Stores` owner token, not from a
-global counter, lock, or atomic; cloning a store allocates a fresh token and
-therefore creates a distinct snapshot timeline.
+on `Universe` only (atomicity rule, §9). The implemented `Universe` wraps a
+private `Stores` composition so the M1/M2 liveness and aggregate-rollback
+discipline carries forward without exporting a `Stores` checkpoint path.
+Because `Symbol` dense ids can be reused after interner rollback, public
+meaning writes also live on `Universe`; the facade rejects symbols that are no
+longer live in its owned interner before mutating Env cells. `Universe`
+snapshots also carry an owning timeline identity and group depth: rollback
+rejects snapshots from another timeline and snapshots invalidated by exiting
+the group that enclosed their checkpoint. The owning timeline identity is
+derived from a private per-`Universe` owner token, not from a global counter,
+lock, or atomic; cloning a `Universe` allocates a fresh token and therefore
+creates a distinct snapshot timeline.
 
 ### 10.7 The JIT bypass, contained
 

@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-/// Public macro meaning aggregate used at the Stores boundary.
+/// Public macro meaning aggregate used at the Universe boundary.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct MacroMeaning {
     flags: MeaningFlags,

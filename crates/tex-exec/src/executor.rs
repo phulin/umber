@@ -2,7 +2,7 @@ use tex_expand::{
     EngineMode, ExpansionHooks, NoopRecorder, ReadRecorder, get_x_token_with_recorder_and_hooks,
 };
 use tex_lex::{InputSource, InputStack};
-use tex_state::stores::Stores;
+use tex_state::Universe;
 
 use crate::dispatch::unimplemented_typesetting;
 use crate::{
@@ -47,7 +47,7 @@ impl Executor {
     pub fn run<S>(
         &mut self,
         input: &mut InputStack<S>,
-        stores: &mut Stores,
+        stores: &mut Universe,
     ) -> Result<ExecutionStats, ExecError>
     where
         S: InputSource,
@@ -59,7 +59,7 @@ impl Executor {
     pub fn run_with_recorder<S, R>(
         &mut self,
         input: &mut InputStack<S>,
-        stores: &mut Stores,
+        stores: &mut Universe,
         recorder: &mut R,
     ) -> Result<ExecutionStats, ExecError>
     where
@@ -74,7 +74,7 @@ impl Executor {
     pub fn run_with_recorder_and_hooks<S, R, H>(
         &mut self,
         input: &mut InputStack<S>,
-        stores: &mut Stores,
+        stores: &mut Universe,
         recorder: &mut R,
         hooks: &mut H,
     ) -> Result<ExecutionStats, ExecError>
@@ -96,7 +96,7 @@ impl Executor {
     pub fn run_with_recorder_and_hooks_and_log_sink<S, R, H, L>(
         &mut self,
         input: &mut InputStack<S>,
-        stores: &mut Stores,
+        stores: &mut Universe,
         recorder: &mut R,
         hooks: &mut H,
         log: &mut L,

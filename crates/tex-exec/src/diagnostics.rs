@@ -5,7 +5,7 @@ use tex_expand::{
     scan_the_text_with_hooks, token_text,
 };
 use tex_lex::{InputSource, InputStack};
-use tex_state::stores::Stores;
+use tex_state::Universe;
 use tex_state::token::{Catcode, Token};
 
 use crate::{ExecError, push_tokens};
@@ -52,7 +52,7 @@ impl LogSink for StringLogSink {
 
 pub(crate) fn execute_show<S, L>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     log: &mut L,
 ) -> Result<(), ExecError>
 where
@@ -81,7 +81,7 @@ where
 
 pub(crate) fn execute_showthe<S, H, L>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     hooks: &mut H,
     log: &mut L,
 ) -> Result<(), ExecError>
@@ -100,7 +100,7 @@ where
 
 pub(crate) fn execute_showtokens<S, L>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     log: &mut L,
 ) -> Result<(), ExecError>
 where
@@ -116,7 +116,7 @@ where
 
 pub(crate) fn execute_message<S, H, L>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     hooks: &mut H,
     log: &mut L,
     error: bool,
@@ -149,7 +149,7 @@ where
 
 pub(crate) fn execute_change_case<S>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     uppercase: bool,
 ) -> Result<(), ExecError>
 where
@@ -183,7 +183,7 @@ where
 
 pub(crate) fn execute_ignorespaces<S>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
@@ -199,7 +199,7 @@ where
     }
 }
 
-fn show_meaning_text(stores: &Stores, token: Token) -> String {
+fn show_meaning_text(stores: &Universe, token: Token) -> String {
     let text = meaning_text(stores, token);
     if let Some(rest) = text.strip_prefix("macro:") {
         format!("macro:\n{rest}")
@@ -212,7 +212,7 @@ fn show_meaning_text(stores: &Stores, token: Token) -> String {
 
 fn scan_balanced_raw_text<S>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     context: &'static str,
 ) -> Result<Vec<Token>, ExecError>
 where
@@ -243,7 +243,7 @@ where
 
 fn scan_balanced_expanded_text<S, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     hooks: &mut H,
     context: &'static str,
 ) -> Result<Vec<Token>, ExecError>
@@ -280,7 +280,7 @@ where
 
 fn next_non_space_raw<S>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
 ) -> Result<Option<Token>, ExecError>
 where
     S: InputSource,
@@ -295,7 +295,7 @@ where
 
 fn next_non_space_x<S, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     hooks: &mut H,
 ) -> Result<Option<Token>, ExecError>
 where
@@ -313,7 +313,7 @@ where
     Ok(None)
 }
 
-fn tokens_text(stores: &Stores, tokens: &[Token]) -> String {
+fn tokens_text(stores: &Universe, tokens: &[Token]) -> String {
     let mut text = String::new();
     for &token in tokens {
         text.push_str(&token_text(stores, token));

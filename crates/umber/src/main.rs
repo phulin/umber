@@ -6,8 +6,8 @@ use std::process::ExitCode;
 
 use tex_expand::ExpansionHooks;
 use tex_lex::{FileInput, InputStack, Lexer};
+use tex_state::Universe;
 use tex_state::env::banks::IntParam;
-use tex_state::stores::Stores;
 use tex_state::token::Token;
 
 mod expand_dump;
@@ -67,7 +67,7 @@ fn run() -> Result<(), CliError> {
 #[allow(clippy::disallowed_methods)] // CLI entry point opens the user-requested file.
 fn lex_dump(path: &str) -> Result<(), CliError> {
     let file = File::open(path)?;
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
     let mut lexer = Lexer::new(FileInput::from_file(file));
 
@@ -82,7 +82,7 @@ fn lex_dump(path: &str) -> Result<(), CliError> {
 fn run_tex(path: &str) -> Result<(), CliError> {
     let path = Path::new(path);
     let file = File::open(path)?;
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     umber::prepare_run_stores(&mut stores);
 
     let mut input = InputStack::new(FileInput::from_file(file));
@@ -127,7 +127,7 @@ impl ExpansionHooks<FileInput> for RunHooks {
     }
 }
 
-fn format_token(token: Token, stores: &Stores) -> String {
+fn format_token(token: Token, stores: &Universe) -> String {
     match token {
         Token::Char { ch, cat } => format!("char:{}:{}", ch as u32, cat as u8),
         Token::Cs(symbol) => format!("cs:{}", stores.resolve(symbol)),

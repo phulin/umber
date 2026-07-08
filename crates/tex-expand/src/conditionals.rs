@@ -1,8 +1,8 @@
 use tex_lex::{ConditionFrameSummary, ConditionKind, ConditionLimb, InputSource, InputStack};
+use tex_state::Universe;
 use tex_state::interner::Symbol;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
 use tex_state::node::Node;
-use tex_state::stores::Stores;
 use tex_state::token::Token;
 
 use crate::{
@@ -12,7 +12,7 @@ use crate::{
 
 pub(crate) fn begin_if<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
     condition: bool,
@@ -31,7 +31,7 @@ where
 
 pub(crate) fn begin_ifcase<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
     selected_case: i32,
@@ -51,7 +51,7 @@ where
 
 pub(crate) fn handle_else<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<Dispatch, ExpandError>
@@ -77,7 +77,7 @@ where
 
 pub(crate) fn handle_or<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<Dispatch, ExpandError>
@@ -103,7 +103,7 @@ where
 
 fn skip_false_limb<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<(), ExpandError>
@@ -117,7 +117,7 @@ where
 
 fn skip_to_fi<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<(), ExpandError>
@@ -131,7 +131,7 @@ where
 
 fn skip_ifcase_to_selected_limb<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
     selected_case: i32,
@@ -159,7 +159,7 @@ enum SkipTarget {
 
 fn skip_until<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     _hooks: &mut H,
     target: SkipTarget,
@@ -264,7 +264,7 @@ enum ConditionalPrimitive {
 }
 
 fn skipped_conditional_control<R>(
-    stores: &Stores,
+    stores: &Universe,
     token: Token,
     recorder: &mut R,
 ) -> Result<Option<ConditionalPrimitive>, ExpandError>
@@ -312,7 +312,7 @@ where
 
 pub(crate) fn scan_condition_x_token<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<Token, ExpandError>
@@ -342,7 +342,7 @@ pub(crate) fn if_cat_equal(left: Token, right: Token) -> bool {
     }
 }
 
-pub(crate) fn ifx_equal(stores: &Stores, left: Token, right: Token) -> bool {
+pub(crate) fn ifx_equal(stores: &Universe, left: Token, right: Token) -> bool {
     match (left, right) {
         (Token::Char { .. } | Token::Param(_), Token::Char { .. } | Token::Param(_)) => {
             left == right
@@ -361,7 +361,7 @@ pub(crate) enum ConditionalRelation {
 
 pub(crate) fn scan_conditional_relation<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<ConditionalRelation, ExpandError>
@@ -402,7 +402,7 @@ pub(crate) enum BoxKind {
     VBox,
 }
 
-pub(crate) fn box_register_has_kind(stores: &Stores, index: u16, kind: BoxKind) -> bool {
+pub(crate) fn box_register_has_kind(stores: &Universe, index: u16, kind: BoxKind) -> bool {
     let Some(list) = stores.box_reg(index) else {
         return false;
     };
@@ -414,7 +414,7 @@ pub(crate) fn box_register_has_kind(stores: &Stores, index: u16, kind: BoxKind) 
 
 pub(crate) fn scan_stream_number<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<u8, ExpandError>
@@ -427,7 +427,7 @@ where
     Ok(value.clamp(0, 15) as u8)
 }
 
-fn meaning_words_ifx_equal(stores: &Stores, left: Symbol, right: Symbol) -> bool {
+fn meaning_words_ifx_equal(stores: &Universe, left: Symbol, right: Symbol) -> bool {
     let left = stores.meaning(left);
     let right = stores.meaning(right);
     match (left, right) {

@@ -29,7 +29,7 @@ pub(super) enum GlueArithmeticRhs {
 pub(super) fn scan_glue_or_factor<S, H>(
     primitive: UnexpandablePrimitive,
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     hooks: &mut H,
     mu: bool,
 ) -> Result<GlueArithmeticRhs, ExecError>

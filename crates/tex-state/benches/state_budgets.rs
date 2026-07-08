@@ -1,13 +1,13 @@
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use tex_state::Universe;
 use tex_state::meaning::Meaning;
-use tex_state::stores::Stores;
 
 const GROUP_SIZES: [usize; 3] = [4, 64, 512];
 const PAGE_DISTINCT_CELLS: usize = 500;
 const PAGE_TOTAL_WRITES: usize = 5_000;
 
 fn meaning_lookup(c: &mut Criterion) {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let symbol = stores.intern("warm-cell");
     stores.set_meaning(symbol, Meaning::Relax);
 
@@ -20,7 +20,7 @@ fn barrier_write(c: &mut Criterion) {
     let mut group = c.benchmark_group("barrier_write");
 
     group.bench_function("journal_push_path", |b| {
-        let mut stores = Stores::new();
+        let mut stores = Universe::new();
         let symbol = stores.intern("push-path");
         let mut operand = 0_u64;
 
@@ -35,7 +35,7 @@ fn barrier_write(c: &mut Criterion) {
     });
 
     group.bench_function("already_stamped_skip_path", |b| {
-        let mut stores = Stores::new();
+        let mut stores = Universe::new();
         let symbol = stores.intern("skip-path");
         stores.set_meaning(symbol, Meaning::Relax);
         let mut operand = 0_u64;
@@ -60,7 +60,7 @@ fn group_cycle(c: &mut Criterion) {
             BenchmarkId::from_parameter(write_count),
             &write_count,
             |b, &write_count| {
-                let mut stores = Stores::new();
+                let mut stores = Universe::new();
                 let symbols = (0..write_count)
                     .map(|index| stores.intern(&format!("group-cell-{index}")))
                     .collect::<Vec<_>>();
@@ -85,7 +85,7 @@ fn group_global_compaction(c: &mut Criterion) {
     let mut group = c.benchmark_group("group_global_compaction");
 
     group.bench_function("mixed_global_local_same_cell", |b| {
-        let mut stores = Stores::new();
+        let mut stores = Universe::new();
         let symbol = stores.intern("global-compaction-cell");
         let mut operand = 0_u64;
 
@@ -124,16 +124,16 @@ fn synthetic_page_journal_bytes() -> usize {
     write_synthetic_page()
 }
 
-fn synthetic_page_symbols(stores: &mut Stores) -> Vec<tex_state::interner::Symbol> {
+fn synthetic_page_symbols(stores: &mut Universe) -> Vec<tex_state::interner::Symbol> {
     (0..PAGE_DISTINCT_CELLS)
         .map(|index| stores.intern(&format!("page-cell-{index}")))
         .collect()
 }
 
 fn write_synthetic_page() -> usize {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let symbols = synthetic_page_symbols(&mut stores);
-    let snapshot = stores.checkpoint();
+    let snapshot = stores.snapshot();
 
     for write_index in 0..PAGE_TOTAL_WRITES {
         let symbol = symbols[write_index % symbols.len()];
@@ -143,7 +143,7 @@ fn write_synthetic_page() -> usize {
         );
     }
 
-    stores.env_journal_bytes_since(snapshot)
+    stores.env_journal_bytes_since(&snapshot)
 }
 
 fn raw_meaning(operand: u64) -> Meaning {

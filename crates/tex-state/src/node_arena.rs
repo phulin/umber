@@ -1,7 +1,7 @@
 //! Epoch arena storage for immutable node lists.
 //!
 //! Node-list watermarks are crate-private so rollback remains coupled to the
-//! aggregate `Stores`/future `Universe` boundary.
+//! aggregate `Universe` boundary.
 
 use crate::ids::{ArenaRef, NodeListId};
 use crate::node::Node;

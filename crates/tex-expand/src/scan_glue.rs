@@ -3,11 +3,11 @@
 use std::fmt;
 
 use tex_lex::{InputSource, InputStack, LexError, TokenListReplayKind};
+use tex_state::Universe;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::GlueId;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::scaled::Scaled;
-use tex_state::stores::Stores;
 use tex_state::token::{Catcode, Token};
 
 use crate::scan_dimen::{self, ScanDimenError, ScanDimenOptions};
@@ -95,7 +95,7 @@ impl From<scan_int::ScanIntError> for ScanGlueError {
 
 pub fn scan_glue<S>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
 ) -> Result<ScannedGlue, ScanGlueError>
 where
     S: InputSource,
@@ -111,7 +111,7 @@ where
 
 pub fn scan_muglue<S>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
 ) -> Result<ScannedGlue, ScanGlueError>
 where
     S: InputSource,
@@ -127,7 +127,7 @@ where
 
 pub fn scan_glue_with_hooks<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
     mu: bool,
@@ -242,7 +242,7 @@ fn dimen_options(mu: bool) -> ScanDimenOptions {
     }
 }
 
-fn intern_spec(stores: &mut Stores, spec: GlueSpec) -> ScannedGlue {
+fn intern_spec(stores: &mut Universe, spec: GlueSpec) -> ScannedGlue {
     ScannedGlue {
         id: stores.intern_glue(spec),
     }
@@ -259,7 +259,7 @@ fn signed_spec(mut spec: GlueSpec, negative: bool) -> GlueSpec {
 
 fn scan_signs<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<(bool, Option<Token>), ScanGlueError>
@@ -290,7 +290,7 @@ where
 
 fn scan_register_index<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<u16, ScanGlueError>
@@ -309,7 +309,7 @@ where
 
 fn scan_keyword<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
     keyword: &str,
@@ -326,7 +326,7 @@ where
 
 fn consume_optional_space<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<(), ScanGlueError>
@@ -344,14 +344,14 @@ where
     Ok(())
 }
 
-fn unread_token<S>(input: &mut InputStack<S>, stores: &mut Stores, token: Token)
+fn unread_token<S>(input: &mut InputStack<S>, stores: &mut Universe, token: Token)
 where
     S: InputSource,
 {
     unread_tokens(input, stores, [token]);
 }
 
-fn unread_tokens<S, I>(input: &mut InputStack<S>, stores: &mut Stores, tokens: I)
+fn unread_tokens<S, I>(input: &mut InputStack<S>, stores: &mut Universe, tokens: I)
 where
     S: InputSource,
     I: IntoIterator<Item = Token>,
@@ -384,9 +384,9 @@ fn is_other_char(token: Token, expected: char) -> bool {
 #[cfg(test)]
 mod tests {
     use tex_lex::{InputStack, MemoryInput};
+    use tex_state::Universe;
     use tex_state::glue::{GlueSpec, Order};
     use tex_state::scaled::Scaled;
-    use tex_state::stores::Stores;
     use tex_state::token::{Catcode, Token};
 
     use crate::scan_glue::{scan_glue, scan_muglue};
@@ -396,7 +396,7 @@ mod tests {
     }
 
     fn scan(input_text: &str) -> (GlueSpec, Option<Token>) {
-        let mut stores = Stores::new();
+        let mut stores = Universe::new();
         let mut input = InputStack::new(MemoryInput::new(input_text));
         let scanned = scan_glue(&mut input, &mut stores).expect("glue scan should succeed");
         let spec = stores.glue(scanned.id());
@@ -459,7 +459,7 @@ mod tests {
 
     #[test]
     fn scans_internal_skip_values() {
-        let mut stores = Stores::new();
+        let mut stores = Universe::new();
         stores.intern("skip");
         let id = stores.intern_glue(GlueSpec {
             width: Scaled::from_raw(10),
@@ -478,7 +478,7 @@ mod tests {
 
     #[test]
     fn scans_muglue_with_mu_units() {
-        let mut stores = Stores::new();
+        let mut stores = Universe::new();
         let mut input = InputStack::new(MemoryInput::new("1mu plus 2fil x"));
 
         let scanned = scan_muglue(&mut input, &mut stores).expect("muglue should scan");
@@ -491,7 +491,7 @@ mod tests {
 
     #[test]
     fn scans_internal_muskip_values() {
-        let mut stores = Stores::new();
+        let mut stores = Universe::new();
         stores.intern("muskip");
         let id = stores.intern_glue(GlueSpec {
             width: Scaled::from_raw(10),

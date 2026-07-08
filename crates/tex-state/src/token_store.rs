@@ -1,7 +1,7 @@
 //! Immutable hash-consed token-list storage.
 //!
 //! Token-list watermarks are crate-private so rollback can stay coupled to
-//! the aggregate `Stores`/future `Universe` boundary.
+//! the aggregate `Universe` boundary.
 
 use crate::ids::TokenListId;
 use crate::token::Token;

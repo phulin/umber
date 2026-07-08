@@ -10,8 +10,8 @@ use tex_state::scaled::{
     DimensionError, PhysicalUnit, Scaled, round_decimal_fraction, scaled_from_decimal_parts,
     xn_over_d,
 };
-use tex_state::stores::{PrepareMagDiagnostic, Stores};
 use tex_state::token::{Catcode, Token};
+use tex_state::{PrepareMagDiagnostic, Universe};
 
 use crate::{
     ExpandError, ExpansionHooks, NoopExpansionHooks, NoopRecorder, ReadRecorder,
@@ -226,7 +226,7 @@ impl From<scan_int::ScanIntError> for ScanDimenError {
 /// Scans a TeX `<dimen>` using expanded tokens.
 pub fn scan_dimen<S>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
 ) -> Result<ScannedDimen, ScanDimenError>
 where
     S: InputSource,
@@ -243,7 +243,7 @@ where
 /// Scans a TeX `<dimen>` using expanded tokens and caller-specific options.
 pub fn scan_dimen_with_options<S>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     options: ScanDimenOptions,
 ) -> Result<ScannedDimen, ScanDimenError>
 where
@@ -261,7 +261,7 @@ where
 /// Scans a TeX `<dimen>` while preserving caller-supplied expansion hooks.
 pub fn scan_dimen_with_options_and_hooks<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
     options: ScanDimenOptions,
@@ -283,7 +283,7 @@ where
 
 fn scan_signs<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<(bool, Option<Token>), ScanDimenError>
@@ -314,7 +314,7 @@ where
 
 fn scan_unsigned_after_first_token<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
     token: Token,
@@ -356,7 +356,7 @@ where
 
 fn scan_decimal_integer<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
     first_digit: i32,
@@ -386,7 +386,7 @@ where
 
 fn scan_decimal_tail<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
     integer: i32,
@@ -417,7 +417,7 @@ where
 
 fn scan_fraction_and_unit<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
     integer: i32,
@@ -436,7 +436,7 @@ where
 
 fn scan_fraction<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<i32, ScanDimenError>
@@ -464,7 +464,7 @@ where
 
 fn scan_internal_or_numeric_dimension<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
     token: Token,
@@ -522,7 +522,7 @@ where
 
 fn scan_integer_constant_with_unit<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
     token: Token,
@@ -552,7 +552,7 @@ where
 
 fn scan_register_index<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<u16, ScanDimenError>
@@ -570,7 +570,7 @@ where
 
 fn scan_unit<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
     options: ScanDimenOptions,
@@ -637,7 +637,7 @@ where
 
 fn scan_unit_keyword<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
     first: Token,
@@ -675,7 +675,7 @@ where
 
 fn keyword_matches<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
     first: Token,
@@ -693,7 +693,7 @@ where
 
 fn keyword<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
     keyword: &str,
@@ -790,7 +790,7 @@ fn convert_decimal(
 }
 
 fn convert_scanned_unit(
-    stores: &mut Stores,
+    stores: &mut Universe,
     integer: i32,
     fraction: i32,
     unit: ScannedUnit,
@@ -810,7 +810,7 @@ fn convert_scanned_unit(
 }
 
 fn convert_physical_unit(
-    stores: &mut Stores,
+    stores: &mut Universe,
     integer: i32,
     fraction: i32,
     unit: PhysicalUnit,
@@ -870,7 +870,7 @@ fn apply_sign(scanned: ScannedDimen, negative: bool) -> ScannedDimen {
 
 fn consume_optional_space<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<(), ScanDimenError>
@@ -890,7 +890,7 @@ where
 
 fn skip_spaces<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<(), ScanDimenError>
@@ -911,14 +911,14 @@ where
     }
 }
 
-fn unread_token<S>(input: &mut InputStack<S>, stores: &mut Stores, token: Token)
+fn unread_token<S>(input: &mut InputStack<S>, stores: &mut Universe, token: Token)
 where
     S: InputSource,
 {
     unread_tokens(input, stores, [token]);
 }
 
-fn unread_tokens<S, I>(input: &mut InputStack<S>, stores: &mut Stores, tokens: I)
+fn unread_tokens<S, I>(input: &mut InputStack<S>, stores: &mut Universe, tokens: I)
 where
     S: InputSource,
     I: IntoIterator<Item = Token>,
@@ -990,12 +990,12 @@ fn keyword_char(token: Token) -> Option<char> {
 #[cfg(test)]
 mod tests {
     use tex_lex::{InputStack, MemoryInput};
+    use tex_state::Universe;
     use tex_state::macro_store::MacroMeaning;
     use tex_state::meaning::MeaningFlags;
     use tex_state::scaled::{
         PhysicalUnit, Scaled, round_decimal_fraction, scaled_from_decimal_parts,
     };
-    use tex_state::stores::Stores;
     use tex_state::token::{Catcode, Token};
 
     use crate::scan_dimen::{
@@ -1003,13 +1003,13 @@ mod tests {
     };
 
     fn scan(input_text: &str) -> (i32, Option<DimensionDiagnostic>, Option<Token>) {
-        let mut stores = Stores::new();
+        let mut stores = Universe::new();
         scan_with_stores(input_text, &mut stores)
     }
 
     fn scan_with_stores(
         input_text: &str,
-        stores: &mut Stores,
+        stores: &mut Universe,
     ) -> (i32, Option<DimensionDiagnostic>, Option<Token>) {
         let mut input = InputStack::new(MemoryInput::new(input_text));
         let scanned = scan_dimen(&mut input, stores).expect("dimension scan should succeed");
@@ -1020,7 +1020,7 @@ mod tests {
     }
 
     fn scan_coerced(input_text: &str) -> (i32, Option<DimensionDiagnostic>, Option<Token>) {
-        let mut stores = Stores::new();
+        let mut stores = Universe::new();
         let mut input = InputStack::new(MemoryInput::new(input_text));
         let scanned = scan_dimen_with_options(
             &mut input,
@@ -1074,7 +1074,7 @@ mod tests {
 
     #[test]
     fn true_units_use_current_mag_before_physical_unit_conversion() {
-        let mut stores = Stores::new();
+        let mut stores = Universe::new();
         stores.set_mag(2000);
 
         assert_eq!(scan_with_stores("1truept x", &mut stores).0, 32_768);
@@ -1084,7 +1084,7 @@ mod tests {
 
     #[test]
     fn true_unit_scaling_folds_xn_over_d_remainder_into_fraction() {
-        let mut stores = Stores::new();
+        let mut stores = Universe::new();
         stores.set_mag(1200);
 
         assert_eq!(scan_with_stores("1.5truept x", &mut stores).0, 81_920);
@@ -1093,7 +1093,7 @@ mod tests {
 
     #[test]
     fn true_units_prepare_and_freeze_magnification() {
-        let mut stores = Stores::new();
+        let mut stores = Universe::new();
         stores.set_mag(1200);
 
         let (value, diagnostic, _next) = scan_with_stores("1truept x", &mut stores);
@@ -1120,7 +1120,7 @@ mod tests {
 
     #[test]
     fn true_units_report_and_coerce_illegal_magnification() {
-        let mut stores = Stores::new();
+        let mut stores = Universe::new();
         stores.set_mag(40_000);
 
         let (value, diagnostic, _next) = scan_with_stores("1truept x", &mut stores);
@@ -1149,7 +1149,7 @@ mod tests {
 
     #[test]
     fn rejects_bare_integer_without_coercion() {
-        let mut stores = Stores::new();
+        let mut stores = Universe::new();
         let mut input = InputStack::new(MemoryInput::new("123 x"));
         let err = scan_dimen(&mut input, &mut stores).expect_err("unit is required");
 
@@ -1158,7 +1158,7 @@ mod tests {
 
     #[test]
     fn scans_supported_internal_dimensions() {
-        let mut stores = Stores::new();
+        let mut stores = Universe::new();
         stores.intern("dimen");
         stores.set_dimen(3, Scaled::from_raw(42_000));
 
@@ -1171,7 +1171,7 @@ mod tests {
 
     #[test]
     fn scans_integer_like_internal_values_with_units() {
-        let mut stores = Stores::new();
+        let mut stores = Universe::new();
         stores.intern("count");
         stores.set_count(4, 2);
 
@@ -1185,7 +1185,7 @@ mod tests {
 
     #[test]
     fn restores_partially_matched_true_keyword_tokens() {
-        let mut stores = Stores::new();
+        let mut stores = Universe::new();
         let mut input = InputStack::new(MemoryInput::new("1truxpt"));
         let err = scan_dimen(&mut input, &mut stores).expect_err("bad true keyword lacks unit");
 
@@ -1210,7 +1210,7 @@ mod tests {
 
     #[test]
     fn reports_font_relative_units_as_clear_stubs() {
-        let mut stores = Stores::new();
+        let mut stores = Universe::new();
         let mut input = InputStack::new(MemoryInput::new("1em"));
         let err = scan_dimen(&mut input, &mut stores).expect_err("em is not implemented");
         assert!(matches!(
@@ -1218,7 +1218,7 @@ mod tests {
             ScanDimenError::UnsupportedFontRelativeUnit("em")
         ));
 
-        let mut stores = Stores::new();
+        let mut stores = Universe::new();
         let mut input = InputStack::new(MemoryInput::new("1ex"));
         let err = scan_dimen(&mut input, &mut stores).expect_err("ex is not implemented");
         assert!(matches!(
@@ -1241,7 +1241,7 @@ mod tests {
 
     #[test]
     fn scans_values_through_macro_expansion() {
-        let mut stores = Stores::new();
+        let mut stores = Universe::new();
         let number = stores.intern("number");
         let replacement = stores.intern_token_list(&[
             char_token('1', Catcode::Other),

@@ -14,7 +14,7 @@ pub(super) fn reject_all_prefixes(prefixes: Prefixes) -> Result<(), ExecError> {
     Ok(())
 }
 
-pub(super) fn apply_globaldefs(explicit_global: bool, stores: &Stores) -> bool {
+pub(super) fn apply_globaldefs(explicit_global: bool, stores: &Universe) -> bool {
     match stores.int_param(IntParam::GLOBAL_DEFS).cmp(&0) {
         std::cmp::Ordering::Greater => true,
         std::cmp::Ordering::Less => false,
@@ -24,7 +24,7 @@ pub(super) fn apply_globaldefs(explicit_global: bool, stores: &Stores) -> bool {
 
 pub(super) fn skip_optional_equals_x<S, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     hooks: &mut H,
 ) -> Result<(), ExecError>
 where
@@ -59,7 +59,7 @@ where
 
 pub(super) fn scan_control_sequence<S>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     context: &'static str,
 ) -> Result<Symbol, ExecError>
 where
@@ -75,7 +75,7 @@ where
 
 pub(super) fn scan_optional_equals_one_space<S>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
 ) -> Result<Token, ExecError>
 where
     S: InputSource,
@@ -98,7 +98,7 @@ where
     }
 }
 
-pub(super) fn token_meaning_for_let(token: Token, stores: &Stores) -> Result<Meaning, ExecError> {
+pub(super) fn token_meaning_for_let(token: Token, stores: &Universe) -> Result<Meaning, ExecError> {
     match token {
         Token::Cs(symbol) => Ok(stores.meaning(symbol)),
         Token::Char { ch, .. } => Ok(Meaning::CharGiven(ch)),
@@ -108,7 +108,7 @@ pub(super) fn token_meaning_for_let(token: Token, stores: &Stores) -> Result<Mea
 
 pub(super) fn next_non_space_raw<S>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
 ) -> Result<Option<Token>, LexError>
 where
     S: InputSource,
@@ -123,7 +123,7 @@ where
     }
 }
 
-pub(super) fn push_tokens<S, I>(input: &mut InputStack<S>, stores: &mut Stores, tokens: I)
+pub(super) fn push_tokens<S, I>(input: &mut InputStack<S>, stores: &mut Universe, tokens: I)
 where
     S: InputSource,
     I: IntoIterator<Item = Token>,

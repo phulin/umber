@@ -12,8 +12,8 @@ use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::{FontId, GlueId, NodeListId};
 use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, Node, Sign};
 use tex_state::scaled::Scaled;
-use tex_state::stores::{Snapshot, Stores};
 use tex_state::token::{Catcode, Token};
+use tex_state::{Snapshot, Universe};
 
 const TREE_FROM_STORE_MAX_DEPTH: usize = 4096;
 
@@ -85,13 +85,13 @@ proptest! {
 
 #[test]
 fn group_exit_epoch_amendment_smoke() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let mut oracle = Oracle::new();
     let cell = TestCell::Count(11);
 
     stores.enter_group();
     oracle.enter_group();
-    let outer_snapshot = stores.checkpoint();
+    let outer_snapshot = stores.snapshot();
     stores.enter_group();
     oracle.enter_group();
     cell.set(&mut stores, 1, false);
@@ -106,22 +106,22 @@ fn group_exit_epoch_amendment_smoke() {
     oracle.assert_matches(stores.env(), &[cell]);
     verify_shadow(&stores);
 
-    stores.rollback(outer_snapshot);
+    stores.rollback(&outer_snapshot);
     assert_eq!(cell.get(stores.env()), 0);
     verify_shadow(&stores);
 }
 
 #[test]
 fn rollback_keeps_box_register_ids_resolvable() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let baseline = stores.freeze_node_list(&[Node::MathOn]);
     stores.set_box_reg(0, baseline);
-    let snapshot = stores.checkpoint();
+    let snapshot = stores.snapshot();
     let temporary = stores.freeze_node_list(&[Node::MathOff]);
     stores.set_box_reg(0, temporary);
     stores.set_box_reg(257, temporary);
 
-    stores.rollback(snapshot);
+    stores.rollback(&snapshot);
 
     // core_state §9's "restore as one tuple" is observable here: if the
     // journal were restored without the matching watermarks/refcounts, a box
@@ -136,7 +136,7 @@ fn rollback_keeps_box_register_ids_resolvable() {
 #[allow(clippy::disallowed_methods)]
 fn run_replay_identity(ops: &[Op]) {
     let started = Instant::now();
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     let mut oracle = Oracle::new();
     let mut box_oracle = BoxOracle::new();
     let mut glue_ids = vec![GlueId::ZERO];
@@ -148,7 +148,7 @@ fn run_replay_identity(ops: &[Op]) {
 
     let hash = stores.testing_state_hash();
     checkpoints.push(Checkpoint {
-        snapshot: stores.checkpoint(),
+        snapshot: stores.snapshot(),
         hash,
         survivor_slots: stores.testing_live_survivor_slot_count(),
         boxes: box_oracle.clone(),
@@ -204,7 +204,7 @@ fn run_replay_identity(ops: &[Op]) {
             Op::Checkpoint if depth == 0 => {
                 let hash = stores.testing_state_hash();
                 checkpoints.push(Checkpoint {
-                    snapshot: stores.checkpoint(),
+                    snapshot: stores.snapshot(),
                     hash,
                     survivor_slots: stores.testing_live_survivor_slot_count(),
                     boxes: box_oracle.clone(),
@@ -218,7 +218,7 @@ fn run_replay_identity(ops: &[Op]) {
     }
 
     for checkpoint in checkpoints.into_iter().rev() {
-        stores.rollback(checkpoint.snapshot.clone());
+        stores.rollback(&checkpoint.snapshot.clone());
         assert_eq!(
             stores.testing_state_hash(),
             checkpoint.hash,
@@ -244,7 +244,7 @@ fn run_replay_identity(ops: &[Op]) {
 }
 
 fn build_nodes(
-    stores: &mut Stores,
+    stores: &mut Universe,
     glue_ids: &[GlueId],
     built: &[BuiltList],
     seed: &NodeSeed,
@@ -476,7 +476,7 @@ impl BoxOracle {
             .and_then(Option::as_ref)
     }
 
-    fn assert_matches(&self, stores: &Stores) {
+    fn assert_matches(&self, stores: &Universe) {
         for index in (0..256).chain(256..320).chain(32_704..32_768) {
             let real = stores.box_reg(index).map(|id| tree_from_store(stores, id));
             assert_eq!(
@@ -488,11 +488,11 @@ impl BoxOracle {
     }
 }
 
-fn tree_from_store(stores: &Stores, id: NodeListId) -> TreeList {
+fn tree_from_store(stores: &Universe, id: NodeListId) -> TreeList {
     tree_from_store_bounded(stores, id, 0)
 }
 
-fn tree_from_store_bounded(stores: &Stores, id: NodeListId, depth: usize) -> TreeList {
+fn tree_from_store_bounded(stores: &Universe, id: NodeListId, depth: usize) -> TreeList {
     assert!(
         depth <= TREE_FROM_STORE_MAX_DEPTH,
         "replay oracle exceeded maximum node-list nesting depth"
@@ -526,9 +526,9 @@ fn prop_cases() -> u32 {
 }
 
 #[cfg(feature = "shadow")]
-fn verify_shadow(stores: &Stores) {
+fn verify_shadow(stores: &Universe) {
     stores.verify_shadow();
 }
 
 #[cfg(not(feature = "shadow"))]
-fn verify_shadow(_: &Stores) {}
+fn verify_shadow(_: &Universe) {}

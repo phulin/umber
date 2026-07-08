@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 use tex_exec::try_execute_assignment;
 use tex_expand::{ExpandError, ExpansionHooks, get_x_token_with_hooks};
 use tex_lex::{FileInput, InputStack, LexError};
+use tex_state::Universe;
 use tex_state::env::banks::IntParam;
 use tex_state::meaning::Meaning;
-use tex_state::stores::Stores;
 use tex_state::token::Token;
 
 use crate::format_token;
@@ -16,7 +16,7 @@ use crate::format_token;
 pub fn expand_dump(path: &str) -> Result<(), ExpandDumpError> {
     let path = Path::new(path);
     let file = File::open(path)?;
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     install_dump_primitives(&mut stores);
 
     let input = InputStack::new(FileInput::from_file(file));
@@ -30,7 +30,7 @@ pub fn expand_dump(path: &str) -> Result<(), ExpandDumpError> {
 
 struct DumpDriver {
     input: InputStack<FileInput>,
-    stores: Stores,
+    stores: Universe,
     hooks: FileHooks,
 }
 
@@ -89,7 +89,7 @@ impl ExpansionHooks<FileInput> for FileHooks {
     }
 }
 
-fn install_dump_primitives(stores: &mut Stores) {
+fn install_dump_primitives(stores: &mut Universe) {
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
     let relax = stores.intern("relax");
     stores.set_meaning(relax, Meaning::Relax);

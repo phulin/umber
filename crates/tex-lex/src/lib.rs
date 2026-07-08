@@ -9,8 +9,8 @@ use std::fmt;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Cursor};
 
+use tex_state::Universe;
 use tex_state::ids::TokenListId;
-use tex_state::stores::Stores;
 use tex_state::token::{Catcode, Token};
 
 /// Maximum number of macro arguments TeX permits in one macro body.
@@ -782,7 +782,7 @@ impl<S> Lexer<S>
 where
     S: InputSource,
 {
-    pub fn next_token(&mut self, stores: &mut Stores) -> Result<Option<Token>, LexError> {
+    pub fn next_token(&mut self, stores: &mut Universe) -> Result<Option<Token>, LexError> {
         self.input.next_token(stores)
     }
 }
@@ -791,7 +791,7 @@ impl<S> InputStack<S>
 where
     S: InputSource,
 {
-    pub fn next_token(&mut self, stores: &mut Stores) -> Result<Option<Token>, LexError> {
+    pub fn next_token(&mut self, stores: &mut Universe) -> Result<Option<Token>, LexError> {
         loop {
             let Some(frame_index) = self.current_token_frame_index() else {
                 return Ok(None);
@@ -858,7 +858,7 @@ where
         }
     }
 
-    pub fn next_token_readonly(&mut self, stores: &Stores) -> Result<Option<Token>, LexError> {
+    pub fn next_token_readonly(&mut self, stores: &Universe) -> Result<Option<Token>, LexError> {
         Ok(self
             .next_expansion_token_readonly(stores)?
             .map(ExpansionToken::token))
@@ -866,7 +866,7 @@ where
 
     pub fn next_expansion_token(
         &mut self,
-        stores: &mut Stores,
+        stores: &mut Universe,
     ) -> Result<Option<ExpansionToken>, LexError> {
         loop {
             let Some(frame_index) = self.current_token_frame_index() else {
@@ -939,7 +939,7 @@ where
 
     pub fn next_expansion_token_readonly(
         &mut self,
-        stores: &Stores,
+        stores: &Universe,
     ) -> Result<Option<ExpansionToken>, LexError> {
         loop {
             let Some(frame_index) = self.current_token_frame_index() else {
@@ -1024,7 +1024,7 @@ impl<S> InputStack<S> {
 
 fn next_token_from_token_list_frame(
     frame: &mut TokenListInputFrame,
-    stores: &Stores,
+    stores: &Universe,
 ) -> Option<TokenReplay> {
     let tokens = stores.tokens(frame.token_list);
     let token = tokens.get(frame.index).copied()?;
@@ -1046,7 +1046,7 @@ fn next_token_from_token_list_frame(
 
 fn load_next_line_readonly<S>(
     source: &mut SourceInputFrame<S>,
-    stores: &Stores,
+    stores: &Universe,
 ) -> Result<bool, LexError>
 where
     S: InputSource,
@@ -1079,7 +1079,7 @@ where
 
 fn load_next_line<S>(
     source: &mut SourceInputFrame<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
 ) -> Result<bool, LexError>
 where
     S: InputSource,
@@ -1110,7 +1110,7 @@ where
 
 fn next_token_from_line<S>(
     source: &mut SourceInputFrame<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     unicode_superscript_notation: bool,
 ) -> Result<Option<Token>, LexError> {
     let ch = read_expanded_char(source, stores, unicode_superscript_notation);
@@ -1172,7 +1172,7 @@ fn next_token_from_line<S>(
 
 fn next_token_from_line_readonly<S>(
     source: &mut SourceInputFrame<S>,
-    stores: &Stores,
+    stores: &Universe,
     unicode_superscript_notation: bool,
 ) -> Result<Option<Token>, LexError> {
     let ch = read_expanded_char(source, stores, unicode_superscript_notation);
@@ -1236,7 +1236,7 @@ fn next_token_from_line_readonly<S>(
 
 fn scan_control_sequence<S>(
     source: &mut SourceInputFrame<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     unicode_superscript_notation: bool,
 ) -> Token {
     if source.frame.offset >= source.frame.line.len() {
@@ -1269,7 +1269,7 @@ fn scan_control_sequence<S>(
 
 fn scan_control_sequence_readonly<S>(
     source: &mut SourceInputFrame<S>,
-    stores: &Stores,
+    stores: &Universe,
     unicode_superscript_notation: bool,
 ) -> Result<Token, LexError> {
     if source.frame.offset >= source.frame.line.len() {
@@ -1300,7 +1300,7 @@ fn scan_control_sequence_readonly<S>(
     readonly_cs_token(stores, &name)
 }
 
-fn readonly_cs_token(stores: &Stores, name: &str) -> Result<Token, LexError> {
+fn readonly_cs_token(stores: &Universe, name: &str) -> Result<Token, LexError> {
     stores
         .symbol(name)
         .map(Token::Cs)
@@ -1309,7 +1309,7 @@ fn readonly_cs_token(stores: &Stores, name: &str) -> Result<Token, LexError> {
 
 fn read_expanded_char<S>(
     source: &mut SourceInputFrame<S>,
-    stores: &Stores,
+    stores: &Universe,
     unicode_superscript_notation: bool,
 ) -> char {
     let ch = source.frame.line[source.frame.offset];
@@ -1321,7 +1321,7 @@ fn read_expanded_char<S>(
 fn expand_superscript_notation<S>(
     source: &mut SourceInputFrame<S>,
     ch: char,
-    stores: &Stores,
+    stores: &Universe,
     unicode_superscript_notation: bool,
 ) -> Option<char> {
     if stores.catcode(ch) != Catcode::Superscript {
@@ -1405,7 +1405,7 @@ impl<S> LineReader<S>
 where
     S: InputSource,
 {
-    pub fn next_event(&mut self, stores: &Stores) -> io::Result<Option<LineEvent>> {
+    pub fn next_event(&mut self, stores: &Universe) -> io::Result<Option<LineEvent>> {
         let Some(line) = self.source.read_line()? else {
             return Ok(None);
         };
@@ -1467,13 +1467,13 @@ mod tests {
         InputStack, LexError, Lexer, LexerState, LineEvent, LineReader, MemoryInput,
         TokenListReplayKind, load_next_line,
     };
+    use tex_state::Universe;
     use tex_state::env::banks::IntParam;
-    use tex_state::stores::Stores;
     use tex_state::token::{Catcode, Token};
 
     #[test]
     fn strips_trailing_spaces_and_appends_endlinechar() {
-        let mut stores = Stores::new();
+        let mut stores = Universe::new();
         stores.set_int_param(IntParam::END_LINE_CHAR, 13);
         let mut reader = LineReader::new(MemoryInput::new("abc   \n"));
 
@@ -1493,7 +1493,7 @@ mod tests {
 
     #[test]
     fn empty_lines_emit_par_event() {
-        let mut stores = Stores::new();
+        let mut stores = Universe::new();
         stores.set_int_param(IntParam::END_LINE_CHAR, 13);
         let mut reader = LineReader::new(MemoryInput::new("   \n\nx\n"));
 
@@ -1525,7 +1525,7 @@ mod tests {
 
     #[test]
     fn suppresses_invalid_endlinechar_values() {
-        let mut stores = Stores::new();
+        let mut stores = Universe::new();
         stores.set_int_param(IntParam::END_LINE_CHAR, -1);
         let mut reader = LineReader::new(MemoryInput::new("abc\n"));
 
@@ -1539,7 +1539,7 @@ mod tests {
 
     #[test]
     fn letters_spaces_and_endline_state_match_tex_rules() {
-        let mut stores = Stores::new();
+        let mut stores = Universe::new();
         stores.set_int_param(IntParam::END_LINE_CHAR, 13);
         let mut lexer = Lexer::new(MemoryInput::new(" a  b\n\n"));
 
@@ -1558,7 +1558,7 @@ mod tests {
 
     #[test]
     fn inactive_endlinechar_blank_line_does_not_emit_par_token() {
-        let mut stores = Stores::new();
+        let mut stores = Universe::new();
         stores.set_int_param(IntParam::END_LINE_CHAR, -1);
         let mut lexer = Lexer::new(MemoryInput::new("a\n\nb"));
 
@@ -1573,7 +1573,7 @@ mod tests {
 
     #[test]
     fn scans_control_words_and_control_symbols() {
-        let mut stores = Stores::new();
+        let mut stores = Universe::new();
         stores.set_int_param(IntParam::END_LINE_CHAR, 13);
         let mut lexer = Lexer::new(MemoryInput::new("\\foo   x\\$"));
 
@@ -1590,7 +1590,7 @@ mod tests {
 
     #[test]
     fn control_word_scanning_uses_current_catcodes() {
-        let mut stores = Stores::new();
+        let mut stores = Universe::new();
         stores.set_int_param(IntParam::END_LINE_CHAR, 13);
         stores.set_catcode('@', Catcode::Letter);
         let mut lexer = Lexer::new(MemoryInput::new("\\foo@bar"));
@@ -1603,7 +1603,7 @@ mod tests {
 
     #[test]
     fn unread_characters_use_catcodes_current_at_token_read() {
-        let mut stores = Stores::new();
+        let mut stores = Universe::new();
         stores.set_int_param(IntParam::END_LINE_CHAR, 13);
         let mut lexer = Lexer::new(MemoryInput::new("a@b"));
 
@@ -1628,7 +1628,7 @@ mod tests {
 
     #[test]
     fn control_word_scan_rechecks_catcodes_after_escape_token_read() {
-        let mut stores = Stores::new();
+        let mut stores = Universe::new();
         stores.set_int_param(IntParam::END_LINE_CHAR, 13);
         stores.set_catcode('@', Catcode::Other);
         let mut lexer = Lexer::new(MemoryInput::new("\\@a"));
@@ -1646,7 +1646,7 @@ mod tests {
 
     #[test]
     fn next_physical_line_uses_current_endlinechar() {
-        let mut stores = Stores::new();
+        let mut stores = Universe::new();
         stores.set_int_param(IntParam::END_LINE_CHAR, b'!' as i32);
         let mut lexer = Lexer::new(MemoryInput::new("a\nb\nc"));
 
@@ -1685,7 +1685,7 @@ mod tests {
 
     #[test]
     fn comments_ignore_rest_of_physical_line() {
-        let mut stores = Stores::new();
+        let mut stores = Universe::new();
         stores.set_int_param(IntParam::END_LINE_CHAR, 13);
         let mut lexer = Lexer::new(MemoryInput::new("a% ignored\nb"));
 
@@ -1701,7 +1701,7 @@ mod tests {
 
     #[test]
     fn ignored_and_invalid_catcodes_follow_tex_rules() {
-        let mut stores = Stores::new();
+        let mut stores = Universe::new();
         stores.set_catcode('!', Catcode::Ignored);
         stores.set_catcode('?', Catcode::Invalid);
         let mut lexer = Lexer::new(MemoryInput::new("a!?"));
@@ -1718,7 +1718,7 @@ mod tests {
 
     #[test]
     fn superscript_notation_is_expanded_before_catcode_lookup() {
-        let mut stores = Stores::new();
+        let mut stores = Universe::new();
         stores.set_int_param(IntParam::END_LINE_CHAR, 13);
         stores.set_catcode('@', Catcode::Letter);
         let mut lexer = Lexer::new(MemoryInput::new("^^40 ^^41 ^^^^00E9"));
@@ -1751,7 +1751,7 @@ mod tests {
         ];
 
         for (ch, cat) in cases {
-            let mut stores = Stores::new();
+            let mut stores = Universe::new();
             stores.set_catcode(ch, cat);
             let mut lexer = Lexer::new(MemoryInput::new(ch.to_string()));
             assert_eq!(
@@ -1763,7 +1763,7 @@ mod tests {
 
     #[test]
     fn token_list_frames_replay_before_sources_and_pop_at_end() {
-        let mut stores = Stores::new();
+        let mut stores = Universe::new();
         stores.set_int_param(IntParam::END_LINE_CHAR, 13);
         let list = stores.intern_token_list(&[
             char_token('x', Catcode::Letter),
@@ -1804,7 +1804,7 @@ mod tests {
 
     #[test]
     fn source_summaries_track_position_and_eof_pop() {
-        let mut stores = Stores::new();
+        let mut stores = Universe::new();
         stores.set_int_param(IntParam::END_LINE_CHAR, 13);
         let mut input = InputStack::new(MemoryInput::new("ab\nc"));
 
@@ -1835,7 +1835,7 @@ mod tests {
 
     #[test]
     fn source_summary_is_resume_complete_inside_current_line() {
-        let mut stores = Stores::new();
+        let mut stores = Universe::new();
         stores.set_int_param(IntParam::END_LINE_CHAR, 13);
         let mut input = InputStack::new(MemoryInput::new("éa"));
 
@@ -1860,7 +1860,7 @@ mod tests {
 
     #[test]
     fn source_summary_captures_pending_synthetic_par() {
-        let mut stores = Stores::new();
+        let mut stores = Universe::new();
         stores.set_int_param(IntParam::END_LINE_CHAR, 13);
         let mut input = InputStack::new(MemoryInput::new("\nnext"));
         let Some(InputFrame::Source(source)) = input.frames.last_mut() else {
@@ -1883,7 +1883,7 @@ mod tests {
 
     #[test]
     fn condition_frames_round_trip_through_input_summary() {
-        let mut stores = Stores::new();
+        let mut stores = Universe::new();
         stores.set_int_param(IntParam::END_LINE_CHAR, 13);
         let mut input = InputStack::new(MemoryInput::new("ab"));
         let condition = ConditionFrameSummary::new_ifcase(false)
@@ -1925,7 +1925,7 @@ mod tests {
 
     #[test]
     fn open_condition_survives_checkpoint_rollback_resume_summary() {
-        let mut stores = Stores::new();
+        let mut stores = Universe::new();
         stores.set_int_param(IntParam::END_LINE_CHAR, 13);
         let mut input = InputStack::new(MemoryInput::new("xy"));
         input.push_condition(ConditionFrameSummary::new_if(true));
@@ -1934,7 +1934,7 @@ mod tests {
             input.next_token(&mut stores).expect("source token"),
             Some(char_token('x', Catcode::Letter))
         );
-        let checkpoint = stores.checkpoint();
+        let checkpoint = stores.snapshot();
         let resume_summary = input.summary();
 
         let updated = ConditionFrameSummary::new_if(true).with_else_limb(false);
@@ -1948,7 +1948,7 @@ mod tests {
             Some(char_token('y', Catcode::Letter))
         );
 
-        stores.rollback(checkpoint);
+        stores.rollback(&checkpoint);
 
         assert_eq!(stores.endlinechar(), 13);
         assert!(matches!(
@@ -1966,7 +1966,7 @@ mod tests {
         ));
     }
 
-    fn collect_tokens(lexer: &mut Lexer<MemoryInput>, stores: &mut Stores) -> Vec<Token> {
+    fn collect_tokens(lexer: &mut Lexer<MemoryInput>, stores: &mut Universe) -> Vec<Token> {
         let mut tokens = Vec::new();
         while let Some(token) = lexer.next_token(stores).expect("lexing should succeed") {
             tokens.push(token);
@@ -1978,7 +1978,7 @@ mod tests {
         Token::Char { ch, cat }
     }
 
-    fn cs_token(stores: &mut Stores, name: &str) -> Token {
+    fn cs_token(stores: &mut Universe, name: &str) -> Token {
         Token::Cs(stores.intern(name))
     }
 }

@@ -1,7 +1,7 @@
 //! Immutable hash-consed glue-spec storage.
 //!
 //! Glue watermarks are crate-private so rollback stays coupled to the
-//! aggregate `Stores`/future `Universe` boundary.
+//! aggregate `Universe` boundary.
 
 use crate::ids::GlueId;
 use crate::scaled::Scaled;

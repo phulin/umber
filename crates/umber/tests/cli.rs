@@ -3,8 +3,8 @@ use std::process::Command;
 use refexec::{RefTex, RunOpts};
 use test_support::{assert_matches_fixture, normalize};
 use tex_lex::{FileInput, Lexer};
+use tex_state::Universe;
 use tex_state::env::banks::IntParam;
-use tex_state::stores::Stores;
 use tex_state::token::{Catcode, Token};
 
 #[test]
@@ -257,18 +257,18 @@ fn lex_invalid_character_fixture() -> String {
 }
 
 #[allow(clippy::disallowed_methods)] // host-side corpus fixture open.
-fn lexer_fixture(case: &str) -> (Lexer<FileInput>, Stores) {
+fn lexer_fixture(case: &str) -> (Lexer<FileInput>, Universe) {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .join("tests/corpus/lexer_dynamic")
         .join(format!("{case}.tex"));
     let file = std::fs::File::open(&path).expect("open dynamic lexer fixture");
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
     (Lexer::new(FileInput::from_file(file)), stores)
 }
 
-fn push_remaining_tokens(actual: &mut String, lexer: &mut Lexer<FileInput>, stores: &mut Stores) {
+fn push_remaining_tokens(actual: &mut String, lexer: &mut Lexer<FileInput>, stores: &mut Universe) {
     while let Some(token) = lexer
         .next_token(stores)
         .expect("dynamic lexer fixture should succeed")
@@ -277,7 +277,7 @@ fn push_remaining_tokens(actual: &mut String, lexer: &mut Lexer<FileInput>, stor
     }
 }
 
-fn push_next_token(actual: &mut String, lexer: &mut Lexer<FileInput>, stores: &mut Stores) {
+fn push_next_token(actual: &mut String, lexer: &mut Lexer<FileInput>, stores: &mut Universe) {
     let token = lexer
         .next_token(stores)
         .expect("dynamic lexer fixture should succeed")
@@ -285,7 +285,7 @@ fn push_next_token(actual: &mut String, lexer: &mut Lexer<FileInput>, stores: &m
     push_token(actual, token, stores);
 }
 
-fn push_token(actual: &mut String, token: Token, stores: &Stores) {
+fn push_token(actual: &mut String, token: Token, stores: &Universe) {
     let line = match token {
         Token::Char { ch, cat } => format!("char:{}:{}", ch as u32, cat as u8),
         Token::Cs(symbol) => format!("cs:{}", stores.resolve(symbol)),

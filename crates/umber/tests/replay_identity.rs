@@ -2,7 +2,7 @@ use std::env;
 
 use proptest::prelude::*;
 use proptest::test_runner::Config;
-use tex_state::stores::Stores;
+use tex_state::Universe;
 
 const PRELUDE: &str = concat!(
     r"\def\A{\count0=1} ",
@@ -207,10 +207,10 @@ fn stale_epoch_global_compaction_regression_replays_cleanly() {
 }
 
 fn assert_replay_identity(source: &str) {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     umber::prepare_run_stores(&mut stores);
     let before = stores.testing_state_hash();
-    let checkpoint = stores.checkpoint();
+    let checkpoint = stores.snapshot();
 
     let log = match umber::run_memory_with_stores(source, &mut stores) {
         Ok(log) => log,
@@ -218,7 +218,7 @@ fn assert_replay_identity(source: &str) {
     };
     verify_shadow(&stores);
 
-    stores.rollback(checkpoint);
+    stores.rollback(&checkpoint);
     assert_eq!(
         stores.testing_state_hash(),
         before,
@@ -794,9 +794,9 @@ fn prop_cases() -> u32 {
 }
 
 #[cfg(feature = "shadow")]
-fn verify_shadow(stores: &Stores) {
+fn verify_shadow(stores: &Universe) {
     stores.verify_shadow();
 }
 
 #[cfg(not(feature = "shadow"))]
-fn verify_shadow(_: &Stores) {}
+fn verify_shadow(_: &Universe) {}

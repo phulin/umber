@@ -136,7 +136,7 @@ supply.
   to turn into `\par`, and owns an
   `InputStack` whose `InputSummary` records resume-complete lexer-owned
   source frame state and token-list replay progress. Token-list frames read
-  frozen content only through `Stores::tokens`; source reopening by content
+  frozen content only through `Universe::tokens`; source reopening by content
   hash remains future `World` integration and is deliberately outside
   `tex-lex`'s local `InputSource` trait. `\endinput` is represented as a
   source-frame flag that lets the lexer finish the current normalized line and
@@ -184,7 +184,7 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   text and a brace-balanced replacement body into frozen token lists,
   including TeX's ordered `#1`..`#9` parameter markers, trailing `#{`, and
   doubled `##` replacement-body escapes. The scanner may freeze content
-  through `Stores`, but it does not assign meanings; the stomach/future
+  through `Universe`, but it does not assign meanings; the stomach/future
   assignment layer remains responsible for installing the returned
   `MacroMeaning`.
 - **Numeric value scanning**: `tex-expand::scan_int`,
@@ -198,9 +198,9 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   internal dimensions, `mu` dimensions for muglue callers, infinite `fil`
   orders for glue components, and opt-in integer-to-sp coercion. The glue
   scanner parses optional `plus`/`minus` components and interns immutable glue
-  specs through `Stores`. These scanners report recoverable numeric diagnostics
+  specs through `Universe`. These scanners report recoverable numeric diagnostics
   without performing assignments. `true` physical units call the
-  `Stores::prepare_mag` boundary before scaling, so illegal magnifications
+  `Universe::prepare_mag` boundary before scaling, so illegal magnifications
   are coerced and the job-level magnification is frozen in snapshot-covered
   state for later shipout/font paths. Font-relative `em`/`ex` units remain
   explicit TODO stubs until font metrics exist (umber2-flt).
@@ -217,7 +217,7 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   pairs (`core_state.md` §9). Off by default, zero-cost when off (the
   recorder is a generic parameter of the loop, monomorphized away).
 - The implemented `tex-expand` scaffold exposes that loop over
-  `tex-lex::InputStack` with `Stores` access for meaning reads and explicit
+  `tex-lex::InputStack` with `Universe` access for meaning reads and explicit
   token-list freezing during macro argument matching. Macro body replay uses
   the body `TokenListId` directly plus frozen argument ids on the replay
   frame; it does not allocate a substituted body list. Token-list replay is
@@ -242,7 +242,7 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   meaning-word equality. `\ifnum`, `\ifdim`, `\ifodd`, and `\ifcase` reuse the
   shared integer/dimension scanners, including `\ifcase` `\or` limb selection.
   Mode predicates read only a driver-supplied query trait; box predicates read
-  only the `Stores` box-register facade; `\ifeof` reads a driver hook whose
+  only the `Universe` box-register facade; `\ifeof` reads a driver hook whose
   no-driver implementation is an explicit EOF stub until input stream state
   exists. False conditional limbs and already-taken `\ifcase` limbs are
   skipped by reading raw tokens from `tex-lex` under the active catcode table,
@@ -268,7 +268,7 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   `\futurelet`, prefix accumulation (`\global`, `\long`, `\outer`,
   `\protected`), and `\globaldefs` override behavior. These commands scan
   through the shared gullet/token scanner where expansion is required and
-  write meanings only through the barriered `Stores` facade. The
+  write meanings only through the barriered `Universe` facade. The
   `umber expand-dump` driver delegates those primitives to `tex-exec` before
   printing delivered tokens; its remaining local assignment handling is
   limited to dump-corpus scaffolding such as `\chardef` and `\catcode` until

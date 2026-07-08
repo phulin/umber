@@ -1,8 +1,8 @@
 use tex_expand::ExpansionHooks;
 use tex_lex::{InputSource, InputStack};
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
-use tex_state::stores::{GroupKind, GroupMismatch, Stores};
 use tex_state::token::{Catcode, Token};
+use tex_state::{GroupKind, GroupMismatch, Universe};
 
 use crate::{ExecError, LogSink, Mode, NoopLogSink, assignments};
 
@@ -24,7 +24,7 @@ pub fn dispatch_delivered_token<S, H>(
     mode: Mode,
     token: Token,
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     hooks: &mut H,
 ) -> Result<DispatchAction, ExecError>
 where
@@ -39,7 +39,7 @@ pub fn dispatch_delivered_token_with_log_sink<S, H, L>(
     mode: Mode,
     token: Token,
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     hooks: &mut H,
     log: &mut L,
 ) -> Result<DispatchAction, ExecError>
@@ -124,7 +124,7 @@ fn dispatch_delivered_expandable(
 
 pub(crate) fn leave_group<S>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     expected: GroupKind,
 ) -> Result<(), ExecError>
 where
@@ -157,7 +157,7 @@ fn group_mismatch_error(expected: GroupKind, mismatch: GroupMismatch) -> ExecErr
     }
 }
 
-pub(crate) fn push_tokens<S, I>(input: &mut InputStack<S>, stores: &mut Stores, tokens: I)
+pub(crate) fn push_tokens<S, I>(input: &mut InputStack<S>, stores: &mut Universe, tokens: I)
 where
     S: InputSource,
     I: IntoIterator<Item = Token>,
@@ -186,7 +186,7 @@ trait ResolveTokenName {
     fn resolve_cs_name(&self, token: Token) -> String;
 }
 
-impl ResolveTokenName for Stores {
+impl ResolveTokenName for Universe {
     fn resolve_cs_name(&self, token: Token) -> String {
         match token {
             Token::Cs(symbol) => self.resolve(symbol).to_owned(),

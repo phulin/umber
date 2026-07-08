@@ -1,13 +1,13 @@
 use std::fs;
 
 use tex_lex::{FileInput, LineEvent, LineReader, MemoryInput};
+use tex_state::Universe;
 use tex_state::env::banks::IntParam;
-use tex_state::stores::Stores;
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side fixture setup, not engine I/O
 fn memory_and_file_sources_share_tex_line_handling() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     stores.set_int_param(IntParam::END_LINE_CHAR, b'!' as i32);
 
     let dir = tempfile::tempdir().expect("create temp dir");
@@ -44,7 +44,7 @@ fn memory_and_file_sources_share_tex_line_handling() {
 
 #[test]
 fn inactive_endlinechar_keeps_blank_physical_lines_from_becoming_par_events() {
-    let mut stores = Stores::new();
+    let mut stores = Universe::new();
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);
 
     let mut reader = LineReader::new(MemoryInput::new("a\n   \nb"));

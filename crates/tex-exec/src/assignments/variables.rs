@@ -17,7 +17,7 @@ pub(super) fn execute_variable_assignment<S, H>(
     primitive: UnexpandablePrimitive,
     prefixes: Prefixes,
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     hooks: &mut H,
 ) -> Result<(), ExecError>
 where
@@ -41,7 +41,7 @@ pub(super) fn execute_assignment_to_target<S, H>(
     target: Variable,
     prefixes: Prefixes,
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     hooks: &mut H,
 ) -> Result<(), ExecError>
 where
@@ -95,7 +95,7 @@ pub(super) fn execute_register_def<S, H>(
     primitive: UnexpandablePrimitive,
     prefixes: Prefixes,
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     hooks: &mut H,
 ) -> Result<(), ExecError>
 where
@@ -126,7 +126,7 @@ pub(super) fn execute_char_def<S, H>(
     primitive: UnexpandablePrimitive,
     prefixes: Prefixes,
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     hooks: &mut H,
 ) -> Result<(), ExecError>
 where
@@ -171,7 +171,7 @@ pub(super) fn execute_arithmetic<S, H>(
     primitive: UnexpandablePrimitive,
     prefixes: Prefixes,
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     hooks: &mut H,
 ) -> Result<(), ExecError>
 where
@@ -229,7 +229,7 @@ where
 pub(super) fn execute_code_table_assignment<S, H>(
     primitive: UnexpandablePrimitive,
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     hooks: &mut H,
 ) -> Result<(), ExecError>
 where
@@ -282,7 +282,7 @@ where
 
 pub(super) fn execute_read_stub<S, H>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     hooks: &mut H,
 ) -> Result<(), ExecError>
 where
@@ -297,7 +297,7 @@ where
     Err(ExecError::ReadNotImplemented)
 }
 
-fn read_int_variable(stores: &Stores, target: Variable) -> i32 {
+fn read_int_variable(stores: &Universe, target: Variable) -> i32 {
     match target {
         Variable::IntRegister(index) => stores.count(index),
         Variable::IntParam(index) => stores.int_param(IntParam::new(index)),
@@ -305,7 +305,13 @@ fn read_int_variable(stores: &Stores, target: Variable) -> i32 {
     }
 }
 
-fn write_int_variable(stores: &mut Stores, target: Variable, index: u16, value: i32, global: bool) {
+fn write_int_variable(
+    stores: &mut Universe,
+    target: Variable,
+    index: u16,
+    value: i32,
+    global: bool,
+) {
     match target {
         Variable::IntRegister(_) => set_int_register(stores, index, value, global),
         Variable::IntParam(_) => set_int_param(stores, index, value, global),
@@ -313,7 +319,7 @@ fn write_int_variable(stores: &mut Stores, target: Variable, index: u16, value: 
     }
 }
 
-fn read_dimen_variable(stores: &Stores, target: Variable) -> Scaled {
+fn read_dimen_variable(stores: &Universe, target: Variable) -> Scaled {
     match target {
         Variable::DimenRegister(index) => stores.dimen(index),
         Variable::DimenParam(index) => stores.dimen_param(DimenParam::new(index)),
@@ -322,7 +328,7 @@ fn read_dimen_variable(stores: &Stores, target: Variable) -> Scaled {
 }
 
 fn write_dimen_variable(
-    stores: &mut Stores,
+    stores: &mut Universe,
     target: Variable,
     index: u16,
     value: Scaled,
@@ -335,7 +341,7 @@ fn write_dimen_variable(
     }
 }
 
-fn read_glue_variable(stores: &Stores, target: Variable) -> GlueId {
+fn read_glue_variable(stores: &Universe, target: Variable) -> GlueId {
     match target {
         Variable::GlueRegister(index) => stores.skip(index),
         Variable::GlueParam(index) => stores.glue_param(GlueParam::new(index)),
@@ -344,7 +350,7 @@ fn read_glue_variable(stores: &Stores, target: Variable) -> GlueId {
 }
 
 fn write_glue_variable(
-    stores: &mut Stores,
+    stores: &mut Universe,
     target: Variable,
     index: u16,
     value: GlueId,
@@ -357,7 +363,7 @@ fn write_glue_variable(
     }
 }
 
-fn set_int_register(stores: &mut Stores, index: u16, value: i32, global: bool) {
+fn set_int_register(stores: &mut Universe, index: u16, value: i32, global: bool) {
     if global {
         stores.set_count_global(index, value);
     } else {
@@ -365,7 +371,7 @@ fn set_int_register(stores: &mut Stores, index: u16, value: i32, global: bool) {
     }
 }
 
-fn set_dimen_register(stores: &mut Stores, index: u16, value: Scaled, global: bool) {
+fn set_dimen_register(stores: &mut Universe, index: u16, value: Scaled, global: bool) {
     if global {
         stores.set_dimen_global(index, value);
     } else {
@@ -373,7 +379,7 @@ fn set_dimen_register(stores: &mut Stores, index: u16, value: Scaled, global: bo
     }
 }
 
-fn set_glue_register(stores: &mut Stores, index: u16, value: GlueId, global: bool) {
+fn set_glue_register(stores: &mut Universe, index: u16, value: GlueId, global: bool) {
     if global {
         stores.set_skip_global(index, value);
     } else {
@@ -381,7 +387,7 @@ fn set_glue_register(stores: &mut Stores, index: u16, value: GlueId, global: boo
     }
 }
 
-fn set_muglue_register(stores: &mut Stores, index: u16, value: GlueId, global: bool) {
+fn set_muglue_register(stores: &mut Universe, index: u16, value: GlueId, global: bool) {
     if global {
         stores.set_muskip_global(index, value);
     } else {
@@ -390,7 +396,7 @@ fn set_muglue_register(stores: &mut Stores, index: u16, value: GlueId, global: b
 }
 
 fn set_toks_register(
-    stores: &mut Stores,
+    stores: &mut Universe,
     index: u16,
     value: tex_state::ids::TokenListId,
     global: bool,
@@ -402,7 +408,7 @@ fn set_toks_register(
     }
 }
 
-fn set_int_param(stores: &mut Stores, index: u16, value: i32, global: bool) {
+fn set_int_param(stores: &mut Universe, index: u16, value: i32, global: bool) {
     let param = IntParam::new(index);
     if global {
         stores.set_int_param_global(param, value);
@@ -411,7 +417,7 @@ fn set_int_param(stores: &mut Stores, index: u16, value: i32, global: bool) {
     }
 }
 
-fn set_dimen_param(stores: &mut Stores, index: u16, value: Scaled, global: bool) {
+fn set_dimen_param(stores: &mut Universe, index: u16, value: Scaled, global: bool) {
     let param = DimenParam::new(index);
     if global {
         stores.set_dimen_param_global(param, value);
@@ -420,7 +426,7 @@ fn set_dimen_param(stores: &mut Stores, index: u16, value: Scaled, global: bool)
     }
 }
 
-fn set_glue_param(stores: &mut Stores, index: u16, value: GlueId, global: bool) {
+fn set_glue_param(stores: &mut Universe, index: u16, value: GlueId, global: bool) {
     let param = GlueParam::new(index);
     if global {
         stores.set_glue_param_global(param, value);
@@ -430,7 +436,7 @@ fn set_glue_param(stores: &mut Stores, index: u16, value: GlueId, global: bool) 
 }
 
 fn set_tok_param(
-    stores: &mut Stores,
+    stores: &mut Universe,
     index: u16,
     value: tex_state::ids::TokenListId,
     global: bool,

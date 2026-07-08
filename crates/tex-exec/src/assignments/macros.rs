@@ -2,7 +2,7 @@ use super::*;
 
 pub(super) fn execute_aftergroup<S>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
@@ -16,7 +16,7 @@ where
 
 pub(super) fn execute_afterassignment<S>(
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
@@ -28,7 +28,7 @@ where
     Ok(())
 }
 
-pub(super) fn fire_afterassignment<S>(input: &mut InputStack<S>, stores: &mut Stores)
+pub(super) fn fire_afterassignment<S>(input: &mut InputStack<S>, stores: &mut Universe)
 where
     S: InputSource,
 {
@@ -41,7 +41,7 @@ pub(super) fn execute_def<S, H>(
     primitive: UnexpandablePrimitive,
     prefixes: Prefixes,
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     hooks: &mut H,
 ) -> Result<(), ExecError>
 where
@@ -74,7 +74,7 @@ where
 pub(super) fn execute_let<S>(
     prefixes: Prefixes,
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
@@ -94,7 +94,7 @@ where
 pub(super) fn execute_futurelet<S>(
     prefixes: Prefixes,
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
@@ -120,7 +120,7 @@ where
 pub(super) fn execute_globaldefs<S, H>(
     prefixes: Prefixes,
     input: &mut InputStack<S>,
-    stores: &mut Stores,
+    stores: &mut Universe,
     hooks: &mut H,
 ) -> Result<(), ExecError>
 where

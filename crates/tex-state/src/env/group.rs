@@ -62,14 +62,16 @@ impl GroupMismatch {
 
 /// Crate-private environment rollback mark.
 ///
-/// The public rollback boundary is `Stores`; this token exists only so that
-/// `Stores` can restore all Env-owned rollback-coupled state atomically.
+/// The public rollback boundary is `Universe`; this token exists only so that
+/// the aggregate owner can restore all Env-owned rollback-coupled state
+/// atomically.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct EnvSnapshot {
     journal_pos: JournalPos,
     aftergroup_len: u32,
     afterassignment: Option<Token>,
     group_depth: u32,
+    epoch: crate::epoch::Epoch,
 }
 
 impl EnvSnapshot {
@@ -83,6 +85,12 @@ impl EnvSnapshot {
     #[must_use]
     pub(crate) const fn group_depth(self) -> u32 {
         self.group_depth
+    }
+
+    /// Returns the epoch captured by this snapshot.
+    #[must_use]
+    pub(crate) const fn epoch(self) -> crate::epoch::Epoch {
+        self.epoch
     }
 }
 
@@ -98,6 +106,7 @@ impl Env {
             ),
             afterassignment: self.afterassignment,
             group_depth: self.group_depth,
+            epoch: self.epoch,
         };
         self.epoch.bump();
         snapshot
