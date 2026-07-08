@@ -5,6 +5,7 @@ use tex_expand::{
     scan_the_text_with_hooks, token_text,
 };
 use tex_lex::{InputSource, InputStack};
+use tex_state::env::banks::IntParam;
 use tex_state::token::{Catcode, Token};
 use tex_state::{PrintSink, Universe};
 
@@ -102,6 +103,60 @@ pub(crate) fn execute_showlists(stores: &mut Universe) {
         stores,
         "\n### vertical mode entered at line 0\nprevdepth ignored\n\n! OK.\n",
     );
+}
+
+pub(crate) fn execute_showhyphens<S, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    hooks: &mut H,
+) -> Result<(), ExecError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    let tokens = scan_balanced_expanded_text(input, stores, hooks, "\\showhyphens")?;
+    let mut words = Vec::new();
+    let mut current = String::new();
+    for token in tokens {
+        match token {
+            Token::Char {
+                ch: _,
+                cat: Catcode::Space,
+            } => {
+                if !current.is_empty() {
+                    words.push(std::mem::take(&mut current));
+                }
+            }
+            Token::Char { ch, .. } => {
+                if let Some(lower) = char::from_u32(stores.lccode(ch)).filter(|&ch| ch != '\0') {
+                    current.push(lower);
+                } else if !current.is_empty() {
+                    words.push(std::mem::take(&mut current));
+                }
+            }
+            Token::Cs(_) | Token::Param(_) => {
+                if !current.is_empty() {
+                    words.push(std::mem::take(&mut current));
+                }
+            }
+        }
+    }
+    if !current.is_empty() {
+        words.push(current);
+    }
+
+    let left = stores.int_param(IntParam::LEFT_HYPHEN_MIN).max(0) as usize;
+    let right = stores.int_param(IntParam::RIGHT_HYPHEN_MIN).max(0) as usize;
+    let mut lines = String::new();
+    lines.push('\n');
+    for word in words {
+        let positions = stores.hyphen_positions(&word, left, right);
+        lines.push_str(&hyphenated_word_text(&word, &positions));
+        lines.push('\n');
+    }
+    lines.push_str("! OK.\n");
+    write_diagnostic(stores, &lines);
+    Ok(())
 }
 
 pub(crate) fn execute_change_case<S>(
@@ -282,6 +337,20 @@ fn tokens_text(stores: &Universe, tokens: &[Token]) -> String {
         }
     }
     text
+}
+
+fn hyphenated_word_text(word: &str, positions: &[usize]) -> String {
+    let mut out = String::new();
+    for (index, ch) in word.chars().enumerate() {
+        if positions.contains(&index) {
+            out.push('-');
+        }
+        out.push(ch);
+    }
+    if positions.contains(&word.chars().count()) {
+        out.push('-');
+    }
+    out
 }
 
 fn write_wrapped_message(text: &str) -> String {

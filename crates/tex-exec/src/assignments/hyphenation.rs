@@ -1,0 +1,263 @@
+use tex_expand::ExpansionHooks;
+use tex_lex::{InputSource, InputStack};
+use tex_state::Universe;
+use tex_state::env::banks::IntParam;
+use tex_state::hyphenation::{ExceptionSpec, PatternSpec};
+use tex_state::node::Node;
+use tex_state::token::{Catcode, Token};
+
+use super::*;
+use crate::ExecError;
+use crate::mode::PendingHChar;
+
+pub(super) fn execute_patterns<S, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    _hooks: &mut H,
+) -> Result<(), ExecError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    for word in scan_hyphenation_words(input, stores, "\\patterns")? {
+        if let Some(pattern) = parse_pattern_word(stores, &word) {
+            stores.add_hyphenation_pattern(pattern);
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn execute_hyphenation<S, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    _hooks: &mut H,
+) -> Result<(), ExecError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    for word in scan_hyphenation_words(input, stores, "\\hyphenation")? {
+        if let Some(exception) = parse_exception_word(stores, &word) {
+            stores.add_hyphenation_exception(exception);
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn hyphenated_hlist(stores: &mut Universe, nodes: &[Node]) -> Vec<Node> {
+    let mut out = Vec::new();
+    let mut word = Vec::new();
+    for node in nodes {
+        if push_word_node(stores, node, &mut word) {
+            continue;
+        }
+        flush_word(stores, &mut word, &mut out);
+        out.push(node.clone());
+    }
+    flush_word(stores, &mut word, &mut out);
+    out
+}
+
+fn scan_hyphenation_words<S>(
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    context: &'static str,
+) -> Result<Vec<Vec<char>>, ExecError>
+where
+    S: InputSource,
+{
+    let open = next_non_space_raw(input, stores)?.ok_or(ExecError::MissingToken { context })?;
+    if !is_begin_group(open) {
+        return Err(ExecError::MissingToken { context });
+    }
+    let mut words = Vec::new();
+    let mut current = Vec::new();
+    let mut depth = 1usize;
+    while let Some(token) = input.next_token(stores)? {
+        if is_begin_group(token) {
+            depth += 1;
+            continue;
+        }
+        if is_end_group(token) {
+            depth -= 1;
+            if depth == 0 {
+                if !current.is_empty() {
+                    words.push(current);
+                }
+                return Ok(words);
+            }
+            continue;
+        }
+        match token {
+            Token::Char {
+                cat: Catcode::Space,
+                ..
+            } => {
+                if !current.is_empty() {
+                    words.push(std::mem::take(&mut current));
+                }
+            }
+            Token::Char { ch, .. } => current.push(ch),
+            Token::Cs(_) | Token::Param(_) => {}
+        }
+    }
+    Err(ExecError::MissingToken { context })
+}
+
+fn parse_pattern_word(stores: &Universe, word: &[char]) -> Option<PatternSpec> {
+    let mut letters = Vec::new();
+    let mut values = vec![0u8];
+    for &ch in word {
+        if let Some(digit) = ch.to_digit(10) {
+            *values.last_mut().expect("values is non-empty") = digit as u8;
+        } else {
+            let normalized = if ch == '.' {
+                '.'
+            } else {
+                normalized_lccode(stores, ch)?
+            };
+            letters.push(normalized);
+            values.push(0);
+        }
+    }
+    Some(PatternSpec { letters, values })
+}
+
+fn parse_exception_word(stores: &Universe, word: &[char]) -> Option<ExceptionSpec> {
+    let mut normalized = String::new();
+    let mut positions = Vec::new();
+    for &ch in word {
+        if ch == '-' {
+            positions.push(normalized.chars().count());
+        } else {
+            normalized.push(normalized_lccode(stores, ch)?);
+        }
+    }
+    Some(ExceptionSpec {
+        word: normalized,
+        positions,
+    })
+}
+
+fn normalized_lccode(stores: &Universe, ch: char) -> Option<char> {
+    char::from_u32(stores.lccode(ch)).filter(|&mapped| mapped != '\0')
+}
+
+fn push_word_node(stores: &Universe, node: &Node, word: &mut Vec<WordChar>) -> bool {
+    match node {
+        Node::Char { font, ch } => {
+            let Some(lower) = normalized_lccode(stores, *ch) else {
+                return false;
+            };
+            word.push(WordChar {
+                font: *font,
+                ch: *ch,
+                lower,
+                uppercase: lower != *ch,
+            });
+            true
+        }
+        Node::Lig { font, ch, orig } => {
+            let chars = ligature_original_chars(*ch, *orig);
+            if chars.is_empty() {
+                return false;
+            }
+            for ch in chars {
+                let Some(lower) = normalized_lccode(stores, ch) else {
+                    return false;
+                };
+                word.push(WordChar {
+                    font: *font,
+                    ch,
+                    lower,
+                    uppercase: lower != ch,
+                });
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
+fn flush_word(stores: &mut Universe, word: &mut Vec<WordChar>, out: &mut Vec<Node>) {
+    if word.is_empty() {
+        return;
+    }
+    let lowercase: String = word.iter().map(|ch| ch.lower).collect();
+    let left = stores.int_param(IntParam::LEFT_HYPHEN_MIN).max(0) as usize;
+    let right = stores.int_param(IntParam::RIGHT_HYPHEN_MIN).max(0) as usize;
+    let positions = if word.first().is_some_and(|ch| ch.uppercase)
+        && stores.int_param(IntParam::UC_HYPH) <= 0
+    {
+        Vec::new()
+    } else {
+        stores.hyphen_positions(&lowercase, left, right)
+    };
+    if positions.is_empty() {
+        let pending: Vec<_> = word.iter().map(|ch| ch.pending()).collect();
+        out.extend(super::hmode::reconstitute(stores, &pending, false));
+        word.clear();
+        return;
+    }
+
+    let mut start = 0usize;
+    for position in positions {
+        if position > start {
+            let pending: Vec<_> = word[start..position]
+                .iter()
+                .map(|ch| ch.pending())
+                .collect();
+            out.extend(super::hmode::reconstitute(stores, &pending, start != 0));
+        }
+        out.push(discretionary_hyphen(stores, word[position - 1].font));
+        start = position;
+    }
+    if start < word.len() {
+        let pending: Vec<_> = word[start..].iter().map(|ch| ch.pending()).collect();
+        out.extend(super::hmode::reconstitute(stores, &pending, start != 0));
+    }
+    word.clear();
+}
+
+fn discretionary_hyphen(stores: &mut Universe, font: tex_state::ids::FontId) -> Node {
+    let hyphen = u8::try_from(stores.font_hyphen_char(font))
+        .ok()
+        .map(char::from)
+        .unwrap_or('-');
+    let pre = stores.freeze_node_list(&[Node::Char { font, ch: hyphen }]);
+    let empty = stores.freeze_node_list(&[]);
+    Node::Disc {
+        pre,
+        post: empty,
+        replace: empty,
+    }
+}
+
+fn ligature_original_chars(ch: char, orig: (char, char)) -> Vec<char> {
+    match ch as u32 {
+        0o13 => vec!['f', 'f'],
+        0o14 => vec!['f', 'i'],
+        0o15 => vec!['f', 'l'],
+        0o16 => vec!['f', 'f', 'i'],
+        0o17 => vec!['f', 'f', 'l'],
+        _ if orig.0 == orig.1 => vec![orig.0],
+        _ => vec![orig.0, orig.1],
+    }
+}
+
+#[derive(Clone, Copy)]
+struct WordChar {
+    font: tex_state::ids::FontId,
+    ch: char,
+    lower: char,
+    uppercase: bool,
+}
+
+impl WordChar {
+    fn pending(&self) -> PendingHChar {
+        PendingHChar {
+            font: self.font,
+            ch: self.ch,
+        }
+    }
+}

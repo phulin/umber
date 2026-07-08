@@ -72,6 +72,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [x] `\showboxbreadth` - Maximum number of list items shown per level. Implemented as an assignable integer parameter; the `\showbox` emitter is tracked separately.
 - [x] `\showboxdepth` - Maximum nesting depth shown for box diagnostics. Implemented as an assignable integer parameter; the `\showbox` emitter is tracked separately.
 - [x] `\showlists` - Writes the current mostly-empty mode nest in pdfTeX format through World's terminal/log effect sink.
+- [x] `\showhyphens` - Displays current automatic hyphenation points using loaded patterns and exceptions for language 0.
 - [x] `\showthe` - Displays the value produced by implemented `\the` targets through World's terminal/log effect sink.
 - [ ] `\tracingcommands` - Logs command execution when positive.
 - [ ] `\tracinglostchars` - Logs missing font characters when positive.
@@ -127,14 +128,14 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [x] `\-` - Inserts a discretionary hyphen.
 - [x] `\defaulthyphenchar` - Default `\hyphenchar` value for newly loaded fonts; implemented as an integer parameter used when initializing font banks.
 - [x] `\discretionary` - Adds an explicit discretionary break with pre, post, and replacement text.
-- [ ] `\hyphenation` - Adds hyphenation exceptions for the current language.
+- [x] `\hyphenation` - Adds lccode-normalized hyphenation exceptions for language 0; exceptions override pattern-derived positions.
 - [x] `\hyphenchar` - Reads or assigns the Env-backed hyphenation character for a font selector.
 - [ ] `\language` - Selects the current hyphenation language.
-- [ ] `\lefthyphenmin` - Minimum characters before the first automatic hyphen.
-- [ ] `\patterns` - Adds INITEX hyphenation patterns for the current language.
-- [ ] `\righthyphenmin` - Minimum characters after the last automatic hyphen.
+- [x] `\lefthyphenmin` - Minimum characters before the first automatic hyphen; consumed by hlist hyphenation and `\showhyphens`.
+- [x] `\patterns` - Adds lccode-normalized INITEX-style Liang patterns for language 0 into the snapshot-covered hyphenation trie.
+- [x] `\righthyphenmin` - Minimum characters after the last automatic hyphen; consumed by hlist hyphenation and `\showhyphens`.
 - [ ] `\setlanguage` - Inserts a language whatsit into the current horizontal list.
-- [ ] `\uchyph` - Enables hyphenation of words beginning with uppercase letters when positive.
+- [x] `\uchyph` - Enables hyphenation of words beginning with uppercase letters when positive.
 
 ## Insertions And Splits
 

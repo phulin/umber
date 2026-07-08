@@ -15,6 +15,7 @@ use crate::font::{
     LoadedFont, MissingCharacter,
 };
 use crate::glue::GlueSpec;
+use crate::hyphenation::{ExceptionSpec, PatternSpec};
 use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, TokenListId};
 use crate::input::{
     ConditionKind, ConditionLimb, InputFrameSummary, InputSummary, LexerState, TokenListReplayKind,
@@ -542,6 +543,24 @@ impl Universe {
 
     pub fn set_delcode(&mut self, ch: char, value: DelCode) {
         self.stores.set_delcode(ch, value);
+    }
+
+    pub fn add_hyphenation_pattern(&mut self, pattern: PatternSpec) {
+        self.stores.add_hyphenation_pattern(pattern);
+    }
+
+    pub fn add_hyphenation_exception(&mut self, exception: ExceptionSpec) {
+        self.stores.add_hyphenation_exception(exception);
+    }
+
+    #[must_use]
+    pub fn hyphen_positions(&self, word: &str, left_min: usize, right_min: usize) -> Vec<usize> {
+        self.stores.hyphen_positions(word, left_min, right_min)
+    }
+
+    #[must_use]
+    pub fn hyphenation_exception(&self, word: &str) -> Option<&[usize]> {
+        self.stores.hyphenation_exception(word)
     }
 
     #[must_use]

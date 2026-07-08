@@ -404,11 +404,16 @@ and read `Universe` only for parameters and fonts. That purity is what
 makes box-level memoization (M4) sound.
 
 - **Paragraph builder / line breaker**: Knuth–Plass over a frozen
-  horizontal list. Hyphenation (patterns loaded via `World`, compiled into
-  an immutable trie), ligature/kerning via `tex-fonts`. Output: vertical
-  list of hboxes + penalties/glue. Parameters (`\tolerance`, `\parshape`,
-  ...) are read once at entry into a plain struct — the kernel never
-  touches `Env` mid-algorithm, which keeps its read-set a clean prefix.
+  horizontal list. Automatic hyphenation runs as a pre-pass over the hlist:
+  word characters and ligature originals are normalized through `\lccode`,
+  language-0 exceptions override pattern matches, and odd Liang values insert
+  discretionary hyphens using the current font's `\hyphenchar`. The loaded
+  pattern trie lives in `tex-state`; future line breaking should consume the
+  pure word-position API without `World` or `&mut Universe`. Ligature/kerning
+  via `tex-fonts`. Output: vertical list of hboxes + penalties/glue.
+  Parameters (`\tolerance`, `\parshape`, ...) are read once at entry into a
+  plain struct — the kernel never touches `Env` mid-algorithm, which keeps
+  its read-set a clean prefix.
 - **Math typesetter**: mlist → hlist conversion, styles, fraction/radical
   layout, math fonts. Same contract: frozen mlist in, frozen hlist out.
   (OpenType MATH is the target metrics model; TFM math as fallback.)

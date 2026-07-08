@@ -24,6 +24,7 @@ mod arithmetic;
 mod boxes;
 mod fonts;
 mod hmode;
+mod hyphenation;
 mod macros;
 mod paragraph;
 mod primitives;
@@ -36,6 +37,7 @@ use boxes::*;
 use fonts::*;
 use hmode::*;
 pub(crate) use hmode::{append_given_char, flush_pending_hchars, try_append_character};
+use hyphenation::*;
 use macros::*;
 use paragraph::*;
 pub use primitives::install_unexpandable_primitives;
@@ -278,6 +280,16 @@ where
                 execute_assignment_to_target(target, prefixes, input, stores, hooks)?;
                 Ok(true)
             }
+            UnexpandablePrimitive::Patterns => {
+                reject_all_prefixes(prefixes)?;
+                execute_patterns(input, stores, hooks)?;
+                Ok(true)
+            }
+            UnexpandablePrimitive::Hyphenation => {
+                reject_all_prefixes(prefixes)?;
+                execute_hyphenation(input, stores, hooks)?;
+                Ok(true)
+            }
             UnexpandablePrimitive::Par
             | UnexpandablePrimitive::EndGraf
             | UnexpandablePrimitive::Indent
@@ -393,6 +405,11 @@ where
             UnexpandablePrimitive::ShowLists => {
                 reject_all_prefixes(prefixes)?;
                 diagnostics::execute_showlists(stores);
+                Ok(false)
+            }
+            UnexpandablePrimitive::ShowHyphens => {
+                reject_all_prefixes(prefixes)?;
+                diagnostics::execute_showhyphens(input, stores, hooks)?;
                 Ok(false)
             }
             UnexpandablePrimitive::Uppercase => {

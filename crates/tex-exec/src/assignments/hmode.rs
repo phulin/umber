@@ -194,7 +194,7 @@ fn append_hchar(nest: &mut ModeNest, stores: &mut Universe, ch: char) {
     report_missing_character(stores, font, ch);
 }
 
-fn reconstitute(
+pub(crate) fn reconstitute(
     stores: &Universe,
     pending: &[crate::mode::PendingHChar],
     no_left_boundary: bool,

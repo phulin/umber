@@ -121,7 +121,8 @@ fn end_paragraph(nest: &mut ModeNest, stores: &mut Universe) -> Result<(), ExecE
         kind: GlueKind::Normal,
     });
     let level = nest.pop()?;
-    let list = stores.freeze_node_list(level.list().nodes());
+    let hyphenated = super::hyphenation::hyphenated_hlist(stores, level.list().nodes());
+    let list = stores.freeze_node_list(&hyphenated);
     let line = hpack(stores, list, PackSpec::Natural, HpackParams::read(stores)).node;
     append_node_to_current_list(nest, stores, Node::HList(line))?;
     reset_after_par(nest, stores);

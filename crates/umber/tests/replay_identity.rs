@@ -183,6 +183,7 @@ enum DiagnosticKind {
     ShowThe,
     ShowTokens,
     ShowLists,
+    ShowHyphens,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -541,6 +542,7 @@ impl DiagnosticKind {
             Self::ShowThe => r"\showthe\count0".to_owned(),
             Self::ShowTokens => r"\showtokens{\count0=1}".to_owned(),
             Self::ShowLists => r"\showlists".to_owned(),
+            Self::ShowHyphens => r"\patterns{a1ba}\showhyphens{aba}".to_owned(),
         }
     }
 }
@@ -793,6 +795,7 @@ fn diagnostic_kind() -> impl Strategy<Value = DiagnosticKind> {
         Just(DiagnosticKind::ShowThe),
         Just(DiagnosticKind::ShowTokens),
         Just(DiagnosticKind::ShowLists),
+        Just(DiagnosticKind::ShowHyphens),
     ]
 }
 

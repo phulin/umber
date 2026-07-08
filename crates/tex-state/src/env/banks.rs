@@ -78,6 +78,9 @@ impl IntParam {
     /// TeX's `\globaldefs` integer parameter.
     pub const GLOBAL_DEFS: Self = Self::new(32);
 
+    /// TeX's `\uchyph` uppercase-start hyphenation gate.
+    pub const UC_HYPH: Self = Self::new(39);
+
     /// Plain TeX's `\escapechar` integer parameter.
     pub const ESCAPE_CHAR: Self = Self::new(40);
 
@@ -89,6 +92,12 @@ impl IntParam {
 
     /// Plain TeX's `\endlinechar` integer parameter.
     pub const END_LINE_CHAR: Self = Self::new(48);
+
+    /// TeX's `\lefthyphenmin` paragraph-breaking parameter.
+    pub const LEFT_HYPHEN_MIN: Self = Self::new(51);
+
+    /// TeX's `\righthyphenmin` paragraph-breaking parameter.
+    pub const RIGHT_HYPHEN_MIN: Self = Self::new(52);
 
     /// TeX's `\showboxbreadth` integer parameter.
     pub const SHOW_BOX_BREADTH: Self = Self::new(24);

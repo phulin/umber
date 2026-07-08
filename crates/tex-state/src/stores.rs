@@ -14,6 +14,7 @@ use crate::font::{
     LigKernCommand, LigKernIter, LoadedFont, MissingCharacter, NULL_FONT,
 };
 use crate::glue::{GlueSpec, GlueStore, GlueStoreMark};
+use crate::hyphenation::{ExceptionSpec, HyphenationTable, PatternSpec};
 use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, TokenListId};
 use crate::interner::{Interner, InternerMark, Symbol};
 use crate::macro_store::{MacroMeaning, MacroStore, MacroStoreMark};
@@ -51,6 +52,7 @@ pub(crate) struct StoreSnapshot {
     font_mark: FontStoreMark,
     node_mark: NodeArenaMark,
     code_tables_snapshot: CodeTablesSnapshot,
+    hyphenation: HyphenationTable,
     prepared_mag: Option<i32>,
     last_loaded_font: FontId,
 }
@@ -109,6 +111,7 @@ pub struct Stores {
     nodes: NodeArena,
     survivors: SurvivorArena,
     code_tables: CodeTables,
+    hyphenation: HyphenationTable,
     prepared_mag: Option<i32>,
     last_loaded_font: FontId,
 }
@@ -147,6 +150,7 @@ impl Clone for Stores {
             nodes: self.nodes.clone(),
             survivors: self.survivors.clone(),
             code_tables: self.code_tables.clone(),
+            hyphenation: self.hyphenation.clone(),
             prepared_mag: self.prepared_mag,
             last_loaded_font: self.last_loaded_font,
         }
@@ -168,6 +172,7 @@ impl Stores {
             nodes: NodeArena::new(),
             survivors: SurvivorArena::new(),
             code_tables: CodeTables::new(),
+            hyphenation: HyphenationTable::new(),
             prepared_mag: None,
             last_loaded_font: NULL_FONT,
         };
@@ -175,6 +180,9 @@ impl Stores {
         stores.set_int_param(IntParam::ESCAPE_CHAR, b'\\'.into());
         stores.set_int_param(IntParam::DEFAULT_HYPHEN_CHAR, b'-'.into());
         stores.set_int_param(IntParam::DEFAULT_SKEW_CHAR, -1);
+        stores.set_int_param(IntParam::UC_HYPH, 1);
+        stores.set_int_param(IntParam::LEFT_HYPHEN_MIN, 2);
+        stores.set_int_param(IntParam::RIGHT_HYPHEN_MIN, 3);
         stores.initialize_font_banks(NULL_FONT, 7, &[]);
         stores
     }
@@ -243,6 +251,24 @@ impl Stores {
 
     pub fn set_delcode(&mut self, ch: char, value: DelCode) {
         self.code_tables.set_delcode(ch, value);
+    }
+
+    pub fn add_hyphenation_pattern(&mut self, pattern: PatternSpec) {
+        self.hyphenation.add_pattern(pattern);
+    }
+
+    pub fn add_hyphenation_exception(&mut self, exception: ExceptionSpec) {
+        self.hyphenation.add_exception(exception);
+    }
+
+    #[must_use]
+    pub fn hyphen_positions(&self, word: &str, left_min: usize, right_min: usize) -> Vec<usize> {
+        self.hyphenation.hyphen_positions(word, left_min, right_min)
+    }
+
+    #[must_use]
+    pub fn hyphenation_exception(&self, word: &str) -> Option<&[usize]> {
+        self.hyphenation.exception(word)
     }
 
     /// Returns the meaning for a live control-sequence symbol.
@@ -873,7 +899,11 @@ impl Stores {
         self.env.set_tok_param_global(param, value);
     }
 
-    /// Takes an O(1) checkpoint for the rollback-coupled store tuple.
+    /// Takes a checkpoint for the rollback-coupled store tuple.
+    ///
+    /// Most fields remain O(1) marks/roots. The hyphenation table is cloned in
+    /// v1 because pattern loading is rare and rollback soundness is more
+    /// important than a premature journal for this INITEX-style state.
     #[must_use]
     pub(crate) fn checkpoint(&mut self) -> StoreSnapshot {
         StoreSnapshot {
@@ -886,6 +916,7 @@ impl Stores {
             font_mark: self.fonts.watermark(),
             node_mark: self.nodes.watermark(),
             code_tables_snapshot: self.code_tables.checkpoint(),
+            hyphenation: self.hyphenation.clone(),
             prepared_mag: self.prepared_mag,
             last_loaded_font: self.last_loaded_font,
         }
@@ -904,6 +935,7 @@ impl Stores {
         self.nodes.truncate_to(snapshot.node_mark);
         self.code_tables
             .rollback_to(snapshot.code_tables_snapshot.clone());
+        self.hyphenation = snapshot.hyphenation.clone();
         self.prepared_mag = snapshot.prepared_mag;
         self.last_loaded_font = snapshot.last_loaded_font;
     }

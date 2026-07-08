@@ -80,6 +80,7 @@ impl Stores {
         self.hash_journal_changed_cells(start, end, &mut hasher);
         self.hash_code_generations(&mut hasher);
         self.hash_epoch_node_slice(start.node_mark, &mut hasher);
+        self.hyphenation.hash_semantic(&mut hasher);
         hash_prepared_mag(self.prepared_mag, &mut hasher);
         hasher.finish()
     }

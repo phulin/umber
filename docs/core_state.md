@@ -61,6 +61,7 @@ supporting untracked mutation "for performance" anywhere, ever.
 | Token store | immutable, hash-consed token lists | frozen at birth | watermark |
 | Glue store | immutable, hash-consed glue specs (`GlueId`) | frozen at birth | watermark |
 | Node arenas | per-epoch bump arenas + survivor arena | frozen at birth; promotion on escape | watermark; refcounts (survivors) |
+| Hyphenation | language-0 Liang trie + exception map | pattern/exception loads through `Universe` | cloned in store snapshot (v1) |
 | Journal | undo records + group/checkpoint markers | append-only | position |
 | Effect log | deferred writes, aux/toc/idx, shell escape, PDF objects | append-only, committed at shipout | position + stream buffers |
 | Misc scalars | RNG state, interaction mode, current epoch, prepared magnification, input-stack summary | barriered / snapshot-owned | copied into snapshot tuple |
@@ -190,6 +191,24 @@ rare and bursty (verbatim, `\makeatletter`, babel shorthands).
 - Rationale for structural persistence *here only*: the read path that
   matters bypasses the tree; the domain is huge and default-dominated; and
   per-snapshot roots make history free. Everywhere else, flat arrays win.
+
+### Hyphenation state
+
+TeX82's hyphenation tables are represented in `tex-state` as a language-0
+Liang trie plus an exception map. Pattern loading normalizes letters through
+the current `\lccode` table, stores digits as inter-letter hyphen weights,
+and treats `.` as the word-boundary edge. The trie is immutable from the
+consumer perspective: execution primitives append patterns/exceptions through
+the `Universe` facade, while hyphenation lookups read a stable table and
+produce plain character positions.
+
+The v1 snapshot strategy clones the hyphenation table into `StoreSnapshot`.
+This keeps rollback and replay semantics exact without exposing raw store
+internals or adding a second ad hoc journal. It makes snapshots after pattern
+loads proportional to the table size; that is acceptable while patterns are
+loaded INITEX-style at job start. A future multi-language/e-TeX pass can
+replace this with a persistent arena or table journal if format-sized pattern
+sets make checkpoint cost visible.
 
 ## 6. History: the journal and the write barrier
 
