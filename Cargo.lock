@@ -711,6 +711,10 @@ dependencies = [
 [[package]]
 name = "umber"
 version = "0.1.0"
+dependencies = [
+ "tex-lex",
+ "tex-state",
+]
 
 [[package]]
 name = "unarray"
