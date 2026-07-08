@@ -348,8 +348,9 @@ assignments, box building, and dispatch into the typesetting kernels.
   command, then reconstitutes them through the loaded font's TFM ligature/kern
   program, updates the mode-local `\spacefactor`, and appends explicit
   h-mode nodes for spaces, kerns, skips, finite-fill glue, penalties, rules,
-  discretionaries, accents, and italic corrections. Paragraph breaking,
-  automatic hyphenation, and page contribution remain later hand-offs.
+  discretionaries, accents, and italic corrections. Paragraph breaking is a
+  hand-off to the pure `tex-typeset` line breaker; page contribution remains
+  a later hand-off.
   Vertical list construction tracks TeX's `prev_depth` on each mode-list
   level. A single shared append routine handles every box or rule appended to
   vertical/internal-vertical lists, including explicit box appends, unboxed
@@ -371,11 +372,11 @@ assignments, box building, and dispatch into the typesetting kernels.
   unrestricted horizontal mode. When horizontal material ends (`\par` or
   `\endgraf`), the stomach performs TeX's final paragraph-list preparation
   (trailing-glue removal and `\penalty10000` plus `\parfillskip`), snapshots
-  paragraph-shape parameters, and hands the frozen hlist to the paragraph
-  kernel. Until the Knuth-Plass issue lands, the handoff packs the prepared
-  paragraph as one hlist line and appends it through the shared vertical
-  append routine; the page builder (§8) observes appends to the main vertical
-  list.
+  paragraph-shape and line-breaking parameters, calls the pure line breaker
+  over the prepared hlist, runs separate post-line-break surgery, freezes each
+  resulting line list, hpack's it to the captured line width, and appends the
+  hboxes through the shared vertical append routine. The page builder (§8)
+  observes appends to the main vertical list.
 - The stomach is the *only* pipeline stage holding `&mut Universe`, and it
   holds it as a plain argument — re-entrancy (e.g. `\output` routines,
   `\vsplit`-triggered mark extraction) is recursion in Rust, with the mode
@@ -393,8 +394,8 @@ assignments, box building, and dispatch into the typesetting kernels.
   and shift commands. Restricted-horizontal builders also now construct
   font-backed hlist content for ordinary characters and spaces, including
   TFM ligature/kern reconstitution, space-factor glue, discretionary nodes,
-  accents, rules, penalties, and italic corrections. Paragraph breaking and
-  page contribution remain future work.
+  accents, rules, penalties, and italic corrections. Paragraph breaking now
+  routes through `tex-typeset`; full page contribution remains future work.
 
 ## 7. Typesetting kernels
 
@@ -403,17 +404,23 @@ are deliberately **libraries, not stages**: they own no state, do no I/O,
 and read `Universe` only for parameters and fonts. That purity is what
 makes box-level memoization (M4) sound.
 
-- **Paragraph builder / line breaker**: Knuth–Plass over a frozen
-  horizontal list. Automatic hyphenation runs as a pre-pass over the hlist:
-  word characters and ligature originals are normalized through `\lccode`,
-  language-0 exceptions override pattern matches, and odd Liang values insert
-  discretionary hyphens using the current font's `\hyphenchar`. The loaded
-  pattern trie lives in `tex-state`; future line breaking should consume the
-  pure word-position API without `World` or `&mut Universe`. Ligature/kerning
-  via `tex-fonts`. Output: vertical list of hboxes + penalties/glue.
-  Parameters (`\tolerance`, `\parshape`, ...) are read once at entry into a
-  plain struct — the kernel never touches `Env` mid-algorithm, which keeps
-  its read-set a clean prefix.
+- **Paragraph builder / line breaker**: Knuth–Plass-style dynamic
+  programming over a prepared horizontal list. `tex-typeset` exposes the pure
+  decision pass (`line_break`) separately from post-line-break surgery
+  (`post_line_break`). The breaker owns the three TeX passes: pretolerance
+  without hyphenation, tolerance with a caller-supplied hyphenation hook, and
+  emergency stretch. Legal breakpoints, demerits, fitness classes,
+  `\looseness`, and line-penalty parameters are copied into plain structs at
+  entry; the kernel never touches `Env`, `World`, or `&mut Universe`
+  mid-algorithm. The current `tex-exec` integration precomputes the
+  hyphenated hlist because automatic hyphen insertion still freezes
+  discretionary child lists through `Universe`; the breaker only sees the
+  hook result as ordinary nodes. Post-line-break produces line node vectors
+  with `\leftskip`/`\rightskip` and interline penalty decisions; the stomach
+  remains responsible for freezing those vectors, hpacking to the captured
+  width, and appending hboxes to the enclosing vertical list. Remaining
+  pdfTeX corpus parity details are tracked as follow-up work rather than
+  weakening this purity boundary.
 - **Math typesetter**: mlist → hlist conversion, styles, fraction/radical
   layout, math fonts. Same contract: frozen mlist in, frozen hlist out.
   (OpenType MATH is the target metrics model; TFM math as fallback.)

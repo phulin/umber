@@ -316,15 +316,15 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 
 ## Paragraphs And Line Breaking
 
-- [ ] `\adjdemerits` - Demerits for adjacent visually incompatible lines.
+- [x] `\adjdemerits` - Demerits for adjacent visually incompatible lines; consumed by the paragraph line breaker.
 - [x] `\baselineskip` - Preferred glue between adjacent baselines; consumed by the shared vertical append routine.
-- [ ] `\doublehyphendemerits` - Demerits for consecutive hyphenated lines.
-- [ ] `\emergencystretch` - Extra stretch used during emergency line-breaking pass.
+- [x] `\doublehyphendemerits` - Demerits for consecutive hyphenated lines; consumed by the paragraph line breaker.
+- [x] `\emergencystretch` - Extra stretch used during the final paragraph line-breaking pass.
 - [x] `\everypar` - Token list inserted at the start of each paragraph and replayed through the input stack.
-- [ ] `\finalhyphendemerits` - Demerits when the penultimate line is hyphenated.
+- [x] `\finalhyphendemerits` - Captured for paragraph breaking; full penultimate-line parity is tracked with the remaining line-break parity follow-up.
 - [x] `\hangafter` - Line number where hanging indentation changes. Captured at `\par` and reset after paragraph completion.
 - [x] `\hangindent` - Hanging indentation amount for paragraphs. Captured at `\par` and reset after paragraph completion.
-- [ ] `\hsize` - Line width for normal paragraph building.
+- [x] `\hsize` - Line width for normal paragraph building; captured at `\par` and used to hpack each broken line.
 - [x] `\ignorespaces` - Skips following space tokens and replays the first nonspace token.
 - [x] `\indent` - Starts an indented paragraph.
 - [x] `\leftskip` - Glue added to the left of every line; captured for the paragraph handoff.
@@ -333,34 +333,34 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [x] `\looseness` - Requests more or fewer lines than the optimal paragraph; captured for the paragraph handoff.
 - [x] `\noboundary` - Suppresses ligature and kern boundary processing.
 - [x] `\noindent` - Starts an unindented paragraph.
-- [x] `\par` - Ends the current paragraph and hands a prepared hlist to the paragraph kernel stub; full Knuth-Plass breaking remains tracked separately.
+- [x] `\par` - Ends the current paragraph, captures paragraph parameters, runs the pure line breaker, then appends hpacked lines to the enclosing vertical list.
 - [x] `\parfillskip` - Glue appended to the final line of a paragraph before the paragraph handoff.
 - [x] `\parindent` - Width of paragraph indentation.
 - [x] `\parshape` - Defines per-line indentation and width; stored per nest level and captured at `\par`.
 - [x] `\parskip` - Glue inserted by the enclosing vertical list before a paragraph starts.
-- [ ] `\pretolerance` - Badness threshold for the no-hyphenation line-breaking pass.
+- [x] `\pretolerance` - Badness threshold for the no-hyphenation line-breaking pass; negative values skip the first pass.
 - [ ] `\prevgraf` - Number of lines in the most recent paragraph contribution.
 - [x] `\rightskip` - Glue added to the right of every line; captured for the paragraph handoff.
 - [x] `\spacefactor` - Current space factor used for interword spacing.
 - [x] `\spaceskip` - Explicit interword glue override.
-- [x] `\tolerance` - Badness threshold for line breaking with hyphenation; implemented as an assignable integer parameter, with paragraph consumption pending.
+- [x] `\tolerance` - Badness threshold for line breaking with hyphenation; consumed by the second and emergency passes.
 - [ ] `\vadjust` - Inserts vertical material associated with the current line.
 - [x] `\xspaceskip` - Explicit intersentence glue override.
 
 ## Penalties
 
-- [ ] `\brokenpenalty` - Penalty after a page break at a hyphenated line.
-- [ ] `\clubpenalty` - Penalty after the first line of a paragraph.
+- [x] `\brokenpenalty` - Penalty after a hyphenated paragraph line; inserted by post-line-break surgery.
+- [x] `\clubpenalty` - Penalty after the first line of a paragraph; inserted by post-line-break surgery.
 - [ ] `\exhyphenpenalty` - Penalty for line breaks after explicit hyphens.
 - [ ] `\floatingpenalty` - Penalty for insertions split between pages.
 - [ ] `\hyphenpenalty` - Penalty for line breaks at discretionary hyphens.
-- [ ] `\interlinepenalty` - Penalty inserted between paragraph lines.
+- [x] `\interlinepenalty` - Penalty inserted between paragraph lines by post-line-break surgery.
 - [ ] `\lastpenalty` - Reports the last penalty on the current list, or zero.
-- [ ] `\linepenalty` - Base demerit contribution for each broken line.
+- [x] `\linepenalty` - Base demerit contribution for each broken line; consumed by the paragraph line breaker.
 - [ ] `\outputpenalty` - Penalty value that triggered the current output routine.
 - [x] `\penalty` - Adds a penalty node to the current list.
 - [ ] `\unpenalty` - Removes the last penalty from the current list when allowed.
-- [ ] `\widowpenalty` - Penalty after the penultimate line of a paragraph.
+- [x] `\widowpenalty` - Penalty after the penultimate line of a paragraph; inserted by post-line-break surgery.
 
 ## Registers And Arithmetic
 

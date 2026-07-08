@@ -41,6 +41,18 @@ pub struct ParagraphParams {
     pub hang_indent: Scaled,
     pub hang_after: i32,
     pub looseness: i32,
+    pub pretolerance: i32,
+    pub tolerance: i32,
+    pub line_penalty: i32,
+    pub adj_demerits: i32,
+    pub double_hyphen_demerits: i32,
+    pub final_hyphen_demerits: i32,
+    pub emergency_stretch: Scaled,
+    pub hsize: Scaled,
+    pub interline_penalty: i32,
+    pub club_penalty: i32,
+    pub widow_penalty: i32,
+    pub broken_penalty: i32,
 }
 
 /// One of TeX's six semantic modes.

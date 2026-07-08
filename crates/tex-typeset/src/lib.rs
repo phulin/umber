@@ -4,6 +4,8 @@
 //! points take immutable state access, copy all parameters into plain structs
 //! before doing arithmetic, and never mutate `Universe`.
 
+pub mod linebreak;
+
 use tex_state::Universe;
 use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::glue::{GlueSpec, Order};

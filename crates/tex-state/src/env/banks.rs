@@ -60,6 +60,36 @@ param_index!(GlueParam);
 param_index!(TokParam);
 
 impl IntParam {
+    /// TeX's first-pass paragraph badness cutoff.
+    pub const PRETOLERANCE: Self = Self::new(0);
+
+    /// TeX's paragraph badness cutoff.
+    pub const TOLERANCE: Self = Self::new(1);
+
+    /// TeX's per-line demerit parameter.
+    pub const LINE_PENALTY: Self = Self::new(2);
+
+    /// TeX's club-line penalty.
+    pub const CLUB_PENALTY: Self = Self::new(5);
+
+    /// TeX's widow-line penalty.
+    pub const WIDOW_PENALTY: Self = Self::new(6);
+
+    /// TeX's post-hyphenated-line penalty.
+    pub const BROKEN_PENALTY: Self = Self::new(8);
+
+    /// TeX's inter-line penalty.
+    pub const INTERLINE_PENALTY: Self = Self::new(13);
+
+    /// TeX's demerits for consecutive hyphenated lines.
+    pub const DOUBLE_HYPHEN_DEMERITS: Self = Self::new(14);
+
+    /// TeX's demerits for a penultimate hyphenated line.
+    pub const FINAL_HYPHEN_DEMERITS: Self = Self::new(15);
+
+    /// TeX's demerits for adjacent incompatible line fitness.
+    pub const ADJ_DEMERITS: Self = Self::new(16);
+
     /// TeX's `\mag` integer parameter.
     pub const MAG: Self = Self::new(17);
 
@@ -139,6 +169,12 @@ impl DimenParam {
 
     /// TeX's `\hangindent` paragraph-shape parameter.
     pub const HANG_INDENT: Self = Self::new(17);
+
+    /// TeX's line width parameter.
+    pub const H_SIZE: Self = Self::new(3);
+
+    /// TeX's final-pass paragraph emergency stretch.
+    pub const EMERGENCY_STRETCH: Self = Self::new(20);
 }
 
 impl GlueParam {

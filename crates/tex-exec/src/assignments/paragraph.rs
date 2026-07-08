@@ -3,6 +3,9 @@ use tex_state::Universe;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::node::{GlueKind, Node};
 use tex_state::scaled::Scaled;
+use tex_typeset::linebreak::{
+    HyphenationHook, LineBreakParams, PostLineBreakParams, line_break, post_line_break,
+};
 use tex_typeset::{HpackParams, PackSpec, hpack};
 
 use super::*;
@@ -121,12 +124,38 @@ fn end_paragraph(nest: &mut ModeNest, stores: &mut Universe) -> Result<(), ExecE
         kind: GlueKind::Normal,
     });
     let level = nest.pop()?;
-    let hyphenated = super::hyphenation::hyphenated_hlist(stores, level.list().nodes());
-    let list = stores.freeze_node_list(&hyphenated);
-    let line = hpack(stores, list, PackSpec::Natural, HpackParams::read(stores)).node;
-    append_node_to_current_list(nest, stores, Node::HList(line))?;
+    let hlist = level.list().nodes();
+    let line_params = line_break_params(&params);
+    let hyphenated = super::hyphenation::hyphenated_hlist(stores, hlist);
+    let mut hook = ExecHyphenationHook { hyphenated };
+    let decisions = line_break(stores, hlist, line_params, &mut hook);
+    let post_params = post_line_break_params(&params);
+    for broken in post_line_break(stores, &decisions.nodes, &decisions.breaks, post_params) {
+        if let Some(penalty) = broken.penalty_after {
+            nest.current_list_mut().push(Node::Penalty(penalty));
+        }
+        let list = stores.freeze_node_list(&broken.nodes);
+        let line = hpack(
+            stores,
+            list,
+            PackSpec::Exactly(params.hsize),
+            HpackParams::read(stores),
+        )
+        .node;
+        append_node_to_current_list(nest, stores, Node::HList(line))?;
+    }
     reset_after_par(nest, stores);
     Ok(())
+}
+
+struct ExecHyphenationHook {
+    hyphenated: Vec<Node>,
+}
+
+impl HyphenationHook<Universe> for ExecHyphenationHook {
+    fn hyphenate(&mut self, _nodes: &[Node]) -> Vec<Node> {
+        self.hyphenated.clone()
+    }
 }
 
 fn snapshot_paragraph_params(nest: &ModeNest, stores: &Universe) -> ParagraphParams {
@@ -138,6 +167,43 @@ fn snapshot_paragraph_params(nest: &ModeNest, stores: &Universe) -> ParagraphPar
         hang_indent: stores.dimen_param(DimenParam::HANG_INDENT),
         hang_after: stores.int_param(IntParam::HANG_AFTER),
         looseness: stores.int_param(IntParam::LOOSENESS),
+        pretolerance: stores.int_param(IntParam::PRETOLERANCE),
+        tolerance: stores.int_param(IntParam::TOLERANCE),
+        line_penalty: stores.int_param(IntParam::LINE_PENALTY),
+        adj_demerits: stores.int_param(IntParam::ADJ_DEMERITS),
+        double_hyphen_demerits: stores.int_param(IntParam::DOUBLE_HYPHEN_DEMERITS),
+        final_hyphen_demerits: stores.int_param(IntParam::FINAL_HYPHEN_DEMERITS),
+        emergency_stretch: stores.dimen_param(DimenParam::EMERGENCY_STRETCH),
+        hsize: stores.dimen_param(DimenParam::H_SIZE),
+        interline_penalty: stores.int_param(IntParam::INTERLINE_PENALTY),
+        club_penalty: stores.int_param(IntParam::CLUB_PENALTY),
+        widow_penalty: stores.int_param(IntParam::WIDOW_PENALTY),
+        broken_penalty: stores.int_param(IntParam::BROKEN_PENALTY),
+    }
+}
+
+fn line_break_params(params: &ParagraphParams) -> LineBreakParams {
+    LineBreakParams {
+        pretolerance: params.pretolerance,
+        tolerance: params.tolerance,
+        line_penalty: params.line_penalty,
+        adj_demerits: params.adj_demerits,
+        double_hyphen_demerits: params.double_hyphen_demerits,
+        final_hyphen_demerits: params.final_hyphen_demerits,
+        emergency_stretch: params.emergency_stretch,
+        looseness: params.looseness,
+        hsize: params.hsize,
+    }
+}
+
+fn post_line_break_params(params: &ParagraphParams) -> PostLineBreakParams {
+    PostLineBreakParams {
+        left_skip: params.left_skip,
+        right_skip: params.right_skip,
+        interline_penalty: params.interline_penalty,
+        club_penalty: params.club_penalty,
+        widow_penalty: params.widow_penalty,
+        broken_penalty: params.broken_penalty,
     }
 }
 
