@@ -14,11 +14,7 @@ mod executor;
 mod mode;
 
 pub use assignments::{install_unexpandable_primitives, try_execute_assignment};
-pub use diagnostics::{LogSink, NoopLogSink, StringLogSink};
-pub use dispatch::{
-    DispatchAction, ExecutionStats, dispatch_delivered_token,
-    dispatch_delivered_token_with_log_sink,
-};
+pub use dispatch::{DispatchAction, ExecutionStats, dispatch_delivered_token};
 pub use error::ExecError;
 pub use executor::Executor;
 pub use mode::{ListBuilderSummary, Mode, ModeLevelSummary, ModeNest, ModeNestSummary};

@@ -278,8 +278,8 @@ where
         self.inner.is_inner_mode()
     }
 
-    fn input_stream_eof(&self, stream: u8) -> bool {
-        self.inner.input_stream_eof(stream)
+    fn input_stream_eof(&self, stores: &Universe, stream: u8) -> bool {
+        self.inner.input_stream_eof(stores, stream)
     }
 }
 

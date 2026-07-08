@@ -83,8 +83,9 @@ fn run_tex(path: &str) -> Result<(), CliError> {
 
     let mut input = InputStack::new(WorldInput::from_content(content));
     let mut hooks = RunHooks::new(path);
-    let log = umber::run_input_with_hooks(&mut input, &mut stores, &mut hooks)?;
-    print!("{log}");
+    let _ = umber::run_input_with_hooks(&mut input, &mut stores, &mut hooks)?;
+    let effect_pos = stores.world().effect_pos();
+    stores.world_mut().commit_effects(effect_pos)?;
     Ok(())
 }
 

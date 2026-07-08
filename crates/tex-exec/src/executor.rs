@@ -5,10 +5,7 @@ use tex_lex::{InputSource, InputStack};
 use tex_state::Universe;
 
 use crate::dispatch::unimplemented_typesetting;
-use crate::{
-    DispatchAction, ExecError, ExecutionStats, LogSink, ModeNest, NoopLogSink,
-    dispatch_delivered_token_with_log_sink,
-};
+use crate::{DispatchAction, ExecError, ExecutionStats, ModeNest, dispatch_delivered_token};
 
 /// Stomach interpreter state.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -83,30 +80,6 @@ impl Executor {
         R: ReadRecorder,
         H: ExpansionHooks<S>,
     {
-        self.run_with_recorder_and_hooks_and_log_sink(
-            input,
-            stores,
-            recorder,
-            hooks,
-            &mut NoopLogSink,
-        )
-    }
-
-    /// Runs main control with expansion hooks and a diagnostic log sink.
-    pub fn run_with_recorder_and_hooks_and_log_sink<S, R, H, L>(
-        &mut self,
-        input: &mut InputStack<S>,
-        stores: &mut Universe,
-        recorder: &mut R,
-        hooks: &mut H,
-        log: &mut L,
-    ) -> Result<ExecutionStats, ExecError>
-    where
-        S: InputSource,
-        R: ReadRecorder,
-        H: ExpansionHooks<S>,
-        L: LogSink,
-    {
         let mut stats = ExecutionStats::default();
         loop {
             let Some(token) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
@@ -114,14 +87,7 @@ impl Executor {
                 return Ok(stats);
             };
             stats.delivered_tokens += 1;
-            match dispatch_delivered_token_with_log_sink(
-                self.nest.current_mode(),
-                token,
-                input,
-                stores,
-                hooks,
-                log,
-            )? {
+            match dispatch_delivered_token(self.nest.current_mode(), token, input, stores, hooks)? {
                 DispatchAction::Continue => {}
                 DispatchAction::End => return Ok(stats),
                 DispatchAction::NotConsumed => {

@@ -6,6 +6,7 @@ use tex_state::Universe;
 use tex_state::env::banks::IntParam;
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
 use tex_state::token::{Catcode, Token};
+use tex_state::{EffectRecord, PrintSink};
 
 #[test]
 fn nest_push_pop_and_summary_cover_all_modes() {
@@ -489,6 +490,68 @@ fn code_table_assignment_validates_and_bumps_generation_on_same_value() {
 fn install_expandable(stores: &mut Universe, name: &str, primitive: ExpandablePrimitive) {
     let symbol = stores.intern(name);
     stores.set_meaning(symbol, Meaning::ExpandablePrimitive(primitive));
+}
+
+#[test]
+fn openin_read_defines_control_sequence_from_world_stream() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    stores
+        .world_mut()
+        .set_memory_file("stream.tex", b"abc\nnext".to_vec())
+        .expect("seed stream");
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\openin1=stream.tex \\read1 to \\foo \\message{\\foo}\\end",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("read from opened stream");
+
+    let output = terminal_effect_text(&stores);
+    assert!(output.contains("abc"));
+    assert!(
+        !stores
+            .world()
+            .input_stream_eof(tex_state::StreamSlot::new(1))
+    );
+}
+
+#[test]
+fn openout_closeout_append_world_effect_records() {
+    let mut stores = Universe::new();
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\openout2=out.aux \\closeout2\\end"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("openout closeout");
+
+    assert!(matches!(
+        stores.world().effect_records(),
+        [
+            EffectRecord::StreamOpen { slot, target },
+            EffectRecord::StreamClose { slot: close_slot }
+        ] if *slot == tex_state::StreamSlot::new(2)
+            && *close_slot == tex_state::StreamSlot::new(2)
+            && target.path() == std::path::Path::new("out.aux")
+    ));
+}
+
+fn terminal_effect_text(stores: &Universe) -> String {
+    let mut output = String::new();
+    for record in stores.world().effect_records() {
+        if let EffectRecord::StreamWrite { sink, text } = record
+            && matches!(
+                sink,
+                PrintSink::Terminal | PrintSink::TerminalAndLog | PrintSink::Log
+            )
+        {
+            output.push_str(text);
+        }
+    }
+    output
 }
 
 struct EdefInputHooks;

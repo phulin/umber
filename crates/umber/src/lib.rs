@@ -1,8 +1,8 @@
-use tex_exec::{Executor, StringLogSink};
+use tex_exec::Executor;
 use tex_expand::{ExpansionHooks, NoopRecorder};
 use tex_lex::{InputSource, InputStack, MemoryInput};
-use tex_state::Universe;
 use tex_state::env::banks::IntParam;
+use tex_state::{EffectRecord, PrintSink, Universe};
 
 /// Installs the primitive/state setup used by `umber run`.
 pub fn prepare_run_stores(stores: &mut Universe) {
@@ -23,15 +23,8 @@ where
     H: ExpansionHooks<S>,
 {
     let mut recorder = NoopRecorder;
-    let mut log = StringLogSink::new();
-    Executor::new().run_with_recorder_and_hooks_and_log_sink(
-        input,
-        stores,
-        &mut recorder,
-        hooks,
-        &mut log,
-    )?;
-    Ok(log.as_str().to_owned())
+    Executor::new().run_with_recorder_and_hooks(input, stores, &mut recorder, hooks)?;
+    Ok(uncommitted_terminal_text(stores))
 }
 
 /// Runs in-memory TeX through the `umber run` executor setup.
@@ -55,4 +48,20 @@ impl ExpansionHooks<MemoryInput> for MemoryRunHooks {
     fn job_name(&self) -> &str {
         "texput"
     }
+}
+
+fn uncommitted_terminal_text(stores: &Universe) -> String {
+    let mut text = String::new();
+    for record in stores.world().effect_records() {
+        let EffectRecord::StreamWrite { sink, text: chunk } = record else {
+            continue;
+        };
+        match sink {
+            PrintSink::Terminal | PrintSink::TerminalAndLog | PrintSink::Log => {
+                text.push_str(chunk);
+            }
+            PrintSink::Stream(_) => {}
+        }
+    }
+    text
 }

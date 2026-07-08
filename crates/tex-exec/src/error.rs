@@ -3,6 +3,7 @@ use std::fmt;
 use tex_expand::ExpandError;
 use tex_expand::scan::ScanToksError;
 use tex_lex::LexError;
+use tex_state::WorldError;
 use tex_state::meaning::ExpandablePrimitive;
 use tex_state::token::Token;
 
@@ -14,6 +15,7 @@ pub enum ExecError {
     Lex(LexError),
     ScanToks(ScanToksError),
     ScanGlue(tex_expand::scan_glue::ScanGlueError),
+    World(WorldError),
     EmptyModeNestSummary,
     CannotPopBaseMode,
     UndefinedControlSequence {
@@ -79,6 +81,7 @@ impl fmt::Display for ExecError {
             Self::Lex(err) => write!(f, "{err}"),
             Self::ScanToks(err) => write!(f, "{err}"),
             Self::ScanGlue(err) => write!(f, "{err}"),
+            Self::World(err) => write!(f, "{err}"),
             Self::EmptyModeNestSummary => write!(f, "mode nest summary has no levels"),
             Self::CannotPopBaseMode => write!(f, "cannot pop the base vertical mode level"),
             Self::UndefinedControlSequence { name } => {
@@ -156,6 +159,7 @@ impl std::error::Error for ExecError {
             Self::Lex(err) => Some(err),
             Self::ScanToks(err) => Some(err),
             Self::ScanGlue(err) => Some(err),
+            Self::World(err) => Some(err),
             Self::EmptyModeNestSummary
             | Self::CannotPopBaseMode
             | Self::UndefinedControlSequence { .. }
@@ -207,5 +211,11 @@ impl From<ScanToksError> for ExecError {
 impl From<tex_expand::scan_glue::ScanGlueError> for ExecError {
     fn from(value: tex_expand::scan_glue::ScanGlueError) -> Self {
         Self::ScanGlue(value)
+    }
+}
+
+impl From<WorldError> for ExecError {
+    fn from(value: WorldError) -> Self {
+        Self::World(value)
     }
 }

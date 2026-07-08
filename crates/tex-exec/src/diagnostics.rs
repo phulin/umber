@@ -1,150 +1,95 @@
-//! Temporary diagnostic sink and log-writing primitives.
+//! Diagnostic and log-writing primitives.
 
 use tex_expand::{
     ExpansionHooks, NoopRecorder, get_x_token_with_recorder_and_hooks, meaning_text,
     scan_the_text_with_hooks, token_text,
 };
 use tex_lex::{InputSource, InputStack};
-use tex_state::Universe;
 use tex_state::token::{Catcode, Token};
+use tex_state::{PrintSink, Universe};
 
 use crate::{ExecError, push_tokens};
 
-/// Minimal diagnostic sink kept local until the World effect log lands.
-pub trait LogSink {
-    fn write(&mut self, text: &str);
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-pub struct NoopLogSink;
-
-impl LogSink for NoopLogSink {
-    fn write(&mut self, _text: &str) {}
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct StringLogSink {
-    output: String,
-}
-
-impl StringLogSink {
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.output
-    }
-
-    #[must_use]
-    pub fn into_string(self) -> String {
-        self.output
-    }
-}
-
-impl LogSink for StringLogSink {
-    fn write(&mut self, text: &str) {
-        self.output.push_str(text);
-    }
-}
-
-pub(crate) fn execute_show<S, L>(
+pub(crate) fn execute_show<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    log: &mut L,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    L: LogSink,
 {
     let token = input
         .next_token(stores)?
         .ok_or(ExecError::MissingToken { context: "\\show" })?;
-    match token {
+    let text = match token {
         Token::Cs(_) => {
-            log.write("\n> ");
-            log.write(&token_text(stores, token));
-            log.write("=");
-            log.write(&show_meaning_text(stores, token));
-            log.write(".\n");
+            format!(
+                "\n> {}={}.\n",
+                token_text(stores, token),
+                show_meaning_text(stores, token)
+            )
         }
         Token::Char { .. } | Token::Param(_) => {
-            log.write("\n> ");
-            log.write(&meaning_text(stores, token));
-            log.write(".\n");
+            format!("\n> {}.\n", meaning_text(stores, token))
         }
-    }
+    };
+    write_diagnostic(stores, &text);
     Ok(())
 }
 
-pub(crate) fn execute_showthe<S, H, L>(
+pub(crate) fn execute_showthe<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
-    log: &mut L,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
     H: ExpansionHooks<S>,
-    L: LogSink,
 {
     let mut recorder = NoopRecorder;
     let text = scan_the_text_with_hooks(input, stores, &mut recorder, hooks)?;
-    log.write("\n> ");
-    log.write(&text);
-    log.write(".\n");
+    write_diagnostic(stores, &format!("\n> {text}.\n"));
     Ok(())
 }
 
-pub(crate) fn execute_showtokens<S, L>(
+pub(crate) fn execute_showtokens<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    log: &mut L,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
-    L: LogSink,
 {
     let tokens = scan_balanced_raw_text(input, stores, "\\showtokens")?;
-    log.write("\n> ");
-    log.write(&tokens_text(stores, &tokens));
-    log.write(".\n");
+    write_diagnostic(stores, &format!("\n> {}.\n", tokens_text(stores, &tokens)));
     Ok(())
 }
 
-pub(crate) fn execute_message<S, H, L>(
+pub(crate) fn execute_message<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
-    log: &mut L,
     error: bool,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
     H: ExpansionHooks<S>,
-    L: LogSink,
 {
     let tokens = scan_balanced_expanded_text(input, stores, hooks, "\\message")?;
+    let text = tokens_text(stores, &tokens);
     if error {
-        log.write("\n! ");
-    }
-    if error {
-        log.write(&tokens_text(stores, &tokens));
-        log.write(".\n");
+        write_diagnostic(stores, &format!("\n! {text}.\n"));
     } else {
-        write_wrapped_message(log, &tokens_text(stores, &tokens));
-        log.write(" ");
+        let mut output = write_wrapped_message(&text);
+        output.push(' ');
+        write_diagnostic(stores, &output);
     }
     Ok(())
 }
 
-pub(crate) fn execute_showlists<L>(log: &mut L)
-where
-    L: LogSink,
-{
-    log.write("\n### vertical mode entered at line 0\nprevdepth ignored\n\n! OK.\n");
+pub(crate) fn execute_showlists(stores: &mut Universe) {
+    write_diagnostic(
+        stores,
+        "\n### vertical mode entered at line 0\nprevdepth ignored\n\n! OK.\n",
+    );
 }
 
 pub(crate) fn execute_change_case<S>(
@@ -327,20 +272,24 @@ fn tokens_text(stores: &Universe, tokens: &[Token]) -> String {
     text
 }
 
-fn write_wrapped_message<L>(log: &mut L, text: &str)
-where
-    L: LogSink,
-{
+fn write_wrapped_message(text: &str) -> String {
+    let mut output = String::new();
     let mut column = 0usize;
     for ch in text.chars() {
         if column == 79 {
-            log.write("\n");
+            output.push('\n');
             column = 0;
         }
-        let mut buffer = [0; 4];
-        log.write(ch.encode_utf8(&mut buffer));
+        output.push(ch);
         column += 1;
     }
+    output
+}
+
+fn write_diagnostic(stores: &mut Universe, text: &str) {
+    stores
+        .world_mut()
+        .write_text(PrintSink::TerminalAndLog, text);
 }
 
 fn is_begin_group(token: Token) -> bool {

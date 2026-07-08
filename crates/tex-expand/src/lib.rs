@@ -303,10 +303,13 @@ pub trait ExpansionHooks<S> {
         false
     }
 
-    fn input_stream_eof(&self, _stream: u8) -> bool {
-        // TODO(umber2-io): replace this documented no-stream-table stub once
-        // \openin/\closein state is represented by the driver/World layer.
-        true
+    fn input_stream_eof(&self, stores: &Universe, stream: u8) -> bool {
+        if stream >= tex_state::world::STREAM_SLOT_COUNT as u8 {
+            return true;
+        }
+        stores
+            .world()
+            .input_stream_eof(tex_state::StreamSlot::new(stream))
     }
 }
 

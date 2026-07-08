@@ -313,7 +313,7 @@ where
                 stores,
                 recorder,
                 hooks,
-                hooks.input_stream_eof(stream),
+                hooks.input_stream_eof(stores, stream),
             )
         }
         Meaning::ExpandablePrimitive(ExpandablePrimitive::Else) => {

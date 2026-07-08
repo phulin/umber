@@ -1293,7 +1293,7 @@ fn box_predicates_read_box_register_state() {
 }
 
 #[test]
-fn ifeof_uses_hook_and_noop_hook_reports_eof_stub() {
+fn ifeof_uses_hook_and_default_world_stream_state() {
     let mut stores = Universe::new();
     let (_, _, else_cs, fi) = conditional_primitives(&mut stores);
     let ifeof = expandable_primitive(&mut stores, "ifeof", ExpandablePrimitive::IfEof);
@@ -1633,7 +1633,7 @@ impl ExpansionHooks<MemoryInput> for MemoryHooks {
         self.inner
     }
 
-    fn input_stream_eof(&self, stream: u8) -> bool {
+    fn input_stream_eof(&self, _stores: &Universe, stream: u8) -> bool {
         self.eof.get(&stream).copied().unwrap_or(true)
     }
 }

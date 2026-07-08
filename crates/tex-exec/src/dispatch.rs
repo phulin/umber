@@ -4,7 +4,7 @@ use tex_state::meaning::{ExpandablePrimitive, Meaning};
 use tex_state::token::{Catcode, Token};
 use tex_state::{GroupKind, GroupMismatch, Universe};
 
-use crate::{ExecError, LogSink, Mode, NoopLogSink, assignments};
+use crate::{ExecError, Mode, assignments};
 
 /// Main-control progress counters.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -30,23 +30,6 @@ pub fn dispatch_delivered_token<S, H>(
 where
     S: InputSource,
     H: ExpansionHooks<S>,
-{
-    dispatch_delivered_token_with_log_sink(mode, token, input, stores, hooks, &mut NoopLogSink)
-}
-
-/// Dispatches one delivered token while writing diagnostics to `log`.
-pub fn dispatch_delivered_token_with_log_sink<S, H, L>(
-    mode: Mode,
-    token: Token,
-    input: &mut InputStack<S>,
-    stores: &mut Universe,
-    hooks: &mut H,
-    log: &mut L,
-) -> Result<DispatchAction, ExecError>
-where
-    S: InputSource,
-    H: ExpansionHooks<S>,
-    L: LogSink,
 {
     let meaning = match token {
         Token::Cs(symbol) => stores.meaning(symbol),
@@ -86,7 +69,7 @@ where
         }),
         Meaning::ExpandablePrimitive(primitive) => dispatch_delivered_expandable(token, primitive),
         Meaning::UnexpandablePrimitive(primitive) => {
-            assignments::execute_unexpandable(primitive, input, stores, hooks, log)
+            assignments::execute_unexpandable(primitive, input, stores, hooks)
         }
         meaning @ (Meaning::CountRegister(_)
         | Meaning::DimenRegister(_)

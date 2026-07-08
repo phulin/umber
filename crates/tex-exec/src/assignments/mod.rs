@@ -16,10 +16,7 @@ use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
 use tex_state::{GroupKind, Universe};
 
-use crate::{
-    DispatchAction, ExecError, LogSink, Mode, NoopLogSink, diagnostics, dispatch_delivered_token,
-    leave_group,
-};
+use crate::{DispatchAction, ExecError, Mode, diagnostics, dispatch_delivered_token, leave_group};
 
 mod arithmetic;
 mod macros;
@@ -60,17 +57,15 @@ where
     }
 }
 
-pub(crate) fn execute_unexpandable<S, H, L>(
+pub(crate) fn execute_unexpandable<S, H>(
     primitive: UnexpandablePrimitive,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
-    log: &mut L,
 ) -> Result<DispatchAction, ExecError>
 where
     S: InputSource,
     H: ExpansionHooks<S>,
-    L: LogSink,
 {
     let mut prefixes = Prefixes::default();
     let command = accumulate_prefixes(
@@ -83,7 +78,7 @@ where
         reject_all_prefixes(prefixes)?;
         return Ok(DispatchAction::End);
     }
-    let assigned = execute_prefixed_command(command, prefixes, input, stores, hooks, log)?;
+    let assigned = execute_prefixed_command(command, prefixes, input, stores, hooks)?;
     if assigned {
         fire_afterassignment(input, stores);
     }
@@ -107,8 +102,7 @@ where
         input,
         stores,
     )?;
-    let assigned =
-        execute_prefixed_command(command, prefixes, input, stores, hooks, &mut NoopLogSink)?;
+    let assigned = execute_prefixed_command(command, prefixes, input, stores, hooks)?;
     if assigned {
         fire_afterassignment(input, stores);
     }
@@ -171,18 +165,16 @@ where
     }
 }
 
-fn execute_prefixed_command<S, H, L>(
+fn execute_prefixed_command<S, H>(
     command: PrefixedCommand,
     prefixes: Prefixes,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
-    log: &mut L,
 ) -> Result<bool, ExecError>
 where
     S: InputSource,
     H: ExpansionHooks<S>,
-    L: LogSink,
 {
     match command {
         PrefixedCommand::Primitive(primitive) => match primitive {
@@ -261,37 +253,44 @@ where
                 Ok(true)
             }
             UnexpandablePrimitive::Read => {
-                execute_read_stub(input, stores, hooks)?;
+                execute_read(input, stores, hooks)?;
+                Ok(true)
+            }
+            UnexpandablePrimitive::OpenIn
+            | UnexpandablePrimitive::CloseIn
+            | UnexpandablePrimitive::OpenOut
+            | UnexpandablePrimitive::CloseOut => {
+                execute_stream_command(primitive, input, stores, hooks)?;
                 Ok(true)
             }
             UnexpandablePrimitive::Show => {
                 reject_all_prefixes(prefixes)?;
-                diagnostics::execute_show(input, stores, log)?;
+                diagnostics::execute_show(input, stores)?;
                 Ok(false)
             }
             UnexpandablePrimitive::ShowThe => {
                 reject_all_prefixes(prefixes)?;
-                diagnostics::execute_showthe(input, stores, hooks, log)?;
+                diagnostics::execute_showthe(input, stores, hooks)?;
                 Ok(false)
             }
             UnexpandablePrimitive::ShowTokens => {
                 reject_all_prefixes(prefixes)?;
-                diagnostics::execute_showtokens(input, stores, log)?;
+                diagnostics::execute_showtokens(input, stores)?;
                 Ok(false)
             }
             UnexpandablePrimitive::Message => {
                 reject_all_prefixes(prefixes)?;
-                diagnostics::execute_message(input, stores, hooks, log, false)?;
+                diagnostics::execute_message(input, stores, hooks, false)?;
                 Ok(false)
             }
             UnexpandablePrimitive::ErrMessage => {
                 reject_all_prefixes(prefixes)?;
-                diagnostics::execute_message(input, stores, hooks, log, true)?;
+                diagnostics::execute_message(input, stores, hooks, true)?;
                 Ok(false)
             }
             UnexpandablePrimitive::ShowLists => {
                 reject_all_prefixes(prefixes)?;
-                diagnostics::execute_showlists(log);
+                diagnostics::execute_showlists(stores);
                 Ok(false)
             }
             UnexpandablePrimitive::Uppercase => {
