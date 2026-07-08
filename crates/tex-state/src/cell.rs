@@ -18,6 +18,7 @@ pub enum BankTag {
     DimenParam = 7,
     GlueParam = 8,
     TokParam = 9,
+    Muskip = 10,
 }
 
 impl BankTag {
@@ -33,6 +34,7 @@ impl BankTag {
             7 => Self::DimenParam,
             8 => Self::GlueParam,
             9 => Self::TokParam,
+            10 => Self::Muskip,
             _ => panic!("unknown cell bank tag"),
         }
     }
@@ -93,6 +95,7 @@ mod tests {
             BankTag::Skip,
             BankTag::Toks,
             BankTag::Box,
+            BankTag::Muskip,
             BankTag::IntParam,
             BankTag::DimenParam,
             BankTag::GlueParam,

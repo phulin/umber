@@ -26,6 +26,7 @@ impl Env {
             BankTag::Skip => self.restore_register(cell.index(), word, RegisterBank::Skip),
             BankTag::Toks => self.restore_register(cell.index(), word, RegisterBank::Toks),
             BankTag::Box => self.restore_register(cell.index(), word, RegisterBank::Box),
+            BankTag::Muskip => self.restore_register(cell.index(), word, RegisterBank::Muskip),
             BankTag::IntParam => self.int_params.restore_word(u16_index(cell.index()), word),
             BankTag::DimenParam => self
                 .dimen_params
@@ -99,6 +100,7 @@ impl Env {
         self.skips.non_default_words(BankTag::Skip, &mut out);
         self.toks.non_default_words(BankTag::Toks, &mut out);
         self.boxes.non_default_words(BankTag::Box, &mut out);
+        self.muskips.non_default_words(BankTag::Muskip, &mut out);
         self.overflow_counts
             .non_default_words(BankTag::Count, &mut out);
         self.overflow_dimens
@@ -109,6 +111,8 @@ impl Env {
             .non_default_words(BankTag::Toks, &mut out);
         self.overflow_boxes
             .non_default_words(BankTag::Box, &mut out);
+        self.overflow_muskips
+            .non_default_words(BankTag::Muskip, &mut out);
         self.int_params
             .non_default_words(BankTag::IntParam, &mut out);
         self.dimen_params
@@ -181,6 +185,7 @@ impl Env {
                 RegisterBank::Skip => self.skips.restore_word(index, word),
                 RegisterBank::Toks => self.toks.restore_word(index, word),
                 RegisterBank::Box => self.boxes.restore_word(index, word),
+                RegisterBank::Muskip => self.muskips.restore_word(index, word),
             }
         } else {
             match bank {
@@ -189,6 +194,7 @@ impl Env {
                 RegisterBank::Skip => self.overflow_skips.restore_word(index, word),
                 RegisterBank::Toks => self.overflow_toks.restore_word(index, word),
                 RegisterBank::Box => self.overflow_boxes.restore_word(index, word),
+                RegisterBank::Muskip => self.overflow_muskips.restore_word(index, word),
             }
         }
     }

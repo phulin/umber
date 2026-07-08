@@ -396,6 +396,23 @@ impl Stores {
         self.env.set_skip_global(index, value);
     }
 
+    pub fn set_muskip(&mut self, index: u16, value: GlueId) {
+        self.assert_live_glue(value);
+        self.env.set_muskip(index, value);
+    }
+
+    #[must_use]
+    pub fn muskip(&self, index: u16) -> GlueId {
+        let value = self.env.muskip(index);
+        self.assert_live_glue(value);
+        value
+    }
+
+    pub fn set_muskip_global(&mut self, index: u16, value: GlueId) {
+        self.assert_live_glue(value);
+        self.env.set_muskip_global(index, value);
+    }
+
     pub fn set_toks(&mut self, index: u16, value: TokenListId) {
         self.assert_live_token_list(value);
         self.env.set_toks(index, value);

@@ -123,11 +123,13 @@ pub struct Env {
     skips: FixedBank<GlueIdCodec, DENSE_REGISTER_COUNT>,
     toks: FixedBank<TokenListIdCodec, DENSE_REGISTER_COUNT>,
     boxes: FixedBank<NodeListIdCodec, DENSE_REGISTER_COUNT>,
+    muskips: FixedBank<GlueIdCodec, DENSE_REGISTER_COUNT>,
     overflow_counts: SparseBank<I32Codec>,
     overflow_dimens: SparseBank<ScaledCodec>,
     overflow_skips: SparseBank<GlueIdCodec>,
     overflow_toks: SparseBank<TokenListIdCodec>,
     overflow_boxes: SparseBank<NodeListIdCodec>,
+    overflow_muskips: SparseBank<GlueIdCodec>,
     int_params: FixedBank<I32Codec, PARAMETER_COUNT>,
     dimen_params: FixedBank<ScaledCodec, PARAMETER_COUNT>,
     glue_params: FixedBank<GlueIdCodec, PARAMETER_COUNT>,
@@ -152,11 +154,13 @@ impl Env {
             skips: FixedBank::new(),
             toks: FixedBank::new(),
             boxes: FixedBank::new(),
+            muskips: FixedBank::new(),
             overflow_counts: SparseBank::new(),
             overflow_dimens: SparseBank::new(),
             overflow_skips: SparseBank::new(),
             overflow_toks: SparseBank::new(),
             overflow_boxes: SparseBank::new(),
+            overflow_muskips: SparseBank::new(),
             int_params: FixedBank::new(),
             dimen_params: FixedBank::new(),
             glue_params: FixedBank::new(),
@@ -246,6 +250,15 @@ impl Env {
         Skip,
         skips,
         overflow_skips
+    );
+    register_accessors!(
+        muskip,
+        set_muskip,
+        set_muskip_global,
+        GlueId,
+        Muskip,
+        muskips,
+        overflow_muskips
     );
     register_accessors!(
         toks,
@@ -543,6 +556,7 @@ enum RegisterBank {
     Skip,
     Toks,
     Box,
+    Muskip,
 }
 
 fn is_dense_register(index: u16) -> bool {

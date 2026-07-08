@@ -376,6 +376,32 @@ fn stale_rolled_back_glue_cannot_mutate_skip_register() {
 }
 
 #[test]
+#[should_panic(expected = "glue id is not live in this Stores timeline")]
+fn stale_rolled_back_glue_cannot_mutate_muskip_register() {
+    let mut stores = Stores::new();
+    let snapshot = stores.checkpoint();
+    let stale = stores.intern_glue(glue_spec(1));
+
+    stores.rollback(snapshot);
+    stores.set_muskip(0, stale);
+}
+
+#[test]
+fn checkpoint_rollback_restores_muskip_register_and_glue_tuple() {
+    let mut stores = Stores::new();
+    let original = stores.intern_glue(glue_spec(1));
+    stores.set_muskip(7, original);
+    let snapshot = stores.checkpoint();
+    let replacement = stores.intern_glue(glue_spec(2));
+
+    stores.set_muskip(7, replacement);
+    stores.rollback(snapshot);
+
+    assert_eq!(stores.muskip(7), original);
+    assert_eq!(stores.glue(stores.muskip(7)), glue_spec(1));
+}
+
+#[test]
 fn rollback_discards_aftergroup_payloads_pushed_after_snapshot() {
     let mut stores = Stores::new();
     stores.enter_group();

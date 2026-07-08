@@ -396,6 +396,7 @@ fn cell_strategy() -> impl Strategy<Value = TestCell> {
         register_index().prop_map(TestCell::Count),
         register_index().prop_map(TestCell::Dimen),
         register_index().prop_map(TestCell::Skip),
+        register_index().prop_map(TestCell::Muskip),
         register_index().prop_map(TestCell::Toks),
         (0_u16..16).prop_map(TestCell::IntParam),
         (0_u16..16).prop_map(TestCell::DimenParam),
@@ -421,6 +422,7 @@ fn cell_universe() -> Vec<TestCell> {
         cells.push(TestCell::Count(index));
         cells.push(TestCell::Dimen(index));
         cells.push(TestCell::Skip(index));
+        cells.push(TestCell::Muskip(index));
         cells.push(TestCell::Toks(index));
     }
     for index in 0..16 {

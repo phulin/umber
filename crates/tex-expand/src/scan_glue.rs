@@ -141,14 +141,19 @@ where
         return Err(ScanGlueError::MissingNumber);
     };
 
-    if let Token::Cs(symbol) = first
-        && !mu
-        && stores.resolve(symbol) == "skip"
-    {
-        let index = scan_register_index(input, stores, recorder, hooks)?;
-        consume_optional_space(input, stores, recorder, hooks)?;
-        let spec = stores.glue(stores.skip(index));
-        return Ok(intern_spec(stores, signed_spec(spec, negative)));
+    if let Token::Cs(symbol) = first {
+        let name = stores.resolve(symbol);
+        if (!mu && name == "skip") || (mu && name == "muskip") {
+            let index = scan_register_index(input, stores, recorder, hooks)?;
+            consume_optional_space(input, stores, recorder, hooks)?;
+            let id = if mu {
+                stores.muskip(index)
+            } else {
+                stores.skip(index)
+            };
+            let spec = stores.glue(id);
+            return Ok(intern_spec(stores, signed_spec(spec, negative)));
+        }
     }
 
     unread_token(input, stores, first);
@@ -488,5 +493,24 @@ mod tests {
         assert_eq!(spec.width.raw(), 65_536);
         assert_eq!(spec.stretch.raw(), 131_072);
         assert_eq!(spec.stretch_order, Order::Fil);
+    }
+
+    #[test]
+    fn scans_internal_muskip_values() {
+        let mut stores = Stores::new();
+        stores.intern("muskip");
+        let id = stores.intern_glue(GlueSpec {
+            width: Scaled::from_raw(10),
+            stretch: Scaled::from_raw(20),
+            stretch_order: Order::Fill,
+            shrink: Scaled::from_raw(30),
+            shrink_order: Order::Fil,
+        });
+        stores.set_muskip(7, id);
+        let mut input = InputStack::new(MemoryInput::new("\\muskip7 x"));
+
+        let scanned = scan_muglue(&mut input, &mut stores).expect("muskip should scan");
+
+        assert_eq!(stores.glue(scanned.id()), stores.glue(id));
     }
 }

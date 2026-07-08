@@ -15,6 +15,7 @@ pub(crate) enum TestCell {
     Count(u16),
     Dimen(u16),
     Skip(u16),
+    Muskip(u16),
     Toks(u16),
     IntParam(u16),
     DimenParam(u16),
@@ -50,7 +51,7 @@ impl TestCell {
 
         if cells
             .iter()
-            .any(|cell| matches!(cell, Self::Skip(_) | Self::GlueParam(_)))
+            .any(|cell| matches!(cell, Self::Skip(_) | Self::Muskip(_) | Self::GlueParam(_)))
         {
             for raw in 1..64 {
                 let id = stores.intern_glue(glue_spec(raw as i32));
@@ -92,6 +93,14 @@ impl TestCell {
                     stores.set_skip_global(index, value);
                 } else {
                     stores.set_skip(index, value);
+                }
+            }
+            Self::Muskip(index) => {
+                let value = GlueId::testing_new(word as u32);
+                if global {
+                    stores.set_muskip_global(index, value);
+                } else {
+                    stores.set_muskip(index, value);
                 }
             }
             Self::Toks(index) => {
@@ -143,6 +152,7 @@ impl TestCell {
             Self::Count(index) => u64::from(env.count(index) as u32),
             Self::Dimen(index) => u64::from(env.dimen(index).raw() as u32),
             Self::Skip(index) => u64::from(env.skip(index).raw()),
+            Self::Muskip(index) => u64::from(env.muskip(index).raw()),
             Self::Toks(index) => u64::from(env.toks(index).raw()),
             Self::IntParam(index) => u64::from(env.int_param(IntParam::new(index)) as u32),
             Self::DimenParam(index) => {

@@ -105,12 +105,14 @@ fn dense_register_typed_api_round_trips_boundary_and_signed_values() {
     env.set_count(255, i32::MIN);
     env.set_dimen(255, Scaled::MIN);
     env.set_skip(255, GlueId::new(u32::MAX));
+    env.set_muskip(255, GlueId::new(u32::MAX - 3));
     env.set_toks(255, TokenListId::new(u32::MAX - 1));
     env.set_box_reg(255, Some(NodeListId::testing_epoch(u32::MAX - 2, 0)));
 
     assert_eq!(env.count(255), i32::MIN);
     assert_eq!(env.dimen(255), Scaled::MIN);
     assert_eq!(env.skip(255), GlueId::new(u32::MAX));
+    assert_eq!(env.muskip(255), GlueId::new(u32::MAX - 3));
     assert_eq!(env.toks(255), TokenListId::new(u32::MAX - 1));
     assert_eq!(
         env.box_reg(255),
@@ -126,8 +128,9 @@ fn dense_register_journal_records_use_bank_tags_and_encoded_words() {
     env.set_count(1, -1);
     env.set_dimen(2, Scaled::from_raw(-2));
     env.set_skip(3, GlueId::new(33));
-    env.set_toks(4, TokenListId::new(44));
-    env.set_box_reg(5, Some(NodeListId::testing_epoch(55, 0)));
+    env.set_muskip(4, GlueId::new(34));
+    env.set_toks(5, TokenListId::new(44));
+    env.set_box_reg(6, Some(NodeListId::testing_epoch(55, 0)));
 
     assert_eq!(
         env.journal_entries_since(start),
@@ -135,8 +138,9 @@ fn dense_register_journal_records_use_bank_tags_and_encoded_words() {
             undo(BankTag::Count, 1, 0, u64::from((-1_i32) as u32)),
             undo(BankTag::Dimen, 2, 0, u64::from((-2_i32) as u32)),
             undo(BankTag::Skip, 3, 0, 33),
-            undo(BankTag::Toks, 4, 0, 44),
-            undo(BankTag::Box, 5, 0, 56),
+            undo(BankTag::Muskip, 4, 0, 34),
+            undo(BankTag::Toks, 5, 0, 44),
+            undo(BankTag::Box, 6, 0, 56),
         ]
     );
 }
@@ -241,12 +245,14 @@ fn sparse_journal_records_use_absolute_register_indices() {
 
     env.set_count(256, -1);
     env.set_dimen(32_767, Scaled::from_raw(-2));
+    env.set_muskip(300, GlueId::new(99));
 
     assert_eq!(
         env.journal_entries_since(start),
         &[
             undo(BankTag::Count, 256, 0, u64::from((-1_i32) as u32)),
             undo(BankTag::Dimen, 32_767, 0, u64::from((-2_i32) as u32)),
+            undo(BankTag::Muskip, 300, 0, 99),
         ]
     );
 }
@@ -317,11 +323,17 @@ fn sparse_register_classes_are_independent() {
 
     env.set_count(300, 123);
     env.set_dimen(300, Scaled::from_raw(456));
+    env.set_skip(300, GlueId::new(7));
+    env.set_muskip(300, GlueId::new(8));
 
     assert_eq!(env.count(300), 123);
     assert_eq!(env.dimen(300), Scaled::from_raw(456));
+    assert_eq!(env.skip(300), GlueId::new(7));
+    assert_eq!(env.muskip(300), GlueId::new(8));
     assert!(env.overflow_counts.has_page_for(300));
     assert!(env.overflow_dimens.has_page_for(300));
+    assert!(env.overflow_skips.has_page_for(300));
+    assert!(env.overflow_muskips.has_page_for(300));
 }
 
 #[test]
