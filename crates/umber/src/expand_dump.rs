@@ -412,49 +412,7 @@ fn install_dump_primitives(stores: &mut Stores) {
     stores.intern("par");
     tex_exec::install_unexpandable_primitives(stores);
 
-    for (name, primitive) in [
-        ("expandafter", ExpandablePrimitive::ExpandAfter),
-        ("noexpand", ExpandablePrimitive::NoExpand),
-        ("csname", ExpandablePrimitive::CsName),
-        ("endcsname", ExpandablePrimitive::EndCsName),
-        ("string", ExpandablePrimitive::String),
-        ("number", ExpandablePrimitive::Number),
-        ("romannumeral", ExpandablePrimitive::RomanNumeral),
-        ("meaning", ExpandablePrimitive::Meaning),
-        ("the", ExpandablePrimitive::The),
-        ("input", ExpandablePrimitive::Input),
-        ("endinput", ExpandablePrimitive::EndInput),
-        ("jobname", ExpandablePrimitive::JobName),
-        ("fontname", ExpandablePrimitive::FontName),
-        ("topmark", ExpandablePrimitive::TopMark),
-        ("firstmark", ExpandablePrimitive::FirstMark),
-        ("botmark", ExpandablePrimitive::BotMark),
-        ("splitfirstmark", ExpandablePrimitive::SplitFirstMark),
-        ("splitbotmark", ExpandablePrimitive::SplitBotMark),
-        ("iftrue", ExpandablePrimitive::IfTrue),
-        ("iffalse", ExpandablePrimitive::IfFalse),
-        ("if", ExpandablePrimitive::If),
-        ("ifcat", ExpandablePrimitive::IfCat),
-        ("ifx", ExpandablePrimitive::IfX),
-        ("ifnum", ExpandablePrimitive::IfNum),
-        ("ifdim", ExpandablePrimitive::IfDim),
-        ("ifodd", ExpandablePrimitive::IfOdd),
-        ("ifcase", ExpandablePrimitive::IfCase),
-        ("ifvmode", ExpandablePrimitive::IfVMode),
-        ("ifhmode", ExpandablePrimitive::IfHMode),
-        ("ifmmode", ExpandablePrimitive::IfMMode),
-        ("ifinner", ExpandablePrimitive::IfInner),
-        ("ifvoid", ExpandablePrimitive::IfVoid),
-        ("ifhbox", ExpandablePrimitive::IfHBox),
-        ("ifvbox", ExpandablePrimitive::IfVBox),
-        ("ifeof", ExpandablePrimitive::IfEof),
-        ("else", ExpandablePrimitive::Else),
-        ("or", ExpandablePrimitive::Or),
-        ("fi", ExpandablePrimitive::Fi),
-    ] {
-        let symbol = stores.intern(name);
-        stores.set_meaning(symbol, Meaning::ExpandablePrimitive(primitive));
-    }
+    tex_expand::install_expandable_primitives(stores);
 
     for name in [
         "def",

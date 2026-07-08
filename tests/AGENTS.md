@@ -14,6 +14,10 @@ tests/corpus/<area>/<case>.tex
 Place any small area-local support files beside the case input unless a
 future test explicitly needs a subdirectory. Expected files use:
 
+`tests/corpus/exec` contains fast execution-core parity cases. These compare
+`umber run` output with normalized `pdftex` logs through the shared
+`test_support::normalize::exec_log` helper.
+
 ```text
 <case>.expected.<kind>
 ```

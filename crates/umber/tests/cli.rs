@@ -1,6 +1,7 @@
 use std::process::Command;
 
-use test_support::assert_matches_fixture;
+use refexec::{RefTex, RunOpts};
+use test_support::{assert_matches_fixture, normalize};
 use tex_lex::{FileInput, Lexer};
 use tex_state::env::banks::IntParam;
 use tex_state::stores::Stores;
@@ -99,6 +100,74 @@ fn expand_dump_usage_errors_follow_lex_dump_shape() {
     assert_eq!(
         String::from_utf8(extra.stderr).expect("stderr is utf-8"),
         "umber: expand-dump accepts exactly one input path\n"
+    );
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side corpus discovery and command execution.
+fn run_exec_corpus_matches_pdftex_diagnostics() {
+    let corpus = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("tests/corpus/exec");
+    let ref_tex = RefTex::locate().expect("reference TeX should be available");
+
+    for entry in std::fs::read_dir(&corpus).expect("read exec corpus") {
+        let path = entry.expect("read corpus entry").path();
+        if path.extension().and_then(std::ffi::OsStr::to_str) != Some("tex") {
+            continue;
+        }
+        let stem = path.file_stem().expect("fixture stem").to_string_lossy();
+
+        let ref_output = ref_tex
+            .run(&path, &RunOpts::default())
+            .expect("reference TeX should run exec fixture");
+        let expected = normalize::exec_log(&ref_output.log);
+        assert_matches_fixture("exec", &stem, "log", &expected);
+
+        let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+            .arg("run")
+            .arg(&path)
+            .output()
+            .expect("run umber run");
+        assert!(
+            output.status.success(),
+            "umber run failed for {}:\n{}",
+            path.display(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let actual_stdout = String::from_utf8(output.stdout).expect("umber run output is utf-8");
+        let actual = normalize::exec_log(&actual_stdout);
+        assert_eq!(
+            actual,
+            expected,
+            "exec fixture mismatch for {}",
+            path.display()
+        );
+    }
+}
+
+#[test]
+fn run_usage_errors_follow_existing_shape() {
+    let missing = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .arg("run")
+        .output()
+        .expect("run umber run without path");
+    assert!(!missing.status.success());
+    assert_eq!(
+        String::from_utf8(missing.stderr).expect("stderr is utf-8"),
+        "umber: missing input path for run\n"
+    );
+
+    let extra = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .arg("run")
+        .arg("one.tex")
+        .arg("two.tex")
+        .output()
+        .expect("run umber run with extra path");
+    assert!(!extra.status.success());
+    assert_eq!(
+        String::from_utf8(extra.stderr).expect("stderr is utf-8"),
+        "umber: run accepts exactly one input path\n"
     );
 }
 

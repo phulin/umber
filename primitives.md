@@ -46,33 +46,33 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [x] `\endlinechar` - Character appended when TeX tokenizes an input line. Implemented as an assignable integer parameter for lexing and value rendering.
 - [x] `\escapechar` - Character used when printing control sequence names. Implemented as an assignable integer parameter for value-rendering expandables.
 - [x] `\lccode` - Reads or assigns a character's lowercase mapping; assignments use the code-table facade and bump generations.
-- [ ] `\lowercase` - Converts character tokens using `\lccode`.
+- [x] `\lowercase` - Converts character tokens using `\lccode`.
 - [ ] `\newlinechar` - Character that starts a new line in terminal or log output.
 - [x] `\number` - Expands an integer as decimal character tokens using the shared expanded integer scanner.
 - [x] `\romannumeral` - Expands an integer as lowercase roman numeral tokens; non-positive values expand to an empty frozen token list.
 - [x] `\sfcode` - Reads or assigns a character's space-factor code; assignments use the code-table facade and bump generations.
 - [x] `\string` - Expands a token into its character representation with `\escapechar` handling and frozen output token lists.
 - [x] `\uccode` - Reads or assigns a character's uppercase mapping; assignments use the code-table facade and bump generations.
-- [ ] `\uppercase` - Converts character tokens using `\uccode`.
+- [x] `\uppercase` - Converts character tokens using `\uccode`.
 
 ## Diagnostics And Interaction
 
 - [ ] `\batchmode` - Suppresses terminal interaction and most terminal output.
 - [ ] `\errhelp` - Token list shown as help for a following `\errmessage`.
-- [ ] `\errmessage` - Issues an error with expanded message text.
+- [x] `\errmessage` - Issues an error with expanded message text. Current implementation writes the primary error line to the temporary execution log sink; interactive help/context remains World/interaction work.
 - [ ] `\errorcontextlines` - Number of context lines shown for errors.
 - [ ] `\errorstopmode` - Restores interactive stopping on errors.
 - [x] `\meaning` - Expands to a textual description of a token's meaning. Macro text is supported; unsupported raw meanings use a placeholder.
-- [ ] `\message` - Writes an expanded message to the terminal and log.
+- [x] `\message` - Writes expanded message text to the temporary execution log sink with pdfTeX-style message separation and wrapping for the covered subset.
 - [ ] `\nonstopmode` - Continues past errors without stopping for input.
 - [ ] `\pausing` - Prompts after input lines when positive.
 - [ ] `\scrollmode` - Scrolls past errors while still showing diagnostics.
-- [ ] `\show` - Displays the meaning of the next token.
+- [x] `\show` - Displays the meaning of the next token through the temporary execution log sink for implemented meaning classes.
 - [ ] `\showbox` - Writes a box register's contents to the log.
 - [ ] `\showboxbreadth` - Maximum number of list items shown per level.
 - [ ] `\showboxdepth` - Maximum nesting depth shown for box diagnostics.
-- [ ] `\showlists` - Writes the current semantic lists to the log.
-- [ ] `\showthe` - Displays the value produced by `\the`.
+- [x] `\showlists` - Writes the current mostly-empty mode nest in pdfTeX format through the temporary execution log sink.
+- [x] `\showthe` - Displays the value produced by implemented `\the` targets through the temporary execution log sink.
 - [ ] `\tracingcommands` - Logs command execution when positive.
 - [ ] `\tracinglostchars` - Logs missing font characters when positive.
 - [ ] `\tracingmacros` - Logs macro expansion and arguments when positive.
@@ -152,7 +152,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [ ] `\day` - Current day of the month.
 - [ ] `\deadcycles` - Number of output routine calls since the last `\shipout`.
 - [ ] `\dump` - Writes a format file in INITEX; otherwise ends the job.
-- [ ] `\end` - Finishes the current job.
+- [x] `\end` - Finishes the current batch execution loop for `umber run`; page finalization/output-file behavior is deferred until typesetting and World output land.
 - [ ] `\everyjob` - Token list inserted at the start of every job.
 - [x] `\jobname` - Expands to the driver-provided job name as rendered character tokens.
 - [x] `\mag` - Magnification ratio, scaled by 1000; implemented as an assignable integer parameter used by true-unit scanning.
@@ -214,7 +214,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [x] `\noexpand` - Suppresses expansion of the next token during expansion-only contexts.
 - [x] `\outer` - Prefix marking a macro invalid in restricted scanning contexts.
 - [x] `\protected` - Prefix marking a macro as protected from expansion.
-- [ ] `\relax` - No-op command that can terminate scans or absorb expansion.
+- [x] `\relax` - No-op command that can terminate scans or absorb expansion.
 - [x] `\the` - Expands supported internal quantities or token register values. Current support covers integer, dimension, glue, muglue, and token registers; register aliases; Env-backed parameters; and code-table values.
 - [x] `\xdef` - Globally defines a macro after expanding replacement text.
 
@@ -324,7 +324,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [ ] `\hangafter` - Line number where hanging indentation changes.
 - [ ] `\hangindent` - Hanging indentation amount for paragraphs.
 - [ ] `\hsize` - Line width for normal paragraph building.
-- [ ] `\ignorespaces` - Skips expandable tokens and spaces until a nonspace token appears.
+- [x] `\ignorespaces` - Skips following space tokens and replays the first nonspace token.
 - [ ] `\indent` - Starts an indented paragraph.
 - [ ] `\leftskip` - Glue added to the left of every line.
 - [ ] `\lineskip` - Fallback interline glue when baseline glue would be too small.

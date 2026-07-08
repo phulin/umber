@@ -19,8 +19,10 @@ use tex_state::stores::{GroupKind, GroupMismatch, Stores};
 use tex_state::token::{Catcode, Token};
 
 mod assignments;
+mod diagnostics;
 
 pub use assignments::{install_unexpandable_primitives, try_execute_assignment};
+pub use diagnostics::{LogSink, NoopLogSink, StringLogSink};
 
 /// One of TeX's six semantic modes.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -240,6 +242,30 @@ impl Executor {
         R: ReadRecorder,
         H: ExpansionHooks<S>,
     {
+        self.run_with_recorder_and_hooks_and_log_sink(
+            input,
+            stores,
+            recorder,
+            hooks,
+            &mut NoopLogSink,
+        )
+    }
+
+    /// Runs main control with expansion hooks and a diagnostic log sink.
+    pub fn run_with_recorder_and_hooks_and_log_sink<S, R, H, L>(
+        &mut self,
+        input: &mut InputStack<S>,
+        stores: &mut Stores,
+        recorder: &mut R,
+        hooks: &mut H,
+        log: &mut L,
+    ) -> Result<ExecutionStats, ExecError>
+    where
+        S: InputSource,
+        R: ReadRecorder,
+        H: ExpansionHooks<S>,
+        L: LogSink,
+    {
         let mut stats = ExecutionStats::default();
         loop {
             let Some(token) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
@@ -247,8 +273,16 @@ impl Executor {
                 return Ok(stats);
             };
             stats.delivered_tokens += 1;
-            match dispatch_delivered_token(self.nest.current_mode(), token, input, stores, hooks)? {
+            match dispatch_delivered_token_with_log_sink(
+                self.nest.current_mode(),
+                token,
+                input,
+                stores,
+                hooks,
+                log,
+            )? {
                 DispatchAction::Continue => {}
+                DispatchAction::End => return Ok(stats),
                 DispatchAction::NotConsumed => {
                     return Err(unimplemented_typesetting(
                         self.nest.current_mode(),
@@ -300,6 +334,7 @@ pub struct ExecutionStats {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DispatchAction {
     Continue,
+    End,
     NotConsumed,
 }
 
@@ -315,6 +350,23 @@ where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
+    dispatch_delivered_token_with_log_sink(mode, token, input, stores, hooks, &mut NoopLogSink)
+}
+
+/// Dispatches one delivered token while writing diagnostics to `log`.
+pub fn dispatch_delivered_token_with_log_sink<S, H, L>(
+    mode: Mode,
+    token: Token,
+    input: &mut InputStack<S>,
+    stores: &mut Stores,
+    hooks: &mut H,
+    log: &mut L,
+) -> Result<DispatchAction, ExecError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+    L: LogSink,
+{
     let meaning = match token {
         Token::Cs(symbol) => stores.meaning(symbol),
         Token::Char {
@@ -329,6 +381,12 @@ where
             ..
         } => {
             leave_group(input, stores, GroupKind::Simple)?;
+            return Ok(DispatchAction::Continue);
+        }
+        Token::Char {
+            cat: Catcode::Space,
+            ..
+        } => {
             return Ok(DispatchAction::Continue);
         }
         Token::Char { .. } | Token::Param(_) => {
@@ -347,7 +405,7 @@ where
         }),
         Meaning::ExpandablePrimitive(primitive) => dispatch_delivered_expandable(token, primitive),
         Meaning::UnexpandablePrimitive(primitive) => {
-            assignments::execute_unexpandable(primitive, input, stores, hooks)
+            assignments::execute_unexpandable(primitive, input, stores, hooks, log)
         }
         meaning @ (Meaning::CountRegister(_)
         | Meaning::DimenRegister(_)
@@ -806,7 +864,7 @@ mod tests {
     }
 
     #[test]
-    fn edef_preserves_noexpand_pair_and_freezes_the_output() {
+    fn edef_omits_noexpand_command_and_freezes_the_output() {
         let mut stores = Stores::new();
         install_unexpandable_primitives(&mut stores);
         install_expandable(&mut stores, "noexpand", ExpandablePrimitive::NoExpand);
@@ -827,11 +885,7 @@ mod tests {
 
         assert_eq!(
             stores.tokens(meaning.replacement_text()),
-            &[
-                Token::Cs(stores.symbol("noexpand").expect("noexpand")),
-                Token::Cs(a),
-                Token::Cs(b)
-            ]
+            &[Token::Cs(a), Token::Cs(b)]
         );
     }
 

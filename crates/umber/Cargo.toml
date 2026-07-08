@@ -10,6 +10,7 @@ tex-lex = { path = "../tex-lex" }
 tex-state = { path = "../tex-state" }
 
 [dev-dependencies]
+refexec = { path = "../../tools/refexec" }
 test-support = { path = "../test-support" }
 
 [lints]

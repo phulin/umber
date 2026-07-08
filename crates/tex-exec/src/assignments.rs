@@ -16,7 +16,10 @@ use tex_state::scaled::Scaled;
 use tex_state::stores::{GroupKind, Stores};
 use tex_state::token::{Catcode, Token};
 
-use crate::{DispatchAction, ExecError, Mode, dispatch_delivered_token, leave_group};
+use crate::{
+    DispatchAction, ExecError, LogSink, Mode, NoopLogSink, diagnostics, dispatch_delivered_token,
+    leave_group,
+};
 
 /// Executes a delivered token if it is an assignment/prefix primitive.
 pub fn try_execute_assignment<S, H>(
@@ -38,6 +41,7 @@ where
     }
     match dispatch_delivered_token(Mode::Vertical, token, input, stores, hooks)? {
         DispatchAction::Continue => Ok(true),
+        DispatchAction::End => Ok(true),
         DispatchAction::NotConsumed => Ok(false),
     }
 }
@@ -82,22 +86,36 @@ pub fn install_unexpandable_primitives(stores: &mut Stores) {
         ("mathcode", UnexpandablePrimitive::MathCode),
         ("delcode", UnexpandablePrimitive::DelCode),
         ("read", UnexpandablePrimitive::Read),
+        ("show", UnexpandablePrimitive::Show),
+        ("showthe", UnexpandablePrimitive::ShowThe),
+        ("showtokens", UnexpandablePrimitive::ShowTokens),
+        ("message", UnexpandablePrimitive::Message),
+        ("errmessage", UnexpandablePrimitive::ErrMessage),
+        ("showlists", UnexpandablePrimitive::ShowLists),
+        ("uppercase", UnexpandablePrimitive::Uppercase),
+        ("lowercase", UnexpandablePrimitive::Lowercase),
+        ("ignorespaces", UnexpandablePrimitive::IgnoreSpaces),
+        ("end", UnexpandablePrimitive::End),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
     }
+    let relax = stores.intern("relax");
+    stores.set_meaning(relax, Meaning::Relax);
     install_parameter_meanings(stores);
 }
 
-pub(crate) fn execute_unexpandable<S, H>(
+pub(crate) fn execute_unexpandable<S, H, L>(
     primitive: UnexpandablePrimitive,
     input: &mut InputStack<S>,
     stores: &mut Stores,
     hooks: &mut H,
+    log: &mut L,
 ) -> Result<DispatchAction, ExecError>
 where
     S: InputSource,
     H: ExpansionHooks<S>,
+    L: LogSink,
 {
     let mut prefixes = Prefixes::default();
     let command = accumulate_prefixes(
@@ -106,7 +124,11 @@ where
         input,
         stores,
     )?;
-    let assigned = execute_prefixed_command(command, prefixes, input, stores, hooks)?;
+    if command == PrefixedCommand::Primitive(UnexpandablePrimitive::End) {
+        reject_all_prefixes(prefixes)?;
+        return Ok(DispatchAction::End);
+    }
+    let assigned = execute_prefixed_command(command, prefixes, input, stores, hooks, log)?;
     if assigned {
         fire_afterassignment(input, stores);
     }
@@ -130,7 +152,8 @@ where
         input,
         stores,
     )?;
-    let assigned = execute_prefixed_command(command, prefixes, input, stores, hooks)?;
+    let assigned =
+        execute_prefixed_command(command, prefixes, input, stores, hooks, &mut NoopLogSink)?;
     if assigned {
         fire_afterassignment(input, stores);
     }
@@ -193,16 +216,18 @@ where
     }
 }
 
-fn execute_prefixed_command<S, H>(
+fn execute_prefixed_command<S, H, L>(
     command: PrefixedCommand,
     prefixes: Prefixes,
     input: &mut InputStack<S>,
     stores: &mut Stores,
     hooks: &mut H,
+    log: &mut L,
 ) -> Result<bool, ExecError>
 where
     S: InputSource,
     H: ExpansionHooks<S>,
+    L: LogSink,
 {
     match command {
         PrefixedCommand::Primitive(primitive) => match primitive {
@@ -284,10 +309,56 @@ where
                 execute_read_stub(input, stores, hooks)?;
                 Ok(true)
             }
+            UnexpandablePrimitive::Show => {
+                reject_all_prefixes(prefixes)?;
+                diagnostics::execute_show(input, stores, log)?;
+                Ok(false)
+            }
+            UnexpandablePrimitive::ShowThe => {
+                reject_all_prefixes(prefixes)?;
+                diagnostics::execute_showthe(input, stores, hooks, log)?;
+                Ok(false)
+            }
+            UnexpandablePrimitive::ShowTokens => {
+                reject_all_prefixes(prefixes)?;
+                diagnostics::execute_showtokens(input, stores, log)?;
+                Ok(false)
+            }
+            UnexpandablePrimitive::Message => {
+                reject_all_prefixes(prefixes)?;
+                diagnostics::execute_message(input, stores, hooks, log, false)?;
+                Ok(false)
+            }
+            UnexpandablePrimitive::ErrMessage => {
+                reject_all_prefixes(prefixes)?;
+                diagnostics::execute_message(input, stores, hooks, log, true)?;
+                Ok(false)
+            }
+            UnexpandablePrimitive::ShowLists => {
+                reject_all_prefixes(prefixes)?;
+                diagnostics::execute_showlists(log);
+                Ok(false)
+            }
+            UnexpandablePrimitive::Uppercase => {
+                reject_all_prefixes(prefixes)?;
+                diagnostics::execute_change_case(input, stores, true)?;
+                Ok(false)
+            }
+            UnexpandablePrimitive::Lowercase => {
+                reject_all_prefixes(prefixes)?;
+                diagnostics::execute_change_case(input, stores, false)?;
+                Ok(false)
+            }
+            UnexpandablePrimitive::IgnoreSpaces => {
+                reject_all_prefixes(prefixes)?;
+                diagnostics::execute_ignorespaces(input, stores)?;
+                Ok(false)
+            }
             UnexpandablePrimitive::Global
             | UnexpandablePrimitive::Long
             | UnexpandablePrimitive::Outer
-            | UnexpandablePrimitive::Protected => unreachable!("prefixes are accumulated first"),
+            | UnexpandablePrimitive::Protected
+            | UnexpandablePrimitive::End => unreachable!("prefixes are accumulated first"),
         },
         PrefixedCommand::Meaning(meaning) => {
             reject_macro_prefixes(prefixes)?;

@@ -231,7 +231,7 @@ pub(crate) fn string_tokens(stores: &Stores, token: Token) -> Vec<Token> {
     }
 }
 
-pub(crate) fn meaning_text(stores: &Stores, token: Token) -> String {
+pub fn meaning_text(stores: &Stores, token: Token) -> String {
     match token {
         Token::Char {
             ch,
@@ -275,15 +275,46 @@ pub(crate) fn meaning_text(stores: &Stores, token: Token) -> String {
 }
 
 fn token_list_text(stores: &Stores, token_list: TokenListId) -> String {
-    stores
-        .tokens(token_list)
-        .iter()
-        .flat_map(|&token| string_tokens(stores, token))
+    let mut text = String::new();
+    for &token in stores.tokens(token_list) {
+        text.push_str(&token_text(stores, token));
+        if let Token::Cs(symbol) = token {
+            let name = stores.resolve(symbol);
+            if name.chars().all(|ch| ch.is_ascii_alphabetic()) {
+                text.push(' ');
+            }
+        }
+    }
+    text
+}
+
+pub fn token_text(stores: &Stores, token: Token) -> String {
+    string_tokens(stores, token)
+        .into_iter()
         .filter_map(|token| match token {
             Token::Char { ch, .. } => Some(ch),
             Token::Cs(_) | Token::Param(_) => None,
         })
         .collect()
+}
+
+pub fn scan_the_text_with_hooks<S, R, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Stores,
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<String, ExpandError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    let dispatch = expand_the(input, stores, recorder, hooks)?;
+    Ok(match dispatch {
+        Dispatch::Push { token_list, .. } => token_list_text(stores, token_list),
+        Dispatch::Deliver(token) | Dispatch::DeliverNoExpand(token) => token_text(stores, token),
+        Dispatch::Continue => String::new(),
+    })
 }
 
 fn text_tokens(text: &str) -> Vec<Token> {

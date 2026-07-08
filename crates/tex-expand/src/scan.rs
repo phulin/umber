@@ -180,7 +180,6 @@ where
         };
         let meaning = stores.meaning(symbol);
         if meaning == Meaning::ExpandablePrimitive(ExpandablePrimitive::NoExpand) {
-            builder.push(token);
             let Some(suppressed) = input.next_token(stores)? else {
                 return Err(
                     ExpandError::MissingTokenAfterPrimitive(ExpandableOpcode::NoExpand).into(),

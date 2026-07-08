@@ -29,6 +29,82 @@ mod tests;
 mod values;
 
 pub use dispatch::{dispatch, dispatch_expandable_opcode, dispatch_with_hooks};
+pub use values::{meaning_text, scan_the_text_with_hooks, token_text};
+
+/// Installs the expandable TeX82 primitives currently implemented by this
+/// crate into the provided state facade.
+pub fn install_expandable_primitives(stores: &mut Stores) {
+    for (name, primitive) in [
+        (
+            "expandafter",
+            tex_state::meaning::ExpandablePrimitive::ExpandAfter,
+        ),
+        (
+            "noexpand",
+            tex_state::meaning::ExpandablePrimitive::NoExpand,
+        ),
+        ("csname", tex_state::meaning::ExpandablePrimitive::CsName),
+        (
+            "endcsname",
+            tex_state::meaning::ExpandablePrimitive::EndCsName,
+        ),
+        ("string", tex_state::meaning::ExpandablePrimitive::String),
+        ("number", tex_state::meaning::ExpandablePrimitive::Number),
+        (
+            "romannumeral",
+            tex_state::meaning::ExpandablePrimitive::RomanNumeral,
+        ),
+        ("meaning", tex_state::meaning::ExpandablePrimitive::Meaning),
+        ("the", tex_state::meaning::ExpandablePrimitive::The),
+        ("input", tex_state::meaning::ExpandablePrimitive::Input),
+        (
+            "endinput",
+            tex_state::meaning::ExpandablePrimitive::EndInput,
+        ),
+        ("jobname", tex_state::meaning::ExpandablePrimitive::JobName),
+        (
+            "fontname",
+            tex_state::meaning::ExpandablePrimitive::FontName,
+        ),
+        ("topmark", tex_state::meaning::ExpandablePrimitive::TopMark),
+        (
+            "firstmark",
+            tex_state::meaning::ExpandablePrimitive::FirstMark,
+        ),
+        ("botmark", tex_state::meaning::ExpandablePrimitive::BotMark),
+        (
+            "splitfirstmark",
+            tex_state::meaning::ExpandablePrimitive::SplitFirstMark,
+        ),
+        (
+            "splitbotmark",
+            tex_state::meaning::ExpandablePrimitive::SplitBotMark,
+        ),
+        ("iftrue", tex_state::meaning::ExpandablePrimitive::IfTrue),
+        ("iffalse", tex_state::meaning::ExpandablePrimitive::IfFalse),
+        ("if", tex_state::meaning::ExpandablePrimitive::If),
+        ("ifcat", tex_state::meaning::ExpandablePrimitive::IfCat),
+        ("ifx", tex_state::meaning::ExpandablePrimitive::IfX),
+        ("ifnum", tex_state::meaning::ExpandablePrimitive::IfNum),
+        ("ifdim", tex_state::meaning::ExpandablePrimitive::IfDim),
+        ("ifodd", tex_state::meaning::ExpandablePrimitive::IfOdd),
+        ("ifcase", tex_state::meaning::ExpandablePrimitive::IfCase),
+        ("ifvmode", tex_state::meaning::ExpandablePrimitive::IfVMode),
+        ("ifhmode", tex_state::meaning::ExpandablePrimitive::IfHMode),
+        ("ifmmode", tex_state::meaning::ExpandablePrimitive::IfMMode),
+        ("ifinner", tex_state::meaning::ExpandablePrimitive::IfInner),
+        ("ifvoid", tex_state::meaning::ExpandablePrimitive::IfVoid),
+        ("ifhbox", tex_state::meaning::ExpandablePrimitive::IfHBox),
+        ("ifvbox", tex_state::meaning::ExpandablePrimitive::IfVBox),
+        ("ifeof", tex_state::meaning::ExpandablePrimitive::IfEof),
+        ("else", tex_state::meaning::ExpandablePrimitive::Else),
+        ("or", tex_state::meaning::ExpandablePrimitive::Or),
+        ("fi", tex_state::meaning::ExpandablePrimitive::Fi),
+    ] {
+        let symbol = stores.intern(name);
+        stores.set_meaning(symbol, Meaning::ExpandablePrimitive(primitive));
+    }
+}
 
 /// Records state reads performed by expansion.
 ///

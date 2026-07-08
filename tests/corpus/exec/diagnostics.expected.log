@@ -1,0 +1,12 @@
+hello 42
+> \foo=macro:
+#1->A#1B.
+
+> 0.5pt.
+
+> a\foo b.
+
+### vertical mode entered at line 0
+prevdepth ignored
+
+! OK.

@@ -260,6 +260,16 @@ pub enum UnexpandablePrimitive {
     EndGroup,
     AfterGroup,
     AfterAssignment,
+    Show,
+    ShowThe,
+    ShowTokens,
+    Message,
+    ErrMessage,
+    ShowLists,
+    Uppercase,
+    Lowercase,
+    IgnoreSpaces,
+    End,
 }
 
 impl UnexpandablePrimitive {
@@ -303,6 +313,16 @@ impl UnexpandablePrimitive {
             Self::EndGroup => 34,
             Self::AfterGroup => 35,
             Self::AfterAssignment => 36,
+            Self::Show => 37,
+            Self::ShowThe => 38,
+            Self::ShowTokens => 39,
+            Self::Message => 40,
+            Self::ErrMessage => 41,
+            Self::ShowLists => 42,
+            Self::Uppercase => 43,
+            Self::Lowercase => 44,
+            Self::IgnoreSpaces => 45,
+            Self::End => 46,
         }
     }
 
@@ -346,6 +366,16 @@ impl UnexpandablePrimitive {
             34 => Some(Self::EndGroup),
             35 => Some(Self::AfterGroup),
             36 => Some(Self::AfterAssignment),
+            37 => Some(Self::Show),
+            38 => Some(Self::ShowThe),
+            39 => Some(Self::ShowTokens),
+            40 => Some(Self::Message),
+            41 => Some(Self::ErrMessage),
+            42 => Some(Self::ShowLists),
+            43 => Some(Self::Uppercase),
+            44 => Some(Self::Lowercase),
+            45 => Some(Self::IgnoreSpaces),
+            46 => Some(Self::End),
             _ => None,
         }
     }
