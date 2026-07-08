@@ -192,10 +192,35 @@ impl WriteTarget {
     }
 }
 
+/// Buffered read-stream target pinned to content read through `World`.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct ReadTarget {
+    path: PathBuf,
+    hash: ContentHash,
+    next_line: usize,
+}
+
+impl ReadTarget {
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    #[must_use]
+    pub const fn hash(&self) -> ContentHash {
+        self.hash
+    }
+
+    #[must_use]
+    pub const fn next_line(&self) -> usize {
+        self.next_line
+    }
+}
+
 /// Snapshot-ready state for all partial stream/log buffers.
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub struct StreamBufState {
-    read_streams: [Option<PathBuf>; STREAM_SLOT_COUNT],
+    read_streams: [Option<ReadTarget>; STREAM_SLOT_COUNT],
     write_streams: [Option<WriteTarget>; STREAM_SLOT_COUNT],
     partial_lines: [String; STREAM_SLOT_COUNT],
     log_partial_line: String,
@@ -205,7 +230,14 @@ pub struct StreamBufState {
 impl StreamBufState {
     #[must_use]
     pub fn read_stream_path(&self, slot: StreamSlot) -> Option<&Path> {
-        self.read_streams[slot.index()].as_deref()
+        self.read_streams[slot.index()]
+            .as_ref()
+            .map(ReadTarget::path)
+    }
+
+    #[must_use]
+    pub fn read_stream_target(&self, slot: StreamSlot) -> Option<&ReadTarget> {
+        self.read_streams[slot.index()].as_ref()
     }
 
     #[must_use]
@@ -423,6 +455,7 @@ pub struct World {
     job_clock: JobClock,
     shell_escape_policy: ShellEscapePolicy,
     inputs: Vec<InputRecord>,
+    input_contents: BTreeMap<ContentHash, Vec<u8>>,
     shell_escapes: Vec<ShellEscapeRecord>,
 }
 
@@ -457,6 +490,7 @@ impl World {
             job_clock,
             shell_escape_policy: ShellEscapePolicy::default(),
             inputs: Vec::new(),
+            input_contents: BTreeMap::new(),
             shell_escapes: Vec::new(),
         }
     }
@@ -494,6 +528,9 @@ impl World {
             })?,
         };
         let content = FileContent::new(path.to_owned(), bytes);
+        self.input_contents
+            .entry(content.hash)
+            .or_insert_with(|| content.bytes.clone());
         self.inputs.push(InputRecord {
             path: content.path.clone(),
             hash: content.hash,
@@ -509,12 +546,56 @@ impl World {
         path: impl AsRef<Path>,
     ) -> Result<FileContent, WorldError> {
         let content = self.read_file(path)?;
-        self.stream_bufs.read_streams[slot.index()] = Some(content.path.clone());
+        self.stream_bufs.read_streams[slot.index()] = Some(ReadTarget {
+            path: content.path.clone(),
+            hash: content.hash,
+            next_line: 0,
+        });
         Ok(content)
     }
 
     pub fn close_in(&mut self, slot: StreamSlot) {
         self.stream_bufs.read_streams[slot.index()] = None;
+    }
+
+    #[must_use]
+    pub fn input_stream_eof(&self, slot: StreamSlot) -> bool {
+        let Some(target) = self.stream_bufs.read_streams[slot.index()].as_ref() else {
+            return true;
+        };
+        let Some(bytes) = self.input_contents.get(&target.hash) else {
+            return true;
+        };
+        target.next_line >= split_physical_lines(&String::from_utf8_lossy(bytes)).len()
+    }
+
+    pub fn read_stream_line(&mut self, slot: StreamSlot) -> Result<Option<String>, WorldError> {
+        let Some(target) = self.stream_bufs.read_streams[slot.index()].as_mut() else {
+            return Ok(None);
+        };
+        let Some(bytes) = self.input_contents.get(&target.hash) else {
+            return Err(WorldError::new(
+                "read input stream",
+                Some(target.path.clone()),
+                "pinned input content is missing",
+            ));
+        };
+        let lines = split_physical_lines(&String::from_utf8_lossy(bytes));
+        let Some(line) = lines.get(target.next_line).cloned() else {
+            return Ok(None);
+        };
+        target.next_line += 1;
+        Ok(Some(line))
+    }
+
+    pub fn recorded_input_content(&self, index: usize) -> Option<FileContent> {
+        let record = self.inputs.get(index)?;
+        let bytes = self.input_contents.get(&record.hash)?.clone();
+        Some(FileContent {
+            path: record.path.clone(),
+            bytes,
+            hash: record.hash,
+        })
     }
 
     pub fn open_out(&mut self, slot: StreamSlot, path: impl Into<PathBuf>) {
@@ -902,6 +983,26 @@ fn append_partial_line(buffer: &mut String, text: &str) {
             buffer.push_str(chunk);
         }
     }
+}
+
+fn split_physical_lines(input: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut start = 0;
+    for (index, ch) in input.char_indices() {
+        if ch == '\n' {
+            let end = if index > start && input[..index].ends_with('\r') {
+                index - 1
+            } else {
+                index
+            };
+            lines.push(input[start..end].to_owned());
+            start = index + 1;
+        }
+    }
+    if start < input.len() {
+        lines.push(input[start..].to_owned());
+    }
+    lines
 }
 
 fn splitmix64(mut value: u64) -> u64 {

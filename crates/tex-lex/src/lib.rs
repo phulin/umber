@@ -11,51 +11,11 @@ use tex_state::ids::TokenListId;
 use tex_state::token::{Catcode, Token};
 use tex_state::{FileContent, Universe, WorldError};
 
-/// Maximum number of macro arguments TeX permits in one macro body.
-pub const MACRO_ARGUMENT_SLOTS: usize = 9;
-
-/// Frozen macro arguments carried by a macro-body replay frame.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
-pub struct MacroArguments {
-    slots: [Option<TokenListId>; MACRO_ARGUMENT_SLOTS],
-}
-
-impl MacroArguments {
-    /// Creates an empty argument-slot frame.
-    #[must_use]
-    pub const fn new() -> Self {
-        Self {
-            slots: [None; MACRO_ARGUMENT_SLOTS],
-        }
-    }
-
-    /// Records one frozen argument token list in a one-based TeX slot.
-    pub fn set(&mut self, slot: u8, token_list: TokenListId) {
-        let index = argument_index(slot);
-        self.slots[index] = Some(token_list);
-    }
-
-    /// Reads the frozen argument token list for a one-based TeX slot.
-    #[must_use]
-    pub fn get(self, slot: u8) -> Option<TokenListId> {
-        let index = argument_index(slot);
-        self.slots[index]
-    }
-
-    /// Returns whether no argument slots are populated.
-    #[must_use]
-    pub fn is_empty(self) -> bool {
-        self.slots.iter().all(Option::is_none)
-    }
-}
-
-fn argument_index(slot: u8) -> usize {
-    assert!(
-        (1..=MACRO_ARGUMENT_SLOTS as u8).contains(&slot),
-        "macro argument slot must be in 1..=9"
-    );
-    usize::from(slot - 1)
-}
+pub use tex_state::{
+    ConditionFrameSummary, ConditionKind, ConditionLimb, InputFrameSummary, InputSummary,
+    LexerState, MACRO_ARGUMENT_SLOTS, MacroArguments, SourceFrameSummary, SourceId,
+    TokenListReplayKind,
+};
 
 /// Source of physical input lines.
 ///
@@ -101,6 +61,18 @@ impl WorldInput {
             lines: split_physical_lines(&input).into_iter(),
         }
     }
+
+    #[must_use]
+    pub fn from_content_after_lines(content: FileContent, lines_read: usize) -> Self {
+        let input = String::from_utf8_lossy(content.bytes()).into_owned();
+        Self {
+            lines: split_physical_lines(&input)
+                .into_iter()
+                .skip(lines_read)
+                .collect::<Vec<_>>()
+                .into_iter(),
+        }
+    }
 }
 
 impl InputSource for WorldInput {
@@ -124,159 +96,6 @@ pub enum LineEvent {
 #[derive(Debug)]
 pub struct LineReader<S> {
     source: S,
-}
-
-/// The semantic lexer state from TeX's `state` variable.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum LexerState {
-    /// State N: at the beginning of a line.
-    #[default]
-    NewLine,
-    /// State M: in the middle of a line.
-    MidLine,
-    /// State S: skipping blanks after a space/control word.
-    SkippingBlanks,
-}
-
-/// Stable identifier for a source frame.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct SourceId(u32);
-
-impl SourceId {
-    #[must_use]
-    pub const fn new(raw: u32) -> Self {
-        Self(raw)
-    }
-
-    #[must_use]
-    pub const fn raw(self) -> u32 {
-        self.0
-    }
-}
-
-/// Why a frozen token list is being replayed.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum TokenListReplayKind {
-    MacroBody,
-    MacroArgument,
-    NoExpand,
-    EveryPar,
-    Mark,
-    OutputRoutine,
-    Inserted,
-}
-
-/// The family of TeX conditional represented by an open condition frame.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum ConditionKind {
-    /// A regular two-limb `\if...` conditional.
-    If,
-    /// An `\ifcase` conditional whose active limb is selected by `\or` count.
-    IfCase,
-}
-
-/// The conditional limb currently being evaluated or skipped.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum ConditionLimb {
-    If,
-    Or,
-    Else,
-}
-
-/// Snapshot-summary state for one open conditional.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct ConditionFrameSummary {
-    kind: ConditionKind,
-    limb: ConditionLimb,
-    current_limb_taken: bool,
-    any_limb_taken: bool,
-    ifcase_or_count: u32,
-    skip_nesting: u32,
-}
-
-impl ConditionFrameSummary {
-    /// Creates a regular `\if...` frame.
-    #[must_use]
-    pub const fn new_if(current_limb_taken: bool) -> Self {
-        Self {
-            kind: ConditionKind::If,
-            limb: ConditionLimb::If,
-            current_limb_taken,
-            any_limb_taken: current_limb_taken,
-            ifcase_or_count: 0,
-            skip_nesting: 0,
-        }
-    }
-
-    /// Creates an `\ifcase` frame at its initial limb.
-    #[must_use]
-    pub const fn new_ifcase(current_limb_taken: bool) -> Self {
-        Self {
-            kind: ConditionKind::IfCase,
-            limb: ConditionLimb::If,
-            current_limb_taken,
-            any_limb_taken: current_limb_taken,
-            ifcase_or_count: 0,
-            skip_nesting: 0,
-        }
-    }
-
-    #[must_use]
-    pub const fn kind(self) -> ConditionKind {
-        self.kind
-    }
-
-    #[must_use]
-    pub const fn limb(self) -> ConditionLimb {
-        self.limb
-    }
-
-    #[must_use]
-    pub const fn current_limb_taken(self) -> bool {
-        self.current_limb_taken
-    }
-
-    #[must_use]
-    pub const fn any_limb_taken(self) -> bool {
-        self.any_limb_taken
-    }
-
-    #[must_use]
-    pub const fn ifcase_or_count(self) -> u32 {
-        self.ifcase_or_count
-    }
-
-    #[must_use]
-    pub const fn skip_nesting(self) -> u32 {
-        self.skip_nesting
-    }
-
-    /// Moves the frame to an `\or` limb and records how many `\or` tokens
-    /// have been crossed in the current `\ifcase`.
-    #[must_use]
-    pub const fn with_or_limb(mut self, ifcase_or_count: u32, current_limb_taken: bool) -> Self {
-        self.limb = ConditionLimb::Or;
-        self.ifcase_or_count = ifcase_or_count;
-        self.current_limb_taken = current_limb_taken;
-        self.any_limb_taken = self.any_limb_taken || current_limb_taken;
-        self
-    }
-
-    /// Moves the frame to its `\else` limb.
-    #[must_use]
-    pub const fn with_else_limb(mut self, current_limb_taken: bool) -> Self {
-        self.limb = ConditionLimb::Else;
-        self.current_limb_taken = current_limb_taken;
-        self.any_limb_taken = self.any_limb_taken || current_limb_taken;
-        self
-    }
-
-    /// Records nested conditional depth observed while scanning/skipping.
-    #[must_use]
-    pub const fn with_skip_nesting(mut self, skip_nesting: u32) -> Self {
-        self.skip_nesting = skip_nesting;
-        self
-    }
 }
 
 /// Source-frame-local lexer state.
@@ -324,147 +143,34 @@ impl SourceFrame {
     }
 
     fn summary(&self, next_source_offset: usize) -> SourceFrameSummary {
-        SourceFrameSummary {
-            buffer_offset: self.buffer_offset,
+        SourceFrameSummary::new(
+            self.buffer_offset,
             next_source_offset,
-            line_number: self.line_number,
-            column: self.column,
-            lexer_state: self.state,
-            normalized_line: self.line.iter().collect(),
-            line_char_offset: self.offset,
-            line_byte_offset: byte_offset_for_char_offset(&self.line, self.offset),
-            pending: self.pending.iter().copied().collect(),
-            end_after_current_line: self.end_after_current_line,
+            self.line_number,
+            self.column,
+            self.state,
+            self.line.iter().collect(),
+            self.offset,
+            self.pending.iter().copied().collect(),
+            self.end_after_current_line,
+        )
+    }
+
+    fn from_summary(summary: &SourceFrameSummary) -> Self {
+        assert!(
+            summary.is_resume_complete(),
+            "source frame summary must be complete enough to resume"
+        );
+        Self {
+            state: summary.lexer_state(),
+            line: summary.normalized_line().chars().collect(),
+            offset: summary.line_char_offset(),
+            pending: summary.pending().iter().copied().collect(),
+            buffer_offset: summary.buffer_offset(),
+            line_number: summary.line_number(),
+            column: summary.column(),
+            end_after_current_line: summary.end_after_current_line(),
         }
-    }
-}
-
-/// Snapshot summary for the input stack.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct InputSummary {
-    frames: Vec<InputFrameSummary>,
-    last_source_frame: Option<SourceFrameSummary>,
-}
-
-impl InputSummary {
-    #[must_use]
-    pub fn frames(&self) -> &[InputFrameSummary] {
-        &self.frames
-    }
-
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.frames.is_empty()
-    }
-
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.frames.len()
-    }
-
-    /// The most recently popped source frame, retained so a snapshot taken
-    /// after source exhaustion can still report the final source coordinates.
-    #[must_use]
-    pub fn last_source_frame(&self) -> Option<&SourceFrameSummary> {
-        self.last_source_frame.as_ref()
-    }
-}
-
-/// Snapshot summary for one input frame.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum InputFrameSummary {
-    Source {
-        source_id: SourceId,
-        source: SourceFrameSummary,
-    },
-    TokenList {
-        token_list: TokenListId,
-        replay_kind: TokenListReplayKind,
-        index: usize,
-        macro_arguments: MacroArguments,
-    },
-    Condition(ConditionFrameSummary),
-}
-
-/// Snapshot summary for one source frame.
-///
-/// `source_id` belongs to the surrounding `InputFrameSummary`; the durable
-/// reopen key is intentionally not stored here because this crate only sees
-/// the local `InputSource` trait. M3 `World` snapshots own file/content
-/// identity and reopen sources by content hash before applying this frame
-/// summary's offsets and normalized-line state.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SourceFrameSummary {
-    buffer_offset: usize,
-    next_source_offset: usize,
-    line_number: usize,
-    column: usize,
-    lexer_state: LexerState,
-    normalized_line: String,
-    line_char_offset: usize,
-    line_byte_offset: usize,
-    pending: Vec<Token>,
-    end_after_current_line: bool,
-}
-
-impl SourceFrameSummary {
-    #[must_use]
-    pub fn buffer_offset(&self) -> usize {
-        self.buffer_offset
-    }
-
-    #[must_use]
-    pub fn next_source_offset(&self) -> usize {
-        self.next_source_offset
-    }
-
-    #[must_use]
-    pub fn line_number(&self) -> usize {
-        self.line_number
-    }
-
-    #[must_use]
-    pub fn column(&self) -> usize {
-        self.column
-    }
-
-    #[must_use]
-    pub fn lexer_state(&self) -> LexerState {
-        self.lexer_state
-    }
-
-    #[must_use]
-    pub fn normalized_line(&self) -> &str {
-        &self.normalized_line
-    }
-
-    #[must_use]
-    pub fn line_char_offset(&self) -> usize {
-        self.line_char_offset
-    }
-
-    #[must_use]
-    pub fn line_byte_offset(&self) -> usize {
-        self.line_byte_offset
-    }
-
-    #[must_use]
-    pub fn pending(&self) -> &[Token] {
-        &self.pending
-    }
-
-    #[must_use]
-    pub fn end_after_current_line(&self) -> bool {
-        self.end_after_current_line
-    }
-
-    /// Returns whether this frame summary contains all lexer-owned state
-    /// needed after a source has been reopened by the snapshot owner.
-    #[must_use]
-    pub fn is_resume_complete(&self) -> bool {
-        self.line_char_offset <= self.normalized_line.chars().count()
-            && self.line_byte_offset <= self.normalized_line.len()
-            && self.normalized_line.is_char_boundary(self.line_byte_offset)
     }
 }
 
@@ -574,6 +280,54 @@ impl<S> InputStack<S> {
         source_id
     }
 
+    pub fn from_summary<E, F>(summary: &InputSummary, mut reopen_source: F) -> Result<Self, E>
+    where
+        F: FnMut(SourceId, &SourceFrameSummary) -> Result<S, E>,
+    {
+        let mut max_source_id = None::<u32>;
+        let mut frames = Vec::with_capacity(summary.frames().len());
+        for frame in summary.frames() {
+            match frame {
+                InputFrameSummary::Source { source_id, source } => {
+                    max_source_id =
+                        Some(max_source_id.map_or(source_id.raw(), |max| max.max(source_id.raw())));
+                    frames.push(InputFrame::Source(SourceInputFrame {
+                        source_id: *source_id,
+                        lines: LineReader::new(reopen_source(*source_id, source)?),
+                        frame: SourceFrame::from_summary(source),
+                        next_source_offset: source.next_source_offset(),
+                    }));
+                }
+                InputFrameSummary::TokenList {
+                    token_list,
+                    replay_kind,
+                    index,
+                    macro_arguments,
+                } => frames.push(InputFrame::TokenList(TokenListInputFrame {
+                    token_list: *token_list,
+                    replay_kind: *replay_kind,
+                    index: *index,
+                    macro_arguments: *macro_arguments,
+                })),
+                InputFrameSummary::Condition(condition) => {
+                    frames.push(InputFrame::Condition(*condition));
+                }
+            }
+        }
+
+        Ok(Self {
+            frames,
+            next_source_id: max_source_id.map_or(0, |id| {
+                id.checked_add(1).expect("source id counter overflowed")
+            }),
+            unicode_superscript_notation: true,
+            last_source_frame: summary.last_source_frame().map(|source| LastSourceFrame {
+                frame: SourceFrame::from_summary(source),
+                next_source_offset: source.next_source_offset(),
+            }),
+        })
+    }
+
     pub fn push_token_list(&mut self, token_list: TokenListId, replay_kind: TokenListReplayKind) {
         self.frames.push(InputFrame::TokenList(TokenListInputFrame {
             token_list,
@@ -620,9 +374,8 @@ impl<S> InputStack<S> {
 
     #[must_use]
     pub fn summary(&self) -> InputSummary {
-        InputSummary {
-            frames: self
-                .frames
+        InputSummary::new(
+            self.frames
                 .iter()
                 .map(|frame| match frame {
                     InputFrame::Source(source) => InputFrameSummary::Source {
@@ -638,11 +391,10 @@ impl<S> InputStack<S> {
                     InputFrame::Condition(condition) => InputFrameSummary::Condition(*condition),
                 })
                 .collect(),
-            last_source_frame: self
-                .last_source_frame
+            self.last_source_frame
                 .as_ref()
                 .map(|last| last.frame.summary(last.next_source_offset)),
-        }
+        )
     }
 
     #[must_use]
@@ -1448,10 +1200,6 @@ fn split_physical_lines(input: &str) -> Vec<String> {
     lines
 }
 
-fn byte_offset_for_char_offset(line: &[char], char_offset: usize) -> usize {
-    line.iter().take(char_offset).map(|ch| ch.len_utf8()).sum()
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
@@ -1956,6 +1704,64 @@ mod tests {
                 && frame.ifcase_or_count() == 0
                 && frame.skip_nesting() == 0
         ));
+    }
+
+    #[test]
+    fn source_summary_restores_mid_world_input_from_recorded_content() {
+        let mut stores = Universe::new();
+        stores.set_int_param(IntParam::END_LINE_CHAR, 13);
+        stores
+            .world_mut()
+            .set_memory_file("main.tex", b"m".to_vec())
+            .expect("seed main");
+        stores
+            .world_mut()
+            .set_memory_file("inc.tex", b"ab\nc".to_vec())
+            .expect("seed include");
+        let main = stores.world_mut().read_file("main.tex").expect("read main");
+        let inc = stores
+            .world_mut()
+            .read_file("inc.tex")
+            .expect("read include");
+        let mut input = InputStack::new(super::WorldInput::from_content(main));
+        input.push_source(super::WorldInput::from_content(inc));
+
+        assert_eq!(
+            input.next_token(&mut stores).expect("first include token"),
+            Some(char_token('a', Catcode::Letter))
+        );
+        stores.set_input_summary(input.summary());
+        let snapshot = stores.snapshot();
+
+        assert_eq!(
+            input.next_token(&mut stores).expect("second include token"),
+            Some(char_token('b', Catcode::Letter))
+        );
+        stores
+            .world_mut()
+            .set_memory_file("inc.tex", b"changed".to_vec())
+            .expect("mutate source after snapshot");
+        stores.rollback(&snapshot);
+
+        let summary = stores.input_summary().clone();
+        let mut restored = InputStack::from_summary(&summary, |source_id, source| {
+            let content = stores
+                .world()
+                .recorded_input_content(source_id.raw() as usize)
+                .expect("recorded source content");
+            Ok::<_, ()>(super::WorldInput::from_content_after_lines(
+                content,
+                source.line_number(),
+            ))
+        })
+        .expect("restore input stack");
+
+        assert_eq!(
+            restored
+                .next_token(&mut stores)
+                .expect("restored second include token"),
+            Some(char_token('b', Catcode::Letter))
+        );
     }
 
     fn collect_tokens(lexer: &mut Lexer<MemoryInput>, stores: &mut Universe) -> Vec<Token> {

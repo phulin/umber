@@ -12,6 +12,9 @@ use crate::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use crate::epoch::Epoch;
 use crate::glue::GlueSpec;
 use crate::ids::{GlueId, MacroDefinitionId, NodeListId, TokenListId};
+use crate::input::{
+    ConditionKind, ConditionLimb, InputFrameSummary, InputSummary, LexerState, TokenListReplayKind,
+};
 use crate::interner::Symbol;
 use crate::macro_store::MacroMeaning;
 use crate::meaning::Meaning;
@@ -99,12 +102,6 @@ pub enum InteractionMode {
     /// TeX's ordinary interactive mode.
     #[default]
     ErrorStop,
-}
-
-/// Placeholder for replay-complete lexer/input-stack state.
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
-pub struct InputSummary {
-    _private: (),
 }
 
 #[derive(Clone, Debug)]
@@ -296,8 +293,7 @@ impl Universe {
 
     fn hash_input_summary(&self, hasher: &mut StateHasher) {
         hasher.tag(0x90);
-        // Placeholder summary is empty today; this tag keeps the tuple field
-        // explicit so future input summary fields have a stable hash domain.
+        hash_input_summary_fields(&self.stores, &self.input_summary, hasher);
     }
 
     fn assert_valid_snapshot(&self, snapshot: &Snapshot) {
@@ -323,6 +319,17 @@ impl Universe {
     /// Mutates the external-effect capability object through the Universe boundary.
     pub fn world_mut(&mut self) -> &mut World {
         &mut self.world
+    }
+
+    /// Records the current lexer-owned input stack state for the next snapshot.
+    pub fn set_input_summary(&mut self, summary: InputSummary) {
+        self.input_summary = summary;
+    }
+
+    /// Returns the lexer-owned input stack state restored by the last rollback.
+    #[must_use]
+    pub const fn input_summary(&self) -> &InputSummary {
+        &self.input_summary
     }
 
     /// Returns the current code-table generation vector.
@@ -715,7 +722,15 @@ fn hash_stream_bufs(streams: &StreamBufState, hasher: &mut StateHasher) {
     hasher.tag(0x83);
     for raw in 0..crate::world::STREAM_SLOT_COUNT as u8 {
         let slot = StreamSlot::new(raw);
-        hash_optional_path(streams.read_stream_path(slot), hasher);
+        match streams.read_stream_target(slot) {
+            Some(target) => {
+                hasher.bool(true);
+                hash_path(target.path(), hasher);
+                hasher.bytes(&target.hash().bytes());
+                hasher.usize(target.next_line());
+            }
+            None => hasher.bool(false),
+        }
         match streams.write_stream_target(slot) {
             Some(target) => {
                 hasher.bool(true);
@@ -782,18 +797,134 @@ fn hash_shell_escape_record(record: &ShellEscapeRecord, hasher: &mut StateHasher
     hasher.bool(record.allowed());
 }
 
-fn hash_optional_path(path: Option<&std::path::Path>, hasher: &mut StateHasher) {
-    match path {
-        Some(path) => {
+fn hash_path(path: &std::path::Path, hasher: &mut StateHasher) {
+    hasher.bytes(path.as_os_str().as_encoded_bytes());
+}
+
+fn hash_input_summary_fields(stores: &Stores, summary: &InputSummary, hasher: &mut StateHasher) {
+    hasher.usize(summary.frames().len());
+    for frame in summary.frames() {
+        match frame {
+            InputFrameSummary::Source { source_id, source } => {
+                hasher.tag(0);
+                hasher.u32(source_id.raw());
+                hasher.usize(source.buffer_offset());
+                hasher.usize(source.next_source_offset());
+                hasher.usize(source.line_number());
+                hasher.usize(source.column());
+                hash_lexer_state(source.lexer_state(), hasher);
+                hasher.str(source.normalized_line());
+                hasher.usize(source.line_char_offset());
+                hasher.usize(source.line_byte_offset());
+                hasher.usize(source.pending().len());
+                for token in source.pending() {
+                    hash_token(stores, *token, hasher);
+                }
+                hasher.bool(source.end_after_current_line());
+            }
+            InputFrameSummary::TokenList {
+                token_list,
+                replay_kind,
+                index,
+                macro_arguments,
+            } => {
+                hasher.tag(1);
+                stores.hash_token_list_semantic(*token_list, hasher);
+                hash_token_list_replay_kind(*replay_kind, hasher);
+                hasher.usize(*index);
+                for slot in 1..=crate::input::MACRO_ARGUMENT_SLOTS as u8 {
+                    match macro_arguments.get(slot) {
+                        Some(token_list) => {
+                            hasher.bool(true);
+                            stores.hash_token_list_semantic(token_list, hasher);
+                        }
+                        None => hasher.bool(false),
+                    }
+                }
+            }
+            InputFrameSummary::Condition(condition) => {
+                hasher.tag(2);
+                hash_condition_kind(condition.kind(), hasher);
+                hash_condition_limb(condition.limb(), hasher);
+                hasher.bool(condition.current_limb_taken());
+                hasher.bool(condition.any_limb_taken());
+                hasher.u32(condition.ifcase_or_count());
+                hasher.u32(condition.skip_nesting());
+            }
+        }
+    }
+    match summary.last_source_frame() {
+        Some(source) => {
             hasher.bool(true);
-            hash_path(path, hasher);
+            hasher.usize(source.buffer_offset());
+            hasher.usize(source.next_source_offset());
+            hasher.usize(source.line_number());
+            hasher.usize(source.column());
+            hash_lexer_state(source.lexer_state(), hasher);
+            hasher.str(source.normalized_line());
+            hasher.usize(source.line_char_offset());
+            hasher.usize(source.line_byte_offset());
+            hasher.usize(source.pending().len());
+            for token in source.pending() {
+                hash_token(stores, *token, hasher);
+            }
+            hasher.bool(source.end_after_current_line());
         }
         None => hasher.bool(false),
     }
 }
 
-fn hash_path(path: &std::path::Path, hasher: &mut StateHasher) {
-    hasher.bytes(path.as_os_str().as_encoded_bytes());
+fn hash_token(stores: &Stores, token: Token, hasher: &mut StateHasher) {
+    match token {
+        Token::Char { ch, cat } => {
+            hasher.tag(0);
+            hasher.u32(ch as u32);
+            hasher.u8(cat as u8);
+        }
+        Token::Cs(symbol) => {
+            hasher.tag(1);
+            hasher.str(stores.resolve(symbol));
+        }
+        Token::Param(slot) => {
+            hasher.tag(2);
+            hasher.u8(slot);
+        }
+    }
+}
+
+fn hash_lexer_state(state: LexerState, hasher: &mut StateHasher) {
+    hasher.u8(match state {
+        LexerState::NewLine => 0,
+        LexerState::MidLine => 1,
+        LexerState::SkippingBlanks => 2,
+    });
+}
+
+fn hash_token_list_replay_kind(kind: TokenListReplayKind, hasher: &mut StateHasher) {
+    hasher.u8(match kind {
+        TokenListReplayKind::MacroBody => 0,
+        TokenListReplayKind::MacroArgument => 1,
+        TokenListReplayKind::NoExpand => 2,
+        TokenListReplayKind::EveryPar => 3,
+        TokenListReplayKind::Mark => 4,
+        TokenListReplayKind::OutputRoutine => 5,
+        TokenListReplayKind::Inserted => 6,
+    });
+}
+
+fn hash_condition_kind(kind: ConditionKind, hasher: &mut StateHasher) {
+    hasher.u8(match kind {
+        ConditionKind::If => 0,
+        ConditionKind::IfCase => 1,
+    });
+}
+
+fn hash_condition_limb(limb: ConditionLimb, hasher: &mut StateHasher) {
+    hasher.u8(match limb {
+        ConditionLimb::If => 0,
+        ConditionLimb::Or => 1,
+        ConditionLimb::Else => 2,
+    });
 }
 
 #[cfg(test)]

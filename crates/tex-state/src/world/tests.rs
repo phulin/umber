@@ -48,6 +48,40 @@ fn stream_partial_lines_snapshot_and_restore() {
 }
 
 #[test]
+fn input_stream_reads_are_pinned_and_snapshot_cursor_restores() {
+    let mut world = World::memory();
+    world
+        .set_memory_file("stream.tex", b"one\ntwo\n".to_vec())
+        .expect("seed memory file");
+    let slot = StreamSlot::new(1);
+
+    let opened = world.open_in(slot, "stream.tex").expect("open input");
+    world
+        .set_memory_file("stream.tex", b"changed\n".to_vec())
+        .expect("mutate memory file after open");
+
+    assert_eq!(opened.hash(), ContentHash::from_bytes(b"one\ntwo\n"));
+    assert!(!world.input_stream_eof(slot));
+    assert_eq!(
+        world.read_stream_line(slot).expect("read first line"),
+        Some("one".to_owned())
+    );
+    let snapshot = world.snapshot();
+    assert_eq!(
+        world.read_stream_line(slot).expect("read second line"),
+        Some("two".to_owned())
+    );
+    assert!(world.input_stream_eof(slot));
+
+    world.rollback(&snapshot);
+
+    assert_eq!(
+        world.read_stream_line(slot).expect("reread second line"),
+        Some("two".to_owned())
+    );
+}
+
+#[test]
 fn rng_snapshot_restores_sequence() {
     let mut world = World::memory();
     let first = world.next_random_u64();

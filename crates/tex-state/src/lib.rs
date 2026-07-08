@@ -6,6 +6,7 @@ pub mod env;
 pub mod epoch;
 pub mod glue;
 pub mod ids;
+pub mod input;
 pub mod interner;
 pub(crate) mod journal;
 pub mod macro_store;
@@ -21,12 +22,17 @@ pub mod token_store;
 mod universe;
 pub mod world;
 
+pub use input::{
+    ConditionFrameSummary, ConditionKind, ConditionLimb, InputFrameSummary, InputSummary,
+    LexerState, MACRO_ARGUMENT_SLOTS, MacroArguments, SourceFrameSummary, SourceId,
+    TokenListReplayKind,
+};
 pub use stores::{GroupKind, GroupMismatch, PrepareMagDiagnostic};
-pub use universe::{InputSummary, InteractionMode, Snapshot, Universe};
+pub use universe::{InteractionMode, Snapshot, Universe};
 pub use world::{
-    ContentHash, EffectPos, EffectRecord, FileContent, InputRecord, JobClock, PrintSink, RngState,
-    ShellEscapePolicy, ShellEscapeRecord, StreamBufState, StreamSlot, World, WorldError,
-    WorldSnapshot,
+    ContentHash, EffectPos, EffectRecord, FileContent, InputRecord, JobClock, PrintSink,
+    ReadTarget, RngState, ShellEscapePolicy, ShellEscapeRecord, StreamBufState, StreamSlot, World,
+    WorldError, WorldSnapshot,
 };
 
 #[cfg(test)]
