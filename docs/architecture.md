@@ -206,8 +206,11 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   frame; it does not allocate a substituted body list. Token-list replay is
   naturally read-only; source-frame replay can scan already-interned control
   sequence names and reports a lexer error if a source token would require
-  minting a new symbol. Future `\csname` work must pass its sanctioned
-  interning capability explicitly.
+  minting a new symbol. `\csname` uses a dedicated expansion scan that stops
+  on `\endcsname`, validates that expanded name material is character tokens,
+  and interns/relaxes the resulting control sequence through an explicit
+  sanctioned capability rather than widening expansion to mutable `Env`
+  access.
 - Frame-control expandables are represented as input-frame rewrites:
   `\expandafter` saves one raw token, performs one expansion step on the
   following token, then pushes the saved token above the expansion result;

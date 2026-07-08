@@ -69,6 +69,8 @@ pub enum Meaning {
 pub enum ExpandablePrimitive {
     ExpandAfter,
     NoExpand,
+    CsName,
+    EndCsName,
 }
 
 impl ExpandablePrimitive {
@@ -77,6 +79,8 @@ impl ExpandablePrimitive {
         match self {
             Self::ExpandAfter => 0,
             Self::NoExpand => 1,
+            Self::CsName => 2,
+            Self::EndCsName => 3,
         }
     }
 
@@ -85,6 +89,8 @@ impl ExpandablePrimitive {
         match operand {
             0 => Some(Self::ExpandAfter),
             1 => Some(Self::NoExpand),
+            2 => Some(Self::CsName),
+            3 => Some(Self::EndCsName),
             _ => None,
         }
     }
@@ -217,6 +223,8 @@ mod tests {
             ExpandablePrimitive::ExpandAfter,
         ));
         round_trip(Meaning::ExpandablePrimitive(ExpandablePrimitive::NoExpand));
+        round_trip(Meaning::ExpandablePrimitive(ExpandablePrimitive::CsName));
+        round_trip(Meaning::ExpandablePrimitive(ExpandablePrimitive::EndCsName));
         round_trip(Meaning::Unknown(RawMeaning::testing_new(u8::MAX, 0)));
         round_trip(Meaning::Unknown(RawMeaning::testing_new(
             u8::MAX,

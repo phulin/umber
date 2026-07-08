@@ -199,10 +199,10 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [ ] `\afterassignment` - Saves a token to insert after the next assignment.
 - [ ] `\aftergroup` - Saves a token to insert after the current group ends.
 - [ ] `\begingroup` - Starts an explicit group.
-- [ ] `\csname` - Builds a control sequence from expanded character tokens.
+- [x] `\csname` - Builds a control sequence from expanded character tokens and assigns `\relax` to newly-created undefined names through the explicit expansion interning capability.
 - [ ] `\def` - Defines a macro without expanding replacement text.
 - [ ] `\edef` - Defines a macro after expanding replacement text.
-- [ ] `\endcsname` - Terminates a `\csname` name scan.
+- [x] `\endcsname` - Terminates a `\csname` name scan.
 - [ ] `\endgroup` - Ends an explicit group.
 - [x] `\expandafter` - Expands the token after the next token before continuing.
 - [ ] `\futurelet` - Assigns a control sequence to the following token while preserving input.

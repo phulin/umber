@@ -66,6 +66,7 @@ pub enum ExpandableOpcode {
     ExpandAfter,
     NoExpand,
     CsName,
+    EndCsName,
     String,
     Number,
     RomanNumeral,
@@ -98,6 +99,8 @@ pub enum ExpandError {
     MacroCall(args::MacroCallError),
     UnimplementedExpandable(ExpandableOpcode),
     MissingTokenAfterPrimitive(ExpandableOpcode),
+    MissingEndCsName,
+    NonCharacterInCsName(Token),
 }
 
 impl fmt::Display for ExpandError {
@@ -111,6 +114,10 @@ impl fmt::Display for ExpandError {
             Self::MissingTokenAfterPrimitive(opcode) => {
                 write!(f, "missing token after expandable primitive {opcode:?}")
             }
+            Self::MissingEndCsName => write!(f, "missing \\endcsname for \\csname"),
+            Self::NonCharacterInCsName(token) => {
+                write!(f, "non-character token {token:?} while scanning \\csname")
+            }
         }
     }
 }
@@ -120,8 +127,22 @@ impl std::error::Error for ExpandError {
         match self {
             Self::Lex(err) => Some(err),
             Self::MacroCall(err) => Some(err),
-            Self::UnimplementedExpandable(_) | Self::MissingTokenAfterPrimitive(_) => None,
+            Self::UnimplementedExpandable(_)
+            | Self::MissingTokenAfterPrimitive(_)
+            | Self::MissingEndCsName
+            | Self::NonCharacterInCsName(_) => None,
         }
+    }
+}
+
+/// Narrow capability for `\csname`'s sanctioned state mutation.
+pub trait CsNameInterner {
+    fn intern_relaxed_control_sequence(&mut self, name: &str) -> Symbol;
+}
+
+impl CsNameInterner for Stores {
+    fn intern_relaxed_control_sequence(&mut self, name: &str) -> Symbol {
+        Stores::intern_relaxed_control_sequence(self, name)
     }
 }
 
@@ -226,6 +247,14 @@ where
             };
             Ok(Dispatch::DeliverNoExpand(token))
         }
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::CsName) => {
+            let name = scan_csname(input, stores, recorder)?;
+            let symbol = CsNameInterner::intern_relaxed_control_sequence(stores, &name);
+            Ok(Dispatch::Deliver(Token::Cs(symbol)))
+        }
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::EndCsName) => {
+            Ok(Dispatch::Deliver(token))
+        }
         Meaning::Macro { .. }
         | Meaning::Undefined
         | Meaning::Relax
@@ -242,8 +271,10 @@ const fn is_expandable_macro(flags: MeaningFlags) -> bool {
 pub fn dispatch_expandable_opcode(opcode: ExpandableOpcode) -> Result<(), ExpandError> {
     match opcode {
         ExpandableOpcode::Macro => Ok(()),
-        ExpandableOpcode::ExpandAfter | ExpandableOpcode::NoExpand => Ok(()),
-        ExpandableOpcode::CsName => Err(unimplemented_expandable(opcode)),
+        ExpandableOpcode::ExpandAfter
+        | ExpandableOpcode::NoExpand
+        | ExpandableOpcode::CsName
+        | ExpandableOpcode::EndCsName => Ok(()),
         ExpandableOpcode::String => Err(unimplemented_expandable(opcode)),
         ExpandableOpcode::Number => Err(unimplemented_expandable(opcode)),
         ExpandableOpcode::RomanNumeral => Err(unimplemented_expandable(opcode)),
@@ -285,6 +316,60 @@ where
     push_dispatch_result(input, stores, target_dispatch);
     push_inserted_token(input, stores, saved);
     Ok(())
+}
+
+fn scan_csname<S, R>(
+    input: &mut InputStack<S>,
+    stores: &mut Stores,
+    recorder: &mut R,
+) -> Result<String, ExpandError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+{
+    let mut name = String::new();
+
+    loop {
+        let Some(read) = input.next_expansion_token_readonly(stores)? else {
+            return Err(ExpandError::MissingEndCsName);
+        };
+        let token = read.token();
+
+        if read.suppress_expansion() {
+            append_csname_token(&mut name, token)?;
+            continue;
+        }
+
+        let Token::Cs(symbol) = token else {
+            append_csname_token(&mut name, token)?;
+            continue;
+        };
+
+        let meaning = stores.meaning(symbol);
+        recorder.record_meaning(symbol, meaning);
+
+        if meaning == Meaning::ExpandablePrimitive(ExpandablePrimitive::EndCsName) {
+            return Ok(name);
+        }
+
+        match dispatch(token, input, stores, recorder, meaning)? {
+            Dispatch::Continue => {}
+            Dispatch::Deliver(token) | Dispatch::DeliverNoExpand(token) => {
+                append_csname_token(&mut name, token)?;
+            }
+            push @ Dispatch::Push { .. } => apply_dispatch_push(input, push),
+        }
+    }
+}
+
+fn append_csname_token(name: &mut String, token: Token) -> Result<(), ExpandError> {
+    match token {
+        Token::Char { ch, .. } => {
+            name.push(ch);
+            Ok(())
+        }
+        Token::Cs(_) | Token::Param(_) => Err(ExpandError::NonCharacterInCsName(token)),
+    }
 }
 
 fn dispatch_one_raw_token<S, R>(
@@ -398,6 +483,7 @@ mod tests {
             ExpandableOpcode::ExpandAfter,
             ExpandableOpcode::NoExpand,
             ExpandableOpcode::CsName,
+            ExpandableOpcode::EndCsName,
             ExpandableOpcode::String,
             ExpandableOpcode::Number,
             ExpandableOpcode::RomanNumeral,
@@ -415,7 +501,9 @@ mod tests {
             match opcode {
                 ExpandableOpcode::Macro
                 | ExpandableOpcode::ExpandAfter
-                | ExpandableOpcode::NoExpand => assert!(result.is_ok()),
+                | ExpandableOpcode::NoExpand
+                | ExpandableOpcode::CsName
+                | ExpandableOpcode::EndCsName => assert!(result.is_ok()),
                 _ => assert!(matches!(
                     result,
                     Err(super::ExpandError::UnimplementedExpandable(found)) if found == opcode
@@ -648,6 +736,130 @@ mod tests {
     }
 
     #[test]
+    fn csname_interns_undefined_name_and_assigns_relax() {
+        let mut stores = Stores::new();
+        let (csname, endcsname) = csname_primitives(&mut stores);
+        let input_list = stores.intern_token_list(&[
+            Token::Cs(csname),
+            char_token('f'),
+            char_token('o'),
+            char_token('o'),
+            Token::Cs(endcsname),
+        ]);
+        let mut input = InputStack::new(MemoryInput::new(""));
+        input.push_token_list(input_list, TokenListReplayKind::Inserted);
+
+        let created = stores.symbol("foo");
+        assert!(created.is_none());
+        let token = get_x_token(&mut input, &mut stores)
+            .expect("csname expansion should succeed")
+            .expect("csname should emit a token");
+        let Token::Cs(created) = token else {
+            panic!("expected control sequence, got {token:?}");
+        };
+
+        assert_eq!(stores.resolve(created), "foo");
+        assert_eq!(stores.meaning(created), Meaning::Relax);
+    }
+
+    #[test]
+    fn csname_expands_name_pieces_before_interning() {
+        let mut stores = Stores::new();
+        let (csname, endcsname) = csname_primitives(&mut stores);
+        let macro_cs = stores.intern("piece");
+        let params = stores.intern_token_list(&[]);
+        let body = stores.intern_token_list(&[char_token('b'), char_token('a'), char_token('r')]);
+        stores.set_macro_meaning(
+            macro_cs,
+            MacroMeaning::new(MeaningFlags::EMPTY, params, body),
+        );
+        let input_list = stores.intern_token_list(&[
+            Token::Cs(csname),
+            char_token('f'),
+            Token::Cs(macro_cs),
+            Token::Cs(endcsname),
+        ]);
+        let mut input = InputStack::new(MemoryInput::new(""));
+        input.push_token_list(input_list, TokenListReplayKind::Inserted);
+
+        assert_eq!(
+            get_x_token(&mut input, &mut stores).expect("csname expansion should succeed"),
+            Some(Token::Cs(
+                stores
+                    .symbol("fbar")
+                    .expect("expanded name should be interned")
+            ))
+        );
+    }
+
+    #[test]
+    fn csname_reports_non_character_material_after_expansion() {
+        let mut stores = Stores::new();
+        let (csname, endcsname) = csname_primitives(&mut stores);
+        let relax = stores.intern("relax");
+        stores.set_meaning(relax, Meaning::Relax);
+        let input_list =
+            stores.intern_token_list(&[Token::Cs(csname), Token::Cs(relax), Token::Cs(endcsname)]);
+        let mut input = InputStack::new(MemoryInput::new(""));
+        input.push_token_list(input_list, TokenListReplayKind::Inserted);
+
+        assert!(matches!(
+            get_x_token(&mut input, &mut stores),
+            Err(super::ExpandError::NonCharacterInCsName(Token::Cs(found))) if found == relax
+        ));
+    }
+
+    #[test]
+    fn csname_preserves_existing_meaning_for_ifx_relax_comparison() {
+        let mut stores = Stores::new();
+        let (csname, endcsname) = csname_primitives(&mut stores);
+        let existing = stores.intern("known");
+        stores.set_meaning(existing, Meaning::CharGiven('K'));
+        let input_list = stores.intern_token_list(&[
+            Token::Cs(csname),
+            char_token('k'),
+            char_token('n'),
+            char_token('o'),
+            char_token('w'),
+            char_token('n'),
+            Token::Cs(endcsname),
+        ]);
+        let mut input = InputStack::new(MemoryInput::new(""));
+        input.push_token_list(input_list, TokenListReplayKind::Inserted);
+
+        assert_eq!(
+            get_x_token(&mut input, &mut stores).expect("csname expansion should succeed"),
+            Some(Token::Cs(existing))
+        );
+        assert_eq!(stores.meaning(existing), Meaning::CharGiven('K'));
+    }
+
+    #[test]
+    fn csname_created_undefined_name_is_meaning_equal_to_relax() {
+        let mut stores = Stores::new();
+        let (csname, endcsname) = csname_primitives(&mut stores);
+        let relax = stores.intern("relax");
+        stores.set_meaning(relax, Meaning::Relax);
+        let input_list = stores.intern_token_list(&[
+            Token::Cs(csname),
+            char_token('n'),
+            char_token('e'),
+            char_token('w'),
+            Token::Cs(endcsname),
+        ]);
+        let mut input = InputStack::new(MemoryInput::new(""));
+        input.push_token_list(input_list, TokenListReplayKind::Inserted);
+
+        let Some(Token::Cs(created)) =
+            get_x_token(&mut input, &mut stores).expect("csname expansion should succeed")
+        else {
+            panic!("expected created control sequence");
+        };
+
+        assert_eq!(stores.meaning(created), stores.meaning(relax));
+    }
+
+    #[test]
     fn macro_body_replay_substitutes_frozen_argument_lists() {
         let mut stores = Stores::new();
         let macro_cs = stores.intern("m");
@@ -819,5 +1031,12 @@ mod tests {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::ExpandablePrimitive(primitive));
         symbol
+    }
+
+    fn csname_primitives(stores: &mut Stores) -> (Symbol, Symbol) {
+        (
+            expandable_primitive(stores, "csname", ExpandablePrimitive::CsName),
+            expandable_primitive(stores, "endcsname", ExpandablePrimitive::EndCsName),
+        )
     }
 }

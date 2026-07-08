@@ -191,6 +191,16 @@ impl Stores {
         self.env.set(symbol, meaning);
     }
 
+    /// Interns a control-sequence name and gives a previously undefined name
+    /// TeX's `\csname`-created `\relax` meaning.
+    pub fn intern_relaxed_control_sequence(&mut self, name: &str) -> Symbol {
+        let symbol = self.intern(name);
+        if self.meaning(symbol) == Meaning::Undefined {
+            self.set_meaning(symbol, Meaning::Relax);
+        }
+        symbol
+    }
+
     /// Sets the global meaning for a live control-sequence symbol.
     pub fn set_meaning_global(&mut self, symbol: Symbol, meaning: Meaning) {
         self.assert_live_symbol(symbol);
