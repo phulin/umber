@@ -1,8 +1,12 @@
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{
+    BatchSize, BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main,
+};
 use tex_state::Universe;
 use tex_state::meaning::Meaning;
 
 const GROUP_SIZES: [usize; 3] = [4, 64, 512];
+const ROLLBACK_TOTAL_CELLS: [usize; 2] = [1024, 4096];
+const ROLLBACK_SLICE_WRITES: [usize; 3] = [4, 64, 512];
 const PAGE_DISTINCT_CELLS: usize = 500;
 const PAGE_TOTAL_WRITES: usize = 5_000;
 
@@ -51,6 +55,46 @@ fn barrier_write(c: &mut Criterion) {
     group.finish();
 }
 
+fn snapshot_take(c: &mut Criterion) {
+    let mut group = c.benchmark_group("snapshot_take");
+
+    group.bench_function("steady_empty_slice", |b| {
+        let mut stores = Universe::new();
+        b.iter(|| {
+            let snapshot = stores.snapshot();
+            black_box(snapshot.state_hash());
+        });
+        black_box(stores);
+    });
+
+    group.finish();
+}
+
+fn checkpoint_state_hash(c: &mut Criterion) {
+    let mut group = c.benchmark_group("checkpoint_state_hash");
+
+    group.bench_function("after_synthetic_page", |b| {
+        b.iter_batched(
+            || {
+                let mut stores = Universe::new();
+                let symbols = synthetic_page_symbols(&mut stores);
+                for write_index in 0..PAGE_TOTAL_WRITES {
+                    let symbol = symbols[write_index % symbols.len()];
+                    stores.set_meaning(symbol, raw_meaning(write_index as u64));
+                }
+                stores
+            },
+            |mut stores| {
+                let snapshot = stores.snapshot();
+                black_box(snapshot.state_hash());
+            },
+            BatchSize::SmallInput,
+        );
+    });
+
+    group.finish();
+}
+
 fn group_cycle(c: &mut Criterion) {
     let mut group = c.benchmark_group("group_cycle");
 
@@ -76,6 +120,32 @@ fn group_cycle(c: &mut Criterion) {
                 black_box(stores);
             },
         );
+    }
+
+    group.finish();
+}
+
+fn rollback_scaling(c: &mut Criterion) {
+    let mut group = c.benchmark_group("rollback_scaling");
+
+    for total_cells in ROLLBACK_TOTAL_CELLS {
+        for slice_writes in ROLLBACK_SLICE_WRITES {
+            group.throughput(Throughput::Elements(slice_writes as u64));
+            group.bench_with_input(
+                BenchmarkId::new(format!("total_{total_cells}"), slice_writes),
+                &(total_cells, slice_writes),
+                |b, &(total_cells, slice_writes)| {
+                    b.iter_batched_ref(
+                        || rollback_case(total_cells, slice_writes),
+                        |(stores, snapshot)| {
+                            stores.rollback(black_box(snapshot));
+                            black_box(stores);
+                        },
+                        BatchSize::SmallInput,
+                    );
+                },
+            );
+        }
     }
 
     group.finish();
@@ -146,6 +216,24 @@ fn write_synthetic_page() -> usize {
     stores.env_journal_bytes_since(&snapshot)
 }
 
+fn rollback_case(total_cells: usize, slice_writes: usize) -> (Universe, tex_state::Snapshot) {
+    let mut stores = Universe::new();
+    let symbols = (0..total_cells)
+        .map(|index| stores.intern(&format!("rollback-cell-{index}")))
+        .collect::<Vec<_>>();
+
+    for (index, &symbol) in symbols.iter().enumerate() {
+        stores.set_meaning(symbol, raw_meaning(index as u64));
+    }
+
+    let snapshot = stores.snapshot();
+    for (write_index, &symbol) in symbols.iter().take(slice_writes).enumerate() {
+        stores.set_meaning(symbol, raw_meaning((write_index + total_cells) as u64));
+    }
+
+    (stores, snapshot)
+}
+
 fn raw_meaning(operand: u64) -> Meaning {
     Meaning::CharGiven(char::from_u32(32 + (operand as u32 % 95)).expect("ASCII graphic"))
 }
@@ -154,7 +242,10 @@ criterion_group!(
     benches,
     meaning_lookup,
     barrier_write,
+    snapshot_take,
+    checkpoint_state_hash,
     group_cycle,
+    rollback_scaling,
     group_global_compaction,
     synthetic_page_journal_volume
 );

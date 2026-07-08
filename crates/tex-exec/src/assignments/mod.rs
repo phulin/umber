@@ -256,6 +256,10 @@ where
                 execute_read(input, stores, hooks)?;
                 Ok(true)
             }
+            UnexpandablePrimitive::Write => {
+                execute_write(input, stores, hooks)?;
+                Ok(true)
+            }
             UnexpandablePrimitive::OpenIn
             | UnexpandablePrimitive::CloseIn
             | UnexpandablePrimitive::OpenOut

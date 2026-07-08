@@ -44,6 +44,7 @@ pub(super) fn is_assignment_meaning(meaning: Meaning) -> bool {
                 | UnexpandablePrimitive::CloseIn
                 | UnexpandablePrimitive::OpenOut
                 | UnexpandablePrimitive::CloseOut
+                | UnexpandablePrimitive::Write
                 | UnexpandablePrimitive::Read
         ),
         meaning => is_assignment_target_meaning(meaning),

@@ -808,6 +808,25 @@ impl World {
         &self.effects
     }
 
+    #[cfg(any(test, feature = "testing", feature = "shadow"))]
+    #[must_use]
+    pub(crate) fn testing_state_hash(&self) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher = DefaultHasher::new();
+        self.effect_base.hash(&mut hasher);
+        self.effects.hash(&mut hasher);
+        self.stream_bufs.hash(&mut hasher);
+        self.committed_write_streams.hash(&mut hasher);
+        self.rng.hash(&mut hasher);
+        self.job_clock.hash(&mut hasher);
+        self.shell_escape_policy.hash(&mut hasher);
+        self.inputs.hash(&mut hasher);
+        self.shell_escapes.hash(&mut hasher);
+        hasher.finish()
+    }
+
     #[must_use]
     pub(crate) fn state_hash_cursor(&self) -> WorldStateHashCursor {
         WorldStateHashCursor {

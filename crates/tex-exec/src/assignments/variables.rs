@@ -337,6 +337,23 @@ where
     Ok(())
 }
 
+pub(super) fn execute_write<S, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    hooks: &mut H,
+) -> Result<(), ExecError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    let slot = scan_stream_slot(input, stores, hooks)?;
+    let scanned = scan_toks(input, stores, MeaningFlags::EMPTY)?;
+    stores
+        .world_mut()
+        .record_deferred_write(slot, scanned.meaning().replacement_text());
+    Ok(())
+}
+
 fn scan_read_tokens(
     slot: StreamSlot,
     target: Symbol,

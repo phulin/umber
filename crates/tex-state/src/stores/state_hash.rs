@@ -17,7 +17,7 @@ const TOKEN_LIST_MAX_ITEMS: usize = 1_000_000;
 const NODE_LIST_MAX_ITEMS: usize = 1_000_000;
 
 /// Cursor into store-owned state for semantic convergence hashing.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct StoreStateHashCursor {
     owner: SnapshotOwner,
     journal_pos: crate::journal::JournalPos,

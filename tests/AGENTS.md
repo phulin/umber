@@ -54,3 +54,15 @@ local long runs, for example:
 PROPTEST_CASES=1000 cargo test -p umber --test replay_identity
 cargo test -p umber --features shadow --test replay_identity
 ```
+
+Effectful rollback/commit fuzzing uses the same budget variable and is wired
+through:
+
+```bash
+scripts/effectful-rollback-fuzz.sh
+PROPTEST_CASES=1000 scripts/effectful-rollback-fuzz.sh
+```
+
+The script defaults to 10,000 generated cases and covers World effects,
+pre-commit leak assertions, rollback state-hash identity, and committed-prefix
+replay checks. Do not move that long run into default cargo tests.

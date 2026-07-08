@@ -31,7 +31,7 @@ use crate::world::{
     StreamSlot, World, WorldSnapshot, WorldStateHashCursor, install_job_clock_params,
 };
 #[cfg(any(test, feature = "testing", feature = "shadow"))]
-use std::hash::Hasher;
+use std::hash::{Hash, Hasher};
 
 /// A whole-Universe rollback snapshot.
 ///
@@ -108,6 +108,8 @@ pub enum InteractionMode {
 struct StateHashBase {
     store: StoreStateHashCursor,
     world: WorldStateHashCursor,
+    input_summary: InputSummary,
+    interaction_mode: InteractionMode,
     checkpoint_hash: u64,
 }
 
@@ -129,6 +131,8 @@ impl Clone for Universe {
         let state_hash_base = StateHashBase {
             store: stores.state_hash_cursor(),
             world: world.state_hash_cursor(),
+            input_summary: self.input_summary.clone(),
+            interaction_mode: self.interaction_mode,
             checkpoint_hash: self.state_hash_base.checkpoint_hash,
         };
         Self {
@@ -167,6 +171,8 @@ impl Universe {
         let state_hash_base = StateHashBase {
             store: stores.state_hash_cursor(),
             world: world.state_hash_cursor(),
+            input_summary: InputSummary::default(),
+            interaction_mode: InteractionMode::default(),
             checkpoint_hash: INITIAL_STATE_HASH,
         };
         Self {
@@ -185,11 +191,23 @@ impl Universe {
         let hash_base = self.state_hash_base.clone();
         let world = self.world.snapshot();
         let store = self.stores.checkpoint();
-        let slice_hash = self.state_hash_slice(&hash_base, &store);
-        let state_hash = combine(hash_base.checkpoint_hash, slice_hash);
+        let store_cursor = Stores::state_hash_cursor_from_snapshot(&store);
+        let world_cursor = World::state_hash_cursor_from_snapshot(&world);
+        let state_hash = if hash_base.store == store_cursor
+            && hash_base.world == world_cursor
+            && hash_base.input_summary == self.input_summary
+            && hash_base.interaction_mode == self.interaction_mode
+        {
+            hash_base.checkpoint_hash
+        } else {
+            let slice_hash = self.state_hash_slice(&hash_base, &store);
+            combine(hash_base.checkpoint_hash, slice_hash)
+        };
         let next_hash_base = StateHashBase {
-            store: Stores::state_hash_cursor_from_snapshot(&store),
-            world: World::state_hash_cursor_from_snapshot(&world),
+            store: store_cursor,
+            world: world_cursor,
+            input_summary: self.input_summary.clone(),
+            interaction_mode: self.interaction_mode,
             checkpoint_hash: state_hash,
         };
         self.state_hash_base = next_hash_base.clone();
@@ -708,7 +726,12 @@ impl Universe {
     #[cfg(any(test, feature = "testing", feature = "shadow"))]
     #[must_use]
     pub fn testing_state_hash(&self) -> u64 {
-        self.stores.testing_state_hash()
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.stores.testing_state_hash().hash(&mut hasher);
+        self.world.testing_state_hash().hash(&mut hasher);
+        self.input_summary.hash(&mut hasher);
+        self.interaction_mode.hash(&mut hasher);
+        hasher.finish()
     }
 
     #[cfg(any(test, feature = "testing", feature = "shadow"))]
