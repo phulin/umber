@@ -187,16 +187,21 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   through `Stores`, but it does not assign meanings; the stomach/future
   assignment layer remains responsible for installing the returned
   `MacroMeaning`.
-- **Numeric value scanning**: `tex-expand::scan_int` and
-  `tex-expand::scan_dimen` own the reusable expanded integer and dimension
-  scanners for conditionals and the later stomach assignment layer. They pull
+- **Numeric value scanning**: `tex-expand::scan_int`,
+  `tex-expand::scan_dimen`, and `tex-expand::scan_glue` own the reusable
+  expanded integer, dimension, glue, and muglue scanners for conditionals and
+  the later stomach assignment layer. They pull
   through `get_x_token`; the integer scanner understands TeX integer
   constants and currently readable integer-like state (`\count`, chardef
   values, `\endlinechar`, and raw-sp `\dimen` coercion), while the dimension
   scanner parses decimal constants, physical units, `true` units, supported
-  internal dimensions, and opt-in integer-to-sp coercion. Both report
-  recoverable numeric diagnostics without performing assignments. Font-relative
-  `em`/`ex` units remain explicit TODO stubs until font metrics exist.
+  internal dimensions, `mu` dimensions for muglue callers, infinite `fil`
+  orders for glue components, and opt-in integer-to-sp coercion. The glue
+  scanner parses optional `plus`/`minus` components and interns immutable glue
+  specs through `Stores`. These scanners report recoverable numeric diagnostics
+  without performing assignments. Font-relative `em`/`ex` units remain explicit
+  TODO stubs until font metrics exist (umber2-flt), and `true` units currently
+  parse without magnification scaling until the `\mag` state surface lands.
 - **Conditionals** are a frame-kind, not a side stack: `\if...` evaluation
   marks the frame; `\else`/`\fi` skipping is a token-level scan that the
   fast lexer can accelerate (skip mode only needs catcode classes for

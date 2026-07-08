@@ -17,6 +17,7 @@ use tex_state::token::Token;
 pub mod args;
 pub mod scan;
 pub mod scan_dimen;
+pub mod scan_glue;
 pub mod scan_int;
 
 mod conditionals;

@@ -3,6 +3,7 @@
 use std::fmt;
 
 use tex_lex::{InputSource, InputStack, LexError, TokenListReplayKind};
+use tex_state::glue::Order;
 use tex_state::interner::Symbol;
 use tex_state::scaled::{
     DimensionError, PhysicalUnit, Scaled, round_decimal_fraction, scaled_from_decimal_parts,
@@ -21,12 +22,16 @@ const MAX_REGISTER: i32 = 32_767;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ScanDimenOptions {
     coerce_integer_to_sp: bool,
+    allow_infinite_units: bool,
+    require_mu_unit: bool,
 }
 
 impl ScanDimenOptions {
     /// Standard TeX dimension scanning: physical/internal dimensions only.
     pub const STANDARD: Self = Self {
         coerce_integer_to_sp: false,
+        allow_infinite_units: false,
+        require_mu_unit: false,
     };
 
     /// Allows a bare scanned integer to stand for raw scaled points.
@@ -37,7 +42,18 @@ impl ScanDimenOptions {
     pub const fn with_integer_to_sp_coercion() -> Self {
         Self {
             coerce_integer_to_sp: true,
+            ..Self::STANDARD
         }
+    }
+
+    pub(crate) const fn with_infinite_units(mut self) -> Self {
+        self.allow_infinite_units = true;
+        self
+    }
+
+    pub(crate) const fn requiring_mu_unit(mut self) -> Self {
+        self.require_mu_unit = true;
+        self
     }
 }
 
@@ -45,6 +61,7 @@ impl ScanDimenOptions {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ScannedDimen {
     value: Scaled,
+    order: Order,
     diagnostic: Option<DimensionDiagnostic>,
 }
 
@@ -53,14 +70,15 @@ impl ScannedDimen {
     pub const fn new(value: Scaled) -> Self {
         Self {
             value,
+            order: Order::Normal,
             diagnostic: None,
         }
     }
 
-    #[must_use]
     pub const fn with_diagnostic(value: Scaled, diagnostic: DimensionDiagnostic) -> Self {
         Self {
             value,
+            order: Order::Normal,
             diagnostic: Some(diagnostic),
         }
     }
@@ -68,6 +86,11 @@ impl ScannedDimen {
     #[must_use]
     pub const fn value(self) -> Scaled {
         self.value
+    }
+
+    #[must_use]
+    pub(crate) const fn order(self) -> Order {
+        self.order
     }
 
     #[must_use]
@@ -108,6 +131,7 @@ pub enum ScanDimenError {
     MissingUnit,
     RegisterNumberOutOfRange(i32),
     UnsupportedFontRelativeUnit(&'static str),
+    IncompatibleGlueUnits,
     UnsupportedInternalDimension(Token),
 }
 
@@ -128,6 +152,7 @@ impl fmt::Display for ScanDimenError {
                     "{unit} units require font metrics, which are not implemented yet"
                 )
             }
+            Self::IncompatibleGlueUnits => f.write_str("Incompatible glue units"),
             Self::UnsupportedInternalDimension(token) => {
                 write!(f, "unsupported internal dimension token {token:?}")
             }
@@ -145,6 +170,7 @@ impl std::error::Error for ScanDimenError {
             | Self::MissingUnit
             | Self::RegisterNumberOutOfRange(_)
             | Self::UnsupportedFontRelativeUnit(_)
+            | Self::IncompatibleGlueUnits
             | Self::UnsupportedInternalDimension(_) => None,
         }
     }
@@ -222,6 +248,7 @@ where
     };
 
     let scanned = scan_unsigned_after_first_token(input, stores, recorder, hooks, token, options)?;
+    consume_optional_space(input, stores, recorder, hooks)?;
     Ok(apply_sign(scanned, negative))
 }
 
@@ -286,7 +313,11 @@ where
         Token::Char {
             ch: '.' | ',',
             cat: Catcode::Other,
-        } => scan_fraction_and_unit(input, stores, recorder, hooks, 0),
+        } => scan_fraction_and_unit(input, stores, recorder, hooks, 0, options),
+        Token::Char {
+            ch: '\'' | '"' | '`',
+            cat: Catcode::Other,
+        } => scan_integer_constant_with_unit(input, stores, recorder, hooks, token, options),
         Token::Cs(symbol) => scan_internal_or_numeric_dimension(
             input, stores, recorder, hooks, token, symbol, options,
         ),
@@ -342,12 +373,12 @@ where
     };
 
     if is_decimal_point(token) {
-        return scan_fraction_and_unit(input, stores, recorder, hooks, integer);
+        return scan_fraction_and_unit(input, stores, recorder, hooks, integer, options);
     }
 
     unread_token(input, stores, token);
-    match scan_unit(input, stores, recorder, hooks)? {
-        Some(unit) => convert_decimal(integer, 0, unit),
+    match scan_unit(input, stores, recorder, hooks, options)? {
+        Some(unit) => convert_scanned_unit(integer, 0, unit),
         None if options.coerce_integer_to_sp => convert_decimal(integer, 0, PhysicalUnit::Sp),
         None => Err(ScanDimenError::MissingUnit),
     }
@@ -359,6 +390,7 @@ fn scan_fraction_and_unit<S, R, H>(
     recorder: &mut R,
     hooks: &mut H,
     integer: i32,
+    options: ScanDimenOptions,
 ) -> Result<ScannedDimen, ScanDimenError>
 where
     S: InputSource,
@@ -366,8 +398,9 @@ where
     H: ExpansionHooks<S>,
 {
     let fraction = scan_fraction(input, stores, recorder, hooks)?;
-    let unit = scan_unit(input, stores, recorder, hooks)?.ok_or(ScanDimenError::MissingUnit)?;
-    convert_decimal(integer, fraction, unit)
+    let unit =
+        scan_unit(input, stores, recorder, hooks, options)?.ok_or(ScanDimenError::MissingUnit)?;
+    convert_scanned_unit(integer, fraction, unit)
 }
 
 fn scan_fraction<S, R, H>(
@@ -428,13 +461,50 @@ where
     }
 
     let integer = scanned.value();
-    let Some(unit) = scan_unit(input, stores, recorder, hooks)? else {
+    let Some(unit) = scan_unit(input, stores, recorder, hooks, options)? else {
         if options.coerce_integer_to_sp {
             return convert_decimal(integer, 0, PhysicalUnit::Sp);
         }
         return Err(ScanDimenError::MissingUnit);
     };
-    convert_decimal(integer, 0, unit)
+    convert_scanned_unit(integer, 0, unit)
+}
+
+fn scan_integer_constant_with_unit<S, R, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Stores,
+    recorder: &mut R,
+    hooks: &mut H,
+    token: Token,
+    options: ScanDimenOptions,
+) -> Result<ScannedDimen, ScanDimenError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    unread_token(input, stores, token);
+    let scanned = scan_int::scan_int_with_recorder_and_hooks(input, stores, recorder, hooks)?;
+    if scanned.diagnostic().is_some() {
+        return Ok(ScannedDimen::with_diagnostic(
+            Scaled::MAX_DIMEN,
+            DimensionDiagnostic::TooLarge,
+        ));
+    }
+    let Some(unit) = scan_unit(input, stores, recorder, hooks, options)? else {
+        if options.coerce_integer_to_sp {
+            return convert_decimal(scanned.value(), 0, PhysicalUnit::Sp);
+        }
+        return Err(ScanDimenError::MissingUnit);
+    };
+    convert_scanned_unit(scanned.value(), 0, unit)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum KeywordMatch {
+    Matched,
+    FirstTokenMismatch,
+    PartialMismatch,
 }
 
 fn scan_register_index<S, R, H>(
@@ -460,7 +530,8 @@ fn scan_unit<S, R, H>(
     stores: &mut Stores,
     recorder: &mut R,
     hooks: &mut H,
-) -> Result<Option<PhysicalUnit>, ScanDimenError>
+    options: ScanDimenOptions,
+) -> Result<Option<ScannedUnit>, ScanDimenError>
 where
     S: InputSource,
     R: ReadRecorder,
@@ -472,13 +543,51 @@ where
         None => return Ok(None),
     };
 
-    if keyword_matches(input, stores, recorder, hooks, first, "true")? {
-        skip_spaces(input, stores, recorder, hooks)?;
-        let Some(token) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
-        else {
-            return Ok(None);
-        };
-        return scan_unit_keyword(input, stores, recorder, hooks, token);
+    if options.allow_infinite_units {
+        match keyword_matches(input, stores, recorder, hooks, first, "fil")? {
+            KeywordMatch::Matched => {
+                let mut order = Order::Fil;
+                while keyword(input, stores, recorder, hooks, "l")? {
+                    if order != Order::Filll {
+                        order = match order {
+                            Order::Normal => Order::Fil,
+                            Order::Fil => Order::Fill,
+                            Order::Fill => Order::Filll,
+                            Order::Filll => Order::Filll,
+                        };
+                    }
+                }
+                return Ok(Some(ScannedUnit::Infinite(order)));
+            }
+            KeywordMatch::PartialMismatch => return Ok(None),
+            KeywordMatch::FirstTokenMismatch => {}
+        }
+    }
+
+    if options.require_mu_unit {
+        match keyword_matches(input, stores, recorder, hooks, first, "mu")? {
+            KeywordMatch::Matched => return Ok(Some(ScannedUnit::Physical(PhysicalUnit::Pt))),
+            KeywordMatch::PartialMismatch => return Err(ScanDimenError::IncompatibleGlueUnits),
+            KeywordMatch::FirstTokenMismatch => {}
+        }
+        unread_token(input, stores, first);
+        return Err(ScanDimenError::IncompatibleGlueUnits);
+    }
+
+    match keyword_matches(input, stores, recorder, hooks, first, "true")? {
+        KeywordMatch::Matched => {
+            // TODO(umber2-teq/umber2-flt): apply \mag once the magnification
+            // parameter/state surface exists. Until then true units are parsed
+            // and intentionally left unscaled.
+            skip_spaces(input, stores, recorder, hooks)?;
+            let Some(token) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
+            else {
+                return Ok(None);
+            };
+            return scan_unit_keyword(input, stores, recorder, hooks, token);
+        }
+        KeywordMatch::PartialMismatch => return Ok(None),
+        KeywordMatch::FirstTokenMismatch => {}
     }
 
     scan_unit_keyword(input, stores, recorder, hooks, first)
@@ -490,7 +599,7 @@ fn scan_unit_keyword<S, R, H>(
     recorder: &mut R,
     hooks: &mut H,
     first: Token,
-) -> Result<Option<PhysicalUnit>, ScanDimenError>
+) -> Result<Option<ScannedUnit>, ScanDimenError>
 where
     S: InputSource,
     R: ReadRecorder,
@@ -502,7 +611,7 @@ where
     };
 
     match unit_from_tokens(first, second) {
-        Some(ScannedUnit::Physical(unit)) => Ok(Some(unit)),
+        Some(ScannedUnit::Physical(unit)) => Ok(Some(ScannedUnit::Physical(unit))),
         Some(ScannedUnit::Em) => {
             // TODO(fonts): resolve em against the current font's quad.
             Err(ScanDimenError::UnsupportedFontRelativeUnit("em"))
@@ -511,6 +620,7 @@ where
             // TODO(fonts): resolve ex against the current font's x-height.
             Err(ScanDimenError::UnsupportedFontRelativeUnit("ex"))
         }
+        Some(ScannedUnit::Infinite(_)) => unreachable!("unit keywords never return infinity"),
         None => {
             unread_tokens(input, stores, [first, second]);
             Ok(None)
@@ -525,7 +635,7 @@ fn keyword_matches<S, R, H>(
     hooks: &mut H,
     first: Token,
     keyword: &str,
-) -> Result<bool, ScanDimenError>
+) -> Result<KeywordMatch, ScanDimenError>
 where
     S: InputSource,
     R: ReadRecorder,
@@ -535,28 +645,55 @@ where
     consumed.push(first);
 
     if !token_matches_keyword_byte(first, keyword.as_bytes()[0]) {
-        return Ok(false);
+        return Ok(KeywordMatch::FirstTokenMismatch);
     }
 
     for &expected in &keyword.as_bytes()[1..] {
         let Some(token) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
         else {
-            unread_tokens(input, stores, consumed.into_iter().skip(1));
-            return Ok(false);
+            unread_tokens(input, stores, consumed);
+            return Ok(KeywordMatch::PartialMismatch);
         };
         consumed.push(token);
         if !token_matches_keyword_byte(token, expected) {
-            unread_tokens(input, stores, consumed.into_iter().skip(1));
-            return Ok(false);
+            unread_tokens(input, stores, consumed);
+            return Ok(KeywordMatch::PartialMismatch);
         }
     }
 
-    Ok(true)
+    Ok(KeywordMatch::Matched)
+}
+
+fn keyword<S, R, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Stores,
+    recorder: &mut R,
+    hooks: &mut H,
+    keyword: &str,
+) -> Result<bool, ScanDimenError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    skip_spaces(input, stores, recorder, hooks)?;
+    let Some(first) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)? else {
+        return Ok(false);
+    };
+    match keyword_matches(input, stores, recorder, hooks, first, keyword)? {
+        KeywordMatch::Matched => Ok(true),
+        KeywordMatch::FirstTokenMismatch => {
+            unread_token(input, stores, first);
+            Ok(false)
+        }
+        KeywordMatch::PartialMismatch => Ok(false),
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ScannedUnit {
     Physical(PhysicalUnit),
+    Infinite(Order),
     Em,
     Ex,
 }
@@ -601,6 +738,22 @@ fn convert_decimal(
     }
 }
 
+fn convert_scanned_unit(
+    integer: i32,
+    fraction: i32,
+    unit: ScannedUnit,
+) -> Result<ScannedDimen, ScanDimenError> {
+    match unit {
+        ScannedUnit::Physical(unit) => convert_decimal(integer, fraction, unit),
+        ScannedUnit::Infinite(order) => {
+            let mut scanned = convert_decimal(integer, fraction, PhysicalUnit::Pt)?;
+            scanned.order = order;
+            Ok(scanned)
+        }
+        ScannedUnit::Em | ScannedUnit::Ex => unreachable!("font units are handled while scanning"),
+    }
+}
+
 fn coerce_or_missing_unit(
     integer: i32,
     options: ScanDimenOptions,
@@ -620,6 +773,7 @@ fn apply_sign(scanned: ScannedDimen, negative: bool) -> ScannedDimen {
     };
     ScannedDimen {
         value,
+        order: scanned.order(),
         diagnostic: scanned.diagnostic(),
     }
 }
@@ -873,6 +1027,36 @@ mod tests {
         stores.set_count(4, 2);
 
         assert_eq!(scan_with_stores("\\count4pt x", &mut stores).0, 131_072);
+    }
+
+    #[test]
+    fn scans_hex_integer_constants_with_units() {
+        assert_eq!(scan("\"7Fpt x").0, 127 * Scaled::UNITY);
+    }
+
+    #[test]
+    fn restores_partially_matched_true_keyword_tokens() {
+        let mut stores = Stores::new();
+        let mut input = InputStack::new(MemoryInput::new("1truxpt"));
+        let err = scan_dimen(&mut input, &mut stores).expect_err("bad true keyword lacks unit");
+
+        assert!(matches!(err, ScanDimenError::MissingUnit));
+        assert_eq!(
+            input.next_token(&mut stores).expect("token should replay"),
+            Some(char_token('t', Catcode::Letter))
+        );
+        assert_eq!(
+            input.next_token(&mut stores).expect("token should replay"),
+            Some(char_token('r', Catcode::Letter))
+        );
+        assert_eq!(
+            input.next_token(&mut stores).expect("token should replay"),
+            Some(char_token('u', Catcode::Letter))
+        );
+        assert_eq!(
+            input.next_token(&mut stores).expect("token should replay"),
+            Some(char_token('x', Catcode::Letter))
+        );
     }
 
     #[test]
