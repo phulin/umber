@@ -3,18 +3,18 @@ use tex_lex::{InputStack, MemoryInput, TokenListReplayKind};
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::MeaningFlags;
 use tex_state::token::{Catcode, Token};
-use tex_state::{ExpansionState, InputOpenState, Universe};
+use tex_state::{ExpansionState, Universe};
 
 fn char_token(ch: char, cat: Catcode) -> Token {
     Token::Char { ch, cat }
 }
 
-fn cs_token(stores: &mut (impl ExpansionState + InputOpenState), name: &str) -> Token {
+fn cs_token(stores: &mut impl ExpansionState, name: &str) -> Token {
     Token::Cs(stores.intern(name))
 }
 
 fn macro_meaning(
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
     flags: MeaningFlags,
     params: &[Token],
 ) -> MacroMeaning {
@@ -24,7 +24,7 @@ fn macro_meaning(
 }
 
 fn match_from_list(
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
     meaning: MacroMeaning,
     input_tokens: &[Token],
 ) -> Result<Vec<Vec<Token>>, MacroCallError> {

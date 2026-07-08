@@ -1,14 +1,12 @@
 use tex_lex::{InputSource, InputStack, TokenListReplayKind};
+use tex_state::ExpansionState;
 use tex_state::token::{Catcode, Token};
-use tex_state::{ExpansionState, InputOpenState};
 
-use crate::{
-    ExpandError, ExpansionHooks, ReadRecorder, get_x_token_with_recorder_and_hooks, scan_int,
-};
+use crate::{ExpandError, ExpansionHooks, ReadRecorder, get_x_token_without_input_open, scan_int};
 
 pub(crate) fn next_non_space_x_token_with_hooks<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<Option<Token>, ExpandError>
@@ -18,8 +16,7 @@ where
     H: ExpansionHooks<S>,
 {
     loop {
-        let Some(token) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
-        else {
+        let Some(token) = get_x_token_without_input_open(input, stores, recorder, hooks)? else {
             return Ok(None);
         };
         if !matches!(
@@ -36,7 +33,7 @@ where
 
 pub(crate) fn scan_register_index<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<u16, ExpandError>
@@ -61,7 +58,7 @@ pub enum ExpandedKeywordMatch {
 
 pub fn scan_optional_keyword_with_hooks<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
     keyword: &str,
@@ -86,7 +83,7 @@ where
 
 pub fn scan_keyword_after_first_with_hooks<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
     first: Token,
@@ -109,8 +106,7 @@ where
     }
 
     for &expected in &keyword.as_bytes()[1..] {
-        let Some(token) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
-        else {
+        let Some(token) = get_x_token_without_input_open(input, stores, recorder, hooks)? else {
             unread_tokens(input, stores, consumed);
             return Ok(ExpandedKeywordMatch::PartialMismatch);
         };
@@ -124,21 +120,15 @@ where
     Ok(ExpandedKeywordMatch::Matched)
 }
 
-fn unread_token<S>(
-    input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
-    token: Token,
-) where
+fn unread_token<S>(input: &mut InputStack<S>, stores: &mut impl ExpansionState, token: Token)
+where
     S: InputSource,
 {
     unread_tokens(input, stores, [token]);
 }
 
-fn unread_tokens<S, I>(
-    input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
-    tokens: I,
-) where
+fn unread_tokens<S, I>(input: &mut InputStack<S>, stores: &mut impl ExpansionState, tokens: I)
+where
     S: InputSource,
     I: IntoIterator<Item = Token>,
 {

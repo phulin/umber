@@ -1,18 +1,18 @@
 use tex_lex::{ConditionFrameSummary, ConditionKind, ConditionLimb, InputSource, InputStack};
+use tex_state::ExpansionState;
 use tex_state::interner::Symbol;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
 use tex_state::node::Node;
 use tex_state::token::Token;
-use tex_state::{ExpansionState, InputOpenState};
 
 use crate::{
     Dispatch, ExpandError, ExpandableOpcode, ExpansionHooks, ReadRecorder,
-    get_x_token_with_recorder_and_hooks, scan_helpers, scan_int,
+    get_x_token_without_input_open, scan_helpers, scan_int,
 };
 
 pub(crate) fn begin_if<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
     condition: bool,
@@ -31,7 +31,7 @@ where
 
 pub(crate) fn begin_ifcase<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
     selected_case: i32,
@@ -51,7 +51,7 @@ where
 
 pub(crate) fn handle_else<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<Dispatch, ExpandError>
@@ -77,7 +77,7 @@ where
 
 pub(crate) fn handle_or<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<Dispatch, ExpandError>
@@ -103,7 +103,7 @@ where
 
 fn skip_false_limb<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<(), ExpandError>
@@ -117,7 +117,7 @@ where
 
 fn skip_to_fi<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<(), ExpandError>
@@ -131,7 +131,7 @@ where
 
 fn skip_ifcase_to_selected_limb<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
     selected_case: i32,
@@ -159,7 +159,7 @@ enum SkipTarget {
 
 fn skip_until<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     _hooks: &mut H,
     target: SkipTarget,
@@ -312,7 +312,7 @@ where
 
 pub(crate) fn scan_condition_x_token<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<Token, ExpandError>
@@ -321,7 +321,7 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?.ok_or(
+    get_x_token_without_input_open(input, stores, recorder, hooks)?.ok_or(
         ExpandError::MissingTokenAfterPrimitive(ExpandableOpcode::If),
     )
 }
@@ -361,7 +361,7 @@ pub(crate) enum ConditionalRelation {
 
 pub(crate) fn scan_conditional_relation<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<ConditionalRelation, ExpandError>
@@ -418,7 +418,7 @@ pub(crate) fn box_register_has_kind(
 
 pub(crate) fn scan_stream_number<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<u8, ExpandError>

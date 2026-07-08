@@ -757,6 +757,7 @@ version = "0.1.0"
 dependencies = [
  "tex-lex",
  "tex-state",
+ "trybuild",
 ]
 
 [[package]]

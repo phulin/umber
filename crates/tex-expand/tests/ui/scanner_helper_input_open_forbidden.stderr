@@ -1,0 +1,11 @@
+error[E0599]: no method named `input_open_context` found for mutable reference `&mut impl ExpansionState` in the current scope
+ --> tests/ui/scanner_helper_input_open_forbidden.rs:4:20
+  |
+4 |     let _ = stores.input_open_context();
+  |                    ^^^^^^^^^^^^^^^^^^ method not found in `&mut impl ExpansionState`
+  |
+  = help: items from traits can only be used if the type parameter is bounded by the trait
+help: the following trait defines an item `input_open_context`, perhaps you need to restrict type parameter `impl ExpansionState` with it:
+  |
+3 | fn scanner_like_helper(stores: &mut (impl ExpansionState + InputOpenState)) {
+  |                                     +                    +++++++++++++++++

@@ -229,11 +229,16 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   interning, and `\csname`'s relaxed control-sequence interning. `ExpansionState`
   cannot construct input-read authority; the top-level expansion/dispatch path
   additionally carries `InputOpenState` only so `\input` can create an
-  `InputOpenContext`. File reads for `\input` live behind the separate
-  `InputReadState` capability; driver hooks receive an `InputOpenContext`, not
-  `ExpansionState`, so hooks can open input files without seeing meaning reads,
-  Env/register writes, code-table writes, grouping, snapshot, font-assignment,
-  or general World mutation APIs. Macro body replay uses
+  `InputOpenContext`. Scanner and helper recursion does not receive that
+  authority directly. Instead recursive expanded-token reads go through the
+  narrow `ExpandNext` capability; the top-level driver supplies a
+  `DriverExpandNext` implementation that can re-enter dispatch with `\input`
+  authority, while ordinary helper-only paths use a no-input implementation.
+  File reads for `\input` live behind the separate `InputReadState`
+  capability; driver hooks receive an `InputOpenContext`, not `ExpansionState`,
+  so hooks can open input files without seeing meaning reads, Env/register
+  writes, code-table writes, grouping, snapshot, font-assignment, or general
+  World mutation APIs. Macro body replay uses
   the body `TokenListId` directly plus frozen argument ids on the replay
   frame; it does not allocate a substituted body list. Token-list replay is
   naturally read-only; source-frame replay may intern newly encountered
@@ -294,8 +299,10 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   *unexpandable* — they are delivered to the stomach. This is TeX's own
   factoring, and the implementation follows it behaviorally: expansion
   routines receive `ExpansionState` for reads and for sanctioned immutable
-  content/interner operations only; expanded-token entry points also carry the
-  separate `InputOpenState` authority needed for `\input` dispatch. Because
+  content/interner operations only; recursive expanded-token reads from
+  scanners are mediated by `ExpandNext`, so scanner signatures never expose
+  file-open authority. Expanded-token entry points also carry the separate
+  `InputOpenState` authority needed for `\input` dispatch. Because
   `ExpansionState` omits input-open construction and barriered assignment
   methods such as meaning, register, code-table, group, and font setters, "the
   gullet cannot mutate Env/register/code-table state" and "ordinary scanner

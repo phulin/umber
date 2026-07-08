@@ -466,9 +466,10 @@ The type system is the write barrier's bodyguard. The rules:
   omits input-file reads, input-open context construction, and Env/register/
   code-table/group/snapshot/font-assignment setters. Only the top-level
   expansion/dispatch path carries the additional `InputOpenState` authority
-  needed to construct `InputOpenContext`. Driver `\input` hooks receive the
-  separate `InputReadState` capability through `InputOpenContext`, which
-  exposes only content-addressed input reads.
+  needed to construct `InputOpenContext`; scanner recursion uses the narrow
+  `ExpandNext` capability instead of receiving input-open authority directly.
+  Driver `\input` hooks receive the separate `InputReadState` capability
+  through `InputOpenContext`, which exposes only content-addressed input reads.
 
 ### 10.3 Unforgeable handles
 

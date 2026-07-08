@@ -3,15 +3,15 @@
 use std::fmt;
 
 use tex_lex::{InputSource, InputStack, LexError, TokenListReplayKind};
+use tex_state::ExpansionState;
 use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::interner::Symbol;
 use tex_state::meaning::Meaning;
 use tex_state::token::{Catcode, Token};
-use tex_state::{ExpansionState, InputOpenState};
 
 use crate::{
-    ExpandError, ExpansionHooks, NoopExpansionHooks, NoopRecorder, ReadRecorder,
-    get_x_token_with_recorder_and_hooks,
+    ExpandError, ExpandNext, ExpansionHooks, NoInputExpandNext, NoopExpansionHooks, NoopRecorder,
+    ReadRecorder,
 };
 
 const INT_MAX: i64 = i32::MAX as i64;
@@ -123,7 +123,7 @@ impl From<LexError> for ScanIntError {
 /// and chardef-like meanings represented by [`Meaning::CharGiven`].
 pub fn scan_int<S>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
 ) -> Result<ScannedInt, ScanIntError>
 where
     S: InputSource,
@@ -134,7 +134,7 @@ where
 /// Scans a TeX `<number>` while preserving caller-supplied expansion hooks.
 pub fn scan_int_with_recorder_and_hooks<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<ScannedInt, ScanIntError>
@@ -143,30 +143,66 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    let (negative, token) = scan_signs(input, stores, recorder, hooks)?;
+    scan_int_with_expander_and_hooks(input, stores, recorder, hooks, &mut NoInputExpandNext)
+}
+
+pub fn scan_int_with_expander_and_hooks<S, St, R, H, E>(
+    input: &mut InputStack<S>,
+    stores: &mut St,
+    recorder: &mut R,
+    hooks: &mut H,
+    expander: &mut E,
+) -> Result<ScannedInt, ScanIntError>
+where
+    S: InputSource,
+    St: ExpansionState,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
+{
+    let (negative, token) = scan_signs(input, stores, recorder, hooks, expander)?;
     let Some(token) = token else {
         return Err(ScanIntError::MissingNumber);
     };
 
-    let scanned = scan_unsigned_after_first_token(input, stores, recorder, hooks, token)?;
+    let scanned = scan_unsigned_after_first_token(input, stores, recorder, hooks, expander, token)?;
     Ok(apply_sign(scanned, negative))
 }
 
-fn scan_signs<S, R, H>(
+fn next_x<S, St, R, H, E>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut St,
     recorder: &mut R,
     hooks: &mut H,
+    expander: &mut E,
+) -> Result<Option<Token>, ScanIntError>
+where
+    S: InputSource,
+    St: ExpansionState,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
+{
+    Ok(expander.next_expanded_token(input, stores, recorder, hooks)?)
+}
+
+fn scan_signs<S, St, R, H, E>(
+    input: &mut InputStack<S>,
+    stores: &mut St,
+    recorder: &mut R,
+    hooks: &mut H,
+    expander: &mut E,
 ) -> Result<(bool, Option<Token>), ScanIntError>
 where
     S: InputSource,
+    St: ExpansionState,
     R: ReadRecorder,
     H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
 {
     let mut negative = false;
     loop {
-        let Some(token) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
-        else {
+        let Some(token) = next_x(input, stores, recorder, hooks, expander)? else {
             return Ok((negative, None));
         };
         if is_space(token) {
@@ -183,17 +219,20 @@ where
     }
 }
 
-fn scan_unsigned_after_first_token<S, R, H>(
+fn scan_unsigned_after_first_token<S, St, R, H, E>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut St,
     recorder: &mut R,
     hooks: &mut H,
+    expander: &mut E,
     token: Token,
 ) -> Result<ScannedInt, ScanIntError>
 where
     S: InputSource,
+    St: ExpansionState,
     R: ReadRecorder,
     H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
 {
     match token {
         Token::Char {
@@ -204,66 +243,74 @@ where
             stores,
             recorder,
             hooks,
+            expander,
             digit_value(ch).expect("matched digit"),
             10,
         ),
         Token::Char {
             ch: '\'',
             cat: Catcode::Other,
-        } => scan_prefixed_digits(input, stores, recorder, hooks, 8),
+        } => scan_prefixed_digits(input, stores, recorder, hooks, expander, 8),
         Token::Char {
             ch: '"',
             cat: Catcode::Other,
-        } => scan_prefixed_digits(input, stores, recorder, hooks, 16),
+        } => scan_prefixed_digits(input, stores, recorder, hooks, expander, 16),
         Token::Char {
             ch: '`',
             cat: Catcode::Other,
-        } => scan_backtick_constant(input, stores, recorder, hooks),
-        Token::Cs(symbol) => scan_internal_integer(input, stores, recorder, hooks, token, symbol),
+        } => scan_backtick_constant(input, stores, recorder, hooks, expander),
+        Token::Cs(symbol) => {
+            scan_internal_integer(input, stores, recorder, hooks, expander, token, symbol)
+        }
         _ => Err(ScanIntError::MissingNumber),
     }
 }
 
-fn scan_prefixed_digits<S, R, H>(
+fn scan_prefixed_digits<S, St, R, H, E>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut St,
     recorder: &mut R,
     hooks: &mut H,
+    expander: &mut E,
     radix: i64,
 ) -> Result<ScannedInt, ScanIntError>
 where
     S: InputSource,
+    St: ExpansionState,
     R: ReadRecorder,
     H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
 {
-    let Some(token) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)? else {
+    let Some(token) = next_x(input, stores, recorder, hooks, expander)? else {
         return Err(ScanIntError::MissingNumber);
     };
     let Some(digit) = token_digit_for_radix(token, radix) else {
         unread_token(input, stores, token);
         return Err(ScanIntError::MissingNumber);
     };
-    scan_radix_digits(input, stores, recorder, hooks, digit, radix)
+    scan_radix_digits(input, stores, recorder, hooks, expander, digit, radix)
 }
 
-fn scan_radix_digits<S, R, H>(
+fn scan_radix_digits<S, St, R, H, E>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut St,
     recorder: &mut R,
     hooks: &mut H,
+    expander: &mut E,
     first_digit: i64,
     radix: i64,
 ) -> Result<ScannedInt, ScanIntError>
 where
     S: InputSource,
+    St: ExpansionState,
     R: ReadRecorder,
     H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
 {
     let mut value = first_digit;
     let mut overflow = value > INT_MAX;
     loop {
-        let Some(token) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
-        else {
+        let Some(token) = next_x(input, stores, recorder, hooks, expander)? else {
             break;
         };
         let Some(digit) = token_digit_for_radix(token, radix) else {
@@ -287,18 +334,21 @@ where
     Ok(scanned_unsigned(value, overflow))
 }
 
-fn scan_backtick_constant<S, R, H>(
+fn scan_backtick_constant<S, St, R, H, E>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut St,
     recorder: &mut R,
     hooks: &mut H,
+    expander: &mut E,
 ) -> Result<ScannedInt, ScanIntError>
 where
     S: InputSource,
+    St: ExpansionState,
     R: ReadRecorder,
     H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
 {
-    let Some(token) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)? else {
+    let Some(token) = next_x(input, stores, recorder, hooks, expander)? else {
         return Err(ScanIntError::MissingNumber);
     };
     let value = match token {
@@ -310,72 +360,75 @@ where
             .ok_or(ScanIntError::MissingNumber)? as i32,
         Token::Param(_) => return Err(ScanIntError::MissingNumber),
     };
-    consume_optional_space(input, stores, recorder, hooks)?;
+    consume_optional_space(input, stores, recorder, hooks, expander)?;
     Ok(ScannedInt::new(value))
 }
 
-fn scan_internal_integer<S, R, H>(
+fn scan_internal_integer<S, St, R, H, E>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut St,
     recorder: &mut R,
     hooks: &mut H,
+    expander: &mut E,
     token: Token,
     symbol: Symbol,
 ) -> Result<ScannedInt, ScanIntError>
 where
     S: InputSource,
+    St: ExpansionState,
     R: ReadRecorder,
     H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
 {
     let meaning = stores.meaning(symbol);
     recorder.record_meaning(symbol, meaning);
     match meaning {
         Meaning::CharGiven(ch) => {
-            consume_optional_space(input, stores, recorder, hooks)?;
+            consume_optional_space(input, stores, recorder, hooks, expander)?;
             Ok(ScannedInt::new(ch as i32))
         }
         Meaning::MathCharGiven(value) => {
-            consume_optional_space(input, stores, recorder, hooks)?;
+            consume_optional_space(input, stores, recorder, hooks, expander)?;
             Ok(ScannedInt::new(i32::from(value)))
         }
         Meaning::CountRegister(index) => {
-            consume_optional_space(input, stores, recorder, hooks)?;
+            consume_optional_space(input, stores, recorder, hooks, expander)?;
             Ok(ScannedInt::new(stores.count(index)))
         }
         Meaning::DimenRegister(index) => {
-            consume_optional_space(input, stores, recorder, hooks)?;
+            consume_optional_space(input, stores, recorder, hooks, expander)?;
             Ok(ScannedInt::new(stores.dimen(index).raw()))
         }
         Meaning::IntParam(index) => {
-            consume_optional_space(input, stores, recorder, hooks)?;
+            consume_optional_space(input, stores, recorder, hooks, expander)?;
             Ok(ScannedInt::new(stores.int_param(IntParam::new(index))))
         }
         Meaning::DimenParam(index) => {
-            consume_optional_space(input, stores, recorder, hooks)?;
+            consume_optional_space(input, stores, recorder, hooks, expander)?;
             Ok(ScannedInt::new(
                 stores.dimen_param(DimenParam::new(index)).raw(),
             ))
         }
-        Meaning::UnexpandablePrimitive(primitive) => {
-            scan_internal_integer_primitive(input, stores, recorder, hooks, token, primitive)
-        }
+        Meaning::UnexpandablePrimitive(primitive) => scan_internal_integer_primitive(
+            input, stores, recorder, hooks, expander, token, primitive,
+        ),
         _ => {
             let name = stores.resolve(symbol);
             match name {
                 "count" => {
-                    let index = scan_register_index(input, stores, recorder, hooks)?;
+                    let index = scan_register_index(input, stores, recorder, hooks, expander)?;
                     let value = stores.count(index);
-                    consume_optional_space(input, stores, recorder, hooks)?;
+                    consume_optional_space(input, stores, recorder, hooks, expander)?;
                     Ok(ScannedInt::new(value))
                 }
                 "dimen" => {
-                    let index = scan_register_index(input, stores, recorder, hooks)?;
+                    let index = scan_register_index(input, stores, recorder, hooks, expander)?;
                     let value = stores.dimen(index).raw();
-                    consume_optional_space(input, stores, recorder, hooks)?;
+                    consume_optional_space(input, stores, recorder, hooks, expander)?;
                     Ok(ScannedInt::new(value))
                 }
                 "endlinechar" => {
-                    consume_optional_space(input, stores, recorder, hooks)?;
+                    consume_optional_space(input, stores, recorder, hooks, expander)?;
                     Ok(ScannedInt::new(stores.int_param(IntParam::END_LINE_CHAR)))
                 }
                 _ => Err(ScanIntError::UnsupportedInternalInteger(token)),
@@ -384,30 +437,33 @@ where
     }
 }
 
-fn scan_internal_integer_primitive<S, R, H>(
+fn scan_internal_integer_primitive<S, St, R, H, E>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut St,
     recorder: &mut R,
     hooks: &mut H,
+    expander: &mut E,
     token: Token,
     primitive: tex_state::meaning::UnexpandablePrimitive,
 ) -> Result<ScannedInt, ScanIntError>
 where
     S: InputSource,
+    St: ExpansionState,
     R: ReadRecorder,
     H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
 {
     match primitive {
         tex_state::meaning::UnexpandablePrimitive::Count => {
-            let index = scan_register_index(input, stores, recorder, hooks)?;
+            let index = scan_register_index(input, stores, recorder, hooks, expander)?;
             let value = stores.count(index);
-            consume_optional_space(input, stores, recorder, hooks)?;
+            consume_optional_space(input, stores, recorder, hooks, expander)?;
             Ok(ScannedInt::new(value))
         }
         tex_state::meaning::UnexpandablePrimitive::Dimen => {
-            let index = scan_register_index(input, stores, recorder, hooks)?;
+            let index = scan_register_index(input, stores, recorder, hooks, expander)?;
             let value = stores.dimen(index).raw();
-            consume_optional_space(input, stores, recorder, hooks)?;
+            consume_optional_space(input, stores, recorder, hooks, expander)?;
             Ok(ScannedInt::new(value))
         }
         tex_state::meaning::UnexpandablePrimitive::CatCode
@@ -416,7 +472,8 @@ where
         | tex_state::meaning::UnexpandablePrimitive::SfCode
         | tex_state::meaning::UnexpandablePrimitive::MathCode
         | tex_state::meaning::UnexpandablePrimitive::DelCode => {
-            let code = scan_int_with_recorder_and_hooks(input, stores, recorder, hooks)?.value();
+            let code =
+                scan_int_with_expander_and_hooks(input, stores, recorder, hooks, expander)?.value();
             let ch = u32::try_from(code)
                 .ok()
                 .and_then(char::from_u32)
@@ -430,43 +487,49 @@ where
                 tex_state::meaning::UnexpandablePrimitive::DelCode => stores.delcode(ch),
                 _ => unreachable!("outer match restricts primitive"),
             };
-            consume_optional_space(input, stores, recorder, hooks)?;
+            consume_optional_space(input, stores, recorder, hooks, expander)?;
             Ok(ScannedInt::new(value))
         }
         _ => Err(ScanIntError::UnsupportedInternalInteger(token)),
     }
 }
 
-fn scan_register_index<S, R, H>(
+fn scan_register_index<S, St, R, H, E>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut St,
     recorder: &mut R,
     hooks: &mut H,
+    expander: &mut E,
 ) -> Result<u16, ScanIntError>
 where
     S: InputSource,
+    St: ExpansionState,
     R: ReadRecorder,
     H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
 {
-    let value = scan_int_with_recorder_and_hooks(input, stores, recorder, hooks)?.value();
+    let value = scan_int_with_expander_and_hooks(input, stores, recorder, hooks, expander)?.value();
     if !(0..=MAX_REGISTER).contains(&value) {
         return Err(ScanIntError::RegisterNumberOutOfRange(value));
     }
     Ok(value as u16)
 }
 
-fn consume_optional_space<S, R, H>(
+fn consume_optional_space<S, St, R, H, E>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut St,
     recorder: &mut R,
     hooks: &mut H,
+    expander: &mut E,
 ) -> Result<(), ScanIntError>
 where
     S: InputSource,
+    St: ExpansionState,
     R: ReadRecorder,
     H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
 {
-    let Some(token) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)? else {
+    let Some(token) = next_x(input, stores, recorder, hooks, expander)? else {
         return Ok(());
     };
     if !is_space(token) {
@@ -475,11 +538,7 @@ where
     Ok(())
 }
 
-fn unread_token<S>(
-    input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
-    token: Token,
-) {
+fn unread_token<S>(input: &mut InputStack<S>, stores: &mut impl ExpansionState, token: Token) {
     let token_list = stores.intern_token_list(&[token]);
     input.push_token_list(token_list, TokenListReplayKind::Inserted);
 }
@@ -549,7 +608,7 @@ mod tests {
     use tex_state::meaning::{Meaning, MeaningFlags};
     use tex_state::scaled::Scaled;
     use tex_state::token::{Catcode, Token};
-    use tex_state::{ExpansionState, InputOpenState, Universe};
+    use tex_state::{ExpansionState, Universe};
 
     use crate::scan_int::{IntegerDiagnostic, ScanIntError, scan_int};
 
@@ -565,7 +624,7 @@ mod tests {
 
     fn scan_with_stores(
         input_text: &str,
-        stores: &mut (impl ExpansionState + InputOpenState),
+        stores: &mut impl ExpansionState,
     ) -> (i32, Option<Token>) {
         let mut input = InputStack::new(MemoryInput::new(input_text));
         let scanned = scan_int(&mut input, stores).expect("integer scan should succeed");

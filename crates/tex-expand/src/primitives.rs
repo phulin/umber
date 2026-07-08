@@ -1,17 +1,17 @@
 use tex_lex::{InputSource, InputStack};
+use tex_state::ExpansionState;
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
 use tex_state::token::{Catcode, Token};
-use tex_state::{ExpansionState, InputOpenState};
 
 use crate::{
     Dispatch, ExpandError, ExpandableOpcode, ExpansionHooks, ReadRecorder, apply_dispatch_push,
-    dispatch_one_raw_token_with_hooks, dispatch_with_hooks, get_x_token_with_recorder_and_hooks,
-    push_dispatch_result, push_inserted_token, scan_helpers,
+    dispatch_one_raw_token_with_hooks, get_x_token_without_input_open, push_dispatch_result,
+    push_inserted_token, scan_helpers,
 };
 
 pub(crate) fn expand_after<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<(), ExpandError>
@@ -40,7 +40,7 @@ where
 
 pub(crate) fn scan_csname<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<String, ExpandError>
@@ -74,7 +74,9 @@ where
             return Ok(name);
         }
 
-        match dispatch_with_hooks(token, input, stores, recorder, hooks, meaning)? {
+        match crate::dispatch::dispatch_without_input_open(
+            token, input, stores, recorder, hooks, meaning,
+        )? {
             Dispatch::Continue => {}
             Dispatch::Deliver(token) | Dispatch::DeliverNoExpand(token) => {
                 append_csname_token(&mut name, token)?;
@@ -96,7 +98,7 @@ fn append_csname_token(name: &mut String, token: Token) -> Result<(), ExpandErro
 
 pub(crate) fn scan_input_name<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<String, ExpandError>
@@ -114,7 +116,7 @@ where
     if is_begin_group(first) {
         let mut name = String::new();
         loop {
-            let Some(token) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
+            let Some(token) = get_x_token_without_input_open(input, stores, recorder, hooks)?
             else {
                 return Err(ExpandError::MissingInputName);
             };
@@ -132,8 +134,7 @@ where
     let mut name = String::new();
     append_input_name_token(&mut name, first)?;
     loop {
-        let Some(token) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
-        else {
+        let Some(token) = get_x_token_without_input_open(input, stores, recorder, hooks)? else {
             break;
         };
         if matches!(

@@ -3,17 +3,17 @@
 use std::fmt;
 
 use tex_lex::{InputSource, InputStack, LexError, TokenListReplayKind};
+use tex_state::ExpansionState;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::GlueId;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
-use tex_state::{ExpansionState, InputOpenState};
 
 use crate::scan_dimen::{self, ScanDimenError, ScanDimenOptions};
 use crate::{
     ExpandError, ExpansionHooks, NoopExpansionHooks, NoopRecorder, ReadRecorder,
-    get_x_token_with_recorder_and_hooks, scan_helpers, scan_int,
+    get_x_token_without_input_open, scan_helpers, scan_int,
 };
 
 /// A successfully scanned glue specification.
@@ -95,7 +95,7 @@ impl From<scan_int::ScanIntError> for ScanGlueError {
 
 pub fn scan_glue<S>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
 ) -> Result<ScannedGlue, ScanGlueError>
 where
     S: InputSource,
@@ -111,7 +111,7 @@ where
 
 pub fn scan_muglue<S>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
 ) -> Result<ScannedGlue, ScanGlueError>
 where
     S: InputSource,
@@ -127,7 +127,7 @@ where
 
 pub fn scan_glue_with_hooks<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
     mu: bool,
@@ -242,7 +242,7 @@ fn dimen_options(mu: bool) -> ScanDimenOptions {
     }
 }
 
-fn intern_spec(stores: &mut (impl ExpansionState + InputOpenState), spec: GlueSpec) -> ScannedGlue {
+fn intern_spec(stores: &mut impl ExpansionState, spec: GlueSpec) -> ScannedGlue {
     ScannedGlue {
         id: stores.intern_glue(spec),
     }
@@ -259,7 +259,7 @@ fn signed_spec(mut spec: GlueSpec, negative: bool) -> GlueSpec {
 
 fn scan_signs<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<(bool, Option<Token>), ScanGlueError>
@@ -270,8 +270,7 @@ where
 {
     let mut negative = false;
     loop {
-        let Some(token) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
-        else {
+        let Some(token) = get_x_token_without_input_open(input, stores, recorder, hooks)? else {
             return Ok((negative, None));
         };
         if is_space(token) {
@@ -290,7 +289,7 @@ where
 
 fn scan_register_index<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<u16, ScanGlueError>
@@ -309,7 +308,7 @@ where
 
 fn scan_keyword<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
     keyword: &str,
@@ -326,7 +325,7 @@ where
 
 fn consume_optional_space<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<(), ScanGlueError>
@@ -335,7 +334,7 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    let Some(token) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)? else {
+    let Some(token) = get_x_token_without_input_open(input, stores, recorder, hooks)? else {
         return Ok(());
     };
     if !is_space(token) {
@@ -344,21 +343,15 @@ where
     Ok(())
 }
 
-fn unread_token<S>(
-    input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
-    token: Token,
-) where
+fn unread_token<S>(input: &mut InputStack<S>, stores: &mut impl ExpansionState, token: Token)
+where
     S: InputSource,
 {
     unread_tokens(input, stores, [token]);
 }
 
-fn unread_tokens<S, I>(
-    input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
-    tokens: I,
-) where
+fn unread_tokens<S, I>(input: &mut InputStack<S>, stores: &mut impl ExpansionState, tokens: I)
+where
     S: InputSource,
     I: IntoIterator<Item = Token>,
 {

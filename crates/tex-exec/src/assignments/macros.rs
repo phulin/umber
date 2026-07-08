@@ -59,7 +59,7 @@ where
             UnexpandablePrimitive::Gdef | UnexpandablePrimitive::Xdef
         );
     let scanned = if expanded {
-        scan_toks_expanded(input, stores, prefixes.flags, hooks)?
+        scan_toks_expanded_with_driver(input, stores, prefixes.flags, hooks)?
     } else {
         scan_toks(input, stores, prefixes.flags)?
     };

@@ -5,7 +5,7 @@ use tex_state::ids::{FontId, TokenListId};
 use tex_state::meaning::{Meaning, MeaningFlags};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
-use tex_state::{BoxDimension, ExpansionState, InputOpenState};
+use tex_state::{BoxDimension, ExpansionState};
 
 use crate::{
     Dispatch, ExpandError, ExpandableOpcode, ExpansionHooks, ExpansionReplayKind, ReadRecorder,
@@ -14,7 +14,7 @@ use crate::{
 
 pub(crate) fn expand_the<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<Dispatch, ExpandError>
@@ -248,7 +248,7 @@ where
 }
 
 pub(crate) fn push_rendered_text(
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
     replay_kind: ExpansionReplayKind,
     text: &str,
 ) -> Dispatch {
@@ -256,7 +256,7 @@ pub(crate) fn push_rendered_text(
 }
 
 pub(crate) fn push_rendered_tokens<I>(
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
     replay_kind: ExpansionReplayKind,
     tokens: I,
 ) -> Dispatch
@@ -272,10 +272,7 @@ where
     }
 }
 
-fn freeze_output_tokens(
-    stores: &mut (impl ExpansionState + InputOpenState),
-    tokens: &[Token],
-) -> TokenListId {
+fn freeze_output_tokens(stores: &mut impl ExpansionState, tokens: &[Token]) -> TokenListId {
     stores.intern_token_list(tokens)
 }
 
@@ -364,7 +361,7 @@ pub fn token_text(stores: &impl ExpansionState, token: Token) -> String {
 
 pub fn scan_the_text_with_hooks<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<String, ExpandError>
@@ -486,7 +483,7 @@ fn order_unit(order: Order) -> &'static str {
 
 fn scan_code_table_char<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<char, ExpandError>
@@ -507,7 +504,7 @@ where
 
 pub(crate) fn scan_font_selector<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<FontId, ExpandError>

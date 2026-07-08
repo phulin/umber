@@ -311,6 +311,62 @@ pub trait ExpansionHooks<S> {
     }
 }
 
+pub trait ExpandNext<S, St: ExpansionState, R, H> {
+    fn next_expanded_token(
+        &mut self,
+        input: &mut InputStack<S>,
+        stores: &mut St,
+        recorder: &mut R,
+        hooks: &mut H,
+    ) -> Result<Option<Token>, ExpandError>
+    where
+        S: InputSource,
+        R: ReadRecorder,
+        H: ExpansionHooks<S>;
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NoInputExpandNext;
+
+impl<S, St, R, H> ExpandNext<S, St, R, H> for NoInputExpandNext
+where
+    S: InputSource,
+    St: ExpansionState,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    fn next_expanded_token(
+        &mut self,
+        input: &mut InputStack<S>,
+        stores: &mut St,
+        recorder: &mut R,
+        hooks: &mut H,
+    ) -> Result<Option<Token>, ExpandError> {
+        get_x_token_without_input_open(input, stores, recorder, hooks)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DriverExpandNext;
+
+impl<S, St, R, H> ExpandNext<S, St, R, H> for DriverExpandNext
+where
+    S: InputSource,
+    St: ExpansionState + InputOpenState,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    fn next_expanded_token(
+        &mut self,
+        input: &mut InputStack<S>,
+        stores: &mut St,
+        recorder: &mut R,
+        hooks: &mut H,
+    ) -> Result<Option<Token>, ExpandError> {
+        get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NoopExpansionHooks;
 
@@ -418,10 +474,47 @@ where
     }
 }
 
+pub(crate) fn get_x_token_without_input_open<S, R, H>(
+    input: &mut InputStack<S>,
+    stores: &mut impl ExpansionState,
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<Option<Token>, ExpandError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    loop {
+        let Some(read) = input.next_expansion_token(stores)? else {
+            return Ok(None);
+        };
+        let token = read.token();
+
+        if read.suppress_expansion() {
+            return Ok(Some(token));
+        }
+
+        let Token::Cs(symbol) = token else {
+            return Ok(Some(token));
+        };
+
+        let meaning = stores.meaning(symbol);
+        recorder.record_meaning(symbol, meaning);
+
+        match dispatch::dispatch_without_input_open(token, input, stores, recorder, hooks, meaning)?
+        {
+            Dispatch::Continue => {}
+            Dispatch::Deliver(token) | Dispatch::DeliverNoExpand(token) => return Ok(Some(token)),
+            push @ Dispatch::Push { .. } => apply_dispatch_push(input, push),
+        }
+    }
+}
+
 pub(crate) fn dispatch_one_raw_token_with_hooks<S, R, H>(
     token: Token,
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<Dispatch, ExpandError>
@@ -436,12 +529,12 @@ where
 
     let meaning = stores.meaning(symbol);
     recorder.record_meaning(symbol, meaning);
-    dispatch_with_hooks(token, input, stores, recorder, hooks, meaning)
+    dispatch::dispatch_without_input_open(token, input, stores, recorder, hooks, meaning)
 }
 
 pub(crate) fn push_dispatch_result<S>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
     dispatch: Dispatch,
 ) {
     match dispatch {
@@ -471,7 +564,7 @@ pub(crate) fn apply_dispatch_push<S>(input: &mut InputStack<S>, dispatch: Dispat
 
 pub(crate) fn push_inserted_token<S>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
     token: Token,
 ) {
     let token_list = stores.intern_token_list(&[token]);
@@ -480,7 +573,7 @@ pub(crate) fn push_inserted_token<S>(
 
 pub(crate) fn push_noexpand_token<S>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
     token: Token,
 ) {
     let token_list = stores.intern_token_list(&[token]);

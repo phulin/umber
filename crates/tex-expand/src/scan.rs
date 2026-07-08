@@ -12,11 +12,11 @@ use tex_state::ids::TokenListId;
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
 use tex_state::token::{Catcode, Token};
-use tex_state::{ExpansionState, InputOpenState, InputReadState};
+use tex_state::{ExpansionState, InputReadState};
 
 use crate::{
-    Dispatch, ExpandError, ExpandableOpcode, ExpansionHooks, ExpansionReplayKind, NoopRecorder,
-    dispatch_with_hooks,
+    DriverExpandNext, ExpandError, ExpandNext, ExpandableOpcode, ExpansionHooks, NoInputExpandNext,
+    NoopRecorder,
 };
 
 /// Result of scanning a macro definition without assigning it.
@@ -117,7 +117,7 @@ impl From<ExpandError> for ScanToksError {
 /// a `MacroMeaning`; callers decide whether, where, and how to assign it.
 pub fn scan_toks<S>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
     flags: MeaningFlags,
 ) -> Result<ScannedMacro, ScanToksError>
 where
@@ -133,7 +133,7 @@ where
 /// Scans a macro definition and expands the replacement text as for `\edef`.
 pub fn scan_toks_expanded<S, H>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
     flags: MeaningFlags,
     hooks: &mut H,
 ) -> Result<ScannedMacro, ScanToksError>
@@ -143,20 +143,52 @@ where
 {
     let scanned = scan_toks(input, stores, flags)?;
     let meaning = scanned.meaning();
-    let replacement_text = expand_replacement_text(stores, meaning.replacement_text(), hooks)?;
+    let replacement_text = expand_replacement_text(
+        stores,
+        meaning.replacement_text(),
+        hooks,
+        &mut NoInputExpandNext,
+    )?;
     Ok(ScannedMacro {
         meaning: MacroMeaning::new(flags, meaning.parameter_text(), replacement_text),
     })
 }
 
-fn expand_replacement_text<S, H>(
-    stores: &mut (impl ExpansionState + InputOpenState),
-    replacement_text: TokenListId,
+pub fn scan_toks_expanded_with_driver<S, St, H>(
+    input: &mut InputStack<S>,
+    stores: &mut St,
+    flags: MeaningFlags,
     hooks: &mut H,
+) -> Result<ScannedMacro, ScanToksError>
+where
+    S: InputSource,
+    St: ExpansionState + tex_state::InputOpenState,
+    H: ExpansionHooks<S>,
+{
+    let scanned = scan_toks(input, stores, flags)?;
+    let meaning = scanned.meaning();
+    let replacement_text = expand_replacement_text(
+        stores,
+        meaning.replacement_text(),
+        hooks,
+        &mut DriverExpandNext,
+    )?;
+    Ok(ScannedMacro {
+        meaning: MacroMeaning::new(flags, meaning.parameter_text(), replacement_text),
+    })
+}
+
+fn expand_replacement_text<'a, S, St, H, E>(
+    stores: &mut St,
+    replacement_text: TokenListId,
+    hooks: &'a mut H,
+    expander: &mut E,
 ) -> Result<TokenListId, ScanToksError>
 where
     S: InputSource,
-    H: ExpansionHooks<S>,
+    St: ExpansionState,
+    H: ExpansionHooks<S> + 'a,
+    E: ExpandNext<ReplacementSource<S>, St, NoopRecorder, ReplacementHooks<'a, S, H>>,
 {
     let mut input = InputStack::new(ReplacementSource::<S>::empty());
     input.push_token_list(replacement_text, TokenListReplayKind::Inserted);
@@ -189,29 +221,22 @@ where
             continue;
         }
 
-        match dispatch_with_hooks(
-            token,
-            &mut input,
-            stores,
-            &mut recorder,
-            &mut hooks,
-            meaning,
-        )? {
-            Dispatch::Continue => {}
-            Dispatch::Deliver(token) | Dispatch::DeliverNoExpand(token) => builder.push(token),
-            Dispatch::Push {
-                replay_kind: ExpansionReplayKind::TheOutput,
-                token_list,
-                ..
-            } => {
-                for token in stores.tokens(token_list).iter().copied() {
-                    builder.push(token);
-                }
-            }
-            push @ Dispatch::Push { .. } => apply_edef_push(&mut input, push),
+        unread_token(&mut input, stores, token);
+        if let Some(expanded) =
+            expander.next_expanded_token(&mut input, stores, &mut recorder, &mut hooks)?
+        {
+            builder.push(expanded);
         }
     }
     Ok(stores.finish_token_list(&mut builder))
+}
+
+fn unread_token<S>(input: &mut InputStack<S>, stores: &mut impl ExpansionState, token: Token)
+where
+    S: InputSource,
+{
+    let token_list = stores.intern_token_list(&[token]);
+    input.push_token_list(token_list, TokenListReplayKind::Inserted);
 }
 
 enum ReplacementSource<S> {
@@ -283,28 +308,9 @@ where
     }
 }
 
-fn apply_edef_push<S>(input: &mut InputStack<ReplacementSource<S>>, dispatch: Dispatch)
-where
-    S: InputSource,
-{
-    let Dispatch::Push {
-        replay_kind,
-        token_list,
-        macro_arguments,
-    } = dispatch
-    else {
-        return;
-    };
-    if replay_kind == ExpansionReplayKind::MacroBody {
-        input.push_macro_body(token_list, macro_arguments);
-    } else {
-        input.push_token_list(token_list, replay_kind.as_lex_kind());
-    }
-}
-
 fn scan_parameter_text<S>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
 ) -> Result<TokenListId, ScanToksError>
 where
     S: InputSource,
@@ -366,7 +372,7 @@ where
 
 fn scan_replacement_text<S>(
     input: &mut InputStack<S>,
-    stores: &mut (impl ExpansionState + InputOpenState),
+    stores: &mut impl ExpansionState,
 ) -> Result<TokenListId, ScanToksError>
 where
     S: InputSource,
