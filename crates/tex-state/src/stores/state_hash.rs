@@ -64,6 +64,20 @@ impl Stores {
     }
 
     #[must_use]
+    pub(crate) fn retarget_state_hash_cursor_after_node_release(
+        &self,
+        cursor: &StoreStateHashCursor,
+    ) -> StoreStateHashCursor {
+        self.assert_valid_hash_cursor(cursor);
+        let current_mark = self.nodes.watermark();
+        StoreStateHashCursor {
+            owner: self.owner.snapshot_owner(),
+            journal_pos: cursor.journal_pos,
+            node_mark: cursor.node_mark.min(current_mark),
+        }
+    }
+
+    #[must_use]
     pub(crate) fn state_hash_slice(
         &self,
         start: &StoreStateHashCursor,

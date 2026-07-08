@@ -64,6 +64,13 @@ impl StoreSnapshot {
     }
 }
 
+/// Opaque node-allocation mark for one in-progress shipout.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ShipoutNodeMark {
+    owner: SnapshotOwner,
+    node_mark: NodeArenaMark,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct SnapshotOwner {
     address: usize,
@@ -950,6 +957,25 @@ impl Stores {
         }
     }
 
+    /// Marks the start of node allocations owned by one shipout operation.
+    #[must_use]
+    pub(crate) fn shipout_node_mark(&self) -> ShipoutNodeMark {
+        ShipoutNodeMark {
+            owner: self.owner.snapshot_owner(),
+            node_mark: self.nodes.watermark(),
+        }
+    }
+
+    /// Releases epoch nodes allocated for a completed shipout page.
+    pub(crate) fn release_shipout_nodes(&mut self, mark: ShipoutNodeMark) {
+        assert_eq!(
+            mark.owner,
+            self.owner.snapshot_owner(),
+            "shipout node mark belongs to a different Stores instance"
+        );
+        self.nodes.truncate_to(mark.node_mark);
+    }
+
     /// Rolls all stores back to `snapshot` as one atomic tuple.
     pub(crate) fn rollback(&mut self, snapshot: &StoreSnapshot) {
         self.assert_valid_snapshot(snapshot);
@@ -1131,6 +1157,12 @@ impl Stores {
     #[must_use]
     pub fn testing_live_survivor_slot_count(&self) -> usize {
         self.survivors.testing_live_slot_count()
+    }
+
+    #[cfg(any(test, feature = "testing"))]
+    #[must_use]
+    pub fn testing_epoch_node_count(&self) -> usize {
+        self.nodes.testing_node_count()
     }
 
     #[cfg(any(test, feature = "testing"))]

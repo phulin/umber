@@ -947,6 +947,35 @@ impl World {
     }
 
     #[must_use]
+    pub(crate) fn retarget_state_hash_cursor_after_commit(
+        &self,
+        cursor: &WorldStateHashCursor,
+    ) -> WorldStateHashCursor {
+        let effect_pos = cursor.effect_pos.max(self.effect_base);
+        assert!(
+            effect_pos <= self.effect_pos(),
+            "World hash cursor effect position is past effect end"
+        );
+        assert!(
+            cursor.input_len <= self.inputs.len(),
+            "World hash cursor input length is past input end"
+        );
+        assert!(
+            cursor.shell_escape_len <= self.shell_escapes.len(),
+            "World hash cursor shell-escape length is past shell-escape end"
+        );
+        WorldStateHashCursor {
+            effect_pos,
+            stream_bufs: cursor.stream_bufs.clone(),
+            rng: cursor.rng,
+            job_clock: cursor.job_clock,
+            shell_escape_policy: cursor.shell_escape_policy,
+            input_len: cursor.input_len,
+            shell_escape_len: cursor.shell_escape_len,
+        }
+    }
+
+    #[must_use]
     pub(crate) fn effect_records_since(&self, cursor: &WorldStateHashCursor) -> &[EffectRecord] {
         assert!(
             cursor.effect_pos >= self.effect_base,

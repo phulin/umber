@@ -29,14 +29,15 @@ use crate::scaled::Scaled;
 use crate::state_hash::{INITIAL_STATE_HASH, StateHasher, combine};
 use crate::stores::StoreStateHashCursor;
 use crate::stores::{
-    FontParameterError, GroupKind, GroupMismatch, PrepareMagDiagnostic, StoreSnapshot, Stores,
+    FontParameterError, GroupKind, GroupMismatch, PrepareMagDiagnostic, ShipoutNodeMark,
+    StoreSnapshot, Stores,
 };
 use crate::token::{Catcode, Token};
 use crate::token_store::TokenListBuilder;
 use crate::world::{
-    EffectPos, EffectRecord, JobClock, PrintSink, ShellEscapePolicy, ShellEscapeRecord,
-    StreamBufState, StreamSlot, World, WorldError, WorldSnapshot, WorldStateHashCursor,
-    install_job_clock_params,
+    ContentHash, EffectPos, EffectRecord, JobClock, PrintSink, ShellEscapePolicy,
+    ShellEscapeRecord, StreamBufState, StreamSlot, World, WorldError, WorldSnapshot,
+    WorldStateHashCursor, install_job_clock_params,
 };
 use std::hash::BuildHasher;
 #[cfg(any(test, feature = "testing", feature = "shadow"))]
@@ -161,6 +162,16 @@ pub struct Snapshot {
     interaction_mode: InteractionMode,
     state_hash: u64,
     state_hash_base: StateHashBase,
+}
+
+/// Opaque state mark for one in-progress shipout operation.
+///
+/// The mark can only be consumed by [`Universe::commit_shipout`]; it does not
+/// expose raw node-arena release or rollback machinery.
+#[derive(Debug)]
+pub struct ShipoutBoundary {
+    owner: SnapshotOwner,
+    node_mark: ShipoutNodeMark,
 }
 
 impl Snapshot {
@@ -313,7 +324,10 @@ impl Universe {
     /// Takes an O(1) snapshot of the whole timeline tuple.
     #[must_use]
     pub fn snapshot(&mut self) -> Snapshot {
-        let hash_base = self.state_hash_base.clone();
+        self.checkpoint_from_hash_base(self.state_hash_base.clone())
+    }
+
+    fn checkpoint_from_hash_base(&mut self, hash_base: StateHashBase) -> Snapshot {
         let world = self.world.snapshot();
         let store = self.stores.checkpoint();
         let store_cursor = Stores::state_hash_cursor_from_snapshot(&store);
@@ -346,6 +360,28 @@ impl Universe {
             state_hash,
             state_hash_base: next_hash_base,
         }
+    }
+
+    fn retarget_hash_base_after_committed_boundary(
+        &self,
+        hash_base: StateHashBase,
+    ) -> StateHashBase {
+        StateHashBase {
+            store: self
+                .stores
+                .retarget_state_hash_cursor_after_node_release(&hash_base.store),
+            world: self
+                .world
+                .retarget_state_hash_cursor_after_commit(&hash_base.world),
+            input_summary: hash_base.input_summary,
+            interaction_mode: hash_base.interaction_mode,
+            checkpoint_hash: hash_base.checkpoint_hash,
+        }
+    }
+
+    fn checkpoint_after_committed_boundary(&mut self, hash_base: StateHashBase) -> Snapshot {
+        let hash_base = self.retarget_hash_base_after_committed_boundary(hash_base);
+        self.checkpoint_from_hash_base(hash_base)
     }
 
     /// Rolls the whole timeline back to `snapshot` atomically.
@@ -464,10 +500,49 @@ impl Universe {
         &mut self.world
     }
 
-    /// Commits an effect prefix after advancing the semantic checkpoint hash.
+    /// Marks the start of node allocations owned by one in-progress shipout.
+    #[must_use]
+    pub fn begin_shipout(&self) -> ShipoutBoundary {
+        ShipoutBoundary {
+            owner: self.owner.snapshot_owner(),
+            node_mark: self.stores.shipout_node_mark(),
+        }
+    }
+
+    /// Stores a shipped page artifact, flushes its effects, releases its
+    /// shipout-local epoch nodes, and advances the checkpoint as one boundary.
+    pub fn commit_shipout(
+        &mut self,
+        boundary: ShipoutBoundary,
+        artifact_bytes: &[u8],
+        effect_pos: EffectPos,
+    ) -> Result<ContentHash, WorldError> {
+        assert_eq!(
+            boundary.owner,
+            self.owner.snapshot_owner(),
+            "shipout boundary belongs to a different Universe instance"
+        );
+
+        let hash_base = self.state_hash_base.clone();
+        let hash = self.world.store_artifact(artifact_bytes)?;
+        if let Err(err) = self.world.commit_effects(effect_pos) {
+            self.state_hash_base = self.retarget_hash_base_after_committed_boundary(hash_base);
+            return Err(err);
+        }
+        self.stores.release_shipout_nodes(boundary.node_mark);
+        let _checkpoint = self.checkpoint_after_committed_boundary(hash_base);
+        Ok(hash)
+    }
+
+    /// Commits an effect prefix and advances the checkpoint after the prefix is dropped.
     pub fn commit_effects(&mut self, effect_pos: EffectPos) -> Result<(), WorldError> {
-        let _checkpoint = self.snapshot();
-        self.world.commit_effects(effect_pos)
+        let hash_base = self.state_hash_base.clone();
+        if let Err(err) = self.world.commit_effects(effect_pos) {
+            self.state_hash_base = self.retarget_hash_base_after_committed_boundary(hash_base);
+            return Err(err);
+        }
+        let _checkpoint = self.checkpoint_after_committed_boundary(hash_base);
+        Ok(())
     }
 
     /// Records the current lexer-owned input stack state for the next snapshot.
@@ -1071,6 +1146,12 @@ impl Universe {
     #[must_use]
     pub fn testing_live_survivor_slot_count(&self) -> usize {
         self.stores.testing_live_survivor_slot_count()
+    }
+
+    #[cfg(any(test, feature = "testing"))]
+    #[must_use]
+    pub fn testing_epoch_node_count(&self) -> usize {
+        self.stores.testing_epoch_node_count()
     }
 
     #[cfg(any(test, feature = "testing"))]

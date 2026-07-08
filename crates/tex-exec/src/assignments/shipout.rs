@@ -34,6 +34,7 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
+    let boundary = stores.begin_shipout();
     let node = scan_required_box_node(input, stores, hooks)?;
     let pending_effects = pending_page_effects(stores.world().effect_records());
     let counts = page_counts(stores);
@@ -64,10 +65,8 @@ where
         effects,
     };
     let bytes = artifact.to_bytes();
-    let hash = stores.world_mut().store_artifact(&bytes)?;
     let effect_pos = stores.world().effect_pos();
-    stores.commit_effects(effect_pos)?;
-    let _checkpoint = stores.snapshot();
+    let hash = stores.commit_shipout(boundary, &bytes, effect_pos)?;
     Ok(hash)
 }
 

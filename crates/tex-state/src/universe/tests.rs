@@ -3,7 +3,7 @@ use crate::font::NULL_FONT;
 use crate::glue::{GlueSpec, Order};
 use crate::macro_store::MacroMeaning;
 use crate::meaning::{Meaning, MeaningFlags};
-use crate::node::{BoxNode, BoxNodeFields, Node, Sign};
+use crate::node::{BoxNode, BoxNodeFields, KernKind, Node, Sign};
 use crate::scaled::{GlueSetRatio, Scaled};
 use crate::token::{Catcode, Token};
 use crate::world::{ContentHash, JobClock, PrintSink, StreamSlot, World};
@@ -99,6 +99,74 @@ fn rollback_restores_world_inputs_stream_buffers_and_rng() {
             .is_none()
     );
     assert_eq!(universe.world_mut().next_random_u64(), random);
+}
+
+#[test]
+fn shipout_commit_flushes_releases_then_checkpoints() {
+    let mut universe = Universe::new();
+    let base = universe.snapshot();
+    let boundary = universe.begin_shipout();
+    let children = universe.freeze_node_list(&[Node::Kern {
+        amount: Scaled::from_raw(7),
+        kind: KernKind::Explicit,
+    }]);
+    let page = Node::HList(BoxNode::new(BoxNodeFields {
+        width: Scaled::from_raw(7),
+        height: Scaled::from_raw(0),
+        depth: Scaled::from_raw(0),
+        shift: Scaled::from_raw(0),
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children,
+    }));
+    assert!(matches!(page, Node::HList(_)));
+    assert_eq!(universe.testing_epoch_node_count(), 1);
+
+    universe
+        .world_mut()
+        .write_text(PrintSink::TerminalAndLog, "shipout\n");
+    let effect_pos = universe.world().effect_pos();
+    let hash = universe
+        .commit_shipout(boundary, b"detached page artifact", effect_pos)
+        .expect("shipout commit succeeds");
+
+    assert_eq!(hash, ContentHash::from_bytes(b"detached page artifact"));
+    assert!(universe.world().effect_records().is_empty());
+    assert_eq!(
+        universe.world().memory_terminal_output(),
+        Some(&b"shipout\n"[..])
+    );
+    assert_eq!(universe.testing_epoch_node_count(), 0);
+    assert_eq!(universe.snapshot().state_hash(), base.state_hash());
+}
+
+#[test]
+fn repeated_shipout_commits_do_not_retain_epoch_page_nodes() {
+    let mut universe = Universe::new();
+
+    for page in 0..32 {
+        let boundary = universe.begin_shipout();
+        let children = universe.freeze_node_list(&[Node::Kern {
+            amount: Scaled::from_raw(page),
+            kind: KernKind::Explicit,
+        }]);
+        let _page = Node::HList(BoxNode::new(BoxNodeFields {
+            width: Scaled::from_raw(page),
+            height: Scaled::from_raw(0),
+            depth: Scaled::from_raw(0),
+            shift: Scaled::from_raw(0),
+            glue_set: GlueSetRatio::ZERO,
+            glue_sign: Sign::Normal,
+            glue_order: Order::Normal,
+            children,
+        }));
+        let effect_pos = universe.world().effect_pos();
+        universe
+            .commit_shipout(boundary, format!("page {page}").as_bytes(), effect_pos)
+            .expect("shipout commit succeeds");
+        assert_eq!(universe.testing_epoch_node_count(), 0);
+    }
 }
 
 #[test]

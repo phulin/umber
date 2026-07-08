@@ -8,7 +8,7 @@ use crate::node::Node;
 use crate::survivor::SurvivorArena;
 
 /// A rollback watermark for the epoch node arena.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct NodeArenaMark {
     nodes: u32,
 }

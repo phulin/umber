@@ -427,12 +427,13 @@ pub struct Snapshot {
   behind `Universe::snapshot`, `Universe::rollback`, and the liveness-checking
   `Universe` write facades.
 - **Commit barrier = shipout**: page artifact serialized and stored through
-  `World`, effects flushed, snapshots older than the last live editing anchor
-  dropped. The flushed effect prefix is dropped too, leaving only the
+  `World`, effects flushed, shipped-page epoch nodes released, and then the
+  next checkpoint taken through one aggregate `Universe::commit_shipout`
+  boundary. The flushed effect prefix is dropped too, leaving only the
   uncommitted suffix and the committed backend stream state. History is
-  bounded. The implemented `Universe::commit_effects` wrapper advances the
-  semantic checkpoint hash before asking `World` to drop a prefix, so later
-  shipout checkpoints never try to hash already-committed effect records.
+  bounded. The implemented boundary retargets hash cursors past dropped effect
+  prefixes before checkpointing, so later shipout checkpoints never try to hash
+  already-committed effect records or released page-local nodes.
 - **Convergence detection**: after re-executing from an edit, compare
   `state_hash` at each checkpoint with the prior run's hash at the same
   input position; on match, splice the old suffix and stop. `state_hash`

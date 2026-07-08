@@ -495,12 +495,14 @@ Responsibility: accumulate the main vertical list, fire `\output`, commit.
 - The implemented stomach shipout path consumes the same box syntax as TeX's
   box primitives (`\shipout\hbox{...}`, `\shipout\boxN`, `\shipout\copyN`),
   traverses the box tree in node order, expands deferred-write whatsits
-  through the ordinary gullet, stores the `tex-out` artifact, commits through
-  `Universe::commit_effects`, and records shipped artifact ids in executor
-  stats for the CLI/driver layer. Shipout also prepares the job magnification
-  before artifact construction and reports any recoverable `prepare_mag`
-  diagnostic through the execution diagnostic/log path; `tex-out` only sees
-  the resulting effective magnification in detached job metadata. Source-level
+  through the ordinary gullet, serializes the `tex-out` artifact, and commits
+  it through `Universe::commit_shipout`, which stores the artifact bytes,
+  flushes the committed effect prefix, releases shipout-local epoch nodes, and
+  takes the next checkpoint as one boundary. The executor records shipped
+  artifact ids for the CLI/driver layer. Shipout also prepares the job
+  magnification before artifact construction and reports any recoverable
+  `prepare_mag` diagnostic through the execution diagnostic/log path; `tex-out`
+  only sees the resulting effective magnification in detached job metadata. Source-level
   `\special{...}` is implemented as a stomach whatsit whose balanced text is
   expanded at scan time, matching TeX82's `scan_toks(false,true)` behavior;
   shipout lowers each special whatsit into a `PageEffect::Special` and a
