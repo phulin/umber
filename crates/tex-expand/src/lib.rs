@@ -16,6 +16,7 @@ use tex_state::env::banks::IntParam;
 use tex_state::ids::TokenListId;
 use tex_state::interner::Symbol;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
+use tex_state::node::Node;
 use tex_state::scaled::Scaled;
 use tex_state::stores::Stores;
 use tex_state::token::{Catcode, Token};
@@ -90,6 +91,15 @@ pub enum ExpandableOpcode {
     Fi,
 }
 
+/// Current semantic mode as reported by the engine driver.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum EngineMode {
+    #[default]
+    Vertical,
+    Horizontal,
+    Math,
+}
+
 /// Result of one expansion dispatch.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Dispatch {
@@ -118,6 +128,7 @@ pub enum ExpandError {
     ScanInt(Box<scan_int::ScanIntError>),
     ScanDimen(Box<scan_dimen::ScanDimenError>),
     UnsupportedTheTarget(Token),
+    InvalidConditionalRelation(Token),
     IncompleteIf,
     ExtraConditionalControl(&'static str),
 }
@@ -152,6 +163,9 @@ impl fmt::Display for ExpandError {
             Self::UnsupportedTheTarget(token) => {
                 write!(f, "unsupported token {token:?} after \\the")
             }
+            Self::InvalidConditionalRelation(token) => {
+                write!(f, "invalid conditional relation token {token:?}")
+            }
             Self::IncompleteIf => write!(f, "Incomplete \\if; all text was ignored after line"),
             Self::ExtraConditionalControl(name) => write!(f, "Extra \\{name}"),
         }
@@ -173,6 +187,7 @@ impl std::error::Error for ExpandError {
             | Self::NonCharacterInInputName(_)
             | Self::InputOpen { .. }
             | Self::UnsupportedTheTarget(_)
+            | Self::InvalidConditionalRelation(_)
             | Self::IncompleteIf
             | Self::ExtraConditionalControl(_) => None,
         }
@@ -189,6 +204,20 @@ pub trait ExpansionHooks<S> {
 
     fn job_name(&self) -> &str {
         "texput"
+    }
+
+    fn mode(&self) -> EngineMode {
+        EngineMode::Vertical
+    }
+
+    fn is_inner_mode(&self) -> bool {
+        false
+    }
+
+    fn input_stream_eof(&self, _stream: u8) -> bool {
+        // TODO(umber2-io): replace this documented no-stream-table stub once
+        // \openin/\closein state is represented by the driver/World layer.
+        true
     }
 }
 
@@ -501,8 +530,107 @@ where
                 ifx_equal(stores, left, right),
             )
         }
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::IfNum) => {
+            let left = scan_int::scan_int(input, stores)?.value();
+            let relation = scan_conditional_relation(input, stores)?;
+            let right = scan_int::scan_int(input, stores)?.value();
+            begin_if(
+                input,
+                stores,
+                recorder,
+                hooks,
+                compare_ordered(left, relation, right),
+            )
+        }
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::IfDim) => {
+            let left = scan_dimen::scan_dimen(input, stores)?.value();
+            let relation = scan_conditional_relation(input, stores)?;
+            let right = scan_dimen::scan_dimen(input, stores)?.value();
+            begin_if(
+                input,
+                stores,
+                recorder,
+                hooks,
+                compare_ordered(left, relation, right),
+            )
+        }
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::IfOdd) => {
+            let value = scan_int::scan_int(input, stores)?.value();
+            begin_if(input, stores, recorder, hooks, value % 2 != 0)
+        }
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::IfCase) => {
+            let selected_case = scan_int::scan_int(input, stores)?.value();
+            begin_ifcase(input, stores, recorder, hooks, selected_case)
+        }
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::IfVMode) => begin_if(
+            input,
+            stores,
+            recorder,
+            hooks,
+            hooks.mode() == EngineMode::Vertical,
+        ),
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::IfHMode) => begin_if(
+            input,
+            stores,
+            recorder,
+            hooks,
+            hooks.mode() == EngineMode::Horizontal,
+        ),
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::IfMMode) => begin_if(
+            input,
+            stores,
+            recorder,
+            hooks,
+            hooks.mode() == EngineMode::Math,
+        ),
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::IfInner) => {
+            begin_if(input, stores, recorder, hooks, hooks.is_inner_mode())
+        }
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::IfVoid) => {
+            let index = scan_register_index(input, stores)?;
+            begin_if(
+                input,
+                stores,
+                recorder,
+                hooks,
+                stores.box_reg(index).is_none(),
+            )
+        }
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::IfHBox) => {
+            let index = scan_register_index(input, stores)?;
+            begin_if(
+                input,
+                stores,
+                recorder,
+                hooks,
+                box_register_has_kind(stores, index, BoxKind::HBox),
+            )
+        }
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::IfVBox) => {
+            let index = scan_register_index(input, stores)?;
+            begin_if(
+                input,
+                stores,
+                recorder,
+                hooks,
+                box_register_has_kind(stores, index, BoxKind::VBox),
+            )
+        }
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::IfEof) => {
+            let stream = scan_stream_number(input, stores)?;
+            begin_if(
+                input,
+                stores,
+                recorder,
+                hooks,
+                hooks.input_stream_eof(stream),
+            )
+        }
         Meaning::ExpandablePrimitive(ExpandablePrimitive::Else) => {
             handle_else(input, stores, recorder, hooks)
+        }
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::Or) => {
+            handle_or(input, stores, recorder, hooks)
         }
         Meaning::ExpandablePrimitive(ExpandablePrimitive::Fi) => {
             input
@@ -542,13 +670,9 @@ pub fn dispatch_expandable_opcode(opcode: ExpandableOpcode) -> Result<(), Expand
         | ExpandableOpcode::Mark
         | ExpandableOpcode::If
         | ExpandableOpcode::Else
+        | ExpandableOpcode::Or
         | ExpandableOpcode::Fi => Ok(()),
-        ExpandableOpcode::Or => Err(unimplemented_expandable(opcode)),
     }
-}
-
-fn unimplemented_expandable(opcode: ExpandableOpcode) -> ExpandError {
-    ExpandError::UnimplementedExpandable(opcode)
 }
 
 fn expand_after<S, R, H>(
@@ -599,6 +723,26 @@ where
     Ok(Dispatch::Continue)
 }
 
+fn begin_ifcase<S, R, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Stores,
+    recorder: &mut R,
+    hooks: &mut H,
+    selected_case: i32,
+) -> Result<Dispatch, ExpandError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    let take_initial_limb = selected_case == 0;
+    input.push_condition(ConditionFrameSummary::new_ifcase(take_initial_limb));
+    if !take_initial_limb {
+        skip_ifcase_to_selected_limb(input, stores, recorder, hooks, selected_case)?;
+    }
+    Ok(Dispatch::Continue)
+}
+
 fn handle_else<S, R, H>(
     input: &mut InputStack<S>,
     stores: &mut Stores,
@@ -613,12 +757,38 @@ where
     let frame = input
         .pop_condition()
         .ok_or(ExpandError::ExtraConditionalControl("else"))?;
-    if frame.kind() != ConditionKind::If || frame.limb() == ConditionLimb::Else {
+    if matches!(frame.limb(), ConditionLimb::Else) {
         return Err(ExpandError::ExtraConditionalControl("else"));
     }
 
     let else_frame = frame.with_else_limb(!frame.any_limb_taken());
     input.push_condition(else_frame);
+    if frame.any_limb_taken() {
+        skip_to_fi(input, stores, recorder, hooks)?;
+    }
+    Ok(Dispatch::Continue)
+}
+
+fn handle_or<S, R, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Stores,
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<Dispatch, ExpandError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    let frame = input
+        .pop_condition()
+        .ok_or(ExpandError::ExtraConditionalControl("or"))?;
+    if frame.kind() != ConditionKind::IfCase || frame.limb() == ConditionLimb::Else {
+        return Err(ExpandError::ExtraConditionalControl("or"));
+    }
+
+    let next_or_count = frame.ifcase_or_count().saturating_add(1);
+    input.push_condition(frame.with_or_limb(next_or_count, false));
     if frame.any_limb_taken() {
         skip_to_fi(input, stores, recorder, hooks)?;
     }
@@ -653,10 +823,32 @@ where
     skip_until(input, stores, recorder, hooks, SkipTarget::Fi)
 }
 
+fn skip_ifcase_to_selected_limb<S, R, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Stores,
+    recorder: &mut R,
+    hooks: &mut H,
+    selected_case: i32,
+) -> Result<(), ExpandError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    skip_until(
+        input,
+        stores,
+        recorder,
+        hooks,
+        SkipTarget::IfCaseSelection(selected_case),
+    )
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SkipTarget {
     ElseOrFi,
     Fi,
+    IfCaseSelection(i32),
 }
 
 fn skip_until<S, R, H>(
@@ -688,6 +880,20 @@ where
                 move_current_if_to_else(input)?;
                 return Ok(());
             }
+            ConditionalPrimitive::Else
+                if nesting == 0 && matches!(target, SkipTarget::IfCaseSelection(_)) =>
+            {
+                move_current_ifcase_to_else(input)?;
+                return Ok(());
+            }
+            ConditionalPrimitive::Or
+                if nesting == 0
+                    && matches!(target, SkipTarget::IfCaseSelection(selected_case) if selected_case >= 0) =>
+            {
+                if move_current_ifcase_to_next_or(input, target)? {
+                    return Ok(());
+                }
+            }
             ConditionalPrimitive::Fi if nesting == 0 => {
                 input
                     .pop_condition()
@@ -697,7 +903,7 @@ where
             ConditionalPrimitive::Fi => {
                 nesting = nesting.saturating_sub(1);
             }
-            ConditionalPrimitive::Else => {}
+            ConditionalPrimitive::Else | ConditionalPrimitive::Or => {}
         }
     }
 }
@@ -713,10 +919,41 @@ fn move_current_if_to_else<S>(input: &mut InputStack<S>) -> Result<(), ExpandErr
     Ok(())
 }
 
+fn move_current_ifcase_to_next_or<S>(
+    input: &mut InputStack<S>,
+    target: SkipTarget,
+) -> Result<bool, ExpandError> {
+    let frame = input
+        .pop_condition()
+        .ok_or(ExpandError::ExtraConditionalControl("or"))?;
+    if frame.kind() != ConditionKind::IfCase || frame.limb() == ConditionLimb::Else {
+        return Err(ExpandError::ExtraConditionalControl("or"));
+    }
+    let next_or_count = frame.ifcase_or_count().saturating_add(1);
+    let current_limb_taken = matches!(
+        target,
+        SkipTarget::IfCaseSelection(selected_case) if selected_case == next_or_count as i32
+    );
+    input.push_condition(frame.with_or_limb(next_or_count, current_limb_taken));
+    Ok(current_limb_taken)
+}
+
+fn move_current_ifcase_to_else<S>(input: &mut InputStack<S>) -> Result<(), ExpandError> {
+    let frame = input
+        .pop_condition()
+        .ok_or(ExpandError::ExtraConditionalControl("else"))?;
+    if frame.kind() != ConditionKind::IfCase || frame.limb() == ConditionLimb::Else {
+        return Err(ExpandError::ExtraConditionalControl("else"));
+    }
+    input.push_condition(frame.with_else_limb(!frame.any_limb_taken()));
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ConditionalPrimitive {
     If,
     Else,
+    Or,
     Fi,
 }
 
@@ -739,9 +976,22 @@ where
             | ExpandablePrimitive::IfFalse
             | ExpandablePrimitive::If
             | ExpandablePrimitive::IfCat
-            | ExpandablePrimitive::IfX,
+            | ExpandablePrimitive::IfX
+            | ExpandablePrimitive::IfNum
+            | ExpandablePrimitive::IfDim
+            | ExpandablePrimitive::IfOdd
+            | ExpandablePrimitive::IfCase
+            | ExpandablePrimitive::IfVMode
+            | ExpandablePrimitive::IfHMode
+            | ExpandablePrimitive::IfMMode
+            | ExpandablePrimitive::IfInner
+            | ExpandablePrimitive::IfVoid
+            | ExpandablePrimitive::IfHBox
+            | ExpandablePrimitive::IfVBox
+            | ExpandablePrimitive::IfEof,
         ) => Some(ConditionalPrimitive::If),
         Meaning::ExpandablePrimitive(ExpandablePrimitive::Else) => Some(ConditionalPrimitive::Else),
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::Or) => Some(ConditionalPrimitive::Or),
         Meaning::ExpandablePrimitive(ExpandablePrimitive::Fi) => Some(ConditionalPrimitive::Fi),
         _ => None,
     }
@@ -787,6 +1037,68 @@ fn ifx_equal(stores: &Stores, left: Token, right: Token) -> bool {
         (Token::Cs(left), Token::Cs(right)) => meaning_words_ifx_equal(stores, left, right),
         _ => false,
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ConditionalRelation {
+    Less,
+    Equal,
+    Greater,
+}
+
+fn scan_conditional_relation<S>(
+    input: &mut InputStack<S>,
+    stores: &mut Stores,
+) -> Result<ConditionalRelation, ExpandError>
+where
+    S: InputSource,
+{
+    let Some(token) = next_non_space_x_token(input, stores)? else {
+        return Err(ExpandError::MissingTokenAfterPrimitive(
+            ExpandableOpcode::If,
+        ));
+    };
+    match token {
+        Token::Char { ch: '<', .. } => Ok(ConditionalRelation::Less),
+        Token::Char { ch: '=', .. } => Ok(ConditionalRelation::Equal),
+        Token::Char { ch: '>', .. } => Ok(ConditionalRelation::Greater),
+        _ => Err(ExpandError::InvalidConditionalRelation(token)),
+    }
+}
+
+fn compare_ordered<T>(left: T, relation: ConditionalRelation, right: T) -> bool
+where
+    T: Ord,
+{
+    match relation {
+        ConditionalRelation::Less => left < right,
+        ConditionalRelation::Equal => left == right,
+        ConditionalRelation::Greater => left > right,
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BoxKind {
+    HBox,
+    VBox,
+}
+
+fn box_register_has_kind(stores: &Stores, index: u16, kind: BoxKind) -> bool {
+    let Some(list) = stores.box_reg(index) else {
+        return false;
+    };
+    matches!(
+        (stores.nodes(list).first(), kind),
+        (Some(Node::HList(_)), BoxKind::HBox) | (Some(Node::VList(_)), BoxKind::VBox)
+    )
+}
+
+fn scan_stream_number<S>(input: &mut InputStack<S>, stores: &mut Stores) -> Result<u8, ExpandError>
+where
+    S: InputSource,
+{
+    let value = scan_int::scan_int(input, stores)?.value();
+    Ok(value.clamp(0, 15) as u8)
 }
 
 fn meaning_words_ifx_equal(stores: &Stores, left: Symbol, right: Symbol) -> bool {
@@ -1294,14 +1606,17 @@ fn push_noexpand_token<S>(input: &mut InputStack<S>, stores: &mut Stores, token:
 #[cfg(test)]
 mod tests {
     use super::{
-        ExpandableOpcode, ExpansionHooks, NoopRecorder, ReadRecorder, dispatch,
+        EngineMode, ExpandableOpcode, ExpansionHooks, NoopRecorder, ReadRecorder, dispatch,
         dispatch_expandable_opcode, get_x_token, get_x_token_with_hooks, get_x_token_with_recorder,
     };
     use std::collections::HashMap;
     use tex_lex::{InputStack, MemoryInput, TokenListReplayKind};
+    use tex_state::glue::Order;
     use tex_state::interner::Symbol;
     use tex_state::macro_store::MacroMeaning;
     use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
+    use tex_state::node::{BoxNode, BoxNodeFields, Node, Sign};
+    use tex_state::scaled::Scaled;
     use tex_state::stores::Stores;
     use tex_state::token::{Catcode, Token};
 
@@ -1363,30 +1678,7 @@ mod tests {
 
         for opcode in opcodes {
             let result = dispatch_expandable_opcode(opcode);
-            match opcode {
-                ExpandableOpcode::Macro
-                | ExpandableOpcode::ExpandAfter
-                | ExpandableOpcode::NoExpand
-                | ExpandableOpcode::CsName
-                | ExpandableOpcode::EndCsName
-                | ExpandableOpcode::String
-                | ExpandableOpcode::Number
-                | ExpandableOpcode::RomanNumeral
-                | ExpandableOpcode::Meaning
-                | ExpandableOpcode::The
-                | ExpandableOpcode::Input
-                | ExpandableOpcode::EndInput
-                | ExpandableOpcode::JobName
-                | ExpandableOpcode::FontName
-                | ExpandableOpcode::Mark
-                | ExpandableOpcode::If
-                | ExpandableOpcode::Else
-                | ExpandableOpcode::Fi => assert!(result.is_ok()),
-                _ => assert!(matches!(
-                    result,
-                    Err(super::ExpandError::UnimplementedExpandable(found)) if found == opcode
-                )),
-            }
+            assert!(result.is_ok(), "{opcode:?} should be covered");
         }
     }
 
@@ -2383,6 +2675,206 @@ mod tests {
         assert_eq!(next_expanded_chars(&mut input, &mut stores), "yy");
     }
 
+    #[test]
+    fn ifnum_and_ifdim_compare_scanned_values() {
+        let mut stores = Stores::new();
+        let (_, _, else_cs, fi) = conditional_primitives(&mut stores);
+        let ifnum = expandable_primitive(&mut stores, "ifnum", ExpandablePrimitive::IfNum);
+        let ifdim = expandable_primitive(&mut stores, "ifdim", ExpandablePrimitive::IfDim);
+        stores.set_count(2, 7);
+        stores.set_dimen(3, Scaled::from_raw(Scaled::UNITY));
+        let count = stores.intern("count");
+        let dimen = stores.intern("dimen");
+        let list = stores.intern_token_list(&[
+            Token::Cs(ifnum),
+            Token::Cs(count),
+            char_token('2'),
+            char_token('>'),
+            char_token('6'),
+            char_token('y'),
+            Token::Cs(else_cs),
+            char_token('n'),
+            Token::Cs(fi),
+            Token::Cs(ifdim),
+            Token::Cs(dimen),
+            char_token('3'),
+            char_token('='),
+            char_token('1'),
+            char_token('p'),
+            char_token('t'),
+            char_token('y'),
+            Token::Cs(else_cs),
+            char_token('n'),
+            Token::Cs(fi),
+        ]);
+        let mut input = InputStack::new(MemoryInput::new(""));
+        input.push_token_list(list, TokenListReplayKind::Inserted);
+
+        assert_eq!(next_expanded_chars(&mut input, &mut stores), "yy");
+    }
+
+    #[test]
+    fn ifodd_and_ifcase_select_expected_limb() {
+        let mut stores = Stores::new();
+        let (_, _, else_cs, fi) = conditional_primitives(&mut stores);
+        let or_cs = expandable_primitive(&mut stores, "or", ExpandablePrimitive::Or);
+        let ifodd = expandable_primitive(&mut stores, "ifodd", ExpandablePrimitive::IfOdd);
+        let ifcase = expandable_primitive(&mut stores, "ifcase", ExpandablePrimitive::IfCase);
+        let list = stores.intern_token_list(&[
+            Token::Cs(ifodd),
+            char_token('-'),
+            char_token('3'),
+            char_token('y'),
+            Token::Cs(else_cs),
+            char_token('n'),
+            Token::Cs(fi),
+            Token::Cs(ifcase),
+            char_token('2'),
+            char_token('z'),
+            Token::Cs(or_cs),
+            char_token('o'),
+            Token::Cs(or_cs),
+            char_token('t'),
+            Token::Cs(or_cs),
+            char_token('x'),
+            Token::Cs(else_cs),
+            char_token('e'),
+            Token::Cs(fi),
+        ]);
+        let mut input = InputStack::new(MemoryInput::new(""));
+        input.push_token_list(list, TokenListReplayKind::Inserted);
+
+        assert_eq!(next_expanded_chars(&mut input, &mut stores), "yt");
+    }
+
+    #[test]
+    fn mode_predicates_use_driver_hook() {
+        let mut stores = Stores::new();
+        let (_, _, else_cs, fi) = conditional_primitives(&mut stores);
+        for (name, primitive) in [
+            ("ifvmode", ExpandablePrimitive::IfVMode),
+            ("ifhmode", ExpandablePrimitive::IfHMode),
+            ("ifmmode", ExpandablePrimitive::IfMMode),
+            ("ifinner", ExpandablePrimitive::IfInner),
+        ] {
+            expandable_primitive(&mut stores, name, primitive);
+        }
+        let list = stores.intern_token_list(&[
+            Token::Cs(stores.symbol("ifhmode").expect("ifhmode")),
+            char_token('h'),
+            Token::Cs(else_cs),
+            char_token('n'),
+            Token::Cs(fi),
+            Token::Cs(stores.symbol("ifvmode").expect("ifvmode")),
+            char_token('n'),
+            Token::Cs(else_cs),
+            char_token('v'),
+            Token::Cs(fi),
+            Token::Cs(stores.symbol("ifinner").expect("ifinner")),
+            char_token('i'),
+            Token::Cs(else_cs),
+            char_token('n'),
+            Token::Cs(fi),
+        ]);
+        let mut input = InputStack::new(MemoryInput::new(""));
+        input.push_token_list(list, TokenListReplayKind::Inserted);
+        let mut hooks = MemoryHooks::new("main")
+            .with_mode(EngineMode::Horizontal)
+            .with_inner(true);
+
+        assert_eq!(
+            next_expanded_chars_with_hooks(&mut input, &mut stores, &mut hooks),
+            "hvi"
+        );
+    }
+
+    #[test]
+    fn box_predicates_read_box_register_state() {
+        let mut stores = Stores::new();
+        let (_, _, else_cs, fi) = conditional_primitives(&mut stores);
+        let ifvoid = expandable_primitive(&mut stores, "ifvoid", ExpandablePrimitive::IfVoid);
+        let ifhbox = expandable_primitive(&mut stores, "ifhbox", ExpandablePrimitive::IfHBox);
+        let ifvbox = expandable_primitive(&mut stores, "ifvbox", ExpandablePrimitive::IfVBox);
+        let hbox = boxed_list(&mut stores, BoxKindForTest::HBox);
+        let vbox = boxed_list(&mut stores, BoxKindForTest::VBox);
+        stores.set_box_reg(1, hbox);
+        stores.set_box_reg(2, vbox);
+        let list = stores.intern_token_list(&[
+            Token::Cs(ifvoid),
+            char_token('0'),
+            char_token('v'),
+            Token::Cs(else_cs),
+            char_token('n'),
+            Token::Cs(fi),
+            Token::Cs(ifhbox),
+            char_token('1'),
+            char_token('h'),
+            Token::Cs(else_cs),
+            char_token('n'),
+            Token::Cs(fi),
+            Token::Cs(ifvbox),
+            char_token('2'),
+            char_token('b'),
+            Token::Cs(else_cs),
+            char_token('n'),
+            Token::Cs(fi),
+            Token::Cs(ifhbox),
+            char_token('2'),
+            char_token('n'),
+            Token::Cs(else_cs),
+            char_token('x'),
+            Token::Cs(fi),
+        ]);
+        let mut input = InputStack::new(MemoryInput::new(""));
+        input.push_token_list(list, TokenListReplayKind::Inserted);
+
+        assert_eq!(next_expanded_chars(&mut input, &mut stores), "vhbx");
+    }
+
+    #[test]
+    fn ifeof_uses_hook_and_noop_hook_reports_eof_stub() {
+        let mut stores = Stores::new();
+        let (_, _, else_cs, fi) = conditional_primitives(&mut stores);
+        let ifeof = expandable_primitive(&mut stores, "ifeof", ExpandablePrimitive::IfEof);
+        let list = stores.intern_token_list(&[
+            Token::Cs(ifeof),
+            char_token('1'),
+            char_token('n'),
+            Token::Cs(else_cs),
+            char_token('o'),
+            Token::Cs(fi),
+            Token::Cs(ifeof),
+            char_token('2'),
+            char_token('e'),
+            Token::Cs(else_cs),
+            char_token('n'),
+            Token::Cs(fi),
+        ]);
+        let mut input = InputStack::new(MemoryInput::new(""));
+        input.push_token_list(list, TokenListReplayKind::Inserted);
+        let mut hooks = MemoryHooks::new("main")
+            .with_eof(1, false)
+            .with_eof(2, true);
+
+        assert_eq!(
+            next_expanded_chars_with_hooks(&mut input, &mut stores, &mut hooks),
+            "oe"
+        );
+
+        let list = stores.intern_token_list(&[
+            Token::Cs(ifeof),
+            char_token('9'),
+            char_token('e'),
+            Token::Cs(else_cs),
+            char_token('n'),
+            Token::Cs(fi),
+        ]);
+        let mut input = InputStack::new(MemoryInput::new(""));
+        input.push_token_list(list, TokenListReplayKind::Inserted);
+
+        assert_eq!(next_expanded_chars(&mut input, &mut stores), "e");
+    }
+
     fn next_expanded_chars(input: &mut InputStack<MemoryInput>, stores: &mut Stores) -> String {
         let mut out = String::new();
         while let Some(token) = get_x_token(input, stores).expect("expansion should succeed") {
@@ -2437,10 +2929,34 @@ mod tests {
         let cat = match ch {
             '{' => Catcode::BeginGroup,
             '}' => Catcode::EndGroup,
-            '0'..='9' | '[' | ']' | '!' => Catcode::Other,
+            '0'..='9' | '[' | ']' | '!' | '<' | '=' | '>' | '-' => Catcode::Other,
             _ => Catcode::Letter,
         };
         Token::Char { ch, cat }
+    }
+
+    #[derive(Clone, Copy)]
+    enum BoxKindForTest {
+        HBox,
+        VBox,
+    }
+
+    fn boxed_list(stores: &mut Stores, kind: BoxKindForTest) -> tex_state::ids::NodeListId {
+        let empty = stores.freeze_node_list(&[]);
+        let box_node = BoxNode::new(BoxNodeFields {
+            width: Scaled::from_raw(0),
+            height: Scaled::from_raw(0),
+            depth: Scaled::from_raw(0),
+            shift: Scaled::from_raw(0),
+            glue_set: 0.0,
+            glue_sign: Sign::Normal,
+            glue_order: Order::Normal,
+            children: empty,
+        });
+        match kind {
+            BoxKindForTest::HBox => stores.freeze_node_list(&[Node::HList(box_node)]),
+            BoxKindForTest::VBox => stores.freeze_node_list(&[Node::VList(box_node)]),
+        }
     }
 
     fn expandable_primitive(
@@ -2473,6 +2989,9 @@ mod tests {
         job_name: String,
         sources: HashMap<String, String>,
         opened: Vec<String>,
+        mode: EngineMode,
+        inner: bool,
+        eof: HashMap<u8, bool>,
     }
 
     impl MemoryHooks {
@@ -2481,11 +3000,29 @@ mod tests {
                 job_name: job_name.to_owned(),
                 sources: HashMap::new(),
                 opened: Vec::new(),
+                mode: EngineMode::Vertical,
+                inner: false,
+                eof: HashMap::new(),
             }
         }
 
         fn with_source(mut self, name: &str, input: &str) -> Self {
             self.sources.insert(name.to_owned(), input.to_owned());
+            self
+        }
+
+        fn with_mode(mut self, mode: EngineMode) -> Self {
+            self.mode = mode;
+            self
+        }
+
+        fn with_inner(mut self, inner: bool) -> Self {
+            self.inner = inner;
+            self
+        }
+
+        fn with_eof(mut self, stream: u8, eof: bool) -> Self {
+            self.eof.insert(stream, eof);
             self
         }
     }
@@ -2502,6 +3039,18 @@ mod tests {
 
         fn job_name(&self) -> &str {
             &self.job_name
+        }
+
+        fn mode(&self) -> EngineMode {
+            self.mode
+        }
+
+        fn is_inner_mode(&self) -> bool {
+            self.inner
+        }
+
+        fn input_stream_eof(&self, stream: u8) -> bool {
+            self.eof.get(&stream).copied().unwrap_or(true)
         }
     }
 }

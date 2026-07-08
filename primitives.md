@@ -173,26 +173,26 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 
 ## Conditionals
 
-- [ ] `\else` - Starts the false branch of a conditional. Core two-limb handling exists for implemented predicates; full skip-control diagnostics remain pending.
-- [ ] `\fi` - Ends a conditional. Core two-limb handling exists for implemented predicates; full skip-control diagnostics remain pending.
+- [ ] `\else` - Starts the false branch of a conditional. Core handling exists for implemented `\if` and `\ifcase` predicates; full skip-control diagnostics remain pending.
+- [ ] `\fi` - Ends a conditional. Core handling exists for implemented `\if` and `\ifcase` predicates; full skip-control diagnostics remain pending.
 - [x] `\if` - Compares two expanded unexpandable character tokens by character code.
-- [ ] `\ifcase` - Selects among numeric conditional branches.
+- [x] `\ifcase` - Selects among numeric conditional branches using the shared integer scanner; full skip-control diagnostics remain pending.
 - [x] `\ifcat` - Compares two expanded unexpandable tokens by category code.
-- [ ] `\ifdim` - Compares two dimensions.
-- [ ] `\ifeof` - Tests whether an input stream is at end of file.
+- [x] `\ifdim` - Compares two dimensions using the shared dimension scanner.
+- [x] `\ifeof` - Tests through a driver hook; the no-driver default is a documented EOF stub until input stream state exists.
 - [x] `\iffalse` - Starts a conditional that is always false.
-- [ ] `\ifhbox` - Tests whether a box register contains an hbox.
-- [ ] `\ifhmode` - Tests whether TeX is in horizontal mode.
-- [ ] `\ifinner` - Tests whether TeX is in an internal mode.
-- [ ] `\ifmmode` - Tests whether TeX is in math mode.
-- [ ] `\ifnum` - Compares two integers.
-- [ ] `\ifodd` - Tests whether an integer is odd.
+- [x] `\ifhbox` - Tests readable box register state for an hlist box.
+- [x] `\ifhmode` - Tests the driver-supplied mode query.
+- [x] `\ifinner` - Tests the driver-supplied inner-mode query.
+- [x] `\ifmmode` - Tests the driver-supplied mode query.
+- [x] `\ifnum` - Compares two integers using the shared integer scanner.
+- [x] `\ifodd` - Tests whether an integer scanned by the shared integer scanner is odd.
 - [x] `\iftrue` - Starts a conditional that is always true.
-- [ ] `\ifvbox` - Tests whether a box register contains a vbox.
-- [ ] `\ifvmode` - Tests whether TeX is in vertical mode.
-- [ ] `\ifvoid` - Tests whether a box register is void.
+- [x] `\ifvbox` - Tests readable box register state for a vlist box.
+- [x] `\ifvmode` - Tests the driver-supplied mode query; the no-driver default is outer vertical mode.
+- [x] `\ifvoid` - Tests readable box register state for TeX's void box.
 - [x] `\ifx` - Compares two unexpanded tokens by meaning, including hash-consed macro definition identity.
-- [ ] `\or` - Separates branches in `\ifcase`.
+- [ ] `\or` - Separates branches in implemented `\ifcase`; full skip-control diagnostics remain pending.
 
 ## Macros, Expansion, And Grouping
 
