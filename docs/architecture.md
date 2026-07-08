@@ -104,6 +104,9 @@ supply.
   pseudo-files, and editor-supplied buffers (the incremental case). All
   file access goes through `World`; every read is content-addressed and
   recorded so a snapshot pins exactly what it consumed (`core_state.md` §8).
+  The concrete file source used by `tex-lex` is `WorldInput`, built from a
+  `World::read_file`/`\openin` `FileContent`; `tex-lex` itself owns line
+  normalization and frame state, not host file handles.
 - **Decoding**: UTF-8 native. Legacy 8-bit input is a per-source decoder
   selected up front, not a per-character branch in the lexer.
 - **The input stack** is the one piece of pipeline-owned state the snapshot
@@ -136,11 +139,12 @@ supply.
   to turn into `\par`, and owns an
   `InputStack` whose `InputSummary` records resume-complete lexer-owned
   source frame state and token-list replay progress. Token-list frames read
-  frozen content only through `Universe::tokens`; source reopening by content
-  hash remains future `World` integration and is deliberately outside
-  `tex-lex`'s local `InputSource` trait. `\endinput` is represented as a
-  source-frame flag that lets the lexer finish the current normalized line and
-  then pop that source without asking expansion to manage source internals.
+  frozen content only through `Universe::tokens`; durable source identity is
+  the `World` input record captured in `Universe` snapshots, and f26.5 will
+  finish applying those records to full source reopening. `\endinput` is
+  represented as a source-frame flag that lets the lexer finish the current
+  normalized line and then pop that source without asking expansion to manage
+  source internals.
 
 ## 4. Lexer (the eyes)
 

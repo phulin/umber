@@ -1612,7 +1612,7 @@ impl MemoryHooks {
 }
 
 impl ExpansionHooks<MemoryInput> for MemoryHooks {
-    fn open_input(&mut self, name: &str) -> Result<MemoryInput, String> {
+    fn open_input(&mut self, _stores: &mut Universe, name: &str) -> Result<MemoryInput, String> {
         let source = self
             .sources
             .get(name)

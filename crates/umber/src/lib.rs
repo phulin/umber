@@ -48,7 +48,7 @@ pub fn run_memory_with_stores(
 struct MemoryRunHooks;
 
 impl ExpansionHooks<MemoryInput> for MemoryRunHooks {
-    fn open_input(&mut self, name: &str) -> Result<MemoryInput, String> {
+    fn open_input(&mut self, _stores: &mut Universe, name: &str) -> Result<MemoryInput, String> {
         Err(format!("memory run cannot open input {name}"))
     }
 

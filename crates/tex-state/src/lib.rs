@@ -18,10 +18,14 @@ pub mod survivor;
 pub mod token;
 pub mod token_store;
 mod universe;
+pub mod world;
 
 pub use stores::{GroupKind, GroupMismatch, PrepareMagDiagnostic};
-pub use universe::{
-    EffectPos, InputSummary, InteractionMode, RngState, Snapshot, StreamBufState, Universe, World,
+pub use universe::{InputSummary, InteractionMode, Snapshot, Universe};
+pub use world::{
+    ContentHash, EffectPos, FileContent, InputRecord, JobClock, PrintSink, RngState,
+    ShellEscapePolicy, ShellEscapeRecord, StreamBufState, StreamSlot, World, WorldError,
+    WorldSnapshot,
 };
 
 #[cfg(test)]

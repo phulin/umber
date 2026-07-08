@@ -1,25 +1,22 @@
-use std::fs::File;
-use std::io;
 use std::path::{Path, PathBuf};
 
 use tex_exec::try_execute_assignment;
 use tex_expand::{ExpandError, ExpansionHooks, get_x_token_with_hooks};
-use tex_lex::{FileInput, InputStack, LexError};
-use tex_state::Universe;
+use tex_lex::{InputStack, LexError, WorldInput};
 use tex_state::env::banks::IntParam;
 use tex_state::meaning::Meaning;
 use tex_state::token::Token;
+use tex_state::{Universe, World, WorldError};
 
 use crate::format_token;
 
-#[allow(clippy::disallowed_methods)] // CLI entry point opens the user-requested file.
 pub fn expand_dump(path: &str) -> Result<(), ExpandDumpError> {
     let path = Path::new(path);
-    let file = File::open(path)?;
-    let mut stores = Universe::new();
+    let mut stores = Universe::with_world(World::real());
+    let content = stores.world_mut().read_file(path)?;
     install_dump_primitives(&mut stores);
 
-    let input = InputStack::new(FileInput::from_file(file));
+    let input = InputStack::new(WorldInput::from_content(content));
     let mut driver = DumpDriver {
         input,
         stores,
@@ -29,7 +26,7 @@ pub fn expand_dump(path: &str) -> Result<(), ExpandDumpError> {
 }
 
 struct DumpDriver {
-    input: InputStack<FileInput>,
+    input: InputStack<WorldInput>,
     stores: Universe,
     hooks: FileHooks,
 }
@@ -54,7 +51,6 @@ impl DumpDriver {
     }
 }
 
-#[allow(clippy::disallowed_methods)] // CLI driver opens user-requested TeX inputs.
 struct FileHooks {
     base_dir: PathBuf,
     job_name: String,
@@ -72,15 +68,16 @@ impl FileHooks {
     }
 }
 
-impl ExpansionHooks<FileInput> for FileHooks {
-    #[allow(clippy::disallowed_methods)] // CLI driver opens files requested by \input.
-    fn open_input(&mut self, name: &str) -> Result<FileInput, String> {
+impl ExpansionHooks<WorldInput> for FileHooks {
+    fn open_input(&mut self, stores: &mut Universe, name: &str) -> Result<WorldInput, String> {
         let mut path = self.base_dir.join(name);
         if path.extension().is_none() {
             path.set_extension("tex");
         }
-        File::open(&path)
-            .map(FileInput::from_file)
+        stores
+            .world_mut()
+            .read_file(&path)
+            .map(WorldInput::from_content)
             .map_err(|err| format!("{} ({err})", path.display()))
     }
 
@@ -124,7 +121,7 @@ fn install_dump_primitives(stores: &mut Universe) {
 
 #[derive(Debug)]
 pub enum ExpandDumpError {
-    Io(io::Error),
+    World(WorldError),
     Exec(tex_exec::ExecError),
     Lex(LexError),
     Expand(ExpandError),
@@ -133,7 +130,7 @@ pub enum ExpandDumpError {
 impl std::fmt::Display for ExpandDumpError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Io(err) => write!(f, "{err}"),
+            Self::World(err) => write!(f, "{err}"),
             Self::Exec(err) => write!(f, "{err}"),
             Self::Lex(err) => write!(f, "{err}"),
             Self::Expand(err) => write!(f, "{err}"),
@@ -144,7 +141,7 @@ impl std::fmt::Display for ExpandDumpError {
 impl std::error::Error for ExpandDumpError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Io(err) => Some(err),
+            Self::World(err) => Some(err),
             Self::Exec(err) => Some(err),
             Self::Lex(err) => Some(err),
             Self::Expand(err) => Some(err),
@@ -152,9 +149,9 @@ impl std::error::Error for ExpandDumpError {
     }
 }
 
-impl From<io::Error> for ExpandDumpError {
-    fn from(value: io::Error) -> Self {
-        Self::Io(value)
+impl From<WorldError> for ExpandDumpError {
+    fn from(value: WorldError) -> Self {
+        Self::World(value)
     }
 }
 

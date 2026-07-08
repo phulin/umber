@@ -2,10 +2,10 @@ use std::process::Command;
 
 use refexec::{RefTex, RunOpts};
 use test_support::{assert_matches_fixture, normalize};
-use tex_lex::{FileInput, Lexer};
-use tex_state::Universe;
+use tex_lex::{Lexer, WorldInput};
 use tex_state::env::banks::IntParam;
 use tex_state::token::{Catcode, Token};
+use tex_state::{Universe, World};
 
 #[test]
 fn exits_successfully() {
@@ -256,19 +256,25 @@ fn lex_invalid_character_fixture() -> String {
     actual
 }
 
-#[allow(clippy::disallowed_methods)] // host-side corpus fixture open.
-fn lexer_fixture(case: &str) -> (Lexer<FileInput>, Universe) {
+fn lexer_fixture(case: &str) -> (Lexer<WorldInput>, Universe) {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .join("tests/corpus/lexer_dynamic")
         .join(format!("{case}.tex"));
-    let file = std::fs::File::open(&path).expect("open dynamic lexer fixture");
-    let mut stores = Universe::new();
+    let mut stores = Universe::with_world(World::real());
+    let content = stores
+        .world_mut()
+        .read_file(&path)
+        .expect("open dynamic lexer fixture");
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
-    (Lexer::new(FileInput::from_file(file)), stores)
+    (Lexer::new(WorldInput::from_content(content)), stores)
 }
 
-fn push_remaining_tokens(actual: &mut String, lexer: &mut Lexer<FileInput>, stores: &mut Universe) {
+fn push_remaining_tokens(
+    actual: &mut String,
+    lexer: &mut Lexer<WorldInput>,
+    stores: &mut Universe,
+) {
     while let Some(token) = lexer
         .next_token(stores)
         .expect("dynamic lexer fixture should succeed")
@@ -277,7 +283,7 @@ fn push_remaining_tokens(actual: &mut String, lexer: &mut Lexer<FileInput>, stor
     }
 }
 
-fn push_next_token(actual: &mut String, lexer: &mut Lexer<FileInput>, stores: &mut Universe) {
+fn push_next_token(actual: &mut String, lexer: &mut Lexer<WorldInput>, stores: &mut Universe) {
     let token = lexer
         .next_token(stores)
         .expect("dynamic lexer fixture should succeed")

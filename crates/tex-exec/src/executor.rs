@@ -144,7 +144,7 @@ impl<S> ExpansionHooks<S> for NoopExecHooks
 where
     S: InputSource,
 {
-    fn open_input(&mut self, _name: &str) -> Result<S, String> {
+    fn open_input(&mut self, _stores: &mut Universe, _name: &str) -> Result<S, String> {
         Err("execution input hook is not installed".to_owned())
     }
 }
@@ -153,7 +153,7 @@ impl<S> ExpansionHooks<S> for Executor
 where
     S: InputSource,
 {
-    fn open_input(&mut self, _name: &str) -> Result<S, String> {
+    fn open_input(&mut self, _stores: &mut Universe, _name: &str) -> Result<S, String> {
         Err("execution input hook is not installed".to_owned())
     }
 

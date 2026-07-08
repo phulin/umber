@@ -296,16 +296,26 @@ cells[i] = new
 
 Nothing in the engine touches the OS directly. A single `World` object owns:
 
+- **Content-addressed inputs**: `World::read_file` and `\openin` reads
+  return bytes plus a stable `ContentHash`, and append an `InputRecord` to
+  the snapshot-owned World state. The real backend is the only engine code
+  that uses host files; the in-memory backend exposes the same API for
+  hermetic tests and corpus drivers.
 - **Output streams** (`\openout`/`\write`, aux/toc/idx): writes append to an
   effect log; stream buffer state *including partial lines* is snapshot
   state. TeX's own defer-`\write`-to-shipout semantics is the model —
-  extended to every effect.
+  extended to every effect. In f26.2, `World` owns the 16 stream slots,
+  terminal/log sinks, and partial-line buffers; f26.3 turns completed entries
+  into committed effect-log records.
 - **Deferred-write token lists** are expanded at shipout against the state
   *at the commit barrier*; read-set tracking must therefore cover
   shipout-time expansion, not just mainline execution.
 - **Shell escape, PDF object stream, log file**: same discipline — buffered,
-  committed at shipout, discarded on rollback.
+  committed at shipout, discarded on rollback. Shell escapes are record-only
+  and the execution policy defaults to disabled.
 - **RNG state and clock reads**: owned by `World`, journaled/snapshotted.
+  The clock is read once when constructing a real `World`; `Universe` copies
+  that job-start clock into `\time`, `\day`, `\month`, and `\year`.
 - **Inputs** (file reads) are content-addressed and recorded, so a snapshot
   pins exactly what it read (needed for cross-run memo sharing).
 
@@ -457,7 +467,7 @@ raw store-finish hooks are crate-private unless compiled for crate-local tests.
 
 Only `World` owns file handles, RNG, clock. Backed by CI lints:
 clippy `disallowed_methods` / `disallowed_types` denying `std::fs`,
-`std::io::stdout`, `std::time`, `rand` outside the effects module.
+`std::io::stdout`, `std::time`, `rand` outside `tex-state::world`.
 
 ### 10.6 `Universe` and concurrency
 

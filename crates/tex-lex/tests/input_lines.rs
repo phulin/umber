@@ -1,22 +1,20 @@
-use std::fs;
-
-use tex_lex::{FileInput, LineEvent, LineReader, MemoryInput};
-use tex_state::Universe;
+use tex_lex::{LineEvent, LineReader, MemoryInput, WorldInput};
 use tex_state::env::banks::IntParam;
+use tex_state::{Universe, World};
 
 #[test]
-#[allow(clippy::disallowed_methods)] // host-side fixture setup, not engine I/O
 fn memory_and_file_sources_share_tex_line_handling() {
     let mut stores = Universe::new();
     stores.set_int_param(IntParam::END_LINE_CHAR, b'!' as i32);
 
-    let dir = tempfile::tempdir().expect("create temp dir");
-    let path = dir.path().join("input.tex");
-    fs::write(&path, "abc  \r\n   \r\ndef").expect("write test fixture");
+    let mut world = World::memory();
+    world
+        .set_memory_file("input.tex", b"abc  \r\n   \r\ndef".to_vec())
+        .expect("seed memory world");
+    let content = world.read_file("input.tex").expect("read memory fixture");
 
     let mut memory = LineReader::new(MemoryInput::new("abc  \r\n   \r\ndef"));
-    let file_handle = fs::File::open(&path).expect("open test fixture");
-    let mut file = LineReader::new(FileInput::from_file(file_handle));
+    let mut file = LineReader::new(WorldInput::from_content(content));
 
     let mut memory_events = Vec::new();
     while let Some(event) = memory

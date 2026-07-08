@@ -494,7 +494,7 @@ fn install_expandable(stores: &mut Universe, name: &str, primitive: ExpandablePr
 struct EdefInputHooks;
 
 impl ExpansionHooks<MemoryInput> for EdefInputHooks {
-    fn open_input(&mut self, name: &str) -> Result<MemoryInput, String> {
+    fn open_input(&mut self, _stores: &mut Universe, name: &str) -> Result<MemoryInput, String> {
         if name == "inc" {
             Ok(MemoryInput::new("OK"))
         } else {

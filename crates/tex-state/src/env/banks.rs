@@ -63,6 +63,18 @@ impl IntParam {
     /// TeX's `\mag` integer parameter.
     pub const MAG: Self = Self::new(17);
 
+    /// TeX's job-start minutes since midnight.
+    pub const TIME: Self = Self::new(20);
+
+    /// TeX's job-start day of month.
+    pub const DAY: Self = Self::new(21);
+
+    /// TeX's job-start month.
+    pub const MONTH: Self = Self::new(22);
+
+    /// TeX's job-start year.
+    pub const YEAR: Self = Self::new(23);
+
     /// TeX's `\globaldefs` integer parameter.
     pub const GLOBAL_DEFS: Self = Self::new(32);
 

@@ -6,12 +6,10 @@
 
 use std::collections::VecDeque;
 use std::fmt;
-use std::fs::File;
-use std::io::{self, BufRead, BufReader, Cursor};
 
-use tex_state::Universe;
 use tex_state::ids::TokenListId;
 use tex_state::token::{Catcode, Token};
+use tex_state::{FileContent, Universe, WorldError};
 
 /// Maximum number of macro arguments TeX permits in one macro body.
 pub const MACRO_ARGUMENT_SLOTS: usize = 9;
@@ -65,7 +63,7 @@ fn argument_index(slot: u8) -> usize {
 /// lexer to know where bytes came from.
 pub trait InputSource {
     /// Reads the next physical line without its line terminator.
-    fn read_line(&mut self) -> io::Result<Option<String>>;
+    fn read_line(&mut self) -> Result<Option<String>, WorldError>;
 }
 
 /// In-memory input source for tests, `\scantokens`, and editor buffers.
@@ -84,29 +82,30 @@ impl MemoryInput {
 }
 
 impl InputSource for MemoryInput {
-    fn read_line(&mut self) -> io::Result<Option<String>> {
+    fn read_line(&mut self) -> Result<Option<String>, WorldError> {
         Ok(self.lines.next())
     }
 }
 
-/// File-backed input source.
+/// Content-addressed input source created from `World` file content.
 #[derive(Debug)]
-pub struct FileInput {
-    reader: BufReader<File>,
+pub struct WorldInput {
+    lines: std::vec::IntoIter<String>,
 }
 
-impl FileInput {
+impl WorldInput {
     #[must_use]
-    pub fn from_file(file: File) -> Self {
+    pub fn from_content(content: FileContent) -> Self {
+        let input = String::from_utf8_lossy(content.bytes()).into_owned();
         Self {
-            reader: BufReader::new(file),
+            lines: split_physical_lines(&input).into_iter(),
         }
     }
 }
 
-impl InputSource for FileInput {
-    fn read_line(&mut self) -> io::Result<Option<String>> {
-        read_buf_line(&mut self.reader)
+impl InputSource for WorldInput {
+    fn read_line(&mut self) -> Result<Option<String>, WorldError> {
+        Ok(self.lines.next())
     }
 }
 
@@ -689,7 +688,7 @@ impl<S> InputStack<S> {
 /// Errors produced while converting characters to TeX tokens.
 #[derive(Debug)]
 pub enum LexError {
-    Io(io::Error),
+    Input(WorldError),
     InvalidCharacter(char),
     MissingControlSequence(String),
 }
@@ -697,7 +696,7 @@ pub enum LexError {
 impl fmt::Display for LexError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Io(err) => write!(f, "input read failed: {err}"),
+            Self::Input(err) => write!(f, "input read failed: {err}"),
             Self::InvalidCharacter(ch) => {
                 write!(
                     f,
@@ -715,16 +714,16 @@ impl fmt::Display for LexError {
 impl std::error::Error for LexError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Io(err) => Some(err),
+            Self::Input(err) => Some(err),
             Self::InvalidCharacter(_) => None,
             Self::MissingControlSequence(_) => None,
         }
     }
 }
 
-impl From<io::Error> for LexError {
-    fn from(value: io::Error) -> Self {
-        Self::Io(value)
+impl From<WorldError> for LexError {
+    fn from(value: WorldError) -> Self {
+        Self::Input(value)
     }
 }
 
@@ -1405,7 +1404,7 @@ impl<S> LineReader<S>
 where
     S: InputSource,
 {
-    pub fn next_event(&mut self, stores: &Universe) -> io::Result<Option<LineEvent>> {
+    pub fn next_event(&mut self, stores: &Universe) -> Result<Option<LineEvent>, WorldError> {
         let Some(line) = self.source.read_line()? else {
             return Ok(None);
         };
@@ -1430,30 +1429,23 @@ fn normalize_line(line: &str, endlinechar: i32) -> LineEvent {
 }
 
 fn split_physical_lines(input: &str) -> Vec<String> {
-    let mut reader = Cursor::new(input.as_bytes());
     let mut lines = Vec::new();
-    while let Some(line) = read_buf_line(&mut reader).expect("in-memory line reads cannot fail") {
-        lines.push(line);
-    }
-    lines
-}
-
-fn read_buf_line<R>(reader: &mut R) -> io::Result<Option<String>>
-where
-    R: BufRead,
-{
-    let mut line = String::new();
-    let read = reader.read_line(&mut line)?;
-    if read == 0 {
-        return Ok(None);
-    }
-    if line.ends_with('\n') {
-        line.pop();
-        if line.ends_with('\r') {
-            line.pop();
+    let mut start = 0;
+    for (index, ch) in input.char_indices() {
+        if ch == '\n' {
+            let end = if index > start && input[..index].ends_with('\r') {
+                index - 1
+            } else {
+                index
+            };
+            lines.push(input[start..end].to_owned());
+            start = index + 1;
         }
     }
-    Ok(Some(line))
+    if start < input.len() {
+        lines.push(input[start..].to_owned());
+    }
+    lines
 }
 
 fn byte_offset_for_char_offset(line: &[char], char_offset: usize) -> usize {

@@ -21,6 +21,7 @@ use crate::scaled::Scaled;
 use crate::stores::{GroupKind, GroupMismatch, PrepareMagDiagnostic, StoreSnapshot, Stores};
 use crate::token::{Catcode, Token};
 use crate::token_store::TokenListBuilder;
+use crate::world::{World, WorldSnapshot, install_job_clock_params};
 #[cfg(any(test, feature = "testing", feature = "shadow"))]
 use std::hash::Hasher;
 
@@ -34,9 +35,7 @@ pub struct Snapshot {
     owner: SnapshotOwner,
     store: StoreSnapshot,
     epoch: Epoch,
-    effect_pos: EffectPos,
-    stream_bufs: StreamBufState,
-    rng: RngState,
+    world: WorldSnapshot,
     input_summary: InputSummary,
     interaction_mode: InteractionMode,
     state_hash: u64,
@@ -102,34 +101,6 @@ pub struct InputSummary {
     _private: (),
 }
 
-/// Placeholder stream-buffer snapshot.
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
-pub struct StreamBufState {
-    _private: (),
-}
-
-/// Placeholder effect-log position.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
-pub struct EffectPos(u32);
-
-/// Deterministic RNG state owned by the Universe timeline.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct RngState(u64);
-
-impl Default for RngState {
-    fn default() -> Self {
-        Self(0x9e37_79b9_7f4a_7c15)
-    }
-}
-
-/// Placeholder World state until the effect log lands.
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
-pub struct World {
-    effect_pos: EffectPos,
-    stream_bufs: StreamBufState,
-    rng: RngState,
-}
-
 /// One owned TeX state timeline.
 #[derive(Debug)]
 pub struct Universe {
@@ -162,10 +133,22 @@ impl Universe {
     /// Creates an isolated TeX state timeline.
     #[must_use]
     pub fn new() -> Self {
+        Self::with_world(World::default())
+    }
+
+    /// Creates an isolated TeX timeline backed by an explicit effect world.
+    #[must_use]
+    pub fn with_world(world: World) -> Self {
+        let mut stores = Stores::new();
+        let clock = world.job_clock();
+        install_job_clock_params(
+            &mut |param, value| stores.set_int_param(param, value),
+            clock,
+        );
         Self {
             owner: UniverseOwner::new(),
-            stores: Stores::new(),
-            world: World::default(),
+            stores,
+            world,
             interaction_mode: InteractionMode::default(),
             input_summary: InputSummary::default(),
         }
@@ -179,9 +162,7 @@ impl Universe {
             owner: self.owner.snapshot_owner(),
             epoch: store.epoch(),
             store,
-            effect_pos: self.world.effect_pos,
-            stream_bufs: self.world.stream_bufs.clone(),
-            rng: self.world.rng,
+            world: self.world.snapshot(),
             input_summary: self.input_summary.clone(),
             interaction_mode: self.interaction_mode,
             state_hash: 0,
@@ -192,9 +173,7 @@ impl Universe {
     pub fn rollback(&mut self, snapshot: &Snapshot) {
         self.assert_valid_snapshot(snapshot);
         self.stores.rollback(&snapshot.store);
-        self.world.effect_pos = snapshot.effect_pos;
-        self.world.stream_bufs = snapshot.stream_bufs.clone();
-        self.world.rng = snapshot.rng;
+        self.world.rollback(&snapshot.world);
         self.input_summary = snapshot.input_summary.clone();
         self.interaction_mode = snapshot.interaction_mode;
     }
@@ -211,6 +190,17 @@ impl Universe {
     #[must_use]
     pub fn env(&self) -> &Env {
         self.stores.env()
+    }
+
+    /// Reads the external-effect capability object.
+    #[must_use]
+    pub const fn world(&self) -> &World {
+        &self.world
+    }
+
+    /// Mutates the external-effect capability object through the Universe boundary.
+    pub fn world_mut(&mut self) -> &mut World {
+        &mut self.world
     }
 
     /// Returns the current code-table generation vector.
@@ -603,6 +593,7 @@ impl Universe {
 mod tests {
     use super::Universe;
     use crate::meaning::Meaning;
+    use crate::world::{ContentHash, JobClock, PrintSink, StreamSlot, World};
 
     #[test]
     fn universe_is_send() {
@@ -643,5 +634,57 @@ mod tests {
 
         assert!(snapshot.epoch() < before_rollback);
         assert!(before_rollback < universe.env().epoch());
+    }
+
+    #[test]
+    fn job_clock_initializes_tex_clock_parameters_once() {
+        let clock = JobClock {
+            time: 721,
+            day: 8,
+            month: 7,
+            year: 2026,
+        };
+        let universe = Universe::with_world(World::memory_with_clock(clock));
+
+        assert_eq!(universe.int_param(crate::env::banks::IntParam::TIME), 721);
+        assert_eq!(universe.int_param(crate::env::banks::IntParam::DAY), 8);
+        assert_eq!(universe.int_param(crate::env::banks::IntParam::MONTH), 7);
+        assert_eq!(universe.int_param(crate::env::banks::IntParam::YEAR), 2026);
+    }
+
+    #[test]
+    fn rollback_restores_world_inputs_stream_buffers_and_rng() {
+        let mut universe = Universe::new();
+        universe
+            .world_mut()
+            .set_memory_file("main.tex", b"abc".to_vec())
+            .expect("seed memory file");
+        let slot = StreamSlot::new(2);
+        let snapshot = universe.snapshot();
+
+        let read = universe
+            .world_mut()
+            .open_in(slot, "main.tex")
+            .expect("read file through world");
+        universe.world_mut().open_out(slot, "main.aux");
+        universe
+            .world_mut()
+            .write_text(PrintSink::Stream(slot), "partial");
+        let random = universe.world_mut().next_random_u64();
+        assert_eq!(read.hash(), ContentHash::from_bytes(b"abc"));
+        assert_eq!(universe.world().input_records().len(), 1);
+
+        universe.rollback(&snapshot);
+
+        assert!(universe.world().input_records().is_empty());
+        assert_eq!(universe.world().stream_bufs().partial_line(slot), "");
+        assert!(
+            universe
+                .world()
+                .stream_bufs()
+                .read_stream_path(slot)
+                .is_none()
+        );
+        assert_eq!(universe.world_mut().next_random_u64(), random);
     }
 }

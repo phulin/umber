@@ -1,0 +1,648 @@
+//! External-effect capability boundary for the engine.
+//!
+//! This is the only engine module that may name host I/O and clock APIs.
+//! Higher layers receive content-addressed inputs, buffered effect records,
+//! deterministic RNG values, and job-start clock parameters through this API.
+
+#![allow(clippy::disallowed_methods)]
+
+use crate::env::banks::IntParam;
+use std::collections::BTreeMap;
+use std::fmt;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+/// TeX's 16 read/write stream slots.
+pub const STREAM_SLOT_COUNT: usize = 16;
+
+/// Stable content hash for bytes consumed through `World`.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct ContentHash([u8; 32]);
+
+impl ContentHash {
+    /// Hashes bytes with a small deterministic content-addressing hash.
+    ///
+    /// f26.2 needs stable addressing but not a cryptographic dependency.
+    #[must_use]
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        const OFFSETS: [u64; 4] = [
+            0xcbf2_9ce4_8422_2325,
+            0x8422_2325_cbf2_9ce4,
+            0x9e37_79b9_7f4a_7c15,
+            0x94d0_49bb_1331_11eb,
+        ];
+        const PRIMES: [u64; 4] = [
+            0x0000_0100_0000_01b3,
+            0x0000_0100_0000_01d3,
+            0x0000_0100_0000_01f3,
+            0x0000_0100_0000_0213,
+        ];
+
+        let mut words = OFFSETS;
+        for (index, &byte) in bytes.iter().enumerate() {
+            for lane in 0..4 {
+                words[lane] ^=
+                    u64::from(byte).wrapping_add(((index as u64) << (lane * 7)) | lane as u64);
+                words[lane] = words[lane].wrapping_mul(PRIMES[lane]);
+                words[lane] ^= words[lane].rotate_right(17 + lane as u32);
+            }
+        }
+        for word in &mut words {
+            *word ^= bytes.len() as u64;
+            *word = splitmix64(*word);
+        }
+
+        let mut out = [0; 32];
+        for (chunk, word) in out.chunks_exact_mut(8).zip(words) {
+            chunk.copy_from_slice(&word.to_le_bytes());
+        }
+        Self(out)
+    }
+
+    /// Returns the raw 32-byte hash.
+    #[must_use]
+    pub const fn bytes(self) -> [u8; 32] {
+        self.0
+    }
+
+    /// Returns a lowercase hexadecimal encoding.
+    #[must_use]
+    pub fn hex(self) -> String {
+        let mut out = String::with_capacity(64);
+        for byte in self.0 {
+            use fmt::Write as _;
+            write!(&mut out, "{byte:02x}").expect("writing to String cannot fail");
+        }
+        out
+    }
+}
+
+/// Bytes returned from a content-addressed `World` read.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FileContent {
+    path: PathBuf,
+    bytes: Vec<u8>,
+    hash: ContentHash,
+}
+
+impl FileContent {
+    #[must_use]
+    pub(crate) fn new(path: PathBuf, bytes: Vec<u8>) -> Self {
+        let hash = ContentHash::from_bytes(&bytes);
+        Self { path, bytes, hash }
+    }
+
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    #[must_use]
+    pub const fn hash(&self) -> ContentHash {
+        self.hash
+    }
+
+    #[must_use]
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.bytes
+    }
+}
+
+/// One recorded file read.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct InputRecord {
+    path: PathBuf,
+    hash: ContentHash,
+    len: usize,
+}
+
+impl InputRecord {
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    #[must_use]
+    pub const fn hash(&self) -> ContentHash {
+        self.hash
+    }
+
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.len
+    }
+
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+}
+
+/// A TeX stream slot.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct StreamSlot(u8);
+
+impl StreamSlot {
+    #[must_use]
+    pub const fn new(raw: u8) -> Self {
+        assert!(
+            raw < STREAM_SLOT_COUNT as u8,
+            "TeX stream slot must be in 0..16"
+        );
+        Self(raw)
+    }
+
+    #[must_use]
+    pub const fn raw(self) -> u8 {
+        self.0
+    }
+
+    const fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+/// The kind of sink a write is routed to.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum PrintSink {
+    Terminal,
+    Log,
+    TerminalAndLog,
+    Stream(StreamSlot),
+}
+
+/// Buffered write-stream target.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct WriteTarget {
+    path: PathBuf,
+}
+
+impl WriteTarget {
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+/// Snapshot-ready state for all partial stream/log buffers.
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+pub struct StreamBufState {
+    read_streams: [Option<PathBuf>; STREAM_SLOT_COUNT],
+    write_streams: [Option<WriteTarget>; STREAM_SLOT_COUNT],
+    partial_lines: [String; STREAM_SLOT_COUNT],
+    log_partial_line: String,
+    terminal_partial_line: String,
+}
+
+impl StreamBufState {
+    #[must_use]
+    pub fn read_stream_path(&self, slot: StreamSlot) -> Option<&Path> {
+        self.read_streams[slot.index()].as_deref()
+    }
+
+    #[must_use]
+    pub fn write_stream_target(&self, slot: StreamSlot) -> Option<&WriteTarget> {
+        self.write_streams[slot.index()].as_ref()
+    }
+
+    #[must_use]
+    pub fn partial_line(&self, slot: StreamSlot) -> &str {
+        &self.partial_lines[slot.index()]
+    }
+
+    #[must_use]
+    pub fn log_partial_line(&self) -> &str {
+        &self.log_partial_line
+    }
+
+    #[must_use]
+    pub fn terminal_partial_line(&self) -> &str {
+        &self.terminal_partial_line
+    }
+}
+
+/// Placeholder effect-log position until f26.3 installs the durable log.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub struct EffectPos(u32);
+
+/// Deterministic xoshiro256** RNG state.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct RngState {
+    state: [u64; 4],
+}
+
+impl RngState {
+    #[must_use]
+    pub fn from_seed(seed: u64) -> Self {
+        let mut value = seed;
+        let mut state = [0; 4];
+        for slot in &mut state {
+            value = splitmix64(value);
+            *slot = value;
+        }
+        if state == [0; 4] {
+            state[0] = 1;
+        }
+        Self { state }
+    }
+
+    #[must_use]
+    pub fn next_u64(&mut self) -> u64 {
+        let result = self.state[1].wrapping_mul(5).rotate_left(7).wrapping_mul(9);
+        let t = self.state[1] << 17;
+
+        self.state[2] ^= self.state[0];
+        self.state[3] ^= self.state[1];
+        self.state[1] ^= self.state[2];
+        self.state[0] ^= self.state[3];
+        self.state[2] ^= t;
+        self.state[3] = self.state[3].rotate_left(45);
+
+        result
+    }
+}
+
+impl Default for RngState {
+    fn default() -> Self {
+        Self::from_seed(0x9e37_79b9_7f4a_7c15)
+    }
+}
+
+/// TeX's job-start clock values.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct JobClock {
+    pub time: i32,
+    pub day: i32,
+    pub month: i32,
+    pub year: i32,
+}
+
+impl JobClock {
+    /// A deterministic clock used by hermetic in-memory worlds.
+    pub const DEFAULT: Self = Self {
+        time: 0,
+        day: 1,
+        month: 1,
+        year: 1970,
+    };
+}
+
+impl Default for JobClock {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+/// Shell-escape execution policy.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum ShellEscapePolicy {
+    #[default]
+    Disabled,
+    Enabled,
+}
+
+/// A recorded shell-escape request.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct ShellEscapeRecord {
+    command: String,
+    allowed: bool,
+}
+
+impl ShellEscapeRecord {
+    #[must_use]
+    pub fn command(&self) -> &str {
+        &self.command
+    }
+
+    #[must_use]
+    pub const fn allowed(&self) -> bool {
+        self.allowed
+    }
+}
+
+/// `World` error with host details erased at the capability boundary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorldError {
+    operation: &'static str,
+    path: Option<PathBuf>,
+    message: String,
+}
+
+impl WorldError {
+    fn new(operation: &'static str, path: Option<PathBuf>, message: impl Into<String>) -> Self {
+        Self {
+            operation,
+            path,
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for WorldError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.path {
+            Some(path) => write!(f, "{} {}: {}", self.operation, path.display(), self.message),
+            None => write!(f, "{}: {}", self.operation, self.message),
+        }
+    }
+}
+
+impl std::error::Error for WorldError {}
+
+/// Snapshot-owned `World` state.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct WorldSnapshot {
+    effect_pos: EffectPos,
+    stream_bufs: StreamBufState,
+    rng: RngState,
+    input_len: usize,
+    shell_escape_len: usize,
+}
+
+/// Engine capability object for all external effects.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct World {
+    backend: WorldBackend,
+    effect_pos: EffectPos,
+    stream_bufs: StreamBufState,
+    rng: RngState,
+    job_clock: JobClock,
+    shell_escape_policy: ShellEscapePolicy,
+    inputs: Vec<InputRecord>,
+    shell_escapes: Vec<ShellEscapeRecord>,
+}
+
+impl World {
+    /// Creates a deterministic in-memory world for tests and hermetic runs.
+    #[must_use]
+    pub fn memory() -> Self {
+        Self::memory_with_clock(JobClock::DEFAULT)
+    }
+
+    /// Creates a deterministic in-memory world with an explicit job clock.
+    #[must_use]
+    pub fn memory_with_clock(job_clock: JobClock) -> Self {
+        Self::new(WorldBackend::Memory(MemoryBackend::default()), job_clock)
+    }
+
+    /// Creates a real host-backed world and reads the job clock once.
+    #[must_use]
+    pub fn real() -> Self {
+        let job_clock = real_job_clock();
+        Self::new(WorldBackend::Real, job_clock)
+    }
+
+    fn new(backend: WorldBackend, job_clock: JobClock) -> Self {
+        Self {
+            backend,
+            effect_pos: EffectPos::default(),
+            stream_bufs: StreamBufState::default(),
+            rng: RngState::default(),
+            job_clock,
+            shell_escape_policy: ShellEscapePolicy::default(),
+            inputs: Vec::new(),
+            shell_escapes: Vec::new(),
+        }
+    }
+
+    /// Adds or replaces one file in an in-memory world.
+    pub fn set_memory_file(
+        &mut self,
+        path: impl Into<PathBuf>,
+        bytes: impl Into<Vec<u8>>,
+    ) -> Result<(), WorldError> {
+        let WorldBackend::Memory(memory) = &mut self.backend else {
+            return Err(WorldError::new(
+                "set memory file",
+                None,
+                "world is not memory-backed",
+            ));
+        };
+        memory.files.insert(path.into(), bytes.into());
+        Ok(())
+    }
+
+    /// Reads a file as bytes, records the hash, and returns both together.
+    pub fn read_file(&mut self, path: impl AsRef<Path>) -> Result<FileContent, WorldError> {
+        let path = path.as_ref();
+        let bytes = match &self.backend {
+            WorldBackend::Real => std::fs::read(path).map_err(|err| {
+                WorldError::new("read file", Some(path.to_owned()), err.to_string())
+            })?,
+            WorldBackend::Memory(memory) => memory.files.get(path).cloned().ok_or_else(|| {
+                WorldError::new(
+                    "read file",
+                    Some(path.to_owned()),
+                    "not found in memory world",
+                )
+            })?,
+        };
+        let content = FileContent::new(path.to_owned(), bytes);
+        self.inputs.push(InputRecord {
+            path: content.path.clone(),
+            hash: content.hash,
+            len: content.bytes.len(),
+        });
+        Ok(content)
+    }
+
+    /// Opens an input stream slot by reading and pinning its content now.
+    pub fn open_in(
+        &mut self,
+        slot: StreamSlot,
+        path: impl AsRef<Path>,
+    ) -> Result<FileContent, WorldError> {
+        let content = self.read_file(path)?;
+        self.stream_bufs.read_streams[slot.index()] = Some(content.path.clone());
+        Ok(content)
+    }
+
+    pub fn close_in(&mut self, slot: StreamSlot) {
+        self.stream_bufs.read_streams[slot.index()] = None;
+    }
+
+    pub fn open_out(&mut self, slot: StreamSlot, path: impl Into<PathBuf>) {
+        self.stream_bufs.write_streams[slot.index()] = Some(WriteTarget { path: path.into() });
+        self.stream_bufs.partial_lines[slot.index()].clear();
+    }
+
+    pub fn close_out(&mut self, slot: StreamSlot) {
+        self.stream_bufs.write_streams[slot.index()] = None;
+        self.stream_bufs.partial_lines[slot.index()].clear();
+    }
+
+    /// Buffers routed output. f26.3 will turn completed lines into effect records.
+    pub fn write_text(&mut self, sink: PrintSink, text: &str) {
+        match sink {
+            PrintSink::Terminal => {
+                append_partial_line(&mut self.stream_bufs.terminal_partial_line, text)
+            }
+            PrintSink::Log => append_partial_line(&mut self.stream_bufs.log_partial_line, text),
+            PrintSink::TerminalAndLog => {
+                append_partial_line(&mut self.stream_bufs.terminal_partial_line, text);
+                append_partial_line(&mut self.stream_bufs.log_partial_line, text);
+            }
+            PrintSink::Stream(slot) => {
+                append_partial_line(&mut self.stream_bufs.partial_lines[slot.index()], text)
+            }
+        }
+    }
+
+    /// Records a shell escape request without executing it by default.
+    pub fn record_shell_escape(&mut self, command: impl Into<String>) -> bool {
+        let allowed = self.shell_escape_policy == ShellEscapePolicy::Enabled;
+        self.shell_escapes.push(ShellEscapeRecord {
+            command: command.into(),
+            allowed,
+        });
+        allowed
+    }
+
+    #[must_use]
+    pub const fn shell_escape_policy(&self) -> ShellEscapePolicy {
+        self.shell_escape_policy
+    }
+
+    pub fn set_shell_escape_policy(&mut self, policy: ShellEscapePolicy) {
+        self.shell_escape_policy = policy;
+    }
+
+    #[must_use]
+    pub fn next_random_u64(&mut self) -> u64 {
+        self.rng.next_u64()
+    }
+
+    #[must_use]
+    pub const fn job_clock(&self) -> JobClock {
+        self.job_clock
+    }
+
+    #[must_use]
+    pub fn input_records(&self) -> &[InputRecord] {
+        &self.inputs
+    }
+
+    #[must_use]
+    pub fn shell_escape_records(&self) -> &[ShellEscapeRecord] {
+        &self.shell_escapes
+    }
+
+    #[must_use]
+    pub const fn effect_pos(&self) -> EffectPos {
+        self.effect_pos
+    }
+
+    #[must_use]
+    pub const fn stream_bufs(&self) -> &StreamBufState {
+        &self.stream_bufs
+    }
+
+    #[must_use]
+    pub const fn rng_state(&self) -> RngState {
+        self.rng
+    }
+
+    #[must_use]
+    pub(crate) fn snapshot(&self) -> WorldSnapshot {
+        WorldSnapshot {
+            effect_pos: self.effect_pos,
+            stream_bufs: self.stream_bufs.clone(),
+            rng: self.rng,
+            input_len: self.inputs.len(),
+            shell_escape_len: self.shell_escapes.len(),
+        }
+    }
+
+    pub(crate) fn rollback(&mut self, snapshot: &WorldSnapshot) {
+        self.effect_pos = snapshot.effect_pos;
+        self.stream_bufs = snapshot.stream_bufs.clone();
+        self.rng = snapshot.rng;
+        self.inputs.truncate(snapshot.input_len);
+        self.shell_escapes.truncate(snapshot.shell_escape_len);
+    }
+}
+
+impl Default for World {
+    fn default() -> Self {
+        Self::memory()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum WorldBackend {
+    Real,
+    Memory(MemoryBackend),
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct MemoryBackend {
+    files: BTreeMap<PathBuf, Vec<u8>>,
+}
+
+fn append_partial_line(buffer: &mut String, text: &str) {
+    for chunk in text.split_inclusive('\n') {
+        if chunk.ends_with('\n') {
+            buffer.clear();
+        } else {
+            buffer.push_str(chunk);
+        }
+    }
+}
+
+fn splitmix64(mut value: u64) -> u64 {
+    value = value.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    value ^ (value >> 31)
+}
+
+fn real_job_clock() -> JobClock {
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs());
+    unix_seconds_to_job_clock(seconds)
+}
+
+fn unix_seconds_to_job_clock(seconds: u64) -> JobClock {
+    let days = (seconds / 86_400) as i64;
+    let seconds_of_day = seconds % 86_400;
+    let (year, month, day) = civil_from_days(days);
+    JobClock {
+        time: (seconds_of_day / 60) as i32,
+        day,
+        month,
+        year,
+    }
+}
+
+fn civil_from_days(days_since_unix_epoch: i64) -> (i32, i32, i32) {
+    let z = days_since_unix_epoch + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = mp + if mp < 10 { 3 } else { -9 };
+    let year = y + i64::from(m <= 2);
+    (year as i32, m as i32, d as i32)
+}
+
+pub(crate) fn install_job_clock_params(
+    set_int_param: &mut impl FnMut(IntParam, i32),
+    clock: JobClock,
+) {
+    set_int_param(IntParam::TIME, clock.time);
+    set_int_param(IntParam::DAY, clock.day);
+    set_int_param(IntParam::MONTH, clock.month);
+    set_int_param(IntParam::YEAR, clock.year);
+}
+
+#[cfg(test)]
+mod tests;

@@ -1,14 +1,12 @@
 use std::env;
-use std::fs::File;
-use std::io;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use tex_expand::ExpansionHooks;
-use tex_lex::{FileInput, InputStack, Lexer};
-use tex_state::Universe;
+use tex_lex::{InputStack, Lexer, WorldInput};
 use tex_state::env::banks::IntParam;
 use tex_state::token::Token;
+use tex_state::{Universe, World, WorldError};
 
 mod expand_dump;
 
@@ -64,12 +62,11 @@ fn run() -> Result<(), CliError> {
     }
 }
 
-#[allow(clippy::disallowed_methods)] // CLI entry point opens the user-requested file.
 fn lex_dump(path: &str) -> Result<(), CliError> {
-    let file = File::open(path)?;
-    let mut stores = Universe::new();
+    let mut stores = Universe::with_world(World::real());
+    let content = stores.world_mut().read_file(path)?;
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
-    let mut lexer = Lexer::new(FileInput::from_file(file));
+    let mut lexer = Lexer::new(WorldInput::from_content(content));
 
     while let Some(token) = lexer.next_token(&mut stores)? {
         println!("{}", format_token(token, &stores));
@@ -78,21 +75,19 @@ fn lex_dump(path: &str) -> Result<(), CliError> {
     Ok(())
 }
 
-#[allow(clippy::disallowed_methods)] // CLI entry point opens the user-requested file.
 fn run_tex(path: &str) -> Result<(), CliError> {
     let path = Path::new(path);
-    let file = File::open(path)?;
-    let mut stores = Universe::new();
+    let mut stores = Universe::with_world(World::real());
+    let content = stores.world_mut().read_file(path)?;
     umber::prepare_run_stores(&mut stores);
 
-    let mut input = InputStack::new(FileInput::from_file(file));
+    let mut input = InputStack::new(WorldInput::from_content(content));
     let mut hooks = RunHooks::new(path);
     let log = umber::run_input_with_hooks(&mut input, &mut stores, &mut hooks)?;
     print!("{log}");
     Ok(())
 }
 
-#[allow(clippy::disallowed_methods)] // CLI driver opens files requested by \input.
 struct RunHooks {
     base_dir: PathBuf,
     job_name: String,
@@ -110,15 +105,16 @@ impl RunHooks {
     }
 }
 
-impl ExpansionHooks<FileInput> for RunHooks {
-    #[allow(clippy::disallowed_methods)] // CLI driver opens files requested by \input.
-    fn open_input(&mut self, name: &str) -> Result<FileInput, String> {
+impl ExpansionHooks<WorldInput> for RunHooks {
+    fn open_input(&mut self, stores: &mut Universe, name: &str) -> Result<WorldInput, String> {
         let mut path = self.base_dir.join(name);
         if path.extension().is_none() {
             path.set_extension("tex");
         }
-        File::open(&path)
-            .map(FileInput::from_file)
+        stores
+            .world_mut()
+            .read_file(&path)
+            .map(WorldInput::from_content)
             .map_err(|err| format!("{} ({err})", path.display()))
     }
 
@@ -138,7 +134,7 @@ fn format_token(token: Token, stores: &Universe) -> String {
 #[derive(Debug)]
 enum CliError {
     Usage(&'static str),
-    Io(io::Error),
+    World(WorldError),
     Lex(tex_lex::LexError),
     ExpandDump(expand_dump::ExpandDumpError),
     Exec(tex_exec::ExecError),
@@ -148,7 +144,7 @@ impl std::fmt::Display for CliError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Usage(message) => f.write_str(message),
-            Self::Io(err) => write!(f, "{err}"),
+            Self::World(err) => write!(f, "{err}"),
             Self::Lex(err) => write!(f, "{err}"),
             Self::ExpandDump(err) => write!(f, "{err}"),
             Self::Exec(err) => write!(f, "{err}"),
@@ -158,9 +154,9 @@ impl std::fmt::Display for CliError {
 
 impl std::error::Error for CliError {}
 
-impl From<io::Error> for CliError {
-    fn from(value: io::Error) -> Self {
-        Self::Io(value)
+impl From<WorldError> for CliError {
+    fn from(value: WorldError) -> Self {
+        Self::World(value)
     }
 }
 

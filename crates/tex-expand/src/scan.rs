@@ -229,7 +229,7 @@ impl<S> InputSource for ReplacementSource<S>
 where
     S: InputSource,
 {
-    fn read_line(&mut self) -> std::io::Result<Option<String>> {
+    fn read_line(&mut self) -> Result<Option<String>, tex_state::WorldError> {
         match self {
             Self::Empty(source) => source.read_line(),
             Self::Driver(source) => source.read_line(),
@@ -256,8 +256,14 @@ where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    fn open_input(&mut self, name: &str) -> Result<ReplacementSource<S>, String> {
-        self.inner.open_input(name).map(ReplacementSource::Driver)
+    fn open_input(
+        &mut self,
+        stores: &mut Universe,
+        name: &str,
+    ) -> Result<ReplacementSource<S>, String> {
+        self.inner
+            .open_input(stores, name)
+            .map(ReplacementSource::Driver)
     }
 
     fn job_name(&self) -> &str {
