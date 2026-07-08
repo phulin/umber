@@ -223,6 +223,12 @@ assignments, box building, and dispatch into the typesetting kernels.
   group markers — the stomach contains **no save-stack logic**; it calls
   `universe.enter_group()` / `leave_group()` and `\aftergroup` tokens are
   the group marker's payload.
+- The arithmetic-only substrate for dimension scanning lives in
+  `tex-state::scaled`: TeX's `xn_over_d` conversion routine, decimal fraction
+  rounding, the physical-unit conversion table, and the `max_dimen` range
+  check with the canonical `Dimension too large` diagnostic. Token parsing,
+  signs, `true` magnification, internal units, and assignment effects remain
+  scanner/stomach responsibilities.
 - **Box building**: `\hbox{...}` etc. push a mode level; on close, the
   finished list freezes into the epoch arena; storing it in a box register
   is the barriered promotion write. The stomach never holds a raw node
