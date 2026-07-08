@@ -6,7 +6,7 @@ use tex_lex::{InputStack, LexError, WorldInput};
 use tex_state::env::banks::IntParam;
 use tex_state::meaning::Meaning;
 use tex_state::token::Token;
-use tex_state::{Universe, World, WorldError};
+use tex_state::{ExpansionCtx, Universe, World, WorldError};
 
 use crate::format_token;
 
@@ -43,9 +43,10 @@ impl DumpDriver {
     }
 
     fn next_delivered(&mut self) -> Result<Option<Token>, ExpandDumpError> {
+        let mut expansion = ExpansionCtx::new(&mut self.stores);
         Ok(get_x_token_with_hooks(
             &mut self.input,
-            &mut self.stores,
+            &mut expansion,
             &mut self.hooks,
         )?)
     }
@@ -69,16 +70,16 @@ impl FileHooks {
 }
 
 impl ExpansionHooks<WorldInput> for FileHooks {
-    fn open_input<C: tex_state::ExpansionState>(
+    fn open_input<C: tex_state::InputReadState>(
         &mut self,
-        stores: &mut C,
+        input: &mut C,
         name: &str,
     ) -> Result<WorldInput, String> {
         let mut path = self.base_dir.join(name);
         if path.extension().is_none() {
             path.set_extension("tex");
         }
-        stores
+        input
             .read_input_file(&path)
             .map(WorldInput::from_content)
             .map_err(|err| format!("{} ({err})", path.display()))

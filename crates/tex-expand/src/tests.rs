@@ -11,7 +11,7 @@ use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
 use tex_state::node::{BoxNode, BoxNodeFields, Node, Sign};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
-use tex_state::{ExpansionState, Universe};
+use tex_state::{ExpansionState, InputReadState, Universe};
 
 #[derive(Default)]
 struct CountingRecorder {
@@ -1618,9 +1618,9 @@ impl MemoryHooks {
 }
 
 impl ExpansionHooks<MemoryInput> for MemoryHooks {
-    fn open_input<C: ExpansionState>(
+    fn open_input<C: InputReadState>(
         &mut self,
-        _stores: &mut C,
+        _input: &mut C,
         name: &str,
     ) -> Result<MemoryInput, String> {
         let source = self

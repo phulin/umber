@@ -222,13 +222,16 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   recorder is a generic parameter of the loop, monomorphized away).
 - The implemented `tex-expand` scaffold exposes that loop over
   `tex-lex::InputStack` through the shared `ExpansionState` capability, not
-  broad `&mut Universe`. That capability allows meaning reads, immutable
-  token/glue/font/node/register/parameter reads, token-list freezing, glue
-  interning, magnification preparation, lexer control-sequence interning,
-  `\csname`'s relaxed control-sequence interning, and the World input read
-  needed by driver-supplied `\input` hooks; it does not expose Env/register,
-  code-table, grouping, snapshot, font-assignment, or general World mutation
-  APIs to production gullet code. Macro body replay uses
+  broad `&mut Universe`. Production callers wrap the owning `Universe` in
+  `ExpansionCtx` before entering the gullet. That capability allows meaning
+  reads, immutable token/glue/font/node/register/parameter reads, token-list
+  freezing, glue interning, magnification preparation, lexer control-sequence
+  interning, and `\csname`'s relaxed control-sequence interning. File reads
+  for `\input` live behind a separate `InputReadState` capability; driver
+  hooks receive an `InputOpenContext`, not `ExpansionState`, so hooks can
+  open input files without seeing meaning reads, Env/register writes,
+  code-table writes, grouping, snapshot, font-assignment, or general World
+  mutation APIs. Macro body replay uses
   the body `TokenListId` directly plus frozen argument ids on the replay
   frame; it does not allocate a substituted body list. Token-list replay is
   naturally read-only; source-frame replay may intern newly encountered

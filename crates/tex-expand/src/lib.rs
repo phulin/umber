@@ -12,7 +12,7 @@ use tex_lex::{InputSource, InputStack, LexError, MacroArguments, TokenListReplay
 use tex_state::interner::Symbol;
 use tex_state::meaning::Meaning;
 use tex_state::token::Token;
-use tex_state::{ExpansionState, Universe};
+use tex_state::{ExpansionState, InputReadState, Universe};
 
 pub mod args;
 pub mod scan;
@@ -289,7 +289,7 @@ impl std::error::Error for ExpandError {
 /// sources through this trait; the eventual `World` implementation is expected
 /// to record and snapshot those reads.
 pub trait ExpansionHooks<S> {
-    fn open_input<C: ExpansionState>(&mut self, stores: &mut C, name: &str) -> Result<S, String>;
+    fn open_input<C: InputReadState>(&mut self, input: &mut C, name: &str) -> Result<S, String>;
 
     fn job_name(&self) -> &str {
         "texput"
@@ -315,7 +315,7 @@ pub trait ExpansionHooks<S> {
 pub struct NoopExpansionHooks;
 
 impl<S> ExpansionHooks<S> for NoopExpansionHooks {
-    fn open_input<C: ExpansionState>(&mut self, _stores: &mut C, _name: &str) -> Result<S, String> {
+    fn open_input<C: InputReadState>(&mut self, _input: &mut C, _name: &str) -> Result<S, String> {
         Err("no input source hook is installed".to_owned())
     }
 }

@@ -45,8 +45,13 @@ use std::hash::{Hash, Hasher};
 /// This is intentionally narrower than `Universe`: it permits immutable state
 /// reads plus the content/interner mutations that the mouth and gullet are
 /// semantically allowed to perform, but it does not expose Env, register, box,
-/// code-table, font-parameter, grouping, snapshot, or World mutation APIs.
+/// code-table, font-parameter, grouping, snapshot, input-file reads, or World
+/// mutation APIs.
 pub trait ExpansionState {
+    type Input<'a>: InputReadState
+    where
+        Self: 'a;
+
     fn catcode(&self, ch: char) -> Catcode;
     fn lccode(&self, ch: char) -> LcCode;
     fn uccode(&self, ch: char) -> UcCode;
@@ -89,10 +94,46 @@ pub trait ExpansionState {
     fn glue_param(&self, param: GlueParam) -> GlueId;
     fn tok_param(&self, param: TokParam) -> TokenListId;
     fn input_stream_eof(&self, stream: StreamSlot) -> bool;
+    fn input_open_context(&mut self) -> Self::Input<'_>;
+}
+
+/// Input file reads available to driver-supplied `\input` hooks.
+///
+/// This is intentionally separate from [`ExpansionState`] so ordinary gullet
+/// code cannot open files and input hooks cannot see expansion, Env/register,
+/// code-table, snapshot, font-assignment, or general [`World`] mutation APIs.
+pub trait InputReadState {
     fn read_input_file(
         &mut self,
         path: &std::path::Path,
     ) -> Result<crate::FileContent, crate::WorldError>;
+}
+
+/// Production expansion capability over a [`Universe`].
+///
+/// Pass this wrapper to lexer/expansion code instead of `&mut Universe` when
+/// the caller does not need the full top-level driver surface.
+pub struct ExpansionCtx<'a> {
+    universe: &'a mut Universe,
+}
+
+impl<'a> ExpansionCtx<'a> {
+    #[must_use]
+    pub fn new(universe: &'a mut Universe) -> Self {
+        Self { universe }
+    }
+}
+
+/// Production input-open capability over a [`Universe`].
+pub struct InputOpenContext<'a> {
+    universe: &'a mut Universe,
+}
+
+impl<'a> InputOpenContext<'a> {
+    #[must_use]
+    pub fn new(universe: &'a mut Universe) -> Self {
+        Self { universe }
+    }
 }
 
 /// A whole-Universe rollback snapshot.
@@ -950,6 +991,11 @@ impl Universe {
 }
 
 impl ExpansionState for Universe {
+    type Input<'a>
+        = InputOpenContext<'a>
+    where
+        Self: 'a;
+
     fn catcode(&self, ch: char) -> Catcode {
         Self::catcode(self, ch)
     }
@@ -1118,11 +1164,205 @@ impl ExpansionState for Universe {
         self.world.input_stream_eof(stream)
     }
 
+    fn input_open_context(&mut self) -> Self::Input<'_> {
+        InputOpenContext::new(self)
+    }
+}
+
+impl ExpansionState for ExpansionCtx<'_> {
+    type Input<'a>
+        = InputOpenContext<'a>
+    where
+        Self: 'a;
+
+    fn catcode(&self, ch: char) -> Catcode {
+        self.universe.catcode(ch)
+    }
+
+    fn lccode(&self, ch: char) -> LcCode {
+        self.universe.lccode(ch)
+    }
+
+    fn uccode(&self, ch: char) -> UcCode {
+        self.universe.uccode(ch)
+    }
+
+    fn sfcode(&self, ch: char) -> SfCode {
+        self.universe.sfcode(ch)
+    }
+
+    fn mathcode(&self, ch: char) -> MathCode {
+        self.universe.mathcode(ch)
+    }
+
+    fn delcode(&self, ch: char) -> DelCode {
+        self.universe.delcode(ch)
+    }
+
+    fn meaning(&self, symbol: Symbol) -> Meaning {
+        self.universe.meaning(symbol)
+    }
+
+    fn macro_definition(&self, id: MacroDefinitionId) -> MacroMeaning {
+        self.universe.macro_definition(id)
+    }
+
+    fn macro_meaning(&self, symbol: Symbol) -> Option<MacroMeaning> {
+        self.universe.macro_meaning(symbol)
+    }
+
+    fn intern_relaxed_control_sequence(&mut self, name: &str) -> Symbol {
+        self.universe.intern_relaxed_control_sequence(name)
+    }
+
+    fn intern(&mut self, name: &str) -> Symbol {
+        self.universe.intern(name)
+    }
+
+    fn symbol(&self, name: &str) -> Option<Symbol> {
+        self.universe.symbol(name)
+    }
+
+    fn resolve(&self, symbol: Symbol) -> &str {
+        self.universe.resolve(symbol)
+    }
+
+    fn token_list_builder(&self) -> TokenListBuilder {
+        self.universe.token_list_builder()
+    }
+
+    fn intern_token_list(&mut self, tokens: &[Token]) -> TokenListId {
+        self.universe.intern_token_list(tokens)
+    }
+
+    fn finish_token_list(&mut self, builder: &mut TokenListBuilder) -> TokenListId {
+        self.universe.finish_token_list(builder)
+    }
+
+    fn tokens(&self, id: TokenListId) -> &[Token] {
+        self.universe.tokens(id)
+    }
+
+    fn intern_glue(&mut self, spec: GlueSpec) -> GlueId {
+        self.universe.intern_glue(spec)
+    }
+
+    fn glue(&self, id: GlueId) -> GlueSpec {
+        self.universe.glue(id)
+    }
+
+    fn font_name(&self, id: FontId) -> String {
+        self.universe.font_name(id)
+    }
+
+    fn font_parameter(&self, font: FontId, number: u16) -> Scaled {
+        self.universe.font_parameter(font, number)
+    }
+
+    fn font_dimen(&self, font: FontId, number: u16) -> Scaled {
+        self.universe.font_dimen(font, number)
+    }
+
+    fn font_hyphen_char(&self, font: FontId) -> i32 {
+        self.universe.font_hyphen_char(font)
+    }
+
+    fn font_skew_char(&self, font: FontId) -> i32 {
+        self.universe.font_skew_char(font)
+    }
+
+    fn current_font(&self) -> FontId {
+        self.universe.current_font()
+    }
+
+    fn current_font_symbol(&self) -> Option<Symbol> {
+        self.universe.current_font_symbol()
+    }
+
+    fn nodes(&self, id: NodeListId) -> &[Node] {
+        self.universe.nodes(id)
+    }
+
+    fn count(&self, index: u16) -> i32 {
+        self.universe.count(index)
+    }
+
+    fn dimen(&self, index: u16) -> Scaled {
+        self.universe.dimen(index)
+    }
+
+    fn skip(&self, index: u16) -> GlueId {
+        self.universe.skip(index)
+    }
+
+    fn muskip(&self, index: u16) -> GlueId {
+        self.universe.muskip(index)
+    }
+
+    fn toks(&self, index: u16) -> TokenListId {
+        self.universe.toks(index)
+    }
+
+    fn box_reg(&self, index: u16) -> Option<NodeListId> {
+        self.universe.box_reg(index)
+    }
+
+    fn int_param(&self, param: IntParam) -> i32 {
+        self.universe.int_param(param)
+    }
+
+    fn mag(&self) -> i32 {
+        self.universe.mag()
+    }
+
+    fn prepared_mag(&self) -> Option<i32> {
+        self.universe.prepared_mag()
+    }
+
+    fn prepare_mag(&mut self) -> (i32, Option<PrepareMagDiagnostic>) {
+        self.universe.prepare_mag()
+    }
+
+    fn endlinechar(&self) -> i32 {
+        self.universe.endlinechar()
+    }
+
+    fn dimen_param(&self, param: DimenParam) -> Scaled {
+        self.universe.dimen_param(param)
+    }
+
+    fn glue_param(&self, param: GlueParam) -> GlueId {
+        self.universe.glue_param(param)
+    }
+
+    fn tok_param(&self, param: TokParam) -> TokenListId {
+        self.universe.tok_param(param)
+    }
+
+    fn input_stream_eof(&self, stream: StreamSlot) -> bool {
+        self.universe.world.input_stream_eof(stream)
+    }
+
+    fn input_open_context(&mut self) -> Self::Input<'_> {
+        InputOpenContext::new(self.universe)
+    }
+}
+
+impl InputReadState for Universe {
     fn read_input_file(
         &mut self,
         path: &std::path::Path,
     ) -> Result<crate::FileContent, crate::WorldError> {
         self.world.read_file(path)
+    }
+}
+
+impl InputReadState for InputOpenContext<'_> {
+    fn read_input_file(
+        &mut self,
+        path: &std::path::Path,
+    ) -> Result<crate::FileContent, crate::WorldError> {
+        self.universe.world.read_file(path)
     }
 }
 

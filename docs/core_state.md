@@ -457,9 +457,11 @@ The type system is the write barrier's bodyguard. The rules:
   checker makes bypass unrepresentable in safe code.
 - Gullet and lexer code use the public `ExpansionState` capability instead of
   broad `&mut Universe`. The capability includes expansion-safe reads,
-  immutable content creation, interning, magnification preparation, and
-  content-addressed input reads for driver `\input` hooks, but omits
-  Env/register/code-table/group/snapshot/font-assignment setters.
+  immutable content creation, interning, and magnification preparation, but
+  omits input-file reads and Env/register/code-table/group/snapshot/font-
+  assignment setters. Driver `\input` hooks receive the separate
+  `InputReadState` capability through `InputOpenContext`, which exposes only
+  content-addressed input reads.
 
 ### 10.3 Unforgeable handles
 

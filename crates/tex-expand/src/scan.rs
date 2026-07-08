@@ -8,11 +8,11 @@
 use std::{fmt, marker::PhantomData};
 
 use tex_lex::{InputSource, InputStack, LexError, MemoryInput, TokenListReplayKind};
-use tex_state::ExpansionState;
 use tex_state::ids::TokenListId;
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
 use tex_state::token::{Catcode, Token};
+use tex_state::{ExpansionState, InputReadState};
 
 use crate::{
     Dispatch, ExpandError, ExpandableOpcode, ExpansionHooks, ExpansionReplayKind, NoopRecorder,
@@ -256,13 +256,13 @@ where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    fn open_input<C: ExpansionState>(
+    fn open_input<C: InputReadState>(
         &mut self,
-        stores: &mut C,
+        input: &mut C,
         name: &str,
     ) -> Result<ReplacementSource<S>, String> {
         self.inner
-            .open_input(stores, name)
+            .open_input(input, name)
             .map(ReplacementSource::Driver)
     }
 

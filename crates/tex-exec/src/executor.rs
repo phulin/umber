@@ -2,7 +2,7 @@ use tex_expand::{
     EngineMode, ExpansionHooks, NoopRecorder, ReadRecorder, get_x_token_with_recorder_and_hooks,
 };
 use tex_lex::{InputSource, InputStack};
-use tex_state::Universe;
+use tex_state::{ExpansionCtx, Universe};
 
 use crate::dispatch::unimplemented_typesetting;
 use crate::{DispatchAction, ExecError, ExecutionStats, ModeNest, dispatch_delivered_token};
@@ -82,8 +82,11 @@ impl Executor {
     {
         let mut stats = ExecutionStats::default();
         loop {
-            let Some(token) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
-            else {
+            let token = {
+                let mut expansion = ExpansionCtx::new(stores);
+                get_x_token_with_recorder_and_hooks(input, &mut expansion, recorder, hooks)?
+            };
+            let Some(token) = token else {
                 return Ok(stats);
             };
             stats.delivered_tokens += 1;
@@ -110,9 +113,9 @@ impl<S> ExpansionHooks<S> for NoopExecHooks
 where
     S: InputSource,
 {
-    fn open_input<C: tex_state::ExpansionState>(
+    fn open_input<C: tex_state::InputReadState>(
         &mut self,
-        _stores: &mut C,
+        _input: &mut C,
         _name: &str,
     ) -> Result<S, String> {
         Err("execution input hook is not installed".to_owned())
@@ -123,9 +126,9 @@ impl<S> ExpansionHooks<S> for Executor
 where
     S: InputSource,
 {
-    fn open_input<C: tex_state::ExpansionState>(
+    fn open_input<C: tex_state::InputReadState>(
         &mut self,
-        _stores: &mut C,
+        _input: &mut C,
         _name: &str,
     ) -> Result<S, String> {
         Err("execution input hook is not installed".to_owned())

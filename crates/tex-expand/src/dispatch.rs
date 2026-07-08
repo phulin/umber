@@ -127,13 +127,12 @@ where
         }
         Meaning::ExpandablePrimitive(ExpandablePrimitive::Input) => {
             let name = scan_input_name(input, stores, recorder, hooks)?;
-            let source =
-                hooks
-                    .open_input(stores, &name)
-                    .map_err(|message| ExpandError::InputOpen {
-                        name: name.clone(),
-                        message,
-                    })?;
+            let source = hooks
+                .open_input(&mut stores.input_open_context(), &name)
+                .map_err(|message| ExpandError::InputOpen {
+                    name: name.clone(),
+                    message,
+                })?;
             input.push_source(source);
             Ok(Dispatch::Continue)
         }
