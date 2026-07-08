@@ -7,8 +7,8 @@ use tex_state::glue::Order;
 use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::scaled::{
-    DimensionError, PhysicalUnit, Scaled, round_decimal_fraction, scaled_from_decimal_parts,
-    xn_over_d,
+    DimensionError, PhysicalUnit, Scaled, nx_plus_y, round_decimal_fraction,
+    scaled_from_decimal_parts, xn_over_d,
 };
 use tex_state::token::{Catcode, Token};
 use tex_state::{PrepareMagDiagnostic, Universe};
@@ -159,7 +159,6 @@ pub enum ScanDimenError {
     MissingNumber,
     MissingUnit,
     RegisterNumberOutOfRange(i32),
-    UnsupportedFontRelativeUnit(&'static str),
     IncompatibleGlueUnits,
     UnsupportedInternalDimension(Token),
 }
@@ -174,12 +173,6 @@ impl fmt::Display for ScanDimenError {
             Self::MissingUnit => f.write_str("Illegal unit of measure"),
             Self::RegisterNumberOutOfRange(value) => {
                 write!(f, "register number {value} is out of range")
-            }
-            Self::UnsupportedFontRelativeUnit(unit) => {
-                write!(
-                    f,
-                    "{unit} units require font metrics, which are not implemented yet"
-                )
             }
             Self::IncompatibleGlueUnits => f.write_str("Incompatible glue units"),
             Self::UnsupportedInternalDimension(token) => {
@@ -198,7 +191,6 @@ impl std::error::Error for ScanDimenError {
             Self::MissingNumber
             | Self::MissingUnit
             | Self::RegisterNumberOutOfRange(_)
-            | Self::UnsupportedFontRelativeUnit(_)
             | Self::IncompatibleGlueUnits
             | Self::UnsupportedInternalDimension(_) => None,
         }
@@ -657,15 +649,16 @@ where
         Some(ScannedUnit::Physical { unit, .. }) => {
             Ok(Some(ScannedUnit::Physical { unit, true_unit }))
         }
-        Some(ScannedUnit::Em) => {
-            // TODO(fonts): resolve em against the current font's quad.
-            Err(ScanDimenError::UnsupportedFontRelativeUnit("em"))
-        }
-        Some(ScannedUnit::Ex) => {
-            // TODO(fonts): resolve ex against the current font's x-height.
-            Err(ScanDimenError::UnsupportedFontRelativeUnit("ex"))
-        }
+        Some(ScannedUnit::Em) => Ok(Some(ScannedUnit::FontRelative {
+            unit: stores.font_parameter(stores.current_font(), 6),
+        })),
+        Some(ScannedUnit::Ex) => Ok(Some(ScannedUnit::FontRelative {
+            unit: stores.font_parameter(stores.current_font(), 5),
+        })),
         Some(ScannedUnit::Infinite(_)) => unreachable!("unit keywords never return infinity"),
+        Some(ScannedUnit::FontRelative { .. }) => {
+            unreachable!("unit keywords never return resolved font-relative units")
+        }
         None => {
             unread_tokens(input, stores, [first, second]);
             Ok(None)
@@ -723,6 +716,7 @@ where
 enum ScannedUnit {
     Physical { unit: PhysicalUnit, true_unit: bool },
     Infinite(Order),
+    FontRelative { unit: Scaled },
     Em,
     Ex,
 }
@@ -805,7 +799,41 @@ fn convert_scanned_unit(
             scanned.order = order;
             Ok(scanned)
         }
+        ScannedUnit::FontRelative { unit } => convert_font_relative_unit(integer, fraction, unit),
         ScannedUnit::Em | ScannedUnit::Ex => unreachable!("font units are handled while scanning"),
+    }
+}
+
+fn convert_font_relative_unit(
+    integer: i32,
+    fraction: i32,
+    unit: Scaled,
+) -> Result<ScannedDimen, ScanDimenError> {
+    assert!(integer >= 0, "dimension integer part must be nonnegative");
+    assert!(
+        (0..=Scaled::UNITY).contains(&fraction),
+        "dimension fraction out of range"
+    );
+
+    let fractional = match xn_over_d(unit, fraction, Scaled::UNITY) {
+        Ok(value) => value.quotient,
+        Err(error) => {
+            return Ok(ScannedDimen::with_diagnostic(
+                Scaled::MAX_DIMEN,
+                DimensionDiagnostic::from(error),
+            ));
+        }
+    };
+    match nx_plus_y(integer, unit, fractional).and_then(|value| {
+        value
+            .check_dimension()
+            .map_err(|_| tex_state::scaled::ArithmeticError::Overflow)
+    }) {
+        Ok(value) => Ok(ScannedDimen::new(value)),
+        Err(_) => Ok(ScannedDimen::with_diagnostic(
+            Scaled::MAX_DIMEN,
+            DimensionDiagnostic::TooLarge,
+        )),
     }
 }
 
@@ -1209,22 +1237,16 @@ mod tests {
     }
 
     #[test]
-    fn reports_font_relative_units_as_clear_stubs() {
+    fn font_relative_units_scan_as_nullfont_zero_by_default() {
         let mut stores = Universe::new();
-        let mut input = InputStack::new(MemoryInput::new("1em"));
-        let err = scan_dimen(&mut input, &mut stores).expect_err("em is not implemented");
-        assert!(matches!(
-            err,
-            ScanDimenError::UnsupportedFontRelativeUnit("em")
-        ));
+        let mut input = InputStack::new(MemoryInput::new("1em x"));
+        let em = scan_dimen(&mut input, &mut stores).expect("em scans");
+        assert_eq!(em.value().raw(), 0);
 
         let mut stores = Universe::new();
-        let mut input = InputStack::new(MemoryInput::new("1ex"));
-        let err = scan_dimen(&mut input, &mut stores).expect_err("ex is not implemented");
-        assert!(matches!(
-            err,
-            ScanDimenError::UnsupportedFontRelativeUnit("ex")
-        ));
+        let mut input = InputStack::new(MemoryInput::new("1ex x"));
+        let ex = scan_dimen(&mut input, &mut stores).expect("ex scans");
+        assert_eq!(ex.value().raw(), 0);
     }
 
     #[test]

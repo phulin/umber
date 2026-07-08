@@ -36,6 +36,7 @@ where
         tfm.header.design_size,
         tfm.font_size,
         parameters,
+        tfm.font_metrics(),
     );
     let id = stores.intern_font(loaded);
     let meaning = Meaning::Font(id);

@@ -39,6 +39,84 @@ impl TfmFont {
             .get(usize::from(code))
             .and_then(Option::as_ref)
     }
+
+    /// Converts parsed TFM data into the backend-neutral metric record stored by `tex-state`.
+    #[must_use]
+    pub fn font_metrics(&self) -> tex_state::font::FontMetrics {
+        tex_state::font::FontMetrics::new(
+            self.characters
+                .iter()
+                .map(|character| {
+                    character
+                        .as_ref()
+                        .map(|character| tex_state::font::CharMetrics {
+                            width: character.width,
+                            height: character.height,
+                            depth: character.depth,
+                            italic_correction: character.italic_correction,
+                            tag: character.tag.into(),
+                        })
+                })
+                .collect(),
+            self.lig_kern_program
+                .iter()
+                .map(|step| tex_state::font::LigKernInstruction {
+                    skip_byte: step.skip_byte,
+                    next_char: step.next_char,
+                    command: step.action.map(Into::into),
+                })
+                .collect(),
+            self.right_boundary_char,
+            self.left_boundary_program,
+            self.extensible_recipes
+                .iter()
+                .copied()
+                .map(Into::into)
+                .collect(),
+        )
+    }
+}
+
+impl From<CharacterTag> for tex_state::font::CharTag {
+    fn from(value: CharacterTag) -> Self {
+        match value {
+            CharacterTag::None => Self::None,
+            CharacterTag::LigKern {
+                program_index,
+                start_index,
+            } => Self::LigKern {
+                program_index,
+                start_index,
+            },
+            CharacterTag::NextLarger(code) => Self::NextLarger(code),
+            CharacterTag::Extensible(index) => Self::Extensible(index),
+        }
+    }
+}
+
+impl From<LigKernAction> for tex_state::font::LigKernCommand {
+    fn from(value: LigKernAction) -> Self {
+        match value {
+            LigKernAction::Ligature(ligature) => Self::Ligature(tex_state::font::LigatureCommand {
+                replacement: ligature.replacement,
+                delete_current: ligature.deletes.current,
+                delete_next: ligature.deletes.next,
+                pass_over: ligature.pass_over,
+            }),
+            LigKernAction::Kern(kern) => Self::Kern(kern.amount),
+        }
+    }
+}
+
+impl From<ExtensibleRecipe> for tex_state::font::ExtensibleRecipe {
+    fn from(value: ExtensibleRecipe) -> Self {
+        Self {
+            top: value.top,
+            middle: value.middle,
+            bottom: value.bottom,
+            repeated: value.repeated,
+        }
+    }
 }
 
 /// Header metadata stored before the metric tables.

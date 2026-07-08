@@ -1,4 +1,5 @@
 use tex_fonts::{CharacterTag, FontParameterKind, LigKernAction, ParseError, TfmFont, TfmTable};
+use tex_state::font::{LigKernChar, LigKernCommand};
 use tex_state::scaled::Scaled;
 
 const CMR10: &[u8] = include_bytes!("fixtures/cm/cmr10.tfm");
@@ -93,6 +94,69 @@ fn parses_real_boundary_char_and_long_jump_encodings() {
             } if start_index > u16::from(program_index)
         )
     }));
+}
+
+#[test]
+fn kernel_metrics_api_exposes_chars_lig_kerns_boundaries_and_recipes() {
+    let cmr = parse(CMR10);
+    let metrics = cmr.font_metrics();
+    let f = metrics.character(b'f').expect("f metric");
+    assert_eq!(f.width.raw(), char_metric(&cmr, b'f').width.raw());
+    assert!(metrics.char_exists(b'A'));
+    assert!(!metrics.char_exists(255));
+    assert!(matches!(
+        metrics.lig_kern_command(LigKernChar::Char(b'f'), LigKernChar::Char(b'i')),
+        Some(LigKernCommand::Ligature(ligature)) if ligature.replacement == 0o14
+            && ligature.delete_current
+            && ligature.delete_next
+            && ligature.pass_over == 0
+    ));
+    assert!(matches!(
+        metrics.lig_kern_command(LigKernChar::Char(b'T'), LigKernChar::Char(b'o')),
+        Some(LigKernCommand::Kern(amount)) if amount.raw() < 0
+    ));
+
+    let cmex = parse(CMEX10);
+    let cmex_metrics = cmex.font_metrics();
+    let extensible = cmex
+        .characters
+        .iter()
+        .flatten()
+        .find(|character| matches!(character.tag, CharacterTag::Extensible(_)))
+        .expect("cmex extensible character");
+    let CharacterTag::Extensible(recipe_index) = extensible.tag else {
+        unreachable!("find restricts tag");
+    };
+    let recipe = cmex_metrics
+        .extensible_recipe(extensible.code)
+        .expect("extensible recipe");
+    assert_eq!(
+        recipe.repeated,
+        cmex.extensible_recipes[usize::from(recipe_index)].repeated
+    );
+
+    let boundary = parse(&tfm_with_sections(Sections {
+        bc: b'A',
+        ec: b'B',
+        char_info: vec![[1, 0, 1, 1], [1, 0, 0, 0]],
+        widths: vec![[0, 0, 0, 0], [0, 8, 0, 0]],
+        heights: vec![[0, 0, 0, 0]],
+        depths: vec![[0, 0, 0, 0]],
+        italics: vec![[0, 0, 0, 0]],
+        lig_kerns: vec![[255, b' ', 0, 0], [128, b' ', 0, b'B'], [255, 0, 0, 1]],
+        kerns: Vec::new(),
+        extensibles: Vec::new(),
+        params: Vec::new(),
+    }));
+    let boundary_metrics = boundary.font_metrics();
+    assert!(matches!(
+        boundary_metrics.lig_kern_command(LigKernChar::Char(b'A'), LigKernChar::Boundary),
+        Some(LigKernCommand::Ligature(ligature)) if ligature.replacement == b'B'
+    ));
+    assert!(matches!(
+        boundary_metrics.lig_kern_command(LigKernChar::Boundary, LigKernChar::Boundary),
+        Some(LigKernCommand::Ligature(ligature)) if ligature.replacement == b'B'
+    ));
 }
 
 #[test]

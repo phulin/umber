@@ -727,6 +727,49 @@ fn fontdimen_growth_is_limited_to_most_recently_loaded_font() {
 }
 
 #[test]
+fn scanner_em_ex_units_use_current_font_parameters() {
+    let mut stores = stores_with_fonts();
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\font\\f=cmr10 \\f\\dimen0=1em \\dimen1=1ex \\end",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("em/ex assignments execute");
+
+    let font = font_meaning(&stores, "f");
+    assert_eq!(stores.dimen(0), stores.font_parameter(font, 6));
+    assert_eq!(stores.dimen(1), stores.font_parameter(font, 5));
+}
+
+#[test]
+fn scanner_em_ex_units_are_zero_for_nullfont() {
+    let mut stores = stores_with_fonts();
+    let mut input = InputStack::new(MemoryInput::new("\\dimen0=1em \\dimen1=1ex \\end"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("nullfont em/ex assignments execute");
+
+    assert_eq!(stores.dimen(0).raw(), 0);
+    assert_eq!(stores.dimen(1).raw(), 0);
+}
+
+#[test]
+fn scanner_em_unit_observes_runtime_fontdimen_write() {
+    let mut stores = stores_with_fonts();
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\font\\f=cmr10 \\f\\fontdimen6\\f=12pt \\dimen0=1em \\end",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("fontdimen write affects em");
+
+    assert_eq!(stores.dimen(0).raw(), 12 * tex_state::scaled::Scaled::UNITY);
+}
+
+#[test]
 fn nullfont_the_font_and_fontname_render_from_font_state() {
     let mut stores = stores_with_fonts();
     tex_expand::install_expandable_primitives(&mut stores);

@@ -10,7 +10,10 @@ use crate::code_tables::{CodeTableGenerations, DelCode, LcCode, MathCode, SfCode
 use crate::env::Env;
 use crate::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use crate::epoch::Epoch;
-use crate::font::LoadedFont;
+use crate::font::{
+    CharMetrics, ExtensibleRecipe, FontMetrics, LigKernChar, LigKernCommand, LigKernIter,
+    LoadedFont, MissingCharacter,
+};
 use crate::glue::GlueSpec;
 use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, TokenListId};
 use crate::input::{
@@ -516,6 +519,56 @@ impl Universe {
     #[must_use]
     pub fn font_name(&self, id: FontId) -> String {
         self.stores.font_name(id)
+    }
+
+    #[must_use]
+    pub fn font_metrics(&self, font: FontId) -> &FontMetrics {
+        self.stores.font_metrics(font)
+    }
+
+    #[must_use]
+    pub fn font_char_exists(&self, font: FontId, code: u8) -> bool {
+        self.stores.font_char_exists(font, code)
+    }
+
+    #[must_use]
+    pub fn font_char_metrics(&self, font: FontId, code: u8) -> Option<CharMetrics> {
+        self.stores.font_char_metrics(font, code)
+    }
+
+    #[must_use]
+    pub fn missing_font_character(&self, font: FontId, code: u8) -> Option<MissingCharacter> {
+        self.stores.missing_font_character(font, code)
+    }
+
+    #[must_use]
+    pub fn lig_kern_iter(
+        &self,
+        font: FontId,
+        left: LigKernChar,
+        right: LigKernChar,
+    ) -> LigKernIter<'_> {
+        self.stores.lig_kern_iter(font, left, right)
+    }
+
+    #[must_use]
+    pub fn lig_kern_command(
+        &self,
+        font: FontId,
+        left: LigKernChar,
+        right: LigKernChar,
+    ) -> Option<LigKernCommand> {
+        self.stores.lig_kern_command(font, left, right)
+    }
+
+    #[must_use]
+    pub fn extensible_recipe(&self, font: FontId, code: u8) -> Option<ExtensibleRecipe> {
+        self.stores.extensible_recipe(font, code)
+    }
+
+    #[must_use]
+    pub fn font_parameter(&self, font: FontId, number: u16) -> Scaled {
+        self.stores.font_parameter(font, number)
     }
 
     #[must_use]
@@ -1354,6 +1407,7 @@ mod tests {
             Scaled::from_raw(10 * Scaled::UNITY),
             Scaled::from_raw(10 * Scaled::UNITY),
             vec![Scaled::from_raw(0); 7],
+            crate::font::FontMetrics::default(),
         )
     }
 }

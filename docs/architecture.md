@@ -391,8 +391,19 @@ immutable tables.
   ordinary barriered `Env` write. Per-font mutable parameters
   (`\fontdimen`) live in `Env`-side banks, *not* in the font object —
   loaded fonts stay immutable and shareable across snapshots and threads.
-- Shaping sits behind a kernel-facing API (`shape(FontId, &str|glyph run)`)
-  so the paragraph builder does not know which backend answered.
+- Loaded fonts carry backend-neutral immutable metrics: character
+  width/height/depth/italic, TFM-style ligature/kern pair answers including
+  boundary programs and ligature retention/pass-over bits, and extensible
+  recipes. Kernels consume these through read-only `Universe` methods keyed by
+  `FontId`; they do not inspect TFM parser tables or store internals.
+- Font parameters are intentionally separate from those immutable metrics.
+  `Universe::font_parameter(font, n)` reads the Env-side `\fontdimen` bank, so
+  runtime writes are visible to scanners and kernels; the original TFM
+  parameter values only seed those banks at load time.
+- Later OpenType support should lower backend data behind the same boundary:
+  glyph metrics can populate the immutable metric record, while complex
+  shaping can replace the TFM pair-program implementation without exposing
+  GSUB/GPOS details to paragraph or math kernels.
 
 ## 10. Output drivers (`tex-out`)
 

@@ -9,7 +9,10 @@ use crate::code_tables::{
 };
 use crate::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use crate::env::{Env, EnvSnapshot};
-use crate::font::{FontStore, FontStoreMark, LoadedFont, NULL_FONT};
+use crate::font::{
+    CharMetrics, ExtensibleRecipe, FontMetrics, FontStore, FontStoreMark, LigKernChar,
+    LigKernCommand, LigKernIter, LoadedFont, MissingCharacter, NULL_FONT,
+};
 use crate::glue::{GlueSpec, GlueStore, GlueStoreMark};
 use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, TokenListId};
 use crate::interner::{Interner, InternerMark, Symbol};
@@ -384,6 +387,56 @@ impl Stores {
     #[must_use]
     pub fn font_name(&self, id: FontId) -> String {
         self.font(id).fontname_text()
+    }
+
+    #[must_use]
+    pub fn font_metrics(&self, font: FontId) -> &FontMetrics {
+        self.font(font).metrics()
+    }
+
+    #[must_use]
+    pub fn font_char_exists(&self, font: FontId, code: u8) -> bool {
+        self.font(font).metrics().char_exists(code)
+    }
+
+    #[must_use]
+    pub fn font_char_metrics(&self, font: FontId, code: u8) -> Option<CharMetrics> {
+        self.font(font).metrics().character(code)
+    }
+
+    #[must_use]
+    pub fn missing_font_character(&self, font: FontId, code: u8) -> Option<MissingCharacter> {
+        self.font(font).metrics().missing_character(font, code)
+    }
+
+    #[must_use]
+    pub fn lig_kern_iter(
+        &self,
+        font: FontId,
+        left: LigKernChar,
+        right: LigKernChar,
+    ) -> LigKernIter<'_> {
+        self.font(font).metrics().lig_kern_iter(left, right)
+    }
+
+    #[must_use]
+    pub fn lig_kern_command(
+        &self,
+        font: FontId,
+        left: LigKernChar,
+        right: LigKernChar,
+    ) -> Option<LigKernCommand> {
+        self.font(font).metrics().lig_kern_command(left, right)
+    }
+
+    #[must_use]
+    pub fn extensible_recipe(&self, font: FontId, code: u8) -> Option<ExtensibleRecipe> {
+        self.font(font).metrics().extensible_recipe(code)
+    }
+
+    #[must_use]
+    pub fn font_parameter(&self, font: FontId, number: u16) -> Scaled {
+        self.font_dimen(font, number)
     }
 
     #[must_use]
