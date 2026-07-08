@@ -139,6 +139,8 @@ pub(super) fn line_badness(widths: Widths, target: Scaled, emergency: Scaled) ->
         let shrink_order = highest_order(widths.shrink);
         if shrink_order != Order::Normal && widths.shrink[shrink_order as usize].raw() > 0 {
             0
+        } else if diff.saturating_abs() > widths.shrink[Order::Normal as usize].raw() {
+            crate::INF_BAD + 1
         } else {
             badness(
                 Scaled::from_raw(diff.saturating_abs()),

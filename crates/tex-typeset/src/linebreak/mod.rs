@@ -2,7 +2,7 @@ use tex_state::ids::GlueId;
 use tex_state::node::{DiscKind, KernKind, Node};
 use tex_state::scaled::Scaled;
 
-use crate::TypesetState;
+use crate::{INF_BAD, TypesetState};
 
 const EJECT_PENALTY: i32 = -10_000;
 const INF_PENALTY: i32 = 10_000;
@@ -160,20 +160,44 @@ where
     H: HyphenationHook<S>,
 {
     if params.pretolerance >= 0 {
-        let first = run_pass(state, nodes, &params, params.pretolerance, false, false);
+        let first = run_pass(
+            state,
+            nodes,
+            &params,
+            params.pretolerance,
+            false,
+            false,
+            false,
+        );
         if let Some(result) = first {
             return result;
         }
     }
 
     let hyphenated = hyphenation.hyphenate(nodes);
-    let second = run_pass(state, &hyphenated, &params, params.tolerance, true, false);
+    let second = run_pass(
+        state,
+        &hyphenated,
+        &params,
+        params.tolerance,
+        true,
+        false,
+        params.emergency_stretch.raw() <= 0,
+    );
     if let Some(result) = second {
         return result;
     }
 
-    run_pass(state, &hyphenated, &params, params.tolerance, true, true)
-        .expect("final line-breaking pass always permits an artificial demerits path")
+    run_pass(
+        state,
+        &hyphenated,
+        &params,
+        params.tolerance,
+        true,
+        true,
+        true,
+    )
+    .expect("final line-breaking pass always permits an artificial demerits path")
 }
 
 mod post;
@@ -220,6 +244,7 @@ fn run_pass<S: TypesetState>(
     tolerance: i32,
     allow_hyphenation: bool,
     emergency: bool,
+    final_pass: bool,
 ) -> Option<LineBreakResult> {
     let prefix = PrefixWidths::new(state, nodes);
     let breakpoints = legal_breakpoints(state, nodes, params, allow_hyphenation);
@@ -259,33 +284,40 @@ fn run_pass<S: TypesetState>(
             };
             let b = line_badness(widths, target, extra);
             let forced = bp.penalty <= EJECT_PENALTY;
-            if !forced && (bp.penalty >= INF_PENALTY || (!emergency && b > tolerance)) {
-                continue;
+            let artificial =
+                final_pass && next.is_empty() && active.len() == 1 && (b > INF_BAD || forced);
+            let deactivates = b > INF_BAD || forced;
+            let feasible = bp.penalty < INF_PENALTY && (artificial || b <= tolerance);
+            if feasible {
+                let badness = b.min(INF_BAD);
+                let fitness = fitness_class(badness, widths.natural.raw(), target.raw());
+                let dem = if artificial {
+                    active_candidate.path_demerits
+                } else {
+                    compute_demerits(params, active_candidate, badness, bp.penalty, fitness, bp)
+                };
+                let id = candidates.len();
+                candidates.push(Candidate {
+                    position: bp.position,
+                    width_position: bp.position,
+                    penalty: bp.penalty,
+                    line: active_candidate.line + 1,
+                    fitness,
+                    demerits: dem,
+                    path_demerits: dem,
+                    previous: Some(active_id),
+                    hyphenated: bp.hyphenated,
+                });
+                next.push(id);
+                if forced && bp.position >= nodes.len() {
+                    finals.push(id);
+                }
             }
-            let fitness = fitness_class(b, widths.natural.raw(), target.raw());
-            let dem = compute_demerits(params, active_candidate, b, bp.penalty, fitness, bp);
-            let id = candidates.len();
-            candidates.push(Candidate {
-                position: bp.position,
-                width_position: bp.position,
-                penalty: bp.penalty,
-                line: active_candidate.line + 1,
-                fitness,
-                demerits: dem,
-                path_demerits: dem,
-                previous: Some(active_id),
-                hyphenated: bp.hyphenated,
-            });
-            next.push(id);
-            if forced && bp.position >= nodes.len() {
-                finals.push(id);
+            if !deactivates {
+                next.push(active_id);
             }
         }
-        if bp.penalty <= EJECT_PENALTY {
-            active = next;
-        } else {
-            active.extend(next);
-        }
+        active = next;
     }
 
     apply_final_hyphen_demerits(&mut candidates, &finals, params.final_hyphen_demerits);
@@ -301,8 +333,12 @@ fn compute_demerits(
     fitness: Fitness,
     bp: Breakpoint,
 ) -> i32 {
-    let line_bad = params.line_penalty.saturating_add(bad).abs();
-    let mut dem = line_bad.saturating_mul(line_bad);
+    let line_bad = params.line_penalty.saturating_add(bad);
+    let mut dem = if line_bad.abs() >= INF_BAD {
+        100_000_000
+    } else {
+        line_bad.saturating_mul(line_bad)
+    };
     if penalty > 0 {
         dem = dem.saturating_add(penalty.saturating_mul(penalty));
     } else if penalty > EJECT_PENALTY {

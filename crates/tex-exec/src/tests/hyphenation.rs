@@ -44,7 +44,7 @@ fn paragraph_hyphenation_honors_uchyph_for_uppercase_start() {
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
-        "\\font\\tenrm=cmr10 \\tenrm\\patterns{a1ba}\\lefthyphenmin=1 \\righthyphenmin=1 \\pretolerance=-1 \\uchyph=0 Aba\\par \\uchyph=1 Aba\\par\\end",
+        "\\font\\tenrm=cmr10 \\tenrm\\hsize=100pt \\patterns{a1ba}\\lefthyphenmin=1 \\righthyphenmin=1 \\pretolerance=-1 \\uchyph=0 Aba\\par \\uchyph=1 Aba\\par\\end",
     ));
 
     let mut executor = Executor::new();

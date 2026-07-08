@@ -54,6 +54,51 @@ fn hpack_sets_finite_stretch_order_and_ratio() {
 }
 
 #[test]
+fn hpack_clamps_overfull_normal_shrink_ratio_to_one() {
+    let mut universe = Universe::new();
+    let glue = universe.intern_glue(GlueSpec {
+        width: sp(10),
+        stretch: sp(0),
+        stretch_order: Order::Normal,
+        shrink: sp(2),
+        shrink_order: Order::Normal,
+    });
+    let list = universe.freeze_node_list(&[
+        Node::Kern {
+            amount: sp(20),
+            kind: KernKind::Explicit,
+        },
+        Node::Glue {
+            spec: glue,
+            kind: GlueKind::Normal,
+        },
+        Node::Kern {
+            amount: sp(20),
+            kind: KernKind::Explicit,
+        },
+    ]);
+
+    let packed = hpack(
+        &universe,
+        list,
+        PackSpec::Exactly(sp(40)),
+        HpackParams {
+            hbadness: 0,
+            hfuzz: sp(0),
+            overfull_rule: sp(0),
+        },
+    );
+
+    assert_eq!(packed.node.glue_sign, Sign::Shrinking);
+    assert_eq!(packed.node.glue_order, Order::Normal);
+    assert_eq!(packed.node.glue_set, 1.0);
+    assert_eq!(
+        packed.diagnostics,
+        vec![PackDiagnostic::Overfull { excess: sp(10) }]
+    );
+}
+
+#[test]
 fn hpack_measures_shifted_child_boxes() {
     let mut universe = Universe::new();
     let child = universe.freeze_node_list(&[]);

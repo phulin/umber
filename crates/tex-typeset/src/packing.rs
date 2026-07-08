@@ -194,12 +194,15 @@ fn set_glue(target: Scaled, natural: Scaled, meas: &Measurement) -> GlueSetting 
     let order = highest_order(totals);
     let total = totals[order as usize].raw();
     let excess = Scaled::from_raw(diff.abs());
+    let ratio = if total == 0 {
+        0.0
+    } else if sign == Sign::Shrinking && order == Order::Normal && excess.raw() > total {
+        1.0
+    } else {
+        f64::from(excess.raw()) / f64::from(total)
+    };
     GlueSetting {
-        ratio: if total != 0 {
-            f64::from(diff.abs()) / f64::from(total)
-        } else {
-            0.0
-        },
+        ratio,
         sign,
         order,
         badness: badness(excess, Scaled::from_raw(total)),

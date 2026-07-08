@@ -180,6 +180,54 @@ fn break_glue_does_not_contribute_to_preceding_line_width() {
 }
 
 #[test]
+fn final_pass_deactivates_unshrinkable_active_line() {
+    let mut universe = Universe::new();
+    let glue = universe.intern_glue(GlueSpec {
+        width: sp(10),
+        stretch: sp(10),
+        stretch_order: Order::Normal,
+        shrink: sp(5),
+        shrink_order: Order::Normal,
+    });
+    let nodes = vec![
+        rule(30),
+        Node::Glue {
+            spec: glue,
+            kind: GlueKind::Normal,
+        },
+        rule(30),
+        Node::Glue {
+            spec: glue,
+            kind: GlueKind::Normal,
+        },
+        rule(30),
+        Node::Glue {
+            spec: glue,
+            kind: GlueKind::Normal,
+        },
+        rule(30),
+        Node::Glue {
+            spec: glue,
+            kind: GlueKind::Normal,
+        },
+        rule(30),
+    ];
+    let mut params = params(100);
+    params.pretolerance = -1;
+    params.tolerance = 200;
+    params.emergency_stretch = sp(0);
+
+    let mut hook = NoHyphenation;
+    let result = line_break(&universe, &nodes, params, &mut hook);
+
+    assert!(result.breaks.len() > 1, "{:?}", result.breaks);
+    assert_ne!(
+        result.breaks.first().map(|br| br.position),
+        Some(nodes.len())
+    );
+}
+
+#[test]
 fn discretionary_penalty_comes_from_source_kind() {
     let mut universe = Universe::new();
     let pre = universe.freeze_node_list(&[kern(0)]);
