@@ -1,4 +1,4 @@
-use std::process::Command;
+use std::{fs, process::Command};
 
 use refexec::{RefTex, RunOpts};
 use test_support::{assert_matches_fixture, normalize};
@@ -147,6 +147,60 @@ fn run_exec_corpus_matches_pdftex_diagnostics() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // host-side optional corpus and command execution.
+fn run_hyphen_showhyphens_corpus_matches_pdftex() {
+    let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let hyphen_tex = repo_root.join("third_party/hyphen/hyphen.tex");
+    if !hyphen_tex.exists() {
+        eprintln!(
+            "skipping hyphen showhyphens parity: {}; run scripts/fetch-hyphen-corpus.sh",
+            hyphen_tex.display()
+        );
+        return;
+    }
+    let ref_tex = match RefTex::locate() {
+        Ok(ref_tex) => ref_tex,
+        Err(error) => {
+            eprintln!("skipping hyphen showhyphens parity: {error:#}");
+            return;
+        }
+    };
+
+    assert_eq!(HYPHEN_PARITY_WORDS.len(), 200);
+    let temp_dir = tempfile::tempdir().expect("create hyphen parity temp dir");
+    fs::copy(&hyphen_tex, temp_dir.path().join("hyphen.tex")).expect("copy hyphen.tex");
+
+    let ref_input = temp_dir.path().join("pdftex-showhyphens.tex");
+    fs::write(&ref_input, showhyphens_source(false)).expect("write pdftex hyphen input");
+    let ref_output = ref_tex
+        .run(&ref_input, &RunOpts::default())
+        .expect("run pdftex hyphen corpus");
+    assert!(
+        ref_output.success,
+        "pdftex hyphen corpus failed:\n{}",
+        ref_output.log
+    );
+    let expected = normalize::showhyphens(&ref_output.log);
+
+    let umber_input = temp_dir.path().join("umber-showhyphens.tex");
+    fs::write(&umber_input, showhyphens_source(true)).expect("write umber hyphen input");
+    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .arg("run")
+        .arg(&umber_input)
+        .output()
+        .expect("run umber hyphen corpus");
+    assert!(
+        output.status.success(),
+        "umber hyphen corpus failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let actual_stdout = String::from_utf8(output.stdout).expect("umber run output is utf-8");
+    let actual = normalize::showhyphens(&actual_stdout);
+
+    assert_eq!(actual, expected, "hyphen.tex showhyphens corpus drifted");
+}
+
+#[test]
 fn run_usage_errors_follow_existing_shape() {
     let missing = Command::new(env!("CARGO_BIN_EXE_umber"))
         .arg("run")
@@ -170,6 +224,223 @@ fn run_usage_errors_follow_existing_shape() {
         "umber: run accepts exactly one input path\n"
     );
 }
+
+fn showhyphens_source(load_hyphen: bool) -> String {
+    let mut source = String::new();
+    if load_hyphen {
+        source.push_str("\\input hyphen\n");
+    }
+    for word in HYPHEN_PARITY_WORDS {
+        source.push_str("\\showhyphens{");
+        source.push_str(word);
+        source.push_str("}\n");
+    }
+    source.push_str("\\end\n");
+    source
+}
+
+const HYPHEN_PARITY_WORDS: &[&str] = &[
+    "hyphenation",
+    "representative",
+    "algorithm",
+    "computer",
+    "science",
+    "mathematics",
+    "language",
+    "programming",
+    "portable",
+    "implementation",
+    "comparison",
+    "diagnostic",
+    "normalization",
+    "exception",
+    "patterns",
+    "boundary",
+    "paragraph",
+    "typesetting",
+    "discretionary",
+    "ligature",
+    "kerning",
+    "baseline",
+    "dimension",
+    "magnification",
+    "assignment",
+    "primitive",
+    "expansion",
+    "conditionals",
+    "registers",
+    "universe",
+    "snapshot",
+    "rollback",
+    "terminal",
+    "transcript",
+    "ordinary",
+    "letters",
+    "lowercase",
+    "uppercase",
+    "character",
+    "sequence",
+    "interpreter",
+    "execution",
+    "analysis",
+    "architecture",
+    "reference",
+    "validation",
+    "fixture",
+    "corpus",
+    "future",
+    "stability",
+    "automatic",
+    "manual",
+    "associate",
+    "associates",
+    "declination",
+    "obligatory",
+    "philanthropic",
+    "reciprocity",
+    "recognizance",
+    "reformation",
+    "table",
+    "index",
+    "memory",
+    "format",
+    "plain",
+    "engine",
+    "workflow",
+    "coordinate",
+    "quality",
+    "testing",
+    "failure",
+    "success",
+    "visible",
+    "invisible",
+    "accurate",
+    "behavior",
+    "semantic",
+    "persistent",
+    "journal",
+    "content",
+    "storage",
+    "scanner",
+    "token",
+    "balanced",
+    "braces",
+    "spaces",
+    "control",
+    "symbol",
+    "mutable",
+    "immutable",
+    "history",
+    "version",
+    "document",
+    "process",
+    "builder",
+    "horizontal",
+    "vertical",
+    "material",
+    "natural",
+    "stretch",
+    "shrink",
+    "penalty",
+    "badness",
+    "tolerance",
+    "pretolerance",
+    "package",
+    "project",
+    "repository",
+    "portable",
+    "modern",
+    "performance",
+    "optimization",
+    "profile",
+    "correctness",
+    "parity",
+    "coverage",
+    "regression",
+    "represent",
+    "normalize",
+    "compare",
+    "output",
+    "input",
+    "source",
+    "available",
+    "optional",
+    "distribution",
+    "installation",
+    "developer",
+    "maintainer",
+    "interface",
+    "command",
+    "script",
+    "fetching",
+    "located",
+    "current",
+    "relative",
+    "absolute",
+    "directory",
+    "temporary",
+    "execution",
+    "captured",
+    "message",
+    "underfull",
+    "overfull",
+    "paragraphs",
+    "minimum",
+    "maximum",
+    "language",
+    "english",
+    "american",
+    "dictionary",
+    "exceptional",
+    "educational",
+    "institution",
+    "international",
+    "representation",
+    "responsibility",
+    "characteristic",
+    "configuration",
+    "communication",
+    "documentation",
+    "implementation",
+    "initialization",
+    "interpretation",
+    "localization",
+    "organization",
+    "presentation",
+    "recommendation",
+    "specification",
+    "transformation",
+    "verification",
+    "application",
+    "development",
+    "foundation",
+    "generation",
+    "operation",
+    "resolution",
+    "translation",
+    "variation",
+    "evaluation",
+    "iteration",
+    "integration",
+    "migration",
+    "selection",
+    "transaction",
+    "allocation",
+    "collection",
+    "definition",
+    "description",
+    "extension",
+    "function",
+    "location",
+    "notation",
+    "position",
+    "question",
+    "relation",
+    "solution",
+    "buffer",
+    "kernel",
+    "driver",
+];
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side corpus files, not engine I/O.

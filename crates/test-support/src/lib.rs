@@ -175,6 +175,47 @@ mod imp {
             }
         }
 
+        pub fn showhyphens(log: &str) -> String {
+            let mut lines = Vec::new();
+            let mut in_showhyphens = false;
+
+            for line in log.lines() {
+                if let Some((_, hyphenated)) = line.split_once(r"[] \tenrm ") {
+                    lines.extend(hyphenated.split_whitespace().map(str::to_owned));
+                    continue;
+                }
+                if line == "! OK." {
+                    if in_showhyphens {
+                        in_showhyphens = false;
+                    }
+                    continue;
+                }
+                if line.is_empty() {
+                    in_showhyphens = true;
+                    continue;
+                }
+                if line.starts_with("Underfull \\hbox")
+                    || line.starts_with("\\hbox(")
+                    || line.starts_with(" )")
+                    || line.starts_with("No pages of output")
+                    || line.starts_with("PDF statistics:")
+                    || line.starts_with(' ')
+                {
+                    continue;
+                }
+                if in_showhyphens {
+                    lines.push(line.trim_end().to_owned());
+                }
+            }
+
+            let normalized = lines.join("\n");
+            if normalized.is_empty() {
+                normalized
+            } else {
+                format!("{normalized}\n")
+            }
+        }
+
         fn is_banner_line(line: &str) -> bool {
             line.starts_with("This is ")
                 || line.starts_with(" restricted \\write18")

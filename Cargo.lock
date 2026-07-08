@@ -869,6 +869,7 @@ version = "0.1.0"
 dependencies = [
  "proptest",
  "refexec",
+ "tempfile",
  "test-support",
  "tex-exec",
  "tex-expand",

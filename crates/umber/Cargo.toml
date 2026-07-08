@@ -16,6 +16,7 @@ tex-state = { path = "../tex-state" }
 [dev-dependencies]
 proptest.workspace = true
 refexec = { path = "../../tools/refexec" }
+tempfile.workspace = true
 test-support = { path = "../test-support" }
 tex-state = { path = "../tex-state", features = ["testing"] }
 
