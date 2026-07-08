@@ -8,7 +8,7 @@ use crate::token::Catcode;
 use core::array;
 #[cfg(any(test, feature = "testing", feature = "shadow"))]
 use std::hash::{Hash, Hasher};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 const PAGE_BITS: u32 = 8;
 const PAGE_LEN: usize = 1 << PAGE_BITS;
@@ -46,7 +46,12 @@ pub struct CodeTableGenerations {
 /// Root snapshot for all code tables.
 #[derive(Clone, Debug)]
 pub(crate) struct CodeTablesSnapshot {
-    tables: CodeTables,
+    catcodes: PagedTableSnapshot<Catcode>,
+    lccodes: PagedTableSnapshot<LcCode>,
+    uccodes: PagedTableSnapshot<UcCode>,
+    sfcodes: PagedTableSnapshot<SfCode>,
+    mathcodes: PagedTableSnapshot<MathCode>,
+    delcodes: PagedTableSnapshot<DelCode>,
 }
 
 /// The six mutable TeX code tables.
@@ -76,12 +81,22 @@ impl CodeTables {
 
     pub(crate) fn checkpoint(&self) -> CodeTablesSnapshot {
         CodeTablesSnapshot {
-            tables: self.clone(),
+            catcodes: self.catcodes.checkpoint(),
+            lccodes: self.lccodes.checkpoint(),
+            uccodes: self.uccodes.checkpoint(),
+            sfcodes: self.sfcodes.checkpoint(),
+            mathcodes: self.mathcodes.checkpoint(),
+            delcodes: self.delcodes.checkpoint(),
         }
     }
 
     pub(crate) fn rollback_to(&mut self, snapshot: CodeTablesSnapshot) {
-        *self = snapshot.tables;
+        self.catcodes.rollback_to(snapshot.catcodes);
+        self.lccodes.rollback_to(snapshot.lccodes);
+        self.uccodes.rollback_to(snapshot.uccodes);
+        self.sfcodes.rollback_to(snapshot.sfcodes);
+        self.mathcodes.rollback_to(snapshot.mathcodes);
+        self.delcodes.rollback_to(snapshot.delcodes);
     }
 
     /// Returns the generation vector for all code tables.
@@ -174,9 +189,9 @@ impl Default for CodeTables {
 struct PagedTable<T, D>
 where
     T: Copy + Eq,
-    D: Defaults<T>,
+    D: Defaults<T> + StaticDefaultRoot<T>,
 {
-    pages: Box<[Arc<Page<T>>]>,
+    root: Arc<Root<T>>,
     generation: u32,
     _defaults: core::marker::PhantomData<D>,
 }
@@ -184,14 +199,11 @@ where
 impl<T, D> PagedTable<T, D>
 where
     T: Copy + Eq,
-    D: Defaults<T>,
+    D: Defaults<T> + StaticDefaultRoot<T>,
 {
     fn new() -> Self {
-        let pages: Vec<_> = (0..ROOT_LEN)
-            .map(|page| Arc::new(Page::default_for::<D>(page)))
-            .collect();
         Self {
-            pages: pages.into_boxed_slice(),
+            root: D::default_root(),
             generation: 0,
             _defaults: core::marker::PhantomData,
         }
@@ -203,21 +215,34 @@ where
 
     fn get(&self, ch: char) -> T {
         let (page, offset) = location(ch);
-        self.pages[page].values[offset]
+        self.root.pages[page].values[offset]
     }
 
     fn set(&mut self, ch: char, value: T) {
         let (page_index, offset) = location(ch);
-        if self.pages[page_index].values[offset] == value {
+        if self.root.pages[page_index].values[offset] == value {
             return;
         }
 
-        let page = Arc::make_mut(&mut self.pages[page_index]);
+        let root = Arc::make_mut(&mut self.root);
+        let page = Arc::make_mut(&mut root.pages[page_index]);
         page.values[offset] = value;
         self.generation = self
             .generation
             .checked_add(1)
             .expect("code-table generation overflow");
+    }
+
+    fn checkpoint(&self) -> PagedTableSnapshot<T> {
+        PagedTableSnapshot {
+            root: Arc::clone(&self.root),
+            generation: self.generation,
+        }
+    }
+
+    fn rollback_to(&mut self, snapshot: PagedTableSnapshot<T>) {
+        self.root = snapshot.root;
+        self.generation = snapshot.generation;
     }
 
     #[cfg(any(test, feature = "testing", feature = "shadow"))]
@@ -226,10 +251,21 @@ where
         T: Hash,
     {
         self.generation.hash(hasher);
-        for page in self.pages.iter() {
+        for page in self.root.pages.iter() {
             page.values.hash(hasher);
         }
     }
+}
+
+#[derive(Clone, Debug)]
+struct PagedTableSnapshot<T> {
+    root: Arc<Root<T>>,
+    generation: u32,
+}
+
+#[derive(Clone, Debug)]
+struct Root<T> {
+    pages: Box<[Arc<Page<T>>]>,
 }
 
 #[derive(Clone, Debug)]
@@ -254,6 +290,23 @@ where
 
 trait Defaults<T> {
     fn default_for(code: u32) -> T;
+}
+
+trait StaticDefaultRoot<T> {
+    fn default_root() -> Arc<Root<T>>;
+}
+
+fn build_default_root<T, D>() -> Arc<Root<T>>
+where
+    T: Copy,
+    D: Defaults<T>,
+{
+    let pages: Vec<_> = (0..ROOT_LEN)
+        .map(|page| Arc::new(Page::default_for::<D>(page)))
+        .collect();
+    Arc::new(Root {
+        pages: pages.into_boxed_slice(),
+    })
 }
 
 #[derive(Clone, Debug)]
@@ -281,6 +334,13 @@ impl Defaults<Catcode> for CatcodeDefaults {
     }
 }
 
+impl StaticDefaultRoot<Catcode> for CatcodeDefaults {
+    fn default_root() -> Arc<Root<Catcode>> {
+        static ROOT: OnceLock<Arc<Root<Catcode>>> = OnceLock::new();
+        Arc::clone(ROOT.get_or_init(build_default_root::<Catcode, CatcodeDefaults>))
+    }
+}
+
 #[derive(Clone, Debug)]
 struct LcCodeDefaults;
 
@@ -291,6 +351,13 @@ impl Defaults<LcCode> for LcCodeDefaults {
             ASCII_LOWER_A..=ASCII_LOWER_Z => code,
             _ => 0,
         }
+    }
+}
+
+impl StaticDefaultRoot<LcCode> for LcCodeDefaults {
+    fn default_root() -> Arc<Root<LcCode>> {
+        static ROOT: OnceLock<Arc<Root<LcCode>>> = OnceLock::new();
+        Arc::clone(ROOT.get_or_init(build_default_root::<LcCode, LcCodeDefaults>))
     }
 }
 
@@ -307,6 +374,13 @@ impl Defaults<UcCode> for UcCodeDefaults {
     }
 }
 
+impl StaticDefaultRoot<UcCode> for UcCodeDefaults {
+    fn default_root() -> Arc<Root<UcCode>> {
+        static ROOT: OnceLock<Arc<Root<UcCode>>> = OnceLock::new();
+        Arc::clone(ROOT.get_or_init(build_default_root::<UcCode, UcCodeDefaults>))
+    }
+}
+
 #[derive(Clone, Debug)]
 struct SfCodeDefaults;
 
@@ -319,6 +393,13 @@ impl Defaults<SfCode> for SfCodeDefaults {
     }
 }
 
+impl StaticDefaultRoot<SfCode> for SfCodeDefaults {
+    fn default_root() -> Arc<Root<SfCode>> {
+        static ROOT: OnceLock<Arc<Root<SfCode>>> = OnceLock::new();
+        Arc::clone(ROOT.get_or_init(build_default_root::<SfCode, SfCodeDefaults>))
+    }
+}
+
 #[derive(Clone, Debug)]
 struct MathCodeDefaults;
 
@@ -328,12 +409,26 @@ impl Defaults<MathCode> for MathCodeDefaults {
     }
 }
 
+impl StaticDefaultRoot<MathCode> for MathCodeDefaults {
+    fn default_root() -> Arc<Root<MathCode>> {
+        static ROOT: OnceLock<Arc<Root<MathCode>>> = OnceLock::new();
+        Arc::clone(ROOT.get_or_init(build_default_root::<MathCode, MathCodeDefaults>))
+    }
+}
+
 #[derive(Clone, Debug)]
 struct DelCodeDefaults;
 
 impl Defaults<DelCode> for DelCodeDefaults {
     fn default_for(_: u32) -> DelCode {
         DELCODE_DEFAULT
+    }
+}
+
+impl StaticDefaultRoot<DelCode> for DelCodeDefaults {
+    fn default_root() -> Arc<Root<DelCode>> {
+        static ROOT: OnceLock<Arc<Root<DelCode>>> = OnceLock::new();
+        Arc::clone(ROOT.get_or_init(build_default_root::<DelCode, DelCodeDefaults>))
     }
 }
 
@@ -351,9 +446,10 @@ fn assert_unicode_code(value: u32, table: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::{CodeTableGenerations, CodeTables, CodeTablesSnapshot};
+    use super::{CodeTableGenerations, CodeTables, location};
     use crate::token::Catcode;
     use proptest::prelude::*;
+    use std::sync::Arc;
 
     #[test]
     fn initex_catcode_defaults_match_tex82_ascii() {
@@ -428,8 +524,48 @@ mod tests {
 
         tables.set_catcode('@', Catcode::Letter);
         assert_eq!(tables.catcode('@'), Catcode::Letter);
-        let CodeTablesSnapshot { tables: old_tables } = snapshot;
-        assert_eq!(old_tables.catcode('@'), Catcode::Other);
+        let (page, offset) = location('@');
+        assert_eq!(
+            snapshot.catcodes.root.pages[page].values[offset],
+            Catcode::Other
+        );
+    }
+
+    #[test]
+    fn new_tables_share_canonical_default_roots_and_pages() {
+        let first = CodeTables::new();
+        let second = CodeTables::new();
+
+        assert!(Arc::ptr_eq(&first.catcodes.root, &second.catcodes.root));
+        assert!(Arc::ptr_eq(
+            &first.catcodes.root.pages[0],
+            &second.catcodes.root.pages[0]
+        ));
+        assert!(Arc::ptr_eq(&first.lccodes.root, &second.lccodes.root));
+        assert!(Arc::ptr_eq(&first.uccodes.root, &second.uccodes.root));
+        assert!(Arc::ptr_eq(&first.sfcodes.root, &second.sfcodes.root));
+        assert!(Arc::ptr_eq(&first.mathcodes.root, &second.mathcodes.root));
+        assert!(Arc::ptr_eq(&first.delcodes.root, &second.delcodes.root));
+    }
+
+    #[test]
+    fn checkpoint_captures_root_pointers_without_cloning_root_arrays() {
+        let mut tables = CodeTables::new();
+        tables.set_catcode('@', Catcode::Letter);
+        let snapshot = tables.checkpoint();
+
+        assert!(Arc::ptr_eq(&tables.catcodes.root, &snapshot.catcodes.root));
+        let old_root = Arc::clone(&snapshot.catcodes.root);
+
+        tables.set_catcode('!', Catcode::Letter);
+
+        assert!(!Arc::ptr_eq(&tables.catcodes.root, &old_root));
+        assert_eq!(tables.catcode('!'), Catcode::Letter);
+        let (page, offset) = location('!');
+        assert_eq!(
+            snapshot.catcodes.root.pages[page].values[offset],
+            Catcode::Other
+        );
     }
 
     #[test]

@@ -164,8 +164,11 @@ rare and bursty (verbatim, `\makeatletter`, babel shorthands).
 - In the implemented `tex-state` API, code tables live behind `Stores`:
   reads and writes go through `Stores::{catcode,set_catcode,...}` and
   `Stores::code_table_generations`. `Stores::checkpoint` captures the
-  structurally shared roots and generation counters, and `Stores::rollback`
-  restores them atomically with the Env/content tuple.
+  structurally shared root pointers and generation counters, and
+  `Stores::rollback` restores them atomically with the Env/content tuple.
+  Each implemented table root starts at a canonical shared default root whose
+  pages are also canonical shared pages; the first effective write detaches
+  the root and then copy-on-writes only the touched page.
 - INITEX defaults are TeX82-compatible for the classic 0..255 range and
   extended over Unicode by the same default rules: ASCII letters have letter
   catcode and case mappings, uppercase ASCII has `sfcode` 999, other scalar
