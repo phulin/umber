@@ -3,7 +3,7 @@
 use tex_expand::scan::{scan_toks, scan_toks_expanded};
 use tex_expand::{
     ExpandError, ExpansionHooks, NoopRecorder, get_x_token_with_recorder_and_hooks, scan_dimen,
-    scan_glue, scan_int,
+    scan_glue, scan_int, scan_optional_keyword_with_hooks,
 };
 use tex_lex::{InputSource, InputStack, LexError, TokenListReplayKind};
 use tex_state::code_tables::{DelCode, LcCode, MathCode, SfCode, UcCode};
@@ -1126,36 +1126,13 @@ where
     H: ExpansionHooks<S>,
 {
     let mut recorder = NoopRecorder;
-    let mut consumed = Vec::new();
-    loop {
-        let Some(token) = get_x_token_with_recorder_and_hooks(input, stores, &mut recorder, hooks)?
-        else {
-            return Ok(false);
-        };
-        if !is_space(token) {
-            consumed.push(token);
-            break;
-        }
-    }
-    for (offset, expected) in keyword.bytes().enumerate() {
-        let token = if offset == 0 {
-            consumed[0]
-        } else {
-            let Some(token) =
-                get_x_token_with_recorder_and_hooks(input, stores, &mut recorder, hooks)?
-            else {
-                push_tokens(input, stores, consumed);
-                return Ok(false);
-            };
-            consumed.push(token);
-            token
-        };
-        if !token_matches_keyword_byte(token, expected) {
-            push_tokens(input, stores, consumed);
-            return Ok(false);
-        }
-    }
-    Ok(true)
+    Ok(scan_optional_keyword_with_hooks(
+        input,
+        stores,
+        &mut recorder,
+        hooks,
+        keyword,
+    )?)
 }
 
 fn arithmetic_i32(primitive: UnexpandablePrimitive, old: i32, rhs: i32) -> Result<i32, ExecError> {
@@ -1801,15 +1778,4 @@ fn is_other_equals(token: Token) -> bool {
             cat: Catcode::Other
         }
     )
-}
-
-fn token_matches_keyword_byte(token: Token, expected: u8) -> bool {
-    let Token::Char {
-        ch,
-        cat: Catcode::Letter | Catcode::Other,
-    } = token
-    else {
-        return false;
-    };
-    ch.to_ascii_lowercase() == char::from(expected)
 }

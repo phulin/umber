@@ -15,8 +15,9 @@ use tex_state::token::{Catcode, Token};
 
 use crate::{
     ExpandError, ExpansionHooks, NoopExpansionHooks, NoopRecorder, ReadRecorder,
-    get_x_token_with_recorder_and_hooks, scan_int,
+    get_x_token_with_recorder_and_hooks, scan_helpers, scan_int,
 };
+use scan_helpers::ExpandedKeywordMatch;
 
 const MAX_REGISTER: i32 = 32_767;
 
@@ -549,13 +550,6 @@ where
     convert_scanned_unit(stores, scanned.value(), 0, unit)
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum KeywordMatch {
-    Matched,
-    FirstTokenMismatch,
-    PartialMismatch,
-}
-
 fn scan_register_index<S, R, H>(
     input: &mut InputStack<S>,
     stores: &mut Stores,
@@ -594,7 +588,7 @@ where
 
     if options.allow_infinite_units {
         match keyword_matches(input, stores, recorder, hooks, first, "fil")? {
-            KeywordMatch::Matched => {
+            ExpandedKeywordMatch::Matched => {
                 let mut order = Order::Fil;
                 while keyword(input, stores, recorder, hooks, "l")? {
                     if order != Order::Filll {
@@ -608,23 +602,25 @@ where
                 }
                 return Ok(Some(ScannedUnit::Infinite(order)));
             }
-            KeywordMatch::PartialMismatch => return Ok(None),
-            KeywordMatch::FirstTokenMismatch => {}
+            ExpandedKeywordMatch::PartialMismatch => return Ok(None),
+            ExpandedKeywordMatch::FirstTokenMismatch => {}
         }
     }
 
     if options.require_mu_unit {
         match keyword_matches(input, stores, recorder, hooks, first, "mu")? {
-            KeywordMatch::Matched => return Ok(Some(physical_unit(PhysicalUnit::Pt))),
-            KeywordMatch::PartialMismatch => return Err(ScanDimenError::IncompatibleGlueUnits),
-            KeywordMatch::FirstTokenMismatch => {}
+            ExpandedKeywordMatch::Matched => return Ok(Some(physical_unit(PhysicalUnit::Pt))),
+            ExpandedKeywordMatch::PartialMismatch => {
+                return Err(ScanDimenError::IncompatibleGlueUnits);
+            }
+            ExpandedKeywordMatch::FirstTokenMismatch => {}
         }
         unread_token(input, stores, first);
         return Err(ScanDimenError::IncompatibleGlueUnits);
     }
 
     match keyword_matches(input, stores, recorder, hooks, first, "true")? {
-        KeywordMatch::Matched => {
+        ExpandedKeywordMatch::Matched => {
             skip_spaces(input, stores, recorder, hooks)?;
             let Some(token) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
             else {
@@ -632,8 +628,8 @@ where
             };
             return scan_unit_keyword(input, stores, recorder, hooks, token, true);
         }
-        KeywordMatch::PartialMismatch => return Ok(None),
-        KeywordMatch::FirstTokenMismatch => {}
+        ExpandedKeywordMatch::PartialMismatch => return Ok(None),
+        ExpandedKeywordMatch::FirstTokenMismatch => {}
     }
 
     scan_unit_keyword(input, stores, recorder, hooks, first, false)
@@ -684,33 +680,15 @@ fn keyword_matches<S, R, H>(
     hooks: &mut H,
     first: Token,
     keyword: &str,
-) -> Result<KeywordMatch, ScanDimenError>
+) -> Result<ExpandedKeywordMatch, ScanDimenError>
 where
     S: InputSource,
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    let mut consumed = Vec::new();
-    consumed.push(first);
-
-    if !token_matches_keyword_byte(first, keyword.as_bytes()[0]) {
-        return Ok(KeywordMatch::FirstTokenMismatch);
-    }
-
-    for &expected in &keyword.as_bytes()[1..] {
-        let Some(token) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
-        else {
-            unread_tokens(input, stores, consumed);
-            return Ok(KeywordMatch::PartialMismatch);
-        };
-        consumed.push(token);
-        if !token_matches_keyword_byte(token, expected) {
-            unread_tokens(input, stores, consumed);
-            return Ok(KeywordMatch::PartialMismatch);
-        }
-    }
-
-    Ok(KeywordMatch::Matched)
+    Ok(scan_helpers::scan_keyword_after_first_with_hooks(
+        input, stores, recorder, hooks, first, keyword,
+    )?)
 }
 
 fn keyword<S, R, H>(
@@ -729,13 +707,15 @@ where
     let Some(first) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)? else {
         return Ok(false);
     };
-    match keyword_matches(input, stores, recorder, hooks, first, keyword)? {
-        KeywordMatch::Matched => Ok(true),
-        KeywordMatch::FirstTokenMismatch => {
+    match scan_helpers::scan_keyword_after_first_with_hooks(
+        input, stores, recorder, hooks, first, keyword,
+    )? {
+        ExpandedKeywordMatch::Matched => Ok(true),
+        ExpandedKeywordMatch::FirstTokenMismatch => {
             unread_token(input, stores, first);
             Ok(false)
         }
-        KeywordMatch::PartialMismatch => Ok(false),
+        ExpandedKeywordMatch::PartialMismatch => Ok(false),
     }
 }
 
@@ -994,13 +974,6 @@ fn is_other_char(token: Token, expected: char) -> bool {
             cat: Catcode::Other
         } if ch == expected
     )
-}
-
-fn token_matches_keyword_byte(token: Token, expected: u8) -> bool {
-    let Some(ch) = keyword_char(token) else {
-        return false;
-    };
-    ch == char::from(expected).to_ascii_lowercase()
 }
 
 fn keyword_char(token: Token) -> Option<char> {

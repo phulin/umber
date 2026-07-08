@@ -29,6 +29,7 @@ mod tests;
 mod values;
 
 pub use dispatch::{dispatch, dispatch_expandable_opcode, dispatch_with_hooks};
+pub use scan_helpers::scan_optional_keyword_with_hooks;
 pub use values::{meaning_text, scan_the_text_with_hooks, token_text};
 
 /// Installs the expandable TeX82 primitives currently implemented by this
