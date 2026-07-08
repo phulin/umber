@@ -13,6 +13,52 @@ use tex_state::ids::TokenListId;
 use tex_state::stores::Stores;
 use tex_state::token::{Catcode, Token};
 
+/// Maximum number of macro arguments TeX permits in one macro body.
+pub const MACRO_ARGUMENT_SLOTS: usize = 9;
+
+/// Frozen macro arguments carried by a macro-body replay frame.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub struct MacroArguments {
+    slots: [Option<TokenListId>; MACRO_ARGUMENT_SLOTS],
+}
+
+impl MacroArguments {
+    /// Creates an empty argument-slot frame.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            slots: [None; MACRO_ARGUMENT_SLOTS],
+        }
+    }
+
+    /// Records one frozen argument token list in a one-based TeX slot.
+    pub fn set(&mut self, slot: u8, token_list: TokenListId) {
+        let index = argument_index(slot);
+        self.slots[index] = Some(token_list);
+    }
+
+    /// Reads the frozen argument token list for a one-based TeX slot.
+    #[must_use]
+    pub fn get(self, slot: u8) -> Option<TokenListId> {
+        let index = argument_index(slot);
+        self.slots[index]
+    }
+
+    /// Returns whether no argument slots are populated.
+    #[must_use]
+    pub fn is_empty(self) -> bool {
+        self.slots.iter().all(Option::is_none)
+    }
+}
+
+fn argument_index(slot: u8) -> usize {
+    assert!(
+        (1..=MACRO_ARGUMENT_SLOTS as u8).contains(&slot),
+        "macro argument slot must be in 1..=9"
+    );
+    usize::from(slot - 1)
+}
+
 /// Source of physical input lines.
 ///
 /// The trait is local so M3's `World` can implement it without forcing the
@@ -220,6 +266,7 @@ pub enum InputFrameSummary {
         token_list: TokenListId,
         replay_kind: TokenListReplayKind,
         index: usize,
+        macro_arguments: MacroArguments,
     },
 }
 
@@ -323,6 +370,7 @@ struct TokenListInputFrame {
     token_list: TokenListId,
     replay_kind: TokenListReplayKind,
     index: usize,
+    macro_arguments: MacroArguments,
 }
 
 #[derive(Debug)]
@@ -335,6 +383,11 @@ enum InputFrame<S> {
 struct LastSourceFrame {
     frame: SourceFrame,
     next_source_offset: usize,
+}
+
+enum TokenReplay {
+    Deliver(Token),
+    PushArgument(TokenListId),
 }
 
 /// TeX input stack for source frames and frozen token-list replay.
@@ -375,6 +428,16 @@ impl<S> InputStack<S> {
             token_list,
             replay_kind,
             index: 0,
+            macro_arguments: MacroArguments::new(),
+        }));
+    }
+
+    pub fn push_macro_body(&mut self, token_list: TokenListId, macro_arguments: MacroArguments) {
+        self.frames.push(InputFrame::TokenList(TokenListInputFrame {
+            token_list,
+            replay_kind: TokenListReplayKind::MacroBody,
+            index: 0,
+            macro_arguments,
         }));
     }
 
@@ -393,6 +456,7 @@ impl<S> InputStack<S> {
                         token_list: token_list.token_list,
                         replay_kind: token_list.replay_kind,
                         index: token_list.index,
+                        macro_arguments: token_list.macro_arguments,
                     },
                 })
                 .collect(),
@@ -539,12 +603,19 @@ where
             };
             match frame {
                 InputFrame::TokenList(token_list) => {
-                    let tokens = stores.tokens(token_list.token_list);
-                    if let Some(token) = tokens.get(token_list.index).copied() {
-                        token_list.index += 1;
-                        return Ok(Some(token));
-                    }
-                    self.frames.pop();
+                    match next_token_from_token_list_frame(token_list, stores) {
+                        Some(TokenReplay::PushArgument(argument)) => {
+                            self.frames.push(InputFrame::TokenList(TokenListInputFrame {
+                                token_list: argument,
+                                replay_kind: TokenListReplayKind::MacroArgument,
+                                index: 0,
+                                macro_arguments: MacroArguments::new(),
+                            }));
+                            continue;
+                        }
+                        Some(TokenReplay::Deliver(token)) => return Ok(Some(token)),
+                        None => self.frames.pop(),
+                    };
                 }
                 InputFrame::Source(source) => {
                     if let Some(token) = source.frame.pending.pop_front() {
@@ -582,12 +653,19 @@ where
             };
             match frame {
                 InputFrame::TokenList(token_list) => {
-                    let tokens = stores.tokens(token_list.token_list);
-                    if let Some(token) = tokens.get(token_list.index).copied() {
-                        token_list.index += 1;
-                        return Ok(Some(token));
-                    }
-                    self.frames.pop();
+                    match next_token_from_token_list_frame(token_list, stores) {
+                        Some(TokenReplay::PushArgument(argument)) => {
+                            self.frames.push(InputFrame::TokenList(TokenListInputFrame {
+                                token_list: argument,
+                                replay_kind: TokenListReplayKind::MacroArgument,
+                                index: 0,
+                                macro_arguments: MacroArguments::new(),
+                            }));
+                            continue;
+                        }
+                        Some(TokenReplay::Deliver(token)) => return Ok(Some(token)),
+                        None => self.frames.pop(),
+                    };
                 }
                 InputFrame::Source(source) => {
                     if let Some(token) = source.frame.pending.pop_front() {
@@ -620,6 +698,24 @@ where
             }
         }
     }
+}
+
+fn next_token_from_token_list_frame(
+    frame: &mut TokenListInputFrame,
+    stores: &Stores,
+) -> Option<TokenReplay> {
+    let tokens = stores.tokens(frame.token_list);
+    let token = tokens.get(frame.index).copied()?;
+    frame.index += 1;
+
+    if frame.replay_kind == TokenListReplayKind::MacroBody
+        && let Token::Param(slot) = token
+        && let Some(argument) = frame.macro_arguments.get(slot)
+    {
+        return Some(TokenReplay::PushArgument(argument));
+    }
+
+    Some(TokenReplay::Deliver(token))
 }
 
 fn load_next_line_readonly<S>(
@@ -1356,9 +1452,10 @@ mod tests {
                 InputFrameSummary::TokenList {
                     token_list,
                     replay_kind: TokenListReplayKind::MacroBody,
-                    index: 0
+                    index: 0,
+                    macro_arguments
                 }
-            ] if *token_list == list
+            ] if *token_list == list && macro_arguments.is_empty()
         ));
         assert_eq!(
             input.next_token(&mut stores).expect("token-list replay"),

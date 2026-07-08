@@ -7,7 +7,7 @@
 use std::collections::VecDeque;
 use std::fmt;
 
-use tex_lex::{InputSource, InputStack, LexError};
+use tex_lex::{InputSource, InputStack, LexError, MACRO_ARGUMENT_SLOTS, MacroArguments};
 use tex_state::ids::TokenListId;
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{Meaning, MeaningFlags};
@@ -38,6 +38,19 @@ impl MatchedArguments {
         slot.checked_sub(1)
             .and_then(|index| self.arguments.get(index as usize))
             .copied()
+    }
+
+    #[must_use]
+    pub fn as_macro_arguments(&self) -> MacroArguments {
+        assert!(
+            self.arguments.len() <= MACRO_ARGUMENT_SLOTS,
+            "macro calls support only #1 through #9"
+        );
+        let mut arguments = MacroArguments::new();
+        for (index, &id) in self.arguments.iter().enumerate() {
+            arguments.set((index + 1) as u8, id);
+        }
+        arguments
     }
 
     fn push(&mut self, id: TokenListId) {

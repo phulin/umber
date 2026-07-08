@@ -341,10 +341,10 @@ pub struct Snapshot {
   state required after a source is reopened: source-local offsets, current
   normalized line, in-line char/byte offsets, lexer N/M/S state, queued
   synthetic tokens such as a blank-line `\par`, token-list replay positions,
-  and the last popped source frame. Durable source reopen identity is not a
-  `tex-lex` field; it is part of the `World` input/effect snapshot that pins
-  file/editor content by content hash and recreates the `InputSource` before
-  these frame summaries are applied.
+  macro-body replay argument slots, and the last popped source frame. Durable
+  source reopen identity is not a `tex-lex` field; it is part of the `World`
+  input/effect snapshot that pins file/editor content by content hash and
+  recreates the `InputSource` before these frame summaries are applied.
 - **Rollback**: replay journal to marker (restoring cells and old code-table
   roots); truncate arenas to watermarks; release survivor owners held by the
   truncated box-register journal records while restored registers reclaim

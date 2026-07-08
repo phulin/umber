@@ -8,7 +8,7 @@
 
 use std::fmt;
 
-use tex_lex::{InputSource, InputStack, LexError, TokenListReplayKind};
+use tex_lex::{InputSource, InputStack, LexError, MacroArguments, TokenListReplayKind};
 use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, MeaningFlags};
 use tex_state::stores::Stores;
@@ -83,6 +83,7 @@ pub enum Dispatch {
     Push {
         replay_kind: ExpansionReplayKind,
         token_list: tex_state::ids::TokenListId,
+        macro_arguments: MacroArguments,
     },
 }
 
@@ -166,15 +167,20 @@ where
             Dispatch::Push {
                 replay_kind,
                 token_list,
-            } => input.push_token_list(token_list, replay_kind.as_lex_kind()),
+                macro_arguments,
+            } => {
+                if replay_kind == ExpansionReplayKind::MacroBody {
+                    input.push_macro_body(token_list, macro_arguments);
+                } else {
+                    input.push_token_list(token_list, replay_kind.as_lex_kind());
+                }
+            }
         }
     }
 }
 
 /// Dispatches one token/meaning pair.
 ///
-/// TODO(umber2-5qt.2.4): replace the simple macro-body replay with argument
-/// frame replay and `Param(slot)` substitution.
 /// TODO(umber2-5qt.3): implement expandable primitive arms.
 /// TODO(umber2-5qt.5): implement conditional scan/evaluation arms.
 pub fn dispatch<S, R>(
@@ -191,7 +197,7 @@ where
     match meaning {
         Meaning::Macro { flags, definition } if is_expandable_macro(flags) => {
             let macro_meaning = stores.macro_definition(definition);
-            let _arguments = args::match_macro_call_with_recorder(
+            let arguments = args::match_macro_call_with_recorder(
                 input,
                 stores,
                 recorder,
@@ -201,6 +207,7 @@ where
             Ok(Dispatch::Push {
                 replay_kind: ExpansionReplayKind::MacroBody,
                 token_list: macro_meaning.replacement_text(),
+                macro_arguments: arguments.as_macro_arguments(),
             })
         }
         Meaning::Macro { .. }
@@ -389,8 +396,9 @@ mod tests {
             Some(tex_lex::InputFrameSummary::TokenList {
                 token_list,
                 replay_kind: TokenListReplayKind::MacroBody,
-                index: 1
-            }) if *token_list == body
+                index: 1,
+                macro_arguments
+            }) if *token_list == body && macro_arguments.is_empty()
         ));
         assert_eq!(
             get_x_token(&mut input, &mut stores).expect("expansion should succeed"),
@@ -417,5 +425,169 @@ mod tests {
             Some(Token::Cs(relax))
         );
         assert_eq!(recorder.reads, 1);
+    }
+
+    #[test]
+    fn macro_body_replay_substitutes_frozen_argument_lists() {
+        let mut stores = Stores::new();
+        let macro_cs = stores.intern("m");
+        let params = stores.intern_token_list(&[Token::param(1)]);
+        let body = stores.intern_token_list(&[char_token('a'), Token::param(1), char_token('b')]);
+        stores.set_macro_meaning(
+            macro_cs,
+            MacroMeaning::new(MeaningFlags::EMPTY, params, body),
+        );
+        let invocation = stores.intern_token_list(&[
+            Token::Cs(macro_cs),
+            char_token('{'),
+            char_token('x'),
+            char_token('y'),
+            char_token('}'),
+        ]);
+        let mut input = InputStack::new(MemoryInput::new(""));
+        input.push_token_list(invocation, TokenListReplayKind::Inserted);
+
+        assert_eq!(next_expanded_chars(&mut input, &mut stores), "axyb");
+    }
+
+    #[test]
+    fn nested_macro_calls_replay_arguments_from_outer_frozen_frame() {
+        let mut stores = Stores::new();
+        let wrap = stores.intern("wrap");
+        let wrap_params = stores.intern_token_list(&[Token::param(1)]);
+        let wrap_body =
+            stores.intern_token_list(&[char_token('['), Token::param(1), char_token(']')]);
+        stores.set_macro_meaning(
+            wrap,
+            MacroMeaning::new(MeaningFlags::EMPTY, wrap_params, wrap_body),
+        );
+
+        let outer = stores.intern("outer");
+        let outer_params = stores.intern_token_list(&[Token::param(1)]);
+        let outer_body = stores.intern_token_list(&[
+            Token::Cs(wrap),
+            char_token('{'),
+            Token::param(1),
+            char_token('}'),
+        ]);
+        stores.set_macro_meaning(
+            outer,
+            MacroMeaning::new(MeaningFlags::EMPTY, outer_params, outer_body),
+        );
+
+        let invocation = stores.intern_token_list(&[
+            Token::Cs(outer),
+            char_token('{'),
+            char_token('x'),
+            char_token('y'),
+            char_token('}'),
+        ]);
+        let mut input = InputStack::new(MemoryInput::new(""));
+        input.push_token_list(invocation, TokenListReplayKind::Inserted);
+
+        assert_eq!(next_expanded_chars(&mut input, &mut stores), "[xy]");
+    }
+
+    #[test]
+    fn identical_macro_bodies_keep_shared_body_identity_with_distinct_arguments() {
+        let mut stores = Stores::new();
+        let left = stores.intern("left");
+        let right = stores.intern("right");
+        let params = stores.intern_token_list(&[Token::param(1)]);
+        let first_body = stores.intern_token_list(&[Token::param(1), char_token('!')]);
+        let second_body = stores.intern_token_list(&[Token::param(1), char_token('!')]);
+        assert_eq!(first_body, second_body);
+        stores.set_macro_meaning(
+            left,
+            MacroMeaning::new(MeaningFlags::EMPTY, params, first_body),
+        );
+        stores.set_macro_meaning(
+            right,
+            MacroMeaning::new(MeaningFlags::EMPTY, params, second_body),
+        );
+
+        let left_arg = stores.intern_token_list(&[char_token('x')]);
+        let mut left_input = InputStack::new(MemoryInput::new(""));
+        left_input.push_token_list(left_arg, TokenListReplayKind::Inserted);
+        let left_meaning = stores.meaning(left);
+        let left_dispatch = dispatch(
+            Token::Cs(left),
+            &mut left_input,
+            &mut stores,
+            &mut NoopRecorder,
+            left_meaning,
+        )
+        .expect("left dispatch should succeed");
+        let super::Dispatch::Push {
+            token_list: left_body,
+            macro_arguments: left_arguments,
+            ..
+        } = left_dispatch
+        else {
+            panic!("expected left macro body push");
+        };
+        assert_eq!(left_body, first_body);
+        assert_eq!(
+            stores.tokens(left_arguments.get(1).expect("left #1")),
+            &[char_token('x')]
+        );
+
+        let right_arg = stores.intern_token_list(&[char_token('y')]);
+        let mut right_input = InputStack::new(MemoryInput::new(""));
+        right_input.push_token_list(right_arg, TokenListReplayKind::Inserted);
+        let right_meaning = stores.meaning(right);
+        let right_dispatch = dispatch(
+            Token::Cs(right),
+            &mut right_input,
+            &mut stores,
+            &mut NoopRecorder,
+            right_meaning,
+        )
+        .expect("right dispatch should succeed");
+        let super::Dispatch::Push {
+            token_list: right_body,
+            macro_arguments: right_arguments,
+            ..
+        } = right_dispatch
+        else {
+            panic!("expected right macro body push");
+        };
+        assert_eq!(right_body, second_body);
+        assert_eq!(
+            stores.tokens(right_arguments.get(1).expect("right #1")),
+            &[char_token('y')]
+        );
+
+        let invocation = stores.intern_token_list(&[
+            Token::Cs(left),
+            char_token('x'),
+            Token::Cs(right),
+            char_token('y'),
+        ]);
+        let mut input = InputStack::new(MemoryInput::new(""));
+        input.push_token_list(invocation, TokenListReplayKind::Inserted);
+
+        assert_eq!(next_expanded_chars(&mut input, &mut stores), "x!y!");
+    }
+
+    fn next_expanded_chars(input: &mut InputStack<MemoryInput>, stores: &mut Stores) -> String {
+        let mut out = String::new();
+        while let Some(token) = get_x_token(input, stores).expect("expansion should succeed") {
+            let Token::Char { ch, .. } = token else {
+                panic!("expected character token, got {token:?}");
+            };
+            out.push(ch);
+        }
+        out
+    }
+
+    fn char_token(ch: char) -> Token {
+        let cat = match ch {
+            '{' => Catcode::BeginGroup,
+            '}' => Catcode::EndGroup,
+            '[' | ']' | '!' => Catcode::Other,
+            _ => Catcode::Letter,
+        };
+        Token::Char { ch, cat }
     }
 }

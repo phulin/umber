@@ -111,12 +111,15 @@ supply.
   *source frame* (source id + source byte offsets + line/col + current
   normalized line + in-line char/byte offsets + lexer state + pending
   synthetic tokens) or a *token-list frame* (`TokenListId` + index + replay
-  kind: macro body, `\everypar`, mark, ...). Source reopen identity is owned
-  by the `World` input record in the outer snapshot: it pins file/editor
-  content by content hash, reopens that exact source, then applies the
-  lexer-owned source-frame summary. `last_source_frame` is also summarized so
-  snapshots taken just after a source pops still have final source
-  coordinates.
+  kind: macro body, `\everypar`, mark, ...). Macro-body token-list frames
+  additionally carry up to nine frozen argument `TokenListId`s; replaying a
+  `Param(slot)` token pushes the corresponding argument list as a nested
+  macro-argument frame while the replacement body id remains unchanged.
+  Source reopen identity is owned by the `World` input record in the outer
+  snapshot: it pins file/editor content by content hash, reopens that exact
+  source, then applies the lexer-owned source-frame summary.
+  `last_source_frame` is also summarized so snapshots taken just after a
+  source pops still have final source coordinates.
 - Line-oriented details TeX cares about (`\endlinechar`, trailing-space
   trimming, `%` line ends) live here, driven by parameters read through the
   aggregate state API. The implemented `tex-lex` input layer exposes a local
@@ -188,7 +191,9 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   recorder is a generic parameter of the loop, monomorphized away).
 - The implemented `tex-expand` scaffold exposes that loop over
   `tex-lex::InputStack` with `Stores` access for meaning reads and explicit
-  token-list freezing during macro argument matching. Token-list replay is
+  token-list freezing during macro argument matching. Macro body replay uses
+  the body `TokenListId` directly plus frozen argument ids on the replay
+  frame; it does not allocate a substituted body list. Token-list replay is
   naturally read-only; source-frame replay can scan already-interned control
   sequence names and reports a lexer error if a source token would require
   minting a new symbol. Future `\csname` work must pass its sanctioned
