@@ -32,12 +32,10 @@ fn rollback_reuse_starts_with_undefined_meaning() {
 #[allow(clippy::disallowed_methods)]
 fn downstream_crate_cannot_construct_or_mutate_raw_env() {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let probe_dir = std::path::Path::new(manifest_dir)
-        .join("target")
-        .join("live-boundary-probe");
+    let probe_workspace = tempfile::tempdir().expect("create live boundary probe workspace");
+    let probe_dir = probe_workspace.path().join("live-boundary-probe");
     let src_dir = probe_dir.join("src");
 
-    let _ = fs::remove_dir_all(&probe_dir);
     fs::create_dir_all(&src_dir).expect("create live boundary probe src dir");
     fs::write(
         probe_dir.join("Cargo.toml"),
@@ -98,12 +96,10 @@ fn main() {
 #[allow(clippy::disallowed_methods)]
 fn downstream_crate_cannot_construct_or_mutate_raw_content_stores() {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let probe_dir = std::path::Path::new(manifest_dir)
-        .join("target")
-        .join("content-boundary-probe");
+    let probe_workspace = tempfile::tempdir().expect("create content boundary probe workspace");
+    let probe_dir = probe_workspace.path().join("content-boundary-probe");
     let src_dir = probe_dir.join("src");
 
-    let _ = fs::remove_dir_all(&probe_dir);
     fs::create_dir_all(&src_dir).expect("create content boundary probe src dir");
     fs::write(
         probe_dir.join("Cargo.toml"),
