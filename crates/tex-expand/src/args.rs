@@ -343,7 +343,7 @@ where
 
 fn next_or_pending_token<S, R>(
     input: &mut InputStack<S>,
-    stores: &Stores,
+    stores: &mut Stores,
     recorder: &mut R,
     flags: MeaningFlags,
     macro_name: &str,
@@ -362,7 +362,7 @@ where
 
 fn next_checked_token<S, R>(
     input: &mut InputStack<S>,
-    stores: &Stores,
+    stores: &mut Stores,
     recorder: &mut R,
     flags: MeaningFlags,
     macro_name: &str,
@@ -372,7 +372,7 @@ where
     R: ReadRecorder,
 {
     let token = input
-        .next_token_readonly(stores)?
+        .next_token(stores)?
         .ok_or_else(|| MacroCallError::EndOfInput {
             macro_name: macro_name.to_owned(),
         })?;

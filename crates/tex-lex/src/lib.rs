@@ -864,6 +864,79 @@ where
             .map(ExpansionToken::token))
     }
 
+    pub fn next_expansion_token(
+        &mut self,
+        stores: &mut Stores,
+    ) -> Result<Option<ExpansionToken>, LexError> {
+        loop {
+            let Some(frame_index) = self.current_token_frame_index() else {
+                return Ok(None);
+            };
+            match &mut self.frames[frame_index] {
+                InputFrame::TokenList(token_list) => {
+                    match next_token_from_token_list_frame(token_list, stores) {
+                        Some(TokenReplay::PushArgument(argument)) => {
+                            self.frames.push(InputFrame::TokenList(TokenListInputFrame {
+                                token_list: argument,
+                                replay_kind: TokenListReplayKind::MacroArgument,
+                                index: 0,
+                                macro_arguments: MacroArguments::new(),
+                            }));
+                            continue;
+                        }
+                        Some(TokenReplay::Deliver(token)) => {
+                            return Ok(Some(ExpansionToken::new(token, false)));
+                        }
+                        Some(TokenReplay::DeliverNoExpand(token)) => {
+                            return Ok(Some(ExpansionToken::new(token, true)));
+                        }
+                        None => {
+                            self.frames.remove(frame_index);
+                        }
+                    };
+                }
+                InputFrame::Source(source) => {
+                    if let Some(token) = source.frame.pending.pop_front() {
+                        return Ok(Some(ExpansionToken::new(token, false)));
+                    }
+
+                    if source.frame.offset >= source.frame.line.len() {
+                        if source.frame.end_after_current_line {
+                            let popped = self.frames.remove(frame_index);
+                            if let InputFrame::Source(source) = popped {
+                                self.last_source_frame = Some(LastSourceFrame {
+                                    frame: source.frame,
+                                    next_source_offset: source.next_source_offset,
+                                });
+                            }
+                            continue;
+                        }
+                        if !load_next_line(source, stores)? {
+                            let popped = self.frames.remove(frame_index);
+                            if let InputFrame::Source(source) = popped {
+                                self.last_source_frame = Some(LastSourceFrame {
+                                    frame: source.frame,
+                                    next_source_offset: source.next_source_offset,
+                                });
+                            }
+                        }
+                        continue;
+                    }
+
+                    let Some(token) =
+                        next_token_from_line(source, stores, self.unicode_superscript_notation)?
+                    else {
+                        continue;
+                    };
+                    return Ok(Some(ExpansionToken::new(token, false)));
+                }
+                InputFrame::Condition(_) => {
+                    unreachable!("current_token_frame_index skips conditions")
+                }
+            }
+        }
+    }
+
     pub fn next_expansion_token_readonly(
         &mut self,
         stores: &Stores,

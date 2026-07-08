@@ -323,7 +323,7 @@ where
     H: ExpansionHooks<S>,
 {
     loop {
-        let Some(read) = input.next_expansion_token_readonly(stores)? else {
+        let Some(read) = input.next_expansion_token(stores)? else {
             return Ok(None);
         };
         let token = read.token();
@@ -403,7 +403,7 @@ where
             Ok(Dispatch::Continue)
         }
         Meaning::ExpandablePrimitive(ExpandablePrimitive::NoExpand) => {
-            let Some(token) = input.next_token_readonly(stores)? else {
+            let Some(token) = input.next_token(stores)? else {
                 return Err(ExpandError::MissingTokenAfterPrimitive(
                     ExpandableOpcode::NoExpand,
                 ));
@@ -419,7 +419,7 @@ where
             Ok(Dispatch::Deliver(token))
         }
         Meaning::ExpandablePrimitive(ExpandablePrimitive::String) => {
-            let Some(target) = input.next_token_readonly(stores)? else {
+            let Some(target) = input.next_token(stores)? else {
                 return Err(ExpandError::MissingTokenAfterPrimitive(
                     ExpandableOpcode::String,
                 ));
@@ -447,7 +447,7 @@ where
             ))
         }
         Meaning::ExpandablePrimitive(ExpandablePrimitive::Meaning) => {
-            let Some(target) = input.next_token_readonly(stores)? else {
+            let Some(target) = input.next_token(stores)? else {
                 return Err(ExpandError::MissingTokenAfterPrimitive(
                     ExpandableOpcode::Meaning,
                 ));
@@ -517,12 +517,12 @@ where
             begin_if(input, stores, recorder, hooks, if_cat_equal(left, right))
         }
         Meaning::ExpandablePrimitive(ExpandablePrimitive::IfX) => {
-            let Some(left) = input.next_token_readonly(stores)? else {
+            let Some(left) = input.next_token(stores)? else {
                 return Err(ExpandError::MissingTokenAfterPrimitive(
                     ExpandableOpcode::If,
                 ));
             };
-            let Some(right) = input.next_token_readonly(stores)? else {
+            let Some(right) = input.next_token(stores)? else {
                 return Err(ExpandError::MissingTokenAfterPrimitive(
                     ExpandableOpcode::If,
                 ));
@@ -691,12 +691,12 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    let Some(saved) = input.next_token_readonly(stores)? else {
+    let Some(saved) = input.next_token(stores)? else {
         return Err(ExpandError::MissingTokenAfterPrimitive(
             ExpandableOpcode::ExpandAfter,
         ));
     };
-    let Some(target) = input.next_token_readonly(stores)? else {
+    let Some(target) = input.next_token(stores)? else {
         return Err(ExpandError::MissingTokenAfterPrimitive(
             ExpandableOpcode::ExpandAfter,
         ));
@@ -870,7 +870,7 @@ where
 {
     let mut nesting = 0_u32;
     loop {
-        let Some(token) = input.next_token_readonly(stores)? else {
+        let Some(token) = input.next_token(stores)? else {
             return Err(ExpandError::IncompleteIf);
         };
         let Some(primitive) = skipped_conditional_control(stores, token, recorder)? else {
@@ -1146,7 +1146,7 @@ where
     let mut name = String::new();
 
     loop {
-        let Some(read) = input.next_expansion_token_readonly(stores)? else {
+        let Some(read) = input.next_expansion_token(stores)? else {
             return Err(ExpandError::MissingEndCsName);
         };
         let token = read.token();

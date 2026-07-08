@@ -8,6 +8,8 @@ use tex_state::env::banks::IntParam;
 use tex_state::stores::Stores;
 use tex_state::token::Token;
 
+mod expand_dump;
+
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
@@ -30,11 +32,24 @@ fn run() -> Result<(), CliError> {
             }
             lex_dump(&path)
         }
+        Some("expand-dump") => {
+            let Some(path) = args.next() else {
+                return Err(CliError::Usage("missing input path for expand-dump"));
+            };
+            if args.next().is_some() {
+                return Err(CliError::Usage(
+                    "expand-dump accepts exactly one input path",
+                ));
+            }
+            expand_dump::expand_dump(&path).map_err(CliError::ExpandDump)
+        }
         None => {
             println!("umber {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
-        Some(_) => Err(CliError::Usage("expected: umber lex-dump <file.tex>")),
+        Some(_) => Err(CliError::Usage(
+            "expected: umber <lex-dump|expand-dump> <file.tex>",
+        )),
     }
 }
 
@@ -65,6 +80,7 @@ enum CliError {
     Usage(&'static str),
     Io(io::Error),
     Lex(tex_lex::LexError),
+    ExpandDump(expand_dump::ExpandDumpError),
 }
 
 impl std::fmt::Display for CliError {
@@ -73,6 +89,7 @@ impl std::fmt::Display for CliError {
             Self::Usage(message) => f.write_str(message),
             Self::Io(err) => write!(f, "{err}"),
             Self::Lex(err) => write!(f, "{err}"),
+            Self::ExpandDump(err) => write!(f, "{err}"),
         }
     }
 }
