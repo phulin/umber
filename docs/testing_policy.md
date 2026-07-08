@@ -116,6 +116,11 @@ Committed corpus fixtures belong under the workspace-level `tests/corpus`
 tree. Keep small area-local support files beside the fixture input. See
 `tests/AGENTS.md` for fixture layout and update commands.
 
+The DVI corpus under `tests/corpus/dvi` commits TeX source files only. Golden
+DVI bytes are not checked in; `scripts/parity.sh` runs `umber run --dvi` and
+the live reference engine over the same temporary inputs with pinned local
+TFMs, then compares the generated DVI bytes through `tools/refexec`.
+
 Test code should live near the crate that owns the behavior. Fixture data
 should live in the shared corpus tree unless it is strictly local to one
 crate-level integration test.

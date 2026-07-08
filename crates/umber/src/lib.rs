@@ -1,8 +1,10 @@
 use tex_exec::Executor;
 use tex_expand::{ExpansionHooks, NoopRecorder};
 use tex_lex::{InputSource, InputStack, MemoryInput};
+use tex_out::PageArtifact;
+use tex_out::dvi::{DviError, write_dvi};
 use tex_state::env::banks::IntParam;
-use tex_state::{ContentHash, EffectRecord, PrintSink, Universe};
+use tex_state::{ContentHash, EffectRecord, PrintSink, Universe, WorldError};
 
 /// Result of running TeX through the batch executor.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -50,6 +52,22 @@ where
     })
 }
 
+/// Reads committed page artifacts from `World` and writes a complete DVI file.
+pub fn dvi_from_artifacts(
+    stores: &Universe,
+    artifacts: &[ContentHash],
+) -> Result<Vec<u8>, DviBuildError> {
+    let mut pages = Vec::with_capacity(artifacts.len());
+    for &hash in artifacts {
+        let bytes = stores
+            .world()
+            .read_artifact(hash)?
+            .ok_or(DviBuildError::MissingArtifact(hash))?;
+        pages.push(PageArtifact::from_bytes(&bytes)?);
+    }
+    Ok(write_dvi(&pages)?)
+}
+
 /// Runs in-memory TeX through the `umber run` executor setup.
 pub fn run_memory_with_stores(
     source: &str,
@@ -91,4 +109,45 @@ fn uncommitted_terminal_text(stores: &Universe) -> String {
         }
     }
     text
+}
+
+#[derive(Debug)]
+pub enum DviBuildError {
+    MissingArtifact(ContentHash),
+    World(WorldError),
+    Parse(tex_out::ParseError),
+    Dvi(DviError),
+}
+
+impl std::fmt::Display for DviBuildError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingArtifact(hash) => {
+                write!(f, "shipped page artifact {} is missing", hash.hex())
+            }
+            Self::World(err) => write!(f, "{err}"),
+            Self::Parse(err) => write!(f, "{err}"),
+            Self::Dvi(err) => write!(f, "{err}"),
+        }
+    }
+}
+
+impl std::error::Error for DviBuildError {}
+
+impl From<WorldError> for DviBuildError {
+    fn from(value: WorldError) -> Self {
+        Self::World(value)
+    }
+}
+
+impl From<tex_out::ParseError> for DviBuildError {
+    fn from(value: tex_out::ParseError) -> Self {
+        Self::Parse(value)
+    }
+}
+
+impl From<DviError> for DviBuildError {
+    fn from(value: DviError) -> Self {
+        Self::Dvi(value)
+    }
 }

@@ -54,6 +54,47 @@ fn hpack_sets_finite_stretch_order_and_ratio() {
 }
 
 #[test]
+fn hpack_measures_shifted_child_boxes() {
+    let mut universe = Universe::new();
+    let child = universe.freeze_node_list(&[]);
+    let raised = Node::HList(BoxNode::new(BoxNodeFields {
+        width: sp(5),
+        height: sp(10),
+        depth: sp(3),
+        shift: sp(4),
+        glue_set: 0.0,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children: child,
+    }));
+    let lowered = Node::HList(BoxNode::new(BoxNodeFields {
+        width: sp(5),
+        height: sp(10),
+        depth: sp(3),
+        shift: sp(-6),
+        glue_set: 0.0,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children: child,
+    }));
+    let list = universe.freeze_node_list(&[raised, lowered]);
+
+    let packed = hpack(
+        &universe,
+        list,
+        PackSpec::Natural,
+        HpackParams {
+            hbadness: INF_BAD,
+            hfuzz: sp(0),
+            overfull_rule: sp(0),
+        },
+    );
+
+    assert_eq!(packed.node.height, sp(14));
+    assert_eq!(packed.node.depth, sp(9));
+}
+
+#[test]
 fn vpack_clamps_depth_to_box_max_depth() {
     let mut universe = Universe::new();
     let child = universe.freeze_node_list(&[]);

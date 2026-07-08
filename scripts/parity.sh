@@ -11,3 +11,27 @@ if [[ -f third_party/hyphen/hyphen.tex ]]; then
 else
   printf 'skipping hyphen parity: third_party/hyphen/hyphen.tex is absent; run scripts/fetch-hyphen-corpus.sh\n' >&2
 fi
+
+cargo build -p umber -p refexec
+
+target_dir="${CARGO_TARGET_DIR:-target}"
+umber_bin="${repo_root}/${target_dir}/debug/umber"
+refexec_bin="${repo_root}/${target_dir}/debug/refexec"
+dvi_corpus="${repo_root}/tests/corpus/dvi"
+cmr10_tfm="${repo_root}/crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"
+tmp_root="$(mktemp -d)"
+trap 'rm -rf "$tmp_root"' EXIT
+
+for source in "${dvi_corpus}"/*.tex; do
+  case_name="$(basename "$source")"
+  case_dir="${tmp_root}/${case_name%.tex}"
+  mkdir -p "$case_dir"
+  cp "$source" "${case_dir}/${case_name}"
+  cp "$cmr10_tfm" "${case_dir}/cmr10.tfm"
+  printf 'DVI parity: %s\n' "$case_name" >&2
+  (
+    cd "$case_dir"
+    "$umber_bin" run "$case_name" --dvi actual.dvi >/dev/null
+    "$refexec_bin" "$case_name" --compare-dvi actual.dvi --extra-input cmr10.tfm
+  )
+done

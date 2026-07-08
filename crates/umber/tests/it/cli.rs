@@ -1,6 +1,6 @@
 use std::{fs, process::Command};
 
-use refexec::{RefTex, RunOpts};
+use refexec::{DviComparison, RefTex, RunOpts};
 use test_support::{assert_matches_fixture, normalize};
 use tex_lex::{Lexer, WorldInput};
 use tex_state::env::banks::IntParam;
@@ -222,6 +222,48 @@ fn run_hyphen_showhyphens_corpus_matches_pdftex() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn run_dvi_smoke_matches_pdftex_single_glyph() {
+    let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let source = repo_root.join("tests/corpus/dvi/single_glyph.tex");
+    let cmr10 = repo_root.join("crates/tex-fonts/tests/fixtures/cm/cmr10.tfm");
+    let temp_dir = tempfile::tempdir().expect("create DVI smoke temp dir");
+    let case_path = temp_dir.path().join("single_glyph.tex");
+    let tfm_path = temp_dir.path().join("cmr10.tfm");
+    let actual_path = temp_dir.path().join("actual.dvi");
+    fs::copy(&source, &case_path).expect("copy DVI smoke source");
+    fs::copy(&cmr10, &tfm_path).expect("copy pinned cmr10.tfm");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .current_dir(temp_dir.path())
+        .arg("run")
+        .arg("single_glyph.tex")
+        .arg("--dvi")
+        .arg("actual.dvi")
+        .output()
+        .expect("run umber DVI smoke");
+    assert!(
+        output.status.success(),
+        "umber DVI smoke failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let actual = fs::read(&actual_path).expect("read umber DVI");
+    let comparison = RefTex::locate()
+        .expect("locate pdftex")
+        .compare_dvi(
+            &case_path,
+            &actual,
+            &RunOpts {
+                extra_inputs: vec![tfm_path],
+                ..RunOpts::default()
+            },
+        )
+        .expect("compare reference DVI");
+    assert_eq!(comparison, DviComparison::Equal);
+}
+
+#[test]
 fn run_usage_errors_follow_existing_shape() {
     let missing = Command::new(env!("CARGO_BIN_EXE_umber"))
         .arg("run")
@@ -242,7 +284,7 @@ fn run_usage_errors_follow_existing_shape() {
     assert!(!extra.status.success());
     assert_eq!(
         String::from_utf8(extra.stderr).expect("stderr is utf-8"),
-        "umber: run accepts one input path and optional --show-fixtures\n"
+        "umber: run accepts one input path with optional --show-fixtures and --dvi <path>\n"
     );
 
     let missing_show_fixtures = Command::new(env!("CARGO_BIN_EXE_umber"))
@@ -254,6 +296,18 @@ fn run_usage_errors_follow_existing_shape() {
     assert_eq!(
         String::from_utf8(missing_show_fixtures.stderr).expect("stderr is utf-8"),
         "umber: missing input path for run\n"
+    );
+
+    let missing_dvi_path = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .arg("run")
+        .arg("one.tex")
+        .arg("--dvi")
+        .output()
+        .expect("run umber run with --dvi but without output path");
+    assert!(!missing_dvi_path.status.success());
+    assert_eq!(
+        String::from_utf8(missing_dvi_path.stderr).expect("stderr is utf-8"),
+        "umber: missing output path for --dvi\n"
     );
 }
 

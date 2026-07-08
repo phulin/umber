@@ -169,6 +169,28 @@ fn horizontal_movement_reuses_w_registers() {
 }
 
 #[test]
+fn positive_hlist_shift_moves_nested_box_up() {
+    let mut page = empty_page(0);
+    page.fonts.push(font_resource(0, "cmr10"));
+    let mut raised = box_node(1, 7, 0, vec![char_node(0, b'B' as u32, 1)]);
+    raised.shift = sp(5);
+    page.root = hlist(
+        2,
+        10,
+        0,
+        vec![char_node(0, b'A' as u32, 1), PageNode::HList(raised)],
+    );
+
+    let dvi = write_dvi(&[page]).expect("DVI writes");
+    let body = page_body(&dvi, 16);
+
+    assert!(
+        body.windows(2).any(|window| window == [DOWN1, 251]),
+        "positive hlist shift should emit an upward DVI movement"
+    );
+}
+
+#[test]
 fn rules_with_negative_width_still_move_without_rule_output() {
     let mut page = empty_page(0);
     page.root = hlist(-4, 1, 0, vec![rule_node(-5, 1, 0), rule_node(1, 1, 0)]);

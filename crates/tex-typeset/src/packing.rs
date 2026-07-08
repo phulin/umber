@@ -296,8 +296,8 @@ fn measure_hlist(state: &impl TypesetState, nodes: &[Node]) -> Measurement {
             }
             Node::HList(box_node) | Node::VList(box_node) => {
                 meas.width = add(meas.width, box_node.width);
-                meas.height = meas.height.max(box_node.height);
-                meas.depth = meas.depth.max(box_node.depth);
+                meas.height = meas.height.max(add(box_node.height, box_node.shift));
+                meas.depth = meas.depth.max(sub(box_node.depth, box_node.shift));
             }
             Node::Penalty(_) => {}
             Node::Disc { replace, .. } => {
@@ -413,6 +413,10 @@ fn vtop_split(
 
 fn add(left: Scaled, right: Scaled) -> Scaled {
     Scaled::from_raw(left.raw().saturating_add(right.raw()))
+}
+
+fn sub(left: Scaled, right: Scaled) -> Scaled {
+    Scaled::from_raw(left.raw().saturating_sub(right.raw()))
 }
 
 #[cfg(test)]

@@ -580,6 +580,26 @@ impl World {
         Ok(content)
     }
 
+    /// Writes a complete host file through the world I/O boundary.
+    pub fn write_file(
+        &mut self,
+        path: impl AsRef<Path>,
+        bytes: impl AsRef<[u8]>,
+    ) -> Result<(), WorldError> {
+        let path = path.as_ref();
+        match &mut self.backend {
+            WorldBackend::Real { .. } => std::fs::write(path, bytes).map_err(|err| {
+                WorldError::new("write file", Some(path.to_owned()), err.to_string())
+            }),
+            WorldBackend::Memory(memory) => {
+                memory
+                    .files
+                    .insert(path.to_owned(), bytes.as_ref().to_vec());
+                Ok(())
+            }
+        }
+    }
+
     /// Opens an input stream slot by reading and pinning its content now.
     pub fn open_in(
         &mut self,

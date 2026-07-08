@@ -43,7 +43,7 @@ impl Default for JobInfo {
     }
 }
 
-pub const DEFAULT_BANNER: &str = "This is Umber, Version 0.1.0";
+pub const DEFAULT_BANNER: &str = "  Umber DVI 1970.01.01:0000";
 
 /// A font resource referenced by the page tree.
 #[derive(Clone, Debug, Eq, PartialEq)]

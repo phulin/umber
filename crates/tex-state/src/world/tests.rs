@@ -29,6 +29,18 @@ fn memory_world_reads_and_records_hashes() {
 }
 
 #[test]
+fn memory_world_write_file_materializes_bytes_through_boundary() {
+    let mut world = World::memory();
+
+    world
+        .write_file("out.dvi", b"dvi bytes")
+        .expect("memory world writes file");
+    let content = world.read_file("out.dvi").expect("read written file");
+
+    assert_eq!(content.bytes(), b"dvi bytes");
+}
+
+#[test]
 fn memory_world_stores_artifacts_by_content_hash() {
     let mut world = World::memory();
     let bytes = b"page artifact bytes";

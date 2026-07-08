@@ -358,6 +358,9 @@ Nothing in the engine touches the OS directly. A single `World` object owns:
   content-addressed bytes in the artifact store. Real worlds materialize those
   bytes under the configured artifact directory; in-memory worlds keep the same
   content-addressed map for hermetic tests.
+- **Explicit driver output files** are materialized through `World::write_file`.
+  This is for user-requested downstream files such as `umber run --dvi`; engine
+  primitives still record effects and rely on the shipout commit barrier.
 
 Effects **materialize only when the producing page commits** (shipout).
 Rollback discards the uncommitted suffix of the effect log. Commit accepts an

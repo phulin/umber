@@ -24,6 +24,13 @@ normalized `pdftex` logs through the shared
 `test_support::normalize::box_dump` helper; that helper uses the same
 diagnostic-log normalizer as `exec_log`.
 
+`tests/corpus/dvi` contains committed TeX source fixtures for full-pipeline
+DVI parity. Do not commit generated DVI files here. `scripts/parity.sh`
+copies each source plus pinned `cmr10.tfm` into a temporary run directory,
+runs `umber run <case>.tex --dvi actual.dvi`, then asks `tools/refexec` to
+run the live reference engine and byte-compare DVI output with only preamble
+comment payload normalization.
+
 ```text
 <case>.expected.<kind>
 ```

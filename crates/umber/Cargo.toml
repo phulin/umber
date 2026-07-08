@@ -11,6 +11,7 @@ shadow = ["tex-state/shadow"]
 tex-exec = { path = "../tex-exec" }
 tex-expand = { path = "../tex-expand" }
 tex-lex = { path = "../tex-lex" }
+tex-out = { path = "../tex-out" }
 tex-state = { path = "../tex-state" }
 
 [dev-dependencies]

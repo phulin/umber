@@ -550,6 +550,14 @@ Responsibility: page artifacts → bytes on disk. Strictly downstream.
   `post_post`, and 223 padding) from committed artifacts, and traverses the
   committed box tree with TeX.web-style `hlist_out`/`vlist_out`, `movement()`
   w/x/y/z optimization, font switches, rules, glyphs, and DVI specials.
+  The `umber run file.tex --dvi out.dvi` CLI path is a thin downstream
+  composition over shipped artifact ids: it reads committed artifact bytes
+  from `World`, parses them as `tex-out` page artifacts, and invokes the DVI
+  writer without reaching back into live `Universe` state. The DVI parity
+  harness runs the reference engine live and byte-compares outputs after the
+  single sanctioned normalization: replacing the existing preamble comment
+  payload bytes in both files so the Umber/reference banner text differs
+  without masking any other byte, length, or pointer discrepancy.
 - Because drivers see only committed artifacts, rollback never reaches
   them; there is nothing to undo downstream of the commit barrier.
 

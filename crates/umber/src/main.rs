@@ -44,28 +44,8 @@ fn run() -> Result<(), CliError> {
             expand_dump::expand_dump(&path).map_err(CliError::ExpandDump)
         }
         Some("run") => {
-            let mut show_fixtures = false;
-            let mut rest: Vec<String> = args.collect();
-            if rest.first().is_some_and(|arg| arg == "--show-fixtures") {
-                show_fixtures = true;
-                rest.remove(0);
-            }
-            if rest.last().is_some_and(|arg| arg == "--show-fixtures") {
-                show_fixtures = true;
-                rest.pop();
-            }
-            let [path] = rest.as_slice() else {
-                if rest.is_empty() {
-                    return Err(CliError::Usage("missing input path for run"));
-                }
-                return Err(CliError::Usage(
-                    "run accepts one input path and optional --show-fixtures",
-                ));
-            };
-            if path == "--show-fixtures" {
-                return Err(CliError::Usage("missing input path for run"));
-            }
-            run_tex(path, show_fixtures)
+            let opts = RunCliOptions::parse(args)?;
+            run_tex(&opts)
         }
         None => {
             println!("umber {}", env!("CARGO_PKG_VERSION"));
@@ -90,18 +70,64 @@ fn lex_dump(path: &str) -> Result<(), CliError> {
     Ok(())
 }
 
-fn run_tex(path: &str, _show_fixtures: bool) -> Result<(), CliError> {
-    let path = Path::new(path);
+fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
+    let path = opts.input.as_path();
     let mut stores = Universe::with_world(World::real());
     let content = stores.world_mut().read_file(path)?;
     umber::prepare_run_stores(&mut stores);
 
     let mut input = InputStack::new(WorldInput::from_content(content));
     let mut hooks = RunHooks::new(path);
-    let _run = umber::run_input_collecting_artifacts(&mut input, &mut stores, &mut hooks)?;
+    let run = umber::run_input_collecting_artifacts(&mut input, &mut stores, &mut hooks)?;
+    if let Some(output) = &opts.dvi {
+        let dvi = umber::dvi_from_artifacts(&stores, &run.artifacts)?;
+        stores.world_mut().write_file(output, dvi)?;
+    }
     let effect_pos = stores.world().effect_pos();
     stores.commit_effects(effect_pos)?;
     Ok(())
+}
+
+struct RunCliOptions {
+    input: PathBuf,
+    dvi: Option<PathBuf>,
+}
+
+impl RunCliOptions {
+    fn parse(args: impl Iterator<Item = String>) -> Result<Self, CliError> {
+        let mut input = None;
+        let mut dvi = None;
+        let mut args = args.peekable();
+        while let Some(arg) = args.next() {
+            match arg.as_str() {
+                "--show-fixtures" => {}
+                "--dvi" => {
+                    if dvi.is_some() {
+                        return Err(CliError::Usage("run accepts at most one --dvi output path"));
+                    }
+                    let Some(path) = args.next() else {
+                        return Err(CliError::Usage("missing output path for --dvi"));
+                    };
+                    dvi = Some(PathBuf::from(path));
+                }
+                flag if flag.starts_with('-') => {
+                    return Err(CliError::Usage(
+                        "run accepts one input path with optional --show-fixtures and --dvi <path>",
+                    ));
+                }
+                path => {
+                    if input.is_some() {
+                        return Err(CliError::Usage(
+                            "run accepts one input path with optional --show-fixtures and --dvi <path>",
+                        ));
+                    }
+                    input = Some(PathBuf::from(path));
+                }
+            }
+        }
+        let input = input.ok_or(CliError::Usage("missing input path for run"))?;
+        Ok(Self { input, dvi })
+    }
 }
 
 struct RunHooks {
@@ -157,6 +183,7 @@ enum CliError {
     Lex(tex_lex::LexError),
     ExpandDump(expand_dump::ExpandDumpError),
     Exec(tex_exec::ExecError),
+    Dvi(umber::DviBuildError),
 }
 
 impl std::fmt::Display for CliError {
@@ -167,6 +194,7 @@ impl std::fmt::Display for CliError {
             Self::Lex(err) => write!(f, "{err}"),
             Self::ExpandDump(err) => write!(f, "{err}"),
             Self::Exec(err) => write!(f, "{err}"),
+            Self::Dvi(err) => write!(f, "{err}"),
         }
     }
 }
@@ -188,5 +216,11 @@ impl From<tex_lex::LexError> for CliError {
 impl From<tex_exec::ExecError> for CliError {
     fn from(value: tex_exec::ExecError) -> Self {
         Self::Exec(value)
+    }
+}
+
+impl From<umber::DviBuildError> for CliError {
+    fn from(value: umber::DviBuildError) -> Self {
+        Self::Dvi(value)
     }
 }
