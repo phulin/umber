@@ -437,6 +437,8 @@ pub struct WorldSnapshot {
     effect_pos: EffectPos,
     stream_bufs: StreamBufState,
     rng: RngState,
+    job_clock: JobClock,
+    shell_escape_policy: ShellEscapePolicy,
     input_len: usize,
     shell_escape_len: usize,
 }
@@ -445,6 +447,10 @@ pub struct WorldSnapshot {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct WorldStateHashCursor {
     effect_pos: EffectPos,
+    stream_bufs: StreamBufState,
+    rng: RngState,
+    job_clock: JobClock,
+    shell_escape_policy: ShellEscapePolicy,
     input_len: usize,
     shell_escape_len: usize,
 }
@@ -831,6 +837,10 @@ impl World {
     pub(crate) fn state_hash_cursor(&self) -> WorldStateHashCursor {
         WorldStateHashCursor {
             effect_pos: self.effect_pos(),
+            stream_bufs: self.stream_bufs.clone(),
+            rng: self.rng,
+            job_clock: self.job_clock,
+            shell_escape_policy: self.shell_escape_policy,
             input_len: self.inputs.len(),
             shell_escape_len: self.shell_escapes.len(),
         }
@@ -842,6 +852,10 @@ impl World {
     ) -> WorldStateHashCursor {
         WorldStateHashCursor {
             effect_pos: snapshot.effect_pos,
+            stream_bufs: snapshot.stream_bufs.clone(),
+            rng: snapshot.rng,
+            job_clock: snapshot.job_clock,
+            shell_escape_policy: snapshot.shell_escape_policy,
             input_len: snapshot.input_len,
             shell_escape_len: snapshot.shell_escape_len,
         }
@@ -922,6 +936,8 @@ impl World {
             effect_pos: self.effect_pos(),
             stream_bufs: self.stream_bufs.clone(),
             rng: self.rng,
+            job_clock: self.job_clock,
+            shell_escape_policy: self.shell_escape_policy,
             input_len: self.inputs.len(),
             shell_escape_len: self.shell_escapes.len(),
         }
@@ -936,6 +952,7 @@ impl World {
             .truncate((snapshot.effect_pos.raw() - self.effect_base.raw()) as usize);
         self.stream_bufs = snapshot.stream_bufs.clone();
         self.rng = snapshot.rng;
+        self.shell_escape_policy = snapshot.shell_escape_policy;
         self.inputs.truncate(snapshot.input_len);
         self.shell_escapes.truncate(snapshot.shell_escape_len);
     }

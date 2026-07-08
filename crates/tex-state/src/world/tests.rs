@@ -142,6 +142,21 @@ fn shell_escape_is_record_only_and_disabled_by_default() {
 }
 
 #[test]
+fn shell_escape_policy_is_snapshot_state() {
+    let mut world = World::memory();
+    let snapshot = world.snapshot();
+
+    world.set_shell_escape_policy(ShellEscapePolicy::Enabled);
+    assert!(world.record_shell_escape("echo yes"));
+
+    world.rollback(&snapshot);
+
+    assert_eq!(world.shell_escape_policy(), ShellEscapePolicy::Disabled);
+    assert!(world.shell_escape_records().is_empty());
+    assert!(!world.record_shell_escape("echo no"));
+}
+
+#[test]
 fn unix_clock_conversion_matches_epoch() {
     assert_eq!(unix_seconds_to_job_clock(0), JobClock::DEFAULT);
 }

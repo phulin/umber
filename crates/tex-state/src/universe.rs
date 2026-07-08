@@ -1167,6 +1167,18 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_state_hash_changes_for_rng_only_change() {
+        let mut unchanged = Universe::new();
+        let mut changed = Universe::new();
+        let _ = changed.world_mut().next_random_u64();
+
+        assert_ne!(
+            unchanged.snapshot().state_hash(),
+            changed.snapshot().state_hash()
+        );
+    }
+
+    #[test]
     fn rollback_restores_state_hash_cursor() {
         let mut universe = Universe::new();
         let base = universe.snapshot();
