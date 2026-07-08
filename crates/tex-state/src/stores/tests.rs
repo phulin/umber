@@ -1,5 +1,5 @@
 use super::{PrepareMagDiagnostic, Stores};
-use crate::env::banks::IntParam;
+use crate::env::banks::{DimenParam, GlueParam, IntParam};
 use crate::font::NULL_FONT;
 use crate::glue::{GlueSpec, Order};
 use crate::ids::{ArenaRef, NodeListId};
@@ -170,6 +170,35 @@ fn rollback_restores_glue_store_as_part_of_snapshot_tuple() {
     assert_eq!(reused.raw(), stale.raw());
     assert_eq!(stores.glue(reused), glue_spec(2));
     assert_eq!(stores.glue(crate::ids::GlueId::ZERO), GlueSpec::ZERO);
+}
+
+#[test]
+fn paragraph_layout_defaults_match_plain_tex_format() {
+    let stores = Stores::new();
+
+    assert_eq!(stores.int_param(IntParam::PRETOLERANCE), 100);
+    assert_eq!(stores.int_param(IntParam::TOLERANCE), 200);
+    assert_eq!(stores.dimen_param(DimenParam::OVERFULL_RULE), scaled_pt(5));
+    assert_eq!(
+        stores.glue(stores.glue_param(GlueParam::BASELINE_SKIP)),
+        GlueSpec {
+            width: scaled_pt(12),
+            stretch: scaled(0),
+            stretch_order: Order::Normal,
+            shrink: scaled(0),
+            shrink_order: Order::Normal,
+        }
+    );
+    assert_eq!(
+        stores.glue(stores.glue_param(GlueParam::PAR_FILL_SKIP)),
+        GlueSpec {
+            width: scaled(0),
+            stretch: scaled_pt(1),
+            stretch_order: Order::Fil,
+            shrink: scaled(0),
+            shrink_order: Order::Normal,
+        }
+    );
 }
 
 #[test]
@@ -763,4 +792,8 @@ fn assert_same_root(a: NodeListId, b: NodeListId) {
 
 fn scaled(raw: i32) -> Scaled {
     Scaled::from_raw(raw)
+}
+
+fn scaled_pt(points: i32) -> Scaled {
+    Scaled::from_raw(points * Scaled::UNITY)
 }

@@ -13,7 +13,7 @@ use crate::font::{
     CharMetrics, ExtensibleRecipe, FontMetrics, FontStore, FontStoreMark, LigKernChar,
     LigKernCommand, LigKernIter, LoadedFont, MissingCharacter, NULL_FONT,
 };
-use crate::glue::{GlueSpec, GlueStore, GlueStoreMark};
+use crate::glue::{GlueSpec, GlueStore, GlueStoreMark, Order};
 use crate::hyphenation::{ExceptionSpec, HyphenationTable, PatternSpec};
 use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, TokenListId};
 use crate::interner::{Interner, InternerMark, Symbol};
@@ -183,8 +183,36 @@ impl Stores {
         stores.set_int_param(IntParam::UC_HYPH, 1);
         stores.set_int_param(IntParam::LEFT_HYPHEN_MIN, 2);
         stores.set_int_param(IntParam::RIGHT_HYPHEN_MIN, 3);
+        stores.initialize_plain_layout_defaults();
         stores.initialize_font_banks(NULL_FONT, 7, &[]);
         stores
+    }
+
+    fn initialize_plain_layout_defaults(&mut self) {
+        self.set_int_param(IntParam::PRETOLERANCE, 100);
+        self.set_int_param(IntParam::TOLERANCE, 200);
+        self.set_dimen_param(
+            DimenParam::OVERFULL_RULE,
+            Scaled::from_raw(5 * Scaled::UNITY),
+        );
+
+        let baseline_skip = self.intern_glue(GlueSpec {
+            width: Scaled::from_raw(12 * Scaled::UNITY),
+            stretch: Scaled::from_raw(0),
+            stretch_order: Order::Normal,
+            shrink: Scaled::from_raw(0),
+            shrink_order: Order::Normal,
+        });
+        self.set_glue_param(GlueParam::BASELINE_SKIP, baseline_skip);
+
+        let par_fill_skip = self.intern_glue(GlueSpec {
+            width: Scaled::from_raw(0),
+            stretch: Scaled::from_raw(Scaled::UNITY),
+            stretch_order: Order::Fil,
+            shrink: Scaled::from_raw(0),
+            shrink_order: Order::Normal,
+        });
+        self.set_glue_param(GlueParam::PAR_FILL_SKIP, par_fill_skip);
     }
 
     /// Reads the owned environment.

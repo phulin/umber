@@ -5,6 +5,7 @@ use proptest::test_runner::Config;
 use std::collections::HashMap;
 use std::env;
 use std::time::Instant;
+use tex_state::env::banks::GlueParam;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::{FontId, GlueId, NodeListId};
 use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, Node, Sign};
@@ -152,7 +153,11 @@ fn run_replay_identity(ops: &[Op]) {
     let mut oracle = Oracle::new();
     let mut box_oracle = BoxOracle::new();
     let mut tree_cache = TreeCache::new();
-    let mut glue_ids = vec![GlueId::ZERO];
+    let mut glue_ids = vec![
+        GlueId::ZERO,
+        stores.glue_param(GlueParam::BASELINE_SKIP),
+        stores.glue_param(GlueParam::PAR_FILL_SKIP),
+    ];
     let mut built_lists = Vec::new();
     let cells = cell_universe();
     TestCell::prepare_stores(&mut stores, &cells);

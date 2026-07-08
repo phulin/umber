@@ -54,7 +54,7 @@ impl TestCell {
             .iter()
             .any(|cell| matches!(cell, Self::Skip(_) | Self::Muskip(_) | Self::GlueParam(_)))
         {
-            for raw in 1..64 {
+            for raw in 3..64 {
                 let id = stores.intern_glue(glue_spec(raw as i32));
                 assert_eq!(id.raw(), raw);
             }
@@ -172,9 +172,18 @@ pub(crate) struct Oracle {
 
 impl Oracle {
     pub(crate) fn new() -> Self {
-        Self {
-            scopes: vec![HashMap::new()],
-        }
+        let mut root = HashMap::new();
+        root.insert(TestCell::IntParam(IntParam::PRETOLERANCE.raw()), 100);
+        root.insert(TestCell::IntParam(IntParam::TOLERANCE.raw()), 200);
+        root.insert(
+            TestCell::GlueParam(GlueParam::BASELINE_SKIP.raw()),
+            u64::from(GlueId::new(1).raw()),
+        );
+        root.insert(
+            TestCell::GlueParam(GlueParam::PAR_FILL_SKIP.raw()),
+            u64::from(GlueId::new(2).raw()),
+        );
+        Self { scopes: vec![root] }
     }
 
     pub(crate) fn enter_group(&mut self) {
