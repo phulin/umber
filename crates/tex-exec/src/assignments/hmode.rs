@@ -174,7 +174,7 @@ where
         UnexpandablePrimitive::Accent => execute_accent(nest, input, stores, hooks)?,
         UnexpandablePrimitive::Mark => {
             flush_pending_hchars(nest, stores)?;
-            let tokens = scan_balanced_expanded_token_list(input, stores, hooks, "\\mark")?;
+            let tokens = scan_general_text_expanded_with_driver(input, stores, hooks)?;
             append_vertical_contribution(nest, stores, Node::Mark { class: 0, tokens });
         }
         UnexpandablePrimitive::VAdjust => execute_vadjust(nest, input, stores, hooks)?,

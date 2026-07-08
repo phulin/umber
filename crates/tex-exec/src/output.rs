@@ -5,7 +5,9 @@ use tex_lex::{InputSource, InputStack, TokenListReplayKind};
 use tex_state::env::banks::{DimenParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, Node, Sign};
-use tex_state::page::{EJECT_PENALTY, INF_PENALTY, PageDimension, PageFireUp, PageInteger};
+use tex_state::page::{
+    EJECT_PENALTY, INF_PENALTY, PageDimension, PageFireUp, PageInteger, PageMark,
+};
 use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::token::Token;
 use tex_state::{ExpansionContext, GroupKind, Universe};
@@ -106,6 +108,7 @@ fn prepare_box255(stores: &mut Universe, fire_up: PageFireUp) -> Result<(), Exec
     let output_penalty = output_penalty_and_rewrite_break(stores, &mut after_break);
     stores.set_int_param_global(IntParam::OUTPUT_PENALTY, output_penalty);
     stores.prepend_page_contributions(after_break);
+    update_page_marks_at_fire_up(stores, &page_nodes);
 
     let page_list = stores.freeze_node_list(&page_nodes);
     let packed = vpack(
@@ -122,6 +125,33 @@ fn prepare_box255(stores: &mut Universe, fire_up: PageFireUp) -> Result<(), Exec
     stores.set_box_reg_global(255, box255);
     stores.start_new_page();
     Ok(())
+}
+
+fn update_page_marks_at_fire_up(stores: &mut Universe, page_nodes: &[Node]) {
+    let top = stores.page_mark(PageMark::Bot);
+    stores.set_page_mark(PageMark::Top, top);
+
+    let mut first = None;
+    let mut bot = None;
+    for node in page_nodes {
+        if let Node::Mark { class: 0, tokens } = node {
+            if first.is_none() {
+                first = Some(*tokens);
+            }
+            bot = Some(*tokens);
+        }
+    }
+
+    match (first, bot) {
+        (Some(first), Some(bot)) => {
+            stores.set_page_mark(PageMark::First, first);
+            stores.set_page_mark(PageMark::Bot, bot);
+        }
+        _ => {
+            stores.set_page_mark(PageMark::First, top);
+            stores.set_page_mark(PageMark::Bot, top);
+        }
+    }
 }
 
 fn output_penalty_and_rewrite_break(stores: &mut Universe, after_break: &mut Vec<Node>) -> i32 {

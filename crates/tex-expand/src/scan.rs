@@ -53,6 +53,7 @@ pub enum ScanToksError {
     TooManyParameters,
     InvalidParameterTokenInParameterText(Token),
     InvalidParameterTokenInReplacementText(Token),
+    MissingGeneralTextBeginGroup(Token),
 }
 
 impl fmt::Display for ScanToksError {
@@ -81,6 +82,12 @@ impl fmt::Display for ScanToksError {
                 write!(
                     f,
                     "invalid parameter token {token:?} in macro replacement text"
+                )
+            }
+            Self::MissingGeneralTextBeginGroup(token) => {
+                write!(
+                    f,
+                    "expected begin-group token before general text, got {token:?}"
                 )
             }
         }
@@ -176,6 +183,25 @@ where
     Ok(ScannedMacro {
         meaning: MacroMeaning::new(flags, meaning.parameter_text(), replacement_text),
     })
+}
+
+/// Scans TeX general text as a raw balanced group, then expands it.
+///
+/// This matches `scan_toks(macro_def = false, xpand = true)` callers such as
+/// TeX82 `\mark`: parameter tokens are ordinary tokens while scanning the
+/// balanced text, and expansion happens over the frozen raw text.
+pub fn scan_general_text_expanded_with_driver<S, St, H>(
+    input: &mut InputStack<S>,
+    stores: &mut St,
+    hooks: &mut H,
+) -> Result<TokenListId, ScanToksError>
+where
+    S: InputSource,
+    St: ExpansionState + tex_state::InputOpenState,
+    H: ExpansionHooks<S>,
+{
+    let raw_text = scan_general_text(input, stores)?;
+    expand_replacement_text(stores, raw_text, hooks, &mut DriverExpandNext)
 }
 
 fn expand_replacement_text<'a, S, St, H, E>(
@@ -455,6 +481,77 @@ where
                 builder.push(token);
             }
             _ => builder.push(token),
+        }
+    }
+}
+
+fn scan_general_text<S>(
+    input: &mut InputStack<S>,
+    stores: &mut impl ExpansionState,
+) -> Result<TokenListId, ScanToksError>
+where
+    S: InputSource,
+{
+    let open =
+        next_non_space_token(input, stores)?.ok_or(ScanToksError::EndOfInputInReplacementText)?;
+    if !matches!(
+        open,
+        Token::Char {
+            cat: Catcode::BeginGroup,
+            ..
+        }
+    ) {
+        return Err(ScanToksError::MissingGeneralTextBeginGroup(open));
+    }
+
+    let mut builder = stores.token_list_builder();
+    let mut brace_level = 1_u32;
+    loop {
+        let token = input
+            .next_token(stores)?
+            .ok_or(ScanToksError::EndOfInputInReplacementText)?;
+        match token {
+            Token::Char {
+                cat: Catcode::BeginGroup,
+                ..
+            } => {
+                brace_level += 1;
+                builder.push(token);
+            }
+            Token::Char {
+                cat: Catcode::EndGroup,
+                ..
+            } => {
+                brace_level -= 1;
+                if brace_level == 0 {
+                    return Ok(stores.finish_token_list(&mut builder));
+                }
+                builder.push(token);
+            }
+            _ => builder.push(token),
+        }
+    }
+}
+
+fn next_non_space_token<S>(
+    input: &mut InputStack<S>,
+    stores: &mut impl ExpansionState,
+) -> Result<Option<Token>, ScanToksError>
+where
+    S: InputSource,
+{
+    loop {
+        let Some(token) = input.next_token(stores)? else {
+            return Ok(None);
+        };
+        if !matches!(
+            token,
+            Token::Char {
+                cat: Catcode::Space,
+                ..
+            }
+        ) {
+            return Ok(Some(token));
         }
     }
 }

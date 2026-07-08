@@ -309,43 +309,6 @@ where
     scan_balanced_text_after_open_group(input, stores)
 }
 
-pub(super) fn scan_balanced_expanded_token_list<S, H>(
-    input: &mut InputStack<S>,
-    stores: &mut Universe,
-    hooks: &mut H,
-    context: &'static str,
-) -> Result<tex_state::ids::TokenListId, ExecError>
-where
-    S: InputSource,
-    H: ExpansionHooks<S>,
-{
-    let open =
-        next_non_space_x(input, stores, hooks)?.ok_or(ExecError::MissingToken { context })?;
-    if !is_begin_group(open) {
-        return Err(ExecError::MissingToken { context });
-    }
-    let mut recorder = NoopRecorder;
-    let mut depth = 1usize;
-    let mut builder = stores.token_list_builder();
-    while let Some(token) =
-        get_x_token_with_recorder_and_hooks(input, stores, &mut recorder, hooks)?
-    {
-        if is_begin_group(token) {
-            depth += 1;
-            builder.push(token);
-        } else if is_end_group(token) {
-            depth -= 1;
-            if depth == 0 {
-                return Ok(stores.finish_token_list(&mut builder));
-            }
-            builder.push(token);
-        } else {
-            builder.push(token);
-        }
-    }
-    Err(ExecError::MissingToken { context })
-}
-
 fn scan_balanced_text_after_open_group<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,

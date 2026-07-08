@@ -1,6 +1,8 @@
 //! Assignment primitives owned by main control.
 
-use tex_expand::scan::{scan_toks, scan_toks_expanded_with_driver};
+use tex_expand::scan::{
+    scan_general_text_expanded_with_driver, scan_toks, scan_toks_expanded_with_driver,
+};
 use tex_expand::{
     DriverExpandNext, ExpandError, ExpansionHooks, NoopRecorder, ReadRecorder,
     get_x_token_with_recorder_and_hooks, scan_dimen, scan_glue, scan_int,

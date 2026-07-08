@@ -26,7 +26,7 @@ use crate::meaning::Meaning;
 use crate::node::Node;
 use crate::node_arena::NodeListBuilder;
 use crate::page::{
-    PageBreak, PageBuilderState, PageContents, PageDimension, PageFireUp, PageInteger,
+    PageBreak, PageBuilderState, PageContents, PageDimension, PageFireUp, PageInteger, PageMark,
 };
 use crate::scaled::Scaled;
 use crate::state_hash::{INITIAL_STATE_HASH, StateHasher, combine};
@@ -90,6 +90,7 @@ pub trait ExpansionState {
     fn box_reg(&self, index: u16) -> Option<NodeListId>;
     fn page_dimension(&self, dimension: PageDimension) -> Scaled;
     fn page_integer(&self, integer: PageInteger) -> i32;
+    fn page_mark(&self, mark: PageMark) -> TokenListId;
     fn int_param(&self, param: IntParam) -> i32;
     fn mag(&self) -> i32;
     fn prepared_mag(&self) -> Option<i32>;
@@ -504,6 +505,7 @@ impl Universe {
             hasher,
             |nodes, hasher| self.stores.hash_node_slice_semantic(nodes, hasher),
             |id, hasher| self.stores.hash_glue_semantic(id, hasher),
+            |id, hasher| self.stores.hash_token_list_semantic(id, hasher),
         );
     }
 
@@ -1030,6 +1032,16 @@ impl Universe {
         self.page.set_integer(integer, value);
     }
 
+    #[must_use]
+    pub fn page_mark(&self, mark: PageMark) -> TokenListId {
+        self.page.mark(mark)
+    }
+
+    pub fn set_page_mark(&mut self, mark: PageMark, value: TokenListId) {
+        let _ = self.stores.tokens(value);
+        self.page.set_mark(mark, value);
+    }
+
     pub fn freeze_page_specs(&mut self, contents: PageContents) {
         let vsize = self.dimen_param(DimenParam::V_SIZE);
         let max_depth = self.dimen_param(DimenParam::MAX_DEPTH);
@@ -1534,6 +1546,10 @@ impl ExpansionState for Universe {
         Self::page_integer(self, integer)
     }
 
+    fn page_mark(&self, mark: PageMark) -> TokenListId {
+        Self::page_mark(self, mark)
+    }
+
     fn box_dimension(&self, index: u16, dimension: BoxDimension) -> Option<Scaled> {
         Self::box_dimension(self, index, dimension)
     }
@@ -1714,6 +1730,10 @@ impl ExpansionState for ExpansionContext<'_> {
 
     fn page_integer(&self, integer: PageInteger) -> i32 {
         self.universe.page_integer(integer)
+    }
+
+    fn page_mark(&self, mark: PageMark) -> TokenListId {
+        self.universe.page_mark(mark)
     }
 
     fn box_dimension(&self, index: u16, dimension: BoxDimension) -> Option<Scaled> {

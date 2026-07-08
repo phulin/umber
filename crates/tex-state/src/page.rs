@@ -1,7 +1,7 @@
 //! Snapshot-owned page-builder state.
 
 use crate::glue::GlueSpec;
-use crate::ids::GlueId;
+use crate::ids::{GlueId, TokenListId};
 use crate::node::Node;
 use crate::scaled::Scaled;
 use crate::state_hash::StateHasher;
@@ -69,6 +69,29 @@ impl PageDimension {
 pub enum PageInteger {
     DeadCycles,
     InsertPenalties,
+}
+
+/// TeX82's single mark-class page mark slots.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum PageMark {
+    Top,
+    First,
+    Bot,
+    SplitFirst,
+    SplitBot,
+}
+
+impl PageMark {
+    #[must_use]
+    pub const fn index(self) -> u8 {
+        match self {
+            Self::Top => 0,
+            Self::First => 1,
+            Self::Bot => 2,
+            Self::SplitFirst => 3,
+            Self::SplitBot => 4,
+        }
+    }
 }
 
 impl PageInteger {
@@ -189,6 +212,11 @@ pub(crate) struct PageBuilderState {
     best_page_break: Option<PageBreak>,
     best_size: Scaled,
     fire_up: Option<PageFireUp>,
+    top_mark: TokenListId,
+    first_mark: TokenListId,
+    bot_mark: TokenListId,
+    split_first_mark: TokenListId,
+    split_bot_mark: TokenListId,
 }
 
 impl Default for PageBuilderState {
@@ -215,6 +243,11 @@ impl Default for PageBuilderState {
             best_page_break: None,
             best_size: Scaled::from_raw(0),
             fire_up: None,
+            top_mark: TokenListId::EMPTY,
+            first_mark: TokenListId::EMPTY,
+            bot_mark: TokenListId::EMPTY,
+            split_first_mark: TokenListId::EMPTY,
+            split_bot_mark: TokenListId::EMPTY,
         }
     }
 }
@@ -267,6 +300,26 @@ impl PageBuilderState {
         match integer {
             PageInteger::DeadCycles => self.dead_cycles = value,
             PageInteger::InsertPenalties => self.insert_penalties = value,
+        }
+    }
+
+    pub(crate) const fn mark(&self, mark: PageMark) -> TokenListId {
+        match mark {
+            PageMark::Top => self.top_mark,
+            PageMark::First => self.first_mark,
+            PageMark::Bot => self.bot_mark,
+            PageMark::SplitFirst => self.split_first_mark,
+            PageMark::SplitBot => self.split_bot_mark,
+        }
+    }
+
+    pub(crate) fn set_mark(&mut self, mark: PageMark, value: TokenListId) {
+        match mark {
+            PageMark::Top => self.top_mark = value,
+            PageMark::First => self.first_mark = value,
+            PageMark::Bot => self.bot_mark = value,
+            PageMark::SplitFirst => self.split_first_mark = value,
+            PageMark::SplitBot => self.split_bot_mark = value,
         }
     }
 
@@ -461,6 +514,7 @@ impl PageBuilderState {
         hasher: &mut StateHasher,
         mut hash_nodes: impl FnMut(&[Node], &mut StateHasher),
         mut hash_glue: impl FnMut(GlueId, &mut StateHasher),
+        mut hash_tokens: impl FnMut(TokenListId, &mut StateHasher),
     ) {
         hasher.tag(0xa0);
         hasher.u8(match self.contents {
@@ -509,6 +563,15 @@ impl PageBuilderState {
                 hasher.usize(fire_up.trigger().index());
             }
             None => hasher.bool(false),
+        }
+        for mark in [
+            self.top_mark,
+            self.first_mark,
+            self.bot_mark,
+            self.split_first_mark,
+            self.split_bot_mark,
+        ] {
+            hash_tokens(mark, hasher);
         }
         hash_nodes(&self.contribution, hasher);
         hash_nodes(&self.current_page, hasher);

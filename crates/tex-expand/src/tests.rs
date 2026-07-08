@@ -9,6 +9,7 @@ use tex_state::interner::Symbol;
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
 use tex_state::node::{BoxNode, BoxNodeFields, Node, Sign};
+use tex_state::page::PageMark;
 use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::token::{Catcode, Token};
 use tex_state::{ExpansionState, InputOpenState, InputReadState, Universe};
@@ -932,7 +933,7 @@ fn fontname_renders_real_font_selector_name() {
 }
 
 #[test]
-fn mark_family_stubs_expand_empty() {
+fn mark_family_primitives_expand_stored_page_marks() {
     let mut stores = Universe::new();
     for (name, primitive) in [
         ("topmark", ExpandablePrimitive::TopMark),
@@ -955,6 +956,28 @@ fn mark_family_stubs_expand_empty() {
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
     assert_eq!(next_expanded_chars(&mut input, &mut stores), "z");
+
+    let top = stores.intern_token_list(&[char_token('T')]);
+    let first = stores.intern_token_list(&[char_token('F')]);
+    let bot = stores.intern_token_list(&[char_token('B')]);
+    let split_first = stores.intern_token_list(&[char_token('S')]);
+    let split_bot = stores.intern_token_list(&[char_token('s')]);
+    stores.set_page_mark(PageMark::Top, top);
+    stores.set_page_mark(PageMark::First, first);
+    stores.set_page_mark(PageMark::Bot, bot);
+    stores.set_page_mark(PageMark::SplitFirst, split_first);
+    stores.set_page_mark(PageMark::SplitBot, split_bot);
+    let list = stores.intern_token_list(&[
+        Token::Cs(stores.symbol("topmark").expect("topmark")),
+        Token::Cs(stores.symbol("firstmark").expect("firstmark")),
+        Token::Cs(stores.symbol("botmark").expect("botmark")),
+        Token::Cs(stores.symbol("splitfirstmark").expect("splitfirstmark")),
+        Token::Cs(stores.symbol("splitbotmark").expect("splitbotmark")),
+    ]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list(list, TokenListReplayKind::Inserted);
+
+    assert_eq!(next_expanded_chars(&mut input, &mut stores), "TFBSs");
 }
 
 #[test]

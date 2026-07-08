@@ -1,5 +1,6 @@
-use tex_lex::{InputSource, InputStack};
+use tex_lex::{InputSource, InputStack, MacroArguments};
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
+use tex_state::page::PageMark;
 use tex_state::token::Token;
 use tex_state::{ExpansionState, InputOpenState};
 
@@ -29,6 +30,17 @@ where
         &mut NoopExpansionHooks,
         meaning,
     )
+}
+
+fn page_mark_for_primitive(primitive: ExpandablePrimitive) -> PageMark {
+    match primitive {
+        ExpandablePrimitive::TopMark => PageMark::Top,
+        ExpandablePrimitive::FirstMark => PageMark::First,
+        ExpandablePrimitive::BotMark => PageMark::Bot,
+        ExpandablePrimitive::SplitFirstMark => PageMark::SplitFirst,
+        ExpandablePrimitive::SplitBotMark => PageMark::SplitBot,
+        _ => unreachable!("caller restricts mark-family primitives"),
+    }
 }
 
 macro_rules! dispatch_match {
@@ -150,16 +162,16 @@ macro_rules! dispatch_match {
                 ))
             }
             Meaning::ExpandablePrimitive(
-                ExpandablePrimitive::TopMark
+                primitive @ (ExpandablePrimitive::TopMark
                 | ExpandablePrimitive::FirstMark
                 | ExpandablePrimitive::BotMark
                 | ExpandablePrimitive::SplitFirstMark
-                | ExpandablePrimitive::SplitBotMark,
-            ) => {
-                // TODO(umber2-page): return the page builder's stored mark token
-                // lists once mark nodes and page splitting exist.
-                Ok(push_rendered_text(stores, ExpansionReplayKind::Mark, ""))
-            }
+                | ExpandablePrimitive::SplitBotMark),
+            ) => Ok(Dispatch::Push {
+                replay_kind: ExpansionReplayKind::Mark,
+                token_list: stores.page_mark(page_mark_for_primitive(primitive)),
+                macro_arguments: MacroArguments::new(),
+            }),
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfTrue) => {
                 begin_if(input, stores, recorder, hooks, true)
             }

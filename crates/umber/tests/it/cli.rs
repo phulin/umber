@@ -245,6 +245,12 @@ fn run_dvi_smoke_matches_pdftex_custom_output_headline() {
     assert_dvi_case_matches_pdftex("custom_output_headline");
 }
 
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn run_dvi_smoke_matches_pdftex_mark_output_headers() {
+    assert_dvi_case_matches_pdftex("mark_output_headers");
+}
+
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
 fn assert_dvi_case_matches_pdftex(case: &str) {
     let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");

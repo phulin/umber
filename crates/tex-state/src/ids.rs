@@ -41,6 +41,11 @@ impl GlueId {
     pub const ZERO: Self = Self(0);
 }
 
+impl TokenListId {
+    /// The canonical empty token-list id, pre-interned by every token store.
+    pub const EMPTY: Self = Self(0);
+}
+
 /// A survivor arena root slot.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct SurvivorRootId(u32);

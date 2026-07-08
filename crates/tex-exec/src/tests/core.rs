@@ -731,6 +731,68 @@ fn forced_page_penalty_runs_default_output() {
 }
 
 #[test]
+fn mark_scans_raw_general_text_then_expands_payload() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\def\\a{A}\\mark{#\\a}"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("\\mark executes");
+
+    let mark = stores
+        .current_page_nodes()
+        .iter()
+        .chain(stores.page_contributions())
+        .find_map(|node| match node {
+            tex_state::node::Node::Mark { tokens, .. } => Some(*tokens),
+            _ => None,
+        })
+        .expect("mark node");
+    assert_eq!(
+        stores.tokens(mark),
+        &[
+            Token::Char {
+                ch: '#',
+                cat: Catcode::Parameter,
+            },
+            Token::Char {
+                ch: 'A',
+                cat: Catcode::Letter,
+            },
+        ]
+    );
+}
+
+#[test]
+fn fire_up_updates_top_first_bot_marks_across_no_mark_page() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\output={\\global\\advance\\count0 by 1 \
+         \\ifnum\\count0=1 \\xdef\\pagea{\\topmark/\\firstmark/\\botmark}\
+         \\else\\ifnum\\count0=2 \\xdef\\pageb{\\topmark/\\firstmark/\\botmark}\
+         \\else \\xdef\\pagec{\\topmark/\\firstmark/\\botmark}\\fi\\fi \
+         \\shipout\\box255}\
+         \\topskip=0pt \\vsize=1pt \\setbox0=\\hbox{}\\ht0=2pt \
+         \\mark{A}\\copy0\\penalty-10000 \
+         \\copy0\\penalty-10000 \
+         \\mark{B}\\copy0\\penalty-10000",
+    ));
+
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("marked pages ship");
+
+    assert_eq!(stats.shipped_artifacts.len(), 3);
+    assert_eq!(macro_text(&stores, "pagea"), "/A/A");
+    assert_eq!(macro_text(&stores, "pageb"), "A/A/A");
+    assert_eq!(macro_text(&stores, "pagec"), "A/B/B");
+}
+
+#[test]
 fn output_routine_replays_in_implicit_group_and_consumes_box255() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

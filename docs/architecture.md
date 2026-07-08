@@ -288,8 +288,9 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   `\input` file name and asks the caller for a new `InputSource`, while
   `\jobname` renders the caller-provided job name. This preserves the rule
   that file access belongs to `World`/the driver layer, not to the gullet.
-  `\fontname` and the mark-family expandables are documented empty stubs until
-  font meanings and page-builder marks exist.
+  `\fontname` renders loaded font selector names. The mark-family expandables
+  replay the frozen token lists stored in the Universe-owned page mark slots;
+  empty slots replay the canonical empty token list.
 - The stomach implements the macro-definition assignment surface used by the
   expansion conformance path: `\def`, `\edef`, `\gdef`, `\xdef`, `\let`,
   `\futurelet`, prefix accumulation (`\global`, `\long`, `\outer`,
@@ -490,12 +491,14 @@ Responsibility: accumulate the main vertical list, fire `\output`, commit.
   or awful break records a pending fire-up boundary.
 - Fire-up splits the current page at the recorded best break, rewrites the
   chosen break penalty to `10000`, stores the original penalty in
-  `\outputpenalty`, vpackages the page material into global `\box255` at the
-  recorded best size using the captured `\maxdepth`, and returns material after
-  the break to the front of the contribution list. Insert nodes intentionally
-  carry a `umber2-4ci.5` TODO hook; until class-specific insertion splitting
-  lands, they remain ordinary page-list nodes rather than being silently
-  approximated.
+  `\outputpenalty`, updates `\topmark` from the old `\botmark`, scans the
+  selected top-level page material for TeX82 mark nodes to set
+  `\firstmark`/`\botmark`, vpackages the page material into global `\box255`
+  at the recorded best size using the captured `\maxdepth`, and returns
+  material after the break to the front of the contribution list. Insert nodes
+  intentionally carry a `umber2-4ci.5` TODO hook; until class-specific
+  insertion splitting lands, they remain ordinary page-list nodes rather than
+  being silently approximated.
 - **`\output` is a recursion**: an empty `\output` token list executes the
   default `\shipout\box255` path directly; otherwise the output token list
   replays as an input frame inside an implicit group and one internal-vertical
