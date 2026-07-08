@@ -147,18 +147,17 @@ pub struct Universe {
 impl Clone for Universe {
     fn clone(&self) -> Self {
         let stores = self.stores.clone();
-        let world = self.world.clone();
         let state_hash_base = StateHashBase {
-            store: stores.state_hash_cursor(),
-            world: world.state_hash_cursor(),
-            input_summary: self.input_summary.clone(),
-            interaction_mode: self.interaction_mode,
+            store: stores.retarget_state_hash_cursor(&self.state_hash_base.store),
+            world: self.state_hash_base.world.clone(),
+            input_summary: self.state_hash_base.input_summary.clone(),
+            interaction_mode: self.state_hash_base.interaction_mode,
             checkpoint_hash: self.state_hash_base.checkpoint_hash,
         };
         Self {
             owner: UniverseOwner::new(),
             stores,
-            world,
+            world: self.world.clone(),
             interaction_mode: self.interaction_mode,
             input_summary: self.input_summary.clone(),
             state_hash_base,
@@ -1306,6 +1305,20 @@ mod tests {
         assert_ne!(
             unchanged.snapshot().state_hash(),
             changed.snapshot().state_hash()
+        );
+    }
+
+    #[test]
+    fn clone_preserves_pending_state_hash_slice() {
+        let mut original = Universe::new();
+        let _base = original.snapshot();
+        original.set_count(0, 42);
+        let mut fork = original.clone();
+
+        assert_eq!(fork.count(0), 42);
+        assert_eq!(
+            original.snapshot().state_hash(),
+            fork.snapshot().state_hash()
         );
     }
 

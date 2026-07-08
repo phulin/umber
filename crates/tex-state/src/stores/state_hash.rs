@@ -48,6 +48,22 @@ impl Stores {
     }
 
     #[must_use]
+    pub(crate) fn retarget_state_hash_cursor(
+        &self,
+        cursor: &StoreStateHashCursor,
+    ) -> StoreStateHashCursor {
+        assert!(
+            cursor.journal_pos <= self.env.current_journal_pos(),
+            "Stores state-hash cursor journal position is past the current journal"
+        );
+        StoreStateHashCursor {
+            owner: self.owner.snapshot_owner(),
+            journal_pos: cursor.journal_pos,
+            node_mark: cursor.node_mark,
+        }
+    }
+
+    #[must_use]
     pub(crate) fn state_hash_slice(
         &self,
         start: &StoreStateHashCursor,
