@@ -5,6 +5,7 @@
 //! truncation, and marker lookup.
 
 use crate::cell::CellId;
+use crate::env::group::GroupKind;
 use crate::ids::SnapshotId;
 
 /// A journal entry.
@@ -59,6 +60,7 @@ impl UndoRec {
 pub(crate) enum Marker {
     Group {
         aftergroup_start: u32,
+        kind: GroupKind,
     },
     #[allow(dead_code)]
     Checkpoint(SnapshotId),
@@ -138,12 +140,17 @@ impl Journal {
 
     /// Finds the last group marker, skipping checkpoint markers.
     #[must_use]
-    pub(crate) fn find_last_group_marker(&self) -> Option<(JournalPos, u32)> {
+    pub(crate) fn find_last_group_marker(&self) -> Option<(JournalPos, u32, GroupKind)> {
         for (index, entry) in self.entries.iter().enumerate().rev() {
-            if let Entry::Marker(Marker::Group { aftergroup_start }) = entry {
+            if let Entry::Marker(Marker::Group {
+                aftergroup_start,
+                kind,
+            }) = entry
+            {
                 return Some((
                     JournalPos(u32_len(index, "journal exceeds u32 entries")),
                     *aftergroup_start,
+                    *kind,
                 ));
             }
         }
@@ -168,6 +175,7 @@ fn u32_len(value: usize, message: &str) -> u32 {
 mod tests {
     use super::{Entry, Journal, JournalPos, Marker, UndoRec};
     use crate::cell::{BankTag, CellId};
+    use crate::env::group::GroupKind;
     use crate::ids::SnapshotId;
 
     #[test]
@@ -208,13 +216,14 @@ mod tests {
         let mut journal = Journal::new();
         journal.push_marker(Marker::Group {
             aftergroup_start: 3,
+            kind: GroupKind::Simple,
         });
         journal.push_undo(UndoRec::new(CellId::new(BankTag::Toks, 4), 5, 6));
         journal.push_marker(Marker::Checkpoint(SnapshotId::new(99)));
 
         let found = journal.find_last_group_marker();
 
-        assert_eq!(found, Some((JournalPos(0), 3)));
+        assert_eq!(found, Some((JournalPos(0), 3, GroupKind::Simple)));
     }
 
     #[test]
@@ -222,13 +231,18 @@ mod tests {
         let mut journal = Journal::new();
         journal.push_marker(Marker::Group {
             aftergroup_start: 1,
+            kind: GroupKind::Simple,
         });
         journal.push_marker(Marker::Checkpoint(SnapshotId::new(2)));
         journal.push_marker(Marker::Group {
             aftergroup_start: 8,
+            kind: GroupKind::SemiSimple,
         });
 
-        assert_eq!(journal.find_last_group_marker(), Some((JournalPos(2), 8)));
+        assert_eq!(
+            journal.find_last_group_marker(),
+            Some((JournalPos(2), 8, GroupKind::SemiSimple))
+        );
     }
 
     #[test]

@@ -28,6 +28,7 @@ use crate::journal::JournalPos;
 use crate::journal::{Journal, UndoRec};
 use crate::meaning::Meaning;
 use crate::scaled::Scaled;
+use crate::token::Token;
 #[cfg(feature = "shadow")]
 use std::collections::HashMap;
 
@@ -135,7 +136,8 @@ pub struct Env {
     glue_params: FixedBank<GlueIdCodec, PARAMETER_COUNT>,
     tok_params: FixedBank<TokenListIdCodec, PARAMETER_COUNT>,
     journal: Journal,
-    aftergroup: Vec<u64>,
+    aftergroup: Vec<Token>,
+    afterassignment: Option<Token>,
     group_depth: u32,
     epoch: Epoch,
     #[cfg(feature = "shadow")]
@@ -167,6 +169,7 @@ impl Env {
             tok_params: FixedBank::new(),
             journal: Journal::new(),
             aftergroup: Vec::new(),
+            afterassignment: None,
             group_depth: 0,
             epoch: Epoch::START,
             #[cfg(feature = "shadow")]

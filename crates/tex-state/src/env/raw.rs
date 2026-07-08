@@ -81,6 +81,7 @@ impl Env {
             word.hash(&mut hasher);
         }
         self.aftergroup.hash(&mut hasher);
+        self.afterassignment.hash(&mut hasher);
         hasher.finish()
     }
 
@@ -125,8 +126,13 @@ impl Env {
     }
 
     #[cfg(any(test, feature = "testing", feature = "shadow"))]
-    pub(crate) fn testing_aftergroup_payloads(&self) -> &[u64] {
+    pub(crate) fn testing_aftergroup_payloads(&self) -> &[crate::token::Token] {
         &self.aftergroup
+    }
+
+    #[cfg(any(test, feature = "testing", feature = "shadow"))]
+    pub(crate) const fn testing_afterassignment(&self) -> Option<crate::token::Token> {
+        self.afterassignment
     }
 
     pub(super) fn meaning_word(&self, index: u32) -> Option<u64> {

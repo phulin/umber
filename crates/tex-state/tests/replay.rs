@@ -96,7 +96,7 @@ fn group_exit_epoch_amendment_smoke() {
     oracle.enter_group();
     cell.set(&mut stores, 1, false);
     oracle.set(cell, 1, false);
-    assert_eq!(stores.leave_group(), Vec::<u64>::new());
+    assert_eq!(stores.leave_group(), Vec::<Token>::new());
     oracle.leave_group();
 
     // Shadow catches storage/barrier bypasses; this oracle assertion catches
@@ -195,7 +195,7 @@ fn run_replay_identity(ops: &[Op]) {
                 depth += 1;
             }
             Op::LeaveGroup => {
-                assert_eq!(stores.leave_group(), Vec::<u64>::new());
+                assert_eq!(stores.leave_group(), Vec::<Token>::new());
                 oracle.leave_group();
                 box_oracle.leave_group();
                 depth -= 1;

@@ -6,6 +6,7 @@ use crate::interner::Symbol;
 use crate::journal::{Entry, UndoRec};
 use crate::meaning::Meaning;
 use crate::scaled::Scaled;
+use crate::token::{Catcode, Token};
 use std::collections::HashMap;
 
 #[test]
@@ -367,15 +368,15 @@ fn nested_groups_follow_naive_oracle_three_deep() {
     env.set_count(300, 30);
     assert_oracle(&env, &oracle, &[1, 2, 300]);
 
-    assert_eq!(env.leave_group(), Vec::<u64>::new());
+    assert_eq!(env.leave_group(), Vec::<Token>::new());
     oracle.leave_group();
     assert_oracle(&env, &oracle, &[1, 2, 300]);
 
-    assert_eq!(env.leave_group(), Vec::<u64>::new());
+    assert_eq!(env.leave_group(), Vec::<Token>::new());
     oracle.leave_group();
     assert_oracle(&env, &oracle, &[1, 2, 300]);
 
-    assert_eq!(env.leave_group(), Vec::<u64>::new());
+    assert_eq!(env.leave_group(), Vec::<Token>::new());
     oracle.leave_group();
     assert_oracle(&env, &oracle, &[1, 2, 300]);
 }
@@ -393,7 +394,7 @@ fn local_write_shadowed_by_global_same_cell_survives_group_exit() {
     oracle.set_global(7, 2);
 
     assert_oracle(&env, &oracle, &[7]);
-    assert_eq!(env.leave_group(), Vec::<u64>::new());
+    assert_eq!(env.leave_group(), Vec::<Token>::new());
     oracle.leave_group();
 
     assert_oracle(&env, &oracle, &[7]);
@@ -415,7 +416,7 @@ fn global_then_local_same_cell_local_wins_inside_global_after_exit() {
     assert_eq!(env.count(9), 6);
     assert_oracle(&env, &oracle, &[9]);
 
-    assert_eq!(env.leave_group(), Vec::<u64>::new());
+    assert_eq!(env.leave_group(), Vec::<Token>::new());
     oracle.leave_group();
 
     assert_eq!(env.count(9), 5);
@@ -432,7 +433,7 @@ fn repeated_same_epoch_globals_keep_last_global_after_exit() {
     env.set_count(10, 3);
 
     assert_eq!(env.count(10), 3);
-    assert_eq!(env.leave_group(), Vec::<u64>::new());
+    assert_eq!(env.leave_group(), Vec::<Token>::new());
     assert_eq!(env.count(10), 2);
 }
 
@@ -456,7 +457,7 @@ fn compacted_global_after_local_rolls_back_to_pre_group_value() {
     env.enter_group();
     env.set_count(12, 1);
     env.set_count_global(12, 0);
-    assert_eq!(env.leave_group(), Vec::<u64>::new());
+    assert_eq!(env.leave_group(), Vec::<Token>::new());
 
     assert_eq!(env.count(12), 0);
     env.rollback_to(pos);
@@ -470,7 +471,7 @@ fn same_value_global_after_local_still_survives_group_exit() {
     env.enter_group();
     env.set_count(12, 1);
     env.set_count_global(12, 1);
-    assert_eq!(env.leave_group(), Vec::<u64>::new());
+    assert_eq!(env.leave_group(), Vec::<Token>::new());
 
     assert_eq!(env.count(12), 1);
 }
@@ -485,7 +486,7 @@ fn large_local_only_group_exit_restores_without_compaction_records() {
         env.set_count(index, i32::from(index) + 1);
     }
 
-    assert_eq!(env.leave_group(), Vec::<u64>::new());
+    assert_eq!(env.leave_group(), Vec::<Token>::new());
 
     for index in 0..1024_u16 {
         assert_eq!(env.count(index), 0, "count register {index}");
@@ -505,7 +506,7 @@ fn mixed_global_local_same_cell_compacts_first_old_for_rollback() {
     env.set_count(7, 73);
     env.set_count_global(7, 74);
 
-    assert_eq!(env.leave_group(), Vec::<u64>::new());
+    assert_eq!(env.leave_group(), Vec::<Token>::new());
 
     assert_eq!(env.count(7), 74);
     assert_eq!(
@@ -523,17 +524,33 @@ fn mixed_global_local_same_cell_compacts_first_old_for_rollback() {
 #[test]
 fn aftergroup_payloads_are_fifo_per_group_across_nesting() {
     let mut env = Env::new();
+    let one = Token::Char {
+        ch: '1',
+        cat: Catcode::Other,
+    };
+    let two = Token::Char {
+        ch: '2',
+        cat: Catcode::Other,
+    };
+    let three = Token::Char {
+        ch: '3',
+        cat: Catcode::Other,
+    };
+    let four = Token::Char {
+        ch: '4',
+        cat: Catcode::Other,
+    };
 
     env.enter_group();
-    env.push_aftergroup(1);
+    env.push_aftergroup(one);
     env.enter_group();
-    env.push_aftergroup(2);
-    env.push_aftergroup(3);
+    env.push_aftergroup(two);
+    env.push_aftergroup(three);
 
-    assert_eq!(env.leave_group(), vec![2, 3]);
+    assert_eq!(env.leave_group(), vec![two, three]);
 
-    env.push_aftergroup(4);
-    assert_eq!(env.leave_group(), vec![1, 4]);
+    env.push_aftergroup(four);
+    assert_eq!(env.leave_group(), vec![one, four]);
 }
 
 #[test]
@@ -549,7 +566,7 @@ fn sparse_register_local_restores_on_group_exit() {
     oracle.set_local(300, 200);
     assert_oracle(&env, &oracle, &[300]);
 
-    assert_eq!(env.leave_group(), Vec::<u64>::new());
+    assert_eq!(env.leave_group(), Vec::<Token>::new());
     oracle.leave_group();
 
     assert_oracle(&env, &oracle, &[300]);
@@ -565,7 +582,7 @@ fn sparse_first_write_group_exit_prunes_restored_default_page() {
     assert_eq!(env.count(300), 100);
     assert!(env.overflow_counts.has_page_for(300));
 
-    assert_eq!(env.leave_group(), Vec::<u64>::new());
+    assert_eq!(env.leave_group(), Vec::<Token>::new());
 
     assert_eq!(env.count(300), 0);
     assert!(!env.overflow_counts.has_page_for(300));
@@ -594,7 +611,7 @@ fn group_exit_bumps_epoch_so_outer_undo_slice_records_rewrite() {
     let outer_pos = env.checkpoint();
     env.enter_group();
     env.set_count(11, 1);
-    assert_eq!(env.leave_group(), Vec::<u64>::new());
+    assert_eq!(env.leave_group(), Vec::<Token>::new());
 
     // Regression for core_state.md §6 / 97a3c1d: without the group-exit epoch
     // bump, this write sees the restored cell's high stamp and skips journaling,

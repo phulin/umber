@@ -1,6 +1,64 @@
 use super::{Env, cell_key, checked_aftergroup_start, u32_len};
 use crate::journal::{Entry, JournalPos, Marker, UndoRec};
+use crate::token::Token;
 use std::collections::{HashMap, HashSet};
+
+/// TeX group boundary kind tracked on state-layer group markers.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GroupKind {
+    /// A `{` ... `}` group.
+    Simple,
+    /// A `\begingroup` ... `\endgroup` group.
+    SemiSimple,
+}
+
+impl GroupKind {
+    #[must_use]
+    pub const fn start_text(self) -> &'static str {
+        match self {
+            Self::Simple => "{",
+            Self::SemiSimple => "\\begingroup",
+        }
+    }
+
+    #[must_use]
+    pub const fn end_text(self) -> &'static str {
+        match self {
+            Self::Simple => "}",
+            Self::SemiSimple => "\\endgroup",
+        }
+    }
+}
+
+/// Group-boundary mismatch detected before any state rollback is performed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GroupMismatch {
+    expected: GroupKind,
+    actual: GroupKind,
+}
+
+impl GroupMismatch {
+    pub(crate) const fn new(expected: GroupKind, actual: GroupKind) -> Self {
+        Self { expected, actual }
+    }
+
+    pub(crate) const fn new_no_group(expected: GroupKind) -> Self {
+        Self {
+            expected,
+            actual: expected,
+        }
+    }
+
+    #[must_use]
+    pub const fn expected(self) -> GroupKind {
+        self.expected
+    }
+
+    #[must_use]
+    pub const fn actual(self) -> GroupKind {
+        self.actual
+    }
+}
 
 /// Crate-private environment rollback mark.
 ///
@@ -10,6 +68,7 @@ use std::collections::{HashMap, HashSet};
 pub(crate) struct EnvSnapshot {
     journal_pos: JournalPos,
     aftergroup_len: u32,
+    afterassignment: Option<Token>,
     group_depth: u32,
 }
 
@@ -37,6 +96,7 @@ impl Env {
                 self.aftergroup.len(),
                 "aftergroup payload list exceeds u32 entries",
             ),
+            afterassignment: self.afterassignment,
             group_depth: self.group_depth,
         };
         self.epoch.bump();
@@ -50,7 +110,7 @@ impl Env {
     }
 
     pub(crate) fn last_group_marker_pos(&self) -> Option<JournalPos> {
-        self.journal.find_last_group_marker().map(|(pos, _)| pos)
+        self.journal.find_last_group_marker().map(|(pos, _, _)| pos)
     }
 
     #[must_use]
@@ -63,13 +123,28 @@ impl Env {
         self.group_depth
     }
 
+    #[must_use]
+    pub(crate) fn innermost_group_kind(&self) -> Option<GroupKind> {
+        self.journal
+            .find_last_group_marker()
+            .map(|(_, _, kind)| kind)
+    }
+
     /// Enters a TeX group.
     pub(crate) fn enter_group(&mut self) {
+        self.enter_group_with_kind(GroupKind::Simple);
+    }
+
+    /// Enters a TeX group with an explicit boundary kind.
+    pub(crate) fn enter_group_with_kind(&mut self, kind: GroupKind) {
         let aftergroup_start = u32_len(
             self.aftergroup.len(),
             "aftergroup payload list exceeds u32 entries",
         );
-        self.journal.push_marker(Marker::Group { aftergroup_start });
+        self.journal.push_marker(Marker::Group {
+            aftergroup_start,
+            kind,
+        });
         self.group_depth = self
             .group_depth
             .checked_add(1)
@@ -78,8 +153,20 @@ impl Env {
     }
 
     /// Pushes an opaque `\aftergroup` payload for the current group.
-    pub(crate) fn push_aftergroup(&mut self, payload: u64) {
-        self.aftergroup.push(payload);
+    pub(crate) fn push_aftergroup(&mut self, payload: Token) {
+        if self.group_depth != 0 {
+            self.aftergroup.push(payload);
+        }
+    }
+
+    /// Stores the token to replay after the next assignment.
+    pub(crate) fn set_afterassignment(&mut self, token: Token) {
+        self.afterassignment = Some(token);
+    }
+
+    /// Takes and clears the token to replay after the next assignment.
+    pub(crate) fn take_afterassignment(&mut self) -> Option<Token> {
+        self.afterassignment.take()
     }
 
     /// Leaves the innermost TeX group and returns its `\aftergroup` payloads.
@@ -87,8 +174,27 @@ impl Env {
     /// Payloads are returned FIFO. Global assignments in the group survive by
     /// being compacted into the enclosing journal slice.
     #[must_use]
-    pub(crate) fn leave_group(&mut self) -> Vec<u64> {
-        let Some((marker_pos, aftergroup_start)) = self.journal.find_last_group_marker() else {
+    pub(crate) fn leave_group(&mut self) -> Vec<Token> {
+        self.leave_group_unchecked()
+    }
+
+    /// Leaves the innermost TeX group if it matches the requested boundary kind.
+    pub(crate) fn leave_group_with_kind(
+        &mut self,
+        expected: GroupKind,
+    ) -> Result<Vec<Token>, GroupMismatch> {
+        let Some(actual) = self.innermost_group_kind() else {
+            return Err(GroupMismatch::new_no_group(expected));
+        };
+        if actual != expected {
+            return Err(GroupMismatch::new(expected, actual));
+        }
+        Ok(self.leave_group_unchecked())
+    }
+
+    fn leave_group_unchecked(&mut self) -> Vec<Token> {
+        let Some((marker_pos, aftergroup_start, _kind)) = self.journal.find_last_group_marker()
+        else {
             panic!("leave_group without matching group marker");
         };
         self.group_depth = self
@@ -180,6 +286,7 @@ impl Env {
             snapshot.aftergroup_len,
             self.aftergroup.len(),
         ));
+        self.afterassignment = snapshot.afterassignment;
         self.epoch.bump();
     }
 }

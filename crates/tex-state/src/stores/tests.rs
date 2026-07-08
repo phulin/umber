@@ -294,7 +294,7 @@ fn rollback_rejects_snapshot_taken_inside_exited_group() {
     stores.enter_group();
     let snapshot = stores.checkpoint();
 
-    assert_eq!(stores.leave_group(), Vec::<u64>::new());
+    assert_eq!(stores.leave_group(), Vec::<Token>::new());
 
     stores.rollback(snapshot);
 }
@@ -307,7 +307,7 @@ fn rollback_allows_snapshot_before_balanced_inner_group() {
 
     stores.enter_group();
     stores.set_meaning(symbol, Meaning::CharGiven('x'));
-    assert_eq!(stores.leave_group(), Vec::<u64>::new());
+    assert_eq!(stores.leave_group(), Vec::<Token>::new());
 
     stores.rollback(snapshot);
     assert_eq!(stores.meaning(symbol), Meaning::Undefined);
@@ -407,10 +407,13 @@ fn rollback_discards_aftergroup_payloads_pushed_after_snapshot() {
     stores.enter_group();
     let snapshot = stores.checkpoint();
 
-    stores.push_aftergroup(99);
+    stores.push_aftergroup(Token::Char {
+        ch: 'x',
+        cat: Catcode::Letter,
+    });
     stores.rollback(snapshot);
 
-    assert_eq!(stores.leave_group(), Vec::<u64>::new());
+    assert_eq!(stores.leave_group(), Vec::<Token>::new());
 }
 
 #[test]
@@ -475,7 +478,7 @@ fn group_exit_and_rollback_restore_box_refs_once() {
     stores.set_box_reg(0, inner);
     assert_eq!(stores.testing_live_survivor_slot_count(), 2);
 
-    assert_eq!(stores.leave_group(), Vec::<u64>::new());
+    assert_eq!(stores.leave_group(), Vec::<Token>::new());
     assert_eq!(stores.box_reg(0), Some(baseline));
     assert_eq!(stores.testing_live_survivor_slot_count(), 1);
     assert_eq!(stores.testing_survivor_refcount(baseline), 1);
@@ -499,7 +502,7 @@ fn global_box_assignment_survives_group_and_journal_owner_survives_rollback() {
     stores.set_box_reg_global(0, global);
     let global = stores.box_reg(0).expect("global box should be stored");
 
-    assert_eq!(stores.leave_group(), Vec::<u64>::new());
+    assert_eq!(stores.leave_group(), Vec::<Token>::new());
     assert_eq!(stores.box_reg(0), Some(global));
     assert_eq!(stores.testing_survivor_refcount(global), 1);
     assert_eq!(stores.testing_survivor_refcount(baseline), 1);
@@ -521,7 +524,7 @@ fn same_value_global_box_adds_only_journal_owner() {
     stores.enter_group();
     stores.set_box_reg_global(0, survivor);
     assert_eq!(stores.testing_survivor_refcount(survivor), 2);
-    assert_eq!(stores.leave_group(), Vec::<u64>::new());
+    assert_eq!(stores.leave_group(), Vec::<Token>::new());
     assert_eq!(stores.testing_survivor_refcount(survivor), 2);
 
     stores.rollback(snapshot);
@@ -565,7 +568,7 @@ fn local_box_after_global_drops_local_survivor_on_group_exit() {
     stores.set_box_reg(0, local);
     assert_eq!(stores.testing_live_survivor_slot_count(), 3);
 
-    assert_eq!(stores.leave_group(), Vec::<u64>::new());
+    assert_eq!(stores.leave_group(), Vec::<Token>::new());
     assert_eq!(stores.box_reg(0), Some(global));
     assert_eq!(stores.testing_live_survivor_slot_count(), 2);
     assert_eq!(stores.testing_survivor_refcount(global), 1);

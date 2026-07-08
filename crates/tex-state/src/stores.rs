@@ -27,6 +27,8 @@ use std::mem;
 
 mod handles;
 
+pub use crate::env::group::{GroupKind, GroupMismatch};
+
 #[cfg(any(test, feature = "testing", feature = "shadow"))]
 const TESTING_NODE_HASH_MAX_DEPTH: usize = 4096;
 
@@ -341,16 +343,46 @@ impl Stores {
         self.env.enter_group();
     }
 
-    /// Pushes an opaque `\aftergroup` payload for the current group.
-    pub fn push_aftergroup(&mut self, payload: u64) {
+    /// Enters a TeX group with a boundary kind used for mismatch diagnostics.
+    pub fn enter_group_with_kind(&mut self, kind: GroupKind) {
+        self.env.enter_group_with_kind(kind);
+    }
+
+    /// Pushes an `\aftergroup` token for the current group.
+    pub fn push_aftergroup(&mut self, payload: Token) {
         self.env.push_aftergroup(payload);
     }
 
     /// Leaves the innermost TeX group and returns its `\aftergroup` payloads.
     #[must_use]
-    pub fn leave_group(&mut self) -> Vec<u64> {
+    pub fn leave_group(&mut self) -> Vec<Token> {
         self.account_current_group_box_refs();
         self.env.leave_group()
+    }
+
+    /// Leaves the innermost TeX group after checking its boundary kind.
+    pub fn leave_group_with_kind(
+        &mut self,
+        expected: GroupKind,
+    ) -> Result<Vec<Token>, GroupMismatch> {
+        let Some(actual) = self.env.innermost_group_kind() else {
+            return Err(GroupMismatch::new_no_group(expected));
+        };
+        if actual != expected {
+            return Err(GroupMismatch::new(expected, actual));
+        }
+        self.account_current_group_box_refs();
+        self.env.leave_group_with_kind(expected)
+    }
+
+    /// Stores the token to insert after the next assignment.
+    pub fn set_afterassignment(&mut self, token: Token) {
+        self.env.set_afterassignment(token);
+    }
+
+    /// Takes and clears the token to insert after the current assignment.
+    pub fn take_afterassignment(&mut self) -> Option<Token> {
+        self.env.take_afterassignment()
     }
 
     pub fn set_count(&mut self, index: u16, value: i32) {
@@ -613,6 +645,7 @@ impl Stores {
             }
         }
         self.env.testing_aftergroup_payloads().hash(hasher);
+        self.env.testing_afterassignment().hash(hasher);
     }
 
     fn assert_valid_snapshot(&self, snapshot: &Snapshot) {
