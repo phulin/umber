@@ -14,6 +14,7 @@ use tex_state::meaning::{Meaning, MeaningFlags};
 use tex_state::stores::Stores;
 use tex_state::token::Token;
 
+pub mod args;
 pub mod scan;
 
 /// Records state reads performed by expansion.
@@ -89,6 +90,7 @@ pub enum Dispatch {
 #[derive(Debug)]
 pub enum ExpandError {
     Lex(LexError),
+    MacroCall(args::MacroCallError),
     UnimplementedExpandable(ExpandableOpcode),
 }
 
@@ -96,6 +98,7 @@ impl fmt::Display for ExpandError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Lex(err) => write!(f, "{err}"),
+            Self::MacroCall(err) => write!(f, "{err}"),
             Self::UnimplementedExpandable(opcode) => {
                 write!(f, "expandable opcode {opcode:?} is not implemented yet")
             }
@@ -107,6 +110,7 @@ impl std::error::Error for ExpandError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Lex(err) => Some(err),
+            Self::MacroCall(err) => Some(err),
             Self::UnimplementedExpandable(_) => None,
         }
     }
@@ -118,10 +122,16 @@ impl From<LexError> for ExpandError {
     }
 }
 
+impl From<args::MacroCallError> for ExpandError {
+    fn from(value: args::MacroCallError) -> Self {
+        Self::MacroCall(value)
+    }
+}
+
 /// Pulls the next fully expanded token.
 pub fn get_x_token<S>(
     input: &mut InputStack<S>,
-    stores: &Stores,
+    stores: &mut Stores,
 ) -> Result<Option<Token>, ExpandError>
 where
     S: InputSource,
@@ -132,7 +142,7 @@ where
 /// Pulls the next fully expanded token while recording meaning reads.
 pub fn get_x_token_with_recorder<S, R>(
     input: &mut InputStack<S>,
-    stores: &Stores,
+    stores: &mut Stores,
     recorder: &mut R,
 ) -> Result<Option<Token>, ExpandError>
 where
@@ -151,7 +161,7 @@ where
         let meaning = stores.meaning(symbol);
         recorder.record_meaning(symbol, meaning);
 
-        match dispatch(token, stores, meaning)? {
+        match dispatch(token, input, stores, recorder, meaning)? {
             Dispatch::Deliver(token) => return Ok(Some(token)),
             Dispatch::Push {
                 replay_kind,
@@ -163,14 +173,31 @@ where
 
 /// Dispatches one token/meaning pair.
 ///
-/// TODO(umber2-5qt.2): replace the simple macro-body replay with TeX-exact
-/// parameter matching and argument substitution.
+/// TODO(umber2-5qt.2.4): replace the simple macro-body replay with argument
+/// frame replay and `Param(slot)` substitution.
 /// TODO(umber2-5qt.3): implement expandable primitive arms.
 /// TODO(umber2-5qt.5): implement conditional scan/evaluation arms.
-pub fn dispatch(token: Token, stores: &Stores, meaning: Meaning) -> Result<Dispatch, ExpandError> {
+pub fn dispatch<S, R>(
+    token: Token,
+    input: &mut InputStack<S>,
+    stores: &mut Stores,
+    recorder: &mut R,
+    meaning: Meaning,
+) -> Result<Dispatch, ExpandError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+{
     match meaning {
         Meaning::Macro { flags, definition } if is_expandable_macro(flags) => {
             let macro_meaning = stores.macro_definition(definition);
+            let _arguments = args::match_macro_call_with_recorder(
+                input,
+                stores,
+                recorder,
+                token,
+                macro_meaning,
+            )?;
             Ok(Dispatch::Push {
                 replay_kind: ExpansionReplayKind::MacroBody,
                 token_list: macro_meaning.replacement_text(),
@@ -243,13 +270,20 @@ mod tests {
 
     #[test]
     fn dispatch_delivers_unexpandable_tokens() {
-        let stores = Stores::new();
+        let mut stores = Stores::new();
         let token = Token::Char {
             ch: 'x',
             cat: Catcode::Letter,
         };
         assert_eq!(
-            dispatch(token, &stores, Meaning::Relax).expect("dispatch should succeed"),
+            dispatch(
+                token,
+                &mut InputStack::new(MemoryInput::new("")),
+                &mut stores,
+                &mut NoopRecorder,
+                Meaning::Relax,
+            )
+            .expect("dispatch should succeed"),
             super::Dispatch::Deliver(token)
         );
     }
@@ -295,7 +329,7 @@ mod tests {
         input.push_token_list(list, TokenListReplayKind::Inserted);
 
         assert_eq!(
-            get_x_token(&mut input, &stores).expect("expansion should succeed"),
+            get_x_token(&mut input, &mut stores).expect("expansion should succeed"),
             Some(Token::Cs(relax))
         );
     }
@@ -308,14 +342,14 @@ mod tests {
         let mut input = InputStack::new(MemoryInput::new("x\\relax"));
 
         assert_eq!(
-            get_x_token(&mut input, &stores).expect("source expansion should succeed"),
+            get_x_token(&mut input, &mut stores).expect("source expansion should succeed"),
             Some(Token::Char {
                 ch: 'x',
                 cat: Catcode::Letter,
             })
         );
         assert_eq!(
-            get_x_token(&mut input, &stores).expect("source expansion should succeed"),
+            get_x_token(&mut input, &mut stores).expect("source expansion should succeed"),
             Some(Token::Cs(relax))
         );
     }
@@ -344,7 +378,7 @@ mod tests {
         input.push_token_list(invocation, TokenListReplayKind::Inserted);
 
         assert_eq!(
-            get_x_token(&mut input, &stores).expect("expansion should succeed"),
+            get_x_token(&mut input, &mut stores).expect("expansion should succeed"),
             Some(Token::Char {
                 ch: 'a',
                 cat: Catcode::Letter,
@@ -359,7 +393,7 @@ mod tests {
             }) if *token_list == body
         ));
         assert_eq!(
-            get_x_token(&mut input, &stores).expect("expansion should succeed"),
+            get_x_token(&mut input, &mut stores).expect("expansion should succeed"),
             Some(Token::Char {
                 ch: 'b',
                 cat: Catcode::Letter,
@@ -378,7 +412,7 @@ mod tests {
         let mut recorder = CountingRecorder::default();
 
         assert_eq!(
-            get_x_token_with_recorder(&mut input, &stores, &mut recorder)
+            get_x_token_with_recorder(&mut input, &mut stores, &mut recorder)
                 .expect("expansion should succeed"),
             Some(Token::Cs(relax))
         );

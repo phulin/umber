@@ -187,11 +187,12 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   pairs (`core_state.md` §9). Off by default, zero-cost when off (the
   recorder is a generic parameter of the loop, monomorphized away).
 - The implemented `tex-expand` scaffold exposes that loop over
-  `tex-lex::InputStack` with read-only `Stores` access. Token-list replay is
+  `tex-lex::InputStack` with `Stores` access for meaning reads and explicit
+  token-list freezing during macro argument matching. Token-list replay is
   naturally read-only; source-frame replay can scan already-interned control
   sequence names and reports a lexer error if a source token would require
-  minting a new symbol. Future `\csname` and argument-building work must pass
-  their sanctioned interning/freezing capabilities explicitly.
+  minting a new symbol. Future `\csname` work must pass its sanctioned
+  interning capability explicitly.
 - **What the gullet never does**: mutate state. `\def`, `\advance`,
   register writes are *unexpandable* — they are delivered to the stomach.
   This is TeX's own factoring and we enforce it in the crate split:
