@@ -1,0 +1,543 @@
+use super::Stores;
+use crate::glue::{GlueSpec, Order};
+use crate::ids::{ArenaRef, FontId, NodeListId};
+use crate::meaning::Meaning;
+use crate::node::{BoxNode, BoxNodeFields, Node, Sign};
+use crate::scaled::Scaled;
+
+#[test]
+fn rollback_restores_env_and_interner_as_one_tuple() {
+    let mut stores = Stores::new();
+    let kept = stores.intern("kept");
+    stores.set_meaning(kept, Meaning::Relax);
+    let snapshot = stores.checkpoint();
+
+    let temporary = stores.intern("temporary");
+    stores.set_meaning(temporary, Meaning::CharGiven('x'));
+
+    stores.rollback(snapshot);
+
+    assert_eq!(stores.resolve(kept), "kept");
+    assert_eq!(stores.meaning(kept), Meaning::Relax);
+    let reused = stores.intern("temporary");
+    assert_eq!(reused.raw(), temporary.raw());
+    assert_eq!(stores.meaning(reused), Meaning::Undefined);
+}
+
+#[test]
+fn rollback_restores_token_store_as_part_of_snapshot_tuple() {
+    let mut stores = Stores::new();
+    let snapshot = stores.checkpoint();
+    let stale = stores.intern_token_list(&[crate::token::Token::param(1)]);
+
+    stores.rollback(snapshot);
+    let reused = stores.intern_token_list(&[crate::token::Token::param(2)]);
+
+    assert_eq!(reused.raw(), stale.raw());
+    assert_eq!(stores.tokens(reused), &[crate::token::Token::param(2)]);
+}
+
+#[test]
+fn token_list_builder_finishes_through_stores_boundary() {
+    let mut stores = Stores::new();
+    let symbol = stores.intern("macro");
+    let mut builder = stores.token_list_builder();
+    builder.push(crate::token::Token::Cs(symbol));
+    builder.push(crate::token::Token::param(1));
+
+    let id = stores.finish_token_list(&mut builder);
+
+    assert!(builder.is_empty());
+    assert_eq!(
+        stores.tokens(id),
+        &[
+            crate::token::Token::Cs(symbol),
+            crate::token::Token::param(1)
+        ]
+    );
+
+    builder.push(crate::token::Token::param(2));
+    let reused = stores.finish_token_list(&mut builder);
+    assert_eq!(stores.tokens(reused), &[crate::token::Token::param(2)]);
+}
+
+#[test]
+fn rollback_restores_glue_store_as_part_of_snapshot_tuple() {
+    let mut stores = Stores::new();
+    let snapshot = stores.checkpoint();
+    let stale = stores.intern_glue(glue_spec(1));
+
+    stores.rollback(snapshot);
+    let reused = stores.intern_glue(glue_spec(2));
+
+    assert_eq!(reused.raw(), stale.raw());
+    assert_eq!(stores.glue(reused), glue_spec(2));
+    assert_eq!(stores.glue(crate::ids::GlueId::ZERO), GlueSpec::ZERO);
+}
+
+#[test]
+fn node_list_builder_finishes_through_stores_boundary() {
+    let mut stores = Stores::new();
+    let mut builder = stores.node_list_builder();
+    builder.push(Node::MathOn);
+    builder.push(Node::MathOff);
+
+    let id = stores.finish_node_list(&mut builder);
+
+    assert!(builder.is_empty());
+    assert_eq!(stores.nodes(id), &[Node::MathOn, Node::MathOff]);
+
+    builder.push(Node::Char {
+        font: FontId::testing_new(1),
+        ch: 'x',
+    });
+    let reused = stores.finish_node_list(&mut builder);
+    assert_eq!(
+        stores.nodes(reused),
+        &[Node::Char {
+            font: FontId::testing_new(1),
+            ch: 'x'
+        }]
+    );
+}
+
+#[test]
+#[should_panic(expected = "glue id is not live in this Stores timeline")]
+fn freeze_node_list_rejects_stale_rolled_back_glue_id() {
+    let mut stores = Stores::new();
+    let snapshot = stores.checkpoint();
+    let stale = stores.intern_glue(glue_spec(1));
+
+    stores.rollback(snapshot);
+    stores.freeze_node_list(&[Node::Glue {
+        spec: stale,
+        kind: crate::node::GlueKind::Normal,
+    }]);
+}
+
+#[test]
+#[should_panic(expected = "glue id is not live in this Stores timeline")]
+fn finish_node_list_rejects_foreign_glue_id() {
+    let mut stores = Stores::new();
+    let mut foreign = stores.clone();
+    let foreign_glue = foreign.intern_glue(glue_spec(1));
+    let mut builder = stores.node_list_builder();
+    builder.push(Node::Glue {
+        spec: foreign_glue,
+        kind: crate::node::GlueKind::Normal,
+    });
+
+    let _ = stores.finish_node_list(&mut builder);
+}
+
+#[test]
+#[should_panic(expected = "token list is not live in this Stores timeline")]
+fn freeze_node_list_rejects_stale_rolled_back_mark_token_list() {
+    let mut stores = Stores::new();
+    let snapshot = stores.checkpoint();
+    let stale = stores.intern_token_list(&[crate::token::Token::param(1)]);
+
+    stores.rollback(snapshot);
+    stores.freeze_node_list(&[Node::Mark {
+        class: 0,
+        tokens: stale,
+    }]);
+}
+
+#[test]
+#[should_panic(expected = "token list is not live in this Stores timeline")]
+fn finish_node_list_rejects_foreign_whatsit_token_list() {
+    let mut stores = Stores::new();
+    let mut foreign = stores.clone();
+    let foreign_tokens = foreign.intern_token_list(&[crate::token::Token::param(1)]);
+    let mut builder = stores.node_list_builder();
+    builder.push(Node::Whatsit(crate::node::Whatsit::DeferredWrite {
+        stream: 16,
+        tokens: foreign_tokens,
+    }));
+
+    let _ = stores.finish_node_list(&mut builder);
+}
+
+#[test]
+#[should_panic(expected = "child node-list id is not live in this Stores timeline")]
+fn freeze_node_list_rejects_stale_rolled_back_child_node_list() {
+    let mut stores = Stores::new();
+    let snapshot = stores.checkpoint();
+    let stale = one_char(&mut stores, 'x');
+
+    stores.rollback(snapshot);
+    stores.freeze_node_list(&[Node::Adjust(stale)]);
+}
+
+#[test]
+#[should_panic(expected = "child node-list id is not live in this Stores timeline")]
+fn finish_node_list_rejects_foreign_child_node_list() {
+    let mut stores = Stores::new();
+    let mut foreign = Stores::new();
+    let foreign_child = one_char(&mut foreign, 'x');
+    let mut builder = stores.node_list_builder();
+    builder.push(Node::HList(BoxNode::new(BoxNodeFields {
+        width: scaled(10),
+        height: scaled(7),
+        depth: scaled(3),
+        shift: scaled(0),
+        glue_set: 0.0,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children: foreign_child,
+    })));
+
+    let _ = stores.finish_node_list(&mut builder);
+}
+
+#[test]
+#[should_panic(expected = "Stores snapshots are invalidated by exiting a group that encloses them")]
+fn rollback_rejects_snapshot_taken_inside_exited_group() {
+    let mut stores = Stores::new();
+    stores.enter_group();
+    let snapshot = stores.checkpoint();
+
+    assert_eq!(stores.leave_group(), Vec::<u64>::new());
+
+    stores.rollback(snapshot);
+}
+
+#[test]
+fn rollback_allows_snapshot_before_balanced_inner_group() {
+    let mut stores = Stores::new();
+    let symbol = stores.intern("kept");
+    let snapshot = stores.checkpoint();
+
+    stores.enter_group();
+    stores.set_meaning(symbol, Meaning::CharGiven('x'));
+    assert_eq!(stores.leave_group(), Vec::<u64>::new());
+
+    stores.rollback(snapshot);
+    assert_eq!(stores.meaning(symbol), Meaning::Undefined);
+}
+
+#[test]
+#[should_panic(expected = "Stores snapshot belongs to a different Stores instance")]
+fn rollback_rejects_snapshot_from_different_store() {
+    let mut first = Stores::new();
+    let mut second = Stores::new();
+    let snapshot = first.checkpoint();
+
+    second.rollback(snapshot);
+}
+
+#[test]
+#[should_panic(expected = "Stores snapshot belongs to a different Stores instance")]
+fn rollback_rejects_snapshot_from_cloned_store() {
+    let mut first = Stores::new();
+    let mut second = first.clone();
+    let snapshot = first.checkpoint();
+
+    second.rollback(snapshot);
+}
+
+#[test]
+#[should_panic(expected = "token list is not live in this Stores timeline")]
+fn stale_rolled_back_token_list_cannot_mutate_toks_register() {
+    let mut stores = Stores::new();
+    let snapshot = stores.checkpoint();
+    let stale = stores.intern_token_list(&[crate::token::Token::param(1)]);
+
+    stores.rollback(snapshot);
+    stores.set_toks(0, stale);
+}
+
+#[test]
+#[should_panic(expected = "glue id is not live in this Stores timeline")]
+fn stale_rolled_back_glue_cannot_mutate_skip_register() {
+    let mut stores = Stores::new();
+    let snapshot = stores.checkpoint();
+    let stale = stores.intern_glue(glue_spec(1));
+
+    stores.rollback(snapshot);
+    stores.set_skip(0, stale);
+}
+
+#[test]
+fn rollback_discards_aftergroup_payloads_pushed_after_snapshot() {
+    let mut stores = Stores::new();
+    stores.enter_group();
+    let snapshot = stores.checkpoint();
+
+    stores.push_aftergroup(99);
+    stores.rollback(snapshot);
+
+    assert_eq!(stores.leave_group(), Vec::<u64>::new());
+}
+
+#[test]
+#[should_panic(expected = "symbol is not live in this Stores timeline")]
+fn stale_rolled_back_symbol_cannot_write_reused_meaning_cell() {
+    let mut stores = Stores::new();
+    let snapshot = stores.checkpoint();
+    let stale = stores.intern("rolled-back");
+
+    stores.rollback(snapshot);
+    stores.set_meaning(stale, Meaning::Relax);
+}
+
+#[test]
+fn same_epoch_list_stored_twice_promotes_to_independent_roots() {
+    let mut stores = Stores::new();
+    let list = one_char(&mut stores, 'a');
+
+    stores.set_box_reg(0, list);
+    stores.set_box_reg(1, list);
+
+    let first = stores.box_reg(0).expect("box 0 should be non-void");
+    let second = stores.box_reg(1).expect("box 1 should be non-void");
+    assert_ne!(first.arena(), second.arena());
+    assert_eq!(stores.testing_live_survivor_slot_count(), 2);
+    assert_eq!(stores.testing_survivor_refcount(first), 1);
+    assert_eq!(stores.testing_survivor_refcount(second), 1);
+}
+
+#[test]
+fn storing_survivor_in_second_register_shares_refcount_until_release() {
+    let mut stores = Stores::new();
+    let list = one_char(&mut stores, 'a');
+
+    stores.set_box_reg(0, list);
+    let survivor = stores.box_reg(0).expect("box should be non-void");
+    stores.set_box_reg(1, survivor);
+
+    assert_eq!(stores.testing_live_survivor_slot_count(), 1);
+    assert_eq!(stores.testing_survivor_refcount(survivor), 2);
+
+    assert_eq!(stores.take_box_reg(0), Some(survivor));
+    // Register 1 and the take journal entry both hold the survivor until a
+    // rollback/commit boundary drops the journal record.
+    assert_eq!(stores.testing_survivor_refcount(survivor), 2);
+
+    let replacement = one_char(&mut stores, 'b');
+    stores.set_box_reg(1, replacement);
+    assert_eq!(stores.testing_live_survivor_slot_count(), 2);
+}
+
+#[test]
+fn group_exit_and_rollback_restore_box_refs_once() {
+    let mut stores = Stores::new();
+    let outer = one_char(&mut stores, 'o');
+    stores.set_box_reg(0, outer);
+    let baseline = stores.box_reg(0).expect("outer box should be stored");
+    let snapshot = stores.checkpoint();
+
+    stores.enter_group();
+    let inner = one_char(&mut stores, 'i');
+    stores.set_box_reg(0, inner);
+    assert_eq!(stores.testing_live_survivor_slot_count(), 2);
+
+    assert_eq!(stores.leave_group(), Vec::<u64>::new());
+    assert_eq!(stores.box_reg(0), Some(baseline));
+    assert_eq!(stores.testing_live_survivor_slot_count(), 1);
+    assert_eq!(stores.testing_survivor_refcount(baseline), 1);
+
+    stores.rollback(snapshot);
+    assert_eq!(stores.box_reg(0), Some(baseline));
+    assert_eq!(stores.testing_live_survivor_slot_count(), 1);
+    assert_eq!(stores.testing_survivor_refcount(baseline), 1);
+}
+
+#[test]
+fn global_box_assignment_survives_group_and_journal_owner_survives_rollback() {
+    let mut stores = Stores::new();
+    let outer = one_char(&mut stores, 'o');
+    stores.set_box_reg(0, outer);
+    let baseline = stores.box_reg(0).expect("outer box should be stored");
+    let snapshot = stores.checkpoint();
+
+    stores.enter_group();
+    let global = one_char(&mut stores, 'g');
+    stores.set_box_reg_global(0, global);
+    let global = stores.box_reg(0).expect("global box should be stored");
+
+    assert_eq!(stores.leave_group(), Vec::<u64>::new());
+    assert_eq!(stores.box_reg(0), Some(global));
+    assert_eq!(stores.testing_survivor_refcount(global), 1);
+    assert_eq!(stores.testing_survivor_refcount(baseline), 1);
+
+    stores.rollback(snapshot);
+    assert_eq!(stores.box_reg(0), Some(baseline));
+    assert_eq!(stores.testing_live_survivor_slot_count(), 1);
+    assert_eq!(stores.testing_survivor_refcount(baseline), 1);
+}
+
+#[test]
+fn same_value_global_box_adds_only_journal_owner() {
+    let mut stores = Stores::new();
+    let list = one_char(&mut stores, 'a');
+    stores.set_box_reg(0, list);
+    let survivor = stores.box_reg(0).expect("box should be stored");
+    let snapshot = stores.checkpoint();
+
+    stores.enter_group();
+    stores.set_box_reg_global(0, survivor);
+    assert_eq!(stores.testing_survivor_refcount(survivor), 2);
+    assert_eq!(stores.leave_group(), Vec::<u64>::new());
+    assert_eq!(stores.testing_survivor_refcount(survivor), 2);
+
+    stores.rollback(snapshot);
+    assert_eq!(stores.box_reg(0), Some(survivor));
+    assert_eq!(stores.testing_survivor_refcount(survivor), 1);
+}
+
+#[test]
+fn same_value_local_box_assignment_preserves_live_register_owner() {
+    let mut stores = Stores::new();
+    let list = one_char(&mut stores, 'a');
+    stores.set_box_reg(0, list);
+    let survivor = stores.box_reg(0).expect("box should be stored");
+
+    stores.set_box_reg(0, survivor);
+
+    assert_eq!(stores.box_reg(0), Some(survivor));
+    assert_eq!(stores.testing_survivor_refcount(survivor), 1);
+    assert_eq!(
+        stores.nodes(survivor),
+        &[Node::Char {
+            font: FontId::testing_new(1),
+            ch: 'a'
+        }]
+    );
+}
+
+#[test]
+fn local_box_after_global_drops_local_survivor_on_group_exit() {
+    let mut stores = Stores::new();
+    let outer = one_char(&mut stores, 'o');
+    stores.set_box_reg(0, outer);
+    let baseline = stores.box_reg(0).expect("outer box should be stored");
+    let snapshot = stores.checkpoint();
+
+    stores.enter_group();
+    let global = one_char(&mut stores, 'g');
+    stores.set_box_reg_global(0, global);
+    let global = stores.box_reg(0).expect("global box should be stored");
+    let local = one_char(&mut stores, 'l');
+    stores.set_box_reg(0, local);
+    assert_eq!(stores.testing_live_survivor_slot_count(), 3);
+
+    assert_eq!(stores.leave_group(), Vec::<u64>::new());
+    assert_eq!(stores.box_reg(0), Some(global));
+    assert_eq!(stores.testing_live_survivor_slot_count(), 2);
+    assert_eq!(stores.testing_survivor_refcount(global), 1);
+    assert_eq!(stores.testing_survivor_refcount(baseline), 1);
+
+    stores.rollback(snapshot);
+    assert_eq!(stores.box_reg(0), Some(baseline));
+    assert_eq!(stores.testing_live_survivor_slot_count(), 1);
+    assert_eq!(stores.testing_survivor_refcount(baseline), 1);
+}
+
+#[test]
+fn promoted_nested_box_remaps_children_to_same_survivor_root() {
+    let mut stores = Stores::new();
+    let inner = one_char(&mut stores, 'x');
+    let middle = stores.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
+        width: scaled(10),
+        height: scaled(7),
+        depth: scaled(3),
+        shift: scaled(0),
+        glue_set: 0.0,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children: inner,
+    }))]);
+    let outer = stores.freeze_node_list(&[Node::VList(BoxNode::new(BoxNodeFields {
+        width: scaled(20),
+        height: scaled(9),
+        depth: scaled(4),
+        shift: scaled(0),
+        glue_set: 0.0,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children: middle,
+    }))]);
+
+    stores.set_box_reg(0, outer);
+    let promoted_outer = stores.box_reg(0).expect("box should be promoted");
+    let [Node::VList(outer_box)] = stores.nodes(promoted_outer) else {
+        panic!("outer survivor list should contain one vlist");
+    };
+    assert_same_root(promoted_outer, outer_box.children);
+    let [Node::HList(middle_box)] = stores.nodes(outer_box.children) else {
+        panic!("middle survivor list should contain one hlist");
+    };
+    assert_same_root(promoted_outer, middle_box.children);
+    assert_eq!(
+        stores.nodes(middle_box.children),
+        &[Node::Char {
+            font: FontId::testing_new(1),
+            ch: 'x'
+        }]
+    );
+}
+
+#[test]
+fn promotion_handles_pathologically_deep_box_nesting() {
+    let mut stores = Stores::new();
+    let mut current = one_char(&mut stores, 'x');
+    for _ in 0..4096 {
+        current = stores.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
+            width: scaled(1),
+            height: scaled(1),
+            depth: scaled(0),
+            shift: scaled(0),
+            glue_set: 0.0,
+            glue_sign: Sign::Normal,
+            glue_order: Order::Normal,
+            children: current,
+        }))]);
+    }
+
+    stores.set_box_reg(0, current);
+    let mut promoted = stores.box_reg(0).expect("box should be promoted");
+    for _ in 0..4096 {
+        let [Node::HList(box_node)] = stores.nodes(promoted) else {
+            panic!("deep promoted chain should remain hlist nodes");
+        };
+        assert_same_root(promoted, box_node.children);
+        promoted = box_node.children;
+    }
+    assert_eq!(
+        stores.nodes(promoted),
+        &[Node::Char {
+            font: FontId::testing_new(1),
+            ch: 'x'
+        }]
+    );
+}
+
+fn glue_spec(width: i32) -> GlueSpec {
+    GlueSpec {
+        width: Scaled::from_raw(width),
+        stretch: Scaled::from_raw(2),
+        stretch_order: Order::Fil,
+        shrink: Scaled::from_raw(3),
+        shrink_order: Order::Fill,
+    }
+}
+
+fn one_char(stores: &mut Stores, ch: char) -> NodeListId {
+    stores.freeze_node_list(&[Node::Char {
+        font: FontId::testing_new(1),
+        ch,
+    }])
+}
+
+fn assert_same_root(a: NodeListId, b: NodeListId) {
+    let (ArenaRef::Survivor(a), ArenaRef::Survivor(b)) = (a.arena(), b.arena()) else {
+        panic!("expected survivor ids");
+    };
+    assert_eq!(a, b);
+}
+
+fn scaled(raw: i32) -> Scaled {
+    Scaled::from_raw(raw)
+}

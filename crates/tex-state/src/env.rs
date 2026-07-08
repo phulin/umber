@@ -9,7 +9,9 @@
 //! `&mut Env` and passing through the write barrier.
 
 pub mod banks;
+pub(crate) mod group;
 pub(crate) mod overflow;
+pub(crate) mod raw;
 
 use self::banks::{
     BankJournalContext, BankSetContext, DENSE_REGISTER_COUNT, DimenParam, FixedBank, GlueIdCodec,
@@ -21,12 +23,13 @@ use crate::cell::{BankTag, CellId};
 use crate::epoch::Epoch;
 use crate::ids::{GlueId, NodeListId, TokenListId};
 use crate::interner::Symbol;
-use crate::journal::{Entry, Journal, JournalPos, Marker, UndoRec};
+#[cfg(test)]
+use crate::journal::JournalPos;
+use crate::journal::{Journal, UndoRec};
 use crate::meaning::Meaning;
 use crate::scaled::Scaled;
-use std::collections::{HashMap, HashSet};
-#[cfg(any(test, feature = "testing", feature = "shadow"))]
-use std::hash::{Hash, Hasher};
+#[cfg(feature = "shadow")]
+use std::collections::HashMap;
 
 const SEGMENT_BITS: u32 = 16;
 const SEGMENT_LEN: usize = 1 << SEGMENT_BITS;
@@ -35,30 +38,7 @@ const SEGMENT_MASK: u32 = (SEGMENT_LEN as u32) - 1;
 type MeaningSegment = Box<[u64; SEGMENT_LEN]>;
 type StampSegment = Box<[Epoch; SEGMENT_LEN]>;
 
-/// Crate-private environment rollback mark.
-///
-/// The public rollback boundary is `Stores`; this token exists only so that
-/// `Stores` can restore all Env-owned rollback-coupled state atomically.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct EnvSnapshot {
-    journal_pos: JournalPos,
-    aftergroup_len: u32,
-    group_depth: u32,
-}
-
-impl EnvSnapshot {
-    /// Returns the journal position captured by this snapshot.
-    #[must_use]
-    pub(crate) const fn journal_pos(self) -> JournalPos {
-        self.journal_pos
-    }
-
-    /// Returns the group depth captured by this snapshot.
-    #[must_use]
-    pub(crate) const fn group_depth(self) -> u32 {
-        self.group_depth
-    }
-}
+pub(crate) use group::EnvSnapshot;
 
 macro_rules! register_accessors {
     ($get:ident, $set:ident, $set_global:ident, $value:ty, $bank:ident, $dense:ident, $sparse:ident) => {
@@ -207,161 +187,6 @@ impl Env {
     #[cfg(test)]
     pub(crate) fn journal_pos(&self) -> JournalPos {
         self.journal.pos()
-    }
-
-    /// Records a checkpoint position and starts a fresh epoch for later writes.
-    #[must_use]
-    pub(crate) fn checkpoint(&mut self) -> EnvSnapshot {
-        let snapshot = EnvSnapshot {
-            journal_pos: self.journal.pos(),
-            aftergroup_len: u32_len(
-                self.aftergroup.len(),
-                "aftergroup payload list exceeds u32 entries",
-            ),
-            group_depth: self.group_depth,
-        };
-        self.epoch.bump();
-        snapshot
-    }
-
-    /// Returns journal entries appended since `pos`.
-    #[must_use]
-    pub(crate) fn journal_entries_since(&self, pos: JournalPos) -> &[Entry] {
-        self.journal.entries_since(pos)
-    }
-
-    pub(crate) fn last_group_marker_pos(&self) -> Option<JournalPos> {
-        self.journal.find_last_group_marker().map(|(pos, _)| pos)
-    }
-
-    #[must_use]
-    pub(crate) fn current_journal_pos(&self) -> JournalPos {
-        self.journal.pos()
-    }
-
-    #[must_use]
-    pub(crate) const fn group_depth(&self) -> u32 {
-        self.group_depth
-    }
-
-    /// Enters a TeX group.
-    pub(crate) fn enter_group(&mut self) {
-        let aftergroup_start = u32_len(
-            self.aftergroup.len(),
-            "aftergroup payload list exceeds u32 entries",
-        );
-        self.journal.push_marker(Marker::Group { aftergroup_start });
-        self.group_depth = self
-            .group_depth
-            .checked_add(1)
-            .expect("group depth exceeds u32 entries");
-        self.epoch.bump();
-    }
-
-    /// Pushes an opaque `\aftergroup` payload for the current group.
-    pub(crate) fn push_aftergroup(&mut self, payload: u64) {
-        self.aftergroup.push(payload);
-    }
-
-    /// Leaves the innermost TeX group and returns its `\aftergroup` payloads.
-    ///
-    /// Payloads are returned FIFO. Global assignments in the group survive by
-    /// being compacted into the enclosing journal slice.
-    #[must_use]
-    pub(crate) fn leave_group(&mut self) -> Vec<u64> {
-        let Some((marker_pos, aftergroup_start)) = self.journal.find_last_group_marker() else {
-            panic!("leave_group without matching group marker");
-        };
-        self.group_depth = self
-            .group_depth
-            .checked_sub(1)
-            .expect("leave_group without matching group marker");
-        let marker_index = marker_pos.raw() as usize;
-        let group_end = self.journal.len();
-        let has_globals = (marker_index + 1..group_end).any(
-            |index| matches!(self.journal.entry(index), Entry::Undo(rec) if rec.cell().is_global()),
-        );
-
-        if has_globals {
-            self.leave_group_with_globals(marker_index, group_end);
-        } else {
-            for index in (marker_index + 1..group_end).rev() {
-                if let Entry::Undo(rec) = self.journal.entry(index) {
-                    self.restore_raw(rec.cell(), rec.old());
-                }
-            }
-            self.journal.truncate_to(marker_pos);
-        }
-
-        let aftergroup_start = checked_aftergroup_start(aftergroup_start, self.aftergroup.len());
-        let payloads = self.aftergroup.drain(aftergroup_start..).collect();
-
-        // core_state.md §6 / 97a3c1d: restore leaves stamps high, so group
-        // exit must start a fresh epoch or the enclosing undo slice can be
-        // corrupted by a later write to the same restored cell.
-        self.epoch.bump();
-        payloads
-    }
-
-    fn leave_group_with_globals(&mut self, marker_index: usize, group_end: usize) {
-        let mut globals = Vec::new();
-        let mut globally_reassigned = HashSet::new();
-        let mut first_old = HashMap::new();
-
-        for index in marker_index + 1..group_end {
-            if let Entry::Undo(rec) = self.journal.entry(index) {
-                first_old
-                    .entry(cell_key(rec.cell()))
-                    .or_insert_with(|| rec.old());
-            }
-        }
-
-        for index in (marker_index + 1..group_end).rev() {
-            match self.journal.entry(index) {
-                Entry::Undo(rec) if rec.cell().is_global() => {
-                    globally_reassigned.insert(cell_key(rec.cell()));
-                    globals.push(rec);
-                }
-                Entry::Undo(rec) if globally_reassigned.contains(&cell_key(rec.cell())) => {}
-                Entry::Undo(rec) => self.restore_raw(rec.cell(), rec.old()),
-                Entry::Marker(Marker::Checkpoint(_)) => {}
-                Entry::Marker(Marker::Group { .. }) => {
-                    unreachable!("group slice starts after the marker")
-                }
-            }
-        }
-
-        self.journal.truncate_to(JournalPos::from_raw(marker_index));
-        let mut refiled_globals = HashSet::new();
-        for rec in globals.into_iter().rev() {
-            self.restore_raw(rec.cell(), rec.new_value());
-            let key = cell_key(rec.cell());
-            let old = if refiled_globals.insert(key) {
-                first_old[&key]
-            } else {
-                rec.old()
-            };
-            self.journal
-                .push_undo(UndoRec::new(rec.cell(), old, rec.new_value()));
-        }
-    }
-
-    /// Rolls back all environment state after `snapshot`.
-    pub(crate) fn rollback_to(&mut self, snapshot: EnvSnapshot) {
-        let snapshot_index = snapshot.journal_pos.raw() as usize;
-        let rollback_end = self.journal.len();
-        for index in (snapshot_index..rollback_end).rev() {
-            if let Entry::Undo(rec) = self.journal.entry(index) {
-                self.restore_raw(rec.cell(), rec.old());
-            }
-        }
-        self.journal.truncate_to(snapshot.journal_pos);
-        self.group_depth = snapshot.group_depth;
-        self.aftergroup.truncate(checked_aftergroup_start(
-            snapshot.aftergroup_len,
-            self.aftergroup.len(),
-        ));
-        self.epoch.bump();
     }
 
     /// Returns the meaning for `symbol`, defaulting to `Undefined`.
@@ -653,188 +478,6 @@ impl Env {
                 global: true,
             },
         );
-    }
-
-    /// Restore-only raw write primitive for journal rollback and group walks.
-    ///
-    /// This deliberately bypasses the write barrier and does not append to the
-    /// journal. It must only be used while replaying existing journal records;
-    /// semantic assignments must go through the typed `set*` APIs so the
-    /// single write path records history.
-    #[allow(dead_code)]
-    pub(crate) fn restore_raw(&mut self, cell: CellId, word: u64) {
-        match cell.bank() {
-            BankTag::Meaning => self.restore_meaning_word(cell.index(), word),
-            BankTag::Count => self.restore_register(cell.index(), word, RegisterBank::Count),
-            BankTag::Dimen => self.restore_register(cell.index(), word, RegisterBank::Dimen),
-            BankTag::Skip => self.restore_register(cell.index(), word, RegisterBank::Skip),
-            BankTag::Toks => self.restore_register(cell.index(), word, RegisterBank::Toks),
-            BankTag::Box => self.restore_register(cell.index(), word, RegisterBank::Box),
-            BankTag::IntParam => self.int_params.restore_word(u16_index(cell.index()), word),
-            BankTag::DimenParam => self
-                .dimen_params
-                .restore_word(u16_index(cell.index()), word),
-            BankTag::GlueParam => self.glue_params.restore_word(u16_index(cell.index()), word),
-            BankTag::TokParam => self.tok_params.restore_word(u16_index(cell.index()), word),
-        }
-        #[cfg(feature = "shadow")]
-        shadow_set(
-            &mut self.shadow,
-            CellId::new(cell.bank(), cell.index()),
-            word,
-        );
-    }
-
-    /// Verifies the shadow mirror against real environment storage.
-    #[cfg(feature = "shadow")]
-    pub fn verify_shadow(&self) {
-        let real = self.semantic_non_default_words();
-        for (cell, real_word) in &real {
-            let shadow_word = self.shadow.get(cell).copied().unwrap_or(0);
-            assert_eq!(
-                shadow_word, *real_word,
-                "shadow mismatch at {cell:?}: shadow={shadow_word} real={real_word}"
-            );
-        }
-        for (&cell, &shadow_word) in &self.shadow {
-            let real_word = real
-                .iter()
-                .find_map(|(real_cell, real_word)| (*real_cell == cell).then_some(*real_word))
-                .unwrap_or(0);
-            assert_eq!(
-                shadow_word, real_word,
-                "shadow mismatch at {cell:?}: shadow={shadow_word} real={real_word}"
-            );
-        }
-    }
-
-    /// Returns a content-only hash of environment semantic state.
-    ///
-    /// The hash intentionally excludes allocation lengths, capacities, and
-    /// epoch stamps; replay identity is about semantic state.
-    #[cfg(any(test, feature = "testing", feature = "shadow"))]
-    #[must_use]
-    pub fn testing_state_hash(&self) -> u64 {
-        let mut pairs = self.semantic_non_default_words();
-        pairs.sort_by_key(|(cell, _)| *cell);
-
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        for (cell, word) in pairs {
-            cell.hash(&mut hasher);
-            word.hash(&mut hasher);
-        }
-        self.aftergroup.hash(&mut hasher);
-        hasher.finish()
-    }
-
-    #[cfg(any(test, feature = "testing", feature = "shadow"))]
-    pub(crate) fn semantic_non_default_words(&self) -> Vec<(CellId, u64)> {
-        let mut out = Vec::new();
-        for (segment_index, segment) in self.meaning_cells.iter().enumerate() {
-            for (offset, &word) in segment.iter().enumerate() {
-                if word != 0 {
-                    let index = ((segment_index as u32) << SEGMENT_BITS) | offset as u32;
-                    out.push((CellId::new(BankTag::Meaning, index), word));
-                }
-            }
-        }
-        self.counts.non_default_words(BankTag::Count, &mut out);
-        self.dimens.non_default_words(BankTag::Dimen, &mut out);
-        self.skips.non_default_words(BankTag::Skip, &mut out);
-        self.toks.non_default_words(BankTag::Toks, &mut out);
-        self.boxes.non_default_words(BankTag::Box, &mut out);
-        self.overflow_counts
-            .non_default_words(BankTag::Count, &mut out);
-        self.overflow_dimens
-            .non_default_words(BankTag::Dimen, &mut out);
-        self.overflow_skips
-            .non_default_words(BankTag::Skip, &mut out);
-        self.overflow_toks
-            .non_default_words(BankTag::Toks, &mut out);
-        self.overflow_boxes
-            .non_default_words(BankTag::Box, &mut out);
-        self.int_params
-            .non_default_words(BankTag::IntParam, &mut out);
-        self.dimen_params
-            .non_default_words(BankTag::DimenParam, &mut out);
-        self.glue_params
-            .non_default_words(BankTag::GlueParam, &mut out);
-        self.tok_params
-            .non_default_words(BankTag::TokParam, &mut out);
-        out
-    }
-
-    #[cfg(any(test, feature = "testing", feature = "shadow"))]
-    pub(crate) fn testing_aftergroup_payloads(&self) -> &[u64] {
-        &self.aftergroup
-    }
-
-    fn meaning_word(&self, index: u32) -> Option<u64> {
-        let segment = segment_index(index);
-        let offset = segment_offset(index);
-        self.meaning_cells.get(segment).map(|cells| cells[offset])
-    }
-
-    fn set_meaning_word(&mut self, symbol: Symbol, word: u64, global: bool) {
-        let index = symbol.raw();
-        self.ensure_meaning_segment(index);
-        let segment = segment_index(index);
-        let offset = segment_offset(index);
-        let cell = if global {
-            CellId::new_global(BankTag::Meaning, index)
-        } else {
-            CellId::new(BankTag::Meaning, index)
-        };
-
-        barrier(
-            &mut self.meaning_cells[segment][offset],
-            &mut self.meaning_stamps[segment][offset],
-            &mut self.journal,
-            #[cfg(feature = "shadow")]
-            &mut self.shadow,
-            self.epoch,
-            cell,
-            word,
-        );
-    }
-
-    fn ensure_meaning_segment(&mut self, index: u32) {
-        let required_len = segment_index(index) + 1;
-        while self.meaning_cells.len() < required_len {
-            self.meaning_cells.push(Box::new([0; SEGMENT_LEN]));
-            self.meaning_stamps
-                .push(Box::new([Epoch::ZERO; SEGMENT_LEN]));
-        }
-    }
-
-    #[allow(dead_code)]
-    fn restore_meaning_word(&mut self, index: u32, word: u64) {
-        self.ensure_meaning_segment(index);
-        let segment = segment_index(index);
-        let offset = segment_offset(index);
-        self.meaning_cells[segment][offset] = word;
-    }
-
-    #[allow(dead_code)]
-    fn restore_register(&mut self, index: u32, word: u64, bank: RegisterBank) {
-        let index = register_index(index);
-        if is_dense_register(index) {
-            match bank {
-                RegisterBank::Count => self.counts.restore_word(index, word),
-                RegisterBank::Dimen => self.dimens.restore_word(index, word),
-                RegisterBank::Skip => self.skips.restore_word(index, word),
-                RegisterBank::Toks => self.toks.restore_word(index, word),
-                RegisterBank::Box => self.boxes.restore_word(index, word),
-            }
-        } else {
-            match bank {
-                RegisterBank::Count => self.overflow_counts.restore_word(index, word),
-                RegisterBank::Dimen => self.overflow_dimens.restore_word(index, word),
-                RegisterBank::Skip => self.overflow_skips.restore_word(index, word),
-                RegisterBank::Toks => self.overflow_toks.restore_word(index, word),
-                RegisterBank::Box => self.overflow_boxes.restore_word(index, word),
-            }
-        }
     }
 }
 
