@@ -431,7 +431,8 @@ where
             ))
         }
         Meaning::ExpandablePrimitive(ExpandablePrimitive::Number) => {
-            let scanned = scan_int::scan_int(input, stores)?;
+            let scanned =
+                scan_int::scan_int_with_recorder_and_hooks(input, stores, recorder, hooks)?;
             Ok(push_rendered_text(
                 stores,
                 ExpansionReplayKind::NumberOutput,
@@ -439,7 +440,8 @@ where
             ))
         }
         Meaning::ExpandablePrimitive(ExpandablePrimitive::RomanNumeral) => {
-            let scanned = scan_int::scan_int(input, stores)?;
+            let scanned =
+                scan_int::scan_int_with_recorder_and_hooks(input, stores, recorder, hooks)?;
             Ok(push_rendered_text(
                 stores,
                 ExpansionReplayKind::NumberOutput,
@@ -458,7 +460,9 @@ where
                 &meaning_text(stores, target),
             ))
         }
-        Meaning::ExpandablePrimitive(ExpandablePrimitive::The) => expand_the(input, stores),
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::The) => {
+            expand_the(input, stores, recorder, hooks)
+        }
         Meaning::ExpandablePrimitive(ExpandablePrimitive::Input) => {
             let name = scan_input_name(input, stores, recorder, hooks)?;
             let source = hooks
@@ -536,9 +540,11 @@ where
             )
         }
         Meaning::ExpandablePrimitive(ExpandablePrimitive::IfNum) => {
-            let left = scan_int::scan_int(input, stores)?.value();
-            let relation = scan_conditional_relation(input, stores)?;
-            let right = scan_int::scan_int(input, stores)?.value();
+            let left =
+                scan_int::scan_int_with_recorder_and_hooks(input, stores, recorder, hooks)?.value();
+            let relation = scan_conditional_relation(input, stores, recorder, hooks)?;
+            let right =
+                scan_int::scan_int_with_recorder_and_hooks(input, stores, recorder, hooks)?.value();
             begin_if(
                 input,
                 stores,
@@ -548,9 +554,23 @@ where
             )
         }
         Meaning::ExpandablePrimitive(ExpandablePrimitive::IfDim) => {
-            let left = scan_dimen::scan_dimen(input, stores)?.value();
-            let relation = scan_conditional_relation(input, stores)?;
-            let right = scan_dimen::scan_dimen(input, stores)?.value();
+            let left = scan_dimen::scan_dimen_with_options_and_hooks(
+                input,
+                stores,
+                recorder,
+                hooks,
+                scan_dimen::ScanDimenOptions::STANDARD,
+            )?
+            .value();
+            let relation = scan_conditional_relation(input, stores, recorder, hooks)?;
+            let right = scan_dimen::scan_dimen_with_options_and_hooks(
+                input,
+                stores,
+                recorder,
+                hooks,
+                scan_dimen::ScanDimenOptions::STANDARD,
+            )?
+            .value();
             begin_if(
                 input,
                 stores,
@@ -560,11 +580,13 @@ where
             )
         }
         Meaning::ExpandablePrimitive(ExpandablePrimitive::IfOdd) => {
-            let value = scan_int::scan_int(input, stores)?.value();
+            let value =
+                scan_int::scan_int_with_recorder_and_hooks(input, stores, recorder, hooks)?.value();
             begin_if(input, stores, recorder, hooks, value % 2 != 0)
         }
         Meaning::ExpandablePrimitive(ExpandablePrimitive::IfCase) => {
-            let selected_case = scan_int::scan_int(input, stores)?.value();
+            let selected_case =
+                scan_int::scan_int_with_recorder_and_hooks(input, stores, recorder, hooks)?.value();
             begin_ifcase(input, stores, recorder, hooks, selected_case)
         }
         Meaning::ExpandablePrimitive(ExpandablePrimitive::IfVMode) => begin_if(
@@ -592,7 +614,7 @@ where
             begin_if(input, stores, recorder, hooks, hooks.is_inner_mode())
         }
         Meaning::ExpandablePrimitive(ExpandablePrimitive::IfVoid) => {
-            let index = scan_register_index(input, stores)?;
+            let index = scan_register_index(input, stores, recorder, hooks)?;
             begin_if(
                 input,
                 stores,
@@ -602,7 +624,7 @@ where
             )
         }
         Meaning::ExpandablePrimitive(ExpandablePrimitive::IfHBox) => {
-            let index = scan_register_index(input, stores)?;
+            let index = scan_register_index(input, stores, recorder, hooks)?;
             begin_if(
                 input,
                 stores,
@@ -612,7 +634,7 @@ where
             )
         }
         Meaning::ExpandablePrimitive(ExpandablePrimitive::IfVBox) => {
-            let index = scan_register_index(input, stores)?;
+            let index = scan_register_index(input, stores, recorder, hooks)?;
             begin_if(
                 input,
                 stores,
@@ -622,7 +644,7 @@ where
             )
         }
         Meaning::ExpandablePrimitive(ExpandablePrimitive::IfEof) => {
-            let stream = scan_stream_number(input, stores)?;
+            let stream = scan_stream_number(input, stores, recorder, hooks)?;
             begin_if(
                 input,
                 stores,
@@ -1058,14 +1080,18 @@ enum ConditionalRelation {
     Greater,
 }
 
-fn scan_conditional_relation<S>(
+fn scan_conditional_relation<S, R, H>(
     input: &mut InputStack<S>,
     stores: &mut Stores,
+    recorder: &mut R,
+    hooks: &mut H,
 ) -> Result<ConditionalRelation, ExpandError>
 where
     S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
 {
-    let Some(token) = next_non_space_x_token(input, stores)? else {
+    let Some(token) = next_non_space_x_token_with_hooks(input, stores, recorder, hooks)? else {
         return Err(ExpandError::MissingTokenAfterPrimitive(
             ExpandableOpcode::If,
         ));
@@ -1105,11 +1131,18 @@ fn box_register_has_kind(stores: &Stores, index: u16, kind: BoxKind) -> bool {
     )
 }
 
-fn scan_stream_number<S>(input: &mut InputStack<S>, stores: &mut Stores) -> Result<u8, ExpandError>
+fn scan_stream_number<S, R, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Stores,
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<u8, ExpandError>
 where
     S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
 {
-    let value = scan_int::scan_int(input, stores)?.value();
+    let value = scan_int::scan_int_with_recorder_and_hooks(input, stores, recorder, hooks)?.value();
     Ok(value.clamp(0, 15) as u8)
 }
 
@@ -1277,11 +1310,18 @@ fn is_end_group(token: Token) -> bool {
     )
 }
 
-fn expand_the<S>(input: &mut InputStack<S>, stores: &mut Stores) -> Result<Dispatch, ExpandError>
+fn expand_the<S, R, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Stores,
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<Dispatch, ExpandError>
 where
     S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
 {
-    let Some(token) = next_non_space_x_token(input, stores)? else {
+    let Some(token) = next_non_space_x_token_with_hooks(input, stores, recorder, hooks)? else {
         return Err(ExpandError::MissingTokenAfterPrimitive(
             ExpandableOpcode::The,
         ));
@@ -1292,7 +1332,7 @@ where
 
     match stores.resolve(symbol) {
         "count" => {
-            let index = scan_register_index(input, stores)?;
+            let index = scan_register_index(input, stores, recorder, hooks)?;
             Ok(push_rendered_text(
                 stores,
                 ExpansionReplayKind::TheOutput,
@@ -1300,7 +1340,7 @@ where
             ))
         }
         "dimen" => {
-            let index = scan_register_index(input, stores)?;
+            let index = scan_register_index(input, stores, recorder, hooks)?;
             Ok(push_rendered_text(
                 stores,
                 ExpansionReplayKind::TheOutput,
@@ -1308,7 +1348,7 @@ where
             ))
         }
         "toks" => {
-            let index = scan_register_index(input, stores)?;
+            let index = scan_register_index(input, stores, recorder, hooks)?;
             Ok(Dispatch::Push {
                 replay_kind: ExpansionReplayKind::TheOutput,
                 token_list: stores.toks(index),
@@ -1383,14 +1423,18 @@ where
     }
 }
 
-fn scan_register_index<S>(
+fn scan_register_index<S, R, H>(
     input: &mut InputStack<S>,
     stores: &mut Stores,
+    recorder: &mut R,
+    hooks: &mut H,
 ) -> Result<u16, ExpandError>
 where
     S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
 {
-    let value = scan_int::scan_int(input, stores)?.value();
+    let value = scan_int::scan_int_with_recorder_and_hooks(input, stores, recorder, hooks)?.value();
     if !(0..=32_767).contains(&value) {
         return Err(scan_int::ScanIntError::RegisterNumberOutOfRange(value).into());
     }
@@ -2296,6 +2340,38 @@ mod tests {
         input.push_token_list(list, TokenListReplayKind::Inserted);
 
         assert_eq!(next_expanded_chars(&mut input, &mut stores), "-19mmmm");
+    }
+
+    #[test]
+    fn number_scanner_preserves_driver_hooks_during_nested_expansion() {
+        let mut stores = Stores::new();
+        let number = expandable_primitive(&mut stores, "number", ExpandablePrimitive::Number);
+        let input_primitive =
+            expandable_primitive(&mut stores, "input", ExpandablePrimitive::Input);
+        let digits = stores.intern("digits");
+        let params = stores.intern_token_list(&[]);
+        let body = stores.intern_token_list(&[
+            Token::Cs(input_primitive),
+            char_token('d'),
+            char_token('i'),
+            char_token('g'),
+            char_token('s'),
+            Token::Char {
+                ch: ' ',
+                cat: Catcode::Space,
+            },
+        ]);
+        stores.set_macro_meaning(digits, MacroMeaning::new(MeaningFlags::EMPTY, params, body));
+        let list = stores.intern_token_list(&[Token::Cs(number), Token::Cs(digits)]);
+        let mut input = InputStack::new(MemoryInput::new(""));
+        input.push_token_list(list, TokenListReplayKind::Inserted);
+        let mut hooks = MemoryHooks::new("job").with_source("digs", "42");
+
+        assert_eq!(
+            next_expanded_chars_with_hooks(&mut input, &mut stores, &mut hooks),
+            "42"
+        );
+        assert_eq!(hooks.opened, vec!["digs"]);
     }
 
     #[test]

@@ -222,7 +222,7 @@ impl DumpDriver {
             ));
         };
         self.skip_optional_equals_x()?;
-        let value = scan_int::scan_int(&mut self.input, &mut self.stores)?.value();
+        let value = self.scan_int_x()?;
         let Some(ch) = u32::try_from(value).ok().and_then(char::from_u32) else {
             return Err(ExpandDumpError::Definition(
                 "\\chardef value is not a valid character",
@@ -238,9 +238,9 @@ impl DumpDriver {
     }
 
     fn consume_catcode(&mut self) -> Result<bool, ExpandDumpError> {
-        let code = scan_int::scan_int(&mut self.input, &mut self.stores)?.value();
+        let code = self.scan_int_x()?;
         self.skip_optional_equals_x()?;
-        let catcode = scan_int::scan_int(&mut self.input, &mut self.stores)?.value();
+        let catcode = self.scan_int_x()?;
         let Some(ch) = u32::try_from(code).ok().and_then(char::from_u32) else {
             return Err(ExpandDumpError::Definition(
                 "\\catcode character code is invalid",
@@ -273,6 +273,17 @@ impl DumpDriver {
             self.pending.push_front(token);
         }
         Ok(())
+    }
+
+    fn scan_int_x(&mut self) -> Result<i32, ExpandDumpError> {
+        let mut recorder = NoopRecorder;
+        Ok(scan_int::scan_int_with_recorder_and_hooks(
+            &mut self.input,
+            &mut self.stores,
+            &mut recorder,
+            &mut self.hooks,
+        )?
+        .value())
     }
 }
 

@@ -9,7 +9,10 @@ use tex_state::meaning::Meaning;
 use tex_state::stores::Stores;
 use tex_state::token::{Catcode, Token};
 
-use crate::{ExpandError, get_x_token};
+use crate::{
+    ExpandError, ExpansionHooks, NoopExpansionHooks, NoopRecorder, ReadRecorder,
+    get_x_token_with_recorder_and_hooks,
+};
 
 const INT_MAX: i64 = i32::MAX as i64;
 const MAX_REGISTER: i32 = 32_767;
@@ -125,25 +128,45 @@ pub fn scan_int<S>(
 where
     S: InputSource,
 {
-    let (negative, token) = scan_signs(input, stores)?;
+    scan_int_with_recorder_and_hooks(input, stores, &mut NoopRecorder, &mut NoopExpansionHooks)
+}
+
+/// Scans a TeX `<number>` while preserving caller-supplied expansion hooks.
+pub fn scan_int_with_recorder_and_hooks<S, R, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Stores,
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<ScannedInt, ScanIntError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    let (negative, token) = scan_signs(input, stores, recorder, hooks)?;
     let Some(token) = token else {
         return Err(ScanIntError::MissingNumber);
     };
 
-    let scanned = scan_unsigned_after_first_token(input, stores, token)?;
+    let scanned = scan_unsigned_after_first_token(input, stores, recorder, hooks, token)?;
     Ok(apply_sign(scanned, negative))
 }
 
-fn scan_signs<S>(
+fn scan_signs<S, R, H>(
     input: &mut InputStack<S>,
     stores: &mut Stores,
+    recorder: &mut R,
+    hooks: &mut H,
 ) -> Result<(bool, Option<Token>), ScanIntError>
 where
     S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
 {
     let mut negative = false;
     loop {
-        let Some(token) = get_x_token(input, stores)? else {
+        let Some(token) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
+        else {
             return Ok((negative, None));
         };
         if is_space(token) {
@@ -160,69 +183,87 @@ where
     }
 }
 
-fn scan_unsigned_after_first_token<S>(
+fn scan_unsigned_after_first_token<S, R, H>(
     input: &mut InputStack<S>,
     stores: &mut Stores,
+    recorder: &mut R,
+    hooks: &mut H,
     token: Token,
 ) -> Result<ScannedInt, ScanIntError>
 where
     S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
 {
     match token {
         Token::Char {
             ch,
             cat: Catcode::Other,
-        } if ch.is_ascii_digit() => {
-            scan_radix_digits(input, stores, digit_value(ch).expect("matched digit"), 10)
-        }
+        } if ch.is_ascii_digit() => scan_radix_digits(
+            input,
+            stores,
+            recorder,
+            hooks,
+            digit_value(ch).expect("matched digit"),
+            10,
+        ),
         Token::Char {
             ch: '\'',
             cat: Catcode::Other,
-        } => scan_prefixed_digits(input, stores, 8),
+        } => scan_prefixed_digits(input, stores, recorder, hooks, 8),
         Token::Char {
             ch: '"',
             cat: Catcode::Other,
-        } => scan_prefixed_digits(input, stores, 16),
+        } => scan_prefixed_digits(input, stores, recorder, hooks, 16),
         Token::Char {
             ch: '`',
             cat: Catcode::Other,
-        } => scan_backtick_constant(input, stores),
-        Token::Cs(symbol) => scan_internal_integer(input, stores, token, symbol),
+        } => scan_backtick_constant(input, stores, recorder, hooks),
+        Token::Cs(symbol) => scan_internal_integer(input, stores, recorder, hooks, token, symbol),
         _ => Err(ScanIntError::MissingNumber),
     }
 }
 
-fn scan_prefixed_digits<S>(
+fn scan_prefixed_digits<S, R, H>(
     input: &mut InputStack<S>,
     stores: &mut Stores,
+    recorder: &mut R,
+    hooks: &mut H,
     radix: i64,
 ) -> Result<ScannedInt, ScanIntError>
 where
     S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
 {
-    let Some(token) = get_x_token(input, stores)? else {
+    let Some(token) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)? else {
         return Err(ScanIntError::MissingNumber);
     };
     let Some(digit) = token_digit_for_radix(token, radix) else {
         unread_token(input, stores, token);
         return Err(ScanIntError::MissingNumber);
     };
-    scan_radix_digits(input, stores, digit, radix)
+    scan_radix_digits(input, stores, recorder, hooks, digit, radix)
 }
 
-fn scan_radix_digits<S>(
+fn scan_radix_digits<S, R, H>(
     input: &mut InputStack<S>,
     stores: &mut Stores,
+    recorder: &mut R,
+    hooks: &mut H,
     first_digit: i64,
     radix: i64,
 ) -> Result<ScannedInt, ScanIntError>
 where
     S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
 {
     let mut value = first_digit;
     let mut overflow = value > INT_MAX;
     loop {
-        let Some(token) = get_x_token(input, stores)? else {
+        let Some(token) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
+        else {
             break;
         };
         let Some(digit) = token_digit_for_radix(token, radix) else {
@@ -246,14 +287,18 @@ where
     Ok(scanned_unsigned(value, overflow))
 }
 
-fn scan_backtick_constant<S>(
+fn scan_backtick_constant<S, R, H>(
     input: &mut InputStack<S>,
     stores: &mut Stores,
+    recorder: &mut R,
+    hooks: &mut H,
 ) -> Result<ScannedInt, ScanIntError>
 where
     S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
 {
-    let Some(token) = get_x_token(input, stores)? else {
+    let Some(token) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)? else {
         return Err(ScanIntError::MissingNumber);
     };
     let value = match token {
@@ -265,41 +310,47 @@ where
             .ok_or(ScanIntError::MissingNumber)? as i32,
         Token::Param(_) => return Err(ScanIntError::MissingNumber),
     };
-    consume_optional_space(input, stores)?;
+    consume_optional_space(input, stores, recorder, hooks)?;
     Ok(ScannedInt::new(value))
 }
 
-fn scan_internal_integer<S>(
+fn scan_internal_integer<S, R, H>(
     input: &mut InputStack<S>,
     stores: &mut Stores,
+    recorder: &mut R,
+    hooks: &mut H,
     token: Token,
     symbol: Symbol,
 ) -> Result<ScannedInt, ScanIntError>
 where
     S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
 {
-    match stores.meaning(symbol) {
+    let meaning = stores.meaning(symbol);
+    recorder.record_meaning(symbol, meaning);
+    match meaning {
         Meaning::CharGiven(ch) => {
-            consume_optional_space(input, stores)?;
+            consume_optional_space(input, stores, recorder, hooks)?;
             Ok(ScannedInt::new(ch as i32))
         }
         _ => {
             let name = stores.resolve(symbol);
             match name {
                 "count" => {
-                    let index = scan_register_index(input, stores)?;
+                    let index = scan_register_index(input, stores, recorder, hooks)?;
                     let value = stores.count(index);
-                    consume_optional_space(input, stores)?;
+                    consume_optional_space(input, stores, recorder, hooks)?;
                     Ok(ScannedInt::new(value))
                 }
                 "dimen" => {
-                    let index = scan_register_index(input, stores)?;
+                    let index = scan_register_index(input, stores, recorder, hooks)?;
                     let value = stores.dimen(index).raw();
-                    consume_optional_space(input, stores)?;
+                    consume_optional_space(input, stores, recorder, hooks)?;
                     Ok(ScannedInt::new(value))
                 }
                 "endlinechar" => {
-                    consume_optional_space(input, stores)?;
+                    consume_optional_space(input, stores, recorder, hooks)?;
                     Ok(ScannedInt::new(stores.int_param(IntParam::END_LINE_CHAR)))
                 }
                 _ => Err(ScanIntError::UnsupportedInternalInteger(token)),
@@ -308,28 +359,36 @@ where
     }
 }
 
-fn scan_register_index<S>(
+fn scan_register_index<S, R, H>(
     input: &mut InputStack<S>,
     stores: &mut Stores,
+    recorder: &mut R,
+    hooks: &mut H,
 ) -> Result<u16, ScanIntError>
 where
     S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
 {
-    let value = scan_int(input, stores)?.value();
+    let value = scan_int_with_recorder_and_hooks(input, stores, recorder, hooks)?.value();
     if !(0..=MAX_REGISTER).contains(&value) {
         return Err(ScanIntError::RegisterNumberOutOfRange(value));
     }
     Ok(value as u16)
 }
 
-fn consume_optional_space<S>(
+fn consume_optional_space<S, R, H>(
     input: &mut InputStack<S>,
     stores: &mut Stores,
+    recorder: &mut R,
+    hooks: &mut H,
 ) -> Result<(), ScanIntError>
 where
     S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
 {
-    let Some(token) = get_x_token(input, stores)? else {
+    let Some(token) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)? else {
         return Ok(());
     };
     if !is_space(token) {
