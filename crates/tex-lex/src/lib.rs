@@ -167,6 +167,119 @@ pub enum TokenListReplayKind {
     Inserted,
 }
 
+/// The family of TeX conditional represented by an open condition frame.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum ConditionKind {
+    /// A regular two-limb `\if...` conditional.
+    If,
+    /// An `\ifcase` conditional whose active limb is selected by `\or` count.
+    IfCase,
+}
+
+/// The conditional limb currently being evaluated or skipped.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum ConditionLimb {
+    If,
+    Or,
+    Else,
+}
+
+/// Snapshot-summary state for one open conditional.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct ConditionFrameSummary {
+    kind: ConditionKind,
+    limb: ConditionLimb,
+    current_limb_taken: bool,
+    any_limb_taken: bool,
+    ifcase_or_count: u32,
+    skip_nesting: u32,
+}
+
+impl ConditionFrameSummary {
+    /// Creates a regular `\if...` frame.
+    #[must_use]
+    pub const fn new_if(current_limb_taken: bool) -> Self {
+        Self {
+            kind: ConditionKind::If,
+            limb: ConditionLimb::If,
+            current_limb_taken,
+            any_limb_taken: current_limb_taken,
+            ifcase_or_count: 0,
+            skip_nesting: 0,
+        }
+    }
+
+    /// Creates an `\ifcase` frame at its initial limb.
+    #[must_use]
+    pub const fn new_ifcase(current_limb_taken: bool) -> Self {
+        Self {
+            kind: ConditionKind::IfCase,
+            limb: ConditionLimb::If,
+            current_limb_taken,
+            any_limb_taken: current_limb_taken,
+            ifcase_or_count: 0,
+            skip_nesting: 0,
+        }
+    }
+
+    #[must_use]
+    pub const fn kind(self) -> ConditionKind {
+        self.kind
+    }
+
+    #[must_use]
+    pub const fn limb(self) -> ConditionLimb {
+        self.limb
+    }
+
+    #[must_use]
+    pub const fn current_limb_taken(self) -> bool {
+        self.current_limb_taken
+    }
+
+    #[must_use]
+    pub const fn any_limb_taken(self) -> bool {
+        self.any_limb_taken
+    }
+
+    #[must_use]
+    pub const fn ifcase_or_count(self) -> u32 {
+        self.ifcase_or_count
+    }
+
+    #[must_use]
+    pub const fn skip_nesting(self) -> u32 {
+        self.skip_nesting
+    }
+
+    /// Moves the frame to an `\or` limb and records how many `\or` tokens
+    /// have been crossed in the current `\ifcase`.
+    #[must_use]
+    pub const fn with_or_limb(mut self, ifcase_or_count: u32, current_limb_taken: bool) -> Self {
+        self.limb = ConditionLimb::Or;
+        self.ifcase_or_count = ifcase_or_count;
+        self.current_limb_taken = current_limb_taken;
+        self.any_limb_taken = self.any_limb_taken || current_limb_taken;
+        self
+    }
+
+    /// Moves the frame to its `\else` limb.
+    #[must_use]
+    pub const fn with_else_limb(mut self, current_limb_taken: bool) -> Self {
+        self.limb = ConditionLimb::Else;
+        self.current_limb_taken = current_limb_taken;
+        self.any_limb_taken = self.any_limb_taken || current_limb_taken;
+        self
+    }
+
+    /// Records nested conditional depth observed while scanning/skipping.
+    #[must_use]
+    pub const fn with_skip_nesting(mut self, skip_nesting: u32) -> Self {
+        self.skip_nesting = skip_nesting;
+        self
+    }
+}
+
 /// Source-frame-local lexer state.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SourceFrame {
@@ -271,6 +384,7 @@ pub enum InputFrameSummary {
         index: usize,
         macro_arguments: MacroArguments,
     },
+    Condition(ConditionFrameSummary),
 }
 
 /// Snapshot summary for one source frame.
@@ -386,6 +500,7 @@ struct TokenListInputFrame {
 enum InputFrame<S> {
     Source(SourceInputFrame<S>),
     TokenList(TokenListInputFrame),
+    Condition(ConditionFrameSummary),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -478,6 +593,32 @@ impl<S> InputStack<S> {
         }));
     }
 
+    pub fn push_condition(&mut self, condition: ConditionFrameSummary) {
+        self.frames.push(InputFrame::Condition(condition));
+    }
+
+    pub fn update_current_condition(
+        &mut self,
+        condition: ConditionFrameSummary,
+    ) -> Option<ConditionFrameSummary> {
+        let frame = self.frames.iter_mut().rev().find_map(|frame| match frame {
+            InputFrame::Condition(condition) => Some(condition),
+            InputFrame::Source(_) | InputFrame::TokenList(_) => None,
+        })?;
+        Some(std::mem::replace(frame, condition))
+    }
+
+    pub fn pop_condition(&mut self) -> Option<ConditionFrameSummary> {
+        let index = self
+            .frames
+            .iter()
+            .rposition(|frame| matches!(frame, InputFrame::Condition(_)))?;
+        match self.frames.remove(index) {
+            InputFrame::Condition(condition) => Some(condition),
+            InputFrame::Source(_) | InputFrame::TokenList(_) => unreachable!("rposition matched"),
+        }
+    }
+
     #[must_use]
     pub fn summary(&self) -> InputSummary {
         InputSummary {
@@ -495,6 +636,7 @@ impl<S> InputStack<S> {
                         index: token_list.index,
                         macro_arguments: token_list.macro_arguments,
                     },
+                    InputFrame::Condition(condition) => InputFrameSummary::Condition(*condition),
                 })
                 .collect(),
             last_source_frame: self
@@ -508,7 +650,7 @@ impl<S> InputStack<S> {
     pub fn current_source_frame(&self) -> Option<&SourceFrame> {
         let current = self.frames.iter().rev().find_map(|frame| match frame {
             InputFrame::Source(source) => Some(&source.frame),
-            InputFrame::TokenList(_) => None,
+            InputFrame::TokenList(_) | InputFrame::Condition(_) => None,
         });
         current.or_else(|| self.last_source_frame.as_ref().map(|last| &last.frame))
     }
@@ -535,7 +677,7 @@ impl<S> InputStack<S> {
     pub fn end_current_source_after_current_line(&mut self) -> bool {
         let Some(source) = self.frames.iter_mut().rev().find_map(|frame| match frame {
             InputFrame::Source(source) => Some(source),
-            InputFrame::TokenList(_) => None,
+            InputFrame::TokenList(_) | InputFrame::Condition(_) => None,
         }) else {
             return false;
         };
@@ -625,7 +767,7 @@ impl<S> Lexer<S> {
     pub fn into_inner(self) -> S {
         match self.input.frames.into_iter().next() {
             Some(InputFrame::Source(source)) => source.lines.into_inner(),
-            Some(InputFrame::TokenList(_)) | None => {
+            Some(InputFrame::TokenList(_) | InputFrame::Condition(_)) | None => {
                 panic!("Lexer source was not at the bottom of the input stack")
             }
         }
@@ -651,10 +793,10 @@ where
 {
     pub fn next_token(&mut self, stores: &mut Stores) -> Result<Option<Token>, LexError> {
         loop {
-            let Some(frame) = self.frames.last_mut() else {
+            let Some(frame_index) = self.current_token_frame_index() else {
                 return Ok(None);
             };
-            match frame {
+            match &mut self.frames[frame_index] {
                 InputFrame::TokenList(token_list) => {
                     match next_token_from_token_list_frame(token_list, stores) {
                         Some(TokenReplay::PushArgument(argument)) => {
@@ -669,7 +811,9 @@ where
                         Some(TokenReplay::Deliver(token) | TokenReplay::DeliverNoExpand(token)) => {
                             return Ok(Some(token));
                         }
-                        None => self.frames.pop(),
+                        None => {
+                            self.frames.remove(frame_index);
+                        }
                     };
                 }
                 InputFrame::Source(source) => {
@@ -679,8 +823,8 @@ where
 
                     if source.frame.offset >= source.frame.line.len() {
                         if source.frame.end_after_current_line {
-                            let popped = self.frames.pop();
-                            if let Some(InputFrame::Source(source)) = popped {
+                            let popped = self.frames.remove(frame_index);
+                            if let InputFrame::Source(source) = popped {
                                 self.last_source_frame = Some(LastSourceFrame {
                                     frame: source.frame,
                                     next_source_offset: source.next_source_offset,
@@ -689,8 +833,8 @@ where
                             continue;
                         }
                         if !load_next_line(source, stores)? {
-                            let popped = self.frames.pop();
-                            if let Some(InputFrame::Source(source)) = popped {
+                            let popped = self.frames.remove(frame_index);
+                            if let InputFrame::Source(source) = popped {
                                 self.last_source_frame = Some(LastSourceFrame {
                                     frame: source.frame,
                                     next_source_offset: source.next_source_offset,
@@ -707,6 +851,9 @@ where
                     };
                     return Ok(Some(token));
                 }
+                InputFrame::Condition(_) => {
+                    unreachable!("current_token_frame_index skips conditions")
+                }
             }
         }
     }
@@ -722,10 +869,10 @@ where
         stores: &Stores,
     ) -> Result<Option<ExpansionToken>, LexError> {
         loop {
-            let Some(frame) = self.frames.last_mut() else {
+            let Some(frame_index) = self.current_token_frame_index() else {
                 return Ok(None);
             };
-            match frame {
+            match &mut self.frames[frame_index] {
                 InputFrame::TokenList(token_list) => {
                     match next_token_from_token_list_frame(token_list, stores) {
                         Some(TokenReplay::PushArgument(argument)) => {
@@ -743,7 +890,9 @@ where
                         Some(TokenReplay::DeliverNoExpand(token)) => {
                             return Ok(Some(ExpansionToken::new(token, true)));
                         }
-                        None => self.frames.pop(),
+                        None => {
+                            self.frames.remove(frame_index);
+                        }
                     };
                 }
                 InputFrame::Source(source) => {
@@ -753,8 +902,8 @@ where
 
                     if source.frame.offset >= source.frame.line.len() {
                         if source.frame.end_after_current_line {
-                            let popped = self.frames.pop();
-                            if let Some(InputFrame::Source(source)) = popped {
+                            let popped = self.frames.remove(frame_index);
+                            if let InputFrame::Source(source) = popped {
                                 self.last_source_frame = Some(LastSourceFrame {
                                     frame: source.frame,
                                     next_source_offset: source.next_source_offset,
@@ -763,8 +912,8 @@ where
                             continue;
                         }
                         if !load_next_line_readonly(source, stores)? {
-                            let popped = self.frames.pop();
-                            if let Some(InputFrame::Source(source)) = popped {
+                            let popped = self.frames.remove(frame_index);
+                            if let InputFrame::Source(source) = popped {
                                 self.last_source_frame = Some(LastSourceFrame {
                                     frame: source.frame,
                                     next_source_offset: source.next_source_offset,
@@ -784,8 +933,19 @@ where
                     };
                     return Ok(Some(ExpansionToken::new(token, false)));
                 }
+                InputFrame::Condition(_) => {
+                    unreachable!("current_token_frame_index skips conditions")
+                }
             }
         }
+    }
+}
+
+impl<S> InputStack<S> {
+    fn current_token_frame_index(&self) -> Option<usize> {
+        self.frames
+            .iter()
+            .rposition(|frame| matches!(frame, InputFrame::Source(_) | InputFrame::TokenList(_)))
     }
 }
 
@@ -1230,8 +1390,9 @@ fn byte_offset_for_char_offset(line: &[char], char_offset: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{
-        InputFrame, InputFrameSummary, InputStack, LexError, Lexer, LexerState, LineEvent,
-        LineReader, MemoryInput, TokenListReplayKind, load_next_line,
+        ConditionFrameSummary, ConditionKind, ConditionLimb, InputFrame, InputFrameSummary,
+        InputStack, LexError, Lexer, LexerState, LineEvent, LineReader, MemoryInput,
+        TokenListReplayKind, load_next_line,
     };
     use tex_state::env::banks::IntParam;
     use tex_state::stores::Stores;
@@ -1645,6 +1806,91 @@ mod tests {
         assert_eq!(source.line_number(), 1);
         assert_eq!(source.pending(), &[cs_token(&mut stores, "par")]);
         assert!(source.is_resume_complete());
+    }
+
+    #[test]
+    fn condition_frames_round_trip_through_input_summary() {
+        let mut stores = Stores::new();
+        stores.set_int_param(IntParam::END_LINE_CHAR, 13);
+        let mut input = InputStack::new(MemoryInput::new("ab"));
+        let condition = ConditionFrameSummary::new_ifcase(false)
+            .with_or_limb(2, true)
+            .with_skip_nesting(1);
+
+        input.push_condition(condition);
+
+        let first = input.summary();
+        let round_tripped = first.clone();
+        assert_eq!(round_tripped, first);
+        assert!(matches!(
+            round_tripped.frames(),
+            [
+                InputFrameSummary::Source { .. },
+                InputFrameSummary::Condition(frame),
+            ] if frame.kind() == ConditionKind::IfCase
+                && frame.limb() == ConditionLimb::Or
+                && frame.current_limb_taken()
+                && frame.any_limb_taken()
+                && frame.ifcase_or_count() == 2
+                && frame.skip_nesting() == 1
+        ));
+
+        assert_eq!(
+            input
+                .next_token(&mut stores)
+                .expect("condition frame skips"),
+            Some(char_token('a', Catcode::Letter))
+        );
+        assert!(matches!(
+            input.summary().frames(),
+            [
+                InputFrameSummary::Source { source, .. },
+                InputFrameSummary::Condition(frame),
+            ] if source.column() == 1 && *frame == condition
+        ));
+    }
+
+    #[test]
+    fn open_condition_survives_checkpoint_rollback_resume_summary() {
+        let mut stores = Stores::new();
+        stores.set_int_param(IntParam::END_LINE_CHAR, 13);
+        let mut input = InputStack::new(MemoryInput::new("xy"));
+        input.push_condition(ConditionFrameSummary::new_if(true));
+
+        assert_eq!(
+            input.next_token(&mut stores).expect("source token"),
+            Some(char_token('x', Catcode::Letter))
+        );
+        let checkpoint = stores.checkpoint();
+        let resume_summary = input.summary();
+
+        let updated = ConditionFrameSummary::new_if(true).with_else_limb(false);
+        assert_eq!(
+            input.update_current_condition(updated),
+            Some(ConditionFrameSummary::new_if(true))
+        );
+        stores.set_int_param(IntParam::END_LINE_CHAR, b'!' as i32);
+        assert_eq!(
+            input.next_token(&mut stores).expect("source token"),
+            Some(char_token('y', Catcode::Letter))
+        );
+
+        stores.rollback(checkpoint);
+
+        assert_eq!(stores.endlinechar(), 13);
+        assert!(matches!(
+            resume_summary.frames(),
+            [
+                InputFrameSummary::Source { source, .. },
+                InputFrameSummary::Condition(frame),
+            ] if source.column() == 1
+                && frame.kind() == ConditionKind::If
+                && frame.limb() == ConditionLimb::If
+                && frame.current_limb_taken()
+                && frame.any_limb_taken()
+                && frame.ifcase_or_count() == 0
+                && frame.skip_nesting() == 0
+        ));
     }
 
     fn collect_tokens(lexer: &mut Lexer<MemoryInput>, stores: &mut Stores) -> Vec<Token> {

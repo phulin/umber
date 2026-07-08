@@ -115,6 +115,12 @@ supply.
   additionally carry up to nine frozen argument `TokenListId`s; replaying a
   `Param(slot)` token pushes the corresponding argument list as a nested
   macro-argument frame while the replacement body id remains unchanged.
+  Open conditionals are summarized as condition frames in the same vector,
+  not as expansion-owned side state. A condition frame records whether it is
+  a regular `\if...` or `\ifcase`, the current limb (`\if`, `\or`, or
+  `\else`), whether the current and any previous limb has been taken, the
+  `\ifcase` `\or` count, and the nested conditional depth observed during
+  skip/resume scanning.
   Source reopen identity is owned by the `World` input record in the outer
   snapshot: it pins file/editor content by content hash, reopens that exact
   source, then applies the lexer-owned source-frame summary.
@@ -194,7 +200,9 @@ Responsibility: the token-level rewriting system — macros, conditionals,
 - **Conditionals** are a frame-kind, not a side stack: `\if...` evaluation
   marks the frame; `\else`/`\fi` skipping is a token-level scan that the
   fast lexer can accelerate (skip mode only needs catcode classes for
-  `\`-detection). The condition stack is part of `InputSummary`.
+  `\`-detection). The condition stack is part of `InputSummary` and carries
+  limb/taken state, `\ifcase` `\or` count, and skip nesting so rollback can
+  restore an open conditional without reconstructing hidden gullet state.
 - **`\csname`** interns through the same interner; **`\the`/`\showthe`**
   read `Env` and mint fresh frozen token lists.
 - **Read-set recording** hooks live here and in the stomach: when the
