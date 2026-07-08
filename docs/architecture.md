@@ -495,11 +495,15 @@ Responsibility: accumulate the main vertical list, fire `\output`, commit.
   traverses the box tree in node order, expands deferred-write whatsits
   through the ordinary gullet, stores the `tex-out` artifact, commits through
   `Universe::commit_effects`, and records shipped artifact ids in executor
-  stats for the CLI/driver layer. Source-level `\special{...}` is implemented
-  as a stomach whatsit whose balanced text is expanded at scan time, matching
-  TeX82's `scan_toks(false,true)` behavior; shipout lowers each special
-  whatsit into a `PageEffect::Special` and a `WhatsitAnchor` at the traversal
-  position so DVI `xxx` output remains ordered by the committed box tree.
+  stats for the CLI/driver layer. Shipout also prepares the job magnification
+  before artifact construction and reports any recoverable `prepare_mag`
+  diagnostic through the execution diagnostic/log path; `tex-out` only sees
+  the resulting effective magnification in detached job metadata. Source-level
+  `\special{...}` is implemented as a stomach whatsit whose balanced text is
+  expanded at scan time, matching TeX82's `scan_toks(false,true)` behavior;
+  shipout lowers each special whatsit into a `PageEffect::Special` and a
+  `WhatsitAnchor` at the traversal position so DVI `xxx` output remains
+  ordered by the committed box tree.
 
 ## 9. Fonts and metrics (`tex-arith`, `tex-fonts`, `tex-state`)
 

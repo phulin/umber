@@ -234,6 +234,72 @@ fn shipout_expands_write_against_barrier_state_and_stores_artifact() {
 }
 
 #[test]
+fn shipout_reports_illegal_magnification_diagnostic() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\mag=40000 \\shipout\\hbox{}\\end"));
+
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("shipout succeeds");
+
+    assert_eq!(stats.shipped_artifacts.len(), 1);
+    assert_eq!(stores.mag(), 1000);
+    assert_eq!(stores.prepared_mag(), Some(1000));
+    assert!(
+        memory_terminal_text(&stores)
+            .contains("! Illegal magnification has been changed to 1000 (40000).")
+    );
+    assert!(
+        memory_log_text(&stores)
+            .contains("! Illegal magnification has been changed to 1000 (40000).")
+    );
+
+    let bytes = stores
+        .world()
+        .read_artifact(stats.shipped_artifacts[0])
+        .expect("read artifact")
+        .expect("artifact stored");
+    let artifact = PageArtifact::from_bytes(&bytes).expect("artifact parses");
+    assert_eq!(artifact.job.mag, 1000);
+}
+
+#[test]
+fn shipout_reports_incompatible_magnification_diagnostic() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\mag=1200 \\shipout\\hbox{} \\mag=2000 \\shipout\\hbox{}\\end",
+    ));
+
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("shipouts succeed");
+
+    assert_eq!(stats.shipped_artifacts.len(), 2);
+    assert_eq!(stores.mag(), 1200);
+    assert_eq!(stores.prepared_mag(), Some(1200));
+    assert!(
+        memory_terminal_text(&stores)
+            .contains("! Incompatible magnification (2000); the previous value will be retained.")
+    );
+    assert!(
+        memory_log_text(&stores)
+            .contains("! Incompatible magnification (2000); the previous value will be retained.")
+    );
+
+    let bytes = stores
+        .world()
+        .read_artifact(stats.shipped_artifacts[1])
+        .expect("read artifact")
+        .expect("artifact stored");
+    let artifact = PageArtifact::from_bytes(&bytes).expect("artifact parses");
+    assert_eq!(artifact.job.mag, 1200);
+}
+
+#[test]
 fn shipout_copy_expands_deferred_write_each_time() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);

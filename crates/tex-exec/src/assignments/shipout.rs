@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use tex_expand::{
     ExpansionHooks, NoopExpansionHooks, ReadRecorder, get_x_token_with_recorder_and_hooks,
-    token_text,
+    scan_dimen::DimensionDiagnostic, token_text,
 };
 use tex_lex::{InputSource, InputStack, MemoryInput, TokenListReplayKind};
 use tex_out::{
@@ -21,6 +21,7 @@ use tex_state::{ContentHash, EffectRecord, PrintSink, Universe};
 
 use super::scan_required_box_node;
 use crate::ExecError;
+use crate::diagnostics;
 
 pub(super) fn execute_shipout<S, R, H>(
     input: &mut InputStack<S>,
@@ -36,7 +37,10 @@ where
     let node = scan_required_box_node(input, stores, hooks)?;
     let pending_effects = pending_page_effects(stores.world().effect_records());
     let counts = page_counts(stores);
-    let (mag, _diagnostic) = stores.prepare_mag();
+    let (mag, diagnostic) = stores.prepare_mag();
+    if let Some(diagnostic) = diagnostic {
+        diagnostics::report_dimension_diagnostic(stores, DimensionDiagnostic::from(diagnostic));
+    }
     let (root, fonts, effects) = {
         let mut lowerer = ShipoutLowerer {
             stores,

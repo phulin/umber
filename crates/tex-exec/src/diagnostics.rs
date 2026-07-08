@@ -2,7 +2,7 @@
 
 use tex_expand::{
     ExpansionHooks, NoopRecorder, get_x_token_with_recorder_and_hooks, meaning_text,
-    scan_the_text_with_hooks, token_text,
+    scan_dimen::DimensionDiagnostic, scan_the_text_with_hooks, token_text,
 };
 use tex_lex::{InputSource, InputStack};
 use tex_state::env::banks::IntParam;
@@ -157,6 +157,17 @@ where
     lines.push_str("! OK.\n");
     write_diagnostic(stores, &lines);
     Ok(())
+}
+
+pub(crate) fn report_dimension_diagnostic(stores: &mut Universe, diagnostic: DimensionDiagnostic) {
+    match diagnostic {
+        DimensionDiagnostic::IllegalMagnification { attempted } => {
+            write_diagnostic(stores, &format!("\n! {diagnostic} ({attempted}).\n"))
+        }
+        DimensionDiagnostic::TooLarge | DimensionDiagnostic::IncompatibleMagnification { .. } => {
+            write_diagnostic(stores, &format!("\n! {diagnostic}.\n"));
+        }
+    }
 }
 
 pub(crate) fn execute_change_case<S>(
