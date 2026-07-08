@@ -38,7 +38,7 @@ fixture assertions. When output changes intentionally, regenerate the
 fixture by running the focused test with:
 
 ```bash
-UPDATE_FIXTURES=1 cargo test -p test-support --test hello
+UPDATE_FIXTURES=1 cargo test -p test-support hello_reference_log_matches_fixture
 ```
 
 The update run rewrites missing or mismatched expected files, then panics.
@@ -47,8 +47,8 @@ Rerun without `UPDATE_FIXTURES` before committing.
 For typeset box-dump fixtures, run:
 
 ```bash
-UPDATE_FIXTURES=1 cargo test -p umber --test cli run_typeset_corpus_matches_pdftex_box_dumps
-cargo test -p umber --test cli run_typeset_corpus_matches_pdftex_box_dumps
+UPDATE_FIXTURES=1 cargo test -p umber --test it run_typeset_corpus_matches_pdftex_box_dumps
+cargo test -p umber --test it run_typeset_corpus_matches_pdftex_box_dumps
 ```
 
 ## Cargo Test Scope
@@ -76,8 +76,8 @@ the default small enough for `cargo test --workspace --tests`; raise it for
 local long runs, for example:
 
 ```bash
-PROPTEST_CASES=1000 cargo test -p umber --test replay_identity
-cargo test -p umber --features shadow --test replay_identity
+PROPTEST_CASES=1000 cargo test -p umber --test it replay_identity
+cargo test -p umber --features shadow --test it replay_identity
 ```
 
 Effectful rollback/commit fuzzing uses the same budget variable and is wired

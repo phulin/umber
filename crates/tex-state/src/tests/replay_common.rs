@@ -1,3 +1,4 @@
+use crate as tex_state;
 use std::collections::HashMap;
 use tex_state::Universe;
 use tex_state::env::Env;

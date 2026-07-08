@@ -1,8 +1,5 @@
-#![cfg(feature = "testing")]
-
-mod common;
-
-use common::{Oracle, TestCell};
+use super::replay_common::{Oracle, TestCell};
+use crate as tex_state;
 use proptest::prelude::*;
 use proptest::test_runner::Config;
 use std::collections::HashMap;

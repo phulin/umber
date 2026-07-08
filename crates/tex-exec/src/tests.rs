@@ -13,6 +13,7 @@ use tex_state::{InteractionMode, Universe};
 mod assignments;
 mod core;
 mod fonts;
+mod grouping_parity;
 mod groups;
 mod hyphenation;
 mod io;

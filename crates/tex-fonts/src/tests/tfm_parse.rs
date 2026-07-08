@@ -1,14 +1,15 @@
+use crate as tex_fonts;
 use tex_arith::Scaled;
 use tex_fonts::{CharacterTag, FontParameterKind, LigKernAction, ParseError, TfmFont, TfmTable};
 use tex_fonts::{LigKernChar, LigKernCommand};
 
-const CMR10: &[u8] = include_bytes!("fixtures/cm/cmr10.tfm");
-const CMMI10: &[u8] = include_bytes!("fixtures/cm/cmmi10.tfm");
-const CMSY10: &[u8] = include_bytes!("fixtures/cm/cmsy10.tfm");
-const CMEX10: &[u8] = include_bytes!("fixtures/cm/cmex10.tfm");
-const CMTT10: &[u8] = include_bytes!("fixtures/cm/cmtt10.tfm");
-const BOUNDARY_CHAR: &[u8] = include_bytes!("fixtures/edge/boundary-char.tfm");
-const LONG_JUMP: &[u8] = include_bytes!("fixtures/edge/ptmr8g-longjump.tfm");
+const CMR10: &[u8] = include_bytes!("../../tests/fixtures/cm/cmr10.tfm");
+const CMMI10: &[u8] = include_bytes!("../../tests/fixtures/cm/cmmi10.tfm");
+const CMSY10: &[u8] = include_bytes!("../../tests/fixtures/cm/cmsy10.tfm");
+const CMEX10: &[u8] = include_bytes!("../../tests/fixtures/cm/cmex10.tfm");
+const CMTT10: &[u8] = include_bytes!("../../tests/fixtures/cm/cmtt10.tfm");
+const BOUNDARY_CHAR: &[u8] = include_bytes!("../../tests/fixtures/edge/boundary-char.tfm");
+const LONG_JUMP: &[u8] = include_bytes!("../../tests/fixtures/edge/ptmr8g-longjump.tfm");
 
 #[test]
 fn parses_required_computer_modern_corpus() {

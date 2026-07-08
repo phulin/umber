@@ -7,6 +7,8 @@ use tex_state::env::banks::IntParam;
 use tex_state::token::{Catcode, Token};
 use tex_state::{ExpansionState, Universe};
 
+mod input_lines;
+
 #[test]
 fn strips_trailing_spaces_and_appends_endlinechar() {
     let mut stores = Universe::new();

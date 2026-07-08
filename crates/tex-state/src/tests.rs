@@ -1,6 +1,12 @@
 use crate::Universe;
 use crate::hyphenation::{ExceptionSpec, PatternSpec};
 
+mod live_boundary;
+#[cfg(feature = "testing")]
+mod replay;
+#[cfg(feature = "testing")]
+mod replay_common;
+
 #[test]
 fn smoke() {
     assert!(!env!("CARGO_PKG_NAME").is_empty());

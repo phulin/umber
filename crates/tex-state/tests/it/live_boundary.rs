@@ -1,32 +1,5 @@
-use tex_state::Universe;
-use tex_state::meaning::Meaning;
-
 use std::fs;
 use std::process::Command;
-
-#[test]
-#[should_panic(expected = "symbol is not live in this Universe timeline")]
-fn stale_rolled_back_symbol_cannot_mutate_reused_meaning_cell() {
-    let mut stores = Universe::new();
-    let snapshot = stores.snapshot();
-    let stale = stores.intern("rolled-back");
-
-    stores.rollback(&snapshot);
-    stores.set_meaning(stale, Meaning::Relax);
-}
-
-#[test]
-fn rollback_reuse_starts_with_undefined_meaning() {
-    let mut stores = Universe::new();
-    let snapshot = stores.snapshot();
-    let stale = stores.intern("rolled-back");
-
-    stores.rollback(&snapshot);
-    let reused = stores.intern("reused");
-
-    assert_eq!(reused.raw(), stale.raw());
-    assert_eq!(stores.meaning(reused), Meaning::Undefined);
-}
 
 #[test]
 #[allow(clippy::disallowed_methods)]

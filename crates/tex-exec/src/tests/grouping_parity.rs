@@ -2,9 +2,9 @@
 
 use std::fs;
 
+use crate::{Executor, install_unexpandable_primitives};
 use refexec::{RefTex, RunOpts};
 use tempfile::tempdir;
-use tex_exec::{Executor, install_unexpandable_primitives};
 use tex_lex::{InputStack, MemoryInput};
 use tex_state::Universe;
 use tex_state::meaning::{ExpandablePrimitive, Meaning};

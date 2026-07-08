@@ -12,3 +12,6 @@ pub use tfm::{
     CharacterTag, ExtensibleRecipe, FontParameter, FontParameterKind, FontParameters, Header,
     LigKernAction, LigKernStep, Ligature, LigatureDeletes, ParseError, TfmFont, TfmTable,
 };
+
+#[cfg(test)]
+mod tests;

@@ -1,4 +1,4 @@
-use tex_lex::{LineEvent, LineReader, MemoryInput, WorldInput};
+use crate::{LineEvent, LineReader, MemoryInput, WorldInput};
 use tex_state::env::banks::IntParam;
 use tex_state::{Universe, World};
 

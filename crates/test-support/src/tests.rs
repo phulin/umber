@@ -1,5 +1,5 @@
+use crate::{assert_matches_fixture, corpus_root, normalize};
 use refexec::{RefTex, RunOpts};
-use test_support::{assert_matches_fixture, corpus_root, normalize};
 
 #[test]
 fn hello_reference_log_matches_fixture() {

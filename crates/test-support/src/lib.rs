@@ -731,3 +731,6 @@ mod imp {
 }
 
 pub use imp::{assert_matches_fixture, corpus_root, normalize, pl};
+
+#[cfg(test)]
+mod tests;

@@ -13,7 +13,7 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - Don't worry about keeping changes "low-risk" or implementing only "narrow slices", as making clean code will sometimes require big, ambitious, cross-cutting changes, and reimplementing something from scratch means we will need to write complex new features.
 - If you discover that a major subsystem is missing, prefer implementing it in one coherent pass instead of scattering partial fragments across many small changes; errors can be revised later.
 - In general, try to keep source files short (goal is under roughly 600 lines, but it's okay if a file gets somewhat larger; test files can be as long as needed, they should only be split logically).
-- Prefer `#[cfg(test)] mod tests;` with separate `src/.../tests.rs` files for nontrivial crate-internal tests; use crate-level `tests/` for public-boundary, CLI, parity, fixture, replay, capability, and compile-fail tests. See `docs/testing_policy.md`.
+- Prefer `#[cfg(test)] mod tests;` with separate `src/.../tests.rs` files for nontrivial crate-internal tests. Internal library crates should avoid crate-level `tests/`; crates that keep external-boundary integration tests should consolidate them under one `tests/it.rs` binary. See `docs/testing_policy.md`.
 - Document todos and stubs in the code clearly with a TODO.
 - For complex features, build design/technical documentation in advance and place in docs/ for your own planning and for reference later, but don't commit temporary task plans or notes.
 - When writing code, prefer principled solutions, clean architecture, and fast, optimized implementation. Avoid hacks.

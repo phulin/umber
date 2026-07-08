@@ -16,9 +16,9 @@ Test placement should optimize for three things:
    humans and agents can read implementation code without paging through large
    test tables, fixtures, or helper scaffolding.
 3. **Correct Rust boundaries.** Tests should live at the visibility boundary
-   they are actually validating: crate-internal tests under `src`, public API
-   tests under crate-level `tests`, and shared fixture data under the workspace
-   `tests/corpus` tree.
+   they are actually validating: internal-library tests under `src`, external
+   boundary tests under crate-level `tests`, and shared fixture data under the
+   workspace `tests/corpus` tree.
 
 ## 2. Default Rule
 
@@ -71,9 +71,14 @@ fixtures, many assertions, or more than a few test functions.
 
 ## 4. Crate-Level Integration Tests
 
-Use `crates/<crate>/tests/` for tests that should exercise the crate as an
-external consumer would. These tests should normally use only public APIs and
-should be reserved for public-boundary behavior:
+Internal library crates should avoid crate-level Cargo integration tests.
+Prefer `src/tests.rs` and `src/tests/<topic>.rs` even when a test exercises
+many modules together; those still compile as one crate unit-test binary and
+can use internal APIs without widening production visibility.
+
+Use `crates/<crate>/tests/` only for tests that intentionally exercise an
+external boundary. These tests should normally use only public APIs and should
+be reserved for:
 
 - capability and visibility boundaries
 - CLI behavior
@@ -82,32 +87,25 @@ should be reserved for public-boundary behavior:
 - fixture and parity tests
 - compile-fail UI tests
 
-Avoid using crate-level integration tests for white-box implementation details.
-If a test needs private access, it belongs under `src`.
+Avoid using crate-level integration tests for white-box implementation details
+or internal-library regression suites. If a test needs private access, or if it
+is validating an internal crate's implementation rather than an external
+contract, it belongs under `src`.
 
 ## 5. Large Integration Suites
 
 Cargo compiles each top-level file under `tests/` as a separate test crate.
-For large suites, avoid creating many top-level integration test binaries.
-Prefer one test binary with submodules:
+Any crate that keeps integration tests should have at most one top-level Cargo
+integration test binary unless there is a measured reason to split it. Prefer
+one test binary with submodules:
 
 ```text
-crates/foo/tests/parity.rs
-crates/foo/tests/parity/
+crates/foo/tests/it.rs
+crates/foo/tests/it/
+  parity.rs
   cases.rs
   support.rs
 ```
-
-or:
-
-```text
-crates/foo/tests/parity/
-  main.rs
-  cases.rs
-  support.rs
-```
-
-using an explicit `[[test]]` entry in `Cargo.toml` when needed.
 
 This improves compile time, simplifies shared helpers, and keeps test output
 easier to scan.

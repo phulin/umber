@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate as tex_fonts;
 use anyhow::{Context, Result, bail};
 use refexec::RefTftopl;
 use test_support::pl::{
