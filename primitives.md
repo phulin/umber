@@ -22,18 +22,18 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [ ] `\lastbox` - Removes and returns the last box from the current list when allowed.
 - [ ] `\leaders` - Repeats a box or rule across glue.
 - [x] `\overfullrule` - Width of the diagnostic rule added to overfull boxes. Implemented as an assignable dimension parameter read by `tex-typeset`; diagnostic rule insertion remains tied to future box primitive emission.
-- [ ] `\prevdepth` - Depth of the previous box on the current vertical list.
-- [ ] `\setbox` - Assigns a box register from an `\hbox`, `\vbox`, or `\vtop`.
-- [ ] `\unhbox` - Unpacks an hbox register into the current list and clears it.
+- [x] `\prevdepth` - Depth of the previous box on the current vertical list. Implemented as a per-mode-list field; `\nointerlineskip` sets TeX's ignore sentinel.
+- [x] `\setbox` - Assigns a box register from an `\hbox`, `\vbox`, or `\vtop`.
+- [x] `\unhbox` - Unpacks an hbox register into the current list and clears it.
 - [ ] `\unhcopy` - Unpacks a copy of an hbox register into the current list.
-- [ ] `\unvbox` - Unpacks a vbox register into the current list and clears it.
+- [x] `\unvbox` - Unpacks a vbox register into the current list and clears it; vertical children are appended through the shared interline-glue path.
 - [ ] `\unvcopy` - Unpacks a copy of a vbox register into the current list.
 - [x] `\vbadness` - Threshold above which underfull or loose vboxes are reported. Implemented as an assignable integer parameter consumed by `tex-typeset` vertical packing diagnostics.
-- [ ] `\vbox` - Builds a vertical box with normal baseline positioning.
+- [x] `\vbox` - Builds a vertical box with normal baseline positioning.
 - [x] `\vfuzz` - Tolerance before overfull vboxes are reported. Implemented as an assignable dimension parameter consumed by `tex-typeset` vertical packing diagnostics.
 - [x] `\vrule` - Adds a vertical rule in horizontal mode.
-- [ ] `\vtop` - Builds a vertical box aligned by its first item.
-- [ ] `\wd` - Reads or assigns the width of a box register.
+- [x] `\vtop` - Builds a vertical box aligned by its first item.
+- [x] `\wd` - Reads or assigns the width of a box register.
 - [ ] `\xleaders` - Builds expanded leaders across glue.
 
 ## Characters And Case
@@ -68,7 +68,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [ ] `\pausing` - Prompts after input lines when positive.
 - [ ] `\scrollmode` - Scrolls past errors while still showing diagnostics.
 - [x] `\show` - Displays the meaning of the next token through World's terminal/log effect sink for implemented meaning classes.
-- [ ] `\showbox` - Writes a box register's contents to the log.
+- [x] `\showbox` - Writes a box register's contents to the log.
 - [x] `\showboxbreadth` - Maximum number of list items shown per level. Implemented as an assignable integer parameter; the `\showbox` emitter is tracked separately.
 - [x] `\showboxdepth` - Maximum nesting depth shown for box diagnostics. Implemented as an assignable integer parameter; the `\showbox` emitter is tracked separately.
 - [x] `\showlists` - Writes the current mostly-empty mode nest in pdfTeX format through World's terminal/log effect sink.
@@ -119,7 +119,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [ ] `\vfil` - Inserts first-order infinitely stretchable vertical glue.
 - [ ] `\vfill` - Inserts second-order infinitely stretchable vertical glue.
 - [ ] `\vfilneg` - Inserts negative first-order vertical stretch.
-- [ ] `\vskip` - Inserts vertical glue.
+- [x] `\vskip` - Inserts vertical glue.
 - [ ] `\vss` - Inserts vertical glue with infinite stretch and shrink.
 
 ## Hyphenation And Languages
@@ -165,10 +165,10 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 
 - [x] `\kern` - Adds an explicit kern to the current list.
 - [ ] `\lastkern` - Reports the last kern on the current list, or zero.
-- [ ] `\lower` - Lowers a box in horizontal or math mode.
-- [ ] `\moveleft` - Moves a box left in vertical mode.
-- [ ] `\moveright` - Moves a box right in vertical mode.
-- [ ] `\raise` - Raises a box in horizontal or math mode.
+- [x] `\lower` - Lowers a box in horizontal or math mode.
+- [x] `\moveleft` - Moves a box left in vertical mode.
+- [x] `\moveright` - Moves a box right in vertical mode.
+- [x] `\raise` - Raises a box in horizontal or math mode.
 - [ ] `\unkern` - Removes the last kern from the current list when allowed.
 
 ## Conditionals
@@ -316,30 +316,30 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 ## Paragraphs And Line Breaking
 
 - [ ] `\adjdemerits` - Demerits for adjacent visually incompatible lines.
-- [ ] `\baselineskip` - Preferred glue between adjacent baselines.
+- [x] `\baselineskip` - Preferred glue between adjacent baselines; consumed by the shared vertical append routine.
 - [ ] `\doublehyphendemerits` - Demerits for consecutive hyphenated lines.
 - [ ] `\emergencystretch` - Extra stretch used during emergency line-breaking pass.
-- [x] `\everypar` - Token list inserted at the start of each paragraph; implemented as an assignable token parameter, with paragraph consumption pending.
+- [x] `\everypar` - Token list inserted at the start of each paragraph and replayed through the input stack.
 - [ ] `\finalhyphendemerits` - Demerits when the penultimate line is hyphenated.
-- [ ] `\hangafter` - Line number where hanging indentation changes.
-- [ ] `\hangindent` - Hanging indentation amount for paragraphs.
+- [x] `\hangafter` - Line number where hanging indentation changes. Captured at `\par` and reset after paragraph completion.
+- [x] `\hangindent` - Hanging indentation amount for paragraphs. Captured at `\par` and reset after paragraph completion.
 - [ ] `\hsize` - Line width for normal paragraph building.
 - [x] `\ignorespaces` - Skips following space tokens and replays the first nonspace token.
-- [ ] `\indent` - Starts an indented paragraph.
-- [ ] `\leftskip` - Glue added to the left of every line.
-- [ ] `\lineskip` - Fallback interline glue when baseline glue would be too small.
-- [ ] `\lineskiplimit` - Threshold for using `\lineskip` instead of `\baselineskip`.
-- [ ] `\looseness` - Requests more or fewer lines than the optimal paragraph.
+- [x] `\indent` - Starts an indented paragraph.
+- [x] `\leftskip` - Glue added to the left of every line; captured for the paragraph handoff.
+- [x] `\lineskip` - Fallback interline glue when baseline glue would be too small; consumed by the shared vertical append routine.
+- [x] `\lineskiplimit` - Threshold for using `\lineskip` instead of `\baselineskip`.
+- [x] `\looseness` - Requests more or fewer lines than the optimal paragraph; captured for the paragraph handoff.
 - [x] `\noboundary` - Suppresses ligature and kern boundary processing.
-- [ ] `\noindent` - Starts an unindented paragraph.
-- [ ] `\par` - Ends the current paragraph.
-- [ ] `\parfillskip` - Glue appended to the final line of a paragraph.
-- [ ] `\parindent` - Width of paragraph indentation.
-- [ ] `\parshape` - Defines per-line indentation and width.
-- [x] `\parskip` - Glue inserted between paragraphs; implemented as an assignable glue parameter, with paragraph consumption pending.
+- [x] `\noindent` - Starts an unindented paragraph.
+- [x] `\par` - Ends the current paragraph and hands a prepared hlist to the paragraph kernel stub; full Knuth-Plass breaking remains tracked separately.
+- [x] `\parfillskip` - Glue appended to the final line of a paragraph before the paragraph handoff.
+- [x] `\parindent` - Width of paragraph indentation.
+- [x] `\parshape` - Defines per-line indentation and width; stored per nest level and captured at `\par`.
+- [x] `\parskip` - Glue inserted by the enclosing vertical list before a paragraph starts.
 - [ ] `\pretolerance` - Badness threshold for the no-hyphenation line-breaking pass.
 - [ ] `\prevgraf` - Number of lines in the most recent paragraph contribution.
-- [ ] `\rightskip` - Glue added to the right of every line.
+- [x] `\rightskip` - Glue added to the right of every line; captured for the paragraph handoff.
 - [x] `\spacefactor` - Current space factor used for interword spacing.
 - [x] `\spaceskip` - Explicit interword glue override.
 - [x] `\tolerance` - Badness threshold for line breaking with hyphenation; implemented as an assignable integer parameter, with paragraph consumption pending.

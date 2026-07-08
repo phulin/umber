@@ -351,22 +351,31 @@ assignments, box building, and dispatch into the typesetting kernels.
   discretionaries, accents, and italic corrections. Paragraph breaking,
   automatic hyphenation, and page contribution remain later hand-offs.
   Vertical list construction tracks TeX's `prev_depth` on each mode-list
-  level. Appending a box or rule to a vertical/internal-vertical list inserts
-  the implicit adjusted `\baselineskip` glue, or `\lineskip` when the adjusted
-  baseline glue is below `\lineskiplimit`, before freezing and packing the
-  list. This keeps baseline/interline side effects in the stomach boundary;
-  `tex-typeset` receives explicit glue nodes and remains a pure measurement
-  and packing kernel.
+  level. A single shared append routine handles every box or rule appended to
+  vertical/internal-vertical lists, including explicit box appends, unboxed
+  vlist children, and paragraph lines. It inserts the implicit adjusted
+  `\baselineskip` glue, or `\lineskip` when the adjusted baseline glue is
+  below `\lineskiplimit`, unless `prev_depth` is TeX's ignore sentinel. This
+  keeps baseline/interline side effects in the stomach boundary; `tex-typeset`
+  receives explicit glue nodes and remains a pure measurement and packing
+  kernel.
 - **List diagnostics**: `\showbox` routes through `World` terminal/log
   effects and uses the shared node-list dump emitter in `tex-exec`. The
   emitter walks frozen node lists through `Universe`, honors
   `\showboxbreadth` and `\showboxdepth`, and is intentionally reusable by
   future `\showlists` and `\tracingoutput` diagnostics rather than tied to
   `\showbox` scanning.
-- **Paragraph and page hand-off**: when horizontal material ends (`\par`),
-  the stomach hands the current list to the paragraph kernel and appends
-  the resulting vertical material; the page builder (§8) observes appends
-  to the main vertical list.
+- **Paragraph and page hand-off**: paragraph start/end is stomach-owned.
+  `\indent`, `\noindent`, implicit start from vertical-mode character
+  material, `\parskip`, and `\everypar` replay are handled before entering
+  unrestricted horizontal mode. When horizontal material ends (`\par` or
+  `\endgraf`), the stomach performs TeX's final paragraph-list preparation
+  (trailing-glue removal and `\penalty10000` plus `\parfillskip`), snapshots
+  paragraph-shape parameters, and hands the frozen hlist to the paragraph
+  kernel. Until the Knuth-Plass issue lands, the handoff packs the prepared
+  paragraph as one hlist line and appends it through the shared vertical
+  append routine; the page builder (§8) observes appends to the main vertical
+  list.
 - The stomach is the *only* pipeline stage holding `&mut Universe`, and it
   holds it as a plain argument — re-entrancy (e.g. `\output` routines,
   `\vsplit`-triggered mark extraction) is recursion in Rust, with the mode

@@ -3,7 +3,8 @@ use crate::executor::NoopExecHooks;
 use std::collections::HashMap;
 use tex_expand::{EngineMode, ExpansionHooks, NoopRecorder};
 use tex_lex::{InputStack, MemoryInput};
-use tex_state::env::banks::IntParam;
+use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
+use tex_state::glue::GlueSpec;
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
 use tex_state::token::{Catcode, Token};
 use tex_state::{EffectRecord, PrintSink};
@@ -394,6 +395,88 @@ fn box_dimension_writes_are_readable_by_the() {
         })
         .collect();
     assert_eq!(rendered, "12.0pt");
+}
+
+#[test]
+fn everypar_replays_through_input_stack_and_mutates_state() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let global = stores.intern("global");
+    let count = stores.intern("count");
+    let everypar = stores.intern_token_list(&[
+        Token::Cs(global),
+        Token::Cs(count),
+        Token::Char {
+            ch: '0',
+            cat: Catcode::Other,
+        },
+        Token::Char {
+            ch: '=',
+            cat: Catcode::Other,
+        },
+        Token::Char {
+            ch: '7',
+            cat: Catcode::Other,
+        },
+    ]);
+    stores.set_tok_param(TokParam::EVERY_PAR, everypar);
+    let mut input = InputStack::new(MemoryInput::new("x\\par"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("paragraph executes");
+
+    assert_eq!(stores.count(0), 7);
+}
+
+#[test]
+fn paragraph_end_appends_single_line_through_vertical_spacing() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    stores.set_dimen_param(
+        DimenParam::PAR_INDENT,
+        tex_state::scaled::Scaled::from_raw(0),
+    );
+    let baseline = stores.intern_glue(GlueSpec {
+        width: tex_state::scaled::Scaled::from_raw(12 * 65_536),
+        ..GlueSpec::ZERO
+    });
+    stores.set_glue_param(GlueParam::BASELINE_SKIP, baseline);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\setbox0=\\hbox{}\\ht0=4pt\\dp0=1pt\\copy0\\par\\copy0",
+    ));
+    let mut executor = Executor::new();
+
+    executor
+        .run(&mut input, &mut stores)
+        .expect("paragraph and box execute");
+
+    let nodes = executor.nest().current_list().nodes();
+    assert!(nodes.iter().any(|node| matches!(
+        node,
+        tex_state::node::Node::Glue {
+            kind: tex_state::node::GlueKind::BaselineSkip,
+            ..
+        }
+    )));
+}
+
+#[test]
+fn parshape_and_hanging_parameters_reset_after_paragraph() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\parshape=1 3pt 40pt\\hangindent=5pt\\hangafter=2 x\\par",
+    ));
+    let mut executor = Executor::new();
+
+    executor
+        .run(&mut input, &mut stores)
+        .expect("paragraph executes");
+
+    assert_eq!(stores.dimen_param(DimenParam::HANG_INDENT).raw(), 0);
+    assert_eq!(stores.int_param(IntParam::HANG_AFTER), 1);
+    assert!(executor.nest().current_list().par_shape().is_none());
 }
 
 #[test]

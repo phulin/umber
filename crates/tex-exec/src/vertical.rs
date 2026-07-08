@@ -1,0 +1,74 @@
+use tex_state::Universe;
+use tex_state::env::banks::{DimenParam, GlueParam};
+use tex_state::glue::GlueSpec;
+use tex_state::node::{GlueKind, Node};
+use tex_state::scaled::Scaled;
+
+use crate::mode::IGNORE_DEPTH;
+use crate::{ExecError, Mode, ModeNest, assignments};
+
+pub(crate) fn append_node_to_current_list(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    node: Node,
+) -> Result<(), ExecError> {
+    assignments::flush_pending_hchars(nest, stores)?;
+    if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
+        append_node_to_vertical_list(nest, stores, node)
+    } else {
+        nest.current_list_mut().push(node);
+        Ok(())
+    }
+}
+
+pub(crate) fn append_node_to_vertical_list(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    node: Node,
+) -> Result<(), ExecError> {
+    let Some((height, depth)) = vertical_baseline_dimensions(&node) else {
+        nest.current_list_mut().push(node);
+        return Ok(());
+    };
+    if let Some(prev_depth) = nest.current_list().prev_depth()
+        && prev_depth.raw() > IGNORE_DEPTH.raw()
+    {
+        let baseline = stores.glue(stores.glue_param(GlueParam::BASELINE_SKIP));
+        let requested = baseline
+            .width
+            .checked_sub(prev_depth)
+            .and_then(|value| value.checked_sub(height))
+            .ok_or(ExecError::ArithmeticOverflow)?;
+        let (spec, kind) =
+            if requested.raw() < stores.dimen_param(DimenParam::LINE_SKIP_LIMIT).raw() {
+                (stores.glue_param(GlueParam::LINE_SKIP), GlueKind::LineSkip)
+            } else {
+                (
+                    stores.intern_glue(GlueSpec {
+                        width: requested,
+                        stretch: baseline.stretch,
+                        stretch_order: baseline.stretch_order,
+                        shrink: baseline.shrink,
+                        shrink_order: baseline.shrink_order,
+                    }),
+                    GlueKind::BaselineSkip,
+                )
+            };
+        nest.current_list_mut().push(Node::Glue { spec, kind });
+    }
+    let list = nest.current_list_mut();
+    list.push(node);
+    list.set_prev_depth(depth);
+    Ok(())
+}
+
+fn vertical_baseline_dimensions(node: &Node) -> Option<(Scaled, Scaled)> {
+    match node {
+        Node::HList(box_node) | Node::VList(box_node) => Some((box_node.height, box_node.depth)),
+        Node::Rule { height, depth, .. } => Some((
+            height.unwrap_or(Scaled::from_raw(0)),
+            depth.unwrap_or(Scaled::from_raw(0)),
+        )),
+        _ => None,
+    }
+}

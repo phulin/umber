@@ -101,9 +101,18 @@ impl IntParam {
 
     /// TeX's `\vbadness` integer parameter.
     pub const VBADNESS: Self = Self::new(27);
+
+    /// TeX's `\looseness` paragraph-breaking parameter.
+    pub const LOOSENESS: Self = Self::new(19);
+
+    /// TeX's `\hangafter` paragraph-shape parameter.
+    pub const HANG_AFTER: Self = Self::new(57);
 }
 
 impl DimenParam {
+    /// TeX's `\parindent` dimension parameter.
+    pub const PAR_INDENT: Self = Self::new(0);
+
     /// TeX's `\lineskiplimit` dimension parameter.
     pub const LINE_SKIP_LIMIT: Self = Self::new(2);
 
@@ -118,6 +127,9 @@ impl DimenParam {
 
     /// TeX's `\overfullrule` dimension parameter.
     pub const OVERFULL_RULE: Self = Self::new(16);
+
+    /// TeX's `\hangindent` paragraph-shape parameter.
+    pub const HANG_INDENT: Self = Self::new(17);
 }
 
 impl GlueParam {
@@ -132,6 +144,23 @@ impl GlueParam {
 
     /// TeX's `\xspaceskip` glue parameter.
     pub const XSPACE_SKIP: Self = Self::new(13);
+
+    /// TeX's `\parskip` glue parameter.
+    pub const PAR_SKIP: Self = Self::new(2);
+
+    /// TeX's `\leftskip` glue parameter.
+    pub const LEFT_SKIP: Self = Self::new(7);
+
+    /// TeX's `\rightskip` glue parameter.
+    pub const RIGHT_SKIP: Self = Self::new(8);
+
+    /// TeX's `\parfillskip` glue parameter.
+    pub const PAR_FILL_SKIP: Self = Self::new(14);
+}
+
+impl TokParam {
+    /// TeX's `\everypar` token-list parameter.
+    pub const EVERY_PAR: Self = Self::new(1);
 }
 
 pub(crate) trait BankCodec {

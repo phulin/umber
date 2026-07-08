@@ -9,6 +9,7 @@ use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
 use tex_state::{PrintSink, Universe};
 
+use super::paragraph::ensure_horizontal_for_character;
 use super::*;
 use crate::{ExecError, Mode, ModeNest};
 
@@ -30,18 +31,22 @@ pub(crate) fn try_append_character(
     }
 }
 
-pub(crate) fn append_given_char(
+pub(crate) fn append_given_char<S>(
     nest: &mut ModeNest,
+    input: &mut InputStack<S>,
     stores: &mut Universe,
     ch: char,
-) -> Result<(), ExecError> {
+) -> Result<(), ExecError>
+where
+    S: InputSource,
+{
     match nest.current_mode() {
         Mode::RestrictedHorizontal | Mode::Horizontal => {
             append_hchar(nest, stores, ch);
             Ok(())
         }
         Mode::Vertical | Mode::InternalVertical => {
-            nest.push(Mode::Horizontal);
+            ensure_horizontal_for_character(nest, input, stores)?;
             append_hchar(nest, stores, ch);
             Ok(())
         }
@@ -89,7 +94,7 @@ where
                 context: "\\char",
                 value,
             })?;
-            append_given_char(nest, stores, ch)?;
+            append_given_char(nest, input, stores, ch)?;
         }
         UnexpandablePrimitive::HFil
         | UnexpandablePrimitive::HFill

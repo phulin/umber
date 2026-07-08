@@ -13,6 +13,7 @@ mod error;
 mod executor;
 mod mode;
 mod node_dump;
+mod vertical;
 
 pub use assignments::{install_unexpandable_primitives, try_execute_assignment};
 pub use dispatch::{DispatchAction, ExecutionStats, dispatch_delivered_token};

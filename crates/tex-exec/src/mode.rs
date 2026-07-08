@@ -1,5 +1,6 @@
 use tex_expand::EngineMode;
 use tex_state::ids::FontId;
+use tex_state::ids::GlueId;
 use tex_state::node::Node;
 use tex_state::scaled::Scaled;
 
@@ -7,6 +8,40 @@ use crate::ExecError;
 
 /// TeX's sentinel depth used before any vertical-list box has established a baseline.
 pub const IGNORE_DEPTH: Scaled = Scaled::from_raw(-65_536_000);
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ParagraphShape {
+    lines: Vec<ParagraphShapeLine>,
+}
+
+impl ParagraphShape {
+    #[must_use]
+    pub fn new(lines: Vec<ParagraphShapeLine>) -> Self {
+        Self { lines }
+    }
+
+    #[must_use]
+    pub fn lines(&self) -> &[ParagraphShapeLine] {
+        &self.lines
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ParagraphShapeLine {
+    pub indent: Scaled,
+    pub width: Scaled,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ParagraphParams {
+    pub left_skip: GlueId,
+    pub right_skip: GlueId,
+    pub par_fill_skip: GlueId,
+    pub par_shape: Option<ParagraphShape>,
+    pub hang_indent: Scaled,
+    pub hang_after: i32,
+    pub looseness: i32,
+}
 
 /// One of TeX's six semantic modes.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -45,6 +80,7 @@ impl Mode {
 pub struct ModeList {
     nodes: Vec<Node>,
     prev_depth: Option<Scaled>,
+    par_shape: Option<ParagraphShape>,
     pending_hchars: Vec<PendingHChar>,
     space_factor: i32,
     no_boundary: bool,
@@ -108,12 +144,29 @@ impl ModeList {
         self.prev_depth = Some(depth);
     }
 
+    pub fn set_par_shape(&mut self, shape: ParagraphShape) {
+        self.par_shape = Some(shape);
+    }
+
+    #[must_use]
+    pub fn par_shape(&self) -> Option<&ParagraphShape> {
+        self.par_shape.as_ref()
+    }
+
+    pub fn reset_par_shape(&mut self) {
+        self.par_shape = None;
+    }
+
     pub fn pop_box(&mut self) -> Option<Node> {
         let pos = self
             .nodes
             .iter()
             .rposition(|node| matches!(node, Node::HList(_) | Node::VList(_)))?;
         Some(self.nodes.remove(pos))
+    }
+
+    pub fn pop_last_node(&mut self) -> Option<Node> {
+        self.nodes.pop()
     }
 }
 

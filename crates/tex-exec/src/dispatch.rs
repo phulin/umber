@@ -57,10 +57,14 @@ where
             }
             return Ok(DispatchAction::Continue);
         }
-        Token::Char { .. } | Token::Param(_) => {
+        Token::Char { ch, .. } => {
             if assignments::try_append_character(nest, token, stores)? {
                 return Ok(DispatchAction::Continue);
             }
+            assignments::append_given_char(nest, input, stores, ch)?;
+            return Ok(DispatchAction::Continue);
+        }
+        Token::Param(_) => {
             return Ok(DispatchAction::NotConsumed);
         }
     };
@@ -71,7 +75,7 @@ where
             name: stores.resolve_cs_name(token),
         }),
         Meaning::CharGiven(ch) => {
-            assignments::append_given_char(nest, stores, ch)?;
+            assignments::append_given_char(nest, input, stores, ch)?;
             Ok(DispatchAction::Continue)
         }
         Meaning::Macro { .. } => Err(ExecError::UnexpectedMacroDelivery {

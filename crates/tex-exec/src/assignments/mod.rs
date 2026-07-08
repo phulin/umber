@@ -25,6 +25,7 @@ mod boxes;
 mod fonts;
 mod hmode;
 mod macros;
+mod paragraph;
 mod primitives;
 mod scanning;
 mod tokens;
@@ -36,6 +37,7 @@ use fonts::*;
 use hmode::*;
 pub(crate) use hmode::{append_given_char, flush_pending_hchars, try_append_character};
 use macros::*;
+use paragraph::*;
 pub use primitives::install_unexpandable_primitives;
 use scanning::*;
 use tokens::*;
@@ -275,6 +277,18 @@ where
                 let target = scan_font_variable_target(primitive, input, stores, hooks)?;
                 execute_assignment_to_target(target, prefixes, input, stores, hooks)?;
                 Ok(true)
+            }
+            UnexpandablePrimitive::Par
+            | UnexpandablePrimitive::EndGraf
+            | UnexpandablePrimitive::Indent
+            | UnexpandablePrimitive::NoIndent
+            | UnexpandablePrimitive::ParShape
+            | UnexpandablePrimitive::PrevDepth
+            | UnexpandablePrimitive::NoInterlineSkip => {
+                reject_all_prefixes(prefixes)?;
+                execute_paragraph_command(primitive, nest, input, stores, hooks)?;
+                Ok(primitive == UnexpandablePrimitive::ParShape
+                    || primitive == UnexpandablePrimitive::PrevDepth)
             }
             UnexpandablePrimitive::HBox
             | UnexpandablePrimitive::VBox
