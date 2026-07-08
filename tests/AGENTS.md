@@ -44,6 +44,18 @@ Keep `cargo test --workspace --tests` fast. Long or full-corpus parity runs
 must stay out of cargo tests; the Conformance epic will own those runs in
 `scripts/parity.sh`.
 
+Font metric parity tests use an optional local TFM corpus under
+`third_party/fonts/`, which is gitignored. Populate it from an ambient TeX
+installation with:
+
+```bash
+scripts/fetch-font-corpus.sh
+```
+
+When those files are absent, the `tftopl` corpus cross-check prints a clear
+skip message and returns success so the fast suite still runs on machines
+without TeX fonts.
+
 ## Proptest Budgets
 
 Replay-identity proptests use `PROPTEST_CASES` for their case budget. Leave

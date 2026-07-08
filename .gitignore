@@ -3,6 +3,7 @@ target/
 
 /third_party/reference/
 /third_party/downloads/
+/third_party/fonts/
 
 .codex
 .claude

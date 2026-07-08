@@ -15,6 +15,11 @@ mod imp {
         executable: PathBuf,
     }
 
+    #[derive(Debug, Clone)]
+    pub struct RefTftopl {
+        executable: PathBuf,
+    }
+
     #[derive(Debug, Clone, Default)]
     pub struct RunOpts {
         pub dvi: bool,
@@ -116,6 +121,49 @@ mod imp {
         }
     }
 
+    impl RefTftopl {
+        pub fn locate() -> Result<Self> {
+            if let Some(path) = env::var_os("UMBER_REF_TFTOPL").filter(|value| !value.is_empty()) {
+                return Ok(Self {
+                    executable: PathBuf::from(path),
+                });
+            }
+
+            if let Some(path) = find_on_path("tftopl") {
+                return Ok(Self { executable: path });
+            }
+
+            Err(anyhow!(
+                "could not locate reference tftopl: set UMBER_REF_TFTOPL or make tftopl available on PATH"
+            ))
+        }
+
+        pub fn to_pl(&self, tfm_file: &Path) -> Result<String> {
+            let output = Command::new(&self.executable)
+                .arg("-charcode-format=octal")
+                .arg(tfm_file)
+                .output()
+                .with_context(|| {
+                    format!(
+                        "failed to execute reference tftopl {}",
+                        self.executable.display()
+                    )
+                })?;
+
+            if !output.status.success() {
+                return Err(anyhow!(
+                    "reference tftopl failed for {} with status {}\nstdout:\n{}\nstderr:\n{}",
+                    tfm_file.display(),
+                    output.status,
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
+
+            Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        }
+    }
+
     fn file_name(path: &Path) -> Result<&std::ffi::OsStr> {
         path.file_name()
             .ok_or_else(|| anyhow!("path has no file name: {}", path.display()))
@@ -145,4 +193,4 @@ mod imp {
     }
 }
 
-pub use imp::{RefTex, RunOpts, RunOutput};
+pub use imp::{RefTex, RefTftopl, RunOpts, RunOutput};

@@ -706,6 +706,10 @@ dependencies = [
 name = "tex-fonts"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "refexec",
+ "tempfile",
+ "test-support",
  "tex-state",
 ]
 

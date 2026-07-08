@@ -226,6 +226,459 @@ mod imp {
             normalized
         }
     }
+
+    pub mod pl {
+        use std::collections::BTreeMap;
+
+        use anyhow::{Context, Result, anyhow, bail};
+
+        #[derive(Clone, Debug, Eq, PartialEq)]
+        pub struct PlFont {
+            pub checksum: Option<u32>,
+            pub design_size: Option<PlNumber>,
+            pub parameters: Vec<PlParameter>,
+            pub boundary_char: Option<u8>,
+            pub lig_tables: Vec<PlLigTable>,
+            pub characters: BTreeMap<u8, PlCharacter>,
+        }
+
+        #[derive(Clone, Debug, Eq, PartialEq)]
+        pub struct PlNumber {
+            raw: String,
+        }
+
+        impl PlNumber {
+            #[must_use]
+            pub fn as_str(&self) -> &str {
+                &self.raw
+            }
+
+            pub fn to_fix_word_bytes(&self) -> Result<[u8; 4]> {
+                let raw = decimal_to_scaled_integer(&self.raw, 1 << 20)
+                    .with_context(|| format!("invalid PL fix_word number {}", self.raw))?;
+                let raw = i32::try_from(raw)
+                    .with_context(|| format!("PL fix_word {} is out of range", self.raw))?;
+                Ok(raw.to_be_bytes())
+            }
+
+            pub fn to_scaled_points(&self) -> Result<i32> {
+                let raw = decimal_to_scaled_integer(&self.raw, 65_536)
+                    .with_context(|| format!("invalid PL scaled-point number {}", self.raw))?;
+                i32::try_from(raw)
+                    .with_context(|| format!("PL scaled-point number {} is out of range", self.raw))
+            }
+        }
+
+        #[derive(Clone, Debug, Eq, PartialEq)]
+        pub struct PlParameter {
+            pub name: String,
+            pub value: PlNumber,
+        }
+
+        #[derive(Clone, Debug, Eq, PartialEq)]
+        pub struct PlLigTable {
+            pub labels: Vec<PlLigLabel>,
+            pub commands: Vec<PlLigCommand>,
+        }
+
+        #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+        pub enum PlLigLabel {
+            Character(u8),
+            Boundary,
+        }
+
+        #[derive(Clone, Debug, Eq, PartialEq)]
+        pub enum PlLigCommand {
+            Ligature(PlLigature),
+            Kern { right: u8, amount: PlNumber },
+        }
+
+        #[derive(Clone, Debug, Eq, PartialEq)]
+        pub struct PlLigature {
+            pub right: u8,
+            pub replacement: u8,
+            pub delete_current: bool,
+            pub delete_next: bool,
+            pub pass_over: u8,
+        }
+
+        #[derive(Clone, Debug, Eq, PartialEq)]
+        pub struct PlCharacter {
+            pub code: u8,
+            pub width: Option<PlNumber>,
+            pub height: Option<PlNumber>,
+            pub depth: Option<PlNumber>,
+            pub italic_correction: Option<PlNumber>,
+            pub next_larger: Option<u8>,
+            pub extensible_recipe: Option<PlExtensibleRecipe>,
+        }
+
+        #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+        pub struct PlExtensibleRecipe {
+            pub top: Option<u8>,
+            pub middle: Option<u8>,
+            pub bottom: Option<u8>,
+            pub repeated: u8,
+        }
+
+        pub fn parse_font(input: &str) -> Result<PlFont> {
+            let expressions = Parser::new(input).parse_all()?;
+            let mut font = PlFont {
+                checksum: None,
+                design_size: None,
+                parameters: Vec::new(),
+                boundary_char: None,
+                lig_tables: Vec::new(),
+                characters: BTreeMap::new(),
+            };
+
+            for expression in expressions {
+                let list = expression
+                    .as_list()
+                    .context("top-level PL entry must be a list")?;
+                let head = list_head(list)?;
+                match head {
+                    "CHECKSUM" => font.checksum = Some(parse_u32_octal(list)?),
+                    "DESIGNSIZE" => font.design_size = Some(parse_number(list)?),
+                    "FONTDIMEN" => font.parameters = parse_parameters(list)?,
+                    "BOUNDARYCHAR" => font.boundary_char = Some(parse_code_args(&list[1..])?),
+                    "LIGTABLE" => font.lig_tables = parse_lig_tables(list)?,
+                    "CHARACTER" => {
+                        let character = parse_character(list)?;
+                        font.characters.insert(character.code, character);
+                    }
+                    _ => {}
+                }
+            }
+
+            Ok(font)
+        }
+
+        fn parse_parameters(list: &[Expr]) -> Result<Vec<PlParameter>> {
+            list.iter()
+                .skip(1)
+                .filter_map(Expr::as_list)
+                .map(|entry| {
+                    Ok(PlParameter {
+                        name: list_head(entry)?.to_owned(),
+                        value: parse_number(entry)?,
+                    })
+                })
+                .collect()
+        }
+
+        fn parse_lig_tables(list: &[Expr]) -> Result<Vec<PlLigTable>> {
+            let mut tables = Vec::new();
+            let mut labels = Vec::new();
+            let mut commands = Vec::new();
+
+            for entry in list.iter().skip(1).filter_map(Expr::as_list) {
+                match list_head(entry)? {
+                    "LABEL" => labels.push((parse_label(entry)?, commands.len())),
+                    "STOP" => {
+                        if !labels.is_empty() {
+                            for (label, start) in std::mem::take(&mut labels) {
+                                tables.push(PlLigTable {
+                                    labels: vec![label],
+                                    commands: commands[start..].to_vec(),
+                                });
+                            }
+                            commands.clear();
+                        } else {
+                            commands.clear();
+                        }
+                    }
+                    "KRN" => commands.push(PlLigCommand::Kern {
+                        right: parse_code_args(&entry[1..3])?,
+                        amount: parse_number(entry)?,
+                    }),
+                    op if op.contains("LIG") => {
+                        commands.push(PlLigCommand::Ligature(parse_ligature(op, &entry[1..])?))
+                    }
+                    _ => {}
+                }
+            }
+
+            Ok(tables)
+        }
+
+        fn parse_character(list: &[Expr]) -> Result<PlCharacter> {
+            let code = parse_code_args(&list[1..3])?;
+            let mut character = PlCharacter {
+                code,
+                width: None,
+                height: None,
+                depth: None,
+                italic_correction: None,
+                next_larger: None,
+                extensible_recipe: None,
+            };
+
+            for entry in list.iter().skip(3).filter_map(Expr::as_list) {
+                match list_head(entry)? {
+                    "CHARWD" => character.width = Some(parse_number(entry)?),
+                    "CHARHT" => character.height = Some(parse_number(entry)?),
+                    "CHARDP" => character.depth = Some(parse_number(entry)?),
+                    "CHARIC" => character.italic_correction = Some(parse_number(entry)?),
+                    "NEXTLARGER" => character.next_larger = Some(parse_code_args(&entry[1..])?),
+                    "VARCHAR" => character.extensible_recipe = Some(parse_extensible(entry)?),
+                    _ => {}
+                }
+            }
+
+            Ok(character)
+        }
+
+        fn parse_extensible(list: &[Expr]) -> Result<PlExtensibleRecipe> {
+            let mut top = None;
+            let mut middle = None;
+            let mut bottom = None;
+            let mut repeated = None;
+
+            for entry in list.iter().skip(1).filter_map(Expr::as_list) {
+                match list_head(entry)? {
+                    "TOP" => top = Some(parse_code_args(&entry[1..])?),
+                    "MID" => middle = Some(parse_code_args(&entry[1..])?),
+                    "BOT" => bottom = Some(parse_code_args(&entry[1..])?),
+                    "REP" => repeated = Some(parse_code_args(&entry[1..])?),
+                    _ => {}
+                }
+            }
+
+            Ok(PlExtensibleRecipe {
+                top,
+                middle,
+                bottom,
+                repeated: repeated.context("VARCHAR is missing REP")?,
+            })
+        }
+
+        fn parse_label(list: &[Expr]) -> Result<PlLigLabel> {
+            if list.len() == 2 && list[1].atom() == Some("BOUNDARYCHAR") {
+                return Ok(PlLigLabel::Boundary);
+            }
+            Ok(PlLigLabel::Character(parse_code_args(&list[1..])?))
+        }
+
+        fn parse_ligature(op: &str, args: &[Expr]) -> Result<PlLigature> {
+            Ok(PlLigature {
+                right: parse_code_args(&args[..2])?,
+                replacement: parse_code_args(&args[2..4])?,
+                delete_current: !op.starts_with('/'),
+                delete_next: !op.strip_suffix('>').unwrap_or(op).ends_with('/'),
+                pass_over: u8::try_from(op.chars().filter(|&ch| ch == '>').count())
+                    .context("too many ligature pass-over markers")?,
+            })
+        }
+
+        fn parse_u32_octal(list: &[Expr]) -> Result<u32> {
+            let [_, kind, value] = list else {
+                bail!("CHECKSUM entry must have exactly three fields");
+            };
+            if kind.atom() != Some("O") {
+                bail!("CHECKSUM must use octal form");
+            }
+            u32::from_str_radix(value.atom().context("CHECKSUM value must be an atom")?, 8)
+                .context("invalid octal CHECKSUM")
+        }
+
+        fn parse_number(list: &[Expr]) -> Result<PlNumber> {
+            let position = list
+                .iter()
+                .position(|expr| expr.atom() == Some("R"))
+                .context("PL numeric entry must use R decimal form")?;
+            Ok(PlNumber {
+                raw: list
+                    .get(position + 1)
+                    .context("PL numeric entry is missing decimal value")?
+                    .atom()
+                    .context("PL numeric value must be an atom")?
+                    .to_owned(),
+            })
+        }
+
+        fn parse_code_args(args: &[Expr]) -> Result<u8> {
+            if args.len() < 2 {
+                bail!("PL character code is missing fields");
+            }
+            let kind = args[0]
+                .atom()
+                .context("PL character code kind must be an atom")?;
+            let value = args[1]
+                .atom()
+                .context("PL character code value must be an atom")?;
+            let code = match kind {
+                "O" => u16::from_str_radix(value, 8).context("invalid octal character code")?,
+                "D" => value
+                    .parse::<u16>()
+                    .context("invalid decimal character code")?,
+                "H" => u16::from_str_radix(value, 16).context("invalid hex character code")?,
+                "C" => {
+                    let bytes = value.as_bytes();
+                    if bytes.len() != 1 {
+                        bail!("C character code must be one byte");
+                    }
+                    u16::from(bytes[0])
+                }
+                _ => bail!("unsupported PL character code kind {kind}"),
+            };
+            u8::try_from(code).with_context(|| format!("PL character code {code} is out of range"))
+        }
+
+        fn list_head(list: &[Expr]) -> Result<&str> {
+            list.first()
+                .and_then(Expr::atom)
+                .ok_or_else(|| anyhow!("PL list is missing atom head"))
+        }
+
+        fn decimal_to_scaled_integer(decimal: &str, scale: i64) -> Result<i64> {
+            let (negative, rest) = match decimal.strip_prefix('-') {
+                Some(rest) => (true, rest),
+                None => (false, decimal),
+            };
+            let (whole, fraction) = rest.split_once('.').unwrap_or((rest, ""));
+            let whole = if whole.is_empty() {
+                0
+            } else {
+                whole
+                    .parse::<i64>()
+                    .context("invalid decimal integer part")?
+            };
+            let mut numerator = whole
+                .checked_mul(scale)
+                .context("decimal integer part overflows scaled value")?;
+            if !fraction.is_empty() {
+                let fraction_value = fraction
+                    .parse::<i64>()
+                    .context("invalid decimal fraction part")?;
+                let denominator = 10_i64
+                    .checked_pow(u32::try_from(fraction.len()).context("decimal is too long")?)
+                    .context("decimal denominator overflows")?;
+                let scaled_fraction = round_div(
+                    fraction_value
+                        .checked_mul(scale)
+                        .context("decimal fraction overflows scaled value")?,
+                    denominator,
+                );
+                numerator = numerator
+                    .checked_add(scaled_fraction)
+                    .context("decimal overflows scaled value")?;
+            }
+            Ok(if negative { -numerator } else { numerator })
+        }
+
+        fn round_div(numerator: i64, denominator: i64) -> i64 {
+            let quotient = numerator / denominator;
+            let remainder = numerator % denominator;
+            if remainder.saturating_mul(2) >= denominator {
+                quotient + 1
+            } else {
+                quotient
+            }
+        }
+
+        #[derive(Clone, Debug, Eq, PartialEq)]
+        enum Expr {
+            Atom(String),
+            List(Vec<Expr>),
+        }
+
+        impl Expr {
+            fn atom(&self) -> Option<&str> {
+                match self {
+                    Self::Atom(value) => Some(value),
+                    Self::List(_) => None,
+                }
+            }
+
+            fn as_list(&self) -> Option<&[Expr]> {
+                match self {
+                    Self::Atom(_) => None,
+                    Self::List(values) => Some(values),
+                }
+            }
+        }
+
+        struct Parser<'a> {
+            input: &'a str,
+            offset: usize,
+        }
+
+        impl<'a> Parser<'a> {
+            fn new(input: &'a str) -> Self {
+                Self { input, offset: 0 }
+            }
+
+            fn parse_all(mut self) -> Result<Vec<Expr>> {
+                let mut expressions = Vec::new();
+                while self.skip_ws() {
+                    expressions.push(self.parse_expr()?);
+                }
+                Ok(expressions)
+            }
+
+            fn parse_expr(&mut self) -> Result<Expr> {
+                match self.peek_char() {
+                    Some('(') => self.parse_list(),
+                    Some(')') => bail!("unexpected ')' in PL input"),
+                    Some(_) => Ok(Expr::Atom(self.parse_atom())),
+                    None => bail!("unexpected end of PL input"),
+                }
+            }
+
+            fn parse_list(&mut self) -> Result<Expr> {
+                self.expect_char('(')?;
+                let mut values = Vec::new();
+                loop {
+                    self.skip_ws();
+                    match self.peek_char() {
+                        Some(')') => {
+                            self.expect_char(')')?;
+                            return Ok(Expr::List(values));
+                        }
+                        Some(_) => values.push(self.parse_expr()?),
+                        None => bail!("unterminated PL list"),
+                    }
+                }
+            }
+
+            fn parse_atom(&mut self) -> String {
+                let start = self.offset;
+                while let Some(ch) = self.peek_char() {
+                    if ch.is_whitespace() || ch == '(' || ch == ')' {
+                        break;
+                    }
+                    self.offset += ch.len_utf8();
+                }
+                self.input[start..self.offset].to_owned()
+            }
+
+            fn skip_ws(&mut self) -> bool {
+                while let Some(ch) = self.peek_char() {
+                    if !ch.is_whitespace() {
+                        return true;
+                    }
+                    self.offset += ch.len_utf8();
+                }
+                false
+            }
+
+            fn expect_char(&mut self, expected: char) -> Result<()> {
+                match self.peek_char() {
+                    Some(ch) if ch == expected => {
+                        self.offset += ch.len_utf8();
+                        Ok(())
+                    }
+                    Some(ch) => bail!("expected '{expected}', found '{ch}'"),
+                    None => bail!("expected '{expected}', found end of input"),
+                }
+            }
+
+            fn peek_char(&self) -> Option<char> {
+                self.input[self.offset..].chars().next()
+            }
+        }
+    }
 }
 
-pub use imp::{assert_matches_fixture, corpus_root, normalize};
+pub use imp::{assert_matches_fixture, corpus_root, normalize, pl};
