@@ -83,7 +83,15 @@ impl Stores {
                 self.assert_live_child_node_list(*replace);
             }
             Node::Mark { tokens, .. } => self.assert_live_token_list(*tokens),
-            Node::Ins { content, .. } | Node::Adjust(content) => {
+            Node::Ins {
+                split_top_skip,
+                content,
+                ..
+            } => {
+                self.assert_live_glue(*split_top_skip);
+                self.assert_live_child_node_list(*content);
+            }
+            Node::Adjust(content) => {
                 self.assert_live_child_node_list(*content);
             }
             Node::Whatsit(crate::node::Whatsit::DeferredWrite { tokens, .. }) => {

@@ -429,7 +429,8 @@ where
             | UnexpandablePrimitive::SpaceFactor
             | UnexpandablePrimitive::Accent
             | UnexpandablePrimitive::Mark
-            | UnexpandablePrimitive::VAdjust => {
+            | UnexpandablePrimitive::VAdjust
+            | UnexpandablePrimitive::Insert => {
                 reject_all_prefixes(prefixes)?;
                 execute_hmode_material(primitive, nest, input, stores, hooks)?;
                 Ok(CommandOutcome::assigned_if(

@@ -26,7 +26,8 @@ use crate::meaning::Meaning;
 use crate::node::Node;
 use crate::node_arena::NodeListBuilder;
 use crate::page::{
-    PageBreak, PageBuilderState, PageContents, PageDimension, PageFireUp, PageInteger, PageMark,
+    PageBreak, PageBuilderState, PageContents, PageDimension, PageFireUp, PageInsertion,
+    PageInteger, PageMark,
 };
 use crate::scaled::Scaled;
 use crate::state_hash::{INITIAL_STATE_HASH, StateHasher, combine};
@@ -1158,6 +1159,20 @@ impl Universe {
         self.page.push_current_page(node);
     }
 
+    #[must_use]
+    pub fn page_insertions(&self) -> &[PageInsertion] {
+        self.page.page_insertions()
+    }
+
+    #[must_use]
+    pub fn page_insertion(&self, class: u16) -> Option<PageInsertion> {
+        self.page.page_insertion(class)
+    }
+
+    pub fn upsert_page_insertion(&mut self, insertion: PageInsertion) {
+        self.page.upsert_page_insertion(insertion);
+    }
+
     pub fn take_current_page_prefix(&mut self, split_index: usize) -> (Vec<Node>, Vec<Node>) {
         self.page.take_current_page_prefix(split_index)
     }
@@ -1236,8 +1251,19 @@ impl Universe {
                 post: self.clone_node_list_to_epoch(post),
                 replace: self.clone_node_list_to_epoch(replace),
             },
-            Node::Ins { class, content } => Node::Ins {
+            Node::Ins {
                 class,
+                size,
+                split_top_skip,
+                split_max_depth,
+                floating_penalty,
+                content,
+            } => Node::Ins {
+                class,
+                size,
+                split_top_skip,
+                split_max_depth,
+                floating_penalty,
                 content: self.clone_node_list_to_epoch(content),
             },
             Node::Adjust(content) => Node::Adjust(self.clone_node_list_to_epoch(content)),

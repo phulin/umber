@@ -498,6 +498,10 @@ fn shipout_lowers_supported_whatsit_adjacent_nodes_without_reordering_effects() 
         },
         tex_state::node::Node::Ins {
             class: 3,
+            size: Scaled::from_raw(0),
+            split_top_skip: stores.glue_param(GlueParam::SPLIT_TOP_SKIP),
+            split_max_depth: Scaled::MAX_DIMEN,
+            floating_penalty: 0,
             content: insert_content,
         },
         tex_state::node::Node::Adjust(adjust_content),

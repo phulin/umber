@@ -251,6 +251,12 @@ fn run_dvi_smoke_matches_pdftex_mark_output_headers() {
     assert_dvi_case_matches_pdftex("mark_output_headers");
 }
 
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn run_dvi_smoke_matches_pdftex_insert_split_footnote() {
+    assert_dvi_case_matches_pdftex("insert_split_footnote");
+}
+
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
 fn assert_dvi_case_matches_pdftex(case: &str) {
     let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");

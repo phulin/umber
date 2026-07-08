@@ -445,9 +445,20 @@ impl Stores {
                 hasher.u16(class);
                 self.hash_token_list_semantic(tokens, hasher);
             }
-            Node::Ins { class, content } => {
+            Node::Ins {
+                class,
+                size,
+                split_top_skip,
+                split_max_depth,
+                floating_penalty,
+                content,
+            } => {
                 hasher.tag(11);
                 hasher.u16(class);
+                hasher.i32(size.raw());
+                self.hash_glue_semantic(split_top_skip, hasher);
+                hasher.i32(split_max_depth.raw());
+                hasher.i32(floating_penalty);
                 stack.push(NodeFrame::List(content));
             }
             Node::Whatsit(whatsit) => self.hash_whatsit(whatsit, hasher),

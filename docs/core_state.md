@@ -64,7 +64,7 @@ supporting untracked mutation "for performance" anywhere, ever.
 | Hyphenation | language-0 Liang trie + exception map | pattern/exception loads through `Universe` | cloned in store snapshot (v1) |
 | Journal | undo records + group/checkpoint markers | append-only | position |
 | Effect log | deferred writes, aux/toc/idx, shell escape, PDF objects | append-only, committed at shipout | position + stream buffers |
-| Page builder | contribution list, current page, `page_so_far` dimensions, page integers, best break/fire-up records, five TeX82 mark token-list slots | mutation through `Universe` page facade | copied into snapshot tuple + semantic hash |
+| Page builder | contribution list, current page, `page_so_far` dimensions, page integers, ordered per-class insertion records, best break/fire-up records, five TeX82 mark token-list slots | mutation through `Universe` page facade | copied into snapshot tuple + semantic hash |
 | Misc scalars | RNG state, interaction mode, current epoch, prepared magnification, input-stack summary | barriered / snapshot-owned | copied into snapshot tuple |
 
 A **snapshot is a tuple of positions and roots** into these stores — a few

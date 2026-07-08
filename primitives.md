@@ -139,13 +139,13 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 
 ## Insertions And Splits
 
-- [ ] `\holdinginserts` - Keeps insertions on the page list during output routine processing when positive.
-- [ ] `\insert` - Adds material to an insertion class.
-- [ ] `\insertpenalties` - Reports penalties accumulated for split or held insertions.
+- [x] `\holdinginserts` - Keeps insertions on the page list during output routine processing when positive.
+- [x] `\insert` - Adds internal vertical material to an insertion class, capturing split parameters and participating in page-builder insertion splitting/distribution.
+- [x] `\insertpenalties` - Reports split/floating insertion penalties in mainline and held-over insertion count while an output routine is active.
 - [x] `\splitbotmark` - Documented stub until the page/split epic stores marks: expands to an empty token list.
 - [x] `\splitfirstmark` - Documented stub until the page/split epic stores marks: expands to an empty token list.
-- [ ] `\splitmaxdepth` - Maximum depth allowed in boxes produced by `\vsplit`.
-- [ ] `\splittopskip` - Top glue inserted in boxes produced by `\vsplit`.
+- [x] `\splitmaxdepth` - Maximum depth allowed in split boxes; assignable and captured by `\insert`, with the standalone `\vsplit` primitive still pending.
+- [x] `\splittopskip` - Top glue inserted in split boxes; assignable and captured by `\insert`, with the standalone `\vsplit` primitive still pending.
 - [ ] `\vsplit` - Splits vertical material from a box register to a target height.
 
 ## Job Control
@@ -352,7 +352,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [x] `\brokenpenalty` - Penalty after a hyphenated paragraph line; inserted by post-line-break surgery.
 - [x] `\clubpenalty` - Penalty after the first line of a paragraph; inserted by post-line-break surgery.
 - [ ] `\exhyphenpenalty` - Penalty for line breaks after explicit hyphens.
-- [ ] `\floatingpenalty` - Penalty for insertions split between pages.
+- [x] `\floatingpenalty` - Penalty for insertions floating after their class has split on the current page.
 - [ ] `\hyphenpenalty` - Penalty for line breaks at discretionary hyphens.
 - [x] `\interlinepenalty` - Penalty inserted between paragraph lines by post-line-break surgery.
 - [x] `\lastpenalty` - Reports the last penalty on the current list, or zero.

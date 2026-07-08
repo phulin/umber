@@ -46,6 +46,10 @@ pub enum Node {
     },
     Ins {
         class: u16,
+        size: Scaled,
+        split_top_skip: GlueId,
+        split_max_depth: Scaled,
+        floating_penalty: i32,
         content: NodeListId,
     },
     Whatsit(Whatsit),

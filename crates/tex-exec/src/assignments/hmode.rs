@@ -1,13 +1,14 @@
 use tex_expand::ExpansionHooks;
 use tex_fonts::{LigKernChar, LigKernCommand};
 use tex_lex::{InputSource, InputStack};
-use tex_state::env::banks::{GlueParam, IntParam};
+use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::node::{DiscKind, GlueKind, KernKind, Node};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
 use tex_state::{PrintSink, Universe};
+use tex_typeset::{INF_BAD, PackSpec, VpackParams, vpack};
 
 use super::paragraph::ensure_horizontal_for_character;
 use super::*;
@@ -178,8 +179,73 @@ where
             append_vertical_contribution(nest, stores, Node::Mark { class: 0, tokens });
         }
         UnexpandablePrimitive::VAdjust => execute_vadjust(nest, input, stores, hooks)?,
+        UnexpandablePrimitive::Insert => execute_insert(nest, input, stores, hooks)?,
         _ => unreachable!("caller restricts hmode material primitives"),
     }
+    Ok(())
+}
+
+fn execute_insert<S, H>(
+    nest: &mut ModeNest,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    hooks: &mut H,
+) -> Result<(), ExecError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    flush_pending_hchars(nest, stores)?;
+    let value = scan_i32(input, stores, hooks)?;
+    if !(0..=254).contains(&value) {
+        return Err(ExecError::InvalidCode {
+            context: "\\insert",
+            value,
+        });
+    }
+    let opener = next_non_space_x(input, stores, hooks)?.ok_or(ExecError::MissingToken {
+        context: "\\insert group",
+    })?;
+    if !is_begin_group(opener) {
+        return Err(ExecError::MissingToken {
+            context: "\\insert group",
+        });
+    }
+
+    let mut inner = ModeNest::new();
+    inner.push(Mode::InternalVertical);
+    scan_box_group(&mut inner, input, stores, hooks)?;
+    let level = inner.pop()?;
+    let content = stores.freeze_node_list(level.list().nodes());
+    let packed = vpack(
+        stores,
+        content,
+        PackSpec::Natural,
+        VpackParams {
+            vbadness: INF_BAD,
+            vfuzz: Scaled::MAX_DIMEN,
+            box_max_depth: Scaled::MAX_DIMEN,
+        },
+    );
+    let size = packed
+        .node
+        .height
+        .checked_add(packed.node.depth)
+        .ok_or(ExecError::ArithmeticOverflow)?;
+
+    append_vertical_contribution(
+        nest,
+        stores,
+        Node::Ins {
+            class: value as u16,
+            size,
+            split_top_skip: stores.glue_param(GlueParam::SPLIT_TOP_SKIP),
+            split_max_depth: stores.dimen_param(DimenParam::SPLIT_MAX_DEPTH),
+            floating_penalty: stores.int_param(IntParam::FLOATING_PENALTY),
+            content,
+        },
+    );
+    build_page_if_outer_vertical(nest, stores)?;
     Ok(())
 }
 

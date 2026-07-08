@@ -188,6 +188,76 @@ impl PageFireUp {
     }
 }
 
+/// Per-class insertion status while the current page is being built.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum PageInsertionStatus {
+    Inserting,
+    SplitUp {
+        broken_ins_index: usize,
+        broken_at: Option<usize>,
+    },
+}
+
+/// TeX.web page insertion record for one insertion class.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct PageInsertion {
+    class: u16,
+    status: PageInsertionStatus,
+    height: Scaled,
+    last_ins_index: Option<usize>,
+    best_ins_index: Option<usize>,
+}
+
+impl PageInsertion {
+    #[must_use]
+    pub const fn new(class: u16, height: Scaled) -> Self {
+        Self {
+            class,
+            status: PageInsertionStatus::Inserting,
+            height,
+            last_ins_index: None,
+            best_ins_index: None,
+        }
+    }
+
+    #[must_use]
+    pub const fn class(&self) -> u16 {
+        self.class
+    }
+
+    #[must_use]
+    pub const fn status(&self) -> PageInsertionStatus {
+        self.status
+    }
+
+    pub fn set_status(&mut self, status: PageInsertionStatus) {
+        self.status = status;
+    }
+
+    #[must_use]
+    pub const fn height(&self) -> Scaled {
+        self.height
+    }
+
+    pub fn set_height(&mut self, height: Scaled) {
+        self.height = height;
+    }
+
+    #[must_use]
+    pub const fn last_ins_index(&self) -> Option<usize> {
+        self.last_ins_index
+    }
+
+    pub fn set_last_ins_index(&mut self, index: Option<usize>) {
+        self.last_ins_index = index;
+    }
+
+    #[must_use]
+    pub const fn best_ins_index(&self) -> Option<usize> {
+        self.best_ins_index
+    }
+}
+
 /// Snapshot-owned state for TeX.web's page builder.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct PageBuilderState {
@@ -212,6 +282,7 @@ pub(crate) struct PageBuilderState {
     best_page_break: Option<PageBreak>,
     best_size: Scaled,
     fire_up: Option<PageFireUp>,
+    insertions: Vec<PageInsertion>,
     top_mark: TokenListId,
     first_mark: TokenListId,
     bot_mark: TokenListId,
@@ -243,6 +314,7 @@ impl Default for PageBuilderState {
             best_page_break: None,
             best_size: Scaled::from_raw(0),
             fire_up: None,
+            insertions: Vec::new(),
             top_mark: TokenListId::EMPTY,
             first_mark: TokenListId::EMPTY,
             bot_mark: TokenListId::EMPTY,
@@ -342,6 +414,7 @@ impl PageBuilderState {
         self.least_page_cost = AWFUL_BAD;
         self.best_page_break = None;
         self.best_size = Scaled::from_raw(0);
+        self.insertions.clear();
     }
 
     pub(crate) fn start_new_page(&mut self) {
@@ -364,6 +437,7 @@ impl PageBuilderState {
         self.best_page_break = None;
         self.best_size = Scaled::from_raw(0);
         self.fire_up = None;
+        self.insertions.clear();
     }
 
     pub(crate) const fn contents(&self) -> PageContents {
@@ -398,6 +472,9 @@ impl PageBuilderState {
         self.best_page_break = Some(PageBreak::new(break_index));
         self.best_size = best_size;
         self.least_page_cost = cost;
+        for insertion in &mut self.insertions {
+            insertion.best_ins_index = insertion.last_ins_index;
+        }
     }
 
     pub(crate) fn record_fire_up(&mut self, trigger_index: usize) {
@@ -473,6 +550,27 @@ impl PageBuilderState {
 
     pub(crate) fn push_current_page(&mut self, node: Node) {
         self.current_page.push(node);
+    }
+
+    pub(crate) fn page_insertions(&self) -> &[PageInsertion] {
+        &self.insertions
+    }
+
+    pub(crate) fn page_insertion(&self, class: u16) -> Option<PageInsertion> {
+        self.insertions
+            .binary_search_by_key(&class, PageInsertion::class)
+            .ok()
+            .map(|index| self.insertions[index])
+    }
+
+    pub(crate) fn upsert_page_insertion(&mut self, insertion: PageInsertion) {
+        match self
+            .insertions
+            .binary_search_by_key(&insertion.class(), PageInsertion::class)
+        {
+            Ok(index) => self.insertions[index] = insertion,
+            Err(index) => self.insertions.insert(index, insertion),
+        }
     }
 
     pub(crate) fn take_current_page_prefix(
@@ -564,6 +662,30 @@ impl PageBuilderState {
             }
             None => hasher.bool(false),
         }
+        hasher.usize(self.insertions.len());
+        for insertion in &self.insertions {
+            hasher.u16(insertion.class);
+            match insertion.status {
+                PageInsertionStatus::Inserting => hasher.u8(0),
+                PageInsertionStatus::SplitUp {
+                    broken_ins_index,
+                    broken_at,
+                } => {
+                    hasher.u8(1);
+                    hasher.usize(broken_ins_index);
+                    match broken_at {
+                        Some(index) => {
+                            hasher.bool(true);
+                            hasher.usize(index);
+                        }
+                        None => hasher.bool(false),
+                    }
+                }
+            }
+            hasher.i32(insertion.height.raw());
+            hash_optional_usize(insertion.last_ins_index, hasher);
+            hash_optional_usize(insertion.best_ins_index, hasher);
+        }
         for mark in [
             self.top_mark,
             self.first_mark,
@@ -575,5 +697,15 @@ impl PageBuilderState {
         }
         hash_nodes(&self.contribution, hasher);
         hash_nodes(&self.current_page, hasher);
+    }
+}
+
+fn hash_optional_usize(value: Option<usize>, hasher: &mut StateHasher) {
+    match value {
+        Some(value) => {
+            hasher.bool(true);
+            hasher.usize(value);
+        }
+        None => hasher.bool(false),
     }
 }

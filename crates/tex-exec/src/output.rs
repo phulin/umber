@@ -1,12 +1,15 @@
 //! TeX.web output routine fire-up and end-of-job cleanup.
 
+use std::collections::BTreeMap;
+
 use tex_expand::{ExpansionHooks, ReadRecorder, get_x_token_with_recorder_and_hooks};
 use tex_lex::{InputSource, InputStack, TokenListReplayKind};
 use tex_state::env::banks::{DimenParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, Node, Sign};
 use tex_state::page::{
-    EJECT_PENALTY, INF_PENALTY, PageDimension, PageFireUp, PageInteger, PageMark,
+    EJECT_PENALTY, INF_PENALTY, PageDimension, PageFireUp, PageInsertionStatus, PageInteger,
+    PageMark,
 };
 use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::token::Token;
@@ -77,6 +80,7 @@ where
     prepare_box255(stores, fire_up)?;
     let output = stores.tok_param(TokParam::OUTPUT);
     if stores.tokens(output).is_empty() {
+        prepend_output_heldover(stores, Vec::new());
         let node = take_box255_node(stores)?;
         let artifact = shipout_node(node, stores, recorder)?;
         stats.shipped_artifacts.push(artifact);
@@ -101,16 +105,16 @@ fn prepare_box255(stores: &mut Universe, fire_up: PageFireUp) -> Result<(), Exec
         return Err(ExecError::Box255NotVoidBeforeOutput);
     }
 
-    stores.set_page_integer(PageInteger::InsertPenalties, 0);
     let split_index = fire_up.best_break().index();
     let page_max_depth = stores.page_max_depth();
     let (page_nodes, mut after_break) = stores.take_current_page_prefix(split_index);
     let output_penalty = output_penalty_and_rewrite_break(stores, &mut after_break);
     stores.set_int_param_global(IntParam::OUTPUT_PENALTY, output_penalty);
     stores.prepend_page_contributions(after_break);
-    update_page_marks_at_fire_up(stores, &page_nodes);
+    let distributed = distribute_insertions(stores, page_nodes)?;
+    update_page_marks_at_fire_up(stores, &distributed.page_nodes);
 
-    let page_list = stores.freeze_node_list(&page_nodes);
+    let page_list = stores.freeze_node_list(&distributed.page_nodes);
     let packed = vpack(
         stores,
         page_list,
@@ -124,6 +128,13 @@ fn prepare_box255(stores: &mut Universe, fire_up: PageFireUp) -> Result<(), Exec
     let box255 = stores.freeze_node_list(&[Node::VList(packed.node)]);
     stores.set_box_reg_global(255, box255);
     stores.start_new_page();
+    for node in distributed.heldover {
+        stores.push_current_page_node(node);
+    }
+    stores.set_page_integer(
+        PageInteger::InsertPenalties,
+        i32::try_from(distributed.heldover_count).map_err(|_| ExecError::ArithmeticOverflow)?,
+    );
     Ok(())
 }
 
@@ -152,6 +163,258 @@ fn update_page_marks_at_fire_up(stores: &mut Universe, page_nodes: &[Node]) {
             stores.set_page_mark(PageMark::Bot, top);
         }
     }
+}
+
+struct DistributedInsertions {
+    page_nodes: Vec<Node>,
+    heldover: Vec<Node>,
+    heldover_count: usize,
+}
+
+struct InsertionQueue {
+    nodes: Vec<Node>,
+    best_ins_index: usize,
+    status: PageInsertionStatus,
+}
+
+#[derive(Clone, Copy)]
+struct SplitInsertionContext {
+    insertion_start: usize,
+    page_index: usize,
+    class: u16,
+    split_top_skip: tex_state::ids::GlueId,
+    split_max_depth: Scaled,
+    floating_penalty: i32,
+}
+
+fn distribute_insertions(
+    stores: &mut Universe,
+    page_nodes: Vec<Node>,
+) -> Result<DistributedInsertions, ExecError> {
+    if stores.int_param(IntParam::HOLDING_INSERTS) > 0 {
+        return Ok(DistributedInsertions {
+            page_nodes,
+            heldover: Vec::new(),
+            heldover_count: 0,
+        });
+    }
+
+    let mut queues = BTreeMap::new();
+    let insertions = stores.page_insertions().to_vec();
+    for insertion in insertions {
+        if let Some(best_ins_index) = insertion.best_ins_index() {
+            queues.insert(
+                insertion.class(),
+                InsertionQueue {
+                    nodes: insertion_box_nodes(stores, insertion.class())?,
+                    best_ins_index,
+                    status: insertion.status(),
+                },
+            );
+        }
+    }
+
+    let mut retained = Vec::new();
+    let mut heldover = Vec::new();
+    let mut heldover_count = 0usize;
+    for (index, node) in page_nodes.into_iter().enumerate() {
+        match node {
+            Node::Ins {
+                class,
+                size,
+                split_top_skip,
+                split_max_depth,
+                floating_penalty,
+                content,
+            } => {
+                let mut wait = Some(Node::Ins {
+                    class,
+                    size,
+                    split_top_skip,
+                    split_max_depth,
+                    floating_penalty,
+                    content,
+                });
+                if let Some(queue) = queues.get_mut(&class) {
+                    wait = None;
+                    let start = queue.nodes.len();
+                    queue.nodes.extend_from_slice(stores.nodes(content));
+                    if queue.best_ins_index == index {
+                        if let Some(remainder) = split_insertion_remainder(
+                            stores,
+                            queue,
+                            SplitInsertionContext {
+                                insertion_start: start,
+                                page_index: index,
+                                class,
+                                split_top_skip,
+                                split_max_depth,
+                                floating_penalty,
+                            },
+                        )? {
+                            heldover.push(remainder);
+                            heldover_count += 1;
+                        }
+                        let boxed_nodes = std::mem::take(&mut queue.nodes);
+                        package_insertion_box(stores, class, boxed_nodes);
+                    }
+                }
+                if let Some(node) = wait {
+                    heldover.push(node);
+                    heldover_count += 1;
+                }
+            }
+            node => retained.push(node),
+        }
+    }
+
+    Ok(DistributedInsertions {
+        page_nodes: retained,
+        heldover,
+        heldover_count,
+    })
+}
+
+fn insertion_box_nodes(stores: &mut Universe, class: u16) -> Result<Vec<Node>, ExecError> {
+    let Some(list) = stores.box_reg(class) else {
+        return Ok(Vec::new());
+    };
+    let Some(node) = stores.nodes(list).first().cloned() else {
+        return Ok(Vec::new());
+    };
+    match node {
+        Node::VList(box_node) => {
+            let children = stores.clone_node_list_to_epoch(box_node.children);
+            Ok(stores.nodes(children).to_vec())
+        }
+        Node::HList(_) => Err(ExecError::UnsupportedShipoutNode {
+            node: "hbox insertion box",
+        }),
+        _ => Ok(Vec::new()),
+    }
+}
+
+fn split_insertion_remainder(
+    stores: &mut Universe,
+    queue: &mut InsertionQueue,
+    context: SplitInsertionContext,
+) -> Result<Option<Node>, ExecError> {
+    let PageInsertionStatus::SplitUp {
+        broken_ins_index,
+        broken_at: Some(broken_at),
+    } = queue.status
+    else {
+        return Ok(None);
+    };
+    if broken_ins_index != context.page_index {
+        return Ok(None);
+    }
+
+    let split_at = context
+        .insertion_start
+        .checked_add(broken_at)
+        .ok_or(ExecError::ArithmeticOverflow)?
+        .min(queue.nodes.len());
+    let remainder = queue.nodes.split_off(split_at);
+    let pruned = prune_page_top(stores, remainder, context.split_top_skip);
+    if pruned.is_empty() {
+        return Ok(None);
+    }
+    let content = stores.freeze_node_list(&pruned);
+    let size = natural_vlist_size(stores, content)?;
+    Ok(Some(Node::Ins {
+        class: context.class,
+        size,
+        split_top_skip: context.split_top_skip,
+        split_max_depth: context.split_max_depth,
+        floating_penalty: context.floating_penalty,
+        content,
+    }))
+}
+
+fn prune_page_top(
+    stores: &mut Universe,
+    nodes: Vec<Node>,
+    split_top_skip: tex_state::ids::GlueId,
+) -> Vec<Node> {
+    let mut out = Vec::new();
+    let mut inserted_top_skip = false;
+    for node in nodes {
+        match &node {
+            Node::HList(_) | Node::VList(_) | Node::Rule { .. } if !inserted_top_skip => {
+                let top_skip = stores.glue(split_top_skip);
+                let adjusted = GlueSpec {
+                    width: top_skip
+                        .width
+                        .checked_sub(vertical_height(&node))
+                        .filter(|width| width.raw() > 0)
+                        .unwrap_or_else(|| Scaled::from_raw(0)),
+                    stretch: top_skip.stretch,
+                    stretch_order: top_skip.stretch_order,
+                    shrink: top_skip.shrink,
+                    shrink_order: top_skip.shrink_order,
+                };
+                let spec = stores.intern_glue(adjusted);
+                out.push(Node::Glue {
+                    spec,
+                    kind: GlueKind::Normal,
+                });
+                out.push(node);
+                inserted_top_skip = true;
+            }
+            Node::Glue { .. } | Node::Kern { .. } | Node::Penalty(_) if !inserted_top_skip => {}
+            _ => out.push(node),
+        }
+    }
+    out
+}
+
+fn package_insertion_box(stores: &mut Universe, class: u16, nodes: Vec<Node>) {
+    let list = stores.freeze_node_list(&nodes);
+    let packed = vpack_natural(stores, list);
+    let boxed = stores.freeze_node_list(&[Node::VList(packed)]);
+    stores.set_box_reg_global(class, boxed);
+}
+
+fn natural_vlist_size(
+    stores: &mut Universe,
+    content: tex_state::ids::NodeListId,
+) -> Result<Scaled, ExecError> {
+    let packed = vpack_natural(stores, content);
+    packed
+        .height
+        .checked_add(packed.depth)
+        .ok_or(ExecError::ArithmeticOverflow)
+}
+
+fn vpack_natural(stores: &mut Universe, content: tex_state::ids::NodeListId) -> BoxNode {
+    vpack(
+        stores,
+        content,
+        PackSpec::Natural,
+        VpackParams {
+            vbadness: INF_BAD,
+            vfuzz: Scaled::MAX_DIMEN,
+            box_max_depth: Scaled::MAX_DIMEN,
+        },
+    )
+    .node
+}
+
+fn vertical_height(node: &Node) -> Scaled {
+    match node {
+        Node::HList(box_node) | Node::VList(box_node) => box_node.height,
+        Node::Rule { height, .. } => height.unwrap_or_else(|| Scaled::from_raw(0)),
+        _ => Scaled::from_raw(0),
+    }
+}
+
+fn prepend_output_heldover(stores: &mut Universe, output_nodes: Vec<Node>) {
+    let (mut heldover, _) = stores.take_current_page_prefix(stores.current_page_len());
+    heldover.extend(output_nodes);
+    stores.start_new_page();
+    stores.set_page_integer(PageInteger::InsertPenalties, 0);
+    stores.prepend_page_contributions(heldover);
 }
 
 fn output_penalty_and_rewrite_break(stores: &mut Universe, after_break: &mut Vec<Node>) -> i32 {
@@ -232,12 +495,11 @@ where
     assignments::flush_pending_hchars(nest, stores)?;
     let output_level = nest.pop()?;
     leave_group(input, stores, GroupKind::Simple)?;
-    stores.set_page_integer(PageInteger::InsertPenalties, 0);
     if stores.box_reg(255).is_some() {
         let _ = stores.take_box_reg_same_level(255);
         return Err(ExecError::OutputRoutineBox255NotVoid);
     }
-    stores.prepend_page_contributions(output_level.list().nodes().to_vec());
+    prepend_output_heldover(stores, output_level.list().nodes().to_vec());
     Ok(())
 }
 

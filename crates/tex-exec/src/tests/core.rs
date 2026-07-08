@@ -708,6 +708,113 @@ fn writable_page_scalars_read_after_page_freeze() {
 }
 
 #[test]
+fn insert_node_captures_split_parameters_and_natural_size() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\count7=1000 \\dimen7=100pt \
+         \\splittopskip=9pt \\splitmaxdepth=3pt \\floatingpenalty=77 \
+         \\insert7{\\vskip2pt\\hrule height5pt depth1pt}",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("\\insert captures parameters");
+
+    let insert = stores
+        .current_page_nodes()
+        .iter()
+        .find_map(|node| match node {
+            tex_state::node::Node::Ins {
+                class,
+                size,
+                split_top_skip,
+                split_max_depth,
+                floating_penalty,
+                content,
+            } => Some((
+                *class,
+                *size,
+                stores.glue(*split_top_skip),
+                *split_max_depth,
+                *floating_penalty,
+                *content,
+            )),
+            _ => None,
+        })
+        .expect("insert node");
+    assert_eq!(insert.0, 7);
+    assert_eq!(insert.1.raw(), 8 * tex_state::scaled::Scaled::UNITY);
+    assert_eq!(insert.2.width.raw(), 9 * tex_state::scaled::Scaled::UNITY);
+    assert_eq!(insert.3.raw(), 3 * tex_state::scaled::Scaled::UNITY);
+    assert_eq!(insert.4, 77);
+    assert_eq!(stores.nodes(insert.5).len(), 2);
+}
+
+#[test]
+fn insertion_page_goal_uses_skip_once_and_count_scaling() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\topskip=0pt \\vsize=100pt \
+         \\count7=500 \\dimen7=100pt \\skip7=10pt \
+         \\insert7{\\hrule height20pt depth0pt}\
+         \\edef\\firstpenalties{\\the\\insertpenalties}\
+         \\insert7{\\hrule height10pt depth0pt}\
+         \\edef\\secondpenalties{\\the\\insertpenalties}",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("insert page goal accounting executes");
+
+    assert_eq!(macro_text(&stores, "firstpenalties"), "0");
+    assert_eq!(macro_text(&stores, "secondpenalties"), "0");
+    assert_eq!(
+        stores
+            .page_dimension(tex_state::page::PageDimension::Goal)
+            .raw(),
+        75 * tex_state::scaled::Scaled::UNITY + 540
+    );
+}
+
+#[test]
+fn split_insertion_penalty_is_mainline_then_heldover_count_in_output() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\topskip=0pt \\vsize=20pt \\count7=1000 \\dimen7=12pt \
+         \\output={\\xdef\\held{\\the\\insertpenalties}\\shipout\\box255}\
+         \\insert7{\\hrule height8pt depth0pt\\penalty123\\hrule height8pt depth0pt}\
+         \\edef\\main{\\the\\insertpenalties}\
+         \\setbox0=\\hbox{}\\copy0\\penalty-10000",
+    ));
+
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("split insertion output executes");
+
+    assert_eq!(stats.shipped_artifacts.len(), 1);
+    assert_eq!(macro_text(&stores, "main"), "123");
+    assert_eq!(macro_text(&stores, "held"), "1");
+
+    let box7 = stores.box_reg(7).expect("insertion box");
+    let [tex_state::node::Node::VList(box_node)] = stores.nodes(box7) else {
+        panic!("box7 should be a vbox");
+    };
+    assert!(
+        stores
+            .nodes(box_node.children)
+            .iter()
+            .any(|node| matches!(node, tex_state::node::Node::Rule { .. })),
+        "split-off insertion material should be appended to box7"
+    );
+}
+
+#[test]
 fn forced_page_penalty_runs_default_output() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

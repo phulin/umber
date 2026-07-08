@@ -226,11 +226,22 @@ fn remap_node_children(
                 ),
             };
         }
-        Node::Ins { class, content } => {
+        Node::Ins {
+            class,
+            size,
+            split_top_skip,
+            split_max_depth,
+            floating_penalty,
+            content,
+        } => {
             let (start, len) = append_list(content, epoch, out);
             queue_children(start, len, pending);
             out[index] = Node::Ins {
                 class,
+                size,
+                split_top_skip,
+                split_max_depth,
+                floating_penalty,
                 content: NodeListId::new_survivor(SurvivorRootId::new(0), start, len),
             };
         }

@@ -149,7 +149,7 @@ where
                 class,
                 tokens: self.lower_tokens(tokens),
             },
-            Node::Ins { class, content } => PageNode::Insert {
+            Node::Ins { class, content, .. } => PageNode::Insert {
                 class,
                 content: self.lower_node_list(content)?,
             },

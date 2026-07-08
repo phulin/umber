@@ -144,6 +144,9 @@ impl IntParam {
     /// TeX's `\maxdeadcycles` parameter.
     pub const MAX_DEAD_CYCLES: Self = Self::new(56);
 
+    /// TeX's `\floatingpenalty` insertion parameter.
+    pub const FLOATING_PENALTY: Self = Self::new(58);
+
     /// TeX's `\showboxbreadth` integer parameter.
     pub const SHOW_BOX_BREADTH: Self = Self::new(24);
 
@@ -194,6 +197,9 @@ impl DimenParam {
     /// TeX's maximum page depth parameter.
     pub const MAX_DEPTH: Self = Self::new(5);
 
+    /// TeX's maximum split depth parameter.
+    pub const SPLIT_MAX_DEPTH: Self = Self::new(6);
+
     /// TeX's final-pass paragraph emergency stretch.
     pub const EMERGENCY_STRETCH: Self = Self::new(20);
 }
@@ -207,6 +213,9 @@ impl GlueParam {
 
     /// TeX's `\topskip` glue parameter.
     pub const TOP_SKIP: Self = Self::new(9);
+
+    /// TeX's `\splittopskip` glue parameter.
+    pub const SPLIT_TOP_SKIP: Self = Self::new(10);
 
     /// TeX's `\spaceskip` glue parameter.
     pub const SPACE_SKIP: Self = Self::new(12);
