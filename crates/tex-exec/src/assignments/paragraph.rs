@@ -1,10 +1,12 @@
 use tex_lex::{InputSource, InputStack, TokenListReplayKind};
 use tex_state::Universe;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
+use tex_state::glue::GlueSpec;
 use tex_state::node::{GlueKind, Node};
 use tex_state::scaled::Scaled;
 use tex_typeset::linebreak::{
-    HyphenationHook, LineBreakParams, PostLineBreakParams, line_break, post_line_break,
+    HyphenationHook, LineBreakParams, LineShape, LineShapeEntry,
+    ParagraphShape as TypesetParagraphShape, PostLineBreakParams, line_break, post_line_break,
 };
 use tex_typeset::{HpackParams, PackSpec, hpack};
 
@@ -65,10 +67,12 @@ where
         Mode::Vertical | Mode::InternalVertical => {
             let par_shape = nest.current_list().par_shape().cloned();
             let parskip = stores.glue_param(GlueParam::PAR_SKIP);
-            nest.current_list_mut().push(Node::Glue {
-                spec: parskip,
-                kind: GlueKind::Normal,
-            });
+            if stores.glue(parskip) != GlueSpec::ZERO {
+                nest.current_list_mut().push(Node::Glue {
+                    spec: parskip,
+                    kind: GlueKind::Normal,
+                });
+            }
             nest.push(Mode::Horizontal);
             if let Some(shape) = par_shape {
                 nest.current_list_mut().set_par_shape(shape);
@@ -121,7 +125,7 @@ fn end_paragraph(nest: &mut ModeNest, stores: &mut Universe) -> Result<(), ExecE
     nest.current_list_mut().push(Node::Penalty(10_000));
     nest.current_list_mut().push(Node::Glue {
         spec: params.par_fill_skip,
-        kind: GlueKind::Normal,
+        kind: GlueKind::ParFillSkip,
     });
     let level = nest.pop()?;
     let hlist = level.list().nodes();
@@ -131,18 +135,20 @@ fn end_paragraph(nest: &mut ModeNest, stores: &mut Universe) -> Result<(), ExecE
     let decisions = line_break(stores, hlist, line_params, &mut hook);
     let post_params = post_line_break_params(&params);
     for broken in post_line_break(stores, &decisions.nodes, &decisions.breaks, post_params) {
-        if let Some(penalty) = broken.penalty_after {
-            nest.current_list_mut().push(Node::Penalty(penalty));
-        }
         let list = stores.freeze_node_list(&broken.nodes);
         let line = hpack(
             stores,
             list,
-            PackSpec::Exactly(params.hsize),
+            PackSpec::Exactly(broken.dimensions.width),
             HpackParams::read(stores),
         )
         .node;
+        let mut line = line;
+        line.shift = broken.dimensions.indent;
         append_node_to_current_list(nest, stores, Node::HList(line))?;
+        if let Some(penalty) = broken.penalty_after {
+            nest.current_list_mut().push(Node::Penalty(penalty));
+        }
     }
     reset_after_par(nest, stores);
     Ok(())
@@ -196,7 +202,7 @@ fn line_break_params(params: &ParagraphParams) -> LineBreakParams {
         final_hyphen_demerits: params.final_hyphen_demerits,
         emergency_stretch: params.emergency_stretch,
         looseness: params.looseness,
-        hsize: params.hsize,
+        shape: line_shape(params),
     }
 }
 
@@ -208,6 +214,28 @@ fn post_line_break_params(params: &ParagraphParams) -> PostLineBreakParams {
         club_penalty: params.club_penalty,
         widow_penalty: params.widow_penalty,
         broken_penalty: params.broken_penalty,
+        shape: line_shape(params),
+    }
+}
+
+fn line_shape(params: &ParagraphParams) -> LineShape {
+    LineShape {
+        hsize: params.hsize,
+        parshape: params
+            .par_shape
+            .as_ref()
+            .map(|shape| TypesetParagraphShape {
+                lines: shape
+                    .lines()
+                    .iter()
+                    .map(|line| LineShapeEntry {
+                        indent: line.indent,
+                        width: line.width,
+                    })
+                    .collect(),
+            }),
+        hang_indent: params.hang_indent,
+        hang_after: params.hang_after,
     }
 }
 

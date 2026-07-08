@@ -9,7 +9,7 @@ const EJECT_PENALTY: i32 = -10_000;
 const INF_PENALTY: i32 = 10_000;
 const AWFUL_BAD: i32 = 0o7777777777;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LineBreakParams {
     pub pretolerance: i32,
     pub tolerance: i32,
@@ -21,10 +21,10 @@ pub struct LineBreakParams {
     pub final_hyphen_demerits: i32,
     pub emergency_stretch: Scaled,
     pub looseness: i32,
-    pub hsize: Scaled,
+    pub shape: LineShape,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PostLineBreakParams {
     pub left_skip: GlueId,
     pub right_skip: GlueId,
@@ -32,6 +32,87 @@ pub struct PostLineBreakParams {
     pub club_penalty: i32,
     pub widow_penalty: i32,
     pub broken_penalty: i32,
+    pub shape: LineShape,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ParagraphShape {
+    pub lines: Vec<LineShapeEntry>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LineShapeEntry {
+    pub indent: Scaled,
+    pub width: Scaled,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LineShape {
+    pub hsize: Scaled,
+    pub parshape: Option<ParagraphShape>,
+    pub hang_indent: Scaled,
+    pub hang_after: i32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LineDimensions {
+    pub indent: Scaled,
+    pub width: Scaled,
+}
+
+impl LineShape {
+    #[must_use]
+    pub fn natural(hsize: Scaled) -> Self {
+        Self {
+            hsize,
+            parshape: None,
+            hang_indent: Scaled::from_raw(0),
+            hang_after: 1,
+        }
+    }
+
+    #[must_use]
+    pub fn dimensions(&self, line_no: usize) -> LineDimensions {
+        let one_based = line_no.max(1);
+        if let Some(parshape) = &self.parshape
+            && !parshape.lines.is_empty()
+        {
+            let index = one_based.saturating_sub(1).min(parshape.lines.len() - 1);
+            let entry = parshape.lines[index];
+            return LineDimensions {
+                indent: entry.indent,
+                width: entry.width,
+            };
+        }
+
+        if self.hang_indent.raw() == 0 || !hanging_applies(one_based, self.hang_after) {
+            return LineDimensions {
+                indent: Scaled::from_raw(0),
+                width: self.hsize,
+            };
+        }
+
+        let amount = self.hang_indent.raw();
+        if amount >= 0 {
+            LineDimensions {
+                indent: self.hang_indent,
+                width: Scaled::from_raw(self.hsize.raw().saturating_sub(amount)),
+            }
+        } else {
+            LineDimensions {
+                indent: Scaled::from_raw(0),
+                width: Scaled::from_raw(self.hsize.raw().saturating_add(amount)),
+            }
+        }
+    }
+}
+
+fn hanging_applies(line_no: usize, hang_after: i32) -> bool {
+    if hang_after < 0 {
+        line_no <= hang_after.saturating_abs() as usize
+    } else {
+        line_no > hang_after as usize
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -53,6 +134,7 @@ pub struct BrokenLine {
     pub nodes: Vec<Node>,
     pub penalty_after: Option<i32>,
     pub hyphenated: bool,
+    pub dimensions: LineDimensions,
 }
 
 pub trait HyphenationHook<S: TypesetState> {
@@ -79,19 +161,19 @@ where
     H: HyphenationHook<S>,
 {
     if params.pretolerance >= 0 {
-        let first = run_pass(state, nodes, params, params.pretolerance, false, false);
+        let first = run_pass(state, nodes, &params, params.pretolerance, false, false);
         if let Some(result) = first {
             return result;
         }
     }
 
     let hyphenated = hyphenation.hyphenate(nodes);
-    let second = run_pass(state, &hyphenated, params, params.tolerance, true, false);
+    let second = run_pass(state, &hyphenated, &params, params.tolerance, true, false);
     if let Some(result) = second {
         return result;
     }
 
-    run_pass(state, &hyphenated, params, params.tolerance, true, true)
+    run_pass(state, &hyphenated, &params, params.tolerance, true, true)
         .expect("final line-breaking pass always permits an artificial demerits path")
 }
 
@@ -106,22 +188,24 @@ pub fn post_line_break<S: TypesetState>(
     let mut pending_post = Vec::new();
     for (line_no, decision) in breaks.iter().enumerate() {
         let mut line = Vec::new();
+        let dimensions = params.shape.dimensions(line_no + 1);
         line.push(Node::Glue {
             spec: params.left_skip,
-            kind: GlueKind::Normal,
+            kind: GlueKind::LeftSkip,
         });
         line.append(&mut pending_post);
         pending_post = push_line_segment(state, nodes, start, decision, &mut line);
         line.push(Node::Glue {
             spec: params.right_skip,
-            kind: GlueKind::Normal,
+            kind: GlueKind::RightSkip,
         });
 
-        let penalty_after = line_penalty_after(line_no, breaks, decision.hyphenated, params);
+        let penalty_after = line_penalty_after(line_no, breaks, decision.hyphenated, &params);
         lines.push(BrokenLine {
             nodes: line,
             penalty_after,
             hyphenated: decision.hyphenated,
+            dimensions,
         });
         start = next_start(nodes, decision.position);
     }
@@ -161,7 +245,7 @@ struct Breakpoint {
 fn run_pass<S: TypesetState>(
     state: &S,
     nodes: &[Node],
-    params: LineBreakParams,
+    params: &LineBreakParams,
     tolerance: i32,
     allow_hyphenation: bool,
     emergency: bool,
@@ -196,7 +280,7 @@ fn run_pass<S: TypesetState>(
             let active_candidate = &candidates[active_id];
             let mut widths = prefix.between(active_candidate.width_position, bp.width_position);
             widths.add_assign(bp.add_width);
-            let target = params.hsize;
+            let target = params.shape.dimensions(active_candidate.line + 1).width;
             let extra = if emergency {
                 params.emergency_stretch
             } else {
@@ -226,7 +310,11 @@ fn run_pass<S: TypesetState>(
                 finals.push(id);
             }
         }
-        active.extend(next);
+        if bp.penalty <= EJECT_PENALTY {
+            active = next;
+        } else {
+            active.extend(next);
+        }
     }
 
     apply_final_hyphen_demerits(&mut candidates, &finals, params.final_hyphen_demerits);
@@ -235,7 +323,7 @@ fn run_pass<S: TypesetState>(
 }
 
 fn compute_demerits(
-    params: LineBreakParams,
+    params: &LineBreakParams,
     active: &Candidate,
     bad: i32,
     penalty: i32,
@@ -269,7 +357,7 @@ fn apply_final_hyphen_demerits(candidates: &mut [Candidate], finals: &[usize], d
     }
 }
 
-fn discretionary_penalty(kind: DiscKind, params: LineBreakParams) -> i32 {
+fn discretionary_penalty(kind: DiscKind, params: &LineBreakParams) -> i32 {
     match kind {
         DiscKind::AutomaticHyphen => params.hyphen_penalty,
         DiscKind::ExplicitHyphen => params.ex_hyphen_penalty,
@@ -280,7 +368,7 @@ fn discretionary_penalty(kind: DiscKind, params: LineBreakParams) -> i32 {
 fn legal_breakpoints<S: TypesetState>(
     state: &S,
     nodes: &[Node],
-    params: LineBreakParams,
+    params: &LineBreakParams,
     allow_hyphenation: bool,
 ) -> Vec<Breakpoint> {
     let mut out = Vec::new();
@@ -556,6 +644,8 @@ fn push_line_segment<S: TypesetState>(
     decision: &BreakDecision,
     out: &mut Vec<Node>,
 ) -> Vec<Node> {
+    // TODO(umber2-page): expose mark/adjust migration from this surgery pass
+    // once the page builder owns a destination for migrated material.
     let end = decision.position.min(nodes.len());
     let mut post = Vec::new();
     for (offset, node) in nodes[start..end].iter().enumerate() {
@@ -569,8 +659,7 @@ fn push_line_segment<S: TypesetState>(
                 out.extend_from_slice(state.nodes(*pre));
                 post.extend_from_slice(state.nodes(*post_list));
             }
-            Node::Penalty(_) if absolute + 1 == end => {}
-            Node::Glue { .. } if absolute + 1 == end => {}
+            Node::Glue { .. } if absolute + 1 == end && end < nodes.len() => {}
             _ => out.push(node.clone()),
         }
     }
@@ -589,7 +678,7 @@ fn line_penalty_after(
     line_no: usize,
     breaks: &[BreakDecision],
     hyphenated: bool,
-    params: PostLineBreakParams,
+    params: &PostLineBreakParams,
 ) -> Option<i32> {
     if line_no + 1 >= breaks.len() {
         return None;
@@ -643,7 +732,7 @@ mod tests {
             final_hyphen_demerits: 5_000,
             emergency_stretch: sp(0),
             looseness: 0,
-            hsize: sp(width),
+            shape: LineShape::natural(sp(width)),
         }
     }
 
@@ -703,6 +792,83 @@ mod tests {
     }
 
     #[test]
+    fn parshape_repeats_last_line_and_overrides_hanging() {
+        let shape = LineShape {
+            hsize: sp(100),
+            parshape: Some(ParagraphShape {
+                lines: vec![
+                    LineShapeEntry {
+                        indent: sp(3),
+                        width: sp(40),
+                    },
+                    LineShapeEntry {
+                        indent: sp(5),
+                        width: sp(30),
+                    },
+                ],
+            }),
+            hang_indent: sp(20),
+            hang_after: 0,
+        };
+
+        assert_eq!(
+            shape.dimensions(1),
+            LineDimensions {
+                indent: sp(3),
+                width: sp(40),
+            }
+        );
+        assert_eq!(
+            shape.dimensions(3),
+            LineDimensions {
+                indent: sp(5),
+                width: sp(30),
+            }
+        );
+    }
+
+    #[test]
+    fn hangindent_selects_affected_lines() {
+        let mut shape = LineShape {
+            hsize: sp(100),
+            parshape: None,
+            hang_indent: sp(25),
+            hang_after: 1,
+        };
+        assert_eq!(
+            shape.dimensions(1),
+            LineDimensions {
+                indent: sp(0),
+                width: sp(100),
+            }
+        );
+        assert_eq!(
+            shape.dimensions(2),
+            LineDimensions {
+                indent: sp(25),
+                width: sp(75),
+            }
+        );
+
+        shape.hang_indent = sp(-25);
+        shape.hang_after = -2;
+        assert_eq!(
+            shape.dimensions(1),
+            LineDimensions {
+                indent: sp(0),
+                width: sp(75),
+            }
+        );
+        assert_eq!(
+            shape.dimensions(3),
+            LineDimensions {
+                indent: sp(0),
+                width: sp(100),
+            }
+        );
+    }
+
+    #[test]
     fn break_glue_does_not_contribute_to_preceding_line_width() {
         let mut universe = Universe::new();
         let glue = universe.intern_glue(GlueSpec {
@@ -745,7 +911,7 @@ mod tests {
             kern(20),
         ];
         let mut hook = NoHyphenation;
-        let result = line_break(&universe, &nodes, params, &mut hook);
+        let result = line_break(&universe, &nodes, params.clone(), &mut hook);
         assert_eq!(result.breaks.first().map(|br| br.penalty), Some(321));
 
         let nodes = vec![
@@ -781,7 +947,7 @@ mod tests {
         base.hyphen_penalty = 0;
         base.final_hyphen_demerits = 0;
         let mut hook = NoHyphenation;
-        let without = line_break(&universe, &nodes, base, &mut hook).demerits;
+        let without = line_break(&universe, &nodes, base.clone(), &mut hook).demerits;
         base.final_hyphen_demerits = 1234;
         let with = line_break(&universe, &nodes, base, &mut hook).demerits;
         assert_eq!(with - without, 1234);

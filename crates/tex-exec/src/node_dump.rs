@@ -186,6 +186,13 @@ fn dump_box(
         format_scaled_without_unit(box_node.width)
     );
     write_glue_set(box_node, out);
+    if box_node.shift.raw() != 0 {
+        let _ = write!(
+            out,
+            ", shifted {}",
+            format_scaled_without_unit(box_node.shift)
+        );
+    }
     if depth + 1 >= config.depth {
         if !stores.nodes(box_node.children).is_empty() {
             out.push_str(" []");
@@ -290,6 +297,9 @@ impl GlueKindDump for GlueKind {
             Self::Normal => "\\glue ",
             Self::BaselineSkip => "\\glue(\\baselineskip) ",
             Self::LineSkip => "\\glue(\\lineskip) ",
+            Self::LeftSkip => "\\glue(\\leftskip) ",
+            Self::RightSkip => "\\glue(\\rightskip) ",
+            Self::ParFillSkip => "\\glue(\\parfillskip) ",
             Self::Leaders => "\\leaders \\glue ",
             Self::Cleaders => "\\cleaders \\glue ",
             Self::Xleaders => "\\xleaders \\glue ",

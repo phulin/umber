@@ -421,12 +421,17 @@ makes box-level memoization (M4) sound.
   The current `tex-exec` integration precomputes the hyphenated hlist because
   automatic hyphen insertion still freezes discretionary child lists through
   `Universe`; the breaker only sees the hook result as ordinary nodes.
-  Post-line-break produces line node vectors
-  with `\leftskip`/`\rightskip` and interline penalty decisions; the stomach
-  remains responsible for freezing those vectors, hpacking to the captured
-  width, and appending hboxes to the enclosing vertical list. Remaining
-  pdfTeX corpus parity details are tracked as follow-up work rather than
-  weakening this purity boundary.
+  Post-line-break produces line node vectors with named
+  `\leftskip`/`\rightskip` glue, per-line width/indent dimensions selected
+  from `\parshape` first and otherwise TeX's `\hangindent`/`\hangafter`
+  rules, and interline penalty decisions. Forced breakpoint penalties are
+  not passable. The stomach remains responsible for freezing those vectors,
+  hpacking to the selected line width, applying the selected indent as the
+  hbox shift, and appending hboxes and after-line penalties to the enclosing
+  vertical list. Mark/adjust migration is deliberately left at this boundary
+  until the P5 page-builder work has a real target for migrated material.
+  Remaining pdfTeX corpus parity details are tracked as follow-up work rather
+  than weakening this purity boundary.
 - **Math typesetter**: mlist → hlist conversion, styles, fraction/radical
   layout, math fonts. Same contract: frozen mlist in, frozen hlist out.
   (OpenType MATH is the target metrics model; TFM math as fallback.)
