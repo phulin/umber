@@ -48,6 +48,61 @@ fn lex_dump_prints_stable_token_format_for_corpus() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // host-side fixture discovery and expected-output reads.
+fn expand_dump_prints_stable_token_format_for_corpus() {
+    let corpus = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("tests/corpus/expand");
+    for entry in std::fs::read_dir(&corpus).expect("read expansion corpus") {
+        let path = entry.expect("read corpus entry").path();
+        if path.extension().and_then(std::ffi::OsStr::to_str) != Some("tex") {
+            continue;
+        }
+        let stem = path.file_stem().expect("fixture stem").to_string_lossy();
+
+        let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+            .arg("expand-dump")
+            .arg(&path)
+            .output()
+            .expect("run umber expand-dump");
+
+        assert!(
+            output.status.success(),
+            "expand-dump failed for {}:\n{}",
+            path.display(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let actual = String::from_utf8(output.stdout).expect("expand-dump output is utf-8");
+        assert_matches_fixture("expand", &stem, "tokens", &actual);
+    }
+}
+
+#[test]
+fn expand_dump_usage_errors_follow_lex_dump_shape() {
+    let missing = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .arg("expand-dump")
+        .output()
+        .expect("run umber expand-dump without path");
+    assert!(!missing.status.success());
+    assert_eq!(
+        String::from_utf8(missing.stderr).expect("stderr is utf-8"),
+        "umber: missing input path for expand-dump\n"
+    );
+
+    let extra = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .arg("expand-dump")
+        .arg("one.tex")
+        .arg("two.tex")
+        .output()
+        .expect("run umber expand-dump with extra path");
+    assert!(!extra.status.success());
+    assert_eq!(
+        String::from_utf8(extra.stderr).expect("stderr is utf-8"),
+        "umber: expand-dump accepts exactly one input path\n"
+    );
+}
+
+#[test]
 #[allow(clippy::disallowed_methods)] // host-side corpus files, not engine I/O.
 fn lexer_dynamic_corpus_covers_mutable_input_state() {
     assert_matches_fixture(

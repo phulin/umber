@@ -1,0 +1,2 @@
+\def\frominput{IN}%
+\frominput

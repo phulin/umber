@@ -214,13 +214,13 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   token-list freezing during macro argument matching. Macro body replay uses
   the body `TokenListId` directly plus frozen argument ids on the replay
   frame; it does not allocate a substituted body list. Token-list replay is
-  naturally read-only; source-frame replay can scan already-interned control
-  sequence names and reports a lexer error if a source token would require
-  minting a new symbol. `\csname` uses a dedicated expansion scan that stops
-  on `\endcsname`, validates that expanded name material is character tokens,
-  and interns/relaxes the resulting control sequence through an explicit
-  sanctioned capability rather than widening expansion to mutable `Env`
-  access.
+  naturally read-only; source-frame replay may intern newly encountered
+  control sequence names through the lexer/interner capability, but it still
+  does not widen expansion to mutable `Env` access. `\csname` uses a dedicated
+  expansion scan that stops on `\endcsname`, validates that expanded name
+  material is character tokens, and interns/relaxes the resulting control
+  sequence through an explicit sanctioned capability rather than widening
+  expansion to mutable `Env` access.
 - Frame-control expandables are represented as input-frame rewrites:
   `\expandafter` saves one raw token, performs one expansion step on the
   following token, then pushes the saved token above the expansion result;
@@ -255,6 +255,16 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   that file access belongs to `World`/the driver layer, not to the gullet.
   `\fontname` and the mark-family expandables are documented empty stubs until
   font meanings and page-builder marks exist.
+- The `umber expand-dump` conformance driver consumes a deliberately small
+  assignment surface before printing delivered tokens: optional `\long`,
+  `\outer`, and `\global` prefixes before `\def`, `\edef`, `\gdef`, `\xdef`,
+  `\let`, and `\chardef`; bare `\def`, `\edef`, `\gdef`, `\xdef`, `\let`,
+  `\chardef`; and `\catcode` assignments. Consumed forms perform barriered
+  writes through `Stores` and are omitted from the dump. `\edef`/`\xdef`
+  expand the replacement text in the driver, preserving literal
+  `\noexpand <token>` pairs so later replay suppresses the target token. This
+  is a dump-harness contract only; full assignment semantics remain stomach
+  work.
 - **What the gullet never does**: mutate state. `\def`, `\advance`,
   register writes are *unexpandable* — they are delivered to the stomach.
   This is TeX's own factoring and we enforce it in the crate split:

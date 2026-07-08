@@ -1710,7 +1710,7 @@ mod tests {
     }
 
     #[test]
-    fn get_x_token_pulls_from_source_frames_readonly() {
+    fn get_x_token_pulls_from_source_frames_with_interner_access() {
         let mut stores = Stores::new();
         let relax = stores.intern("relax");
         stores.set_meaning(relax, Meaning::Relax);
