@@ -2,10 +2,11 @@
 
 use std::fmt::Write as _;
 
+use tex_expand::token_text;
 use tex_state::Universe;
 use tex_state::env::banks::IntParam;
 use tex_state::glue::{GlueSpec, Order};
-use tex_state::ids::NodeListId;
+use tex_state::ids::{NodeListId, TokenListId};
 use tex_state::node::{BoxNode, GlueKind, KernKind, Node, Sign};
 use tex_state::scaled::{GLUE_SET_RATIO_SCALE, GlueSetRatio, Scaled};
 
@@ -101,11 +102,14 @@ fn dump_node(stores: &Universe, node: &Node, config: &DumpConfig, depth: i32, ou
         Node::Disc {
             pre, post, replace, ..
         } => dump_disc(stores, *pre, *post, *replace, config, depth, out),
+        Node::Mark { tokens, .. } => dump_mark(stores, *tokens, out),
+        Node::Adjust(list) => {
+            out.push_str("\\vadjust\n");
+            dump_list(stores, *list, config, depth + 1, out);
+        }
         Node::MathOn => out.push_str("\\mathon\n"),
         Node::MathOff => out.push_str("\\mathoff\n"),
-        Node::Unset | Node::Mark { .. } | Node::Ins { .. } | Node::Whatsit(_) | Node::Adjust(_) => {
-            out.push_str("[]\n")
-        }
+        Node::Unset | Node::Ins { .. } | Node::Whatsit(_) => out.push_str("[]\n"),
     }
 }
 
@@ -136,6 +140,14 @@ fn dump_disc(
         }
     }
     dump_list(stores, replace, config, depth, out);
+}
+
+fn dump_mark(stores: &Universe, tokens: TokenListId, out: &mut String) {
+    out.push_str("\\mark{");
+    for &token in stores.tokens(tokens) {
+        out.push_str(&token_text(stores, token));
+    }
+    out.push_str("}\n");
 }
 
 fn dump_font(stores: &Universe, font: tex_state::ids::FontId) -> String {

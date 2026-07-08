@@ -62,6 +62,10 @@ pub(crate) fn append_node_to_vertical_list(
     Ok(())
 }
 
+pub(crate) fn append_migrated_contribution(nest: &mut ModeNest, node: Node) {
+    nest.current_list_mut().push(node);
+}
+
 fn vertical_baseline_dimensions(node: &Node) -> Option<(Scaled, Scaled)> {
     match node {
         Node::HList(box_node) | Node::VList(box_node) => Some((box_node.height, box_node.depth)),

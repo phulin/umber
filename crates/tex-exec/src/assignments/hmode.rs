@@ -166,8 +166,50 @@ where
             nest.current_list_mut().set_space_factor(value);
         }
         UnexpandablePrimitive::Accent => execute_accent(nest, input, stores, hooks)?,
+        UnexpandablePrimitive::Mark => {
+            flush_pending_hchars(nest, stores)?;
+            let tokens = scan_balanced_expanded_token_list(input, stores, hooks, "\\mark")?;
+            nest.current_list_mut()
+                .push(Node::Mark { class: 0, tokens });
+        }
+        UnexpandablePrimitive::VAdjust => execute_vadjust(nest, input, stores, hooks)?,
         _ => unreachable!("caller restricts hmode material primitives"),
     }
+    Ok(())
+}
+
+fn execute_vadjust<S, H>(
+    nest: &mut ModeNest,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    hooks: &mut H,
+) -> Result<(), ExecError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    if nest.current_mode() != Mode::Horizontal {
+        return Err(ExecError::UnimplementedTypesetting {
+            mode: nest.current_mode(),
+            token: Token::Cs(stores.intern("vadjust")),
+            operation: "\\vadjust",
+        });
+    }
+    flush_pending_hchars(nest, stores)?;
+    let opener = next_non_space_x(input, stores, hooks)?.ok_or(ExecError::MissingToken {
+        context: "\\vadjust group",
+    })?;
+    if !is_begin_group(opener) {
+        return Err(ExecError::MissingToken {
+            context: "\\vadjust group",
+        });
+    }
+    let mut inner = ModeNest::new();
+    inner.push(Mode::InternalVertical);
+    scan_box_group(&mut inner, input, stores, hooks)?;
+    let level = inner.pop()?;
+    let content = stores.freeze_node_list(level.list().nodes());
+    nest.current_list_mut().push(Node::Adjust(content));
     Ok(())
 }
 

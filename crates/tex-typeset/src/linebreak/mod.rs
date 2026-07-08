@@ -131,6 +131,7 @@ pub struct LineBreakResult {
 #[derive(Clone, Debug, PartialEq)]
 pub struct BrokenLine {
     pub nodes: Vec<Node>,
+    pub migrated: Vec<Node>,
     pub penalty_after: Option<i32>,
     pub hyphenated: bool,
     pub dimensions: LineDimensions,

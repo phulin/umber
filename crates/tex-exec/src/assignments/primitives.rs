@@ -83,6 +83,8 @@ pub fn install_unexpandable_primitives(stores: &mut Universe) {
         ("noboundary", UnexpandablePrimitive::NoBoundary),
         ("spacefactor", UnexpandablePrimitive::SpaceFactor),
         ("accent", UnexpandablePrimitive::Accent),
+        ("mark", UnexpandablePrimitive::Mark),
+        ("vadjust", UnexpandablePrimitive::VAdjust),
         ("openin", UnexpandablePrimitive::OpenIn),
         ("closein", UnexpandablePrimitive::CloseIn),
         ("openout", UnexpandablePrimitive::OpenOut),

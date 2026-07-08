@@ -3,6 +3,7 @@ use tex_state::Universe;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::{DiscKind, GlueKind, KernKind, Node};
 use tex_state::scaled::Scaled;
+use tex_state::token::{Catcode, Token};
 
 fn sp(raw: i32) -> Scaled {
     Scaled::from_raw(raw)
@@ -287,4 +288,71 @@ fn final_hyphen_demerits_apply_to_penultimate_hyphenated_line() {
     base.final_hyphen_demerits = 1234;
     let with = line_break(&universe, &nodes, base, &mut hook).demerits;
     assert_eq!(with - without, 1234);
+}
+
+#[test]
+fn post_line_break_migrates_marks_and_adjust_content_out_of_lines() {
+    let mut universe = Universe::new();
+    let empty_glue = universe.intern_glue(GlueSpec::ZERO);
+    let mark_tokens = universe.intern_token_list(&[Token::Char {
+        ch: 'm',
+        cat: Catcode::Letter,
+    }]);
+    let adjust_content = universe.freeze_node_list(&[kern(7)]);
+    let nodes = vec![
+        rule(10),
+        Node::Mark {
+            class: 0,
+            tokens: mark_tokens,
+        },
+        Node::Adjust(adjust_content),
+        Node::Penalty(-10_000),
+        rule(10),
+        Node::Penalty(10_000),
+    ];
+    let breaks = vec![
+        BreakDecision {
+            position: 4,
+            penalty: -10_000,
+            hyphenated: false,
+        },
+        BreakDecision {
+            position: 6,
+            penalty: 10_000,
+            hyphenated: false,
+        },
+    ];
+    let lines = post_line_break(
+        &universe,
+        &nodes,
+        &breaks,
+        PostLineBreakParams {
+            left_skip: empty_glue,
+            right_skip: empty_glue,
+            interline_penalty: 0,
+            club_penalty: 0,
+            widow_penalty: 0,
+            broken_penalty: 0,
+            shape: LineShape::natural(sp(100)),
+        },
+    );
+
+    assert_eq!(lines.len(), 2);
+    assert!(
+        lines[0]
+            .nodes
+            .iter()
+            .all(|node| !matches!(node, Node::Mark { .. } | Node::Adjust(_)))
+    );
+    assert!(matches!(
+        lines[0].migrated.as_slice(),
+        [
+            Node::Mark { class: 0, tokens },
+            Node::Kern {
+                amount,
+                kind: KernKind::Explicit,
+            }
+        ] if *tokens == mark_tokens && *amount == sp(7)
+    ));
+    assert!(lines[1].migrated.is_empty());
 }

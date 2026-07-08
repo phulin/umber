@@ -400,7 +400,9 @@ where
             | UnexpandablePrimitive::DiscretionaryHyphen
             | UnexpandablePrimitive::NoBoundary
             | UnexpandablePrimitive::SpaceFactor
-            | UnexpandablePrimitive::Accent => {
+            | UnexpandablePrimitive::Accent
+            | UnexpandablePrimitive::Mark
+            | UnexpandablePrimitive::VAdjust => {
                 reject_all_prefixes(prefixes)?;
                 execute_hmode_material(primitive, nest, input, stores, hooks)?;
                 Ok(CommandOutcome::assigned_if(

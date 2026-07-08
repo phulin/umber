@@ -1,0 +1,28 @@
+> \box0=
+\vbox(37.30554+0.0)x20.0
+.\hbox(4.30554+0.0)x20.0
+..\glue(\leftskip) 1.0
+..\hbox(0.0+0.0)x0.0
+..\tenrm a
+..\penalty -10000
+..\glue(\rightskip) 0.0
+.\kern 4.0
+.\penalty 123
+.\penalty 17
+.\glue(\baselineskip) 5.05556
+.\hbox(6.94444+0.0)x20.0
+..\glue(\leftskip) 1.0
+..\tenrm b
+..\penalty -10000
+..\glue(\rightskip) 0.0
+.\kern 5.0
+.\penalty 17
+.\glue(\baselineskip) 7.69446
+.\hbox(4.30554+0.0)x20.0
+..\glue(\leftskip) 1.0
+..\tenrm c
+..\penalty 10000
+..\glue(\parfillskip) 0.0
+..\glue(\rightskip) 0.0
+
+! OK.

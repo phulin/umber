@@ -13,7 +13,7 @@ use tex_typeset::linebreak::{
 use super::boxes::hpack_with_overfull_rule;
 use super::*;
 use crate::mode::{IGNORE_DEPTH, ParagraphParams, ParagraphShape, ParagraphShapeLine};
-use crate::vertical::append_node_to_current_list;
+use crate::vertical::{append_migrated_contribution, append_node_to_current_list};
 use crate::{ExecError, Mode, ModeNest};
 
 pub(super) fn execute_paragraph_command<S, H>(
@@ -137,6 +137,9 @@ fn end_paragraph(nest: &mut ModeNest, stores: &mut Universe) -> Result<(), ExecE
         let mut line = line;
         line.shift = broken.dimensions.indent;
         append_node_to_current_list(nest, stores, Node::HList(line))?;
+        for node in broken.migrated {
+            append_migrated_contribution(nest, node);
+        }
         if let Some(penalty) = broken.penalty_after {
             nest.current_list_mut().push(Node::Penalty(penalty));
         }
