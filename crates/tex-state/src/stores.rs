@@ -344,12 +344,22 @@ impl Stores {
         self.env.set_count(index, value);
     }
 
+    #[must_use]
+    pub fn count(&self, index: u16) -> i32 {
+        self.env.count(index)
+    }
+
     pub fn set_count_global(&mut self, index: u16, value: i32) {
         self.env.set_count_global(index, value);
     }
 
     pub fn set_dimen(&mut self, index: u16, value: Scaled) {
         self.env.set_dimen(index, value);
+    }
+
+    #[must_use]
+    pub fn dimen(&self, index: u16) -> Scaled {
+        self.env.dimen(index)
     }
 
     pub fn set_dimen_global(&mut self, index: u16, value: Scaled) {

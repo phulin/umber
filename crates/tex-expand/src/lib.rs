@@ -16,6 +16,7 @@ use tex_state::token::Token;
 
 pub mod args;
 pub mod scan;
+pub mod scan_int;
 
 /// Records state reads performed by expansion.
 ///

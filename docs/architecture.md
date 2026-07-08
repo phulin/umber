@@ -179,6 +179,12 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   through `Stores`, but it does not assign meanings; the stomach/future
   assignment layer remains responsible for installing the returned
   `MacroMeaning`.
+- **Numeric value scanning**: `tex-expand::scan_int` owns the reusable
+  expanded integer scanner for conditionals and the later stomach assignment
+  layer. It pulls through `get_x_token`, understands TeX integer constants
+  and currently readable integer-like state (`\count`, chardef values,
+  `\endlinechar`, and raw-sp `\dimen` coercion), and reports recoverable
+  numeric diagnostics without performing assignments.
 - **Conditionals** are a frame-kind, not a side stack: `\if...` evaluation
   marks the frame; `\else`/`\fi` skipping is a token-level scan that the
   fast lexer can accelerate (skip mode only needs catcode classes for
