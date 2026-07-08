@@ -3,6 +3,10 @@ name = "umber"
 version.workspace = true
 edition.workspace = true
 
+[features]
+default = []
+shadow = ["tex-state/shadow"]
+
 [dependencies]
 tex-exec = { path = "../tex-exec" }
 tex-expand = { path = "../tex-expand" }
@@ -10,8 +14,10 @@ tex-lex = { path = "../tex-lex" }
 tex-state = { path = "../tex-state" }
 
 [dev-dependencies]
+proptest.workspace = true
 refexec = { path = "../../tools/refexec" }
 test-support = { path = "../test-support" }
+tex-state = { path = "../tex-state", features = ["testing"] }
 
 [lints]
 workspace = true

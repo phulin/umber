@@ -43,3 +43,14 @@ Rerun without `UPDATE_FIXTURES` before committing.
 Keep `cargo test --workspace --tests` fast. Long or full-corpus parity runs
 must stay out of cargo tests; the Conformance epic will own those runs in
 `scripts/parity.sh`.
+
+## Proptest Budgets
+
+Replay-identity proptests use `PROPTEST_CASES` for their case budget. Leave
+the default small enough for `cargo test --workspace --tests`; raise it for
+local long runs, for example:
+
+```bash
+PROPTEST_CASES=1000 cargo test -p umber --test replay_identity
+cargo test -p umber --features shadow --test replay_identity
+```

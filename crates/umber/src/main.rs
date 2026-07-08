@@ -4,8 +4,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use tex_exec::{Executor, StringLogSink};
-use tex_expand::{ExpansionHooks, NoopRecorder};
+use tex_expand::ExpansionHooks;
 use tex_lex::{FileInput, InputStack, Lexer};
 use tex_state::env::banks::IntParam;
 use tex_state::stores::Stores;
@@ -84,23 +83,12 @@ fn run_tex(path: &str) -> Result<(), CliError> {
     let path = Path::new(path);
     let file = File::open(path)?;
     let mut stores = Stores::new();
-    stores.set_int_param(IntParam::END_LINE_CHAR, 13);
-    tex_expand::install_expandable_primitives(&mut stores);
-    tex_exec::install_unexpandable_primitives(&mut stores);
-    stores.intern("par");
+    umber::prepare_run_stores(&mut stores);
 
     let mut input = InputStack::new(FileInput::from_file(file));
     let mut hooks = RunHooks::new(path);
-    let mut recorder = NoopRecorder;
-    let mut log = StringLogSink::new();
-    Executor::new().run_with_recorder_and_hooks_and_log_sink(
-        &mut input,
-        &mut stores,
-        &mut recorder,
-        &mut hooks,
-        &mut log,
-    )?;
-    print!("{}", log.as_str());
+    let log = umber::run_input_with_hooks(&mut input, &mut stores, &mut hooks)?;
+    print!("{log}");
     Ok(())
 }
 

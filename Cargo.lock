@@ -732,6 +732,7 @@ dependencies = [
 name = "umber"
 version = "0.1.0"
 dependencies = [
+ "proptest",
  "refexec",
  "test-support",
  "tex-exec",
