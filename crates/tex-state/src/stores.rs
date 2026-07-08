@@ -433,6 +433,11 @@ impl Stores {
         self.env.set_dimen_param_global(param, value);
     }
 
+    #[must_use]
+    pub fn dimen_param(&self, param: DimenParam) -> Scaled {
+        self.env.dimen_param(param)
+    }
+
     pub fn set_glue_param(&mut self, param: GlueParam, value: GlueId) {
         self.assert_live_glue(value);
         self.env.set_glue_param(param, value);
