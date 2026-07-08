@@ -15,8 +15,8 @@ use tex_expand::{
 };
 use tex_lex::{InputSource, InputStack, LexError};
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
-use tex_state::stores::Stores;
-use tex_state::token::Token;
+use tex_state::stores::{GroupKind, GroupMismatch, Stores};
+use tex_state::token::{Catcode, Token};
 
 mod assignments;
 
@@ -317,6 +317,20 @@ where
 {
     let meaning = match token {
         Token::Cs(symbol) => stores.meaning(symbol),
+        Token::Char {
+            cat: Catcode::BeginGroup,
+            ..
+        } => {
+            stores.enter_group_with_kind(GroupKind::Simple);
+            return Ok(DispatchAction::Continue);
+        }
+        Token::Char {
+            cat: Catcode::EndGroup,
+            ..
+        } => {
+            leave_group(input, stores, GroupKind::Simple)?;
+            return Ok(DispatchAction::Continue);
+        }
         Token::Char { .. } | Token::Param(_) => {
             return Ok(DispatchAction::NotConsumed);
         }
@@ -369,6 +383,54 @@ fn dispatch_delivered_expandable(
     }
 }
 
+fn leave_group<S>(
+    input: &mut InputStack<S>,
+    stores: &mut Stores,
+    expected: GroupKind,
+) -> Result<(), ExecError>
+where
+    S: InputSource,
+{
+    match stores.leave_group_with_kind(expected) {
+        Ok(tokens) => {
+            push_tokens(input, stores, tokens);
+            Ok(())
+        }
+        Err(mismatch) => Err(group_mismatch_error(expected, mismatch)),
+    }
+}
+
+fn group_mismatch_error(expected: GroupKind, mismatch: GroupMismatch) -> ExecError {
+    let no_open_group = mismatch.actual() == expected;
+    match (expected, mismatch.actual(), no_open_group) {
+        (GroupKind::Simple, _, true) => ExecError::TooManyRightBraces,
+        (GroupKind::Simple, GroupKind::SemiSimple, false) => {
+            ExecError::ExtraRightBraceOrForgottenEndgroup
+        }
+        (GroupKind::SemiSimple, _, true) => ExecError::ExtraEndGroup,
+        (GroupKind::SemiSimple, GroupKind::Simple, false) => ExecError::EndGroupMismatch {
+            started_by: mismatch.actual().start_text(),
+        },
+        (GroupKind::Simple, GroupKind::Simple, false)
+        | (GroupKind::SemiSimple, GroupKind::SemiSimple, false) => {
+            unreachable!("matching group kinds are returned as successful leaves, not mismatches")
+        }
+    }
+}
+
+pub(crate) fn push_tokens<S, I>(input: &mut InputStack<S>, stores: &mut Stores, tokens: I)
+where
+    S: InputSource,
+    I: IntoIterator<Item = Token>,
+{
+    let tokens: Vec<_> = tokens.into_iter().collect();
+    if tokens.is_empty() {
+        return;
+    }
+    let token_list = stores.intern_token_list(&tokens);
+    input.push_token_list(token_list, tex_lex::TokenListReplayKind::Inserted);
+}
+
 fn unimplemented_typesetting(
     mode: Mode,
     token: Token,
@@ -415,6 +477,12 @@ pub enum ExecError {
     },
     ExtraConditionalControl(ExpandablePrimitive),
     ExtraEndCsName,
+    TooManyRightBraces,
+    ExtraRightBraceOrForgottenEndgroup,
+    ExtraEndGroup,
+    EndGroupMismatch {
+        started_by: &'static str,
+    },
     UnsupportedCommand {
         token: Token,
         opcode: u8,
@@ -476,6 +544,14 @@ impl fmt::Display for ExecError {
                 write!(f, "extra conditional control {primitive:?}")
             }
             Self::ExtraEndCsName => write!(f, "extra \\endcsname"),
+            Self::TooManyRightBraces => write!(f, "Too many }}'s."),
+            Self::ExtraRightBraceOrForgottenEndgroup => {
+                write!(f, "Extra }}, or forgotten \\endgroup.")
+            }
+            Self::ExtraEndGroup => write!(f, "Extra \\endgroup."),
+            Self::EndGroupMismatch { started_by } => {
+                write!(f, "\\endgroup ended a group started by {started_by}")
+            }
             Self::UnsupportedCommand { token, opcode } => {
                 write!(
                     f,
@@ -536,6 +612,10 @@ impl std::error::Error for ExecError {
             | Self::UnexpectedExpandableDelivery { .. }
             | Self::ExtraConditionalControl(_)
             | Self::ExtraEndCsName
+            | Self::TooManyRightBraces
+            | Self::ExtraRightBraceOrForgottenEndgroup
+            | Self::ExtraEndGroup
+            | Self::EndGroupMismatch { .. }
             | Self::UnsupportedCommand { .. }
             | Self::MissingPrefixedCommand
             | Self::PrefixWithNonAssignment { .. }
@@ -840,6 +920,106 @@ mod tests {
         let _ = stores.leave_group();
         assert!(matches!(stores.meaning(a), Meaning::Macro { .. }));
         assert_eq!(stores.meaning(b), Meaning::Undefined);
+    }
+
+    #[test]
+    fn brace_and_begingroup_groups_restore_local_assignments() {
+        let mut stores = Stores::new();
+        install_unexpandable_primitives(&mut stores);
+        let mut input = InputStack::new(MemoryInput::new(
+            "{\\count0=1\\global\\count1=2}\\begingroup\\count2=3\\endgroup",
+        ));
+
+        Executor::new()
+            .run(&mut input, &mut stores)
+            .expect("grouping primitives execute");
+
+        assert_eq!(stores.count(0), 0);
+        assert_eq!(stores.count(1), 2);
+        assert_eq!(stores.count(2), 0);
+    }
+
+    #[test]
+    fn aftergroup_replays_tokens_fifo_on_group_exit() {
+        let mut stores = Stores::new();
+        install_unexpandable_primitives(&mut stores);
+        let mut input = InputStack::new(MemoryInput::new(
+            "\\def\\A{\\count0=1}\\def\\B{\\count0=2}{\\aftergroup\\A\\aftergroup\\B}",
+        ));
+
+        Executor::new()
+            .run(&mut input, &mut stores)
+            .expect("aftergroup executes");
+
+        assert_eq!(stores.count(0), 2);
+    }
+
+    #[test]
+    fn afterassignment_fires_before_aftergroup_tokens() {
+        let mut stores = Stores::new();
+        install_unexpandable_primitives(&mut stores);
+        let mut input = InputStack::new(MemoryInput::new(
+            "\\def\\A{\\global\\count0=1}\\def\\B{\\global\\count0=2}{\\aftergroup\\B\\afterassignment\\A\\count1=7}",
+        ));
+
+        Executor::new()
+            .run(&mut input, &mut stores)
+            .expect("afterassignment and aftergroup execute");
+
+        assert_eq!(stores.count(0), 2);
+        assert_eq!(stores.count(1), 0);
+    }
+
+    #[test]
+    fn afterassignment_slot_is_single_token_and_overwrites_previous() {
+        let mut stores = Stores::new();
+        install_unexpandable_primitives(&mut stores);
+        let mut input = InputStack::new(MemoryInput::new(
+            "\\def\\A{\\count0=1}\\def\\B{\\count0=2}\\afterassignment\\A\\afterassignment\\B\\count1=7",
+        ));
+
+        Executor::new()
+            .run(&mut input, &mut stores)
+            .expect("afterassignment executes");
+
+        assert_eq!(stores.count(0), 2);
+        assert_eq!(stores.count(1), 7);
+    }
+
+    #[test]
+    fn group_mismatch_errors_use_tex_primary_text() {
+        let mut stores = Stores::new();
+        install_unexpandable_primitives(&mut stores);
+        let mut input = InputStack::new(MemoryInput::new("}"));
+
+        let err = Executor::new()
+            .run(&mut input, &mut stores)
+            .expect_err("extra right brace is an error");
+        assert_eq!(err.to_string(), "Too many }'s.");
+
+        let mut stores = Stores::new();
+        install_unexpandable_primitives(&mut stores);
+        let mut input = InputStack::new(MemoryInput::new("\\begingroup}"));
+        let err = Executor::new()
+            .run(&mut input, &mut stores)
+            .expect_err("right brace cannot close begingroup");
+        assert_eq!(err.to_string(), "Extra }, or forgotten \\endgroup.");
+
+        let mut stores = Stores::new();
+        install_unexpandable_primitives(&mut stores);
+        let mut input = InputStack::new(MemoryInput::new("\\endgroup"));
+        let err = Executor::new()
+            .run(&mut input, &mut stores)
+            .expect_err("extra endgroup is an error");
+        assert_eq!(err.to_string(), "Extra \\endgroup.");
+
+        let mut stores = Stores::new();
+        install_unexpandable_primitives(&mut stores);
+        let mut input = InputStack::new(MemoryInput::new("{\\endgroup"));
+        let err = Executor::new()
+            .run(&mut input, &mut stores)
+            .expect_err("endgroup cannot close brace group");
+        assert_eq!(err.to_string(), "\\endgroup ended a group started by {");
     }
 
     #[test]

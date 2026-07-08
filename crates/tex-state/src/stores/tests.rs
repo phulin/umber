@@ -417,6 +417,27 @@ fn rollback_discards_aftergroup_payloads_pushed_after_snapshot() {
 }
 
 #[test]
+fn rollback_restores_afterassignment_slot() {
+    let mut stores = Stores::new();
+    let original = Token::Char {
+        ch: 'a',
+        cat: Catcode::Letter,
+    };
+    let replacement = Token::Char {
+        ch: 'b',
+        cat: Catcode::Letter,
+    };
+    stores.set_afterassignment(original);
+    let snapshot = stores.checkpoint();
+
+    stores.set_afterassignment(replacement);
+    stores.rollback(snapshot);
+
+    assert_eq!(stores.take_afterassignment(), Some(original));
+    assert_eq!(stores.take_afterassignment(), None);
+}
+
+#[test]
 #[should_panic(expected = "symbol is not live in this Stores timeline")]
 fn stale_rolled_back_symbol_cannot_write_reused_meaning_cell() {
     let mut stores = Stores::new();

@@ -256,6 +256,10 @@ pub enum UnexpandablePrimitive {
     MathCode,
     DelCode,
     Read,
+    BeginGroup,
+    EndGroup,
+    AfterGroup,
+    AfterAssignment,
 }
 
 impl UnexpandablePrimitive {
@@ -295,6 +299,10 @@ impl UnexpandablePrimitive {
             Self::MathCode => 30,
             Self::DelCode => 31,
             Self::Read => 32,
+            Self::BeginGroup => 33,
+            Self::EndGroup => 34,
+            Self::AfterGroup => 35,
+            Self::AfterAssignment => 36,
         }
     }
 
@@ -334,6 +342,10 @@ impl UnexpandablePrimitive {
             30 => Some(Self::MathCode),
             31 => Some(Self::DelCode),
             32 => Some(Self::Read),
+            33 => Some(Self::BeginGroup),
+            34 => Some(Self::EndGroup),
+            35 => Some(Self::AfterGroup),
+            36 => Some(Self::AfterAssignment),
             _ => None,
         }
     }

@@ -686,6 +686,8 @@ dependencies = [
 name = "tex-exec"
 version = "0.1.0"
 dependencies = [
+ "refexec",
+ "tempfile",
  "tex-expand",
  "tex-lex",
  "tex-state",

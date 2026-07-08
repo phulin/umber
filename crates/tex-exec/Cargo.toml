@@ -8,5 +8,9 @@ tex-expand = { path = "../tex-expand" }
 tex-lex = { path = "../tex-lex" }
 tex-state = { path = "../tex-state" }
 
+[dev-dependencies]
+refexec = { path = "../../tools/refexec" }
+tempfile.workspace = true
+
 [lints]
 workspace = true

@@ -13,10 +13,10 @@ use tex_state::ids::GlueId;
 use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::scaled::Scaled;
-use tex_state::stores::Stores;
+use tex_state::stores::{GroupKind, Stores};
 use tex_state::token::{Catcode, Token};
 
-use crate::{DispatchAction, ExecError, Mode, dispatch_delivered_token};
+use crate::{DispatchAction, ExecError, Mode, dispatch_delivered_token, leave_group};
 
 /// Executes a delivered token if it is an assignment/prefix primitive.
 pub fn try_execute_assignment<S, H>(
@@ -53,6 +53,10 @@ pub fn install_unexpandable_primitives(stores: &mut Stores) {
         ("futurelet", UnexpandablePrimitive::FutureLet),
         ("globaldefs", UnexpandablePrimitive::GlobalDefs),
         ("global", UnexpandablePrimitive::Global),
+        ("begingroup", UnexpandablePrimitive::BeginGroup),
+        ("endgroup", UnexpandablePrimitive::EndGroup),
+        ("aftergroup", UnexpandablePrimitive::AfterGroup),
+        ("afterassignment", UnexpandablePrimitive::AfterAssignment),
         ("long", UnexpandablePrimitive::Long),
         ("outer", UnexpandablePrimitive::Outer),
         ("protected", UnexpandablePrimitive::Protected),
@@ -102,7 +106,10 @@ where
         input,
         stores,
     )?;
-    execute_prefixed_command(command, prefixes, input, stores, hooks)?;
+    let assigned = execute_prefixed_command(command, prefixes, input, stores, hooks)?;
+    if assigned {
+        fire_afterassignment(input, stores);
+    }
     Ok(DispatchAction::Continue)
 }
 
@@ -123,7 +130,10 @@ where
         input,
         stores,
     )?;
-    execute_prefixed_command(command, prefixes, input, stores, hooks)?;
+    let assigned = execute_prefixed_command(command, prefixes, input, stores, hooks)?;
+    if assigned {
+        fire_afterassignment(input, stores);
+    }
     Ok(DispatchAction::Continue)
 }
 
@@ -189,7 +199,7 @@ fn execute_prefixed_command<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Stores,
     hooks: &mut H,
-) -> Result<(), ExecError>
+) -> Result<bool, ExecError>
 where
     S: InputSource,
     H: ExpansionHooks<S>,
@@ -199,31 +209,67 @@ where
             UnexpandablePrimitive::Def
             | UnexpandablePrimitive::Edef
             | UnexpandablePrimitive::Gdef
-            | UnexpandablePrimitive::Xdef => execute_def(primitive, prefixes, input, stores, hooks),
-            UnexpandablePrimitive::Let => execute_let(prefixes, input, stores),
-            UnexpandablePrimitive::FutureLet => execute_futurelet(prefixes, input, stores),
-            UnexpandablePrimitive::GlobalDefs => execute_globaldefs(prefixes, input, stores, hooks),
+            | UnexpandablePrimitive::Xdef => {
+                execute_def(primitive, prefixes, input, stores, hooks)?;
+                Ok(true)
+            }
+            UnexpandablePrimitive::Let => {
+                execute_let(prefixes, input, stores)?;
+                Ok(true)
+            }
+            UnexpandablePrimitive::FutureLet => {
+                execute_futurelet(prefixes, input, stores)?;
+                Ok(true)
+            }
+            UnexpandablePrimitive::GlobalDefs => {
+                execute_globaldefs(prefixes, input, stores, hooks)?;
+                Ok(true)
+            }
+            UnexpandablePrimitive::BeginGroup => {
+                reject_all_prefixes(prefixes)?;
+                stores.enter_group_with_kind(GroupKind::SemiSimple);
+                Ok(false)
+            }
+            UnexpandablePrimitive::EndGroup => {
+                reject_all_prefixes(prefixes)?;
+                leave_group(input, stores, GroupKind::SemiSimple)?;
+                Ok(false)
+            }
+            UnexpandablePrimitive::AfterGroup => {
+                reject_all_prefixes(prefixes)?;
+                execute_aftergroup(input, stores)?;
+                Ok(false)
+            }
+            UnexpandablePrimitive::AfterAssignment => {
+                reject_all_prefixes(prefixes)?;
+                execute_afterassignment(input, stores)?;
+                Ok(false)
+            }
             UnexpandablePrimitive::Count
             | UnexpandablePrimitive::Dimen
             | UnexpandablePrimitive::Skip
             | UnexpandablePrimitive::Muskip
             | UnexpandablePrimitive::Toks => {
-                execute_variable_assignment(primitive, prefixes, input, stores, hooks)
+                execute_variable_assignment(primitive, prefixes, input, stores, hooks)?;
+                Ok(true)
             }
             UnexpandablePrimitive::CountDef
             | UnexpandablePrimitive::DimenDef
             | UnexpandablePrimitive::SkipDef
             | UnexpandablePrimitive::MuskipDef
             | UnexpandablePrimitive::ToksDef => {
-                execute_register_def(primitive, prefixes, input, stores, hooks)
+                execute_register_def(primitive, prefixes, input, stores, hooks)?;
+                Ok(true)
             }
             UnexpandablePrimitive::CharDef | UnexpandablePrimitive::MathCharDef => {
-                execute_char_def(primitive, prefixes, input, stores, hooks)
+                execute_char_def(primitive, prefixes, input, stores, hooks)?;
+                Ok(true)
             }
             UnexpandablePrimitive::Advance
             | UnexpandablePrimitive::Multiply
             | UnexpandablePrimitive::Divide => {
-                execute_arithmetic(primitive, prefixes, input, stores, hooks)
+                execute_arithmetic(primitive, prefixes, input, stores, hooks)?;
+                Ok(true)
             }
             UnexpandablePrimitive::CatCode
             | UnexpandablePrimitive::LcCode
@@ -231,9 +277,13 @@ where
             | UnexpandablePrimitive::SfCode
             | UnexpandablePrimitive::MathCode
             | UnexpandablePrimitive::DelCode => {
-                execute_code_table_assignment(primitive, input, stores, hooks)
+                execute_code_table_assignment(primitive, input, stores, hooks)?;
+                Ok(true)
             }
-            UnexpandablePrimitive::Read => execute_read_stub(input, stores, hooks),
+            UnexpandablePrimitive::Read => {
+                execute_read_stub(input, stores, hooks)?;
+                Ok(true)
+            }
             UnexpandablePrimitive::Global
             | UnexpandablePrimitive::Long
             | UnexpandablePrimitive::Outer
@@ -243,8 +293,43 @@ where
             reject_macro_prefixes(prefixes)?;
             let target =
                 variable_from_meaning(meaning).ok_or(ExecError::UnsupportedAssignmentTarget)?;
-            execute_assignment_to_target(target, prefixes, input, stores, hooks)
+            execute_assignment_to_target(target, prefixes, input, stores, hooks)?;
+            Ok(true)
         }
+    }
+}
+
+fn execute_aftergroup<S>(input: &mut InputStack<S>, stores: &mut Stores) -> Result<(), ExecError>
+where
+    S: InputSource,
+{
+    let token = input.next_token(stores)?.ok_or(ExecError::MissingToken {
+        context: "\\aftergroup",
+    })?;
+    stores.push_aftergroup(token);
+    Ok(())
+}
+
+fn execute_afterassignment<S>(
+    input: &mut InputStack<S>,
+    stores: &mut Stores,
+) -> Result<(), ExecError>
+where
+    S: InputSource,
+{
+    let token = input.next_token(stores)?.ok_or(ExecError::MissingToken {
+        context: "\\afterassignment",
+    })?;
+    stores.set_afterassignment(token);
+    Ok(())
+}
+
+fn fire_afterassignment<S>(input: &mut InputStack<S>, stores: &mut Stores)
+where
+    S: InputSource,
+{
+    if let Some(token) = stores.take_afterassignment() {
+        push_tokens(input, stores, [token]);
     }
 }
 
@@ -661,6 +746,10 @@ fn is_assignment_meaning(meaning: Meaning) -> bool {
                 | UnexpandablePrimitive::FutureLet
                 | UnexpandablePrimitive::GlobalDefs
                 | UnexpandablePrimitive::Global
+                | UnexpandablePrimitive::BeginGroup
+                | UnexpandablePrimitive::EndGroup
+                | UnexpandablePrimitive::AfterGroup
+                | UnexpandablePrimitive::AfterAssignment
                 | UnexpandablePrimitive::Long
                 | UnexpandablePrimitive::Outer
                 | UnexpandablePrimitive::Protected
@@ -1472,6 +1561,13 @@ const TOK_PARAMS: &[(&str, u16)] = &[
 
 fn reject_macro_prefixes(prefixes: Prefixes) -> Result<(), ExecError> {
     if prefixes.flags != MeaningFlags::EMPTY {
+        return Err(ExecError::PrefixWithNonDefinition);
+    }
+    Ok(())
+}
+
+fn reject_all_prefixes(prefixes: Prefixes) -> Result<(), ExecError> {
+    if prefixes.global || prefixes.flags != MeaningFlags::EMPTY {
         return Err(ExecError::PrefixWithNonDefinition);
     }
     Ok(())

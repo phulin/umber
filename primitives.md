@@ -196,14 +196,14 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 
 ## Macros, Expansion, And Grouping
 
-- [ ] `\afterassignment` - Saves a token to insert after the next assignment.
-- [ ] `\aftergroup` - Saves a token to insert after the current group ends.
-- [ ] `\begingroup` - Starts an explicit group.
+- [x] `\afterassignment` - Saves a token in snapshot-covered state and inserts it after the next completed assignment; box-assignment firing is deferred until box assignments land.
+- [x] `\aftergroup` - Saves a token on the current state-layer group marker and replays saved tokens FIFO when that group exits.
+- [x] `\begingroup` - Starts an explicit semi-simple group through the state journal marker API.
 - [x] `\csname` - Builds a control sequence from expanded character tokens and assigns `\relax` to newly-created undefined names through the explicit expansion interning capability.
 - [x] `\def` - Defines a macro without expanding replacement text.
 - [x] `\edef` - Defines a macro after expanding replacement text.
 - [x] `\endcsname` - Terminates a `\csname` name scan.
-- [ ] `\endgroup` - Ends an explicit group.
+- [x] `\endgroup` - Ends an explicit semi-simple group through the state journal marker API with boundary-kind mismatch diagnostics.
 - [x] `\expandafter` - Expands the token after the next token before continuing.
 - [x] `\futurelet` - Assigns a control sequence to the following token while preserving input.
 - [x] `\gdef` - Globally defines a macro without expanding replacement text.
