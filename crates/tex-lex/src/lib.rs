@@ -432,6 +432,7 @@ impl<S> InputStack<S> {
 pub enum LexError {
     Io(io::Error),
     InvalidCharacter(char),
+    MissingControlSequence(String),
 }
 
 impl fmt::Display for LexError {
@@ -445,6 +446,9 @@ impl fmt::Display for LexError {
                     *ch as u32
                 )
             }
+            Self::MissingControlSequence(name) => {
+                write!(f, "control sequence {name:?} is not interned")
+            }
         }
     }
 }
@@ -454,6 +458,7 @@ impl std::error::Error for LexError {
         match self {
             Self::Io(err) => Some(err),
             Self::InvalidCharacter(_) => None,
+            Self::MissingControlSequence(_) => None,
         }
     }
 }
@@ -569,6 +574,85 @@ where
             }
         }
     }
+
+    pub fn next_token_readonly(&mut self, stores: &Stores) -> Result<Option<Token>, LexError> {
+        loop {
+            let Some(frame) = self.frames.last_mut() else {
+                return Ok(None);
+            };
+            match frame {
+                InputFrame::TokenList(token_list) => {
+                    let tokens = stores.tokens(token_list.token_list);
+                    if let Some(token) = tokens.get(token_list.index).copied() {
+                        token_list.index += 1;
+                        return Ok(Some(token));
+                    }
+                    self.frames.pop();
+                }
+                InputFrame::Source(source) => {
+                    if let Some(token) = source.frame.pending.pop_front() {
+                        return Ok(Some(token));
+                    }
+
+                    if source.frame.offset >= source.frame.line.len() {
+                        if !load_next_line_readonly(source, stores)? {
+                            let popped = self.frames.pop();
+                            if let Some(InputFrame::Source(source)) = popped {
+                                self.last_source_frame = Some(LastSourceFrame {
+                                    frame: source.frame,
+                                    next_source_offset: source.next_source_offset,
+                                });
+                            }
+                        }
+                        continue;
+                    }
+
+                    let Some(token) = next_token_from_line_readonly(
+                        source,
+                        stores,
+                        self.unicode_superscript_notation,
+                    )?
+                    else {
+                        continue;
+                    };
+                    return Ok(Some(token));
+                }
+            }
+        }
+    }
+}
+
+fn load_next_line_readonly<S>(
+    source: &mut SourceInputFrame<S>,
+    stores: &Stores,
+) -> Result<bool, LexError>
+where
+    S: InputSource,
+{
+    match source.lines.next_event(stores)? {
+        Some(LineEvent::Text(line)) => {
+            source.frame.line = line.chars().collect();
+            source.frame.offset = 0;
+            source.frame.buffer_offset = source.next_source_offset;
+            source.frame.line_number += 1;
+            source.frame.column = 0;
+            source.next_source_offset += line.len();
+            Ok(true)
+        }
+        Some(LineEvent::Par) => {
+            source.frame.state = LexerState::NewLine;
+            source.frame.line_number += 1;
+            source.frame.column = 0;
+            source.frame.buffer_offset = source.next_source_offset;
+            source.next_source_offset += 1;
+            let Some(par) = stores.symbol("par") else {
+                return Err(LexError::MissingControlSequence("par".to_owned()));
+            };
+            source.frame.pending.push_back(Token::Cs(par));
+            Ok(true)
+        }
+        None => Ok(false),
+    }
 }
 
 fn load_next_line<S>(
@@ -664,6 +748,70 @@ fn next_token_from_line<S>(
     }
 }
 
+fn next_token_from_line_readonly<S>(
+    source: &mut SourceInputFrame<S>,
+    stores: &Stores,
+    unicode_superscript_notation: bool,
+) -> Result<Option<Token>, LexError> {
+    let ch = read_expanded_char(source, stores, unicode_superscript_notation);
+    let cat = stores.catcode(ch);
+    match cat {
+        Catcode::Ignored => Ok(None),
+        Catcode::Invalid => Err(LexError::InvalidCharacter(ch)),
+        Catcode::Comment => {
+            source.frame.offset = source.frame.line.len();
+            Ok(None)
+        }
+        Catcode::EndLine => {
+            let token = match source.frame.state {
+                LexerState::NewLine => {
+                    let Some(par) = stores.symbol("par") else {
+                        return Err(LexError::MissingControlSequence("par".to_owned()));
+                    };
+                    Token::Cs(par)
+                }
+                LexerState::MidLine => Token::Char {
+                    ch: ' ',
+                    cat: Catcode::Space,
+                },
+                LexerState::SkippingBlanks => return Ok(None),
+            };
+            source.frame.state = LexerState::NewLine;
+            Ok(Some(token))
+        }
+        Catcode::Space => match source.frame.state {
+            LexerState::MidLine => {
+                source.frame.state = LexerState::SkippingBlanks;
+                Ok(Some(Token::Char {
+                    ch: ' ',
+                    cat: Catcode::Space,
+                }))
+            }
+            LexerState::NewLine | LexerState::SkippingBlanks => Ok(None),
+        },
+        Catcode::Escape => Ok(Some(scan_control_sequence_readonly(
+            source,
+            stores,
+            unicode_superscript_notation,
+        )?)),
+        Catcode::Letter | Catcode::Superscript => {
+            source.frame.state = LexerState::MidLine;
+            Ok(Some(Token::Char { ch, cat }))
+        }
+        Catcode::BeginGroup
+        | Catcode::EndGroup
+        | Catcode::MathShift
+        | Catcode::AlignmentTab
+        | Catcode::Parameter
+        | Catcode::Subscript
+        | Catcode::Other
+        | Catcode::Active => {
+            source.frame.state = LexerState::MidLine;
+            Ok(Some(Token::Char { ch, cat }))
+        }
+    }
+}
+
 fn scan_control_sequence<S>(
     source: &mut SourceInputFrame<S>,
     stores: &mut Stores,
@@ -695,6 +843,46 @@ fn scan_control_sequence<S>(
     }
     source.frame.state = LexerState::SkippingBlanks;
     Token::Cs(stores.intern(&name))
+}
+
+fn scan_control_sequence_readonly<S>(
+    source: &mut SourceInputFrame<S>,
+    stores: &Stores,
+    unicode_superscript_notation: bool,
+) -> Result<Token, LexError> {
+    if source.frame.offset >= source.frame.line.len() {
+        source.frame.state = LexerState::SkippingBlanks;
+        return readonly_cs_token(stores, "");
+    }
+
+    let ch = read_expanded_char(source, stores, unicode_superscript_notation);
+    if stores.catcode(ch) != Catcode::Letter {
+        source.frame.state = LexerState::MidLine;
+        return readonly_cs_token(stores, &ch.to_string());
+    }
+
+    let mut name = String::from(ch);
+    while source.frame.offset < source.frame.line.len() {
+        let mark = source.frame.offset;
+        let mark_col = source.frame.column;
+        let next = read_expanded_char(source, stores, unicode_superscript_notation);
+        if stores.catcode(next) == Catcode::Letter {
+            name.push(next);
+        } else {
+            source.frame.offset = mark;
+            source.frame.column = mark_col;
+            break;
+        }
+    }
+    source.frame.state = LexerState::SkippingBlanks;
+    readonly_cs_token(stores, &name)
+}
+
+fn readonly_cs_token(stores: &Stores, name: &str) -> Result<Token, LexError> {
+    stores
+        .symbol(name)
+        .map(Token::Cs)
+        .ok_or_else(|| LexError::MissingControlSequence(name.to_owned()))
 }
 
 fn read_expanded_char<S>(

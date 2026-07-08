@@ -198,6 +198,12 @@ impl Stores {
         self.interner.intern(name)
     }
 
+    /// Returns the live symbol for an already-interned control-sequence name.
+    #[must_use]
+    pub fn symbol(&self, name: &str) -> Option<Symbol> {
+        self.interner.get(name)
+    }
+
     /// Resolves a live control-sequence symbol.
     #[must_use]
     pub fn resolve(&self, symbol: Symbol) -> &str {

@@ -84,6 +84,18 @@ impl Interner {
         symbol
     }
 
+    /// Returns the live symbol for `name` without mutating the interner.
+    #[must_use]
+    pub fn get(&self, name: &str) -> Option<Symbol> {
+        let hash = content_hash(name);
+        self.index.get(&hash).and_then(|candidates| {
+            candidates
+                .iter()
+                .copied()
+                .find(|&symbol| self.resolve(symbol) == name)
+        })
+    }
+
     /// Resolves a live symbol to its interned string.
     #[must_use]
     pub fn resolve(&self, symbol: Symbol) -> &str {
