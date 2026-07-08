@@ -2,7 +2,7 @@ use tex_lex::{InputSource, InputStack, TokenListReplayKind};
 use tex_state::ExpansionState;
 use tex_state::token::{Catcode, Token};
 
-use crate::{ExpandError, ExpansionHooks, ReadRecorder, get_x_token_without_input_open, scan_int};
+use crate::{ExpandError, ExpandNext, ExpansionHooks, NoInputExpandNext, ReadRecorder, scan_int};
 
 pub(crate) fn next_non_space_x_token_with_hooks<S, R, H>(
     input: &mut InputStack<S>,
@@ -15,8 +15,31 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
+    next_non_space_x_token_with_expander_and_hooks(
+        input,
+        stores,
+        recorder,
+        hooks,
+        &mut NoInputExpandNext,
+    )
+}
+
+pub(crate) fn next_non_space_x_token_with_expander_and_hooks<S, St, R, H, E>(
+    input: &mut InputStack<S>,
+    stores: &mut St,
+    recorder: &mut R,
+    hooks: &mut H,
+    expander: &mut E,
+) -> Result<Option<Token>, ExpandError>
+where
+    S: InputSource,
+    St: ExpansionState,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
+{
     loop {
-        let Some(token) = get_x_token_without_input_open(input, stores, recorder, hooks)? else {
+        let Some(token) = expander.next_expanded_token(input, stores, recorder, hooks)? else {
             return Ok(None);
         };
         if !matches!(
@@ -31,6 +54,7 @@ where
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn scan_register_index<S, R, H>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
@@ -42,7 +66,32 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    let value = scan_int::scan_int_with_recorder_and_hooks(input, stores, recorder, hooks)?.value();
+    scan_register_index_with_expander_and_hooks(
+        input,
+        stores,
+        recorder,
+        hooks,
+        &mut NoInputExpandNext,
+    )
+}
+
+pub(crate) fn scan_register_index_with_expander_and_hooks<S, St, R, H, E>(
+    input: &mut InputStack<S>,
+    stores: &mut St,
+    recorder: &mut R,
+    hooks: &mut H,
+    expander: &mut E,
+) -> Result<u16, ExpandError>
+where
+    S: InputSource,
+    St: ExpansionState,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
+{
+    let value =
+        scan_int::scan_int_with_expander_and_hooks(input, stores, recorder, hooks, expander)?
+            .value();
     if !(0..=32_767).contains(&value) {
         return Err(scan_int::ScanIntError::RegisterNumberOutOfRange(value).into());
     }
@@ -68,10 +117,39 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    let Some(first) = next_non_space_x_token_with_hooks(input, stores, recorder, hooks)? else {
+    scan_optional_keyword_with_expander_and_hooks(
+        input,
+        stores,
+        recorder,
+        hooks,
+        &mut NoInputExpandNext,
+        keyword,
+    )
+}
+
+pub fn scan_optional_keyword_with_expander_and_hooks<S, St, R, H, E>(
+    input: &mut InputStack<S>,
+    stores: &mut St,
+    recorder: &mut R,
+    hooks: &mut H,
+    expander: &mut E,
+    keyword: &str,
+) -> Result<bool, ExpandError>
+where
+    S: InputSource,
+    St: ExpansionState,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
+{
+    let Some(first) =
+        next_non_space_x_token_with_expander_and_hooks(input, stores, recorder, hooks, expander)?
+    else {
         return Ok(false);
     };
-    match scan_keyword_after_first_with_hooks(input, stores, recorder, hooks, first, keyword)? {
+    match scan_keyword_after_first_with_expander_and_hooks(
+        input, stores, recorder, hooks, expander, first, keyword,
+    )? {
         ExpandedKeywordMatch::Matched => Ok(true),
         ExpandedKeywordMatch::FirstTokenMismatch => {
             unread_token(input, stores, first);
@@ -81,6 +159,7 @@ where
     }
 }
 
+#[allow(dead_code)]
 pub fn scan_keyword_after_first_with_hooks<S, R, H>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
@@ -94,6 +173,33 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
+    scan_keyword_after_first_with_expander_and_hooks(
+        input,
+        stores,
+        recorder,
+        hooks,
+        &mut NoInputExpandNext,
+        first,
+        keyword,
+    )
+}
+
+pub fn scan_keyword_after_first_with_expander_and_hooks<S, St, R, H, E>(
+    input: &mut InputStack<S>,
+    stores: &mut St,
+    recorder: &mut R,
+    hooks: &mut H,
+    expander: &mut E,
+    first: Token,
+    keyword: &str,
+) -> Result<ExpandedKeywordMatch, ExpandError>
+where
+    S: InputSource,
+    St: ExpansionState,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
+{
     if keyword.is_empty() {
         return Ok(ExpandedKeywordMatch::Matched);
     }
@@ -106,7 +212,7 @@ where
     }
 
     for &expected in &keyword.as_bytes()[1..] {
-        let Some(token) = get_x_token_without_input_open(input, stores, recorder, hooks)? else {
+        let Some(token) = expander.next_expanded_token(input, stores, recorder, hooks)? else {
             unread_tokens(input, stores, consumed);
             return Ok(ExpandedKeywordMatch::PartialMismatch);
         };

@@ -234,6 +234,10 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   narrow `ExpandNext` capability; the top-level driver supplies a
   `DriverExpandNext` implementation that can re-enter dispatch with `\input`
   authority, while ordinary helper-only paths use a no-input implementation.
+  Dimension, glue, condition-token, register-index, and `\the` operand scans
+  therefore expose both no-input helper entry points and explicit
+  expander/driver-aware entry points for production callers that already own
+  input-read authority.
   File reads for `\input` live behind the separate `InputReadState`
   capability; driver hooks receive an `InputOpenContext`, not `ExpansionState`,
   so hooks can open input files without seeing meaning reads, Env/register

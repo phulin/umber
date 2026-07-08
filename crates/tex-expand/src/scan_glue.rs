@@ -12,8 +12,8 @@ use tex_state::token::{Catcode, Token};
 
 use crate::scan_dimen::{self, ScanDimenError, ScanDimenOptions};
 use crate::{
-    ExpandError, ExpansionHooks, NoopExpansionHooks, NoopRecorder, ReadRecorder,
-    get_x_token_without_input_open, scan_helpers, scan_int,
+    ExpandError, ExpandNext, ExpansionHooks, NoInputExpandNext, NoopExpansionHooks, NoopRecorder,
+    ReadRecorder, scan_helpers, scan_int,
 };
 
 /// A successfully scanned glue specification.
@@ -137,7 +137,25 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    let (negative, first) = scan_signs(input, stores, recorder, hooks)?;
+    scan_glue_with_expander_and_hooks(input, stores, recorder, hooks, &mut NoInputExpandNext, mu)
+}
+
+pub fn scan_glue_with_expander_and_hooks<S, St, R, H, E>(
+    input: &mut InputStack<S>,
+    stores: &mut St,
+    recorder: &mut R,
+    hooks: &mut H,
+    expander: &mut E,
+    mu: bool,
+) -> Result<ScannedGlue, ScanGlueError>
+where
+    S: InputSource,
+    St: ExpansionState,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
+{
+    let (negative, first) = scan_signs(input, stores, recorder, hooks, expander)?;
     let Some(first) = first else {
         return Err(ScanGlueError::MissingNumber);
     };
@@ -145,38 +163,38 @@ where
     if let Token::Cs(symbol) = first {
         match stores.meaning(symbol) {
             Meaning::SkipRegister(index) if !mu => {
-                consume_optional_space(input, stores, recorder, hooks)?;
+                consume_optional_space(input, stores, recorder, hooks, expander)?;
                 let spec = stores.glue(stores.skip(index));
                 return Ok(intern_spec(stores, signed_spec(spec, negative)));
             }
             Meaning::MuskipRegister(index) if mu => {
-                consume_optional_space(input, stores, recorder, hooks)?;
+                consume_optional_space(input, stores, recorder, hooks, expander)?;
                 let spec = stores.glue(stores.muskip(index));
                 return Ok(intern_spec(stores, signed_spec(spec, negative)));
             }
             Meaning::GlueParam(index) if !mu => {
-                consume_optional_space(input, stores, recorder, hooks)?;
+                consume_optional_space(input, stores, recorder, hooks, expander)?;
                 let spec =
                     stores.glue(stores.glue_param(tex_state::env::banks::GlueParam::new(index)));
                 return Ok(intern_spec(stores, signed_spec(spec, negative)));
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Skip) if !mu => {
-                let index = scan_register_index(input, stores, recorder, hooks)?;
-                consume_optional_space(input, stores, recorder, hooks)?;
+                let index = scan_register_index(input, stores, recorder, hooks, expander)?;
+                consume_optional_space(input, stores, recorder, hooks, expander)?;
                 let spec = stores.glue(stores.skip(index));
                 return Ok(intern_spec(stores, signed_spec(spec, negative)));
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Muskip) if mu => {
-                let index = scan_register_index(input, stores, recorder, hooks)?;
-                consume_optional_space(input, stores, recorder, hooks)?;
+                let index = scan_register_index(input, stores, recorder, hooks, expander)?;
+                consume_optional_space(input, stores, recorder, hooks, expander)?;
                 let spec = stores.glue(stores.muskip(index));
                 return Ok(intern_spec(stores, signed_spec(spec, negative)));
             }
             _ => {
                 let name = stores.resolve(symbol);
                 if (!mu && name == "skip") || (mu && name == "muskip") {
-                    let index = scan_register_index(input, stores, recorder, hooks)?;
-                    consume_optional_space(input, stores, recorder, hooks)?;
+                    let index = scan_register_index(input, stores, recorder, hooks, expander)?;
+                    consume_optional_space(input, stores, recorder, hooks, expander)?;
                     let id = if mu {
                         stores.muskip(index)
                     } else {
@@ -190,11 +208,12 @@ where
     }
 
     unread_token(input, stores, first);
-    let width = scan_dimen::scan_dimen_with_options_and_hooks(
+    let width = scan_dimen::scan_dimen_with_expander_and_hooks(
         input,
         stores,
         recorder,
         hooks,
+        expander,
         dimen_options(mu),
     )?;
     let mut spec = GlueSpec {
@@ -208,23 +227,25 @@ where
         spec.width = -spec.width;
     }
 
-    if scan_keyword(input, stores, recorder, hooks, "plus")? {
-        let stretch = scan_dimen::scan_dimen_with_options_and_hooks(
+    if scan_keyword(input, stores, recorder, hooks, expander, "plus")? {
+        let stretch = scan_dimen::scan_dimen_with_expander_and_hooks(
             input,
             stores,
             recorder,
             hooks,
+            expander,
             dimen_options(mu).with_infinite_units(),
         )?;
         spec.stretch = stretch.value();
         spec.stretch_order = stretch.order();
     }
-    if scan_keyword(input, stores, recorder, hooks, "minus")? {
-        let shrink = scan_dimen::scan_dimen_with_options_and_hooks(
+    if scan_keyword(input, stores, recorder, hooks, expander, "minus")? {
+        let shrink = scan_dimen::scan_dimen_with_expander_and_hooks(
             input,
             stores,
             recorder,
             hooks,
+            expander,
             dimen_options(mu).with_infinite_units(),
         )?;
         spec.shrink = shrink.value();
@@ -257,20 +278,23 @@ fn signed_spec(mut spec: GlueSpec, negative: bool) -> GlueSpec {
     spec
 }
 
-fn scan_signs<S, R, H>(
+fn scan_signs<S, St, R, H, E>(
     input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+    stores: &mut St,
     recorder: &mut R,
     hooks: &mut H,
+    expander: &mut E,
 ) -> Result<(bool, Option<Token>), ScanGlueError>
 where
     S: InputSource,
+    St: ExpansionState,
     R: ReadRecorder,
     H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
 {
     let mut negative = false;
     loop {
-        let Some(token) = get_x_token_without_input_open(input, stores, recorder, hooks)? else {
+        let Some(token) = next_x(input, stores, recorder, hooks, expander)? else {
             return Ok((negative, None));
         };
         if is_space(token) {
@@ -287,54 +311,82 @@ where
     }
 }
 
-fn scan_register_index<S, R, H>(
+fn next_x<S, St, R, H, E>(
     input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+    stores: &mut St,
     recorder: &mut R,
     hooks: &mut H,
+    expander: &mut E,
+) -> Result<Option<Token>, ScanGlueError>
+where
+    S: InputSource,
+    St: ExpansionState,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
+{
+    Ok(expander.next_expanded_token(input, stores, recorder, hooks)?)
+}
+
+fn scan_register_index<S, St, R, H, E>(
+    input: &mut InputStack<S>,
+    stores: &mut St,
+    recorder: &mut R,
+    hooks: &mut H,
+    expander: &mut E,
 ) -> Result<u16, ScanGlueError>
 where
     S: InputSource,
+    St: ExpansionState,
     R: ReadRecorder,
     H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
 {
-    let value =
-        crate::scan_int::scan_int_with_recorder_and_hooks(input, stores, recorder, hooks)?.value();
+    let value = crate::scan_int::scan_int_with_expander_and_hooks(
+        input, stores, recorder, hooks, expander,
+    )?
+    .value();
     if !(0..=32_767).contains(&value) {
         return Err(ScanGlueError::RegisterNumberOutOfRange(value));
     }
     Ok(value as u16)
 }
 
-fn scan_keyword<S, R, H>(
+fn scan_keyword<S, St, R, H, E>(
     input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+    stores: &mut St,
     recorder: &mut R,
     hooks: &mut H,
+    expander: &mut E,
     keyword: &str,
 ) -> Result<bool, ScanGlueError>
 where
     S: InputSource,
+    St: ExpansionState,
     R: ReadRecorder,
     H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
 {
-    Ok(scan_helpers::scan_optional_keyword_with_hooks(
-        input, stores, recorder, hooks, keyword,
+    Ok(scan_helpers::scan_optional_keyword_with_expander_and_hooks(
+        input, stores, recorder, hooks, expander, keyword,
     )?)
 }
 
-fn consume_optional_space<S, R, H>(
+fn consume_optional_space<S, St, R, H, E>(
     input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+    stores: &mut St,
     recorder: &mut R,
     hooks: &mut H,
+    expander: &mut E,
 ) -> Result<(), ScanGlueError>
 where
     S: InputSource,
+    St: ExpansionState,
     R: ReadRecorder,
     H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
 {
-    let Some(token) = get_x_token_without_input_open(input, stores, recorder, hooks)? else {
+    let Some(token) = next_x(input, stores, recorder, hooks, expander)? else {
         return Ok(());
     };
     if !is_space(token) {

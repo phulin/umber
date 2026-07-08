@@ -1,5 +1,6 @@
 use super::*;
 use crate::executor::NoopExecHooks;
+use std::collections::HashMap;
 use tex_expand::{EngineMode, ExpansionHooks, NoopRecorder};
 use tex_lex::{InputStack, MemoryInput};
 use tex_state::env::banks::IntParam;
@@ -201,6 +202,86 @@ fn edef_expansion_uses_active_input_hooks() {
                 cat: Catcode::Letter
             },
         ]
+    );
+}
+
+#[test]
+fn input_expands_while_scanning_assignment_values() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    stores.set_int_param(IntParam::END_LINE_CHAR, -1);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\dimen0=\\input{dim}\\skip0=\\input{glue}\\end",
+    ));
+    let mut hooks = MemoryInputHooks::new()
+        .with_source("dim", "12pt")
+        .with_source("glue", "3pt plus 2pt");
+
+    Executor::new()
+        .run_with_recorder_and_hooks(&mut input, &mut stores, &mut NoopRecorder, &mut hooks)
+        .expect("assignments scan through input hooks");
+
+    assert_eq!(
+        stores.dimen(0),
+        tex_state::scaled::Scaled::from_raw(12 * 65_536)
+    );
+    let glue = stores.glue(stores.skip(0));
+    assert_eq!(glue.width, tex_state::scaled::Scaled::from_raw(3 * 65_536));
+    assert_eq!(
+        glue.stretch,
+        tex_state::scaled::Scaled::from_raw(2 * 65_536)
+    );
+}
+
+#[test]
+fn input_expands_while_scanning_conditional_operands() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    stores.set_int_param(IntParam::END_LINE_CHAR, -1);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\ifdim\\input{left}<\\input{right}\\count0=1\\fi\
+         \\ifcat\\input{a}\\input{b}\\count1=1\\fi\\end",
+    ));
+    let mut hooks = MemoryInputHooks::new()
+        .with_source("left", "1pt")
+        .with_source("right", "2pt")
+        .with_source("a", "a")
+        .with_source("b", "b");
+
+    Executor::new()
+        .run_with_recorder_and_hooks(&mut input, &mut stores, &mut NoopRecorder, &mut hooks)
+        .expect("conditionals scan through input hooks");
+
+    assert_eq!(stores.count(0), 1);
+    assert_eq!(stores.count(1), 1);
+}
+
+#[test]
+fn input_expands_while_scanning_register_indices_and_the_operands() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    stores.set_int_param(IntParam::END_LINE_CHAR, -1);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\count\\input{idx}=9\\edef\\e{\\the\\count\\input{idx}}\\end",
+    ));
+    let mut hooks = MemoryInputHooks::new().with_source("idx", "5");
+
+    Executor::new()
+        .run_with_recorder_and_hooks(&mut input, &mut stores, &mut NoopRecorder, &mut hooks)
+        .expect("register and the scans use input hooks");
+
+    assert_eq!(stores.count(5), 9);
+    let e = stores.symbol("e").expect("macro was defined");
+    let meaning = stores.macro_meaning(e).expect("e is a macro");
+    assert_eq!(
+        stores.tokens(meaning.replacement_text()),
+        &[Token::Char {
+            ch: '9',
+            cat: Catcode::Other
+        }]
     );
 }
 
@@ -900,5 +981,35 @@ impl ExpansionHooks<MemoryInput> for EdefInputHooks {
         } else {
             Err(format!("unexpected input {name}"))
         }
+    }
+}
+
+struct MemoryInputHooks {
+    sources: HashMap<String, String>,
+}
+
+impl MemoryInputHooks {
+    fn new() -> Self {
+        Self {
+            sources: HashMap::new(),
+        }
+    }
+
+    fn with_source(mut self, name: &str, source: &str) -> Self {
+        self.sources.insert(name.to_owned(), source.to_owned());
+        self
+    }
+}
+
+impl ExpansionHooks<MemoryInput> for MemoryInputHooks {
+    fn open_input<C: tex_state::InputReadState>(
+        &mut self,
+        _input: &mut C,
+        name: &str,
+    ) -> Result<MemoryInput, String> {
+        self.sources
+            .get(name)
+            .map(|source| MemoryInput::new(source.clone()))
+            .ok_or_else(|| format!("unexpected input {name}"))
     }
 }

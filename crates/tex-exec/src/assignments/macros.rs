@@ -130,9 +130,15 @@ where
     reject_macro_prefixes(prefixes)?;
     skip_optional_equals_x(input, stores, hooks)?;
     let mut recorder = NoopRecorder;
-    let value = scan_int::scan_int_with_recorder_and_hooks(input, stores, &mut recorder, hooks)
-        .map_err(ExpandError::from)?
-        .value();
+    let value = scan_int::scan_int_with_expander_and_hooks(
+        input,
+        stores,
+        &mut recorder,
+        hooks,
+        &mut DriverExpandNext,
+    )
+    .map_err(ExpandError::from)?
+    .value();
     if apply_globaldefs(prefixes.global, stores) {
         stores.set_int_param_global(IntParam::GLOBAL_DEFS, value);
     } else {

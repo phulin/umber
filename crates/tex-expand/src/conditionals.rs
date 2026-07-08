@@ -6,8 +6,8 @@ use tex_state::node::Node;
 use tex_state::token::Token;
 
 use crate::{
-    Dispatch, ExpandError, ExpandableOpcode, ExpansionHooks, ReadRecorder,
-    get_x_token_without_input_open, scan_helpers, scan_int,
+    Dispatch, ExpandError, ExpandNext, ExpandableOpcode, ExpansionHooks, ReadRecorder,
+    scan_helpers, scan_int,
 };
 
 pub(crate) fn begin_if<S, R, H>(
@@ -310,20 +310,25 @@ where
     }
 }
 
-pub(crate) fn scan_condition_x_token<S, R, H>(
+pub(crate) fn scan_condition_x_token<S, St, R, H, E>(
     input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+    stores: &mut St,
     recorder: &mut R,
     hooks: &mut H,
+    expander: &mut E,
 ) -> Result<Token, ExpandError>
 where
     S: InputSource,
+    St: ExpansionState,
     R: ReadRecorder,
     H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
 {
-    get_x_token_without_input_open(input, stores, recorder, hooks)?.ok_or(
-        ExpandError::MissingTokenAfterPrimitive(ExpandableOpcode::If),
-    )
+    expander
+        .next_expanded_token(input, stores, recorder, hooks)?
+        .ok_or(ExpandError::MissingTokenAfterPrimitive(
+            ExpandableOpcode::If,
+        ))
 }
 
 pub(crate) fn if_char_equal(left: Token, right: Token) -> bool {
