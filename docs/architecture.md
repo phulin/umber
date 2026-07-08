@@ -381,8 +381,11 @@ assignments, box building, and dispatch into the typesetting kernels.
   the six modes into the three `\ifvmode`/`\ifhmode`/`\ifmmode` families and
   the `\ifinner` bit. Box primitives are implemented for register
   round-trips, packing, unboxing, last-box extraction, dimension reads/writes,
-  and shift commands; full paragraph/font-driven hlist construction remains
-  future work.
+  and shift commands. Restricted-horizontal builders also now construct
+  font-backed hlist content for ordinary characters and spaces, including
+  TFM ligature/kern reconstitution, space-factor glue, discretionary nodes,
+  accents, rules, penalties, and italic corrections. Paragraph breaking and
+  page contribution remain future work.
 
 ## 7. Typesetting kernels
 

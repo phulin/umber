@@ -47,20 +47,21 @@ fn dump_list(stores: &Universe, id: NodeListId, config: &DumpConfig, depth: i32,
 fn dump_node(stores: &Universe, node: &Node, config: &DumpConfig, depth: i32, out: &mut String) {
     write_prefix(depth, out);
     match node {
-        Node::Kern { amount, kind } => {
-            if *kind == KernKind::Accent {
+        Node::Kern { amount, kind } => match kind {
+            KernKind::Explicit => {
+                let _ = writeln!(out, "\\kern {}", format_scaled_without_unit(*amount));
+            }
+            KernKind::Font => {
+                let _ = writeln!(out, "\\kern{}", format_scaled_without_unit(*amount));
+            }
+            KernKind::Accent => {
                 let _ = writeln!(
                     out,
                     "\\kern {} (for accent)",
                     format_scaled_without_unit(*amount)
                 );
-            } else {
-                if *kind != KernKind::Explicit {
-                    out.push_str(kind.kern_dump_prefix());
-                }
-                let _ = writeln!(out, "\\kern {}", format_scaled_without_unit(*amount));
             }
-        }
+        },
         Node::Glue { spec, kind } => {
             let _ = writeln!(
                 out,
@@ -276,20 +277,6 @@ fn order_unit(order: Order) -> &'static str {
         Order::Fil => "fil",
         Order::Fill => "fill",
         Order::Filll => "filll",
-    }
-}
-
-trait KernKindDump {
-    fn kern_dump_prefix(self) -> &'static str;
-}
-
-impl KernKindDump for KernKind {
-    fn kern_dump_prefix(self) -> &'static str {
-        match self {
-            Self::Explicit => "",
-            Self::Font => "\\kern (font) ",
-            Self::Accent => "\\kern (for accent) ",
-        }
     }
 }
 
