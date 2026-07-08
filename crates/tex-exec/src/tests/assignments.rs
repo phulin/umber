@@ -1,3 +1,4 @@
+use super::support::terminal_effect_text;
 use super::*;
 
 #[test]
@@ -13,6 +14,46 @@ fn register_assignments_cover_sparse_aliases_and_arithmetic() {
         .expect("register assignments execute");
 
     assert_eq!(stores.count(300), 18);
+}
+
+#[test]
+fn dimension_assignment_reports_recoverable_scanner_diagnostic() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\mag=40000 \\dimen0=1truept"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("dimension assignment executes");
+
+    assert_eq!(stores.mag(), 1000);
+    assert_eq!(stores.prepared_mag(), Some(1000));
+    assert_eq!(stores.dimen(0).raw(), tex_state::scaled::Scaled::UNITY);
+    assert!(
+        terminal_effect_text(&stores)
+            .contains("! Illegal magnification has been changed to 1000 (40000).")
+    );
+}
+
+#[test]
+fn dimension_arithmetic_reports_recoverable_scanner_diagnostic() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\mag=1200 \\dimen0=0pt \\dimen1=1truept \\mag=2000 \\advance\\dimen0 by 1truept",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("dimension arithmetic executes");
+
+    assert_eq!(stores.mag(), 1200);
+    assert_eq!(stores.prepared_mag(), Some(1200));
+    assert_eq!(stores.dimen(0).raw(), 54_613);
+    assert!(
+        terminal_effect_text(&stores)
+            .contains("! Incompatible magnification (2000); the previous value will be retained.")
+    );
 }
 
 #[test]

@@ -234,7 +234,7 @@ where
     H: ExpansionHooks<S>,
 {
     let mut recorder = NoopRecorder;
-    Ok(scan_dimen::scan_dimen_with_expander_and_hooks(
+    let scanned = scan_dimen::scan_dimen_with_expander_and_hooks(
         input,
         stores,
         &mut recorder,
@@ -242,8 +242,11 @@ where
         &mut DriverExpandNext,
         scan_dimen::ScanDimenOptions::STANDARD,
     )
-    .map_err(ExpandError::from)?
-    .value())
+    .map_err(ExpandError::from)?;
+    if let Some(diagnostic) = scanned.diagnostic() {
+        diagnostics::report_dimension_diagnostic(stores, diagnostic);
+    }
+    Ok(scanned.value())
 }
 
 pub(super) fn scan_glue_id<S, H>(
