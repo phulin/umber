@@ -50,7 +50,7 @@ fn hpack_sets_finite_stretch_order_and_ratio() {
     assert_eq!(packed.node.width, sp(40));
     assert_eq!(packed.node.glue_sign, Sign::Stretching);
     assert_eq!(packed.node.glue_order, Order::Fil);
-    assert_eq!(packed.node.glue_set, 2.0);
+    assert_eq!(packed.node.glue_set, GlueSetRatio::from_raw(2_000_000));
 }
 
 #[test]
@@ -91,7 +91,7 @@ fn hpack_clamps_overfull_normal_shrink_ratio_to_one() {
 
     assert_eq!(packed.node.glue_sign, Sign::Shrinking);
     assert_eq!(packed.node.glue_order, Order::Normal);
-    assert_eq!(packed.node.glue_set, 1.0);
+    assert_eq!(packed.node.glue_set, GlueSetRatio::UNITY);
     assert_eq!(
         packed.diagnostics,
         vec![PackDiagnostic::Overfull { excess: sp(10) }]
@@ -107,7 +107,7 @@ fn hpack_measures_shifted_child_boxes() {
         height: sp(10),
         depth: sp(3),
         shift: sp(4),
-        glue_set: 0.0,
+        glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
         children: child,
@@ -117,7 +117,7 @@ fn hpack_measures_shifted_child_boxes() {
         height: sp(10),
         depth: sp(3),
         shift: sp(-6),
-        glue_set: 0.0,
+        glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
         children: child,
@@ -148,7 +148,7 @@ fn vpack_clamps_depth_to_box_max_depth() {
         height: sp(10),
         depth: sp(8),
         shift: sp(0),
-        glue_set: 0.0,
+        glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
         children: child,
@@ -183,7 +183,7 @@ fn vertical_spacing_consumes_previous_depth() {
         height: sp(4),
         depth: sp(1),
         shift: sp(0),
-        glue_set: 0.0,
+        glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
         children: child,

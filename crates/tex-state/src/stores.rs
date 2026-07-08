@@ -1103,7 +1103,7 @@ impl Stores {
                 box_node.height.raw().hash(hasher);
                 box_node.depth.raw().hash(hasher);
                 box_node.shift.raw().hash(hasher);
-                box_node.glue_set.to_bits().hash(hasher);
+                box_node.glue_set.raw().hash(hasher);
                 box_node.glue_sign.hash(hasher);
                 box_node.glue_order.hash(hasher);
                 self.testing_hash_node_list_content_bounded(box_node.children, hasher, depth + 1);

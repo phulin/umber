@@ -3,7 +3,7 @@ use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::NodeListId;
 use tex_state::node::{BoxNode, BoxNodeFields, Node, Sign};
-use tex_state::scaled::Scaled;
+use tex_state::scaled::{GlueSetRatio, Scaled};
 
 use crate::{INF_BAD, TypesetState, badness};
 
@@ -160,7 +160,7 @@ impl Measurement {
 
 #[derive(Clone, Copy, Debug)]
 struct GlueSetting {
-    ratio: f64,
+    ratio: GlueSetRatio,
     sign: Sign,
     order: Order,
     badness: i32,
@@ -179,7 +179,7 @@ fn set_glue(target: Scaled, natural: Scaled, meas: &Measurement) -> GlueSetting 
     let diff = target.raw() - natural.raw();
     if diff == 0 {
         return GlueSetting {
-            ratio: 0.0,
+            ratio: GlueSetRatio::ZERO,
             sign: Sign::Normal,
             order: Order::Normal,
             badness: 0,
@@ -195,11 +195,11 @@ fn set_glue(target: Scaled, natural: Scaled, meas: &Measurement) -> GlueSetting 
     let total = totals[order as usize].raw();
     let excess = Scaled::from_raw(diff.abs());
     let ratio = if total == 0 {
-        0.0
+        GlueSetRatio::ZERO
     } else if sign == Sign::Shrinking && order == Order::Normal && excess.raw() > total {
-        1.0
+        GlueSetRatio::UNITY
     } else {
-        f64::from(excess.raw()) / f64::from(total)
+        GlueSetRatio::from_scaled_ratio(excess, Scaled::from_raw(total))
     };
     GlueSetting {
         ratio,

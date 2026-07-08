@@ -245,7 +245,7 @@ fn glue_set_is_rounded_cumulatively_without_float_math_in_writer() {
         height: sp(1),
         depth: sp(0),
         shift: sp(0),
-        glue_set: GlueSetRatio { raw: 500_000 },
+        glue_set: GlueSetRatio::from_raw(500_000),
         glue_sign: GlueSign::Stretching,
         glue_order: GlueOrder::Normal,
         children: vec![
@@ -337,7 +337,7 @@ fn box_node(width: i32, height: i32, depth: i32, children: Vec<PageNode>) -> Box
         height: sp(height),
         depth: sp(depth),
         shift: sp(0),
-        glue_set: GlueSetRatio { raw: 0 },
+        glue_set: GlueSetRatio::ZERO,
         glue_sign: GlueSign::Normal,
         glue_order: GlueOrder::Normal,
         children,

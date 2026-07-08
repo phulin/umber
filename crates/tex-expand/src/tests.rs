@@ -9,7 +9,7 @@ use tex_state::interner::Symbol;
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
 use tex_state::node::{BoxNode, BoxNodeFields, Node, Sign};
-use tex_state::scaled::Scaled;
+use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::token::{Catcode, Token};
 use tex_state::{ExpansionState, InputOpenState, InputReadState, Universe};
 
@@ -1538,7 +1538,7 @@ fn boxed_list(stores: &mut Universe, kind: BoxKindForTest) -> tex_state::ids::No
         height: Scaled::from_raw(0),
         depth: Scaled::from_raw(0),
         shift: Scaled::from_raw(0),
-        glue_set: 0.0,
+        glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
         children: empty,

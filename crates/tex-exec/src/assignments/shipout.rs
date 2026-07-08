@@ -7,7 +7,7 @@ use tex_expand::{
 use tex_lex::{InputSource, InputStack, MemoryInput, TokenListReplayKind};
 use tex_out::{
     BoxNode as PageBoxNode, ContentHash as PageContentHash, DEFAULT_BANNER, EffectSink,
-    FontResource, GlueKind as PageGlueKind, GlueOrder as PageGlueOrder, GlueSetRatio, GlueSign,
+    FontResource, GlueKind as PageGlueKind, GlueOrder as PageGlueOrder, GlueSign,
     GlueSpec as PageGlueSpec, JobInfo, KernKind as PageKernKind, PageArtifact, PageEffect,
     PageNode,
 };
@@ -142,7 +142,7 @@ where
             height: box_node.height,
             depth: box_node.depth,
             shift: box_node.shift,
-            glue_set: lower_glue_set(box_node.glue_set),
+            glue_set: box_node.glue_set,
             glue_sign: lower_glue_sign(box_node.glue_sign),
             glue_order: lower_order(box_node.glue_order),
             children: self.lower_node_list(box_node.children)?,
@@ -302,18 +302,6 @@ fn lower_glue_sign(sign: Sign) -> GlueSign {
         Sign::Normal => GlueSign::Normal,
         Sign::Stretching => GlueSign::Stretching,
         Sign::Shrinking => GlueSign::Shrinking,
-    }
-}
-
-fn lower_glue_set(value: f64) -> GlueSetRatio {
-    const SCALE: f64 = 1_000_000.0;
-    let raw = if value.is_finite() {
-        (value * SCALE).round()
-    } else {
-        0.0
-    };
-    GlueSetRatio {
-        raw: raw.clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32,
     }
 }
 

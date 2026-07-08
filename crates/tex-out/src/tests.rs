@@ -66,7 +66,7 @@ fn sample_artifact() -> PageArtifact {
             height: Scaled::from_raw(200),
             depth: Scaled::from_raw(30),
             shift: Scaled::from_raw(0),
-            glue_set: GlueSetRatio { raw: 12_345 },
+            glue_set: GlueSetRatio::from_raw(12_345),
             glue_sign: GlueSign::Stretching,
             glue_order: GlueOrder::Fil,
             children: vec![
@@ -75,7 +75,7 @@ fn sample_artifact() -> PageArtifact {
                     height: Scaled::from_raw(40),
                     depth: Scaled::from_raw(5),
                     shift: Scaled::from_raw(-2),
-                    glue_set: GlueSetRatio { raw: 0 },
+                    glue_set: GlueSetRatio::ZERO,
                     glue_sign: GlueSign::Normal,
                     glue_order: GlueOrder::Normal,
                     children: vec![

@@ -1,8 +1,8 @@
 use crate::{
-    ArithmeticError, DimensionError, FontSizeSpec, PhysicalUnit, Scaled, TfmConversionError,
-    XOverN, XnOverD, half, mult_and_add, nx_plus_y, round_decimal_fraction,
-    scaled_from_decimal_parts, tfm_design_size_from_fix_word, tfm_fix_word_to_scaled,
-    tfm_font_size, x_over_n, xn_over_d,
+    ArithmeticError, DimensionError, FontSizeSpec, GLUE_SET_RATIO_SCALE, GlueSetRatio,
+    PhysicalUnit, Scaled, TfmConversionError, XOverN, XnOverD, half, mult_and_add, nx_plus_y,
+    round_decimal_fraction, scaled_from_decimal_parts, tfm_design_size_from_fix_word,
+    tfm_fix_word_to_scaled, tfm_font_size, x_over_n, xn_over_d,
 };
 
 #[test]
@@ -19,6 +19,22 @@ fn scaled_add_sub_neg_and_checked_variants() {
 
     assert_eq!(Scaled::MAX.checked_add(Scaled::from_raw(1)), None);
     assert_eq!(Scaled::from_raw(i32::MIN).checked_neg(), None);
+}
+
+#[test]
+fn glue_set_ratio_uses_deterministic_fixed_point_rounding() {
+    assert_eq!(
+        GlueSetRatio::from_scaled_ratio(Scaled::from_raw(1), Scaled::from_raw(2)),
+        GlueSetRatio::from_raw(GLUE_SET_RATIO_SCALE / 2)
+    );
+    assert_eq!(
+        GlueSetRatio::from_scaled_ratio(Scaled::from_raw(1), Scaled::from_raw(3)),
+        GlueSetRatio::from_raw(333_333)
+    );
+    assert_eq!(
+        GlueSetRatio::from_scaled_ratio(Scaled::from_raw(i32::MAX), Scaled::from_raw(1)),
+        GlueSetRatio::from_raw(i32::MAX)
+    );
 }
 
 #[test]

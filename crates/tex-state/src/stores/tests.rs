@@ -7,7 +7,7 @@ use crate::macro_store::MacroMeaning;
 use crate::meaning::Meaning;
 use crate::meaning::MeaningFlags;
 use crate::node::{BoxNode, BoxNodeFields, Node, Sign};
-use crate::scaled::Scaled;
+use crate::scaled::{GlueSetRatio, Scaled};
 use crate::token::{Catcode, Token};
 
 #[test]
@@ -308,7 +308,7 @@ fn finish_node_list_rejects_foreign_child_node_list() {
         height: scaled(7),
         depth: scaled(3),
         shift: scaled(0),
-        glue_set: 0.0,
+        glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
         children: foreign_child,
@@ -640,7 +640,7 @@ fn promoted_nested_box_remaps_children_to_same_survivor_root() {
         height: scaled(7),
         depth: scaled(3),
         shift: scaled(0),
-        glue_set: 0.0,
+        glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
         children: inner,
@@ -650,7 +650,7 @@ fn promoted_nested_box_remaps_children_to_same_survivor_root() {
         height: scaled(9),
         depth: scaled(4),
         shift: scaled(0),
-        glue_set: 0.0,
+        glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
         children: middle,
@@ -741,7 +741,7 @@ fn promotion_handles_pathologically_deep_box_nesting() {
             height: scaled(1),
             depth: scaled(0),
             shift: scaled(0),
-            glue_set: 0.0,
+            glue_set: GlueSetRatio::ZERO,
             glue_sign: Sign::Normal,
             glue_order: Order::Normal,
             children: current,

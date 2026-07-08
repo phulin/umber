@@ -1,6 +1,6 @@
 use std::fmt;
 
-use tex_arith::Scaled;
+use tex_arith::{GLUE_SET_RATIO_SCALE, Scaled};
 
 use movement::MovementStack;
 
@@ -42,7 +42,6 @@ const PADDING: u8 = 223;
 
 const NUM: i32 = 25_400_000;
 const DEN: i32 = 473_628_672;
-const GLUE_SET_SCALE: i64 = 1_000_000;
 const BILLION: i64 = 1_000_000_000;
 
 /// DVI emission failure.
@@ -769,8 +768,8 @@ fn adjusted_glue_width(
 }
 
 fn rounded_glue_set(glue_set: GlueSetRatio, cur_glue: Scaled) -> Scaled {
-    let product = i128::from(glue_set.raw) * i128::from(cur_glue.raw());
-    let rounded = rounded_div(product, i128::from(GLUE_SET_SCALE));
+    let product = i128::from(glue_set.raw()) * i128::from(cur_glue.raw());
+    let rounded = rounded_div(product, i128::from(GLUE_SET_RATIO_SCALE));
     let vetted = rounded.clamp(-i128::from(BILLION), i128::from(BILLION));
     Scaled::from_raw(i32::try_from(vetted).expect("vetted glue is in i32 range"))
 }

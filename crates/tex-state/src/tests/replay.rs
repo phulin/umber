@@ -9,7 +9,7 @@ use tex_state::env::banks::GlueParam;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::{FontId, GlueId, NodeListId};
 use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, Node, Sign};
-use tex_state::scaled::Scaled;
+use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::token::{Catcode, Token};
 use tex_state::{Snapshot, Universe};
 
@@ -308,7 +308,7 @@ fn build_nodes(
             height: Scaled::from_raw(2),
             depth: Scaled::from_raw(3),
             shift: Scaled::from_raw(4),
-            glue_set: 0.0,
+            glue_set: GlueSetRatio::ZERO,
             glue_sign: Sign::Normal,
             glue_order: Order::Normal,
             children: slot.id,

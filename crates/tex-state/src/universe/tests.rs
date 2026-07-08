@@ -4,7 +4,7 @@ use crate::glue::{GlueSpec, Order};
 use crate::macro_store::MacroMeaning;
 use crate::meaning::{Meaning, MeaningFlags};
 use crate::node::{BoxNode, BoxNodeFields, Node, Sign};
-use crate::scaled::Scaled;
+use crate::scaled::{GlueSetRatio, Scaled};
 use crate::token::{Catcode, Token};
 use crate::world::{ContentHash, JobClock, PrintSink, StreamSlot, World};
 
@@ -275,7 +275,7 @@ fn snapshot_state_hash_walks_deep_node_lists_iteratively() {
             height: Scaled::from_raw(2),
             depth: Scaled::from_raw(3),
             shift: Scaled::from_raw(0),
-            glue_set: 0.0,
+            glue_set: GlueSetRatio::ZERO,
             glue_sign: Sign::Normal,
             glue_order: Order::Normal,
             children: current,

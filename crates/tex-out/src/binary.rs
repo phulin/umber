@@ -250,7 +250,7 @@ impl Writer {
         self.scaled(box_node.height);
         self.scaled(box_node.depth);
         self.scaled(box_node.shift);
-        self.i32(box_node.glue_set.raw);
+        self.i32(box_node.glue_set.raw());
         self.u8(glue_sign_tag(box_node.glue_sign));
         self.u8(glue_order_tag(box_node.glue_order));
         self.len(box_node.children.len());
@@ -459,7 +459,7 @@ impl Reader<'_> {
         let height = self.scaled()?;
         let depth = self.scaled()?;
         let shift = self.scaled()?;
-        let glue_set = GlueSetRatio { raw: self.i32()? };
+        let glue_set = GlueSetRatio::from_raw(self.i32()?);
         let glue_sign = parse_glue_sign(self.u8()?)?;
         let glue_order = parse_glue_order(self.u8()?)?;
         let len = self.len()?;

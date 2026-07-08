@@ -2,7 +2,7 @@ use super::{NodeArena, NodeListBuilder};
 use crate::glue::Order;
 use crate::ids::{FontId, NodeListId};
 use crate::node::{BoxNode, BoxNodeFields, Node, Sign};
-use crate::scaled::Scaled;
+use crate::scaled::{GlueSetRatio, Scaled};
 
 #[test]
 fn nested_lists_build_bottom_up_and_read_back() {
@@ -22,7 +22,7 @@ fn nested_lists_build_bottom_up_and_read_back() {
         height: scaled(7),
         depth: scaled(3),
         shift: scaled(1),
-        glue_set: -0.0,
+        glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
         children: inner_id,
@@ -35,7 +35,7 @@ fn nested_lists_build_bottom_up_and_read_back() {
         height: scaled(9),
         depth: scaled(4),
         shift: scaled(0),
-        glue_set: 1.5,
+        glue_set: GlueSetRatio::from_raw(1_500_000),
         glue_sign: Sign::Stretching,
         glue_order: Order::Fil,
         children: middle_id,
@@ -53,7 +53,7 @@ fn nested_lists_build_bottom_up_and_read_back() {
         panic!("middle list should contain one hlist")
     };
     assert_eq!(middle_box.children, inner_id);
-    assert_eq!(middle_box.glue_set.to_bits(), 0.0_f64.to_bits());
+    assert_eq!(middle_box.glue_set, GlueSetRatio::ZERO);
     let [Node::VList(outer_box)] = arena.get(outer_id, &survivors) else {
         panic!("outer list should contain one vlist")
     };

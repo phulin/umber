@@ -1,4 +1,5 @@
 use crate::ContentHash;
+pub use tex_arith::GlueSetRatio;
 use tex_arith::Scaled;
 
 /// A committed page artifact.
@@ -54,14 +55,6 @@ pub struct FontResource {
     pub tfm_checksum: u32,
     pub design_size: Scaled,
     pub at_size: Scaled,
-}
-
-/// Fixed-point glue-set ratio. The exact scale is chosen by the shipout
-/// lowering code; the artifact format only requires deterministic integer
-/// storage.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
-pub struct GlueSetRatio {
-    pub raw: i32,
 }
 
 /// A driver-facing shipped node.

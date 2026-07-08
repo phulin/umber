@@ -2,7 +2,7 @@
 
 use crate::glue::Order;
 use crate::ids::{FontId, GlueId, NodeListId, TokenListId};
-use crate::scaled::Scaled;
+use crate::scaled::{GlueSetRatio, Scaled};
 use crate::world::PrintSink;
 
 /// A frozen TeX node.
@@ -61,14 +61,14 @@ pub struct BoxNode {
     pub height: Scaled,
     pub depth: Scaled,
     pub shift: Scaled,
-    pub glue_set: f64,
+    pub glue_set: GlueSetRatio,
     pub glue_sign: Sign,
     pub glue_order: Order,
     pub children: NodeListId,
 }
 
 impl BoxNode {
-    /// Creates a box payload, normalizing `-0.0` glue ratios to `0.0`.
+    /// Creates a box payload.
     #[must_use]
     pub fn new(fields: BoxNodeFields) -> Self {
         Self {
@@ -76,13 +76,7 @@ impl BoxNode {
             height: fields.height,
             depth: fields.depth,
             shift: fields.shift,
-            // TeX's glue_ratio is a float; normalize the negative zero spelling
-            // so future content hashing is independent of arithmetic history.
-            glue_set: if fields.glue_set == 0.0 {
-                0.0
-            } else {
-                fields.glue_set
-            },
+            glue_set: fields.glue_set,
             glue_sign: fields.glue_sign,
             glue_order: fields.glue_order,
             children: fields.children,
@@ -97,7 +91,7 @@ pub struct BoxNodeFields {
     pub height: Scaled,
     pub depth: Scaled,
     pub shift: Scaled,
-    pub glue_set: f64,
+    pub glue_set: GlueSetRatio,
     pub glue_sign: Sign,
     pub glue_order: Order,
     pub children: NodeListId,

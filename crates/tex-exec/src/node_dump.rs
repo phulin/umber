@@ -7,7 +7,7 @@ use tex_state::env::banks::IntParam;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::NodeListId;
 use tex_state::node::{BoxNode, GlueKind, KernKind, Node, Sign};
-use tex_state::scaled::Scaled;
+use tex_state::scaled::{GLUE_SET_RATIO_SCALE, GlueSetRatio, Scaled};
 
 pub(crate) struct DumpConfig {
     pub(crate) breadth: i32,
@@ -205,7 +205,7 @@ fn dump_box(
 }
 
 fn write_glue_set(box_node: &BoxNode, out: &mut String) {
-    if box_node.glue_sign == Sign::Normal || box_node.glue_set == 0.0 {
+    if box_node.glue_sign == Sign::Normal || box_node.glue_set.is_zero() {
         return;
     }
     let sign = match box_node.glue_sign {
@@ -270,8 +270,17 @@ fn format_scaled_without_unit(value: Scaled) -> String {
     format!("{sign}{integer}.{fraction_text}")
 }
 
-fn format_glue_ratio(value: f64) -> String {
-    let mut text = format!("{:.5}", value.abs());
+fn format_glue_ratio(value: GlueSetRatio) -> String {
+    let raw = i64::from(value.raw()).abs();
+    let scale = i64::from(GLUE_SET_RATIO_SCALE);
+    let mut integer = raw / scale;
+    let fraction = raw % scale;
+    let mut decimal = ((fraction * 100_000) + (scale / 2)) / scale;
+    if decimal == 100_000 {
+        integer += 1;
+        decimal = 0;
+    }
+    let mut text = format!("{integer}.{decimal:05}");
     while text.matches('.').count() == 1 && text.ends_with('0') && !text.ends_with(".0") {
         text.pop();
     }

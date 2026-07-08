@@ -98,6 +98,59 @@ impl fmt::Display for DimensionError {
 
 impl std::error::Error for DimensionError {}
 
+/// Scale used for fixed-point glue-set ratios.
+pub const GLUE_SET_RATIO_SCALE: i32 = 1_000_000;
+
+/// Fixed-point glue-set ratio used by packed boxes and output drivers.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub struct GlueSetRatio {
+    raw: i32,
+}
+
+impl GlueSetRatio {
+    /// Zero glue-set ratio.
+    pub const ZERO: Self = Self { raw: 0 };
+
+    /// Unit glue-set ratio.
+    pub const UNITY: Self = Self {
+        raw: GLUE_SET_RATIO_SCALE,
+    };
+
+    /// Creates a glue-set ratio from the raw fixed-point representation.
+    #[must_use]
+    pub const fn from_raw(raw: i32) -> Self {
+        Self { raw }
+    }
+
+    /// Returns the raw fixed-point representation.
+    #[must_use]
+    pub const fn raw(self) -> i32 {
+        self.raw
+    }
+
+    /// Returns whether this ratio is zero.
+    #[must_use]
+    pub const fn is_zero(self) -> bool {
+        self.raw == 0
+    }
+
+    /// Computes `numerator / denominator` with the fixed-point scale.
+    #[must_use]
+    pub fn from_scaled_ratio(numerator: Scaled, denominator: Scaled) -> Self {
+        let denominator = i128::from(denominator.raw()).abs();
+        if denominator == 0 {
+            return Self::ZERO;
+        }
+        let numerator = i128::from(numerator.raw()).abs();
+        let scaled = numerator * i128::from(GLUE_SET_RATIO_SCALE);
+        let rounded = (scaled + denominator / 2) / denominator;
+        let clamped = rounded.clamp(i128::from(i32::MIN), i128::from(i32::MAX));
+        Self {
+            raw: i32::try_from(clamped).expect("clamped glue-set ratio fits i32"),
+        }
+    }
+}
+
 /// Errors produced by TeX's arithmetic helper routines.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ArithmeticError {
