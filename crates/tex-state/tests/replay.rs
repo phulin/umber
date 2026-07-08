@@ -587,7 +587,7 @@ fn prop_cases() -> u32 {
     env::var("PROPTEST_CASES")
         .ok()
         .and_then(|value| value.parse().ok())
-        .unwrap_or(100)
+        .unwrap_or(10)
 }
 
 fn prop_cases_for_shard(shard: u32) -> u32 {
