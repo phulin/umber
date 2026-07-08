@@ -339,8 +339,11 @@ assignments, box building, and dispatch into the typesetting kernels.
 - **Box building**: `\hbox{...}` etc. scan a packing spec, execute a nested
   restricted-horizontal or internal-vertical list builder, freeze the
   finished list into the epoch arena, then call the pure `tex-typeset`
-  packing kernel. Storing the resulting one-node list in a box register is
-  the barriered promotion write. Pulling boxes back out through `\copy`,
+  packing kernel. When horizontal packing reports an overfull box and
+  `\overfullrule` is positive, the execution hand-off appends TeX's
+  running-height rule node to the packed child list before the box can be
+  stored, appended, or shipped. Storing the resulting one-node list in a box
+  register is the barriered promotion write. Pulling boxes back out through `\copy`,
   `\box`, unboxing, `\lastbox`, or box-dimension rewrites clones any
   survivor-backed node tree into the current epoch before it can be appended
   to an unfinished mode list or promoted again. Horizontal list construction
@@ -456,8 +459,10 @@ makes box-level memoization (M4) sound.
   The crate reads `Universe` immutably, including frozen nodes, glue specs,
   and loaded font character metrics, copies packing parameters into plain
   structs at entry, and returns box payloads plus diagnostics without writing
-  state. Stomach-side box-building primitives live in `tex-exec`; the packing
-  crate remains pure and has no `World` or `&mut Universe` surface.
+  state. Stomach-side box-building primitives live in `tex-exec`; when hpack
+  diagnostics require TeX's overfull marker, `tex-exec` materializes the
+  synthetic rule while freezing the final child list. The packing crate
+  remains pure and has no `World` or `&mut Universe` surface.
 
 ## 8. Page builder and output routine
 

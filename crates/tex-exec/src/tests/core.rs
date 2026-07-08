@@ -362,6 +362,35 @@ fn box_primitives_round_trip_through_registers() {
 }
 
 #[test]
+fn overfull_hbox_appends_running_rule_when_enabled() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    stores.set_dimen_param(
+        DimenParam::OVERFULL_RULE,
+        tex_state::scaled::Scaled::from_raw(3 * tex_state::scaled::Scaled::UNITY),
+    );
+    let mut input = InputStack::new(MemoryInput::new("\\setbox0=\\hbox to 10pt{\\kern20pt}"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("overfull hbox executes");
+
+    let box0 = stores.box_reg(0).expect("box should be assigned");
+    let [tex_state::node::Node::HList(box_node)] = stores.nodes(box0) else {
+        panic!("register 0 should hold an hbox");
+    };
+    let children = stores.nodes(box_node.children);
+    assert!(matches!(
+        children.last(),
+        Some(tex_state::node::Node::Rule {
+            width: Some(width),
+            height: None,
+            depth: None,
+        }) if width.raw() == 3 * tex_state::scaled::Scaled::UNITY
+    ));
+}
+
+#[test]
 fn box_dimension_writes_are_readable_by_the() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

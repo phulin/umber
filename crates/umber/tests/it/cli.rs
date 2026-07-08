@@ -224,11 +224,24 @@ fn run_hyphen_showhyphens_corpus_matches_pdftex() {
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
 fn run_dvi_smoke_matches_pdftex_single_glyph() {
+    assert_dvi_case_matches_pdftex("single_glyph");
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn run_dvi_smoke_matches_pdftex_overfull_rule() {
+    assert_dvi_case_matches_pdftex("overfull_rule");
+}
+
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn assert_dvi_case_matches_pdftex(case: &str) {
     let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let source = repo_root.join("tests/corpus/dvi/single_glyph.tex");
+    let source = repo_root
+        .join("tests/corpus/dvi")
+        .join(format!("{case}.tex"));
     let cmr10 = repo_root.join("crates/tex-fonts/tests/fixtures/cm/cmr10.tfm");
     let temp_dir = tempfile::tempdir().expect("create DVI smoke temp dir");
-    let case_path = temp_dir.path().join("single_glyph.tex");
+    let case_path = temp_dir.path().join(format!("{case}.tex"));
     let tfm_path = temp_dir.path().join("cmr10.tfm");
     let actual_path = temp_dir.path().join("actual.dvi");
     fs::copy(&source, &case_path).expect("copy DVI smoke source");
@@ -237,7 +250,7 @@ fn run_dvi_smoke_matches_pdftex_single_glyph() {
     let output = Command::new(env!("CARGO_BIN_EXE_umber"))
         .current_dir(temp_dir.path())
         .arg("run")
-        .arg("single_glyph.tex")
+        .arg(format!("{case}.tex"))
         .arg("--dvi")
         .arg("actual.dvi")
         .output()

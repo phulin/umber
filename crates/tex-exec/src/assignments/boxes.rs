@@ -1,11 +1,12 @@
 use tex_expand::{ExpansionHooks, NoopRecorder, get_x_token_with_recorder_and_hooks};
 use tex_lex::{InputSource, InputStack};
+use tex_state::ids::NodeListId;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::node::{GlueKind, KernKind, Node};
 use tex_state::scaled::Scaled;
 use tex_state::token::Token;
 use tex_state::{BoxDimension, Universe};
-use tex_typeset::{HpackParams, PackSpec, VpackParams, hpack, vpack, vtop};
+use tex_typeset::{HpackParams, PackDiagnostic, PackSpec, VpackParams, hpack, vpack, vtop};
 
 use super::*;
 use crate::vertical::append_node_to_current_list;
@@ -242,11 +243,35 @@ where
     let level = inner.pop()?;
     let children = stores.freeze_node_list(level.list().nodes());
     let node = match kind {
-        BoxKind::HBox => Node::HList(hpack(stores, children, spec, HpackParams::read(stores)).node),
+        BoxKind::HBox => Node::HList(hpack_with_overfull_rule(stores, children, spec)),
         BoxKind::VBox => Node::VList(vpack(stores, children, spec, VpackParams::read(stores)).node),
         BoxKind::VTop => Node::VList(vtop(stores, children, spec, VpackParams::read(stores)).node),
     };
     Ok(node)
+}
+
+pub(super) fn hpack_with_overfull_rule(
+    stores: &mut Universe,
+    children: NodeListId,
+    spec: PackSpec,
+) -> tex_state::node::BoxNode {
+    let params = HpackParams::read(stores);
+    let mut packed = hpack(stores, children, spec, params);
+    if params.overfull_rule.raw() > 0
+        && packed
+            .diagnostics
+            .iter()
+            .any(|diagnostic| matches!(diagnostic, PackDiagnostic::Overfull { .. }))
+    {
+        let mut nodes = stores.nodes(children).to_vec();
+        nodes.push(Node::Rule {
+            width: Some(params.overfull_rule),
+            height: None,
+            depth: None,
+        });
+        packed.node.children = stores.freeze_node_list(&nodes);
+    }
+    packed.node
 }
 
 pub(super) fn scan_box_group<S, H>(

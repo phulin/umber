@@ -4,12 +4,13 @@ use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::GlueSpec;
 use tex_state::node::{GlueKind, Node};
 use tex_state::scaled::Scaled;
+use tex_typeset::PackSpec;
 use tex_typeset::linebreak::{
     HyphenationHook, LineBreakParams, LineShape, LineShapeEntry,
     ParagraphShape as TypesetParagraphShape, PostLineBreakParams, line_break, post_line_break,
 };
-use tex_typeset::{HpackParams, PackSpec, hpack};
 
+use super::boxes::hpack_with_overfull_rule;
 use super::*;
 use crate::mode::{IGNORE_DEPTH, ParagraphParams, ParagraphShape, ParagraphShapeLine};
 use crate::vertical::append_node_to_current_list;
@@ -102,13 +103,8 @@ where
 
 fn append_indent_box(nest: &mut ModeNest, stores: &mut Universe) -> Result<(), ExecError> {
     let empty = stores.freeze_node_list(&[]);
-    let mut node = hpack(
-        stores,
-        empty,
-        PackSpec::Exactly(stores.dimen_param(DimenParam::PAR_INDENT)),
-        HpackParams::read(stores),
-    )
-    .node;
+    let par_indent = stores.dimen_param(DimenParam::PAR_INDENT);
+    let mut node = hpack_with_overfull_rule(stores, empty, PackSpec::Exactly(par_indent));
     node.height = Scaled::from_raw(0);
     node.depth = Scaled::from_raw(0);
     nest.current_list_mut().push(Node::HList(node));
@@ -136,13 +132,8 @@ fn end_paragraph(nest: &mut ModeNest, stores: &mut Universe) -> Result<(), ExecE
     let post_params = post_line_break_params(&params);
     for broken in post_line_break(stores, &decisions.nodes, &decisions.breaks, post_params) {
         let list = stores.freeze_node_list(&broken.nodes);
-        let line = hpack(
-            stores,
-            list,
-            PackSpec::Exactly(broken.dimensions.width),
-            HpackParams::read(stores),
-        )
-        .node;
+        let line =
+            hpack_with_overfull_rule(stores, list, PackSpec::Exactly(broken.dimensions.width));
         let mut line = line;
         line.shift = broken.dimensions.indent;
         append_node_to_current_list(nest, stores, Node::HList(line))?;
