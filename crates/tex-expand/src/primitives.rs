@@ -1,5 +1,5 @@
 use tex_lex::{InputSource, InputStack};
-use tex_state::Universe;
+use tex_state::ExpansionState;
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
 use tex_state::token::{Catcode, Token};
 
@@ -11,7 +11,7 @@ use crate::{
 
 pub(crate) fn expand_after<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Universe,
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<(), ExpandError>
@@ -40,7 +40,7 @@ where
 
 pub(crate) fn scan_csname<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Universe,
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<String, ExpandError>
@@ -96,7 +96,7 @@ fn append_csname_token(name: &mut String, token: Token) -> Result<(), ExpandErro
 
 pub(crate) fn scan_input_name<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Universe,
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<String, ExpandError>

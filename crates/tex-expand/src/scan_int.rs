@@ -3,7 +3,7 @@
 use std::fmt;
 
 use tex_lex::{InputSource, InputStack, LexError, TokenListReplayKind};
-use tex_state::Universe;
+use tex_state::ExpansionState;
 use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::interner::Symbol;
 use tex_state::meaning::Meaning;
@@ -123,7 +123,7 @@ impl From<LexError> for ScanIntError {
 /// and chardef-like meanings represented by [`Meaning::CharGiven`].
 pub fn scan_int<S>(
     input: &mut InputStack<S>,
-    stores: &mut Universe,
+    stores: &mut impl ExpansionState,
 ) -> Result<ScannedInt, ScanIntError>
 where
     S: InputSource,
@@ -134,7 +134,7 @@ where
 /// Scans a TeX `<number>` while preserving caller-supplied expansion hooks.
 pub fn scan_int_with_recorder_and_hooks<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Universe,
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<ScannedInt, ScanIntError>
@@ -154,7 +154,7 @@ where
 
 fn scan_signs<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Universe,
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<(bool, Option<Token>), ScanIntError>
@@ -185,7 +185,7 @@ where
 
 fn scan_unsigned_after_first_token<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Universe,
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
     token: Token,
@@ -226,7 +226,7 @@ where
 
 fn scan_prefixed_digits<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Universe,
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
     radix: i64,
@@ -248,7 +248,7 @@ where
 
 fn scan_radix_digits<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Universe,
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
     first_digit: i64,
@@ -289,7 +289,7 @@ where
 
 fn scan_backtick_constant<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Universe,
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<ScannedInt, ScanIntError>
@@ -316,7 +316,7 @@ where
 
 fn scan_internal_integer<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Universe,
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
     token: Token,
@@ -386,7 +386,7 @@ where
 
 fn scan_internal_integer_primitive<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Universe,
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
     token: Token,
@@ -439,7 +439,7 @@ where
 
 fn scan_register_index<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Universe,
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<u16, ScanIntError>
@@ -457,7 +457,7 @@ where
 
 fn consume_optional_space<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Universe,
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<(), ScanIntError>
@@ -475,7 +475,7 @@ where
     Ok(())
 }
 
-fn unread_token<S>(input: &mut InputStack<S>, stores: &mut Universe, token: Token) {
+fn unread_token<S>(input: &mut InputStack<S>, stores: &mut impl ExpansionState, token: Token) {
     let token_list = stores.intern_token_list(&[token]);
     input.push_token_list(token_list, TokenListReplayKind::Inserted);
 }
@@ -540,12 +540,12 @@ fn is_char(token: Token, expected: char) -> bool {
 #[cfg(test)]
 mod tests {
     use tex_lex::{InputStack, MemoryInput};
-    use tex_state::Universe;
     use tex_state::env::banks::IntParam;
     use tex_state::macro_store::MacroMeaning;
     use tex_state::meaning::{Meaning, MeaningFlags};
     use tex_state::scaled::Scaled;
     use tex_state::token::{Catcode, Token};
+    use tex_state::{ExpansionState, Universe};
 
     use crate::scan_int::{IntegerDiagnostic, ScanIntError, scan_int};
 
@@ -559,7 +559,10 @@ mod tests {
         (scanned.value(), scanned.diagnostic(), next)
     }
 
-    fn scan_with_stores(input_text: &str, stores: &mut Universe) -> (i32, Option<Token>) {
+    fn scan_with_stores(
+        input_text: &str,
+        stores: &mut impl ExpansionState,
+    ) -> (i32, Option<Token>) {
         let mut input = InputStack::new(MemoryInput::new(input_text));
         let scanned = scan_int(&mut input, stores).expect("integer scan should succeed");
         let next = input

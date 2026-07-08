@@ -1,19 +1,19 @@
 use tex_lex::{InputSource, InputStack};
-use tex_state::Universe;
+use tex_state::ExpansionState;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
 use tex_state::token::Token;
 
 use crate::{
-    CsNameInterner, Dispatch, EngineMode, ExpandError, ExpandableOpcode, ExpansionHooks,
-    ExpansionReplayKind, NoopExpansionHooks, ReadRecorder, args, conditionals::*, primitives::*,
-    scan_dimen, scan_helpers::*, scan_int, values::*,
+    Dispatch, EngineMode, ExpandError, ExpandableOpcode, ExpansionHooks, ExpansionReplayKind,
+    NoopExpansionHooks, ReadRecorder, args, conditionals::*, primitives::*, scan_dimen,
+    scan_helpers::*, scan_int, values::*,
 };
 
 /// Dispatches one token/meaning pair.
 pub fn dispatch<S, R>(
     token: Token,
     input: &mut InputStack<S>,
-    stores: &mut Universe,
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     meaning: Meaning,
 ) -> Result<Dispatch, ExpandError>
@@ -34,7 +34,7 @@ where
 pub fn dispatch_with_hooks<S, R, H>(
     token: Token,
     input: &mut InputStack<S>,
-    stores: &mut Universe,
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
     meaning: Meaning,
@@ -74,7 +74,7 @@ where
         }
         Meaning::ExpandablePrimitive(ExpandablePrimitive::CsName) => {
             let name = scan_csname(input, stores, recorder, hooks)?;
-            let symbol = CsNameInterner::intern_relaxed_control_sequence(stores, &name);
+            let symbol = stores.intern_relaxed_control_sequence(&name);
             Ok(Dispatch::Deliver(Token::Cs(symbol)))
         }
         Meaning::ExpandablePrimitive(ExpandablePrimitive::EndCsName) => {

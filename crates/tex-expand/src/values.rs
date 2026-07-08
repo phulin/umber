@@ -1,5 +1,5 @@
 use tex_lex::{InputSource, InputStack, MacroArguments};
-use tex_state::Universe;
+use tex_state::ExpansionState;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::{FontId, TokenListId};
@@ -14,7 +14,7 @@ use crate::{
 
 pub(crate) fn expand_the<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Universe,
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<Dispatch, ExpandError>
@@ -228,7 +228,7 @@ where
 }
 
 pub(crate) fn push_rendered_text(
-    stores: &mut Universe,
+    stores: &mut impl ExpansionState,
     replay_kind: ExpansionReplayKind,
     text: &str,
 ) -> Dispatch {
@@ -236,7 +236,7 @@ pub(crate) fn push_rendered_text(
 }
 
 pub(crate) fn push_rendered_tokens<I>(
-    stores: &mut Universe,
+    stores: &mut impl ExpansionState,
     replay_kind: ExpansionReplayKind,
     tokens: I,
 ) -> Dispatch
@@ -252,11 +252,11 @@ where
     }
 }
 
-fn freeze_output_tokens(stores: &mut Universe, tokens: &[Token]) -> TokenListId {
+fn freeze_output_tokens(stores: &mut impl ExpansionState, tokens: &[Token]) -> TokenListId {
     stores.intern_token_list(tokens)
 }
 
-pub(crate) fn string_tokens(stores: &Universe, token: Token) -> Vec<Token> {
+pub(crate) fn string_tokens(stores: &impl ExpansionState, token: Token) -> Vec<Token> {
     match token {
         Token::Char { ch, .. } => vec![rendered_char(ch)],
         Token::Cs(symbol) => {
@@ -271,7 +271,7 @@ pub(crate) fn string_tokens(stores: &Universe, token: Token) -> Vec<Token> {
     }
 }
 
-pub fn meaning_text(stores: &Universe, token: Token) -> String {
+pub fn meaning_text(stores: &impl ExpansionState, token: Token) -> String {
     match token {
         Token::Char {
             ch,
@@ -315,7 +315,7 @@ pub fn meaning_text(stores: &Universe, token: Token) -> String {
     }
 }
 
-fn token_list_text(stores: &Universe, token_list: TokenListId) -> String {
+fn token_list_text(stores: &impl ExpansionState, token_list: TokenListId) -> String {
     let mut text = String::new();
     for &token in stores.tokens(token_list) {
         text.push_str(&token_text(stores, token));
@@ -329,7 +329,7 @@ fn token_list_text(stores: &Universe, token_list: TokenListId) -> String {
     text
 }
 
-pub fn token_text(stores: &Universe, token: Token) -> String {
+pub fn token_text(stores: &impl ExpansionState, token: Token) -> String {
     string_tokens(stores, token)
         .into_iter()
         .filter_map(|token| match token {
@@ -341,7 +341,7 @@ pub fn token_text(stores: &Universe, token: Token) -> String {
 
 pub fn scan_the_text_with_hooks<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Universe,
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<String, ExpandError>
@@ -373,7 +373,7 @@ fn rendered_char(ch: char) -> Token {
     }
 }
 
-fn escapechar(stores: &Universe) -> Option<char> {
+fn escapechar(stores: &impl ExpansionState) -> Option<char> {
     u32::try_from(stores.int_param(IntParam::ESCAPE_CHAR))
         .ok()
         .filter(|&value| value < 256)
@@ -463,7 +463,7 @@ fn order_unit(order: Order) -> &'static str {
 
 fn scan_code_table_char<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Universe,
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<char, ExpandError>
@@ -484,7 +484,7 @@ where
 
 pub(crate) fn scan_font_selector<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Universe,
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<FontId, ExpandError>

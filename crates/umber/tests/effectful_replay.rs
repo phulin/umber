@@ -322,14 +322,17 @@ fn seed_world(world: &mut World) {
 struct FuzzHooks;
 
 impl ExpansionHooks<MemoryInput> for FuzzHooks {
-    fn open_input(&mut self, stores: &mut Universe, name: &str) -> Result<MemoryInput, String> {
+    fn open_input<C: tex_state::ExpansionState>(
+        &mut self,
+        stores: &mut C,
+        name: &str,
+    ) -> Result<MemoryInput, String> {
         let mut path = PathBuf::from(name);
         if path.extension().is_none() {
             path.set_extension("tex");
         }
         let content = stores
-            .world_mut()
-            .read_file(&path)
+            .read_input_file(&path)
             .map_err(|err| format!("{} ({err})", path.display()))?;
         Ok(MemoryInput::new(
             String::from_utf8_lossy(content.bytes()).into_owned(),

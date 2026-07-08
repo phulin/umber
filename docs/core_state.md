@@ -455,6 +455,11 @@ The type system is the write barrier's bodyguard. The rules:
 - Journal lives inside `Env` (and its siblings inside `Universe`), so
   mutating cells and mutating history require the same `&mut` — the borrow
   checker makes bypass unrepresentable in safe code.
+- Gullet and lexer code use the public `ExpansionState` capability instead of
+  broad `&mut Universe`. The capability includes expansion-safe reads,
+  immutable content creation, interning, magnification preparation, and
+  content-addressed input reads for driver `\input` hooks, but omits
+  Env/register/code-table/group/snapshot/font-assignment setters.
 
 ### 10.3 Unforgeable handles
 

@@ -40,6 +40,61 @@ use std::hash::BuildHasher;
 #[cfg(any(test, feature = "testing", feature = "shadow"))]
 use std::hash::{Hash, Hasher};
 
+/// State operations available to TeX's lexer and expansion engine.
+///
+/// This is intentionally narrower than `Universe`: it permits immutable state
+/// reads plus the content/interner mutations that the mouth and gullet are
+/// semantically allowed to perform, but it does not expose Env, register, box,
+/// code-table, font-parameter, grouping, snapshot, or World mutation APIs.
+pub trait ExpansionState {
+    fn catcode(&self, ch: char) -> Catcode;
+    fn lccode(&self, ch: char) -> LcCode;
+    fn uccode(&self, ch: char) -> UcCode;
+    fn sfcode(&self, ch: char) -> SfCode;
+    fn mathcode(&self, ch: char) -> MathCode;
+    fn delcode(&self, ch: char) -> DelCode;
+    fn meaning(&self, symbol: Symbol) -> Meaning;
+    fn macro_definition(&self, id: MacroDefinitionId) -> MacroMeaning;
+    fn macro_meaning(&self, symbol: Symbol) -> Option<MacroMeaning>;
+    fn intern_relaxed_control_sequence(&mut self, name: &str) -> Symbol;
+    fn intern(&mut self, name: &str) -> Symbol;
+    fn symbol(&self, name: &str) -> Option<Symbol>;
+    fn resolve(&self, symbol: Symbol) -> &str;
+    fn token_list_builder(&self) -> TokenListBuilder;
+    fn intern_token_list(&mut self, tokens: &[Token]) -> TokenListId;
+    fn finish_token_list(&mut self, builder: &mut TokenListBuilder) -> TokenListId;
+    fn tokens(&self, id: TokenListId) -> &[Token];
+    fn intern_glue(&mut self, spec: GlueSpec) -> GlueId;
+    fn glue(&self, id: GlueId) -> GlueSpec;
+    fn font_name(&self, id: FontId) -> String;
+    fn font_parameter(&self, font: FontId, number: u16) -> Scaled;
+    fn font_dimen(&self, font: FontId, number: u16) -> Scaled;
+    fn font_hyphen_char(&self, font: FontId) -> i32;
+    fn font_skew_char(&self, font: FontId) -> i32;
+    fn current_font(&self) -> FontId;
+    fn current_font_symbol(&self) -> Option<Symbol>;
+    fn nodes(&self, id: NodeListId) -> &[Node];
+    fn count(&self, index: u16) -> i32;
+    fn dimen(&self, index: u16) -> Scaled;
+    fn skip(&self, index: u16) -> GlueId;
+    fn muskip(&self, index: u16) -> GlueId;
+    fn toks(&self, index: u16) -> TokenListId;
+    fn box_reg(&self, index: u16) -> Option<NodeListId>;
+    fn int_param(&self, param: IntParam) -> i32;
+    fn mag(&self) -> i32;
+    fn prepared_mag(&self) -> Option<i32>;
+    fn prepare_mag(&mut self) -> (i32, Option<PrepareMagDiagnostic>);
+    fn endlinechar(&self) -> i32;
+    fn dimen_param(&self, param: DimenParam) -> Scaled;
+    fn glue_param(&self, param: GlueParam) -> GlueId;
+    fn tok_param(&self, param: TokParam) -> TokenListId;
+    fn input_stream_eof(&self, stream: StreamSlot) -> bool;
+    fn read_input_file(
+        &mut self,
+        path: &std::path::Path,
+    ) -> Result<crate::FileContent, crate::WorldError>;
+}
+
 /// A whole-Universe rollback snapshot.
 ///
 /// Snapshot capture is O(1): the private store snapshot is a tuple of marks,
@@ -891,6 +946,183 @@ impl Universe {
     #[must_use]
     pub fn testing_survivor_refcount(&self, id: NodeListId) -> u32 {
         self.stores.testing_survivor_refcount(id)
+    }
+}
+
+impl ExpansionState for Universe {
+    fn catcode(&self, ch: char) -> Catcode {
+        Self::catcode(self, ch)
+    }
+
+    fn lccode(&self, ch: char) -> LcCode {
+        Self::lccode(self, ch)
+    }
+
+    fn uccode(&self, ch: char) -> UcCode {
+        Self::uccode(self, ch)
+    }
+
+    fn sfcode(&self, ch: char) -> SfCode {
+        Self::sfcode(self, ch)
+    }
+
+    fn mathcode(&self, ch: char) -> MathCode {
+        Self::mathcode(self, ch)
+    }
+
+    fn delcode(&self, ch: char) -> DelCode {
+        Self::delcode(self, ch)
+    }
+
+    fn meaning(&self, symbol: Symbol) -> Meaning {
+        Self::meaning(self, symbol)
+    }
+
+    fn macro_definition(&self, id: MacroDefinitionId) -> MacroMeaning {
+        Self::macro_definition(self, id)
+    }
+
+    fn macro_meaning(&self, symbol: Symbol) -> Option<MacroMeaning> {
+        Self::macro_meaning(self, symbol)
+    }
+
+    fn intern_relaxed_control_sequence(&mut self, name: &str) -> Symbol {
+        Self::intern_relaxed_control_sequence(self, name)
+    }
+
+    fn intern(&mut self, name: &str) -> Symbol {
+        Self::intern(self, name)
+    }
+
+    fn symbol(&self, name: &str) -> Option<Symbol> {
+        Self::symbol(self, name)
+    }
+
+    fn resolve(&self, symbol: Symbol) -> &str {
+        Self::resolve(self, symbol)
+    }
+
+    fn token_list_builder(&self) -> TokenListBuilder {
+        Self::token_list_builder(self)
+    }
+
+    fn intern_token_list(&mut self, tokens: &[Token]) -> TokenListId {
+        Self::intern_token_list(self, tokens)
+    }
+
+    fn finish_token_list(&mut self, builder: &mut TokenListBuilder) -> TokenListId {
+        Self::finish_token_list(self, builder)
+    }
+
+    fn tokens(&self, id: TokenListId) -> &[Token] {
+        Self::tokens(self, id)
+    }
+
+    fn intern_glue(&mut self, spec: GlueSpec) -> GlueId {
+        Self::intern_glue(self, spec)
+    }
+
+    fn glue(&self, id: GlueId) -> GlueSpec {
+        Self::glue(self, id)
+    }
+
+    fn font_name(&self, id: FontId) -> String {
+        Self::font_name(self, id)
+    }
+
+    fn font_parameter(&self, font: FontId, number: u16) -> Scaled {
+        Self::font_parameter(self, font, number)
+    }
+
+    fn font_dimen(&self, font: FontId, number: u16) -> Scaled {
+        Self::font_dimen(self, font, number)
+    }
+
+    fn font_hyphen_char(&self, font: FontId) -> i32 {
+        Self::font_hyphen_char(self, font)
+    }
+
+    fn font_skew_char(&self, font: FontId) -> i32 {
+        Self::font_skew_char(self, font)
+    }
+
+    fn current_font(&self) -> FontId {
+        Self::current_font(self)
+    }
+
+    fn current_font_symbol(&self) -> Option<Symbol> {
+        Self::current_font_symbol(self)
+    }
+
+    fn nodes(&self, id: NodeListId) -> &[Node] {
+        Self::nodes(self, id)
+    }
+
+    fn count(&self, index: u16) -> i32 {
+        Self::count(self, index)
+    }
+
+    fn dimen(&self, index: u16) -> Scaled {
+        Self::dimen(self, index)
+    }
+
+    fn skip(&self, index: u16) -> GlueId {
+        Self::skip(self, index)
+    }
+
+    fn muskip(&self, index: u16) -> GlueId {
+        Self::muskip(self, index)
+    }
+
+    fn toks(&self, index: u16) -> TokenListId {
+        Self::toks(self, index)
+    }
+
+    fn box_reg(&self, index: u16) -> Option<NodeListId> {
+        Self::box_reg(self, index)
+    }
+
+    fn int_param(&self, param: IntParam) -> i32 {
+        Self::int_param(self, param)
+    }
+
+    fn mag(&self) -> i32 {
+        Self::mag(self)
+    }
+
+    fn prepared_mag(&self) -> Option<i32> {
+        Self::prepared_mag(self)
+    }
+
+    fn prepare_mag(&mut self) -> (i32, Option<PrepareMagDiagnostic>) {
+        Self::prepare_mag(self)
+    }
+
+    fn endlinechar(&self) -> i32 {
+        Self::endlinechar(self)
+    }
+
+    fn dimen_param(&self, param: DimenParam) -> Scaled {
+        Self::dimen_param(self, param)
+    }
+
+    fn glue_param(&self, param: GlueParam) -> GlueId {
+        Self::glue_param(self, param)
+    }
+
+    fn tok_param(&self, param: TokParam) -> TokenListId {
+        Self::tok_param(self, param)
+    }
+
+    fn input_stream_eof(&self, stream: StreamSlot) -> bool {
+        self.world.input_stream_eof(stream)
+    }
+
+    fn read_input_file(
+        &mut self,
+        path: &std::path::Path,
+    ) -> Result<crate::FileContent, crate::WorldError> {
+        self.world.read_file(path)
     }
 }
 

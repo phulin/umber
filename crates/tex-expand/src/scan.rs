@@ -8,7 +8,7 @@
 use std::{fmt, marker::PhantomData};
 
 use tex_lex::{InputSource, InputStack, LexError, MemoryInput, TokenListReplayKind};
-use tex_state::Universe;
+use tex_state::ExpansionState;
 use tex_state::ids::TokenListId;
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
@@ -117,7 +117,7 @@ impl From<ExpandError> for ScanToksError {
 /// a `MacroMeaning`; callers decide whether, where, and how to assign it.
 pub fn scan_toks<S>(
     input: &mut InputStack<S>,
-    stores: &mut Universe,
+    stores: &mut impl ExpansionState,
     flags: MeaningFlags,
 ) -> Result<ScannedMacro, ScanToksError>
 where
@@ -133,7 +133,7 @@ where
 /// Scans a macro definition and expands the replacement text as for `\edef`.
 pub fn scan_toks_expanded<S, H>(
     input: &mut InputStack<S>,
-    stores: &mut Universe,
+    stores: &mut impl ExpansionState,
     flags: MeaningFlags,
     hooks: &mut H,
 ) -> Result<ScannedMacro, ScanToksError>
@@ -150,7 +150,7 @@ where
 }
 
 fn expand_replacement_text<S, H>(
-    stores: &mut Universe,
+    stores: &mut impl ExpansionState,
     replacement_text: TokenListId,
     hooks: &mut H,
 ) -> Result<TokenListId, ScanToksError>
@@ -256,9 +256,9 @@ where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    fn open_input(
+    fn open_input<C: ExpansionState>(
         &mut self,
-        stores: &mut Universe,
+        stores: &mut C,
         name: &str,
     ) -> Result<ReplacementSource<S>, String> {
         self.inner
@@ -278,7 +278,7 @@ where
         self.inner.is_inner_mode()
     }
 
-    fn input_stream_eof(&self, stores: &Universe, stream: u8) -> bool {
+    fn input_stream_eof(&self, stores: &impl ExpansionState, stream: u8) -> bool {
         self.inner.input_stream_eof(stores, stream)
     }
 }
@@ -304,7 +304,7 @@ where
 
 fn scan_parameter_text<S>(
     input: &mut InputStack<S>,
-    stores: &mut Universe,
+    stores: &mut impl ExpansionState,
 ) -> Result<TokenListId, ScanToksError>
 where
     S: InputSource,
@@ -366,7 +366,7 @@ where
 
 fn scan_replacement_text<S>(
     input: &mut InputStack<S>,
-    stores: &mut Universe,
+    stores: &mut impl ExpansionState,
 ) -> Result<TokenListId, ScanToksError>
 where
     S: InputSource,

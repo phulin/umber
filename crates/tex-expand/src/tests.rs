@@ -4,7 +4,6 @@ use crate::{
 };
 use std::collections::HashMap;
 use tex_lex::{InputStack, MemoryInput, TokenListReplayKind};
-use tex_state::Universe;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::interner::Symbol;
 use tex_state::macro_store::MacroMeaning;
@@ -12,6 +11,7 @@ use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
 use tex_state::node::{BoxNode, BoxNodeFields, Node, Sign};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
+use tex_state::{ExpansionState, Universe};
 
 #[derive(Default)]
 struct CountingRecorder {
@@ -1459,7 +1459,10 @@ fn skipped_source_text_is_lexed_with_current_catcodes() {
     assert_eq!(next_expanded_chars(&mut input, &mut stores), "good");
 }
 
-fn next_expanded_chars(input: &mut InputStack<MemoryInput>, stores: &mut Universe) -> String {
+fn next_expanded_chars(
+    input: &mut InputStack<MemoryInput>,
+    stores: &mut impl ExpansionState,
+) -> String {
     let mut out = String::new();
     while let Some(token) = get_x_token(input, stores).expect("expansion should succeed") {
         let Token::Char { ch, .. } = token else {
@@ -1470,7 +1473,10 @@ fn next_expanded_chars(input: &mut InputStack<MemoryInput>, stores: &mut Univers
     out
 }
 
-fn collect_expanded(input: &mut InputStack<MemoryInput>, stores: &mut Universe) -> Vec<Token> {
+fn collect_expanded(
+    input: &mut InputStack<MemoryInput>,
+    stores: &mut impl ExpansionState,
+) -> Vec<Token> {
     let mut out = Vec::new();
     while let Some(token) = get_x_token(input, stores).expect("expansion should succeed") {
         out.push(token);
@@ -1480,7 +1486,7 @@ fn collect_expanded(input: &mut InputStack<MemoryInput>, stores: &mut Universe) 
 
 fn next_expanded_chars_with_hooks(
     input: &mut InputStack<MemoryInput>,
-    stores: &mut Universe,
+    stores: &mut impl ExpansionState,
     hooks: &mut MemoryHooks,
 ) -> String {
     let mut out = String::new();
@@ -1497,7 +1503,7 @@ fn next_expanded_chars_with_hooks(
 
 fn collect_expanded_with_hooks(
     input: &mut InputStack<MemoryInput>,
-    stores: &mut Universe,
+    stores: &mut impl ExpansionState,
     hooks: &mut MemoryHooks,
 ) -> Vec<Token> {
     let mut out = Vec::new();
@@ -1612,7 +1618,11 @@ impl MemoryHooks {
 }
 
 impl ExpansionHooks<MemoryInput> for MemoryHooks {
-    fn open_input(&mut self, _stores: &mut Universe, name: &str) -> Result<MemoryInput, String> {
+    fn open_input<C: ExpansionState>(
+        &mut self,
+        _stores: &mut C,
+        name: &str,
+    ) -> Result<MemoryInput, String> {
         let source = self
             .sources
             .get(name)
@@ -1633,7 +1643,7 @@ impl ExpansionHooks<MemoryInput> for MemoryHooks {
         self.inner
     }
 
-    fn input_stream_eof(&self, _stores: &Universe, stream: u8) -> bool {
+    fn input_stream_eof(&self, _stores: &impl ExpansionState, stream: u8) -> bool {
         self.eof.get(&stream).copied().unwrap_or(true)
     }
 }

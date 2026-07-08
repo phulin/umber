@@ -9,7 +9,7 @@ use std::fmt;
 
 use tex_state::ids::TokenListId;
 use tex_state::token::{Catcode, Token};
-use tex_state::{FileContent, Universe, WorldError};
+use tex_state::{ExpansionState, FileContent, WorldError};
 
 pub use tex_state::{
     ConditionFrameSummary, ConditionKind, ConditionLimb, InputFrameSummary, InputSummary,
@@ -533,7 +533,10 @@ impl<S> Lexer<S>
 where
     S: InputSource,
 {
-    pub fn next_token(&mut self, stores: &mut Universe) -> Result<Option<Token>, LexError> {
+    pub fn next_token(
+        &mut self,
+        stores: &mut impl ExpansionState,
+    ) -> Result<Option<Token>, LexError> {
         self.input.next_token(stores)
     }
 }
@@ -542,7 +545,10 @@ impl<S> InputStack<S>
 where
     S: InputSource,
 {
-    pub fn next_token(&mut self, stores: &mut Universe) -> Result<Option<Token>, LexError> {
+    pub fn next_token(
+        &mut self,
+        stores: &mut impl ExpansionState,
+    ) -> Result<Option<Token>, LexError> {
         loop {
             let Some(frame_index) = self.current_token_frame_index() else {
                 return Ok(None);
@@ -609,7 +615,10 @@ where
         }
     }
 
-    pub fn next_token_readonly(&mut self, stores: &Universe) -> Result<Option<Token>, LexError> {
+    pub fn next_token_readonly(
+        &mut self,
+        stores: &impl ExpansionState,
+    ) -> Result<Option<Token>, LexError> {
         Ok(self
             .next_expansion_token_readonly(stores)?
             .map(ExpansionToken::token))
@@ -617,7 +626,7 @@ where
 
     pub fn next_expansion_token(
         &mut self,
-        stores: &mut Universe,
+        stores: &mut impl ExpansionState,
     ) -> Result<Option<ExpansionToken>, LexError> {
         loop {
             let Some(frame_index) = self.current_token_frame_index() else {
@@ -690,7 +699,7 @@ where
 
     pub fn next_expansion_token_readonly(
         &mut self,
-        stores: &Universe,
+        stores: &impl ExpansionState,
     ) -> Result<Option<ExpansionToken>, LexError> {
         loop {
             let Some(frame_index) = self.current_token_frame_index() else {
@@ -775,7 +784,7 @@ impl<S> InputStack<S> {
 
 fn next_token_from_token_list_frame(
     frame: &mut TokenListInputFrame,
-    stores: &Universe,
+    stores: &impl ExpansionState,
 ) -> Option<TokenReplay> {
     let tokens = stores.tokens(frame.token_list);
     let token = tokens.get(frame.index).copied()?;
@@ -797,7 +806,7 @@ fn next_token_from_token_list_frame(
 
 fn load_next_line_readonly<S>(
     source: &mut SourceInputFrame<S>,
-    stores: &Universe,
+    stores: &impl ExpansionState,
 ) -> Result<bool, LexError>
 where
     S: InputSource,
@@ -830,7 +839,7 @@ where
 
 fn load_next_line<S>(
     source: &mut SourceInputFrame<S>,
-    stores: &mut Universe,
+    stores: &mut impl ExpansionState,
 ) -> Result<bool, LexError>
 where
     S: InputSource,
@@ -861,7 +870,7 @@ where
 
 fn next_token_from_line<S>(
     source: &mut SourceInputFrame<S>,
-    stores: &mut Universe,
+    stores: &mut impl ExpansionState,
     unicode_superscript_notation: bool,
 ) -> Result<Option<Token>, LexError> {
     let ch = read_expanded_char(source, stores, unicode_superscript_notation);
@@ -923,7 +932,7 @@ fn next_token_from_line<S>(
 
 fn next_token_from_line_readonly<S>(
     source: &mut SourceInputFrame<S>,
-    stores: &Universe,
+    stores: &impl ExpansionState,
     unicode_superscript_notation: bool,
 ) -> Result<Option<Token>, LexError> {
     let ch = read_expanded_char(source, stores, unicode_superscript_notation);
@@ -987,7 +996,7 @@ fn next_token_from_line_readonly<S>(
 
 fn scan_control_sequence<S>(
     source: &mut SourceInputFrame<S>,
-    stores: &mut Universe,
+    stores: &mut impl ExpansionState,
     unicode_superscript_notation: bool,
 ) -> Token {
     if source.frame.offset >= source.frame.line.len() {
@@ -1020,7 +1029,7 @@ fn scan_control_sequence<S>(
 
 fn scan_control_sequence_readonly<S>(
     source: &mut SourceInputFrame<S>,
-    stores: &Universe,
+    stores: &impl ExpansionState,
     unicode_superscript_notation: bool,
 ) -> Result<Token, LexError> {
     if source.frame.offset >= source.frame.line.len() {
@@ -1051,7 +1060,7 @@ fn scan_control_sequence_readonly<S>(
     readonly_cs_token(stores, &name)
 }
 
-fn readonly_cs_token(stores: &Universe, name: &str) -> Result<Token, LexError> {
+fn readonly_cs_token(stores: &impl ExpansionState, name: &str) -> Result<Token, LexError> {
     stores
         .symbol(name)
         .map(Token::Cs)
@@ -1060,7 +1069,7 @@ fn readonly_cs_token(stores: &Universe, name: &str) -> Result<Token, LexError> {
 
 fn read_expanded_char<S>(
     source: &mut SourceInputFrame<S>,
-    stores: &Universe,
+    stores: &impl ExpansionState,
     unicode_superscript_notation: bool,
 ) -> char {
     let ch = source.frame.line[source.frame.offset];
@@ -1072,7 +1081,7 @@ fn read_expanded_char<S>(
 fn expand_superscript_notation<S>(
     source: &mut SourceInputFrame<S>,
     ch: char,
-    stores: &Universe,
+    stores: &impl ExpansionState,
     unicode_superscript_notation: bool,
 ) -> Option<char> {
     if stores.catcode(ch) != Catcode::Superscript {
@@ -1156,7 +1165,10 @@ impl<S> LineReader<S>
 where
     S: InputSource,
 {
-    pub fn next_event(&mut self, stores: &Universe) -> Result<Option<LineEvent>, WorldError> {
+    pub fn next_event(
+        &mut self,
+        stores: &impl ExpansionState,
+    ) -> Result<Option<LineEvent>, WorldError> {
         let Some(line) = self.source.read_line()? else {
             return Ok(None);
         };
@@ -1207,9 +1219,9 @@ mod tests {
         InputStack, LexError, Lexer, LexerState, LineEvent, LineReader, MemoryInput,
         TokenListReplayKind, load_next_line,
     };
-    use tex_state::Universe;
     use tex_state::env::banks::IntParam;
     use tex_state::token::{Catcode, Token};
+    use tex_state::{ExpansionState, Universe};
 
     #[test]
     fn strips_trailing_spaces_and_appends_endlinechar() {
@@ -1764,7 +1776,10 @@ mod tests {
         );
     }
 
-    fn collect_tokens(lexer: &mut Lexer<MemoryInput>, stores: &mut Universe) -> Vec<Token> {
+    fn collect_tokens(
+        lexer: &mut Lexer<MemoryInput>,
+        stores: &mut impl ExpansionState,
+    ) -> Vec<Token> {
         let mut tokens = Vec::new();
         while let Some(token) = lexer.next_token(stores).expect("lexing should succeed") {
             tokens.push(token);
@@ -1776,7 +1791,7 @@ mod tests {
         Token::Char { ch, cat }
     }
 
-    fn cs_token(stores: &mut Universe, name: &str) -> Token {
+    fn cs_token(stores: &mut impl ExpansionState, name: &str) -> Token {
         Token::Cs(stores.intern(name))
     }
 }

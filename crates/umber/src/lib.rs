@@ -41,7 +41,11 @@ pub fn run_memory_with_stores(
 struct MemoryRunHooks;
 
 impl ExpansionHooks<MemoryInput> for MemoryRunHooks {
-    fn open_input(&mut self, _stores: &mut Universe, name: &str) -> Result<MemoryInput, String> {
+    fn open_input<C: tex_state::ExpansionState>(
+        &mut self,
+        _stores: &mut C,
+        name: &str,
+    ) -> Result<MemoryInput, String> {
         Err(format!("memory run cannot open input {name}"))
     }
 

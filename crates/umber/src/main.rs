@@ -107,14 +107,17 @@ impl RunHooks {
 }
 
 impl ExpansionHooks<WorldInput> for RunHooks {
-    fn open_input(&mut self, stores: &mut Universe, name: &str) -> Result<WorldInput, String> {
+    fn open_input<C: tex_state::ExpansionState>(
+        &mut self,
+        stores: &mut C,
+        name: &str,
+    ) -> Result<WorldInput, String> {
         let mut path = self.base_dir.join(name);
         if path.extension().is_none() {
             path.set_extension("tex");
         }
         stores
-            .world_mut()
-            .read_file(&path)
+            .read_input_file(&path)
             .map(WorldInput::from_content)
             .map_err(|err| format!("{} ({err})", path.display()))
     }

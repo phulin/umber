@@ -830,7 +830,11 @@ fn font_meaning(stores: &Universe, name: &str) -> tex_state::ids::FontId {
 struct EdefInputHooks;
 
 impl ExpansionHooks<MemoryInput> for EdefInputHooks {
-    fn open_input(&mut self, _stores: &mut Universe, name: &str) -> Result<MemoryInput, String> {
+    fn open_input<C: tex_state::ExpansionState>(
+        &mut self,
+        _stores: &mut C,
+        name: &str,
+    ) -> Result<MemoryInput, String> {
         if name == "inc" {
             Ok(MemoryInput::new("OK"))
         } else {

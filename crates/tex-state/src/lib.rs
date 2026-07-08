@@ -29,7 +29,7 @@ pub use input::{
     TokenListReplayKind,
 };
 pub use stores::{FontParameterError, GroupKind, GroupMismatch, PrepareMagDiagnostic};
-pub use universe::{InteractionMode, Snapshot, Universe};
+pub use universe::{ExpansionState, InteractionMode, Snapshot, Universe};
 pub use world::{
     ContentHash, EffectPos, EffectRecord, FileContent, InputRecord, JobClock, PrintSink,
     ReadTarget, RngState, ShellEscapePolicy, ShellEscapeRecord, StreamBufState, StreamSlot, World,

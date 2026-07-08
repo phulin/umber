@@ -1,26 +1,30 @@
 use crate::args::{MacroCallError, match_macro_call};
 use tex_lex::{InputStack, MemoryInput, TokenListReplayKind};
-use tex_state::Universe;
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::MeaningFlags;
 use tex_state::token::{Catcode, Token};
+use tex_state::{ExpansionState, Universe};
 
 fn char_token(ch: char, cat: Catcode) -> Token {
     Token::Char { ch, cat }
 }
 
-fn cs_token(stores: &mut Universe, name: &str) -> Token {
+fn cs_token(stores: &mut impl ExpansionState, name: &str) -> Token {
     Token::Cs(stores.intern(name))
 }
 
-fn macro_meaning(stores: &mut Universe, flags: MeaningFlags, params: &[Token]) -> MacroMeaning {
+fn macro_meaning(
+    stores: &mut impl ExpansionState,
+    flags: MeaningFlags,
+    params: &[Token],
+) -> MacroMeaning {
     let params = stores.intern_token_list(params);
     let body = stores.intern_token_list(&[]);
     MacroMeaning::new(flags, params, body)
 }
 
 fn match_from_list(
-    stores: &mut Universe,
+    stores: &mut impl ExpansionState,
     meaning: MacroMeaning,
     input_tokens: &[Token],
 ) -> Result<Vec<Vec<Token>>, MacroCallError> {

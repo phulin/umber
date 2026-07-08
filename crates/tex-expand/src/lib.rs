@@ -9,10 +9,10 @@
 use std::fmt;
 
 use tex_lex::{InputSource, InputStack, LexError, MacroArguments, TokenListReplayKind};
-use tex_state::Universe;
 use tex_state::interner::Symbol;
 use tex_state::meaning::Meaning;
 use tex_state::token::Token;
+use tex_state::{ExpansionState, Universe};
 
 pub mod args;
 pub mod scan;
@@ -289,7 +289,7 @@ impl std::error::Error for ExpandError {
 /// sources through this trait; the eventual `World` implementation is expected
 /// to record and snapshot those reads.
 pub trait ExpansionHooks<S> {
-    fn open_input(&mut self, stores: &mut Universe, name: &str) -> Result<S, String>;
+    fn open_input<C: ExpansionState>(&mut self, stores: &mut C, name: &str) -> Result<S, String>;
 
     fn job_name(&self) -> &str {
         "texput"
@@ -303,13 +303,11 @@ pub trait ExpansionHooks<S> {
         false
     }
 
-    fn input_stream_eof(&self, stores: &Universe, stream: u8) -> bool {
+    fn input_stream_eof(&self, stores: &impl ExpansionState, stream: u8) -> bool {
         if stream >= tex_state::world::STREAM_SLOT_COUNT as u8 {
             return true;
         }
-        stores
-            .world()
-            .input_stream_eof(tex_state::StreamSlot::new(stream))
+        stores.input_stream_eof(tex_state::StreamSlot::new(stream))
     }
 }
 
@@ -317,19 +315,8 @@ pub trait ExpansionHooks<S> {
 pub struct NoopExpansionHooks;
 
 impl<S> ExpansionHooks<S> for NoopExpansionHooks {
-    fn open_input(&mut self, _stores: &mut Universe, _name: &str) -> Result<S, String> {
+    fn open_input<C: ExpansionState>(&mut self, _stores: &mut C, _name: &str) -> Result<S, String> {
         Err("no input source hook is installed".to_owned())
-    }
-}
-
-/// Narrow capability for `\csname`'s sanctioned state mutation.
-pub trait CsNameInterner {
-    fn intern_relaxed_control_sequence(&mut self, name: &str) -> Symbol;
-}
-
-impl CsNameInterner for Universe {
-    fn intern_relaxed_control_sequence(&mut self, name: &str) -> Symbol {
-        Universe::intern_relaxed_control_sequence(self, name)
     }
 }
 
@@ -360,7 +347,7 @@ impl From<scan_dimen::ScanDimenError> for ExpandError {
 /// Pulls the next fully expanded token.
 pub fn get_x_token<S>(
     input: &mut InputStack<S>,
-    stores: &mut Universe,
+    stores: &mut impl ExpansionState,
 ) -> Result<Option<Token>, ExpandError>
 where
     S: InputSource,
@@ -371,7 +358,7 @@ where
 /// Pulls the next fully expanded token while recording meaning reads.
 pub fn get_x_token_with_recorder<S, R>(
     input: &mut InputStack<S>,
-    stores: &mut Universe,
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
 ) -> Result<Option<Token>, ExpandError>
 where
@@ -384,7 +371,7 @@ where
 /// Pulls the next fully expanded token using driver-provided expansion hooks.
 pub fn get_x_token_with_hooks<S, H>(
     input: &mut InputStack<S>,
-    stores: &mut Universe,
+    stores: &mut impl ExpansionState,
     hooks: &mut H,
 ) -> Result<Option<Token>, ExpandError>
 where
@@ -397,7 +384,7 @@ where
 /// Pulls the next fully expanded token while recording reads and using hooks.
 pub fn get_x_token_with_recorder_and_hooks<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut Universe,
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<Option<Token>, ExpandError>
@@ -434,7 +421,7 @@ where
 pub(crate) fn dispatch_one_raw_token_with_hooks<S, R, H>(
     token: Token,
     input: &mut InputStack<S>,
-    stores: &mut Universe,
+    stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<Dispatch, ExpandError>
@@ -454,7 +441,7 @@ where
 
 pub(crate) fn push_dispatch_result<S>(
     input: &mut InputStack<S>,
-    stores: &mut Universe,
+    stores: &mut impl ExpansionState,
     dispatch: Dispatch,
 ) {
     match dispatch {
@@ -484,7 +471,7 @@ pub(crate) fn apply_dispatch_push<S>(input: &mut InputStack<S>, dispatch: Dispat
 
 pub(crate) fn push_inserted_token<S>(
     input: &mut InputStack<S>,
-    stores: &mut Universe,
+    stores: &mut impl ExpansionState,
     token: Token,
 ) {
     let token_list = stores.intern_token_list(&[token]);
@@ -493,7 +480,7 @@ pub(crate) fn push_inserted_token<S>(
 
 pub(crate) fn push_noexpand_token<S>(
     input: &mut InputStack<S>,
-    stores: &mut Universe,
+    stores: &mut impl ExpansionState,
     token: Token,
 ) {
     let token_list = stores.intern_token_list(&[token]);
