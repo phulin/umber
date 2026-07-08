@@ -320,10 +320,14 @@ assignments, box building, and dispatch into the typesetting kernels.
   check with the canonical `Dimension too large` diagnostic. Token parsing,
   signs, `true` magnification, internal units, and assignment effects remain
   scanner/stomach responsibilities.
-- **Box building**: `\hbox{...}` etc. push a mode level; on close, the
-  finished list freezes into the epoch arena; storing it in a box register
-  is the barriered promotion write. The stomach never holds a raw node
-  pointer across a state write.
+- **Box building**: `\hbox{...}` etc. scan a packing spec, execute a nested
+  restricted-horizontal or internal-vertical list builder, freeze the
+  finished list into the epoch arena, then call the pure `tex-typeset`
+  packing kernel. Storing the resulting one-node list in a box register is
+  the barriered promotion write. Pulling boxes back out through `\copy`,
+  `\box`, unboxing, `\lastbox`, or box-dimension rewrites clones any
+  survivor-backed node tree into the current epoch before it can be appended
+  to an unfinished mode list or promoted again.
 - **Paragraph and page hand-off**: when horizontal material ends (`\par`),
   the stomach hands the current list to the paragraph kernel and appends
   the resulting vertical material; the page builder (§8) observes appends
@@ -335,14 +339,15 @@ assignments, box building, and dispatch into the typesetting kernels.
 - The implemented `tex-exec` scaffold owns that explicit mode nest now. Its
   summary is a vector of mode levels, each carrying one of TeX's six modes
   (vertical/internal vertical, horizontal/restricted horizontal, math/display
-  math) plus a placeholder list-under-construction summary until node builders
-  arrive. Main control pulls only through `tex-expand`'s `get_x_token` loop;
-  the crate does not read raw lexer tokens. The gullet's mode predicates are
-  backed by the current nest level through `ExpansionHooks`, collapsing the
-  six modes into the three `\ifvmode`/`\ifhmode`/`\ifmmode` families and the
-  `\ifinner` bit. For this first slice, `\relax` is the only completed
-  execution command and all typesetting material fails through an explicit
-  "typesetting path is not implemented yet" diagnostic.
+  math) plus the node list under construction. Main control pulls through
+  `tex-expand`'s `get_x_token` loop, and the box-group scanner re-enters the
+  same dispatch path for nested stomach work. The gullet's mode predicates
+  are backed by the current nest level through `ExpansionHooks`, collapsing
+  the six modes into the three `\ifvmode`/`\ifhmode`/`\ifmmode` families and
+  the `\ifinner` bit. Box primitives are implemented for register
+  round-trips, packing, unboxing, last-box extraction, dimension reads/writes,
+  and shift commands; full paragraph/font-driven hlist construction remains
+  future work.
 
 ## 7. Typesetting kernels
 
@@ -372,9 +377,8 @@ makes box-level memoization (M4) sound.
   `hpack`, `vpack`, `vtop`, and TeX.web §108 badness over frozen node lists.
   The crate reads `Universe` immutably, copies packing parameters into plain
   structs at entry, and returns box payloads plus diagnostics without writing
-  state. Stomach-side box-building primitives are tracked separately until
-  `tex-exec` mode levels own real node builders instead of placeholder
-  summaries.
+  state. Stomach-side box-building primitives live in `tex-exec`; the packing
+  crate remains pure and has no `World` or `&mut Universe` surface.
 
 ## 8. Page builder and output routine
 

@@ -1,11 +1,11 @@
 use tex_lex::{InputSource, InputStack, MacroArguments};
-use tex_state::ExpansionState;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::{FontId, TokenListId};
 use tex_state::meaning::{Meaning, MeaningFlags};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
+use tex_state::{BoxDimension, ExpansionState};
 
 use crate::{
     Dispatch, ExpandError, ExpandableOpcode, ExpansionHooks, ExpansionReplayKind, ReadRecorder,
@@ -114,6 +114,26 @@ where
                     stores,
                     ExpansionReplayKind::TheOutput,
                     &stores.font_skew_char(font).to_string(),
+                ))
+            }
+            tex_state::meaning::UnexpandablePrimitive::Wd
+            | tex_state::meaning::UnexpandablePrimitive::Ht
+            | tex_state::meaning::UnexpandablePrimitive::Dp => {
+                let index = scan_helpers::scan_register_index(input, stores, recorder, hooks)?;
+                let dimension = match primitive {
+                    tex_state::meaning::UnexpandablePrimitive::Wd => BoxDimension::Width,
+                    tex_state::meaning::UnexpandablePrimitive::Ht => BoxDimension::Height,
+                    tex_state::meaning::UnexpandablePrimitive::Dp => BoxDimension::Depth,
+                    _ => unreachable!("outer match restricts primitive"),
+                };
+                Ok(push_rendered_text(
+                    stores,
+                    ExpansionReplayKind::TheOutput,
+                    &format_scaled(
+                        stores
+                            .box_dimension(index, dimension)
+                            .unwrap_or_else(|| Scaled::from_raw(0)),
+                    ),
                 ))
             }
             tex_state::meaning::UnexpandablePrimitive::CatCode

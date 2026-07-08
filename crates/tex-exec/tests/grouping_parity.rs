@@ -7,6 +7,7 @@ use tempfile::tempdir;
 use tex_exec::{Executor, install_unexpandable_primitives};
 use tex_lex::{InputStack, MemoryInput};
 use tex_state::Universe;
+use tex_state::meaning::{ExpandablePrimitive, Meaning};
 
 #[test]
 fn grouping_after_tokens_match_pdftex_micro_suite() {
@@ -106,6 +107,61 @@ fn prepare_mag_cases_match_pdftex_micro_suite() {
     assert_eq!(stores.dimen(0).raw(), 65_536);
 }
 
+#[test]
+fn box_register_cases_match_pdftex_micro_suite() {
+    let temp_dir = tempdir().expect("create reftex temp dir");
+
+    let dimensions = run_pdftex(
+        temp_dir.path(),
+        "box_dimensions",
+        r"\setbox0=\hbox to 10pt{}\wd0=12pt\ht0=3pt\dp0=2pt\message{B:\the\wd0,\the\ht0,\the\dp0}\end",
+    );
+    assert!(
+        dimensions.stdout.contains("B:12.0pt,3.0pt,2.0pt"),
+        "pdftex box dimension output changed:\n{}",
+        dimensions.stdout
+    );
+
+    let movement = run_pdftex(
+        temp_dir.path(),
+        "box_movement",
+        r"\setbox0=\hbox{}\setbox1=\copy0\box0\message{M:\ifvoid0 void\else full\fi,\ifvoid1 full\else void\fi}\end",
+    );
+    assert!(
+        movement.stdout.contains("M:void,void"),
+        "pdftex box movement output changed:\n{}",
+        movement.stdout
+    );
+
+    let mut stores =
+        run_umber_exec_with_box_expandables(r"\setbox0=\hbox to 10pt{}\wd0=12pt\ht0=3pt\dp0=2pt");
+    assert_eq!(
+        stores
+            .box_dimension(0, tex_state::BoxDimension::Width)
+            .expect("box width should be readable")
+            .raw(),
+        12 * 65_536
+    );
+    assert_eq!(
+        stores
+            .box_dimension(0, tex_state::BoxDimension::Height)
+            .expect("box height should be readable")
+            .raw(),
+        3 * 65_536
+    );
+    assert_eq!(
+        stores
+            .box_dimension(0, tex_state::BoxDimension::Depth)
+            .expect("box depth should be readable")
+            .raw(),
+        2 * 65_536
+    );
+
+    stores = run_umber_exec_with_box_expandables(r"\setbox0=\hbox{}\setbox1=\copy0\box0");
+    assert!(stores.box_reg(0).is_none());
+    assert!(stores.box_reg(1).is_some());
+}
+
 fn run_pdftex(dir: &std::path::Path, stem: &str, input: &str) -> refexec::RunOutput {
     let tex_file = dir.join(format!("{stem}.tex"));
     fs::write(&tex_file, input).expect("write reftex input");
@@ -118,6 +174,25 @@ fn run_pdftex(dir: &std::path::Path, stem: &str, input: &str) -> refexec::RunOut
 fn run_umber_exec(input: &str) -> Universe {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(input));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("umber execution succeeds");
+    stores
+}
+
+fn run_umber_exec_with_box_expandables(input: &str) -> Universe {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    for (name, primitive) in [
+        ("the", ExpandablePrimitive::The),
+        ("ifvoid", ExpandablePrimitive::IfVoid),
+        ("else", ExpandablePrimitive::Else),
+        ("fi", ExpandablePrimitive::Fi),
+    ] {
+        let symbol = stores.intern(name);
+        stores.set_meaning(symbol, Meaning::ExpandablePrimitive(primitive));
+    }
     let mut input = InputStack::new(MemoryInput::new(input));
     Executor::new()
         .run(&mut input, &mut stores)

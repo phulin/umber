@@ -4,7 +4,7 @@ use tex_state::meaning::{ExpandablePrimitive, Meaning};
 use tex_state::token::{Catcode, Token};
 use tex_state::{GroupKind, GroupMismatch, Universe};
 
-use crate::{ExecError, Mode, assignments};
+use crate::{ExecError, Mode, ModeNest, assignments};
 
 /// Main-control progress counters.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -21,7 +21,7 @@ pub enum DispatchAction {
 
 /// Dispatches one gullet-delivered token in the current mode.
 pub fn dispatch_delivered_token<S, H>(
-    mode: Mode,
+    nest: &mut ModeNest,
     token: Token,
     input: &mut InputStack<S>,
     stores: &mut Universe,
@@ -31,6 +31,7 @@ where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
+    let mode = nest.current_mode();
     let meaning = match token {
         Token::Cs(symbol) => stores.meaning(symbol),
         Token::Char {
@@ -54,6 +55,9 @@ where
             return Ok(DispatchAction::Continue);
         }
         Token::Char { .. } | Token::Param(_) => {
+            if assignments::try_append_character(nest, token, stores)? {
+                return Ok(DispatchAction::Continue);
+            }
             return Ok(DispatchAction::NotConsumed);
         }
     };
@@ -69,7 +73,7 @@ where
         }),
         Meaning::ExpandablePrimitive(primitive) => dispatch_delivered_expandable(token, primitive),
         Meaning::UnexpandablePrimitive(primitive) => {
-            assignments::execute_unexpandable(primitive, input, stores, hooks)
+            assignments::execute_unexpandable(primitive, nest, input, stores, hooks)
         }
         Meaning::Font(id) => {
             if let Token::Cs(symbol) = token {

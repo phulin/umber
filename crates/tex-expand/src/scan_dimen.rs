@@ -3,6 +3,7 @@
 use std::fmt;
 
 use tex_lex::{InputSource, InputStack, LexError, TokenListReplayKind};
+use tex_state::BoxDimension;
 use tex_state::glue::Order;
 use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
@@ -483,6 +484,25 @@ where
             let index = scan_register_index(input, stores, recorder, hooks)?;
             consume_optional_space(input, stores, recorder, hooks)?;
             return Ok(ScannedDimen::new(stores.dimen(index)));
+        }
+        Meaning::UnexpandablePrimitive(
+            primitive @ (UnexpandablePrimitive::Wd
+            | UnexpandablePrimitive::Ht
+            | UnexpandablePrimitive::Dp),
+        ) => {
+            let index = scan_register_index(input, stores, recorder, hooks)?;
+            consume_optional_space(input, stores, recorder, hooks)?;
+            let dimension = match primitive {
+                UnexpandablePrimitive::Wd => BoxDimension::Width,
+                UnexpandablePrimitive::Ht => BoxDimension::Height,
+                UnexpandablePrimitive::Dp => BoxDimension::Depth,
+                _ => unreachable!("outer match restricts primitive"),
+            };
+            return Ok(ScannedDimen::new(
+                stores
+                    .box_dimension(index, dimension)
+                    .unwrap_or_else(|| Scaled::from_raw(0)),
+            ));
         }
         _ => {}
     }

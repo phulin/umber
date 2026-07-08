@@ -289,6 +289,11 @@ cells[i] = new
   earns the right to be truncated blindly. Test-only replay/hash helpers that
   still walk node trees recursively carry explicit depth bounds until M3
   replaces them with convergence-grade semantic hashing.
+- **Returning from survivor storage**: unfinished mode lists are epoch-owned,
+  so a box copied or removed from a survivor-backed register is cloned back
+  into the current epoch before append, unbox, dimension rewrite, or
+  re-promotion. This preserves the bottom-up invariant for epoch node lists
+  while keeping box-register storage survivor-owned and journal-accounted.
 - Shipped pages serialize into content-addressed artifacts (the memo/extern
   store) and their nodes are released.
 

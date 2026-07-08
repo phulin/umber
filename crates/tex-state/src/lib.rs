@@ -30,8 +30,8 @@ pub use input::{
 };
 pub use stores::{FontParameterError, GroupKind, GroupMismatch, PrepareMagDiagnostic};
 pub use universe::{
-    ExpansionCtx, ExpansionState, InputOpenContext, InputReadState, InteractionMode, Snapshot,
-    Universe,
+    BoxDimension, ExpansionCtx, ExpansionState, InputOpenContext, InputReadState, InteractionMode,
+    Snapshot, Universe,
 };
 pub use world::{
     ContentHash, EffectPos, EffectRecord, FileContent, InputRecord, JobClock, PrintSink,

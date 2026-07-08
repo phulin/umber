@@ -85,7 +85,7 @@ fn dispatch_relax_continues_without_state_mutation() {
 
     assert_eq!(
         dispatch_delivered_token(
-            Mode::Vertical,
+            &mut ModeNest::new(),
             Token::Cs(relax),
             &mut input,
             &mut stores,
@@ -105,11 +105,13 @@ fn dispatch_character_hits_loud_typesetting_stub() {
     };
     let mut input = InputStack::new(MemoryInput::new(""));
     let mut hooks = NoopExecHooks;
+    let mut nest = ModeNest::new();
 
+    nest.push(Mode::Horizontal);
     assert_eq!(
-        dispatch_delivered_token(Mode::Horizontal, token, &mut input, &mut stores, &mut hooks)
+        dispatch_delivered_token(&mut nest, token, &mut input, &mut stores, &mut hooks)
             .expect("character dispatch"),
-        DispatchAction::NotConsumed
+        DispatchAction::Continue
     );
 }
 
@@ -232,7 +234,7 @@ fn futurelet_assigns_second_token_meaning_and_preserves_order() {
     let mut hooks = NoopExecHooks;
 
     dispatch_delivered_token(
-        Mode::Vertical,
+        &mut ModeNest::new(),
         Token::Cs(futurelet),
         &mut input,
         &mut stores,
@@ -253,6 +255,64 @@ fn futurelet_assigns_second_token_meaning_and_preserves_order() {
             cat: Catcode::Letter
         })
     );
+}
+
+#[test]
+fn box_primitives_round_trip_through_registers() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\setbox0=\\hbox to 10pt{}\\setbox1=\\copy0\\box0",
+    ));
+    let mut executor = Executor::new();
+
+    executor
+        .run(&mut input, &mut stores)
+        .expect("box primitives execute");
+
+    assert!(stores.box_reg(0).is_none(), "\\box should void register 0");
+    let box1 = stores.box_reg(1).expect("copy should preserve register 1");
+    let [tex_state::node::Node::HList(box_node)] = stores.nodes(box1) else {
+        panic!("register 1 should hold an hbox");
+    };
+    assert_eq!(box_node.width.raw(), 10 * tex_state::scaled::Scaled::UNITY);
+    let [tex_state::node::Node::HList(appended)] = executor.nest().current_list().nodes() else {
+        panic!("main vertical list should contain copied-out hbox");
+    };
+    assert_eq!(appended.width.raw(), 10 * tex_state::scaled::Scaled::UNITY);
+}
+
+#[test]
+fn box_dimension_writes_are_readable_by_the() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    install_expandable(&mut stores, "the", ExpandablePrimitive::The);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\setbox0=\\hbox{}\\wd0=12pt\\edef\\x{\\the\\wd0}",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("box dimension assignment executes");
+
+    assert_eq!(
+        stores
+            .box_dimension(0, tex_state::BoxDimension::Width)
+            .expect("box dimension")
+            .raw(),
+        12 * tex_state::scaled::Scaled::UNITY
+    );
+    let x = stores.symbol("x").expect("x was interned");
+    let meaning = stores.macro_meaning(x).expect("x is a macro");
+    let rendered: String = stores
+        .tokens(meaning.replacement_text())
+        .iter()
+        .filter_map(|token| match token {
+            Token::Char { ch, .. } => Some(*ch),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(rendered, "12.0pt");
 }
 
 #[test]

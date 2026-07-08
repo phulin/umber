@@ -1,4 +1,5 @@
 use tex_expand::EngineMode;
+use tex_state::node::Node;
 
 use crate::ExecError;
 
@@ -34,42 +35,73 @@ impl Mode {
     }
 }
 
-/// Placeholder for the list-under-construction owned by each nest level.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
-pub enum ListBuilderSummary {
-    #[default]
-    Empty,
+/// The list-under-construction owned by one mode level.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ModeList {
+    nodes: Vec<Node>,
+}
+
+impl ModeList {
+    #[must_use]
+    pub fn nodes(&self) -> &[Node] {
+        &self.nodes
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.nodes.is_empty()
+    }
+
+    pub fn push(&mut self, node: Node) {
+        self.nodes.push(node);
+    }
+
+    pub fn append(&mut self, nodes: impl IntoIterator<Item = Node>) {
+        self.nodes.extend(nodes);
+    }
+
+    pub fn pop_box(&mut self) -> Option<Node> {
+        let pos = self
+            .nodes
+            .iter()
+            .rposition(|node| matches!(node, Node::HList(_) | Node::VList(_)))?;
+        Some(self.nodes.remove(pos))
+    }
 }
 
 /// Snapshot-summary state for one mode level.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ModeLevelSummary {
     mode: Mode,
-    list: ListBuilderSummary,
+    list: ModeList,
 }
 
 impl ModeLevelSummary {
     #[must_use]
-    pub const fn new(mode: Mode) -> Self {
+    pub fn new(mode: Mode) -> Self {
         Self {
             mode,
-            list: ListBuilderSummary::Empty,
+            list: ModeList::default(),
         }
     }
 
     #[must_use]
-    pub const fn mode(self) -> Mode {
+    pub const fn mode(&self) -> Mode {
         self.mode
     }
 
     #[must_use]
-    pub const fn list(self) -> ListBuilderSummary {
-        self.list
+    pub fn list(&self) -> &ModeList {
+        &self.list
+    }
+
+    pub fn list_mut(&mut self) -> &mut ModeList {
+        &mut self.list
     }
 }
 
 /// Snapshot-coverable summary of the whole mode nest.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ModeNestSummary {
     levels: Vec<ModeLevelSummary>,
 }
@@ -82,7 +114,7 @@ impl ModeNestSummary {
 }
 
 /// Explicit stack of TeX mode levels.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ModeNest {
     levels: Vec<ModeLevelSummary>,
 }
@@ -144,5 +176,19 @@ impl ModeNest {
             .levels
             .pop()
             .expect("length checked before popping mode level"))
+    }
+
+    pub fn current_list(&self) -> &ModeList {
+        self.levels
+            .last()
+            .expect("ModeNest always has at least one level")
+            .list()
+    }
+
+    pub fn current_list_mut(&mut self) -> &mut ModeList {
+        self.levels
+            .last_mut()
+            .expect("ModeNest always has at least one level")
+            .list_mut()
     }
 }

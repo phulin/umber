@@ -16,9 +16,11 @@ use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
 use tex_state::{GroupKind, InteractionMode, Universe};
 
-use crate::{DispatchAction, ExecError, Mode, diagnostics, dispatch_delivered_token, leave_group};
+use crate::ModeNest;
+use crate::{DispatchAction, ExecError, diagnostics, dispatch_delivered_token, leave_group};
 
 mod arithmetic;
+mod boxes;
 mod fonts;
 mod macros;
 mod primitives;
@@ -27,6 +29,8 @@ mod tokens;
 mod variables;
 
 use arithmetic::*;
+pub(crate) use boxes::try_append_character;
+use boxes::*;
 use fonts::*;
 use macros::*;
 pub use primitives::install_unexpandable_primitives;
@@ -52,7 +56,8 @@ where
     if !is_assignment_meaning(meaning) {
         return Ok(false);
     }
-    match dispatch_delivered_token(Mode::Vertical, token, input, stores, hooks)? {
+    let mut nest = ModeNest::new();
+    match dispatch_delivered_token(&mut nest, token, input, stores, hooks)? {
         DispatchAction::Continue => Ok(true),
         DispatchAction::End => Ok(true),
         DispatchAction::NotConsumed => Ok(false),
@@ -61,6 +66,7 @@ where
 
 pub(crate) fn execute_unexpandable<S, H>(
     primitive: UnexpandablePrimitive,
+    nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
@@ -80,7 +86,7 @@ where
         reject_all_prefixes(prefixes)?;
         return Ok(DispatchAction::End);
     }
-    let assigned = execute_prefixed_command(command, prefixes, input, stores, hooks)?;
+    let assigned = execute_prefixed_command(command, prefixes, nest, input, stores, hooks)?;
     if assigned {
         fire_afterassignment(input, stores);
     }
@@ -104,7 +110,8 @@ where
         input,
         stores,
     )?;
-    let assigned = execute_prefixed_command(command, prefixes, input, stores, hooks)?;
+    let mut nest = ModeNest::new();
+    let assigned = execute_prefixed_command(command, prefixes, &mut nest, input, stores, hooks)?;
     if assigned {
         fire_afterassignment(input, stores);
     }
@@ -170,6 +177,7 @@ where
 fn execute_prefixed_command<S, H>(
     command: PrefixedCommand,
     prefixes: Prefixes,
+    nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
@@ -263,6 +271,36 @@ where
             | UnexpandablePrimitive::SkewChar => {
                 let target = scan_font_variable_target(primitive, input, stores, hooks)?;
                 execute_assignment_to_target(target, prefixes, input, stores, hooks)?;
+                Ok(true)
+            }
+            UnexpandablePrimitive::HBox
+            | UnexpandablePrimitive::VBox
+            | UnexpandablePrimitive::VTop => {
+                reject_macro_prefixes(prefixes)?;
+                execute_make_box(primitive, nest, prefixes.global, input, stores, hooks)?;
+                Ok(false)
+            }
+            UnexpandablePrimitive::SetBox => {
+                reject_macro_prefixes(prefixes)?;
+                execute_setbox(prefixes.global, input, stores, hooks)?;
+                Ok(true)
+            }
+            UnexpandablePrimitive::Box
+            | UnexpandablePrimitive::Copy
+            | UnexpandablePrimitive::UnHBox
+            | UnexpandablePrimitive::UnVBox
+            | UnexpandablePrimitive::LastBox
+            | UnexpandablePrimitive::Raise
+            | UnexpandablePrimitive::Lower
+            | UnexpandablePrimitive::MoveLeft
+            | UnexpandablePrimitive::MoveRight => {
+                reject_all_prefixes(prefixes)?;
+                execute_box_list_command(primitive, nest, input, stores, hooks)?;
+                Ok(false)
+            }
+            UnexpandablePrimitive::Wd | UnexpandablePrimitive::Ht | UnexpandablePrimitive::Dp => {
+                reject_macro_prefixes(prefixes)?;
+                execute_box_dimension_assignment(primitive, prefixes.global, input, stores, hooks)?;
                 Ok(true)
             }
             UnexpandablePrimitive::Read => {

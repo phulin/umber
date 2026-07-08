@@ -8,7 +8,7 @@ use crate::dispatch::unimplemented_typesetting;
 use crate::{DispatchAction, ExecError, ExecutionStats, ModeNest, dispatch_delivered_token};
 
 /// Stomach interpreter state.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Executor {
     nest: ModeNest,
 }
@@ -90,7 +90,7 @@ impl Executor {
                 return Ok(stats);
             };
             stats.delivered_tokens += 1;
-            match dispatch_delivered_token(self.nest.current_mode(), token, input, stores, hooks)? {
+            match dispatch_delivered_token(&mut self.nest, token, input, stores, hooks)? {
                 DispatchAction::Continue => {}
                 DispatchAction::End => return Ok(stats),
                 DispatchAction::NotConsumed => {

@@ -79,6 +79,7 @@ pub trait ExpansionState {
     fn current_font(&self) -> FontId;
     fn current_font_symbol(&self) -> Option<Symbol>;
     fn nodes(&self, id: NodeListId) -> &[Node];
+    fn box_dimension(&self, index: u16, dimension: BoxDimension) -> Option<Scaled>;
     fn count(&self, index: u16) -> i32;
     fn dimen(&self, index: u16) -> Scaled;
     fn skip(&self, index: u16) -> GlueId;
@@ -871,6 +872,56 @@ impl Universe {
         self.stores.take_box_reg(index)
     }
 
+    #[must_use]
+    pub fn box_dimension(&self, index: u16, dimension: BoxDimension) -> Option<Scaled> {
+        let id = self.box_reg(index)?;
+        box_dimension_from_nodes(self.nodes(id), dimension)
+    }
+
+    pub fn set_box_dimension(&mut self, index: u16, dimension: BoxDimension, value: Scaled) {
+        let Some(id) = self.box_reg(index) else {
+            return;
+        };
+        let epoch_id = self.clone_node_list_to_epoch(id);
+        let mut nodes = self.nodes(epoch_id).to_vec();
+        set_box_dimension_in_nodes(&mut nodes, dimension, value);
+        let rewritten = self.freeze_node_list(&nodes);
+        self.set_box_reg(index, rewritten);
+    }
+
+    pub fn clone_node_list_to_epoch(&mut self, id: NodeListId) -> NodeListId {
+        let nodes = self.nodes(id).to_vec();
+        let cloned: Vec<_> = nodes
+            .into_iter()
+            .map(|node| self.clone_node_to_epoch(node))
+            .collect();
+        self.freeze_node_list(&cloned)
+    }
+
+    pub fn clone_node_to_epoch(&mut self, node: Node) -> Node {
+        match node {
+            Node::HList(mut box_node) => {
+                box_node.children = self.clone_node_list_to_epoch(box_node.children);
+                Node::HList(box_node)
+            }
+            Node::VList(mut box_node) => {
+                box_node.children = self.clone_node_list_to_epoch(box_node.children);
+                Node::VList(box_node)
+            }
+            Node::Disc { pre, post, replace } => Node::Disc {
+                pre: self.clone_node_list_to_epoch(pre),
+                post: self.clone_node_list_to_epoch(post),
+                replace: self.clone_node_list_to_epoch(replace),
+            },
+            Node::Ins { class, content } => Node::Ins {
+                class,
+                content: self.clone_node_list_to_epoch(content),
+            },
+            Node::Adjust(content) => Node::Adjust(self.clone_node_list_to_epoch(content)),
+            node => node,
+        }
+    }
+
     pub fn set_int_param(&mut self, param: IntParam, value: i32) {
         self.stores.set_int_param(param, value);
     }
@@ -987,6 +1038,38 @@ impl Universe {
     #[must_use]
     pub fn testing_survivor_refcount(&self, id: NodeListId) -> u32 {
         self.stores.testing_survivor_refcount(id)
+    }
+}
+
+/// A mutable dimension field of a box register's top-level box.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum BoxDimension {
+    Width,
+    Height,
+    Depth,
+}
+
+fn box_dimension_from_nodes(nodes: &[Node], dimension: BoxDimension) -> Option<Scaled> {
+    let box_node = match nodes {
+        [Node::HList(box_node)] | [Node::VList(box_node)] => box_node,
+        _ => return None,
+    };
+    Some(match dimension {
+        BoxDimension::Width => box_node.width,
+        BoxDimension::Height => box_node.height,
+        BoxDimension::Depth => box_node.depth,
+    })
+}
+
+fn set_box_dimension_in_nodes(nodes: &mut [Node], dimension: BoxDimension, value: Scaled) {
+    let box_node = match nodes {
+        [Node::HList(box_node)] | [Node::VList(box_node)] => box_node,
+        _ => return,
+    };
+    match dimension {
+        BoxDimension::Width => box_node.width = value,
+        BoxDimension::Height => box_node.height = value,
+        BoxDimension::Depth => box_node.depth = value,
     }
 }
 
@@ -1126,6 +1209,10 @@ impl ExpansionState for Universe {
 
     fn box_reg(&self, index: u16) -> Option<NodeListId> {
         Self::box_reg(self, index)
+    }
+
+    fn box_dimension(&self, index: u16, dimension: BoxDimension) -> Option<Scaled> {
+        Self::box_dimension(self, index, dimension)
     }
 
     fn int_param(&self, param: IntParam) -> i32 {
@@ -1305,6 +1392,10 @@ impl ExpansionState for ExpansionCtx<'_> {
 
     fn box_reg(&self, index: u16) -> Option<NodeListId> {
         self.universe.box_reg(index)
+    }
+
+    fn box_dimension(&self, index: u16, dimension: BoxDimension) -> Option<Scaled> {
+        self.universe.box_dimension(index, dimension)
     }
 
     fn int_param(&self, param: IntParam) -> i32 {

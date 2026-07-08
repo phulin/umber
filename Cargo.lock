@@ -748,6 +748,7 @@ dependencies = [
  "tex-fonts",
  "tex-lex",
  "tex-state",
+ "tex-typeset",
 ]
 
 [[package]]

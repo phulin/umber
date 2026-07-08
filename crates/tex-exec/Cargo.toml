@@ -8,6 +8,7 @@ tex-expand = { path = "../tex-expand" }
 tex-fonts = { path = "../tex-fonts" }
 tex-lex = { path = "../tex-lex" }
 tex-state = { path = "../tex-state" }
+tex-typeset = { path = "../tex-typeset" }
 
 [dev-dependencies]
 refexec = { path = "../../tools/refexec" }
