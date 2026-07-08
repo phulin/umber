@@ -5,6 +5,9 @@
 //! this boundary instead of rolling back `Env` or content stores independently.
 
 use crate::cell::BankTag;
+use crate::code_tables::{
+    CodeTableGenerations, CodeTables, CodeTablesSnapshot, DelCode, LcCode, MathCode, SfCode, UcCode,
+};
 use crate::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use crate::env::{Env, EnvSnapshot};
 use crate::glue::{GlueSpec, GlueStore, GlueStoreMark};
@@ -15,6 +18,7 @@ use crate::node::Node;
 use crate::node_arena::{NodeArena, NodeArenaMark, NodeListBuilder};
 use crate::scaled::Scaled;
 use crate::survivor::SurvivorArena;
+use crate::token::Catcode;
 use crate::token::Token;
 use crate::token_store::{TokenListBuilder, TokenStore, TokenStoreMark};
 #[cfg(any(test, feature = "testing", feature = "shadow"))]
@@ -22,7 +26,7 @@ use std::hash::{Hash, Hasher};
 use std::mem;
 
 /// A rollback snapshot for all currently implemented state stores.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct Snapshot {
     owner: SnapshotOwner,
     env_snapshot: EnvSnapshot,
@@ -30,6 +34,7 @@ pub struct Snapshot {
     token_mark: TokenStoreMark,
     glue_mark: GlueStoreMark,
     node_mark: NodeArenaMark,
+    code_tables_snapshot: CodeTablesSnapshot,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -63,6 +68,7 @@ pub struct Stores {
     glue: GlueStore,
     nodes: NodeArena,
     survivors: SurvivorArena,
+    code_tables: CodeTables,
 }
 
 impl Clone for Stores {
@@ -75,6 +81,7 @@ impl Clone for Stores {
             glue: self.glue.clone(),
             nodes: self.nodes.clone(),
             survivors: self.survivors.clone(),
+            code_tables: self.code_tables.clone(),
         }
     }
 }
@@ -91,6 +98,7 @@ impl Stores {
             glue: GlueStore::new(),
             nodes: NodeArena::new(),
             survivors: SurvivorArena::new(),
+            code_tables: CodeTables::new(),
         }
     }
 
@@ -98,6 +106,66 @@ impl Stores {
     #[must_use]
     pub fn env(&self) -> &Env {
         &self.env
+    }
+
+    /// Returns the current code-table generation vector.
+    #[must_use]
+    pub fn code_table_generations(&self) -> CodeTableGenerations {
+        self.code_tables.generations()
+    }
+
+    #[must_use]
+    pub fn catcode(&self, ch: char) -> Catcode {
+        self.code_tables.catcode(ch)
+    }
+
+    pub fn set_catcode(&mut self, ch: char, value: Catcode) {
+        self.code_tables.set_catcode(ch, value);
+    }
+
+    #[must_use]
+    pub fn lccode(&self, ch: char) -> LcCode {
+        self.code_tables.lccode(ch)
+    }
+
+    pub fn set_lccode(&mut self, ch: char, value: LcCode) {
+        self.code_tables.set_lccode(ch, value);
+    }
+
+    #[must_use]
+    pub fn uccode(&self, ch: char) -> UcCode {
+        self.code_tables.uccode(ch)
+    }
+
+    pub fn set_uccode(&mut self, ch: char, value: UcCode) {
+        self.code_tables.set_uccode(ch, value);
+    }
+
+    #[must_use]
+    pub fn sfcode(&self, ch: char) -> SfCode {
+        self.code_tables.sfcode(ch)
+    }
+
+    pub fn set_sfcode(&mut self, ch: char, value: SfCode) {
+        self.code_tables.set_sfcode(ch, value);
+    }
+
+    #[must_use]
+    pub fn mathcode(&self, ch: char) -> MathCode {
+        self.code_tables.mathcode(ch)
+    }
+
+    pub fn set_mathcode(&mut self, ch: char, value: MathCode) {
+        self.code_tables.set_mathcode(ch, value);
+    }
+
+    #[must_use]
+    pub fn delcode(&self, ch: char) -> DelCode {
+        self.code_tables.delcode(ch)
+    }
+
+    pub fn set_delcode(&mut self, ch: char, value: DelCode) {
+        self.code_tables.set_delcode(ch, value);
     }
 
     /// Returns the meaning for a live control-sequence symbol.
@@ -176,11 +244,13 @@ impl Stores {
 
     /// Appends and freezes a node list in the owned epoch arena.
     pub fn freeze_node_list(&mut self, nodes: &[Node]) -> NodeListId {
+        self.assert_live_handles_in_nodes(nodes);
         self.nodes.append(nodes)
     }
 
     /// Freezes the current node-list builder value and clears it for reuse.
     pub fn finish_node_list(&mut self, builder: &mut NodeListBuilder) -> NodeListId {
+        self.assert_live_handles_in_nodes(builder.as_slice());
         builder.finish(&mut self.nodes)
     }
 
@@ -260,7 +330,7 @@ impl Stores {
     pub fn take_box_reg(&mut self, index: u16) -> Option<NodeListId> {
         let old = self.env.box_reg(index);
         let rec = self.env.set_box_reg(index, None);
-        self.account_box_write(old, None, rec);
+        self.account_box_write(old, rec);
         old
     }
 
@@ -270,6 +340,17 @@ impl Stores {
 
     pub fn set_int_param_global(&mut self, param: IntParam, value: i32) {
         self.env.set_int_param_global(param, value);
+    }
+
+    #[must_use]
+    pub fn int_param(&self, param: IntParam) -> i32 {
+        self.env.int_param(param)
+    }
+
+    /// Reads TeX's current `\endlinechar` parameter.
+    #[must_use]
+    pub fn endlinechar(&self) -> i32 {
+        self.int_param(IntParam::END_LINE_CHAR)
     }
 
     pub fn set_dimen_param(&mut self, param: DimenParam, value: Scaled) {
@@ -315,24 +396,26 @@ impl Stores {
             token_mark: self.tokens.watermark(),
             glue_mark: self.glue.watermark(),
             node_mark: self.nodes.watermark(),
+            code_tables_snapshot: self.code_tables.checkpoint(),
         }
     }
 
     /// Rolls all stores back to `snapshot` as one atomic tuple.
     pub fn rollback(&mut self, snapshot: Snapshot) {
-        self.assert_valid_snapshot(snapshot);
+        self.assert_valid_snapshot(&snapshot);
         self.account_rollback_box_refs(snapshot.env_snapshot);
         self.env.rollback_to(snapshot.env_snapshot);
         self.interner.truncate_to(snapshot.interner_mark);
         self.tokens.truncate_to(snapshot.token_mark);
         self.glue.truncate_to(snapshot.glue_mark);
         self.nodes.truncate_to(snapshot.node_mark);
+        self.code_tables.rollback_to(snapshot.code_tables_snapshot);
     }
 
     /// Returns the number of journal bytes appended since `snapshot`.
     #[must_use]
     pub fn env_journal_bytes_since(&self, snapshot: Snapshot) -> usize {
-        self.assert_valid_snapshot(snapshot);
+        self.assert_valid_snapshot(&snapshot);
         mem::size_of_val(
             self.env
                 .journal_entries_since(snapshot.env_snapshot.journal_pos()),
@@ -360,6 +443,7 @@ impl Stores {
         self.tokens.testing_state_hash().hash(&mut hasher);
         self.glue.testing_state_hash().hash(&mut hasher);
         self.testing_hash_all_epoch_nodes(&mut hasher);
+        self.code_tables.testing_hash_content(&mut hasher);
         hasher.finish()
     }
 
@@ -378,7 +462,7 @@ impl Stores {
         self.env.testing_aftergroup_payloads().hash(hasher);
     }
 
-    fn assert_valid_snapshot(&self, snapshot: Snapshot) {
+    fn assert_valid_snapshot(&self, snapshot: &Snapshot) {
         assert_eq!(
             snapshot.owner,
             self.owner.snapshot_owner(),
@@ -509,6 +593,58 @@ impl Stores {
         }
     }
 
+    fn assert_live_handles_in_nodes(&self, nodes: &[Node]) {
+        for node in nodes {
+            self.assert_live_handles_in_node(node);
+        }
+    }
+
+    fn assert_live_handles_in_node(&self, node: &Node) {
+        match node {
+            Node::Glue { spec, .. } => self.assert_live_glue(*spec),
+            Node::HList(box_node) | Node::VList(box_node) => {
+                self.assert_live_child_node_list(box_node.children);
+            }
+            Node::Disc { pre, post, replace } => {
+                self.assert_live_child_node_list(*pre);
+                self.assert_live_child_node_list(*post);
+                self.assert_live_child_node_list(*replace);
+            }
+            Node::Mark { tokens, .. } => self.assert_live_token_list(*tokens),
+            Node::Ins { content, .. } | Node::Adjust(content) => {
+                self.assert_live_child_node_list(*content);
+            }
+            Node::Whatsit(crate::node::Whatsit::DeferredWrite { tokens, .. }) => {
+                self.assert_live_token_list(*tokens);
+            }
+            Node::Char { .. }
+            | Node::Lig { .. }
+            | Node::Kern { .. }
+            | Node::Penalty(_)
+            | Node::Rule { .. }
+            | Node::Unset
+            | Node::MathOn
+            | Node::MathOff => {}
+        }
+    }
+
+    fn assert_live_child_node_list(&self, id: NodeListId) {
+        match id.arena() {
+            ArenaRef::Epoch => {
+                assert!(
+                    self.nodes.contains(id),
+                    "child node-list id is not live in this Stores timeline"
+                );
+            }
+            ArenaRef::Survivor(_) => {
+                assert!(
+                    self.survivors.contains(id),
+                    "child node-list id is not live in this Stores timeline"
+                );
+            }
+        }
+    }
+
     fn prepare_box_value(&mut self, value: NodeListId) -> NodeListId {
         self.assert_live_node_list(value);
         match value.arena() {
@@ -532,19 +668,11 @@ impl Stores {
         } else {
             self.env.set_box_reg(index, value)
         };
-        self.account_box_write(old, value, rec);
+        self.account_box_write(old, rec);
     }
 
-    fn account_box_write(
-        &mut self,
-        old: Option<NodeListId>,
-        new: Option<NodeListId>,
-        rec: Option<crate::journal::UndoRec>,
-    ) {
+    fn account_box_write(&mut self, old: Option<NodeListId>, rec: Option<crate::journal::UndoRec>) {
         let Some(rec) = rec else {
-            if let Some(id) = new {
-                self.dec_survivor_ref(id);
-            }
             return;
         };
 
@@ -727,6 +855,96 @@ mod tests {
                 ch: 'x'
             }]
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "glue id is not live in this Stores timeline")]
+    fn freeze_node_list_rejects_stale_rolled_back_glue_id() {
+        let mut stores = Stores::new();
+        let snapshot = stores.checkpoint();
+        let stale = stores.intern_glue(glue_spec(1));
+
+        stores.rollback(snapshot);
+        stores.freeze_node_list(&[Node::Glue {
+            spec: stale,
+            kind: crate::node::GlueKind::Normal,
+        }]);
+    }
+
+    #[test]
+    #[should_panic(expected = "glue id is not live in this Stores timeline")]
+    fn finish_node_list_rejects_foreign_glue_id() {
+        let mut stores = Stores::new();
+        let mut foreign = stores.clone();
+        let foreign_glue = foreign.intern_glue(glue_spec(1));
+        let mut builder = stores.node_list_builder();
+        builder.push(Node::Glue {
+            spec: foreign_glue,
+            kind: crate::node::GlueKind::Normal,
+        });
+
+        let _ = stores.finish_node_list(&mut builder);
+    }
+
+    #[test]
+    #[should_panic(expected = "token list is not live in this Stores timeline")]
+    fn freeze_node_list_rejects_stale_rolled_back_mark_token_list() {
+        let mut stores = Stores::new();
+        let snapshot = stores.checkpoint();
+        let stale = stores.intern_token_list(&[crate::token::Token::param(1)]);
+
+        stores.rollback(snapshot);
+        stores.freeze_node_list(&[Node::Mark {
+            class: 0,
+            tokens: stale,
+        }]);
+    }
+
+    #[test]
+    #[should_panic(expected = "token list is not live in this Stores timeline")]
+    fn finish_node_list_rejects_foreign_whatsit_token_list() {
+        let mut stores = Stores::new();
+        let mut foreign = stores.clone();
+        let foreign_tokens = foreign.intern_token_list(&[crate::token::Token::param(1)]);
+        let mut builder = stores.node_list_builder();
+        builder.push(Node::Whatsit(crate::node::Whatsit::DeferredWrite {
+            stream: 16,
+            tokens: foreign_tokens,
+        }));
+
+        let _ = stores.finish_node_list(&mut builder);
+    }
+
+    #[test]
+    #[should_panic(expected = "child node-list id is not live in this Stores timeline")]
+    fn freeze_node_list_rejects_stale_rolled_back_child_node_list() {
+        let mut stores = Stores::new();
+        let snapshot = stores.checkpoint();
+        let stale = one_char(&mut stores, 'x');
+
+        stores.rollback(snapshot);
+        stores.freeze_node_list(&[Node::Adjust(stale)]);
+    }
+
+    #[test]
+    #[should_panic(expected = "child node-list id is not live in this Stores timeline")]
+    fn finish_node_list_rejects_foreign_child_node_list() {
+        let mut stores = Stores::new();
+        let mut foreign = Stores::new();
+        let foreign_child = one_char(&mut foreign, 'x');
+        let mut builder = stores.node_list_builder();
+        builder.push(Node::HList(BoxNode::new(BoxNodeFields {
+            width: scaled(10),
+            height: scaled(7),
+            depth: scaled(3),
+            shift: scaled(0),
+            glue_set: 0.0,
+            glue_sign: Sign::Normal,
+            glue_order: Order::Normal,
+            children: foreign_child,
+        })));
+
+        let _ = stores.finish_node_list(&mut builder);
     }
 
     #[test]
@@ -925,6 +1143,26 @@ mod tests {
         stores.rollback(snapshot);
         assert_eq!(stores.box_reg(0), Some(survivor));
         assert_eq!(stores.testing_survivor_refcount(survivor), 1);
+    }
+
+    #[test]
+    fn same_value_local_box_assignment_preserves_live_register_owner() {
+        let mut stores = Stores::new();
+        let list = one_char(&mut stores, 'a');
+        stores.set_box_reg(0, list);
+        let survivor = stores.box_reg(0).expect("box should be stored");
+
+        stores.set_box_reg(0, survivor);
+
+        assert_eq!(stores.box_reg(0), Some(survivor));
+        assert_eq!(stores.testing_survivor_refcount(survivor), 1);
+        assert_eq!(
+            stores.nodes(survivor),
+            &[Node::Char {
+                font: FontId::testing_new(1),
+                ch: 'a'
+            }]
+        );
     }
 
     #[test]

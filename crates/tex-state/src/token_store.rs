@@ -17,7 +17,7 @@ pub(crate) struct TokenStoreMark {
 }
 
 /// An owned scratch buffer for building a token list before freezing it.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct TokenListBuilder {
     buf: Vec<Token>,
 }
@@ -25,8 +25,8 @@ pub struct TokenListBuilder {
 impl TokenListBuilder {
     /// Creates an empty reusable token-list builder.
     #[must_use]
-    pub fn new() -> Self {
-        Self::default()
+    pub(crate) fn new() -> Self {
+        Self { buf: Vec::new() }
     }
 
     /// Appends one token to the unfinished list.
@@ -52,7 +52,7 @@ impl TokenListBuilder {
     }
 
     /// Interns the current token list and clears the builder for reuse.
-    pub fn finish(&mut self, store: &mut TokenStore) -> TokenListId {
+    pub(crate) fn finish(&mut self, store: &mut TokenStore) -> TokenListId {
         let id = store.intern(&self.buf);
         self.buf.clear();
         id
@@ -71,7 +71,7 @@ pub struct TokenStore {
 impl TokenStore {
     /// Creates a token store containing the canonical empty list.
     #[must_use]
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let mut store = Self {
             arena: Vec::new(),
             spans: vec![(0, 0)],
@@ -88,7 +88,7 @@ impl TokenStore {
 
     /// Creates a fresh owned scratch builder.
     #[must_use]
-    pub fn builder() -> TokenListBuilder {
+    pub(crate) fn builder() -> TokenListBuilder {
         TokenListBuilder::new()
     }
 
@@ -99,7 +99,7 @@ impl TokenStore {
     }
 
     /// Interns `tokens`, returning a dense id for the live token-list content.
-    pub fn intern(&mut self, tokens: &[Token]) -> TokenListId {
+    pub(crate) fn intern(&mut self, tokens: &[Token]) -> TokenListId {
         if tokens.is_empty() {
             return Self::empty_id();
         }
@@ -134,7 +134,7 @@ impl TokenStore {
 
     /// Reads a live frozen token list.
     #[must_use]
-    pub fn get(&self, id: TokenListId) -> &[Token] {
+    pub(crate) fn get(&self, id: TokenListId) -> &[Token] {
         let index = id.raw() as usize;
         assert!(index < self.spans.len(), "token list id is not live");
         let (start, len) = self.spans[index];
@@ -204,12 +204,6 @@ impl TokenStore {
             self.index.entry(hash).or_default().push(id);
         }
         self.index_dirty = false;
-    }
-}
-
-impl Default for TokenStore {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

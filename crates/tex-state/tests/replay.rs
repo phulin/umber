@@ -216,7 +216,7 @@ fn run_replay_identity(ops: &[Op]) {
     }
 
     for checkpoint in checkpoints.into_iter().rev() {
-        stores.rollback(checkpoint.snapshot);
+        stores.rollback(checkpoint.snapshot.clone());
         assert_eq!(
             stores.testing_state_hash(),
             checkpoint.hash,

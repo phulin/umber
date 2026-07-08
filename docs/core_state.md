@@ -161,6 +161,16 @@ rare and bursty (verbatim, `\makeatletter`, babel shorthands).
   lexer's SIMD fast path is compiled/validated against a generation vector
   and never touches the tree until a generation bump forces reclassification.
   This is the storage-level grounding of catcode speculation.
+- In the implemented `tex-state` API, code tables live behind `Stores`:
+  reads and writes go through `Stores::{catcode,set_catcode,...}` and
+  `Stores::code_table_generations`. `Stores::checkpoint` captures the
+  structurally shared roots and generation counters, and `Stores::rollback`
+  restores them atomically with the Env/content tuple.
+- INITEX defaults are TeX82-compatible for the classic 0..255 range and
+  extended over Unicode by the same default rules: ASCII letters have letter
+  catcode and case mappings, uppercase ASCII has `sfcode` 999, other scalar
+  values keep the normal TeX defaults (`other` catcode, zero case codes,
+  `sfcode` 1000, mathcode equal to the scalar value, delcode -1) until set.
 - Rationale for structural persistence *here only*: the read path that
   matters bypasses the tree; the domain is huge and default-dominated; and
   per-snapshot roots make history free. Everywhere else, flat arrays win.
@@ -321,10 +331,11 @@ pub struct Snapshot {
   independently** — otherwise every box register dangles. Enforce by making
   rollback a single method on the top-level `Universe` (§10.6); no partial
   rollback API exists. In M1, `Stores` is the implemented subset of that
-  boundary (`Env` + interner); `Env` journal positions, journal walks, raw
-  rollback, and symbol-keyed meaning writes are crate-private implementation
-  details behind `Stores::checkpoint`, `Stores::rollback`, and the
-  liveness-checking `Stores` meaning-write facade.
+  boundary (`Env`, interner, content stores, survivor roots, and code-table
+  roots); `Env` journal positions, journal walks, raw rollback, and raw root
+  restoration are crate-private implementation details behind
+  `Stores::checkpoint`, `Stores::rollback`, and the liveness-checking
+  `Stores` write facades.
 - **Commit barrier = shipout**: page artifact serialized, effects flushed,
   snapshots older than the last live editing anchor dropped. History is
   bounded.
@@ -397,6 +408,18 @@ the environment because no API accepts it. Builders are reusable owned scratch
 buffers so the gullet can read frozen lists while building new argument lists.
 Node lists likewise; promotion is expressed as the *only* signature for storing
 into a box register.
+
+In M2, raw content substores are implementation details of `Stores`: downstream
+crates cannot construct `TokenStore`, `GlueStore`, `NodeArena`, or
+`SurvivorArena`, cannot call their raw `intern`/append/read APIs, and cannot
+freeze a builder by passing `&mut` to a raw substore. Public content creation
+and reading instead go through `Stores::intern_token_list`,
+`Stores::finish_token_list`, `Stores::intern_glue`, `Stores::freeze_node_list`,
+`Stores::finish_node_list`, `Stores::tokens`, `Stores::glue`, and
+`Stores::nodes`, which keep handle liveness and rollback watermarks on the
+aggregate timeline. Public modules may still expose immutable value types,
+handles, and the builder types returned by `Stores`; their constructors and
+raw store-finish hooks are crate-private unless compiled for crate-local tests.
 
 ### 10.5 Effects as capability
 

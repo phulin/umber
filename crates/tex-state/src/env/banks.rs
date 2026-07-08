@@ -57,6 +57,11 @@ param_index!(DimenParam);
 param_index!(GlueParam);
 param_index!(TokParam);
 
+impl IntParam {
+    /// Plain TeX's `\endlinechar` integer parameter.
+    pub const END_LINE_CHAR: Self = Self::new(48);
+}
+
 pub(crate) trait BankCodec {
     type Value: Copy;
 

@@ -1,6 +1,7 @@
 //! Core TeX state layer. See `docs/core_state.md` for the design.
 
 pub mod cell;
+pub mod code_tables;
 pub mod env;
 pub mod epoch;
 pub mod glue;

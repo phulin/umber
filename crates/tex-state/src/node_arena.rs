@@ -14,7 +14,7 @@ pub(crate) struct NodeArenaMark {
 }
 
 /// An owned scratch buffer for building a node list before freezing it.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct NodeListBuilder {
     buf: Vec<Node>,
 }
@@ -22,8 +22,8 @@ pub struct NodeListBuilder {
 impl NodeListBuilder {
     /// Creates an empty reusable node-list builder.
     #[must_use]
-    pub fn new() -> Self {
-        Self::default()
+    pub(crate) fn new() -> Self {
+        Self { buf: Vec::new() }
     }
 
     /// Appends one node to the unfinished list.
@@ -43,13 +43,19 @@ impl NodeListBuilder {
         self.buf.is_empty()
     }
 
+    /// Returns the unfinished list content.
+    #[must_use]
+    pub(crate) fn as_slice(&self) -> &[Node] {
+        &self.buf
+    }
+
     /// Clears the unfinished list without freezing it.
     pub fn clear(&mut self) {
         self.buf.clear();
     }
 
     /// Freezes the current node list into `arena` and clears this builder.
-    pub fn finish(&mut self, arena: &mut NodeArena) -> NodeListId {
+    pub(crate) fn finish(&mut self, arena: &mut NodeArena) -> NodeListId {
         let id = arena.append(&self.buf);
         self.buf.clear();
         id
@@ -57,7 +63,7 @@ impl NodeListBuilder {
 }
 
 /// Per-epoch bump arena for frozen node lists.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct NodeArena {
     nodes: Vec<Node>,
 }
@@ -65,19 +71,19 @@ pub struct NodeArena {
 impl NodeArena {
     /// Creates an empty epoch node arena.
     #[must_use]
-    pub fn new() -> Self {
-        Self::default()
+    pub(crate) fn new() -> Self {
+        Self { nodes: Vec::new() }
     }
 
     /// Creates a fresh owned scratch builder.
     #[must_use]
-    pub fn builder() -> NodeListBuilder {
+    pub(crate) fn builder() -> NodeListBuilder {
         NodeListBuilder::new()
     }
 
     /// Reads a live frozen epoch node list.
     #[must_use]
-    pub fn get<'a>(&'a self, id: NodeListId, survivors: &'a SurvivorArena) -> &'a [Node] {
+    pub(crate) fn get<'a>(&'a self, id: NodeListId, survivors: &'a SurvivorArena) -> &'a [Node] {
         match id.arena() {
             ArenaRef::Epoch => {
                 let start = id.start() as usize;

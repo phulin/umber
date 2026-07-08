@@ -8,7 +8,7 @@ use crate::node::Node;
 use crate::node_arena::NodeArena;
 
 /// Arena for promoted node-list roots.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct SurvivorArena {
     slots: Vec<Option<SurvivorRoot>>,
     free: Vec<SurvivorRootId>,
@@ -23,8 +23,11 @@ struct SurvivorRoot {
 impl SurvivorArena {
     /// Creates an empty survivor arena.
     #[must_use]
-    pub fn new() -> Self {
-        Self::default()
+    pub(crate) fn new() -> Self {
+        Self {
+            slots: Vec::new(),
+            free: Vec::new(),
+        }
     }
 
     /// Promotes an epoch list into one survivor root with refcount 1.

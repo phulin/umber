@@ -57,7 +57,7 @@ pub struct GlueStore {
 impl GlueStore {
     /// Creates a glue store containing the canonical zero spec.
     #[must_use]
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let mut store = Self {
             specs: vec![GlueSpec::ZERO],
             index: HashMap::new(),
@@ -72,7 +72,7 @@ impl GlueStore {
     }
 
     /// Interns `spec`, returning a dense id for the live glue-spec content.
-    pub fn intern(&mut self, spec: GlueSpec) -> GlueId {
+    pub(crate) fn intern(&mut self, spec: GlueSpec) -> GlueId {
         if spec == GlueSpec::ZERO {
             return GlueId::ZERO;
         }
@@ -98,7 +98,7 @@ impl GlueStore {
 
     /// Reads a live frozen glue specification.
     #[must_use]
-    pub fn get(&self, id: GlueId) -> GlueSpec {
+    pub(crate) fn get(&self, id: GlueId) -> GlueSpec {
         let index = id.raw() as usize;
         assert!(index < self.specs.len(), "glue id is not live");
         self.specs[index]
@@ -147,12 +147,6 @@ impl GlueStore {
             self.index.entry(hash).or_default().push(id);
         }
         self.index_dirty = false;
-    }
-}
-
-impl Default for GlueStore {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
