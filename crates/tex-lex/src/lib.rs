@@ -162,12 +162,27 @@ impl SourceFrame {
     pub fn column(&self) -> usize {
         self.column
     }
+
+    fn summary(&self, next_source_offset: usize) -> SourceFrameSummary {
+        SourceFrameSummary {
+            buffer_offset: self.buffer_offset,
+            next_source_offset,
+            line_number: self.line_number,
+            column: self.column,
+            lexer_state: self.state,
+            normalized_line: self.line.iter().collect(),
+            line_char_offset: self.offset,
+            line_byte_offset: byte_offset_for_char_offset(&self.line, self.offset),
+            pending: self.pending.iter().copied().collect(),
+        }
+    }
 }
 
 /// Snapshot summary for the input stack.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct InputSummary {
     frames: Vec<InputFrameSummary>,
+    last_source_frame: Option<SourceFrameSummary>,
 }
 
 impl InputSummary {
@@ -185,23 +200,103 @@ impl InputSummary {
     pub fn len(&self) -> usize {
         self.frames.len()
     }
+
+    /// The most recently popped source frame, retained so a snapshot taken
+    /// after source exhaustion can still report the final source coordinates.
+    #[must_use]
+    pub fn last_source_frame(&self) -> Option<&SourceFrameSummary> {
+        self.last_source_frame.as_ref()
+    }
 }
 
 /// Snapshot summary for one input frame.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum InputFrameSummary {
     Source {
         source_id: SourceId,
-        buffer_offset: usize,
-        line: usize,
-        column: usize,
-        lexer_state: LexerState,
+        source: SourceFrameSummary,
     },
     TokenList {
         token_list: TokenListId,
         replay_kind: TokenListReplayKind,
         index: usize,
     },
+}
+
+/// Snapshot summary for one source frame.
+///
+/// `source_id` belongs to the surrounding `InputFrameSummary`; the durable
+/// reopen key is intentionally not stored here because this crate only sees
+/// the local `InputSource` trait. M3 `World` snapshots own file/content
+/// identity and reopen sources by content hash before applying this frame
+/// summary's offsets and normalized-line state.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SourceFrameSummary {
+    buffer_offset: usize,
+    next_source_offset: usize,
+    line_number: usize,
+    column: usize,
+    lexer_state: LexerState,
+    normalized_line: String,
+    line_char_offset: usize,
+    line_byte_offset: usize,
+    pending: Vec<Token>,
+}
+
+impl SourceFrameSummary {
+    #[must_use]
+    pub fn buffer_offset(&self) -> usize {
+        self.buffer_offset
+    }
+
+    #[must_use]
+    pub fn next_source_offset(&self) -> usize {
+        self.next_source_offset
+    }
+
+    #[must_use]
+    pub fn line_number(&self) -> usize {
+        self.line_number
+    }
+
+    #[must_use]
+    pub fn column(&self) -> usize {
+        self.column
+    }
+
+    #[must_use]
+    pub fn lexer_state(&self) -> LexerState {
+        self.lexer_state
+    }
+
+    #[must_use]
+    pub fn normalized_line(&self) -> &str {
+        &self.normalized_line
+    }
+
+    #[must_use]
+    pub fn line_char_offset(&self) -> usize {
+        self.line_char_offset
+    }
+
+    #[must_use]
+    pub fn line_byte_offset(&self) -> usize {
+        self.line_byte_offset
+    }
+
+    #[must_use]
+    pub fn pending(&self) -> &[Token] {
+        &self.pending
+    }
+
+    /// Returns whether this frame summary contains all lexer-owned state
+    /// needed after a source has been reopened by the snapshot owner.
+    #[must_use]
+    pub fn is_resume_complete(&self) -> bool {
+        self.line_char_offset <= self.normalized_line.chars().count()
+            && self.line_byte_offset <= self.normalized_line.len()
+            && self.normalized_line.is_char_boundary(self.line_byte_offset)
+    }
 }
 
 #[derive(Debug)]
@@ -236,13 +331,19 @@ enum InputFrame<S> {
     TokenList(TokenListInputFrame),
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct LastSourceFrame {
+    frame: SourceFrame,
+    next_source_offset: usize,
+}
+
 /// TeX input stack for source frames and frozen token-list replay.
 #[derive(Debug)]
 pub struct InputStack<S> {
     frames: Vec<InputFrame<S>>,
     next_source_id: u32,
     unicode_superscript_notation: bool,
-    last_source_frame: Option<SourceFrame>,
+    last_source_frame: Option<LastSourceFrame>,
 }
 
 impl<S> InputStack<S> {
@@ -286,10 +387,7 @@ impl<S> InputStack<S> {
                 .map(|frame| match frame {
                     InputFrame::Source(source) => InputFrameSummary::Source {
                         source_id: source.source_id,
-                        buffer_offset: source.frame.buffer_offset,
-                        line: source.frame.line_number,
-                        column: source.frame.column,
-                        lexer_state: source.frame.state,
+                        source: source.frame.summary(source.next_source_offset),
                     },
                     InputFrame::TokenList(token_list) => InputFrameSummary::TokenList {
                         token_list: token_list.token_list,
@@ -298,19 +396,20 @@ impl<S> InputStack<S> {
                     },
                 })
                 .collect(),
+            last_source_frame: self
+                .last_source_frame
+                .as_ref()
+                .map(|last| last.frame.summary(last.next_source_offset)),
         }
     }
 
     #[must_use]
     pub fn current_source_frame(&self) -> Option<&SourceFrame> {
-        self.frames
-            .iter()
-            .rev()
-            .find_map(|frame| match frame {
-                InputFrame::Source(source) => Some(&source.frame),
-                InputFrame::TokenList(_) => None,
-            })
-            .or(self.last_source_frame.as_ref())
+        let current = self.frames.iter().rev().find_map(|frame| match frame {
+            InputFrame::Source(source) => Some(&source.frame),
+            InputFrame::TokenList(_) => None,
+        });
+        current.or_else(|| self.last_source_frame.as_ref().map(|last| &last.frame))
     }
 
     #[must_use]
@@ -451,7 +550,10 @@ where
                         if !load_next_line(source, stores)? {
                             let popped = self.frames.pop();
                             if let Some(InputFrame::Source(source)) = popped {
-                                self.last_source_frame = Some(source.frame);
+                                self.last_source_frame = Some(LastSourceFrame {
+                                    frame: source.frame,
+                                    next_source_offset: source.next_source_offset,
+                                });
                             }
                         }
                         continue;
@@ -744,11 +846,15 @@ where
     Ok(Some(line))
 }
 
+fn byte_offset_for_char_offset(line: &[char], char_offset: usize) -> usize {
+    line.iter().take(char_offset).map(|ch| ch.len_utf8()).sum()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        InputFrameSummary, InputStack, LexError, Lexer, LexerState, LineEvent, LineReader,
-        MemoryInput, TokenListReplayKind,
+        InputFrame, InputFrameSummary, InputStack, LexError, Lexer, LexerState, LineEvent,
+        LineReader, MemoryInput, TokenListReplayKind, load_next_line,
     };
     use tex_state::env::banks::IntParam;
     use tex_state::stores::Stores;
@@ -1098,11 +1204,12 @@ mod tests {
             input.summary().frames(),
             [InputFrameSummary::Source {
                 source_id,
-                buffer_offset: 0,
-                line: 1,
-                column: 1,
-                lexer_state: LexerState::MidLine,
+                source,
             }] if source_id.raw() == 0
+                && source.buffer_offset() == 0
+                && source.line_number() == 1
+                && source.column() == 1
+                && source.lexer_state() == LexerState::MidLine
         ));
 
         while input
@@ -1112,6 +1219,54 @@ mod tests {
         {}
         assert!(input.summary().is_empty());
         assert!(input.is_empty());
+    }
+
+    #[test]
+    fn source_summary_is_resume_complete_inside_current_line() {
+        let mut stores = Stores::new();
+        stores.set_int_param(IntParam::END_LINE_CHAR, 13);
+        let mut input = InputStack::new(MemoryInput::new("éa"));
+
+        assert_eq!(
+            input.next_token(&mut stores).expect("source token"),
+            Some(char_token('é', Catcode::Other))
+        );
+        let summary = input.summary();
+        let [InputFrameSummary::Source { source_id, source }] = summary.frames() else {
+            panic!("expected one source frame");
+        };
+
+        assert_eq!(source_id.raw(), 0);
+        assert_eq!(source.normalized_line(), "éa\r");
+        assert_eq!(source.line_char_offset(), 1);
+        assert_eq!(source.line_byte_offset(), 2);
+        assert_eq!(source.column(), 1);
+        assert_eq!(source.lexer_state(), LexerState::MidLine);
+        assert!(source.pending().is_empty());
+        assert!(source.is_resume_complete());
+    }
+
+    #[test]
+    fn source_summary_captures_pending_synthetic_par() {
+        let mut stores = Stores::new();
+        stores.set_int_param(IntParam::END_LINE_CHAR, 13);
+        let mut input = InputStack::new(MemoryInput::new("\nnext"));
+        let Some(InputFrame::Source(source)) = input.frames.last_mut() else {
+            panic!("expected source frame");
+        };
+
+        assert!(load_next_line(source, &mut stores).expect("blank line loads"));
+        let summary = input.summary();
+        let [InputFrameSummary::Source { source, .. }] = summary.frames() else {
+            panic!("expected one source frame");
+        };
+
+        assert_eq!(source.normalized_line(), "");
+        assert_eq!(source.line_char_offset(), 0);
+        assert_eq!(source.line_byte_offset(), 0);
+        assert_eq!(source.line_number(), 1);
+        assert_eq!(source.pending(), &[cs_token(&mut stores, "par")]);
+        assert!(source.is_resume_complete());
     }
 
     fn collect_tokens(lexer: &mut Lexer<MemoryInput>, stores: &mut Stores) -> Vec<Token> {

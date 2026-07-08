@@ -312,7 +312,7 @@ pub struct Snapshot {
     effect_pos: EffectPos,
     stream_bufs: StreamBufState,
     rng: RngState,
-    input_stack: InputSummary,     // enough to resume the mouth
+    input_stack: InputSummary,     // lexer-owned state needed to resume the mouth
     state_hash: u64,               // for convergence detection
 }
 ```
@@ -323,6 +323,14 @@ pub struct Snapshot {
   inside a TeX group are valid only while that enclosing group is still open;
   leaving the group truncates the journal below the checkpoint position and
   invalidates those snapshots instead of permitting partial rollback.
+- **Input restoration**: `InputSummary` carries the lexer-owned source-frame
+  state required after a source is reopened: source-local offsets, current
+  normalized line, in-line char/byte offsets, lexer N/M/S state, queued
+  synthetic tokens such as a blank-line `\par`, token-list replay positions,
+  and the last popped source frame. Durable source reopen identity is not a
+  `tex-lex` field; it is part of the `World` input/effect snapshot that pins
+  file/editor content by content hash and recreates the `InputSource` before
+  these frame summaries are applied.
 - **Rollback**: replay journal to marker (restoring cells and old code-table
   roots); truncate arenas to watermarks; release survivor owners held by the
   truncated box-register journal records while restored registers reclaim

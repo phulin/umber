@@ -108,10 +108,15 @@ supply.
   selected up front, not a per-character branch in the lexer.
 - **The input stack** is the one piece of pipeline-owned state the snapshot
   must summarize (`InputSummary`): a vector of frames, each either a
-  *source frame* (file id + byte offset + line/col) or a *token-list frame*
-  (`TokenListId` + index + replay kind: macro body, `\everypar`, mark, ...).
-  Frames are small and `Copy`-ish by design — resuming from a snapshot
-  reopens sources by content hash and seeks.
+  *source frame* (source id + source byte offsets + line/col + current
+  normalized line + in-line char/byte offsets + lexer state + pending
+  synthetic tokens) or a *token-list frame* (`TokenListId` + index + replay
+  kind: macro body, `\everypar`, mark, ...). Source reopen identity is owned
+  by the `World` input record in the outer snapshot: it pins file/editor
+  content by content hash, reopens that exact source, then applies the
+  lexer-owned source-frame summary. `last_source_frame` is also summarized so
+  snapshots taken just after a source pops still have final source
+  coordinates.
 - Line-oriented details TeX cares about (`\endlinechar`, trailing-space
   trimming, `%` line ends) live here, driven by parameters read through the
   aggregate state API. The implemented `tex-lex` input layer exposes a local
@@ -120,10 +125,11 @@ supply.
   when valid, reports blank/all-space lines with a valid appended endline
   character as a structured paragraph boundary event for the semantic lexer
   to turn into `\par`, and owns an
-  `InputStack` whose `InputSummary` records source coordinates, lexer state,
-  and token-list replay progress. Token-list frames read frozen content only
-  through `Stores::tokens`; source reopening by content hash remains future
-  `World` integration.
+  `InputStack` whose `InputSummary` records resume-complete lexer-owned
+  source frame state and token-list replay progress. Token-list frames read
+  frozen content only through `Stores::tokens`; source reopening by content
+  hash remains future `World` integration and is deliberately outside
+  `tex-lex`'s local `InputSource` trait.
 
 ## 4. Lexer (the eyes)
 
