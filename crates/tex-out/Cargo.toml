@@ -1,0 +1,10 @@
+[package]
+name = "tex-out"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tex-arith = { path = "../tex-arith" }
+
+[lints]
+workspace = true

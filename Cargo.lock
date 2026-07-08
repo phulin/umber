@@ -780,6 +780,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "tex-out"
+version = "0.1.0"
+dependencies = [
+ "tex-arith",
+]
+
+[[package]]
 name = "tex-state"
 version = "0.1.0"
 dependencies = [

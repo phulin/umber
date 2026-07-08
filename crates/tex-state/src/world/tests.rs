@@ -29,6 +29,39 @@ fn memory_world_reads_and_records_hashes() {
 }
 
 #[test]
+fn memory_world_stores_artifacts_by_content_hash() {
+    let mut world = World::memory();
+    let bytes = b"page artifact bytes";
+
+    let first = world.store_artifact(bytes).expect("store artifact");
+    let second = world.store_artifact(bytes).expect("store same artifact");
+
+    assert_eq!(first, ContentHash::from_bytes(bytes));
+    assert_eq!(first, second);
+    assert_eq!(
+        world.read_artifact(first).expect("read artifact"),
+        Some(bytes.to_vec())
+    );
+}
+
+#[test]
+fn real_world_stores_artifacts_in_configured_directory() {
+    let temp_dir = tempfile::tempdir().expect("temp dir");
+    let artifact_dir = temp_dir.path().join("artifacts");
+    let mut world = World::real_with_artifact_dir(&artifact_dir);
+    let bytes = b"committed page";
+
+    let hash = world.store_artifact(bytes).expect("store artifact");
+    let path = artifact_dir.join(hash.hex());
+
+    assert_eq!(std::fs::read(&path).expect("artifact file"), bytes);
+    assert_eq!(
+        world.read_artifact(hash).expect("read artifact"),
+        Some(bytes.to_vec())
+    );
+}
+
+#[test]
 fn stream_partial_lines_snapshot_and_restore() {
     let mut world = World::memory();
     let slot = StreamSlot::new(3);

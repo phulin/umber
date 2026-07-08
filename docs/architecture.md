@@ -475,6 +475,11 @@ Responsibility: accumulate the main vertical list, fire `\output`, commit.
 - Page artifacts are the currency between the engine and both the output
   drivers and the incremental engine: a page artifact = (serialized node
   tree, resources used (fonts/images by content hash), effect slice).
+  The concrete artifact substrate lives in `tex-out`: a versioned,
+  hand-written binary format over lowered, driver-facing page nodes, font
+  resource identities, `\count0..\count9`, and the page effect slice. The
+  format is stored by content hash through `World`; drivers receive artifact
+  bytes/ids, not live node handles.
 
 ## 9. Fonts and metrics (`tex-arith`, `tex-fonts`, `tex-state`)
 
@@ -520,6 +525,9 @@ Responsibility: page artifacts → bytes on disk. Strictly downstream.
 - Drivers consume committed page artifacts only — they can run
   out-of-process, in parallel with typesetting of later pages, or not at
   all (editor preview may rasterize page artifacts directly).
+- `tex-out` owns the page artifact model and binary reader/writer. It has no
+  dependency on `tex-state` or `Universe`; shipout code lowers live state into
+  artifact bytes before asking `World` to store them.
 - PDF driver owns the PDF object model; `\pdfliteral`-class primitives
   produce *effect-log entries* engine-side that the driver interprets —
   the engine never constructs PDF syntax.

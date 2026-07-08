@@ -349,6 +349,10 @@ Nothing in the engine touches the OS directly. A single `World` object owns:
   that job-start clock into `\time`, `\day`, `\month`, and `\year`.
 - **Inputs** (file reads) are content-addressed and recorded, so a snapshot
   pins exactly what it read (needed for cross-run memo sharing).
+- **Page artifacts** are committed through `World::store_artifact` as
+  content-addressed bytes in the artifact store. Real worlds materialize those
+  bytes under the configured artifact directory; in-memory worlds keep the same
+  content-addressed map for hermetic tests.
 
 Effects **materialize only when the producing page commits** (shipout).
 Rollback discards the uncommitted suffix of the effect log. Commit accepts an
@@ -414,10 +418,11 @@ pub struct Snapshot {
   and `Stores` checkpoint/rollback remain crate-private implementation details
   behind `Universe::snapshot`, `Universe::rollback`, and the liveness-checking
   `Universe` write facades.
-- **Commit barrier = shipout**: page artifact serialized, effects flushed,
-  snapshots older than the last live editing anchor dropped. The flushed
-  effect prefix is dropped too, leaving only the uncommitted suffix and the
-  committed backend stream state. History is bounded.
+- **Commit barrier = shipout**: page artifact serialized and stored through
+  `World`, effects flushed, snapshots older than the last live editing anchor
+  dropped. The flushed effect prefix is dropped too, leaving only the
+  uncommitted suffix and the committed backend stream state. History is
+  bounded.
 - **Convergence detection**: after re-executing from an edit, compare
   `state_hash` at each checkpoint with the prior run's hash at the same
   input position; on match, splice the old suffix and stop. `state_hash`

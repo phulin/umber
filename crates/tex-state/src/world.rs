@@ -488,8 +488,19 @@ impl World {
     /// Creates a real host-backed world and reads the job clock once.
     #[must_use]
     pub fn real() -> Self {
+        Self::real_with_artifact_dir(".umber/artifacts")
+    }
+
+    /// Creates a real host-backed world with an explicit page artifact store.
+    #[must_use]
+    pub fn real_with_artifact_dir(artifact_dir: impl Into<PathBuf>) -> Self {
         let job_clock = real_job_clock();
-        Self::new(WorldBackend::Real, job_clock)
+        Self::new(
+            WorldBackend::Real {
+                artifact_dir: artifact_dir.into(),
+            },
+            job_clock,
+        )
     }
 
     fn new(backend: WorldBackend, job_clock: JobClock) -> Self {
@@ -546,7 +557,7 @@ impl World {
     pub fn read_file(&mut self, path: impl AsRef<Path>) -> Result<FileContent, WorldError> {
         let path = path.as_ref();
         let bytes = match &self.backend {
-            WorldBackend::Real => std::fs::read(path).map_err(|err| {
+            WorldBackend::Real { .. } => std::fs::read(path).map_err(|err| {
                 WorldError::new("read file", Some(path.to_owned()), err.to_string())
             })?,
             WorldBackend::Memory(memory) => memory.files.get(path).cloned().ok_or_else(|| {
@@ -629,7 +640,7 @@ impl World {
             line
         } else {
             match &mut self.backend {
-                WorldBackend::Real => {
+                WorldBackend::Real { .. } => {
                     let mut line = String::new();
                     let read = io::stdin()
                         .read_line(&mut line)
@@ -668,6 +679,58 @@ impl World {
             bytes,
             hash: record.hash,
         })
+    }
+
+    /// Stores committed page artifact bytes by content hash.
+    ///
+    /// This method is intended for the shipout commit barrier: callers prepare
+    /// deterministic artifact bytes first, then ask `World` to materialize the
+    /// content-addressed object in the configured artifact store.
+    pub fn store_artifact(&mut self, bytes: &[u8]) -> Result<ContentHash, WorldError> {
+        let hash = ContentHash::from_bytes(bytes);
+        match &mut self.backend {
+            WorldBackend::Real { artifact_dir } => {
+                std::fs::create_dir_all(&artifact_dir).map_err(|err| {
+                    WorldError::new(
+                        "create artifact directory",
+                        Some(artifact_dir.clone()),
+                        err.to_string(),
+                    )
+                })?;
+                let path = artifact_dir.join(hash.hex());
+                if !path.exists() {
+                    std::fs::write(&path, bytes).map_err(|err| {
+                        WorldError::new("write artifact", Some(path), err.to_string())
+                    })?;
+                }
+            }
+            WorldBackend::Memory(memory) => {
+                memory
+                    .artifacts
+                    .entry(hash)
+                    .or_insert_with(|| bytes.to_vec());
+            }
+        }
+        Ok(hash)
+    }
+
+    /// Reads committed page artifact bytes from the content-addressed store.
+    pub fn read_artifact(&self, hash: ContentHash) -> Result<Option<Vec<u8>>, WorldError> {
+        match &self.backend {
+            WorldBackend::Real { artifact_dir } => {
+                let path = artifact_dir.join(hash.hex());
+                match std::fs::read(&path) {
+                    Ok(bytes) => Ok(Some(bytes)),
+                    Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
+                    Err(err) => Err(WorldError::new(
+                        "read artifact",
+                        Some(path),
+                        err.to_string(),
+                    )),
+                }
+            }
+            WorldBackend::Memory(memory) => Ok(memory.artifacts.get(&hash).cloned()),
+        }
     }
 
     pub fn open_out(&mut self, slot: StreamSlot, path: impl Into<PathBuf>) {
@@ -1003,7 +1066,7 @@ impl World {
 
     fn truncate_output(&mut self, path: &Path) -> Result<(), WorldError> {
         match &mut self.backend {
-            WorldBackend::Real => std::fs::write(path, []).map_err(|err| {
+            WorldBackend::Real { .. } => std::fs::write(path, []).map_err(|err| {
                 WorldError::new("open output", Some(path.to_owned()), err.to_string())
             }),
             WorldBackend::Memory(memory) => {
@@ -1015,7 +1078,7 @@ impl World {
 
     fn append_output(&mut self, path: &Path, bytes: &[u8]) -> Result<(), WorldError> {
         match &mut self.backend {
-            WorldBackend::Real => {
+            WorldBackend::Real { .. } => {
                 let mut file = OpenOptions::new()
                     .create(true)
                     .append(true)
@@ -1040,7 +1103,7 @@ impl World {
 
     fn write_terminal(&mut self, bytes: &[u8]) -> Result<(), WorldError> {
         match &mut self.backend {
-            WorldBackend::Real => io::stdout()
+            WorldBackend::Real { .. } => io::stdout()
                 .write_all(bytes)
                 .map_err(|err| WorldError::new("write terminal", None, err.to_string())),
             WorldBackend::Memory(memory) => {
@@ -1065,7 +1128,7 @@ impl Default for World {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum WorldBackend {
-    Real,
+    Real { artifact_dir: PathBuf },
     Memory(MemoryBackend),
 }
 
@@ -1073,6 +1136,7 @@ enum WorldBackend {
 struct MemoryBackend {
     files: BTreeMap<PathBuf, Vec<u8>>,
     outputs: BTreeMap<PathBuf, Vec<u8>>,
+    artifacts: BTreeMap<ContentHash, Vec<u8>>,
     terminal_output: Vec<u8>,
     log_output: Vec<u8>,
 }
