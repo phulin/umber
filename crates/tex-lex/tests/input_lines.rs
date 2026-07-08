@@ -41,3 +41,28 @@ fn memory_and_file_sources_share_tex_line_handling() {
     );
     assert_eq!(file_events, memory_events);
 }
+
+#[test]
+fn inactive_endlinechar_keeps_blank_physical_lines_from_becoming_par_events() {
+    let mut stores = Stores::new();
+    stores.set_int_param(IntParam::END_LINE_CHAR, -1);
+
+    let mut reader = LineReader::new(MemoryInput::new("a\n   \nb"));
+
+    let mut events = Vec::new();
+    while let Some(event) = reader
+        .next_event(&stores)
+        .expect("memory input should read")
+    {
+        events.push(event);
+    }
+
+    assert_eq!(
+        events,
+        vec![
+            LineEvent::Text("a".to_owned()),
+            LineEvent::Text(String::new()),
+            LineEvent::Text("b".to_owned()),
+        ]
+    );
+}

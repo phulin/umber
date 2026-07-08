@@ -67,11 +67,11 @@ impl InputSource for FileInput {
 /// A TeX-normalized logical input line.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LineEvent {
-    /// A nonempty line after trailing spaces were removed and `\endlinechar`
-    /// was appended when it names a valid Unicode scalar value.
+    /// A line after trailing spaces were removed and `\endlinechar` was
+    /// appended when it names a valid Unicode scalar value.
     Text(String),
-    /// An empty line after trailing-space trimming. The semantic lexer will
-    /// emit the TeX `\par` behavior for this event.
+    /// A blank/all-space line whose valid appended `\endlinechar` should
+    /// produce TeX's `\par` behavior.
     Par,
 }
 
@@ -703,17 +703,18 @@ where
 
 fn normalize_line(line: &str, endlinechar: i32) -> LineEvent {
     let stripped = line.trim_end_matches(' ');
-    if stripped.is_empty() {
-        return LineEvent::Par;
-    }
-
-    let mut normalized = stripped.to_owned();
     if let Ok(value) = u32::try_from(endlinechar)
         && let Some(ch) = char::from_u32(value)
     {
+        if stripped.is_empty() {
+            return LineEvent::Par;
+        }
+
+        let mut normalized = stripped.to_owned();
         normalized.push(ch);
+        return LineEvent::Text(normalized);
     }
-    LineEvent::Text(normalized)
+    LineEvent::Text(stripped.to_owned())
 }
 
 fn split_physical_lines(input: &str) -> Vec<String> {
@@ -836,6 +837,21 @@ mod tests {
             ]
         );
         assert_eq!(lexer.frame().state(), LexerState::NewLine);
+    }
+
+    #[test]
+    fn inactive_endlinechar_blank_line_does_not_emit_par_token() {
+        let mut stores = Stores::new();
+        stores.set_int_param(IntParam::END_LINE_CHAR, -1);
+        let mut lexer = Lexer::new(MemoryInput::new("a\n\nb"));
+
+        assert_eq!(
+            collect_tokens(&mut lexer, &mut stores),
+            vec![
+                char_token('a', Catcode::Letter),
+                char_token('b', Catcode::Letter),
+            ]
+        );
     }
 
     #[test]
