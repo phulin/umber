@@ -174,10 +174,10 @@ where
     }
 
     #[cfg(any(test, feature = "testing", feature = "shadow"))]
-    pub(crate) fn non_default_words(&self, bank: BankTag, out: &mut Vec<(CellId, u64)>) {
+    pub(crate) fn for_each_non_default_word(&self, bank: BankTag, mut f: impl FnMut(CellId, u64)) {
         for (index, &word) in self.values.iter().enumerate() {
             if word != 0 {
-                out.push((CellId::new(bank, index as u32), word));
+                f(CellId::new(bank, index as u32), word);
             }
         }
     }

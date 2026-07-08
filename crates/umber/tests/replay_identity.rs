@@ -4,6 +4,8 @@ use proptest::prelude::*;
 use proptest::test_runner::Config;
 use tex_state::Universe;
 
+const REPLAY_SHARDS: u32 = 8;
+
 const PRELUDE: &str = concat!(
     r"\def\A{\count0=1} ",
     r"\gdef\B{\global\count0=2} ",
@@ -186,18 +188,31 @@ enum DiagnosticKind {
 #[derive(Clone, Copy, Debug)]
 struct ValueSeed(i32);
 
-proptest! {
-    #![proptest_config(Config {
-        cases: prop_cases(),
-        failure_persistence: None,
-        ..Config::default()
-    })]
+macro_rules! replay_identity_shard {
+    ($name:ident, $shard:expr) => {
+        proptest! {
+            #![proptest_config(Config {
+                cases: prop_cases_for_shard($shard),
+                failure_persistence: None,
+                ..Config::default()
+            })]
 
-    #[test]
-    fn replay_identity_through_real_primitives(program in program_strategy()) {
-        assert_replay_identity(&program);
-    }
+            #[test]
+            fn $name(program in program_strategy()) {
+                assert_replay_identity(&program);
+            }
+        }
+    };
 }
+
+replay_identity_shard!(replay_identity_through_real_primitives_0, 0);
+replay_identity_shard!(replay_identity_through_real_primitives_1, 1);
+replay_identity_shard!(replay_identity_through_real_primitives_2, 2);
+replay_identity_shard!(replay_identity_through_real_primitives_3, 3);
+replay_identity_shard!(replay_identity_through_real_primitives_4, 4);
+replay_identity_shard!(replay_identity_through_real_primitives_5, 5);
+replay_identity_shard!(replay_identity_through_real_primitives_6, 6);
+replay_identity_shard!(replay_identity_through_real_primitives_7, 7);
 
 #[test]
 fn stale_epoch_global_compaction_regression_replays_cleanly() {
@@ -791,6 +806,13 @@ fn prop_cases() -> u32 {
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(64)
+}
+
+fn prop_cases_for_shard(shard: u32) -> u32 {
+    let cases = prop_cases();
+    let base = cases / REPLAY_SHARDS;
+    let remainder = cases % REPLAY_SHARDS;
+    base + u32::from(shard < remainder)
 }
 
 #[cfg(feature = "shadow")]

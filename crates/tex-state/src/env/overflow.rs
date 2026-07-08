@@ -110,10 +110,10 @@ where
     }
 
     #[cfg(any(test, feature = "testing", feature = "shadow"))]
-    pub(crate) fn non_default_words(
+    pub(crate) fn for_each_non_default_word(
         &self,
         bank: crate::cell::BankTag,
-        out: &mut Vec<(CellId, u64)>,
+        mut f: impl FnMut(CellId, u64),
     ) {
         for (page_index, page) in self.pages.iter().enumerate() {
             let Some(page) = page else {
@@ -124,7 +124,7 @@ where
                     let index = DENSE_REGISTER_COUNT as u32
                         + (page_index as u32 * PAGE_LEN as u32)
                         + offset as u32;
-                    out.push((CellId::new(bank, index), word));
+                    f(CellId::new(bank, index), word);
                 }
             }
         }

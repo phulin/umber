@@ -199,11 +199,15 @@ impl Oracle {
 
     pub(crate) fn assert_matches(&self, env: &Env, cells: &[TestCell]) {
         for &cell in cells {
-            assert_eq!(cell.get(env), self.get(cell), "oracle mismatch at {cell:?}");
+            self.assert_cell_matches(env, cell);
         }
     }
 
-    fn get(&self, cell: TestCell) -> u64 {
+    pub(crate) fn assert_cell_matches(&self, env: &Env, cell: TestCell) {
+        assert_eq!(cell.get(env), self.get(cell), "oracle mismatch at {cell:?}");
+    }
+
+    pub(crate) fn get(&self, cell: TestCell) -> u64 {
         self.scopes
             .iter()
             .rev()
