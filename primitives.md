@@ -94,7 +94,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [ ] `\openin` - Opens a file for input.
 - [ ] `\openout` - Opens a file for output.
 - [ ] `\output` - Token list invoked by the page builder for output routine processing.
-- [x] `\read` - Documented execution stub scans `\read N to \cs` and returns TeX-style unsupported input until World-backed streams land.
+- [ ] `\read` - Execution stub scans `\read N to \cs` and returns TeX-style unsupported input until World-backed streams land.
 - [ ] `\shipout` - Writes a completed box to the DVI output.
 - [ ] `\special` - Emits backend-specific material into the DVI stream.
 - [ ] `\write` - Writes expanded material to an output stream, normally delayed until shipout.

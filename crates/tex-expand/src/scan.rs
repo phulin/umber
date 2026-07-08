@@ -5,7 +5,7 @@
 //! text. It freezes the resulting token lists through `Stores`, but it does
 //! not assign the macro meaning to `Env`.
 
-use std::fmt;
+use std::{fmt, marker::PhantomData};
 
 use tex_lex::{InputSource, InputStack, LexError, MemoryInput, TokenListReplayKind};
 use tex_state::ids::TokenListId;
@@ -15,8 +15,8 @@ use tex_state::stores::Stores;
 use tex_state::token::{Catcode, Token};
 
 use crate::{
-    Dispatch, ExpandError, ExpandableOpcode, ExpansionHooks, ExpansionReplayKind,
-    NoopExpansionHooks, NoopRecorder, dispatch_with_hooks,
+    Dispatch, ExpandError, ExpandableOpcode, ExpansionHooks, ExpansionReplayKind, NoopRecorder,
+    dispatch_with_hooks,
 };
 
 /// Result of scanning a macro definition without assigning it.
@@ -152,17 +152,17 @@ where
 fn expand_replacement_text<S, H>(
     stores: &mut Stores,
     replacement_text: TokenListId,
-    _hooks: &mut H,
+    hooks: &mut H,
 ) -> Result<TokenListId, ScanToksError>
 where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    let mut input = InputStack::new(MemoryInput::new(""));
+    let mut input = InputStack::new(ReplacementSource::<S>::empty());
     input.push_token_list(replacement_text, TokenListReplayKind::Inserted);
     let mut builder = stores.token_list_builder();
     let mut recorder = NoopRecorder;
-    let mut hooks = NoopExpansionHooks;
+    let mut hooks = ReplacementHooks::new(hooks);
 
     loop {
         let Some(read) = input.next_expansion_token(stores)? else {
@@ -214,7 +214,73 @@ where
     Ok(stores.finish_token_list(&mut builder))
 }
 
-fn apply_edef_push(input: &mut InputStack<MemoryInput>, dispatch: Dispatch) {
+enum ReplacementSource<S> {
+    Empty(MemoryInput),
+    Driver(S),
+}
+
+impl<S> ReplacementSource<S> {
+    fn empty() -> Self {
+        Self::Empty(MemoryInput::new(""))
+    }
+}
+
+impl<S> InputSource for ReplacementSource<S>
+where
+    S: InputSource,
+{
+    fn read_line(&mut self) -> std::io::Result<Option<String>> {
+        match self {
+            Self::Empty(source) => source.read_line(),
+            Self::Driver(source) => source.read_line(),
+        }
+    }
+}
+
+struct ReplacementHooks<'a, S, H> {
+    inner: &'a mut H,
+    _source: PhantomData<fn() -> S>,
+}
+
+impl<'a, S, H> ReplacementHooks<'a, S, H> {
+    fn new(inner: &'a mut H) -> Self {
+        Self {
+            inner,
+            _source: PhantomData,
+        }
+    }
+}
+
+impl<S, H> ExpansionHooks<ReplacementSource<S>> for ReplacementHooks<'_, S, H>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    fn open_input(&mut self, name: &str) -> Result<ReplacementSource<S>, String> {
+        self.inner.open_input(name).map(ReplacementSource::Driver)
+    }
+
+    fn job_name(&self) -> &str {
+        self.inner.job_name()
+    }
+
+    fn mode(&self) -> crate::EngineMode {
+        self.inner.mode()
+    }
+
+    fn is_inner_mode(&self) -> bool {
+        self.inner.is_inner_mode()
+    }
+
+    fn input_stream_eof(&self, stream: u8) -> bool {
+        self.inner.input_stream_eof(stream)
+    }
+}
+
+fn apply_edef_push<S>(input: &mut InputStack<ReplacementSource<S>>, dispatch: Dispatch)
+where
+    S: InputSource,
+{
     let Dispatch::Push {
         replay_kind,
         token_list,

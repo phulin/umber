@@ -890,6 +890,36 @@ mod tests {
     }
 
     #[test]
+    fn edef_expansion_uses_active_input_hooks() {
+        let mut stores = Stores::new();
+        install_unexpandable_primitives(&mut stores);
+        install_expandable(&mut stores, "input", ExpandablePrimitive::Input);
+        stores.set_int_param(IntParam::END_LINE_CHAR, -1);
+        let mut input = InputStack::new(MemoryInput::new("\\edef\\e{\\input{inc}}"));
+        let mut hooks = EdefInputHooks;
+
+        Executor::new()
+            .run_with_recorder_and_hooks(&mut input, &mut stores, &mut NoopRecorder, &mut hooks)
+            .expect("edef executes through input hook");
+        let e = stores.symbol("e").expect("e was interned");
+        let meaning = stores.macro_meaning(e).expect("e is a macro");
+
+        assert_eq!(
+            stores.tokens(meaning.replacement_text()),
+            &[
+                Token::Char {
+                    ch: 'O',
+                    cat: Catcode::Letter
+                },
+                Token::Char {
+                    ch: 'K',
+                    cat: Catcode::Letter
+                },
+            ]
+        );
+    }
+
+    #[test]
     fn let_assigns_control_sequence_and_implicit_character_meanings() {
         let mut stores = Stores::new();
         install_unexpandable_primitives(&mut stores);
@@ -1177,5 +1207,17 @@ mod tests {
     fn install_expandable(stores: &mut Stores, name: &str, primitive: ExpandablePrimitive) {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::ExpandablePrimitive(primitive));
+    }
+
+    struct EdefInputHooks;
+
+    impl ExpansionHooks<MemoryInput> for EdefInputHooks {
+        fn open_input(&mut self, name: &str) -> Result<MemoryInput, String> {
+            if name == "inc" {
+                Ok(MemoryInput::new("OK"))
+            } else {
+                Err(format!("unexpected input {name}"))
+            }
+        }
     }
 }

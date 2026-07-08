@@ -1,21 +1,14 @@
-use std::collections::VecDeque;
 use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
 
 use tex_exec::try_execute_assignment;
-use tex_expand::scan::{ScanToksError, scan_toks};
-use tex_expand::scan_int;
-use tex_expand::{
-    Dispatch, ExpandError, ExpansionHooks, ExpansionReplayKind, NoopRecorder, dispatch_with_hooks,
-    get_x_token_with_hooks,
-};
-use tex_lex::{FileInput, InputStack, LexError, MemoryInput, TokenListReplayKind};
+use tex_expand::{ExpandError, ExpansionHooks, get_x_token_with_hooks};
+use tex_lex::{FileInput, InputStack, LexError};
 use tex_state::env::banks::IntParam;
-use tex_state::macro_store::MacroMeaning;
-use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
+use tex_state::meaning::Meaning;
 use tex_state::stores::Stores;
-use tex_state::token::{Catcode, Token};
+use tex_state::token::Token;
 
 use crate::format_token;
 
@@ -31,7 +24,6 @@ pub fn expand_dump(path: &str) -> Result<(), ExpandDumpError> {
         input,
         stores,
         hooks: FileHooks::new(path),
-        pending: VecDeque::new(),
     };
     driver.dump()
 }
@@ -40,7 +32,6 @@ struct DumpDriver {
     input: InputStack<FileInput>,
     stores: Stores,
     hooks: FileHooks,
-    pending: VecDeque<Token>,
 }
 
 impl DumpDriver {
@@ -49,245 +40,17 @@ impl DumpDriver {
             if try_execute_assignment(token, &mut self.input, &mut self.stores, &mut self.hooks)? {
                 continue;
             }
-            if self.try_consume_driver_form(token)? {
-                continue;
-            }
             println!("{}", format_token(token, &self.stores));
         }
         Ok(())
     }
 
     fn next_delivered(&mut self) -> Result<Option<Token>, ExpandDumpError> {
-        if let Some(token) = self.pending.pop_front() {
-            return Ok(Some(token));
-        }
         Ok(get_x_token_with_hooks(
             &mut self.input,
             &mut self.stores,
             &mut self.hooks,
         )?)
-    }
-
-    fn next_raw(&mut self) -> Result<Option<Token>, ExpandDumpError> {
-        Ok(self.input.next_token(&mut self.stores)?)
-    }
-
-    fn next_non_space_raw(&mut self) -> Result<Option<Token>, ExpandDumpError> {
-        loop {
-            let Some(token) = self.next_raw()? else {
-                return Ok(None);
-            };
-            if !is_space(token) {
-                return Ok(Some(token));
-            }
-        }
-    }
-
-    fn next_non_space_x(&mut self) -> Result<Option<Token>, ExpandDumpError> {
-        loop {
-            let Some(token) =
-                get_x_token_with_hooks(&mut self.input, &mut self.stores, &mut self.hooks)?
-            else {
-                return Ok(None);
-            };
-            if !is_space(token) {
-                return Ok(Some(token));
-            }
-        }
-    }
-
-    fn try_consume_driver_form(&mut self, first: Token) -> Result<bool, ExpandDumpError> {
-        let Token::Cs(symbol) = first else {
-            return Ok(false);
-        };
-        match self.stores.resolve(symbol) {
-            "def" => self.consume_macro_definition(MeaningFlags::EMPTY, false, false),
-            "edef" => self.consume_macro_definition(MeaningFlags::EMPTY, false, true),
-            "gdef" => self.consume_macro_definition(MeaningFlags::EMPTY, true, false),
-            "xdef" => self.consume_macro_definition(MeaningFlags::EMPTY, true, true),
-            "let" => self.consume_let(false),
-            "chardef" => self.consume_chardef(false),
-            "catcode" => self.consume_catcode(),
-            "long" | "outer" | "global" => self.consume_prefixed(first),
-            _ => Ok(false),
-        }
-    }
-
-    fn consume_prefixed(&mut self, first: Token) -> Result<bool, ExpandDumpError> {
-        let mut global = false;
-        let mut flags = MeaningFlags::EMPTY;
-        let mut consumed = vec![first];
-
-        loop {
-            let Some(token) = self.next_delivered()? else {
-                self.pending.extend(consumed);
-                return Ok(false);
-            };
-            consumed.push(token);
-            let Token::Cs(symbol) = token else {
-                self.replay_unconsumed(consumed);
-                return Ok(false);
-            };
-
-            match self.stores.resolve(symbol) {
-                "long" => flags = flags | MeaningFlags::LONG,
-                "outer" => flags = flags | MeaningFlags::OUTER,
-                "global" => global = true,
-                "def" => return self.consume_macro_definition(flags, global, false),
-                "edef" => return self.consume_macro_definition(flags, global, true),
-                "gdef" => return self.consume_macro_definition(flags, true, false),
-                "xdef" => return self.consume_macro_definition(flags, true, true),
-                "let" => return self.consume_let(global),
-                "chardef" => return self.consume_chardef(global),
-                _ => {
-                    self.replay_unconsumed(consumed);
-                    return Ok(false);
-                }
-            }
-        }
-    }
-
-    fn replay_unconsumed(&mut self, tokens: Vec<Token>) {
-        self.pending.extend(tokens);
-    }
-
-    fn consume_macro_definition(
-        &mut self,
-        flags: MeaningFlags,
-        global: bool,
-        expanded: bool,
-    ) -> Result<bool, ExpandDumpError> {
-        let Some(target) = self.next_non_space_raw()? else {
-            return Err(ExpandDumpError::Definition(
-                "missing control sequence after macro definition",
-            ));
-        };
-        let Token::Cs(target) = target else {
-            return Err(ExpandDumpError::Definition(
-                "macro definition target must be a control sequence",
-            ));
-        };
-
-        let scanned = scan_toks(&mut self.input, &mut self.stores, flags)?;
-        let mut meaning = scanned.meaning();
-        if expanded {
-            let expanded_body =
-                expand_replacement_text(&mut self.stores, meaning.replacement_text())?;
-            meaning = MacroMeaning::new(flags, meaning.parameter_text(), expanded_body);
-        }
-
-        if global {
-            self.stores.set_macro_meaning_global(target, meaning);
-        } else {
-            self.stores.set_macro_meaning(target, meaning);
-        }
-        Ok(true)
-    }
-
-    fn consume_let(&mut self, global: bool) -> Result<bool, ExpandDumpError> {
-        let Some(target) = self.next_non_space_raw()? else {
-            return Err(ExpandDumpError::Definition(
-                "missing control sequence after \\let",
-            ));
-        };
-        let Token::Cs(target) = target else {
-            return Err(ExpandDumpError::Definition(
-                "\\let target must be a control sequence",
-            ));
-        };
-
-        let rhs = self.next_optional_equals_raw()?;
-        let meaning = match rhs {
-            Token::Cs(symbol) => self.stores.meaning(symbol),
-            Token::Char { ch, .. } => Meaning::CharGiven(ch),
-            Token::Param(_) => {
-                return Err(ExpandDumpError::Definition(
-                    "\\let cannot assign a macro parameter token in expand-dump",
-                ));
-            }
-        };
-        if global {
-            self.stores.set_meaning_global(target, meaning);
-        } else {
-            self.stores.set_meaning(target, meaning);
-        }
-        Ok(true)
-    }
-
-    fn consume_chardef(&mut self, global: bool) -> Result<bool, ExpandDumpError> {
-        let Some(target) = self.next_non_space_raw()? else {
-            return Err(ExpandDumpError::Definition(
-                "missing control sequence after \\chardef",
-            ));
-        };
-        let Token::Cs(target) = target else {
-            return Err(ExpandDumpError::Definition(
-                "\\chardef target must be a control sequence",
-            ));
-        };
-        self.skip_optional_equals_x()?;
-        let value = self.scan_int_x()?;
-        let Some(ch) = u32::try_from(value).ok().and_then(char::from_u32) else {
-            return Err(ExpandDumpError::Definition(
-                "\\chardef value is not a valid character",
-            ));
-        };
-        if global {
-            self.stores
-                .set_meaning_global(target, Meaning::CharGiven(ch));
-        } else {
-            self.stores.set_meaning(target, Meaning::CharGiven(ch));
-        }
-        Ok(true)
-    }
-
-    fn consume_catcode(&mut self) -> Result<bool, ExpandDumpError> {
-        let code = self.scan_int_x()?;
-        self.skip_optional_equals_x()?;
-        let catcode = self.scan_int_x()?;
-        let Some(ch) = u32::try_from(code).ok().and_then(char::from_u32) else {
-            return Err(ExpandDumpError::Definition(
-                "\\catcode character code is invalid",
-            ));
-        };
-        let cat = catcode_from_i32(catcode)?;
-        self.stores.set_catcode(ch, cat);
-        Ok(true)
-    }
-
-    fn next_optional_equals_raw(&mut self) -> Result<Token, ExpandDumpError> {
-        let Some(token) = self.next_non_space_raw()? else {
-            return Err(ExpandDumpError::Definition(
-                "missing token after optional equals",
-            ));
-        };
-        if is_other_equals(token) {
-            self.next_non_space_raw()?
-                .ok_or(ExpandDumpError::Definition("missing token after equals"))
-        } else {
-            Ok(token)
-        }
-    }
-
-    fn skip_optional_equals_x(&mut self) -> Result<(), ExpandDumpError> {
-        let Some(token) = self.next_non_space_x()? else {
-            return Err(ExpandDumpError::Definition("missing assignment value"));
-        };
-        if !is_other_equals(token) {
-            self.pending.push_front(token);
-        }
-        Ok(())
-    }
-
-    fn scan_int_x(&mut self) -> Result<i32, ExpandDumpError> {
-        let mut recorder = NoopRecorder;
-        Ok(scan_int::scan_int_with_recorder_and_hooks(
-            &mut self.input,
-            &mut self.stores,
-            &mut recorder,
-            &mut self.hooks,
-        )?
-        .value())
     }
 }
 
@@ -326,85 +89,6 @@ impl ExpansionHooks<FileInput> for FileHooks {
     }
 }
 
-fn expand_replacement_text(
-    stores: &mut Stores,
-    replacement_text: tex_state::ids::TokenListId,
-) -> Result<tex_state::ids::TokenListId, ExpandDumpError> {
-    let mut input = InputStack::new(MemoryInput::new(""));
-    input.push_token_list(replacement_text, TokenListReplayKind::Inserted);
-    let mut builder = stores.token_list_builder();
-    let mut hooks = EdefHooks;
-    let mut recorder = NoopRecorder;
-
-    loop {
-        let Some(read) = input.next_expansion_token(stores)? else {
-            break;
-        };
-        let token = read.token();
-        if read.suppress_expansion() {
-            builder.push(token);
-            continue;
-        }
-
-        let Token::Cs(symbol) = token else {
-            builder.push(token);
-            continue;
-        };
-        let meaning = stores.meaning(symbol);
-        if meaning == Meaning::ExpandablePrimitive(ExpandablePrimitive::NoExpand) {
-            builder.push(token);
-            let Some(suppressed) = input.next_token(stores)? else {
-                return Err(ExpandError::MissingTokenAfterPrimitive(
-                    tex_expand::ExpandableOpcode::NoExpand,
-                )
-                .into());
-            };
-            builder.push(suppressed);
-            continue;
-        }
-
-        match dispatch_with_hooks(
-            token,
-            &mut input,
-            stores,
-            &mut recorder,
-            &mut hooks,
-            meaning,
-        )? {
-            Dispatch::Continue => {}
-            Dispatch::Deliver(token) | Dispatch::DeliverNoExpand(token) => builder.push(token),
-            push @ Dispatch::Push { .. } => apply_edef_push(&mut input, push),
-        }
-    }
-    Ok(stores.finish_token_list(&mut builder))
-}
-
-fn apply_edef_push(input: &mut InputStack<MemoryInput>, dispatch: Dispatch) {
-    let Dispatch::Push {
-        replay_kind,
-        token_list,
-        macro_arguments,
-    } = dispatch
-    else {
-        return;
-    };
-    if replay_kind == ExpansionReplayKind::MacroBody {
-        input.push_macro_body(token_list, macro_arguments);
-    } else {
-        input.push_token_list(token_list, replay_kind.as_lex_kind());
-    }
-}
-
-struct EdefHooks;
-
-impl ExpansionHooks<MemoryInput> for EdefHooks {
-    fn open_input(&mut self, name: &str) -> Result<MemoryInput, String> {
-        Err(format!(
-            "\\input {name} is not supported while expanding \\edef in expand-dump"
-        ))
-    }
-}
-
 fn install_dump_primitives(stores: &mut Stores) {
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
     let relax = stores.intern("relax");
@@ -438,59 +122,12 @@ fn install_dump_primitives(stores: &mut Stores) {
     }
 }
 
-fn is_space(token: Token) -> bool {
-    matches!(
-        token,
-        Token::Char {
-            cat: Catcode::Space,
-            ..
-        }
-    )
-}
-
-fn is_other_equals(token: Token) -> bool {
-    matches!(
-        token,
-        Token::Char {
-            ch: '=',
-            cat: Catcode::Other
-        }
-    )
-}
-
-fn catcode_from_i32(value: i32) -> Result<Catcode, ExpandDumpError> {
-    match value {
-        0 => Ok(Catcode::Escape),
-        1 => Ok(Catcode::BeginGroup),
-        2 => Ok(Catcode::EndGroup),
-        3 => Ok(Catcode::MathShift),
-        4 => Ok(Catcode::AlignmentTab),
-        5 => Ok(Catcode::EndLine),
-        6 => Ok(Catcode::Parameter),
-        7 => Ok(Catcode::Superscript),
-        8 => Ok(Catcode::Subscript),
-        9 => Ok(Catcode::Ignored),
-        10 => Ok(Catcode::Space),
-        11 => Ok(Catcode::Letter),
-        12 => Ok(Catcode::Other),
-        13 => Ok(Catcode::Active),
-        14 => Ok(Catcode::Comment),
-        15 => Ok(Catcode::Invalid),
-        _ => Err(ExpandDumpError::Definition(
-            "\\catcode value must be in 0..=15",
-        )),
-    }
-}
-
 #[derive(Debug)]
 pub enum ExpandDumpError {
     Io(io::Error),
     Exec(tex_exec::ExecError),
     Lex(LexError),
     Expand(ExpandError),
-    ScanToks(ScanToksError),
-    ScanInt(scan_int::ScanIntError),
-    Definition(&'static str),
 }
 
 impl std::fmt::Display for ExpandDumpError {
@@ -500,9 +137,6 @@ impl std::fmt::Display for ExpandDumpError {
             Self::Exec(err) => write!(f, "{err}"),
             Self::Lex(err) => write!(f, "{err}"),
             Self::Expand(err) => write!(f, "{err}"),
-            Self::ScanToks(err) => write!(f, "{err}"),
-            Self::ScanInt(err) => write!(f, "{err}"),
-            Self::Definition(message) => f.write_str(message),
         }
     }
 }
@@ -514,9 +148,6 @@ impl std::error::Error for ExpandDumpError {
             Self::Exec(err) => Some(err),
             Self::Lex(err) => Some(err),
             Self::Expand(err) => Some(err),
-            Self::ScanToks(err) => Some(err),
-            Self::ScanInt(err) => Some(err),
-            Self::Definition(_) => None,
         }
     }
 }
@@ -542,17 +173,5 @@ impl From<LexError> for ExpandDumpError {
 impl From<ExpandError> for ExpandDumpError {
     fn from(value: ExpandError) -> Self {
         Self::Expand(value)
-    }
-}
-
-impl From<ScanToksError> for ExpandDumpError {
-    fn from(value: ScanToksError) -> Self {
-        Self::ScanToks(value)
-    }
-}
-
-impl From<scan_int::ScanIntError> for ExpandDumpError {
-    fn from(value: scan_int::ScanIntError) -> Self {
-        Self::ScanInt(value)
     }
 }
