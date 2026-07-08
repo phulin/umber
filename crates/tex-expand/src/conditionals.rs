@@ -6,8 +6,8 @@ use tex_state::node::Node;
 use tex_state::token::Token;
 
 use crate::{
-    Dispatch, ExpandError, ExpandNext, ExpandableOpcode, ExpansionHooks, ReadRecorder,
-    scan_helpers, scan_int,
+    Dispatch, ExpandError, ExpandNext, ExpandableOpcode, ExpansionHooks, NoInputExpandNext,
+    ReadRecorder, scan_helpers, scan_int,
 };
 
 pub(crate) fn begin_if<S, R, H>(
@@ -364,6 +364,7 @@ pub(crate) enum ConditionalRelation {
     Greater,
 }
 
+#[allow(dead_code)]
 pub(crate) fn scan_conditional_relation<S, R, H>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
@@ -375,8 +376,32 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    let Some(token) =
-        scan_helpers::next_non_space_x_token_with_hooks(input, stores, recorder, hooks)?
+    scan_conditional_relation_with_expander_and_hooks(
+        input,
+        stores,
+        recorder,
+        hooks,
+        &mut NoInputExpandNext,
+    )
+}
+
+pub(crate) fn scan_conditional_relation_with_expander_and_hooks<S, St, R, H, E>(
+    input: &mut InputStack<S>,
+    stores: &mut St,
+    recorder: &mut R,
+    hooks: &mut H,
+    expander: &mut E,
+) -> Result<ConditionalRelation, ExpandError>
+where
+    S: InputSource,
+    St: ExpansionState,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
+{
+    let Some(token) = scan_helpers::next_non_space_x_token_with_expander_and_hooks(
+        input, stores, recorder, hooks, expander,
+    )?
     else {
         return Err(ExpandError::MissingTokenAfterPrimitive(
             ExpandableOpcode::If,
@@ -421,6 +446,7 @@ pub(crate) fn box_register_has_kind(
     )
 }
 
+#[allow(dead_code)]
 pub(crate) fn scan_stream_number<S, R, H>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
@@ -432,7 +458,32 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    let value = scan_int::scan_int_with_recorder_and_hooks(input, stores, recorder, hooks)?.value();
+    scan_stream_number_with_expander_and_hooks(
+        input,
+        stores,
+        recorder,
+        hooks,
+        &mut NoInputExpandNext,
+    )
+}
+
+pub(crate) fn scan_stream_number_with_expander_and_hooks<S, St, R, H, E>(
+    input: &mut InputStack<S>,
+    stores: &mut St,
+    recorder: &mut R,
+    hooks: &mut H,
+    expander: &mut E,
+) -> Result<u8, ExpandError>
+where
+    S: InputSource,
+    St: ExpansionState,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
+{
+    let value =
+        scan_int::scan_int_with_expander_and_hooks(input, stores, recorder, hooks, expander)?
+            .value();
     Ok(value.clamp(0, 15) as u8)
 }
 

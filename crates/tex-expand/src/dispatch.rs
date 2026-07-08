@@ -204,7 +204,13 @@ macro_rules! dispatch_match {
                     &mut expander,
                 )?
                 .value();
-                let relation = scan_conditional_relation(input, stores, recorder, hooks)?;
+                let relation = scan_conditional_relation_with_expander_and_hooks(
+                    input,
+                    stores,
+                    recorder,
+                    hooks,
+                    &mut expander,
+                )?;
                 let right = scan_int::scan_int_with_expander_and_hooks(
                     input,
                     stores,
@@ -231,7 +237,13 @@ macro_rules! dispatch_match {
                     scan_dimen::ScanDimenOptions::STANDARD,
                 )?
                 .value();
-                let relation = scan_conditional_relation(input, stores, recorder, hooks)?;
+                let relation = scan_conditional_relation_with_expander_and_hooks(
+                    input,
+                    stores,
+                    recorder,
+                    hooks,
+                    &mut expander,
+                )?;
                 let right = scan_dimen::scan_dimen_with_expander_and_hooks(
                     input,
                     stores,
@@ -344,7 +356,13 @@ macro_rules! dispatch_match {
                 )
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfEof) => {
-                let stream = scan_stream_number(input, stores, recorder, hooks)?;
+                let stream = scan_stream_number_with_expander_and_hooks(
+                    input,
+                    stores,
+                    recorder,
+                    hooks,
+                    &mut expander,
+                )?;
                 begin_if(
                     input,
                     stores,
