@@ -168,6 +168,14 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   parameter-text and replacement-text token-list ids. The body replays as a
   frame with argument slots resolved by index — no token-list copying for
   the body, ever (bodies are shared `TokenListId`s).
+- **Macro definition scanning**: `tex-expand` exposes the shared
+  `scan_toks`-style scanner for `\def`/`\edef` syntax. It scans parameter
+  text and a brace-balanced replacement body into frozen token lists,
+  including TeX's ordered `#1`..`#9` parameter markers, trailing `#{`, and
+  doubled `##` replacement-body escapes. The scanner may freeze content
+  through `Stores`, but it does not assign meanings; the stomach/future
+  assignment layer remains responsible for installing the returned
+  `MacroMeaning`.
 - **Conditionals** are a frame-kind, not a side stack: `\if...` evaluation
   marks the frame; `\else`/`\fi` skipping is a token-level scan that the
   fast lexer can accelerate (skip mode only needs catcode classes for

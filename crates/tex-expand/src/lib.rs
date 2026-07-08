@@ -14,6 +14,8 @@ use tex_state::meaning::{Meaning, MeaningFlags};
 use tex_state::stores::Stores;
 use tex_state::token::Token;
 
+pub mod scan;
+
 /// Records state reads performed by expansion.
 ///
 /// The default implementation is `NoopRecorder`. Callers that need read sets
