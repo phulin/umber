@@ -133,6 +133,7 @@ pub enum Whatsit {
 }
 
 impl Node {
+    #[cfg(debug_assertions)]
     pub(crate) fn child_lists(&self, out: &mut Vec<NodeListId>) {
         match self {
             Self::HList(box_node) | Self::VList(box_node) => out.push(box_node.children),
