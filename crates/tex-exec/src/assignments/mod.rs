@@ -22,6 +22,7 @@ use crate::{DispatchAction, ExecError, diagnostics, dispatch_delivered_token, le
 mod arithmetic;
 mod boxes;
 mod fonts;
+mod hmode;
 mod macros;
 mod primitives;
 mod scanning;
@@ -29,9 +30,10 @@ mod tokens;
 mod variables;
 
 use arithmetic::*;
-pub(crate) use boxes::try_append_character;
 use boxes::*;
 use fonts::*;
+use hmode::*;
+pub(crate) use hmode::{append_given_char, flush_pending_hchars, try_append_character};
 use macros::*;
 pub use primitives::install_unexpandable_primitives;
 use scanning::*;
@@ -304,6 +306,23 @@ where
                 reject_all_prefixes(prefixes)?;
                 execute_kern_or_skip(primitive, nest, input, stores, hooks)?;
                 Ok(false)
+            }
+            UnexpandablePrimitive::Char
+            | UnexpandablePrimitive::HFil
+            | UnexpandablePrimitive::HFill
+            | UnexpandablePrimitive::HSs
+            | UnexpandablePrimitive::HFilNeg
+            | UnexpandablePrimitive::Penalty
+            | UnexpandablePrimitive::VRule
+            | UnexpandablePrimitive::ItalicCorrection
+            | UnexpandablePrimitive::Discretionary
+            | UnexpandablePrimitive::DiscretionaryHyphen
+            | UnexpandablePrimitive::NoBoundary
+            | UnexpandablePrimitive::SpaceFactor
+            | UnexpandablePrimitive::Accent => {
+                reject_all_prefixes(prefixes)?;
+                execute_hmode_material(primitive, nest, input, stores, hooks)?;
+                Ok(primitive == UnexpandablePrimitive::SpaceFactor)
             }
             UnexpandablePrimitive::Wd | UnexpandablePrimitive::Ht | UnexpandablePrimitive::Dp => {
                 reject_macro_prefixes(prefixes)?;

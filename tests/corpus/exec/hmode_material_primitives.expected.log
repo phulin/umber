@@ -1,0 +1,24 @@
+> \box34=
+\hbox(6.94444+3.0)x14.2778
+.\tenrm A
+.\tenrm !
+.\kern 1.0
+.\glue 2.0
+.\glue 0.0 plus 1.0fil
+.\penalty 42
+.\rule(2.0+3.0)x1.0
+
+! OK.
+
+> \box35=
+\hbox(6.94444+0.0)x15.00003
+.\tenrm a
+.\discretionary
+..\tenrm -
+.\tenrm b
+.\discretionary replacing 1
+..\tenrm c
+.|\tenrm d
+.\tenrm e
+
+! OK.

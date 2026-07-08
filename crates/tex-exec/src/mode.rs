@@ -1,4 +1,5 @@
 use tex_expand::EngineMode;
+use tex_state::ids::FontId;
 use tex_state::node::Node;
 use tex_state::scaled::Scaled;
 
@@ -44,6 +45,9 @@ impl Mode {
 pub struct ModeList {
     nodes: Vec<Node>,
     prev_depth: Option<Scaled>,
+    pending_hchars: Vec<PendingHChar>,
+    space_factor: i32,
+    no_boundary: bool,
 }
 
 impl ModeList {
@@ -65,6 +69,36 @@ impl ModeList {
         self.nodes.extend(nodes);
     }
 
+    pub fn push_pending_hchar(&mut self, font: FontId, ch: char) {
+        self.pending_hchars.push(PendingHChar { font, ch });
+    }
+
+    pub fn take_pending_hchars(&mut self) -> Vec<PendingHChar> {
+        std::mem::take(&mut self.pending_hchars)
+    }
+
+    #[must_use]
+    pub const fn space_factor(&self) -> i32 {
+        if self.space_factor == 0 {
+            1000
+        } else {
+            self.space_factor
+        }
+    }
+
+    pub fn set_space_factor(&mut self, value: i32) {
+        self.space_factor = value;
+    }
+
+    #[must_use]
+    pub const fn no_boundary(&self) -> bool {
+        self.no_boundary
+    }
+
+    pub fn set_no_boundary(&mut self, value: bool) {
+        self.no_boundary = value;
+    }
+
     #[must_use]
     pub const fn prev_depth(&self) -> Option<Scaled> {
         self.prev_depth
@@ -81,6 +115,12 @@ impl ModeList {
             .rposition(|node| matches!(node, Node::HList(_) | Node::VList(_)))?;
         Some(self.nodes.remove(pos))
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PendingHChar {
+    pub font: FontId,
+    pub ch: char,
 }
 
 /// Snapshot-summary state for one mode level.

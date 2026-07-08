@@ -339,10 +339,13 @@ assignments, box building, and dispatch into the typesetting kernels.
   the barriered promotion write. Pulling boxes back out through `\copy`,
   `\box`, unboxing, `\lastbox`, or box-dimension rewrites clones any
   survivor-backed node tree into the current epoch before it can be appended
-  to an unfinished mode list or promoted again. The implemented scaffold also
-  supports direct explicit `\kern`, `\hskip`, and `\vskip` node construction
-  for currently representable lists; richer horizontal-mode content remains
-  font/paragraph work.
+  to an unfinished mode list or promoted again. Horizontal list construction
+  buffers adjacent font-backed characters in the stomach until a boundary
+  command, then reconstitutes them through the loaded font's TFM ligature/kern
+  program, updates the mode-local `\spacefactor`, and appends explicit
+  h-mode nodes for spaces, kerns, skips, finite-fill glue, penalties, rules,
+  discretionaries, accents, and italic corrections. Paragraph breaking,
+  automatic hyphenation, and page contribution remain later hand-offs.
   Vertical list construction tracks TeX's `prev_depth` on each mode-list
   level. Appending a box or rule to a vertical/internal-vertical list inserts
   the implicit adjusted `\baselineskip` glue, or `\lineskip` when the adjusted
@@ -403,7 +406,8 @@ makes box-level memoization (M4) sound.
   reads are recorded like any state read.
 - **Implemented packing foundation**: `tex-typeset` currently provides pure
   `hpack`, `vpack`, `vtop`, and TeX.web §108 badness over frozen node lists.
-  The crate reads `Universe` immutably, copies packing parameters into plain
+  The crate reads `Universe` immutably, including frozen nodes, glue specs,
+  and loaded font character metrics, copies packing parameters into plain
   structs at entry, and returns box payloads plus diagnostics without writing
   state. Stomach-side box-building primitives live in `tex-exec`; the packing
   crate remains pure and has no `World` or `&mut Universe` surface.

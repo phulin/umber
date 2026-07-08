@@ -5,7 +5,9 @@ use tex_lex::{InputSource, InputStack};
 use tex_state::{ExpansionContext, Universe};
 
 use crate::dispatch::unimplemented_typesetting;
-use crate::{DispatchAction, ExecError, ExecutionStats, ModeNest, dispatch_delivered_token};
+use crate::{
+    DispatchAction, ExecError, ExecutionStats, ModeNest, assignments, dispatch_delivered_token,
+};
 
 /// Stomach interpreter state.
 #[derive(Clone, Debug, PartialEq)]
@@ -87,12 +89,16 @@ impl Executor {
                 get_x_token_with_recorder_and_hooks(input, &mut expansion, recorder, hooks)?
             };
             let Some(token) = token else {
+                assignments::flush_pending_hchars(&mut self.nest, stores)?;
                 return Ok(stats);
             };
             stats.delivered_tokens += 1;
             match dispatch_delivered_token(&mut self.nest, token, input, stores, hooks)? {
                 DispatchAction::Continue => {}
-                DispatchAction::End => return Ok(stats),
+                DispatchAction::End => {
+                    assignments::flush_pending_hchars(&mut self.nest, stores)?;
+                    return Ok(stats);
+                }
                 DispatchAction::NotConsumed => {
                     return Err(unimplemented_typesetting(
                         self.nest.current_mode(),

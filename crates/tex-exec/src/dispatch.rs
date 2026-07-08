@@ -52,6 +52,9 @@ where
             cat: Catcode::Space,
             ..
         } => {
+            if assignments::try_append_character(nest, token, stores)? {
+                return Ok(DispatchAction::Continue);
+            }
             return Ok(DispatchAction::Continue);
         }
         Token::Char { .. } | Token::Param(_) => {
@@ -67,7 +70,10 @@ where
         Meaning::Undefined => Err(ExecError::UndefinedControlSequence {
             name: stores.resolve_cs_name(token),
         }),
-        Meaning::CharGiven(_) => unimplemented_typesetting(mode, token, "character token command"),
+        Meaning::CharGiven(ch) => {
+            assignments::append_given_char(nest, stores, ch)?;
+            Ok(DispatchAction::Continue)
+        }
         Meaning::Macro { .. } => Err(ExecError::UnexpectedMacroDelivery {
             name: stores.resolve_cs_name(token),
         }),

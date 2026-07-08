@@ -44,6 +44,7 @@ pub(super) fn is_assignment_meaning(meaning: Meaning) -> bool {
                 | UnexpandablePrimitive::FontDimen
                 | UnexpandablePrimitive::HyphenChar
                 | UnexpandablePrimitive::SkewChar
+                | UnexpandablePrimitive::SpaceFactor
                 | UnexpandablePrimitive::SetBox
                 | UnexpandablePrimitive::Wd
                 | UnexpandablePrimitive::Ht

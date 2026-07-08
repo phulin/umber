@@ -7,7 +7,7 @@
 use tex_state::Universe;
 use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::glue::{GlueSpec, Order};
-use tex_state::ids::NodeListId;
+use tex_state::ids::{FontId, NodeListId};
 use tex_state::node::{BoxNode, BoxNodeFields, Node, Sign};
 use tex_state::scaled::Scaled;
 
@@ -83,6 +83,7 @@ pub struct PackedBox {
 pub trait TypesetState {
     fn nodes(&self, id: NodeListId) -> &[Node];
     fn glue(&self, id: tex_state::ids::GlueId) -> GlueSpec;
+    fn font_char_metrics(&self, font: FontId, code: u8) -> Option<tex_fonts::CharMetrics>;
 }
 
 impl TypesetState for Universe {
@@ -92,6 +93,10 @@ impl TypesetState for Universe {
 
     fn glue(&self, id: tex_state::ids::GlueId) -> GlueSpec {
         Universe::glue(self, id)
+    }
+
+    fn font_char_metrics(&self, font: FontId, code: u8) -> Option<tex_fonts::CharMetrics> {
+        Universe::font_char_metrics(self, font, code)
     }
 }
 
@@ -315,7 +320,16 @@ fn measure_hlist(state: &impl TypesetState, nodes: &[Node]) -> Measurement {
     let mut meas = Measurement::ZERO;
     for node in nodes {
         match node {
-            Node::Char { .. } | Node::Lig { .. } | Node::Unset => {}
+            Node::Char { font, ch } | Node::Lig { font, ch, .. } => {
+                if let Ok(code) = u8::try_from(*ch as u32)
+                    && let Some(metrics) = state.font_char_metrics(*font, code)
+                {
+                    meas.width = add(meas.width, metrics.width);
+                    meas.height = meas.height.max(metrics.height);
+                    meas.depth = meas.depth.max(metrics.depth);
+                }
+            }
+            Node::Unset => {}
             Node::Kern { amount, .. } => meas.width = add(meas.width, *amount),
             Node::Glue { spec, .. } => add_glue(&mut meas, state.glue(*spec), Axis::Horizontal),
             Node::Rule {
@@ -338,9 +352,14 @@ fn measure_hlist(state: &impl TypesetState, nodes: &[Node]) -> Measurement {
                 meas.height = meas.height.max(box_node.height);
                 meas.depth = meas.depth.max(box_node.depth);
             }
-            Node::Penalty(_)
-            | Node::Disc { .. }
-            | Node::Mark { .. }
+            Node::Penalty(_) => {}
+            Node::Disc { replace, .. } => {
+                let replacement = measure_hlist(state, state.nodes(*replace));
+                meas.width = add(meas.width, replacement.width);
+                meas.height = meas.height.max(replacement.height);
+                meas.depth = meas.depth.max(replacement.depth);
+            }
+            Node::Mark { .. }
             | Node::Ins { .. }
             | Node::Whatsit(_)
             | Node::MathOn

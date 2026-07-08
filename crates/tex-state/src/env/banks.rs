@@ -126,6 +126,12 @@ impl GlueParam {
 
     /// TeX's `\baselineskip` glue parameter.
     pub const BASELINE_SKIP: Self = Self::new(1);
+
+    /// TeX's `\spaceskip` glue parameter.
+    pub const SPACE_SKIP: Self = Self::new(12);
+
+    /// TeX's `\xspaceskip` glue parameter.
+    pub const XSPACE_SKIP: Self = Self::new(13);
 }
 
 pub(crate) trait BankCodec {

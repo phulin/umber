@@ -1,0 +1,15 @@
+> \box32=
+\hbox(6.83331+0.0)x18.88893
+.\tenrm A
+.\tenrm .
+.\glue 3.33333 plus 1.66666 minus 1.11111
+.\tenrm x
+
+! OK.
+
+> \box33=
+\hbox(6.83331+0.0)x12.77782
+.\tenrm A
+.\tenrm x
+
+! OK.

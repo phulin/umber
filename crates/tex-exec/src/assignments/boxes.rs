@@ -5,7 +5,7 @@ use tex_state::glue::GlueSpec;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::node::{GlueKind, KernKind, Node};
 use tex_state::scaled::Scaled;
-use tex_state::token::{Catcode, Token};
+use tex_state::token::Token;
 use tex_state::{BoxDimension, Universe};
 use tex_typeset::{HpackParams, PackSpec, VpackParams, hpack, vpack, vtop};
 
@@ -18,31 +18,6 @@ enum BoxKind {
     HBox,
     VBox,
     VTop,
-}
-
-pub(crate) fn try_append_character(
-    nest: &mut ModeNest,
-    token: Token,
-    stores: &mut Universe,
-) -> Result<bool, ExecError> {
-    match (nest.current_mode(), token) {
-        (Mode::RestrictedHorizontal | Mode::Horizontal, Token::Char { ch, cat }) => {
-            if cat == Catcode::Space {
-                let id = stores.intern_glue(GlueSpec::ZERO);
-                nest.current_list_mut().push(Node::Glue {
-                    spec: id,
-                    kind: GlueKind::Normal,
-                });
-            } else {
-                nest.current_list_mut().push(Node::Char {
-                    font: stores.current_font(),
-                    ch,
-                });
-            }
-            Ok(true)
-        }
-        _ => Ok(false),
-    }
 }
 
 pub(super) fn execute_make_box<S, H>(
@@ -176,6 +151,7 @@ where
 {
     match primitive {
         UnexpandablePrimitive::Kern => {
+            flush_pending_hchars(nest, stores)?;
             let amount = scan_scaled(input, stores, hooks)?;
             nest.current_list_mut().push(Node::Kern {
                 amount,
@@ -183,6 +159,7 @@ where
             });
         }
         UnexpandablePrimitive::HSkip | UnexpandablePrimitive::VSkip => {
+            flush_pending_hchars(nest, stores)?;
             let spec = scan_glue_id(input, stores, hooks, false)?;
             nest.current_list_mut().push(Node::Glue {
                 spec,
@@ -268,7 +245,7 @@ where
     Ok(node)
 }
 
-fn scan_box_group<S, H>(
+pub(super) fn scan_box_group<S, H>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
@@ -287,6 +264,7 @@ where
             context: "box closing brace",
         })?;
         if is_end_group(token) {
+            flush_pending_hchars(nest, stores)?;
             return Ok(());
         }
         match crate::dispatch_delivered_token(nest, token, input, stores, hooks)? {
@@ -362,6 +340,7 @@ fn append_node_to_current_list(
     stores: &mut Universe,
     node: Node,
 ) -> Result<(), ExecError> {
+    flush_pending_hchars(nest, stores)?;
     if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
         append_node_to_vertical_list(nest, stores, node)
     } else {

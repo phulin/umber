@@ -25,7 +25,7 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - `crates/tex-arith`: shared TeX scaled-point and TFM arithmetic.
 - `crates/tex-state`: engine state layer substrate.
 - `crates/tex-fonts`: immutable font metric parsing and TFM data.
-- `crates/tex-exec`: stomach execution scaffold, mode nest, and main-control dispatch.
+- `crates/tex-exec`: stomach execution, mode nest, main-control dispatch, and h-mode material construction.
 - `crates/umber`: CLI driver.
 - `crates/test-support`: shared fixture and parity-test helpers.
 - `tools/`: Rust workspace tools, including `refexec` for reference TeX execution.

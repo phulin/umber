@@ -31,7 +31,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [x] `\vbadness` - Threshold above which underfull or loose vboxes are reported. Implemented as an assignable integer parameter consumed by `tex-typeset` vertical packing diagnostics.
 - [ ] `\vbox` - Builds a vertical box with normal baseline positioning.
 - [x] `\vfuzz` - Tolerance before overfull vboxes are reported. Implemented as an assignable dimension parameter consumed by `tex-typeset` vertical packing diagnostics.
-- [ ] `\vrule` - Adds a vertical rule in horizontal mode.
+- [x] `\vrule` - Adds a vertical rule in horizontal mode.
 - [ ] `\vtop` - Builds a vertical box aligned by its first item.
 - [ ] `\wd` - Reads or assigns the width of a box register.
 - [ ] `\xleaders` - Builds expanded leaders across glue.
@@ -39,9 +39,9 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 ## Characters And Case
 
 - [ ] `\ ` - Inserts an explicit control space.
-- [ ] `\accent` - Places a text accent over the following character.
+- [x] `\accent` - Places a text accent over the following character.
 - [x] `\catcode` - Reads or assigns a character's category code; assignments use the code-table facade and bump generations.
-- [ ] `\char` - Produces a character token by numeric character code.
+- [x] `\char` - Produces a character token by numeric character code.
 - [x] `\chardef` - Defines a control sequence as a character-code command usable as an internal integer.
 - [x] `\endlinechar` - Character appended when TeX tokenizes an input line. Implemented as an assignable integer parameter for lexing and value rendering.
 - [x] `\escapechar` - Character used when printing control sequence names. Implemented as an assignable integer parameter for value-rendering expandables.
@@ -101,7 +101,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 
 ## Fonts
 
-- [ ] `\/` - Inserts italic correction for the preceding character or ligature.
+- [x] `\/` - Inserts italic correction for the preceding character or ligature.
 - [x] `\font` - Defines a font control sequence, loads TFM metrics via `World`, and reuses loaded font ids for the same name, selected size, and content.
 - [x] `\fontdimen` - Reads or assigns Env-backed per-font parameters with grouping and TeX's most-recent-font growth rule.
 - [x] `\fontname` - Expands a real font selector to its TFM name, including an `at <size>` suffix when selected size differs from design size.
@@ -109,11 +109,11 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 
 ## Glue And Skips
 
-- [ ] `\hfil` - Inserts first-order infinitely stretchable horizontal glue.
-- [ ] `\hfill` - Inserts second-order infinitely stretchable horizontal glue.
-- [ ] `\hfilneg` - Inserts negative first-order horizontal stretch.
-- [ ] `\hskip` - Inserts horizontal glue.
-- [ ] `\hss` - Inserts horizontal glue with infinite stretch and shrink.
+- [x] `\hfil` - Inserts first-order infinitely stretchable horizontal glue.
+- [x] `\hfill` - Inserts second-order infinitely stretchable horizontal glue.
+- [x] `\hfilneg` - Inserts negative first-order horizontal stretch.
+- [x] `\hskip` - Inserts horizontal glue.
+- [x] `\hss` - Inserts horizontal glue with infinite stretch and shrink.
 - [ ] `\lastskip` - Reports the last glue or muglue on the current list, or zero.
 - [ ] `\unskip` - Removes the last glue item from the current list when allowed.
 - [ ] `\vfil` - Inserts first-order infinitely stretchable vertical glue.
@@ -124,9 +124,9 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 
 ## Hyphenation And Languages
 
-- [ ] `\-` - Inserts a discretionary hyphen.
+- [x] `\-` - Inserts a discretionary hyphen.
 - [x] `\defaulthyphenchar` - Default `\hyphenchar` value for newly loaded fonts; implemented as an integer parameter used when initializing font banks.
-- [ ] `\discretionary` - Adds an explicit discretionary break with pre, post, and replacement text.
+- [x] `\discretionary` - Adds an explicit discretionary break with pre, post, and replacement text.
 - [ ] `\hyphenation` - Adds hyphenation exceptions for the current language.
 - [x] `\hyphenchar` - Reads or assigns the Env-backed hyphenation character for a font selector.
 - [ ] `\language` - Selects the current hyphenation language.
@@ -163,7 +163,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 
 ## Kerns And Box Motion
 
-- [ ] `\kern` - Adds an explicit kern to the current list.
+- [x] `\kern` - Adds an explicit kern to the current list.
 - [ ] `\lastkern` - Reports the last kern on the current list, or zero.
 - [ ] `\lower` - Lowers a box in horizontal or math mode.
 - [ ] `\moveleft` - Moves a box left in vertical mode.
@@ -330,7 +330,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [ ] `\lineskip` - Fallback interline glue when baseline glue would be too small.
 - [ ] `\lineskiplimit` - Threshold for using `\lineskip` instead of `\baselineskip`.
 - [ ] `\looseness` - Requests more or fewer lines than the optimal paragraph.
-- [ ] `\noboundary` - Suppresses ligature and kern boundary processing.
+- [x] `\noboundary` - Suppresses ligature and kern boundary processing.
 - [ ] `\noindent` - Starts an unindented paragraph.
 - [ ] `\par` - Ends the current paragraph.
 - [ ] `\parfillskip` - Glue appended to the final line of a paragraph.
@@ -340,11 +340,11 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [ ] `\pretolerance` - Badness threshold for the no-hyphenation line-breaking pass.
 - [ ] `\prevgraf` - Number of lines in the most recent paragraph contribution.
 - [ ] `\rightskip` - Glue added to the right of every line.
-- [ ] `\spacefactor` - Current space factor used for interword spacing.
-- [ ] `\spaceskip` - Explicit interword glue override.
+- [x] `\spacefactor` - Current space factor used for interword spacing.
+- [x] `\spaceskip` - Explicit interword glue override.
 - [x] `\tolerance` - Badness threshold for line breaking with hyphenation; implemented as an assignable integer parameter, with paragraph consumption pending.
 - [ ] `\vadjust` - Inserts vertical material associated with the current line.
-- [ ] `\xspaceskip` - Explicit intersentence glue override.
+- [x] `\xspaceskip` - Explicit intersentence glue override.
 
 ## Penalties
 
@@ -357,7 +357,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [ ] `\lastpenalty` - Reports the last penalty on the current list, or zero.
 - [ ] `\linepenalty` - Base demerit contribution for each broken line.
 - [ ] `\outputpenalty` - Penalty value that triggered the current output routine.
-- [ ] `\penalty` - Adds a penalty node to the current list.
+- [x] `\penalty` - Adds a penalty node to the current list.
 - [ ] `\unpenalty` - Removes the last penalty from the current list when allowed.
 - [ ] `\widowpenalty` - Penalty after the penultimate line of a paragraph.
 

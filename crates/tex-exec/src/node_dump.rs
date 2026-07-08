@@ -48,10 +48,18 @@ fn dump_node(stores: &Universe, node: &Node, config: &DumpConfig, depth: i32, ou
     write_prefix(depth, out);
     match node {
         Node::Kern { amount, kind } => {
-            if *kind != KernKind::Explicit {
-                out.push_str(kind.kern_dump_prefix());
+            if *kind == KernKind::Accent {
+                let _ = writeln!(
+                    out,
+                    "\\kern {} (for accent)",
+                    format_scaled_without_unit(*amount)
+                );
+            } else {
+                if *kind != KernKind::Explicit {
+                    out.push_str(kind.kern_dump_prefix());
+                }
+                let _ = writeln!(out, "\\kern {}", format_scaled_without_unit(*amount));
             }
-            let _ = writeln!(out, "\\kern {}", format_scaled_without_unit(*amount));
         }
         Node::Glue { spec, kind } => {
             let _ = writeln!(
@@ -83,20 +91,80 @@ fn dump_node(stores: &Universe, node: &Node, config: &DumpConfig, depth: i32, ou
         Node::Penalty(value) => {
             let _ = writeln!(out, "\\penalty {value}");
         }
-        Node::Char { ch, .. } => {
-            let _ = writeln!(out, "\\char{}", *ch as u32);
+        Node::Char { font, ch } => {
+            let _ = writeln!(out, "{} {}", dump_font(stores, *font), dump_char(*ch));
         }
-        Node::Lig { ch, .. } => {
-            let _ = writeln!(out, "\\ligature {ch}");
+        Node::Lig { font, ch, .. } => {
+            let _ = writeln!(out, "{} {}", dump_font(stores, *font), dump_ligature(*ch));
+        }
+        Node::Disc { pre, post, replace } => {
+            dump_disc(stores, *pre, *post, *replace, config, depth, out)
         }
         Node::MathOn => out.push_str("\\mathon\n"),
         Node::MathOff => out.push_str("\\mathoff\n"),
-        Node::Unset
-        | Node::Disc { .. }
-        | Node::Mark { .. }
-        | Node::Ins { .. }
-        | Node::Whatsit(_)
-        | Node::Adjust(_) => out.push_str("[]\n"),
+        Node::Unset | Node::Mark { .. } | Node::Ins { .. } | Node::Whatsit(_) | Node::Adjust(_) => {
+            out.push_str("[]\n")
+        }
+    }
+}
+
+fn dump_disc(
+    stores: &Universe,
+    pre: NodeListId,
+    post: NodeListId,
+    replace: NodeListId,
+    config: &DumpConfig,
+    depth: i32,
+    out: &mut String,
+) {
+    if stores.nodes(replace).is_empty() {
+        out.push_str("\\discretionary\n");
+    } else {
+        let _ = writeln!(
+            out,
+            "\\discretionary replacing {}",
+            stores.nodes(replace).len()
+        );
+    }
+    dump_list(stores, pre, config, depth + 1, out);
+    if !stores.nodes(post).is_empty() {
+        let old_len = out.len();
+        dump_list(stores, post, config, depth + 1, out);
+        if old_len + 1 < out.len() {
+            out.replace_range(old_len + 1..old_len + 2, "|");
+        }
+    }
+    dump_list(stores, replace, config, depth, out);
+}
+
+fn dump_font(stores: &Universe, font: tex_state::ids::FontId) -> String {
+    if stores.current_font() == font
+        && let Some(symbol) = stores.current_font_symbol()
+    {
+        return format!("\\{}", stores.resolve(symbol));
+    }
+    format!("\\{}", stores.font_name(font))
+}
+
+fn dump_char(ch: char) -> String {
+    if ch.is_ascii_graphic() {
+        ch.to_string()
+    } else if (0..=31).contains(&(ch as u32)) {
+        let marker = char::from_u32((ch as u32) + 64).expect("control marker is ASCII");
+        format!("^^{marker}")
+    } else {
+        format!("\\char{}", ch as u32)
+    }
+}
+
+fn dump_ligature(ch: char) -> String {
+    match ch as u32 {
+        11 => "^^K (ligature ff)".to_owned(),
+        12 => "^^L (ligature fi)".to_owned(),
+        13 => "^^M (ligature fl)".to_owned(),
+        14 => "^^N (ligature ffi)".to_owned(),
+        15 => "^^O (ligature ffl)".to_owned(),
+        _ => dump_char(ch),
     }
 }
 
