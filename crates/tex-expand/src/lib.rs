@@ -9,8 +9,10 @@
 use std::fmt;
 
 use tex_lex::{InputSource, InputStack, LexError, MacroArguments, TokenListReplayKind};
+use tex_state::glue::GlueSpec;
 use tex_state::interner::Symbol;
 use tex_state::meaning::Meaning;
+use tex_state::scaled::Scaled;
 use tex_state::token::Token;
 use tex_state::{ExpansionState, InputOpenState, InputReadState, Universe};
 
@@ -181,6 +183,34 @@ pub enum EngineMode {
     Math,
 }
 
+/// Read-only execution facts needed by expansion-time internal quantities.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EngineStateSnapshot {
+    pub mode: EngineMode,
+    pub is_inner_mode: bool,
+    pub space_factor: i32,
+    pub prev_depth: Scaled,
+    pub prev_graf: i32,
+    pub last_penalty: i32,
+    pub last_kern: Scaled,
+    pub last_skip: GlueSpec,
+}
+
+impl Default for EngineStateSnapshot {
+    fn default() -> Self {
+        Self {
+            mode: EngineMode::Vertical,
+            is_inner_mode: false,
+            space_factor: 1000,
+            prev_depth: Scaled::from_raw(0),
+            prev_graf: 0,
+            last_penalty: 0,
+            last_kern: Scaled::from_raw(0),
+            last_skip: GlueSpec::ZERO,
+        }
+    }
+}
+
 /// Result of one expansion dispatch.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Dispatch {
@@ -303,12 +333,38 @@ pub trait ExpansionHooks<S> {
         false
     }
 
+    fn space_factor(&self) -> i32 {
+        1000
+    }
+
+    fn prev_depth(&self) -> Scaled {
+        Scaled::from_raw(0)
+    }
+
+    fn prev_graf(&self) -> i32 {
+        0
+    }
+
+    fn last_penalty(&self) -> i32 {
+        0
+    }
+
+    fn last_kern(&self) -> Scaled {
+        Scaled::from_raw(0)
+    }
+
+    fn last_skip(&self) -> GlueSpec {
+        GlueSpec::ZERO
+    }
+
     fn input_stream_eof(&self, stores: &impl ExpansionState, stream: u8) -> bool {
         if stream >= tex_state::world::STREAM_SLOT_COUNT as u8 {
             return true;
         }
         stores.input_stream_eof(tex_state::StreamSlot::new(stream))
     }
+
+    fn set_engine_state(&mut self, _state: EngineStateSnapshot) {}
 }
 
 pub trait ExpandNext<S, St: ExpansionState, R, H> {

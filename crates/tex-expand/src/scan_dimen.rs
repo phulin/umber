@@ -570,6 +570,18 @@ where
                     .unwrap_or_else(|| Scaled::from_raw(0)),
             ));
         }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PrevDepth) => {
+            consume_optional_space(input, stores, recorder, hooks, expander)?;
+            return Ok(ScannedDimen::new(hooks.prev_depth()));
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastKern) => {
+            consume_optional_space(input, stores, recorder, hooks, expander)?;
+            return Ok(ScannedDimen::new(hooks.last_kern()));
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastSkip) => {
+            consume_optional_space(input, stores, recorder, hooks, expander)?;
+            return Ok(ScannedDimen::new(hooks.last_skip().width));
+        }
         _ => {}
     }
 

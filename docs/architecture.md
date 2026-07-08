@@ -440,12 +440,13 @@ makes box-level memoization (M4) sound.
   Post-line-break produces line node vectors with named
   `\leftskip`/`\rightskip` glue, per-line width/indent dimensions selected
   from `\parshape` first and otherwise TeX's `\hangindent`/`\hangafter`
-  rules, interline penalty decisions, and migrated paragraph mark/adjust
-  material. Forced breakpoint penalties are not passable. The stomach remains
-  responsible for freezing those vectors, hpacking to the selected line width,
-  applying the selected indent as the hbox shift, and appending hboxes,
-  migrated contribution material, and after-line penalties to the enclosing
-  vertical list in TeX order. Remaining pdfTeX corpus parity details are
+  rules, and interline penalty decisions. Forced breakpoint penalties are not
+  passable. The stomach remains responsible for extracting top-level
+  mark/insert/adjust material from each line, freezing the retained line
+  vectors, hpacking to the selected line width, applying the selected indent
+  as the hbox shift, and appending hboxes, migrated contribution material, and
+  after-line penalties to the enclosing vertical list in TeX order. Remaining
+  pdfTeX corpus parity details are
   tracked as follow-up work rather than weakening this purity boundary.
 - **Math typesetter**: mlist → hlist conversion, styles, fraction/radical
   layout, math fonts. Same contract: frozen mlist in, frozen hlist out.

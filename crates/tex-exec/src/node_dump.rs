@@ -30,11 +30,27 @@ pub(crate) fn dump_node_list(stores: &Universe, id: NodeListId, config: DumpConf
     out
 }
 
+pub(crate) fn dump_node_slice(stores: &Universe, nodes: &[Node], config: DumpConfig) -> String {
+    let mut out = String::new();
+    dump_nodes(stores, nodes, &config, -1, &mut out);
+    out
+}
+
 fn dump_list(stores: &Universe, id: NodeListId, config: &DumpConfig, depth: i32, out: &mut String) {
+    let nodes = stores.nodes(id);
+    dump_nodes(stores, nodes, config, depth, out);
+}
+
+fn dump_nodes(
+    stores: &Universe,
+    nodes: &[Node],
+    config: &DumpConfig,
+    depth: i32,
+    out: &mut String,
+) {
     if config.depth < 0 || depth > config.depth {
         return;
     }
-    let nodes = stores.nodes(id);
     let limit = config.breadth.max(0) as usize;
     for node in nodes.iter().take(limit) {
         dump_node(stores, node, config, depth, out);
@@ -259,27 +275,35 @@ fn format_rule_dimension(value: Option<Scaled>) -> String {
 }
 
 fn format_scaled_without_unit(value: Scaled) -> String {
-    let raw = value.raw();
-    let negative = raw < 0;
-    let magnitude = if negative {
-        i64::from(raw).wrapping_neg()
-    } else {
-        i64::from(raw)
-    };
+    let mut raw = i64::from(value.raw());
+    let mut out = String::new();
+    if raw < 0 {
+        out.push('-');
+        raw = -raw;
+    }
     let unity = i64::from(Scaled::UNITY);
-    let mut integer = magnitude / unity;
-    let fraction = magnitude % unity;
-    let mut decimal = ((fraction * 100_000) + (unity / 2)) / unity;
-    if decimal == 100_000 {
-        integer += 1;
-        decimal = 0;
+    out.push_str(&(raw / unity).to_string());
+    out.push('.');
+    let mut scaled = 10 * (raw % unity) + 5;
+    let mut delta = 10;
+    loop {
+        if delta > unity {
+            scaled += 0o100000 - 50_000;
+        }
+        out.push(char::from(
+            b'0' + u8::try_from(scaled / unity).expect("scaled digit fits u8"),
+        ));
+        scaled = 10 * (scaled % unity);
+        delta *= 10;
+        if scaled <= delta {
+            break;
+        }
     }
-    let mut fraction_text = format!("{decimal:05}");
-    while fraction_text.len() > 1 && fraction_text.ends_with('0') {
-        fraction_text.pop();
-    }
-    let sign = if negative { "-" } else { "" };
-    format!("{sign}{integer}.{fraction_text}")
+    out
+}
+
+pub(crate) fn format_scaled_for_diagnostics(value: Scaled) -> String {
+    format_scaled_without_unit(value)
 }
 
 fn format_glue_ratio(value: GlueSetRatio) -> String {

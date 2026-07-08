@@ -17,7 +17,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [x] `\hbadness` - Threshold above which underfull or loose hboxes are reported. Implemented as an assignable integer parameter consumed by `tex-typeset` horizontal packing diagnostics.
 - [ ] `\hbox` - Builds a horizontal box.
 - [x] `\hfuzz` - Tolerance before overfull hboxes are reported. Implemented as an assignable dimension parameter consumed by `tex-typeset` horizontal packing diagnostics.
-- [ ] `\hrule` - Adds a horizontal rule in vertical mode.
+- [x] `\hrule` - Adds a horizontal rule in vertical mode with TeX's running-width/default-thickness rule dimensions and resets `\prevdepth` to the ignore sentinel.
 - [ ] `\ht` - Reads or assigns the height of a box register.
 - [ ] `\lastbox` - Removes and returns the last box from the current list when allowed.
 - [ ] `\leaders` - Repeats a box or rule across glue.
@@ -115,13 +115,13 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [x] `\hfilneg` - Inserts negative first-order horizontal stretch.
 - [x] `\hskip` - Inserts horizontal glue.
 - [x] `\hss` - Inserts horizontal glue with infinite stretch and shrink.
-- [ ] `\lastskip` - Reports the last glue or muglue on the current list, or zero.
-- [ ] `\unskip` - Removes the last glue item from the current list when allowed.
-- [ ] `\vfil` - Inserts first-order infinitely stretchable vertical glue.
-- [ ] `\vfill` - Inserts second-order infinitely stretchable vertical glue.
-- [ ] `\vfilneg` - Inserts negative first-order vertical stretch.
+- [x] `\lastskip` - Reports the last glue on the current list, preserving stretch and shrink order, or zero.
+- [x] `\unskip` - Removes the last glue item from the current list when allowed.
+- [x] `\vfil` - Inserts first-order infinitely stretchable vertical glue.
+- [x] `\vfill` - Inserts second-order infinitely stretchable vertical glue.
+- [x] `\vfilneg` - Inserts negative first-order vertical stretch.
 - [x] `\vskip` - Inserts vertical glue.
-- [ ] `\vss` - Inserts vertical glue with infinite stretch and shrink.
+- [x] `\vss` - Inserts vertical glue with infinite stretch and shrink.
 
 ## Hyphenation And Languages
 
@@ -165,12 +165,12 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 ## Kerns And Box Motion
 
 - [x] `\kern` - Adds an explicit kern to the current list.
-- [ ] `\lastkern` - Reports the last kern on the current list, or zero.
+- [x] `\lastkern` - Reports the last kern on the current list, or zero.
 - [x] `\lower` - Lowers a box in horizontal or math mode.
 - [x] `\moveleft` - Moves a box left in vertical mode.
 - [x] `\moveright` - Moves a box right in vertical mode.
 - [x] `\raise` - Raises a box in horizontal or math mode.
-- [ ] `\unkern` - Removes the last kern from the current list when allowed.
+- [x] `\unkern` - Removes the last kern from the current list when allowed.
 
 ## Conditionals
 
@@ -223,7 +223,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 
 - [x] `\botmark` - Documented stub until the page builder stores marks: expands to an empty token list.
 - [x] `\firstmark` - Documented stub until the page builder stores marks: expands to an empty token list.
-- [ ] `\mark` - Adds mark text to the current vertical list.
+- [x] `\mark` - Adds frozen mark text to the current list for later page-builder mark handling.
 - [x] `\topmark` - Documented stub until the page builder stores marks: expands to an empty token list.
 
 ## Math
@@ -339,12 +339,12 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [x] `\parshape` - Defines per-line indentation and width; stored per nest level and captured at `\par`.
 - [x] `\parskip` - Glue inserted by the enclosing vertical list before a paragraph starts.
 - [x] `\pretolerance` - Badness threshold for the no-hyphenation line-breaking pass; negative values skip the first pass.
-- [ ] `\prevgraf` - Number of lines in the most recent paragraph contribution.
+- [x] `\prevgraf` - Number of lines in the most recent paragraph contribution; read/write through the enclosing vertical mode level.
 - [x] `\rightskip` - Glue added to the right of every line; captured for the paragraph handoff.
 - [x] `\spacefactor` - Current space factor used for interword spacing.
 - [x] `\spaceskip` - Explicit interword glue override.
 - [x] `\tolerance` - Badness threshold for line breaking with hyphenation; consumed by the second and emergency passes.
-- [ ] `\vadjust` - Inserts vertical material associated with the current line.
+- [x] `\vadjust` - Inserts internal vertical material associated with the current paragraph line and migrates it after line breaking.
 - [x] `\xspaceskip` - Explicit intersentence glue override.
 
 ## Penalties
@@ -355,11 +355,11 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [ ] `\floatingpenalty` - Penalty for insertions split between pages.
 - [ ] `\hyphenpenalty` - Penalty for line breaks at discretionary hyphens.
 - [x] `\interlinepenalty` - Penalty inserted between paragraph lines by post-line-break surgery.
-- [ ] `\lastpenalty` - Reports the last penalty on the current list, or zero.
+- [x] `\lastpenalty` - Reports the last penalty on the current list, or zero.
 - [x] `\linepenalty` - Base demerit contribution for each broken line; consumed by the paragraph line breaker.
 - [ ] `\outputpenalty` - Penalty value that triggered the current output routine.
 - [x] `\penalty` - Adds a penalty node to the current list.
-- [ ] `\unpenalty` - Removes the last penalty from the current list when allowed.
+- [x] `\unpenalty` - Removes the last penalty from the current list when allowed.
 - [x] `\widowpenalty` - Penalty after the penultimate line of a paragraph; inserted by post-line-break surgery.
 
 ## Registers And Arithmetic

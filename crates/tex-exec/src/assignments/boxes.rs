@@ -1,5 +1,6 @@
 use tex_expand::{ExpansionHooks, NoopRecorder, get_x_token_with_recorder_and_hooks};
 use tex_lex::{InputSource, InputStack};
+use tex_state::glue::Order;
 use tex_state::ids::NodeListId;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::node::{GlueKind, KernKind, Node};
@@ -160,7 +161,10 @@ where
                 },
             )?;
         }
-        UnexpandablePrimitive::HSkip | UnexpandablePrimitive::VSkip => {
+        UnexpandablePrimitive::HSkip => {
+            if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
+                ensure_horizontal_for_character(nest, input, stores)?;
+            }
             let spec = scan_glue_id(input, stores, hooks, false)?;
             append_node_to_current_list(
                 nest,
@@ -171,8 +175,114 @@ where
                 },
             )?;
         }
+        UnexpandablePrimitive::VSkip
+        | UnexpandablePrimitive::VFil
+        | UnexpandablePrimitive::VFill
+        | UnexpandablePrimitive::VSs
+        | UnexpandablePrimitive::VFilNeg => {
+            execute_vertical_skip(primitive, nest, input, stores, hooks)?
+        }
         _ => unreachable!("caller restricts kern/skip primitives"),
     }
+    Ok(())
+}
+
+pub(super) fn execute_hrule<S, H>(
+    nest: &mut ModeNest,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    hooks: &mut H,
+) -> Result<(), ExecError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    match nest.current_mode() {
+        Mode::Vertical | Mode::InternalVertical => {}
+        Mode::Horizontal => end_paragraph(nest, stores)?,
+        Mode::RestrictedHorizontal => return Err(ExecError::HRuleHereExceptLeaders),
+        mode => {
+            return Err(ExecError::UnimplementedTypesetting {
+                mode,
+                token: Token::Cs(stores.intern("hrule")),
+                operation: "\\hrule",
+            });
+        }
+    }
+    let node = scan_rule_node(input, stores, hooks, UnexpandablePrimitive::HRule)?;
+    nest.current_list_mut().push(node);
+    nest.current_list_mut()
+        .set_prev_depth(crate::mode::IGNORE_DEPTH);
+    Ok(())
+}
+
+pub(super) fn execute_delete_last(
+    primitive: UnexpandablePrimitive,
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+) -> Result<(), ExecError> {
+    flush_pending_hchars(nest, stores)?;
+    if nest.current_mode() == Mode::Vertical && nest.current_list().is_empty() {
+        return match primitive {
+            UnexpandablePrimitive::UnSkip => Ok(()),
+            UnexpandablePrimitive::UnPenalty => Err(ExecError::CannotDeleteFromCurrentPage {
+                command: "\\unpenalty",
+            }),
+            UnexpandablePrimitive::UnKern => Err(ExecError::CannotDeleteFromCurrentPage {
+                command: "\\unkern",
+            }),
+            _ => unreachable!("caller restricts delete_last primitives"),
+        };
+    }
+    let matches_target = matches!(
+        (primitive, nest.current_list().nodes().last()),
+        (UnexpandablePrimitive::UnSkip, Some(Node::Glue { .. }))
+            | (UnexpandablePrimitive::UnPenalty, Some(Node::Penalty(_)))
+            | (UnexpandablePrimitive::UnKern, Some(Node::Kern { .. }))
+    );
+    if matches_target {
+        let _ = nest.current_list_mut().pop_last_node();
+    }
+    Ok(())
+}
+
+fn execute_vertical_skip<S, H>(
+    primitive: UnexpandablePrimitive,
+    nest: &mut ModeNest,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    hooks: &mut H,
+) -> Result<(), ExecError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    if nest.current_mode() == Mode::Horizontal {
+        end_paragraph(nest, stores)?;
+    }
+    if !matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
+        return Err(ExecError::UnimplementedTypesetting {
+            mode: nest.current_mode(),
+            token: Token::Cs(stores.intern("vskip")),
+            operation: "\\vskip",
+        });
+    }
+    let spec = match primitive {
+        UnexpandablePrimitive::VSkip => scan_glue_id(input, stores, hooks, false)?,
+        UnexpandablePrimitive::VFil => stores.intern_glue(infinite_glue(Order::Fil, false, false)),
+        UnexpandablePrimitive::VFill => {
+            stores.intern_glue(infinite_glue(Order::Fill, false, false))
+        }
+        UnexpandablePrimitive::VSs => stores.intern_glue(infinite_glue(Order::Fil, false, true)),
+        UnexpandablePrimitive::VFilNeg => {
+            stores.intern_glue(infinite_glue(Order::Fil, true, false))
+        }
+        _ => unreachable!("caller restricts vertical skip primitives"),
+    };
+    nest.current_list_mut().push(Node::Glue {
+        spec,
+        kind: GlueKind::Normal,
+    });
     Ok(())
 }
 
@@ -285,6 +395,7 @@ where
     H: ExpansionHooks<S>,
 {
     loop {
+        crate::executor::sync_engine_state::<S, _>(hooks, nest, stores);
         let token = {
             let mut recorder = NoopRecorder;
             get_x_token_with_recorder_and_hooks(input, stores, &mut recorder, hooks)?

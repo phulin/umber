@@ -21,7 +21,7 @@ pub fn post_line_break<S: TypesetState>(
             kind: GlueKind::LeftSkip,
         });
         line.append(&mut pending_post);
-        let (post, migrated) = push_line_segment(state, nodes, start, decision, &mut line);
+        let post = push_line_segment(state, nodes, start, decision, &mut line);
         pending_post = post;
         line.push(Node::Glue {
             spec: params.right_skip,
@@ -31,7 +31,6 @@ pub fn post_line_break<S: TypesetState>(
         let penalty_after = line_penalty_after(line_no, breaks, decision.hyphenated, &params);
         lines.push(BrokenLine {
             nodes: line,
-            migrated,
             penalty_after,
             hyphenated: decision.hyphenated,
             dimensions,
@@ -47,10 +46,9 @@ fn push_line_segment<S: TypesetState>(
     start: usize,
     decision: &BreakDecision,
     out: &mut Vec<Node>,
-) -> (Vec<Node>, Vec<Node>) {
+) -> Vec<Node> {
     let end = decision.position.min(nodes.len());
     let mut post = Vec::new();
-    let mut migrated = Vec::new();
     for (offset, node) in nodes[start..end].iter().enumerate() {
         let absolute = start + offset;
         match node {
@@ -62,13 +60,11 @@ fn push_line_segment<S: TypesetState>(
                 out.extend_from_slice(state.nodes(*pre));
                 post.extend_from_slice(state.nodes(*post_list));
             }
-            Node::Mark { .. } => migrated.push(node.clone()),
-            Node::Adjust(list) => migrated.extend_from_slice(state.nodes(*list)),
             Node::Glue { .. } if absolute + 1 == end && end < nodes.len() => {}
             _ => out.push(node.clone()),
         }
     }
-    (post, migrated)
+    post
 }
 
 fn next_start(nodes: &[Node], position: usize) -> usize {

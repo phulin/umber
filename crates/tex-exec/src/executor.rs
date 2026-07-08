@@ -1,10 +1,15 @@
 use tex_expand::{
-    EngineMode, ExpansionHooks, NoopRecorder, ReadRecorder, get_x_token_with_recorder_and_hooks,
+    EngineMode, EngineStateSnapshot, ExpansionHooks, NoopRecorder, ReadRecorder,
+    get_x_token_with_recorder_and_hooks,
 };
 use tex_lex::{InputSource, InputStack};
+use tex_state::glue::GlueSpec;
+use tex_state::node::Node;
+use tex_state::scaled::Scaled;
 use tex_state::{ExpansionContext, Universe};
 
 use crate::dispatch::{dispatch_delivered_token_with_recorder, unimplemented_typesetting};
+use crate::mode::IGNORE_DEPTH;
 use crate::{DispatchAction, ExecError, ExecutionStats, ModeNest, assignments};
 
 /// Stomach interpreter state.
@@ -80,11 +85,18 @@ impl Executor {
         R: ReadRecorder,
         H: ExpansionHooks<S>,
     {
+        let mut exec_hooks = ExecExpansionHooks::new(hooks);
         let mut stats = ExecutionStats::default();
         loop {
+            sync_engine_state::<S, _>(&mut exec_hooks, &self.nest, stores);
             let token = {
                 let mut expansion = ExpansionContext::new(stores);
-                get_x_token_with_recorder_and_hooks(input, &mut expansion, recorder, hooks)?
+                get_x_token_with_recorder_and_hooks(
+                    input,
+                    &mut expansion,
+                    recorder,
+                    &mut exec_hooks,
+                )?
             };
             let Some(token) = token else {
                 assignments::flush_pending_hchars(&mut self.nest, stores)?;
@@ -97,7 +109,7 @@ impl Executor {
                 input,
                 stores,
                 recorder,
-                hooks,
+                &mut exec_hooks,
             )? {
                 DispatchAction::Continue => {}
                 DispatchAction::Shipout(artifact) => {
@@ -117,6 +129,105 @@ impl Executor {
                 }
             }
         }
+    }
+}
+
+pub(crate) fn sync_engine_state<S, H>(hooks: &mut H, nest: &ModeNest, stores: &Universe)
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    hooks.set_engine_state(engine_state_snapshot(nest, stores));
+}
+
+fn engine_state_snapshot(nest: &ModeNest, stores: &Universe) -> EngineStateSnapshot {
+    let list = nest.current_list();
+    let mut state = EngineStateSnapshot {
+        mode: nest.current_mode().engine_mode(),
+        is_inner_mode: nest.current_mode().is_inner(),
+        space_factor: list.space_factor(),
+        prev_depth: list.prev_depth().unwrap_or(IGNORE_DEPTH),
+        prev_graf: nest.enclosing_vertical_prev_graf(),
+        ..EngineStateSnapshot::default()
+    };
+    match list.nodes().last() {
+        Some(Node::Penalty(value)) => state.last_penalty = *value,
+        Some(Node::Kern { amount, .. }) => state.last_kern = *amount,
+        Some(Node::Glue { spec, .. }) => state.last_skip = stores.glue(*spec),
+        _ => {}
+    }
+    state
+}
+
+struct ExecExpansionHooks<'a, H> {
+    inner: &'a mut H,
+    state: EngineStateSnapshot,
+}
+
+impl<'a, H> ExecExpansionHooks<'a, H> {
+    fn new(inner: &'a mut H) -> Self {
+        Self {
+            inner,
+            state: EngineStateSnapshot::default(),
+        }
+    }
+}
+
+impl<S, H> ExpansionHooks<S> for ExecExpansionHooks<'_, H>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    fn open_input<C: tex_state::InputReadState>(
+        &mut self,
+        input: &mut C,
+        name: &str,
+    ) -> Result<S, String> {
+        self.inner.open_input(input, name)
+    }
+
+    fn job_name(&self) -> &str {
+        self.inner.job_name()
+    }
+
+    fn mode(&self) -> EngineMode {
+        self.state.mode
+    }
+
+    fn is_inner_mode(&self) -> bool {
+        self.state.is_inner_mode
+    }
+
+    fn space_factor(&self) -> i32 {
+        self.state.space_factor
+    }
+
+    fn prev_depth(&self) -> Scaled {
+        self.state.prev_depth
+    }
+
+    fn prev_graf(&self) -> i32 {
+        self.state.prev_graf
+    }
+
+    fn last_penalty(&self) -> i32 {
+        self.state.last_penalty
+    }
+
+    fn last_kern(&self) -> Scaled {
+        self.state.last_kern
+    }
+
+    fn last_skip(&self) -> GlueSpec {
+        self.state.last_skip
+    }
+
+    fn input_stream_eof(&self, stores: &impl tex_state::ExpansionState, stream: u8) -> bool {
+        self.inner.input_stream_eof(stores, stream)
+    }
+
+    fn set_engine_state(&mut self, state: EngineStateSnapshot) {
+        self.state = state;
     }
 }
 
@@ -154,5 +265,20 @@ where
 
     fn is_inner_mode(&self) -> bool {
         self.nest.current_mode().is_inner()
+    }
+
+    fn space_factor(&self) -> i32 {
+        self.nest.current_list().space_factor()
+    }
+
+    fn prev_depth(&self) -> Scaled {
+        self.nest
+            .current_list()
+            .prev_depth()
+            .unwrap_or(IGNORE_DEPTH)
+    }
+
+    fn prev_graf(&self) -> i32 {
+        self.nest.enclosing_vertical_prev_graf()
     }
 }

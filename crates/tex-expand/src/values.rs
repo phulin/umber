@@ -168,6 +168,36 @@ where
                     ),
                 ))
             }
+            tex_state::meaning::UnexpandablePrimitive::SpaceFactor => Ok(push_rendered_text(
+                stores,
+                ExpansionReplayKind::TheOutput,
+                &hooks.space_factor().to_string(),
+            )),
+            tex_state::meaning::UnexpandablePrimitive::PrevDepth => Ok(push_rendered_text(
+                stores,
+                ExpansionReplayKind::TheOutput,
+                &format_scaled(hooks.prev_depth()),
+            )),
+            tex_state::meaning::UnexpandablePrimitive::PrevGraf => Ok(push_rendered_text(
+                stores,
+                ExpansionReplayKind::TheOutput,
+                &hooks.prev_graf().to_string(),
+            )),
+            tex_state::meaning::UnexpandablePrimitive::LastPenalty => Ok(push_rendered_text(
+                stores,
+                ExpansionReplayKind::TheOutput,
+                &hooks.last_penalty().to_string(),
+            )),
+            tex_state::meaning::UnexpandablePrimitive::LastKern => Ok(push_rendered_text(
+                stores,
+                ExpansionReplayKind::TheOutput,
+                &format_scaled(hooks.last_kern()),
+            )),
+            tex_state::meaning::UnexpandablePrimitive::LastSkip => Ok(push_rendered_text(
+                stores,
+                ExpansionReplayKind::TheOutput,
+                &format_glue(hooks.last_skip()),
+            )),
             tex_state::meaning::UnexpandablePrimitive::CatCode
             | tex_state::meaning::UnexpandablePrimitive::LcCode
             | tex_state::meaning::UnexpandablePrimitive::UcCode
@@ -469,27 +499,32 @@ pub(crate) fn roman_numeral(value: i32) -> String {
 }
 
 fn format_scaled(value: Scaled) -> String {
-    let raw = value.raw();
-    let negative = raw < 0;
-    let magnitude = if negative {
-        i64::from(raw).wrapping_neg()
-    } else {
-        i64::from(raw)
-    };
+    let mut raw = i64::from(value.raw());
+    let mut out = String::new();
+    if raw < 0 {
+        out.push('-');
+        raw = -raw;
+    }
     let unity = i64::from(Scaled::UNITY);
-    let mut integer = magnitude / unity;
-    let fraction = magnitude % unity;
-    let mut decimal = ((fraction * 100_000) + (unity / 2)) / unity;
-    if decimal == 100_000 {
-        integer += 1;
-        decimal = 0;
+    out.push_str(&(raw / unity).to_string());
+    out.push('.');
+    let mut scaled = 10 * (raw % unity) + 5;
+    let mut delta = 10;
+    loop {
+        if delta > unity {
+            scaled += 0o100000 - 50_000;
+        }
+        out.push(char::from(
+            b'0' + u8::try_from(scaled / unity).expect("scaled digit fits u8"),
+        ));
+        scaled = 10 * (scaled % unity);
+        delta *= 10;
+        if scaled <= delta {
+            break;
+        }
     }
-    let mut fraction_text = format!("{decimal:05}");
-    while fraction_text.len() > 1 && fraction_text.ends_with('0') {
-        fraction_text.pop();
-    }
-    let sign = if negative { "-" } else { "" };
-    format!("{sign}{integer}.{fraction_text}pt")
+    out.push_str("pt");
+    out
 }
 
 fn format_glue(spec: GlueSpec) -> String {

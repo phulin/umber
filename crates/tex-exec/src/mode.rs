@@ -38,6 +38,7 @@ pub struct ParagraphParams {
     pub right_skip: GlueId,
     pub par_fill_skip: GlueId,
     pub par_shape: Option<ParagraphShape>,
+    pub prev_graf: i32,
     pub hang_indent: Scaled,
     pub hang_after: i32,
     pub looseness: i32,
@@ -94,6 +95,7 @@ impl Mode {
 pub struct ModeList {
     nodes: Vec<Node>,
     prev_depth: Option<Scaled>,
+    prev_graf: i32,
     par_shape: Option<ParagraphShape>,
     pending_hchars: Vec<PendingHChar>,
     space_factor: i32,
@@ -156,6 +158,15 @@ impl ModeList {
 
     pub fn set_prev_depth(&mut self, depth: Scaled) {
         self.prev_depth = Some(depth);
+    }
+
+    #[must_use]
+    pub const fn prev_graf(&self) -> i32 {
+        self.prev_graf
+    }
+
+    pub fn set_prev_graf(&mut self, lines: i32) {
+        self.prev_graf = lines;
     }
 
     pub fn set_par_shape(&mut self, shape: ParagraphShape) {
@@ -311,5 +322,23 @@ impl ModeNest {
             .last_mut()
             .expect("ModeNest always has at least one level")
             .list_mut()
+    }
+
+    #[must_use]
+    pub fn enclosing_vertical_prev_graf(&self) -> i32 {
+        let index = self.enclosing_vertical_index();
+        self.levels[index].list().prev_graf()
+    }
+
+    pub fn set_enclosing_vertical_prev_graf(&mut self, lines: i32) {
+        let index = self.enclosing_vertical_index();
+        self.levels[index].list_mut().set_prev_graf(lines);
+    }
+
+    fn enclosing_vertical_index(&self) -> usize {
+        self.levels
+            .iter()
+            .rposition(|level| matches!(level.mode(), Mode::Vertical | Mode::InternalVertical))
+            .expect("base vertical level is always present")
     }
 }

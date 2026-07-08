@@ -47,6 +47,8 @@ pub(super) fn is_assignment_meaning(meaning: Meaning) -> bool {
                 | UnexpandablePrimitive::Patterns
                 | UnexpandablePrimitive::Hyphenation
                 | UnexpandablePrimitive::SpaceFactor
+                | UnexpandablePrimitive::PrevDepth
+                | UnexpandablePrimitive::PrevGraf
                 | UnexpandablePrimitive::SetBox
                 | UnexpandablePrimitive::Wd
                 | UnexpandablePrimitive::Ht

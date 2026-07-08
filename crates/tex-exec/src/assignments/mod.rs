@@ -348,12 +348,14 @@ where
             | UnexpandablePrimitive::NoIndent
             | UnexpandablePrimitive::ParShape
             | UnexpandablePrimitive::PrevDepth
+            | UnexpandablePrimitive::PrevGraf
             | UnexpandablePrimitive::NoInterlineSkip => {
                 reject_all_prefixes(prefixes)?;
                 execute_paragraph_command(primitive, nest, input, stores, hooks)?;
                 Ok(CommandOutcome::assigned_if(
                     primitive == UnexpandablePrimitive::ParShape
-                        || primitive == UnexpandablePrimitive::PrevDepth,
+                        || primitive == UnexpandablePrimitive::PrevDepth
+                        || primitive == UnexpandablePrimitive::PrevGraf,
                 ))
             }
             UnexpandablePrimitive::HBox
@@ -383,9 +385,31 @@ where
             }
             UnexpandablePrimitive::Kern
             | UnexpandablePrimitive::HSkip
-            | UnexpandablePrimitive::VSkip => {
+            | UnexpandablePrimitive::VSkip
+            | UnexpandablePrimitive::VFil
+            | UnexpandablePrimitive::VFill
+            | UnexpandablePrimitive::VSs
+            | UnexpandablePrimitive::VFilNeg => {
                 reject_all_prefixes(prefixes)?;
                 execute_kern_or_skip(primitive, nest, input, stores, hooks)?;
+                Ok(CommandOutcome::continue_only())
+            }
+            UnexpandablePrimitive::HRule => {
+                reject_all_prefixes(prefixes)?;
+                execute_hrule(nest, input, stores, hooks)?;
+                Ok(CommandOutcome::continue_only())
+            }
+            UnexpandablePrimitive::UnPenalty
+            | UnexpandablePrimitive::UnKern
+            | UnexpandablePrimitive::UnSkip => {
+                reject_all_prefixes(prefixes)?;
+                execute_delete_last(primitive, nest, stores)?;
+                Ok(CommandOutcome::continue_only())
+            }
+            UnexpandablePrimitive::LastPenalty
+            | UnexpandablePrimitive::LastKern
+            | UnexpandablePrimitive::LastSkip => {
+                reject_all_prefixes(prefixes)?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::Char
@@ -472,7 +496,7 @@ where
             }
             UnexpandablePrimitive::ShowLists => {
                 reject_all_prefixes(prefixes)?;
-                diagnostics::execute_showlists(stores);
+                diagnostics::execute_showlists(stores, nest);
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::ShowHyphens => {

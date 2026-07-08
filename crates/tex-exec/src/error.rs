@@ -68,6 +68,11 @@ pub enum ExecError {
         context: &'static str,
         value: i32,
     },
+    BadPrevGraf(i32),
+    HRuleHereExceptLeaders,
+    CannotDeleteFromCurrentPage {
+        command: &'static str,
+    },
     ReadNeedsTo,
     ReadNotImplemented,
     FileEndedWithinRead,
@@ -148,6 +153,13 @@ impl fmt::Display for ExecError {
             Self::InvalidCode { context, value } => {
                 write!(f, "Invalid code ({value}) while scanning {context}")
             }
+            Self::BadPrevGraf(value) => write!(f, "Bad \\prevgraf ({value})"),
+            Self::HRuleHereExceptLeaders => {
+                write!(f, "You can't use `\\hrule' here except with leaders.")
+            }
+            Self::CannotDeleteFromCurrentPage { command } => {
+                write!(f, "You can't use `{command}' in vertical mode.")
+            }
             Self::ReadNeedsTo => write!(f, "Missing `to' inserted for \\read"),
             Self::ReadNotImplemented => write!(f, "I can't \\read from terminal in nonstop modes"),
             Self::FileEndedWithinRead => write!(f, "File ended within \\read"),
@@ -202,6 +214,9 @@ impl std::error::Error for ExecError {
             | Self::RegisterNumberOutOfRange(_)
             | Self::ArithmeticOverflow
             | Self::InvalidCode { .. }
+            | Self::BadPrevGraf(_)
+            | Self::HRuleHereExceptLeaders
+            | Self::CannotDeleteFromCurrentPage { .. }
             | Self::ReadNeedsTo
             | Self::ReadNotImplemented
             | Self::FileEndedWithinRead

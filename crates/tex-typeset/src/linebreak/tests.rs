@@ -98,6 +98,7 @@ fn parshape_repeats_last_line_and_overrides_hanging() {
         }),
         hang_indent: sp(20),
         hang_after: 0,
+        line_offset: 0,
     };
 
     assert_eq!(
@@ -123,6 +124,7 @@ fn hangindent_selects_affected_lines() {
         parshape: None,
         hang_indent: sp(25),
         hang_after: 1,
+        line_offset: 0,
     };
     assert_eq!(
         shape.dimensions(1),
@@ -291,7 +293,7 @@ fn final_hyphen_demerits_apply_to_penultimate_hyphenated_line() {
 }
 
 #[test]
-fn post_line_break_migrates_marks_and_adjust_content_out_of_lines() {
+fn post_line_break_keeps_migrating_nodes_for_execution_layer() {
     let mut universe = Universe::new();
     let empty_glue = universe.intern_glue(GlueSpec::ZERO);
     let mark_tokens = universe.intern_token_list(&[Token::Char {
@@ -338,21 +340,15 @@ fn post_line_break_migrates_marks_and_adjust_content_out_of_lines() {
     );
 
     assert_eq!(lines.len(), 2);
-    assert!(
-        lines[0]
-            .nodes
-            .iter()
-            .all(|node| !matches!(node, Node::Mark { .. } | Node::Adjust(_)))
-    );
     assert!(matches!(
-        lines[0].migrated.as_slice(),
+        lines[0].nodes.as_slice(),
         [
+            Node::Glue { .. },
+            Node::Rule { .. },
             Node::Mark { class: 0, tokens },
-            Node::Kern {
-                amount,
-                kind: KernKind::Explicit,
-            }
-        ] if *tokens == mark_tokens && *amount == sp(7)
+            Node::Adjust(list),
+            Node::Penalty(-10_000),
+            Node::Glue { .. },
+        ] if *tokens == mark_tokens && *list == adjust_content
     ));
-    assert!(lines[1].migrated.is_empty());
 }

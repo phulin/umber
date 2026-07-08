@@ -466,6 +466,30 @@ where
             consume_optional_space(input, stores, recorder, hooks, expander)?;
             Ok(ScannedInt::new(value))
         }
+        tex_state::meaning::UnexpandablePrimitive::SpaceFactor => {
+            consume_optional_space(input, stores, recorder, hooks, expander)?;
+            Ok(ScannedInt::new(hooks.space_factor()))
+        }
+        tex_state::meaning::UnexpandablePrimitive::PrevDepth => {
+            consume_optional_space(input, stores, recorder, hooks, expander)?;
+            Ok(ScannedInt::new(hooks.prev_depth().raw()))
+        }
+        tex_state::meaning::UnexpandablePrimitive::PrevGraf => {
+            consume_optional_space(input, stores, recorder, hooks, expander)?;
+            Ok(ScannedInt::new(hooks.prev_graf()))
+        }
+        tex_state::meaning::UnexpandablePrimitive::LastPenalty => {
+            consume_optional_space(input, stores, recorder, hooks, expander)?;
+            Ok(ScannedInt::new(hooks.last_penalty()))
+        }
+        tex_state::meaning::UnexpandablePrimitive::LastKern => {
+            consume_optional_space(input, stores, recorder, hooks, expander)?;
+            Ok(ScannedInt::new(hooks.last_kern().raw()))
+        }
+        tex_state::meaning::UnexpandablePrimitive::LastSkip => {
+            consume_optional_space(input, stores, recorder, hooks, expander)?;
+            Ok(ScannedInt::new(hooks.last_skip().width.raw()))
+        }
         tex_state::meaning::UnexpandablePrimitive::CatCode
         | tex_state::meaning::UnexpandablePrimitive::LcCode
         | tex_state::meaning::UnexpandablePrimitive::UcCode

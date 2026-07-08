@@ -488,6 +488,166 @@ fn paragraph_end_appends_single_line_through_vertical_spacing() {
 }
 
 #[test]
+fn last_items_read_current_horizontal_tail_by_type() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\setbox0=\\hbox{\
+         \\kern3pt\\edef\\lk{\\the\\lastkern}\
+         \\penalty42\\edef\\lp{\\the\\lastpenalty}\
+         \\hskip1pt plus 2fil\\edef\\ls{\\the\\lastskip}\
+         \\kern4pt\\edef\\lszero{\\the\\lastskip}}",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("last-item reads execute");
+
+    assert_eq!(macro_text(&stores, "lk"), "3.0pt");
+    assert_eq!(macro_text(&stores, "lp"), "42");
+    assert_eq!(macro_text(&stores, "ls"), "1.0pt plus 2.0fil");
+    assert_eq!(macro_text(&stores, "lszero"), "0.0pt");
+}
+
+#[test]
+fn delete_last_removes_only_matching_current_list_tail() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\vskip1pt\\unpenalty\\edef\\stillglue{\\the\\lastskip}\
+         \\unskip\\edef\\noglue{\\the\\lastskip}\
+         \\penalty77\\unpenalty\\kern3pt\\unkern\\unskip",
+    ));
+    let mut executor = Executor::new();
+
+    executor
+        .run(&mut input, &mut stores)
+        .expect("delete-last commands execute");
+
+    assert_eq!(macro_text(&stores, "stillglue"), "1.0pt");
+    assert_eq!(macro_text(&stores, "noglue"), "0.0pt");
+    assert!(executor.nest().current_list().nodes().is_empty());
+}
+
+#[test]
+fn vertical_infinite_skip_primitives_preserve_glue_orders() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\vfil\\edef\\vfilglue{\\the\\lastskip}\
+         \\vfill\\edef\\vfillglue{\\the\\lastskip}\
+         \\vss\\edef\\vssglue{\\the\\lastskip}\
+         \\vfilneg\\edef\\vfilnegglue{\\the\\lastskip}",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("vertical infinite skips execute");
+
+    assert_eq!(macro_text(&stores, "vfilglue"), "0.0pt plus 1.0fil");
+    assert_eq!(macro_text(&stores, "vfillglue"), "0.0pt plus 1.0fill");
+    assert_eq!(
+        macro_text(&stores, "vssglue"),
+        "0.0pt plus 1.0fil minus 1.0fil"
+    );
+    assert_eq!(macro_text(&stores, "vfilnegglue"), "0.0pt plus -1.0fil");
+}
+
+#[test]
+fn delete_last_outer_vertical_empty_matches_tex_error_asymmetry() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\unskip"));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("empty outer unskip is silent");
+
+    for (source, command) in [("\\unpenalty", "\\unpenalty"), ("\\unkern", "\\unkern")] {
+        let mut stores = Universe::new();
+        install_unexpandable_primitives(&mut stores);
+        let mut input = InputStack::new(MemoryInput::new(source));
+        let err = Executor::new()
+            .run(&mut input, &mut stores)
+            .expect_err("empty outer delete should error");
+        assert_eq!(
+            err.to_string(),
+            format!("You can't use `{command}' in vertical mode.")
+        );
+    }
+}
+
+#[test]
+fn prevgraf_reads_writes_and_tracks_finished_paragraph_lines() {
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\font\\tenrm=cmr10 \\tenrm\
+         \\parindent=0pt \\hsize=20pt \\parfillskip=0pt\
+         \\prevgraf=5 \\edef\\pg{\\the\\prevgraf}\
+         a\\penalty-10000 b\\penalty-10000 c\\par",
+    ));
+    let mut executor = Executor::new();
+
+    executor
+        .run(&mut input, &mut stores)
+        .expect("prevgraf program executes");
+
+    assert_eq!(macro_text(&stores, "pg"), "5");
+    assert_eq!(executor.nest().enclosing_vertical_prev_graf(), 8);
+}
+
+#[test]
+fn vertical_hrule_uses_defaults_and_sets_prevdepth_ignore_sentinel() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\hrule width7pt"));
+    let mut executor = Executor::new();
+
+    executor
+        .run(&mut input, &mut stores)
+        .expect("hrule executes");
+
+    assert_eq!(
+        executor.nest().current_list().prev_depth(),
+        Some(crate::mode::IGNORE_DEPTH)
+    );
+    let [
+        tex_state::node::Node::Rule {
+            width,
+            height,
+            depth,
+        },
+    ] = executor.nest().current_list().nodes()
+    else {
+        panic!("vertical list should contain one rule");
+    };
+    assert_eq!(width.map(tex_state::scaled::Scaled::raw), Some(7 * 65_536));
+    assert_eq!(height.map(tex_state::scaled::Scaled::raw), Some(26_214));
+    assert_eq!(depth.map(tex_state::scaled::Scaled::raw), Some(0));
+}
+
+#[test]
+fn showlists_reports_vertical_rule_and_ignored_prevdepth() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\showboxbreadth=100 \\showboxdepth=100 \\hrule width7pt\\showlists",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("showlists executes");
+
+    let log = terminal_effect_text(&stores);
+    assert!(log.contains("### recent contributions:"));
+    assert!(log.contains("\\rule(0.4+0.0)x7.0"));
+    assert!(log.contains("prevdepth ignored"));
+}
+
+#[test]
 fn parshape_and_hanging_parameters_reset_after_paragraph() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
@@ -503,6 +663,19 @@ fn parshape_and_hanging_parameters_reset_after_paragraph() {
     assert_eq!(stores.dimen_param(DimenParam::HANG_INDENT).raw(), 0);
     assert_eq!(stores.int_param(IntParam::HANG_AFTER), 1);
     assert!(executor.nest().current_list().par_shape().is_none());
+}
+
+fn macro_text(stores: &Universe, name: &str) -> String {
+    let symbol = stores.symbol(name).expect("macro control sequence");
+    let meaning = stores.macro_meaning(symbol).expect("macro meaning");
+    stores
+        .tokens(meaning.replacement_text())
+        .iter()
+        .filter_map(|token| match token {
+            Token::Char { ch, .. } => Some(*ch),
+            Token::Cs(_) | Token::Param(_) => None,
+        })
+        .collect()
 }
 
 #[test]

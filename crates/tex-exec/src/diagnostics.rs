@@ -9,8 +9,10 @@ use tex_state::env::banks::IntParam;
 use tex_state::token::{Catcode, Token};
 use tex_state::{PrintSink, Universe};
 
-use crate::node_dump::{DumpConfig, dump_node_list};
+use crate::mode::IGNORE_DEPTH;
+use crate::node_dump::{DumpConfig, dump_node_list, dump_node_slice};
 use crate::{ExecError, push_tokens};
+use crate::{Mode, ModeNest};
 
 pub(crate) fn execute_show<S>(
     input: &mut InputStack<S>,
@@ -98,11 +100,62 @@ where
     Ok(())
 }
 
-pub(crate) fn execute_showlists(stores: &mut Universe) {
-    write_diagnostic(
-        stores,
-        "\n### vertical mode entered at line 0\nprevdepth ignored\n\n! OK.\n",
-    );
+pub(crate) fn execute_showlists(stores: &mut Universe, nest: &ModeNest) {
+    let mut text = String::new();
+    text.push('\n');
+    let summary = nest.summary();
+    for (index, level) in summary.levels().iter().enumerate().rev() {
+        text.push_str("### ");
+        text.push_str(mode_text(level.mode()));
+        text.push_str(" mode entered at line 0\n");
+        if index == 0 && !level.list().nodes().is_empty() {
+            text.push_str("### recent contributions:\n");
+        }
+        text.push_str(&dump_node_slice(
+            stores,
+            level.list().nodes(),
+            DumpConfig::read(stores),
+        ));
+        match level.mode() {
+            Mode::Vertical | Mode::InternalVertical => {
+                text.push_str("prevdepth ");
+                match level.list().prev_depth() {
+                    Some(depth) if depth.raw() > IGNORE_DEPTH.raw() => {
+                        text.push_str(&crate::node_dump::format_scaled_for_diagnostics(depth));
+                    }
+                    _ => text.push_str("ignored"),
+                }
+                if level.list().prev_graf() != 0 {
+                    text.push_str(", prevgraf ");
+                    text.push_str(&level.list().prev_graf().to_string());
+                    text.push_str(" line");
+                    if level.list().prev_graf() != 1 {
+                        text.push('s');
+                    }
+                }
+                text.push('\n');
+            }
+            Mode::Horizontal | Mode::RestrictedHorizontal => {
+                text.push_str("spacefactor ");
+                text.push_str(&level.list().space_factor().to_string());
+                text.push('\n');
+            }
+            Mode::Math | Mode::DisplayMath => {}
+        }
+    }
+    text.push_str("\n! OK.\n");
+    write_diagnostic(stores, &text);
+}
+
+fn mode_text(mode: Mode) -> &'static str {
+    match mode {
+        Mode::Vertical => "vertical",
+        Mode::InternalVertical => "internal vertical",
+        Mode::Horizontal => "horizontal",
+        Mode::RestrictedHorizontal => "restricted horizontal",
+        Mode::Math => "math",
+        Mode::DisplayMath => "display math",
+    }
 }
 
 pub(crate) fn execute_showhyphens<S, H>(

@@ -121,8 +121,12 @@ where
         }
         UnexpandablePrimitive::VRule => {
             flush_pending_hchars(nest, stores)?;
+            if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
+                ensure_horizontal_for_character(nest, input, stores)?;
+            }
             nest.current_list_mut()
-                .push(scan_rule_node(input, stores, hooks)?);
+                .push(scan_rule_node(input, stores, hooks, primitive)?);
+            nest.current_list_mut().set_space_factor(1000);
         }
         UnexpandablePrimitive::ItalicCorrection => append_italic_correction(nest, stores)?,
         UnexpandablePrimitive::Discretionary => {
@@ -406,7 +410,7 @@ fn scale_by_factor(value: Scaled, num: i32, den: i32) -> Scaled {
     Scaled::from_raw(((i64::from(value.raw()) * i64::from(num)) / i64::from(den)) as i32)
 }
 
-fn infinite_glue(order: Order, negative: bool, shrink: bool) -> GlueSpec {
+pub(super) fn infinite_glue(order: Order, negative: bool, shrink: bool) -> GlueSpec {
     GlueSpec {
         width: Scaled::from_raw(0),
         stretch: Scaled::from_raw(if negative {
@@ -518,18 +522,22 @@ where
     }
 }
 
-fn scan_rule_node<S, H>(
+pub(super) fn scan_rule_node<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
+    primitive: UnexpandablePrimitive,
 ) -> Result<Node, ExecError>
 where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    let mut width = None;
-    let mut height = None;
-    let mut depth = None;
+    let default_rule = Scaled::from_raw(26_214);
+    let (mut width, mut height, mut depth) = if primitive == UnexpandablePrimitive::VRule {
+        (Some(default_rule), None, None)
+    } else {
+        (None, Some(default_rule), Some(Scaled::from_raw(0)))
+    };
     loop {
         if scan_optional_keyword_x(input, stores, hooks, "width")? {
             width = Some(scan_scaled(input, stores, hooks)?);

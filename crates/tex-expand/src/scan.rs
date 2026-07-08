@@ -303,8 +303,36 @@ where
         self.inner.is_inner_mode()
     }
 
+    fn space_factor(&self) -> i32 {
+        self.inner.space_factor()
+    }
+
+    fn prev_depth(&self) -> tex_state::scaled::Scaled {
+        self.inner.prev_depth()
+    }
+
+    fn prev_graf(&self) -> i32 {
+        self.inner.prev_graf()
+    }
+
+    fn last_penalty(&self) -> i32 {
+        self.inner.last_penalty()
+    }
+
+    fn last_kern(&self) -> tex_state::scaled::Scaled {
+        self.inner.last_kern()
+    }
+
+    fn last_skip(&self) -> tex_state::glue::GlueSpec {
+        self.inner.last_skip()
+    }
+
     fn input_stream_eof(&self, stores: &impl ExpansionState, stream: u8) -> bool {
         self.inner.input_stream_eof(stores, stream)
+    }
+
+    fn set_engine_state(&mut self, state: crate::EngineStateSnapshot) {
+        self.inner.set_engine_state(state);
     }
 }
 

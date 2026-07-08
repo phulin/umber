@@ -190,6 +190,13 @@ where
                 let spec = stores.glue(stores.muskip(index));
                 return Ok(intern_spec(stores, signed_spec(spec, negative)));
             }
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastSkip) if !mu => {
+                consume_optional_space(input, stores, recorder, hooks, expander)?;
+                return Ok(intern_spec(
+                    stores,
+                    signed_spec(hooks.last_skip(), negative),
+                ));
+            }
             _ => {
                 let name = stores.resolve(symbol);
                 if (!mu && name == "skip") || (mu && name == "muskip") {

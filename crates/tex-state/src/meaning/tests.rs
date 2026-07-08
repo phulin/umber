@@ -67,6 +67,13 @@ fn meaning_variants_round_trip() {
     round_trip(Meaning::UnexpandablePrimitive(
         UnexpandablePrimitive::VAdjust,
     ));
+    round_trip(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HRule));
+    round_trip(Meaning::UnexpandablePrimitive(
+        UnexpandablePrimitive::LastSkip,
+    ));
+    round_trip(Meaning::UnexpandablePrimitive(
+        UnexpandablePrimitive::PrevGraf,
+    ));
     round_trip(Meaning::Unknown(RawMeaning::testing_new(u8::MAX, 0)));
     round_trip(Meaning::Unknown(RawMeaning::testing_new(
         u8::MAX,

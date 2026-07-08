@@ -4,6 +4,7 @@ use tex_state::meaning::{ExpandablePrimitive, Meaning};
 use tex_state::token::{Catcode, Token};
 use tex_state::{ContentHash, GroupKind, GroupMismatch, Universe};
 
+use crate::executor::sync_engine_state;
 use crate::{ExecError, Mode, ModeNest, assignments};
 
 /// Main-control progress counters.
@@ -87,6 +88,11 @@ where
             return Ok(DispatchAction::NotConsumed);
         }
     };
+
+    if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal) {
+        assignments::flush_pending_hchars(nest, stores)?;
+        sync_engine_state::<S, _>(hooks, nest, stores);
+    }
 
     match meaning {
         Meaning::Relax => Ok(DispatchAction::Continue),

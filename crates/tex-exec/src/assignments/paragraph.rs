@@ -33,6 +33,7 @@ where
         UnexpandablePrimitive::NoIndent => start_paragraph(nest, input, stores, false),
         UnexpandablePrimitive::ParShape => assign_parshape(nest, input, stores, hooks),
         UnexpandablePrimitive::PrevDepth => assign_prevdepth(nest, input, stores, hooks),
+        UnexpandablePrimitive::PrevGraf => assign_prevgraf(nest, input, stores, hooks),
         UnexpandablePrimitive::NoInterlineSkip => {
             nest.current_list_mut().set_prev_depth(IGNORE_DEPTH);
             Ok(())
@@ -111,7 +112,7 @@ fn append_indent_box(nest: &mut ModeNest, stores: &mut Universe) -> Result<(), E
     Ok(())
 }
 
-fn end_paragraph(nest: &mut ModeNest, stores: &mut Universe) -> Result<(), ExecError> {
+pub(super) fn end_paragraph(nest: &mut ModeNest, stores: &mut Universe) -> Result<(), ExecError> {
     if !matches!(nest.current_mode(), Mode::Horizontal) {
         return Ok(());
     }
@@ -130,22 +131,41 @@ fn end_paragraph(nest: &mut ModeNest, stores: &mut Universe) -> Result<(), ExecE
     let mut hook = ExecHyphenationHook { hyphenated };
     let decisions = line_break(stores, hlist, line_params, &mut hook);
     let post_params = post_line_break_params(&params);
-    for broken in post_line_break(stores, &decisions.nodes, &decisions.breaks, post_params) {
+    let mut line_count = 0i32;
+    for mut broken in post_line_break(stores, &decisions.nodes, &decisions.breaks, post_params) {
+        line_count += 1;
+        let migrated = extract_migrating_material(stores, &mut broken.nodes);
         let list = stores.freeze_node_list(&broken.nodes);
         let line =
             hpack_with_overfull_rule(stores, list, PackSpec::Exactly(broken.dimensions.width));
         let mut line = line;
         line.shift = broken.dimensions.indent;
         append_node_to_current_list(nest, stores, Node::HList(line))?;
-        for node in broken.migrated {
+        for node in migrated {
             append_migrated_contribution(nest, node);
         }
         if let Some(penalty) = broken.penalty_after {
             nest.current_list_mut().push(Node::Penalty(penalty));
         }
     }
+    nest.current_list_mut()
+        .set_prev_graf(params.prev_graf.saturating_add(line_count));
     reset_after_par(nest, stores);
     Ok(())
+}
+
+fn extract_migrating_material(stores: &Universe, nodes: &mut Vec<Node>) -> Vec<Node> {
+    let mut retained = Vec::with_capacity(nodes.len());
+    let mut migrated = Vec::new();
+    for node in nodes.drain(..) {
+        match node {
+            Node::Mark { .. } | Node::Ins { .. } => migrated.push(node),
+            Node::Adjust(list) => migrated.extend_from_slice(stores.nodes(list)),
+            node => retained.push(node),
+        }
+    }
+    *nodes = retained;
+    migrated
 }
 
 struct ExecHyphenationHook {
@@ -164,6 +184,7 @@ fn snapshot_paragraph_params(nest: &ModeNest, stores: &Universe) -> ParagraphPar
         right_skip: stores.glue_param(GlueParam::RIGHT_SKIP),
         par_fill_skip: stores.glue_param(GlueParam::PAR_FILL_SKIP),
         par_shape: nest.current_list().par_shape().cloned(),
+        prev_graf: nest.enclosing_vertical_prev_graf(),
         hang_indent: stores.dimen_param(DimenParam::HANG_INDENT),
         hang_after: stores.int_param(IntParam::HANG_AFTER),
         looseness: stores.int_param(IntParam::LOOSENESS),
@@ -230,6 +251,7 @@ fn line_shape(params: &ParagraphParams) -> LineShape {
             }),
         hang_indent: params.hang_indent,
         hang_after: params.hang_after,
+        line_offset: params.prev_graf.max(0) as usize,
     }
 }
 
@@ -282,5 +304,24 @@ where
     skip_optional_equals_x(input, stores, hooks)?;
     let depth = scan_scaled(input, stores, hooks)?;
     nest.current_list_mut().set_prev_depth(depth);
+    Ok(())
+}
+
+fn assign_prevgraf<S, H>(
+    nest: &mut ModeNest,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    hooks: &mut H,
+) -> Result<(), ExecError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    skip_optional_equals_x(input, stores, hooks)?;
+    let lines = scan_i32(input, stores, hooks)?;
+    if lines < 0 {
+        return Err(ExecError::BadPrevGraf(lines));
+    }
+    nest.set_enclosing_vertical_prev_graf(lines);
     Ok(())
 }

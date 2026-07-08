@@ -51,6 +51,7 @@ pub struct LineShape {
     pub parshape: Option<ParagraphShape>,
     pub hang_indent: Scaled,
     pub hang_after: i32,
+    pub line_offset: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -67,12 +68,13 @@ impl LineShape {
             parshape: None,
             hang_indent: Scaled::from_raw(0),
             hang_after: 1,
+            line_offset: 0,
         }
     }
 
     #[must_use]
     pub fn dimensions(&self, line_no: usize) -> LineDimensions {
-        let one_based = line_no.max(1);
+        let one_based = line_no.max(1).saturating_add(self.line_offset);
         if let Some(parshape) = &self.parshape
             && !parshape.lines.is_empty()
         {
@@ -131,7 +133,6 @@ pub struct LineBreakResult {
 #[derive(Clone, Debug, PartialEq)]
 pub struct BrokenLine {
     pub nodes: Vec<Node>,
-    pub migrated: Vec<Node>,
     pub penalty_after: Option<i32>,
     pub hyphenated: bool,
     pub dimensions: LineDimensions,
