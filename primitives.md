@@ -173,10 +173,10 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 
 ## Conditionals
 
-- [ ] `\else` - Starts the false branch of a conditional. Core handling exists for implemented `\if` and `\ifcase` predicates; full skip-control diagnostics remain pending.
-- [ ] `\fi` - Ends a conditional. Core handling exists for implemented `\if` and `\ifcase` predicates; full skip-control diagnostics remain pending.
+- [x] `\else` - Starts the else branch of implemented conditionals, skipping already-taken limbs through the real token stream with nested conditional tracking and extra-control diagnostics.
+- [x] `\fi` - Ends an implemented conditional and reports an extra-control diagnostic when no conditional is open.
 - [x] `\if` - Compares two expanded unexpandable character tokens by character code.
-- [x] `\ifcase` - Selects among numeric conditional branches using the shared integer scanner; full skip-control diagnostics remain pending.
+- [x] `\ifcase` - Selects among numeric conditional branches using the shared integer scanner, `\or` counting, else fallback, and token-level skipped-limb scanning.
 - [x] `\ifcat` - Compares two expanded unexpandable tokens by category code.
 - [x] `\ifdim` - Compares two dimensions using the shared dimension scanner.
 - [x] `\ifeof` - Tests through a driver hook; the no-driver default is a documented EOF stub until input stream state exists.
@@ -192,7 +192,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [x] `\ifvmode` - Tests the driver-supplied mode query; the no-driver default is outer vertical mode.
 - [x] `\ifvoid` - Tests readable box register state for TeX's void box.
 - [x] `\ifx` - Compares two unexpanded tokens by meaning, including hash-consed macro definition identity.
-- [ ] `\or` - Separates branches in implemented `\ifcase`; full skip-control diagnostics remain pending.
+- [x] `\or` - Separates implemented `\ifcase` branches, advances the selected limb count, skips remaining taken branches, and reports extra-control diagnostics outside `\ifcase`.
 
 ## Macros, Expansion, And Grouping
 

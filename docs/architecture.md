@@ -237,8 +237,11 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   Mode predicates read only a driver-supplied query trait; box predicates read
   only the `Stores` box-register facade; `\ifeof` reads a driver hook whose
   no-driver implementation is an explicit EOF stub until input stream state
-  exists. The complete skip-control diagnostic surface remains separate
-  conditional work.
+  exists. False conditional limbs and already-taken `\ifcase` limbs are
+  skipped by reading raw tokens from `tex-lex` under the active catcode table,
+  while `\else`, `\or`, and `\fi` update the input-stack condition frame and
+  report extra-control, incomplete-conditional, and skipped-outer-token
+  diagnostics.
 - Value-rendering expandables (`\string`, `\number`, `\romannumeral`,
   `\meaning`, and the currently supported `\the` classes) mint their visible
   output through the explicit token-list freezing capability. `\the` currently

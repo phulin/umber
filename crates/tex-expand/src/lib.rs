@@ -131,6 +131,7 @@ pub enum ExpandError {
     InvalidConditionalRelation(Token),
     IncompleteIf,
     ExtraConditionalControl(&'static str),
+    ForbiddenOuterTokenInSkippedConditional { name: String },
 }
 
 impl fmt::Display for ExpandError {
@@ -168,6 +169,12 @@ impl fmt::Display for ExpandError {
             }
             Self::IncompleteIf => write!(f, "Incomplete \\if; all text was ignored after line"),
             Self::ExtraConditionalControl(name) => write!(f, "Extra \\{name}"),
+            Self::ForbiddenOuterTokenInSkippedConditional { name } => {
+                write!(
+                    f,
+                    "Forbidden control sequence found while scanning conditional text: {name}"
+                )
+            }
         }
     }
 }
@@ -189,7 +196,8 @@ impl std::error::Error for ExpandError {
             | Self::UnsupportedTheTarget(_)
             | Self::InvalidConditionalRelation(_)
             | Self::IncompleteIf
-            | Self::ExtraConditionalControl(_) => None,
+            | Self::ExtraConditionalControl(_)
+            | Self::ForbiddenOuterTokenInSkippedConditional { .. } => None,
         }
     }
 }
@@ -340,9 +348,6 @@ where
 }
 
 /// Dispatches one token/meaning pair.
-///
-/// TODO(umber2-5qt.3): implement expandable primitive arms.
-/// TODO(umber2-5qt.5): implement conditional scan/evaluation arms.
 pub fn dispatch<S, R>(
     token: Token,
     input: &mut InputStack<S>,
@@ -868,7 +873,7 @@ where
         let Some(token) = input.next_token_readonly(stores)? else {
             return Err(ExpandError::IncompleteIf);
         };
-        let Some(primitive) = conditional_primitive(stores, token, recorder) else {
+        let Some(primitive) = skipped_conditional_control(stores, token, recorder)? else {
             continue;
         };
 
@@ -957,16 +962,16 @@ enum ConditionalPrimitive {
     Fi,
 }
 
-fn conditional_primitive<R>(
+fn skipped_conditional_control<R>(
     stores: &Stores,
     token: Token,
     recorder: &mut R,
-) -> Option<ConditionalPrimitive>
+) -> Result<Option<ConditionalPrimitive>, ExpandError>
 where
     R: ReadRecorder,
 {
     let Token::Cs(symbol) = token else {
-        return None;
+        return Ok(None);
     };
     let meaning = stores.meaning(symbol);
     recorder.record_meaning(symbol, meaning);
@@ -989,11 +994,18 @@ where
             | ExpandablePrimitive::IfHBox
             | ExpandablePrimitive::IfVBox
             | ExpandablePrimitive::IfEof,
-        ) => Some(ConditionalPrimitive::If),
-        Meaning::ExpandablePrimitive(ExpandablePrimitive::Else) => Some(ConditionalPrimitive::Else),
-        Meaning::ExpandablePrimitive(ExpandablePrimitive::Or) => Some(ConditionalPrimitive::Or),
-        Meaning::ExpandablePrimitive(ExpandablePrimitive::Fi) => Some(ConditionalPrimitive::Fi),
-        _ => None,
+        ) => Ok(Some(ConditionalPrimitive::If)),
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::Else) => {
+            Ok(Some(ConditionalPrimitive::Else))
+        }
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::Or) => Ok(Some(ConditionalPrimitive::Or)),
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::Fi) => Ok(Some(ConditionalPrimitive::Fi)),
+        Meaning::Macro { flags, .. } if flags.contains(MeaningFlags::OUTER) => {
+            Err(ExpandError::ForbiddenOuterTokenInSkippedConditional {
+                name: format!("\\{}", stores.resolve(symbol)),
+            })
+        }
+        _ => Ok(None),
     }
 }
 
@@ -2873,6 +2885,129 @@ mod tests {
         input.push_token_list(list, TokenListReplayKind::Inserted);
 
         assert_eq!(next_expanded_chars(&mut input, &mut stores), "e");
+    }
+
+    #[test]
+    fn skipped_false_limb_tracks_nested_conditionals() {
+        let mut stores = Stores::new();
+        let (iftrue, iffalse, else_cs, fi) = conditional_primitives(&mut stores);
+        let list = stores.intern_token_list(&[
+            Token::Cs(iffalse),
+            char_token('x'),
+            Token::Cs(iftrue),
+            char_token('y'),
+            Token::Cs(else_cs),
+            char_token('z'),
+            Token::Cs(fi),
+            Token::Cs(else_cs),
+            char_token('t'),
+            Token::Cs(fi),
+        ]);
+        let mut input = InputStack::new(MemoryInput::new(""));
+        input.push_token_list(list, TokenListReplayKind::Inserted);
+
+        assert_eq!(next_expanded_chars(&mut input, &mut stores), "t");
+    }
+
+    #[test]
+    fn ifcase_selects_selected_limb_and_else_fallback() {
+        let mut stores = Stores::new();
+        let (_, _, else_cs, fi) = conditional_primitives(&mut stores);
+        let ifcase = expandable_primitive(&mut stores, "ifcase", ExpandablePrimitive::IfCase);
+        let or_cs = expandable_primitive(&mut stores, "or", ExpandablePrimitive::Or);
+        let list = stores.intern_token_list(&[
+            Token::Cs(ifcase),
+            char_token('0'),
+            char_token('z'),
+            Token::Cs(or_cs),
+            char_token('o'),
+            Token::Cs(else_cs),
+            char_token('e'),
+            Token::Cs(fi),
+            Token::Cs(ifcase),
+            char_token('-'),
+            char_token('1'),
+            char_token('z'),
+            Token::Cs(or_cs),
+            char_token('o'),
+            Token::Cs(else_cs),
+            char_token('e'),
+            Token::Cs(fi),
+        ]);
+        let mut input = InputStack::new(MemoryInput::new(""));
+        input.push_token_list(list, TokenListReplayKind::Inserted);
+
+        assert_eq!(next_expanded_chars(&mut input, &mut stores), "ze");
+    }
+
+    #[test]
+    fn else_or_fi_report_extra_without_open_conditional() {
+        for (name, primitive, expected) in [
+            ("else", ExpandablePrimitive::Else, "else"),
+            ("or", ExpandablePrimitive::Or, "or"),
+            ("fi", ExpandablePrimitive::Fi, "fi"),
+        ] {
+            let mut stores = Stores::new();
+            let control = expandable_primitive(&mut stores, name, primitive);
+            let list = stores.intern_token_list(&[Token::Cs(control)]);
+            let mut input = InputStack::new(MemoryInput::new(""));
+            input.push_token_list(list, TokenListReplayKind::Inserted);
+
+            assert!(matches!(
+                get_x_token(&mut input, &mut stores),
+                Err(super::ExpandError::ExtraConditionalControl(found)) if found == expected
+            ));
+        }
+    }
+
+    #[test]
+    fn skipped_conditional_reports_incomplete_if_at_eof() {
+        let mut stores = Stores::new();
+        let (_, iffalse, _, _) = conditional_primitives(&mut stores);
+        let list = stores.intern_token_list(&[Token::Cs(iffalse), char_token('x')]);
+        let mut input = InputStack::new(MemoryInput::new(""));
+        input.push_token_list(list, TokenListReplayKind::Inserted);
+
+        assert!(matches!(
+            get_x_token(&mut input, &mut stores),
+            Err(super::ExpandError::IncompleteIf)
+        ));
+    }
+
+    #[test]
+    fn skipped_conditional_rejects_outer_macro_tokens() {
+        let mut stores = Stores::new();
+        let (_, iffalse, else_cs, fi) = conditional_primitives(&mut stores);
+        let outer = stores.intern("outer");
+        let params = stores.intern_token_list(&[]);
+        let body = stores.intern_token_list(&[char_token('x')]);
+        stores.set_macro_meaning(outer, MacroMeaning::new(MeaningFlags::OUTER, params, body));
+        let list = stores.intern_token_list(&[
+            Token::Cs(iffalse),
+            Token::Cs(outer),
+            Token::Cs(else_cs),
+            char_token('t'),
+            Token::Cs(fi),
+        ]);
+        let mut input = InputStack::new(MemoryInput::new(""));
+        input.push_token_list(list, TokenListReplayKind::Inserted);
+
+        assert!(matches!(
+            get_x_token(&mut input, &mut stores),
+            Err(super::ExpandError::ForbiddenOuterTokenInSkippedConditional { ref name })
+                if name == "\\outer"
+        ));
+    }
+
+    #[test]
+    fn skipped_source_text_is_lexed_with_current_catcodes() {
+        let mut stores = Stores::new();
+        stores.set_int_param(tex_state::env::banks::IntParam::END_LINE_CHAR, -1);
+        stores.set_catcode('@', Catcode::Escape);
+        conditional_primitives(&mut stores);
+        let mut input = InputStack::new(MemoryInput::new("@iffalse@iftrue bad@fi@else good@fi"));
+
+        assert_eq!(next_expanded_chars(&mut input, &mut stores), "good");
     }
 
     fn next_expanded_chars(input: &mut InputStack<MemoryInput>, stores: &mut Stores) -> String {
