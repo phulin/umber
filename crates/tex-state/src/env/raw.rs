@@ -5,10 +5,8 @@ use super::{
     segment_offset, u16_index,
 };
 use crate::cell::{BankTag, CellId};
-#[cfg(feature = "shadow")]
 use crate::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use crate::epoch::Epoch;
-#[cfg(feature = "shadow")]
 use crate::ids::NodeListId;
 use crate::interner::Symbol;
 #[cfg(any(test, feature = "testing", feature = "shadow"))]
@@ -65,8 +63,7 @@ impl Env {
         }
     }
 
-    #[cfg(feature = "shadow")]
-    fn semantic_word(&self, cell: CellId) -> u64 {
+    pub(crate) fn semantic_word(&self, cell: CellId) -> u64 {
         let index = cell.index();
         match cell.bank() {
             BankTag::Meaning => self.get(Symbol::new(index)).encode(),

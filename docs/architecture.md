@@ -419,6 +419,10 @@ degenerate case (run once, commit every page, never look back).
   the last snapshot before the edit point, re-execute, compare
   `state_hash` at checkpoints; on match, splice the previous run's suffix
   of page artifacts and stop.
+  The hash is a semantic checkpoint hash, not a store-layout checksum:
+  content handles are followed to token/glue/node/macro contents, control
+  sequences are keyed by name, and checkpoint hashes are combined from the
+  previous checkpoint plus the current semantic slice.
 - **Memoization**: keyed by (input span or token-list id, read-set epochs,
   code-table generations); value = (journal redo slice, effect slice,
   artifact ids). First target is box/paragraph-level (M4). The memo store

@@ -398,6 +398,23 @@ pub struct Snapshot {
   slice), code-table generations, arena content hashes of the epoch slice,
   effect-log slice, RNG. It must be a pure function of semantic state —
   never of addresses or allocation order.
+  The implemented f26.4 hash is maintained as
+  `combine(previous_checkpoint_hash, semantic_slice_hash)`. The slice query
+  collects journal cells between checkpoint cursors, canonicalizes global and
+  local records to the same semantic cell, compares first-old vs final-live
+  semantic content, and hashes only cells whose content changed. Meaning
+  cells are keyed by resolved control-sequence name rather than `Symbol`
+  number; token, glue, macro-definition, node-list, and deferred-write
+  handles are followed to the content they name rather than hashing handle
+  words. Node-list content is walked with an explicit worklist, so deep box
+  trees do not depend on the Rust call stack. The hash also includes code
+  table generation counters, nodes appended to the epoch arena since the
+  previous cursor, the uncommitted World effect/input/shell-escape slices,
+  stream-buffer state, RNG state, job clock, interaction mode, and prepared
+  magnification. Font ids are deliberately omitted while they remain
+  placeholder handles; the font epic must replace that omission with
+  content-backed font identity before font-dependent node hashes are
+  convergence-grade.
 
 Derived queries (these fall out; do not build separate instrumentation):
 

@@ -1,0 +1,95 @@
+//! Deterministic semantic state hashing.
+//!
+//! This module intentionally does not expose a generic `Hash` adapter. Callers
+//! feed only fields that are known to be semantic so raw handles and allocation
+//! identities do not accidentally become part of convergence hashes.
+
+const MIX_INCREMENT: u64 = 0x9e37_79b9_7f4a_7c15;
+const INITIAL_STATE: u64 = 0x6a09_e667_f3bc_c909;
+
+/// Initial checkpoint hash before any semantic slice is combined.
+pub(crate) const INITIAL_STATE_HASH: u64 = INITIAL_STATE;
+
+/// Combines a previous checkpoint hash with the next semantic slice hash.
+#[must_use]
+pub(crate) fn combine(prev: u64, slice: u64) -> u64 {
+    splitmix64(prev ^ slice.wrapping_add(MIX_INCREMENT))
+}
+
+/// A deterministic field-by-field state hasher.
+#[derive(Clone, Debug)]
+pub(crate) struct StateHasher {
+    state: u64,
+}
+
+impl StateHasher {
+    #[must_use]
+    pub(crate) const fn new(domain: u64) -> Self {
+        Self {
+            state: INITIAL_STATE ^ domain,
+        }
+    }
+
+    pub(crate) fn tag(&mut self, tag: u8) {
+        self.u8(tag);
+    }
+
+    pub(crate) fn bool(&mut self, value: bool) {
+        self.u8(u8::from(value));
+    }
+
+    pub(crate) fn u8(&mut self, value: u8) {
+        self.mix(u64::from(value));
+    }
+
+    pub(crate) fn u16(&mut self, value: u16) {
+        self.mix(u64::from(value));
+    }
+
+    pub(crate) fn u32(&mut self, value: u32) {
+        self.mix(u64::from(value));
+    }
+
+    pub(crate) fn u64(&mut self, value: u64) {
+        self.mix(value);
+    }
+
+    pub(crate) fn i32(&mut self, value: i32) {
+        self.u32(value as u32);
+    }
+
+    pub(crate) fn usize(&mut self, value: usize) {
+        self.u64(u64::try_from(value).expect("state hash length exceeds u64"));
+    }
+
+    pub(crate) fn bytes(&mut self, bytes: &[u8]) {
+        self.usize(bytes.len());
+        for chunk in bytes.chunks(8) {
+            let mut word = 0_u64;
+            for (offset, byte) in chunk.iter().copied().enumerate() {
+                word |= u64::from(byte) << (offset * 8);
+            }
+            self.mix(word);
+        }
+    }
+
+    pub(crate) fn str(&mut self, value: &str) {
+        self.bytes(value.as_bytes());
+    }
+
+    #[must_use]
+    pub(crate) fn finish(self) -> u64 {
+        splitmix64(self.state)
+    }
+
+    fn mix(&mut self, value: u64) {
+        self.state = splitmix64(self.state ^ value.wrapping_add(MIX_INCREMENT));
+    }
+}
+
+fn splitmix64(mut value: u64) -> u64 {
+    value = value.wrapping_add(MIX_INCREMENT);
+    value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    value ^ (value >> 31)
+}

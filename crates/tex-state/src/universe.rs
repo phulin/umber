@@ -18,10 +18,15 @@ use crate::meaning::Meaning;
 use crate::node::Node;
 use crate::node_arena::NodeListBuilder;
 use crate::scaled::Scaled;
+use crate::state_hash::{INITIAL_STATE_HASH, StateHasher, combine};
+use crate::stores::StoreStateHashCursor;
 use crate::stores::{GroupKind, GroupMismatch, PrepareMagDiagnostic, StoreSnapshot, Stores};
 use crate::token::{Catcode, Token};
 use crate::token_store::TokenListBuilder;
-use crate::world::{World, WorldSnapshot, install_job_clock_params};
+use crate::world::{
+    EffectRecord, JobClock, PrintSink, ShellEscapePolicy, ShellEscapeRecord, StreamBufState,
+    StreamSlot, World, WorldSnapshot, WorldStateHashCursor, install_job_clock_params,
+};
 #[cfg(any(test, feature = "testing", feature = "shadow"))]
 use std::hash::Hasher;
 
@@ -39,6 +44,7 @@ pub struct Snapshot {
     input_summary: InputSummary,
     interaction_mode: InteractionMode,
     state_hash: u64,
+    state_hash_base: StateHashBase,
 }
 
 impl Snapshot {
@@ -101,6 +107,13 @@ pub struct InputSummary {
     _private: (),
 }
 
+#[derive(Clone, Debug)]
+struct StateHashBase {
+    store: StoreStateHashCursor,
+    world: WorldStateHashCursor,
+    checkpoint_hash: u64,
+}
+
 /// One owned TeX state timeline.
 #[derive(Debug)]
 pub struct Universe {
@@ -109,16 +122,25 @@ pub struct Universe {
     world: World,
     interaction_mode: InteractionMode,
     input_summary: InputSummary,
+    state_hash_base: StateHashBase,
 }
 
 impl Clone for Universe {
     fn clone(&self) -> Self {
+        let stores = self.stores.clone();
+        let world = self.world.clone();
+        let state_hash_base = StateHashBase {
+            store: stores.state_hash_cursor(),
+            world: world.state_hash_cursor(),
+            checkpoint_hash: self.state_hash_base.checkpoint_hash,
+        };
         Self {
             owner: UniverseOwner::new(),
-            stores: self.stores.clone(),
-            world: self.world.clone(),
+            stores,
+            world,
             interaction_mode: self.interaction_mode,
             input_summary: self.input_summary.clone(),
+            state_hash_base,
         }
     }
 }
@@ -145,27 +167,44 @@ impl Universe {
             &mut |param, value| stores.set_int_param(param, value),
             clock,
         );
+        let state_hash_base = StateHashBase {
+            store: stores.state_hash_cursor(),
+            world: world.state_hash_cursor(),
+            checkpoint_hash: INITIAL_STATE_HASH,
+        };
         Self {
             owner: UniverseOwner::new(),
             stores,
             world,
             interaction_mode: InteractionMode::default(),
             input_summary: InputSummary::default(),
+            state_hash_base,
         }
     }
 
     /// Takes an O(1) snapshot of the whole timeline tuple.
     #[must_use]
     pub fn snapshot(&mut self) -> Snapshot {
+        let hash_base = self.state_hash_base.clone();
+        let world = self.world.snapshot();
         let store = self.stores.checkpoint();
+        let slice_hash = self.state_hash_slice(&hash_base, &store);
+        let state_hash = combine(hash_base.checkpoint_hash, slice_hash);
+        let next_hash_base = StateHashBase {
+            store: Stores::state_hash_cursor_from_snapshot(&store),
+            world: World::state_hash_cursor_from_snapshot(&world),
+            checkpoint_hash: state_hash,
+        };
+        self.state_hash_base = next_hash_base.clone();
         Snapshot {
             owner: self.owner.snapshot_owner(),
             epoch: store.epoch(),
             store,
-            world: self.world.snapshot(),
+            world,
             input_summary: self.input_summary.clone(),
             interaction_mode: self.interaction_mode,
-            state_hash: 0,
+            state_hash,
+            state_hash_base: next_hash_base,
         }
     }
 
@@ -176,6 +215,89 @@ impl Universe {
         self.world.rollback(&snapshot.world);
         self.input_summary = snapshot.input_summary.clone();
         self.interaction_mode = snapshot.interaction_mode;
+        self.state_hash_base = snapshot.state_hash_base.clone();
+    }
+
+    fn state_hash_slice(&self, hash_base: &StateHashBase, store: &StoreSnapshot) -> u64 {
+        let mut hasher = StateHasher::new(0x756e_6976_6572_7365);
+        hasher.u64(self.stores.state_hash_slice(&hash_base.store, store));
+        self.hash_world_state_slice(&hash_base.world, &mut hasher);
+        self.hash_input_summary(&mut hasher);
+        hash_interaction_mode(self.interaction_mode, &mut hasher);
+        hasher.finish()
+    }
+
+    fn hash_world_state_slice(&self, cursor: &WorldStateHashCursor, hasher: &mut StateHasher) {
+        hasher.tag(0x80);
+        let effects = self.world.effect_records_since(cursor);
+        hasher.usize(effects.len());
+        for effect in effects {
+            self.hash_effect_record(effect, hasher);
+        }
+
+        hasher.tag(0x81);
+        let inputs = self.world.input_records_since(cursor);
+        hasher.usize(inputs.len());
+        for input in inputs {
+            hash_path(input.path(), hasher);
+            hasher.bytes(&input.hash().bytes());
+            hasher.usize(input.len());
+        }
+
+        hasher.tag(0x82);
+        let shell_escapes = self.world.shell_escape_records_since(cursor);
+        hasher.usize(shell_escapes.len());
+        for record in shell_escapes {
+            hash_shell_escape_record(record, hasher);
+        }
+
+        hash_stream_bufs(self.world.stream_bufs(), hasher);
+        hash_rng_state(self.world.rng_state(), hasher);
+        hash_job_clock(self.world.job_clock(), hasher);
+        hash_shell_escape_policy(self.world.shell_escape_policy(), hasher);
+    }
+
+    fn hash_effect_record(&self, record: &EffectRecord, hasher: &mut StateHasher) {
+        match record {
+            EffectRecord::StreamOpen { slot, target } => {
+                hasher.tag(0);
+                hash_stream_slot(*slot, hasher);
+                hash_path(target.path(), hasher);
+            }
+            EffectRecord::StreamClose { slot } => {
+                hasher.tag(1);
+                hash_stream_slot(*slot, hasher);
+            }
+            EffectRecord::StreamWrite { sink, text } => {
+                hasher.tag(2);
+                hash_print_sink(*sink, hasher);
+                hasher.str(text);
+            }
+            EffectRecord::DeferredWrite { stream, tokens } => {
+                hasher.tag(3);
+                hash_stream_slot(*stream, hasher);
+                self.stores.hash_token_list_semantic(*tokens, hasher);
+            }
+            EffectRecord::Special { class, payload } => {
+                hasher.tag(4);
+                hasher.str(class);
+                hasher.bytes(payload);
+            }
+            EffectRecord::PdfObjectPlaceholder { label } => {
+                hasher.tag(5);
+                hasher.str(label);
+            }
+            EffectRecord::ShellEscape(record) => {
+                hasher.tag(6);
+                hash_shell_escape_record(record, hasher);
+            }
+        }
+    }
+
+    fn hash_input_summary(&self, hasher: &mut StateHasher) {
+        hasher.tag(0x90);
+        // Placeholder summary is empty today; this tag keeps the tuple field
+        // explicit so future input summary fields have a stable hash domain.
     }
 
     fn assert_valid_snapshot(&self, snapshot: &Snapshot) {
@@ -589,10 +711,101 @@ impl Universe {
     }
 }
 
+fn hash_stream_bufs(streams: &StreamBufState, hasher: &mut StateHasher) {
+    hasher.tag(0x83);
+    for raw in 0..crate::world::STREAM_SLOT_COUNT as u8 {
+        let slot = StreamSlot::new(raw);
+        hash_optional_path(streams.read_stream_path(slot), hasher);
+        match streams.write_stream_target(slot) {
+            Some(target) => {
+                hasher.bool(true);
+                hash_path(target.path(), hasher);
+            }
+            None => hasher.bool(false),
+        }
+        hasher.str(streams.partial_line(slot));
+    }
+    hasher.str(streams.log_partial_line());
+    hasher.str(streams.terminal_partial_line());
+}
+
+fn hash_rng_state(rng: crate::world::RngState, hasher: &mut StateHasher) {
+    hasher.tag(0x84);
+    let text = format!("{rng:?}");
+    hasher.str(&text);
+}
+
+fn hash_job_clock(clock: JobClock, hasher: &mut StateHasher) {
+    hasher.tag(0x85);
+    hasher.i32(clock.time);
+    hasher.i32(clock.day);
+    hasher.i32(clock.month);
+    hasher.i32(clock.year);
+}
+
+fn hash_shell_escape_policy(policy: ShellEscapePolicy, hasher: &mut StateHasher) {
+    hasher.tag(0x86);
+    hasher.u8(match policy {
+        ShellEscapePolicy::Disabled => 0,
+        ShellEscapePolicy::Enabled => 1,
+    });
+}
+
+fn hash_interaction_mode(mode: InteractionMode, hasher: &mut StateHasher) {
+    hasher.tag(0x91);
+    hasher.u8(match mode {
+        InteractionMode::Batch => 0,
+        InteractionMode::Nonstop => 1,
+        InteractionMode::Scroll => 2,
+        InteractionMode::ErrorStop => 3,
+    });
+}
+
+fn hash_print_sink(sink: PrintSink, hasher: &mut StateHasher) {
+    match sink {
+        PrintSink::Terminal => hasher.tag(0),
+        PrintSink::Log => hasher.tag(1),
+        PrintSink::TerminalAndLog => hasher.tag(2),
+        PrintSink::Stream(slot) => {
+            hasher.tag(3);
+            hash_stream_slot(slot, hasher);
+        }
+    }
+}
+
+fn hash_stream_slot(slot: StreamSlot, hasher: &mut StateHasher) {
+    hasher.u8(slot.raw());
+}
+
+fn hash_shell_escape_record(record: &ShellEscapeRecord, hasher: &mut StateHasher) {
+    hasher.str(record.command());
+    hasher.bool(record.allowed());
+}
+
+fn hash_optional_path(path: Option<&std::path::Path>, hasher: &mut StateHasher) {
+    match path {
+        Some(path) => {
+            hasher.bool(true);
+            hash_path(path, hasher);
+        }
+        None => hasher.bool(false),
+    }
+}
+
+fn hash_path(path: &std::path::Path, hasher: &mut StateHasher) {
+    hasher.bytes(path.as_os_str().as_encoded_bytes());
+}
+
 #[cfg(test)]
 mod tests {
     use super::Universe;
-    use crate::meaning::Meaning;
+    use crate::glue::{GlueSpec, Order};
+    use crate::ids::FontId;
+    use crate::macro_store::MacroMeaning;
+    use crate::meaning::{Meaning, MeaningFlags};
+    use crate::node::{BoxNode, BoxNodeFields, Node, Sign};
+    use crate::scaled::Scaled;
+    use crate::token::{Catcode, Token};
     use crate::world::{ContentHash, JobClock, PrintSink, StreamSlot, World};
 
     #[test]
@@ -686,5 +899,176 @@ mod tests {
                 .is_none()
         );
         assert_eq!(universe.world_mut().next_random_u64(), random);
+    }
+
+    #[test]
+    fn snapshot_state_hash_is_deterministic_for_same_program() {
+        assert_eq!(
+            checkpoint_hashes_for_program(),
+            checkpoint_hashes_for_program()
+        );
+    }
+
+    #[test]
+    fn snapshot_state_hash_ignores_content_intern_order() {
+        let mut first = Universe::new();
+        let zed = first.intern("z");
+        let alpha = first.intern("alpha");
+        let macro_target = first.intern("macro_target");
+        first.set_meaning(zed, Meaning::Relax);
+        let filler_tokens = first.intern_token_list(&[Token::param(1)]);
+        let target_tokens = first.intern_token_list(&[
+            Token::Cs(alpha),
+            Token::Char {
+                ch: 'x',
+                cat: Catcode::Letter,
+            },
+        ]);
+        let filler_glue = first.intern_glue(glue(99));
+        let target_glue = first.intern_glue(glue(7));
+        let filler_macro = first.intern_macro(MacroMeaning::new(
+            MeaningFlags::LONG,
+            filler_tokens,
+            filler_tokens,
+        ));
+        let target_macro = first.intern_macro(MacroMeaning::new(
+            MeaningFlags::PROTECTED,
+            target_tokens,
+            target_tokens,
+        ));
+        first.set_toks(0, target_tokens);
+        first.set_skip(0, target_glue);
+        first.set_meaning(
+            macro_target,
+            Meaning::Macro {
+                flags: MeaningFlags::PROTECTED,
+                definition: target_macro,
+            },
+        );
+        assert_ne!(filler_glue, target_glue);
+        assert_ne!(filler_macro, target_macro);
+        let first_hash = first.snapshot().state_hash();
+
+        let mut second = Universe::new();
+        let macro_target = second.intern("macro_target");
+        let alpha = second.intern("alpha");
+        let target_tokens = second.intern_token_list(&[
+            Token::Cs(alpha),
+            Token::Char {
+                ch: 'x',
+                cat: Catcode::Letter,
+            },
+        ]);
+        let filler_tokens = second.intern_token_list(&[Token::param(1)]);
+        let target_glue = second.intern_glue(glue(7));
+        let filler_glue = second.intern_glue(glue(99));
+        let target_macro = second.intern_macro(MacroMeaning::new(
+            MeaningFlags::PROTECTED,
+            target_tokens,
+            target_tokens,
+        ));
+        let filler_macro = second.intern_macro(MacroMeaning::new(
+            MeaningFlags::LONG,
+            filler_tokens,
+            filler_tokens,
+        ));
+        let zed = second.intern("z");
+        second.set_meaning(zed, Meaning::Relax);
+        second.set_toks(0, target_tokens);
+        second.set_skip(0, target_glue);
+        second.set_meaning(
+            macro_target,
+            Meaning::Macro {
+                flags: MeaningFlags::PROTECTED,
+                definition: target_macro,
+            },
+        );
+        assert_ne!(filler_glue, target_glue);
+        assert_ne!(filler_macro, target_macro);
+
+        assert_eq!(first_hash, second.snapshot().state_hash());
+    }
+
+    #[test]
+    fn snapshot_state_hash_changes_for_one_register_bit() {
+        let mut unchanged = Universe::new();
+        let mut changed = Universe::new();
+        changed.set_count(0, 1);
+
+        assert_ne!(
+            unchanged.snapshot().state_hash(),
+            changed.snapshot().state_hash()
+        );
+    }
+
+    #[test]
+    fn rollback_restores_state_hash_cursor() {
+        let mut universe = Universe::new();
+        let base = universe.snapshot();
+        universe.set_count(0, 10);
+        let first = universe.snapshot();
+
+        universe.rollback(&base);
+        universe.set_count(0, 10);
+        let second = universe.snapshot();
+
+        assert_eq!(first.state_hash(), second.state_hash());
+    }
+
+    #[test]
+    fn snapshot_state_hash_walks_deep_node_lists_iteratively() {
+        let mut universe = Universe::new();
+        let mut current = universe.freeze_node_list(&[Node::Char {
+            font: FontId::testing_new(1),
+            ch: 'x',
+        }]);
+
+        for _ in 0..5000 {
+            current = universe.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
+                width: Scaled::from_raw(1),
+                height: Scaled::from_raw(2),
+                depth: Scaled::from_raw(3),
+                shift: Scaled::from_raw(0),
+                glue_set: 0.0,
+                glue_sign: Sign::Normal,
+                glue_order: Order::Normal,
+                children: current,
+            }))]);
+        }
+
+        universe.set_box_reg(0, current);
+        assert_ne!(universe.snapshot().state_hash(), 0);
+    }
+
+    fn checkpoint_hashes_for_program() -> Vec<u64> {
+        let mut universe = Universe::new();
+        let mut hashes = Vec::new();
+        hashes.push(universe.snapshot().state_hash());
+
+        universe.set_count(0, 42);
+        universe.set_catcode('@', Catcode::Letter);
+        hashes.push(universe.snapshot().state_hash());
+
+        let symbol = universe.intern("foo");
+        let tokens = universe.intern_token_list(&[Token::Cs(symbol)]);
+        universe.set_toks(2, tokens);
+        universe
+            .world_mut()
+            .record_deferred_write(StreamSlot::new(1), tokens);
+        hashes.push(universe.snapshot().state_hash());
+
+        let _ = universe.world_mut().next_random_u64();
+        hashes.push(universe.snapshot().state_hash());
+        hashes
+    }
+
+    fn glue(width: i32) -> GlueSpec {
+        GlueSpec {
+            width: Scaled::from_raw(width),
+            stretch: Scaled::from_raw(1),
+            stretch_order: Order::Fil,
+            shrink: Scaled::from_raw(2),
+            shrink_order: Order::Normal,
+        }
     }
 }

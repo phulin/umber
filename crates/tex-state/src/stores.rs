@@ -26,8 +26,10 @@ use std::hash::{Hash, Hasher};
 use std::mem;
 
 mod handles;
+mod state_hash;
 
 pub use crate::env::group::{GroupKind, GroupMismatch};
+pub(crate) use state_hash::StoreStateHashCursor;
 
 #[cfg(any(test, feature = "testing", feature = "shadow"))]
 const TESTING_NODE_HASH_MAX_DEPTH: usize = 4096;

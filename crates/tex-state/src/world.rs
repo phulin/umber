@@ -403,6 +403,14 @@ pub struct WorldSnapshot {
     shell_escape_len: usize,
 }
 
+/// Cursor into World-owned state for semantic convergence hashing.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct WorldStateHashCursor {
+    effect_pos: EffectPos,
+    input_len: usize,
+    shell_escape_len: usize,
+}
+
 /// Engine capability object for all external effects.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct World {
@@ -651,6 +659,61 @@ impl World {
     #[must_use]
     pub fn effect_records(&self) -> &[EffectRecord] {
         &self.effects
+    }
+
+    #[must_use]
+    pub(crate) fn state_hash_cursor(&self) -> WorldStateHashCursor {
+        WorldStateHashCursor {
+            effect_pos: self.effect_pos(),
+            input_len: self.inputs.len(),
+            shell_escape_len: self.shell_escapes.len(),
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn state_hash_cursor_from_snapshot(
+        snapshot: &WorldSnapshot,
+    ) -> WorldStateHashCursor {
+        WorldStateHashCursor {
+            effect_pos: snapshot.effect_pos,
+            input_len: snapshot.input_len,
+            shell_escape_len: snapshot.shell_escape_len,
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn effect_records_since(&self, cursor: &WorldStateHashCursor) -> &[EffectRecord] {
+        assert!(
+            cursor.effect_pos >= self.effect_base,
+            "World hash cursor effect position has already been committed and dropped"
+        );
+        let start = (cursor.effect_pos.raw() - self.effect_base.raw()) as usize;
+        assert!(
+            start <= self.effects.len(),
+            "World hash cursor is past effect end"
+        );
+        &self.effects[start..]
+    }
+
+    #[must_use]
+    pub(crate) fn input_records_since(&self, cursor: &WorldStateHashCursor) -> &[InputRecord] {
+        assert!(
+            cursor.input_len <= self.inputs.len(),
+            "World hash cursor is past input end"
+        );
+        &self.inputs[cursor.input_len..]
+    }
+
+    #[must_use]
+    pub(crate) fn shell_escape_records_since(
+        &self,
+        cursor: &WorldStateHashCursor,
+    ) -> &[ShellEscapeRecord] {
+        assert!(
+            cursor.shell_escape_len <= self.shell_escapes.len(),
+            "World hash cursor is past shell-escape end"
+        );
+        &self.shell_escapes[cursor.shell_escape_len..]
     }
 
     #[must_use]

@@ -13,6 +13,7 @@ pub mod meaning;
 pub mod node;
 pub mod node_arena;
 pub mod scaled;
+pub(crate) mod state_hash;
 mod stores;
 pub mod survivor;
 pub mod token;
