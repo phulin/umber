@@ -40,19 +40,19 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 
 - [ ] `\ ` - Inserts an explicit control space.
 - [ ] `\accent` - Places a text accent over the following character.
-- [ ] `\catcode` - Reads or assigns a character's category code.
+- [x] `\catcode` - Reads or assigns a character's category code; assignments use the code-table facade and bump generations.
 - [ ] `\char` - Produces a character token by numeric character code.
-- [ ] `\chardef` - Defines a control sequence as a character-code command.
-- [x] `\endlinechar` - Character appended when TeX tokenizes an input line. Implemented as an integer parameter for lexing/value rendering; assignment syntax is not implemented yet.
-- [x] `\escapechar` - Character used when printing control sequence names. Implemented as an integer parameter for value-rendering expandables; assignment syntax is not implemented yet.
-- [ ] `\lccode` - Reads or assigns a character's lowercase mapping.
+- [x] `\chardef` - Defines a control sequence as a character-code command usable as an internal integer.
+- [x] `\endlinechar` - Character appended when TeX tokenizes an input line. Implemented as an assignable integer parameter for lexing and value rendering.
+- [x] `\escapechar` - Character used when printing control sequence names. Implemented as an assignable integer parameter for value-rendering expandables.
+- [x] `\lccode` - Reads or assigns a character's lowercase mapping; assignments use the code-table facade and bump generations.
 - [ ] `\lowercase` - Converts character tokens using `\lccode`.
 - [ ] `\newlinechar` - Character that starts a new line in terminal or log output.
 - [x] `\number` - Expands an integer as decimal character tokens using the shared expanded integer scanner.
 - [x] `\romannumeral` - Expands an integer as lowercase roman numeral tokens; non-positive values expand to an empty frozen token list.
-- [ ] `\sfcode` - Reads or assigns a character's space-factor code.
+- [x] `\sfcode` - Reads or assigns a character's space-factor code; assignments use the code-table facade and bump generations.
 - [x] `\string` - Expands a token into its character representation with `\escapechar` handling and frozen output token lists.
-- [ ] `\uccode` - Reads or assigns a character's uppercase mapping.
+- [x] `\uccode` - Reads or assigns a character's uppercase mapping; assignments use the code-table facade and bump generations.
 - [ ] `\uppercase` - Converts character tokens using `\uccode`.
 
 ## Diagnostics And Interaction
@@ -94,7 +94,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [ ] `\openin` - Opens a file for input.
 - [ ] `\openout` - Opens a file for output.
 - [ ] `\output` - Token list invoked by the page builder for output routine processing.
-- [ ] `\read` - Reads a line from an input stream into a control sequence.
+- [x] `\read` - Documented execution stub scans `\read N to \cs` and returns TeX-style unsupported input until World-backed streams land.
 - [ ] `\shipout` - Writes a completed box to the DVI output.
 - [ ] `\special` - Emits backend-specific material into the DVI stream.
 - [ ] `\write` - Writes expanded material to an output stream, normally delayed until shipout.
@@ -155,7 +155,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [ ] `\end` - Finishes the current job.
 - [ ] `\everyjob` - Token list inserted at the start of every job.
 - [x] `\jobname` - Expands to the driver-provided job name as rendered character tokens.
-- [ ] `\mag` - Magnification ratio, scaled by 1000.
+- [x] `\mag` - Magnification ratio, scaled by 1000; implemented as an assignable integer parameter used by true-unit scanning.
 - [ ] `\maxdeadcycles` - Maximum allowed output routine cycles without shipout.
 - [ ] `\month` - Current month number.
 - [ ] `\time` - Current minutes after midnight.
@@ -215,7 +215,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [x] `\outer` - Prefix marking a macro invalid in restricted scanning contexts.
 - [x] `\protected` - Prefix marking a macro as protected from expansion.
 - [ ] `\relax` - No-op command that can terminate scans or absorb expansion.
-- [x] `\the` - Expands supported internal quantities or token register values. Current support covers `\count`, `\dimen`, `\toks`, `\endlinechar`, and `\escapechar`; glue, muglue, font dimensions, code tables, box dimensions, page state, and time/job parameters remain TODOs.
+- [x] `\the` - Expands supported internal quantities or token register values. Current support covers integer, dimension, glue, muglue, and token registers; register aliases; Env-backed parameters; and code-table values.
 - [x] `\xdef` - Globally defines a macro after expanding replacement text.
 
 ## Marks
@@ -237,7 +237,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [ ] `\belowdisplayskip` - Normal glue below a display.
 - [ ] `\binoppenalty` - Penalty for line breaks after binary operators in math.
 - [ ] `\defaultskewchar` - Default `\skewchar` value for newly loaded fonts.
-- [ ] `\delcode` - Reads or assigns a character's delimiter code.
+- [x] `\delcode` - Reads or assigns a character's delimiter code; assignments use the code-table facade and bump generations.
 - [ ] `\delimiter` - Adds a delimiter by numeric delimiter code.
 - [ ] `\delimiterfactor` - Scaling factor used to choose delimiter sizes.
 - [ ] `\delimitershortfall` - Allowed shortfall when choosing delimiter sizes.
@@ -256,10 +256,10 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [ ] `\mathaccent` - Adds a math accent atom.
 - [ ] `\mathbin` - Treats the following item as a binary operator atom.
 - [ ] `\mathchar` - Adds a math character by numeric math code.
-- [ ] `\mathchardef` - Defines a control sequence as a math character command.
+- [x] `\mathchardef` - Defines a control sequence as a math character command usable as an internal integer.
 - [ ] `\mathchoice` - Provides alternatives for display, text, script, and scriptscript styles.
 - [ ] `\mathclose` - Treats the following item as a closing atom.
-- [ ] `\mathcode` - Reads or assigns a character's math code.
+- [x] `\mathcode` - Reads or assigns a character's math code; assignments use the code-table facade and bump generations.
 - [ ] `\mathinner` - Treats the following subformula as an inner atom.
 - [ ] `\mathop` - Treats the following item as a large-operator atom.
 - [ ] `\mathopen` - Treats the following item as an opening atom.
@@ -270,8 +270,8 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [ ] `\medmuskip` - Medium math glue between math atoms.
 - [ ] `\mkern` - Adds a math kern.
 - [ ] `\mskip` - Adds math glue.
-- [ ] `\muskip` - Reads or assigns a math glue register.
-- [ ] `\muskipdef` - Defines a symbolic name for a math glue register.
+- [x] `\muskip` - Reads or assigns a math glue register, including sparse e-TeX indices.
+- [x] `\muskipdef` - Defines a symbolic name for a math glue register.
 - [ ] `\nolimits` - Forces limits to the side of a large operator.
 - [ ] `\nonscript` - Suppresses following glue or kern in script styles.
 - [ ] `\nulldelimiterspace` - Width reserved for missing delimiters.
@@ -319,7 +319,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [ ] `\baselineskip` - Preferred glue between adjacent baselines.
 - [ ] `\doublehyphendemerits` - Demerits for consecutive hyphenated lines.
 - [ ] `\emergencystretch` - Extra stretch used during emergency line-breaking pass.
-- [ ] `\everypar` - Token list inserted at the start of each paragraph.
+- [x] `\everypar` - Token list inserted at the start of each paragraph; implemented as an assignable token parameter, with paragraph consumption pending.
 - [ ] `\finalhyphendemerits` - Demerits when the penultimate line is hyphenated.
 - [ ] `\hangafter` - Line number where hanging indentation changes.
 - [ ] `\hangindent` - Hanging indentation amount for paragraphs.
@@ -336,13 +336,13 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [ ] `\parfillskip` - Glue appended to the final line of a paragraph.
 - [ ] `\parindent` - Width of paragraph indentation.
 - [ ] `\parshape` - Defines per-line indentation and width.
-- [ ] `\parskip` - Glue inserted between paragraphs.
+- [x] `\parskip` - Glue inserted between paragraphs; implemented as an assignable glue parameter, with paragraph consumption pending.
 - [ ] `\pretolerance` - Badness threshold for the no-hyphenation line-breaking pass.
 - [ ] `\prevgraf` - Number of lines in the most recent paragraph contribution.
 - [ ] `\rightskip` - Glue added to the right of every line.
 - [ ] `\spacefactor` - Current space factor used for interword spacing.
 - [ ] `\spaceskip` - Explicit interword glue override.
-- [ ] `\tolerance` - Badness threshold for line breaking with hyphenation.
+- [x] `\tolerance` - Badness threshold for line breaking with hyphenation; implemented as an assignable integer parameter, with paragraph consumption pending.
 - [ ] `\vadjust` - Inserts vertical material associated with the current line.
 - [ ] `\xspaceskip` - Explicit intersentence glue override.
 
@@ -363,17 +363,17 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 
 ## Registers And Arithmetic
 
-- [ ] `\advance` - Adds to an integer, dimension, glue, or muglue quantity.
-- [ ] `\count` - Reads or assigns an integer register.
-- [ ] `\countdef` - Defines a symbolic name for an integer register.
-- [ ] `\dimen` - Reads or assigns a dimension register.
-- [ ] `\dimendef` - Defines a symbolic name for a dimension register.
-- [ ] `\divide` - Divides a register by an integer.
-- [ ] `\multiply` - Multiplies a register by an integer.
-- [ ] `\skip` - Reads or assigns a glue register.
-- [ ] `\skipdef` - Defines a symbolic name for a glue register.
-- [ ] `\toks` - Reads or assigns a token-list register.
-- [ ] `\toksdef` - Defines a symbolic name for a token-list register.
+- [x] `\advance` - Adds to an integer, dimension, glue, or muglue quantity with TeX-style overflow diagnostics.
+- [x] `\count` - Reads or assigns an integer register, including sparse e-TeX indices.
+- [x] `\countdef` - Defines a symbolic name for an integer register.
+- [x] `\dimen` - Reads or assigns a dimension register, including sparse e-TeX indices.
+- [x] `\dimendef` - Defines a symbolic name for a dimension register.
+- [x] `\divide` - Divides an integer, dimension, glue, or muglue quantity by an integer with TeX-style overflow diagnostics.
+- [x] `\multiply` - Multiplies an integer, dimension, glue, or muglue quantity by an integer with TeX-style overflow diagnostics.
+- [x] `\skip` - Reads or assigns a glue register, including sparse e-TeX indices.
+- [x] `\skipdef` - Defines a symbolic name for a glue register.
+- [x] `\toks` - Reads or assigns a token-list register, including sparse e-TeX indices and balanced text assignment.
+- [x] `\toksdef` - Defines a symbolic name for a token-list register.
 
 ## Alignments
 

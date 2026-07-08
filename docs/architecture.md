@@ -249,11 +249,12 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   diagnostics.
 - Value-rendering expandables (`\string`, `\number`, `\romannumeral`,
   `\meaning`, and the currently supported `\the` classes) mint their visible
-  output through the explicit token-list freezing capability. `\the` currently
-  covers count, dimension, token registers, `\endlinechar`, and `\escapechar`;
-  glue-like values, font dimensions, code-table values, box dimensions, page
-  state, and time/job parameters remain documented TODOs until those Env
-  classes are semantically available.
+  output through the explicit token-list freezing capability. `\the` covers
+  integer, dimension, glue, muglue, and token registers; register aliases;
+  integer, dimension, glue, and token parameters represented in `Env`; and
+  code-table values. Font dimensions, box dimensions, page state, and
+  time/job parameters not yet backed by `Env` remain documented TODOs until
+  those classes are semantically available.
 - Input/job expandables use explicit driver hooks: `tex-expand` scans the
   `\input` file name and asks the caller for a new `InputSource`, while
   `\jobname` renders the caller-provided job name. This preserves the rule

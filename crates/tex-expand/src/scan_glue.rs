@@ -5,6 +5,7 @@ use std::fmt;
 use tex_lex::{InputSource, InputStack, LexError, TokenListReplayKind};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::GlueId;
+use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::scaled::Scaled;
 use tex_state::stores::Stores;
 use tex_state::token::{Catcode, Token};
@@ -142,17 +143,49 @@ where
     };
 
     if let Token::Cs(symbol) = first {
-        let name = stores.resolve(symbol);
-        if (!mu && name == "skip") || (mu && name == "muskip") {
-            let index = scan_register_index(input, stores, recorder, hooks)?;
-            consume_optional_space(input, stores, recorder, hooks)?;
-            let id = if mu {
-                stores.muskip(index)
-            } else {
-                stores.skip(index)
-            };
-            let spec = stores.glue(id);
-            return Ok(intern_spec(stores, signed_spec(spec, negative)));
+        match stores.meaning(symbol) {
+            Meaning::SkipRegister(index) if !mu => {
+                consume_optional_space(input, stores, recorder, hooks)?;
+                let spec = stores.glue(stores.skip(index));
+                return Ok(intern_spec(stores, signed_spec(spec, negative)));
+            }
+            Meaning::MuskipRegister(index) if mu => {
+                consume_optional_space(input, stores, recorder, hooks)?;
+                let spec = stores.glue(stores.muskip(index));
+                return Ok(intern_spec(stores, signed_spec(spec, negative)));
+            }
+            Meaning::GlueParam(index) if !mu => {
+                consume_optional_space(input, stores, recorder, hooks)?;
+                let spec =
+                    stores.glue(stores.glue_param(tex_state::env::banks::GlueParam::new(index)));
+                return Ok(intern_spec(stores, signed_spec(spec, negative)));
+            }
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Skip) if !mu => {
+                let index = scan_register_index(input, stores, recorder, hooks)?;
+                consume_optional_space(input, stores, recorder, hooks)?;
+                let spec = stores.glue(stores.skip(index));
+                return Ok(intern_spec(stores, signed_spec(spec, negative)));
+            }
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Muskip) if mu => {
+                let index = scan_register_index(input, stores, recorder, hooks)?;
+                consume_optional_space(input, stores, recorder, hooks)?;
+                let spec = stores.glue(stores.muskip(index));
+                return Ok(intern_spec(stores, signed_spec(spec, negative)));
+            }
+            _ => {
+                let name = stores.resolve(symbol);
+                if (!mu && name == "skip") || (mu && name == "muskip") {
+                    let index = scan_register_index(input, stores, recorder, hooks)?;
+                    consume_optional_space(input, stores, recorder, hooks)?;
+                    let id = if mu {
+                        stores.muskip(index)
+                    } else {
+                        stores.skip(index)
+                    };
+                    let spec = stores.glue(id);
+                    return Ok(intern_spec(stores, signed_spec(spec, negative)));
+                }
+            }
         }
     }
 

@@ -12,6 +12,16 @@ const OP_MACRO: u8 = 2;
 const OP_CHAR_GIVEN: u8 = 3;
 const OP_EXPANDABLE_PRIMITIVE: u8 = 4;
 const OP_UNEXPANDABLE_PRIMITIVE: u8 = 5;
+const OP_MATH_CHAR_GIVEN: u8 = 6;
+const OP_COUNT_REGISTER: u8 = 7;
+const OP_DIMEN_REGISTER: u8 = 8;
+const OP_SKIP_REGISTER: u8 = 9;
+const OP_MUSKIP_REGISTER: u8 = 10;
+const OP_TOKS_REGISTER: u8 = 11;
+const OP_INT_PARAM: u8 = 12;
+const OP_DIMEN_PARAM: u8 = 13;
+const OP_GLUE_PARAM: u8 = 14;
+const OP_TOK_PARAM: u8 = 15;
 
 /// Bitflags carried by meaning words.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -61,6 +71,16 @@ pub enum Meaning {
         definition: MacroDefinitionId,
     },
     CharGiven(char),
+    MathCharGiven(u16),
+    CountRegister(u16),
+    DimenRegister(u16),
+    SkipRegister(u16),
+    MuskipRegister(u16),
+    ToksRegister(u16),
+    IntParam(u16),
+    DimenParam(u16),
+    GlueParam(u16),
+    TokParam(u16),
     ExpandablePrimitive(ExpandablePrimitive),
     UnexpandablePrimitive(UnexpandablePrimitive),
     Unknown(RawMeaning),
@@ -214,6 +234,28 @@ pub enum UnexpandablePrimitive {
     Long,
     Outer,
     Protected,
+    Count,
+    Dimen,
+    Skip,
+    Muskip,
+    Toks,
+    CountDef,
+    DimenDef,
+    SkipDef,
+    MuskipDef,
+    ToksDef,
+    CharDef,
+    MathCharDef,
+    Advance,
+    Multiply,
+    Divide,
+    CatCode,
+    LcCode,
+    UcCode,
+    SfCode,
+    MathCode,
+    DelCode,
+    Read,
 }
 
 impl UnexpandablePrimitive {
@@ -231,6 +273,28 @@ impl UnexpandablePrimitive {
             Self::Long => 8,
             Self::Outer => 9,
             Self::Protected => 10,
+            Self::Count => 11,
+            Self::Dimen => 12,
+            Self::Skip => 13,
+            Self::Muskip => 14,
+            Self::Toks => 15,
+            Self::CountDef => 16,
+            Self::DimenDef => 17,
+            Self::SkipDef => 18,
+            Self::MuskipDef => 19,
+            Self::ToksDef => 20,
+            Self::CharDef => 21,
+            Self::MathCharDef => 22,
+            Self::Advance => 23,
+            Self::Multiply => 24,
+            Self::Divide => 25,
+            Self::CatCode => 26,
+            Self::LcCode => 27,
+            Self::UcCode => 28,
+            Self::SfCode => 29,
+            Self::MathCode => 30,
+            Self::DelCode => 31,
+            Self::Read => 32,
         }
     }
 
@@ -248,6 +312,28 @@ impl UnexpandablePrimitive {
             8 => Some(Self::Long),
             9 => Some(Self::Outer),
             10 => Some(Self::Protected),
+            11 => Some(Self::Count),
+            12 => Some(Self::Dimen),
+            13 => Some(Self::Skip),
+            14 => Some(Self::Muskip),
+            15 => Some(Self::Toks),
+            16 => Some(Self::CountDef),
+            17 => Some(Self::DimenDef),
+            18 => Some(Self::SkipDef),
+            19 => Some(Self::MuskipDef),
+            20 => Some(Self::ToksDef),
+            21 => Some(Self::CharDef),
+            22 => Some(Self::MathCharDef),
+            23 => Some(Self::Advance),
+            24 => Some(Self::Multiply),
+            25 => Some(Self::Divide),
+            26 => Some(Self::CatCode),
+            27 => Some(Self::LcCode),
+            28 => Some(Self::UcCode),
+            29 => Some(Self::SfCode),
+            30 => Some(Self::MathCode),
+            31 => Some(Self::DelCode),
+            32 => Some(Self::Read),
             _ => None,
         }
     }
@@ -294,6 +380,24 @@ impl Meaning {
             Self::Relax => pack(OP_RELAX, MeaningFlags::EMPTY, 0),
             Self::Macro { flags, definition } => pack(OP_MACRO, flags, definition.raw() as u64),
             Self::CharGiven(ch) => pack(OP_CHAR_GIVEN, MeaningFlags::EMPTY, ch as u64),
+            Self::MathCharGiven(value) => {
+                pack(OP_MATH_CHAR_GIVEN, MeaningFlags::EMPTY, value as u64)
+            }
+            Self::CountRegister(index) => {
+                pack(OP_COUNT_REGISTER, MeaningFlags::EMPTY, index as u64)
+            }
+            Self::DimenRegister(index) => {
+                pack(OP_DIMEN_REGISTER, MeaningFlags::EMPTY, index as u64)
+            }
+            Self::SkipRegister(index) => pack(OP_SKIP_REGISTER, MeaningFlags::EMPTY, index as u64),
+            Self::MuskipRegister(index) => {
+                pack(OP_MUSKIP_REGISTER, MeaningFlags::EMPTY, index as u64)
+            }
+            Self::ToksRegister(index) => pack(OP_TOKS_REGISTER, MeaningFlags::EMPTY, index as u64),
+            Self::IntParam(index) => pack(OP_INT_PARAM, MeaningFlags::EMPTY, index as u64),
+            Self::DimenParam(index) => pack(OP_DIMEN_PARAM, MeaningFlags::EMPTY, index as u64),
+            Self::GlueParam(index) => pack(OP_GLUE_PARAM, MeaningFlags::EMPTY, index as u64),
+            Self::TokParam(index) => pack(OP_TOK_PARAM, MeaningFlags::EMPTY, index as u64),
             Self::ExpandablePrimitive(primitive) => pack(
                 OP_EXPANDABLE_PRIMITIVE,
                 MeaningFlags::EMPTY,
@@ -326,6 +430,18 @@ impl Meaning {
                 Some(ch) => Self::CharGiven(ch),
                 None => Self::Unknown(RawMeaning { op, operand }),
             },
+            OP_MATH_CHAR_GIVEN if operand <= u16::MAX as u64 => Self::MathCharGiven(operand as u16),
+            OP_COUNT_REGISTER if operand <= u16::MAX as u64 => Self::CountRegister(operand as u16),
+            OP_DIMEN_REGISTER if operand <= u16::MAX as u64 => Self::DimenRegister(operand as u16),
+            OP_SKIP_REGISTER if operand <= u16::MAX as u64 => Self::SkipRegister(operand as u16),
+            OP_MUSKIP_REGISTER if operand <= u16::MAX as u64 => {
+                Self::MuskipRegister(operand as u16)
+            }
+            OP_TOKS_REGISTER if operand <= u16::MAX as u64 => Self::ToksRegister(operand as u16),
+            OP_INT_PARAM if operand <= u16::MAX as u64 => Self::IntParam(operand as u16),
+            OP_DIMEN_PARAM if operand <= u16::MAX as u64 => Self::DimenParam(operand as u16),
+            OP_GLUE_PARAM if operand <= u16::MAX as u64 => Self::GlueParam(operand as u16),
+            OP_TOK_PARAM if operand <= u16::MAX as u64 => Self::TokParam(operand as u16),
             OP_EXPANDABLE_PRIMITIVE => match ExpandablePrimitive::from_operand(operand) {
                 Some(primitive) => Self::ExpandablePrimitive(primitive),
                 None => Self::Unknown(RawMeaning { op, operand }),

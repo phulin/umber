@@ -4,7 +4,7 @@ use crate::{
 };
 use std::collections::HashMap;
 use tex_lex::{InputStack, MemoryInput, TokenListReplayKind};
-use tex_state::glue::Order;
+use tex_state::glue::{GlueSpec, Order};
 use tex_state::interner::Symbol;
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
@@ -673,6 +673,47 @@ fn number_and_romannumeral_scan_expanded_integer_edge_cases() {
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
     assert_eq!(next_expanded_chars(&mut input, &mut stores), "-19mmmm");
+}
+
+#[test]
+fn the_renders_assignable_registers_parameters_and_code_tables() {
+    let mut stores = Stores::new();
+    expandable_primitive(&mut stores, "the", ExpandablePrimitive::The);
+    let count = stores.intern("count");
+    stores.set_meaning(
+        count,
+        Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::Count),
+    );
+    let catcode = stores.intern("catcode");
+    stores.set_meaning(
+        catcode,
+        Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::CatCode),
+    );
+    let foo = stores.intern("foo");
+    stores.set_meaning(foo, Meaning::CountRegister(300));
+    stores.set_count(300, 42);
+    let parskip = stores.intern("parskip");
+    stores.set_meaning(parskip, Meaning::GlueParam(2));
+    let glue = stores.intern_glue(GlueSpec {
+        width: Scaled::from_raw(Scaled::UNITY),
+        stretch: Scaled::from_raw(2 * Scaled::UNITY),
+        stretch_order: Order::Fil,
+        shrink: Scaled::from_raw(0),
+        shrink_order: Order::Normal,
+    });
+    stores.set_glue_param(tex_state::env::banks::GlueParam::new(2), glue);
+    let everypar = stores.intern("everypar");
+    stores.set_meaning(everypar, Meaning::TokParam(1));
+    let hi = stores.intern_token_list(&[char_token('h'), char_token('i')]);
+    stores.set_tok_param(tex_state::env::banks::TokParam::new(1), hi);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\the\\count300 \\the\\foo \\the\\parskip \\the\\everypar \\the\\catcode`x",
+    ));
+
+    assert_eq!(
+        next_expanded_chars(&mut input, &mut stores),
+        "42421.0pt plus 2.0filhi11"
+    );
 }
 
 #[test]

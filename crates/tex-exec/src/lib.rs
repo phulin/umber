@@ -335,6 +335,20 @@ where
         Meaning::UnexpandablePrimitive(primitive) => {
             assignments::execute_unexpandable(primitive, input, stores, hooks)
         }
+        meaning @ (Meaning::CountRegister(_)
+        | Meaning::DimenRegister(_)
+        | Meaning::SkipRegister(_)
+        | Meaning::MuskipRegister(_)
+        | Meaning::ToksRegister(_)
+        | Meaning::IntParam(_)
+        | Meaning::DimenParam(_)
+        | Meaning::GlueParam(_)
+        | Meaning::TokParam(_)) => {
+            assignments::execute_assignment_meaning(meaning, input, stores, hooks)
+        }
+        Meaning::MathCharGiven(_) => {
+            unimplemented_typesetting(mode, token, "math character command")
+        }
         Meaning::Unknown(raw) => Err(ExecError::UnsupportedCommand {
             token,
             opcode: raw.op(),
@@ -386,6 +400,7 @@ pub enum ExecError {
     Expand(ExpandError),
     Lex(LexError),
     ScanToks(ScanToksError),
+    ScanGlue(tex_expand::scan_glue::ScanGlueError),
     EmptyModeNestSummary,
     CannotPopBaseMode,
     UndefinedControlSequence {
@@ -422,6 +437,15 @@ pub enum ExecError {
     InvalidLetRhs {
         token: Token,
     },
+    UnsupportedAssignmentTarget,
+    RegisterNumberOutOfRange(i32),
+    ArithmeticOverflow,
+    InvalidCode {
+        context: &'static str,
+        value: i32,
+    },
+    ReadNeedsTo,
+    ReadNotImplemented,
     UnimplementedTypesetting {
         mode: Mode,
         token: Token,
@@ -435,6 +459,7 @@ impl fmt::Display for ExecError {
             Self::Expand(err) => write!(f, "{err}"),
             Self::Lex(err) => write!(f, "{err}"),
             Self::ScanToks(err) => write!(f, "{err}"),
+            Self::ScanGlue(err) => write!(f, "{err}"),
             Self::EmptyModeNestSummary => write!(f, "mode nest summary has no levels"),
             Self::CannotPopBaseMode => write!(f, "cannot pop the base vertical mode level"),
             Self::UndefinedControlSequence { name } => {
@@ -475,6 +500,16 @@ impl fmt::Display for ExecError {
             Self::InvalidLetRhs { token } => {
                 write!(f, "\\let cannot assign macro parameter token {token:?}")
             }
+            Self::UnsupportedAssignmentTarget => write!(f, "unsupported assignment target"),
+            Self::RegisterNumberOutOfRange(value) => {
+                write!(f, "register number {value} is out of range")
+            }
+            Self::ArithmeticOverflow => write!(f, "Arithmetic overflow"),
+            Self::InvalidCode { context, value } => {
+                write!(f, "Invalid code ({value}) while scanning {context}")
+            }
+            Self::ReadNeedsTo => write!(f, "Missing `to' inserted for \\read"),
+            Self::ReadNotImplemented => write!(f, "I can't \\read from terminal in nonstop modes"),
             Self::UnimplementedTypesetting {
                 mode,
                 token,
@@ -493,6 +528,7 @@ impl std::error::Error for ExecError {
             Self::Expand(err) => Some(err),
             Self::Lex(err) => Some(err),
             Self::ScanToks(err) => Some(err),
+            Self::ScanGlue(err) => Some(err),
             Self::EmptyModeNestSummary
             | Self::CannotPopBaseMode
             | Self::UndefinedControlSequence { .. }
@@ -508,6 +544,12 @@ impl std::error::Error for ExecError {
             | Self::ExpectedControlSequence { .. }
             | Self::MissingToken { .. }
             | Self::InvalidLetRhs { .. }
+            | Self::UnsupportedAssignmentTarget
+            | Self::RegisterNumberOutOfRange(_)
+            | Self::ArithmeticOverflow
+            | Self::InvalidCode { .. }
+            | Self::ReadNeedsTo
+            | Self::ReadNotImplemented
             | Self::UnimplementedTypesetting { .. } => None,
         }
     }
@@ -528,6 +570,12 @@ impl From<LexError> for ExecError {
 impl From<ScanToksError> for ExecError {
     fn from(value: ScanToksError) -> Self {
         Self::ScanToks(value)
+    }
+}
+
+impl From<tex_expand::scan_glue::ScanGlueError> for ExecError {
+    fn from(value: tex_expand::scan_glue::ScanGlueError) -> Self {
+        Self::ScanGlue(value)
     }
 }
 
@@ -792,6 +840,104 @@ mod tests {
         let _ = stores.leave_group();
         assert!(matches!(stores.meaning(a), Meaning::Macro { .. }));
         assert_eq!(stores.meaning(b), Meaning::Undefined);
+    }
+
+    #[test]
+    fn register_assignments_cover_sparse_aliases_and_arithmetic() {
+        let mut stores = Stores::new();
+        install_unexpandable_primitives(&mut stores);
+        let mut input = InputStack::new(MemoryInput::new(
+            "\\count300 = 7 \\countdef\\foo=300 \\advance\\foo by 5 \\multiply\\foo 3 \\divide\\foo by 2",
+        ));
+
+        Executor::new()
+            .run(&mut input, &mut stores)
+            .expect("register assignments execute");
+
+        assert_eq!(stores.count(300), 18);
+    }
+
+    #[test]
+    fn chardef_and_mathchardef_are_internal_integers() {
+        let mut stores = Stores::new();
+        install_unexpandable_primitives(&mut stores);
+        let mut input = InputStack::new(MemoryInput::new(
+            "\\chardef\\A=65 \\mathchardef\\M=\"7132 \\count0=\\A \\count1=\\M",
+        ));
+
+        Executor::new()
+            .run(&mut input, &mut stores)
+            .expect("character definitions execute");
+
+        assert_eq!(stores.count(0), 65);
+        assert_eq!(stores.count(1), 0x7132);
+    }
+
+    #[test]
+    fn token_register_assignments_scan_balanced_text_and_copy_variables() {
+        let mut stores = Stores::new();
+        install_unexpandable_primitives(&mut stores);
+        let mut input = InputStack::new(MemoryInput::new(
+            "\\toks0={a{b}c}\\toksdef\\T=1 \\T=\\toks0",
+        ));
+
+        Executor::new()
+            .run(&mut input, &mut stores)
+            .expect("token assignments execute");
+
+        assert_eq!(stores.tokens(stores.toks(0)), stores.tokens(stores.toks(1)));
+        assert_eq!(stores.tokens(stores.toks(0)).len(), 5);
+    }
+
+    #[test]
+    fn glue_arithmetic_preserves_fil_order_rules() {
+        let mut stores = Stores::new();
+        install_unexpandable_primitives(&mut stores);
+        let mut input = InputStack::new(MemoryInput::new(
+            "\\skip0=1pt plus 2fil minus 6pt \\advance\\skip0 by 3pt plus 4fill minus 1pt \\divide\\skip0 by 2",
+        ));
+
+        Executor::new()
+            .run(&mut input, &mut stores)
+            .expect("glue arithmetic executes");
+        let spec = stores.glue(stores.skip(0));
+
+        assert_eq!(spec.width.raw(), 2 * tex_state::scaled::Scaled::UNITY);
+        assert_eq!(spec.stretch.raw(), 2 * tex_state::scaled::Scaled::UNITY);
+        assert_eq!(spec.stretch_order, tex_state::glue::Order::Fill);
+        assert_eq!(spec.shrink.raw(), 7 * tex_state::scaled::Scaled::UNITY / 2);
+        assert_eq!(spec.shrink_order, tex_state::glue::Order::Normal);
+    }
+
+    #[test]
+    fn arithmetic_overflow_reports_tex_error_text() {
+        let mut stores = Stores::new();
+        install_unexpandable_primitives(&mut stores);
+        let mut input = InputStack::new(MemoryInput::new(
+            "\\count0=2147483647 \\advance\\count0 by 1",
+        ));
+
+        let err = Executor::new()
+            .run(&mut input, &mut stores)
+            .expect_err("advance should overflow");
+
+        assert_eq!(err.to_string(), "Arithmetic overflow");
+    }
+
+    #[test]
+    fn code_table_assignment_validates_and_bumps_generation_on_same_value() {
+        let mut stores = Stores::new();
+        install_unexpandable_primitives(&mut stores);
+        let before = stores.code_table_generations();
+        let mut input = InputStack::new(MemoryInput::new("\\catcode`\\@=12 \\catcode`\\@=12"));
+
+        Executor::new()
+            .run(&mut input, &mut stores)
+            .expect("catcode assignments execute");
+        let after = stores.code_table_generations();
+
+        assert_eq!(stores.catcode('@'), Catcode::Other);
+        assert_eq!(after.catcode, before.catcode + 2);
     }
 
     fn install_expandable(stores: &mut Stores, name: &str, primitive: ExpandablePrimitive) {

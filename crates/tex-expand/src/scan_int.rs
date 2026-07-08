@@ -3,7 +3,7 @@
 use std::fmt;
 
 use tex_lex::{InputSource, InputStack, LexError, TokenListReplayKind};
-use tex_state::env::banks::IntParam;
+use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::interner::Symbol;
 use tex_state::meaning::Meaning;
 use tex_state::stores::Stores;
@@ -334,6 +334,31 @@ where
             consume_optional_space(input, stores, recorder, hooks)?;
             Ok(ScannedInt::new(ch as i32))
         }
+        Meaning::MathCharGiven(value) => {
+            consume_optional_space(input, stores, recorder, hooks)?;
+            Ok(ScannedInt::new(i32::from(value)))
+        }
+        Meaning::CountRegister(index) => {
+            consume_optional_space(input, stores, recorder, hooks)?;
+            Ok(ScannedInt::new(stores.count(index)))
+        }
+        Meaning::DimenRegister(index) => {
+            consume_optional_space(input, stores, recorder, hooks)?;
+            Ok(ScannedInt::new(stores.dimen(index).raw()))
+        }
+        Meaning::IntParam(index) => {
+            consume_optional_space(input, stores, recorder, hooks)?;
+            Ok(ScannedInt::new(stores.int_param(IntParam::new(index))))
+        }
+        Meaning::DimenParam(index) => {
+            consume_optional_space(input, stores, recorder, hooks)?;
+            Ok(ScannedInt::new(
+                stores.dimen_param(DimenParam::new(index)).raw(),
+            ))
+        }
+        Meaning::UnexpandablePrimitive(primitive) => {
+            scan_internal_integer_primitive(input, stores, recorder, hooks, token, primitive)
+        }
         _ => {
             let name = stores.resolve(symbol);
             match name {
@@ -356,6 +381,59 @@ where
                 _ => Err(ScanIntError::UnsupportedInternalInteger(token)),
             }
         }
+    }
+}
+
+fn scan_internal_integer_primitive<S, R, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Stores,
+    recorder: &mut R,
+    hooks: &mut H,
+    token: Token,
+    primitive: tex_state::meaning::UnexpandablePrimitive,
+) -> Result<ScannedInt, ScanIntError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    match primitive {
+        tex_state::meaning::UnexpandablePrimitive::Count => {
+            let index = scan_register_index(input, stores, recorder, hooks)?;
+            let value = stores.count(index);
+            consume_optional_space(input, stores, recorder, hooks)?;
+            Ok(ScannedInt::new(value))
+        }
+        tex_state::meaning::UnexpandablePrimitive::Dimen => {
+            let index = scan_register_index(input, stores, recorder, hooks)?;
+            let value = stores.dimen(index).raw();
+            consume_optional_space(input, stores, recorder, hooks)?;
+            Ok(ScannedInt::new(value))
+        }
+        tex_state::meaning::UnexpandablePrimitive::CatCode
+        | tex_state::meaning::UnexpandablePrimitive::LcCode
+        | tex_state::meaning::UnexpandablePrimitive::UcCode
+        | tex_state::meaning::UnexpandablePrimitive::SfCode
+        | tex_state::meaning::UnexpandablePrimitive::MathCode
+        | tex_state::meaning::UnexpandablePrimitive::DelCode => {
+            let code = scan_int_with_recorder_and_hooks(input, stores, recorder, hooks)?.value();
+            let ch = u32::try_from(code)
+                .ok()
+                .and_then(char::from_u32)
+                .ok_or(ScanIntError::RegisterNumberOutOfRange(code))?;
+            let value = match primitive {
+                tex_state::meaning::UnexpandablePrimitive::CatCode => stores.catcode(ch) as i32,
+                tex_state::meaning::UnexpandablePrimitive::LcCode => stores.lccode(ch) as i32,
+                tex_state::meaning::UnexpandablePrimitive::UcCode => stores.uccode(ch) as i32,
+                tex_state::meaning::UnexpandablePrimitive::SfCode => stores.sfcode(ch) as i32,
+                tex_state::meaning::UnexpandablePrimitive::MathCode => stores.mathcode(ch) as i32,
+                tex_state::meaning::UnexpandablePrimitive::DelCode => stores.delcode(ch),
+                _ => unreachable!("outer match restricts primitive"),
+            };
+            consume_optional_space(input, stores, recorder, hooks)?;
+            Ok(ScannedInt::new(value))
+        }
+        _ => Err(ScanIntError::UnsupportedInternalInteger(token)),
     }
 }
 

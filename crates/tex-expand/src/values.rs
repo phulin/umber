@@ -1,5 +1,6 @@
 use tex_lex::{InputSource, InputStack, MacroArguments};
-use tex_state::env::banks::IntParam;
+use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
+use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::TokenListId;
 use tex_state::meaning::{Meaning, MeaningFlags};
 use tex_state::scaled::Scaled;
@@ -8,7 +9,7 @@ use tex_state::token::{Catcode, Token};
 
 use crate::{
     Dispatch, ExpandError, ExpandableOpcode, ExpansionHooks, ExpansionReplayKind, ReadRecorder,
-    scan_helpers,
+    scan_helpers, scan_int,
 };
 
 pub(crate) fn expand_the<S, R, H>(
@@ -33,45 +34,156 @@ where
         return Err(ExpandError::UnsupportedTheTarget(token));
     };
 
-    match stores.resolve(symbol) {
-        "count" => {
-            let index = scan_helpers::scan_register_index(input, stores, recorder, hooks)?;
-            Ok(push_rendered_text(
-                stores,
-                ExpansionReplayKind::TheOutput,
-                &stores.count(index).to_string(),
-            ))
-        }
-        "dimen" => {
-            let index = scan_helpers::scan_register_index(input, stores, recorder, hooks)?;
-            Ok(push_rendered_text(
-                stores,
-                ExpansionReplayKind::TheOutput,
-                &format_scaled(stores.dimen(index)),
-            ))
-        }
-        "toks" => {
-            let index = scan_helpers::scan_register_index(input, stores, recorder, hooks)?;
-            Ok(Dispatch::Push {
-                replay_kind: ExpansionReplayKind::TheOutput,
-                token_list: stores.toks(index),
-                macro_arguments: MacroArguments::new(),
-            })
-        }
-        "endlinechar" => Ok(push_rendered_text(
+    match stores.meaning(symbol) {
+        Meaning::UnexpandablePrimitive(primitive) => match primitive {
+            tex_state::meaning::UnexpandablePrimitive::Count => {
+                let index = scan_helpers::scan_register_index(input, stores, recorder, hooks)?;
+                Ok(push_rendered_text(
+                    stores,
+                    ExpansionReplayKind::TheOutput,
+                    &stores.count(index).to_string(),
+                ))
+            }
+            tex_state::meaning::UnexpandablePrimitive::Dimen => {
+                let index = scan_helpers::scan_register_index(input, stores, recorder, hooks)?;
+                Ok(push_rendered_text(
+                    stores,
+                    ExpansionReplayKind::TheOutput,
+                    &format_scaled(stores.dimen(index)),
+                ))
+            }
+            tex_state::meaning::UnexpandablePrimitive::Skip => {
+                let index = scan_helpers::scan_register_index(input, stores, recorder, hooks)?;
+                Ok(push_rendered_text(
+                    stores,
+                    ExpansionReplayKind::TheOutput,
+                    &format_glue(stores.glue(stores.skip(index))),
+                ))
+            }
+            tex_state::meaning::UnexpandablePrimitive::Muskip => {
+                let index = scan_helpers::scan_register_index(input, stores, recorder, hooks)?;
+                Ok(push_rendered_text(
+                    stores,
+                    ExpansionReplayKind::TheOutput,
+                    &format_glue(stores.glue(stores.muskip(index))),
+                ))
+            }
+            tex_state::meaning::UnexpandablePrimitive::Toks => {
+                let index = scan_helpers::scan_register_index(input, stores, recorder, hooks)?;
+                Ok(Dispatch::Push {
+                    replay_kind: ExpansionReplayKind::TheOutput,
+                    token_list: stores.toks(index),
+                    macro_arguments: MacroArguments::new(),
+                })
+            }
+            tex_state::meaning::UnexpandablePrimitive::CatCode
+            | tex_state::meaning::UnexpandablePrimitive::LcCode
+            | tex_state::meaning::UnexpandablePrimitive::UcCode
+            | tex_state::meaning::UnexpandablePrimitive::SfCode
+            | tex_state::meaning::UnexpandablePrimitive::MathCode
+            | tex_state::meaning::UnexpandablePrimitive::DelCode => {
+                let ch = scan_code_table_char(input, stores, recorder, hooks)?;
+                let value = match primitive {
+                    tex_state::meaning::UnexpandablePrimitive::CatCode => stores.catcode(ch) as i32,
+                    tex_state::meaning::UnexpandablePrimitive::LcCode => stores.lccode(ch) as i32,
+                    tex_state::meaning::UnexpandablePrimitive::UcCode => stores.uccode(ch) as i32,
+                    tex_state::meaning::UnexpandablePrimitive::SfCode => stores.sfcode(ch) as i32,
+                    tex_state::meaning::UnexpandablePrimitive::MathCode => {
+                        stores.mathcode(ch) as i32
+                    }
+                    tex_state::meaning::UnexpandablePrimitive::DelCode => stores.delcode(ch),
+                    _ => unreachable!("outer match restricts primitive"),
+                };
+                Ok(push_rendered_text(
+                    stores,
+                    ExpansionReplayKind::TheOutput,
+                    &value.to_string(),
+                ))
+            }
+            _ => Err(ExpandError::UnsupportedTheTarget(token)),
+        },
+        Meaning::CountRegister(index) => Ok(push_rendered_text(
             stores,
             ExpansionReplayKind::TheOutput,
-            &stores.int_param(IntParam::END_LINE_CHAR).to_string(),
+            &stores.count(index).to_string(),
         )),
-        "escapechar" => Ok(push_rendered_text(
+        Meaning::DimenRegister(index) => Ok(push_rendered_text(
             stores,
             ExpansionReplayKind::TheOutput,
-            &stores.int_param(IntParam::ESCAPE_CHAR).to_string(),
+            &format_scaled(stores.dimen(index)),
         )),
-        // TODO(umber2-5qt): support `\the` for glue, muglue, font dimensions,
-        // code tables, box dimensions, page state, and time/job parameters as
-        // those Env classes become semantically available to the gullet.
-        _ => Err(ExpandError::UnsupportedTheTarget(token)),
+        Meaning::SkipRegister(index) => Ok(push_rendered_text(
+            stores,
+            ExpansionReplayKind::TheOutput,
+            &format_glue(stores.glue(stores.skip(index))),
+        )),
+        Meaning::MuskipRegister(index) => Ok(push_rendered_text(
+            stores,
+            ExpansionReplayKind::TheOutput,
+            &format_glue(stores.glue(stores.muskip(index))),
+        )),
+        Meaning::ToksRegister(index) => Ok(Dispatch::Push {
+            replay_kind: ExpansionReplayKind::TheOutput,
+            token_list: stores.toks(index),
+            macro_arguments: MacroArguments::new(),
+        }),
+        Meaning::IntParam(index) => Ok(push_rendered_text(
+            stores,
+            ExpansionReplayKind::TheOutput,
+            &stores.int_param(IntParam::new(index)).to_string(),
+        )),
+        Meaning::DimenParam(index) => Ok(push_rendered_text(
+            stores,
+            ExpansionReplayKind::TheOutput,
+            &format_scaled(stores.dimen_param(DimenParam::new(index))),
+        )),
+        Meaning::GlueParam(index) => Ok(push_rendered_text(
+            stores,
+            ExpansionReplayKind::TheOutput,
+            &format_glue(stores.glue(stores.glue_param(GlueParam::new(index)))),
+        )),
+        Meaning::TokParam(index) => Ok(Dispatch::Push {
+            replay_kind: ExpansionReplayKind::TheOutput,
+            token_list: stores.tok_param(TokParam::new(index)),
+            macro_arguments: MacroArguments::new(),
+        }),
+        _ => match stores.resolve(symbol) {
+            "count" => {
+                let index = scan_helpers::scan_register_index(input, stores, recorder, hooks)?;
+                Ok(push_rendered_text(
+                    stores,
+                    ExpansionReplayKind::TheOutput,
+                    &stores.count(index).to_string(),
+                ))
+            }
+            "dimen" => {
+                let index = scan_helpers::scan_register_index(input, stores, recorder, hooks)?;
+                Ok(push_rendered_text(
+                    stores,
+                    ExpansionReplayKind::TheOutput,
+                    &format_scaled(stores.dimen(index)),
+                ))
+            }
+            "toks" => {
+                let index = scan_helpers::scan_register_index(input, stores, recorder, hooks)?;
+                Ok(Dispatch::Push {
+                    replay_kind: ExpansionReplayKind::TheOutput,
+                    token_list: stores.toks(index),
+                    macro_arguments: MacroArguments::new(),
+                })
+            }
+            "endlinechar" => Ok(push_rendered_text(
+                stores,
+                ExpansionReplayKind::TheOutput,
+                &stores.int_param(IntParam::END_LINE_CHAR).to_string(),
+            )),
+            "escapechar" => Ok(push_rendered_text(
+                stores,
+                ExpansionReplayKind::TheOutput,
+                &stores.int_param(IntParam::ESCAPE_CHAR).to_string(),
+            )),
+            _ => Err(ExpandError::UnsupportedTheTarget(token)),
+        },
     }
 }
 
@@ -131,6 +243,18 @@ pub(crate) fn meaning_text(stores: &Stores, token: Token) -> String {
             Meaning::Undefined => "undefined".to_owned(),
             Meaning::Relax => "\\relax".to_owned(),
             Meaning::CharGiven(ch) => format!("the character {ch}"),
+            Meaning::MathCharGiven(value) => format!("\\mathchar\"{value:X}"),
+            Meaning::CountRegister(index) => format!("\\count{index}"),
+            Meaning::DimenRegister(index) => format!("\\dimen{index}"),
+            Meaning::SkipRegister(index) => format!("\\skip{index}"),
+            Meaning::MuskipRegister(index) => format!("\\muskip{index}"),
+            Meaning::ToksRegister(index) => format!("\\toks{index}"),
+            Meaning::IntParam(_)
+            | Meaning::DimenParam(_)
+            | Meaning::GlueParam(_)
+            | Meaning::TokParam(_) => {
+                format!("\\{}", stores.resolve(symbol))
+            }
             Meaning::ExpandablePrimitive(_) => format!("\\{}", stores.resolve(symbol)),
             Meaning::UnexpandablePrimitive(_) => format!("\\{}", stores.resolve(symbol)),
             Meaning::Macro { flags, definition } => {
@@ -235,4 +359,53 @@ fn format_scaled(value: Scaled) -> String {
     }
     let sign = if negative { "-" } else { "" };
     format!("{sign}{integer}.{fraction_text}pt")
+}
+
+fn format_glue(spec: GlueSpec) -> String {
+    let mut text = format_scaled(spec.width);
+    if spec.stretch.raw() != 0 {
+        text.push_str(" plus ");
+        text.push_str(&format_scaled_without_unit(spec.stretch));
+        text.push_str(order_unit(spec.stretch_order));
+    }
+    if spec.shrink.raw() != 0 {
+        text.push_str(" minus ");
+        text.push_str(&format_scaled_without_unit(spec.shrink));
+        text.push_str(order_unit(spec.shrink_order));
+    }
+    text
+}
+
+fn format_scaled_without_unit(value: Scaled) -> String {
+    format_scaled(value).trim_end_matches("pt").to_owned()
+}
+
+fn order_unit(order: Order) -> &'static str {
+    match order {
+        Order::Normal => "pt",
+        Order::Fil => "fil",
+        Order::Fill => "fill",
+        Order::Filll => "filll",
+    }
+}
+
+fn scan_code_table_char<S, R, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Stores,
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<char, ExpandError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    let value = scan_int::scan_int_with_recorder_and_hooks(input, stores, recorder, hooks)?.value();
+    u32::try_from(value)
+        .ok()
+        .and_then(char::from_u32)
+        .ok_or(ExpandError::UnsupportedTheTarget(Token::Char {
+            ch: '?',
+            cat: Catcode::Other,
+        }))
 }

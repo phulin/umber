@@ -331,6 +331,16 @@ where
         | Meaning::Undefined
         | Meaning::Relax
         | Meaning::CharGiven(_)
+        | Meaning::MathCharGiven(_)
+        | Meaning::CountRegister(_)
+        | Meaning::DimenRegister(_)
+        | Meaning::SkipRegister(_)
+        | Meaning::MuskipRegister(_)
+        | Meaning::ToksRegister(_)
+        | Meaning::IntParam(_)
+        | Meaning::DimenParam(_)
+        | Meaning::GlueParam(_)
+        | Meaning::TokParam(_)
         | Meaning::UnexpandablePrimitive(_)
         | Meaning::Unknown(_) => Ok(Dispatch::Deliver(token)),
     }

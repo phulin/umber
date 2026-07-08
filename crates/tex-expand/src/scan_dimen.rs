@@ -5,6 +5,7 @@ use std::fmt;
 use tex_lex::{InputSource, InputStack, LexError, TokenListReplayKind};
 use tex_state::glue::Order;
 use tex_state::interner::Symbol;
+use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::scaled::{
     DimensionError, PhysicalUnit, Scaled, round_decimal_fraction, scaled_from_decimal_parts,
     xn_over_d,
@@ -448,6 +449,25 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
+    match stores.meaning(symbol) {
+        Meaning::DimenRegister(index) => {
+            consume_optional_space(input, stores, recorder, hooks)?;
+            return Ok(ScannedDimen::new(stores.dimen(index)));
+        }
+        Meaning::DimenParam(index) => {
+            consume_optional_space(input, stores, recorder, hooks)?;
+            return Ok(ScannedDimen::new(
+                stores.dimen_param(tex_state::env::banks::DimenParam::new(index)),
+            ));
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen) => {
+            let index = scan_register_index(input, stores, recorder, hooks)?;
+            consume_optional_space(input, stores, recorder, hooks)?;
+            return Ok(ScannedDimen::new(stores.dimen(index)));
+        }
+        _ => {}
+    }
+
     if stores.resolve(symbol) == "dimen" {
         let index = scan_register_index(input, stores, recorder, hooks)?;
         consume_optional_space(input, stores, recorder, hooks)?;
