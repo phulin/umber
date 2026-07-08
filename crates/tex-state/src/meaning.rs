@@ -76,6 +76,15 @@ pub enum ExpandablePrimitive {
     RomanNumeral,
     Meaning,
     The,
+    Input,
+    EndInput,
+    JobName,
+    FontName,
+    TopMark,
+    FirstMark,
+    BotMark,
+    SplitFirstMark,
+    SplitBotMark,
 }
 
 impl ExpandablePrimitive {
@@ -91,6 +100,15 @@ impl ExpandablePrimitive {
             Self::RomanNumeral => 6,
             Self::Meaning => 7,
             Self::The => 8,
+            Self::Input => 9,
+            Self::EndInput => 10,
+            Self::JobName => 11,
+            Self::FontName => 12,
+            Self::TopMark => 13,
+            Self::FirstMark => 14,
+            Self::BotMark => 15,
+            Self::SplitFirstMark => 16,
+            Self::SplitBotMark => 17,
         }
     }
 
@@ -106,6 +124,15 @@ impl ExpandablePrimitive {
             6 => Some(Self::RomanNumeral),
             7 => Some(Self::Meaning),
             8 => Some(Self::The),
+            9 => Some(Self::Input),
+            10 => Some(Self::EndInput),
+            11 => Some(Self::JobName),
+            12 => Some(Self::FontName),
+            13 => Some(Self::TopMark),
+            14 => Some(Self::FirstMark),
+            15 => Some(Self::BotMark),
+            16 => Some(Self::SplitFirstMark),
+            17 => Some(Self::SplitBotMark),
             _ => None,
         }
     }
@@ -247,6 +274,19 @@ mod tests {
         ));
         round_trip(Meaning::ExpandablePrimitive(ExpandablePrimitive::Meaning));
         round_trip(Meaning::ExpandablePrimitive(ExpandablePrimitive::The));
+        round_trip(Meaning::ExpandablePrimitive(ExpandablePrimitive::Input));
+        round_trip(Meaning::ExpandablePrimitive(ExpandablePrimitive::EndInput));
+        round_trip(Meaning::ExpandablePrimitive(ExpandablePrimitive::JobName));
+        round_trip(Meaning::ExpandablePrimitive(ExpandablePrimitive::FontName));
+        round_trip(Meaning::ExpandablePrimitive(ExpandablePrimitive::TopMark));
+        round_trip(Meaning::ExpandablePrimitive(ExpandablePrimitive::FirstMark));
+        round_trip(Meaning::ExpandablePrimitive(ExpandablePrimitive::BotMark));
+        round_trip(Meaning::ExpandablePrimitive(
+            ExpandablePrimitive::SplitFirstMark,
+        ));
+        round_trip(Meaning::ExpandablePrimitive(
+            ExpandablePrimitive::SplitBotMark,
+        ));
         round_trip(Meaning::Unknown(RawMeaning::testing_new(u8::MAX, 0)));
         round_trip(Meaning::Unknown(RawMeaning::testing_new(
             u8::MAX,

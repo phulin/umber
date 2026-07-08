@@ -87,9 +87,9 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 
 - [ ] `\closein` - Closes an input stream.
 - [ ] `\closeout` - Closes an output stream.
-- [ ] `\endinput` - Stops reading the current input file after the current line.
+- [x] `\endinput` - Stops reading the current input source after the current line through the lexer input stack; source identity and reopening remain driver/World responsibilities.
 - [ ] `\immediate` - Executes the following output operation immediately.
-- [ ] `\input` - Reads another file at the current input position.
+- [x] `\input` - Pushes a driver-provided source at the current input position. `tex-expand` scans the file name and calls a source hook; it does not read the filesystem directly.
 - [ ] `\inputlineno` - Current line number in the active input file.
 - [ ] `\openin` - Opens a file for input.
 - [ ] `\openout` - Opens a file for output.
@@ -104,7 +104,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [ ] `\/` - Inserts italic correction for the preceding character or ligature.
 - [ ] `\font` - Defines a font control sequence and loads font metrics.
 - [ ] `\fontdimen` - Reads or assigns a font dimension parameter.
-- [ ] `\fontname` - Expands to the external name of a font.
+- [x] `\fontname` - Documented stub until font meanings exist: consumes the selector token and expands to an empty token list.
 - [ ] `\nullfont` - Predefined empty font used when no real font is selected.
 
 ## Glue And Skips
@@ -141,8 +141,8 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [ ] `\holdinginserts` - Keeps insertions on the page list during output routine processing when positive.
 - [ ] `\insert` - Adds material to an insertion class.
 - [ ] `\insertpenalties` - Reports penalties accumulated for split or held insertions.
-- [ ] `\splitbotmark` - Last mark found by the most recent `\vsplit`.
-- [ ] `\splitfirstmark` - First mark found by the most recent `\vsplit`.
+- [x] `\splitbotmark` - Documented stub until the page/split epic stores marks: expands to an empty token list.
+- [x] `\splitfirstmark` - Documented stub until the page/split epic stores marks: expands to an empty token list.
 - [ ] `\splitmaxdepth` - Maximum depth allowed in boxes produced by `\vsplit`.
 - [ ] `\splittopskip` - Top glue inserted in boxes produced by `\vsplit`.
 - [ ] `\vsplit` - Splits vertical material from a box register to a target height.
@@ -154,7 +154,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [ ] `\dump` - Writes a format file in INITEX; otherwise ends the job.
 - [ ] `\end` - Finishes the current job.
 - [ ] `\everyjob` - Token list inserted at the start of every job.
-- [ ] `\jobname` - Expands to the base name of the main input file.
+- [x] `\jobname` - Expands to the driver-provided job name as rendered character tokens.
 - [ ] `\mag` - Magnification ratio, scaled by 1000.
 - [ ] `\maxdeadcycles` - Maximum allowed output routine cycles without shipout.
 - [ ] `\month` - Current month number.
@@ -219,10 +219,10 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 
 ## Marks
 
-- [ ] `\botmark` - Last mark found on the current page.
-- [ ] `\firstmark` - First mark found on the current page.
+- [x] `\botmark` - Documented stub until the page builder stores marks: expands to an empty token list.
+- [x] `\firstmark` - Documented stub until the page builder stores marks: expands to an empty token list.
 - [ ] `\mark` - Adds mark text to the current vertical list.
-- [ ] `\topmark` - Mark inherited from the previous page.
+- [x] `\topmark` - Documented stub until the page builder stores marks: expands to an empty token list.
 
 ## Math
 

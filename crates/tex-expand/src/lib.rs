@@ -46,6 +46,7 @@ pub enum ExpansionReplayKind {
     MacroBody,
     TheOutput,
     NumberOutput,
+    JobName,
     Mark,
     Inserted,
 }
@@ -55,7 +56,7 @@ impl ExpansionReplayKind {
     pub const fn as_lex_kind(self) -> TokenListReplayKind {
         match self {
             Self::MacroBody => TokenListReplayKind::MacroBody,
-            Self::TheOutput | Self::NumberOutput => TokenListReplayKind::Inserted,
+            Self::TheOutput | Self::NumberOutput | Self::JobName => TokenListReplayKind::Inserted,
             Self::Mark => TokenListReplayKind::Mark,
             Self::Inserted => TokenListReplayKind::Inserted,
         }
@@ -76,6 +77,10 @@ pub enum ExpandableOpcode {
     Meaning,
     The,
     Input,
+    EndInput,
+    JobName,
+    FontName,
+    Mark,
     If,
     Else,
     Or,
@@ -104,6 +109,9 @@ pub enum ExpandError {
     MissingTokenAfterPrimitive(ExpandableOpcode),
     MissingEndCsName,
     NonCharacterInCsName(Token),
+    MissingInputName,
+    NonCharacterInInputName(Token),
+    InputOpen { name: String, message: String },
     ScanInt(Box<scan_int::ScanIntError>),
     ScanDimen(Box<scan_dimen::ScanDimenError>),
     UnsupportedTheTarget(Token),
@@ -123,6 +131,16 @@ impl fmt::Display for ExpandError {
             Self::MissingEndCsName => write!(f, "missing \\endcsname for \\csname"),
             Self::NonCharacterInCsName(token) => {
                 write!(f, "non-character token {token:?} while scanning \\csname")
+            }
+            Self::MissingInputName => write!(f, "missing file name after \\input"),
+            Self::NonCharacterInInputName(token) => {
+                write!(
+                    f,
+                    "non-character token {token:?} while scanning \\input file name"
+                )
+            }
+            Self::InputOpen { name, message } => {
+                write!(f, "failed to open input {name:?}: {message}")
             }
             Self::ScanInt(err) => write!(f, "{err}"),
             Self::ScanDimen(err) => write!(f, "{err}"),
@@ -144,8 +162,33 @@ impl std::error::Error for ExpandError {
             | Self::MissingTokenAfterPrimitive(_)
             | Self::MissingEndCsName
             | Self::NonCharacterInCsName(_)
+            | Self::MissingInputName
+            | Self::NonCharacterInInputName(_)
+            | Self::InputOpen { .. }
             | Self::UnsupportedTheTarget(_) => None,
         }
+    }
+}
+
+/// Driver hooks for expandable primitives that need outside-world state.
+///
+/// `tex-expand` never opens files itself. A driver or test harness supplies
+/// sources through this trait; the eventual `World` implementation is expected
+/// to record and snapshot those reads.
+pub trait ExpansionHooks<S> {
+    fn open_input(&mut self, name: &str) -> Result<S, String>;
+
+    fn job_name(&self) -> &str {
+        "texput"
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NoopExpansionHooks;
+
+impl<S> ExpansionHooks<S> for NoopExpansionHooks {
+    fn open_input(&mut self, _name: &str) -> Result<S, String> {
+        Err("no input source hook is installed".to_owned())
     }
 }
 
@@ -192,7 +235,7 @@ pub fn get_x_token<S>(
 where
     S: InputSource,
 {
-    get_x_token_with_recorder(input, stores, &mut NoopRecorder)
+    get_x_token_with_recorder_and_hooks(input, stores, &mut NoopRecorder, &mut NoopExpansionHooks)
 }
 
 /// Pulls the next fully expanded token while recording meaning reads.
@@ -204,6 +247,34 @@ pub fn get_x_token_with_recorder<S, R>(
 where
     S: InputSource,
     R: ReadRecorder,
+{
+    get_x_token_with_recorder_and_hooks(input, stores, recorder, &mut NoopExpansionHooks)
+}
+
+/// Pulls the next fully expanded token using driver-provided expansion hooks.
+pub fn get_x_token_with_hooks<S, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Stores,
+    hooks: &mut H,
+) -> Result<Option<Token>, ExpandError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    get_x_token_with_recorder_and_hooks(input, stores, &mut NoopRecorder, hooks)
+}
+
+/// Pulls the next fully expanded token while recording reads and using hooks.
+pub fn get_x_token_with_recorder_and_hooks<S, R, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Stores,
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<Option<Token>, ExpandError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
 {
     loop {
         let Some(read) = input.next_expansion_token_readonly(stores)? else {
@@ -222,7 +293,7 @@ where
         let meaning = stores.meaning(symbol);
         recorder.record_meaning(symbol, meaning);
 
-        match dispatch(token, input, stores, recorder, meaning)? {
+        match dispatch_with_hooks(token, input, stores, recorder, hooks, meaning)? {
             Dispatch::Continue => {}
             Dispatch::Deliver(token) | Dispatch::DeliverNoExpand(token) => return Ok(Some(token)),
             push @ Dispatch::Push { .. } => apply_dispatch_push(input, push),
@@ -245,6 +316,29 @@ where
     S: InputSource,
     R: ReadRecorder,
 {
+    dispatch_with_hooks(
+        token,
+        input,
+        stores,
+        recorder,
+        &mut NoopExpansionHooks,
+        meaning,
+    )
+}
+
+pub fn dispatch_with_hooks<S, R, H>(
+    token: Token,
+    input: &mut InputStack<S>,
+    stores: &mut Stores,
+    recorder: &mut R,
+    hooks: &mut H,
+    meaning: Meaning,
+) -> Result<Dispatch, ExpandError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
     match meaning {
         Meaning::Macro { flags, definition } if is_expandable_macro(flags) => {
             let macro_meaning = stores.macro_definition(definition);
@@ -262,7 +356,7 @@ where
             })
         }
         Meaning::ExpandablePrimitive(ExpandablePrimitive::ExpandAfter) => {
-            expand_after(input, stores, recorder)?;
+            expand_after(input, stores, recorder, hooks)?;
             Ok(Dispatch::Continue)
         }
         Meaning::ExpandablePrimitive(ExpandablePrimitive::NoExpand) => {
@@ -274,7 +368,7 @@ where
             Ok(Dispatch::DeliverNoExpand(token))
         }
         Meaning::ExpandablePrimitive(ExpandablePrimitive::CsName) => {
-            let name = scan_csname(input, stores, recorder)?;
+            let name = scan_csname(input, stores, recorder, hooks)?;
             let symbol = CsNameInterner::intern_relaxed_control_sequence(stores, &name);
             Ok(Dispatch::Deliver(Token::Cs(symbol)))
         }
@@ -322,6 +416,47 @@ where
             ))
         }
         Meaning::ExpandablePrimitive(ExpandablePrimitive::The) => expand_the(input, stores),
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::Input) => {
+            let name = scan_input_name(input, stores, recorder, hooks)?;
+            let source = hooks
+                .open_input(&name)
+                .map_err(|message| ExpandError::InputOpen {
+                    name: name.clone(),
+                    message,
+                })?;
+            input.push_source(source);
+            Ok(Dispatch::Continue)
+        }
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::EndInput) => {
+            input.end_current_source_after_current_line();
+            Ok(Dispatch::Continue)
+        }
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::JobName) => Ok(push_rendered_text(
+            stores,
+            ExpansionReplayKind::JobName,
+            hooks.job_name(),
+        )),
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::FontName) => {
+            // TODO(umber2-fonts): consume/resolve a font selector once font
+            // meanings exist. Until then this documented stub expands empty.
+            let _ = next_non_space_x_token(input, stores)?;
+            Ok(push_rendered_text(
+                stores,
+                ExpansionReplayKind::NumberOutput,
+                "",
+            ))
+        }
+        Meaning::ExpandablePrimitive(
+            ExpandablePrimitive::TopMark
+            | ExpandablePrimitive::FirstMark
+            | ExpandablePrimitive::BotMark
+            | ExpandablePrimitive::SplitFirstMark
+            | ExpandablePrimitive::SplitBotMark,
+        ) => {
+            // TODO(umber2-page): return the page builder's stored mark token
+            // lists once mark nodes and page splitting exist.
+            Ok(push_rendered_text(stores, ExpansionReplayKind::Mark, ""))
+        }
         Meaning::Macro { .. }
         | Meaning::Undefined
         | Meaning::Relax
@@ -346,8 +481,12 @@ pub fn dispatch_expandable_opcode(opcode: ExpandableOpcode) -> Result<(), Expand
         | ExpandableOpcode::Number
         | ExpandableOpcode::RomanNumeral
         | ExpandableOpcode::Meaning
-        | ExpandableOpcode::The => Ok(()),
-        ExpandableOpcode::Input => Err(unimplemented_expandable(opcode)),
+        | ExpandableOpcode::The
+        | ExpandableOpcode::Input
+        | ExpandableOpcode::EndInput
+        | ExpandableOpcode::JobName
+        | ExpandableOpcode::FontName
+        | ExpandableOpcode::Mark => Ok(()),
         ExpandableOpcode::If => Err(unimplemented_expandable(opcode)),
         ExpandableOpcode::Else => Err(unimplemented_expandable(opcode)),
         ExpandableOpcode::Or => Err(unimplemented_expandable(opcode)),
@@ -359,14 +498,16 @@ fn unimplemented_expandable(opcode: ExpandableOpcode) -> ExpandError {
     ExpandError::UnimplementedExpandable(opcode)
 }
 
-fn expand_after<S, R>(
+fn expand_after<S, R, H>(
     input: &mut InputStack<S>,
     stores: &mut Stores,
     recorder: &mut R,
+    hooks: &mut H,
 ) -> Result<(), ExpandError>
 where
     S: InputSource,
     R: ReadRecorder,
+    H: ExpansionHooks<S>,
 {
     let Some(saved) = input.next_token_readonly(stores)? else {
         return Err(ExpandError::MissingTokenAfterPrimitive(
@@ -379,20 +520,23 @@ where
         ));
     };
 
-    let target_dispatch = dispatch_one_raw_token(target, input, stores, recorder)?;
+    let target_dispatch =
+        dispatch_one_raw_token_with_hooks(target, input, stores, recorder, hooks)?;
     push_dispatch_result(input, stores, target_dispatch);
     push_inserted_token(input, stores, saved);
     Ok(())
 }
 
-fn scan_csname<S, R>(
+fn scan_csname<S, R, H>(
     input: &mut InputStack<S>,
     stores: &mut Stores,
     recorder: &mut R,
+    hooks: &mut H,
 ) -> Result<String, ExpandError>
 where
     S: InputSource,
     R: ReadRecorder,
+    H: ExpansionHooks<S>,
 {
     let mut name = String::new();
 
@@ -419,7 +563,7 @@ where
             return Ok(name);
         }
 
-        match dispatch(token, input, stores, recorder, meaning)? {
+        match dispatch_with_hooks(token, input, stores, recorder, hooks, meaning)? {
             Dispatch::Continue => {}
             Dispatch::Deliver(token) | Dispatch::DeliverNoExpand(token) => {
                 append_csname_token(&mut name, token)?;
@@ -437,6 +581,95 @@ fn append_csname_token(name: &mut String, token: Token) -> Result<(), ExpandErro
         }
         Token::Cs(_) | Token::Param(_) => Err(ExpandError::NonCharacterInCsName(token)),
     }
+}
+
+fn scan_input_name<S, R, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Stores,
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<String, ExpandError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    let Some(first) = next_non_space_x_token_with_hooks(input, stores, recorder, hooks)? else {
+        return Err(ExpandError::MissingInputName);
+    };
+
+    if is_begin_group(first) {
+        let mut name = String::new();
+        loop {
+            let Some(token) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
+            else {
+                return Err(ExpandError::MissingInputName);
+            };
+            if is_end_group(token) {
+                return if name.is_empty() {
+                    Err(ExpandError::MissingInputName)
+                } else {
+                    Ok(name)
+                };
+            }
+            append_input_name_token(&mut name, token)?;
+        }
+    }
+
+    let mut name = String::new();
+    append_input_name_token(&mut name, first)?;
+    loop {
+        let Some(token) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
+        else {
+            break;
+        };
+        if matches!(
+            token,
+            Token::Char {
+                cat: Catcode::Space,
+                ..
+            }
+        ) {
+            break;
+        }
+        append_input_name_token(&mut name, token)?;
+    }
+
+    if name.is_empty() {
+        Err(ExpandError::MissingInputName)
+    } else {
+        Ok(name)
+    }
+}
+
+fn append_input_name_token(name: &mut String, token: Token) -> Result<(), ExpandError> {
+    match token {
+        Token::Char { ch, .. } => {
+            name.push(ch);
+            Ok(())
+        }
+        Token::Cs(_) | Token::Param(_) => Err(ExpandError::NonCharacterInInputName(token)),
+    }
+}
+
+fn is_begin_group(token: Token) -> bool {
+    matches!(
+        token,
+        Token::Char {
+            cat: Catcode::BeginGroup,
+            ..
+        }
+    )
+}
+
+fn is_end_group(token: Token) -> bool {
+    matches!(
+        token,
+        Token::Char {
+            cat: Catcode::EndGroup,
+            ..
+        }
+    )
 }
 
 fn expand_the<S>(input: &mut InputStack<S>, stores: &mut Stores) -> Result<Dispatch, ExpandError>
@@ -503,6 +736,34 @@ where
 {
     loop {
         let Some(token) = get_x_token(input, stores)? else {
+            return Ok(None);
+        };
+        if !matches!(
+            token,
+            Token::Char {
+                cat: Catcode::Space,
+                ..
+            }
+        ) {
+            return Ok(Some(token));
+        }
+    }
+}
+
+fn next_non_space_x_token_with_hooks<S, R, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Stores,
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<Option<Token>, ExpandError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    loop {
+        let Some(token) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
+        else {
             return Ok(None);
         };
         if !matches!(
@@ -692,15 +953,17 @@ fn format_scaled(value: Scaled) -> String {
     format!("{sign}{integer}.{fraction_text}pt")
 }
 
-fn dispatch_one_raw_token<S, R>(
+fn dispatch_one_raw_token_with_hooks<S, R, H>(
     token: Token,
     input: &mut InputStack<S>,
     stores: &mut Stores,
     recorder: &mut R,
+    hooks: &mut H,
 ) -> Result<Dispatch, ExpandError>
 where
     S: InputSource,
     R: ReadRecorder,
+    H: ExpansionHooks<S>,
 {
     let Token::Cs(symbol) = token else {
         return Ok(Dispatch::Deliver(token));
@@ -708,7 +971,7 @@ where
 
     let meaning = stores.meaning(symbol);
     recorder.record_meaning(symbol, meaning);
-    dispatch(token, input, stores, recorder, meaning)
+    dispatch_with_hooks(token, input, stores, recorder, hooks, meaning)
 }
 
 fn push_dispatch_result<S>(input: &mut InputStack<S>, stores: &mut Stores, dispatch: Dispatch) {
@@ -750,9 +1013,10 @@ fn push_noexpand_token<S>(input: &mut InputStack<S>, stores: &mut Stores, token:
 #[cfg(test)]
 mod tests {
     use super::{
-        ExpandableOpcode, NoopRecorder, ReadRecorder, dispatch, dispatch_expandable_opcode,
-        get_x_token, get_x_token_with_recorder,
+        ExpandableOpcode, ExpansionHooks, NoopRecorder, ReadRecorder, dispatch,
+        dispatch_expandable_opcode, get_x_token, get_x_token_with_hooks, get_x_token_with_recorder,
     };
+    use std::collections::HashMap;
     use tex_lex::{InputStack, MemoryInput, TokenListReplayKind};
     use tex_state::interner::Symbol;
     use tex_state::macro_store::MacroMeaning;
@@ -828,7 +1092,12 @@ mod tests {
                 | ExpandableOpcode::Number
                 | ExpandableOpcode::RomanNumeral
                 | ExpandableOpcode::Meaning
-                | ExpandableOpcode::The => assert!(result.is_ok()),
+                | ExpandableOpcode::The
+                | ExpandableOpcode::Input
+                | ExpandableOpcode::EndInput
+                | ExpandableOpcode::JobName
+                | ExpandableOpcode::FontName
+                | ExpandableOpcode::Mark => assert!(result.is_ok()),
                 _ => assert!(matches!(
                     result,
                     Err(super::ExpandError::UnimplementedExpandable(found)) if found == opcode
@@ -1552,6 +1821,105 @@ mod tests {
         );
     }
 
+    #[test]
+    fn input_pushes_driver_source_and_returns_to_calling_source() {
+        let mut stores = Stores::new();
+        stores.set_int_param(tex_state::env::banks::IntParam::END_LINE_CHAR, 13);
+        expandable_primitive(&mut stores, "input", ExpandablePrimitive::Input);
+        let mut input = InputStack::new(MemoryInput::new("\\input{inc}z"));
+        let mut hooks = MemoryHooks::new("main").with_source("inc", "ab");
+
+        assert_eq!(
+            next_expanded_chars_with_hooks(&mut input, &mut stores, &mut hooks),
+            "ab z "
+        );
+        assert_eq!(hooks.opened, vec!["inc"]);
+    }
+
+    #[test]
+    fn endinput_finishes_current_line_then_pops_source() {
+        let mut stores = Stores::new();
+        stores.set_int_param(tex_state::env::banks::IntParam::END_LINE_CHAR, 13);
+        expandable_primitive(&mut stores, "input", ExpandablePrimitive::Input);
+        expandable_primitive(&mut stores, "endinput", ExpandablePrimitive::EndInput);
+        let mut input = InputStack::new(MemoryInput::new("\\input{inc}z"));
+        let mut hooks = MemoryHooks::new("main").with_source("inc", "a\\endinput b\nc");
+
+        assert_eq!(
+            next_expanded_chars_with_hooks(&mut input, &mut stores, &mut hooks),
+            "ab z "
+        );
+    }
+
+    #[test]
+    fn jobname_expands_from_driver_hook_as_rendered_tokens() {
+        let mut stores = Stores::new();
+        expandable_primitive(&mut stores, "jobname", ExpandablePrimitive::JobName);
+        let mut input = InputStack::new(MemoryInput::new("\\jobname"));
+        let mut hooks = MemoryHooks::new("paper");
+
+        let tokens = collect_expanded_with_hooks(&mut input, &mut stores, &mut hooks);
+        let text = tokens
+            .iter()
+            .map(|token| match token {
+                Token::Char { ch, .. } => *ch,
+                other => panic!("expected character token, got {other:?}"),
+            })
+            .collect::<String>();
+
+        assert_eq!(text, "paper");
+        assert!(tokens.iter().all(|token| matches!(
+            token,
+            Token::Char {
+                cat: Catcode::Other,
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn fontname_stub_consumes_selector_and_expands_empty() {
+        let mut stores = Stores::new();
+        expandable_primitive(&mut stores, "fontname", ExpandablePrimitive::FontName);
+        let nullfont = stores.intern("nullfont");
+        stores.set_meaning(nullfont, Meaning::Relax);
+        let list = stores.intern_token_list(&[
+            Token::Cs(stores.symbol("fontname").expect("fontname")),
+            Token::Cs(nullfont),
+            char_token('z'),
+        ]);
+        let mut input = InputStack::new(MemoryInput::new(""));
+        input.push_token_list(list, TokenListReplayKind::Inserted);
+
+        assert_eq!(next_expanded_chars(&mut input, &mut stores), "z");
+    }
+
+    #[test]
+    fn mark_family_stubs_expand_empty() {
+        let mut stores = Stores::new();
+        for (name, primitive) in [
+            ("topmark", ExpandablePrimitive::TopMark),
+            ("firstmark", ExpandablePrimitive::FirstMark),
+            ("botmark", ExpandablePrimitive::BotMark),
+            ("splitfirstmark", ExpandablePrimitive::SplitFirstMark),
+            ("splitbotmark", ExpandablePrimitive::SplitBotMark),
+        ] {
+            expandable_primitive(&mut stores, name, primitive);
+        }
+        let list = stores.intern_token_list(&[
+            Token::Cs(stores.symbol("topmark").expect("topmark")),
+            Token::Cs(stores.symbol("firstmark").expect("firstmark")),
+            Token::Cs(stores.symbol("botmark").expect("botmark")),
+            Token::Cs(stores.symbol("splitfirstmark").expect("splitfirstmark")),
+            Token::Cs(stores.symbol("splitbotmark").expect("splitbotmark")),
+            char_token('z'),
+        ]);
+        let mut input = InputStack::new(MemoryInput::new(""));
+        input.push_token_list(list, TokenListReplayKind::Inserted);
+
+        assert_eq!(next_expanded_chars(&mut input, &mut stores), "z");
+    }
+
     fn next_expanded_chars(input: &mut InputStack<MemoryInput>, stores: &mut Stores) -> String {
         let mut out = String::new();
         while let Some(token) = get_x_token(input, stores).expect("expansion should succeed") {
@@ -1566,6 +1934,37 @@ mod tests {
     fn collect_expanded(input: &mut InputStack<MemoryInput>, stores: &mut Stores) -> Vec<Token> {
         let mut out = Vec::new();
         while let Some(token) = get_x_token(input, stores).expect("expansion should succeed") {
+            out.push(token);
+        }
+        out
+    }
+
+    fn next_expanded_chars_with_hooks(
+        input: &mut InputStack<MemoryInput>,
+        stores: &mut Stores,
+        hooks: &mut MemoryHooks,
+    ) -> String {
+        let mut out = String::new();
+        while let Some(token) =
+            get_x_token_with_hooks(input, stores, hooks).expect("expansion should succeed")
+        {
+            let Token::Char { ch, .. } = token else {
+                panic!("expected character token, got {token:?}");
+            };
+            out.push(ch);
+        }
+        out
+    }
+
+    fn collect_expanded_with_hooks(
+        input: &mut InputStack<MemoryInput>,
+        stores: &mut Stores,
+        hooks: &mut MemoryHooks,
+    ) -> Vec<Token> {
+        let mut out = Vec::new();
+        while let Some(token) =
+            get_x_token_with_hooks(input, stores, hooks).expect("expansion should succeed")
+        {
             out.push(token);
         }
         out
@@ -1596,5 +1995,41 @@ mod tests {
             expandable_primitive(stores, "csname", ExpandablePrimitive::CsName),
             expandable_primitive(stores, "endcsname", ExpandablePrimitive::EndCsName),
         )
+    }
+
+    struct MemoryHooks {
+        job_name: String,
+        sources: HashMap<String, String>,
+        opened: Vec<String>,
+    }
+
+    impl MemoryHooks {
+        fn new(job_name: &str) -> Self {
+            Self {
+                job_name: job_name.to_owned(),
+                sources: HashMap::new(),
+                opened: Vec::new(),
+            }
+        }
+
+        fn with_source(mut self, name: &str, input: &str) -> Self {
+            self.sources.insert(name.to_owned(), input.to_owned());
+            self
+        }
+    }
+
+    impl ExpansionHooks<MemoryInput> for MemoryHooks {
+        fn open_input(&mut self, name: &str) -> Result<MemoryInput, String> {
+            let source = self
+                .sources
+                .get(name)
+                .ok_or_else(|| "missing memory source".to_owned())?;
+            self.opened.push(name.to_owned());
+            Ok(MemoryInput::new(source.clone()))
+        }
+
+        fn job_name(&self) -> &str {
+            &self.job_name
+        }
     }
 }

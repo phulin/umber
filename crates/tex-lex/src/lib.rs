@@ -177,6 +177,7 @@ pub struct SourceFrame {
     buffer_offset: usize,
     line_number: usize,
     column: usize,
+    end_after_current_line: bool,
 }
 
 impl SourceFrame {
@@ -221,6 +222,7 @@ impl SourceFrame {
             line_char_offset: self.offset,
             line_byte_offset: byte_offset_for_char_offset(&self.line, self.offset),
             pending: self.pending.iter().copied().collect(),
+            end_after_current_line: self.end_after_current_line,
         }
     }
 }
@@ -289,6 +291,7 @@ pub struct SourceFrameSummary {
     line_char_offset: usize,
     line_byte_offset: usize,
     pending: Vec<Token>,
+    end_after_current_line: bool,
 }
 
 impl SourceFrameSummary {
@@ -335,6 +338,11 @@ impl SourceFrameSummary {
     #[must_use]
     pub fn pending(&self) -> &[Token] {
         &self.pending
+    }
+
+    #[must_use]
+    pub fn end_after_current_line(&self) -> bool {
+        self.end_after_current_line
     }
 
     /// Returns whether this frame summary contains all lexer-owned state
@@ -518,6 +526,22 @@ impl<S> InputStack<S> {
     pub fn set_unicode_superscript_notation(&mut self, enabled: bool) {
         self.unicode_superscript_notation = enabled;
     }
+
+    /// Stops the current source frame after its current normalized line.
+    ///
+    /// This is the lexer-owned half of TeX's `\endinput`: expansion/execution
+    /// decide when the primitive is seen, while the input stack controls the
+    /// exact source-frame pop point.
+    pub fn end_current_source_after_current_line(&mut self) -> bool {
+        let Some(source) = self.frames.iter_mut().rev().find_map(|frame| match frame {
+            InputFrame::Source(source) => Some(source),
+            InputFrame::TokenList(_) => None,
+        }) else {
+            return false;
+        };
+        source.frame.end_after_current_line = true;
+        true
+    }
 }
 
 /// Errors produced while converting characters to TeX tokens.
@@ -654,6 +678,16 @@ where
                     }
 
                     if source.frame.offset >= source.frame.line.len() {
+                        if source.frame.end_after_current_line {
+                            let popped = self.frames.pop();
+                            if let Some(InputFrame::Source(source)) = popped {
+                                self.last_source_frame = Some(LastSourceFrame {
+                                    frame: source.frame,
+                                    next_source_offset: source.next_source_offset,
+                                });
+                            }
+                            continue;
+                        }
                         if !load_next_line(source, stores)? {
                             let popped = self.frames.pop();
                             if let Some(InputFrame::Source(source)) = popped {
@@ -718,6 +752,16 @@ where
                     }
 
                     if source.frame.offset >= source.frame.line.len() {
+                        if source.frame.end_after_current_line {
+                            let popped = self.frames.pop();
+                            if let Some(InputFrame::Source(source)) = popped {
+                                self.last_source_frame = Some(LastSourceFrame {
+                                    frame: source.frame,
+                                    next_source_offset: source.next_source_offset,
+                                });
+                            }
+                            continue;
+                        }
                         if !load_next_line_readonly(source, stores)? {
                             let popped = self.frames.pop();
                             if let Some(InputFrame::Source(source)) = popped {

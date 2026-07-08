@@ -132,7 +132,9 @@ supply.
   source frame state and token-list replay progress. Token-list frames read
   frozen content only through `Stores::tokens`; source reopening by content
   hash remains future `World` integration and is deliberately outside
-  `tex-lex`'s local `InputSource` trait.
+  `tex-lex`'s local `InputSource` trait. `\endinput` is represented as a
+  source-frame flag that lets the lexer finish the current normalized line and
+  then pop that source without asking expansion to manage source internals.
 
 ## 4. Lexer (the eyes)
 
@@ -224,6 +226,12 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   glue-like values, font dimensions, code-table values, box dimensions, page
   state, and time/job parameters remain documented TODOs until those Env
   classes are semantically available.
+- Input/job expandables use explicit driver hooks: `tex-expand` scans the
+  `\input` file name and asks the caller for a new `InputSource`, while
+  `\jobname` renders the caller-provided job name. This preserves the rule
+  that file access belongs to `World`/the driver layer, not to the gullet.
+  `\fontname` and the mark-family expandables are documented empty stubs until
+  font meanings and page-builder marks exist.
 - **What the gullet never does**: mutate state. `\def`, `\advance`,
   register writes are *unexpandable* — they are delivered to the stomach.
   This is TeX's own factoring and we enforce it in the crate split:
