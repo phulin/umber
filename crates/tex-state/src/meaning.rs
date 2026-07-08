@@ -1,6 +1,7 @@
 //! Meaning word encoding and decoding.
 
 use crate::ids::{FontId, MacroDefinitionId};
+use crate::page::{PageDimension, PageInteger};
 
 const OPCODE_SHIFT: u32 = 56;
 const FLAGS_SHIFT: u32 = 48;
@@ -23,6 +24,8 @@ const OP_DIMEN_PARAM: u8 = 13;
 const OP_GLUE_PARAM: u8 = 14;
 const OP_TOK_PARAM: u8 = 15;
 const OP_FONT: u8 = 16;
+const OP_PAGE_DIMENSION: u8 = 17;
+const OP_PAGE_INTEGER: u8 = 18;
 
 /// Bitflags carried by meaning words.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -82,6 +85,8 @@ pub enum Meaning {
     DimenParam(u16),
     GlueParam(u16),
     TokParam(u16),
+    PageDimension(PageDimension),
+    PageInteger(PageInteger),
     Font(FontId),
     ExpandablePrimitive(ExpandablePrimitive),
     UnexpandablePrimitive(UnexpandablePrimitive),
@@ -646,6 +651,14 @@ impl Meaning {
             Self::DimenParam(index) => pack(OP_DIMEN_PARAM, MeaningFlags::EMPTY, index as u64),
             Self::GlueParam(index) => pack(OP_GLUE_PARAM, MeaningFlags::EMPTY, index as u64),
             Self::TokParam(index) => pack(OP_TOK_PARAM, MeaningFlags::EMPTY, index as u64),
+            Self::PageDimension(dimension) => pack(
+                OP_PAGE_DIMENSION,
+                MeaningFlags::EMPTY,
+                dimension.index() as u64,
+            ),
+            Self::PageInteger(integer) => {
+                pack(OP_PAGE_INTEGER, MeaningFlags::EMPTY, integer.index() as u64)
+            }
             Self::Font(id) => pack(OP_FONT, MeaningFlags::EMPTY, id.raw() as u64),
             Self::ExpandablePrimitive(primitive) => pack(
                 OP_EXPANDABLE_PRIMITIVE,
@@ -691,6 +704,18 @@ impl Meaning {
             OP_DIMEN_PARAM if operand <= u16::MAX as u64 => Self::DimenParam(operand as u16),
             OP_GLUE_PARAM if operand <= u16::MAX as u64 => Self::GlueParam(operand as u16),
             OP_TOK_PARAM if operand <= u16::MAX as u64 => Self::TokParam(operand as u16),
+            OP_PAGE_DIMENSION if operand <= u8::MAX as u64 => {
+                match PageDimension::from_index(operand as u8) {
+                    Some(dimension) => Self::PageDimension(dimension),
+                    None => Self::Unknown(RawMeaning { op, operand }),
+                }
+            }
+            OP_PAGE_INTEGER if operand <= u8::MAX as u64 => {
+                match PageInteger::from_index(operand as u8) {
+                    Some(integer) => Self::PageInteger(integer),
+                    None => Self::Unknown(RawMeaning { op, operand }),
+                }
+            }
             OP_FONT if operand <= u32::MAX as u64 => Self::Font(FontId::new(operand as u32)),
             OP_EXPANDABLE_PRIMITIVE => match ExpandablePrimitive::from_operand(operand) {
                 Some(primitive) => Self::ExpandablePrimitive(primitive),

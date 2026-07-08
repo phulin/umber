@@ -9,6 +9,7 @@ use tex_state::env::banks::GlueParam;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::{FontId, GlueId, NodeListId};
 use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, Node, Sign};
+use tex_state::page::{PageDimension, PageInteger};
 use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::token::{Catcode, Token};
 use tex_state::{Snapshot, Universe};
@@ -32,6 +33,17 @@ enum Op {
         global: bool,
     },
     TakeBoxReg(u16),
+    SetPageDim {
+        dimension: PageDimension,
+        raw: i32,
+    },
+    SetPageInt {
+        integer: PageInteger,
+        value: i32,
+    },
+    PushPageContribution(NodeSeed),
+    PushCurrentPage(NodeSeed),
+    PopPageContributionTail,
     EnterGroup,
     LeaveGroup,
     Checkpoint,
@@ -215,6 +227,21 @@ fn run_replay_identity(ops: &[Op]) {
                 box_oracle.set(*index, None, false);
                 box_oracle.assert_index_matches(*index, &stores, &mut tree_cache);
             }
+            Op::SetPageDim { dimension, raw } => {
+                stores.set_page_dimension(*dimension, Scaled::from_raw(*raw));
+            }
+            Op::SetPageInt { integer, value } => {
+                stores.set_page_integer(*integer, *value);
+            }
+            Op::PushPageContribution(seed) => {
+                stores.append_page_contribution(page_node(&glue_ids, seed));
+            }
+            Op::PushCurrentPage(seed) => {
+                stores.push_current_page_node(page_node(&glue_ids, seed));
+            }
+            Op::PopPageContributionTail => {
+                let _ = stores.pop_page_contribution_tail();
+            }
             Op::EnterGroup => {
                 stores.enter_group();
                 oracle.enter_group();
@@ -377,6 +404,15 @@ fn op_seed() -> impl Strategy<Value = OpSeed> {
             OpSeed::Op(Op::SetBoxReg { index, list, global })
         }),
         1 => register_index().prop_map(|index| OpSeed::Op(Op::TakeBoxReg(index))),
+        2 => (page_dimension_strategy(), -100_i32..100).prop_map(|(dimension, raw)| {
+            OpSeed::Op(Op::SetPageDim { dimension, raw })
+        }),
+        1 => (page_integer_strategy(), -100_i32..100).prop_map(|(integer, value)| {
+            OpSeed::Op(Op::SetPageInt { integer, value })
+        }),
+        2 => node_seed_strategy().prop_map(|seed| OpSeed::Op(Op::PushPageContribution(seed))),
+        2 => node_seed_strategy().prop_map(|seed| OpSeed::Op(Op::PushCurrentPage(seed))),
+        1 => Just(OpSeed::Op(Op::PopPageContributionTail)),
         1 => Just(OpSeed::EnterGroup),
         1 => Just(OpSeed::LeaveGroup),
         2 => Just(OpSeed::Checkpoint),
@@ -416,6 +452,40 @@ fn node_seed_strategy() -> impl Strategy<Value = NodeSeed> {
             glue_slot,
             nest_slot,
         })
+}
+
+fn page_node(glue_ids: &[GlueId], seed: &NodeSeed) -> Node {
+    if seed.amount % 2 == 0 {
+        Node::Kern {
+            amount: Scaled::from_raw(seed.amount),
+            kind: tex_state::node::KernKind::Explicit,
+        }
+    } else {
+        Node::Glue {
+            spec: glue_ids[seed.glue_slot % glue_ids.len()],
+            kind: GlueKind::Normal,
+        }
+    }
+}
+
+fn page_dimension_strategy() -> impl Strategy<Value = PageDimension> {
+    prop_oneof![
+        Just(PageDimension::Goal),
+        Just(PageDimension::Total),
+        Just(PageDimension::Stretch),
+        Just(PageDimension::FilStretch),
+        Just(PageDimension::FillStretch),
+        Just(PageDimension::FilllStretch),
+        Just(PageDimension::Shrink),
+        Just(PageDimension::Depth),
+    ]
+}
+
+fn page_integer_strategy() -> impl Strategy<Value = PageInteger> {
+    prop_oneof![
+        Just(PageInteger::DeadCycles),
+        Just(PageInteger::InsertPenalties),
+    ]
 }
 
 fn cell_strategy() -> impl Strategy<Value = TestCell> {

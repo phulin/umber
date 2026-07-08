@@ -259,6 +259,16 @@ where
             ExpansionReplayKind::TheOutput,
             &format_scaled(stores.dimen_param(DimenParam::new(index))),
         )),
+        Meaning::PageDimension(dimension) => Ok(push_rendered_text(
+            stores,
+            ExpansionReplayKind::TheOutput,
+            &format_scaled(stores.page_dimension(dimension)),
+        )),
+        Meaning::PageInteger(integer) => Ok(push_rendered_text(
+            stores,
+            ExpansionReplayKind::TheOutput,
+            &stores.page_integer(integer).to_string(),
+        )),
         Meaning::GlueParam(index) => Ok(push_rendered_text(
             stores,
             ExpansionReplayKind::TheOutput,
@@ -380,7 +390,9 @@ pub fn meaning_text(stores: &impl ExpansionState, token: Token) -> String {
             Meaning::IntParam(_)
             | Meaning::DimenParam(_)
             | Meaning::GlueParam(_)
-            | Meaning::TokParam(_) => {
+            | Meaning::TokParam(_)
+            | Meaning::PageDimension(_)
+            | Meaning::PageInteger(_) => {
                 format!("\\{}", stores.resolve(symbol))
             }
             Meaning::Font(_) => format!("select font {}", token_text(stores, token)),

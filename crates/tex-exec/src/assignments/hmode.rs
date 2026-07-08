@@ -11,6 +11,7 @@ use tex_state::{PrintSink, Universe};
 
 use super::paragraph::ensure_horizontal_for_character;
 use super::*;
+use crate::vertical::{append_vertical_contribution, build_page_if_outer_vertical};
 use crate::{ExecError, Mode, ModeNest};
 
 pub(crate) fn try_append_character(
@@ -116,8 +117,9 @@ where
         }
         UnexpandablePrimitive::Penalty => {
             flush_pending_hchars(nest, stores)?;
-            nest.current_list_mut()
-                .push(Node::Penalty(scan_i32(input, stores, hooks)?));
+            let penalty = scan_i32(input, stores, hooks)?;
+            append_vertical_contribution(nest, stores, Node::Penalty(penalty));
+            build_page_if_outer_vertical(nest, stores)?;
         }
         UnexpandablePrimitive::VRule => {
             flush_pending_hchars(nest, stores)?;
@@ -173,8 +175,7 @@ where
         UnexpandablePrimitive::Mark => {
             flush_pending_hchars(nest, stores)?;
             let tokens = scan_balanced_expanded_token_list(input, stores, hooks, "\\mark")?;
-            nest.current_list_mut()
-                .push(Node::Mark { class: 0, tokens });
+            append_vertical_contribution(nest, stores, Node::Mark { class: 0, tokens });
         }
         UnexpandablePrimitive::VAdjust => execute_vadjust(nest, input, stores, hooks)?,
         _ => unreachable!("caller restricts hmode material primitives"),

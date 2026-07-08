@@ -179,6 +179,12 @@ impl DimenParam {
     /// TeX's line width parameter.
     pub const H_SIZE: Self = Self::new(3);
 
+    /// TeX's page height parameter.
+    pub const V_SIZE: Self = Self::new(4);
+
+    /// TeX's maximum page depth parameter.
+    pub const MAX_DEPTH: Self = Self::new(5);
+
     /// TeX's final-pass paragraph emergency stretch.
     pub const EMERGENCY_STRETCH: Self = Self::new(20);
 }
@@ -189,6 +195,9 @@ impl GlueParam {
 
     /// TeX's `\baselineskip` glue parameter.
     pub const BASELINE_SKIP: Self = Self::new(1);
+
+    /// TeX's `\topskip` glue parameter.
+    pub const TOP_SKIP: Self = Self::new(9);
 
     /// TeX's `\spaceskip` glue parameter.
     pub const SPACE_SKIP: Self = Self::new(12);

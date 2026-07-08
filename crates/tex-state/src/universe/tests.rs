@@ -3,7 +3,8 @@ use crate::font::NULL_FONT;
 use crate::glue::{GlueSpec, Order};
 use crate::macro_store::MacroMeaning;
 use crate::meaning::{Meaning, MeaningFlags};
-use crate::node::{BoxNode, BoxNodeFields, KernKind, Node, Sign};
+use crate::node::{BoxNode, BoxNodeFields, GlueKind, KernKind, Node, Sign};
+use crate::page::{PageDimension, PageInteger};
 use crate::scaled::{GlueSetRatio, Scaled};
 use crate::token::{Catcode, Token};
 use crate::world::{ContentHash, JobClock, PrintSink, StreamSlot, World};
@@ -35,6 +36,44 @@ fn rollback_restores_store_tuple_and_placeholder_scalars() {
     universe.rollback(&snapshot);
 
     assert_eq!(universe.meaning(symbol), Meaning::Undefined);
+}
+
+#[test]
+fn rollback_restores_page_builder_state_and_hash() {
+    let mut universe = Universe::new();
+    let base_hash = universe.testing_state_hash();
+    let snapshot = universe.snapshot();
+    let glue = universe.intern_glue(GlueSpec {
+        width: Scaled::from_raw(3),
+        stretch: Scaled::from_raw(1),
+        stretch_order: Order::Normal,
+        shrink: Scaled::from_raw(0),
+        shrink_order: Order::Normal,
+    });
+
+    universe.set_page_dimension(PageDimension::Goal, Scaled::from_raw(100));
+    universe.set_page_dimension(PageDimension::Total, Scaled::from_raw(25));
+    universe.set_page_integer(PageInteger::InsertPenalties, 7);
+    universe.append_page_contribution(Node::Glue {
+        spec: glue,
+        kind: GlueKind::Normal,
+    });
+    universe.push_current_page_node(Node::Penalty(42));
+    universe.record_best_page_break(1, Scaled::from_raw(100), 12);
+    universe.record_page_fire_up(1);
+
+    assert_ne!(universe.testing_state_hash(), base_hash);
+    universe.rollback(&snapshot);
+
+    assert_eq!(universe.testing_state_hash(), base_hash);
+    assert!(universe.page_contributions().is_empty());
+    assert!(universe.current_page_nodes().is_empty());
+    assert_eq!(
+        universe.page_dimension(PageDimension::Goal),
+        Scaled::MAX_DIMEN
+    );
+    assert_eq!(universe.page_integer(PageInteger::InsertPenalties), 0);
+    assert!(universe.page_fire_up().is_none());
 }
 
 #[test]

@@ -13,6 +13,7 @@ mod error;
 mod executor;
 mod mode;
 mod node_dump;
+mod page_builder;
 mod vertical;
 
 pub use assignments::{install_unexpandable_primitives, try_execute_assignment};

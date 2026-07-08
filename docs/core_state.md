@@ -64,6 +64,7 @@ supporting untracked mutation "for performance" anywhere, ever.
 | Hyphenation | language-0 Liang trie + exception map | pattern/exception loads through `Universe` | cloned in store snapshot (v1) |
 | Journal | undo records + group/checkpoint markers | append-only | position |
 | Effect log | deferred writes, aux/toc/idx, shell escape, PDF objects | append-only, committed at shipout | position + stream buffers |
+| Page builder | contribution list, current page, `page_so_far` dimensions, page integers, best break/fire-up records | mutation through `Universe` page facade | copied into snapshot tuple + semantic hash |
 | Misc scalars | RNG state, interaction mode, current epoch, prepared magnification, input-stack summary | barriered / snapshot-owned | copied into snapshot tuple |
 
 A **snapshot is a tuple of positions and roots** into these stores — a few
@@ -385,6 +386,7 @@ pub struct Snapshot {
     stream_bufs: StreamBufState,
     rng: RngState,
     input_stack: InputSummary,     // lexer-owned state needed to resume the mouth
+    page: PageBuilderState,        // current page, contributions, page scalars
     state_hash: u64,               // for convergence detection
 }
 ```
@@ -410,7 +412,8 @@ pub struct Snapshot {
 - **Rollback**: replay journal to marker (restoring cells and old code-table
   roots); truncate arenas to watermarks; release survivor owners held by the
   truncated box-register journal records while restored registers reclaim
-  their old owners; discard effect-log suffix; restore scalars.
+  their old owners; discard effect-log suffix; restore scalars and the
+  Universe-owned page-builder tuple.
   Pending `\aftergroup` payloads are part of the Env rollback tuple: snapshots
   carry an aftergroup length and rollback truncates payloads pushed after the
   snapshot. The epoch counter is never rewound — rollback bumps it past its previous
@@ -600,8 +603,9 @@ Compiled code emits raw loads/stores; it cannot call `Env::set`. Containment:
 
 1. **Replay identity (the defining property, fuzzed).** Snapshot → random
    op sequence → rollback → assert state-hash equality with pre-snapshot
-   hash. Any unlogged semantic mutation, including pending `\aftergroup`
-   payloads, survives rollback and diverges the hash. Run
+  hash. Any unlogged semantic mutation, including pending `\aftergroup`
+  payloads and page-builder contribution/current-page state, survives rollback
+  and diverges the hash. Run
    under cargo-fuzz/proptest from day one; this test *is* the invariant.
 2. **Shadow mode.** Build flag: every `set` also updates a shadow
    `HashMap<CellId, u64>`; periodic full comparison localizes divergence to

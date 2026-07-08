@@ -546,6 +546,10 @@ where
                 stores.dimen_param(tex_state::env::banks::DimenParam::new(index)),
             ));
         }
+        Meaning::PageDimension(dimension) => {
+            consume_optional_space(input, stores, recorder, hooks, expander)?;
+            return Ok(ScannedDimen::new(stores.page_dimension(dimension)));
+        }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen) => {
             let index = scan_register_index(input, stores, recorder, hooks, expander)?;
             consume_optional_space(input, stores, recorder, hooks, expander)?;

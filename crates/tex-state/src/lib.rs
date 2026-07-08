@@ -15,6 +15,7 @@ pub mod macro_store;
 pub mod meaning;
 pub mod node;
 pub mod node_arena;
+pub mod page;
 pub mod scaled;
 pub(crate) mod state_hash;
 mod stores;
@@ -28,6 +29,10 @@ pub use input::{
     ConditionFrameSummary, ConditionKind, ConditionLimb, InputFrameSummary, InputSummary,
     LexerState, MACRO_ARGUMENT_SLOTS, MacroArguments, SourceFrameSummary, SourceId,
     TokenListReplayKind,
+};
+pub use page::{
+    AWFUL_BAD, DEPLORABLE, EJECT_PENALTY, INF_PENALTY, PageBreak, PageContents, PageDimension,
+    PageFireUp, PageInteger,
 };
 pub use stores::{FontParameterError, GroupKind, GroupMismatch, PrepareMagDiagnostic};
 pub use universe::{

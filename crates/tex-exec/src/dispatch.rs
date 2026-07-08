@@ -128,7 +128,9 @@ where
         | Meaning::IntParam(_)
         | Meaning::DimenParam(_)
         | Meaning::GlueParam(_)
-        | Meaning::TokParam(_)) => {
+        | Meaning::TokParam(_)
+        | Meaning::PageDimension(_)
+        | Meaning::PageInteger(_)) => {
             assignments::execute_assignment_meaning(meaning, input, stores, hooks)
         }
         Meaning::MathCharGiven(_) => {

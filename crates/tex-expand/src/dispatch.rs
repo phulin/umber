@@ -397,6 +397,8 @@ macro_rules! dispatch_match {
             | Meaning::DimenParam(_)
             | Meaning::GlueParam(_)
             | Meaning::TokParam(_)
+            | Meaning::PageDimension(_)
+            | Meaning::PageInteger(_)
             | Meaning::Font(_)
             | Meaning::UnexpandablePrimitive(_)
             | Meaning::Unknown(_) => Ok(Dispatch::Deliver(token)),

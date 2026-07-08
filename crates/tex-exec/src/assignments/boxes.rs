@@ -10,7 +10,10 @@ use tex_state::{BoxDimension, Universe};
 use tex_typeset::{HpackParams, PackDiagnostic, PackSpec, VpackParams, hpack, vpack, vtop};
 
 use super::*;
-use crate::vertical::append_node_to_current_list;
+use crate::vertical::{
+    append_node_to_current_list, append_vertical_contribution, build_page_if_outer_vertical,
+    is_outer_vertical,
+};
 use crate::{ExecError, Mode, ModeNest};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -34,6 +37,7 @@ where
 {
     let node = scan_box_node(kind_for_primitive(primitive)?, input, stores, hooks)?;
     append_node_to_current_list(nest, stores, node)?;
+    build_page_if_outer_vertical(nest, stores)?;
     Ok(())
 }
 
@@ -135,6 +139,9 @@ where
         }
         _ => unreachable!("caller restricts box list commands"),
     }
+    if primitive != UnexpandablePrimitive::LastBox {
+        build_page_if_outer_vertical(nest, stores)?;
+    }
     Ok(())
 }
 
@@ -210,7 +217,7 @@ where
         }
     }
     let node = scan_rule_node(input, stores, hooks, UnexpandablePrimitive::HRule)?;
-    nest.current_list_mut().push(node);
+    append_vertical_contribution(nest, stores, node);
     nest.current_list_mut()
         .set_prev_depth(crate::mode::IGNORE_DEPTH);
     Ok(())
@@ -222,6 +229,9 @@ pub(super) fn execute_delete_last(
     stores: &mut Universe,
 ) -> Result<(), ExecError> {
     flush_pending_hchars(nest, stores)?;
+    if is_outer_vertical(nest) {
+        return execute_delete_last_outer_vertical(primitive, stores);
+    }
     if nest.current_mode() == Mode::Vertical && nest.current_list().is_empty() {
         return match primitive {
             UnexpandablePrimitive::UnSkip => Ok(()),
@@ -242,6 +252,34 @@ pub(super) fn execute_delete_last(
     );
     if matches_target {
         let _ = nest.current_list_mut().pop_last_node();
+    }
+    Ok(())
+}
+
+fn execute_delete_last_outer_vertical(
+    primitive: UnexpandablePrimitive,
+    stores: &mut Universe,
+) -> Result<(), ExecError> {
+    let Some(tail) = stores.page_contribution_tail() else {
+        return match primitive {
+            UnexpandablePrimitive::UnSkip => Ok(()),
+            UnexpandablePrimitive::UnPenalty => Err(ExecError::CannotDeleteFromCurrentPage {
+                command: "\\unpenalty",
+            }),
+            UnexpandablePrimitive::UnKern => Err(ExecError::CannotDeleteFromCurrentPage {
+                command: "\\unkern",
+            }),
+            _ => unreachable!("caller restricts delete_last primitives"),
+        };
+    };
+    let matches_target = matches!(
+        (primitive, tail),
+        (UnexpandablePrimitive::UnSkip, Node::Glue { .. })
+            | (UnexpandablePrimitive::UnPenalty, Node::Penalty(_))
+            | (UnexpandablePrimitive::UnKern, Node::Kern { .. })
+    );
+    if matches_target {
+        let _ = stores.pop_page_contribution_tail();
     }
     Ok(())
 }
@@ -279,10 +317,14 @@ where
         }
         _ => unreachable!("caller restricts vertical skip primitives"),
     };
-    nest.current_list_mut().push(Node::Glue {
-        spec,
-        kind: GlueKind::Normal,
-    });
+    append_vertical_contribution(
+        nest,
+        stores,
+        Node::Glue {
+            spec,
+            kind: GlueKind::Normal,
+        },
+    );
     Ok(())
 }
 

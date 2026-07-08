@@ -5,6 +5,7 @@ use tex_state::node::{GlueKind, Node};
 use tex_state::scaled::Scaled;
 
 use crate::mode::IGNORE_DEPTH;
+use crate::page_builder::build_page;
 use crate::{ExecError, Mode, ModeNest, assignments};
 
 pub(crate) fn append_node_to_current_list(
@@ -27,7 +28,7 @@ pub(crate) fn append_node_to_vertical_list(
     node: Node,
 ) -> Result<(), ExecError> {
     let Some((height, depth)) = vertical_baseline_dimensions(&node) else {
-        nest.current_list_mut().push(node);
+        append_vertical_contribution(nest, stores, node);
         return Ok(());
     };
     if let Some(prev_depth) = nest.current_list().prev_depth()
@@ -54,16 +55,37 @@ pub(crate) fn append_node_to_vertical_list(
                     GlueKind::BaselineSkip,
                 )
             };
-        nest.current_list_mut().push(Node::Glue { spec, kind });
+        append_vertical_contribution(nest, stores, Node::Glue { spec, kind });
     }
-    let list = nest.current_list_mut();
-    list.push(node);
-    list.set_prev_depth(depth);
+    append_vertical_contribution(nest, stores, node);
+    nest.current_list_mut().set_prev_depth(depth);
     Ok(())
 }
 
-pub(crate) fn append_migrated_contribution(nest: &mut ModeNest, node: Node) {
-    nest.current_list_mut().push(node);
+pub(crate) fn append_migrated_contribution(nest: &mut ModeNest, stores: &mut Universe, node: Node) {
+    append_vertical_contribution(nest, stores, node);
+}
+
+pub(crate) fn append_vertical_contribution(nest: &mut ModeNest, stores: &mut Universe, node: Node) {
+    if is_outer_vertical(nest) {
+        stores.append_page_contribution(node);
+    } else {
+        nest.current_list_mut().push(node);
+    }
+}
+
+pub(crate) fn build_page_if_outer_vertical(
+    nest: &ModeNest,
+    stores: &mut Universe,
+) -> Result<(), ExecError> {
+    if is_outer_vertical(nest) {
+        build_page(stores)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn is_outer_vertical(nest: &ModeNest) -> bool {
+    nest.depth() == 1 && nest.current_mode() == Mode::Vertical
 }
 
 fn vertical_baseline_dimensions(node: &Node) -> Option<(Scaled, Scaled)> {

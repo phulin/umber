@@ -2,6 +2,7 @@ use super::{
     ExpandablePrimitive, Meaning, MeaningFlags, OPERAND_MASK, RawMeaning, UnexpandablePrimitive,
 };
 use crate::ids::{FontId, MacroDefinitionId};
+use crate::page::{PageDimension, PageInteger};
 
 fn round_trip(meaning: Meaning) {
     assert_eq!(Meaning::decode_stored(meaning.encode()), meaning);
@@ -74,6 +75,10 @@ fn meaning_variants_round_trip() {
     round_trip(Meaning::UnexpandablePrimitive(
         UnexpandablePrimitive::PrevGraf,
     ));
+    round_trip(Meaning::PageDimension(PageDimension::Goal));
+    round_trip(Meaning::PageDimension(PageDimension::FilllStretch));
+    round_trip(Meaning::PageInteger(PageInteger::DeadCycles));
+    round_trip(Meaning::PageInteger(PageInteger::InsertPenalties));
     round_trip(Meaning::Unknown(RawMeaning::testing_new(u8::MAX, 0)));
     round_trip(Meaning::Unknown(RawMeaning::testing_new(
         u8::MAX,

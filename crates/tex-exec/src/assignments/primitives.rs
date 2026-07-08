@@ -1,4 +1,5 @@
 use super::*;
+use tex_state::page::{PageDimension, PageInteger};
 
 pub fn install_unexpandable_primitives(stores: &mut Universe) {
     for (name, primitive) in [
@@ -127,6 +128,7 @@ pub fn install_unexpandable_primitives(stores: &mut Universe) {
     stores.set_meaning(nullfont, Meaning::Font(tex_state::font::NULL_FONT));
     stores.set_current_font_selector_global(nullfont, tex_state::font::NULL_FONT);
     install_parameter_meanings(stores);
+    install_page_meanings(stores);
 }
 
 fn install_parameter_meanings(stores: &mut Universe) {
@@ -145,6 +147,17 @@ fn install_parameter_meanings(stores: &mut Universe) {
     for &(name, index) in TOK_PARAMS {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::TokParam(index));
+    }
+}
+
+fn install_page_meanings(stores: &mut Universe) {
+    for &(name, dimension) in PAGE_DIMENSIONS {
+        let symbol = stores.intern(name);
+        stores.set_meaning(symbol, Meaning::PageDimension(dimension));
+    }
+    for &(name, integer) in PAGE_INTEGERS {
+        let symbol = stores.intern(name);
+        stores.set_meaning(symbol, Meaning::PageInteger(integer));
     }
 }
 
@@ -260,4 +273,20 @@ const TOK_PARAMS: &[(&str, u16)] = &[
     ("everyjob", 6),
     ("everycr", 7),
     ("errhelp", 8),
+];
+
+const PAGE_DIMENSIONS: &[(&str, PageDimension)] = &[
+    ("pagegoal", PageDimension::Goal),
+    ("pagetotal", PageDimension::Total),
+    ("pagestretch", PageDimension::Stretch),
+    ("pagefilstretch", PageDimension::FilStretch),
+    ("pagefillstretch", PageDimension::FillStretch),
+    ("pagefilllstretch", PageDimension::FilllStretch),
+    ("pageshrink", PageDimension::Shrink),
+    ("pagedepth", PageDimension::Depth),
+];
+
+const PAGE_INTEGERS: &[(&str, PageInteger)] = &[
+    ("deadcycles", PageInteger::DeadCycles),
+    ("insertpenalties", PageInteger::InsertPenalties),
 ];

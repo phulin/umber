@@ -1,5 +1,6 @@
 use super::*;
 use tex_state::ids::FontId;
+use tex_state::page::{PageDimension, PageInteger};
 mod streams;
 mod variable_access;
 
@@ -17,6 +18,8 @@ pub(super) enum Variable {
     DimenParam(u16),
     GlueParam(u16),
     TokParam(u16),
+    PageDimension(PageDimension),
+    PageInteger(PageInteger),
     FontDimen(FontId, u16),
     FontHyphenChar(FontId),
     FontSkewChar(FontId),
@@ -84,9 +87,19 @@ where
             let value = scan_i32(input, stores, hooks)?;
             set_int_param(stores, index, value, global);
         }
+        Variable::PageInteger(integer) => {
+            reject_macro_prefixes(prefixes)?;
+            let value = scan_i32(input, stores, hooks)?;
+            stores.set_page_integer(integer, value);
+        }
         Variable::DimenParam(index) => {
             let value = scan_scaled(input, stores, hooks)?;
             set_dimen_param(stores, index, value, global);
+        }
+        Variable::PageDimension(dimension) => {
+            reject_macro_prefixes(prefixes)?;
+            let value = scan_scaled(input, stores, hooks)?;
+            stores.set_page_dimension(dimension, value);
         }
         Variable::FontDimen(font, number) => {
             let value = scan_scaled(input, stores, hooks)?;
@@ -210,6 +223,12 @@ where
             let value = arithmetic_i32(primitive, old, rhs)?;
             write_int_variable(stores, target, index, value, global);
         }
+        Variable::PageInteger(integer) => {
+            let old = stores.page_integer(integer);
+            let rhs = scan_i32(input, stores, hooks)?;
+            let value = arithmetic_i32(primitive, old, rhs)?;
+            stores.set_page_integer(integer, value);
+        }
         Variable::FontHyphenChar(font) | Variable::FontSkewChar(font) => {
             let old = read_int_variable(stores, target);
             let rhs = scan_i32(input, stores, hooks)?;
@@ -231,6 +250,22 @@ where
                 _ => unreachable!("caller restricts primitive"),
             };
             write_dimen_variable(stores, target, index, value, global);
+        }
+        Variable::PageDimension(dimension) => {
+            let old = stores.page_dimension(dimension);
+            let value = match primitive {
+                UnexpandablePrimitive::Advance => old
+                    .checked_add(scan_scaled(input, stores, hooks)?)
+                    .ok_or(ExecError::ArithmeticOverflow)?,
+                UnexpandablePrimitive::Multiply => {
+                    scaled_checked_mul(old, scan_i32(input, stores, hooks)?)?
+                }
+                UnexpandablePrimitive::Divide => {
+                    scaled_checked_div(old, scan_nonzero_i32(input, stores, hooks)?)?
+                }
+                _ => unreachable!("caller restricts primitive"),
+            };
+            stores.set_page_dimension(dimension, value);
         }
         Variable::FontDimen(font, number) => {
             let old = stores.font_dimen(font, number);

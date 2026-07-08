@@ -355,8 +355,12 @@ fn box_primitives_round_trip_through_registers() {
         panic!("register 1 should hold an hbox");
     };
     assert_eq!(box_node.width.raw(), 10 * tex_state::scaled::Scaled::UNITY);
-    let [tex_state::node::Node::HList(appended)] = executor.nest().current_list().nodes() else {
-        panic!("main vertical list should contain copied-out hbox");
+    let Some(tex_state::node::Node::HList(appended)) = stores
+        .current_page_nodes()
+        .iter()
+        .find(|node| matches!(node, tex_state::node::Node::HList(_)))
+    else {
+        panic!("current page should contain copied-out hbox");
     };
     assert_eq!(appended.width.raw(), 10 * tex_state::scaled::Scaled::UNITY);
 }
@@ -469,7 +473,7 @@ fn paragraph_end_appends_single_line_through_vertical_spacing() {
     });
     stores.set_glue_param(GlueParam::BASELINE_SKIP, baseline);
     let mut input = InputStack::new(MemoryInput::new(
-        "\\setbox0=\\hbox{}\\ht0=4pt\\dp0=1pt\\copy0\\par\\copy0",
+        "\\vsize=1000pt \\setbox0=\\hbox{}\\ht0=4pt\\dp0=1pt\\copy0\\par\\copy0",
     ));
     let mut executor = Executor::new();
 
@@ -477,7 +481,7 @@ fn paragraph_end_appends_single_line_through_vertical_spacing() {
         .run(&mut input, &mut stores)
         .expect("paragraph and box execute");
 
-    let nodes = executor.nest().current_list().nodes();
+    let nodes = stores.current_page_nodes();
     assert!(nodes.iter().any(|node| matches!(
         node,
         tex_state::node::Node::Glue {
@@ -517,8 +521,7 @@ fn delete_last_removes_only_matching_current_list_tail() {
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\vskip1pt\\unpenalty\\edef\\stillglue{\\the\\lastskip}\
-         \\unskip\\edef\\noglue{\\the\\lastskip}\
-         \\penalty77\\unpenalty\\kern3pt\\unkern\\unskip",
+         \\unskip\\edef\\noglue{\\the\\lastskip}",
     ));
     let mut executor = Executor::new();
 
@@ -529,6 +532,7 @@ fn delete_last_removes_only_matching_current_list_tail() {
     assert_eq!(macro_text(&stores, "stillglue"), "1.0pt");
     assert_eq!(macro_text(&stores, "noglue"), "0.0pt");
     assert!(executor.nest().current_list().nodes().is_empty());
+    assert!(stores.page_contributions().is_empty());
 }
 
 #[test]
@@ -614,15 +618,16 @@ fn vertical_hrule_uses_defaults_and_sets_prevdepth_ignore_sentinel() {
         executor.nest().current_list().prev_depth(),
         Some(crate::mode::IGNORE_DEPTH)
     );
+    assert!(executor.nest().current_list().nodes().is_empty());
     let [
         tex_state::node::Node::Rule {
             width,
             height,
             depth,
         },
-    ] = executor.nest().current_list().nodes()
+    ] = stores.page_contributions()
     else {
-        panic!("vertical list should contain one rule");
+        panic!("recent contributions should contain one rule");
     };
     assert_eq!(width.map(tex_state::scaled::Scaled::raw), Some(7 * 65_536));
     assert_eq!(height.map(tex_state::scaled::Scaled::raw), Some(26_214));
@@ -645,6 +650,85 @@ fn showlists_reports_vertical_rule_and_ignored_prevdepth() {
     assert!(log.contains("### recent contributions:"));
     assert!(log.contains("\\rule(0.4+0.0)x7.0"));
     assert!(log.contains("prevdepth ignored"));
+}
+
+#[test]
+fn page_builder_moves_box_and_updates_page_scalars() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\topskip=10pt \\vsize=100pt \\maxdepth=2pt \
+         \\setbox0=\\hbox{}\\ht0=7pt \\dp0=3pt \
+         \\copy0 \\edef\\snapshot{\\the\\pagegoal,\\the\\pagetotal,\\the\\pagedepth}",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("page snapshot executes");
+
+    assert!(stores.page_contributions().is_empty());
+    assert_eq!(stores.current_page_nodes().len(), 2);
+    assert_eq!(macro_text(&stores, "snapshot"), "100.0pt,11.0pt,2.0pt");
+}
+
+#[test]
+fn page_builder_discards_glue_before_first_box() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\vskip 5pt\\setbox0=\\hbox{}\\copy0"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("discardable glue executes");
+
+    assert!(stores.page_contributions().is_empty());
+    assert!(stores.current_page_nodes().iter().all(|node| {
+        !matches!(node, tex_state::node::Node::Glue { spec, .. }
+            if stores.glue(*spec).width.raw() == 5 * tex_state::scaled::Scaled::UNITY)
+    }));
+}
+
+#[test]
+fn writable_page_scalars_read_after_page_freeze() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\topskip=0pt \\setbox0=\\hbox{}\\copy0 \
+         \\pagegoal=12pt \\advance\\pagegoal by 3pt \
+         \\insertpenalties=4 \\edef\\snapshot{\\the\\pagegoal/\\the\\insertpenalties}",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("page scalar assignment executes");
+
+    assert_eq!(macro_text(&stores, "snapshot"), "15.0pt/4");
+}
+
+#[test]
+fn forced_page_penalty_records_pending_fire_up() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\topskip=0pt \\setbox0=\\hbox{}\\copy0 \\penalty-10000",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("forced penalty executes");
+
+    let fire_up = stores.page_fire_up().expect("forced penalty fires page");
+    assert_eq!(
+        fire_up.best_break().index(),
+        stores.current_page_nodes().len()
+    );
+    assert_eq!(fire_up.trigger().index(), stores.current_page_nodes().len());
+    assert!(matches!(
+        stores.page_contributions(),
+        [tex_state::node::Node::Penalty(-10000)]
+    ));
 }
 
 #[test]

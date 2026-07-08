@@ -6,6 +6,7 @@ use tex_expand::{
 };
 use tex_lex::{InputSource, InputStack};
 use tex_state::env::banks::IntParam;
+use tex_state::page::{PageContents, PageDimension};
 use tex_state::token::{Catcode, Token};
 use tex_state::{PrintSink, Universe};
 
@@ -108,14 +109,42 @@ pub(crate) fn execute_showlists(stores: &mut Universe, nest: &ModeNest) {
         text.push_str("### ");
         text.push_str(mode_text(level.mode()));
         text.push_str(" mode entered at line 0\n");
-        if index == 0 && !level.list().nodes().is_empty() {
-            text.push_str("### recent contributions:\n");
+        if index == 0 && level.mode() == Mode::Vertical {
+            if !stores.current_page_nodes().is_empty() {
+                text.push_str("### current page:\n");
+                text.push_str(&dump_node_slice(
+                    stores,
+                    stores.current_page_nodes(),
+                    DumpConfig::read(stores),
+                ));
+                if stores.page_contents() != PageContents::Empty {
+                    text.push_str("total height ");
+                    push_page_totals(stores, &mut text);
+                    text.push_str("\ngoal height ");
+                    text.push_str(&crate::node_dump::format_scaled_for_diagnostics(
+                        stores.page_dimension(PageDimension::Goal),
+                    ));
+                    text.push('\n');
+                }
+            }
+            if !stores.page_contributions().is_empty() {
+                text.push_str("### recent contributions:\n");
+                text.push_str(&dump_node_slice(
+                    stores,
+                    stores.page_contributions(),
+                    DumpConfig::read(stores),
+                ));
+            }
+        } else if !level.list().nodes().is_empty() {
+            if index == 0 {
+                text.push_str("### recent contributions:\n");
+            }
+            text.push_str(&dump_node_slice(
+                stores,
+                level.list().nodes(),
+                DumpConfig::read(stores),
+            ));
         }
-        text.push_str(&dump_node_slice(
-            stores,
-            level.list().nodes(),
-            DumpConfig::read(stores),
-        ));
         match level.mode() {
             Mode::Vertical | Mode::InternalVertical => {
                 text.push_str("prevdepth ");
@@ -145,6 +174,30 @@ pub(crate) fn execute_showlists(stores: &mut Universe, nest: &ModeNest) {
     }
     text.push_str("\n! OK.\n");
     write_diagnostic(stores, &text);
+}
+
+fn push_page_totals(stores: &Universe, text: &mut String) {
+    text.push_str(&crate::node_dump::format_scaled_for_diagnostics(
+        stores.page_dimension(PageDimension::Total),
+    ));
+    for (dimension, suffix) in [
+        (PageDimension::Stretch, ""),
+        (PageDimension::FilStretch, "fil"),
+        (PageDimension::FillStretch, "fill"),
+        (PageDimension::FilllStretch, "filll"),
+    ] {
+        let value = stores.page_dimension(dimension);
+        if value.raw() != 0 {
+            text.push_str(" plus ");
+            text.push_str(&crate::node_dump::format_scaled_for_diagnostics(value));
+            text.push_str(suffix);
+        }
+    }
+    let shrink = stores.page_dimension(PageDimension::Shrink);
+    if shrink.raw() != 0 {
+        text.push_str(" minus ");
+        text.push_str(&crate::node_dump::format_scaled_for_diagnostics(shrink));
+    }
 }
 
 fn mode_text(mode: Mode) -> &'static str {

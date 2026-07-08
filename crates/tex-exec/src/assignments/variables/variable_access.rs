@@ -4,6 +4,7 @@ pub(super) fn read_int_variable(stores: &Universe, target: Variable) -> i32 {
     match target {
         Variable::IntRegister(index) => stores.count(index),
         Variable::IntParam(index) => stores.int_param(IntParam::new(index)),
+        Variable::PageInteger(integer) => stores.page_integer(integer),
         Variable::FontHyphenChar(font) => stores.font_hyphen_char(font),
         Variable::FontSkewChar(font) => stores.font_skew_char(font),
         _ => unreachable!("caller restricts target"),
@@ -20,6 +21,7 @@ pub(super) fn write_int_variable(
     match target {
         Variable::IntRegister(_) => set_int_register(stores, index, value, global),
         Variable::IntParam(_) => set_int_param(stores, index, value, global),
+        Variable::PageInteger(integer) => stores.set_page_integer(integer, value),
         _ => unreachable!("caller restricts target"),
     }
 }
@@ -28,6 +30,7 @@ pub(super) fn read_dimen_variable(stores: &Universe, target: Variable) -> Scaled
     match target {
         Variable::DimenRegister(index) => stores.dimen(index),
         Variable::DimenParam(index) => stores.dimen_param(DimenParam::new(index)),
+        Variable::PageDimension(dimension) => stores.page_dimension(dimension),
         Variable::FontDimen(font, number) => stores.font_dimen(font, number),
         _ => unreachable!("caller restricts target"),
     }
@@ -43,6 +46,7 @@ pub(super) fn write_dimen_variable(
     match target {
         Variable::DimenRegister(_) => set_dimen_register(stores, index, value, global),
         Variable::DimenParam(_) => set_dimen_param(stores, index, value, global),
+        Variable::PageDimension(dimension) => stores.set_page_dimension(dimension, value),
         _ => unreachable!("caller restricts target"),
     }
 }

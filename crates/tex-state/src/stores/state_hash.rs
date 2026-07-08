@@ -113,6 +113,18 @@ impl Stores {
         }
     }
 
+    pub(crate) fn hash_node_slice_semantic(&self, nodes: &[Node], hasher: &mut StateHasher) {
+        hasher.tag(0x72);
+        hasher.usize(nodes.len());
+        for node in nodes {
+            self.hash_node_tree_from_node(node.clone(), hasher);
+        }
+    }
+
+    pub(crate) fn hash_glue_semantic(&self, id: GlueId, hasher: &mut StateHasher) {
+        self.hash_glue(id, hasher);
+    }
+
     fn assert_valid_hash_cursor(&self, cursor: &StoreStateHashCursor) {
         assert_eq!(
             cursor.owner,
@@ -263,6 +275,14 @@ impl Stores {
             Meaning::DimenParam(index) => hash_register_alias(11, index, hasher),
             Meaning::GlueParam(index) => hash_register_alias(12, index, hasher),
             Meaning::TokParam(index) => hash_register_alias(13, index, hasher),
+            Meaning::PageDimension(dimension) => {
+                hasher.tag(18);
+                hasher.u8(dimension.index());
+            }
+            Meaning::PageInteger(integer) => {
+                hasher.tag(19);
+                hasher.u8(integer.index());
+            }
             Meaning::Font(id) => {
                 hasher.tag(17);
                 self.hash_font(id, hasher);

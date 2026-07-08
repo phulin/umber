@@ -354,8 +354,8 @@ assignments, box building, and dispatch into the typesetting kernels.
   program, updates the mode-local `\spacefactor`, and appends explicit
   h-mode nodes for spaces, kerns, skips, finite-fill glue, penalties, rules,
   discretionaries, accents, and italic corrections. Paragraph breaking is a
-  hand-off to the pure `tex-typeset` line breaker; page contribution remains
-  a later hand-off.
+  hand-off to the pure `tex-typeset` line breaker; resulting outer-vertical
+  material is appended to the Universe-owned page contribution list.
   Vertical list construction tracks TeX's `prev_depth` on each mode-list
   level. A single shared append routine handles every box or rule appended to
   vertical/internal-vertical lists, including explicit box appends, unboxed
@@ -411,7 +411,8 @@ assignments, box building, and dispatch into the typesetting kernels.
   font-backed hlist content for ordinary characters and spaces, including
   TFM ligature/kern reconstitution, space-factor glue, discretionary nodes,
   accents, rules, penalties, and italic corrections. Paragraph breaking now
-  routes through `tex-typeset`; full page contribution remains future work.
+  routes through `tex-typeset`; outer vertical contributions are observed by
+  the page builder described in §8.
 
 ## 7. Typesetting kernels
 
@@ -473,11 +474,23 @@ makes box-level memoization (M4) sound.
 
 Responsibility: accumulate the main vertical list, fire `\output`, commit.
 
-- The page builder is an incremental observer of main-vertical-list
-  appends (contributions), maintaining `\pagegoal`/`\pagetotal` and the
-  best-break record, inserting from `\insert` classes. It is stomach-side
-  state, summarized in snapshots (it is small: a handful of scalars + the
-  contribution list, which is an ordinary unfrozen node list).
+- The page builder is an incremental observer of main-vertical-list appends.
+  The base vertical mode list keeps mode-local fields such as `\prevdepth`
+  and `\prevgraf`; durable page state lives in `Universe`: the recent
+  contribution list, current page nodes, `\pagegoal`/`\pagetotal` and the
+  other `page_so_far` dimensions, `\insertpenalties`/`\deadcycles`, page
+  contents state, page-level `\lastskip`/`\lastpenalty`/`\lastkern` mirrors,
+  least-cost/best-break records, and the pending fire-up trigger. These fields
+  are copied into snapshots and included in convergence hashes.
+- `tex-exec` currently ports the TeX.web accounting pass: discardables before
+  the first box are pruned when the builder catches up; the first box freezes
+  page specs from `\vsize`/`\maxdepth` and inserts adjusted `\topskip`; box,
+  rule, glue, kern, and penalty contributions update page totals and legal
+  breakpoint costs using TeX's `badness`/`awful_bad` comparison order. A forced
+  or awful break records a pending fire-up boundary for the output-routine
+  implementation tracked by `umber2-4ci.3`. Insert nodes intentionally carry a
+  `umber2-4ci.5` TODO hook; their class-specific goal and split accounting is
+  not silently approximated.
 - **`\output` is a recursion**: box 255 is filled, the output routine's
   token list replays as a frame, `\shipout` is a primitive delivered back
   to the stomach. Nothing special architecturally — except that

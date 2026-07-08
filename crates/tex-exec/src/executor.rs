@@ -10,6 +10,7 @@ use tex_state::{ExpansionContext, Universe};
 
 use crate::dispatch::{dispatch_delivered_token_with_recorder, unimplemented_typesetting};
 use crate::mode::IGNORE_DEPTH;
+use crate::vertical::is_outer_vertical;
 use crate::{DispatchAction, ExecError, ExecutionStats, ModeNest, assignments};
 
 /// Stomach interpreter state.
@@ -150,11 +151,24 @@ fn engine_state_snapshot(nest: &ModeNest, stores: &Universe) -> EngineStateSnaps
         prev_graf: nest.enclosing_vertical_prev_graf(),
         ..EngineStateSnapshot::default()
     };
-    match list.nodes().last() {
-        Some(Node::Penalty(value)) => state.last_penalty = *value,
-        Some(Node::Kern { amount, .. }) => state.last_kern = *amount,
-        Some(Node::Glue { spec, .. }) => state.last_skip = stores.glue(*spec),
-        _ => {}
+    if is_outer_vertical(nest) {
+        match stores.page_contribution_tail() {
+            Some(Node::Penalty(value)) => state.last_penalty = *value,
+            Some(Node::Kern { amount, .. }) => state.last_kern = *amount,
+            Some(Node::Glue { spec, .. }) => state.last_skip = stores.glue(*spec),
+            Some(_) | None => {
+                state.last_penalty = stores.page_last_penalty();
+                state.last_kern = stores.page_last_kern();
+                state.last_skip = stores.page_last_skip();
+            }
+        }
+    } else {
+        match list.nodes().last() {
+            Some(Node::Penalty(value)) => state.last_penalty = *value,
+            Some(Node::Kern { amount, .. }) => state.last_kern = *amount,
+            Some(Node::Glue { spec, .. }) => state.last_skip = stores.glue(*spec),
+            _ => {}
+        }
     }
     state
 }

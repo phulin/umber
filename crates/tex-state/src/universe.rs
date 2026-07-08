@@ -25,6 +25,9 @@ use crate::macro_store::MacroMeaning;
 use crate::meaning::Meaning;
 use crate::node::Node;
 use crate::node_arena::NodeListBuilder;
+use crate::page::{
+    PageBreak, PageBuilderState, PageContents, PageDimension, PageFireUp, PageInteger,
+};
 use crate::scaled::Scaled;
 use crate::state_hash::{INITIAL_STATE_HASH, StateHasher, combine};
 use crate::stores::StoreStateHashCursor;
@@ -85,6 +88,8 @@ pub trait ExpansionState {
     fn muskip(&self, index: u16) -> GlueId;
     fn toks(&self, index: u16) -> TokenListId;
     fn box_reg(&self, index: u16) -> Option<NodeListId>;
+    fn page_dimension(&self, dimension: PageDimension) -> Scaled;
+    fn page_integer(&self, integer: PageInteger) -> i32;
     fn int_param(&self, param: IntParam) -> i32;
     fn mag(&self) -> i32;
     fn prepared_mag(&self) -> Option<i32>;
@@ -160,6 +165,7 @@ pub struct Snapshot {
     world: WorldSnapshot,
     input_summary: InputSummary,
     interaction_mode: InteractionMode,
+    page: PageBuilderState,
     state_hash: u64,
     state_hash_base: StateHashBase,
 }
@@ -247,6 +253,7 @@ struct StateHashBase {
     world: WorldStateHashCursor,
     input_summary: InputSummary,
     interaction_mode: InteractionMode,
+    page: PageBuilderState,
     checkpoint_hash: u64,
 }
 
@@ -258,6 +265,7 @@ pub struct Universe {
     world: World,
     interaction_mode: InteractionMode,
     input_summary: InputSummary,
+    page: PageBuilderState,
     state_hash_base: StateHashBase,
 }
 
@@ -269,6 +277,7 @@ impl Clone for Universe {
             world: self.state_hash_base.world.clone(),
             input_summary: self.state_hash_base.input_summary.clone(),
             interaction_mode: self.state_hash_base.interaction_mode,
+            page: self.state_hash_base.page.clone(),
             checkpoint_hash: self.state_hash_base.checkpoint_hash,
         };
         Self {
@@ -277,6 +286,7 @@ impl Clone for Universe {
             world: self.world.clone(),
             interaction_mode: self.interaction_mode,
             input_summary: self.input_summary.clone(),
+            page: self.page.clone(),
             state_hash_base,
         }
     }
@@ -309,6 +319,7 @@ impl Universe {
             world: world.state_hash_cursor(),
             input_summary: InputSummary::default(),
             interaction_mode: InteractionMode::default(),
+            page: PageBuilderState::default(),
             checkpoint_hash: INITIAL_STATE_HASH,
         };
         Self {
@@ -317,6 +328,7 @@ impl Universe {
             world,
             interaction_mode: InteractionMode::default(),
             input_summary: InputSummary::default(),
+            page: PageBuilderState::default(),
             state_hash_base,
         }
     }
@@ -336,6 +348,7 @@ impl Universe {
             && hash_base.world == world_cursor
             && hash_base.input_summary == self.input_summary
             && hash_base.interaction_mode == self.interaction_mode
+            && hash_base.page == self.page
         {
             hash_base.checkpoint_hash
         } else {
@@ -347,6 +360,7 @@ impl Universe {
             world: world_cursor,
             input_summary: self.input_summary.clone(),
             interaction_mode: self.interaction_mode,
+            page: self.page.clone(),
             checkpoint_hash: state_hash,
         };
         self.state_hash_base = next_hash_base.clone();
@@ -357,6 +371,7 @@ impl Universe {
             world,
             input_summary: self.input_summary.clone(),
             interaction_mode: self.interaction_mode,
+            page: self.page.clone(),
             state_hash,
             state_hash_base: next_hash_base,
         }
@@ -375,6 +390,7 @@ impl Universe {
                 .retarget_state_hash_cursor_after_commit(&hash_base.world),
             input_summary: hash_base.input_summary,
             interaction_mode: hash_base.interaction_mode,
+            page: hash_base.page,
             checkpoint_hash: hash_base.checkpoint_hash,
         }
     }
@@ -391,6 +407,7 @@ impl Universe {
         self.world.rollback(&snapshot.world);
         self.input_summary = snapshot.input_summary.clone();
         self.interaction_mode = snapshot.interaction_mode;
+        self.page = snapshot.page.clone();
         self.state_hash_base = snapshot.state_hash_base.clone();
     }
 
@@ -400,6 +417,7 @@ impl Universe {
         self.hash_world_state_slice(&hash_base.world, &mut hasher);
         self.hash_input_summary(&mut hasher);
         hash_interaction_mode(self.interaction_mode, &mut hasher);
+        self.hash_page_state(&mut hasher);
         hasher.finish()
     }
 
@@ -473,6 +491,14 @@ impl Universe {
     fn hash_input_summary(&self, hasher: &mut StateHasher) {
         hasher.tag(0x90);
         hash_input_summary_fields(&self.stores, &self.input_summary, hasher);
+    }
+
+    fn hash_page_state(&self, hasher: &mut StateHasher) {
+        self.page.hash_semantic(
+            hasher,
+            |nodes, hasher| self.stores.hash_node_slice_semantic(nodes, hasher),
+            |id, hasher| self.stores.hash_glue_semantic(id, hasher),
+        );
     }
 
     fn assert_valid_snapshot(&self, snapshot: &Snapshot) {
@@ -976,6 +1002,155 @@ impl Universe {
         self.stores.box_reg(index)
     }
 
+    #[must_use]
+    pub fn page_dimension(&self, dimension: PageDimension) -> Scaled {
+        self.page.dimension(dimension)
+    }
+
+    pub fn set_page_dimension(&mut self, dimension: PageDimension, value: Scaled) {
+        self.page.set_dimension(dimension, value);
+    }
+
+    #[must_use]
+    pub fn page_integer(&self, integer: PageInteger) -> i32 {
+        self.page.integer(integer)
+    }
+
+    pub fn set_page_integer(&mut self, integer: PageInteger, value: i32) {
+        self.page.set_integer(integer, value);
+    }
+
+    pub fn freeze_page_specs(&mut self, contents: PageContents) {
+        let vsize = self.dimen_param(DimenParam::V_SIZE);
+        let max_depth = self.dimen_param(DimenParam::MAX_DEPTH);
+        self.page.freeze_specs(contents, vsize, max_depth);
+    }
+
+    pub fn start_new_page(&mut self) {
+        self.page.start_new_page();
+    }
+
+    #[must_use]
+    pub fn page_contents(&self) -> PageContents {
+        self.page.contents()
+    }
+
+    pub fn set_page_contents(&mut self, contents: PageContents) {
+        self.page.set_contents(contents);
+    }
+
+    #[must_use]
+    pub fn page_max_depth(&self) -> Scaled {
+        self.page.page_max_depth()
+    }
+
+    #[must_use]
+    pub fn insert_penalties(&self) -> i32 {
+        self.page.insert_penalties()
+    }
+
+    #[must_use]
+    pub fn least_page_cost(&self) -> i32 {
+        self.page.least_page_cost()
+    }
+
+    #[must_use]
+    pub fn best_page_break(&self) -> Option<PageBreak> {
+        self.page.best_page_break()
+    }
+
+    #[must_use]
+    pub fn best_size(&self) -> Scaled {
+        self.page.best_size()
+    }
+
+    pub fn record_best_page_break(&mut self, break_index: usize, best_size: Scaled, cost: i32) {
+        self.page.record_best_break(break_index, best_size, cost);
+    }
+
+    pub fn record_page_fire_up(&mut self, trigger_index: usize) {
+        self.page.record_fire_up(trigger_index);
+    }
+
+    #[must_use]
+    pub fn page_fire_up(&self) -> Option<PageFireUp> {
+        self.page.fire_up()
+    }
+
+    pub fn append_page_contribution(&mut self, node: Node) {
+        self.page.push_contribution(node);
+    }
+
+    pub fn prepend_page_contribution(&mut self, node: Node) {
+        self.page.prepend_contribution(node);
+    }
+
+    #[must_use]
+    pub fn page_contributions(&self) -> &[Node] {
+        self.page.contribution()
+    }
+
+    #[must_use]
+    pub fn page_contribution_front(&self) -> Option<&Node> {
+        self.page.contribution_front()
+    }
+
+    #[must_use]
+    pub fn page_contribution_second(&self) -> Option<&Node> {
+        self.page.contribution_second()
+    }
+
+    #[must_use]
+    pub fn page_contribution_tail(&self) -> Option<&Node> {
+        self.page.contribution_tail()
+    }
+
+    pub fn pop_page_contribution_front(&mut self) -> Option<Node> {
+        self.page.pop_contribution_front()
+    }
+
+    pub fn pop_page_contribution_tail(&mut self) -> Option<Node> {
+        self.page.pop_contribution_tail()
+    }
+
+    #[must_use]
+    pub fn current_page_nodes(&self) -> &[Node] {
+        self.page.current_page()
+    }
+
+    #[must_use]
+    pub fn current_page_tail(&self) -> Option<&Node> {
+        self.page.current_page_tail()
+    }
+
+    #[must_use]
+    pub fn current_page_len(&self) -> usize {
+        self.page.current_page_len()
+    }
+
+    pub fn push_current_page_node(&mut self, node: Node) {
+        self.page.push_current_page(node);
+    }
+
+    pub fn update_page_last_from_node(&mut self, node: &Node) {
+        self.page.update_last_from_node(node);
+    }
+
+    #[must_use]
+    pub fn page_last_skip(&self) -> GlueSpec {
+        self.page.last_skip(|id| self.glue(id))
+    }
+
+    #[must_use]
+    pub fn page_last_penalty(&self) -> i32 {
+        self.page.last_penalty()
+    }
+
+    #[must_use]
+    pub fn page_last_kern(&self) -> Scaled {
+        self.page.last_kern()
+    }
+
     pub fn take_box_reg(&mut self, index: u16) -> Option<NodeListId> {
         self.stores.take_box_reg(index)
     }
@@ -1134,6 +1309,9 @@ impl Universe {
         self.world.testing_state_hash().hash(&mut hasher);
         self.input_summary.hash(&mut hasher);
         self.interaction_mode.hash(&mut hasher);
+        let mut page_hasher = StateHasher::new(0x7061_6765_7465_7374);
+        self.hash_page_state(&mut page_hasher);
+        page_hasher.finish().hash(&mut hasher);
         hasher.finish()
     }
 
@@ -1326,6 +1504,14 @@ impl ExpansionState for Universe {
         Self::box_reg(self, index)
     }
 
+    fn page_dimension(&self, dimension: PageDimension) -> Scaled {
+        Self::page_dimension(self, dimension)
+    }
+
+    fn page_integer(&self, integer: PageInteger) -> i32 {
+        Self::page_integer(self, integer)
+    }
+
     fn box_dimension(&self, index: u16, dimension: BoxDimension) -> Option<Scaled> {
         Self::box_dimension(self, index, dimension)
     }
@@ -1498,6 +1684,14 @@ impl ExpansionState for ExpansionContext<'_> {
 
     fn box_reg(&self, index: u16) -> Option<NodeListId> {
         self.universe.box_reg(index)
+    }
+
+    fn page_dimension(&self, dimension: PageDimension) -> Scaled {
+        self.universe.page_dimension(dimension)
+    }
+
+    fn page_integer(&self, integer: PageInteger) -> i32 {
+        self.universe.page_integer(integer)
     }
 
     fn box_dimension(&self, index: u16, dimension: BoxDimension) -> Option<Scaled> {

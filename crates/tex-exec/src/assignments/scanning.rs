@@ -76,6 +76,8 @@ pub(super) fn is_assignment_target_meaning(meaning: Meaning) -> bool {
             | Meaning::DimenParam(_)
             | Meaning::GlueParam(_)
             | Meaning::TokParam(_)
+            | Meaning::PageDimension(_)
+            | Meaning::PageInteger(_)
     )
 }
 
@@ -90,6 +92,8 @@ pub(super) fn variable_from_meaning(meaning: Meaning) -> Option<Variable> {
         Meaning::DimenParam(index) => Some(Variable::DimenParam(index)),
         Meaning::GlueParam(index) => Some(Variable::GlueParam(index)),
         Meaning::TokParam(index) => Some(Variable::TokParam(index)),
+        Meaning::PageDimension(dimension) => Some(Variable::PageDimension(dimension)),
+        Meaning::PageInteger(integer) => Some(Variable::PageInteger(integer)),
         _ => None,
     }
 }

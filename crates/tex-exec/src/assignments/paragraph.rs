@@ -13,7 +13,10 @@ use tex_typeset::linebreak::{
 use super::boxes::hpack_with_overfull_rule;
 use super::*;
 use crate::mode::{IGNORE_DEPTH, ParagraphParams, ParagraphShape, ParagraphShapeLine};
-use crate::vertical::{append_migrated_contribution, append_node_to_current_list};
+use crate::vertical::{
+    append_migrated_contribution, append_node_to_current_list, append_vertical_contribution,
+    build_page_if_outer_vertical,
+};
 use crate::{ExecError, Mode, ModeNest};
 
 pub(super) fn execute_paragraph_command<S, H>(
@@ -70,10 +73,15 @@ where
             let par_shape = nest.current_list().par_shape().cloned();
             let parskip = stores.glue_param(GlueParam::PAR_SKIP);
             if stores.glue(parskip) != GlueSpec::ZERO {
-                nest.current_list_mut().push(Node::Glue {
-                    spec: parskip,
-                    kind: GlueKind::Normal,
-                });
+                append_vertical_contribution(
+                    nest,
+                    stores,
+                    Node::Glue {
+                        spec: parskip,
+                        kind: GlueKind::Normal,
+                    },
+                );
+                build_page_if_outer_vertical(nest, stores)?;
             }
             nest.push(Mode::Horizontal);
             if let Some(shape) = par_shape {
@@ -142,15 +150,16 @@ pub(super) fn end_paragraph(nest: &mut ModeNest, stores: &mut Universe) -> Resul
         line.shift = broken.dimensions.indent;
         append_node_to_current_list(nest, stores, Node::HList(line))?;
         for node in migrated {
-            append_migrated_contribution(nest, node);
+            append_migrated_contribution(nest, stores, node);
         }
         if let Some(penalty) = broken.penalty_after {
-            nest.current_list_mut().push(Node::Penalty(penalty));
+            append_vertical_contribution(nest, stores, Node::Penalty(penalty));
         }
     }
     nest.current_list_mut()
         .set_prev_graf(params.prev_graf.saturating_add(line_count));
     reset_after_par(nest, stores);
+    build_page_if_outer_vertical(nest, stores)?;
     Ok(())
 }
 

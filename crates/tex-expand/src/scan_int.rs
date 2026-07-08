@@ -409,6 +409,14 @@ where
                 stores.dimen_param(DimenParam::new(index)).raw(),
             ))
         }
+        Meaning::PageInteger(integer) => {
+            consume_optional_space(input, stores, recorder, hooks, expander)?;
+            Ok(ScannedInt::new(stores.page_integer(integer)))
+        }
+        Meaning::PageDimension(dimension) => {
+            consume_optional_space(input, stores, recorder, hooks, expander)?;
+            Ok(ScannedInt::new(stores.page_dimension(dimension).raw()))
+        }
         Meaning::UnexpandablePrimitive(primitive) => scan_internal_integer_primitive(
             input, stores, recorder, hooks, expander, token, primitive,
         ),

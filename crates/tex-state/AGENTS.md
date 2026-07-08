@@ -44,6 +44,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/node.rs`: Immutable TeX node, box, glue, kern, penalty, rule, whatsit, discretionary, and list-field model.
 - `src/node_arena.rs`: Epoch arena for immutable node-list slices with watermarks and rollback.
 - `src/node_arena/tests.rs`: Unit tests for node-list allocation, lookup, rollback, and arena liveness.
+- `src/page.rs`: Snapshot-owned page-builder state, page dimensions/integers, contribution/current-page queues, and fire-up records.
 - `src/scaled.rs`: Compatibility re-export for shared TeX scaled-point arithmetic.
 - `src/state_hash.rs`: Deterministic semantic state hasher used by snapshots and replay convergence checks.
 - `src/stores.rs`: Internal aggregate store tuple that coordinates interner, env, token, glue, node, font, survivor, input, and rollback state.

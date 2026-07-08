@@ -41,6 +41,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/lib.rs`: public crate surface and module wiring for the TeX execution engine.
 - `src/mode.rs`: mode nest, mode summaries, pending horizontal chars, paragraph state, and list metadata.
 - `src/node_dump.rs`: TeX-style node-list dumping used by diagnostic output.
+- `src/page_builder.rs`: TeX.web page-builder accounting for outer vertical contributions, break costs, and pending fire-up records.
 - `src/tests.rs`: crate-internal test harness module and shared imports.
 - `src/tests/assignments.rs`: tests for registers, definitions, arithmetic, token assignments, and assignments.
 - `src/tests/core.rs`: tests for mode nest behavior, executor hooks, dispatch, and core errors.
