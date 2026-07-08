@@ -702,6 +702,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "tex-fonts"
+version = "0.1.0"
+dependencies = [
+ "tex-state",
+]
+
+[[package]]
 name = "tex-lex"
 version = "0.1.0"
 dependencies = [
