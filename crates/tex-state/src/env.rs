@@ -12,8 +12,9 @@ pub mod banks;
 pub(crate) mod overflow;
 
 use self::banks::{
-    DENSE_REGISTER_COUNT, DimenParam, FixedBank, GlueIdCodec, GlueParam, I32Codec, IntParam,
-    NodeListIdCodec, PARAMETER_COUNT, ScaledCodec, TokParam, TokenListIdCodec,
+    BankJournalContext, BankSetContext, DENSE_REGISTER_COUNT, DimenParam, FixedBank, GlueIdCodec,
+    GlueParam, I32Codec, IntParam, NodeListIdCodec, PARAMETER_COUNT, ScaledCodec, TokParam,
+    TokenListIdCodec,
 };
 use self::overflow::{REGISTER_COUNT, SparseBank};
 use crate::cell::{BankTag, CellId};
@@ -75,23 +76,27 @@ macro_rules! register_accessors {
                 self.$dense.set(
                     index,
                     value,
-                    &mut self.journal,
-                    #[cfg(feature = "shadow")]
-                    &mut self.shadow,
-                    self.epoch,
-                    BankTag::$bank,
-                    false,
+                    BankSetContext {
+                        journal: &mut self.journal,
+                        #[cfg(feature = "shadow")]
+                        shadow: &mut self.shadow,
+                        epoch: self.epoch,
+                        bank: BankTag::$bank,
+                        global: false,
+                    },
                 );
             } else {
                 self.$sparse.set(
                     index,
                     value,
-                    &mut self.journal,
-                    #[cfg(feature = "shadow")]
-                    &mut self.shadow,
-                    self.epoch,
-                    BankTag::$bank,
-                    false,
+                    BankSetContext {
+                        journal: &mut self.journal,
+                        #[cfg(feature = "shadow")]
+                        shadow: &mut self.shadow,
+                        epoch: self.epoch,
+                        bank: BankTag::$bank,
+                        global: false,
+                    },
                 );
             }
         }
@@ -101,23 +106,27 @@ macro_rules! register_accessors {
                 self.$dense.set(
                     index,
                     value,
-                    &mut self.journal,
-                    #[cfg(feature = "shadow")]
-                    &mut self.shadow,
-                    self.epoch,
-                    BankTag::$bank,
-                    true,
+                    BankSetContext {
+                        journal: &mut self.journal,
+                        #[cfg(feature = "shadow")]
+                        shadow: &mut self.shadow,
+                        epoch: self.epoch,
+                        bank: BankTag::$bank,
+                        global: true,
+                    },
                 );
             } else {
                 self.$sparse.set(
                     index,
                     value,
-                    &mut self.journal,
-                    #[cfg(feature = "shadow")]
-                    &mut self.shadow,
-                    self.epoch,
-                    BankTag::$bank,
-                    true,
+                    BankSetContext {
+                        journal: &mut self.journal,
+                        #[cfg(feature = "shadow")]
+                        shadow: &mut self.shadow,
+                        epoch: self.epoch,
+                        bank: BankTag::$bank,
+                        global: true,
+                    },
                 );
             }
         }
@@ -438,21 +447,25 @@ impl Env {
             self.boxes.set_always_journal(
                 index,
                 value,
-                &mut self.journal,
-                #[cfg(feature = "shadow")]
-                &mut self.shadow,
-                BankTag::Box,
-                false,
+                BankJournalContext {
+                    journal: &mut self.journal,
+                    #[cfg(feature = "shadow")]
+                    shadow: &mut self.shadow,
+                    bank: BankTag::Box,
+                    global: false,
+                },
             )
         } else {
             self.overflow_boxes.set_always_journal(
                 index,
                 value,
-                &mut self.journal,
-                #[cfg(feature = "shadow")]
-                &mut self.shadow,
-                BankTag::Box,
-                false,
+                BankJournalContext {
+                    journal: &mut self.journal,
+                    #[cfg(feature = "shadow")]
+                    shadow: &mut self.shadow,
+                    bank: BankTag::Box,
+                    global: false,
+                },
             )
         }
     }
@@ -467,21 +480,25 @@ impl Env {
             self.boxes.set_always_journal(
                 index,
                 value,
-                &mut self.journal,
-                #[cfg(feature = "shadow")]
-                &mut self.shadow,
-                BankTag::Box,
-                true,
+                BankJournalContext {
+                    journal: &mut self.journal,
+                    #[cfg(feature = "shadow")]
+                    shadow: &mut self.shadow,
+                    bank: BankTag::Box,
+                    global: true,
+                },
             )
         } else {
             self.overflow_boxes.set_always_journal(
                 index,
                 value,
-                &mut self.journal,
-                #[cfg(feature = "shadow")]
-                &mut self.shadow,
-                BankTag::Box,
-                true,
+                BankJournalContext {
+                    journal: &mut self.journal,
+                    #[cfg(feature = "shadow")]
+                    shadow: &mut self.shadow,
+                    bank: BankTag::Box,
+                    global: true,
+                },
             )
         }
     }
@@ -497,12 +514,14 @@ impl Env {
         self.int_params.set(
             param.raw(),
             value,
-            &mut self.journal,
-            #[cfg(feature = "shadow")]
-            &mut self.shadow,
-            self.epoch,
-            BankTag::IntParam,
-            false,
+            BankSetContext {
+                journal: &mut self.journal,
+                #[cfg(feature = "shadow")]
+                shadow: &mut self.shadow,
+                epoch: self.epoch,
+                bank: BankTag::IntParam,
+                global: false,
+            },
         );
     }
 
@@ -511,12 +530,14 @@ impl Env {
         self.int_params.set(
             param.raw(),
             value,
-            &mut self.journal,
-            #[cfg(feature = "shadow")]
-            &mut self.shadow,
-            self.epoch,
-            BankTag::IntParam,
-            true,
+            BankSetContext {
+                journal: &mut self.journal,
+                #[cfg(feature = "shadow")]
+                shadow: &mut self.shadow,
+                epoch: self.epoch,
+                bank: BankTag::IntParam,
+                global: true,
+            },
         );
     }
 
@@ -531,12 +552,14 @@ impl Env {
         self.dimen_params.set(
             param.raw(),
             value,
-            &mut self.journal,
-            #[cfg(feature = "shadow")]
-            &mut self.shadow,
-            self.epoch,
-            BankTag::DimenParam,
-            false,
+            BankSetContext {
+                journal: &mut self.journal,
+                #[cfg(feature = "shadow")]
+                shadow: &mut self.shadow,
+                epoch: self.epoch,
+                bank: BankTag::DimenParam,
+                global: false,
+            },
         );
     }
 
@@ -545,12 +568,14 @@ impl Env {
         self.dimen_params.set(
             param.raw(),
             value,
-            &mut self.journal,
-            #[cfg(feature = "shadow")]
-            &mut self.shadow,
-            self.epoch,
-            BankTag::DimenParam,
-            true,
+            BankSetContext {
+                journal: &mut self.journal,
+                #[cfg(feature = "shadow")]
+                shadow: &mut self.shadow,
+                epoch: self.epoch,
+                bank: BankTag::DimenParam,
+                global: true,
+            },
         );
     }
 
@@ -565,12 +590,14 @@ impl Env {
         self.glue_params.set(
             param.raw(),
             value,
-            &mut self.journal,
-            #[cfg(feature = "shadow")]
-            &mut self.shadow,
-            self.epoch,
-            BankTag::GlueParam,
-            false,
+            BankSetContext {
+                journal: &mut self.journal,
+                #[cfg(feature = "shadow")]
+                shadow: &mut self.shadow,
+                epoch: self.epoch,
+                bank: BankTag::GlueParam,
+                global: false,
+            },
         );
     }
 
@@ -579,12 +606,14 @@ impl Env {
         self.glue_params.set(
             param.raw(),
             value,
-            &mut self.journal,
-            #[cfg(feature = "shadow")]
-            &mut self.shadow,
-            self.epoch,
-            BankTag::GlueParam,
-            true,
+            BankSetContext {
+                journal: &mut self.journal,
+                #[cfg(feature = "shadow")]
+                shadow: &mut self.shadow,
+                epoch: self.epoch,
+                bank: BankTag::GlueParam,
+                global: true,
+            },
         );
     }
 
@@ -599,12 +628,14 @@ impl Env {
         self.tok_params.set(
             param.raw(),
             value,
-            &mut self.journal,
-            #[cfg(feature = "shadow")]
-            &mut self.shadow,
-            self.epoch,
-            BankTag::TokParam,
-            false,
+            BankSetContext {
+                journal: &mut self.journal,
+                #[cfg(feature = "shadow")]
+                shadow: &mut self.shadow,
+                epoch: self.epoch,
+                bank: BankTag::TokParam,
+                global: false,
+            },
         );
     }
 
@@ -613,12 +644,14 @@ impl Env {
         self.tok_params.set(
             param.raw(),
             value,
-            &mut self.journal,
-            #[cfg(feature = "shadow")]
-            &mut self.shadow,
-            self.epoch,
-            BankTag::TokParam,
-            true,
+            BankSetContext {
+                journal: &mut self.journal,
+                #[cfg(feature = "shadow")]
+                shadow: &mut self.shadow,
+                epoch: self.epoch,
+                bank: BankTag::TokParam,
+                global: true,
+            },
         );
     }
 

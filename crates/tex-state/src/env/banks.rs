@@ -7,6 +7,8 @@ use crate::ids::{GlueId, NodeListId, TokenListId};
 use crate::journal::{Journal, UndoRec};
 use crate::scaled::Scaled;
 use core::marker::PhantomData;
+#[cfg(feature = "shadow")]
+use std::collections::HashMap;
 
 /// Number of dense classical register slots per bank.
 pub const DENSE_REGISTER_COUNT: usize = 256;
@@ -69,6 +71,35 @@ pub(crate) trait BankCodec {
     fn decode(word: u64) -> Self::Value;
 }
 
+pub(crate) struct BankSetContext<'a> {
+    pub(crate) journal: &'a mut Journal,
+    #[cfg(feature = "shadow")]
+    pub(crate) shadow: &'a mut HashMap<CellId, u64>,
+    pub(crate) epoch: Epoch,
+    pub(crate) bank: BankTag,
+    pub(crate) global: bool,
+}
+
+impl BankSetContext<'_> {
+    fn cell_id(&self, index: u16) -> CellId {
+        cell_id(self.bank, index, self.global)
+    }
+}
+
+pub(crate) struct BankJournalContext<'a> {
+    pub(crate) journal: &'a mut Journal,
+    #[cfg(feature = "shadow")]
+    pub(crate) shadow: &'a mut HashMap<CellId, u64>,
+    pub(crate) bank: BankTag,
+    pub(crate) global: bool,
+}
+
+impl BankJournalContext<'_> {
+    fn cell_id(&self, index: u16) -> CellId {
+        cell_id(self.bank, index, self.global)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct FixedBank<C, const N: usize> {
     values: [u64; N],
@@ -92,26 +123,16 @@ where
         C::decode(self.values[checked_index::<N>(index)])
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn set(
-        &mut self,
-        index: u16,
-        value: C::Value,
-        journal: &mut Journal,
-        #[cfg(feature = "shadow")] shadow: &mut std::collections::HashMap<CellId, u64>,
-        epoch: Epoch,
-        bank: BankTag,
-        global: bool,
-    ) {
+    pub(crate) fn set(&mut self, index: u16, value: C::Value, ctx: BankSetContext<'_>) {
         let offset = checked_index::<N>(index);
-        let cell_id = cell_id(bank, index, global);
+        let cell_id = ctx.cell_id(index);
         barrier(
             &mut self.values[offset],
             &mut self.stamps[offset],
-            journal,
+            ctx.journal,
             #[cfg(feature = "shadow")]
-            shadow,
-            epoch,
+            ctx.shadow,
+            ctx.epoch,
             cell_id,
             C::encode(value),
         );
@@ -121,23 +142,20 @@ where
         &mut self,
         index: u16,
         value: C::Value,
-        journal: &mut Journal,
-        #[cfg(feature = "shadow")] shadow: &mut std::collections::HashMap<CellId, u64>,
-        bank: BankTag,
-        global: bool,
+        ctx: BankJournalContext<'_>,
     ) -> Option<UndoRec> {
         let offset = checked_index::<N>(index);
-        let cell_id = cell_id(bank, index, global);
+        let cell_id = ctx.cell_id(index);
         let old = self.values[offset];
         let new = C::encode(value);
-        if old == new && !global {
+        if old == new && !ctx.global {
             return None;
         }
         let rec = UndoRec::new(cell_id, old, new);
-        journal.push_undo(rec);
+        ctx.journal.push_undo(rec);
         self.values[offset] = new;
         #[cfg(feature = "shadow")]
-        crate::env::shadow_set(shadow, CellId::new(bank, u32::from(index)), new);
+        crate::env::shadow_set(ctx.shadow, CellId::new(ctx.bank, u32::from(index)), new);
         Some(rec)
     }
 
