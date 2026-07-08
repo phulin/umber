@@ -82,6 +82,7 @@ fn sample_artifact() -> PageArtifact {
                         PageNode::Char {
                             font_id: 1,
                             ch: 'A' as u32,
+                            width: Scaled::from_raw(42),
                         },
                         PageNode::Glue {
                             spec: glue,

@@ -1,17 +1,26 @@
-use super::{DEN, EOP, FNT_DEF1, ID_BYTE, NUM, POST, POST_POST, PRE, write_dvi};
+use super::{
+    BOP, DEN, DOWN1, EOP, FNT_DEF1, FNT_NUM_0, FNT1, ID_BYTE, NUM, POST, POST_POST, PRE, PUT_RULE,
+    RIGHT1, SET_RULE, SET1, XXX1, XXX4, write_dvi,
+};
 use crate::{
-    BoxNode, ContentHash, FontResource, GlueOrder, GlueSetRatio, GlueSign, JobInfo, PageArtifact,
-    PageNode,
+    BoxNode, ContentHash, FontResource, GlueKind, GlueOrder, GlueSetRatio, GlueSign, GlueSpec,
+    JobInfo, PageArtifact, PageEffect, PageNode,
 };
 use tex_arith::Scaled;
 
+const W0: u8 = 147;
+const W1: u8 = 148;
+const Y0: u8 = 161;
+const Y1: u8 = 162;
+
 #[test]
-fn writes_preamble_bop_font_defs_and_postamble() {
+fn writes_preamble_bop_body_and_postamble() {
     let dvi = write_dvi(&[glyph_page(7)]).expect("DVI writes");
-    let pre_len = 16;
-    let bop = pre_len;
-    let post = 83;
-    let post_post = 133;
+    let bop = 16;
+    let body = page_body(&dvi, bop);
+    let mut expected_body = vec![DOWN1, 100];
+    expected_body.extend(font_def_bytes(0, "cmr10"));
+    expected_body.extend([FNT_NUM_0, b'A']);
 
     assert_eq!(dvi[0], PRE);
     assert_eq!(dvi[1], ID_BYTE);
@@ -21,24 +30,26 @@ fn writes_preamble_bop_font_defs_and_postamble() {
     assert_eq!(dvi[14], 1);
     assert_eq!(dvi[15], b'B');
 
-    assert_eq!(dvi[bop], 139);
+    assert_eq!(dvi[bop], BOP);
     assert_eq!(be_i32(&dvi, bop + 1), 7);
     assert_eq!(be_i32(&dvi, bop + 41), -1);
+    assert_eq!(body, expected_body);
 
-    assert_font_def(&dvi, 61, 0);
-    assert_eq!(dvi[82], EOP);
-
+    let eop = page_eop(&dvi, bop);
+    let post = eop + 1;
+    assert_eq!(dvi[eop], EOP);
     assert_eq!(dvi[post], POST);
     assert_eq!(be_i32(&dvi, post + 1), bop as i32);
     assert_eq!(be_i32(&dvi, post + 5), NUM);
     assert_eq!(be_i32(&dvi, post + 9), DEN);
     assert_eq!(be_i32(&dvi, post + 13), 1200);
-    assert_eq!(be_i32(&dvi, post + 17), 230);
+    assert_eq!(be_i32(&dvi, post + 17), 130);
     assert_eq!(be_i32(&dvi, post + 21), 300);
     assert_eq!(be_u16(&dvi, post + 25), 0);
     assert_eq!(be_u16(&dvi, post + 27), 1);
 
-    assert_font_def(&dvi, post + 29, 0);
+    assert_font_def(&dvi, post + 29, 0, "cmr10");
+    let post_post = post + 50;
     assert_eq!(dvi[post_post], POST_POST);
     assert_eq!(be_i32(&dvi, post_post + 1), post as i32);
     assert_eq!(dvi[post_post + 5], ID_BYTE);
@@ -54,10 +65,11 @@ fn chains_bop_pointers_across_pages() {
     let second_bop = 62;
     let post = 108;
 
-    assert_eq!(dvi[first_bop], 139);
+    assert_eq!(dvi[first_bop], BOP);
     assert_eq!(be_i32(&dvi, first_bop + 1), 1);
     assert_eq!(be_i32(&dvi, first_bop + 41), -1);
-    assert_eq!(dvi[second_bop], 139);
+    assert_eq!(dvi[page_eop(&dvi, first_bop)], EOP);
+    assert_eq!(dvi[second_bop], BOP);
     assert_eq!(be_i32(&dvi, second_bop + 1), 2);
     assert_eq!(be_i32(&dvi, second_bop + 41), first_bop as i32);
     assert_eq!(dvi[post], POST);
@@ -66,36 +78,207 @@ fn chains_bop_pointers_across_pages() {
 }
 
 #[test]
-fn defines_each_font_at_first_use_and_repeats_used_fonts_in_postamble() {
+fn defines_fonts_at_first_use_and_uses_fnt_num_or_fnt1() {
+    let mut page = empty_page(0);
+    page.fonts = (0..65)
+        .map(|id| font_resource(id, &format!("f{id:02}")))
+        .collect();
+    page.root = hlist(
+        65,
+        5,
+        0,
+        (0..65).map(|id| char_node(id, b'A' as u32, 1)).collect(),
+    );
+
+    let dvi = write_dvi(&[page]).expect("DVI writes");
+    let body = page_body(&dvi, 16);
+
+    let first_font = find_font_def(body, b"f00", 0).expect("body f00 def");
+    assert_eq!(body[first_font], FNT_DEF1);
+    assert_eq!(body[first_font + 1], 0);
+    assert_eq!(body[first_font + 19], FNT_NUM_0);
+
+    let font64 = find_font_def(body, b"f64", 0).expect("body f64 def");
+    assert_eq!(body[font64], FNT_DEF1);
+    assert_eq!(body[font64 + 1], 64);
+    assert_eq!(&body[font64 + 19..font64 + 21], &[FNT1, 64]);
+
+    let post = page_eop(&dvi, 16) + 1;
+    let post_f00 = find_font_def(&dvi, b"f00", post).expect("post f00 def");
+    let post_f64 = find_font_def(&dvi, b"f64", post).expect("post f64 def");
+    assert!(post_f00 < post_f64);
+}
+
+#[test]
+fn set1_is_used_for_high_tex82_character_codes() {
     let mut page = glyph_page(0);
-    page.fonts.push(FontResource {
-        font_id: 9,
-        name: "cmtt10".to_owned(),
-        tfm_content_hash: ContentHash::from_bytes(b"cmtt10.tfm"),
-        tfm_checksum: 0x1111_2222,
-        design_size: Scaled::from_raw(655_360),
-        at_size: Scaled::from_raw(655_360),
-    });
-    let PageNode::VList(box_node) = &mut page.root else {
-        panic!("sample page root should be vlist");
+    page.root = hlist(1, 3, 0, vec![char_node(3, 200, 1)]);
+
+    let dvi = write_dvi(&[page]).expect("DVI writes");
+    let body = page_body(&dvi, 16);
+
+    assert!(body.windows(2).any(|window| window == [SET1, 200]));
+}
+
+#[test]
+fn vertical_movement_reuses_y_registers() {
+    let mut page = empty_page(0);
+    page.fonts.push(font_resource(0, "cmr10"));
+    page.root = vlist(
+        10,
+        0,
+        0,
+        vec![
+            hlist(1, 10, 0, vec![char_node(0, b'A' as u32, 1)]),
+            PageNode::Kern {
+                amount: sp(10),
+                kind: crate::KernKind::Explicit,
+            },
+            hlist(1, 0, 0, vec![char_node(0, b'B' as u32, 1)]),
+        ],
+    );
+
+    let dvi = write_dvi(&[page]).expect("DVI writes");
+    let body = page_body(&dvi, 16);
+
+    assert_eq!(&body[0..2], &[Y1, 10]);
+    assert!(body.contains(&Y0));
+}
+
+#[test]
+fn horizontal_movement_reuses_w_registers() {
+    let mut page = empty_page(0);
+    page.root = hlist(
+        23,
+        1,
+        0,
+        vec![
+            rule_node(1, 1, 0),
+            kern_node(10),
+            rule_node(1, 1, 0),
+            kern_node(10),
+            rule_node(1, 1, 0),
+        ],
+    );
+
+    let dvi = write_dvi(&[page]).expect("DVI writes");
+    let body = page_body(&dvi, 16);
+
+    assert!(body.windows(2).any(|window| window == [W1, 10]));
+    assert!(body.contains(&W0));
+}
+
+#[test]
+fn rules_with_negative_width_still_move_without_rule_output() {
+    let mut page = empty_page(0);
+    page.root = hlist(-4, 1, 0, vec![rule_node(-5, 1, 0), rule_node(1, 1, 0)]);
+
+    let dvi = write_dvi(&[page]).expect("DVI writes");
+    let body = page_body(&dvi, 16);
+    let first_rule = body
+        .iter()
+        .position(|&byte| byte == SET_RULE)
+        .expect("visible rule");
+
+    assert_eq!(&body[first_rule - 4..first_rule], &[RIGHT1, 251, DOWN1, 1]);
+}
+
+#[test]
+fn vlist_rules_use_put_rule_and_running_width() {
+    let mut page = empty_page(0);
+    page.root = vlist(
+        4,
+        9,
+        0,
+        vec![PageNode::Rule {
+            width: None,
+            height: Some(sp(7)),
+            depth: Some(sp(2)),
+        }],
+    );
+
+    let dvi = write_dvi(&[page]).expect("DVI writes");
+    let body = page_body(&dvi, 16);
+    let put_rule = body
+        .iter()
+        .position(|&byte| byte == PUT_RULE)
+        .expect("put_rule");
+
+    assert_eq!(be_i32(body, put_rule + 1), 9);
+    assert_eq!(be_i32(body, put_rule + 5), 4);
+}
+
+#[test]
+fn glue_set_is_rounded_cumulatively_without_float_math_in_writer() {
+    let mut page = empty_page(0);
+    let glue = GlueSpec {
+        width: sp(10),
+        stretch: sp(5),
+        stretch_order: GlueOrder::Normal,
+        shrink: sp(0),
+        shrink_order: GlueOrder::Normal,
     };
-    box_node.children.push(PageNode::Char {
-        font_id: 9,
-        ch: 'B' as u32,
+    page.root = PageNode::HList(BoxNode {
+        width: sp(26),
+        height: sp(1),
+        depth: sp(0),
+        shift: sp(0),
+        glue_set: GlueSetRatio { raw: 500_000 },
+        glue_sign: GlueSign::Stretching,
+        glue_order: GlueOrder::Normal,
+        children: vec![
+            rule_node(1, 1, 0),
+            PageNode::Glue {
+                spec: glue,
+                kind: GlueKind::Normal,
+            },
+            rule_node(1, 1, 0),
+            PageNode::Glue {
+                spec: glue,
+                kind: GlueKind::Normal,
+            },
+            rule_node(1, 1, 0),
+        ],
     });
 
     let dvi = write_dvi(&[page]).expect("DVI writes");
-    let first_cmr = find_font_def(&dvi, b"cmr10", 0).expect("body cmr10 def");
-    let first_cmtt = find_font_def(&dvi, b"cmtt10", first_cmr + 1).expect("body cmtt10 def");
-    assert_eq!(dvi[first_cmr], FNT_DEF1);
-    assert_eq!(dvi[first_cmr + 1], 0);
-    assert_eq!(dvi[first_cmtt], FNT_DEF1);
-    assert_eq!(dvi[first_cmtt + 1], 1);
+    let body = page_body(&dvi, 16);
 
-    let post = dvi.iter().position(|&byte| byte == POST).expect("post");
-    let post_cmr = find_font_def(&dvi, b"cmr10", post).expect("post cmr10 def");
-    let post_cmtt = find_font_def(&dvi, b"cmtt10", post_cmr + 1).expect("post cmtt10 def");
-    assert!(post_cmr < post_cmtt);
+    assert!(body.windows(2).any(|window| window == [RIGHT1, 13]));
+    assert!(body.windows(2).any(|window| window == [RIGHT1, 12]));
+}
+
+#[test]
+fn specials_emit_xxx1_and_xxx4_at_anchor_positions() {
+    let mut page = empty_page(0);
+    page.root = hlist(
+        0,
+        5,
+        0,
+        vec![
+            PageNode::WhatsitAnchor { effect_index: 0 },
+            PageNode::WhatsitAnchor { effect_index: 1 },
+        ],
+    );
+    page.effects = vec![
+        PageEffect::Special {
+            class: "dvi".to_owned(),
+            payload: b"abc".to_vec(),
+        },
+        PageEffect::Special {
+            class: "dvi".to_owned(),
+            payload: vec![b'x'; 256],
+        },
+    ];
+
+    let dvi = write_dvi(&[page]).expect("DVI writes");
+    let body = page_body(&dvi, 16);
+    let short = body.iter().position(|&byte| byte == XXX1).expect("xxx1");
+    let long = body.iter().position(|&byte| byte == XXX4).expect("xxx4");
+
+    assert_eq!(&body[short..short + 5], &[XXX1, 3, b'a', b'b', b'c']);
+    assert_eq!(be_i32(body, long + 1), 256);
+    assert_eq!(&body[long + 5..long + 9], b"xxxx");
 }
 
 fn glyph_page(count0: i32) -> PageArtifact {
@@ -104,28 +287,9 @@ fn glyph_page(count0: i32) -> PageArtifact {
             mag: 1200,
             banner: "B".to_owned(),
         },
-        fonts: vec![FontResource {
-            font_id: 3,
-            name: "cmr10".to_owned(),
-            tfm_content_hash: ContentHash::from_bytes(b"cmr10.tfm"),
-            tfm_checksum: 0x1234_5678,
-            design_size: Scaled::from_raw(655_360),
-            at_size: Scaled::from_raw(655_360),
-        }],
+        fonts: vec![font_resource(3, "cmr10")],
         counts: [count0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-        root: PageNode::VList(BoxNode {
-            width: Scaled::from_raw(300),
-            height: Scaled::from_raw(200),
-            depth: Scaled::from_raw(30),
-            shift: Scaled::from_raw(0),
-            glue_set: GlueSetRatio { raw: 0 },
-            glue_sign: GlueSign::Normal,
-            glue_order: GlueOrder::Normal,
-            children: vec![PageNode::Char {
-                font_id: 3,
-                ch: 'A' as u32,
-            }],
-        }),
+        root: hlist(300, 100, 30, vec![char_node(3, b'A' as u32, 50)]),
         effects: Vec::new(),
     }
 }
@@ -133,21 +297,100 @@ fn glyph_page(count0: i32) -> PageArtifact {
 fn empty_page(count0: i32) -> PageArtifact {
     let mut page = glyph_page(count0);
     page.fonts.clear();
-    if let PageNode::VList(box_node) = &mut page.root {
-        box_node.children.clear();
-    }
+    page.root = hlist(0, 0, 0, Vec::new());
     page
 }
 
-fn assert_font_def(dvi: &[u8], offset: usize, number: u8) {
-    assert_eq!(dvi[offset], FNT_DEF1);
-    assert_eq!(dvi[offset + 1], number);
-    assert_eq!(be_u32(dvi, offset + 2), 0x1234_5678);
-    assert_eq!(be_i32(dvi, offset + 6), 655_360);
-    assert_eq!(be_i32(dvi, offset + 10), 655_360);
-    assert_eq!(dvi[offset + 14], 0);
-    assert_eq!(dvi[offset + 15], 5);
-    assert_eq!(&dvi[offset + 16..offset + 21], b"cmr10");
+fn hlist(width: i32, height: i32, depth: i32, children: Vec<PageNode>) -> PageNode {
+    PageNode::HList(box_node(width, height, depth, children))
+}
+
+fn vlist(width: i32, height: i32, depth: i32, children: Vec<PageNode>) -> PageNode {
+    PageNode::VList(box_node(width, height, depth, children))
+}
+
+fn box_node(width: i32, height: i32, depth: i32, children: Vec<PageNode>) -> BoxNode {
+    BoxNode {
+        width: sp(width),
+        height: sp(height),
+        depth: sp(depth),
+        shift: sp(0),
+        glue_set: GlueSetRatio { raw: 0 },
+        glue_sign: GlueSign::Normal,
+        glue_order: GlueOrder::Normal,
+        children,
+    }
+}
+
+fn char_node(font_id: u32, ch: u32, width: i32) -> PageNode {
+    PageNode::Char {
+        font_id,
+        ch,
+        width: sp(width),
+    }
+}
+
+fn kern_node(amount: i32) -> PageNode {
+    PageNode::Kern {
+        amount: sp(amount),
+        kind: crate::KernKind::Explicit,
+    }
+}
+
+fn rule_node(width: i32, height: i32, depth: i32) -> PageNode {
+    PageNode::Rule {
+        width: Some(sp(width)),
+        height: Some(sp(height)),
+        depth: Some(sp(depth)),
+    }
+}
+
+fn font_resource(font_id: u32, name: &str) -> FontResource {
+    FontResource {
+        font_id,
+        name: name.to_owned(),
+        tfm_content_hash: ContentHash::from_bytes(name.as_bytes()),
+        tfm_checksum: 0x1234_5678,
+        design_size: sp(655_360),
+        at_size: sp(655_360),
+    }
+}
+
+fn sp(value: i32) -> Scaled {
+    Scaled::from_raw(value)
+}
+
+fn page_body(dvi: &[u8], bop: usize) -> &[u8] {
+    let start = bop + 45;
+    let end = page_eop(dvi, bop);
+    &dvi[start..end]
+}
+
+fn page_eop(dvi: &[u8], bop: usize) -> usize {
+    let start = bop + 45;
+    start
+        + dvi[start..]
+            .iter()
+            .position(|&byte| byte == EOP)
+            .expect("eop")
+}
+
+fn font_def_bytes(number: u8, name: &str) -> Vec<u8> {
+    let mut bytes = vec![FNT_DEF1, number];
+    bytes.extend_from_slice(&0x1234_5678_u32.to_be_bytes());
+    bytes.extend_from_slice(&655_360_i32.to_be_bytes());
+    bytes.extend_from_slice(&655_360_i32.to_be_bytes());
+    bytes.push(0);
+    bytes.push(name.len() as u8);
+    bytes.extend_from_slice(name.as_bytes());
+    bytes
+}
+
+fn assert_font_def(dvi: &[u8], offset: usize, number: u8, name: &str) {
+    assert_eq!(
+        &dvi[offset..offset + 16 + name.len()],
+        font_def_bytes(number, name)
+    );
 }
 
 fn find_font_def(dvi: &[u8], name: &[u8], start: usize) -> Option<usize> {
@@ -159,15 +402,6 @@ fn find_font_def(dvi: &[u8], name: &[u8], start: usize) -> Option<usize> {
 
 fn be_u16(bytes: &[u8], offset: usize) -> u16 {
     u16::from_be_bytes([bytes[offset], bytes[offset + 1]])
-}
-
-fn be_u32(bytes: &[u8], offset: usize) -> u32 {
-    u32::from_be_bytes([
-        bytes[offset],
-        bytes[offset + 1],
-        bytes[offset + 2],
-        bytes[offset + 3],
-    ])
 }
 
 fn be_i32(bytes: &[u8], offset: usize) -> i32 {

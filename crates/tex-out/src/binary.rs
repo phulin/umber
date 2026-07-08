@@ -6,7 +6,7 @@ use std::fmt;
 use tex_arith::Scaled;
 
 const MAGIC: &[u8; 4] = b"UMPG";
-const VERSION: u8 = 2;
+const VERSION: u8 = 3;
 
 /// Binary parse failure.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -183,22 +183,25 @@ impl Writer {
 
     fn node(&mut self, node: &PageNode) {
         match node {
-            PageNode::Char { font_id, ch } => {
+            PageNode::Char { font_id, ch, width } => {
                 self.u8(0);
                 self.u32(*font_id);
                 self.u32(*ch);
+                self.scaled(*width);
             }
             PageNode::Lig {
                 font_id,
                 ch,
                 left,
                 right,
+                width,
             } => {
                 self.u8(1);
                 self.u32(*font_id);
                 self.u32(*ch);
                 self.u32(*left);
                 self.u32(*right);
+                self.scaled(*width);
             }
             PageNode::Kern { amount, kind } => {
                 self.u8(2);
@@ -416,12 +419,14 @@ impl Reader<'_> {
             0 => Ok(PageNode::Char {
                 font_id: self.u32()?,
                 ch: self.u32()?,
+                width: self.scaled()?,
             }),
             1 => Ok(PageNode::Lig {
                 font_id: self.u32()?,
                 ch: self.u32()?,
                 left: self.u32()?,
                 right: self.u32()?,
+                width: self.scaled()?,
             }),
             2 => Ok(PageNode::Kern {
                 amount: self.scaled()?,

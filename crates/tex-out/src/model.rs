@@ -70,12 +70,14 @@ pub enum PageNode {
     Char {
         font_id: u32,
         ch: u32,
+        width: Scaled,
     },
     Lig {
         font_id: u32,
         ch: u32,
         left: u32,
         right: u32,
+        width: Scaled,
     },
     Kern {
         amount: Scaled,

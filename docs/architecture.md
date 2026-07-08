@@ -543,8 +543,9 @@ Responsibility: page artifacts → bytes on disk. Strictly downstream.
 - DVI driver is the conformance driver: byte-comparable against Knuth's
   `tex` for the parity corpus. The implemented DVI layer writes the file
   container structure (`pre`, page `bop`/`eop`, first-use `fnt_def`, `post`,
-  `post_post`, and 223 padding) from committed artifacts; box movement and
-  glyph body commands are layered on the same artifact traversal.
+  `post_post`, and 223 padding) from committed artifacts, and traverses the
+  committed box tree with TeX.web-style `hlist_out`/`vlist_out`, `movement()`
+  w/x/y/z optimization, font switches, rules, glyphs, and DVI specials.
 - Because drivers see only committed artifacts, rollback never reaches
   them; there is nothing to undo downstream of the commit barrier.
 

@@ -2,17 +2,38 @@ use std::fmt;
 
 use tex_arith::Scaled;
 
-use crate::{BoxNode, FontResource, PageArtifact, PageNode};
+use movement::MovementStack;
+
+use crate::{
+    BoxNode, FontResource, GlueOrder, GlueSetRatio, GlueSign, GlueSpec, PageArtifact, PageEffect,
+    PageNode,
+};
 
 #[cfg(test)]
 mod tests;
 
+mod movement;
+
 const ID_BYTE: u8 = 2;
+const SET1: u8 = 128;
+const SET_RULE: u8 = 132;
+const PUT_RULE: u8 = 137;
 const PRE: u8 = 247;
 const POST: u8 = 248;
 const POST_POST: u8 = 249;
 const BOP: u8 = 139;
 const EOP: u8 = 140;
+const PUSH: u8 = 141;
+const POP: u8 = 142;
+const RIGHT1: u8 = 143;
+const DOWN1: u8 = 157;
+const FNT_NUM_0: u8 = 171;
+const FNT1: u8 = 235;
+const FNT2: u8 = 236;
+const FNT3: u8 = 237;
+const FNT4: u8 = 238;
+const XXX1: u8 = 239;
+const XXX4: u8 = 242;
 const FNT_DEF1: u8 = 243;
 const FNT_DEF2: u8 = 244;
 const FNT_DEF3: u8 = 245;
@@ -21,6 +42,8 @@ const PADDING: u8 = 223;
 
 const NUM: i32 = 25_400_000;
 const DEN: i32 = 473_628_672;
+const GLUE_SET_SCALE: i64 = 1_000_000;
+const BILLION: i64 = 1_000_000_000;
 
 /// DVI emission failure.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -29,9 +52,13 @@ pub enum DviError {
     EmptyFontName { font_id: u32 },
     FieldTooLong { field: &'static str, len: usize },
     MissingFont { font_id: u32 },
+    MissingEffect { effect_index: u32 },
+    CharacterOutOfRange { ch: u32 },
     InconsistentJobInfo,
     TooManyPages { pages: usize },
+    SpecialTooLong { len: usize },
     OffsetOverflow { offset: usize },
+    PositionOverflow,
 }
 
 impl fmt::Display for DviError {
@@ -47,16 +74,29 @@ impl fmt::Display for DviError {
             Self::MissingFont { font_id } => {
                 write!(f, "page node references missing font resource {font_id}")
             }
+            Self::MissingEffect { effect_index } => {
+                write!(f, "page node references missing effect {effect_index}")
+            }
+            Self::CharacterOutOfRange { ch } => {
+                write!(f, "DVI TeX82 character code {ch} is outside 0..=255")
+            }
             Self::InconsistentJobInfo => {
                 f.write_str("page artifacts disagree on job banner or magnification")
             }
             Self::TooManyPages { pages } => write!(f, "DVI page count {pages} exceeds 65535"),
+            Self::SpecialTooLong { len } => {
+                write!(
+                    f,
+                    "DVI special payload length {len} exceeds signed 32-bit range"
+                )
+            }
             Self::OffsetOverflow { offset } => {
                 write!(
                     f,
                     "DVI byte offset {offset} exceeds signed 32-bit pointer range"
                 )
             }
+            Self::PositionOverflow => f.write_str("DVI page position arithmetic overflowed"),
         }
     }
 }
@@ -79,6 +119,14 @@ struct DviWriter<'a> {
     max_height_depth: i32,
     max_width: i32,
     max_stack_depth: u16,
+    right_stack: MovementStack,
+    down_stack: MovementStack,
+    dvi_h: Scaled,
+    dvi_v: Scaled,
+    cur_h: Scaled,
+    cur_v: Scaled,
+    dvi_f: Option<u32>,
+    cur_s: i32,
 }
 
 impl<'a> DviWriter<'a> {
@@ -101,6 +149,14 @@ impl<'a> DviWriter<'a> {
             max_height_depth: 0,
             max_width: 0,
             max_stack_depth: 0,
+            right_stack: MovementStack::default(),
+            down_stack: MovementStack::default(),
+            dvi_h: Scaled::from_raw(0),
+            dvi_v: Scaled::from_raw(0),
+            cur_h: Scaled::from_raw(0),
+            cur_v: Scaled::from_raw(0),
+            dvi_f: None,
+            cur_s: -1,
         };
         writer.preamble(&first.job.banner, first.job.mag)?;
         debug_assert_eq!(page_count as usize, pages.len());
@@ -128,6 +184,7 @@ impl<'a> DviWriter<'a> {
     }
 
     fn page(&mut self, page: &'a PageArtifact) -> Result<(), DviError> {
+        self.reset_page_state();
         let bop_location = self.current_pointer()?;
         self.u8(BOP);
         for count in page.counts {
@@ -139,27 +196,37 @@ impl<'a> DviWriter<'a> {
         let extent = page_extent(&page.root);
         self.max_height_depth = self.max_height_depth.max(extent.height_depth);
         self.max_width = self.max_width.max(extent.width);
-        self.emit_page_fonts(page, &page.root)?;
+        self.ship_box(page, &page.root)?;
         self.u8(EOP);
         Ok(())
     }
 
-    fn emit_page_fonts(
-        &mut self,
-        page: &'a PageArtifact,
-        node: &'a PageNode,
-    ) -> Result<(), DviError> {
+    fn reset_page_state(&mut self) {
+        self.right_stack.clear();
+        self.down_stack.clear();
+        self.dvi_h = Scaled::from_raw(0);
+        self.dvi_v = Scaled::from_raw(0);
+        self.cur_h = Scaled::from_raw(0);
+        self.cur_v = Scaled::from_raw(0);
+        self.dvi_f = None;
+        self.cur_s = -1;
+    }
+
+    fn ship_box(&mut self, page: &'a PageArtifact, node: &'a PageNode) -> Result<(), DviError> {
         match node {
-            PageNode::Char { font_id, .. } | PageNode::Lig { font_id, .. } => {
-                let font = page_font(page, *font_id)?;
-                self.ensure_font_defined(font)?;
+            PageNode::HList(box_node) => {
+                // tex.web ship_out: cur_v := height(p) + v_offset.
+                self.cur_v = box_node.height;
+                self.hlist_out(page, box_node)?;
             }
-            PageNode::HList(box_node) | PageNode::VList(box_node) => {
-                for child in &box_node.children {
-                    self.emit_page_fonts(page, child)?;
-                }
+            PageNode::VList(box_node) => {
+                // tex.web ship_out: cur_v := height(p) + v_offset.
+                self.cur_v = box_node.height;
+                self.vlist_out(page, box_node)?;
             }
-            PageNode::Kern { .. }
+            PageNode::Char { .. }
+            | PageNode::Lig { .. }
+            | PageNode::Kern { .. }
             | PageNode::Glue { .. }
             | PageNode::Penalty(_)
             | PageNode::Rule { .. }
@@ -168,6 +235,328 @@ impl<'a> DviWriter<'a> {
             | PageNode::MathOn
             | PageNode::MathOff => {}
         }
+        Ok(())
+    }
+
+    fn hlist_out(&mut self, page: &'a PageArtifact, this_box: &'a BoxNode) -> Result<(), DviError> {
+        let g_order = this_box.glue_order;
+        let g_sign = this_box.glue_sign;
+        self.enter_box();
+        if self.cur_s > 0 {
+            self.u8(PUSH);
+        }
+        let save_loc = self.bytes.len();
+        let base_line = self.cur_v;
+        let mut cur_g = Scaled::from_raw(0);
+        let mut cur_glue = Scaled::from_raw(0);
+
+        for child in &this_box.children {
+            match child {
+                PageNode::Char { font_id, ch, width }
+                | PageNode::Lig {
+                    font_id, ch, width, ..
+                } => {
+                    self.synch_h()?;
+                    self.synch_v()?;
+                    self.change_font(page, *font_id)?;
+                    self.set_char(*ch)?;
+                    self.cur_h = add_scaled(self.cur_h, *width)?;
+                    self.dvi_h = self.cur_h;
+                }
+                PageNode::HList(box_node) | PageNode::VList(box_node) => {
+                    self.output_box_in_hlist(page, box_node, matches!(child, PageNode::VList(_)))?;
+                }
+                PageNode::Rule {
+                    width,
+                    height,
+                    depth,
+                } => {
+                    let rule_ht = height.unwrap_or(this_box.height);
+                    let rule_dp = depth.unwrap_or(this_box.depth);
+                    let rule_wd = width.unwrap_or(Scaled::from_raw(0));
+                    self.output_rule_in_hlist(rule_ht, rule_dp, rule_wd, base_line)?;
+                    self.cur_h = add_scaled(self.cur_h, rule_wd)?;
+                }
+                PageNode::Glue { spec, .. } => {
+                    let rule_wd = adjusted_glue_width(
+                        *spec,
+                        g_sign,
+                        g_order,
+                        this_box.glue_set,
+                        &mut cur_glue,
+                        &mut cur_g,
+                    )?;
+                    self.cur_h = add_scaled(self.cur_h, rule_wd)?;
+                }
+                PageNode::Kern { amount, .. } => {
+                    self.cur_h = add_scaled(self.cur_h, *amount)?;
+                }
+                PageNode::WhatsitAnchor { effect_index } => {
+                    self.out_what(page, *effect_index)?;
+                }
+                PageNode::Penalty(_) | PageNode::Unset | PageNode::MathOn | PageNode::MathOff => {}
+            }
+            self.cur_v = base_line;
+        }
+
+        self.prune_movements(save_loc);
+        if self.cur_s > 0 {
+            self.dvi_pop(save_loc);
+        }
+        self.cur_s -= 1;
+        Ok(())
+    }
+
+    fn vlist_out(&mut self, page: &'a PageArtifact, this_box: &'a BoxNode) -> Result<(), DviError> {
+        let g_order = this_box.glue_order;
+        let g_sign = this_box.glue_sign;
+        self.enter_box();
+        if self.cur_s > 0 {
+            self.u8(PUSH);
+        }
+        let save_loc = self.bytes.len();
+        let left_edge = self.cur_h;
+        self.cur_v = sub_scaled(self.cur_v, this_box.height)?;
+        let mut cur_g = Scaled::from_raw(0);
+        let mut cur_glue = Scaled::from_raw(0);
+
+        for child in &this_box.children {
+            match child {
+                PageNode::HList(box_node) | PageNode::VList(box_node) => {
+                    self.output_box_in_vlist(page, box_node, matches!(child, PageNode::VList(_)))?;
+                    self.cur_h = left_edge;
+                }
+                PageNode::Rule {
+                    width,
+                    height,
+                    depth,
+                } => {
+                    let rule_ht = add_scaled(
+                        height.unwrap_or(Scaled::from_raw(0)),
+                        depth.unwrap_or(Scaled::from_raw(0)),
+                    )?;
+                    let rule_wd = width.unwrap_or(this_box.width);
+                    self.cur_v = add_scaled(self.cur_v, rule_ht)?;
+                    if rule_ht.raw() > 0 && rule_wd.raw() > 0 {
+                        self.synch_h()?;
+                        self.synch_v()?;
+                        self.u8(PUT_RULE);
+                        self.scaled(rule_ht);
+                        self.scaled(rule_wd);
+                    }
+                }
+                PageNode::Glue { spec, .. } => {
+                    let rule_ht = adjusted_glue_width(
+                        *spec,
+                        g_sign,
+                        g_order,
+                        this_box.glue_set,
+                        &mut cur_glue,
+                        &mut cur_g,
+                    )?;
+                    self.cur_v = add_scaled(self.cur_v, rule_ht)?;
+                }
+                PageNode::Kern { amount, .. } => {
+                    self.cur_v = add_scaled(self.cur_v, *amount)?;
+                }
+                PageNode::WhatsitAnchor { effect_index } => {
+                    self.out_what(page, *effect_index)?;
+                }
+                PageNode::Char { .. }
+                | PageNode::Lig { .. }
+                | PageNode::Penalty(_)
+                | PageNode::Unset
+                | PageNode::MathOn
+                | PageNode::MathOff => {}
+            }
+        }
+
+        self.prune_movements(save_loc);
+        if self.cur_s > 0 {
+            self.dvi_pop(save_loc);
+        }
+        self.cur_s -= 1;
+        Ok(())
+    }
+
+    fn output_box_in_hlist(
+        &mut self,
+        page: &'a PageArtifact,
+        box_node: &'a BoxNode,
+        is_vlist: bool,
+    ) -> Result<(), DviError> {
+        if box_node.children.is_empty() {
+            self.cur_h = add_scaled(self.cur_h, box_node.width)?;
+            return Ok(());
+        }
+        let save_h = self.dvi_h;
+        let save_v = self.dvi_v;
+        let edge = self.cur_h;
+        let base_line = self.cur_v;
+        self.cur_v = add_scaled(base_line, box_node.shift)?;
+        if is_vlist {
+            self.vlist_out(page, box_node)?;
+        } else {
+            self.hlist_out(page, box_node)?;
+        }
+        self.dvi_h = save_h;
+        self.dvi_v = save_v;
+        self.cur_h = add_scaled(edge, box_node.width)?;
+        self.cur_v = base_line;
+        Ok(())
+    }
+
+    fn output_box_in_vlist(
+        &mut self,
+        page: &'a PageArtifact,
+        box_node: &'a BoxNode,
+        is_vlist: bool,
+    ) -> Result<(), DviError> {
+        if box_node.children.is_empty() {
+            self.cur_v = add_scaled(add_scaled(self.cur_v, box_node.height)?, box_node.depth)?;
+            return Ok(());
+        }
+        self.cur_v = add_scaled(self.cur_v, box_node.height)?;
+        self.synch_v()?;
+        let save_h = self.dvi_h;
+        let save_v = self.dvi_v;
+        let left_edge = self.cur_h;
+        self.cur_h = add_scaled(left_edge, box_node.shift)?;
+        if is_vlist {
+            self.vlist_out(page, box_node)?;
+        } else {
+            self.hlist_out(page, box_node)?;
+        }
+        self.dvi_h = save_h;
+        self.dvi_v = save_v;
+        self.cur_v = add_scaled(save_v, box_node.depth)?;
+        self.cur_h = left_edge;
+        Ok(())
+    }
+
+    fn output_rule_in_hlist(
+        &mut self,
+        rule_ht: Scaled,
+        rule_dp: Scaled,
+        rule_wd: Scaled,
+        base_line: Scaled,
+    ) -> Result<(), DviError> {
+        let rule_ht = add_scaled(rule_ht, rule_dp)?;
+        if rule_ht.raw() > 0 && rule_wd.raw() > 0 {
+            self.synch_h()?;
+            self.cur_v = add_scaled(base_line, rule_dp)?;
+            self.synch_v()?;
+            self.u8(SET_RULE);
+            self.scaled(rule_ht);
+            self.scaled(rule_wd);
+            self.cur_v = base_line;
+            self.dvi_h = add_scaled(self.dvi_h, rule_wd)?;
+        }
+        Ok(())
+    }
+
+    fn enter_box(&mut self) {
+        self.cur_s += 1;
+        if let Ok(depth) = u16::try_from(self.cur_s) {
+            self.max_stack_depth = self.max_stack_depth.max(depth);
+        }
+    }
+
+    fn synch_h(&mut self) -> Result<(), DviError> {
+        if self.cur_h != self.dvi_h {
+            let movement = sub_scaled(self.cur_h, self.dvi_h)?;
+            self.right_stack.movement(&mut self.bytes, movement, RIGHT1);
+            self.dvi_h = self.cur_h;
+        }
+        Ok(())
+    }
+
+    fn synch_v(&mut self) -> Result<(), DviError> {
+        if self.cur_v != self.dvi_v {
+            let movement = sub_scaled(self.cur_v, self.dvi_v)?;
+            self.down_stack.movement(&mut self.bytes, movement, DOWN1);
+            self.dvi_v = self.cur_v;
+        }
+        Ok(())
+    }
+
+    fn prune_movements(&mut self, save_loc: usize) {
+        self.down_stack.prune_movements(save_loc);
+        self.right_stack.prune_movements(save_loc);
+    }
+
+    fn dvi_pop(&mut self, save_loc: usize) {
+        if save_loc == self.bytes.len() && !self.bytes.is_empty() {
+            self.bytes.pop();
+        } else {
+            self.u8(POP);
+        }
+    }
+
+    fn change_font(&mut self, page: &'a PageArtifact, font_id: u32) -> Result<(), DviError> {
+        let font = page_font(page, font_id)?;
+        let number = self.ensure_font_defined(font)?;
+        if self.dvi_f == Some(number) {
+            return Ok(());
+        }
+        match number {
+            0..=63 => self.u8(FNT_NUM_0 + number as u8),
+            64..=0xff => {
+                self.u8(FNT1);
+                self.u8(number as u8);
+            }
+            0x100..=0xffff => {
+                self.u8(FNT2);
+                self.u16(number as u16);
+            }
+            0x1_0000..=0xff_ffff => {
+                self.u8(FNT3);
+                self.u24(number);
+            }
+            _ => {
+                self.u8(FNT4);
+                self.u32(number);
+            }
+        }
+        self.dvi_f = Some(number);
+        Ok(())
+    }
+
+    fn set_char(&mut self, ch: u32) -> Result<(), DviError> {
+        let ch = u8::try_from(ch).map_err(|_| DviError::CharacterOutOfRange { ch })?;
+        if ch < SET1 {
+            self.u8(ch);
+        } else {
+            self.u8(SET1);
+            self.u8(ch);
+        }
+        Ok(())
+    }
+
+    fn out_what(&mut self, page: &'a PageArtifact, effect_index: u32) -> Result<(), DviError> {
+        let effect = page
+            .effects
+            .get(usize::try_from(effect_index).expect("u32 fits usize"))
+            .ok_or(DviError::MissingEffect { effect_index })?;
+        if let PageEffect::Special { payload, .. } = effect {
+            self.special_out(payload)?;
+        }
+        Ok(())
+    }
+
+    fn special_out(&mut self, payload: &[u8]) -> Result<(), DviError> {
+        self.synch_h()?;
+        self.synch_v()?;
+        if payload.len() < 256 {
+            self.u8(XXX1);
+            self.u8(payload.len() as u8);
+        } else {
+            let len = i32::try_from(payload.len())
+                .map_err(|_| DviError::SpecialTooLong { len: payload.len() })?;
+            self.u8(XXX4);
+            self.i32(len);
+        }
+        self.raw(payload);
         Ok(())
     }
 
@@ -350,6 +739,57 @@ fn box_extent(box_node: &BoxNode) -> PageExtent {
 
 fn optional_raw(value: Option<Scaled>) -> i32 {
     value.map_or(0, Scaled::raw)
+}
+
+fn adjusted_glue_width(
+    spec: GlueSpec,
+    g_sign: GlueSign,
+    g_order: GlueOrder,
+    glue_set: GlueSetRatio,
+    cur_glue: &mut Scaled,
+    cur_g: &mut Scaled,
+) -> Result<Scaled, DviError> {
+    // tex.web hlist_out/vlist_out: rule_wd/rule_ht := width(g) - cur_g,
+    // then cur_g becomes round(glue_set(this_box) * cur_glue).
+    let base = sub_scaled(spec.width, *cur_g)?;
+    if g_sign != GlueSign::Normal {
+        match g_sign {
+            GlueSign::Stretching if spec.stretch_order == g_order => {
+                *cur_glue = add_scaled(*cur_glue, spec.stretch)?;
+                *cur_g = rounded_glue_set(glue_set, *cur_glue);
+            }
+            GlueSign::Shrinking if spec.shrink_order == g_order => {
+                *cur_glue = sub_scaled(*cur_glue, spec.shrink)?;
+                *cur_g = rounded_glue_set(glue_set, *cur_glue);
+            }
+            _ => {}
+        }
+    }
+    add_scaled(base, *cur_g)
+}
+
+fn rounded_glue_set(glue_set: GlueSetRatio, cur_glue: Scaled) -> Scaled {
+    let product = i128::from(glue_set.raw) * i128::from(cur_glue.raw());
+    let rounded = rounded_div(product, i128::from(GLUE_SET_SCALE));
+    let vetted = rounded.clamp(-i128::from(BILLION), i128::from(BILLION));
+    Scaled::from_raw(i32::try_from(vetted).expect("vetted glue is in i32 range"))
+}
+
+fn rounded_div(value: i128, divisor: i128) -> i128 {
+    debug_assert!(divisor > 0);
+    if value >= 0 {
+        (value + divisor / 2) / divisor
+    } else {
+        -((-value + divisor / 2) / divisor)
+    }
+}
+
+fn add_scaled(left: Scaled, right: Scaled) -> Result<Scaled, DviError> {
+    left.checked_add(right).ok_or(DviError::PositionOverflow)
+}
+
+fn sub_scaled(left: Scaled, right: Scaled) -> Result<Scaled, DviError> {
+    left.checked_sub(right).ok_or(DviError::PositionOverflow)
 }
 
 fn page_font(page: &PageArtifact, font_id: u32) -> Result<&FontResource, DviError> {

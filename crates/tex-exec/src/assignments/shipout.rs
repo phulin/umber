@@ -84,12 +84,14 @@ where
             Node::Char { font, ch } => PageNode::Char {
                 font_id: self.font_resource_id(font),
                 ch: ch as u32,
+                width: self.glyph_width(font, ch)?,
             },
             Node::Lig { font, ch, orig } => PageNode::Lig {
                 font_id: self.font_resource_id(font),
                 ch: ch as u32,
                 left: orig.0 as u32,
                 right: orig.1 as u32,
+                width: self.glyph_width(font, ch)?,
             },
             Node::Kern { amount, kind } => PageNode::Kern {
                 amount,
@@ -185,6 +187,20 @@ where
         });
         self.font_map.insert(font, id);
         id
+    }
+
+    fn glyph_width(&self, font: FontId, ch: char) -> Result<tex_state::scaled::Scaled, ExecError> {
+        let Ok(code) = u8::try_from(ch as u32) else {
+            return Err(ExecError::UnsupportedShipoutNode {
+                node: "non-TeX82 character",
+            });
+        };
+        self.stores
+            .font_char_metrics(font, code)
+            .map(|metrics| metrics.width)
+            .ok_or(ExecError::UnsupportedShipoutNode {
+                node: "missing character metrics",
+            })
     }
 }
 
