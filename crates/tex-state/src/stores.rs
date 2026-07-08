@@ -25,6 +25,7 @@ use crate::survivor::SurvivorArena;
 use crate::token::Catcode;
 use crate::token::Token;
 use crate::token_store::{TokenListBuilder, TokenStore, TokenStoreMark};
+use std::hash::BuildHasher;
 #[cfg(any(test, feature = "testing", feature = "shadow"))]
 use std::hash::{Hash, Hasher};
 use std::mem;
@@ -62,24 +63,37 @@ impl StoreSnapshot {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct SnapshotOwner(usize);
+struct SnapshotOwner {
+    address: usize,
+    nonce: u64,
+}
 
 #[derive(Debug)]
 struct StoreOwner(Box<StoreOwnerToken>);
 
 #[derive(Debug)]
 struct StoreOwnerToken {
-    _private: u8,
+    nonce: u64,
 }
 
 impl StoreOwner {
     fn new() -> Self {
-        Self(Box::new(StoreOwnerToken { _private: 0 }))
+        Self(Box::new(StoreOwnerToken {
+            nonce: random_owner_nonce(),
+        }))
     }
 
     fn snapshot_owner(&self) -> SnapshotOwner {
-        SnapshotOwner(self.0.as_ref() as *const StoreOwnerToken as usize)
+        SnapshotOwner {
+            address: self.0.as_ref() as *const StoreOwnerToken as usize,
+            nonce: self.0.nonce,
+        }
     }
+}
+
+fn random_owner_nonce() -> u64 {
+    let state = std::collections::hash_map::RandomState::new();
+    state.hash_one(0x7374_6f72_6573_u64)
 }
 
 /// Internal owner for rollback-coupled state stores.

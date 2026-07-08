@@ -70,7 +70,7 @@ pub struct CodeTables {
 impl CodeTables {
     /// Creates code tables initialized to INITEX defaults.
     #[must_use]
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             catcodes: PagedTable::new(),
             lccodes: PagedTable::new(),
@@ -119,7 +119,7 @@ impl CodeTables {
         self.catcodes.get(ch)
     }
 
-    pub fn set_catcode(&mut self, ch: char, value: Catcode) {
+    pub(crate) fn set_catcode(&mut self, ch: char, value: Catcode) {
         self.catcodes.set(ch, value);
     }
 
@@ -128,7 +128,7 @@ impl CodeTables {
         self.lccodes.get(ch)
     }
 
-    pub fn set_lccode(&mut self, ch: char, value: LcCode) {
+    pub(crate) fn set_lccode(&mut self, ch: char, value: LcCode) {
         assert_unicode_code(value, "lccode");
         self.lccodes.set(ch, value);
     }
@@ -138,7 +138,7 @@ impl CodeTables {
         self.uccodes.get(ch)
     }
 
-    pub fn set_uccode(&mut self, ch: char, value: UcCode) {
+    pub(crate) fn set_uccode(&mut self, ch: char, value: UcCode) {
         assert_unicode_code(value, "uccode");
         self.uccodes.set(ch, value);
     }
@@ -148,7 +148,7 @@ impl CodeTables {
         self.sfcodes.get(ch)
     }
 
-    pub fn set_sfcode(&mut self, ch: char, value: SfCode) {
+    pub(crate) fn set_sfcode(&mut self, ch: char, value: SfCode) {
         self.sfcodes.set(ch, value);
     }
 
@@ -157,7 +157,7 @@ impl CodeTables {
         self.mathcodes.get(ch)
     }
 
-    pub fn set_mathcode(&mut self, ch: char, value: MathCode) {
+    pub(crate) fn set_mathcode(&mut self, ch: char, value: MathCode) {
         self.mathcodes.set(ch, value);
     }
 
@@ -166,7 +166,7 @@ impl CodeTables {
         self.delcodes.get(ch)
     }
 
-    pub fn set_delcode(&mut self, ch: char, value: DelCode) {
+    pub(crate) fn set_delcode(&mut self, ch: char, value: DelCode) {
         self.delcodes.set(ch, value);
     }
 
@@ -178,12 +178,6 @@ impl CodeTables {
         self.sfcodes.hash_content(hasher);
         self.mathcodes.hash_content(hasher);
         self.delcodes.hash_content(hasher);
-    }
-}
-
-impl Default for CodeTables {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

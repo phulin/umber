@@ -525,9 +525,11 @@ longer live in its owned interner before mutating Env cells. `Universe`
 snapshots also carry an owning timeline identity and group depth: rollback
 rejects snapshots from another timeline and snapshots invalidated by exiting
 the group that enclosed their checkpoint. The owning timeline identity is
-derived from a private per-`Universe` owner token, not from a global counter,
-lock, or atomic; cloning a `Universe` allocates a fresh token and therefore
-creates a distinct snapshot timeline.
+derived from a private per-`Universe` owner token plus a per-token random
+nonce, not from a global counter, lock, or atomic; cloning a `Universe`
+allocates a fresh token and nonce and therefore creates a distinct snapshot
+timeline. The nonce is part of the snapshot owner identity only; semantic
+state hashes never include owner-token addresses or nonces.
 
 ### 10.7 The JIT bypass, contained
 

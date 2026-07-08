@@ -51,12 +51,12 @@ pub struct Interner {
 impl Interner {
     /// Creates an empty interner.
     #[must_use]
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
     /// Interns `name`, returning its stable dense symbol while it remains live.
-    pub fn intern(&mut self, name: &str) -> Symbol {
+    pub(crate) fn intern(&mut self, name: &str) -> Symbol {
         if self.index_dirty {
             self.rebuild_index();
         }

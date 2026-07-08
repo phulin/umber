@@ -36,6 +36,7 @@ use crate::world::{
     EffectRecord, JobClock, PrintSink, ShellEscapePolicy, ShellEscapeRecord, StreamBufState,
     StreamSlot, World, WorldSnapshot, WorldStateHashCursor, install_job_clock_params,
 };
+use std::hash::BuildHasher;
 #[cfg(any(test, feature = "testing", feature = "shadow"))]
 use std::hash::{Hash, Hasher};
 
@@ -76,24 +77,37 @@ impl Snapshot {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct SnapshotOwner(usize);
+struct SnapshotOwner {
+    address: usize,
+    nonce: u64,
+}
 
 #[derive(Debug)]
 struct UniverseOwner(Box<UniverseOwnerToken>);
 
 #[derive(Debug)]
 struct UniverseOwnerToken {
-    _private: u8,
+    nonce: u64,
 }
 
 impl UniverseOwner {
     fn new() -> Self {
-        Self(Box::new(UniverseOwnerToken { _private: 0 }))
+        Self(Box::new(UniverseOwnerToken {
+            nonce: random_owner_nonce(),
+        }))
     }
 
     fn snapshot_owner(&self) -> SnapshotOwner {
-        SnapshotOwner(self.0.as_ref() as *const UniverseOwnerToken as usize)
+        SnapshotOwner {
+            address: self.0.as_ref() as *const UniverseOwnerToken as usize,
+            nonce: self.0.nonce,
+        }
     }
+}
+
+fn random_owner_nonce() -> u64 {
+    let state = std::collections::hash_map::RandomState::new();
+    state.hash_one(0x756e_6976_6572_7365_u64)
 }
 
 /// Current engine interaction mode.

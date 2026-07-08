@@ -688,12 +688,6 @@ impl Env {
     }
 }
 
-impl Default for Env {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[inline]
 pub(crate) fn barrier(
     cell_slot: &mut u64,

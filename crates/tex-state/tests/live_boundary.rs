@@ -119,6 +119,7 @@ use tex_state::env::banks::IntParam;
 
 fn main() {
     let mut env = Env::new();
+    let _default_env = Env::default();
     env.bump_epoch();
     env.enter_group();
     env.push_aftergroup(1);
@@ -145,10 +146,92 @@ fn main() {
         "downstream raw Env probe unexpectedly compiled"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
+    for expected in ["Env::new", "Env::default"] {
+        assert!(
+            stderr.contains("E0624") && stderr.contains(expected),
+            "probe failed for an unexpected reason while checking {expected}:\n{stderr}"
+        );
+    }
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)]
+fn downstream_crate_cannot_construct_or_mutate_raw_interner_or_code_tables() {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let probe_workspace = tempfile::tempdir().expect("create raw table boundary probe workspace");
+    let probe_dir = probe_workspace.path().join("raw-table-boundary-probe");
+    let src_dir = probe_dir.join("src");
+
+    fs::create_dir_all(&src_dir).expect("create raw table boundary probe src dir");
+    fs::write(
+        probe_dir.join("Cargo.toml"),
+        format!(
+            r#"[package]
+name = "raw-table-boundary-probe"
+version = "0.0.0"
+edition = "2024"
+
+[workspace]
+
+[dependencies]
+tex-state = {{ path = "{manifest_dir}" }}
+"#
+        ),
+    )
+    .expect("write raw table boundary probe manifest");
+    fs::write(
+        src_dir.join("main.rs"),
+        r#"use tex_state::code_tables::CodeTables;
+use tex_state::interner::Interner;
+use tex_state::token::Catcode;
+
+fn main() {
+    let mut interner = Interner::new();
+    let _symbol = interner.intern("rogue");
+
+    let mut tables = CodeTables::new();
+    tables.set_catcode('@', Catcode::Letter);
+    tables.set_lccode('@', u32::from('a'));
+    tables.set_uccode('@', u32::from('A'));
+    tables.set_sfcode('@', 1000);
+    tables.set_mathcode('@', u32::from('@'));
+    tables.set_delcode('@', -1);
+}
+"#,
+    )
+    .expect("write raw table boundary probe main");
+
+    let output = Command::new(env!("CARGO"))
+        .arg("check")
+        .arg("--quiet")
+        .arg("--manifest-path")
+        .arg(probe_dir.join("Cargo.toml"))
+        .arg("--target-dir")
+        .arg(probe_dir.join("target"))
+        .output()
+        .expect("run raw table boundary probe");
+
     assert!(
-        stderr.contains("E0624") && stderr.contains("Env::new"),
-        "probe failed for an unexpected reason:\n{stderr}"
+        !output.status.success(),
+        "downstream raw table/interner probe unexpectedly compiled"
     );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    for expected in [
+        "Interner::new",
+        "method `intern` is private",
+        "CodeTables::new",
+        "method `set_catcode` is private",
+        "method `set_lccode` is private",
+        "method `set_uccode` is private",
+        "method `set_sfcode` is private",
+        "method `set_mathcode` is private",
+        "method `set_delcode` is private",
+    ] {
+        assert!(
+            stderr.contains("E0624") && stderr.contains(expected),
+            "probe failed for an unexpected reason while checking {expected}:\n{stderr}"
+        );
+    }
 }
 
 #[test]
