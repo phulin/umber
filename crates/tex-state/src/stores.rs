@@ -98,7 +98,7 @@ impl Stores {
     /// Creates an empty state-store tuple.
     #[must_use]
     pub fn new() -> Self {
-        Self {
+        let mut stores = Self {
             owner: StoreOwner::new(),
             env: Env::new(),
             interner: Interner::new(),
@@ -108,7 +108,9 @@ impl Stores {
             nodes: NodeArena::new(),
             survivors: SurvivorArena::new(),
             code_tables: CodeTables::new(),
-        }
+        };
+        stores.set_int_param(IntParam::ESCAPE_CHAR, b'\\'.into());
+        stores
     }
 
     /// Reads the owned environment.
@@ -381,6 +383,13 @@ impl Stores {
         self.env.set_skip(index, value);
     }
 
+    #[must_use]
+    pub fn skip(&self, index: u16) -> GlueId {
+        let value = self.env.skip(index);
+        self.assert_live_glue(value);
+        value
+    }
+
     pub fn set_skip_global(&mut self, index: u16, value: GlueId) {
         self.assert_live_glue(value);
         self.env.set_skip_global(index, value);
@@ -389,6 +398,13 @@ impl Stores {
     pub fn set_toks(&mut self, index: u16, value: TokenListId) {
         self.assert_live_token_list(value);
         self.env.set_toks(index, value);
+    }
+
+    #[must_use]
+    pub fn toks(&self, index: u16) -> TokenListId {
+        let value = self.env.toks(index);
+        self.assert_live_token_list(value);
+        value
     }
 
     pub fn set_toks_global(&mut self, index: u16, value: TokenListId) {
@@ -453,6 +469,13 @@ impl Stores {
         self.env.set_glue_param(param, value);
     }
 
+    #[must_use]
+    pub fn glue_param(&self, param: GlueParam) -> GlueId {
+        let value = self.env.glue_param(param);
+        self.assert_live_glue(value);
+        value
+    }
+
     pub fn set_glue_param_global(&mut self, param: GlueParam, value: GlueId) {
         self.assert_live_glue(value);
         self.env.set_glue_param_global(param, value);
@@ -461,6 +484,13 @@ impl Stores {
     pub fn set_tok_param(&mut self, param: TokParam, value: TokenListId) {
         self.assert_live_token_list(value);
         self.env.set_tok_param(param, value);
+    }
+
+    #[must_use]
+    pub fn tok_param(&self, param: TokParam) -> TokenListId {
+        let value = self.env.tok_param(param);
+        self.assert_live_token_list(value);
+        value
     }
 
     pub fn set_tok_param_global(&mut self, param: TokParam, value: TokenListId) {

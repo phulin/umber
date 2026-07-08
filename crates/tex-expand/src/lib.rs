@@ -9,10 +9,13 @@
 use std::fmt;
 
 use tex_lex::{InputSource, InputStack, LexError, MacroArguments, TokenListReplayKind};
+use tex_state::env::banks::IntParam;
+use tex_state::ids::TokenListId;
 use tex_state::interner::Symbol;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
+use tex_state::scaled::Scaled;
 use tex_state::stores::Stores;
-use tex_state::token::Token;
+use tex_state::token::{Catcode, Token};
 
 pub mod args;
 pub mod scan;
@@ -101,6 +104,9 @@ pub enum ExpandError {
     MissingTokenAfterPrimitive(ExpandableOpcode),
     MissingEndCsName,
     NonCharacterInCsName(Token),
+    ScanInt(Box<scan_int::ScanIntError>),
+    ScanDimen(Box<scan_dimen::ScanDimenError>),
+    UnsupportedTheTarget(Token),
 }
 
 impl fmt::Display for ExpandError {
@@ -118,6 +124,11 @@ impl fmt::Display for ExpandError {
             Self::NonCharacterInCsName(token) => {
                 write!(f, "non-character token {token:?} while scanning \\csname")
             }
+            Self::ScanInt(err) => write!(f, "{err}"),
+            Self::ScanDimen(err) => write!(f, "{err}"),
+            Self::UnsupportedTheTarget(token) => {
+                write!(f, "unsupported token {token:?} after \\the")
+            }
         }
     }
 }
@@ -127,10 +138,13 @@ impl std::error::Error for ExpandError {
         match self {
             Self::Lex(err) => Some(err),
             Self::MacroCall(err) => Some(err),
+            Self::ScanInt(err) => Some(err),
+            Self::ScanDimen(err) => Some(err),
             Self::UnimplementedExpandable(_)
             | Self::MissingTokenAfterPrimitive(_)
             | Self::MissingEndCsName
-            | Self::NonCharacterInCsName(_) => None,
+            | Self::NonCharacterInCsName(_)
+            | Self::UnsupportedTheTarget(_) => None,
         }
     }
 }
@@ -155,6 +169,18 @@ impl From<LexError> for ExpandError {
 impl From<args::MacroCallError> for ExpandError {
     fn from(value: args::MacroCallError) -> Self {
         Self::MacroCall(value)
+    }
+}
+
+impl From<scan_int::ScanIntError> for ExpandError {
+    fn from(value: scan_int::ScanIntError) -> Self {
+        Self::ScanInt(Box::new(value))
+    }
+}
+
+impl From<scan_dimen::ScanDimenError> for ExpandError {
+    fn from(value: scan_dimen::ScanDimenError) -> Self {
+        Self::ScanDimen(Box::new(value))
     }
 }
 
@@ -255,6 +281,47 @@ where
         Meaning::ExpandablePrimitive(ExpandablePrimitive::EndCsName) => {
             Ok(Dispatch::Deliver(token))
         }
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::String) => {
+            let Some(target) = input.next_token_readonly(stores)? else {
+                return Err(ExpandError::MissingTokenAfterPrimitive(
+                    ExpandableOpcode::String,
+                ));
+            };
+            Ok(push_rendered_tokens(
+                stores,
+                ExpansionReplayKind::NumberOutput,
+                string_tokens(stores, target),
+            ))
+        }
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::Number) => {
+            let scanned = scan_int::scan_int(input, stores)?;
+            Ok(push_rendered_text(
+                stores,
+                ExpansionReplayKind::NumberOutput,
+                &scanned.value().to_string(),
+            ))
+        }
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::RomanNumeral) => {
+            let scanned = scan_int::scan_int(input, stores)?;
+            Ok(push_rendered_text(
+                stores,
+                ExpansionReplayKind::NumberOutput,
+                &roman_numeral(scanned.value()),
+            ))
+        }
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::Meaning) => {
+            let Some(target) = input.next_token_readonly(stores)? else {
+                return Err(ExpandError::MissingTokenAfterPrimitive(
+                    ExpandableOpcode::Meaning,
+                ));
+            };
+            Ok(push_rendered_text(
+                stores,
+                ExpansionReplayKind::NumberOutput,
+                &meaning_text(stores, target),
+            ))
+        }
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::The) => expand_the(input, stores),
         Meaning::Macro { .. }
         | Meaning::Undefined
         | Meaning::Relax
@@ -274,12 +341,12 @@ pub fn dispatch_expandable_opcode(opcode: ExpandableOpcode) -> Result<(), Expand
         ExpandableOpcode::ExpandAfter
         | ExpandableOpcode::NoExpand
         | ExpandableOpcode::CsName
-        | ExpandableOpcode::EndCsName => Ok(()),
-        ExpandableOpcode::String => Err(unimplemented_expandable(opcode)),
-        ExpandableOpcode::Number => Err(unimplemented_expandable(opcode)),
-        ExpandableOpcode::RomanNumeral => Err(unimplemented_expandable(opcode)),
-        ExpandableOpcode::Meaning => Err(unimplemented_expandable(opcode)),
-        ExpandableOpcode::The => Err(unimplemented_expandable(opcode)),
+        | ExpandableOpcode::EndCsName
+        | ExpandableOpcode::String
+        | ExpandableOpcode::Number
+        | ExpandableOpcode::RomanNumeral
+        | ExpandableOpcode::Meaning
+        | ExpandableOpcode::The => Ok(()),
         ExpandableOpcode::Input => Err(unimplemented_expandable(opcode)),
         ExpandableOpcode::If => Err(unimplemented_expandable(opcode)),
         ExpandableOpcode::Else => Err(unimplemented_expandable(opcode)),
@@ -370,6 +437,259 @@ fn append_csname_token(name: &mut String, token: Token) -> Result<(), ExpandErro
         }
         Token::Cs(_) | Token::Param(_) => Err(ExpandError::NonCharacterInCsName(token)),
     }
+}
+
+fn expand_the<S>(input: &mut InputStack<S>, stores: &mut Stores) -> Result<Dispatch, ExpandError>
+where
+    S: InputSource,
+{
+    let Some(token) = next_non_space_x_token(input, stores)? else {
+        return Err(ExpandError::MissingTokenAfterPrimitive(
+            ExpandableOpcode::The,
+        ));
+    };
+    let Token::Cs(symbol) = token else {
+        return Err(ExpandError::UnsupportedTheTarget(token));
+    };
+
+    match stores.resolve(symbol) {
+        "count" => {
+            let index = scan_register_index(input, stores)?;
+            Ok(push_rendered_text(
+                stores,
+                ExpansionReplayKind::TheOutput,
+                &stores.count(index).to_string(),
+            ))
+        }
+        "dimen" => {
+            let index = scan_register_index(input, stores)?;
+            Ok(push_rendered_text(
+                stores,
+                ExpansionReplayKind::TheOutput,
+                &format_scaled(stores.dimen(index)),
+            ))
+        }
+        "toks" => {
+            let index = scan_register_index(input, stores)?;
+            Ok(Dispatch::Push {
+                replay_kind: ExpansionReplayKind::TheOutput,
+                token_list: stores.toks(index),
+                macro_arguments: MacroArguments::new(),
+            })
+        }
+        "endlinechar" => Ok(push_rendered_text(
+            stores,
+            ExpansionReplayKind::TheOutput,
+            &stores.int_param(IntParam::END_LINE_CHAR).to_string(),
+        )),
+        "escapechar" => Ok(push_rendered_text(
+            stores,
+            ExpansionReplayKind::TheOutput,
+            &stores.int_param(IntParam::ESCAPE_CHAR).to_string(),
+        )),
+        // TODO(umber2-5qt): support `\the` for glue, muglue, font dimensions,
+        // code tables, box dimensions, page state, and time/job parameters as
+        // those Env classes become semantically available to the gullet.
+        _ => Err(ExpandError::UnsupportedTheTarget(token)),
+    }
+}
+
+fn next_non_space_x_token<S>(
+    input: &mut InputStack<S>,
+    stores: &mut Stores,
+) -> Result<Option<Token>, ExpandError>
+where
+    S: InputSource,
+{
+    loop {
+        let Some(token) = get_x_token(input, stores)? else {
+            return Ok(None);
+        };
+        if !matches!(
+            token,
+            Token::Char {
+                cat: Catcode::Space,
+                ..
+            }
+        ) {
+            return Ok(Some(token));
+        }
+    }
+}
+
+fn scan_register_index<S>(
+    input: &mut InputStack<S>,
+    stores: &mut Stores,
+) -> Result<u16, ExpandError>
+where
+    S: InputSource,
+{
+    let value = scan_int::scan_int(input, stores)?.value();
+    if !(0..=32_767).contains(&value) {
+        return Err(scan_int::ScanIntError::RegisterNumberOutOfRange(value).into());
+    }
+    Ok(value as u16)
+}
+
+fn push_rendered_text(
+    stores: &mut Stores,
+    replay_kind: ExpansionReplayKind,
+    text: &str,
+) -> Dispatch {
+    push_rendered_tokens(stores, replay_kind, text_tokens(text))
+}
+
+fn push_rendered_tokens<I>(
+    stores: &mut Stores,
+    replay_kind: ExpansionReplayKind,
+    tokens: I,
+) -> Dispatch
+where
+    I: IntoIterator<Item = Token>,
+{
+    let tokens = tokens.into_iter().collect::<Vec<_>>();
+    let token_list = freeze_output_tokens(stores, &tokens);
+    Dispatch::Push {
+        replay_kind,
+        token_list,
+        macro_arguments: MacroArguments::new(),
+    }
+}
+
+fn freeze_output_tokens(stores: &mut Stores, tokens: &[Token]) -> TokenListId {
+    stores.intern_token_list(tokens)
+}
+
+fn string_tokens(stores: &Stores, token: Token) -> Vec<Token> {
+    match token {
+        Token::Char { ch, .. } => vec![rendered_char(ch)],
+        Token::Cs(symbol) => {
+            let mut out = Vec::new();
+            if let Some(escape) = escapechar(stores) {
+                out.push(rendered_char(escape));
+            }
+            out.extend(stores.resolve(symbol).chars().map(rendered_char));
+            out
+        }
+        Token::Param(slot) => text_tokens(&format!("#{slot}")),
+    }
+}
+
+fn meaning_text(stores: &Stores, token: Token) -> String {
+    match token {
+        Token::Char {
+            ch,
+            cat: Catcode::Letter,
+        } => format!("the letter {ch}"),
+        Token::Char { ch, .. } => format!("the character {ch}"),
+        Token::Param(slot) => format!("macro parameter character #{slot}"),
+        Token::Cs(symbol) => match stores.meaning(symbol) {
+            Meaning::Undefined => "undefined".to_owned(),
+            Meaning::Relax => "\\relax".to_owned(),
+            Meaning::CharGiven(ch) => format!("the character {ch}"),
+            Meaning::ExpandablePrimitive(_) => format!("\\{}", stores.resolve(symbol)),
+            Meaning::Macro { flags, definition } => {
+                let macro_meaning = stores.macro_definition(definition);
+                let mut text = String::new();
+                if flags.contains(MeaningFlags::PROTECTED) {
+                    text.push_str("protected");
+                }
+                text.push_str("macro:");
+                text.push_str(&token_list_text(stores, macro_meaning.parameter_text()));
+                text.push_str("->");
+                text.push_str(&token_list_text(stores, macro_meaning.replacement_text()));
+                text
+            }
+            Meaning::Unknown(_) => "unknown".to_owned(),
+        },
+    }
+}
+
+fn token_list_text(stores: &Stores, token_list: TokenListId) -> String {
+    stores
+        .tokens(token_list)
+        .iter()
+        .flat_map(|&token| string_tokens(stores, token))
+        .filter_map(|token| match token {
+            Token::Char { ch, .. } => Some(ch),
+            Token::Cs(_) | Token::Param(_) => None,
+        })
+        .collect()
+}
+
+fn text_tokens(text: &str) -> Vec<Token> {
+    text.chars().map(rendered_char).collect()
+}
+
+fn rendered_char(ch: char) -> Token {
+    Token::Char {
+        ch,
+        cat: if ch == ' ' {
+            Catcode::Space
+        } else {
+            Catcode::Other
+        },
+    }
+}
+
+fn escapechar(stores: &Stores) -> Option<char> {
+    u32::try_from(stores.int_param(IntParam::ESCAPE_CHAR))
+        .ok()
+        .filter(|&value| value < 256)
+        .and_then(char::from_u32)
+}
+
+fn roman_numeral(value: i32) -> String {
+    if value <= 0 {
+        return String::new();
+    }
+    let mut value = value;
+    let mut out = String::new();
+    for (amount, text) in [
+        (1000, "m"),
+        (900, "cm"),
+        (500, "d"),
+        (400, "cd"),
+        (100, "c"),
+        (90, "xc"),
+        (50, "l"),
+        (40, "xl"),
+        (10, "x"),
+        (9, "ix"),
+        (5, "v"),
+        (4, "iv"),
+        (1, "i"),
+    ] {
+        while value >= amount {
+            out.push_str(text);
+            value -= amount;
+        }
+    }
+    out
+}
+
+fn format_scaled(value: Scaled) -> String {
+    let raw = value.raw();
+    let negative = raw < 0;
+    let magnitude = if negative {
+        i64::from(raw).wrapping_neg()
+    } else {
+        i64::from(raw)
+    };
+    let unity = i64::from(Scaled::UNITY);
+    let mut integer = magnitude / unity;
+    let fraction = magnitude % unity;
+    let mut decimal = ((fraction * 100_000) + (unity / 2)) / unity;
+    if decimal == 100_000 {
+        integer += 1;
+        decimal = 0;
+    }
+    let mut fraction_text = format!("{decimal:05}");
+    while fraction_text.len() > 1 && fraction_text.ends_with('0') {
+        fraction_text.pop();
+    }
+    let sign = if negative { "-" } else { "" };
+    format!("{sign}{integer}.{fraction_text}pt")
 }
 
 fn dispatch_one_raw_token<S, R>(
@@ -503,7 +823,12 @@ mod tests {
                 | ExpandableOpcode::ExpandAfter
                 | ExpandableOpcode::NoExpand
                 | ExpandableOpcode::CsName
-                | ExpandableOpcode::EndCsName => assert!(result.is_ok()),
+                | ExpandableOpcode::EndCsName
+                | ExpandableOpcode::String
+                | ExpandableOpcode::Number
+                | ExpandableOpcode::RomanNumeral
+                | ExpandableOpcode::Meaning
+                | ExpandableOpcode::The => assert!(result.is_ok()),
                 _ => assert!(matches!(
                     result,
                     Err(super::ExpandError::UnimplementedExpandable(found)) if found == opcode
@@ -1002,6 +1327,231 @@ mod tests {
         assert_eq!(next_expanded_chars(&mut input, &mut stores), "x!y!");
     }
 
+    #[test]
+    fn string_respects_escapechar_and_renders_other_catcodes() {
+        let mut stores = Stores::new();
+        let string = expandable_primitive(&mut stores, "string", ExpandablePrimitive::String);
+        let target = stores.intern("foo");
+        let list = stores.intern_token_list(&[
+            Token::Cs(string),
+            Token::Cs(target),
+            Token::Cs(string),
+            Token::Char {
+                ch: 'a',
+                cat: Catcode::Letter,
+            },
+        ]);
+        let mut input = InputStack::new(MemoryInput::new(""));
+        input.push_token_list(list, TokenListReplayKind::Inserted);
+
+        assert_eq!(
+            collect_expanded(&mut input, &mut stores),
+            vec![
+                Token::Char {
+                    ch: '\\',
+                    cat: Catcode::Other
+                },
+                Token::Char {
+                    ch: 'f',
+                    cat: Catcode::Other
+                },
+                Token::Char {
+                    ch: 'o',
+                    cat: Catcode::Other
+                },
+                Token::Char {
+                    ch: 'o',
+                    cat: Catcode::Other
+                },
+                Token::Char {
+                    ch: 'a',
+                    cat: Catcode::Other
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn string_omits_invalid_escapechar() {
+        let mut stores = Stores::new();
+        stores.set_int_param(tex_state::env::banks::IntParam::ESCAPE_CHAR, -1);
+        let string = expandable_primitive(&mut stores, "string", ExpandablePrimitive::String);
+        let target = stores.intern("foo");
+        let list = stores.intern_token_list(&[Token::Cs(string), Token::Cs(target)]);
+        let mut input = InputStack::new(MemoryInput::new(""));
+        input.push_token_list(list, TokenListReplayKind::Inserted);
+
+        assert_eq!(next_expanded_chars(&mut input, &mut stores), "foo");
+    }
+
+    #[test]
+    fn number_and_romannumeral_scan_expanded_integer_edge_cases() {
+        let mut stores = Stores::new();
+        let number = expandable_primitive(&mut stores, "number", ExpandablePrimitive::Number);
+        let roman = expandable_primitive(
+            &mut stores,
+            "romannumeral",
+            ExpandablePrimitive::RomanNumeral,
+        );
+        let digits = stores.intern("digits");
+        let params = stores.intern_token_list(&[]);
+        let body = stores.intern_token_list(&[char_token('1'), char_token('9')]);
+        stores.set_macro_meaning(digits, MacroMeaning::new(MeaningFlags::EMPTY, params, body));
+        let list = stores.intern_token_list(&[
+            Token::Cs(number),
+            Token::Char {
+                ch: '-',
+                cat: Catcode::Other,
+            },
+            Token::Cs(digits),
+            Token::Char {
+                ch: ' ',
+                cat: Catcode::Space,
+            },
+            Token::Cs(roman),
+            Token::Char {
+                ch: '0',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: ' ',
+                cat: Catcode::Space,
+            },
+            Token::Cs(roman),
+            Token::Char {
+                ch: '4',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: '0',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: '0',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: '0',
+                cat: Catcode::Other,
+            },
+        ]);
+        let mut input = InputStack::new(MemoryInput::new(""));
+        input.push_token_list(list, TokenListReplayKind::Inserted);
+
+        assert_eq!(next_expanded_chars(&mut input, &mut stores), "-19mmmm");
+    }
+
+    #[test]
+    fn meaning_renders_macro_text_and_output_catcodes() {
+        let mut stores = Stores::new();
+        let meaning = expandable_primitive(&mut stores, "meaning", ExpandablePrimitive::Meaning);
+        let macro_cs = stores.intern("m");
+        let params = stores.intern_token_list(&[Token::param(1)]);
+        let body = stores.intern_token_list(&[char_token('a'), Token::param(1)]);
+        stores.set_macro_meaning(
+            macro_cs,
+            MacroMeaning::new(MeaningFlags::EMPTY, params, body),
+        );
+        let list = stores.intern_token_list(&[Token::Cs(meaning), Token::Cs(macro_cs)]);
+        let mut input = InputStack::new(MemoryInput::new(""));
+        input.push_token_list(list, TokenListReplayKind::Inserted);
+
+        let tokens = collect_expanded(&mut input, &mut stores);
+        let text = tokens
+            .iter()
+            .map(|token| match token {
+                Token::Char { ch, .. } => *ch,
+                other => panic!("expected character token, got {other:?}"),
+            })
+            .collect::<String>();
+
+        assert_eq!(text, "macro:#1->a#1");
+        assert!(tokens.iter().all(|token| matches!(
+            token,
+            Token::Char {
+                cat: Catcode::Other | Catcode::Space,
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn the_renders_supported_registers_and_token_registers() {
+        let mut stores = Stores::new();
+        let the = expandable_primitive(&mut stores, "the", ExpandablePrimitive::The);
+        let count = stores.intern("count");
+        let dimen = stores.intern("dimen");
+        let toks = stores.intern("toks");
+        stores.set_count(2, -42);
+        stores.set_dimen(3, tex_state::scaled::Scaled::from_raw(65_537));
+        let toks_value = stores.intern_token_list(&[
+            Token::Char {
+                ch: 'A',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: '!',
+                cat: Catcode::Other,
+            },
+        ]);
+        stores.set_toks(4, toks_value);
+        let list = stores.intern_token_list(&[
+            Token::Cs(the),
+            Token::Cs(count),
+            char_token('2'),
+            Token::Char {
+                ch: ' ',
+                cat: Catcode::Space,
+            },
+            Token::Cs(the),
+            Token::Cs(dimen),
+            char_token('3'),
+            Token::Char {
+                ch: ' ',
+                cat: Catcode::Space,
+            },
+            Token::Cs(the),
+            Token::Cs(toks),
+            char_token('4'),
+        ]);
+        let mut input = InputStack::new(MemoryInput::new(""));
+        input.push_token_list(list, TokenListReplayKind::Inserted);
+
+        assert_eq!(
+            next_expanded_chars(&mut input, &mut stores),
+            "-421.00002ptA!"
+        );
+    }
+
+    #[test]
+    fn rendered_output_is_frozen_and_rollback_removes_it() {
+        let mut stores = Stores::new();
+        let snapshot = stores.checkpoint();
+        let number = expandable_primitive(&mut stores, "number", ExpandablePrimitive::Number);
+        let list = stores.intern_token_list(&[Token::Cs(number), char_token('7')]);
+        let mut input = InputStack::new(MemoryInput::new(""));
+        input.push_token_list(list, TokenListReplayKind::Inserted);
+
+        assert_eq!(
+            get_x_token(&mut input, &mut stores).expect("number should expand"),
+            Some(Token::Char {
+                ch: '7',
+                cat: Catcode::Other
+            })
+        );
+        let rendered = match input.summary().frames().last() {
+            Some(tex_lex::InputFrameSummary::TokenList { token_list, .. }) => *token_list,
+            other => panic!("expected rendered token-list frame, got {other:?}"),
+        };
+
+        stores.rollback(snapshot);
+        let err = std::panic::catch_unwind(|| stores.tokens(rendered));
+        assert!(
+            err.is_err(),
+            "rendered output must be rollback-coupled frozen content"
+        );
+    }
+
     fn next_expanded_chars(input: &mut InputStack<MemoryInput>, stores: &mut Stores) -> String {
         let mut out = String::new();
         while let Some(token) = get_x_token(input, stores).expect("expansion should succeed") {
@@ -1013,11 +1563,19 @@ mod tests {
         out
     }
 
+    fn collect_expanded(input: &mut InputStack<MemoryInput>, stores: &mut Stores) -> Vec<Token> {
+        let mut out = Vec::new();
+        while let Some(token) = get_x_token(input, stores).expect("expansion should succeed") {
+            out.push(token);
+        }
+        out
+    }
+
     fn char_token(ch: char) -> Token {
         let cat = match ch {
             '{' => Catcode::BeginGroup,
             '}' => Catcode::EndGroup,
-            '[' | ']' | '!' => Catcode::Other,
+            '0'..='9' | '[' | ']' | '!' => Catcode::Other,
             _ => Catcode::Letter,
         };
         Token::Char { ch, cat }

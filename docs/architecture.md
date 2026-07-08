@@ -217,6 +217,13 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   `\noexpand` pushes a one-token replay frame that suppresses expansion for
   exactly the next `get_x_token` read. This keeps suppression frame-local and
   avoids mutating `Env`.
+- Value-rendering expandables (`\string`, `\number`, `\romannumeral`,
+  `\meaning`, and the currently supported `\the` classes) mint their visible
+  output through the explicit token-list freezing capability. `\the` currently
+  covers count, dimension, token registers, `\endlinechar`, and `\escapechar`;
+  glue-like values, font dimensions, code-table values, box dimensions, page
+  state, and time/job parameters remain documented TODOs until those Env
+  classes are semantically available.
 - **What the gullet never does**: mutate state. `\def`, `\advance`,
   register writes are *unexpandable* — they are delivered to the stomach.
   This is TeX's own factoring and we enforce it in the crate split:

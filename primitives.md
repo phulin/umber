@@ -43,15 +43,15 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [ ] `\catcode` - Reads or assigns a character's category code.
 - [ ] `\char` - Produces a character token by numeric character code.
 - [ ] `\chardef` - Defines a control sequence as a character-code command.
-- [ ] `\endlinechar` - Character appended when TeX tokenizes an input line.
-- [ ] `\escapechar` - Character used when printing control sequence names.
+- [x] `\endlinechar` - Character appended when TeX tokenizes an input line. Implemented as an integer parameter for lexing/value rendering; assignment syntax is not implemented yet.
+- [x] `\escapechar` - Character used when printing control sequence names. Implemented as an integer parameter for value-rendering expandables; assignment syntax is not implemented yet.
 - [ ] `\lccode` - Reads or assigns a character's lowercase mapping.
 - [ ] `\lowercase` - Converts character tokens using `\lccode`.
 - [ ] `\newlinechar` - Character that starts a new line in terminal or log output.
-- [ ] `\number` - Expands an integer as decimal character tokens.
-- [ ] `\romannumeral` - Expands an integer as lowercase roman numeral tokens.
+- [x] `\number` - Expands an integer as decimal character tokens using the shared expanded integer scanner.
+- [x] `\romannumeral` - Expands an integer as lowercase roman numeral tokens; non-positive values expand to an empty frozen token list.
 - [ ] `\sfcode` - Reads or assigns a character's space-factor code.
-- [ ] `\string` - Expands a token into its character representation.
+- [x] `\string` - Expands a token into its character representation with `\escapechar` handling and frozen output token lists.
 - [ ] `\uccode` - Reads or assigns a character's uppercase mapping.
 - [ ] `\uppercase` - Converts character tokens using `\uccode`.
 
@@ -62,7 +62,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [ ] `\errmessage` - Issues an error with expanded message text.
 - [ ] `\errorcontextlines` - Number of context lines shown for errors.
 - [ ] `\errorstopmode` - Restores interactive stopping on errors.
-- [ ] `\meaning` - Expands to a textual description of a token's meaning.
+- [x] `\meaning` - Expands to a textual description of a token's meaning. Macro text is supported; unsupported raw meanings use a placeholder.
 - [ ] `\message` - Writes an expanded message to the terminal and log.
 - [ ] `\nonstopmode` - Continues past errors without stopping for input.
 - [ ] `\pausing` - Prompts after input lines when positive.
@@ -214,7 +214,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [x] `\noexpand` - Suppresses expansion of the next token during expansion-only contexts.
 - [ ] `\outer` - Prefix marking a macro invalid in restricted scanning contexts.
 - [ ] `\relax` - No-op command that can terminate scans or absorb expansion.
-- [ ] `\the` - Expands an internal quantity or token register value.
+- [x] `\the` - Expands supported internal quantities or token register values. Current support covers `\count`, `\dimen`, `\toks`, `\endlinechar`, and `\escapechar`; glue, muglue, font dimensions, code tables, box dimensions, page state, and time/job parameters remain TODOs.
 - [ ] `\xdef` - Globally defines a macro after expanding replacement text.
 
 ## Marks

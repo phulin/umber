@@ -71,6 +71,11 @@ pub enum ExpandablePrimitive {
     NoExpand,
     CsName,
     EndCsName,
+    String,
+    Number,
+    RomanNumeral,
+    Meaning,
+    The,
 }
 
 impl ExpandablePrimitive {
@@ -81,6 +86,11 @@ impl ExpandablePrimitive {
             Self::NoExpand => 1,
             Self::CsName => 2,
             Self::EndCsName => 3,
+            Self::String => 4,
+            Self::Number => 5,
+            Self::RomanNumeral => 6,
+            Self::Meaning => 7,
+            Self::The => 8,
         }
     }
 
@@ -91,6 +101,11 @@ impl ExpandablePrimitive {
             1 => Some(Self::NoExpand),
             2 => Some(Self::CsName),
             3 => Some(Self::EndCsName),
+            4 => Some(Self::String),
+            5 => Some(Self::Number),
+            6 => Some(Self::RomanNumeral),
+            7 => Some(Self::Meaning),
+            8 => Some(Self::The),
             _ => None,
         }
     }
@@ -225,6 +240,13 @@ mod tests {
         round_trip(Meaning::ExpandablePrimitive(ExpandablePrimitive::NoExpand));
         round_trip(Meaning::ExpandablePrimitive(ExpandablePrimitive::CsName));
         round_trip(Meaning::ExpandablePrimitive(ExpandablePrimitive::EndCsName));
+        round_trip(Meaning::ExpandablePrimitive(ExpandablePrimitive::String));
+        round_trip(Meaning::ExpandablePrimitive(ExpandablePrimitive::Number));
+        round_trip(Meaning::ExpandablePrimitive(
+            ExpandablePrimitive::RomanNumeral,
+        ));
+        round_trip(Meaning::ExpandablePrimitive(ExpandablePrimitive::Meaning));
+        round_trip(Meaning::ExpandablePrimitive(ExpandablePrimitive::The));
         round_trip(Meaning::Unknown(RawMeaning::testing_new(u8::MAX, 0)));
         round_trip(Meaning::Unknown(RawMeaning::testing_new(
             u8::MAX,

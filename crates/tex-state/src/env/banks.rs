@@ -60,6 +60,9 @@ param_index!(GlueParam);
 param_index!(TokParam);
 
 impl IntParam {
+    /// Plain TeX's `\escapechar` integer parameter.
+    pub const ESCAPE_CHAR: Self = Self::new(40);
+
     /// Plain TeX's `\endlinechar` integer parameter.
     pub const END_LINE_CHAR: Self = Self::new(48);
 }
