@@ -23,7 +23,7 @@ pub mod world;
 pub use stores::{GroupKind, GroupMismatch, PrepareMagDiagnostic};
 pub use universe::{InputSummary, InteractionMode, Snapshot, Universe};
 pub use world::{
-    ContentHash, EffectPos, FileContent, InputRecord, JobClock, PrintSink, RngState,
+    ContentHash, EffectPos, EffectRecord, FileContent, InputRecord, JobClock, PrintSink, RngState,
     ShellEscapePolicy, ShellEscapeRecord, StreamBufState, StreamSlot, World, WorldError,
     WorldSnapshot,
 };

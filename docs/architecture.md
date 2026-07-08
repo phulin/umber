@@ -372,7 +372,8 @@ Responsibility: accumulate the main vertical list, fire `\output`, commit.
   **`\shipout` is the commit barrier** (`core_state.md` §9): the shipped
   page freezes, serializes into the content-addressed artifact store,
   deferred `\write`s expand *now* against current state (with read-set
-  tracking active), the effect-log prefix flushes, and old history drops.
+  tracking active), the effect-log prefix flushes exactly once through
+  `World`, and old history drops.
 - Page artifacts are the currency between the engine and both the output
   drivers and the incremental engine: a page artifact = (serialized node
   tree, resources used (fonts/images by content hash), effect slice).
@@ -460,7 +461,9 @@ to native code that plays by the rules.
    structured as stomach recursion instead.
 4. **Effects only via `World`; commit only at shipout.** Any new
    primitive with an observable side effect gets an effect-log entry kind,
-   not an I/O call.
+   not an I/O call. Uncommitted records are rollback state; committed
+   prefixes are materialized through `World` and then discarded from the
+   in-memory log.
 5. **One interpreter loop.** Expansion and execution share the
    `get_x_token` core; there are not two token-reading engines with subtly
    different semantics (a classic source of TeX-clone divergence).

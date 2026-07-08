@@ -7,8 +7,11 @@
 #![allow(clippy::disallowed_methods)]
 
 use crate::env::banks::IntParam;
+use crate::ids::TokenListId;
 use std::collections::BTreeMap;
 use std::fmt;
+use std::fs::OpenOptions;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -226,9 +229,45 @@ impl StreamBufState {
     }
 }
 
-/// Placeholder effect-log position until f26.3 installs the durable log.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
-pub struct EffectPos(u32);
+/// Absolute position in the append-only effect log.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct EffectPos(u64);
+
+impl EffectPos {
+    #[must_use]
+    pub const fn raw(self) -> u64 {
+        self.0
+    }
+}
+
+/// One append-only effect record.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum EffectRecord {
+    StreamOpen {
+        slot: StreamSlot,
+        target: WriteTarget,
+    },
+    StreamClose {
+        slot: StreamSlot,
+    },
+    StreamWrite {
+        sink: PrintSink,
+        text: String,
+    },
+    /// Deferred `\write` seam: the token list is intentionally unexpanded.
+    DeferredWrite {
+        stream: StreamSlot,
+        tokens: TokenListId,
+    },
+    Special {
+        class: String,
+        payload: Vec<u8>,
+    },
+    PdfObjectPlaceholder {
+        label: String,
+    },
+    ShellEscape(ShellEscapeRecord),
+}
 
 /// Deterministic xoshiro256** RNG state.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -368,8 +407,10 @@ pub struct WorldSnapshot {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct World {
     backend: WorldBackend,
-    effect_pos: EffectPos,
+    effect_base: EffectPos,
+    effects: Vec<EffectRecord>,
     stream_bufs: StreamBufState,
+    committed_write_streams: [Option<WriteTarget>; STREAM_SLOT_COUNT],
     rng: RngState,
     job_clock: JobClock,
     shell_escape_policy: ShellEscapePolicy,
@@ -400,8 +441,10 @@ impl World {
     fn new(backend: WorldBackend, job_clock: JobClock) -> Self {
         Self {
             backend,
-            effect_pos: EffectPos::default(),
+            effect_base: EffectPos::default(),
+            effects: Vec::new(),
             stream_bufs: StreamBufState::default(),
+            committed_write_streams: Default::default(),
             rng: RngState::default(),
             job_clock,
             shell_escape_policy: ShellEscapePolicy::default(),
@@ -467,17 +510,27 @@ impl World {
     }
 
     pub fn open_out(&mut self, slot: StreamSlot, path: impl Into<PathBuf>) {
-        self.stream_bufs.write_streams[slot.index()] = Some(WriteTarget { path: path.into() });
+        let target = WriteTarget { path: path.into() };
+        self.append_effect(EffectRecord::StreamOpen {
+            slot,
+            target: target.clone(),
+        });
+        self.stream_bufs.write_streams[slot.index()] = Some(target);
         self.stream_bufs.partial_lines[slot.index()].clear();
     }
 
     pub fn close_out(&mut self, slot: StreamSlot) {
+        self.append_effect(EffectRecord::StreamClose { slot });
         self.stream_bufs.write_streams[slot.index()] = None;
         self.stream_bufs.partial_lines[slot.index()].clear();
     }
 
-    /// Buffers routed output. f26.3 will turn completed lines into effect records.
+    /// Buffers routed output as a deferred effect record.
     pub fn write_text(&mut self, sink: PrintSink, text: &str) {
+        self.append_effect(EffectRecord::StreamWrite {
+            sink,
+            text: text.to_owned(),
+        });
         match sink {
             PrintSink::Terminal => {
                 append_partial_line(&mut self.stream_bufs.terminal_partial_line, text)
@@ -493,14 +546,72 @@ impl World {
         }
     }
 
+    /// Records a deferred `\write` token list without expanding it.
+    ///
+    /// TODO(umber2-n11): expand these token lists at shipout before emitting
+    /// stream-write bytes. f26.3 deliberately has no `\immediate\write`.
+    pub fn record_deferred_write(&mut self, stream: StreamSlot, tokens: TokenListId) {
+        self.append_effect(EffectRecord::DeferredWrite { stream, tokens });
+    }
+
+    pub fn record_special(&mut self, class: impl Into<String>, payload: impl Into<Vec<u8>>) {
+        self.append_effect(EffectRecord::Special {
+            class: class.into(),
+            payload: payload.into(),
+        });
+    }
+
+    pub fn record_pdf_object_placeholder(&mut self, label: impl Into<String>) {
+        self.append_effect(EffectRecord::PdfObjectPlaceholder {
+            label: label.into(),
+        });
+    }
+
     /// Records a shell escape request without executing it by default.
     pub fn record_shell_escape(&mut self, command: impl Into<String>) -> bool {
         let allowed = self.shell_escape_policy == ShellEscapePolicy::Enabled;
-        self.shell_escapes.push(ShellEscapeRecord {
+        let record = ShellEscapeRecord {
             command: command.into(),
             allowed,
-        });
+        };
+        self.append_effect(EffectRecord::ShellEscape(record.clone()));
+        self.shell_escapes.push(record);
         allowed
+    }
+
+    /// Flushes all effect records up to `effect_pos`, in order, exactly once.
+    pub fn commit_effects(&mut self, effect_pos: EffectPos) -> Result<(), WorldError> {
+        if effect_pos <= self.effect_base {
+            return Ok(());
+        }
+        if effect_pos > self.effect_pos() {
+            return Err(WorldError::new(
+                "commit effects",
+                None,
+                format!(
+                    "effect position {} is beyond current end {}",
+                    effect_pos.raw(),
+                    self.effect_pos().raw()
+                ),
+            ));
+        }
+
+        let mut applied = 0usize;
+        let count = (effect_pos.raw() - self.effect_base.raw()) as usize;
+        for index in 0..count {
+            if let Err(err) = self.apply_effect(index) {
+                if applied > 0 {
+                    self.effects.drain(0..applied);
+                    self.effect_base.0 += applied as u64;
+                }
+                return Err(err);
+            }
+            applied += 1;
+        }
+
+        self.effects.drain(0..applied);
+        self.effect_base = effect_pos;
+        Ok(())
     }
 
     #[must_use]
@@ -533,8 +644,37 @@ impl World {
     }
 
     #[must_use]
-    pub const fn effect_pos(&self) -> EffectPos {
-        self.effect_pos
+    pub fn effect_pos(&self) -> EffectPos {
+        EffectPos(self.effect_base.raw() + self.effects.len() as u64)
+    }
+
+    #[must_use]
+    pub fn effect_records(&self) -> &[EffectRecord] {
+        &self.effects
+    }
+
+    #[must_use]
+    pub fn memory_output(&self, path: impl AsRef<Path>) -> Option<&[u8]> {
+        let WorldBackend::Memory(memory) = &self.backend else {
+            return None;
+        };
+        memory.outputs.get(path.as_ref()).map(Vec::as_slice)
+    }
+
+    #[must_use]
+    pub fn memory_terminal_output(&self) -> Option<&[u8]> {
+        let WorldBackend::Memory(memory) = &self.backend else {
+            return None;
+        };
+        Some(&memory.terminal_output)
+    }
+
+    #[must_use]
+    pub fn memory_log_output(&self) -> Option<&[u8]> {
+        let WorldBackend::Memory(memory) = &self.backend else {
+            return None;
+        };
+        Some(&memory.log_output)
     }
 
     #[must_use]
@@ -550,7 +690,7 @@ impl World {
     #[must_use]
     pub(crate) fn snapshot(&self) -> WorldSnapshot {
         WorldSnapshot {
-            effect_pos: self.effect_pos,
+            effect_pos: self.effect_pos(),
             stream_bufs: self.stream_bufs.clone(),
             rng: self.rng,
             input_len: self.inputs.len(),
@@ -559,11 +699,115 @@ impl World {
     }
 
     pub(crate) fn rollback(&mut self, snapshot: &WorldSnapshot) {
-        self.effect_pos = snapshot.effect_pos;
+        assert!(
+            snapshot.effect_pos >= self.effect_base,
+            "World snapshot effect position has already been committed and dropped"
+        );
+        self.effects
+            .truncate((snapshot.effect_pos.raw() - self.effect_base.raw()) as usize);
         self.stream_bufs = snapshot.stream_bufs.clone();
         self.rng = snapshot.rng;
         self.inputs.truncate(snapshot.input_len);
         self.shell_escapes.truncate(snapshot.shell_escape_len);
+    }
+
+    fn append_effect(&mut self, record: EffectRecord) {
+        self.effects.push(record);
+    }
+
+    fn apply_effect(&mut self, index: usize) -> Result<(), WorldError> {
+        let record = self.effects[index].clone();
+        match record {
+            EffectRecord::StreamOpen { slot, target } => {
+                self.truncate_output(target.path())?;
+                self.committed_write_streams[slot.index()] = Some(target);
+            }
+            EffectRecord::StreamClose { slot } => {
+                self.committed_write_streams[slot.index()] = None;
+            }
+            EffectRecord::StreamWrite { sink, text } => self.commit_write(sink, text.as_bytes())?,
+            EffectRecord::DeferredWrite { .. }
+            | EffectRecord::Special { .. }
+            | EffectRecord::PdfObjectPlaceholder { .. }
+            | EffectRecord::ShellEscape(_) => {}
+        }
+        Ok(())
+    }
+
+    fn commit_write(&mut self, sink: PrintSink, bytes: &[u8]) -> Result<(), WorldError> {
+        match sink {
+            PrintSink::Terminal => self.write_terminal(bytes),
+            PrintSink::Log => {
+                self.write_log(bytes);
+                Ok(())
+            }
+            PrintSink::TerminalAndLog => {
+                self.write_terminal(bytes)?;
+                self.write_log(bytes);
+                Ok(())
+            }
+            PrintSink::Stream(slot) => {
+                let Some(target) = self.committed_write_streams[slot.index()].clone() else {
+                    return Ok(());
+                };
+                self.append_output(target.path(), bytes)
+            }
+        }
+    }
+
+    fn truncate_output(&mut self, path: &Path) -> Result<(), WorldError> {
+        match &mut self.backend {
+            WorldBackend::Real => std::fs::write(path, []).map_err(|err| {
+                WorldError::new("open output", Some(path.to_owned()), err.to_string())
+            }),
+            WorldBackend::Memory(memory) => {
+                memory.outputs.insert(path.to_owned(), Vec::new());
+                Ok(())
+            }
+        }
+    }
+
+    fn append_output(&mut self, path: &Path, bytes: &[u8]) -> Result<(), WorldError> {
+        match &mut self.backend {
+            WorldBackend::Real => {
+                let mut file = OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(path)
+                    .map_err(|err| {
+                        WorldError::new("write output", Some(path.to_owned()), err.to_string())
+                    })?;
+                file.write_all(bytes).map_err(|err| {
+                    WorldError::new("write output", Some(path.to_owned()), err.to_string())
+                })
+            }
+            WorldBackend::Memory(memory) => {
+                memory
+                    .outputs
+                    .entry(path.to_owned())
+                    .or_default()
+                    .extend_from_slice(bytes);
+                Ok(())
+            }
+        }
+    }
+
+    fn write_terminal(&mut self, bytes: &[u8]) -> Result<(), WorldError> {
+        match &mut self.backend {
+            WorldBackend::Real => io::stdout()
+                .write_all(bytes)
+                .map_err(|err| WorldError::new("write terminal", None, err.to_string())),
+            WorldBackend::Memory(memory) => {
+                memory.terminal_output.extend_from_slice(bytes);
+                Ok(())
+            }
+        }
+    }
+
+    fn write_log(&mut self, bytes: &[u8]) {
+        if let WorldBackend::Memory(memory) = &mut self.backend {
+            memory.log_output.extend_from_slice(bytes);
+        }
     }
 }
 
@@ -582,6 +826,9 @@ enum WorldBackend {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct MemoryBackend {
     files: BTreeMap<PathBuf, Vec<u8>>,
+    outputs: BTreeMap<PathBuf, Vec<u8>>,
+    terminal_output: Vec<u8>,
+    log_output: Vec<u8>,
 }
 
 fn append_partial_line(buffer: &mut String, text: &str) {

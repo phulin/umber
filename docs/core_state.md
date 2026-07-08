@@ -304,12 +304,16 @@ Nothing in the engine touches the OS directly. A single `World` object owns:
 - **Output streams** (`\openout`/`\write`, aux/toc/idx): writes append to an
   effect log; stream buffer state *including partial lines* is snapshot
   state. TeX's own defer-`\write`-to-shipout semantics is the model —
-  extended to every effect. In f26.2, `World` owns the 16 stream slots,
-  terminal/log sinks, and partial-line buffers; f26.3 turns completed entries
-  into committed effect-log records.
+  extended to every effect. `World` owns the 16 stream slots, terminal/log
+  sinks, partial-line buffers, and an append-only effect log. `\openout`,
+  `\closeout`, routed stream writes, special-class payloads, PDF object
+  placeholders, and shell-escape requests append records only; no host bytes
+  materialize until the commit barrier flushes a prefix.
 - **Deferred-write token lists** are expanded at shipout against the state
   *at the commit barrier*; read-set tracking must therefore cover
-  shipout-time expansion, not just mainline execution.
+  shipout-time expansion, not just mainline execution. Until the page epic
+  installs expansion, deferred `\write` records hold the unexpanded
+  `TokenListId` explicitly.
 - **Shell escape, PDF object stream, log file**: same discipline — buffered,
   committed at shipout, discarded on rollback. Shell escapes are record-only
   and the execution policy defaults to disabled.
@@ -320,7 +324,12 @@ Nothing in the engine touches the OS directly. A single `World` object owns:
   pins exactly what it read (needed for cross-run memo sharing).
 
 Effects **materialize only when the producing page commits** (shipout).
-Rollback discards the uncommitted suffix of the effect log.
+Rollback discards the uncommitted suffix of the effect log. Commit accepts an
+`EffectPos`, flushes records from the last committed position through that
+prefix in order, and then drops the flushed prefix from memory; committing the
+same or an older position is a no-op, so each record reaches `World`'s real
+backend exactly once. Snapshots older than the dropped prefix must be discarded
+by the caller as part of the bounded-history policy.
 
 ## 9. Snapshots, rollback, commit
 
@@ -379,8 +388,9 @@ pub struct Snapshot {
   behind `Universe::snapshot`, `Universe::rollback`, and the liveness-checking
   `Universe` write facades.
 - **Commit barrier = shipout**: page artifact serialized, effects flushed,
-  snapshots older than the last live editing anchor dropped. History is
-  bounded.
+  snapshots older than the last live editing anchor dropped. The flushed
+  effect prefix is dropped too, leaving only the uncommitted suffix and the
+  committed backend stream state. History is bounded.
 - **Convergence detection**: after re-executing from an edit, compare
   `state_hash` at each checkpoint with the prior run's hash at the same
   input position; on match, splice the old suffix and stop. `state_hash`
