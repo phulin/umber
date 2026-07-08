@@ -1,5 +1,11 @@
 use std::process::Command;
 
+use test_support::assert_matches_fixture;
+use tex_lex::{FileInput, Lexer};
+use tex_state::env::banks::IntParam;
+use tex_state::stores::Stores;
+use tex_state::token::{Catcode, Token};
+
 #[test]
 fn exits_successfully() {
     let status = Command::new(env!("CARGO_BIN_EXE_umber"))
@@ -39,4 +45,128 @@ fn lex_dump_prints_stable_token_format_for_corpus() {
         let expected = std::fs::read_to_string(&expected).expect("read expected tokens");
         assert_eq!(actual, expected, "fixture mismatch for {}", path.display());
     }
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side corpus files, not engine I/O.
+fn lexer_dynamic_corpus_covers_mutable_input_state() {
+    assert_matches_fixture(
+        "lexer_dynamic",
+        "catcode_mutation",
+        "tokens",
+        &lex_catcode_mutation_fixture(),
+    );
+    assert_matches_fixture(
+        "lexer_dynamic",
+        "endlinechar_mutation",
+        "tokens",
+        &lex_endlinechar_mutation_fixture(),
+    );
+    assert_matches_fixture(
+        "lexer_dynamic",
+        "ignored_character",
+        "tokens",
+        &lex_ignored_character_fixture(),
+    );
+    assert_matches_fixture(
+        "lexer_dynamic",
+        "invalid_character",
+        "tokens",
+        &lex_invalid_character_fixture(),
+    );
+}
+
+fn lex_catcode_mutation_fixture() -> String {
+    let (mut lexer, mut stores) = lexer_fixture("catcode_mutation");
+    let mut actual = String::new();
+
+    push_next_token(&mut actual, &mut lexer, &mut stores);
+    stores.set_catcode('@', Catcode::Letter);
+    push_remaining_tokens(&mut actual, &mut lexer, &mut stores);
+
+    actual
+}
+
+fn lex_endlinechar_mutation_fixture() -> String {
+    let (mut lexer, mut stores) = lexer_fixture("endlinechar_mutation");
+    stores.set_int_param(IntParam::END_LINE_CHAR, b'!' as i32);
+    let mut actual = String::new();
+
+    push_next_token(&mut actual, &mut lexer, &mut stores);
+    push_next_token(&mut actual, &mut lexer, &mut stores);
+    stores.set_int_param(IntParam::END_LINE_CHAR, b'?' as i32);
+    push_next_token(&mut actual, &mut lexer, &mut stores);
+    push_next_token(&mut actual, &mut lexer, &mut stores);
+    stores.set_int_param(IntParam::END_LINE_CHAR, -1);
+    push_remaining_tokens(&mut actual, &mut lexer, &mut stores);
+
+    actual
+}
+
+fn lex_ignored_character_fixture() -> String {
+    let (mut lexer, mut stores) = lexer_fixture("ignored_character");
+    stores.set_catcode('!', Catcode::Ignored);
+    let mut actual = String::new();
+
+    push_remaining_tokens(&mut actual, &mut lexer, &mut stores);
+
+    actual
+}
+
+fn lex_invalid_character_fixture() -> String {
+    let (mut lexer, mut stores) = lexer_fixture("invalid_character");
+    stores.set_catcode('?', Catcode::Invalid);
+    let mut actual = String::new();
+
+    loop {
+        match lexer.next_token(&mut stores) {
+            Ok(Some(token)) => push_token(&mut actual, token, &stores),
+            Ok(None) => break,
+            Err(err) => {
+                actual.push_str(&format!("error:{err}\n"));
+                break;
+            }
+        }
+    }
+
+    actual
+}
+
+#[allow(clippy::disallowed_methods)] // host-side corpus fixture open.
+fn lexer_fixture(case: &str) -> (Lexer<FileInput>, Stores) {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("tests/corpus/lexer_dynamic")
+        .join(format!("{case}.tex"));
+    let file = std::fs::File::open(&path).expect("open dynamic lexer fixture");
+    let mut stores = Stores::new();
+    stores.set_int_param(IntParam::END_LINE_CHAR, 13);
+    (Lexer::new(FileInput::from_file(file)), stores)
+}
+
+fn push_remaining_tokens(actual: &mut String, lexer: &mut Lexer<FileInput>, stores: &mut Stores) {
+    while let Some(token) = lexer
+        .next_token(stores)
+        .expect("dynamic lexer fixture should succeed")
+    {
+        push_token(actual, token, stores);
+    }
+}
+
+fn push_next_token(actual: &mut String, lexer: &mut Lexer<FileInput>, stores: &mut Stores) {
+    let token = lexer
+        .next_token(stores)
+        .expect("dynamic lexer fixture should succeed")
+        .expect("dynamic lexer fixture ended early");
+    push_token(actual, token, stores);
+}
+
+fn push_token(actual: &mut String, token: Token, stores: &Stores) {
+    let line = match token {
+        Token::Char { ch, cat } => format!("char:{}:{}", ch as u32, cat as u8),
+        Token::Cs(symbol) => format!("cs:{}", stores.resolve(symbol)),
+        Token::Param(slot) => format!("param:{slot}"),
+    };
+    actual.push_str(&line);
+    actual.push('\n');
 }
