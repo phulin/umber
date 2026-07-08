@@ -474,7 +474,8 @@ Responsibility: accumulate the main vertical list, fire `\output`, commit.
   `World`, and old history drops.
 - Page artifacts are the currency between the engine and both the output
   drivers and the incremental engine: a page artifact = (serialized node
-  tree, resources used (fonts/images by content hash), effect slice).
+  tree, resources used (fonts/images by content hash), `\count0..\count9`,
+  frozen job metadata needed by output containers, effect slice).
   The concrete artifact substrate lives in `tex-out`: a versioned,
   hand-written binary format over lowered, driver-facing page nodes, font
   resource identities, `\count0..\count9`, and the page effect slice. The
@@ -534,11 +535,16 @@ Responsibility: page artifacts → bytes on disk. Strictly downstream.
 - `tex-out` owns the page artifact model and binary reader/writer. It has no
   dependency on `tex-state` or `Universe`; shipout code lowers live state into
   artifact bytes before asking `World` to store them.
+- The artifact record captures the effective job magnification and banner at
+  shipout, so DVI preamble generation does not reach back into live state.
 - PDF driver owns the PDF object model; `\pdfliteral`-class primitives
   produce *effect-log entries* engine-side that the driver interprets —
   the engine never constructs PDF syntax.
 - DVI driver is the conformance driver: byte-comparable against Knuth's
-  `tex` for the parity corpus.
+  `tex` for the parity corpus. The implemented DVI layer writes the file
+  container structure (`pre`, page `bop`/`eop`, first-use `fnt_def`, `post`,
+  `post_post`, and 223 padding) from committed artifacts; box movement and
+  glyph body commands are layered on the same artifact traversal.
 - Because drivers see only committed artifacts, rollback never reaches
   them; there is nothing to undo downstream of the commit barrier.
 

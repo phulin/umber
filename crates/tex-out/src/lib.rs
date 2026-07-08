@@ -11,11 +11,12 @@
 //! All integers are little-endian. Lengths are `u32`. `Scaled` values are their
 //! raw `i32` scaled-point representation. Strings and byte arrays are encoded
 //! as a `u32` byte length followed by exact bytes. The stream begins with
-//! `b"UMPG"` followed by one version byte; version `1` is the only accepted
+//! `b"UMPG"` followed by one version byte; version `2` is the only accepted
 //! version.
 //!
 //! ```text
 //! magic[4] version:u8
+//! job_mag:i32 job_banner
 //! fonts_len:u32 font*
 //! count0_to_count9:i32[10]
 //! root_node
@@ -29,6 +30,7 @@
 //! artifact path does not contain floats.
 
 mod binary;
+pub mod dvi;
 mod hash;
 mod model;
 
@@ -38,6 +40,6 @@ mod tests;
 pub use binary::ParseError;
 pub use hash::ContentHash;
 pub use model::{
-    BoxNode, EffectSink, FontResource, GlueKind, GlueOrder, GlueSetRatio, GlueSign, GlueSpec,
-    KernKind, PageArtifact, PageEffect, PageNode,
+    BoxNode, DEFAULT_BANNER, EffectSink, FontResource, GlueKind, GlueOrder, GlueSetRatio, GlueSign,
+    GlueSpec, JobInfo, KernKind, PageArtifact, PageEffect, PageNode,
 };

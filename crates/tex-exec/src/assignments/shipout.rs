@@ -6,9 +6,10 @@ use tex_expand::{
 };
 use tex_lex::{InputSource, InputStack, MemoryInput, TokenListReplayKind};
 use tex_out::{
-    BoxNode as PageBoxNode, ContentHash as PageContentHash, EffectSink, FontResource,
-    GlueKind as PageGlueKind, GlueOrder as PageGlueOrder, GlueSetRatio, GlueSign,
-    GlueSpec as PageGlueSpec, KernKind as PageKernKind, PageArtifact, PageEffect, PageNode,
+    BoxNode as PageBoxNode, ContentHash as PageContentHash, DEFAULT_BANNER, EffectSink,
+    FontResource, GlueKind as PageGlueKind, GlueOrder as PageGlueOrder, GlueSetRatio, GlueSign,
+    GlueSpec as PageGlueSpec, JobInfo, KernKind as PageKernKind, PageArtifact, PageEffect,
+    PageNode,
 };
 use tex_state::glue::Order;
 use tex_state::ids::{FontId, NodeListId, TokenListId};
@@ -35,6 +36,7 @@ where
     let node = scan_required_box_node(input, stores, hooks)?;
     let pending_effects = pending_page_effects(stores.world().effect_records());
     let counts = page_counts(stores);
+    let (mag, _diagnostic) = stores.prepare_mag();
     let (root, fonts, effects) = {
         let mut lowerer = ShipoutLowerer {
             stores,
@@ -48,6 +50,10 @@ where
     };
 
     let artifact = PageArtifact {
+        job: JobInfo {
+            mag,
+            banner: DEFAULT_BANNER.to_owned(),
+        },
         fonts,
         counts,
         root,

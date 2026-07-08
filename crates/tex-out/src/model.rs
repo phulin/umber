@@ -4,6 +4,7 @@ use tex_arith::Scaled;
 /// A committed page artifact.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PageArtifact {
+    pub job: JobInfo,
     pub fonts: Vec<FontResource>,
     pub counts: [i32; 10],
     pub root: PageNode,
@@ -25,6 +26,24 @@ impl PageArtifact {
         ContentHash::from_bytes(&self.to_bytes())
     }
 }
+
+/// Job-level data captured at shipout for downstream output drivers.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JobInfo {
+    pub mag: i32,
+    pub banner: String,
+}
+
+impl Default for JobInfo {
+    fn default() -> Self {
+        Self {
+            mag: 1000,
+            banner: DEFAULT_BANNER.to_owned(),
+        }
+    }
+}
+
+pub const DEFAULT_BANNER: &str = "This is Umber, Version 0.1.0";
 
 /// A font resource referenced by the page tree.
 #[derive(Clone, Debug, Eq, PartialEq)]

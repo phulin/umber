@@ -1,6 +1,6 @@
 use crate::{
     BoxNode, ContentHash, EffectSink, FontResource, GlueKind, GlueOrder, GlueSetRatio, GlueSign,
-    GlueSpec, KernKind, PageArtifact, PageEffect, PageNode, ParseError,
+    GlueSpec, JobInfo, KernKind, PageArtifact, PageEffect, PageNode, ParseError,
 };
 use tex_arith::Scaled;
 
@@ -31,11 +31,11 @@ fn artifact_bytes_and_hash_are_deterministic() {
 #[test]
 fn rejects_unknown_version() {
     let mut bytes = sample_artifact().to_bytes();
-    bytes[4] = 2;
+    bytes[4] = 99;
 
     assert_eq!(
         PageArtifact::from_bytes(&bytes),
-        Err(ParseError::UnsupportedVersion(2))
+        Err(ParseError::UnsupportedVersion(99))
     );
 }
 
@@ -48,6 +48,10 @@ fn sample_artifact() -> PageArtifact {
         shrink_order: GlueOrder::Normal,
     };
     PageArtifact {
+        job: JobInfo {
+            mag: 1200,
+            banner: "This is Umber test".to_owned(),
+        },
         fonts: vec![FontResource {
             font_id: 1,
             name: "cmr10".to_owned(),
