@@ -160,7 +160,10 @@ rare and bursty (verbatim, `\makeatletter`, babel shorthands).
 - Each table carries a **generation counter**, bumped on any write. The
   lexer's SIMD fast path is compiled/validated against a generation vector
   and never touches the tree until a generation bump forces reclassification.
-  This is the storage-level grounding of catcode speculation.
+  This is the storage-level grounding of catcode speculation. Generations
+  represent assignment activity, not effective value changes: a same-value
+  code-table assignment still bumps the table generation, though it need not
+  copy a page because the table content is unchanged.
 - In the implemented `tex-state` API, code tables live behind `Stores`:
   reads and writes go through `Stores::{catcode,set_catcode,...}` and
   `Stores::code_table_generations`. `Stores::checkpoint` captures the

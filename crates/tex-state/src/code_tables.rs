@@ -3,6 +3,8 @@
 //! Code-table writes are sparse, so each table is represented as a 256-way
 //! root of 256-entry pages. Snapshot history is structural: snapshots keep old
 //! roots and writes copy a touched shared page before replacing the value.
+//! Generations track write events, including same-value assignments, so lexer
+//! classifiers can invalidate on assignment activity rather than value changes.
 
 use crate::token::Catcode;
 use core::array;
@@ -220,6 +222,11 @@ where
 
     fn set(&mut self, ch: char, value: T) {
         let (page_index, offset) = location(ch);
+        self.generation = self
+            .generation
+            .checked_add(1)
+            .expect("code-table generation overflow");
+
         if self.root.pages[page_index].values[offset] == value {
             return;
         }
@@ -227,10 +234,6 @@ where
         let root = Arc::make_mut(&mut self.root);
         let page = Arc::make_mut(&mut root.pages[page_index]);
         page.values[offset] = value;
-        self.generation = self
-            .generation
-            .checked_add(1)
-            .expect("code-table generation overflow");
     }
 
     fn checkpoint(&self) -> PagedTableSnapshot<T> {
@@ -569,13 +572,16 @@ mod tests {
     }
 
     #[test]
-    fn no_op_write_does_not_bump_generation() {
+    fn no_op_write_bumps_generation_without_copying_root() {
         let mut tables = CodeTables::new();
         let generation = tables.generations();
+        let snapshot = tables.checkpoint();
 
         tables.set_catcode('@', Catcode::Other);
 
-        assert_eq!(tables.generations(), generation);
+        assert_eq!(tables.generations().catcode, generation.catcode + 1);
+        assert_eq!(tables.catcode('@'), Catcode::Other);
+        assert!(Arc::ptr_eq(&tables.catcodes.root, &snapshot.catcodes.root));
     }
 
     proptest! {
@@ -591,10 +597,9 @@ mod tests {
             let snapshot = tables.checkpoint();
 
             tables.set_catcode(ch, replacement);
-            let changed = replacement != before;
             prop_assert_eq!(
                 tables.generations().catcode,
-                generation.catcode + u32::from(changed)
+                generation.catcode + 1
             );
 
             tables.rollback_to(snapshot);
@@ -603,7 +608,7 @@ mod tests {
         }
 
         #[test]
-        fn generation_bumps_once_per_effective_code_table_write(
+        fn generation_bumps_once_per_code_table_write(
             ch in any::<char>(),
             lc in 0_u32..0x11_0000,
             uc in 0_u32..0x11_0000,
@@ -615,11 +620,11 @@ mod tests {
             let before = tables.generations();
             let expected = CodeTableGenerations {
                 catcode: before.catcode,
-                lccode: before.lccode + u32::from(lc != tables.lccode(ch)),
-                uccode: before.uccode + u32::from(uc != tables.uccode(ch)),
-                sfcode: before.sfcode + u32::from(sf != tables.sfcode(ch)),
-                mathcode: before.mathcode + u32::from(math != tables.mathcode(ch)),
-                delcode: before.delcode + u32::from(del != tables.delcode(ch)),
+                lccode: before.lccode + 1,
+                uccode: before.uccode + 1,
+                sfcode: before.sfcode + 1,
+                mathcode: before.mathcode + 1,
+                delcode: before.delcode + 1,
             };
 
             tables.set_lccode(ch, lc);
