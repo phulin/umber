@@ -31,6 +31,7 @@ macro_rules! opaque_id {
 }
 
 opaque_id!(TokenListId);
+opaque_id!(MacroDefinitionId);
 opaque_id!(GlueId);
 opaque_id!(FontId);
 opaque_id!(SnapshotId);

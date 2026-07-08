@@ -10,8 +10,9 @@ use crate::code_tables::{
 use crate::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use crate::env::{Env, EnvSnapshot};
 use crate::glue::{GlueSpec, GlueStore, GlueStoreMark};
-use crate::ids::{GlueId, NodeListId, TokenListId};
+use crate::ids::{GlueId, MacroDefinitionId, NodeListId, TokenListId};
 use crate::interner::{Interner, InternerMark, Symbol};
+use crate::macro_store::{MacroMeaning, MacroStore, MacroStoreMark};
 use crate::meaning::Meaning;
 use crate::node::Node;
 use crate::node_arena::{NodeArena, NodeArenaMark, NodeListBuilder};
@@ -36,6 +37,7 @@ pub struct Snapshot {
     env_snapshot: EnvSnapshot,
     interner_mark: InternerMark,
     token_mark: TokenStoreMark,
+    macro_mark: MacroStoreMark,
     glue_mark: GlueStoreMark,
     node_mark: NodeArenaMark,
     code_tables_snapshot: CodeTablesSnapshot,
@@ -69,6 +71,7 @@ pub struct Stores {
     env: Env,
     interner: Interner,
     tokens: TokenStore,
+    macros: MacroStore,
     glue: GlueStore,
     nodes: NodeArena,
     survivors: SurvivorArena,
@@ -82,6 +85,7 @@ impl Clone for Stores {
             env: self.env.clone(),
             interner: self.interner.clone(),
             tokens: self.tokens.clone(),
+            macros: self.macros.clone(),
             glue: self.glue.clone(),
             nodes: self.nodes.clone(),
             survivors: self.survivors.clone(),
@@ -99,6 +103,7 @@ impl Stores {
             env: Env::new(),
             interner: Interner::new(),
             tokens: TokenStore::new(),
+            macros: MacroStore::new(),
             glue: GlueStore::new(),
             nodes: NodeArena::new(),
             survivors: SurvivorArena::new(),
@@ -182,15 +187,62 @@ impl Stores {
     /// Sets the local meaning for a live control-sequence symbol.
     pub fn set_meaning(&mut self, symbol: Symbol, meaning: Meaning) {
         self.assert_live_symbol(symbol);
-        self.assert_live_token_list_in_meaning(meaning);
+        self.assert_live_macro_definition_in_meaning(meaning);
         self.env.set(symbol, meaning);
     }
 
     /// Sets the global meaning for a live control-sequence symbol.
     pub fn set_meaning_global(&mut self, symbol: Symbol, meaning: Meaning) {
         self.assert_live_symbol(symbol);
-        self.assert_live_token_list_in_meaning(meaning);
+        self.assert_live_macro_definition_in_meaning(meaning);
         self.env.set_global(symbol, meaning);
+    }
+
+    /// Interns a frozen macro definition in the owned macro-definition store.
+    pub fn intern_macro(&mut self, macro_meaning: MacroMeaning) -> MacroDefinitionId {
+        self.assert_live_token_list(macro_meaning.parameter_text());
+        self.assert_live_token_list(macro_meaning.replacement_text());
+        self.macros.intern(macro_meaning)
+    }
+
+    /// Reads a live frozen macro definition.
+    #[must_use]
+    pub fn macro_definition(&self, id: MacroDefinitionId) -> MacroMeaning {
+        self.assert_live_macro_definition(id);
+        self.macros.get(id)
+    }
+
+    /// Sets a local macro meaning by freezing its public aggregate first.
+    pub fn set_macro_meaning(&mut self, symbol: Symbol, macro_meaning: MacroMeaning) {
+        let definition = self.intern_macro(macro_meaning);
+        self.set_meaning(
+            symbol,
+            Meaning::Macro {
+                flags: macro_meaning.flags(),
+                definition,
+            },
+        );
+    }
+
+    /// Sets a global macro meaning by freezing its public aggregate first.
+    pub fn set_macro_meaning_global(&mut self, symbol: Symbol, macro_meaning: MacroMeaning) {
+        let definition = self.intern_macro(macro_meaning);
+        self.set_meaning_global(
+            symbol,
+            Meaning::Macro {
+                flags: macro_meaning.flags(),
+                definition,
+            },
+        );
+    }
+
+    /// Decodes a symbol's meaning as a public macro aggregate when applicable.
+    #[must_use]
+    pub fn macro_meaning(&self, symbol: Symbol) -> Option<MacroMeaning> {
+        match self.meaning(symbol) {
+            Meaning::Macro { definition, .. } => Some(self.macro_definition(definition)),
+            _ => None,
+        }
     }
 
     /// Interns a control-sequence name in the owned interner.
@@ -404,6 +456,7 @@ impl Stores {
             env_snapshot: self.env.checkpoint(),
             interner_mark: self.interner.watermark(),
             token_mark: self.tokens.watermark(),
+            macro_mark: self.macros.watermark(),
             glue_mark: self.glue.watermark(),
             node_mark: self.nodes.watermark(),
             code_tables_snapshot: self.code_tables.checkpoint(),
@@ -417,6 +470,7 @@ impl Stores {
         self.env.rollback_to(snapshot.env_snapshot);
         self.interner.truncate_to(snapshot.interner_mark);
         self.tokens.truncate_to(snapshot.token_mark);
+        self.macros.truncate_to(snapshot.macro_mark);
         self.glue.truncate_to(snapshot.glue_mark);
         self.nodes.truncate_to(snapshot.node_mark);
         self.code_tables.rollback_to(snapshot.code_tables_snapshot);

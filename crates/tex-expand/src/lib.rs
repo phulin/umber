@@ -149,7 +149,7 @@ where
         let meaning = stores.meaning(symbol);
         recorder.record_meaning(symbol, meaning);
 
-        match dispatch(token, meaning)? {
+        match dispatch(token, stores, meaning)? {
             Dispatch::Deliver(token) => return Ok(Some(token)),
             Dispatch::Push {
                 replay_kind,
@@ -165,12 +165,15 @@ where
 /// parameter matching and argument substitution.
 /// TODO(umber2-5qt.3): implement expandable primitive arms.
 /// TODO(umber2-5qt.5): implement conditional scan/evaluation arms.
-pub fn dispatch(token: Token, meaning: Meaning) -> Result<Dispatch, ExpandError> {
+pub fn dispatch(token: Token, stores: &Stores, meaning: Meaning) -> Result<Dispatch, ExpandError> {
     match meaning {
-        Meaning::Macro { flags, token_list } if is_expandable_macro(flags) => Ok(Dispatch::Push {
-            replay_kind: ExpansionReplayKind::MacroBody,
-            token_list,
-        }),
+        Meaning::Macro { flags, definition } if is_expandable_macro(flags) => {
+            let macro_meaning = stores.macro_definition(definition);
+            Ok(Dispatch::Push {
+                replay_kind: ExpansionReplayKind::MacroBody,
+                token_list: macro_meaning.replacement_text(),
+            })
+        }
         Meaning::Macro { .. }
         | Meaning::Undefined
         | Meaning::Relax
@@ -215,6 +218,7 @@ mod tests {
     };
     use tex_lex::{InputStack, MemoryInput, TokenListReplayKind};
     use tex_state::interner::Symbol;
+    use tex_state::macro_store::MacroMeaning;
     use tex_state::meaning::{Meaning, MeaningFlags};
     use tex_state::stores::Stores;
     use tex_state::token::{Catcode, Token};
@@ -237,12 +241,13 @@ mod tests {
 
     #[test]
     fn dispatch_delivers_unexpandable_tokens() {
+        let stores = Stores::new();
         let token = Token::Char {
             ch: 'x',
             cat: Catcode::Letter,
         };
         assert_eq!(
-            dispatch(token, Meaning::Relax).expect("dispatch should succeed"),
+            dispatch(token, &stores, Meaning::Relax).expect("dispatch should succeed"),
             super::Dispatch::Deliver(token)
         );
     }
@@ -327,12 +332,10 @@ mod tests {
                 cat: Catcode::Letter,
             },
         ]);
-        stores.set_meaning(
+        let params = stores.intern_token_list(&[]);
+        stores.set_macro_meaning(
             macro_cs,
-            Meaning::Macro {
-                flags: MeaningFlags::EMPTY,
-                token_list: body,
-            },
+            MacroMeaning::new(MeaningFlags::EMPTY, params, body),
         );
         let invocation = stores.intern_token_list(&[Token::Cs(macro_cs)]);
         let mut input = InputStack::new(MemoryInput::new(""));

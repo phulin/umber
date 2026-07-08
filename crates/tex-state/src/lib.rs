@@ -8,6 +8,7 @@ pub mod glue;
 pub mod ids;
 pub mod interner;
 pub(crate) mod journal;
+pub mod macro_store;
 pub mod meaning;
 pub mod node;
 pub mod node_arena;

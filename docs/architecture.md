@@ -163,9 +163,11 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   token-list frame and continue; else deliver it downstream.
 - **Macro call**: match delimited/undelimited parameters against the
   incoming stream (argument scanning is the gullet's inner loop and the
-  #1 profile target); arguments are built with token builders and frozen;
-  the body replays as a frame with argument slots resolved by index — no
-  token-list copying for the body, ever (bodies are shared `TokenListId`s).
+  #1 profile target); arguments are built with token builders and frozen.
+  Macro meanings decode through the state aggregate into flags plus frozen
+  parameter-text and replacement-text token-list ids. The body replays as a
+  frame with argument slots resolved by index — no token-list copying for
+  the body, ever (bodies are shared `TokenListId`s).
 - **Conditionals** are a frame-kind, not a side stack: `\if...` evaluation
   marks the frame; `\else`/`\fi` skipping is a token-level scan that the
   fast lexer can accelerate (skip mode only needs catcode classes for

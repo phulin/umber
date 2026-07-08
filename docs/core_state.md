@@ -134,8 +134,18 @@ Rules:
 - **The epoch stamp is the workhorse**: journal coalescing filter, JIT
   inline-cache guard, and memoizer read-set timestamp. One counter, three
   consumers. Do not add a second versioning scheme for any of these.
-- Macro bodies are **not** stored here — the operand is a `TokenListId` into
-  the token store. The environment holds dispatch, never content.
+- Macro bodies are **not** stored here. A macro meaning word stores opcode
+  `macro`, the public flag byte (`\long`, `\outer`, `\protected`, plus the
+  reserved frozen bit), and a 48-bit operand naming an immutable
+  `MacroDefinitionId`. That definition is owned by the aggregate
+  `Stores`/future `Universe` boundary and contains two frozen token-list ids:
+  parameter text and replacement text. Downstream code may decode macro
+  meanings through public aggregate facades into the `MacroMeaning` aggregate,
+  but it cannot mint live macro-definition ids or inspect the raw store.
+  Identical token lists are hash-consed by the token store, so separately
+  scanned identical replacement bodies receive the same `TokenListId`; macro
+  definitions themselves are also hash-consed over flags, parameter text id,
+  and replacement text id.
 - Addresses of `cells` are stable for the process lifetime (no reallocation:
   size the array to the interner's max, grow by chunked segments if needed —
   segments never move).

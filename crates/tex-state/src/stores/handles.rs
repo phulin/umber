@@ -1,7 +1,7 @@
 use super::Stores;
 use crate::cell::BankTag;
 use crate::env::EnvSnapshot;
-use crate::ids::{ArenaRef, GlueId, NodeListId, TokenListId};
+use crate::ids::{ArenaRef, GlueId, MacroDefinitionId, NodeListId, TokenListId};
 use crate::interner::Symbol;
 use crate::meaning::Meaning;
 use crate::node::Node;
@@ -28,6 +28,13 @@ impl Stores {
         );
     }
 
+    pub(super) fn assert_live_macro_definition(&self, id: MacroDefinitionId) {
+        assert!(
+            self.macros.contains(id),
+            "macro definition id is not live in this Stores timeline"
+        );
+    }
+
     pub(super) fn assert_live_node_list(&self, id: NodeListId) {
         let live = match id.arena() {
             ArenaRef::Epoch => self.nodes.contains(id),
@@ -36,9 +43,9 @@ impl Stores {
         assert!(live, "node list is not live in this Stores timeline");
     }
 
-    pub(super) fn assert_live_token_list_in_meaning(&self, meaning: Meaning) {
-        if let Meaning::Macro { token_list, .. } = meaning {
-            self.assert_live_token_list(token_list);
+    pub(super) fn assert_live_macro_definition_in_meaning(&self, meaning: Meaning) {
+        if let Meaning::Macro { definition, .. } = meaning {
+            self.assert_live_macro_definition(definition);
         }
     }
 

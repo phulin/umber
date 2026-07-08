@@ -1,6 +1,6 @@
 //! Meaning word encoding and decoding.
 
-use crate::ids::TokenListId;
+use crate::ids::MacroDefinitionId;
 
 const OPCODE_SHIFT: u32 = 56;
 const FLAGS_SHIFT: u32 = 48;
@@ -56,7 +56,7 @@ pub enum Meaning {
     Relax,
     Macro {
         flags: MeaningFlags,
-        token_list: TokenListId,
+        definition: MacroDefinitionId,
     },
     CharGiven(char),
     Unknown(RawMeaning),
@@ -101,7 +101,7 @@ impl Meaning {
         match self {
             Self::Undefined => pack(OP_UNDEFINED, MeaningFlags::EMPTY, 0),
             Self::Relax => pack(OP_RELAX, MeaningFlags::EMPTY, 0),
-            Self::Macro { flags, token_list } => pack(OP_MACRO, flags, token_list.raw() as u64),
+            Self::Macro { flags, definition } => pack(OP_MACRO, flags, definition.raw() as u64),
             Self::CharGiven(ch) => pack(OP_CHAR_GIVEN, MeaningFlags::EMPTY, ch as u64),
             Self::Unknown(raw) => pack(raw.op, MeaningFlags::EMPTY, raw.operand),
         }
@@ -119,7 +119,7 @@ impl Meaning {
             OP_RELAX => Self::Relax,
             OP_MACRO => Self::Macro {
                 flags,
-                token_list: TokenListId::new(operand as u32),
+                definition: MacroDefinitionId::new(operand as u32),
             },
             OP_CHAR_GIVEN => match char::from_u32(operand as u32) {
                 Some(ch) => Self::CharGiven(ch),
@@ -145,7 +145,7 @@ const fn pack(op: u8, flags: MeaningFlags, operand: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{Meaning, MeaningFlags, OPERAND_MASK, RawMeaning};
-    use crate::ids::TokenListId;
+    use crate::ids::MacroDefinitionId;
 
     fn round_trip(meaning: Meaning) {
         assert_eq!(Meaning::decode_stored(meaning.encode()), meaning);
@@ -168,11 +168,11 @@ mod tests {
                 | MeaningFlags::OUTER
                 | MeaningFlags::PROTECTED
                 | MeaningFlags::FROZEN,
-            token_list: TokenListId::new(0),
+            definition: MacroDefinitionId::new(0),
         });
         round_trip(Meaning::Macro {
             flags: MeaningFlags::EMPTY,
-            token_list: TokenListId::new(u32::MAX),
+            definition: MacroDefinitionId::new(u32::MAX),
         });
         round_trip(Meaning::CharGiven('\0'));
         round_trip(Meaning::CharGiven(char::MAX));

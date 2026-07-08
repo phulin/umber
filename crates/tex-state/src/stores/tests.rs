@@ -1,9 +1,12 @@
 use super::Stores;
 use crate::glue::{GlueSpec, Order};
 use crate::ids::{ArenaRef, FontId, NodeListId};
+use crate::macro_store::MacroMeaning;
 use crate::meaning::Meaning;
+use crate::meaning::MeaningFlags;
 use crate::node::{BoxNode, BoxNodeFields, Node, Sign};
 use crate::scaled::Scaled;
+use crate::token::{Catcode, Token};
 
 #[test]
 fn rollback_restores_env_and_interner_as_one_tuple() {
@@ -59,6 +62,98 @@ fn token_list_builder_finishes_through_stores_boundary() {
     builder.push(crate::token::Token::param(2));
     let reused = stores.finish_token_list(&mut builder);
     assert_eq!(stores.tokens(reused), &[crate::token::Token::param(2)]);
+}
+
+#[test]
+fn macro_meaning_round_trips_through_stores_boundary() {
+    let mut stores = Stores::new();
+    let symbol = stores.intern("m");
+    let params = stores.intern_token_list(&[Token::Char {
+        ch: '#',
+        cat: Catcode::Parameter,
+    }]);
+    let body = stores.intern_token_list(&[Token::param(1), Token::Cs(symbol)]);
+    let macro_meaning = MacroMeaning::new(
+        MeaningFlags::LONG | MeaningFlags::OUTER | MeaningFlags::PROTECTED,
+        params,
+        body,
+    );
+
+    stores.set_macro_meaning(symbol, macro_meaning);
+
+    assert_eq!(stores.macro_meaning(symbol), Some(macro_meaning));
+    let Meaning::Macro { flags, definition } = stores.meaning(symbol) else {
+        panic!("expected macro meaning");
+    };
+    assert_eq!(flags, macro_meaning.flags());
+    assert_eq!(stores.macro_definition(definition), macro_meaning);
+}
+
+#[test]
+fn separately_created_identical_macro_bodies_share_token_list_identity() {
+    let mut stores = Stores::new();
+    let a = stores.intern("a");
+    let b = stores.intern("b");
+    let first_body = stores.intern_token_list(&[Token::param(1), Token::Cs(a)]);
+    let second_body = stores.intern_token_list(&[Token::param(1), Token::Cs(a)]);
+    let params = stores.intern_token_list(&[]);
+
+    assert_eq!(first_body, second_body);
+
+    stores.set_macro_meaning(
+        a,
+        MacroMeaning::new(MeaningFlags::EMPTY, params, first_body),
+    );
+    stores.set_macro_meaning(
+        b,
+        MacroMeaning::new(MeaningFlags::EMPTY, params, second_body),
+    );
+
+    assert_eq!(
+        stores.macro_meaning(a).map(MacroMeaning::replacement_text),
+        stores.macro_meaning(b).map(MacroMeaning::replacement_text)
+    );
+}
+
+#[test]
+fn identical_macro_definitions_share_definition_identity() {
+    let mut stores = Stores::new();
+    let symbol = stores.intern("same");
+    let params = stores.intern_token_list(&[]);
+    let body = stores.intern_token_list(&[Token::Cs(symbol)]);
+    let macro_meaning = MacroMeaning::new(MeaningFlags::PROTECTED, params, body);
+
+    let first = stores.intern_macro(macro_meaning);
+    let second = stores.intern_macro(macro_meaning);
+
+    assert_eq!(first, second);
+}
+
+#[test]
+fn rollback_restores_macro_store_as_part_of_snapshot_tuple() {
+    let mut stores = Stores::new();
+    let symbol = stores.intern("macro");
+    let params = stores.intern_token_list(&[]);
+    let kept_body = stores.intern_token_list(&[Token::param(1)]);
+    let kept = stores.intern_macro(MacroMeaning::new(MeaningFlags::LONG, params, kept_body));
+    let snapshot = stores.checkpoint();
+    let stale_body = stores.intern_token_list(&[Token::param(2)]);
+    let stale = stores.intern_macro(MacroMeaning::new(MeaningFlags::OUTER, params, stale_body));
+
+    stores.rollback(snapshot);
+    let reused_body = stores.intern_token_list(&[Token::Cs(symbol)]);
+    let reused = stores.intern_macro(MacroMeaning::new(
+        MeaningFlags::PROTECTED,
+        params,
+        reused_body,
+    ));
+
+    assert_eq!(stores.macro_definition(kept).replacement_text(), kept_body);
+    assert_eq!(reused.raw(), stale.raw());
+    assert_eq!(
+        stores.macro_definition(reused).replacement_text(),
+        reused_body
+    );
 }
 
 #[test]
@@ -246,6 +341,26 @@ fn stale_rolled_back_token_list_cannot_mutate_toks_register() {
 
     stores.rollback(snapshot);
     stores.set_toks(0, stale);
+}
+
+#[test]
+#[should_panic(expected = "macro definition id is not live in this Stores timeline")]
+fn stale_rolled_back_macro_definition_cannot_mutate_meaning() {
+    let mut stores = Stores::new();
+    let symbol = stores.intern("macro");
+    let params = stores.intern_token_list(&[]);
+    let snapshot = stores.checkpoint();
+    let body = stores.intern_token_list(&[Token::param(1)]);
+    let stale = stores.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, params, body));
+
+    stores.rollback(snapshot);
+    stores.set_meaning(
+        symbol,
+        Meaning::Macro {
+            flags: MeaningFlags::EMPTY,
+            definition: stale,
+        },
+    );
 }
 
 #[test]
