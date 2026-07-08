@@ -121,6 +121,12 @@ DVI bytes are not checked in; `scripts/parity.sh` runs `umber run --dvi` and
 the live reference engine over the same temporary inputs with pinned local
 TFMs, then compares the generated DVI bytes through `tools/refexec`.
 
+`tex-out` also owns the cross-crate page-output float guard. Its unit tests
+scan the page node, packing, shipout lowering, artifact, DVI, and CLI DVI
+composition sources and fail if float types or float rounding APIs enter that
+fixed-point path. Keep the guard allowlist limited to documented
+non-arithmetic fixture or formatting false positives.
+
 Test code should live near the crate that owns the behavior. Fixture data
 should live in the shared corpus tree unless it is strictly local to one
 crate-level integration test.

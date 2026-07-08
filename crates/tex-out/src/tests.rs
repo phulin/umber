@@ -39,6 +39,129 @@ fn rejects_unknown_version() {
     );
 }
 
+#[test]
+fn page_output_path_rejects_float_arithmetic_sources() {
+    let mut violations = Vec::new();
+
+    for (source_path, source) in PAGE_OUTPUT_FLOAT_GUARD_SOURCES {
+        for (line_number, line) in source.lines().enumerate() {
+            for reason in forbidden_float_usage_reasons(line) {
+                if !is_allowed_float_guard_hit(source_path, line) {
+                    violations.push(format!(
+                        "{}:{}: {reason}: {}",
+                        source_path,
+                        line_number + 1,
+                        line.trim()
+                    ));
+                }
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "page output path must stay fixed-point; forbidden float usage found:\n{}",
+        violations.join("\n")
+    );
+}
+
+const PAGE_OUTPUT_FLOAT_GUARD_SOURCES: &[(&str, &str)] = &[
+    (
+        "crates/tex-state/src/node.rs",
+        include_str!("../../tex-state/src/node.rs"),
+    ),
+    (
+        "crates/tex-typeset/src/packing.rs",
+        include_str!("../../tex-typeset/src/packing.rs"),
+    ),
+    (
+        "crates/tex-exec/src/assignments/shipout.rs",
+        include_str!("../../tex-exec/src/assignments/shipout.rs"),
+    ),
+    ("crates/tex-out/src/model.rs", include_str!("model.rs")),
+    ("crates/tex-out/src/binary.rs", include_str!("binary.rs")),
+    ("crates/tex-out/src/dvi.rs", include_str!("dvi.rs")),
+    (
+        "crates/tex-out/src/dvi/movement.rs",
+        include_str!("dvi/movement.rs"),
+    ),
+    (
+        "crates/tex-out/src/dvi/tests.rs",
+        include_str!("dvi/tests.rs"),
+    ),
+    (
+        "crates/umber/src/lib.rs",
+        include_str!("../../umber/src/lib.rs"),
+    ),
+    (
+        "crates/umber/src/main.rs",
+        include_str!("../../umber/src/main.rs"),
+    ),
+];
+
+const FLOAT_ROUNDING_API_PATTERNS: &[&str] = &[
+    ".round(",
+    ".floor(",
+    ".ceil(",
+    ".trunc(",
+    "round_ties_even(",
+];
+
+fn forbidden_float_usage_reasons(line: &str) -> Vec<&'static str> {
+    let mut reasons = Vec::new();
+
+    if contains_ident_token(line, "f32") {
+        reasons.push("f32 token");
+    }
+    if contains_ident_token(line, "f64") {
+        reasons.push("f64 token");
+    }
+    for pattern in FLOAT_ROUNDING_API_PATTERNS {
+        if line.contains(pattern) {
+            reasons.push("float rounding API");
+        }
+    }
+
+    reasons
+}
+
+fn contains_ident_token(line: &str, token: &str) -> bool {
+    line.match_indices(token).any(|(start, _)| {
+        let before = line[..start].chars().next_back();
+        let after = line[start + token.len()..].chars().next();
+        before.is_none_or(|ch| !is_rust_ident_char(ch))
+            && after.is_none_or(|ch| !is_rust_ident_char(ch))
+    })
+}
+
+fn is_rust_ident_char(ch: char) -> bool {
+    ch == '_' || ch.is_ascii_alphanumeric()
+}
+
+fn is_allowed_float_guard_hit(source_path: &str, line: &str) -> bool {
+    FLOAT_GUARD_ALLOWLIST.iter().any(|entry| {
+        assert!(
+            !entry.reason.is_empty(),
+            "float guard allowlist entries must document a reason"
+        );
+        entry.source_path == source_path && line.contains(entry.needle)
+    })
+}
+
+struct FloatGuardAllow {
+    source_path: &'static str,
+    needle: &'static str,
+    reason: &'static str,
+}
+
+// Non-arithmetic false positives only. These fixture font names exercise DVI
+// font-definition ordering and are not float types or computations.
+const FLOAT_GUARD_ALLOWLIST: &[FloatGuardAllow] = &[FloatGuardAllow {
+    source_path: "crates/tex-out/src/dvi/tests.rs",
+    needle: "b\"f64\"",
+    reason: "DVI test font name fixture",
+}];
+
 fn sample_artifact() -> PageArtifact {
     let glue = GlueSpec {
         width: Scaled::from_raw(65_536),
