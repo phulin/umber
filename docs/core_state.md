@@ -63,7 +63,7 @@ supporting untracked mutation "for performance" anywhere, ever.
 | Node arenas | per-epoch bump arenas + survivor arena | frozen at birth; promotion on escape | watermark; refcounts (survivors) |
 | Journal | undo records + group/checkpoint markers | append-only | position |
 | Effect log | deferred writes, aux/toc/idx, shell escape, PDF objects | append-only, committed at shipout | position + stream buffers |
-| Misc scalars | RNG state, interaction mode, current epoch, input-stack summary | barriered / snapshot-owned | copied into snapshot tuple |
+| Misc scalars | RNG state, interaction mode, current epoch, prepared magnification, input-stack summary | barriered / snapshot-owned | copied into snapshot tuple |
 
 A **snapshot is a tuple of positions and roots** into these stores — a few
 dozen words, O(1) to take (§7).

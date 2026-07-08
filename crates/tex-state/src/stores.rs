@@ -43,6 +43,7 @@ pub struct Snapshot {
     glue_mark: GlueStoreMark,
     node_mark: NodeArenaMark,
     code_tables_snapshot: CodeTablesSnapshot,
+    prepared_mag: Option<i32>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -78,6 +79,14 @@ pub struct Stores {
     nodes: NodeArena,
     survivors: SurvivorArena,
     code_tables: CodeTables,
+    prepared_mag: Option<i32>,
+}
+
+/// Recoverable diagnostics from TeX's `prepare_mag` operation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PrepareMagDiagnostic {
+    IllegalMagnification { attempted: i32 },
+    IncompatibleMagnification { attempted: i32, retained: i32 },
 }
 
 impl Clone for Stores {
@@ -92,6 +101,7 @@ impl Clone for Stores {
             nodes: self.nodes.clone(),
             survivors: self.survivors.clone(),
             code_tables: self.code_tables.clone(),
+            prepared_mag: self.prepared_mag,
         }
     }
 }
@@ -110,6 +120,7 @@ impl Stores {
             nodes: NodeArena::new(),
             survivors: SurvivorArena::new(),
             code_tables: CodeTables::new(),
+            prepared_mag: None,
         };
         stores.set_int_param(IntParam::MAG, 1000);
         stores.set_int_param(IntParam::ESCAPE_CHAR, b'\\'.into());
@@ -511,6 +522,46 @@ impl Stores {
         self.set_int_param_global(IntParam::MAG, value);
     }
 
+    /// Returns the job-level magnification frozen by `prepare_mag`, if any.
+    #[must_use]
+    pub fn prepared_mag(&self) -> Option<i32> {
+        self.prepared_mag
+    }
+
+    /// Validates and freezes TeX's job-level magnification.
+    ///
+    /// This mirrors tex.web's `prepare_mag`: illegal `\mag` values are
+    /// globally coerced to 1000, and once any magnification has been prepared
+    /// the same effective value is retained for the rest of the job.
+    pub fn prepare_mag(&mut self) -> (i32, Option<PrepareMagDiagnostic>) {
+        let attempted = self.mag();
+        let (effective, diagnostic) = if !(1..=32_768).contains(&attempted) {
+            self.set_mag_global(1000);
+            (
+                1000,
+                Some(PrepareMagDiagnostic::IllegalMagnification { attempted }),
+            )
+        } else if attempted != 1000 {
+            match self.prepared_mag {
+                Some(retained) if retained != attempted => {
+                    self.set_mag_global(retained);
+                    (
+                        retained,
+                        Some(PrepareMagDiagnostic::IncompatibleMagnification {
+                            attempted,
+                            retained,
+                        }),
+                    )
+                }
+                _ => (attempted, None),
+            }
+        } else {
+            (attempted, None)
+        };
+        self.prepared_mag = Some(effective);
+        (effective, diagnostic)
+    }
+
     /// Reads TeX's current `\endlinechar` parameter.
     #[must_use]
     pub fn endlinechar(&self) -> i32 {
@@ -581,6 +632,7 @@ impl Stores {
             glue_mark: self.glue.watermark(),
             node_mark: self.nodes.watermark(),
             code_tables_snapshot: self.code_tables.checkpoint(),
+            prepared_mag: self.prepared_mag,
         }
     }
 
@@ -595,6 +647,7 @@ impl Stores {
         self.glue.truncate_to(snapshot.glue_mark);
         self.nodes.truncate_to(snapshot.node_mark);
         self.code_tables.rollback_to(snapshot.code_tables_snapshot);
+        self.prepared_mag = snapshot.prepared_mag;
     }
 
     /// Returns the number of journal bytes appended since `snapshot`.
@@ -629,6 +682,7 @@ impl Stores {
         self.glue.testing_state_hash().hash(&mut hasher);
         self.testing_hash_all_epoch_nodes(&mut hasher);
         self.code_tables.testing_hash_content(&mut hasher);
+        self.prepared_mag.hash(&mut hasher);
         hasher.finish()
     }
 

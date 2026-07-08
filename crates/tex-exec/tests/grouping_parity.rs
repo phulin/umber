@@ -62,6 +62,50 @@ fn grouping_after_tokens_match_pdftex_micro_suite() {
     assert_eq!(stores.count(102), 0);
 }
 
+#[test]
+fn prepare_mag_cases_match_pdftex_micro_suite() {
+    let temp_dir = tempdir().expect("create reftex temp dir");
+
+    let illegal = run_pdftex(
+        temp_dir.path(),
+        "illegal_mag",
+        r"\mag=40000\dimen0=1truept\showthe\dimen0\end",
+    );
+    assert!(
+        illegal
+            .log
+            .contains("! Illegal magnification has been changed to 1000 (40000).")
+    );
+
+    let incompatible = run_pdftex(
+        temp_dir.path(),
+        "incompatible_mag",
+        r"\mag=1200\dimen0=1truept\mag=2000\dimen1=1truept\showthe\dimen1\end",
+    );
+    assert!(
+        incompatible
+            .log
+            .contains("! Incompatible magnification (2000);")
+    );
+    assert!(
+        incompatible
+            .log
+            .contains("the previous value will be retained")
+    );
+    assert!(incompatible.log.contains("> 0.83333pt."));
+
+    let stores = run_umber_exec(r"\mag=1200\dimen0=1truept\mag=2000\dimen1=1truept");
+    assert_eq!(stores.mag(), 1200);
+    assert_eq!(stores.prepared_mag(), Some(1200));
+    assert_eq!(stores.dimen(0).raw(), 54_613);
+    assert_eq!(stores.dimen(1).raw(), 54_613);
+
+    let stores = run_umber_exec(r"\mag=40000\dimen0=1truept");
+    assert_eq!(stores.mag(), 1000);
+    assert_eq!(stores.prepared_mag(), Some(1000));
+    assert_eq!(stores.dimen(0).raw(), 65_536);
+}
+
 fn run_pdftex(dir: &std::path::Path, stem: &str, input: &str) -> refexec::RunOutput {
     let tex_file = dir.join(format!("{stem}.tex"));
     fs::write(&tex_file, input).expect("write reftex input");

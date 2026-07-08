@@ -1,4 +1,4 @@
-use super::Stores;
+use super::{PrepareMagDiagnostic, Stores};
 use crate::env::banks::IntParam;
 use crate::glue::{GlueSpec, Order};
 use crate::ids::{ArenaRef, FontId, NodeListId};
@@ -657,6 +657,48 @@ fn mag_parameter_defaults_and_rolls_back_through_stores() {
 
     stores.rollback(snapshot);
     assert_eq!(stores.mag(), 1000);
+}
+
+#[test]
+fn prepare_mag_coerces_illegal_values_and_rolls_back_freeze() {
+    let mut stores = Stores::new();
+    let snapshot = stores.checkpoint();
+    stores.set_mag(0);
+
+    let (prepared, diagnostic) = stores.prepare_mag();
+
+    assert_eq!(prepared, 1000);
+    assert_eq!(stores.mag(), 1000);
+    assert_eq!(stores.prepared_mag(), Some(1000));
+    assert_eq!(
+        diagnostic,
+        Some(PrepareMagDiagnostic::IllegalMagnification { attempted: 0 })
+    );
+
+    stores.rollback(snapshot);
+    assert_eq!(stores.mag(), 1000);
+    assert_eq!(stores.prepared_mag(), None);
+}
+
+#[test]
+fn prepare_mag_retain_first_job_magnification() {
+    let mut stores = Stores::new();
+    stores.set_mag(1200);
+    assert_eq!(stores.prepare_mag(), (1200, None));
+
+    stores.set_mag(2000);
+    let (prepared, diagnostic) = stores.prepare_mag();
+
+    assert_eq!(prepared, 1200);
+    assert_eq!(stores.mag(), 1200);
+    assert_eq!(stores.prepared_mag(), Some(1200));
+    assert_eq!(
+        diagnostic,
+        Some(PrepareMagDiagnostic::IncompatibleMagnification {
+            attempted: 2000,
+            retained: 1200
+        })
+    );
 }
 
 #[test]

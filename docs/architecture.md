@@ -199,9 +199,11 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   orders for glue components, and opt-in integer-to-sp coercion. The glue
   scanner parses optional `plus`/`minus` components and interns immutable glue
   specs through `Stores`. These scanners report recoverable numeric diagnostics
-  without performing assignments. `true` physical units are scaled using the
-  current `\mag` parameter through `Stores`; font-relative `em`/`ex` units
-  remain explicit TODO stubs until font metrics exist (umber2-flt).
+  without performing assignments. `true` physical units call the
+  `Stores::prepare_mag` boundary before scaling, so illegal magnifications
+  are coerced and the job-level magnification is frozen in snapshot-covered
+  state for later shipout/font paths. Font-relative `em`/`ex` units remain
+  explicit TODO stubs until font metrics exist (umber2-flt).
 - **Conditionals** are a frame-kind, not a side stack: `\if...` evaluation
   marks the frame; `\else`/`\fi` skipping is a token-level scan that the
   fast lexer can accelerate (skip mode only needs catcode classes for

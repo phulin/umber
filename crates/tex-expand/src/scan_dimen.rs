@@ -10,7 +10,7 @@ use tex_state::scaled::{
     DimensionError, PhysicalUnit, Scaled, round_decimal_fraction, scaled_from_decimal_parts,
     xn_over_d,
 };
-use tex_state::stores::Stores;
+use tex_state::stores::{PrepareMagDiagnostic, Stores};
 use tex_state::token::{Catcode, Token};
 
 use crate::{
@@ -105,12 +105,21 @@ impl ScannedDimen {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DimensionDiagnostic {
     TooLarge,
+    IllegalMagnification { attempted: i32 },
+    IncompatibleMagnification { attempted: i32, retained: i32 },
 }
 
 impl fmt::Display for DimensionDiagnostic {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::TooLarge => f.write_str("Dimension too large"),
+            Self::IllegalMagnification { .. } => {
+                f.write_str("Illegal magnification has been changed to 1000")
+            }
+            Self::IncompatibleMagnification { attempted, .. } => write!(
+                f,
+                "Incompatible magnification ({attempted}); the previous value will be retained"
+            ),
         }
     }
 }
@@ -119,6 +128,23 @@ impl From<DimensionError> for DimensionDiagnostic {
     fn from(value: DimensionError) -> Self {
         match value {
             DimensionError::TooLarge => Self::TooLarge,
+        }
+    }
+}
+
+impl From<PrepareMagDiagnostic> for DimensionDiagnostic {
+    fn from(value: PrepareMagDiagnostic) -> Self {
+        match value {
+            PrepareMagDiagnostic::IllegalMagnification { attempted } => {
+                Self::IllegalMagnification { attempted }
+            }
+            PrepareMagDiagnostic::IncompatibleMagnification {
+                attempted,
+                retained,
+            } => Self::IncompatibleMagnification {
+                attempted,
+                retained,
+            },
         }
     }
 }
@@ -784,14 +810,14 @@ fn convert_decimal(
 }
 
 fn convert_scanned_unit(
-    stores: &Stores,
+    stores: &mut Stores,
     integer: i32,
     fraction: i32,
     unit: ScannedUnit,
 ) -> Result<ScannedDimen, ScanDimenError> {
     match unit {
         ScannedUnit::Physical { unit, true_unit } => {
-            convert_decimal(integer, fraction, unit, true_unit, stores.mag())
+            convert_physical_unit(stores, integer, fraction, unit, true_unit)
         }
         ScannedUnit::Infinite(order) => {
             let mut scanned =
@@ -803,19 +829,31 @@ fn convert_scanned_unit(
     }
 }
 
+fn convert_physical_unit(
+    stores: &mut Stores,
+    integer: i32,
+    fraction: i32,
+    unit: PhysicalUnit,
+    true_unit: bool,
+) -> Result<ScannedDimen, ScanDimenError> {
+    let (mag, mag_diagnostic) = if true_unit {
+        stores.prepare_mag()
+    } else {
+        (stores.mag(), None)
+    };
+    let mut scanned = convert_decimal(integer, fraction, unit, true_unit, mag)?;
+    if scanned.diagnostic.is_none() {
+        scanned.diagnostic = mag_diagnostic.map(DimensionDiagnostic::from);
+    }
+    Ok(scanned)
+}
+
 fn true_scaled_decimal_parts(
     integer: i32,
     fraction: i32,
     mag: i32,
 ) -> Result<(i32, i32), DimensionError> {
     if mag == 1000 {
-        return Ok((integer, fraction));
-    }
-
-    // TeX's `prepare_mag` also reports and coerces illegal magnifications.
-    // This scanner has no job-level magnification diagnostics yet, so use the
-    // effective value that keeps true-unit arithmetic defined.
-    if !(1..=32_768).contains(&mag) {
         return Ok((integer, fraction));
     }
 
@@ -1078,6 +1116,53 @@ mod tests {
 
         assert_eq!(scan_with_stores("1.5truept x", &mut stores).0, 81_920);
         assert_eq!(scan_with_stores("1truesp x", &mut stores).0, 0);
+    }
+
+    #[test]
+    fn true_units_prepare_and_freeze_magnification() {
+        let mut stores = Stores::new();
+        stores.set_mag(1200);
+
+        let (value, diagnostic, _next) = scan_with_stores("1truept x", &mut stores);
+        assert_eq!(value, 54_613);
+        assert_eq!(diagnostic, None);
+        assert_eq!(stores.prepared_mag(), Some(1200));
+
+        stores.set_mag(2000);
+        let (value, diagnostic, _next) = scan_with_stores("1truept x", &mut stores);
+        assert_eq!(value, 54_613);
+        assert_eq!(stores.mag(), 1200);
+        assert_eq!(
+            diagnostic,
+            Some(DimensionDiagnostic::IncompatibleMagnification {
+                attempted: 2000,
+                retained: 1200
+            })
+        );
+        assert_eq!(
+            diagnostic.expect("magnification diagnostic").to_string(),
+            "Incompatible magnification (2000); the previous value will be retained"
+        );
+    }
+
+    #[test]
+    fn true_units_report_and_coerce_illegal_magnification() {
+        let mut stores = Stores::new();
+        stores.set_mag(40_000);
+
+        let (value, diagnostic, _next) = scan_with_stores("1truept x", &mut stores);
+
+        assert_eq!(value, 65_536);
+        assert_eq!(stores.mag(), 1000);
+        assert_eq!(stores.prepared_mag(), Some(1000));
+        assert_eq!(
+            diagnostic,
+            Some(DimensionDiagnostic::IllegalMagnification { attempted: 40_000 })
+        );
+        assert_eq!(
+            diagnostic.expect("magnification diagnostic").to_string(),
+            "Illegal magnification has been changed to 1000"
+        );
     }
 
     #[test]
