@@ -60,6 +60,9 @@ param_index!(GlueParam);
 param_index!(TokParam);
 
 impl IntParam {
+    /// TeX's `\mag` integer parameter.
+    pub const MAG: Self = Self::new(17);
+
     /// Plain TeX's `\escapechar` integer parameter.
     pub const ESCAPE_CHAR: Self = Self::new(40);
 

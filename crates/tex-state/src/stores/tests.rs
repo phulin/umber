@@ -1,4 +1,5 @@
 use super::Stores;
+use crate::env::banks::IntParam;
 use crate::glue::{GlueSpec, Order};
 use crate::ids::{ArenaRef, FontId, NodeListId};
 use crate::macro_store::MacroMeaning;
@@ -592,6 +593,20 @@ fn promoted_nested_box_remaps_children_to_same_survivor_root() {
             ch: 'x'
         }]
     );
+}
+
+#[test]
+fn mag_parameter_defaults_and_rolls_back_through_stores() {
+    let mut stores = Stores::new();
+    assert_eq!(stores.mag(), 1000);
+    assert_eq!(stores.int_param(IntParam::MAG), 1000);
+
+    let snapshot = stores.checkpoint();
+    stores.set_mag(2000);
+    assert_eq!(stores.mag(), 2000);
+
+    stores.rollback(snapshot);
+    assert_eq!(stores.mag(), 1000);
 }
 
 #[test]

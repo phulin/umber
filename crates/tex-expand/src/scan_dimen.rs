@@ -7,6 +7,7 @@ use tex_state::glue::Order;
 use tex_state::interner::Symbol;
 use tex_state::scaled::{
     DimensionError, PhysicalUnit, Scaled, round_decimal_fraction, scaled_from_decimal_parts,
+    xn_over_d,
 };
 use tex_state::stores::Stores;
 use tex_state::token::{Catcode, Token};
@@ -378,8 +379,10 @@ where
 
     unread_token(input, stores, token);
     match scan_unit(input, stores, recorder, hooks, options)? {
-        Some(unit) => convert_scanned_unit(integer, 0, unit),
-        None if options.coerce_integer_to_sp => convert_decimal(integer, 0, PhysicalUnit::Sp),
+        Some(unit) => convert_scanned_unit(stores, integer, 0, unit),
+        None if options.coerce_integer_to_sp => {
+            convert_decimal(integer, 0, PhysicalUnit::Sp, false, stores.mag())
+        }
         None => Err(ScanDimenError::MissingUnit),
     }
 }
@@ -400,7 +403,7 @@ where
     let fraction = scan_fraction(input, stores, recorder, hooks)?;
     let unit =
         scan_unit(input, stores, recorder, hooks, options)?.ok_or(ScanDimenError::MissingUnit)?;
-    convert_scanned_unit(integer, fraction, unit)
+    convert_scanned_unit(stores, integer, fraction, unit)
 }
 
 fn scan_fraction<S, R, H>(
@@ -463,11 +466,11 @@ where
     let integer = scanned.value();
     let Some(unit) = scan_unit(input, stores, recorder, hooks, options)? else {
         if options.coerce_integer_to_sp {
-            return convert_decimal(integer, 0, PhysicalUnit::Sp);
+            return convert_decimal(integer, 0, PhysicalUnit::Sp, false, stores.mag());
         }
         return Err(ScanDimenError::MissingUnit);
     };
-    convert_scanned_unit(integer, 0, unit)
+    convert_scanned_unit(stores, integer, 0, unit)
 }
 
 fn scan_integer_constant_with_unit<S, R, H>(
@@ -493,11 +496,11 @@ where
     }
     let Some(unit) = scan_unit(input, stores, recorder, hooks, options)? else {
         if options.coerce_integer_to_sp {
-            return convert_decimal(scanned.value(), 0, PhysicalUnit::Sp);
+            return convert_decimal(scanned.value(), 0, PhysicalUnit::Sp, false, stores.mag());
         }
         return Err(ScanDimenError::MissingUnit);
     };
-    convert_scanned_unit(scanned.value(), 0, unit)
+    convert_scanned_unit(stores, scanned.value(), 0, unit)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -566,7 +569,7 @@ where
 
     if options.require_mu_unit {
         match keyword_matches(input, stores, recorder, hooks, first, "mu")? {
-            KeywordMatch::Matched => return Ok(Some(ScannedUnit::Physical(PhysicalUnit::Pt))),
+            KeywordMatch::Matched => return Ok(Some(physical_unit(PhysicalUnit::Pt))),
             KeywordMatch::PartialMismatch => return Err(ScanDimenError::IncompatibleGlueUnits),
             KeywordMatch::FirstTokenMismatch => {}
         }
@@ -576,21 +579,18 @@ where
 
     match keyword_matches(input, stores, recorder, hooks, first, "true")? {
         KeywordMatch::Matched => {
-            // TODO(umber2-teq/umber2-flt): apply \mag once the magnification
-            // parameter/state surface exists. Until then true units are parsed
-            // and intentionally left unscaled.
             skip_spaces(input, stores, recorder, hooks)?;
             let Some(token) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
             else {
                 return Ok(None);
             };
-            return scan_unit_keyword(input, stores, recorder, hooks, token);
+            return scan_unit_keyword(input, stores, recorder, hooks, token, true);
         }
         KeywordMatch::PartialMismatch => return Ok(None),
         KeywordMatch::FirstTokenMismatch => {}
     }
 
-    scan_unit_keyword(input, stores, recorder, hooks, first)
+    scan_unit_keyword(input, stores, recorder, hooks, first, false)
 }
 
 fn scan_unit_keyword<S, R, H>(
@@ -599,6 +599,7 @@ fn scan_unit_keyword<S, R, H>(
     recorder: &mut R,
     hooks: &mut H,
     first: Token,
+    true_unit: bool,
 ) -> Result<Option<ScannedUnit>, ScanDimenError>
 where
     S: InputSource,
@@ -611,7 +612,9 @@ where
     };
 
     match unit_from_tokens(first, second) {
-        Some(ScannedUnit::Physical(unit)) => Ok(Some(ScannedUnit::Physical(unit))),
+        Some(ScannedUnit::Physical { unit, .. }) => {
+            Ok(Some(ScannedUnit::Physical { unit, true_unit }))
+        }
         Some(ScannedUnit::Em) => {
             // TODO(fonts): resolve em against the current font's quad.
             Err(ScanDimenError::UnsupportedFontRelativeUnit("em"))
@@ -692,7 +695,7 @@ where
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ScannedUnit {
-    Physical(PhysicalUnit),
+    Physical { unit: PhysicalUnit, true_unit: bool },
     Infinite(Order),
     Em,
     Ex,
@@ -702,18 +705,25 @@ fn unit_from_tokens(first: Token, second: Token) -> Option<ScannedUnit> {
     let first = keyword_char(first)?;
     let second = keyword_char(second)?;
     match (first, second) {
-        ('p', 't') => Some(ScannedUnit::Physical(PhysicalUnit::Pt)),
-        ('p', 'c') => Some(ScannedUnit::Physical(PhysicalUnit::Pc)),
-        ('i', 'n') => Some(ScannedUnit::Physical(PhysicalUnit::In)),
-        ('b', 'p') => Some(ScannedUnit::Physical(PhysicalUnit::Bp)),
-        ('c', 'm') => Some(ScannedUnit::Physical(PhysicalUnit::Cm)),
-        ('m', 'm') => Some(ScannedUnit::Physical(PhysicalUnit::Mm)),
-        ('d', 'd') => Some(ScannedUnit::Physical(PhysicalUnit::Dd)),
-        ('c', 'c') => Some(ScannedUnit::Physical(PhysicalUnit::Cc)),
-        ('s', 'p') => Some(ScannedUnit::Physical(PhysicalUnit::Sp)),
+        ('p', 't') => Some(physical_unit(PhysicalUnit::Pt)),
+        ('p', 'c') => Some(physical_unit(PhysicalUnit::Pc)),
+        ('i', 'n') => Some(physical_unit(PhysicalUnit::In)),
+        ('b', 'p') => Some(physical_unit(PhysicalUnit::Bp)),
+        ('c', 'm') => Some(physical_unit(PhysicalUnit::Cm)),
+        ('m', 'm') => Some(physical_unit(PhysicalUnit::Mm)),
+        ('d', 'd') => Some(physical_unit(PhysicalUnit::Dd)),
+        ('c', 'c') => Some(physical_unit(PhysicalUnit::Cc)),
+        ('s', 'p') => Some(physical_unit(PhysicalUnit::Sp)),
         ('e', 'm') => Some(ScannedUnit::Em),
         ('e', 'x') => Some(ScannedUnit::Ex),
         _ => None,
+    }
+}
+
+fn physical_unit(unit: PhysicalUnit) -> ScannedUnit {
+    ScannedUnit::Physical {
+        unit,
+        true_unit: false,
     }
 }
 
@@ -721,12 +731,27 @@ fn convert_decimal(
     integer: i32,
     fraction: i32,
     unit: PhysicalUnit,
+    true_unit: bool,
+    mag: i32,
 ) -> Result<ScannedDimen, ScanDimenError> {
     let negative = integer < 0;
     let magnitude = if negative {
         integer.checked_neg().unwrap_or(Scaled::MAX_DIMEN.raw() + 1)
     } else {
         integer
+    };
+    let (magnitude, fraction) = if true_unit {
+        match true_scaled_decimal_parts(magnitude, fraction, mag) {
+            Ok(parts) => parts,
+            Err(error) => {
+                return Ok(ScannedDimen::with_diagnostic(
+                    Scaled::MAX_DIMEN,
+                    DimensionDiagnostic::from(error),
+                ));
+            }
+        }
+    } else {
+        (magnitude, fraction)
     };
     match scaled_from_decimal_parts(magnitude, fraction, unit) {
         Ok(value) if negative => Ok(ScannedDimen::new(-value)),
@@ -739,14 +764,18 @@ fn convert_decimal(
 }
 
 fn convert_scanned_unit(
+    stores: &Stores,
     integer: i32,
     fraction: i32,
     unit: ScannedUnit,
 ) -> Result<ScannedDimen, ScanDimenError> {
     match unit {
-        ScannedUnit::Physical(unit) => convert_decimal(integer, fraction, unit),
+        ScannedUnit::Physical { unit, true_unit } => {
+            convert_decimal(integer, fraction, unit, true_unit, stores.mag())
+        }
         ScannedUnit::Infinite(order) => {
-            let mut scanned = convert_decimal(integer, fraction, PhysicalUnit::Pt)?;
+            let mut scanned =
+                convert_decimal(integer, fraction, PhysicalUnit::Pt, false, stores.mag())?;
             scanned.order = order;
             Ok(scanned)
         }
@@ -754,12 +783,35 @@ fn convert_scanned_unit(
     }
 }
 
+fn true_scaled_decimal_parts(
+    integer: i32,
+    fraction: i32,
+    mag: i32,
+) -> Result<(i32, i32), DimensionError> {
+    if mag == 1000 {
+        return Ok((integer, fraction));
+    }
+
+    // TeX's `prepare_mag` also reports and coerces illegal magnifications.
+    // This scanner has no job-level magnification diagnostics yet, so use the
+    // effective value that keeps true-unit arithmetic defined.
+    if !(1..=32_768).contains(&mag) {
+        return Ok((integer, fraction));
+    }
+
+    let converted = xn_over_d(Scaled::from_raw(integer), 1000, mag)?;
+    let mut fraction = (1000 * fraction + Scaled::UNITY * converted.remainder) / mag;
+    let integer = converted.quotient.raw() + fraction / Scaled::UNITY;
+    fraction %= Scaled::UNITY;
+    Ok((integer, fraction))
+}
+
 fn coerce_or_missing_unit(
     integer: i32,
     options: ScanDimenOptions,
 ) -> Result<ScannedDimen, ScanDimenError> {
     if options.coerce_integer_to_sp {
-        convert_decimal(integer, 0, PhysicalUnit::Sp)
+        convert_decimal(integer, 0, PhysicalUnit::Sp, false, 1000)
     } else {
         Err(ScanDimenError::MissingUnit)
     }
@@ -984,9 +1036,28 @@ mod tests {
     }
 
     #[test]
-    fn scans_true_units_without_magnification_scaling_yet() {
+    fn scans_true_units_at_default_magnification_without_rescaling() {
         assert_eq!(scan("1truept x").0, 65_536);
         assert_eq!(scan("1 true in x").0, 4_736_286);
+    }
+
+    #[test]
+    fn true_units_use_current_mag_before_physical_unit_conversion() {
+        let mut stores = Stores::new();
+        stores.set_mag(2000);
+
+        assert_eq!(scan_with_stores("1truept x", &mut stores).0, 32_768);
+        assert_eq!(scan_with_stores("1truein x", &mut stores).0, 2_368_143);
+        assert_eq!(scan_with_stores("1pt x", &mut stores).0, 65_536);
+    }
+
+    #[test]
+    fn true_unit_scaling_folds_xn_over_d_remainder_into_fraction() {
+        let mut stores = Stores::new();
+        stores.set_mag(1200);
+
+        assert_eq!(scan_with_stores("1.5truept x", &mut stores).0, 81_920);
+        assert_eq!(scan_with_stores("1truesp x", &mut stores).0, 0);
     }
 
     #[test]

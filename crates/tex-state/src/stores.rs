@@ -109,6 +109,7 @@ impl Stores {
             survivors: SurvivorArena::new(),
             code_tables: CodeTables::new(),
         };
+        stores.set_int_param(IntParam::MAG, 1000);
         stores.set_int_param(IntParam::ESCAPE_CHAR, b'\\'.into());
         stores
     }
@@ -443,6 +444,22 @@ impl Stores {
     #[must_use]
     pub fn int_param(&self, param: IntParam) -> i32 {
         self.env.int_param(param)
+    }
+
+    /// Reads TeX's current `\mag` parameter.
+    #[must_use]
+    pub fn mag(&self) -> i32 {
+        self.int_param(IntParam::MAG)
+    }
+
+    /// Sets TeX's local `\mag` parameter.
+    pub fn set_mag(&mut self, value: i32) {
+        self.set_int_param(IntParam::MAG, value);
+    }
+
+    /// Sets TeX's global `\mag` parameter.
+    pub fn set_mag_global(&mut self, value: i32) {
+        self.set_int_param_global(IntParam::MAG, value);
     }
 
     /// Reads TeX's current `\endlinechar` parameter.
