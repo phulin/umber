@@ -1,0 +1,186 @@
+use tex_lex::{InputSource, InputStack};
+use tex_state::meaning::{ExpandablePrimitive, Meaning};
+use tex_state::stores::Stores;
+use tex_state::token::{Catcode, Token};
+
+use crate::{
+    Dispatch, ExpandError, ExpandableOpcode, ExpansionHooks, ReadRecorder, apply_dispatch_push,
+    dispatch_one_raw_token_with_hooks, dispatch_with_hooks, get_x_token_with_recorder_and_hooks,
+    push_dispatch_result, push_inserted_token, scan_helpers,
+};
+
+pub(crate) fn expand_after<S, R, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Stores,
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<(), ExpandError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    let Some(saved) = input.next_token(stores)? else {
+        return Err(ExpandError::MissingTokenAfterPrimitive(
+            ExpandableOpcode::ExpandAfter,
+        ));
+    };
+    let Some(target) = input.next_token(stores)? else {
+        return Err(ExpandError::MissingTokenAfterPrimitive(
+            ExpandableOpcode::ExpandAfter,
+        ));
+    };
+
+    let target_dispatch =
+        dispatch_one_raw_token_with_hooks(target, input, stores, recorder, hooks)?;
+    push_dispatch_result(input, stores, target_dispatch);
+    push_inserted_token(input, stores, saved);
+    Ok(())
+}
+
+pub(crate) fn scan_csname<S, R, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Stores,
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<String, ExpandError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    let mut name = String::new();
+
+    loop {
+        let Some(read) = input.next_expansion_token(stores)? else {
+            return Err(ExpandError::MissingEndCsName);
+        };
+        let token = read.token();
+
+        if read.suppress_expansion() {
+            append_csname_token(&mut name, token)?;
+            continue;
+        }
+
+        let Token::Cs(symbol) = token else {
+            append_csname_token(&mut name, token)?;
+            continue;
+        };
+
+        let meaning = stores.meaning(symbol);
+        recorder.record_meaning(symbol, meaning);
+
+        if meaning == Meaning::ExpandablePrimitive(ExpandablePrimitive::EndCsName) {
+            return Ok(name);
+        }
+
+        match dispatch_with_hooks(token, input, stores, recorder, hooks, meaning)? {
+            Dispatch::Continue => {}
+            Dispatch::Deliver(token) | Dispatch::DeliverNoExpand(token) => {
+                append_csname_token(&mut name, token)?;
+            }
+            push @ Dispatch::Push { .. } => apply_dispatch_push(input, push),
+        }
+    }
+}
+
+fn append_csname_token(name: &mut String, token: Token) -> Result<(), ExpandError> {
+    match token {
+        Token::Char { ch, .. } => {
+            name.push(ch);
+            Ok(())
+        }
+        Token::Cs(_) | Token::Param(_) => Err(ExpandError::NonCharacterInCsName(token)),
+    }
+}
+
+pub(crate) fn scan_input_name<S, R, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Stores,
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<String, ExpandError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    let Some(first) =
+        scan_helpers::next_non_space_x_token_with_hooks(input, stores, recorder, hooks)?
+    else {
+        return Err(ExpandError::MissingInputName);
+    };
+
+    if is_begin_group(first) {
+        let mut name = String::new();
+        loop {
+            let Some(token) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
+            else {
+                return Err(ExpandError::MissingInputName);
+            };
+            if is_end_group(token) {
+                return if name.is_empty() {
+                    Err(ExpandError::MissingInputName)
+                } else {
+                    Ok(name)
+                };
+            }
+            append_input_name_token(&mut name, token)?;
+        }
+    }
+
+    let mut name = String::new();
+    append_input_name_token(&mut name, first)?;
+    loop {
+        let Some(token) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
+        else {
+            break;
+        };
+        if matches!(
+            token,
+            Token::Char {
+                cat: Catcode::Space,
+                ..
+            }
+        ) {
+            break;
+        }
+        append_input_name_token(&mut name, token)?;
+    }
+
+    if name.is_empty() {
+        Err(ExpandError::MissingInputName)
+    } else {
+        Ok(name)
+    }
+}
+
+fn append_input_name_token(name: &mut String, token: Token) -> Result<(), ExpandError> {
+    match token {
+        Token::Char { ch, .. } => {
+            name.push(ch);
+            Ok(())
+        }
+        Token::Cs(_) | Token::Param(_) => Err(ExpandError::NonCharacterInInputName(token)),
+    }
+}
+
+fn is_begin_group(token: Token) -> bool {
+    matches!(
+        token,
+        Token::Char {
+            cat: Catcode::BeginGroup,
+            ..
+        }
+    )
+}
+
+fn is_end_group(token: Token) -> bool {
+    matches!(
+        token,
+        Token::Char {
+            cat: Catcode::EndGroup,
+            ..
+        }
+    )
+}
