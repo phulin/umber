@@ -149,20 +149,26 @@ where
 {
     match primitive {
         UnexpandablePrimitive::Kern => {
-            flush_pending_hchars(nest, stores)?;
             let amount = scan_scaled(input, stores, hooks)?;
-            nest.current_list_mut().push(Node::Kern {
-                amount,
-                kind: KernKind::Explicit,
-            });
+            append_node_to_current_list(
+                nest,
+                stores,
+                Node::Kern {
+                    amount,
+                    kind: KernKind::Explicit,
+                },
+            )?;
         }
         UnexpandablePrimitive::HSkip | UnexpandablePrimitive::VSkip => {
-            flush_pending_hchars(nest, stores)?;
             let spec = scan_glue_id(input, stores, hooks, false)?;
-            nest.current_list_mut().push(Node::Glue {
-                spec,
-                kind: GlueKind::Normal,
-            });
+            append_node_to_current_list(
+                nest,
+                stores,
+                Node::Glue {
+                    spec,
+                    kind: GlueKind::Normal,
+                },
+            )?;
         }
         _ => unreachable!("caller restricts kern/skip primitives"),
     }
