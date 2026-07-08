@@ -1,6 +1,7 @@
 use super::support::*;
 use super::*;
 use tex_expand::ReadRecorder;
+use tex_out::dvi::write_dvi;
 use tex_out::{EffectSink, PageArtifact, PageEffect, PageNode};
 use tex_state::interner::Symbol;
 
@@ -298,6 +299,90 @@ fn shipout_write_expansion_uses_active_read_recorder() {
     );
 }
 
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side pdfTeX parity file.
+fn source_special_lowers_to_anchored_dvi_xxx_payload() {
+    let source = "\\def\\payload{abc}\\count0=42\
+        \\shipout\\hbox{\\special{pre \\payload-\\the\\count0}}\\end";
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(source));
+
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("shipout succeeds");
+
+    let bytes = stores
+        .world()
+        .read_artifact(stats.shipped_artifacts[0])
+        .expect("read artifact")
+        .expect("artifact stored");
+    let artifact = PageArtifact::from_bytes(&bytes).expect("artifact parses");
+    assert!(matches!(
+        artifact.effects.as_slice(),
+        [PageEffect::Special { class, payload }]
+            if class == "dvi" && payload == b"pre abc-42"
+    ));
+    assert!(matches!(
+        artifact.root,
+        PageNode::HList(ref box_node)
+            if matches!(box_node.children.as_slice(), [PageNode::WhatsitAnchor { effect_index: 0 }])
+    ));
+
+    let dvi = write_dvi(std::slice::from_ref(&artifact)).expect("DVI writes");
+    assert_eq!(dvi_special_payloads(&dvi), vec![b"pre abc-42".to_vec()]);
+
+    let temp_dir = tempfile::TempDir::new().expect("temporary TeX run directory");
+    let tex_path = temp_dir.path().join("special_payload.tex");
+    std::fs::write(&tex_path, source).expect("write reference TeX source");
+    let reference = refexec::RefTex::locate()
+        .expect("locate pdftex")
+        .run(
+            &tex_path,
+            &refexec::RunOpts {
+                dvi: true,
+                ..refexec::RunOpts::default()
+            },
+        )
+        .expect("run pdftex");
+    assert!(
+        reference.success,
+        "pdftex special payload case failed:\n{}",
+        reference.log
+    );
+    assert_eq!(
+        dvi_special_payloads(reference.dvi.as_deref().expect("reference DVI")),
+        vec![b"pre abc-42".to_vec()]
+    );
+}
+
+#[test]
+fn copied_special_reuses_scan_time_expansion() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\count0=1 \\setbox0=\\hbox{\\special{\\the\\count0}}\
+         \\count0=2 \\shipout\\copy0\\end",
+    ));
+
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("shipout succeeds");
+    let bytes = stores
+        .world()
+        .read_artifact(stats.shipped_artifacts[0])
+        .expect("read artifact")
+        .expect("artifact stored");
+    let artifact = PageArtifact::from_bytes(&bytes).expect("artifact parses");
+
+    assert!(matches!(
+        artifact.effects.as_slice(),
+        [PageEffect::Special { payload, .. }] if payload == b"1"
+    ));
+}
+
 #[derive(Default)]
 struct SawTheRecorder {
     saw_the: bool,
@@ -329,4 +414,47 @@ fn memory_log_text(stores: &Universe) -> String {
             .expect("memory log output"),
     )
     .into_owned()
+}
+
+fn dvi_special_payloads(dvi: &[u8]) -> Vec<Vec<u8>> {
+    const XXX1: u8 = 239;
+    const XXX4: u8 = 242;
+
+    let mut payloads = Vec::new();
+    let mut index = 0usize;
+    while index < dvi.len() {
+        match dvi[index] {
+            XXX1 if index + 2 <= dvi.len() => {
+                let len = dvi[index + 1] as usize;
+                let start = index + 2;
+                let end = start + len;
+                if end <= dvi.len() {
+                    payloads.push(dvi[start..end].to_vec());
+                    index = end;
+                    continue;
+                }
+                break;
+            }
+            XXX4 if index + 5 <= dvi.len() => {
+                let Ok(len) = usize::try_from(i32::from_be_bytes([
+                    dvi[index + 1],
+                    dvi[index + 2],
+                    dvi[index + 3],
+                    dvi[index + 4],
+                ])) else {
+                    break;
+                };
+                let start = index + 5;
+                let end = start + len;
+                if end <= dvi.len() {
+                    payloads.push(dvi[start..end].to_vec());
+                    index = end;
+                    continue;
+                }
+                break;
+            }
+            _ => index += 1,
+        }
+    }
+    payloads
 }

@@ -88,6 +88,7 @@ pub fn install_unexpandable_primitives(stores: &mut Universe) {
         ("openout", UnexpandablePrimitive::OpenOut),
         ("closeout", UnexpandablePrimitive::CloseOut),
         ("write", UnexpandablePrimitive::Write),
+        ("special", UnexpandablePrimitive::Special),
         ("read", UnexpandablePrimitive::Read),
         ("shipout", UnexpandablePrimitive::Shipout),
         ("show", UnexpandablePrimitive::Show),

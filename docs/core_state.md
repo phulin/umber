@@ -342,7 +342,10 @@ Nothing in the engine touches the OS directly. A single `World` object owns:
   whatsits carry the resolved `PrintSink` plus the unexpanded `TokenListId`;
   shipout replays that token list through the ordinary gullet and appends the
   resulting routed stream-write effect record immediately before committing
-  the page prefix.
+  the page prefix. In contrast, source `\special` expands its balanced text
+  when the primitive is scanned and stores detached DVI-class payload bytes in
+  a whatsit; shipout only anchors that already-expanded payload into the
+  committed page effect slice.
 - **Shell escape, PDF object stream, log file**: same discipline — buffered,
   committed at shipout, discarded on rollback. Shell escapes are record-only
   and the execution policy defaults to disabled.

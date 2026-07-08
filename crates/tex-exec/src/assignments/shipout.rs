@@ -168,6 +168,14 @@ where
                         .map_err(|_| ExecError::ArithmeticOverflow)?,
                 })
             }
+            Whatsit::Special { class, payload } => {
+                let effect_index = self.effects.len();
+                self.effects.push(PageEffect::Special { class, payload });
+                Ok(PageNode::WhatsitAnchor {
+                    effect_index: u32::try_from(effect_index)
+                        .map_err(|_| ExecError::ArithmeticOverflow)?,
+                })
+            }
         }
     }
 

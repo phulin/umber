@@ -4,7 +4,7 @@ use tex_expand::scan::{scan_toks, scan_toks_expanded_with_driver};
 use tex_expand::{
     DriverExpandNext, ExpandError, ExpansionHooks, NoopRecorder, ReadRecorder,
     get_x_token_with_recorder_and_hooks, scan_dimen, scan_glue, scan_int,
-    scan_optional_keyword_with_hooks,
+    scan_optional_keyword_with_hooks, token_text,
 };
 use tex_lex::{InputSource, InputStack, LexError, TokenListReplayKind};
 use tex_state::code_tables::{DelCode, LcCode, MathCode, SfCode, UcCode};
@@ -418,6 +418,11 @@ where
             }
             UnexpandablePrimitive::Write => {
                 execute_write(nest, input, stores, hooks)?;
+                Ok(CommandOutcome::continue_only())
+            }
+            UnexpandablePrimitive::Special => {
+                reject_all_prefixes(prefixes)?;
+                execute_special(nest, input, stores, hooks)?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::Shipout => {

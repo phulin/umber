@@ -82,6 +82,28 @@ where
     )
 }
 
+pub(in crate::assignments) fn execute_special<S, H>(
+    nest: &mut ModeNest,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    hooks: &mut H,
+) -> Result<(), ExecError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    let tokens = scan_balanced_expanded_text(input, stores, hooks, "\\special")?;
+    let payload = tokens_text(stores, &tokens).into_bytes();
+    append_node_to_current_list(
+        nest,
+        stores,
+        Node::Whatsit(Whatsit::Special {
+            class: "dvi".to_owned(),
+            payload,
+        }),
+    )
+}
+
 fn scan_read_tokens(
     slot: StreamSlot,
     target: Symbol,
@@ -259,4 +281,55 @@ fn tokenize_read_line(line: &str, stores: &mut Universe) -> Result<Vec<Token>, E
         tokens.push(token);
     }
     Ok(tokens)
+}
+
+fn scan_balanced_expanded_text<S, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    hooks: &mut H,
+    context: &'static str,
+) -> Result<Vec<Token>, ExecError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    let open =
+        next_non_space_x(input, stores, hooks)?.ok_or(ExecError::MissingToken { context })?;
+    if !is_begin_group(open) {
+        return Err(ExecError::MissingToken { context });
+    }
+    let mut recorder = NoopRecorder;
+    let mut depth = 1usize;
+    let mut tokens = Vec::new();
+    while let Some(token) =
+        get_x_token_with_recorder_and_hooks(input, stores, &mut recorder, hooks)?
+    {
+        if is_begin_group(token) {
+            depth += 1;
+            tokens.push(token);
+        } else if is_end_group(token) {
+            depth -= 1;
+            if depth == 0 {
+                return Ok(tokens);
+            }
+            tokens.push(token);
+        } else {
+            tokens.push(token);
+        }
+    }
+    Err(ExecError::MissingToken { context })
+}
+
+fn tokens_text(stores: &Universe, tokens: &[Token]) -> String {
+    let mut text = String::new();
+    for &token in tokens {
+        text.push_str(&token_text(stores, token));
+        if let Token::Cs(symbol) = token {
+            let name = stores.resolve(symbol);
+            if name.chars().all(|ch| ch.is_ascii_alphabetic()) {
+                text.push(' ');
+            }
+        }
+    }
+    text
 }

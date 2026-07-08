@@ -3,7 +3,7 @@ use tex_state::ids::FontId;
 mod streams;
 mod variable_access;
 
-pub(super) use streams::{execute_read, execute_stream_command, execute_write};
+pub(super) use streams::{execute_read, execute_special, execute_stream_command, execute_write};
 use variable_access::*;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

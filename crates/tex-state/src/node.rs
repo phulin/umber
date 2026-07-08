@@ -148,6 +148,10 @@ pub enum Whatsit {
         sink: PrintSink,
         tokens: TokenListId,
     },
+    Special {
+        class: String,
+        payload: Vec<u8>,
+    },
 }
 
 impl Node {

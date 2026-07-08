@@ -433,6 +433,11 @@ impl Stores {
                 hash_print_sink(sink, hasher);
                 self.hash_token_list_semantic(tokens, hasher);
             }
+            Whatsit::Special { class, payload } => {
+                hasher.tag(16);
+                hasher.bytes(class.as_bytes());
+                hasher.bytes(&payload);
+            }
         }
     }
 
