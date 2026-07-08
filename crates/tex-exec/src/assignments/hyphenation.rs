@@ -3,7 +3,7 @@ use tex_lex::{InputSource, InputStack};
 use tex_state::Universe;
 use tex_state::env::banks::IntParam;
 use tex_state::hyphenation::{ExceptionSpec, PatternSpec};
-use tex_state::node::Node;
+use tex_state::node::{DiscKind, Node};
 use tex_state::token::{Catcode, Token};
 
 use super::*;
@@ -227,6 +227,7 @@ fn discretionary_hyphen(stores: &mut Universe, font: tex_state::ids::FontId) -> 
     let pre = stores.freeze_node_list(&[Node::Char { font, ch: hyphen }]);
     let empty = stores.freeze_node_list(&[]);
     Node::Disc {
+        kind: DiscKind::AutomaticHyphen,
         pre,
         post: empty,
         replace: empty,

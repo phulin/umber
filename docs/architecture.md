@@ -412,10 +412,16 @@ makes box-level memoization (M4) sound.
   emergency stretch. Legal breakpoints, demerits, fitness classes,
   `\looseness`, and line-penalty parameters are copied into plain structs at
   entry; the kernel never touches `Env`, `World`, or `&mut Universe`
-  mid-algorithm. The current `tex-exec` integration precomputes the
-  hyphenated hlist because automatic hyphen insertion still freezes
-  discretionary child lists through `Universe`; the breaker only sees the
-  hook result as ordinary nodes. Post-line-break produces line node vectors
+  mid-algorithm. The decision pass keeps prefix width totals and
+  breakpoint-local width adjustments so glue break widths and discretionary
+  pre/replace widths are accounted for at the breakpoint rather than by
+  ad hoc line slicing. Discretionary nodes carry their source kind, letting
+  the pure breaker apply `\hyphenpenalty`, `\exhyphenpenalty`, consecutive
+  hyphen demerits, and final-hyphen demerits without consulting state.
+  The current `tex-exec` integration precomputes the hyphenated hlist because
+  automatic hyphen insertion still freezes discretionary child lists through
+  `Universe`; the breaker only sees the hook result as ordinary nodes.
+  Post-line-break produces line node vectors
   with `\leftskip`/`\rightskip` and interline penalty decisions; the stomach
   remains responsible for freezing those vectors, hpacking to the captured
   width, and appending hboxes to the enclosing vertical list. Remaining

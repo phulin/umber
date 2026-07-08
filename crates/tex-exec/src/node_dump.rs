@@ -98,9 +98,9 @@ fn dump_node(stores: &Universe, node: &Node, config: &DumpConfig, depth: i32, ou
         Node::Lig { font, ch, .. } => {
             let _ = writeln!(out, "{} {}", dump_font(stores, *font), dump_ligature(*ch));
         }
-        Node::Disc { pre, post, replace } => {
-            dump_disc(stores, *pre, *post, *replace, config, depth, out)
-        }
+        Node::Disc {
+            pre, post, replace, ..
+        } => dump_disc(stores, *pre, *post, *replace, config, depth, out),
         Node::MathOn => out.push_str("\\mathon\n"),
         Node::MathOff => out.push_str("\\mathoff\n"),
         Node::Unset | Node::Mark { .. } | Node::Ins { .. } | Node::Whatsit(_) | Node::Adjust(_) => {

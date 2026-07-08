@@ -34,6 +34,7 @@ pub enum Node {
     VList(BoxNode),
     Unset,
     Disc {
+        kind: DiscKind,
         pre: NodeListId,
         post: NodeListId,
         replace: NodeListId,
@@ -120,6 +121,14 @@ pub enum GlueKind {
     Xleaders,
 }
 
+/// The source of a discretionary node.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum DiscKind {
+    Discretionary,
+    ExplicitHyphen,
+    AutomaticHyphen,
+}
+
 /// The sign of box glue adjustment.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Sign {
@@ -139,7 +148,9 @@ impl Node {
     pub(crate) fn child_lists(&self, out: &mut Vec<NodeListId>) {
         match self {
             Self::HList(box_node) | Self::VList(box_node) => out.push(box_node.children),
-            Self::Disc { pre, post, replace } => {
+            Self::Disc {
+                pre, post, replace, ..
+            } => {
                 out.push(*pre);
                 out.push(*post);
                 out.push(*replace);

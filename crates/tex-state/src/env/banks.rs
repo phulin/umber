@@ -69,6 +69,12 @@ impl IntParam {
     /// TeX's per-line demerit parameter.
     pub const LINE_PENALTY: Self = Self::new(2);
 
+    /// TeX's automatic hyphenation break penalty.
+    pub const HYPHEN_PENALTY: Self = Self::new(3);
+
+    /// TeX's explicit discretionary hyphen break penalty.
+    pub const EX_HYPHEN_PENALTY: Self = Self::new(4);
+
     /// TeX's club-line penalty.
     pub const CLUB_PENALTY: Self = Self::new(5);
 

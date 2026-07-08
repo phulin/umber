@@ -75,7 +75,9 @@ impl Stores {
             Node::HList(box_node) | Node::VList(box_node) => {
                 self.assert_live_child_node_list(box_node.children);
             }
-            Node::Disc { pre, post, replace } => {
+            Node::Disc {
+                pre, post, replace, ..
+            } => {
                 self.assert_live_child_node_list(*pre);
                 self.assert_live_child_node_list(*post);
                 self.assert_live_child_node_list(*replace);

@@ -4,7 +4,7 @@ use tex_lex::{InputSource, InputStack};
 use tex_state::env::banks::{GlueParam, IntParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
-use tex_state::node::{GlueKind, KernKind, Node};
+use tex_state::node::{DiscKind, GlueKind, KernKind, Node};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
 use tex_state::{PrintSink, Universe};
@@ -130,8 +130,12 @@ where
             let pre = scan_hlist_group(input, stores, hooks, "\\discretionary pre")?;
             let post = scan_hlist_group(input, stores, hooks, "\\discretionary post")?;
             let replace = scan_hlist_group(input, stores, hooks, "\\discretionary replace")?;
-            nest.current_list_mut()
-                .push(Node::Disc { pre, post, replace });
+            nest.current_list_mut().push(Node::Disc {
+                kind: DiscKind::Discretionary,
+                pre,
+                post,
+                replace,
+            });
         }
         UnexpandablePrimitive::DiscretionaryHyphen => {
             flush_pending_hchars(nest, stores)?;
@@ -143,6 +147,7 @@ where
             let pre = stores.freeze_node_list(&[Node::Char { font, ch: hyphen }]);
             let empty = stores.freeze_node_list(&[]);
             nest.current_list_mut().push(Node::Disc {
+                kind: DiscKind::ExplicitHyphen,
                 pre,
                 post: empty,
                 replace: empty,

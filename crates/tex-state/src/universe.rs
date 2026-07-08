@@ -934,7 +934,13 @@ impl Universe {
                 box_node.children = self.clone_node_list_to_epoch(box_node.children);
                 Node::VList(box_node)
             }
-            Node::Disc { pre, post, replace } => Node::Disc {
+            Node::Disc {
+                kind,
+                pre,
+                post,
+                replace,
+            } => Node::Disc {
+                kind,
                 pre: self.clone_node_list_to_epoch(pre),
                 post: self.clone_node_list_to_epoch(post),
                 replace: self.clone_node_list_to_epoch(replace),

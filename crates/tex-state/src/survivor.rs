@@ -203,7 +203,12 @@ fn remap_node_children(
             box_node.children = NodeListId::new_survivor(SurvivorRootId::new(0), start, len);
             out[index] = Node::VList(box_node);
         }
-        Node::Disc { pre, post, replace } => {
+        Node::Disc {
+            kind,
+            pre,
+            post,
+            replace,
+        } => {
             let (pre_start, pre_len) = append_list(pre, epoch, out);
             queue_children(pre_start, pre_len, pending);
             let (post_start, post_len) = append_list(post, epoch, out);
@@ -211,6 +216,7 @@ fn remap_node_children(
             let (replace_start, replace_len) = append_list(replace, epoch, out);
             queue_children(replace_start, replace_len, pending);
             out[index] = Node::Disc {
+                kind,
                 pre: NodeListId::new_survivor(SurvivorRootId::new(0), pre_start, pre_len),
                 post: NodeListId::new_survivor(SurvivorRootId::new(0), post_start, post_len),
                 replace: NodeListId::new_survivor(
@@ -252,7 +258,9 @@ fn rewrite_node_root_ids(node: &mut Node, root: SurvivorRootId) {
         Node::HList(box_node) | Node::VList(box_node) => {
             box_node.children = with_root(box_node.children, root);
         }
-        Node::Disc { pre, post, replace } => {
+        Node::Disc {
+            pre, post, replace, ..
+        } => {
             *pre = with_root(*pre, root);
             *post = with_root(*post, root);
             *replace = with_root(*replace, root);

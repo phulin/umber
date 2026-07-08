@@ -372,8 +372,18 @@ impl Stores {
             Node::HList(box_node) => self.hash_box_node(6, box_node, hasher, stack),
             Node::VList(box_node) => self.hash_box_node(7, box_node, hasher, stack),
             Node::Unset => hasher.tag(8),
-            Node::Disc { pre, post, replace } => {
+            Node::Disc {
+                kind,
+                pre,
+                post,
+                replace,
+            } => {
                 hasher.tag(9);
+                hasher.u8(match kind {
+                    crate::node::DiscKind::Discretionary => 0,
+                    crate::node::DiscKind::ExplicitHyphen => 1,
+                    crate::node::DiscKind::AutomaticHyphen => 2,
+                });
                 stack.push(NodeFrame::List(replace));
                 stack.push(NodeFrame::List(post));
                 stack.push(NodeFrame::List(pre));

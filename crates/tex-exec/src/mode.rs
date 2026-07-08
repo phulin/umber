@@ -44,6 +44,8 @@ pub struct ParagraphParams {
     pub pretolerance: i32,
     pub tolerance: i32,
     pub line_penalty: i32,
+    pub hyphen_penalty: i32,
+    pub ex_hyphen_penalty: i32,
     pub adj_demerits: i32,
     pub double_hyphen_demerits: i32,
     pub final_hyphen_demerits: i32,
