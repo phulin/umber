@@ -233,6 +233,18 @@ fn run_dvi_smoke_matches_pdftex_overfull_rule() {
     assert_dvi_case_matches_pdftex("overfull_rule");
 }
 
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn run_dvi_smoke_matches_pdftex_default_output_end() {
+    assert_dvi_case_matches_pdftex("default_output_end");
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn run_dvi_smoke_matches_pdftex_custom_output_headline() {
+    assert_dvi_case_matches_pdftex("custom_output_headline");
+}
+
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
 fn assert_dvi_case_matches_pdftex(case: &str) {
     let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -274,6 +286,31 @@ fn assert_dvi_case_matches_pdftex(case: &str) {
         )
         .expect("compare reference DVI");
     assert_eq!(comparison, DviComparison::Equal);
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn run_reports_deadcycles_overflow_primary_text() {
+    let temp_dir = tempfile::tempdir().expect("create deadcycles temp dir");
+    let source = temp_dir.path().join("deadcycles.tex");
+    fs::write(
+        &source,
+        "\\maxdeadcycles=1 \\output={\\setbox1=\\box255}\n\
+         \\topskip=0pt \\setbox0=\\hbox{}\n\
+         \\copy0 \\penalty-10000\n\
+         \\copy0 \\penalty-10000\n",
+    )
+    .expect("write deadcycles fixture");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .arg("run")
+        .arg(&source)
+        .output()
+        .expect("run umber deadcycles fixture");
+
+    assert!(!output.status.success(), "deadcycles run should fail");
+    let stderr = String::from_utf8(output.stderr).expect("stderr is utf-8");
+    assert!(stderr.contains("Output loop---1 consecutive dead cycles"));
 }
 
 #[test]

@@ -487,18 +487,34 @@ Responsibility: accumulate the main vertical list, fire `\output`, commit.
   page specs from `\vsize`/`\maxdepth` and inserts adjusted `\topskip`; box,
   rule, glue, kern, and penalty contributions update page totals and legal
   breakpoint costs using TeX's `badness`/`awful_bad` comparison order. A forced
-  or awful break records a pending fire-up boundary for the output-routine
-  implementation tracked by `umber2-4ci.3`. Insert nodes intentionally carry a
-  `umber2-4ci.5` TODO hook; their class-specific goal and split accounting is
-  not silently approximated.
-- **`\output` is a recursion**: box 255 is filled, the output routine's
-  token list replays as a frame, `\shipout` is a primitive delivered back
-  to the stomach. Nothing special architecturally — except that
+  or awful break records a pending fire-up boundary.
+- Fire-up splits the current page at the recorded best break, rewrites the
+  chosen break penalty to `10000`, stores the original penalty in
+  `\outputpenalty`, vpackages the page material into global `\box255` at the
+  recorded best size using the captured `\maxdepth`, and returns material after
+  the break to the front of the contribution list. Insert nodes intentionally
+  carry a `umber2-4ci.5` TODO hook; until class-specific insertion splitting
+  lands, they remain ordinary page-list nodes rather than being silently
+  approximated.
+- **`\output` is a recursion**: an empty `\output` token list executes the
+  default `\shipout\box255` path directly; otherwise the output token list
+  replays as an input frame inside an implicit group and one internal-vertical
+  nest level. `\shipout` is an ordinary primitive delivered back to the
+  stomach, so output-routine assignments obey normal grouping and only
+  `\global` writes survive the implicit group. At output end, non-void
+  `\box255` is the TeX error, material left on the output nest level is
+  prepended to the contribution list, `\deadcycles` enforces
+  `\maxdeadcycles`, and a successful shipout resets the counter. Nothing
+  special architecturally — except that
   **`\shipout` is the commit barrier** (`core_state.md` §9): the shipped
   page freezes, serializes into the content-addressed artifact store,
   deferred `\write`s expand *now* against current state (with read-set
   tracking active), the effect-log prefix flushes exactly once through
   `World`, and old history drops.
+- `\end` runs the TeX-style final cleanup loop: while the page/contribution
+  lists or dead-cycle state are not quiescent, it appends an empty hbox,
+  fill glue, and an eject penalty, then lets the ordinary page builder and
+  output routine fire until shipout drains the job.
 - Page artifacts are the currency between the engine and both the output
   drivers and the incremental engine: a page artifact = (serialized node
   tree, resources used (fonts/images by content hash), `\count0..\count9`,

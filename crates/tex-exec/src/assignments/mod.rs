@@ -43,6 +43,7 @@ use macros::*;
 use paragraph::*;
 pub use primitives::install_unexpandable_primitives;
 use scanning::*;
+pub(crate) use shipout::shipout_node;
 use shipout::*;
 use tokens::*;
 use variables::*;

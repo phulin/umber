@@ -190,6 +190,7 @@ impl Stores {
         stores.set_int_param(IntParam::UC_HYPH, 1);
         stores.set_int_param(IntParam::LEFT_HYPHEN_MIN, 2);
         stores.set_int_param(IntParam::RIGHT_HYPHEN_MIN, 3);
+        stores.set_int_param(IntParam::MAX_DEAD_CYCLES, 25);
         stores.initialize_plain_layout_defaults();
         stores.initialize_font_banks(NULL_FONT, 7, &[]);
         stores
@@ -808,6 +809,12 @@ impl Stores {
     pub fn take_box_reg(&mut self, index: u16) -> Option<NodeListId> {
         let old = self.env.box_reg(index);
         let rec = self.env.set_box_reg(index, None);
+        self.account_box_write(old, rec);
+        old
+    }
+
+    pub fn take_box_reg_same_level(&mut self, index: u16) -> Option<NodeListId> {
+        let (old, rec) = self.env.take_box_reg_same_level(index);
         self.account_box_write(old, rec);
         old
     }

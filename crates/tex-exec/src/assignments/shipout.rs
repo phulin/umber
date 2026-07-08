@@ -17,6 +17,7 @@ use tex_state::node::{
     BoxNode as StateBoxNode, DiscKind as StateDiscKind, GlueKind as StateGlueKind,
     KernKind as StateKernKind, Node, Sign, Whatsit,
 };
+use tex_state::page::PageInteger;
 use tex_state::token::{Catcode, Token};
 use tex_state::{ContentHash, EffectRecord, PrintSink, Universe};
 
@@ -35,8 +36,19 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    let boundary = stores.begin_shipout();
     let node = scan_required_box_node(input, stores, hooks)?;
+    shipout_node(node, stores, recorder)
+}
+
+pub(crate) fn shipout_node<R>(
+    node: Node,
+    stores: &mut Universe,
+    recorder: &mut R,
+) -> Result<ContentHash, ExecError>
+where
+    R: ReadRecorder,
+{
+    let boundary = stores.begin_shipout();
     let pending_effects = pending_page_effects(stores.world().effect_records());
     let counts = page_counts(stores);
     let (mag, diagnostic) = stores.prepare_mag();
@@ -68,6 +80,7 @@ where
     let bytes = artifact.to_bytes();
     let effect_pos = stores.world().effect_pos();
     let hash = stores.commit_shipout(boundary, &bytes, effect_pos)?;
+    stores.set_page_integer(PageInteger::DeadCycles, 0);
     Ok(hash)
 }
 

@@ -13,6 +13,7 @@ mod error;
 mod executor;
 mod mode;
 mod node_dump;
+mod output;
 mod page_builder;
 mod vertical;
 

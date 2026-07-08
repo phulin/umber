@@ -10,6 +10,7 @@ use tex_state::{ExpansionContext, Universe};
 
 use crate::dispatch::{dispatch_delivered_token_with_recorder, unimplemented_typesetting};
 use crate::mode::IGNORE_DEPTH;
+use crate::output;
 use crate::vertical::is_outer_vertical;
 use crate::{DispatchAction, ExecError, ExecutionStats, ModeNest, assignments};
 
@@ -112,12 +113,37 @@ impl Executor {
                 recorder,
                 &mut exec_hooks,
             )? {
-                DispatchAction::Continue => {}
+                DispatchAction::Continue => {
+                    output::drain_pending_output(
+                        &mut self.nest,
+                        input,
+                        stores,
+                        recorder,
+                        &mut exec_hooks,
+                        &mut stats,
+                    )?;
+                }
                 DispatchAction::Shipout(artifact) => {
                     stats.shipped_artifacts.push(artifact);
+                    output::drain_pending_output(
+                        &mut self.nest,
+                        input,
+                        stores,
+                        recorder,
+                        &mut exec_hooks,
+                        &mut stats,
+                    )?;
                 }
                 DispatchAction::End => {
                     assignments::flush_pending_hchars(&mut self.nest, stores)?;
+                    output::finish_end(
+                        &mut self.nest,
+                        input,
+                        stores,
+                        recorder,
+                        &mut exec_hooks,
+                        &mut stats,
+                    )?;
                     return Ok(stats);
                 }
                 DispatchAction::NotConsumed => {

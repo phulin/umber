@@ -775,6 +775,53 @@ where
 }
 
 impl<S> InputStack<S> {
+    #[must_use]
+    pub fn current_token_list_frame(&self) -> Option<(TokenListId, TokenListReplayKind, usize)> {
+        let frame_index = self.current_token_frame_index()?;
+        match &self.frames[frame_index] {
+            InputFrame::TokenList(token_list) => Some((
+                token_list.token_list,
+                token_list.replay_kind,
+                token_list.index,
+            )),
+            InputFrame::Source(_) | InputFrame::Condition(_) => None,
+        }
+    }
+
+    pub fn pop_current_token_list_frame(
+        &mut self,
+        token_list: TokenListId,
+        replay_kind: TokenListReplayKind,
+    ) -> bool {
+        let Some(frame_index) = self.current_token_frame_index() else {
+            return false;
+        };
+        let matches = matches!(
+            &self.frames[frame_index],
+            InputFrame::TokenList(frame)
+                if frame.token_list == token_list && frame.replay_kind == replay_kind
+        );
+        if matches {
+            self.frames.remove(frame_index);
+        }
+        matches
+    }
+
+    #[must_use]
+    pub fn contains_token_list_frame(
+        &self,
+        token_list: TokenListId,
+        replay_kind: TokenListReplayKind,
+    ) -> bool {
+        self.frames.iter().any(|frame| {
+            matches!(
+                frame,
+                InputFrame::TokenList(frame)
+                    if frame.token_list == token_list && frame.replay_kind == replay_kind
+            )
+        })
+    }
+
     fn current_token_frame_index(&self) -> Option<usize> {
         self.frames
             .iter()

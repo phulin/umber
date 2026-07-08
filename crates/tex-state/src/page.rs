@@ -293,12 +293,23 @@ impl PageBuilderState {
 
     pub(crate) fn start_new_page(&mut self) {
         self.current_page.clear();
+        self.page_goal = Scaled::from_raw(0);
+        self.page_total = Scaled::from_raw(0);
+        self.page_stretch = Scaled::from_raw(0);
+        self.page_fil_stretch = Scaled::from_raw(0);
+        self.page_fill_stretch = Scaled::from_raw(0);
+        self.page_filll_stretch = Scaled::from_raw(0);
+        self.page_shrink = Scaled::from_raw(0);
         self.contents = PageContents::Empty;
         self.last_glue = None;
         self.last_penalty = 0;
         self.last_kern = Scaled::from_raw(0);
         self.page_depth = Scaled::from_raw(0);
         self.page_max_depth = Scaled::from_raw(0);
+        self.insert_penalties = 0;
+        self.least_page_cost = AWFUL_BAD;
+        self.best_page_break = None;
+        self.best_size = Scaled::from_raw(0);
         self.fire_up = None;
     }
 
@@ -387,6 +398,14 @@ impl PageBuilderState {
         self.contribution.pop()
     }
 
+    pub(crate) fn prepend_contributions(&mut self, mut nodes: Vec<Node>) {
+        if nodes.is_empty() {
+            return;
+        }
+        nodes.append(&mut self.contribution);
+        self.contribution = nodes;
+    }
+
     pub(crate) fn current_page(&self) -> &[Node] {
         &self.current_page
     }
@@ -401,6 +420,16 @@ impl PageBuilderState {
 
     pub(crate) fn push_current_page(&mut self, node: Node) {
         self.current_page.push(node);
+    }
+
+    pub(crate) fn take_current_page_prefix(
+        &mut self,
+        split_index: usize,
+    ) -> (Vec<Node>, Vec<Node>) {
+        let split_index = split_index.min(self.current_page.len());
+        let after = self.current_page.split_off(split_index);
+        let before = std::mem::take(&mut self.current_page);
+        (before, after)
     }
 
     pub(crate) fn update_last_from_node(&mut self, node: &Node) {

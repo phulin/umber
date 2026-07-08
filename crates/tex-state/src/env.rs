@@ -25,7 +25,7 @@ use crate::ids::{FontId, GlueId, NodeListId, TokenListId};
 use crate::interner::Symbol;
 #[cfg(test)]
 use crate::journal::JournalPos;
-use crate::journal::{Journal, UndoRec};
+use crate::journal::{Entry, Journal, UndoRec};
 use crate::meaning::Meaning;
 use crate::scaled::Scaled;
 use crate::token::Token;
@@ -370,6 +370,40 @@ impl Env {
                 },
             )
         }
+    }
+
+    /// Takes a box register at TeX's current box level.
+    ///
+    /// This matches `\box<n>`: if the visible box value was locally assigned
+    /// in the current group, the voiding is local to that group; otherwise it
+    /// must survive the current group while remaining rollback-visible.
+    pub(crate) fn take_box_reg_same_level(
+        &mut self,
+        index: u16,
+    ) -> (Option<NodeListId>, Option<UndoRec>) {
+        let old = self.box_reg(index);
+        let rec = if self.box_reg_is_local_to_current_group(index) {
+            self.set_box_reg(index, None)
+        } else {
+            self.set_box_reg_global(index, None)
+        };
+        (old, rec)
+    }
+
+    fn box_reg_is_local_to_current_group(&self, index: u16) -> bool {
+        let Some((marker_pos, _, _)) = self.journal.find_last_group_marker() else {
+            return false;
+        };
+        let key = (BankTag::Box, u32::from(index));
+        for entry_index in (marker_pos.raw() as usize + 1..self.journal.len()).rev() {
+            let Entry::Undo(rec) = self.journal.entry(entry_index) else {
+                continue;
+            };
+            if cell_key(rec.cell()) == key {
+                return !rec.cell().is_global();
+            }
+        }
+        false
     }
 
     /// Returns an integer parameter value.

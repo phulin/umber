@@ -400,6 +400,12 @@ impl Universe {
         self.checkpoint_from_hash_base(hash_base)
     }
 
+    fn retarget_hash_base_after_group_compaction(&mut self) {
+        self.state_hash_base.store = self
+            .stores
+            .retarget_state_hash_cursor_after_journal_compaction(&self.state_hash_base.store);
+    }
+
     /// Rolls the whole timeline back to `snapshot` atomically.
     pub fn rollback(&mut self, snapshot: &Snapshot) {
         self.assert_valid_snapshot(snapshot);
@@ -906,14 +912,18 @@ impl Universe {
 
     #[must_use]
     pub fn leave_group(&mut self) -> Vec<Token> {
-        self.stores.leave_group()
+        let tokens = self.stores.leave_group();
+        self.retarget_hash_base_after_group_compaction();
+        tokens
     }
 
     pub fn leave_group_with_kind(
         &mut self,
         expected: GroupKind,
     ) -> Result<Vec<Token>, GroupMismatch> {
-        self.stores.leave_group_with_kind(expected)
+        let tokens = self.stores.leave_group_with_kind(expected)?;
+        self.retarget_hash_base_after_group_compaction();
+        Ok(tokens)
     }
 
     pub fn set_afterassignment(&mut self, token: Token) {
@@ -1113,6 +1123,10 @@ impl Universe {
         self.page.pop_contribution_tail()
     }
 
+    pub fn prepend_page_contributions(&mut self, nodes: Vec<Node>) {
+        self.page.prepend_contributions(nodes);
+    }
+
     #[must_use]
     pub fn current_page_nodes(&self) -> &[Node] {
         self.page.current_page()
@@ -1130,6 +1144,10 @@ impl Universe {
 
     pub fn push_current_page_node(&mut self, node: Node) {
         self.page.push_current_page(node);
+    }
+
+    pub fn take_current_page_prefix(&mut self, split_index: usize) -> (Vec<Node>, Vec<Node>) {
+        self.page.take_current_page_prefix(split_index)
     }
 
     pub fn update_page_last_from_node(&mut self, node: &Node) {
@@ -1153,6 +1171,10 @@ impl Universe {
 
     pub fn take_box_reg(&mut self, index: u16) -> Option<NodeListId> {
         self.stores.take_box_reg(index)
+    }
+
+    pub fn take_box_reg_same_level(&mut self, index: u16) -> Option<NodeListId> {
+        self.stores.take_box_reg_same_level(index)
     }
 
     #[must_use]

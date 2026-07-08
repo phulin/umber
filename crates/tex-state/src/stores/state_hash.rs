@@ -78,6 +78,24 @@ impl Stores {
     }
 
     #[must_use]
+    pub(crate) fn retarget_state_hash_cursor_after_journal_compaction(
+        &self,
+        cursor: &StoreStateHashCursor,
+    ) -> StoreStateHashCursor {
+        assert_eq!(
+            cursor.owner,
+            self.owner.snapshot_owner(),
+            "Stores state-hash cursor belongs to a different Stores instance"
+        );
+        let current_journal_pos = self.env.current_journal_pos();
+        StoreStateHashCursor {
+            owner: self.owner.snapshot_owner(),
+            journal_pos: cursor.journal_pos.min(current_journal_pos),
+            node_mark: cursor.node_mark,
+        }
+    }
+
+    #[must_use]
     pub(crate) fn state_hash_slice(
         &self,
         start: &StoreStateHashCursor,

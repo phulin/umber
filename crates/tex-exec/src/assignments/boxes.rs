@@ -108,7 +108,7 @@ where
         UnexpandablePrimitive::Box | UnexpandablePrimitive::Copy => {
             let index = scan_register_index(input, stores, hooks)?;
             let id = if primitive == UnexpandablePrimitive::Box {
-                stores.take_box_reg(index)
+                stores.take_box_reg_same_level(index)
             } else {
                 stores.box_reg(index)
             };
@@ -116,7 +116,7 @@ where
         }
         UnexpandablePrimitive::UnHBox | UnexpandablePrimitive::UnVBox => {
             let index = scan_register_index(input, stores, hooks)?;
-            let id = stores.take_box_reg(index);
+            let id = stores.take_box_reg_same_level(index);
             append_unboxed(nest, stores, id, primitive)?;
         }
         UnexpandablePrimitive::LastBox => {
@@ -355,7 +355,7 @@ where
                 stores.meaning(symbol),
                 Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Box)
             ) {
-                stores.take_box_reg(index)
+                stores.take_box_reg_same_level(index)
             } else {
                 stores.box_reg(index)
             };

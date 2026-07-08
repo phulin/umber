@@ -135,6 +135,15 @@ impl IntParam {
     /// TeX's `\righthyphenmin` paragraph-breaking parameter.
     pub const RIGHT_HYPHEN_MIN: Self = Self::new(52);
 
+    /// TeX's `\holdinginserts` output-routine parameter.
+    pub const HOLDING_INSERTS: Self = Self::new(53);
+
+    /// TeX's `\outputpenalty` parameter.
+    pub const OUTPUT_PENALTY: Self = Self::new(55);
+
+    /// TeX's `\maxdeadcycles` parameter.
+    pub const MAX_DEAD_CYCLES: Self = Self::new(56);
+
     /// TeX's `\showboxbreadth` integer parameter.
     pub const SHOW_BOX_BREADTH: Self = Self::new(24);
 
@@ -219,6 +228,9 @@ impl GlueParam {
 }
 
 impl TokParam {
+    /// TeX's `\output` token-list parameter.
+    pub const OUTPUT: Self = Self::new(0);
+
     /// TeX's `\everypar` token-list parameter.
     pub const EVERY_PAR: Self = Self::new(1);
 }

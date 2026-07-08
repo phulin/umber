@@ -708,27 +708,112 @@ fn writable_page_scalars_read_after_page_freeze() {
 }
 
 #[test]
-fn forced_page_penalty_records_pending_fire_up() {
+fn forced_page_penalty_runs_default_output() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\topskip=0pt \\setbox0=\\hbox{}\\copy0 \\penalty-10000",
     ));
 
-    Executor::new()
+    let stats = Executor::new()
         .run(&mut input, &mut stores)
         .expect("forced penalty executes");
 
-    let fire_up = stores.page_fire_up().expect("forced penalty fires page");
+    assert_eq!(stats.shipped_artifacts.len(), 1);
+    assert!(stores.box_reg(255).is_none());
+    assert!(stores.page_fire_up().is_none());
+    assert!(stores.current_page_nodes().is_empty());
+    assert!(stores.page_contributions().is_empty());
     assert_eq!(
-        fire_up.best_break().index(),
-        stores.current_page_nodes().len()
+        stores.page_dimension(tex_state::page::PageDimension::Goal),
+        tex_state::scaled::Scaled::MAX_DIMEN
     );
-    assert_eq!(fire_up.trigger().index(), stores.current_page_nodes().len());
-    assert!(matches!(
-        stores.page_contributions(),
-        [tex_state::node::Node::Penalty(-10000)]
+}
+
+#[test]
+fn output_routine_replays_in_implicit_group_and_consumes_box255() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\output={\\advance\\count0 by 1 \\global\\advance\\count1 by 1 \\shipout\\box255}\
+         \\count0=10 \\count1=20 \
+         \\topskip=0pt \\setbox0=\\hbox{}\\copy0 \\penalty-10000",
     ));
+
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("custom output routine executes");
+
+    assert_eq!(stats.shipped_artifacts.len(), 1);
+    assert_eq!(
+        stores.count(0),
+        10,
+        "plain assignments in \\output are local"
+    );
+    assert_eq!(
+        stores.count(1),
+        21,
+        "global assignments in \\output survive"
+    );
+    assert_eq!(
+        stores.page_integer(tex_state::page::PageInteger::DeadCycles),
+        0
+    );
+    assert!(stores.box_reg(255).is_none());
+}
+
+#[test]
+fn output_routine_reports_nonvoid_box255_after_output() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\output={\\relax}\\topskip=0pt \\setbox0=\\hbox{}\\copy0 \\penalty-10000",
+    ));
+
+    let err = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect_err("empty custom output leaves box255 behind");
+
+    assert_eq!(err.to_string(), "Output routine didn't use all of \\box255");
+}
+
+#[test]
+fn deadcycles_overflow_reports_output_loop() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\maxdeadcycles=1 \\output={\\setbox1=\\box255}\
+         \\topskip=0pt \\setbox0=\\hbox{}\
+         \\copy0 \\penalty-10000 \
+         \\copy0 \\penalty-10000",
+    ));
+
+    let err = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect_err("second dead cycle should overflow");
+
+    assert_eq!(err.to_string(), "Output loop---1 consecutive dead cycles");
+}
+
+#[test]
+fn end_cleanup_ejects_residual_page() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\topskip=0pt \\setbox0=\\hbox{}\\copy0 \\end",
+    ));
+
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("\\end cleanup ships residual page");
+
+    assert_eq!(stats.shipped_artifacts.len(), 1);
+    assert!(stores.current_page_nodes().is_empty());
+    assert!(stores.page_contributions().is_empty());
+    assert_eq!(
+        stores.page_integer(tex_state::page::PageInteger::DeadCycles),
+        0
+    );
 }
 
 #[test]

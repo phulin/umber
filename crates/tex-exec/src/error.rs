@@ -85,6 +85,11 @@ pub enum ExecError {
     UnsupportedShipoutNode {
         node: &'static str,
     },
+    Box255NotVoidBeforeOutput,
+    OutputRoutineBox255NotVoid,
+    OutputLoop {
+        dead_cycles: i32,
+    },
 }
 
 impl fmt::Display for ExecError {
@@ -178,6 +183,13 @@ impl fmt::Display for ExecError {
                     "shipout artifact lowering does not support {node} nodes yet"
                 )
             }
+            Self::Box255NotVoidBeforeOutput => write!(f, "\\box255 is not void"),
+            Self::OutputRoutineBox255NotVoid => {
+                write!(f, "Output routine didn't use all of \\box255")
+            }
+            Self::OutputLoop { dead_cycles } => {
+                write!(f, "Output loop---{dead_cycles} consecutive dead cycles")
+            }
         }
     }
 }
@@ -223,7 +235,10 @@ impl std::error::Error for ExecError {
             | Self::TerminalReadEof
             | Self::FontParameter(_)
             | Self::UnimplementedTypesetting { .. }
-            | Self::UnsupportedShipoutNode { .. } => None,
+            | Self::UnsupportedShipoutNode { .. }
+            | Self::Box255NotVoidBeforeOutput
+            | Self::OutputRoutineBox255NotVoid
+            | Self::OutputLoop { .. } => None,
         }
     }
 }
