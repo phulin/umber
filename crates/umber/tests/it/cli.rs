@@ -324,6 +324,51 @@ fn run_usage_errors_follow_existing_shape() {
     );
 }
 
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side fixture command execution and file checks.
+fn run_show_fixtures_harvests_without_committing_stream_effects() {
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let normal_dir = temp_dir.path().join("normal");
+    let fixture_dir = temp_dir.path().join("fixture");
+    fs::create_dir_all(&normal_dir).expect("create normal dir");
+    fs::create_dir_all(&fixture_dir).expect("create fixture dir");
+    let input = temp_dir.path().join("stream_effect.tex");
+    fs::write(&input, "\\openout0=side-effect.txt\n\\closeout0\n\\end\n").expect("write input");
+
+    let normal = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .current_dir(&normal_dir)
+        .arg("run")
+        .arg(&input)
+        .output()
+        .expect("run ordinary umber run");
+    assert!(
+        normal.status.success(),
+        "ordinary run failed:\n{}",
+        String::from_utf8_lossy(&normal.stderr)
+    );
+    assert!(
+        normal_dir.join("side-effect.txt").exists(),
+        "ordinary run should commit \\openout effects"
+    );
+
+    let fixture = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .current_dir(&fixture_dir)
+        .arg("run")
+        .arg("--show-fixtures")
+        .arg(&input)
+        .output()
+        .expect("run umber fixture harvest");
+    assert!(
+        fixture.status.success(),
+        "fixture run failed:\n{}",
+        String::from_utf8_lossy(&fixture.stderr)
+    );
+    assert!(
+        !fixture_dir.join("side-effect.txt").exists(),
+        "--show-fixtures must not commit pending stream effects"
+    );
+}
+
 fn showhyphens_source(load_hyphen: bool) -> String {
     let mut source = String::new();
     if load_hyphen {

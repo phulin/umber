@@ -371,10 +371,13 @@ assignments, box building, and dispatch into the typesetting kernels.
   `\showboxbreadth` and `\showboxdepth`, and is intentionally reusable by
   future `\showlists` and `\tracingoutput` diagnostics rather than tied to
   `\showbox` scanning. The committed typeset corpus uses pdfTeX's box-dump
-  text as the comparison format: `umber run --show-fixtures` emits the same
-  diagnostic stream shape as `umber run`, while test support normalizes
-  banners, source line echoes, and memory-irrelevant trailer noise through one
-  shared diagnostic-log normalizer for both execution and box-dump fixtures.
+  text as the comparison format: `umber run --show-fixtures` is an explicit
+  fixture-harvesting mode whose stdout is the collected terminal/log diagnostic
+  text produced by the engine run. It does not commit the pending `World`
+  effect log, so stream opens, closes, and writes recorded during harvesting do
+  not create unrelated host-side files. Test support still normalizes banners,
+  source line echoes, and memory-irrelevant trailer noise through one shared
+  diagnostic-log normalizer for both execution and box-dump fixtures.
 - **Paragraph and page hand-off**: paragraph start/end is stomach-owned.
   `\indent`, `\noindent`, implicit start from vertical-mode character
   material, `\parskip`, and `\everypar` replay are handled before entering

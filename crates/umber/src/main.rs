@@ -83,6 +83,10 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
         let dvi = umber::dvi_from_artifacts(&stores, &run.artifacts)?;
         stores.world_mut().write_file(output, dvi)?;
     }
+    if opts.show_fixtures {
+        print!("{}", run.terminal_text);
+        return Ok(());
+    }
     let effect_pos = stores.world().effect_pos();
     stores.commit_effects(effect_pos)?;
     Ok(())
@@ -90,17 +94,21 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
 
 struct RunCliOptions {
     input: PathBuf,
+    show_fixtures: bool,
     dvi: Option<PathBuf>,
 }
 
 impl RunCliOptions {
     fn parse(args: impl Iterator<Item = String>) -> Result<Self, CliError> {
         let mut input = None;
+        let mut show_fixtures = false;
         let mut dvi = None;
         let mut args = args.peekable();
         while let Some(arg) = args.next() {
             match arg.as_str() {
-                "--show-fixtures" => {}
+                "--show-fixtures" => {
+                    show_fixtures = true;
+                }
                 "--dvi" => {
                     if dvi.is_some() {
                         return Err(CliError::Usage("run accepts at most one --dvi output path"));
@@ -126,7 +134,11 @@ impl RunCliOptions {
             }
         }
         let input = input.ok_or(CliError::Usage("missing input path for run"))?;
-        Ok(Self { input, dvi })
+        Ok(Self {
+            input,
+            show_fixtures,
+            dvi,
+        })
     }
 }
 
