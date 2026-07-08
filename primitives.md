@@ -59,20 +59,20 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 
 - [ ] `\batchmode` - Suppresses terminal interaction and most terminal output.
 - [ ] `\errhelp` - Token list shown as help for a following `\errmessage`.
-- [x] `\errmessage` - Issues an error with expanded message text. Current implementation writes the primary error line to the temporary execution log sink; interactive help/context remains World/interaction work.
+- [x] `\errmessage` - Issues an error with expanded message text through World's terminal/log effect sink; interactive help/context remains World/interaction work.
 - [ ] `\errorcontextlines` - Number of context lines shown for errors.
 - [ ] `\errorstopmode` - Restores interactive stopping on errors.
 - [x] `\meaning` - Expands to a textual description of a token's meaning. Macro text is supported; unsupported raw meanings use a placeholder.
-- [x] `\message` - Writes expanded message text to the temporary execution log sink with pdfTeX-style message separation and wrapping for the covered subset.
+- [x] `\message` - Writes expanded message text through World's terminal/log effect sink with pdfTeX-style message separation and wrapping for the covered subset.
 - [ ] `\nonstopmode` - Continues past errors without stopping for input.
 - [ ] `\pausing` - Prompts after input lines when positive.
 - [ ] `\scrollmode` - Scrolls past errors while still showing diagnostics.
-- [x] `\show` - Displays the meaning of the next token through the temporary execution log sink for implemented meaning classes.
+- [x] `\show` - Displays the meaning of the next token through World's terminal/log effect sink for implemented meaning classes.
 - [ ] `\showbox` - Writes a box register's contents to the log.
 - [ ] `\showboxbreadth` - Maximum number of list items shown per level.
 - [ ] `\showboxdepth` - Maximum nesting depth shown for box diagnostics.
-- [x] `\showlists` - Writes the current mostly-empty mode nest in pdfTeX format through the temporary execution log sink.
-- [x] `\showthe` - Displays the value produced by implemented `\the` targets through the temporary execution log sink.
+- [x] `\showlists` - Writes the current mostly-empty mode nest in pdfTeX format through World's terminal/log effect sink.
+- [x] `\showthe` - Displays the value produced by implemented `\the` targets through World's terminal/log effect sink.
 - [ ] `\tracingcommands` - Logs command execution when positive.
 - [ ] `\tracinglostchars` - Logs missing font characters when positive.
 - [ ] `\tracingmacros` - Logs macro expansion and arguments when positive.
@@ -85,16 +85,16 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 
 ## File I/O And Output
 
-- [ ] `\closein` - Closes an input stream.
-- [ ] `\closeout` - Closes an output stream.
-- [x] `\endinput` - Stops reading the current input source after the current line through the lexer input stack; source identity and reopening remain driver/World responsibilities.
+- [x] `\closein` - Closes a World input stream slot.
+- [x] `\closeout` - Closes a World output stream slot by appending an effect record.
+- [x] `\endinput` - Stops reading the current input source after the current line through the lexer input stack; source identity is pinned by World input records and lexer summaries can restore mid-source positions.
 - [ ] `\immediate` - Executes the following output operation immediately.
 - [x] `\input` - Pushes a driver-provided source at the current input position. `tex-expand` scans the file name and calls a source hook; it does not read the filesystem directly.
 - [ ] `\inputlineno` - Current line number in the active input file.
-- [ ] `\openin` - Opens a file for input.
-- [ ] `\openout` - Opens a file for output.
+- [x] `\openin` - Opens a World-backed content-addressed input stream; missing files leave the slot at EOF.
+- [x] `\openout` - Opens a World output stream by appending an effect record.
 - [ ] `\output` - Token list invoked by the page builder for output routine processing.
-- [ ] `\read` - Execution stub scans `\read N to \cs` and returns TeX-style unsupported input until World-backed streams land.
+- [x] `\read` - Reads one line from an opened World input stream and defines the target control sequence as a no-parameter macro; terminal reads remain unsupported in nonstop batch execution.
 - [ ] `\shipout` - Writes a completed box to the DVI output.
 - [ ] `\special` - Emits backend-specific material into the DVI stream.
 - [ ] `\write` - Writes expanded material to an output stream, normally delayed until shipout.
@@ -179,7 +179,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [x] `\ifcase` - Selects among numeric conditional branches using the shared integer scanner, `\or` counting, else fallback, and token-level skipped-limb scanning.
 - [x] `\ifcat` - Compares two expanded unexpandable tokens by category code.
 - [x] `\ifdim` - Compares two dimensions using the shared dimension scanner.
-- [x] `\ifeof` - Tests through a driver hook; the no-driver default is a documented EOF stub until input stream state exists.
+- [x] `\ifeof` - Tests World input stream state; unopened or exhausted streams are EOF.
 - [x] `\iffalse` - Starts a conditional that is always false.
 - [x] `\ifhbox` - Tests readable box register state for an hlist box.
 - [x] `\ifhmode` - Tests the driver-supplied mode query.

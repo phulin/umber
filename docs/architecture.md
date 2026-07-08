@@ -140,11 +140,11 @@ supply.
   `InputStack` whose `InputSummary` records resume-complete lexer-owned
   source frame state and token-list replay progress. Token-list frames read
   frozen content only through `Universe::tokens`; durable source identity is
-  the `World` input record captured in `Universe` snapshots, and f26.5 will
-  finish applying those records to full source reopening. `\endinput` is
-  represented as a source-frame flag that lets the lexer finish the current
-  normalized line and then pop that source without asking expansion to manage
-  source internals.
+  the `World` input record captured in `Universe` snapshots, which pins file
+  bytes by content hash so a driver can reopen the exact source and apply the
+  lexer summary. `\endinput` is represented as a source-frame flag that lets
+  the lexer finish the current normalized line and then pop that source
+  without asking expansion to manage source internals.
 
 ## 4. Lexer (the eyes)
 
@@ -246,9 +246,9 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   meaning-word equality. `\ifnum`, `\ifdim`, `\ifodd`, and `\ifcase` reuse the
   shared integer/dimension scanners, including `\ifcase` `\or` limb selection.
   Mode predicates read only a driver-supplied query trait; box predicates read
-  only the `Universe` box-register facade; `\ifeof` reads a driver hook whose
-  no-driver implementation is an explicit EOF stub until input stream state
-  exists. False conditional limbs and already-taken `\ifcase` limbs are
+  only the `Universe` box-register facade; `\ifeof` reads the `World` input
+  stream table through the expansion hook's `Universe` access. False
+  conditional limbs and already-taken `\ifcase` limbs are
   skipped by reading raw tokens from `tex-lex` under the active catcode table,
   while `\else`, `\or`, and `\fi` update the input-stack condition frame and
   report extra-control, incomplete-conditional, and skipped-outer-token
