@@ -132,6 +132,7 @@ pub(crate) fn meaning_text(stores: &Stores, token: Token) -> String {
             Meaning::Relax => "\\relax".to_owned(),
             Meaning::CharGiven(ch) => format!("the character {ch}"),
             Meaning::ExpandablePrimitive(_) => format!("\\{}", stores.resolve(symbol)),
+            Meaning::UnexpandablePrimitive(_) => format!("\\{}", stores.resolve(symbol)),
             Meaning::Macro { flags, definition } => {
                 let macro_meaning = stores.macro_definition(definition);
                 let mut text = String::new();

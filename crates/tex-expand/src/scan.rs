@@ -7,12 +7,17 @@
 
 use std::fmt;
 
-use tex_lex::{InputSource, InputStack, LexError};
+use tex_lex::{InputSource, InputStack, LexError, MemoryInput, TokenListReplayKind};
 use tex_state::ids::TokenListId;
 use tex_state::macro_store::MacroMeaning;
-use tex_state::meaning::MeaningFlags;
+use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
 use tex_state::stores::Stores;
 use tex_state::token::{Catcode, Token};
+
+use crate::{
+    Dispatch, ExpandError, ExpandableOpcode, ExpansionHooks, ExpansionReplayKind,
+    NoopExpansionHooks, NoopRecorder, dispatch_with_hooks,
+};
 
 /// Result of scanning a macro definition without assigning it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -41,6 +46,7 @@ impl ScannedMacro {
 #[derive(Debug)]
 pub enum ScanToksError {
     Lex(LexError),
+    Expand(ExpandError),
     EndOfInputInParameterText,
     EndOfInputInReplacementText,
     ParameterNumberOutOfOrder { expected: u8, found: u8 },
@@ -53,6 +59,7 @@ impl fmt::Display for ScanToksError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Lex(err) => write!(f, "{err}"),
+            Self::Expand(err) => write!(f, "{err}"),
             Self::EndOfInputInParameterText => {
                 write!(f, "end of input while scanning macro parameter text")
             }
@@ -84,6 +91,7 @@ impl std::error::Error for ScanToksError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Lex(err) => Some(err),
+            Self::Expand(err) => Some(err),
             _ => None,
         }
     }
@@ -92,6 +100,12 @@ impl std::error::Error for ScanToksError {
 impl From<LexError> for ScanToksError {
     fn from(value: LexError) -> Self {
         Self::Lex(value)
+    }
+}
+
+impl From<ExpandError> for ScanToksError {
+    fn from(value: ExpandError) -> Self {
+        Self::Expand(value)
     }
 }
 
@@ -114,6 +128,107 @@ where
     Ok(ScannedMacro {
         meaning: MacroMeaning::new(flags, parameter_text, replacement_text),
     })
+}
+
+/// Scans a macro definition and expands the replacement text as for `\edef`.
+pub fn scan_toks_expanded<S, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Stores,
+    flags: MeaningFlags,
+    hooks: &mut H,
+) -> Result<ScannedMacro, ScanToksError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    let scanned = scan_toks(input, stores, flags)?;
+    let meaning = scanned.meaning();
+    let replacement_text = expand_replacement_text(stores, meaning.replacement_text(), hooks)?;
+    Ok(ScannedMacro {
+        meaning: MacroMeaning::new(flags, meaning.parameter_text(), replacement_text),
+    })
+}
+
+fn expand_replacement_text<S, H>(
+    stores: &mut Stores,
+    replacement_text: TokenListId,
+    _hooks: &mut H,
+) -> Result<TokenListId, ScanToksError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list(replacement_text, TokenListReplayKind::Inserted);
+    let mut builder = stores.token_list_builder();
+    let mut recorder = NoopRecorder;
+    let mut hooks = NoopExpansionHooks;
+
+    loop {
+        let Some(read) = input.next_expansion_token(stores)? else {
+            break;
+        };
+        let token = read.token();
+        if read.suppress_expansion() {
+            builder.push(token);
+            continue;
+        }
+
+        let Token::Cs(symbol) = token else {
+            builder.push(token);
+            continue;
+        };
+        let meaning = stores.meaning(symbol);
+        if meaning == Meaning::ExpandablePrimitive(ExpandablePrimitive::NoExpand) {
+            builder.push(token);
+            let Some(suppressed) = input.next_token(stores)? else {
+                return Err(
+                    ExpandError::MissingTokenAfterPrimitive(ExpandableOpcode::NoExpand).into(),
+                );
+            };
+            builder.push(suppressed);
+            continue;
+        }
+
+        match dispatch_with_hooks(
+            token,
+            &mut input,
+            stores,
+            &mut recorder,
+            &mut hooks,
+            meaning,
+        )? {
+            Dispatch::Continue => {}
+            Dispatch::Deliver(token) | Dispatch::DeliverNoExpand(token) => builder.push(token),
+            Dispatch::Push {
+                replay_kind: ExpansionReplayKind::TheOutput,
+                token_list,
+                ..
+            } => {
+                for token in stores.tokens(token_list).iter().copied() {
+                    builder.push(token);
+                }
+            }
+            push @ Dispatch::Push { .. } => apply_edef_push(&mut input, push),
+        }
+    }
+    Ok(stores.finish_token_list(&mut builder))
+}
+
+fn apply_edef_push(input: &mut InputStack<MemoryInput>, dispatch: Dispatch) {
+    let Dispatch::Push {
+        replay_kind,
+        token_list,
+        macro_arguments,
+    } = dispatch
+    else {
+        return;
+    };
+    if replay_kind == ExpansionReplayKind::MacroBody {
+        input.push_macro_body(token_list, macro_arguments);
+    } else {
+        input.push_token_list(token_list, replay_kind.as_lex_kind());
+    }
 }
 
 fn scan_parameter_text<S>(

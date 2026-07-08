@@ -8,14 +8,19 @@
 
 use std::fmt;
 
+use tex_expand::scan::ScanToksError;
 use tex_expand::{
     EngineMode, ExpandError, ExpansionHooks, NoopRecorder, ReadRecorder,
     get_x_token_with_recorder_and_hooks,
 };
-use tex_lex::{InputSource, InputStack};
+use tex_lex::{InputSource, InputStack, LexError};
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
 use tex_state::stores::Stores;
 use tex_state::token::Token;
+
+mod assignments;
+
+pub use assignments::{install_unexpandable_primitives, try_execute_assignment};
 
 /// One of TeX's six semantic modes.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -218,17 +223,54 @@ impl Executor {
         S: InputSource,
         R: ReadRecorder,
     {
+        let mut hooks = NoopExecHooks;
+        self.run_with_recorder_and_hooks(input, stores, recorder, &mut hooks)
+    }
+
+    /// Runs main control while recording reads and using driver expansion hooks.
+    pub fn run_with_recorder_and_hooks<S, R, H>(
+        &mut self,
+        input: &mut InputStack<S>,
+        stores: &mut Stores,
+        recorder: &mut R,
+        hooks: &mut H,
+    ) -> Result<ExecutionStats, ExecError>
+    where
+        S: InputSource,
+        R: ReadRecorder,
+        H: ExpansionHooks<S>,
+    {
         let mut stats = ExecutionStats::default();
         loop {
-            let Some(token) = get_x_token_with_recorder_and_hooks(input, stores, recorder, self)?
+            let Some(token) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
             else {
                 return Ok(stats);
             };
             stats.delivered_tokens += 1;
-            match dispatch_delivered_token(self.nest.current_mode(), token, stores)? {
+            match dispatch_delivered_token(self.nest.current_mode(), token, input, stores, hooks)? {
                 DispatchAction::Continue => {}
+                DispatchAction::NotConsumed => {
+                    return Err(unimplemented_typesetting(
+                        self.nest.current_mode(),
+                        token,
+                        "non-assignment command",
+                    )
+                    .expect_err("unimplemented_typesetting always returns Err"));
+                }
             }
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct NoopExecHooks;
+
+impl<S> ExpansionHooks<S> for NoopExecHooks
+where
+    S: InputSource,
+{
+    fn open_input(&mut self, _name: &str) -> Result<S, String> {
+        Err("execution input hook is not installed".to_owned())
     }
 }
 
@@ -258,18 +300,25 @@ pub struct ExecutionStats {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DispatchAction {
     Continue,
+    NotConsumed,
 }
 
 /// Dispatches one gullet-delivered token in the current mode.
-pub fn dispatch_delivered_token(
+pub fn dispatch_delivered_token<S, H>(
     mode: Mode,
     token: Token,
-    stores: &Stores,
-) -> Result<DispatchAction, ExecError> {
+    input: &mut InputStack<S>,
+    stores: &mut Stores,
+    hooks: &mut H,
+) -> Result<DispatchAction, ExecError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
     let meaning = match token {
         Token::Cs(symbol) => stores.meaning(symbol),
         Token::Char { .. } | Token::Param(_) => {
-            return unimplemented_typesetting(mode, token, "character material");
+            return Ok(DispatchAction::NotConsumed);
         }
     };
 
@@ -283,6 +332,9 @@ pub fn dispatch_delivered_token(
             name: stores.resolve_cs_name(token),
         }),
         Meaning::ExpandablePrimitive(primitive) => dispatch_delivered_expandable(token, primitive),
+        Meaning::UnexpandablePrimitive(primitive) => {
+            assignments::execute_unexpandable(primitive, input, stores, hooks)
+        }
         Meaning::Unknown(raw) => Err(ExecError::UnsupportedCommand {
             token,
             opcode: raw.op(),
@@ -332,6 +384,8 @@ impl ResolveTokenName for Stores {
 #[derive(Debug)]
 pub enum ExecError {
     Expand(ExpandError),
+    Lex(LexError),
+    ScanToks(ScanToksError),
     EmptyModeNestSummary,
     CannotPopBaseMode,
     UndefinedControlSequence {
@@ -350,6 +404,24 @@ pub enum ExecError {
         token: Token,
         opcode: u8,
     },
+    MissingPrefixedCommand,
+    PrefixWithNonAssignment {
+        token: Token,
+    },
+    PrefixWithNonDefinition,
+    MissingControlSequence {
+        context: &'static str,
+    },
+    ExpectedControlSequence {
+        context: &'static str,
+        token: Token,
+    },
+    MissingToken {
+        context: &'static str,
+    },
+    InvalidLetRhs {
+        token: Token,
+    },
     UnimplementedTypesetting {
         mode: Mode,
         token: Token,
@@ -361,6 +433,8 @@ impl fmt::Display for ExecError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Expand(err) => write!(f, "{err}"),
+            Self::Lex(err) => write!(f, "{err}"),
+            Self::ScanToks(err) => write!(f, "{err}"),
             Self::EmptyModeNestSummary => write!(f, "mode nest summary has no levels"),
             Self::CannotPopBaseMode => write!(f, "cannot pop the base vertical mode level"),
             Self::UndefinedControlSequence { name } => {
@@ -383,6 +457,24 @@ impl fmt::Display for ExecError {
                     "unsupported unexpandable opcode {opcode} for token {token:?}"
                 )
             }
+            Self::MissingPrefixedCommand => write!(f, "You can't use a prefix with `end of input'"),
+            Self::PrefixWithNonAssignment { token } => {
+                write!(f, "You can't use a prefix with `{token:?}'")
+            }
+            Self::PrefixWithNonDefinition => write!(f, "You can't use a prefix with `\\let'"),
+            Self::MissingControlSequence { context } => {
+                write!(f, "missing control sequence after {context}")
+            }
+            Self::ExpectedControlSequence { context, token } => {
+                write!(
+                    f,
+                    "expected control sequence after {context}, got {token:?}"
+                )
+            }
+            Self::MissingToken { context } => write!(f, "missing token while scanning {context}"),
+            Self::InvalidLetRhs { token } => {
+                write!(f, "\\let cannot assign macro parameter token {token:?}")
+            }
             Self::UnimplementedTypesetting {
                 mode,
                 token,
@@ -399,6 +491,8 @@ impl std::error::Error for ExecError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Expand(err) => Some(err),
+            Self::Lex(err) => Some(err),
+            Self::ScanToks(err) => Some(err),
             Self::EmptyModeNestSummary
             | Self::CannotPopBaseMode
             | Self::UndefinedControlSequence { .. }
@@ -407,6 +501,13 @@ impl std::error::Error for ExecError {
             | Self::ExtraConditionalControl(_)
             | Self::ExtraEndCsName
             | Self::UnsupportedCommand { .. }
+            | Self::MissingPrefixedCommand
+            | Self::PrefixWithNonAssignment { .. }
+            | Self::PrefixWithNonDefinition
+            | Self::MissingControlSequence { .. }
+            | Self::ExpectedControlSequence { .. }
+            | Self::MissingToken { .. }
+            | Self::InvalidLetRhs { .. }
             | Self::UnimplementedTypesetting { .. } => None,
         }
     }
@@ -418,10 +519,24 @@ impl From<ExpandError> for ExecError {
     }
 }
 
+impl From<LexError> for ExecError {
+    fn from(value: LexError) -> Self {
+        Self::Lex(value)
+    }
+}
+
+impl From<ScanToksError> for ExecError {
+    fn from(value: ScanToksError) -> Self {
+        Self::ScanToks(value)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use tex_lex::MemoryInput;
+    use tex_state::env::banks::IntParam;
+    use tex_state::meaning::ExpandablePrimitive;
     use tex_state::token::Catcode;
 
     #[test]
@@ -496,35 +611,36 @@ mod tests {
         let mut stores = Stores::new();
         let relax = stores.intern("relax");
         stores.set_meaning(relax, Meaning::Relax);
+        let mut input = InputStack::new(MemoryInput::new(""));
+        let mut hooks = NoopExecHooks;
 
         assert_eq!(
-            dispatch_delivered_token(Mode::Vertical, Token::Cs(relax), &stores)
-                .expect("relax dispatch"),
+            dispatch_delivered_token(
+                Mode::Vertical,
+                Token::Cs(relax),
+                &mut input,
+                &mut stores,
+                &mut hooks
+            )
+            .expect("relax dispatch"),
             DispatchAction::Continue
         );
     }
 
     #[test]
     fn dispatch_character_hits_loud_typesetting_stub() {
-        let stores = Stores::new();
+        let mut stores = Stores::new();
         let token = Token::Char {
             ch: 'x',
             cat: Catcode::Letter,
         };
+        let mut input = InputStack::new(MemoryInput::new(""));
+        let mut hooks = NoopExecHooks;
 
-        let err = dispatch_delivered_token(Mode::Horizontal, token, &stores)
-            .expect_err("characters need typesetting");
-        assert!(matches!(
-            err,
-            ExecError::UnimplementedTypesetting {
-                mode: Mode::Horizontal,
-                token: Token::Char { ch: 'x', .. },
-                operation: "character material",
-            }
-        ));
-        assert!(
-            err.to_string()
-                .contains("typesetting path is not implemented yet")
+        assert_eq!(
+            dispatch_delivered_token(Mode::Horizontal, token, &mut input, &mut stores, &mut hooks)
+                .expect("character dispatch"),
+            DispatchAction::NotConsumed
         );
     }
 
@@ -539,5 +655,147 @@ mod tests {
             .run(&mut input, &mut stores)
             .expect("execution succeeds");
         assert_eq!(stats.delivered_tokens, 1);
+    }
+
+    #[test]
+    fn def_and_gdef_assign_macro_meanings_through_group_barrier() {
+        let mut stores = Stores::new();
+        install_unexpandable_primitives(&mut stores);
+        let mut input = InputStack::new(MemoryInput::new("\\def\\a{A}\\gdef\\b{B}"));
+        stores.enter_group();
+
+        Executor::new()
+            .run(&mut input, &mut stores)
+            .expect("definitions execute");
+        let a = stores.symbol("a").expect("a was interned");
+        let b = stores.symbol("b").expect("b was interned");
+        assert!(matches!(stores.meaning(a), Meaning::Macro { .. }));
+        assert!(matches!(stores.meaning(b), Meaning::Macro { .. }));
+
+        let _ = stores.leave_group();
+        assert_eq!(stores.meaning(a), Meaning::Undefined);
+        assert!(matches!(stores.meaning(b), Meaning::Macro { .. }));
+    }
+
+    #[test]
+    fn edef_preserves_noexpand_pair_and_freezes_the_output() {
+        let mut stores = Stores::new();
+        install_unexpandable_primitives(&mut stores);
+        install_expandable(&mut stores, "noexpand", ExpandablePrimitive::NoExpand);
+        install_expandable(&mut stores, "the", ExpandablePrimitive::The);
+        stores.intern("toks");
+        stores.set_int_param(IntParam::END_LINE_CHAR, -1);
+        let a = stores.intern("a");
+        let b = stores.intern("b");
+        let toks_body = stores.intern_token_list(&[Token::Cs(b)]);
+        stores.set_toks(0, toks_body);
+        let mut input = InputStack::new(MemoryInput::new("\\edef\\e{\\noexpand\\a\\the\\toks0}"));
+
+        Executor::new()
+            .run(&mut input, &mut stores)
+            .expect("edef executes");
+        let e = stores.symbol("e").expect("e was interned");
+        let meaning = stores.macro_meaning(e).expect("e is a macro");
+
+        assert_eq!(
+            stores.tokens(meaning.replacement_text()),
+            &[
+                Token::Cs(stores.symbol("noexpand").expect("noexpand")),
+                Token::Cs(a),
+                Token::Cs(b)
+            ]
+        );
+    }
+
+    #[test]
+    fn let_assigns_control_sequence_and_implicit_character_meanings() {
+        let mut stores = Stores::new();
+        install_unexpandable_primitives(&mut stores);
+        let a = stores.intern("a");
+        stores.set_meaning(a, Meaning::CharGiven('Q'));
+        let mut input = InputStack::new(MemoryInput::new("\\let\\b=\\a\\let\\c = Z"));
+
+        Executor::new()
+            .run(&mut input, &mut stores)
+            .expect("let assignments execute");
+        assert_eq!(
+            stores.meaning(stores.symbol("b").expect("b was interned")),
+            Meaning::CharGiven('Q')
+        );
+        assert_eq!(
+            stores.meaning(stores.symbol("c").expect("c was interned")),
+            Meaning::CharGiven('Z')
+        );
+    }
+
+    #[test]
+    fn futurelet_assigns_second_token_meaning_and_preserves_order() {
+        let mut stores = Stores::new();
+        install_unexpandable_primitives(&mut stores);
+        let futurelet = stores.symbol("futurelet").expect("futurelet");
+        let mut input = InputStack::new(MemoryInput::new("\\n\\first x"));
+        let mut hooks = NoopExecHooks;
+
+        dispatch_delivered_token(
+            Mode::Vertical,
+            Token::Cs(futurelet),
+            &mut input,
+            &mut stores,
+            &mut hooks,
+        )
+        .expect("futurelet executes");
+
+        let n = stores.symbol("n").expect("n was interned");
+        assert_eq!(stores.meaning(n), Meaning::CharGiven('x'));
+        assert_eq!(
+            input.next_token(&mut stores).expect("first replayed"),
+            Some(Token::Cs(stores.symbol("first").expect("first")))
+        );
+        assert_eq!(
+            input.next_token(&mut stores).expect("second replayed"),
+            Some(Token::Char {
+                ch: 'x',
+                cat: Catcode::Letter
+            })
+        );
+    }
+
+    #[test]
+    fn long_prefix_on_let_reports_tex_prefix_error() {
+        let mut stores = Stores::new();
+        install_unexpandable_primitives(&mut stores);
+        let mut input = InputStack::new(MemoryInput::new("\\long\\let\\a=b"));
+
+        let err = Executor::new()
+            .run(&mut input, &mut stores)
+            .expect_err("prefix is illegal");
+        assert!(err.to_string().contains("You can't use a prefix with"));
+    }
+
+    #[test]
+    fn globaldefs_forces_and_suppresses_global_assignments() {
+        let mut stores = Stores::new();
+        install_unexpandable_primitives(&mut stores);
+        stores.enter_group();
+        let mut input = InputStack::new(MemoryInput::new(
+            "\\globaldefs=1 \\def\\a{A}\\globaldefs=-1 \\gdef\\b{B}",
+        ));
+
+        Executor::new()
+            .run(&mut input, &mut stores)
+            .expect("globaldefs assignments execute");
+        let a = stores.symbol("a").expect("a");
+        let b = stores.symbol("b").expect("b");
+        assert!(matches!(stores.meaning(a), Meaning::Macro { .. }));
+        assert!(matches!(stores.meaning(b), Meaning::Macro { .. }));
+
+        let _ = stores.leave_group();
+        assert!(matches!(stores.meaning(a), Meaning::Macro { .. }));
+        assert_eq!(stores.meaning(b), Meaning::Undefined);
+    }
+
+    fn install_expandable(stores: &mut Stores, name: &str, primitive: ExpandablePrimitive) {
+        let symbol = stores.intern(name);
+        stores.set_meaning(symbol, Meaning::ExpandablePrimitive(primitive));
     }
 }

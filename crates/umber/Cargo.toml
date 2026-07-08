@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+tex-exec = { path = "../tex-exec" }
 tex-expand = { path = "../tex-expand" }
 tex-lex = { path = "../tex-lex" }
 tex-state = { path = "../tex-state" }

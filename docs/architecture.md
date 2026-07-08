@@ -260,16 +260,16 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   that file access belongs to `World`/the driver layer, not to the gullet.
   `\fontname` and the mark-family expandables are documented empty stubs until
   font meanings and page-builder marks exist.
-- The `umber expand-dump` conformance driver consumes a deliberately small
-  assignment surface before printing delivered tokens: optional `\long`,
-  `\outer`, and `\global` prefixes before `\def`, `\edef`, `\gdef`, `\xdef`,
-  `\let`, and `\chardef`; bare `\def`, `\edef`, `\gdef`, `\xdef`, `\let`,
-  `\chardef`; and `\catcode` assignments. Consumed forms perform barriered
-  writes through `Stores` and are omitted from the dump. `\edef`/`\xdef`
-  expand the replacement text in the driver, preserving literal
-  `\noexpand <token>` pairs so later replay suppresses the target token. This
-  is a dump-harness contract only; full assignment semantics remain stomach
-  work.
+- The stomach implements the macro-definition assignment surface used by the
+  expansion conformance path: `\def`, `\edef`, `\gdef`, `\xdef`, `\let`,
+  `\futurelet`, prefix accumulation (`\global`, `\long`, `\outer`,
+  `\protected`), and `\globaldefs` override behavior. These commands scan
+  through the shared gullet/token scanner where expansion is required and
+  write meanings only through the barriered `Stores` facade. The
+  `umber expand-dump` driver delegates those primitives to `tex-exec` before
+  printing delivered tokens; its remaining local assignment handling is
+  limited to dump-corpus scaffolding such as `\chardef` and `\catcode` until
+  those stomach assignments land.
 - **What the gullet never does**: mutate state. `\def`, `\advance`,
   register writes are *unexpandable* — they are delivered to the stomach.
   This is TeX's own factoring and we enforce it in the crate split:

@@ -11,6 +11,7 @@ const OP_RELAX: u8 = 1;
 const OP_MACRO: u8 = 2;
 const OP_CHAR_GIVEN: u8 = 3;
 const OP_EXPANDABLE_PRIMITIVE: u8 = 4;
+const OP_UNEXPANDABLE_PRIMITIVE: u8 = 5;
 
 /// Bitflags carried by meaning words.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -61,6 +62,7 @@ pub enum Meaning {
     },
     CharGiven(char),
     ExpandablePrimitive(ExpandablePrimitive),
+    UnexpandablePrimitive(UnexpandablePrimitive),
     Unknown(RawMeaning),
 }
 
@@ -198,6 +200,59 @@ impl ExpandablePrimitive {
     }
 }
 
+/// Unexpandable primitive opcodes represented directly in meaning words.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UnexpandablePrimitive {
+    Def,
+    Edef,
+    Gdef,
+    Xdef,
+    Let,
+    FutureLet,
+    GlobalDefs,
+    Global,
+    Long,
+    Outer,
+    Protected,
+}
+
+impl UnexpandablePrimitive {
+    #[must_use]
+    pub const fn operand(self) -> u64 {
+        match self {
+            Self::Def => 0,
+            Self::Edef => 1,
+            Self::Gdef => 2,
+            Self::Xdef => 3,
+            Self::Let => 4,
+            Self::FutureLet => 5,
+            Self::GlobalDefs => 6,
+            Self::Global => 7,
+            Self::Long => 8,
+            Self::Outer => 9,
+            Self::Protected => 10,
+        }
+    }
+
+    #[must_use]
+    pub const fn from_operand(operand: u64) -> Option<Self> {
+        match operand {
+            0 => Some(Self::Def),
+            1 => Some(Self::Edef),
+            2 => Some(Self::Gdef),
+            3 => Some(Self::Xdef),
+            4 => Some(Self::Let),
+            5 => Some(Self::FutureLet),
+            6 => Some(Self::GlobalDefs),
+            7 => Some(Self::Global),
+            8 => Some(Self::Long),
+            9 => Some(Self::Outer),
+            10 => Some(Self::Protected),
+            _ => None,
+        }
+    }
+}
+
 /// An unknown raw meaning word decoded from environment storage.
 ///
 /// The fields are intentionally private so downstream code can preserve and
@@ -244,6 +299,11 @@ impl Meaning {
                 MeaningFlags::EMPTY,
                 primitive.operand(),
             ),
+            Self::UnexpandablePrimitive(primitive) => pack(
+                OP_UNEXPANDABLE_PRIMITIVE,
+                MeaningFlags::EMPTY,
+                primitive.operand(),
+            ),
             Self::Unknown(raw) => pack(raw.op, MeaningFlags::EMPTY, raw.operand),
         }
     }
@@ -270,6 +330,10 @@ impl Meaning {
                 Some(primitive) => Self::ExpandablePrimitive(primitive),
                 None => Self::Unknown(RawMeaning { op, operand }),
             },
+            OP_UNEXPANDABLE_PRIMITIVE => match UnexpandablePrimitive::from_operand(operand) {
+                Some(primitive) => Self::UnexpandablePrimitive(primitive),
+                None => Self::Unknown(RawMeaning { op, operand }),
+            },
             _ => Self::Unknown(RawMeaning { op, operand }),
         }
     }
@@ -289,7 +353,9 @@ const fn pack(op: u8, flags: MeaningFlags, operand: u64) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{ExpandablePrimitive, Meaning, MeaningFlags, OPERAND_MASK, RawMeaning};
+    use super::{
+        ExpandablePrimitive, Meaning, MeaningFlags, OPERAND_MASK, RawMeaning, UnexpandablePrimitive,
+    };
     use crate::ids::MacroDefinitionId;
 
     fn round_trip(meaning: Meaning) {
@@ -346,6 +412,9 @@ mod tests {
         ));
         round_trip(Meaning::ExpandablePrimitive(
             ExpandablePrimitive::SplitBotMark,
+        ));
+        round_trip(Meaning::UnexpandablePrimitive(
+            UnexpandablePrimitive::FutureLet,
         ));
         round_trip(Meaning::Unknown(RawMeaning::testing_new(u8::MAX, 0)));
         round_trip(Meaning::Unknown(RawMeaning::testing_new(

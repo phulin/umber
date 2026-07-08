@@ -63,6 +63,9 @@ impl IntParam {
     /// TeX's `\mag` integer parameter.
     pub const MAG: Self = Self::new(17);
 
+    /// TeX's `\globaldefs` integer parameter.
+    pub const GLOBAL_DEFS: Self = Self::new(32);
+
     /// Plain TeX's `\escapechar` integer parameter.
     pub const ESCAPE_CHAR: Self = Self::new(40);
 

@@ -331,6 +331,7 @@ where
         | Meaning::Undefined
         | Meaning::Relax
         | Meaning::CharGiven(_)
+        | Meaning::UnexpandablePrimitive(_)
         | Meaning::Unknown(_) => Ok(Dispatch::Deliver(token)),
     }
 }

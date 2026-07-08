@@ -3,6 +3,7 @@ use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use tex_exec::try_execute_assignment;
 use tex_expand::scan::{ScanToksError, scan_toks};
 use tex_expand::scan_int;
 use tex_expand::{
@@ -45,6 +46,9 @@ struct DumpDriver {
 impl DumpDriver {
     fn dump(&mut self) -> Result<(), ExpandDumpError> {
         while let Some(token) = self.next_delivered()? {
+            if try_execute_assignment(token, &mut self.input, &mut self.stores, &mut self.hooks)? {
+                continue;
+            }
             if self.try_consume_driver_form(token)? {
                 continue;
             }
@@ -406,6 +410,7 @@ fn install_dump_primitives(stores: &mut Stores) {
     let relax = stores.intern("relax");
     stores.set_meaning(relax, Meaning::Relax);
     stores.intern("par");
+    tex_exec::install_unexpandable_primitives(stores);
 
     for (name, primitive) in [
         ("expandafter", ExpandablePrimitive::ExpandAfter),
@@ -458,8 +463,11 @@ fn install_dump_primitives(stores: &mut Stores) {
         "xdef",
         "long",
         "outer",
+        "protected",
         "global",
+        "globaldefs",
         "let",
+        "futurelet",
         "chardef",
         "catcode",
         "count",
@@ -519,6 +527,7 @@ fn catcode_from_i32(value: i32) -> Result<Catcode, ExpandDumpError> {
 #[derive(Debug)]
 pub enum ExpandDumpError {
     Io(io::Error),
+    Exec(tex_exec::ExecError),
     Lex(LexError),
     Expand(ExpandError),
     ScanToks(ScanToksError),
@@ -530,6 +539,7 @@ impl std::fmt::Display for ExpandDumpError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Io(err) => write!(f, "{err}"),
+            Self::Exec(err) => write!(f, "{err}"),
             Self::Lex(err) => write!(f, "{err}"),
             Self::Expand(err) => write!(f, "{err}"),
             Self::ScanToks(err) => write!(f, "{err}"),
@@ -543,6 +553,7 @@ impl std::error::Error for ExpandDumpError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io(err) => Some(err),
+            Self::Exec(err) => Some(err),
             Self::Lex(err) => Some(err),
             Self::Expand(err) => Some(err),
             Self::ScanToks(err) => Some(err),
@@ -555,6 +566,12 @@ impl std::error::Error for ExpandDumpError {
 impl From<io::Error> for ExpandDumpError {
     fn from(value: io::Error) -> Self {
         Self::Io(value)
+    }
+}
+
+impl From<tex_exec::ExecError> for ExpandDumpError {
+    fn from(value: tex_exec::ExecError) -> Self {
+        Self::Exec(value)
     }
 }
 

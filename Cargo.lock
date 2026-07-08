@@ -731,6 +731,7 @@ name = "umber"
 version = "0.1.0"
 dependencies = [
  "test-support",
+ "tex-exec",
  "tex-expand",
  "tex-lex",
  "tex-state",

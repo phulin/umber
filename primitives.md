@@ -200,22 +200,23 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [ ] `\aftergroup` - Saves a token to insert after the current group ends.
 - [ ] `\begingroup` - Starts an explicit group.
 - [x] `\csname` - Builds a control sequence from expanded character tokens and assigns `\relax` to newly-created undefined names through the explicit expansion interning capability.
-- [ ] `\def` - Defines a macro without expanding replacement text.
-- [ ] `\edef` - Defines a macro after expanding replacement text.
+- [x] `\def` - Defines a macro without expanding replacement text.
+- [x] `\edef` - Defines a macro after expanding replacement text.
 - [x] `\endcsname` - Terminates a `\csname` name scan.
 - [ ] `\endgroup` - Ends an explicit group.
 - [x] `\expandafter` - Expands the token after the next token before continuing.
-- [ ] `\futurelet` - Assigns a control sequence to the following token while preserving input.
-- [ ] `\gdef` - Globally defines a macro without expanding replacement text.
-- [ ] `\global` - Prefix that makes the following assignment global.
-- [ ] `\globaldefs` - Overrides local or global assignment behavior by sign.
-- [ ] `\let` - Gives a control sequence the current meaning of another token.
-- [ ] `\long` - Prefix allowing a macro parameter to contain `\par`.
+- [x] `\futurelet` - Assigns a control sequence to the following token while preserving input.
+- [x] `\gdef` - Globally defines a macro without expanding replacement text.
+- [x] `\global` - Prefix that makes the following assignment global.
+- [x] `\globaldefs` - Overrides local or global assignment behavior by sign.
+- [x] `\let` - Gives a control sequence the current meaning of another token.
+- [x] `\long` - Prefix allowing a macro parameter to contain `\par`.
 - [x] `\noexpand` - Suppresses expansion of the next token during expansion-only contexts.
-- [ ] `\outer` - Prefix marking a macro invalid in restricted scanning contexts.
+- [x] `\outer` - Prefix marking a macro invalid in restricted scanning contexts.
+- [x] `\protected` - Prefix marking a macro as protected from expansion.
 - [ ] `\relax` - No-op command that can terminate scans or absorb expansion.
 - [x] `\the` - Expands supported internal quantities or token register values. Current support covers `\count`, `\dimen`, `\toks`, `\endlinechar`, and `\escapechar`; glue, muglue, font dimensions, code tables, box dimensions, page state, and time/job parameters remain TODOs.
-- [ ] `\xdef` - Globally defines a macro after expanding replacement text.
+- [x] `\xdef` - Globally defines a macro after expanding replacement text.
 
 ## Marks
 
