@@ -2,7 +2,7 @@ use tex_expand::{ExpansionHooks, NoopRecorder, get_x_token_with_recorder_and_hoo
 use tex_lex::{InputSource, InputStack};
 use tex_state::glue::GlueSpec;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
-use tex_state::node::{GlueKind, Node};
+use tex_state::node::{GlueKind, KernKind, Node};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
 use tex_state::{BoxDimension, Universe};
@@ -157,6 +157,37 @@ where
             nest.current_list_mut().push(node);
         }
         _ => unreachable!("caller restricts box list commands"),
+    }
+    Ok(())
+}
+
+pub(super) fn execute_kern_or_skip<S, H>(
+    primitive: UnexpandablePrimitive,
+    nest: &mut ModeNest,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    hooks: &mut H,
+) -> Result<(), ExecError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    match primitive {
+        UnexpandablePrimitive::Kern => {
+            let amount = scan_scaled(input, stores, hooks)?;
+            nest.current_list_mut().push(Node::Kern {
+                amount,
+                kind: KernKind::Explicit,
+            });
+        }
+        UnexpandablePrimitive::HSkip | UnexpandablePrimitive::VSkip => {
+            let spec = scan_glue_id(input, stores, hooks, false)?;
+            nest.current_list_mut().push(Node::Glue {
+                spec,
+                kind: GlueKind::Normal,
+            });
+        }
+        _ => unreachable!("caller restricts kern/skip primitives"),
     }
     Ok(())
 }

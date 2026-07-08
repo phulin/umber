@@ -1,0 +1,20 @@
+> \box10=
+\hbox(0.0+0.0)x3.0
+.\kern 1.0
+.\glue 2.0
+
+! OK.
+
+> \box11=
+\vbox(7.0+0.0)x0.0
+.\kern 3.0
+.\glue 4.0
+.\hbox(0.0+0.0)x0.0
+
+! OK.
+
+> \box12=
+\hbox(0.0+0.0)x7.0, glue set 5.0fil
+.\glue 2.0 plus 1.0fil
+
+! OK.

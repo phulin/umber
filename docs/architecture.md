@@ -332,7 +332,16 @@ assignments, box building, and dispatch into the typesetting kernels.
   the barriered promotion write. Pulling boxes back out through `\copy`,
   `\box`, unboxing, `\lastbox`, or box-dimension rewrites clones any
   survivor-backed node tree into the current epoch before it can be appended
-  to an unfinished mode list or promoted again.
+  to an unfinished mode list or promoted again. The implemented scaffold also
+  supports direct explicit `\kern`, `\hskip`, and `\vskip` node construction
+  for currently representable lists; richer horizontal-mode content remains
+  font/paragraph work.
+- **List diagnostics**: `\showbox` routes through `World` terminal/log
+  effects and uses the shared node-list dump emitter in `tex-exec`. The
+  emitter walks frozen node lists through `Universe`, honors
+  `\showboxbreadth` and `\showboxdepth`, and is intentionally reusable by
+  future `\showlists` and `\tracingoutput` diagnostics rather than tied to
+  `\showbox` scanning.
 - **Paragraph and page hand-off**: when horizontal material ends (`\par`),
   the stomach hands the current list to the paragraph kernel and appends
   the resulting vertical material; the page builder (§8) observes appends

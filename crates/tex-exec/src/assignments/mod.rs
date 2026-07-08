@@ -298,6 +298,13 @@ where
                 execute_box_list_command(primitive, nest, input, stores, hooks)?;
                 Ok(false)
             }
+            UnexpandablePrimitive::Kern
+            | UnexpandablePrimitive::HSkip
+            | UnexpandablePrimitive::VSkip => {
+                reject_all_prefixes(prefixes)?;
+                execute_kern_or_skip(primitive, nest, input, stores, hooks)?;
+                Ok(false)
+            }
             UnexpandablePrimitive::Wd | UnexpandablePrimitive::Ht | UnexpandablePrimitive::Dp => {
                 reject_macro_prefixes(prefixes)?;
                 execute_box_dimension_assignment(primitive, prefixes.global, input, stores, hooks)?;
@@ -321,6 +328,12 @@ where
             UnexpandablePrimitive::Show => {
                 reject_all_prefixes(prefixes)?;
                 diagnostics::execute_show(input, stores)?;
+                Ok(false)
+            }
+            UnexpandablePrimitive::ShowBox => {
+                reject_all_prefixes(prefixes)?;
+                let index = scan_register_index(input, stores, hooks)?;
+                diagnostics::execute_showbox(stores, index);
                 Ok(false)
             }
             UnexpandablePrimitive::ShowThe => {

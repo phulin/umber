@@ -8,6 +8,7 @@ use tex_lex::{InputSource, InputStack};
 use tex_state::token::{Catcode, Token};
 use tex_state::{PrintSink, Universe};
 
+use crate::node_dump::{DumpConfig, dump_node_list};
 use crate::{ExecError, push_tokens};
 
 pub(crate) fn execute_show<S>(
@@ -61,6 +62,17 @@ where
     let tokens = scan_balanced_raw_text(input, stores, "\\showtokens")?;
     write_diagnostic(stores, &format!("\n> {}.\n", tokens_text(stores, &tokens)));
     Ok(())
+}
+
+pub(crate) fn execute_showbox(stores: &mut Universe, index: u16) {
+    let mut text = format!("\n> \\box{index}=\n");
+    if let Some(id) = stores.box_reg(index) {
+        text.push_str(&dump_node_list(stores, id, DumpConfig::read(stores)));
+    } else {
+        text.push_str("void\n");
+    }
+    text.push_str("\n! OK.\n");
+    write_diagnostic(stores, &text);
 }
 
 pub(crate) fn execute_message<S, H>(
