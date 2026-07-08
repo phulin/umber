@@ -8,29 +8,29 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 
 - [ ] `\badness` - Reports the badness of the glue setting in the last box made.
 - [ ] `\box` - Appends a box register's contents and clears that register.
-- [ ] `\boxmaxdepth` - Sets the maximum depth allowed when building vertical boxes.
+- [x] `\boxmaxdepth` - Sets the maximum depth allowed when building vertical boxes. Implemented as an assignable dimension parameter consumed by `tex-typeset` vertical packing.
 - [ ] `\cleaders` - Builds centered leaders across glue.
 - [ ] `\copy` - Appends a copy of a box register without clearing it.
 - [ ] `\dp` - Reads or assigns the depth of a box register.
 - [ ] `\everyhbox` - Token list inserted at the start of every `\hbox`.
 - [ ] `\everyvbox` - Token list inserted at the start of every `\vbox`.
-- [ ] `\hbadness` - Threshold above which underfull or loose hboxes are reported.
+- [x] `\hbadness` - Threshold above which underfull or loose hboxes are reported. Implemented as an assignable integer parameter consumed by `tex-typeset` horizontal packing diagnostics.
 - [ ] `\hbox` - Builds a horizontal box.
-- [ ] `\hfuzz` - Tolerance before overfull hboxes are reported.
+- [x] `\hfuzz` - Tolerance before overfull hboxes are reported. Implemented as an assignable dimension parameter consumed by `tex-typeset` horizontal packing diagnostics.
 - [ ] `\hrule` - Adds a horizontal rule in vertical mode.
 - [ ] `\ht` - Reads or assigns the height of a box register.
 - [ ] `\lastbox` - Removes and returns the last box from the current list when allowed.
 - [ ] `\leaders` - Repeats a box or rule across glue.
-- [ ] `\overfullrule` - Width of the diagnostic rule added to overfull boxes.
+- [x] `\overfullrule` - Width of the diagnostic rule added to overfull boxes. Implemented as an assignable dimension parameter read by `tex-typeset`; diagnostic rule insertion remains tied to future box primitive emission.
 - [ ] `\prevdepth` - Depth of the previous box on the current vertical list.
 - [ ] `\setbox` - Assigns a box register from an `\hbox`, `\vbox`, or `\vtop`.
 - [ ] `\unhbox` - Unpacks an hbox register into the current list and clears it.
 - [ ] `\unhcopy` - Unpacks a copy of an hbox register into the current list.
 - [ ] `\unvbox` - Unpacks a vbox register into the current list and clears it.
 - [ ] `\unvcopy` - Unpacks a copy of a vbox register into the current list.
-- [ ] `\vbadness` - Threshold above which underfull or loose vboxes are reported.
+- [x] `\vbadness` - Threshold above which underfull or loose vboxes are reported. Implemented as an assignable integer parameter consumed by `tex-typeset` vertical packing diagnostics.
 - [ ] `\vbox` - Builds a vertical box with normal baseline positioning.
-- [ ] `\vfuzz` - Tolerance before overfull vboxes are reported.
+- [x] `\vfuzz` - Tolerance before overfull vboxes are reported. Implemented as an assignable dimension parameter consumed by `tex-typeset` vertical packing diagnostics.
 - [ ] `\vrule` - Adds a vertical rule in horizontal mode.
 - [ ] `\vtop` - Builds a vertical box aligned by its first item.
 - [ ] `\wd` - Reads or assigns the width of a box register.
@@ -69,8 +69,8 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [ ] `\scrollmode` - Scrolls past errors while still showing diagnostics.
 - [x] `\show` - Displays the meaning of the next token through World's terminal/log effect sink for implemented meaning classes.
 - [ ] `\showbox` - Writes a box register's contents to the log.
-- [ ] `\showboxbreadth` - Maximum number of list items shown per level.
-- [ ] `\showboxdepth` - Maximum nesting depth shown for box diagnostics.
+- [x] `\showboxbreadth` - Maximum number of list items shown per level. Implemented as an assignable integer parameter; the `\showbox` emitter is tracked separately.
+- [x] `\showboxdepth` - Maximum nesting depth shown for box diagnostics. Implemented as an assignable integer parameter; the `\showbox` emitter is tracked separately.
 - [x] `\showlists` - Writes the current mostly-empty mode nest in pdfTeX format through World's terminal/log effect sink.
 - [x] `\showthe` - Displays the value produced by implemented `\the` targets through World's terminal/log effect sink.
 - [ ] `\tracingcommands` - Logs command execution when positive.

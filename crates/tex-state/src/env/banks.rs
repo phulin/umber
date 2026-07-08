@@ -89,6 +89,32 @@ impl IntParam {
 
     /// Plain TeX's `\endlinechar` integer parameter.
     pub const END_LINE_CHAR: Self = Self::new(48);
+
+    /// TeX's `\showboxbreadth` integer parameter.
+    pub const SHOW_BOX_BREADTH: Self = Self::new(24);
+
+    /// TeX's `\showboxdepth` integer parameter.
+    pub const SHOW_BOX_DEPTH: Self = Self::new(25);
+
+    /// TeX's `\hbadness` integer parameter.
+    pub const HBADNESS: Self = Self::new(26);
+
+    /// TeX's `\vbadness` integer parameter.
+    pub const VBADNESS: Self = Self::new(27);
+}
+
+impl DimenParam {
+    /// TeX's `\boxmaxdepth` dimension parameter.
+    pub const BOX_MAX_DEPTH: Self = Self::new(7);
+
+    /// TeX's `\hfuzz` dimension parameter.
+    pub const HFUZZ: Self = Self::new(8);
+
+    /// TeX's `\vfuzz` dimension parameter.
+    pub const VFUZZ: Self = Self::new(9);
+
+    /// TeX's `\overfullrule` dimension parameter.
+    pub const OVERFULL_RULE: Self = Self::new(16);
 }
 
 pub(crate) trait BankCodec {

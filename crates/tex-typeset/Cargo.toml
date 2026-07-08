@@ -1,0 +1,10 @@
+[package]
+name = "tex-typeset"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tex-state = { path = "../tex-state" }
+
+[lints]
+workspace = true

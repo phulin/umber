@@ -365,6 +365,13 @@ makes box-level memoization (M4) sound.
 - **Vertical packing, `\vsplit`, marks**: operate on survivor-arena lists
   (they are reachable from box registers by definition); mark extraction
   reads are recorded like any state read.
+- **Implemented packing foundation**: `tex-typeset` currently provides pure
+  `hpack`, `vpack`, `vtop`, and TeX.web §108 badness over frozen node lists.
+  The crate reads `Universe` immutably, copies packing parameters into plain
+  structs at entry, and returns box payloads plus diagnostics without writing
+  state. Stomach-side box-building primitives are tracked separately until
+  `tex-exec` mode levels own real node builders instead of placeholder
+  summaries.
 
 ## 8. Page builder and output routine
 
