@@ -1,0 +1,332 @@
+use super::Universe;
+use crate::font::NULL_FONT;
+use crate::glue::{GlueSpec, Order};
+use crate::macro_store::MacroMeaning;
+use crate::meaning::{Meaning, MeaningFlags};
+use crate::node::{BoxNode, BoxNodeFields, Node, Sign};
+use crate::scaled::Scaled;
+use crate::token::{Catcode, Token};
+use crate::world::{ContentHash, JobClock, PrintSink, StreamSlot, World};
+
+#[test]
+fn universe_is_send() {
+    fn assert_send<T: Send>() {}
+
+    assert_send::<Universe>();
+}
+
+#[test]
+#[should_panic(expected = "Universe snapshot belongs to a different Universe instance")]
+fn rollback_rejects_snapshot_from_different_universe() {
+    let mut first = Universe::new();
+    let mut second = Universe::new();
+    let snapshot = first.snapshot();
+
+    second.rollback(&snapshot);
+}
+
+#[test]
+fn rollback_restores_store_tuple_and_placeholder_scalars() {
+    let mut universe = Universe::new();
+    let symbol = universe.intern("x");
+    let snapshot = universe.snapshot();
+
+    universe.set_meaning(symbol, Meaning::Relax);
+    universe.rollback(&snapshot);
+
+    assert_eq!(universe.meaning(symbol), Meaning::Undefined);
+}
+
+#[test]
+fn rollback_bumps_epoch_past_previous_live_epoch() {
+    let mut universe = Universe::new();
+    let snapshot = universe.snapshot();
+    let before_rollback = universe.env().epoch();
+
+    universe.rollback(&snapshot);
+
+    assert!(snapshot.epoch() < before_rollback);
+    assert!(before_rollback < universe.env().epoch());
+}
+
+#[test]
+fn job_clock_initializes_tex_clock_parameters_once() {
+    let clock = JobClock {
+        time: 721,
+        day: 8,
+        month: 7,
+        year: 2026,
+    };
+    let universe = Universe::with_world(World::memory_with_clock(clock));
+
+    assert_eq!(universe.int_param(crate::env::banks::IntParam::TIME), 721);
+    assert_eq!(universe.int_param(crate::env::banks::IntParam::DAY), 8);
+    assert_eq!(universe.int_param(crate::env::banks::IntParam::MONTH), 7);
+    assert_eq!(universe.int_param(crate::env::banks::IntParam::YEAR), 2026);
+}
+
+#[test]
+fn rollback_restores_world_inputs_stream_buffers_and_rng() {
+    let mut universe = Universe::new();
+    universe
+        .world_mut()
+        .set_memory_file("main.tex", b"abc".to_vec())
+        .expect("seed memory file");
+    let slot = StreamSlot::new(2);
+    let snapshot = universe.snapshot();
+
+    let read = universe
+        .world_mut()
+        .open_in(slot, "main.tex")
+        .expect("read file through world");
+    universe.world_mut().open_out(slot, "main.aux");
+    universe
+        .world_mut()
+        .write_text(PrintSink::Stream(slot), "partial");
+    let random = universe.world_mut().next_random_u64();
+    assert_eq!(read.hash(), ContentHash::from_bytes(b"abc"));
+    assert_eq!(universe.world().input_records().len(), 1);
+
+    universe.rollback(&snapshot);
+
+    assert!(universe.world().input_records().is_empty());
+    assert_eq!(universe.world().stream_bufs().partial_line(slot), "");
+    assert!(
+        universe
+            .world()
+            .stream_bufs()
+            .read_stream_path(slot)
+            .is_none()
+    );
+    assert_eq!(universe.world_mut().next_random_u64(), random);
+}
+
+#[test]
+fn snapshot_state_hash_is_deterministic_for_same_program() {
+    assert_eq!(
+        checkpoint_hashes_for_program(),
+        checkpoint_hashes_for_program()
+    );
+}
+
+#[test]
+fn snapshot_state_hash_ignores_content_intern_order() {
+    let mut first = Universe::new();
+    let zed = first.intern("z");
+    let alpha = first.intern("alpha");
+    let macro_target = first.intern("macro_target");
+    first.set_meaning(zed, Meaning::Relax);
+    let filler_tokens = first.intern_token_list(&[Token::param(1)]);
+    let target_tokens = first.intern_token_list(&[
+        Token::Cs(alpha),
+        Token::Char {
+            ch: 'x',
+            cat: Catcode::Letter,
+        },
+    ]);
+    let filler_glue = first.intern_glue(glue(99));
+    let target_glue = first.intern_glue(glue(7));
+    let filler_macro = first.intern_macro(MacroMeaning::new(
+        MeaningFlags::LONG,
+        filler_tokens,
+        filler_tokens,
+    ));
+    let target_macro = first.intern_macro(MacroMeaning::new(
+        MeaningFlags::PROTECTED,
+        target_tokens,
+        target_tokens,
+    ));
+    first.set_toks(0, target_tokens);
+    first.set_skip(0, target_glue);
+    first.set_meaning(
+        macro_target,
+        Meaning::Macro {
+            flags: MeaningFlags::PROTECTED,
+            definition: target_macro,
+        },
+    );
+    assert_ne!(filler_glue, target_glue);
+    assert_ne!(filler_macro, target_macro);
+    let first_hash = first.snapshot().state_hash();
+
+    let mut second = Universe::new();
+    let macro_target = second.intern("macro_target");
+    let alpha = second.intern("alpha");
+    let target_tokens = second.intern_token_list(&[
+        Token::Cs(alpha),
+        Token::Char {
+            ch: 'x',
+            cat: Catcode::Letter,
+        },
+    ]);
+    let filler_tokens = second.intern_token_list(&[Token::param(1)]);
+    let target_glue = second.intern_glue(glue(7));
+    let filler_glue = second.intern_glue(glue(99));
+    let target_macro = second.intern_macro(MacroMeaning::new(
+        MeaningFlags::PROTECTED,
+        target_tokens,
+        target_tokens,
+    ));
+    let filler_macro = second.intern_macro(MacroMeaning::new(
+        MeaningFlags::LONG,
+        filler_tokens,
+        filler_tokens,
+    ));
+    let zed = second.intern("z");
+    second.set_meaning(zed, Meaning::Relax);
+    second.set_toks(0, target_tokens);
+    second.set_skip(0, target_glue);
+    second.set_meaning(
+        macro_target,
+        Meaning::Macro {
+            flags: MeaningFlags::PROTECTED,
+            definition: target_macro,
+        },
+    );
+    assert_ne!(filler_glue, target_glue);
+    assert_ne!(filler_macro, target_macro);
+
+    assert_eq!(first_hash, second.snapshot().state_hash());
+}
+
+#[test]
+fn snapshot_state_hash_changes_for_one_register_bit() {
+    let mut unchanged = Universe::new();
+    let mut changed = Universe::new();
+    changed.set_count(0, 1);
+
+    assert_ne!(
+        unchanged.snapshot().state_hash(),
+        changed.snapshot().state_hash()
+    );
+}
+
+#[test]
+fn clone_preserves_pending_state_hash_slice() {
+    let mut original = Universe::new();
+    let _base = original.snapshot();
+    original.set_count(0, 42);
+    let mut fork = original.clone();
+
+    assert_eq!(fork.count(0), 42);
+    assert_eq!(
+        original.snapshot().state_hash(),
+        fork.snapshot().state_hash()
+    );
+}
+
+#[test]
+fn snapshot_state_hash_changes_for_rng_only_change() {
+    let mut unchanged = Universe::new();
+    let mut changed = Universe::new();
+    let _ = changed.world_mut().next_random_u64();
+
+    assert_ne!(
+        unchanged.snapshot().state_hash(),
+        changed.snapshot().state_hash()
+    );
+}
+
+#[test]
+fn snapshot_state_hash_distinguishes_font_content_identity() {
+    let mut first = Universe::new();
+    let mut second = Universe::new();
+    let first_symbol = first.intern("font");
+    let second_symbol = second.intern("font");
+
+    let first_font = first.intern_font(test_font("cmr10", b"same"));
+    let second_font = second.intern_font(test_font("cmr10", b"different"));
+    assert_eq!(first_font.raw(), second_font.raw());
+
+    first.set_meaning(first_symbol, Meaning::Font(first_font));
+    second.set_meaning(second_symbol, Meaning::Font(second_font));
+
+    assert_ne!(
+        first.snapshot().state_hash(),
+        second.snapshot().state_hash()
+    );
+}
+
+#[test]
+fn rollback_restores_state_hash_cursor() {
+    let mut universe = Universe::new();
+    let base = universe.snapshot();
+    universe.set_count(0, 10);
+    let first = universe.snapshot();
+
+    universe.rollback(&base);
+    universe.set_count(0, 10);
+    let second = universe.snapshot();
+
+    assert_eq!(first.state_hash(), second.state_hash());
+}
+
+#[test]
+fn snapshot_state_hash_walks_deep_node_lists_iteratively() {
+    let mut universe = Universe::new();
+    let mut current = universe.freeze_node_list(&[Node::Char {
+        font: NULL_FONT,
+        ch: 'x',
+    }]);
+
+    for _ in 0..5000 {
+        current = universe.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
+            width: Scaled::from_raw(1),
+            height: Scaled::from_raw(2),
+            depth: Scaled::from_raw(3),
+            shift: Scaled::from_raw(0),
+            glue_set: 0.0,
+            glue_sign: Sign::Normal,
+            glue_order: Order::Normal,
+            children: current,
+        }))]);
+    }
+
+    universe.set_box_reg(0, current);
+    assert_ne!(universe.snapshot().state_hash(), 0);
+}
+
+fn checkpoint_hashes_for_program() -> Vec<u64> {
+    let mut universe = Universe::new();
+    let mut hashes = Vec::new();
+    hashes.push(universe.snapshot().state_hash());
+
+    universe.set_count(0, 42);
+    universe.set_catcode('@', Catcode::Letter);
+    hashes.push(universe.snapshot().state_hash());
+
+    let symbol = universe.intern("foo");
+    let tokens = universe.intern_token_list(&[Token::Cs(symbol)]);
+    universe.set_toks(2, tokens);
+    universe
+        .world_mut()
+        .record_deferred_write(StreamSlot::new(1), tokens);
+    hashes.push(universe.snapshot().state_hash());
+
+    let _ = universe.world_mut().next_random_u64();
+    hashes.push(universe.snapshot().state_hash());
+    hashes
+}
+
+fn glue(width: i32) -> GlueSpec {
+    GlueSpec {
+        width: Scaled::from_raw(width),
+        stretch: Scaled::from_raw(1),
+        stretch_order: Order::Fil,
+        shrink: Scaled::from_raw(2),
+        shrink_order: Order::Normal,
+    }
+}
+
+fn test_font(name: &str, bytes: &[u8]) -> crate::font::LoadedFont {
+    crate::font::LoadedFont::new(
+        name,
+        format!("{name}.tfm"),
+        ContentHash::from_bytes(bytes).bytes(),
+        0,
+        Scaled::from_raw(10 * Scaled::UNITY),
+        Scaled::from_raw(10 * Scaled::UNITY),
+        vec![Scaled::from_raw(0); 7],
+        crate::font::FontMetrics::default(),
+    )
+}
