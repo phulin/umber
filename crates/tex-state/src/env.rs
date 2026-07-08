@@ -799,6 +799,7 @@ fn pack_current_font(symbol: Option<Symbol>, font: FontId) -> u64 {
     (symbol << 32) | u64::from(font.raw())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn set_font_bank_word(
     map: &mut BTreeMap<u32, WordStamp>,
     journal: &mut Journal,

@@ -221,17 +221,23 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   pairs (`core_state.md` §9). Off by default, zero-cost when off (the
   recorder is a generic parameter of the loop, monomorphized away).
 - The implemented `tex-expand` scaffold exposes that loop over
-  `tex-lex::InputStack` with `Universe` access for meaning reads and explicit
-  token-list freezing during macro argument matching. Macro body replay uses
+  `tex-lex::InputStack` with `&mut Universe` access. That mutable aggregate is
+  currently needed because lexing can intern newly encountered control sequence
+  names and expansion-owned scanners freeze token lists, intern glue specs,
+  prepare magnification, and perform `\csname`'s relaxed control-sequence
+  interning. Macro body replay uses
   the body `TokenListId` directly plus frozen argument ids on the replay
   frame; it does not allocate a substituted body list. Token-list replay is
   naturally read-only; source-frame replay may intern newly encountered
-  control sequence names through the lexer/interner capability, but it still
-  does not widen expansion to mutable `Env` access. `\csname` uses a dedicated
+  control sequence names through the lexer/interner capability, but production
+  expansion code must treat the wider `&mut Universe` as a conventionally
+  narrowed capability rather than a license to assign mutable TeX state.
+  `\csname` uses a dedicated
   expansion scan that stops on `\endcsname`, validates that expanded name
   material is character tokens, and interns/relaxes the resulting control
-  sequence through an explicit sanctioned capability rather than widening
-  expansion to mutable `Env` access.
+  sequence through the same aggregate boundary. This means the crate split
+  currently preserves journaled mutation, but it does not yet Rust-enforce the
+  stronger "gullet cannot write Env/register/code-table state" theorem.
 - Frame-control expandables are represented as input-frame rewrites:
   `\expandafter` saves one raw token, performs one expansion step on the
   following token, then pushes the saved token above the expansion result;
@@ -277,13 +283,19 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   printing delivered tokens; its remaining local assignment handling is
   limited to dump-corpus scaffolding such as `\chardef` and `\catcode` until
   those stomach assignments land.
-- **What the gullet never does**: mutate state. `\def`, `\advance`,
-  register writes are *unexpandable* — they are delivered to the stomach.
-  This is TeX's own factoring and we enforce it in the crate split:
-  `tex-expand` gets `&Env` (plus token-builder access), never `&mut Env`.
-  The handful of true exceptions (`\csname` interning, alignment's
-  `\span`-time expansion) are threaded explicitly, not by widening the
-  borrow.
+- **What the gullet never does semantically**: perform TeX assignments.
+  `\def`, `\advance`, register writes, and code-table writes are
+  *unexpandable* — they are delivered to the stomach. This is TeX's own
+  factoring, and the implementation follows it behaviorally: expansion
+  routines use the aggregate state API for reads and for sanctioned immutable
+  content/interner operations only. However, today `tex-expand` still receives
+  `&mut Universe`, so the Rust type system does not yet prevent accidental
+  calls to barriered assignment methods such as meaning, register, or
+  code-table setters from inside the gullet. The current enforced contract is
+  therefore "all mutation is journaled and centralized in `Universe`"; the
+  stronger "the gullet cannot mutate Env/register/code-table state" boundary
+  remains future work that should be implemented by a narrower expansion
+  capability shared with `tex-lex`.
 
 ## 6. Execution engine (the stomach)
 
