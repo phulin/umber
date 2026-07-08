@@ -113,6 +113,8 @@ pub enum KernKind {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum GlueKind {
     Normal,
+    BaselineSkip,
+    LineSkip,
     Leaders,
     Cleaders,
     Xleaders,

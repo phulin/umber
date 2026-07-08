@@ -1,5 +1,6 @@
 use tex_expand::{ExpansionHooks, NoopRecorder, get_x_token_with_recorder_and_hooks};
 use tex_lex::{InputSource, InputStack};
+use tex_state::env::banks::{DimenParam, GlueParam};
 use tex_state::glue::GlueSpec;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::node::{GlueKind, KernKind, Node};
@@ -9,6 +10,7 @@ use tex_state::{BoxDimension, Universe};
 use tex_typeset::{HpackParams, PackSpec, VpackParams, hpack, vpack, vtop};
 
 use super::*;
+use crate::mode::IGNORE_DEPTH;
 use crate::{ExecError, Mode, ModeNest};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -56,7 +58,7 @@ where
     H: ExpansionHooks<S>,
 {
     let node = scan_box_node(kind_for_primitive(primitive)?, input, stores, hooks)?;
-    nest.current_list_mut().push(node);
+    append_node_to_current_list(nest, stores, node)?;
     Ok(())
 }
 
@@ -131,7 +133,7 @@ where
             } else {
                 stores.box_reg(index)
             };
-            append_box_register(nest, stores, id);
+            append_box_register(nest, stores, id)?;
         }
         UnexpandablePrimitive::UnHBox | UnexpandablePrimitive::UnVBox => {
             let index = scan_register_index(input, stores, hooks)?;
@@ -154,7 +156,7 @@ where
             let amount = scan_scaled(input, stores, hooks)?;
             let mut node = scan_required_box_node(input, stores, hooks)?;
             apply_shift(&mut node, primitive, amount)?;
-            nest.current_list_mut().push(node);
+            append_node_to_current_list(nest, stores, node)?;
         }
         _ => unreachable!("caller restricts box list commands"),
     }
@@ -323,11 +325,12 @@ fn append_box_register(
     nest: &mut ModeNest,
     stores: &mut Universe,
     id: Option<tex_state::ids::NodeListId>,
-) {
+) -> Result<(), ExecError> {
     if let Some(node) = first_box_node(stores, id) {
         let node = stores.clone_node_to_epoch(node);
-        nest.current_list_mut().push(node);
+        append_node_to_current_list(nest, stores, node)?;
     }
+    Ok(())
 }
 
 fn append_unboxed(
@@ -348,9 +351,74 @@ fn append_unboxed(
             Ok(())
         }
         (_, node) => {
-            nest.current_list_mut().push(node);
+            append_node_to_current_list(nest, stores, node)?;
             Ok(())
         }
+    }
+}
+
+fn append_node_to_current_list(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    node: Node,
+) -> Result<(), ExecError> {
+    if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
+        append_node_to_vertical_list(nest, stores, node)
+    } else {
+        nest.current_list_mut().push(node);
+        Ok(())
+    }
+}
+
+fn append_node_to_vertical_list(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    node: Node,
+) -> Result<(), ExecError> {
+    let Some((height, depth)) = vertical_baseline_dimensions(&node) else {
+        nest.current_list_mut().push(node);
+        return Ok(());
+    };
+    if let Some(prev_depth) = nest.current_list().prev_depth()
+        && prev_depth.raw() > IGNORE_DEPTH.raw()
+    {
+        let baseline = stores.glue(stores.glue_param(GlueParam::BASELINE_SKIP));
+        let requested = baseline
+            .width
+            .checked_sub(prev_depth)
+            .and_then(|value| value.checked_sub(height))
+            .ok_or(ExecError::ArithmeticOverflow)?;
+        let (spec, kind) =
+            if requested.raw() < stores.dimen_param(DimenParam::LINE_SKIP_LIMIT).raw() {
+                (stores.glue_param(GlueParam::LINE_SKIP), GlueKind::LineSkip)
+            } else {
+                (
+                    stores.intern_glue(GlueSpec {
+                        width: requested,
+                        stretch: baseline.stretch,
+                        stretch_order: baseline.stretch_order,
+                        shrink: baseline.shrink,
+                        shrink_order: baseline.shrink_order,
+                    }),
+                    GlueKind::BaselineSkip,
+                )
+            };
+        nest.current_list_mut().push(Node::Glue { spec, kind });
+    }
+    let list = nest.current_list_mut();
+    list.push(node);
+    list.set_prev_depth(depth);
+    Ok(())
+}
+
+fn vertical_baseline_dimensions(node: &Node) -> Option<(Scaled, Scaled)> {
+    match node {
+        Node::HList(box_node) | Node::VList(box_node) => Some((box_node.height, box_node.depth)),
+        Node::Rule { height, depth, .. } => Some((
+            height.unwrap_or(Scaled::from_raw(0)),
+            depth.unwrap_or(Scaled::from_raw(0)),
+        )),
+        _ => None,
     }
 }
 

@@ -1,7 +1,11 @@
 use tex_expand::EngineMode;
 use tex_state::node::Node;
+use tex_state::scaled::Scaled;
 
 use crate::ExecError;
+
+/// TeX's sentinel depth used before any vertical-list box has established a baseline.
+pub const IGNORE_DEPTH: Scaled = Scaled::from_raw(-65_536_000);
 
 /// One of TeX's six semantic modes.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -39,6 +43,7 @@ impl Mode {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ModeList {
     nodes: Vec<Node>,
+    prev_depth: Option<Scaled>,
 }
 
 impl ModeList {
@@ -58,6 +63,15 @@ impl ModeList {
 
     pub fn append(&mut self, nodes: impl IntoIterator<Item = Node>) {
         self.nodes.extend(nodes);
+    }
+
+    #[must_use]
+    pub const fn prev_depth(&self) -> Option<Scaled> {
+        self.prev_depth
+    }
+
+    pub fn set_prev_depth(&mut self, depth: Scaled) {
+        self.prev_depth = Some(depth);
     }
 
     pub fn pop_box(&mut self) -> Option<Node> {

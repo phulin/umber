@@ -343,6 +343,13 @@ assignments, box building, and dispatch into the typesetting kernels.
   supports direct explicit `\kern`, `\hskip`, and `\vskip` node construction
   for currently representable lists; richer horizontal-mode content remains
   font/paragraph work.
+  Vertical list construction tracks TeX's `prev_depth` on each mode-list
+  level. Appending a box or rule to a vertical/internal-vertical list inserts
+  the implicit adjusted `\baselineskip` glue, or `\lineskip` when the adjusted
+  baseline glue is below `\lineskiplimit`, before freezing and packing the
+  list. This keeps baseline/interline side effects in the stomach boundary;
+  `tex-typeset` receives explicit glue nodes and remains a pure measurement
+  and packing kernel.
 - **List diagnostics**: `\showbox` routes through `World` terminal/log
   effects and uses the shared node-list dump emitter in `tex-exec`. The
   emitter walks frozen node lists through `Universe`, honors

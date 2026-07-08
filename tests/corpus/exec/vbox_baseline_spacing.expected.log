@@ -1,0 +1,15 @@
+> \box1=
+\vbox(16.0+1.0)x6.0
+.\hbox(4.0+1.0)x6.0
+.\glue(\baselineskip) 7.0
+.\hbox(4.0+1.0)x6.0
+
+! OK.
+
+> \box2=
+\vbox(12.0+1.0)x6.0
+.\hbox(4.0+1.0)x6.0
+.\glue(\lineskip) 3.0
+.\hbox(4.0+1.0)x6.0
+
+! OK.

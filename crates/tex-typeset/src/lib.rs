@@ -374,7 +374,7 @@ fn measure_vlist(state: &impl TypesetState, nodes: &[Node]) -> Measurement {
                     meas.width = meas.width.max(*width);
                 }
             }
-            Node::Kern { amount, .. } => meas.height = add(meas.height, *amount),
+            Node::Kern { amount, .. } => add_vertical_spacing(&mut meas, *amount),
             Node::Glue { spec, .. } => add_glue(&mut meas, state.glue(*spec), Axis::Vertical),
             Node::Penalty(_) => {}
             Node::Char { .. }
@@ -401,12 +401,17 @@ enum Axis {
 fn add_glue(meas: &mut Measurement, spec: GlueSpec, axis: Axis) {
     match axis {
         Axis::Horizontal => meas.width = add(meas.width, spec.width),
-        Axis::Vertical => meas.height = add(meas.height, add(meas.depth, spec.width)),
+        Axis::Vertical => add_vertical_spacing(meas, spec.width),
     }
     meas.stretch[spec.stretch_order as usize] =
         add(meas.stretch[spec.stretch_order as usize], spec.stretch);
     meas.shrink[spec.shrink_order as usize] =
         add(meas.shrink[spec.shrink_order as usize], spec.shrink);
+}
+
+fn add_vertical_spacing(meas: &mut Measurement, amount: Scaled) {
+    meas.height = add(meas.height, add(meas.depth, amount));
+    meas.depth = Scaled::from_raw(0);
 }
 
 fn clamp_depth(meas: &mut Measurement, box_max_depth: Scaled) {
@@ -527,6 +532,49 @@ mod tests {
         );
         assert_eq!(packed.node.height, sp(15));
         assert_eq!(packed.node.depth, sp(3));
+    }
+
+    #[test]
+    fn vertical_spacing_consumes_previous_depth() {
+        let mut universe = Universe::new();
+        let child = universe.freeze_node_list(&[]);
+        let glue = universe.intern_glue(GlueSpec {
+            width: sp(7),
+            stretch: sp(0),
+            stretch_order: Order::Normal,
+            shrink: sp(0),
+            shrink_order: Order::Normal,
+        });
+        let hbox = Node::HList(BoxNode::new(BoxNodeFields {
+            width: sp(6),
+            height: sp(4),
+            depth: sp(1),
+            shift: sp(0),
+            glue_set: 0.0,
+            glue_sign: Sign::Normal,
+            glue_order: Order::Normal,
+            children: child,
+        }));
+        let list = universe.freeze_node_list(&[
+            hbox.clone(),
+            Node::Glue {
+                spec: glue,
+                kind: GlueKind::BaselineSkip,
+            },
+            hbox,
+        ]);
+        let packed = vpack(
+            &universe,
+            list,
+            PackSpec::Natural,
+            VpackParams {
+                vbadness: INF_BAD,
+                vfuzz: sp(0),
+                box_max_depth: sp(100),
+            },
+        );
+        assert_eq!(packed.node.height, sp(16));
+        assert_eq!(packed.node.depth, sp(1));
     }
 
     #[test]

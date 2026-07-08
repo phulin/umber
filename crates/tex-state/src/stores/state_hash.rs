@@ -597,9 +597,11 @@ fn hash_kern_kind(kind: KernKind, hasher: &mut StateHasher) {
 fn hash_glue_kind(kind: GlueKind, hasher: &mut StateHasher) {
     hasher.u8(match kind {
         GlueKind::Normal => 0,
-        GlueKind::Leaders => 1,
-        GlueKind::Cleaders => 2,
-        GlueKind::Xleaders => 3,
+        GlueKind::BaselineSkip => 1,
+        GlueKind::LineSkip => 2,
+        GlueKind::Leaders => 3,
+        GlueKind::Cleaders => 4,
+        GlueKind::Xleaders => 5,
     });
 }
 

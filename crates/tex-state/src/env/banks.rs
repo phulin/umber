@@ -104,6 +104,9 @@ impl IntParam {
 }
 
 impl DimenParam {
+    /// TeX's `\lineskiplimit` dimension parameter.
+    pub const LINE_SKIP_LIMIT: Self = Self::new(2);
+
     /// TeX's `\boxmaxdepth` dimension parameter.
     pub const BOX_MAX_DEPTH: Self = Self::new(7);
 
@@ -115,6 +118,14 @@ impl DimenParam {
 
     /// TeX's `\overfullrule` dimension parameter.
     pub const OVERFULL_RULE: Self = Self::new(16);
+}
+
+impl GlueParam {
+    /// TeX's `\lineskip` glue parameter.
+    pub const LINE_SKIP: Self = Self::new(0);
+
+    /// TeX's `\baselineskip` glue parameter.
+    pub const BASELINE_SKIP: Self = Self::new(1);
 }
 
 pub(crate) trait BankCodec {

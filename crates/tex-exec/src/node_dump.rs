@@ -54,10 +54,12 @@ fn dump_node(stores: &Universe, node: &Node, config: &DumpConfig, depth: i32, ou
             let _ = writeln!(out, "\\kern {}", format_scaled_without_unit(*amount));
         }
         Node::Glue { spec, kind } => {
-            if *kind != GlueKind::Normal {
-                out.push_str(kind.glue_dump_prefix());
-            }
-            let _ = writeln!(out, "\\glue {}", format_glue(stores.glue(*spec)));
+            let _ = writeln!(
+                out,
+                "{}{}",
+                kind.glue_dump_prefix(),
+                format_glue(stores.glue(*spec))
+            );
         }
         Node::HList(box_node) => {
             dump_box("hbox", stores, box_node, config, depth, out);
@@ -230,10 +232,12 @@ trait GlueKindDump {
 impl GlueKindDump for GlueKind {
     fn glue_dump_prefix(self) -> &'static str {
         match self {
-            Self::Normal => "",
-            Self::Leaders => "\\leaders ",
-            Self::Cleaders => "\\cleaders ",
-            Self::Xleaders => "\\xleaders ",
+            Self::Normal => "\\glue ",
+            Self::BaselineSkip => "\\glue(\\baselineskip) ",
+            Self::LineSkip => "\\glue(\\lineskip) ",
+            Self::Leaders => "\\leaders \\glue ",
+            Self::Cleaders => "\\cleaders \\glue ",
+            Self::Xleaders => "\\xleaders \\glue ",
         }
     }
 }
