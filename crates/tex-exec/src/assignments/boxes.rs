@@ -175,7 +175,7 @@ where
     Ok(())
 }
 
-fn scan_required_box_node<S, H>(
+pub(super) fn scan_required_box_node<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
@@ -273,6 +273,7 @@ where
         }
         match crate::dispatch_delivered_token(nest, token, input, stores, hooks)? {
             crate::DispatchAction::Continue => {}
+            crate::DispatchAction::Shipout(_) => {}
             crate::DispatchAction::End => return Ok(()),
             crate::DispatchAction::NotConsumed => {
                 return Err(ExecError::UnimplementedTypesetting {

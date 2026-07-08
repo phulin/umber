@@ -98,9 +98,9 @@ fn run_tex(path: &str, _show_fixtures: bool) -> Result<(), CliError> {
 
     let mut input = InputStack::new(WorldInput::from_content(content));
     let mut hooks = RunHooks::new(path);
-    let _ = umber::run_input_with_hooks(&mut input, &mut stores, &mut hooks)?;
+    let _run = umber::run_input_collecting_artifacts(&mut input, &mut stores, &mut hooks)?;
     let effect_pos = stores.world().effect_pos();
-    stores.world_mut().commit_effects(effect_pos)?;
+    stores.commit_effects(effect_pos)?;
     Ok(())
 }
 

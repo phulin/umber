@@ -77,6 +77,9 @@ pub enum ExecError {
         token: Token,
         operation: &'static str,
     },
+    UnsupportedShipoutNode {
+        node: &'static str,
+    },
 }
 
 impl fmt::Display for ExecError {
@@ -157,6 +160,12 @@ impl fmt::Display for ExecError {
                 f,
                 "typesetting path is not implemented yet: {operation} in {mode:?} for token {token:?}"
             ),
+            Self::UnsupportedShipoutNode { node } => {
+                write!(
+                    f,
+                    "shipout artifact lowering does not support {node} nodes yet"
+                )
+            }
         }
     }
 }
@@ -198,7 +207,8 @@ impl std::error::Error for ExecError {
             | Self::FileEndedWithinRead
             | Self::TerminalReadEof
             | Self::FontParameter(_)
-            | Self::UnimplementedTypesetting { .. } => None,
+            | Self::UnimplementedTypesetting { .. }
+            | Self::UnsupportedShipoutNode { .. } => None,
         }
     }
 }

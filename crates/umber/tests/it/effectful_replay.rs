@@ -42,6 +42,10 @@ enum TexStep {
         seed: u8,
         register: u16,
     },
+    Shipout {
+        seed: u8,
+        register: u16,
+    },
     Input {
         file: InputFile,
     },
@@ -108,7 +112,7 @@ macro_rules! commit_path_shard {
             })]
 
             #[test]
-            fn $name((program, mask) in (program_strategy(), prop::collection::vec(any::<bool>(), 0..18))) {
+            fn $name((program, mask) in (commit_program_strategy(), prop::collection::vec(any::<bool>(), 0..18))) {
                 assert_commit_path_matches_straight_line(&program, &mask);
             }
         }
@@ -243,7 +247,6 @@ fn run_tex_chunk(universe: &mut Universe, source: &str) {
 fn commit_all(universe: &mut Universe) {
     let effect_pos = universe.world().effect_pos();
     universe
-        .world_mut()
         .commit_effects(effect_pos)
         .expect("memory world commit succeeds");
 }
@@ -373,6 +376,9 @@ impl TexStep {
                 seed,
                 register,
             } => format!(r"\write{slot}{{w{seed}:\the\count{register}}} "),
+            Self::Shipout { seed, register } => {
+                format!(r"\shipout\hbox{{\write16{{s{seed}:\the\count{register}}}}} ")
+            }
             Self::Input { file } => format!(r"\input{{{}}} ", file.name()),
             Self::OpenInRead { slot, file, target } => {
                 format!(
@@ -429,9 +435,20 @@ fn program_strategy() -> impl Strategy<Value = Program> {
     prop::collection::vec(step_strategy(), 1..18).prop_map(|steps| Program { steps })
 }
 
+fn commit_program_strategy() -> impl Strategy<Value = Program> {
+    prop::collection::vec(commit_step_strategy(), 1..18).prop_map(|steps| Program { steps })
+}
+
 fn step_strategy() -> impl Strategy<Value = Step> {
     prop_oneof![
         10 => tex_step_strategy().prop_map(Step::Tex),
+        2 => register_strategy().prop_map(|register| Step::RngTick { register }),
+    ]
+}
+
+fn commit_step_strategy() -> impl Strategy<Value = Step> {
+    prop_oneof![
+        10 => tex_step_with_shipout_strategy().prop_map(Step::Tex),
         2 => register_strategy().prop_map(|register| Step::RngTick { register }),
     ]
 }
@@ -458,6 +475,15 @@ fn tex_step_strategy() -> impl Strategy<Value = TexStep> {
             |(slot, file, target)| TexStep::OpenInRead { slot, file, target },
         ),
         2 => read_target_strategy().prop_map(|target| TexStep::TerminalRead { target }),
+    ]
+}
+
+fn tex_step_with_shipout_strategy() -> impl Strategy<Value = TexStep> {
+    prop_oneof![
+        12 => tex_step_strategy(),
+        3 => (0_u8..32, register_strategy()).prop_map(|(seed, register)| {
+            TexStep::Shipout { seed, register }
+        }),
     ]
 }
 

@@ -249,7 +249,7 @@ fn finish_node_list_rejects_foreign_whatsit_token_list() {
     let foreign_tokens = foreign.intern_token_list(&[crate::token::Token::param(1)]);
     let mut builder = stores.node_list_builder();
     builder.push(Node::Whatsit(crate::node::Whatsit::DeferredWrite {
-        stream: 16,
+        sink: crate::world::PrintSink::TerminalAndLog,
         tokens: foreign_tokens,
     }));
 

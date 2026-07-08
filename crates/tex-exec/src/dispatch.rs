@@ -1,15 +1,16 @@
-use tex_expand::ExpansionHooks;
+use tex_expand::{ExpansionHooks, NoopRecorder, ReadRecorder};
 use tex_lex::{InputSource, InputStack};
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
 use tex_state::token::{Catcode, Token};
-use tex_state::{GroupKind, GroupMismatch, Universe};
+use tex_state::{ContentHash, GroupKind, GroupMismatch, Universe};
 
 use crate::{ExecError, Mode, ModeNest, assignments};
 
 /// Main-control progress counters.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ExecutionStats {
     pub delivered_tokens: usize,
+    pub shipped_artifacts: Vec<ContentHash>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -17,6 +18,7 @@ pub enum DispatchAction {
     Continue,
     End,
     NotConsumed,
+    Shipout(ContentHash),
 }
 
 /// Dispatches one gullet-delivered token in the current mode.
@@ -29,6 +31,23 @@ pub fn dispatch_delivered_token<S, H>(
 ) -> Result<DispatchAction, ExecError>
 where
     S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    let mut recorder = NoopRecorder;
+    dispatch_delivered_token_with_recorder(nest, token, input, stores, &mut recorder, hooks)
+}
+
+pub(crate) fn dispatch_delivered_token_with_recorder<S, R, H>(
+    nest: &mut ModeNest,
+    token: Token,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<DispatchAction, ExecError>
+where
+    S: InputSource,
+    R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
     let mode = nest.current_mode();
@@ -83,7 +102,9 @@ where
         }),
         Meaning::ExpandablePrimitive(primitive) => dispatch_delivered_expandable(token, primitive),
         Meaning::UnexpandablePrimitive(primitive) => {
-            assignments::execute_unexpandable(primitive, nest, input, stores, hooks)
+            assignments::execute_unexpandable_with_recorder(
+                primitive, nest, input, stores, recorder, hooks,
+            )
         }
         Meaning::Font(id) => {
             if let Token::Cs(symbol) = token {

@@ -480,6 +480,12 @@ Responsibility: accumulate the main vertical list, fire `\output`, commit.
   resource identities, `\count0..\count9`, and the page effect slice. The
   format is stored by content hash through `World`; drivers receive artifact
   bytes/ids, not live node handles.
+- The implemented stomach shipout path consumes the same box syntax as TeX's
+  box primitives (`\shipout\hbox{...}`, `\shipout\boxN`, `\shipout\copyN`),
+  traverses the box tree in node order, expands deferred-write whatsits
+  through the ordinary gullet, stores the `tex-out` artifact, commits through
+  `Universe::commit_effects`, and records shipped artifact ids in executor
+  stats for the CLI/driver layer.
 
 ## 9. Fonts and metrics (`tex-arith`, `tex-fonts`, `tex-state`)
 

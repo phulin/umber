@@ -34,8 +34,9 @@ use crate::stores::{
 use crate::token::{Catcode, Token};
 use crate::token_store::TokenListBuilder;
 use crate::world::{
-    EffectRecord, JobClock, PrintSink, ShellEscapePolicy, ShellEscapeRecord, StreamBufState,
-    StreamSlot, World, WorldSnapshot, WorldStateHashCursor, install_job_clock_params,
+    EffectPos, EffectRecord, JobClock, PrintSink, ShellEscapePolicy, ShellEscapeRecord,
+    StreamBufState, StreamSlot, World, WorldError, WorldSnapshot, WorldStateHashCursor,
+    install_job_clock_params,
 };
 use std::hash::BuildHasher;
 #[cfg(any(test, feature = "testing", feature = "shadow"))]
@@ -461,6 +462,12 @@ impl Universe {
     /// Mutates the external-effect capability object through the Universe boundary.
     pub fn world_mut(&mut self) -> &mut World {
         &mut self.world
+    }
+
+    /// Commits an effect prefix after advancing the semantic checkpoint hash.
+    pub fn commit_effects(&mut self, effect_pos: EffectPos) -> Result<(), WorldError> {
+        let _checkpoint = self.snapshot();
+        self.world.commit_effects(effect_pos)
     }
 
     /// Records the current lexer-owned input stack state for the next snapshot.

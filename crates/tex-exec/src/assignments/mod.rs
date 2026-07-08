@@ -2,7 +2,7 @@
 
 use tex_expand::scan::{scan_toks, scan_toks_expanded_with_driver};
 use tex_expand::{
-    DriverExpandNext, ExpandError, ExpansionHooks, NoopRecorder,
+    DriverExpandNext, ExpandError, ExpansionHooks, NoopRecorder, ReadRecorder,
     get_x_token_with_recorder_and_hooks, scan_dimen, scan_glue, scan_int,
     scan_optional_keyword_with_hooks,
 };
@@ -29,6 +29,7 @@ mod macros;
 mod paragraph;
 mod primitives;
 mod scanning;
+mod shipout;
 mod tokens;
 mod variables;
 
@@ -42,6 +43,7 @@ use macros::*;
 use paragraph::*;
 pub use primitives::install_unexpandable_primitives;
 use scanning::*;
+use shipout::*;
 use tokens::*;
 use variables::*;
 
@@ -67,19 +69,22 @@ where
     match dispatch_delivered_token(&mut nest, token, input, stores, hooks)? {
         DispatchAction::Continue => Ok(true),
         DispatchAction::End => Ok(true),
+        DispatchAction::Shipout(_) => Ok(true),
         DispatchAction::NotConsumed => Ok(false),
     }
 }
 
-pub(crate) fn execute_unexpandable<S, H>(
+pub(crate) fn execute_unexpandable_with_recorder<S, R, H>(
     primitive: UnexpandablePrimitive,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
+    recorder: &mut R,
     hooks: &mut H,
 ) -> Result<DispatchAction, ExecError>
 where
     S: InputSource,
+    R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
     let mut prefixes = Prefixes::default();
@@ -93,11 +98,12 @@ where
         reject_all_prefixes(prefixes)?;
         return Ok(DispatchAction::End);
     }
-    let assigned = execute_prefixed_command(command, prefixes, nest, input, stores, hooks)?;
-    if assigned {
+    let outcome =
+        execute_prefixed_command(command, prefixes, nest, input, stores, recorder, hooks)?;
+    if outcome.assigned {
         fire_afterassignment(input, stores);
     }
-    Ok(DispatchAction::Continue)
+    Ok(outcome.action)
 }
 
 pub(crate) fn execute_assignment_meaning<S, H>(
@@ -118,11 +124,20 @@ where
         stores,
     )?;
     let mut nest = ModeNest::new();
-    let assigned = execute_prefixed_command(command, prefixes, &mut nest, input, stores, hooks)?;
-    if assigned {
+    let mut recorder = NoopRecorder;
+    let outcome = execute_prefixed_command(
+        command,
+        prefixes,
+        &mut nest,
+        input,
+        stores,
+        &mut recorder,
+        hooks,
+    )?;
+    if outcome.assigned {
         fire_afterassignment(input, stores);
     }
-    Ok(DispatchAction::Continue)
+    Ok(outcome.action)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -142,6 +157,42 @@ impl Default for Prefixes {
         Self {
             global: false,
             flags: MeaningFlags::EMPTY,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CommandOutcome {
+    assigned: bool,
+    action: DispatchAction,
+}
+
+impl CommandOutcome {
+    const fn assigned() -> Self {
+        Self {
+            assigned: true,
+            action: DispatchAction::Continue,
+        }
+    }
+
+    const fn assigned_if(assigned: bool) -> Self {
+        Self {
+            assigned,
+            action: DispatchAction::Continue,
+        }
+    }
+
+    const fn continue_only() -> Self {
+        Self {
+            assigned: false,
+            action: DispatchAction::Continue,
+        }
+    }
+
+    const fn shipout(hash: tex_state::ContentHash) -> Self {
+        Self {
+            assigned: false,
+            action: DispatchAction::Shipout(hash),
         }
     }
 }
@@ -187,8 +238,9 @@ fn execute_prefixed_command<S, H>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
+    recorder: &mut impl ReadRecorder,
     hooks: &mut H,
-) -> Result<bool, ExecError>
+) -> Result<CommandOutcome, ExecError>
 where
     S: InputSource,
     H: ExpansionHooks<S>,
@@ -200,39 +252,39 @@ where
             | UnexpandablePrimitive::Gdef
             | UnexpandablePrimitive::Xdef => {
                 execute_def(primitive, prefixes, input, stores, hooks)?;
-                Ok(true)
+                Ok(CommandOutcome::assigned())
             }
             UnexpandablePrimitive::Let => {
                 execute_let(prefixes, input, stores)?;
-                Ok(true)
+                Ok(CommandOutcome::assigned())
             }
             UnexpandablePrimitive::FutureLet => {
                 execute_futurelet(prefixes, input, stores)?;
-                Ok(true)
+                Ok(CommandOutcome::assigned())
             }
             UnexpandablePrimitive::GlobalDefs => {
                 execute_globaldefs(prefixes, input, stores, hooks)?;
-                Ok(true)
+                Ok(CommandOutcome::assigned())
             }
             UnexpandablePrimitive::BeginGroup => {
                 reject_all_prefixes(prefixes)?;
                 stores.enter_group_with_kind(GroupKind::SemiSimple);
-                Ok(false)
+                Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::EndGroup => {
                 reject_all_prefixes(prefixes)?;
                 leave_group(input, stores, GroupKind::SemiSimple)?;
-                Ok(false)
+                Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::AfterGroup => {
                 reject_all_prefixes(prefixes)?;
                 execute_aftergroup(input, stores)?;
-                Ok(false)
+                Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::AfterAssignment => {
                 reject_all_prefixes(prefixes)?;
                 execute_afterassignment(input, stores)?;
-                Ok(false)
+                Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::Count
             | UnexpandablePrimitive::Dimen
@@ -240,7 +292,7 @@ where
             | UnexpandablePrimitive::Muskip
             | UnexpandablePrimitive::Toks => {
                 execute_variable_assignment(primitive, prefixes, input, stores, hooks)?;
-                Ok(true)
+                Ok(CommandOutcome::assigned())
             }
             UnexpandablePrimitive::CountDef
             | UnexpandablePrimitive::DimenDef
@@ -248,17 +300,17 @@ where
             | UnexpandablePrimitive::MuskipDef
             | UnexpandablePrimitive::ToksDef => {
                 execute_register_def(primitive, prefixes, input, stores, hooks)?;
-                Ok(true)
+                Ok(CommandOutcome::assigned())
             }
             UnexpandablePrimitive::CharDef | UnexpandablePrimitive::MathCharDef => {
                 execute_char_def(primitive, prefixes, input, stores, hooks)?;
-                Ok(true)
+                Ok(CommandOutcome::assigned())
             }
             UnexpandablePrimitive::Advance
             | UnexpandablePrimitive::Multiply
             | UnexpandablePrimitive::Divide => {
                 execute_arithmetic(primitive, prefixes, input, stores, hooks)?;
-                Ok(true)
+                Ok(CommandOutcome::assigned())
             }
             UnexpandablePrimitive::CatCode
             | UnexpandablePrimitive::LcCode
@@ -267,28 +319,28 @@ where
             | UnexpandablePrimitive::MathCode
             | UnexpandablePrimitive::DelCode => {
                 execute_code_table_assignment(primitive, input, stores, hooks)?;
-                Ok(true)
+                Ok(CommandOutcome::assigned())
             }
             UnexpandablePrimitive::Font => {
                 execute_font_definition(prefixes, input, stores, hooks)?;
-                Ok(true)
+                Ok(CommandOutcome::assigned())
             }
             UnexpandablePrimitive::FontDimen
             | UnexpandablePrimitive::HyphenChar
             | UnexpandablePrimitive::SkewChar => {
                 let target = scan_font_variable_target(primitive, input, stores, hooks)?;
                 execute_assignment_to_target(target, prefixes, input, stores, hooks)?;
-                Ok(true)
+                Ok(CommandOutcome::assigned())
             }
             UnexpandablePrimitive::Patterns => {
                 reject_all_prefixes(prefixes)?;
                 execute_patterns(input, stores, hooks)?;
-                Ok(true)
+                Ok(CommandOutcome::assigned())
             }
             UnexpandablePrimitive::Hyphenation => {
                 reject_all_prefixes(prefixes)?;
                 execute_hyphenation(input, stores, hooks)?;
-                Ok(true)
+                Ok(CommandOutcome::assigned())
             }
             UnexpandablePrimitive::Par
             | UnexpandablePrimitive::EndGraf
@@ -299,20 +351,22 @@ where
             | UnexpandablePrimitive::NoInterlineSkip => {
                 reject_all_prefixes(prefixes)?;
                 execute_paragraph_command(primitive, nest, input, stores, hooks)?;
-                Ok(primitive == UnexpandablePrimitive::ParShape
-                    || primitive == UnexpandablePrimitive::PrevDepth)
+                Ok(CommandOutcome::assigned_if(
+                    primitive == UnexpandablePrimitive::ParShape
+                        || primitive == UnexpandablePrimitive::PrevDepth,
+                ))
             }
             UnexpandablePrimitive::HBox
             | UnexpandablePrimitive::VBox
             | UnexpandablePrimitive::VTop => {
                 reject_macro_prefixes(prefixes)?;
                 execute_make_box(primitive, nest, prefixes.global, input, stores, hooks)?;
-                Ok(false)
+                Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::SetBox => {
                 reject_macro_prefixes(prefixes)?;
                 execute_setbox(prefixes.global, input, stores, hooks)?;
-                Ok(true)
+                Ok(CommandOutcome::assigned())
             }
             UnexpandablePrimitive::Box
             | UnexpandablePrimitive::Copy
@@ -325,14 +379,14 @@ where
             | UnexpandablePrimitive::MoveRight => {
                 reject_all_prefixes(prefixes)?;
                 execute_box_list_command(primitive, nest, input, stores, hooks)?;
-                Ok(false)
+                Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::Kern
             | UnexpandablePrimitive::HSkip
             | UnexpandablePrimitive::VSkip => {
                 reject_all_prefixes(prefixes)?;
                 execute_kern_or_skip(primitive, nest, input, stores, hooks)?;
-                Ok(false)
+                Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::Char
             | UnexpandablePrimitive::HFil
@@ -349,83 +403,90 @@ where
             | UnexpandablePrimitive::Accent => {
                 reject_all_prefixes(prefixes)?;
                 execute_hmode_material(primitive, nest, input, stores, hooks)?;
-                Ok(primitive == UnexpandablePrimitive::SpaceFactor)
+                Ok(CommandOutcome::assigned_if(
+                    primitive == UnexpandablePrimitive::SpaceFactor,
+                ))
             }
             UnexpandablePrimitive::Wd | UnexpandablePrimitive::Ht | UnexpandablePrimitive::Dp => {
                 reject_macro_prefixes(prefixes)?;
                 execute_box_dimension_assignment(primitive, prefixes.global, input, stores, hooks)?;
-                Ok(true)
+                Ok(CommandOutcome::assigned())
             }
             UnexpandablePrimitive::Read => {
                 execute_read(input, stores, hooks)?;
-                Ok(true)
+                Ok(CommandOutcome::assigned())
             }
             UnexpandablePrimitive::Write => {
-                execute_write(input, stores, hooks)?;
-                Ok(true)
+                execute_write(nest, input, stores, hooks)?;
+                Ok(CommandOutcome::continue_only())
+            }
+            UnexpandablePrimitive::Shipout => {
+                reject_all_prefixes(prefixes)?;
+                let hash = execute_shipout(input, stores, recorder, hooks)?;
+                Ok(CommandOutcome::shipout(hash))
             }
             UnexpandablePrimitive::OpenIn
             | UnexpandablePrimitive::CloseIn
             | UnexpandablePrimitive::OpenOut
             | UnexpandablePrimitive::CloseOut => {
                 execute_stream_command(primitive, input, stores, hooks)?;
-                Ok(true)
+                Ok(CommandOutcome::assigned())
             }
             UnexpandablePrimitive::Show => {
                 reject_all_prefixes(prefixes)?;
                 diagnostics::execute_show(input, stores)?;
-                Ok(false)
+                Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::ShowBox => {
                 reject_all_prefixes(prefixes)?;
                 let index = scan_register_index(input, stores, hooks)?;
                 diagnostics::execute_showbox(stores, index);
-                Ok(false)
+                Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::ShowThe => {
                 reject_all_prefixes(prefixes)?;
                 diagnostics::execute_showthe(input, stores, hooks)?;
-                Ok(false)
+                Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::ShowTokens => {
                 reject_all_prefixes(prefixes)?;
                 diagnostics::execute_showtokens(input, stores)?;
-                Ok(false)
+                Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::Message => {
                 reject_all_prefixes(prefixes)?;
                 diagnostics::execute_message(input, stores, hooks, false)?;
-                Ok(false)
+                Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::ErrMessage => {
                 reject_all_prefixes(prefixes)?;
                 diagnostics::execute_message(input, stores, hooks, true)?;
-                Ok(false)
+                Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::ShowLists => {
                 reject_all_prefixes(prefixes)?;
                 diagnostics::execute_showlists(stores);
-                Ok(false)
+                Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::ShowHyphens => {
                 reject_all_prefixes(prefixes)?;
                 diagnostics::execute_showhyphens(input, stores, hooks)?;
-                Ok(false)
+                Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::Uppercase => {
                 reject_all_prefixes(prefixes)?;
                 diagnostics::execute_change_case(input, stores, true)?;
-                Ok(false)
+                Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::Lowercase => {
                 reject_all_prefixes(prefixes)?;
                 diagnostics::execute_change_case(input, stores, false)?;
-                Ok(false)
+                Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::IgnoreSpaces => {
                 reject_all_prefixes(prefixes)?;
                 diagnostics::execute_ignorespaces(input, stores)?;
-                Ok(false)
+                Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::Global
             | UnexpandablePrimitive::Long
@@ -438,7 +499,7 @@ where
             let target =
                 variable_from_meaning(meaning).ok_or(ExecError::UnsupportedAssignmentTarget)?;
             execute_assignment_to_target(target, prefixes, input, stores, hooks)?;
-            Ok(true)
+            Ok(CommandOutcome::assigned())
         }
     }
 }

@@ -338,9 +338,11 @@ Nothing in the engine touches the OS directly. A single `World` object owns:
   materialize until the commit barrier flushes a prefix.
 - **Deferred-write token lists** are expanded at shipout against the state
   *at the commit barrier*; read-set tracking must therefore cover
-  shipout-time expansion, not just mainline execution. Until the page epic
-  installs expansion, deferred `\write` records hold the unexpanded
-  `TokenListId` explicitly.
+  shipout-time expansion, not just mainline execution. Deferred `\write`
+  whatsits carry the resolved `PrintSink` plus the unexpanded `TokenListId`;
+  shipout replays that token list through the ordinary gullet and appends the
+  resulting routed stream-write effect record immediately before committing
+  the page prefix.
 - **Shell escape, PDF object stream, log file**: same discipline — buffered,
   committed at shipout, discarded on rollback. Shell escapes are record-only
   and the execution policy defaults to disabled.
@@ -422,7 +424,9 @@ pub struct Snapshot {
   `World`, effects flushed, snapshots older than the last live editing anchor
   dropped. The flushed effect prefix is dropped too, leaving only the
   uncommitted suffix and the committed backend stream state. History is
-  bounded.
+  bounded. The implemented `Universe::commit_effects` wrapper advances the
+  semantic checkpoint hash before asking `World` to drop a prefix, so later
+  shipout checkpoints never try to hash already-committed effect records.
 - **Convergence detection**: after re-executing from an edit, compare
   `state_hash` at each checkpoint with the prior run's hash at the same
   input position; on match, splice the old suffix and stop. `state_hash`

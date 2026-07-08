@@ -2,7 +2,14 @@ use tex_exec::Executor;
 use tex_expand::{ExpansionHooks, NoopRecorder};
 use tex_lex::{InputSource, InputStack, MemoryInput};
 use tex_state::env::banks::IntParam;
-use tex_state::{EffectRecord, PrintSink, Universe};
+use tex_state::{ContentHash, EffectRecord, PrintSink, Universe};
+
+/// Result of running TeX through the batch executor.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RunResult {
+    pub terminal_text: String,
+    pub artifacts: Vec<ContentHash>,
+}
 
 /// Installs the primitive/state setup used by `umber run`.
 pub fn prepare_run_stores(stores: &mut Universe) {
@@ -22,9 +29,25 @@ where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
+    run_input_collecting_artifacts(input, stores, hooks).map(|result| result.terminal_text)
+}
+
+/// Runs input and returns the artifact ids emitted by `\shipout` in order.
+pub fn run_input_collecting_artifacts<S, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    hooks: &mut H,
+) -> Result<RunResult, tex_exec::ExecError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
     let mut recorder = NoopRecorder;
-    Executor::new().run_with_recorder_and_hooks(input, stores, &mut recorder, hooks)?;
-    Ok(uncommitted_terminal_text(stores))
+    let stats = Executor::new().run_with_recorder_and_hooks(input, stores, &mut recorder, hooks)?;
+    Ok(RunResult {
+        terminal_text: uncommitted_terminal_text(stores),
+        artifacts: stats.shipped_artifacts,
+    })
 }
 
 /// Runs in-memory TeX through the `umber run` executor setup.

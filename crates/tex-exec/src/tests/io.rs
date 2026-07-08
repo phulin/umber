@@ -1,5 +1,8 @@
 use super::support::*;
 use super::*;
+use tex_expand::ReadRecorder;
+use tex_out::{EffectSink, PageArtifact, PageEffect, PageNode};
+use tex_state::interner::Symbol;
 
 #[test]
 fn openin_read_defines_control_sequence_from_world_stream() {
@@ -180,4 +183,150 @@ fn openout_closeout_append_world_effect_records() {
             && *close_slot == tex_state::StreamSlot::new(2)
             && target.path() == std::path::Path::new("out.aux")
     ));
+}
+
+#[test]
+fn shipout_expands_write_against_barrier_state_and_stores_artifact() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\count0=7 \\setbox0=\\hbox{\\write16{p:\\the\\count0}}\
+         \\count0=9 \\shipout\\box0\\end",
+    ));
+
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("shipout succeeds");
+    let effect_pos = stores.world().effect_pos();
+    stores
+        .commit_effects(effect_pos)
+        .expect("final commit is idempotent");
+
+    assert_eq!(stats.shipped_artifacts.len(), 1);
+    assert_eq!(memory_terminal_text(&stores), "p:9");
+    assert_eq!(memory_log_text(&stores), "p:9");
+    assert!(
+        stores.world().effect_records().is_empty(),
+        "shipout should flush the committed effect prefix"
+    );
+
+    let bytes = stores
+        .world()
+        .read_artifact(stats.shipped_artifacts[0])
+        .expect("read artifact")
+        .expect("artifact stored");
+    let artifact = PageArtifact::from_bytes(&bytes).expect("artifact parses");
+    assert_eq!(artifact.counts[0], 9);
+    assert!(matches!(
+        artifact.effects.as_slice(),
+        [PageEffect::Write {
+            sink: EffectSink::TerminalAndLog,
+            text
+        }] if text == "p:9"
+    ));
+    assert!(matches!(
+        artifact.root,
+        PageNode::HList(ref box_node)
+            if matches!(box_node.children.as_slice(), [PageNode::WhatsitAnchor { effect_index: 0 }])
+    ));
+}
+
+#[test]
+fn shipout_copy_expands_deferred_write_each_time() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\setbox0=\\hbox{\\write16{p:\\the\\count0}}\
+         \\count0=1 \\shipout\\copy0\
+         \\count0=2 \\shipout\\copy0\\end",
+    ));
+
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("shipout copies succeed");
+
+    assert_eq!(stats.shipped_artifacts.len(), 2);
+    assert_ne!(stats.shipped_artifacts[0], stats.shipped_artifacts[1]);
+    assert_eq!(memory_terminal_text(&stores), "p:1p:2");
+}
+
+#[test]
+fn rollback_after_shipout_does_not_replay_committed_effects() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut ship = InputStack::new(MemoryInput::new("\\shipout\\hbox{\\write16{once}}\\end"));
+
+    Executor::new()
+        .run(&mut ship, &mut stores)
+        .expect("shipout succeeds");
+    let snapshot = stores.snapshot();
+
+    let mut later = InputStack::new(MemoryInput::new("\\message{later}\\end"));
+    Executor::new()
+        .run(&mut later, &mut stores)
+        .expect("later message succeeds");
+    stores.rollback(&snapshot);
+    let effect_pos = stores.world().effect_pos();
+    stores
+        .commit_effects(effect_pos)
+        .expect("post-rollback final commit succeeds");
+
+    assert_eq!(memory_terminal_text(&stores), "once");
+}
+
+#[test]
+fn shipout_write_expansion_uses_active_read_recorder() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\count0=5 \\shipout\\hbox{\\write16{\\the\\count0}}\\end",
+    ));
+    let mut recorder = SawTheRecorder::default();
+    let mut hooks = NoopExecHooks;
+
+    Executor::new()
+        .run_with_recorder_and_hooks(&mut input, &mut stores, &mut recorder, &mut hooks)
+        .expect("shipout succeeds");
+
+    assert!(
+        recorder.saw_the,
+        "shipout-time deferred write expansion should use the active recorder"
+    );
+}
+
+#[derive(Default)]
+struct SawTheRecorder {
+    saw_the: bool,
+}
+
+impl ReadRecorder for SawTheRecorder {
+    fn record_meaning(&mut self, _symbol: Symbol, meaning: Meaning) {
+        if meaning == Meaning::ExpandablePrimitive(ExpandablePrimitive::The) {
+            self.saw_the = true;
+        }
+    }
+}
+
+fn memory_terminal_text(stores: &Universe) -> String {
+    String::from_utf8_lossy(
+        stores
+            .world()
+            .memory_terminal_output()
+            .expect("memory terminal output"),
+    )
+    .into_owned()
+}
+
+fn memory_log_text(stores: &Universe) -> String {
+    String::from_utf8_lossy(
+        stores
+            .world()
+            .memory_log_output()
+            .expect("memory log output"),
+    )
+    .into_owned()
 }

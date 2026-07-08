@@ -3,6 +3,7 @@
 use crate::glue::Order;
 use crate::ids::{FontId, GlueId, NodeListId, TokenListId};
 use crate::scaled::Scaled;
+use crate::world::PrintSink;
 
 /// A frozen TeX node.
 #[derive(Clone, Debug, PartialEq)]
@@ -143,7 +144,10 @@ pub enum Sign {
 /// Extension nodes whose effects are interpreted by later subsystems.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum Whatsit {
-    DeferredWrite { stream: u8, tokens: TokenListId },
+    DeferredWrite {
+        sink: PrintSink,
+        tokens: TokenListId,
+    },
 }
 
 impl Node {

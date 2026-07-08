@@ -1,6 +1,9 @@
 use super::*;
-use tex_state::StreamSlot;
 use tex_state::macro_store::MacroMeaning;
+use tex_state::node::{Node, Whatsit};
+use tex_state::{PrintSink, StreamSlot};
+
+use crate::vertical::append_node_to_current_list;
 
 pub(in crate::assignments) fn execute_stream_command<S, H>(
     primitive: UnexpandablePrimitive,
@@ -58,6 +61,7 @@ where
 }
 
 pub(in crate::assignments) fn execute_write<S, H>(
+    nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
@@ -66,12 +70,16 @@ where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    let slot = scan_stream_slot(input, stores, hooks)?;
+    let sink = scan_write_sink(input, stores, hooks)?;
     let scanned = scan_toks(input, stores, MeaningFlags::EMPTY)?;
-    stores
-        .world_mut()
-        .record_deferred_write(slot, scanned.meaning().replacement_text());
-    Ok(())
+    append_node_to_current_list(
+        nest,
+        stores,
+        Node::Whatsit(Whatsit::DeferredWrite {
+            sink,
+            tokens: scanned.meaning().replacement_text(),
+        }),
+    )
 }
 
 fn scan_read_tokens(
@@ -181,6 +189,23 @@ where
         return Err(ExecError::RegisterNumberOutOfRange(value));
     }
     Ok(StreamSlot::new(value as u8))
+}
+
+fn scan_write_sink<S, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    hooks: &mut H,
+) -> Result<PrintSink, ExecError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    let value = scan_i32(input, stores, hooks)?;
+    Ok(match value {
+        0..=15 => PrintSink::Stream(StreamSlot::new(value as u8)),
+        value if value < 0 => PrintSink::Log,
+        _ => PrintSink::TerminalAndLog,
+    })
 }
 
 fn scan_file_name<S, H>(

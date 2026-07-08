@@ -772,8 +772,10 @@ impl World {
 
     /// Records a deferred `\write` token list without expanding it.
     ///
-    /// TODO(umber2-n11): expand these token lists at shipout before emitting
-    /// stream-write bytes. f26.3 deliberately has no `\immediate\write`.
+    /// Normal stomach `\write` execution stores this payload in a whatsit so
+    /// copied boxes expand it once per shipout. This low-level record shape
+    /// remains available for direct World/effect-log tests and future effect
+    /// replay paths.
     pub fn record_deferred_write(&mut self, stream: StreamSlot, tokens: TokenListId) {
         self.append_effect(EffectRecord::DeferredWrite { stream, tokens });
     }

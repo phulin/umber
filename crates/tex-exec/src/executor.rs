@@ -4,10 +4,8 @@ use tex_expand::{
 use tex_lex::{InputSource, InputStack};
 use tex_state::{ExpansionContext, Universe};
 
-use crate::dispatch::unimplemented_typesetting;
-use crate::{
-    DispatchAction, ExecError, ExecutionStats, ModeNest, assignments, dispatch_delivered_token,
-};
+use crate::dispatch::{dispatch_delivered_token_with_recorder, unimplemented_typesetting};
+use crate::{DispatchAction, ExecError, ExecutionStats, ModeNest, assignments};
 
 /// Stomach interpreter state.
 #[derive(Clone, Debug, PartialEq)]
@@ -93,8 +91,18 @@ impl Executor {
                 return Ok(stats);
             };
             stats.delivered_tokens += 1;
-            match dispatch_delivered_token(&mut self.nest, token, input, stores, hooks)? {
+            match dispatch_delivered_token_with_recorder(
+                &mut self.nest,
+                token,
+                input,
+                stores,
+                recorder,
+                hooks,
+            )? {
                 DispatchAction::Continue => {}
+                DispatchAction::Shipout(artifact) => {
+                    stats.shipped_artifacts.push(artifact);
+                }
                 DispatchAction::End => {
                     assignments::flush_pending_hchars(&mut self.nest, stores)?;
                     return Ok(stats);

@@ -428,9 +428,9 @@ impl Stores {
 
     fn hash_whatsit(&self, whatsit: Whatsit, hasher: &mut StateHasher) {
         match whatsit {
-            Whatsit::DeferredWrite { stream, tokens } => {
+            Whatsit::DeferredWrite { sink, tokens } => {
                 hasher.tag(12);
-                hasher.u8(stream);
+                hash_print_sink(sink, hasher);
                 self.hash_token_list_semantic(tokens, hasher);
             }
         }
@@ -512,6 +512,18 @@ impl Stores {
                 NodeFrame::ListEnd => hasher.tag(0x71),
                 NodeFrame::Node(node) => self.hash_node(node, hasher, &mut stack),
             }
+        }
+    }
+}
+
+fn hash_print_sink(sink: crate::world::PrintSink, hasher: &mut StateHasher) {
+    match sink {
+        crate::world::PrintSink::Terminal => hasher.tag(0),
+        crate::world::PrintSink::Log => hasher.tag(1),
+        crate::world::PrintSink::TerminalAndLog => hasher.tag(2),
+        crate::world::PrintSink::Stream(slot) => {
+            hasher.tag(3);
+            hasher.u8(slot.raw());
         }
     }
 }
