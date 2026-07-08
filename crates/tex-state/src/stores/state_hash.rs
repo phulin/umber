@@ -1,7 +1,7 @@
 use super::{SnapshotOwner, StoreSnapshot, Stores};
 use crate::cell::{BankTag, CellId};
 use crate::glue::GlueSpec;
-use crate::ids::{GlueId, MacroDefinitionId, NodeListId, TokenListId};
+use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, TokenListId};
 use crate::interner::Symbol;
 use crate::journal::Entry;
 use crate::meaning::{ExpandablePrimitive, Meaning, RawMeaning, UnexpandablePrimitive};
@@ -15,6 +15,8 @@ const STORE_SLICE_DOMAIN: u64 = 0x7374_6f72_6573_6c63;
 const CELL_VALUE_DOMAIN: u64 = 0x6365_6c6c_7661_6c75;
 const TOKEN_LIST_MAX_ITEMS: usize = 1_000_000;
 const NODE_LIST_MAX_ITEMS: usize = 1_000_000;
+const FONT_DIMEN_BITS: u32 = 15;
+const FONT_DIMEN_MASK: u32 = (1 << FONT_DIMEN_BITS) - 1;
 
 /// Cursor into store-owned state for semantic convergence hashing.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -134,6 +136,21 @@ impl Stores {
             BankTag::Meaning => SemanticCellKey::Meaning(
                 self.interner.resolve(Symbol::new(cell.index())).to_owned(),
             ),
+            BankTag::FontDimen => {
+                let (font, slot) = unpack_font_dimen_index(cell.index());
+                SemanticCellKey::FontBank {
+                    bank: bank_order(cell.bank()),
+                    font: self.font_semantic_key(font),
+                    index: u32::from(slot),
+                }
+            }
+            BankTag::FontParamLen | BankTag::FontHyphenChar | BankTag::FontSkewChar => {
+                SemanticCellKey::FontBank {
+                    bank: bank_order(cell.bank()),
+                    font: self.font_semantic_key(FontId::new(cell.index())),
+                    index: 0,
+                }
+            }
             bank => SemanticCellKey::Bank {
                 bank: bank_order(bank),
                 index: cell.index(),
@@ -150,6 +167,12 @@ impl Stores {
             SemanticCellKey::Bank { bank, index } => {
                 hasher.tag(0x02);
                 hasher.u8(*bank);
+                hasher.u32(*index);
+            }
+            SemanticCellKey::FontBank { bank, font, index } => {
+                hasher.tag(0x03);
+                hasher.u8(*bank);
+                hash_font_semantic_key(font, hasher);
                 hasher.u32(*index);
             }
         }
@@ -176,6 +199,10 @@ impl Stores {
                 Some(id) => self.hash_node_list(id, hasher),
                 None => hasher.tag(0),
             },
+            BankTag::FontDimen => hasher.i32(word as u32 as i32),
+            BankTag::FontParamLen => hasher.u16(decode_u16(word)),
+            BankTag::FontHyphenChar | BankTag::FontSkewChar => hasher.i32(word as u32 as i32),
+            BankTag::CurrentFont => self.hash_current_font_word(word, hasher),
         }
     }
 
@@ -205,6 +232,10 @@ impl Stores {
             Meaning::DimenParam(index) => hash_register_alias(11, index, hasher),
             Meaning::GlueParam(index) => hash_register_alias(12, index, hasher),
             Meaning::TokParam(index) => hash_register_alias(13, index, hasher),
+            Meaning::Font(id) => {
+                hasher.tag(17);
+                self.hash_font(id, hasher);
+            }
             Meaning::ExpandablePrimitive(primitive) => hash_expandable_primitive(primitive, hasher),
             Meaning::UnexpandablePrimitive(primitive) => {
                 hash_unexpandable_primitive(primitive, hasher);
@@ -287,12 +318,12 @@ impl Stores {
         match node {
             Node::Char { font, ch } => {
                 hasher.tag(0);
-                hash_font(font, hasher);
+                self.hash_font(font, hasher);
                 hasher.u32(ch as u32);
             }
             Node::Lig { font, ch, orig } => {
                 hasher.tag(1);
-                hash_font(font, hasher);
+                self.hash_font(font, hasher);
                 hasher.u32(ch as u32);
                 hasher.u32(orig.0 as u32);
                 hasher.u32(orig.1 as u32);
@@ -378,6 +409,39 @@ impl Stores {
         }
     }
 
+    fn hash_font(&self, font: FontId, hasher: &mut StateHasher) {
+        self.assert_live_font(font);
+        hash_font_semantic_key(&self.font_semantic_key(font), hasher);
+    }
+
+    fn font_semantic_key(&self, font: FontId) -> FontSemanticKey {
+        self.assert_live_font(font);
+        let font = self.fonts.get(font);
+        FontSemanticKey {
+            name: font.name().to_owned(),
+            path: font.path().to_string_lossy().into_owned(),
+            content_hash: font.content_hash().bytes(),
+            checksum: font.checksum(),
+            design_size: font.design_size().raw(),
+            size: font.size().raw(),
+        }
+    }
+
+    fn hash_current_font_word(&self, word: u64, hasher: &mut StateHasher) {
+        hasher.tag(0x69);
+        let font = FontId::new(word as u32);
+        self.hash_font(font, hasher);
+        let symbol = word >> 32;
+        if symbol == 0 {
+            hasher.bool(false);
+        } else {
+            let symbol = Symbol::new((symbol - 1) as u32);
+            self.assert_live_symbol(symbol);
+            hasher.bool(true);
+            hasher.str(self.interner.resolve(symbol));
+        }
+    }
+
     fn hash_code_generations(&self, hasher: &mut StateHasher) {
         let generations = self.code_tables.generations();
         hasher.tag(0x20);
@@ -428,7 +492,25 @@ impl Stores {
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum SemanticCellKey {
     Meaning(String),
-    Bank { bank: u8, index: u32 },
+    Bank {
+        bank: u8,
+        index: u32,
+    },
+    FontBank {
+        bank: u8,
+        font: FontSemanticKey,
+        index: u32,
+    },
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct FontSemanticKey {
+    name: String,
+    path: String,
+    content_hash: [u8; 32],
+    checksum: u32,
+    design_size: i32,
+    size: i32,
 }
 
 #[derive(Clone, Debug)]
@@ -478,11 +560,14 @@ fn hash_catcode(cat: Catcode, hasher: &mut StateHasher) {
     hasher.u8(cat as u8);
 }
 
-fn hash_font(_font: crate::ids::FontId, hasher: &mut StateHasher) {
-    // Font storage is not implemented yet. Until fonts have content-backed
-    // handles, placeholder font slots are deliberately omitted instead of
-    // feeding raw allocation-order ids into convergence hashing.
-    hasher.tag(0);
+fn hash_font_semantic_key(font: &FontSemanticKey, hasher: &mut StateHasher) {
+    hasher.tag(0x68);
+    hasher.str(&font.name);
+    hasher.str(&font.path);
+    hasher.bytes(&font.content_hash);
+    hasher.u32(font.checksum);
+    hasher.i32(font.design_size);
+    hasher.i32(font.size);
 }
 
 fn hash_kern_kind(kind: KernKind, hasher: &mut StateHasher) {
@@ -533,6 +618,11 @@ fn bank_order(bank: BankTag) -> u8 {
         BankTag::GlueParam => 8,
         BankTag::TokParam => 9,
         BankTag::Muskip => 10,
+        BankTag::FontDimen => 11,
+        BankTag::FontParamLen => 12,
+        BankTag::FontHyphenChar => 13,
+        BankTag::FontSkewChar => 14,
+        BankTag::CurrentFont => 15,
     }
 }
 
@@ -540,5 +630,18 @@ fn decode_u32(word: u64) -> u32 {
     match u32::try_from(word) {
         Ok(value) => value,
         Err(_) => panic!("opaque id word exceeds u32"),
+    }
+}
+
+fn unpack_font_dimen_index(index: u32) -> (FontId, u16) {
+    let font = FontId::new(index >> FONT_DIMEN_BITS);
+    let slot = ((index & FONT_DIMEN_MASK) + 1) as u16;
+    (font, slot)
+}
+
+fn decode_u16(word: u64) -> u16 {
+    match u16::try_from(word) {
+        Ok(value) => value,
+        Err(_) => panic!("font parameter count exceeds u16"),
     }
 }

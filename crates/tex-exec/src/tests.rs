@@ -673,6 +673,77 @@ fn openout_closeout_append_world_effect_records() {
     ));
 }
 
+#[test]
+fn font_definition_loads_tfm_via_world_and_reuses_identity() {
+    let mut stores = stores_with_fonts();
+    let mut input = InputStack::new(MemoryInput::new("\\font\\a=cmr10 \\font\\b=cmr10 \\end"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("font definitions execute");
+
+    let a = font_meaning(&stores, "a");
+    let b = font_meaning(&stores, "b");
+    assert_eq!(a, b);
+    assert_eq!(stores.font_name(a), "cmr10");
+    assert_eq!(stores.world().input_records().len(), 2);
+}
+
+#[test]
+fn fontdimen_assignment_is_grouping_aware() {
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\font\\f=cmr10 \\fontdimen2\\f=10pt {\\fontdimen2\\f=20pt \\message{in=\\the\\fontdimen2\\f}}\\message{out=\\the\\fontdimen2\\f}\\end",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("fontdimen assignments execute");
+
+    let output = terminal_effect_text(&stores);
+    assert!(output.contains("in=20.0pt"));
+    assert!(output.contains("out=10.0pt"));
+}
+
+#[test]
+fn fontdimen_growth_is_limited_to_most_recently_loaded_font() {
+    let mut stores = stores_with_fonts();
+    let mut ok = InputStack::new(MemoryInput::new(
+        "\\font\\a=cmr10 \\fontdimen8\\a=1pt \\end",
+    ));
+    Executor::new()
+        .run(&mut ok, &mut stores)
+        .expect("last loaded font may grow");
+
+    let mut bad = InputStack::new(MemoryInput::new(
+        "\\font\\b=cmtt10 \\fontdimen9\\a=2pt \\end",
+    ));
+    let err = Executor::new()
+        .run(&mut bad, &mut stores)
+        .expect_err("older font cannot grow");
+
+    assert!(err.to_string().contains("CannotGrow"));
+}
+
+#[test]
+fn nullfont_the_font_and_fontname_render_from_font_state() {
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\message{A=\\the\\font|N=\\fontname\\nullfont}\\font\\foo=cmr10 \\foo\\message{B=\\the\\font|F=\\fontname\\foo}\\font\\bar=cmr10 at 12pt \\message{C=\\fontname\\bar}\\end",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("font rendering execute");
+
+    let output = terminal_effect_text(&stores);
+    assert!(output.contains("A=\\nullfont |N=nullfont"));
+    assert!(output.contains("B=\\foo |F=cmr10"));
+    assert!(output.contains("C=cmr10 at 12.0pt"));
+}
+
 fn terminal_effect_text(stores: &Universe) -> String {
     let mut output = String::new();
     for record in stores.world().effect_records() {
@@ -686,6 +757,31 @@ fn terminal_effect_text(stores: &Universe) -> String {
         }
     }
     output
+}
+
+fn stores_with_fonts() -> Universe {
+    const CMR10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
+    const CMTT10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmtt10.tfm");
+
+    let mut stores = Universe::with_world(tex_state::World::memory());
+    crate::install_unexpandable_primitives(&mut stores);
+    stores
+        .world_mut()
+        .set_memory_file("cmr10.tfm", CMR10.to_vec())
+        .expect("seed cmr10");
+    stores
+        .world_mut()
+        .set_memory_file("cmtt10.tfm", CMTT10.to_vec())
+        .expect("seed cmtt10");
+    stores
+}
+
+fn font_meaning(stores: &Universe, name: &str) -> tex_state::ids::FontId {
+    let symbol = stores.symbol(name).expect("font control sequence");
+    match stores.meaning(symbol) {
+        Meaning::Font(id) => id,
+        meaning => panic!("expected font meaning, got {meaning:?}"),
+    }
 }
 
 struct EdefInputHooks;

@@ -102,10 +102,10 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 ## Fonts
 
 - [ ] `\/` - Inserts italic correction for the preceding character or ligature.
-- [ ] `\font` - Defines a font control sequence and loads font metrics.
-- [ ] `\fontdimen` - Reads or assigns a font dimension parameter.
-- [x] `\fontname` - Documented stub until font meanings exist: consumes the selector token and expands to an empty token list.
-- [ ] `\nullfont` - Predefined empty font used when no real font is selected.
+- [x] `\font` - Defines a font control sequence, loads TFM metrics via `World`, and reuses loaded font ids for the same name, selected size, and content.
+- [x] `\fontdimen` - Reads or assigns Env-backed per-font parameters with grouping and TeX's most-recent-font growth rule.
+- [x] `\fontname` - Expands a real font selector to its TFM name, including an `at <size>` suffix when selected size differs from design size.
+- [x] `\nullfont` - Predefined empty font used when no real font is selected; installed as the initial current font in no-format runs.
 
 ## Glue And Skips
 
@@ -125,10 +125,10 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 ## Hyphenation And Languages
 
 - [ ] `\-` - Inserts a discretionary hyphen.
-- [ ] `\defaulthyphenchar` - Default `\hyphenchar` value for newly loaded fonts.
+- [x] `\defaulthyphenchar` - Default `\hyphenchar` value for newly loaded fonts; implemented as an integer parameter used when initializing font banks.
 - [ ] `\discretionary` - Adds an explicit discretionary break with pre, post, and replacement text.
 - [ ] `\hyphenation` - Adds hyphenation exceptions for the current language.
-- [ ] `\hyphenchar` - Reads or assigns the hyphenation character for a font.
+- [x] `\hyphenchar` - Reads or assigns the Env-backed hyphenation character for a font selector.
 - [ ] `\language` - Selects the current hyphenation language.
 - [ ] `\lefthyphenmin` - Minimum characters before the first automatic hyphen.
 - [ ] `\patterns` - Adds INITEX hyphenation patterns for the current language.
@@ -236,7 +236,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [ ] `\belowdisplayshortskip` - Glue below a display when short-display spacing is used.
 - [ ] `\belowdisplayskip` - Normal glue below a display.
 - [ ] `\binoppenalty` - Penalty for line breaks after binary operators in math.
-- [ ] `\defaultskewchar` - Default `\skewchar` value for newly loaded fonts.
+- [x] `\defaultskewchar` - Default `\skewchar` value for newly loaded fonts; implemented as an integer parameter used when initializing font banks.
 - [x] `\delcode` - Reads or assigns a character's delimiter code; assignments use the code-table facade and bump generations.
 - [ ] `\delimiter` - Adds a delimiter by numeric delimiter code.
 - [ ] `\delimiterfactor` - Scaling factor used to choose delimiter sizes.
@@ -289,7 +289,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [ ] `\scriptscriptstyle` - Selects scriptscript math style.
 - [ ] `\scriptspace` - Extra space after subscripts and superscripts.
 - [ ] `\scriptstyle` - Selects script math style.
-- [ ] `\skewchar` - Font-specific character used to position math accents.
+- [x] `\skewchar` - Font-specific Env-backed character used to position math accents.
 - [ ] `\textfont` - Font used for a family in text style.
 - [ ] `\textstyle` - Selects text math style.
 - [ ] `\thickmuskip` - Thick math glue between math atoms.

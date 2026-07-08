@@ -915,11 +915,11 @@ fn jobname_expands_from_driver_hook_as_rendered_tokens() {
 }
 
 #[test]
-fn fontname_stub_consumes_selector_and_expands_empty() {
+fn fontname_renders_real_font_selector_name() {
     let mut stores = Universe::new();
     expandable_primitive(&mut stores, "fontname", ExpandablePrimitive::FontName);
     let nullfont = stores.intern("nullfont");
-    stores.set_meaning(nullfont, Meaning::Relax);
+    stores.set_meaning(nullfont, Meaning::Font(tex_state::font::NULL_FONT));
     let list = stores.intern_token_list(&[
         Token::Cs(stores.symbol("fontname").expect("fontname")),
         Token::Cs(nullfont),
@@ -928,7 +928,7 @@ fn fontname_stub_consumes_selector_and_expands_empty() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
-    assert_eq!(next_expanded_chars(&mut input, &mut stores), "z");
+    assert_eq!(next_expanded_chars(&mut input, &mut stores), "nullfontz");
 }
 
 #[test]

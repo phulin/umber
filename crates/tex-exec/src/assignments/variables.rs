@@ -1,5 +1,6 @@
 use super::*;
 use tex_state::StreamSlot;
+use tex_state::ids::FontId;
 use tex_state::macro_store::MacroMeaning;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -13,6 +14,9 @@ pub(super) enum Variable {
     DimenParam(u16),
     GlueParam(u16),
     TokParam(u16),
+    FontDimen(FontId, u16),
+    FontHyphenChar(FontId),
+    FontSkewChar(FontId),
 }
 
 pub(super) fn execute_variable_assignment<S, H>(
@@ -81,6 +85,10 @@ where
             let value = scan_scaled(input, stores, hooks)?;
             set_dimen_param(stores, index, value, global);
         }
+        Variable::FontDimen(font, number) => {
+            let value = scan_scaled(input, stores, hooks)?;
+            stores.set_font_dimen(font, number, value, global)?;
+        }
         Variable::GlueParam(index) => {
             let value = scan_glue_id(input, stores, hooks, false)?;
             set_glue_param(stores, index, value, global);
@@ -88,6 +96,14 @@ where
         Variable::TokParam(index) => {
             let value = scan_token_list_assignment(input, stores, hooks)?;
             set_tok_param(stores, index, value, global);
+        }
+        Variable::FontHyphenChar(font) => {
+            let value = scan_i32(input, stores, hooks)?;
+            stores.set_font_hyphen_char(font, value, global);
+        }
+        Variable::FontSkewChar(font) => {
+            let value = scan_i32(input, stores, hooks)?;
+            stores.set_font_skew_char(font, value, global);
         }
     }
     Ok(())
@@ -191,6 +207,12 @@ where
             let value = arithmetic_i32(primitive, old, rhs)?;
             write_int_variable(stores, target, index, value, global);
         }
+        Variable::FontHyphenChar(font) | Variable::FontSkewChar(font) => {
+            let old = read_int_variable(stores, target);
+            let rhs = scan_i32(input, stores, hooks)?;
+            let value = arithmetic_i32(primitive, old, rhs)?;
+            write_font_int_variable(stores, target, font, value, global);
+        }
         Variable::DimenRegister(index) | Variable::DimenParam(index) => {
             let old = read_dimen_variable(stores, target);
             let value = match primitive {
@@ -206,6 +228,22 @@ where
                 _ => unreachable!("caller restricts primitive"),
             };
             write_dimen_variable(stores, target, index, value, global);
+        }
+        Variable::FontDimen(font, number) => {
+            let old = stores.font_dimen(font, number);
+            let value = match primitive {
+                UnexpandablePrimitive::Advance => old
+                    .checked_add(scan_scaled(input, stores, hooks)?)
+                    .ok_or(ExecError::ArithmeticOverflow)?,
+                UnexpandablePrimitive::Multiply => {
+                    scaled_checked_mul(old, scan_i32(input, stores, hooks)?)?
+                }
+                UnexpandablePrimitive::Divide => {
+                    scaled_checked_div(old, scan_nonzero_i32(input, stores, hooks)?)?
+                }
+                _ => unreachable!("caller restricts primitive"),
+            };
+            stores.set_font_dimen(font, number, value, global)?;
         }
         Variable::GlueRegister(index) | Variable::GlueParam(index) => {
             let old = stores.glue(read_glue_variable(stores, target));
@@ -520,6 +558,8 @@ fn read_int_variable(stores: &Universe, target: Variable) -> i32 {
     match target {
         Variable::IntRegister(index) => stores.count(index),
         Variable::IntParam(index) => stores.int_param(IntParam::new(index)),
+        Variable::FontHyphenChar(font) => stores.font_hyphen_char(font),
+        Variable::FontSkewChar(font) => stores.font_skew_char(font),
         _ => unreachable!("caller restricts target"),
     }
 }
@@ -542,6 +582,7 @@ fn read_dimen_variable(stores: &Universe, target: Variable) -> Scaled {
     match target {
         Variable::DimenRegister(index) => stores.dimen(index),
         Variable::DimenParam(index) => stores.dimen_param(DimenParam::new(index)),
+        Variable::FontDimen(font, number) => stores.font_dimen(font, number),
         _ => unreachable!("caller restricts target"),
     }
 }
@@ -578,6 +619,20 @@ fn write_glue_variable(
     match target {
         Variable::GlueRegister(_) => set_glue_register(stores, index, value, global),
         Variable::GlueParam(_) => set_glue_param(stores, index, value, global),
+        _ => unreachable!("caller restricts target"),
+    }
+}
+
+fn write_font_int_variable(
+    stores: &mut Universe,
+    target: Variable,
+    font: FontId,
+    value: i32,
+    global: bool,
+) {
+    match target {
+        Variable::FontHyphenChar(_) => stores.set_font_hyphen_char(font, value, global),
+        Variable::FontSkewChar(_) => stores.set_font_skew_char(font, value, global),
         _ => unreachable!("caller restricts target"),
     }
 }

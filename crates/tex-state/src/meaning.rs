@@ -1,6 +1,6 @@
 //! Meaning word encoding and decoding.
 
-use crate::ids::MacroDefinitionId;
+use crate::ids::{FontId, MacroDefinitionId};
 
 const OPCODE_SHIFT: u32 = 56;
 const FLAGS_SHIFT: u32 = 48;
@@ -22,6 +22,7 @@ const OP_INT_PARAM: u8 = 12;
 const OP_DIMEN_PARAM: u8 = 13;
 const OP_GLUE_PARAM: u8 = 14;
 const OP_TOK_PARAM: u8 = 15;
+const OP_FONT: u8 = 16;
 
 /// Bitflags carried by meaning words.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -81,6 +82,7 @@ pub enum Meaning {
     DimenParam(u16),
     GlueParam(u16),
     TokParam(u16),
+    Font(FontId),
     ExpandablePrimitive(ExpandablePrimitive),
     UnexpandablePrimitive(UnexpandablePrimitive),
     Unknown(RawMeaning),
@@ -255,6 +257,10 @@ pub enum UnexpandablePrimitive {
     SfCode,
     MathCode,
     DelCode,
+    Font,
+    FontDimen,
+    HyphenChar,
+    SkewChar,
     OpenIn,
     CloseIn,
     OpenOut,
@@ -313,26 +319,30 @@ impl UnexpandablePrimitive {
             Self::SfCode => 29,
             Self::MathCode => 30,
             Self::DelCode => 31,
-            Self::OpenIn => 32,
-            Self::CloseIn => 33,
-            Self::OpenOut => 34,
-            Self::CloseOut => 35,
-            Self::Write => 51,
-            Self::Read => 36,
-            Self::BeginGroup => 37,
-            Self::EndGroup => 38,
-            Self::AfterGroup => 39,
-            Self::AfterAssignment => 40,
-            Self::Show => 41,
-            Self::ShowThe => 42,
-            Self::ShowTokens => 43,
-            Self::Message => 44,
-            Self::ErrMessage => 45,
-            Self::ShowLists => 46,
-            Self::Uppercase => 47,
-            Self::Lowercase => 48,
-            Self::IgnoreSpaces => 49,
-            Self::End => 50,
+            Self::Font => 32,
+            Self::FontDimen => 33,
+            Self::HyphenChar => 34,
+            Self::SkewChar => 35,
+            Self::OpenIn => 36,
+            Self::CloseIn => 37,
+            Self::OpenOut => 38,
+            Self::CloseOut => 39,
+            Self::Write => 55,
+            Self::Read => 40,
+            Self::BeginGroup => 41,
+            Self::EndGroup => 42,
+            Self::AfterGroup => 43,
+            Self::AfterAssignment => 44,
+            Self::Show => 45,
+            Self::ShowThe => 46,
+            Self::ShowTokens => 47,
+            Self::Message => 48,
+            Self::ErrMessage => 49,
+            Self::ShowLists => 50,
+            Self::Uppercase => 51,
+            Self::Lowercase => 52,
+            Self::IgnoreSpaces => 53,
+            Self::End => 54,
         }
     }
 
@@ -371,26 +381,30 @@ impl UnexpandablePrimitive {
             29 => Some(Self::SfCode),
             30 => Some(Self::MathCode),
             31 => Some(Self::DelCode),
-            32 => Some(Self::OpenIn),
-            33 => Some(Self::CloseIn),
-            34 => Some(Self::OpenOut),
-            35 => Some(Self::CloseOut),
-            51 => Some(Self::Write),
-            36 => Some(Self::Read),
-            37 => Some(Self::BeginGroup),
-            38 => Some(Self::EndGroup),
-            39 => Some(Self::AfterGroup),
-            40 => Some(Self::AfterAssignment),
-            41 => Some(Self::Show),
-            42 => Some(Self::ShowThe),
-            43 => Some(Self::ShowTokens),
-            44 => Some(Self::Message),
-            45 => Some(Self::ErrMessage),
-            46 => Some(Self::ShowLists),
-            47 => Some(Self::Uppercase),
-            48 => Some(Self::Lowercase),
-            49 => Some(Self::IgnoreSpaces),
-            50 => Some(Self::End),
+            32 => Some(Self::Font),
+            33 => Some(Self::FontDimen),
+            34 => Some(Self::HyphenChar),
+            35 => Some(Self::SkewChar),
+            36 => Some(Self::OpenIn),
+            37 => Some(Self::CloseIn),
+            38 => Some(Self::OpenOut),
+            39 => Some(Self::CloseOut),
+            55 => Some(Self::Write),
+            40 => Some(Self::Read),
+            41 => Some(Self::BeginGroup),
+            42 => Some(Self::EndGroup),
+            43 => Some(Self::AfterGroup),
+            44 => Some(Self::AfterAssignment),
+            45 => Some(Self::Show),
+            46 => Some(Self::ShowThe),
+            47 => Some(Self::ShowTokens),
+            48 => Some(Self::Message),
+            49 => Some(Self::ErrMessage),
+            50 => Some(Self::ShowLists),
+            51 => Some(Self::Uppercase),
+            52 => Some(Self::Lowercase),
+            53 => Some(Self::IgnoreSpaces),
+            54 => Some(Self::End),
             _ => None,
         }
     }
@@ -455,6 +469,7 @@ impl Meaning {
             Self::DimenParam(index) => pack(OP_DIMEN_PARAM, MeaningFlags::EMPTY, index as u64),
             Self::GlueParam(index) => pack(OP_GLUE_PARAM, MeaningFlags::EMPTY, index as u64),
             Self::TokParam(index) => pack(OP_TOK_PARAM, MeaningFlags::EMPTY, index as u64),
+            Self::Font(id) => pack(OP_FONT, MeaningFlags::EMPTY, id.raw() as u64),
             Self::ExpandablePrimitive(primitive) => pack(
                 OP_EXPANDABLE_PRIMITIVE,
                 MeaningFlags::EMPTY,
@@ -499,6 +514,7 @@ impl Meaning {
             OP_DIMEN_PARAM if operand <= u16::MAX as u64 => Self::DimenParam(operand as u16),
             OP_GLUE_PARAM if operand <= u16::MAX as u64 => Self::GlueParam(operand as u16),
             OP_TOK_PARAM if operand <= u16::MAX as u64 => Self::TokParam(operand as u16),
+            OP_FONT if operand <= u32::MAX as u64 => Self::Font(FontId::new(operand as u32)),
             OP_EXPANDABLE_PRIMITIVE => match ExpandablePrimitive::from_operand(operand) {
                 Some(primitive) => Self::ExpandablePrimitive(primitive),
                 None => Self::Unknown(RawMeaning { op, operand }),
@@ -529,7 +545,7 @@ mod tests {
     use super::{
         ExpandablePrimitive, Meaning, MeaningFlags, OPERAND_MASK, RawMeaning, UnexpandablePrimitive,
     };
-    use crate::ids::MacroDefinitionId;
+    use crate::ids::{FontId, MacroDefinitionId};
 
     fn round_trip(meaning: Meaning) {
         assert_eq!(Meaning::decode_stored(meaning.encode()), meaning);
@@ -560,6 +576,8 @@ mod tests {
         });
         round_trip(Meaning::CharGiven('\0'));
         round_trip(Meaning::CharGiven(char::MAX));
+        round_trip(Meaning::Font(FontId::new(0)));
+        round_trip(Meaning::Font(FontId::new(u32::MAX)));
         round_trip(Meaning::ExpandablePrimitive(
             ExpandablePrimitive::ExpandAfter,
         ));

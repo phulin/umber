@@ -9,8 +9,9 @@ use crate::code_tables::{
 };
 use crate::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use crate::env::{Env, EnvSnapshot};
+use crate::font::{FontStore, FontStoreMark, LoadedFont, NULL_FONT};
 use crate::glue::{GlueSpec, GlueStore, GlueStoreMark};
-use crate::ids::{GlueId, MacroDefinitionId, NodeListId, TokenListId};
+use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, TokenListId};
 use crate::interner::{Interner, InternerMark, Symbol};
 use crate::macro_store::{MacroMeaning, MacroStore, MacroStoreMark};
 use crate::meaning::Meaning;
@@ -43,9 +44,11 @@ pub(crate) struct StoreSnapshot {
     token_mark: TokenStoreMark,
     macro_mark: MacroStoreMark,
     glue_mark: GlueStoreMark,
+    font_mark: FontStoreMark,
     node_mark: NodeArenaMark,
     code_tables_snapshot: CodeTablesSnapshot,
     prepared_mag: Option<i32>,
+    last_loaded_font: FontId,
 }
 
 impl StoreSnapshot {
@@ -85,10 +88,12 @@ pub struct Stores {
     tokens: TokenStore,
     macros: MacroStore,
     glue: GlueStore,
+    fonts: FontStore,
     nodes: NodeArena,
     survivors: SurvivorArena,
     code_tables: CodeTables,
     prepared_mag: Option<i32>,
+    last_loaded_font: FontId,
 }
 
 /// Recoverable diagnostics from TeX's `prepare_mag` operation.
@@ -96,6 +101,20 @@ pub struct Stores {
 pub enum PrepareMagDiagnostic {
     IllegalMagnification { attempted: i32 },
     IncompatibleMagnification { attempted: i32, retained: i32 },
+}
+
+/// Diagnostics for mutable font parameter assignments.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FontParameterError {
+    /// TeX font parameter numbers start at 1.
+    Zero,
+    /// Only the most recently loaded font may grow its parameter table.
+    CannotGrow {
+        font: FontId,
+        number: u16,
+        current_len: u16,
+        last_loaded_font: FontId,
+    },
 }
 
 impl Clone for Stores {
@@ -107,10 +126,12 @@ impl Clone for Stores {
             tokens: self.tokens.clone(),
             macros: self.macros.clone(),
             glue: self.glue.clone(),
+            fonts: self.fonts.clone(),
             nodes: self.nodes.clone(),
             survivors: self.survivors.clone(),
             code_tables: self.code_tables.clone(),
             prepared_mag: self.prepared_mag,
+            last_loaded_font: self.last_loaded_font,
         }
     }
 }
@@ -126,13 +147,18 @@ impl Stores {
             tokens: TokenStore::new(),
             macros: MacroStore::new(),
             glue: GlueStore::new(),
+            fonts: FontStore::new(),
             nodes: NodeArena::new(),
             survivors: SurvivorArena::new(),
             code_tables: CodeTables::new(),
             prepared_mag: None,
+            last_loaded_font: NULL_FONT,
         };
         stores.set_int_param(IntParam::MAG, 1000);
         stores.set_int_param(IntParam::ESCAPE_CHAR, b'\\'.into());
+        stores.set_int_param(IntParam::DEFAULT_HYPHEN_CHAR, b'-'.into());
+        stores.set_int_param(IntParam::DEFAULT_SKEW_CHAR, -1);
+        stores.initialize_font_banks(NULL_FONT, 7, &[]);
         stores
     }
 
@@ -213,6 +239,7 @@ impl Stores {
     pub fn set_meaning(&mut self, symbol: Symbol, meaning: Meaning) {
         self.assert_live_symbol(symbol);
         self.assert_live_macro_definition_in_meaning(meaning);
+        self.assert_live_font_in_meaning(meaning);
         self.env.set(symbol, meaning);
     }
 
@@ -230,6 +257,7 @@ impl Stores {
     pub fn set_meaning_global(&mut self, symbol: Symbol, meaning: Meaning) {
         self.assert_live_symbol(symbol);
         self.assert_live_macro_definition_in_meaning(meaning);
+        self.assert_live_font_in_meaning(meaning);
         self.env.set_global(symbol, meaning);
     }
 
@@ -331,6 +359,160 @@ impl Stores {
     pub fn glue(&self, id: GlueId) -> GlueSpec {
         self.assert_live_glue(id);
         self.glue.get(id)
+    }
+
+    /// Interns a loaded immutable font and initializes its Env-side banks.
+    pub fn intern_font(&mut self, font: LoadedFont) -> FontId {
+        let parameter_count = u16::try_from(font.parameters().len())
+            .expect("loaded font has more than u16::MAX parameters");
+        let parameters = font.parameters().to_vec();
+        let id = self.fonts.intern(font);
+        if self.env.font_param_len(id) == 0 && id != NULL_FONT {
+            self.initialize_font_banks(id, parameter_count, &parameters);
+        }
+        self.last_loaded_font = id;
+        id
+    }
+
+    /// Reads a live immutable font record.
+    #[must_use]
+    pub fn font(&self, id: FontId) -> &LoadedFont {
+        self.assert_live_font(id);
+        self.fonts.get(id)
+    }
+
+    #[must_use]
+    pub fn font_name(&self, id: FontId) -> String {
+        self.font(id).fontname_text()
+    }
+
+    #[must_use]
+    pub fn current_font(&self) -> FontId {
+        let id = self.env.current_font();
+        self.assert_live_font(id);
+        id
+    }
+
+    #[must_use]
+    pub fn current_font_symbol(&self) -> Option<Symbol> {
+        let symbol = self.env.current_font_symbol()?;
+        self.assert_live_symbol(symbol);
+        Some(symbol)
+    }
+
+    pub fn set_current_font(&mut self, id: FontId) {
+        self.assert_live_font(id);
+        self.env.set_current_font(id);
+    }
+
+    pub fn set_current_font_global(&mut self, id: FontId) {
+        self.assert_live_font(id);
+        self.env.set_current_font_global(id);
+    }
+
+    pub fn set_current_font_selector(&mut self, symbol: Symbol, id: FontId) {
+        self.assert_live_symbol(symbol);
+        self.assert_live_font(id);
+        self.env.set_current_font_selector(symbol, id);
+    }
+
+    pub fn set_current_font_selector_global(&mut self, symbol: Symbol, id: FontId) {
+        self.assert_live_symbol(symbol);
+        self.assert_live_font(id);
+        self.env.set_current_font_selector_global(symbol, id);
+    }
+
+    #[must_use]
+    pub fn font_dimen(&self, font: FontId, number: u16) -> Scaled {
+        self.assert_live_font(font);
+        self.env.font_dimen(font, number)
+    }
+
+    pub fn set_font_dimen(
+        &mut self,
+        font: FontId,
+        number: u16,
+        value: Scaled,
+        global: bool,
+    ) -> Result<(), FontParameterError> {
+        self.prepare_font_dimen_write(font, number, global)?;
+        if global {
+            self.env.set_font_dimen_global(font, number, value);
+        } else {
+            self.env.set_font_dimen(font, number, value);
+        }
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn font_hyphen_char(&self, font: FontId) -> i32 {
+        self.assert_live_font(font);
+        self.env.font_hyphen_char(font)
+    }
+
+    pub fn set_font_hyphen_char(&mut self, font: FontId, value: i32, global: bool) {
+        self.assert_live_font(font);
+        if global {
+            self.env.set_font_hyphen_char_global(font, value);
+        } else {
+            self.env.set_font_hyphen_char(font, value);
+        }
+    }
+
+    #[must_use]
+    pub fn font_skew_char(&self, font: FontId) -> i32 {
+        self.assert_live_font(font);
+        self.env.font_skew_char(font)
+    }
+
+    pub fn set_font_skew_char(&mut self, font: FontId, value: i32, global: bool) {
+        self.assert_live_font(font);
+        if global {
+            self.env.set_font_skew_char_global(font, value);
+        } else {
+            self.env.set_font_skew_char(font, value);
+        }
+    }
+
+    fn initialize_font_banks(&mut self, font: FontId, parameter_count: u16, parameters: &[Scaled]) {
+        self.env.set_font_param_len_global(font, parameter_count);
+        for (index, value) in parameters.iter().copied().enumerate() {
+            let number = u16::try_from(index + 1).expect("font parameter index exceeds u16");
+            self.env.set_font_dimen_global(font, number, value);
+        }
+        self.env
+            .set_font_hyphen_char_global(font, self.env.int_param(IntParam::DEFAULT_HYPHEN_CHAR));
+        self.env
+            .set_font_skew_char_global(font, self.env.int_param(IntParam::DEFAULT_SKEW_CHAR));
+    }
+
+    fn prepare_font_dimen_write(
+        &mut self,
+        font: FontId,
+        number: u16,
+        global: bool,
+    ) -> Result<(), FontParameterError> {
+        self.assert_live_font(font);
+        if number == 0 {
+            return Err(FontParameterError::Zero);
+        }
+        let current_len = self.env.font_param_len(font);
+        if number > current_len {
+            if font != self.last_loaded_font {
+                return Err(FontParameterError::CannotGrow {
+                    font,
+                    number,
+                    current_len,
+                    last_loaded_font: self.last_loaded_font,
+                });
+            }
+            if global {
+                self.env.set_font_param_len_global(font, number);
+            } else {
+                self.env.set_font_param_len(font, number);
+            }
+        }
+        Ok(())
     }
 
     /// Creates a fresh owned scratch node-list builder.
@@ -634,9 +816,11 @@ impl Stores {
             token_mark: self.tokens.watermark(),
             macro_mark: self.macros.watermark(),
             glue_mark: self.glue.watermark(),
+            font_mark: self.fonts.watermark(),
             node_mark: self.nodes.watermark(),
             code_tables_snapshot: self.code_tables.checkpoint(),
             prepared_mag: self.prepared_mag,
+            last_loaded_font: self.last_loaded_font,
         }
     }
 
@@ -649,10 +833,12 @@ impl Stores {
         self.tokens.truncate_to(snapshot.token_mark);
         self.macros.truncate_to(snapshot.macro_mark);
         self.glue.truncate_to(snapshot.glue_mark);
+        self.fonts.truncate_to(snapshot.font_mark);
         self.nodes.truncate_to(snapshot.node_mark);
         self.code_tables
             .rollback_to(snapshot.code_tables_snapshot.clone());
         self.prepared_mag = snapshot.prepared_mag;
+        self.last_loaded_font = snapshot.last_loaded_font;
     }
 
     /// Returns the number of journal bytes appended since `snapshot`.
@@ -685,9 +871,11 @@ impl Stores {
         }
         self.tokens.testing_state_hash().hash(&mut hasher);
         self.glue.testing_state_hash().hash(&mut hasher);
+        self.fonts.testing_state_hash(&mut hasher);
         self.testing_hash_all_epoch_nodes(&mut hasher);
         self.code_tables.testing_hash_content(&mut hasher);
         self.prepared_mag.hash(&mut hasher);
+        self.last_loaded_font.hash(&mut hasher);
         hasher.finish()
     }
 

@@ -19,6 +19,11 @@ pub enum BankTag {
     GlueParam = 8,
     TokParam = 9,
     Muskip = 10,
+    FontDimen = 11,
+    FontParamLen = 12,
+    FontHyphenChar = 13,
+    FontSkewChar = 14,
+    CurrentFont = 15,
 }
 
 impl BankTag {
@@ -35,6 +40,11 @@ impl BankTag {
             8 => Self::GlueParam,
             9 => Self::TokParam,
             10 => Self::Muskip,
+            11 => Self::FontDimen,
+            12 => Self::FontParamLen,
+            13 => Self::FontHyphenChar,
+            14 => Self::FontSkewChar,
+            15 => Self::CurrentFont,
             _ => panic!("unknown cell bank tag"),
         }
     }
@@ -100,6 +110,11 @@ mod tests {
             BankTag::DimenParam,
             BankTag::GlueParam,
             BankTag::TokParam,
+            BankTag::FontDimen,
+            BankTag::FontParamLen,
+            BankTag::FontHyphenChar,
+            BankTag::FontSkewChar,
+            BankTag::CurrentFont,
         ];
 
         for bank in banks {

@@ -71,6 +71,14 @@ where
         Meaning::UnexpandablePrimitive(primitive) => {
             assignments::execute_unexpandable(primitive, input, stores, hooks)
         }
+        Meaning::Font(id) => {
+            if let Token::Cs(symbol) = token {
+                stores.set_current_font_selector(symbol, id);
+            } else {
+                stores.set_current_font(id);
+            }
+            Ok(DispatchAction::Continue)
+        }
         meaning @ (Meaning::CountRegister(_)
         | Meaning::DimenRegister(_)
         | Meaning::SkipRegister(_)

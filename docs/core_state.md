@@ -414,10 +414,10 @@ pub struct Snapshot {
   table generation counters, nodes appended to the epoch arena since the
   previous cursor, the uncommitted World effect/input/shell-escape slices,
   stream-buffer state (including terminal-input cursor), RNG state, job clock,
-  interaction mode, and prepared magnification. Font ids are deliberately omitted while they remain
-  placeholder handles; the font epic must replace that omission with
-  content-backed font identity before font-dependent node hashes are
-  convergence-grade.
+  interaction mode, prepared magnification, and font-dependent content by
+  following `FontId` handles to the loaded font's semantic identity (font name,
+  input path/content hash, checksum, design size, and selected size) rather
+  than hashing raw dense ids.
 
 Derived queries (these fall out; do not build separate instrumentation):
 
@@ -492,6 +492,13 @@ and reading instead go through `Universe::intern_token_list`,
 aggregate timeline. Public modules may still expose immutable value types,
 handles, and the builder types returned by `Universe`; their constructors and
 raw store-finish hooks are crate-private unless compiled for crate-local tests.
+Loaded fonts follow the same aggregate rule: `Universe::intern_font`,
+`Universe::font`, `Universe::font_name`, and the font parameter/current-font
+facades are the public boundary. Font store rollback is watermark based like
+the interner and other immutable content stores; rolling back a `Universe`
+snapshot truncates fonts loaded after the snapshot, while ordinary TeX group
+exit only restores Env-side meanings/current-font/fontdimen banks through the
+journal and does not unload immutable font objects.
 
 ### 10.5 Effects as capability
 

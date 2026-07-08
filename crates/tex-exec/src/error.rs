@@ -3,6 +3,7 @@ use std::fmt;
 use tex_expand::ExpandError;
 use tex_expand::scan::ScanToksError;
 use tex_lex::LexError;
+use tex_state::FontParameterError;
 use tex_state::WorldError;
 use tex_state::meaning::ExpandablePrimitive;
 use tex_state::token::Token;
@@ -16,6 +17,8 @@ pub enum ExecError {
     ScanToks(ScanToksError),
     ScanGlue(tex_expand::scan_glue::ScanGlueError),
     World(WorldError),
+    FontParse(tex_fonts::ParseError),
+    FontParameter(FontParameterError),
     EmptyModeNestSummary,
     CannotPopBaseMode,
     UndefinedControlSequence {
@@ -84,6 +87,8 @@ impl fmt::Display for ExecError {
             Self::ScanToks(err) => write!(f, "{err}"),
             Self::ScanGlue(err) => write!(f, "{err}"),
             Self::World(err) => write!(f, "{err}"),
+            Self::FontParse(err) => write!(f, "{err}"),
+            Self::FontParameter(err) => write!(f, "{err:?}"),
             Self::EmptyModeNestSummary => write!(f, "mode nest summary has no levels"),
             Self::CannotPopBaseMode => write!(f, "cannot pop the base vertical mode level"),
             Self::UndefinedControlSequence { name } => {
@@ -164,6 +169,7 @@ impl std::error::Error for ExecError {
             Self::ScanToks(err) => Some(err),
             Self::ScanGlue(err) => Some(err),
             Self::World(err) => Some(err),
+            Self::FontParse(err) => Some(err),
             Self::EmptyModeNestSummary
             | Self::CannotPopBaseMode
             | Self::UndefinedControlSequence { .. }
@@ -191,6 +197,7 @@ impl std::error::Error for ExecError {
             | Self::ReadNotImplemented
             | Self::FileEndedWithinRead
             | Self::TerminalReadEof
+            | Self::FontParameter(_)
             | Self::UnimplementedTypesetting { .. } => None,
         }
     }
@@ -223,5 +230,17 @@ impl From<tex_expand::scan_glue::ScanGlueError> for ExecError {
 impl From<WorldError> for ExecError {
     fn from(value: WorldError) -> Self {
         Self::World(value)
+    }
+}
+
+impl From<tex_fonts::ParseError> for ExecError {
+    fn from(value: tex_fonts::ParseError) -> Self {
+        Self::FontParse(value)
+    }
+}
+
+impl From<FontParameterError> for ExecError {
+    fn from(value: FontParameterError) -> Self {
+        Self::FontParameter(value)
     }
 }

@@ -38,6 +38,10 @@ pub fn install_unexpandable_primitives(stores: &mut Universe) {
         ("sfcode", UnexpandablePrimitive::SfCode),
         ("mathcode", UnexpandablePrimitive::MathCode),
         ("delcode", UnexpandablePrimitive::DelCode),
+        ("font", UnexpandablePrimitive::Font),
+        ("fontdimen", UnexpandablePrimitive::FontDimen),
+        ("hyphenchar", UnexpandablePrimitive::HyphenChar),
+        ("skewchar", UnexpandablePrimitive::SkewChar),
         ("openin", UnexpandablePrimitive::OpenIn),
         ("closein", UnexpandablePrimitive::CloseIn),
         ("openout", UnexpandablePrimitive::OpenOut),
@@ -60,6 +64,9 @@ pub fn install_unexpandable_primitives(stores: &mut Universe) {
     }
     let relax = stores.intern("relax");
     stores.set_meaning(relax, Meaning::Relax);
+    let nullfont = stores.intern("nullfont");
+    stores.set_meaning(nullfont, Meaning::Font(tex_state::font::NULL_FONT));
+    stores.set_current_font_selector_global(nullfont, tex_state::font::NULL_FONT);
     install_parameter_meanings(stores);
 }
 

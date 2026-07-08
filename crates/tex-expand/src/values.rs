@@ -2,7 +2,7 @@ use tex_lex::{InputSource, InputStack, MacroArguments};
 use tex_state::Universe;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
-use tex_state::ids::TokenListId;
+use tex_state::ids::{FontId, TokenListId};
 use tex_state::meaning::{Meaning, MeaningFlags};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
@@ -75,6 +75,46 @@ where
                     token_list: stores.toks(index),
                     macro_arguments: MacroArguments::new(),
                 })
+            }
+            tex_state::meaning::UnexpandablePrimitive::Font => {
+                let symbol = stores
+                    .current_font_symbol()
+                    .ok_or(ExpandError::UnsupportedTheTarget(token))?;
+                Ok(Dispatch::Push {
+                    replay_kind: ExpansionReplayKind::TheOutput,
+                    token_list: stores.intern_token_list(&[Token::Cs(symbol)]),
+                    macro_arguments: MacroArguments::new(),
+                })
+            }
+            tex_state::meaning::UnexpandablePrimitive::FontDimen => {
+                let number =
+                    scan_int::scan_int_with_recorder_and_hooks(input, stores, recorder, hooks)?
+                        .value();
+                if !(1..=32_767).contains(&number) {
+                    return Err(ExpandError::UnsupportedTheTarget(token));
+                }
+                let font = scan_font_selector(input, stores, recorder, hooks)?;
+                Ok(push_rendered_text(
+                    stores,
+                    ExpansionReplayKind::TheOutput,
+                    &format_scaled(stores.font_dimen(font, number as u16)),
+                ))
+            }
+            tex_state::meaning::UnexpandablePrimitive::HyphenChar => {
+                let font = scan_font_selector(input, stores, recorder, hooks)?;
+                Ok(push_rendered_text(
+                    stores,
+                    ExpansionReplayKind::TheOutput,
+                    &stores.font_hyphen_char(font).to_string(),
+                ))
+            }
+            tex_state::meaning::UnexpandablePrimitive::SkewChar => {
+                let font = scan_font_selector(input, stores, recorder, hooks)?;
+                Ok(push_rendered_text(
+                    stores,
+                    ExpansionReplayKind::TheOutput,
+                    &stores.font_skew_char(font).to_string(),
+                ))
             }
             tex_state::meaning::UnexpandablePrimitive::CatCode
             | tex_state::meaning::UnexpandablePrimitive::LcCode
@@ -255,6 +295,7 @@ pub fn meaning_text(stores: &Universe, token: Token) -> String {
             | Meaning::TokParam(_) => {
                 format!("\\{}", stores.resolve(symbol))
             }
+            Meaning::Font(_) => format!("select font {}", token_text(stores, token)),
             Meaning::ExpandablePrimitive(_) => format!("\\{}", stores.resolve(symbol)),
             Meaning::UnexpandablePrimitive(_) => format!("\\{}", stores.resolve(symbol)),
             Meaning::Macro { flags, definition } => {
@@ -439,4 +480,31 @@ where
             ch: '?',
             cat: Catcode::Other,
         }))
+}
+
+pub(crate) fn scan_font_selector<S, R, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<FontId, ExpandError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    let Some(token) =
+        scan_helpers::next_non_space_x_token_with_hooks(input, stores, recorder, hooks)?
+    else {
+        return Err(ExpandError::MissingTokenAfterPrimitive(
+            ExpandableOpcode::FontName,
+        ));
+    };
+    let Token::Cs(symbol) = token else {
+        return Err(ExpandError::UnsupportedTheTarget(token));
+    };
+    match stores.meaning(symbol) {
+        Meaning::Font(id) => Ok(id),
+        _ => Err(ExpandError::UnsupportedTheTarget(token)),
+    }
 }

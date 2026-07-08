@@ -35,6 +35,17 @@ impl Env {
                 .restore_word(u16_index(cell.index()), word),
             BankTag::GlueParam => self.glue_params.restore_word(u16_index(cell.index()), word),
             BankTag::TokParam => self.tok_params.restore_word(u16_index(cell.index()), word),
+            BankTag::FontDimen => restore_font_bank_word(&mut self.font_dimens, cell.index(), word),
+            BankTag::FontParamLen => {
+                restore_font_bank_word(&mut self.font_param_lens, cell.index(), word);
+            }
+            BankTag::FontHyphenChar => {
+                restore_font_bank_word(&mut self.font_hyphen_chars, cell.index(), word);
+            }
+            BankTag::FontSkewChar => {
+                restore_font_bank_word(&mut self.font_skew_chars, cell.index(), word);
+            }
+            BankTag::CurrentFont => self.current_font.word = word,
         }
         #[cfg(feature = "shadow")]
         shadow_set(
@@ -81,6 +92,20 @@ impl Env {
                 u64::from(self.glue_param(GlueParam::new(u16_index(index))).raw())
             }
             BankTag::TokParam => u64::from(self.tok_param(TokParam::new(u16_index(index))).raw()),
+            BankTag::FontDimen => self.font_dimens.get(&index).map_or(0, |entry| entry.word),
+            BankTag::FontParamLen => self
+                .font_param_lens
+                .get(&index)
+                .map_or(0, |entry| entry.word),
+            BankTag::FontHyphenChar => self
+                .font_hyphen_chars
+                .get(&index)
+                .map_or(0, |entry| entry.word),
+            BankTag::FontSkewChar => self
+                .font_skew_chars
+                .get(&index)
+                .map_or(0, |entry| entry.word),
+            BankTag::CurrentFont => self.current_font.word,
         }
     }
 
@@ -140,6 +165,13 @@ impl Env {
             .for_each_non_default_word(BankTag::GlueParam, &mut f);
         self.tok_params
             .for_each_non_default_word(BankTag::TokParam, &mut f);
+        for_each_font_bank_word(BankTag::FontDimen, &self.font_dimens, &mut f);
+        for_each_font_bank_word(BankTag::FontParamLen, &self.font_param_lens, &mut f);
+        for_each_font_bank_word(BankTag::FontHyphenChar, &self.font_hyphen_chars, &mut f);
+        for_each_font_bank_word(BankTag::FontSkewChar, &self.font_skew_chars, &mut f);
+        if self.current_font.word != 0 {
+            f(CellId::new(BankTag::CurrentFont, 0), self.current_font.word);
+        }
     }
 
     #[cfg(any(test, feature = "testing", feature = "shadow"))]
@@ -219,6 +251,31 @@ impl Env {
                 RegisterBank::Box => self.overflow_boxes.restore_word(index, word),
                 RegisterBank::Muskip => self.overflow_muskips.restore_word(index, word),
             }
+        }
+    }
+}
+
+fn restore_font_bank_word(
+    map: &mut std::collections::BTreeMap<u32, super::WordStamp>,
+    index: u32,
+    word: u64,
+) {
+    if word == 0 {
+        map.remove(&index);
+    } else {
+        map.entry(index).or_default().word = word;
+    }
+}
+
+#[cfg(any(test, feature = "testing", feature = "shadow"))]
+fn for_each_font_bank_word(
+    bank: BankTag,
+    map: &std::collections::BTreeMap<u32, super::WordStamp>,
+    f: &mut impl FnMut(CellId, u64),
+) {
+    for (&index, entry) in map {
+        if entry.word != 0 {
+            f(CellId::new(bank, index), entry.word);
         }
     }
 }

@@ -4,6 +4,7 @@ pub mod cell;
 pub mod code_tables;
 pub mod env;
 pub mod epoch;
+pub mod font;
 pub mod glue;
 pub mod ids;
 pub mod input;
@@ -27,7 +28,7 @@ pub use input::{
     LexerState, MACRO_ARGUMENT_SLOTS, MacroArguments, SourceFrameSummary, SourceId,
     TokenListReplayKind,
 };
-pub use stores::{GroupKind, GroupMismatch, PrepareMagDiagnostic};
+pub use stores::{FontParameterError, GroupKind, GroupMismatch, PrepareMagDiagnostic};
 pub use universe::{InteractionMode, Snapshot, Universe};
 pub use world::{
     ContentHash, EffectPos, EffectRecord, FileContent, InputRecord, JobClock, PrintSink,

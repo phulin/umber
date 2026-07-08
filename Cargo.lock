@@ -689,6 +689,7 @@ dependencies = [
  "refexec",
  "tempfile",
  "tex-expand",
+ "tex-fonts",
  "tex-lex",
  "tex-state",
 ]

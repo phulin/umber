@@ -1,7 +1,7 @@
 use super::Stores;
 use crate::cell::BankTag;
 use crate::env::EnvSnapshot;
-use crate::ids::{ArenaRef, GlueId, MacroDefinitionId, NodeListId, TokenListId};
+use crate::ids::{ArenaRef, FontId, GlueId, MacroDefinitionId, NodeListId, TokenListId};
 use crate::interner::Symbol;
 use crate::meaning::Meaning;
 use crate::node::Node;
@@ -28,6 +28,13 @@ impl Stores {
         );
     }
 
+    pub(super) fn assert_live_font(&self, id: FontId) {
+        assert!(
+            self.fonts.contains(id),
+            "font id is not live in this Universe timeline"
+        );
+    }
+
     pub(super) fn assert_live_macro_definition(&self, id: MacroDefinitionId) {
         assert!(
             self.macros.contains(id),
@@ -49,6 +56,12 @@ impl Stores {
         }
     }
 
+    pub(super) fn assert_live_font_in_meaning(&self, meaning: Meaning) {
+        if let Meaning::Font(id) = meaning {
+            self.assert_live_font(id);
+        }
+    }
+
     pub(super) fn assert_live_handles_in_nodes(&self, nodes: &[Node]) {
         for node in nodes {
             self.assert_live_handles_in_node(node);
@@ -58,6 +71,7 @@ impl Stores {
     fn assert_live_handles_in_node(&self, node: &Node) {
         match node {
             Node::Glue { spec, .. } => self.assert_live_glue(*spec),
+            Node::Char { font, .. } | Node::Lig { font, .. } => self.assert_live_font(*font),
             Node::HList(box_node) | Node::VList(box_node) => {
                 self.assert_live_child_node_list(box_node.children);
             }
@@ -73,9 +87,7 @@ impl Stores {
             Node::Whatsit(crate::node::Whatsit::DeferredWrite { tokens, .. }) => {
                 self.assert_live_token_list(*tokens);
             }
-            Node::Char { .. }
-            | Node::Lig { .. }
-            | Node::Kern { .. }
+            Node::Kern { .. }
             | Node::Penalty(_)
             | Node::Rule { .. }
             | Node::Unset

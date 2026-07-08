@@ -21,7 +21,7 @@ use self::banks::{
 use self::overflow::{REGISTER_COUNT, SparseBank};
 use crate::cell::{BankTag, CellId};
 use crate::epoch::Epoch;
-use crate::ids::{GlueId, NodeListId, TokenListId};
+use crate::ids::{FontId, GlueId, NodeListId, TokenListId};
 use crate::interner::Symbol;
 #[cfg(test)]
 use crate::journal::JournalPos;
@@ -29,15 +29,33 @@ use crate::journal::{Journal, UndoRec};
 use crate::meaning::Meaning;
 use crate::scaled::Scaled;
 use crate::token::Token;
+use std::collections::BTreeMap;
 #[cfg(feature = "shadow")]
 use std::collections::HashMap;
 
 const SEGMENT_BITS: u32 = 16;
 const SEGMENT_LEN: usize = 1 << SEGMENT_BITS;
 const SEGMENT_MASK: u32 = (SEGMENT_LEN as u32) - 1;
+const FONT_DIMEN_BITS: u32 = 15;
+const FONT_DIMEN_MASK: u32 = (1 << FONT_DIMEN_BITS) - 1;
 
 type MeaningSegment = Box<[u64; SEGMENT_LEN]>;
 type StampSegment = Box<[Epoch; SEGMENT_LEN]>;
+
+#[derive(Clone, Copy, Debug)]
+struct WordStamp {
+    word: u64,
+    stamp: Epoch,
+}
+
+impl Default for WordStamp {
+    fn default() -> Self {
+        Self {
+            word: 0,
+            stamp: Epoch::ZERO,
+        }
+    }
+}
 
 pub(crate) use group::EnvSnapshot;
 
@@ -135,6 +153,11 @@ pub struct Env {
     dimen_params: FixedBank<ScaledCodec, PARAMETER_COUNT>,
     glue_params: FixedBank<GlueIdCodec, PARAMETER_COUNT>,
     tok_params: FixedBank<TokenListIdCodec, PARAMETER_COUNT>,
+    font_dimens: BTreeMap<u32, WordStamp>,
+    font_param_lens: BTreeMap<u32, WordStamp>,
+    font_hyphen_chars: BTreeMap<u32, WordStamp>,
+    font_skew_chars: BTreeMap<u32, WordStamp>,
+    current_font: WordStamp,
     journal: Journal,
     aftergroup: Vec<Token>,
     afterassignment: Option<Token>,
@@ -167,6 +190,11 @@ impl Env {
             dimen_params: FixedBank::new(),
             glue_params: FixedBank::new(),
             tok_params: FixedBank::new(),
+            font_dimens: BTreeMap::new(),
+            font_param_lens: BTreeMap::new(),
+            font_hyphen_chars: BTreeMap::new(),
+            font_skew_chars: BTreeMap::new(),
+            current_font: WordStamp::default(),
             journal: Journal::new(),
             aftergroup: Vec::new(),
             afterassignment: None,
@@ -495,6 +523,169 @@ impl Env {
             },
         );
     }
+
+    #[must_use]
+    pub fn current_font(&self) -> FontId {
+        FontId::new(self.current_font.word as u32)
+    }
+
+    #[must_use]
+    pub fn current_font_symbol(&self) -> Option<Symbol> {
+        let raw = self.current_font.word >> 32;
+        if raw == 0 {
+            None
+        } else {
+            Some(Symbol::new((raw - 1) as u32))
+        }
+    }
+
+    pub(crate) fn set_current_font(&mut self, value: FontId) {
+        self.set_current_font_word(pack_current_font(self.current_font_symbol(), value), false);
+    }
+
+    pub(crate) fn set_current_font_global(&mut self, value: FontId) {
+        self.set_current_font_word(pack_current_font(self.current_font_symbol(), value), true);
+    }
+
+    pub(crate) fn set_current_font_selector(&mut self, symbol: Symbol, value: FontId) {
+        self.set_current_font_word(pack_current_font(Some(symbol), value), false);
+    }
+
+    pub(crate) fn set_current_font_selector_global(&mut self, symbol: Symbol, value: FontId) {
+        self.set_current_font_word(pack_current_font(Some(symbol), value), true);
+    }
+
+    #[must_use]
+    pub fn font_dimen(&self, font: FontId, number: u16) -> Scaled {
+        Scaled::from_raw(decode_i32(font_bank_word(
+            &self.font_dimens,
+            font_dimen_index(font, number),
+        )))
+    }
+
+    pub(crate) fn set_font_dimen(&mut self, font: FontId, number: u16, value: Scaled) {
+        set_font_bank_word(
+            &mut self.font_dimens,
+            &mut self.journal,
+            #[cfg(feature = "shadow")]
+            &mut self.shadow,
+            self.epoch,
+            BankTag::FontDimen,
+            font_dimen_index(font, number),
+            encode_i32(value.raw()),
+            false,
+        );
+    }
+
+    pub(crate) fn set_font_dimen_global(&mut self, font: FontId, number: u16, value: Scaled) {
+        set_font_bank_word(
+            &mut self.font_dimens,
+            &mut self.journal,
+            #[cfg(feature = "shadow")]
+            &mut self.shadow,
+            self.epoch,
+            BankTag::FontDimen,
+            font_dimen_index(font, number),
+            encode_i32(value.raw()),
+            true,
+        );
+    }
+
+    #[must_use]
+    pub fn font_param_len(&self, font: FontId) -> u16 {
+        decode_u16(font_bank_word(&self.font_param_lens, font.raw()))
+    }
+
+    pub(crate) fn set_font_param_len(&mut self, font: FontId, value: u16) {
+        set_font_bank_word(
+            &mut self.font_param_lens,
+            &mut self.journal,
+            #[cfg(feature = "shadow")]
+            &mut self.shadow,
+            self.epoch,
+            BankTag::FontParamLen,
+            font.raw(),
+            u64::from(value),
+            false,
+        );
+    }
+
+    pub(crate) fn set_font_param_len_global(&mut self, font: FontId, value: u16) {
+        set_font_bank_word(
+            &mut self.font_param_lens,
+            &mut self.journal,
+            #[cfg(feature = "shadow")]
+            &mut self.shadow,
+            self.epoch,
+            BankTag::FontParamLen,
+            font.raw(),
+            u64::from(value),
+            true,
+        );
+    }
+
+    #[must_use]
+    pub fn font_hyphen_char(&self, font: FontId) -> i32 {
+        decode_i32(font_bank_word(&self.font_hyphen_chars, font.raw()))
+    }
+
+    pub(crate) fn set_font_hyphen_char(&mut self, font: FontId, value: i32) {
+        self.set_font_int_bank(BankTag::FontHyphenChar, font, value, false);
+    }
+
+    pub(crate) fn set_font_hyphen_char_global(&mut self, font: FontId, value: i32) {
+        self.set_font_int_bank(BankTag::FontHyphenChar, font, value, true);
+    }
+
+    #[must_use]
+    pub fn font_skew_char(&self, font: FontId) -> i32 {
+        decode_i32(font_bank_word(&self.font_skew_chars, font.raw()))
+    }
+
+    pub(crate) fn set_font_skew_char(&mut self, font: FontId, value: i32) {
+        self.set_font_int_bank(BankTag::FontSkewChar, font, value, false);
+    }
+
+    pub(crate) fn set_font_skew_char_global(&mut self, font: FontId, value: i32) {
+        self.set_font_int_bank(BankTag::FontSkewChar, font, value, true);
+    }
+
+    fn set_current_font_word(&mut self, word: u64, global: bool) {
+        let cell = if global {
+            CellId::new_global(BankTag::CurrentFont, 0)
+        } else {
+            CellId::new(BankTag::CurrentFont, 0)
+        };
+        barrier(
+            &mut self.current_font.word,
+            &mut self.current_font.stamp,
+            &mut self.journal,
+            #[cfg(feature = "shadow")]
+            &mut self.shadow,
+            self.epoch,
+            cell,
+            word,
+        );
+    }
+
+    fn set_font_int_bank(&mut self, bank: BankTag, font: FontId, value: i32, global: bool) {
+        let map = match bank {
+            BankTag::FontHyphenChar => &mut self.font_hyphen_chars,
+            BankTag::FontSkewChar => &mut self.font_skew_chars,
+            _ => unreachable!("caller restricts font integer banks"),
+        };
+        set_font_bank_word(
+            map,
+            &mut self.journal,
+            #[cfg(feature = "shadow")]
+            &mut self.shadow,
+            self.epoch,
+            bank,
+            font.raw(),
+            encode_i32(value),
+            global,
+        );
+    }
 }
 
 impl Default for Env {
@@ -587,6 +778,68 @@ fn checked_aftergroup_start(start: u32, len: usize) -> usize {
     let start = start as usize;
     assert!(start <= len, "aftergroup start is past the end");
     start
+}
+
+fn font_dimen_index(font: FontId, number: u16) -> u32 {
+    assert!(number != 0, "fontdimen number must be positive");
+    let font = font.raw();
+    assert!(
+        font < (1 << (27 - FONT_DIMEN_BITS)),
+        "font id exceeds fontdimen cell range"
+    );
+    (font << FONT_DIMEN_BITS) | (u32::from(number - 1) & FONT_DIMEN_MASK)
+}
+
+fn font_bank_word(map: &BTreeMap<u32, WordStamp>, index: u32) -> u64 {
+    map.get(&index).map_or(0, |entry| entry.word)
+}
+
+fn pack_current_font(symbol: Option<Symbol>, font: FontId) -> u64 {
+    let symbol = symbol.map_or(0, |symbol| u64::from(symbol.raw()) + 1);
+    (symbol << 32) | u64::from(font.raw())
+}
+
+fn set_font_bank_word(
+    map: &mut BTreeMap<u32, WordStamp>,
+    journal: &mut Journal,
+    #[cfg(feature = "shadow")] shadow: &mut HashMap<CellId, u64>,
+    epoch: Epoch,
+    bank: BankTag,
+    index: u32,
+    word: u64,
+    global: bool,
+) {
+    let entry = map.entry(index).or_default();
+    let cell = if global {
+        CellId::new_global(bank, index)
+    } else {
+        CellId::new(bank, index)
+    };
+    barrier(
+        &mut entry.word,
+        &mut entry.stamp,
+        journal,
+        #[cfg(feature = "shadow")]
+        shadow,
+        epoch,
+        cell,
+        word,
+    );
+}
+
+fn encode_i32(value: i32) -> u64 {
+    u64::from(value as u32)
+}
+
+fn decode_i32(word: u64) -> i32 {
+    word as u32 as i32
+}
+
+fn decode_u16(word: u64) -> u16 {
+    match u16::try_from(word) {
+        Ok(value) => value,
+        Err(_) => panic!("font parameter count exceeds u16"),
+    }
 }
 
 fn u32_len(value: usize, message: &str) -> u32 {

@@ -40,6 +40,10 @@ pub(super) fn is_assignment_meaning(meaning: Meaning) -> bool {
                 | UnexpandablePrimitive::SfCode
                 | UnexpandablePrimitive::MathCode
                 | UnexpandablePrimitive::DelCode
+                | UnexpandablePrimitive::Font
+                | UnexpandablePrimitive::FontDimen
+                | UnexpandablePrimitive::HyphenChar
+                | UnexpandablePrimitive::SkewChar
                 | UnexpandablePrimitive::OpenIn
                 | UnexpandablePrimitive::CloseIn
                 | UnexpandablePrimitive::OpenOut
@@ -123,6 +127,15 @@ where
                 &mut recorder,
                 hooks,
             )?))
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::FontDimen) => {
+            scan_font_variable_target(UnexpandablePrimitive::FontDimen, input, stores, hooks)
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HyphenChar) => {
+            scan_font_variable_target(UnexpandablePrimitive::HyphenChar, input, stores, hooks)
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::SkewChar) => {
+            scan_font_variable_target(UnexpandablePrimitive::SkewChar, input, stores, hooks)
         }
         meaning => variable_from_meaning(meaning).ok_or(ExecError::UnsupportedAssignmentTarget),
     }

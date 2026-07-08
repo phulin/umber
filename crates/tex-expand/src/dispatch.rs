@@ -147,13 +147,11 @@ where
             hooks.job_name(),
         )),
         Meaning::ExpandablePrimitive(ExpandablePrimitive::FontName) => {
-            // TODO(umber2-fonts): consume/resolve a font selector once font
-            // meanings exist. Until then this documented stub expands empty.
-            let _ = next_non_space_x_token(input, stores)?;
+            let font = scan_font_selector(input, stores, recorder, hooks)?;
             Ok(push_rendered_text(
                 stores,
                 ExpansionReplayKind::NumberOutput,
-                "",
+                &stores.font_name(font),
             ))
         }
         Meaning::ExpandablePrimitive(
@@ -342,6 +340,7 @@ where
         | Meaning::DimenParam(_)
         | Meaning::GlueParam(_)
         | Meaning::TokParam(_)
+        | Meaning::Font(_)
         | Meaning::UnexpandablePrimitive(_)
         | Meaning::Unknown(_) => Ok(Dispatch::Deliver(token)),
     }

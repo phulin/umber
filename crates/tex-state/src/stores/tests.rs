@@ -1,7 +1,8 @@
 use super::{PrepareMagDiagnostic, Stores};
 use crate::env::banks::IntParam;
+use crate::font::NULL_FONT;
 use crate::glue::{GlueSpec, Order};
-use crate::ids::{ArenaRef, FontId, NodeListId};
+use crate::ids::{ArenaRef, NodeListId};
 use crate::macro_store::MacroMeaning;
 use crate::meaning::Meaning;
 use crate::meaning::MeaningFlags;
@@ -184,14 +185,14 @@ fn node_list_builder_finishes_through_stores_boundary() {
     assert_eq!(stores.nodes(id), &[Node::MathOn, Node::MathOff]);
 
     builder.push(Node::Char {
-        font: FontId::testing_new(1),
+        font: NULL_FONT,
         ch: 'x',
     });
     let reused = stores.finish_node_list(&mut builder);
     assert_eq!(
         stores.nodes(reused),
         &[Node::Char {
-            font: FontId::testing_new(1),
+            font: NULL_FONT,
             ch: 'x'
         }]
     );
@@ -567,7 +568,7 @@ fn same_value_local_box_assignment_preserves_live_register_owner() {
     assert_eq!(
         stores.nodes(survivor),
         &[Node::Char {
-            font: FontId::testing_new(1),
+            font: NULL_FONT,
             ch: 'a'
         }]
     );
@@ -639,7 +640,7 @@ fn promoted_nested_box_remaps_children_to_same_survivor_root() {
     assert_eq!(
         stores.nodes(middle_box.children),
         &[Node::Char {
-            font: FontId::testing_new(1),
+            font: NULL_FONT,
             ch: 'x'
         }]
     );
@@ -730,7 +731,7 @@ fn promotion_handles_pathologically_deep_box_nesting() {
     assert_eq!(
         stores.nodes(promoted),
         &[Node::Char {
-            font: FontId::testing_new(1),
+            font: NULL_FONT,
             ch: 'x'
         }]
     );
@@ -748,7 +749,7 @@ fn glue_spec(width: i32) -> GlueSpec {
 
 fn one_char(stores: &mut Stores, ch: char) -> NodeListId {
     stores.freeze_node_list(&[Node::Char {
-        font: FontId::testing_new(1),
+        font: NULL_FONT,
         ch,
     }])
 }

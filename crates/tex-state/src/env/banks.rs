@@ -81,6 +81,12 @@ impl IntParam {
     /// Plain TeX's `\escapechar` integer parameter.
     pub const ESCAPE_CHAR: Self = Self::new(40);
 
+    /// Initial `\hyphenchar` value assigned to newly loaded fonts.
+    pub const DEFAULT_HYPHEN_CHAR: Self = Self::new(41);
+
+    /// Initial `\skewchar` value assigned to newly loaded fonts.
+    pub const DEFAULT_SKEW_CHAR: Self = Self::new(42);
+
     /// Plain TeX's `\endlinechar` integer parameter.
     pub const END_LINE_CHAR: Self = Self::new(48);
 }

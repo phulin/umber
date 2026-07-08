@@ -3,32 +3,8 @@ use tex_state::Universe;
 use tex_state::token::{Catcode, Token};
 
 use crate::{
-    ExpandError, ExpansionHooks, ReadRecorder, get_x_token, get_x_token_with_recorder_and_hooks,
-    scan_int,
+    ExpandError, ExpansionHooks, ReadRecorder, get_x_token_with_recorder_and_hooks, scan_int,
 };
-
-pub(crate) fn next_non_space_x_token<S>(
-    input: &mut InputStack<S>,
-    stores: &mut Universe,
-) -> Result<Option<Token>, ExpandError>
-where
-    S: InputSource,
-{
-    loop {
-        let Some(token) = get_x_token(input, stores)? else {
-            return Ok(None);
-        };
-        if !matches!(
-            token,
-            Token::Char {
-                cat: Catcode::Space,
-                ..
-            }
-        ) {
-            return Ok(Some(token));
-        }
-    }
-}
 
 pub(crate) fn next_non_space_x_token_with_hooks<S, R, H>(
     input: &mut InputStack<S>,

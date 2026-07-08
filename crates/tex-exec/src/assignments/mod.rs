@@ -19,6 +19,7 @@ use tex_state::{GroupKind, InteractionMode, Universe};
 use crate::{DispatchAction, ExecError, Mode, diagnostics, dispatch_delivered_token, leave_group};
 
 mod arithmetic;
+mod fonts;
 mod macros;
 mod primitives;
 mod scanning;
@@ -26,6 +27,7 @@ mod tokens;
 mod variables;
 
 use arithmetic::*;
+use fonts::*;
 use macros::*;
 pub use primitives::install_unexpandable_primitives;
 use scanning::*;
@@ -250,6 +252,17 @@ where
             | UnexpandablePrimitive::MathCode
             | UnexpandablePrimitive::DelCode => {
                 execute_code_table_assignment(primitive, input, stores, hooks)?;
+                Ok(true)
+            }
+            UnexpandablePrimitive::Font => {
+                execute_font_definition(prefixes, input, stores, hooks)?;
+                Ok(true)
+            }
+            UnexpandablePrimitive::FontDimen
+            | UnexpandablePrimitive::HyphenChar
+            | UnexpandablePrimitive::SkewChar => {
+                let target = scan_font_variable_target(primitive, input, stores, hooks)?;
+                execute_assignment_to_target(target, prefixes, input, stores, hooks)?;
                 Ok(true)
             }
             UnexpandablePrimitive::Read => {

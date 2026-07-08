@@ -1,8 +1,8 @@
 //! Opaque store handles.
 //!
 //! `TokenListId` is minted by the token store. `GlueId` is minted by the glue
-//! store. `NodeListId` is minted by node arenas. `FontId` becomes real in the
-//! fonts epic. `SnapshotId` becomes real in State M3.
+//! store. `NodeListId` is minted by node arenas. `FontId` is minted by the
+//! loaded font store. `SnapshotId` becomes real in State M3.
 
 macro_rules! opaque_id {
     ($name:ident) => {

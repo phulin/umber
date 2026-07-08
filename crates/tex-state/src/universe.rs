@@ -10,8 +10,9 @@ use crate::code_tables::{CodeTableGenerations, DelCode, LcCode, MathCode, SfCode
 use crate::env::Env;
 use crate::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use crate::epoch::Epoch;
+use crate::font::LoadedFont;
 use crate::glue::GlueSpec;
-use crate::ids::{GlueId, MacroDefinitionId, NodeListId, TokenListId};
+use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, TokenListId};
 use crate::input::{
     ConditionKind, ConditionLimb, InputFrameSummary, InputSummary, LexerState, TokenListReplayKind,
 };
@@ -23,7 +24,9 @@ use crate::node_arena::NodeListBuilder;
 use crate::scaled::Scaled;
 use crate::state_hash::{INITIAL_STATE_HASH, StateHasher, combine};
 use crate::stores::StoreStateHashCursor;
-use crate::stores::{GroupKind, GroupMismatch, PrepareMagDiagnostic, StoreSnapshot, Stores};
+use crate::stores::{
+    FontParameterError, GroupKind, GroupMismatch, PrepareMagDiagnostic, StoreSnapshot, Stores,
+};
 use crate::token::{Catcode, Token};
 use crate::token_store::TokenListBuilder;
 use crate::world::{
@@ -501,6 +504,79 @@ impl Universe {
         self.stores.glue(id)
     }
 
+    pub fn intern_font(&mut self, font: LoadedFont) -> FontId {
+        self.stores.intern_font(font)
+    }
+
+    #[must_use]
+    pub fn font(&self, id: FontId) -> &LoadedFont {
+        self.stores.font(id)
+    }
+
+    #[must_use]
+    pub fn font_name(&self, id: FontId) -> String {
+        self.stores.font_name(id)
+    }
+
+    #[must_use]
+    pub fn current_font(&self) -> FontId {
+        self.stores.current_font()
+    }
+
+    #[must_use]
+    pub fn current_font_symbol(&self) -> Option<Symbol> {
+        self.stores.current_font_symbol()
+    }
+
+    pub fn set_current_font(&mut self, id: FontId) {
+        self.stores.set_current_font(id);
+    }
+
+    pub fn set_current_font_global(&mut self, id: FontId) {
+        self.stores.set_current_font_global(id);
+    }
+
+    pub fn set_current_font_selector(&mut self, symbol: Symbol, id: FontId) {
+        self.stores.set_current_font_selector(symbol, id);
+    }
+
+    pub fn set_current_font_selector_global(&mut self, symbol: Symbol, id: FontId) {
+        self.stores.set_current_font_selector_global(symbol, id);
+    }
+
+    #[must_use]
+    pub fn font_dimen(&self, font: FontId, number: u16) -> Scaled {
+        self.stores.font_dimen(font, number)
+    }
+
+    pub fn set_font_dimen(
+        &mut self,
+        font: FontId,
+        number: u16,
+        value: Scaled,
+        global: bool,
+    ) -> Result<(), FontParameterError> {
+        self.stores.set_font_dimen(font, number, value, global)
+    }
+
+    #[must_use]
+    pub fn font_hyphen_char(&self, font: FontId) -> i32 {
+        self.stores.font_hyphen_char(font)
+    }
+
+    pub fn set_font_hyphen_char(&mut self, font: FontId, value: i32, global: bool) {
+        self.stores.set_font_hyphen_char(font, value, global);
+    }
+
+    #[must_use]
+    pub fn font_skew_char(&self, font: FontId) -> i32 {
+        self.stores.font_skew_char(font)
+    }
+
+    pub fn set_font_skew_char(&mut self, font: FontId, value: i32, global: bool) {
+        self.stores.set_font_skew_char(font, value, global);
+    }
+
     #[must_use]
     pub fn node_list_builder(&self) -> NodeListBuilder {
         self.stores.node_list_builder()
@@ -964,8 +1040,8 @@ fn hash_condition_limb(limb: ConditionLimb, hasher: &mut StateHasher) {
 #[cfg(test)]
 mod tests {
     use super::Universe;
+    use crate::font::NULL_FONT;
     use crate::glue::{GlueSpec, Order};
-    use crate::ids::FontId;
     use crate::macro_store::MacroMeaning;
     use crate::meaning::{Meaning, MeaningFlags};
     use crate::node::{BoxNode, BoxNodeFields, Node, Sign};
@@ -1179,6 +1255,26 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_state_hash_distinguishes_font_content_identity() {
+        let mut first = Universe::new();
+        let mut second = Universe::new();
+        let first_symbol = first.intern("font");
+        let second_symbol = second.intern("font");
+
+        let first_font = first.intern_font(test_font("cmr10", b"same"));
+        let second_font = second.intern_font(test_font("cmr10", b"different"));
+        assert_eq!(first_font.raw(), second_font.raw());
+
+        first.set_meaning(first_symbol, Meaning::Font(first_font));
+        second.set_meaning(second_symbol, Meaning::Font(second_font));
+
+        assert_ne!(
+            first.snapshot().state_hash(),
+            second.snapshot().state_hash()
+        );
+    }
+
+    #[test]
     fn rollback_restores_state_hash_cursor() {
         let mut universe = Universe::new();
         let base = universe.snapshot();
@@ -1196,7 +1292,7 @@ mod tests {
     fn snapshot_state_hash_walks_deep_node_lists_iteratively() {
         let mut universe = Universe::new();
         let mut current = universe.freeze_node_list(&[Node::Char {
-            font: FontId::testing_new(1),
+            font: NULL_FONT,
             ch: 'x',
         }]);
 
@@ -1247,5 +1343,17 @@ mod tests {
             shrink: Scaled::from_raw(2),
             shrink_order: Order::Normal,
         }
+    }
+
+    fn test_font(name: &str, bytes: &[u8]) -> crate::font::LoadedFont {
+        crate::font::LoadedFont::new(
+            name,
+            format!("{name}.tfm"),
+            ContentHash::from_bytes(bytes),
+            0,
+            Scaled::from_raw(10 * Scaled::UNITY),
+            Scaled::from_raw(10 * Scaled::UNITY),
+            vec![Scaled::from_raw(0); 7],
+        )
     }
 }
