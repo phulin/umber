@@ -1,0 +1,11 @@
+error[E0599]: no method named `input_open_context` found for mutable reference `&mut S` in the current scope
+ --> tests/ui/expansion_state_input_forbidden.rs:6:28
+  |
+6 |     let mut input = stores.input_open_context();
+  |                            ^^^^^^^^^^^^^^^^^^ method not found in `&mut S`
+  |
+  = help: items from traits can only be used if the type parameter is bounded by the trait
+help: the following trait defines an item `input_open_context`, perhaps you need to restrict type parameter `S` with it:
+  |
+5 | fn generic_expansion_code<S: ExpansionState + InputOpenState>(stores: &mut S) {
+  |                                             ++++++++++++++++

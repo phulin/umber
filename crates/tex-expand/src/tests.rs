@@ -11,7 +11,7 @@ use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
 use tex_state::node::{BoxNode, BoxNodeFields, Node, Sign};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
-use tex_state::{ExpansionState, InputReadState, Universe};
+use tex_state::{ExpansionState, InputOpenState, InputReadState, Universe};
 
 #[derive(Default)]
 struct CountingRecorder {
@@ -1461,7 +1461,7 @@ fn skipped_source_text_is_lexed_with_current_catcodes() {
 
 fn next_expanded_chars(
     input: &mut InputStack<MemoryInput>,
-    stores: &mut impl ExpansionState,
+    stores: &mut (impl ExpansionState + InputOpenState),
 ) -> String {
     let mut out = String::new();
     while let Some(token) = get_x_token(input, stores).expect("expansion should succeed") {
@@ -1475,7 +1475,7 @@ fn next_expanded_chars(
 
 fn collect_expanded(
     input: &mut InputStack<MemoryInput>,
-    stores: &mut impl ExpansionState,
+    stores: &mut (impl ExpansionState + InputOpenState),
 ) -> Vec<Token> {
     let mut out = Vec::new();
     while let Some(token) = get_x_token(input, stores).expect("expansion should succeed") {
@@ -1486,7 +1486,7 @@ fn collect_expanded(
 
 fn next_expanded_chars_with_hooks(
     input: &mut InputStack<MemoryInput>,
-    stores: &mut impl ExpansionState,
+    stores: &mut (impl ExpansionState + InputOpenState),
     hooks: &mut MemoryHooks,
 ) -> String {
     let mut out = String::new();
@@ -1503,7 +1503,7 @@ fn next_expanded_chars_with_hooks(
 
 fn collect_expanded_with_hooks(
     input: &mut InputStack<MemoryInput>,
-    stores: &mut impl ExpansionState,
+    stores: &mut (impl ExpansionState + InputOpenState),
     hooks: &mut MemoryHooks,
 ) -> Vec<Token> {
     let mut out = Vec::new();

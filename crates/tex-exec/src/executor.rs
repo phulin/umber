@@ -2,7 +2,7 @@ use tex_expand::{
     EngineMode, ExpansionHooks, NoopRecorder, ReadRecorder, get_x_token_with_recorder_and_hooks,
 };
 use tex_lex::{InputSource, InputStack};
-use tex_state::{ExpansionCtx, Universe};
+use tex_state::{ExpansionContext, Universe};
 
 use crate::dispatch::unimplemented_typesetting;
 use crate::{DispatchAction, ExecError, ExecutionStats, ModeNest, dispatch_delivered_token};
@@ -83,7 +83,7 @@ impl Executor {
         let mut stats = ExecutionStats::default();
         loop {
             let token = {
-                let mut expansion = ExpansionCtx::new(stores);
+                let mut expansion = ExpansionContext::new(stores);
                 get_x_token_with_recorder_and_hooks(input, &mut expansion, recorder, hooks)?
             };
             let Some(token) = token else {

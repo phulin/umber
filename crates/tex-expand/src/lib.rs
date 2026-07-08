@@ -12,7 +12,7 @@ use tex_lex::{InputSource, InputStack, LexError, MacroArguments, TokenListReplay
 use tex_state::interner::Symbol;
 use tex_state::meaning::Meaning;
 use tex_state::token::Token;
-use tex_state::{ExpansionState, InputReadState, Universe};
+use tex_state::{ExpansionState, InputOpenState, InputReadState, Universe};
 
 pub mod args;
 pub mod scan;
@@ -347,7 +347,7 @@ impl From<scan_dimen::ScanDimenError> for ExpandError {
 /// Pulls the next fully expanded token.
 pub fn get_x_token<S>(
     input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+    stores: &mut (impl ExpansionState + InputOpenState),
 ) -> Result<Option<Token>, ExpandError>
 where
     S: InputSource,
@@ -358,7 +358,7 @@ where
 /// Pulls the next fully expanded token while recording meaning reads.
 pub fn get_x_token_with_recorder<S, R>(
     input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+    stores: &mut (impl ExpansionState + InputOpenState),
     recorder: &mut R,
 ) -> Result<Option<Token>, ExpandError>
 where
@@ -371,7 +371,7 @@ where
 /// Pulls the next fully expanded token using driver-provided expansion hooks.
 pub fn get_x_token_with_hooks<S, H>(
     input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+    stores: &mut (impl ExpansionState + InputOpenState),
     hooks: &mut H,
 ) -> Result<Option<Token>, ExpandError>
 where
@@ -384,7 +384,7 @@ where
 /// Pulls the next fully expanded token while recording reads and using hooks.
 pub fn get_x_token_with_recorder_and_hooks<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+    stores: &mut (impl ExpansionState + InputOpenState),
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<Option<Token>, ExpandError>
@@ -421,7 +421,7 @@ where
 pub(crate) fn dispatch_one_raw_token_with_hooks<S, R, H>(
     token: Token,
     input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+    stores: &mut (impl ExpansionState + InputOpenState),
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<Dispatch, ExpandError>
@@ -441,7 +441,7 @@ where
 
 pub(crate) fn push_dispatch_result<S>(
     input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+    stores: &mut (impl ExpansionState + InputOpenState),
     dispatch: Dispatch,
 ) {
     match dispatch {
@@ -471,7 +471,7 @@ pub(crate) fn apply_dispatch_push<S>(input: &mut InputStack<S>, dispatch: Dispat
 
 pub(crate) fn push_inserted_token<S>(
     input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+    stores: &mut (impl ExpansionState + InputOpenState),
     token: Token,
 ) {
     let token_list = stores.intern_token_list(&[token]);
@@ -480,7 +480,7 @@ pub(crate) fn push_inserted_token<S>(
 
 pub(crate) fn push_noexpand_token<S>(
     input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+    stores: &mut (impl ExpansionState + InputOpenState),
     token: Token,
 ) {
     let token_list = stores.intern_token_list(&[token]);

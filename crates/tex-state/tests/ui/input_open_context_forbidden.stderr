@@ -1,23 +1,23 @@
 error[E0599]: no method named `world_mut` found for mutable reference `&mut InputOpenContext<'_>` in the current scope
- --> tests/ui/input_open_ctx_forbidden.rs:7:17
+ --> tests/ui/input_open_context_forbidden.rs:7:17
   |
 7 |     let _ = ctx.world_mut();
   |                 ^^^^^^^^^ method not found in `&mut InputOpenContext<'_>`
 
 error[E0599]: no method named `meaning` found for mutable reference `&mut InputOpenContext<'_>` in the current scope
- --> tests/ui/input_open_ctx_forbidden.rs:8:17
+ --> tests/ui/input_open_context_forbidden.rs:8:17
   |
 8 |     let _ = ctx.meaning(ctx.symbol("relax").unwrap());
   |                 ^^^^^^^ method not found in `&mut InputOpenContext<'_>`
 
 error[E0599]: no method named `symbol` found for mutable reference `&mut InputOpenContext<'_>` in the current scope
- --> tests/ui/input_open_ctx_forbidden.rs:8:29
+ --> tests/ui/input_open_context_forbidden.rs:8:29
   |
 8 |     let _ = ctx.meaning(ctx.symbol("relax").unwrap());
   |                             ^^^^^^ method not found in `&mut InputOpenContext<'_>`
 
 error[E0599]: no method named `set_count` found for mutable reference `&mut InputOpenContext<'_>` in the current scope
- --> tests/ui/input_open_ctx_forbidden.rs:9:9
+ --> tests/ui/input_open_context_forbidden.rs:9:9
   |
 9 |     ctx.set_count(0, 1);
   |         ^^^^^^^^^ method not found in `&mut InputOpenContext<'_>`

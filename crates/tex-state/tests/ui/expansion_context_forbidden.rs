@@ -1,7 +1,7 @@
 use tex_state::token::Catcode;
-use tex_state::{ExpansionCtx, ExpansionState, Universe};
+use tex_state::{ExpansionContext, ExpansionState, Universe};
 
-fn lower_crate_expansion_code(ctx: &mut ExpansionCtx<'_>) {
+fn lower_crate_expansion_code(ctx: &mut ExpansionContext<'_>) {
     let _ = ctx.world_mut();
     let snapshot = ctx.snapshot();
     ctx.rollback(&snapshot);
@@ -13,6 +13,6 @@ fn lower_crate_expansion_code(ctx: &mut ExpansionCtx<'_>) {
 
 fn main() {
     let mut universe = Universe::new();
-    let mut ctx = ExpansionCtx::new(&mut universe);
+    let mut ctx = ExpansionContext::new(&mut universe);
     lower_crate_expansion_code(&mut ctx);
 }

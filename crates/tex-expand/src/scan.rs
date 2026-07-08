@@ -12,7 +12,7 @@ use tex_state::ids::TokenListId;
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
 use tex_state::token::{Catcode, Token};
-use tex_state::{ExpansionState, InputReadState};
+use tex_state::{ExpansionState, InputOpenState, InputReadState};
 
 use crate::{
     Dispatch, ExpandError, ExpandableOpcode, ExpansionHooks, ExpansionReplayKind, NoopRecorder,
@@ -117,7 +117,7 @@ impl From<ExpandError> for ScanToksError {
 /// a `MacroMeaning`; callers decide whether, where, and how to assign it.
 pub fn scan_toks<S>(
     input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+    stores: &mut (impl ExpansionState + InputOpenState),
     flags: MeaningFlags,
 ) -> Result<ScannedMacro, ScanToksError>
 where
@@ -133,7 +133,7 @@ where
 /// Scans a macro definition and expands the replacement text as for `\edef`.
 pub fn scan_toks_expanded<S, H>(
     input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+    stores: &mut (impl ExpansionState + InputOpenState),
     flags: MeaningFlags,
     hooks: &mut H,
 ) -> Result<ScannedMacro, ScanToksError>
@@ -150,7 +150,7 @@ where
 }
 
 fn expand_replacement_text<S, H>(
-    stores: &mut impl ExpansionState,
+    stores: &mut (impl ExpansionState + InputOpenState),
     replacement_text: TokenListId,
     hooks: &mut H,
 ) -> Result<TokenListId, ScanToksError>
@@ -304,7 +304,7 @@ where
 
 fn scan_parameter_text<S>(
     input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+    stores: &mut (impl ExpansionState + InputOpenState),
 ) -> Result<TokenListId, ScanToksError>
 where
     S: InputSource,
@@ -366,7 +366,7 @@ where
 
 fn scan_replacement_text<S>(
     input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+    stores: &mut (impl ExpansionState + InputOpenState),
 ) -> Result<TokenListId, ScanToksError>
 where
     S: InputSource,

@@ -1,0 +1,53 @@
+error[E0599]: no method named `world_mut` found for mutable reference `&mut ExpansionContext<'_>` in the current scope
+ --> tests/ui/expansion_context_forbidden.rs:5:17
+  |
+5 |     let _ = ctx.world_mut();
+  |                 ^^^^^^^^^ method not found in `&mut ExpansionContext<'_>`
+
+error[E0599]: no method named `snapshot` found for mutable reference `&mut ExpansionContext<'_>` in the current scope
+ --> tests/ui/expansion_context_forbidden.rs:6:24
+  |
+6 |     let snapshot = ctx.snapshot();
+  |                        ^^^^^^^^ method not found in `&mut ExpansionContext<'_>`
+
+error[E0599]: no method named `rollback` found for mutable reference `&mut ExpansionContext<'_>` in the current scope
+ --> tests/ui/expansion_context_forbidden.rs:7:9
+  |
+7 |     ctx.rollback(&snapshot);
+  |         ^^^^^^^^ method not found in `&mut ExpansionContext<'_>`
+
+error[E0599]: no method named `set_count` found for mutable reference `&mut ExpansionContext<'_>` in the current scope
+ --> tests/ui/expansion_context_forbidden.rs:8:9
+  |
+8 |     ctx.set_count(0, 1);
+  |         ^^^^^^^^^
+  |
+help: there is a method `count` with a similar name, but with different arguments
+ --> src/universe.rs
+  |
+  |     fn count(&self, index: u16) -> i32;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0599]: no method named `set_catcode` found for mutable reference `&mut ExpansionContext<'_>` in the current scope
+ --> tests/ui/expansion_context_forbidden.rs:9:9
+  |
+9 |     ctx.set_catcode('@', Catcode::Letter);
+  |         ^^^^^^^^^^^
+  |
+help: there is a method `catcode` with a similar name, but with different arguments
+ --> src/universe.rs
+  |
+  |     fn catcode(&self, ch: char) -> Catcode;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0599]: no method named `set_current_font` found for mutable reference `&mut ExpansionContext<'_>` in the current scope
+  --> tests/ui/expansion_context_forbidden.rs:11:9
+   |
+11 |     ctx.set_current_font(font);
+   |         ^^^^^^^^^^^^^^^^
+   |
+help: there is a method `current_font` with a similar name, but with different arguments
+  --> src/universe.rs
+   |
+   |     fn current_font(&self) -> FontId;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

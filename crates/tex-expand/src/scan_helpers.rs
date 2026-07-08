@@ -1,6 +1,6 @@
 use tex_lex::{InputSource, InputStack, TokenListReplayKind};
-use tex_state::ExpansionState;
 use tex_state::token::{Catcode, Token};
+use tex_state::{ExpansionState, InputOpenState};
 
 use crate::{
     ExpandError, ExpansionHooks, ReadRecorder, get_x_token_with_recorder_and_hooks, scan_int,
@@ -8,7 +8,7 @@ use crate::{
 
 pub(crate) fn next_non_space_x_token_with_hooks<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+    stores: &mut (impl ExpansionState + InputOpenState),
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<Option<Token>, ExpandError>
@@ -36,7 +36,7 @@ where
 
 pub(crate) fn scan_register_index<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+    stores: &mut (impl ExpansionState + InputOpenState),
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<u16, ExpandError>
@@ -61,7 +61,7 @@ pub enum ExpandedKeywordMatch {
 
 pub fn scan_optional_keyword_with_hooks<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+    stores: &mut (impl ExpansionState + InputOpenState),
     recorder: &mut R,
     hooks: &mut H,
     keyword: &str,
@@ -86,7 +86,7 @@ where
 
 pub fn scan_keyword_after_first_with_hooks<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+    stores: &mut (impl ExpansionState + InputOpenState),
     recorder: &mut R,
     hooks: &mut H,
     first: Token,
@@ -124,15 +124,21 @@ where
     Ok(ExpandedKeywordMatch::Matched)
 }
 
-fn unread_token<S>(input: &mut InputStack<S>, stores: &mut impl ExpansionState, token: Token)
-where
+fn unread_token<S>(
+    input: &mut InputStack<S>,
+    stores: &mut (impl ExpansionState + InputOpenState),
+    token: Token,
+) where
     S: InputSource,
 {
     unread_tokens(input, stores, [token]);
 }
 
-fn unread_tokens<S, I>(input: &mut InputStack<S>, stores: &mut impl ExpansionState, tokens: I)
-where
+fn unread_tokens<S, I>(
+    input: &mut InputStack<S>,
+    stores: &mut (impl ExpansionState + InputOpenState),
+    tokens: I,
+) where
     S: InputSource,
     I: IntoIterator<Item = Token>,
 {

@@ -12,7 +12,7 @@ use tex_state::scaled::{
     scaled_from_decimal_parts, xn_over_d,
 };
 use tex_state::token::{Catcode, Token};
-use tex_state::{ExpansionState, PrepareMagDiagnostic};
+use tex_state::{ExpansionState, InputOpenState, PrepareMagDiagnostic};
 
 use crate::{
     ExpandError, ExpansionHooks, NoopExpansionHooks, NoopRecorder, ReadRecorder,
@@ -219,7 +219,7 @@ impl From<scan_int::ScanIntError> for ScanDimenError {
 /// Scans a TeX `<dimen>` using expanded tokens.
 pub fn scan_dimen<S>(
     input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+    stores: &mut (impl ExpansionState + InputOpenState),
 ) -> Result<ScannedDimen, ScanDimenError>
 where
     S: InputSource,
@@ -236,7 +236,7 @@ where
 /// Scans a TeX `<dimen>` using expanded tokens and caller-specific options.
 pub fn scan_dimen_with_options<S>(
     input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+    stores: &mut (impl ExpansionState + InputOpenState),
     options: ScanDimenOptions,
 ) -> Result<ScannedDimen, ScanDimenError>
 where
@@ -254,7 +254,7 @@ where
 /// Scans a TeX `<dimen>` while preserving caller-supplied expansion hooks.
 pub fn scan_dimen_with_options_and_hooks<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+    stores: &mut (impl ExpansionState + InputOpenState),
     recorder: &mut R,
     hooks: &mut H,
     options: ScanDimenOptions,
@@ -276,7 +276,7 @@ where
 
 fn scan_signs<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+    stores: &mut (impl ExpansionState + InputOpenState),
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<(bool, Option<Token>), ScanDimenError>
@@ -307,7 +307,7 @@ where
 
 fn scan_unsigned_after_first_token<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+    stores: &mut (impl ExpansionState + InputOpenState),
     recorder: &mut R,
     hooks: &mut H,
     token: Token,
@@ -349,7 +349,7 @@ where
 
 fn scan_decimal_integer<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+    stores: &mut (impl ExpansionState + InputOpenState),
     recorder: &mut R,
     hooks: &mut H,
     first_digit: i32,
@@ -379,7 +379,7 @@ where
 
 fn scan_decimal_tail<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+    stores: &mut (impl ExpansionState + InputOpenState),
     recorder: &mut R,
     hooks: &mut H,
     integer: i32,
@@ -410,7 +410,7 @@ where
 
 fn scan_fraction_and_unit<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+    stores: &mut (impl ExpansionState + InputOpenState),
     recorder: &mut R,
     hooks: &mut H,
     integer: i32,
@@ -429,7 +429,7 @@ where
 
 fn scan_fraction<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+    stores: &mut (impl ExpansionState + InputOpenState),
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<i32, ScanDimenError>
@@ -457,7 +457,7 @@ where
 
 fn scan_internal_or_numeric_dimension<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+    stores: &mut (impl ExpansionState + InputOpenState),
     recorder: &mut R,
     hooks: &mut H,
     token: Token,
@@ -534,7 +534,7 @@ where
 
 fn scan_integer_constant_with_unit<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+    stores: &mut (impl ExpansionState + InputOpenState),
     recorder: &mut R,
     hooks: &mut H,
     token: Token,
@@ -564,7 +564,7 @@ where
 
 fn scan_register_index<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+    stores: &mut (impl ExpansionState + InputOpenState),
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<u16, ScanDimenError>
@@ -582,7 +582,7 @@ where
 
 fn scan_unit<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+    stores: &mut (impl ExpansionState + InputOpenState),
     recorder: &mut R,
     hooks: &mut H,
     options: ScanDimenOptions,
@@ -649,7 +649,7 @@ where
 
 fn scan_unit_keyword<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+    stores: &mut (impl ExpansionState + InputOpenState),
     recorder: &mut R,
     hooks: &mut H,
     first: Token,
@@ -688,7 +688,7 @@ where
 
 fn keyword_matches<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+    stores: &mut (impl ExpansionState + InputOpenState),
     recorder: &mut R,
     hooks: &mut H,
     first: Token,
@@ -706,7 +706,7 @@ where
 
 fn keyword<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+    stores: &mut (impl ExpansionState + InputOpenState),
     recorder: &mut R,
     hooks: &mut H,
     keyword: &str,
@@ -804,7 +804,7 @@ fn convert_decimal(
 }
 
 fn convert_scanned_unit(
-    stores: &mut impl ExpansionState,
+    stores: &mut (impl ExpansionState + InputOpenState),
     integer: i32,
     fraction: i32,
     unit: ScannedUnit,
@@ -858,7 +858,7 @@ fn convert_font_relative_unit(
 }
 
 fn convert_physical_unit(
-    stores: &mut impl ExpansionState,
+    stores: &mut (impl ExpansionState + InputOpenState),
     integer: i32,
     fraction: i32,
     unit: PhysicalUnit,
@@ -918,7 +918,7 @@ fn apply_sign(scanned: ScannedDimen, negative: bool) -> ScannedDimen {
 
 fn consume_optional_space<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+    stores: &mut (impl ExpansionState + InputOpenState),
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<(), ScanDimenError>
@@ -938,7 +938,7 @@ where
 
 fn skip_spaces<S, R, H>(
     input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+    stores: &mut (impl ExpansionState + InputOpenState),
     recorder: &mut R,
     hooks: &mut H,
 ) -> Result<(), ScanDimenError>
@@ -959,15 +959,21 @@ where
     }
 }
 
-fn unread_token<S>(input: &mut InputStack<S>, stores: &mut impl ExpansionState, token: Token)
-where
+fn unread_token<S>(
+    input: &mut InputStack<S>,
+    stores: &mut (impl ExpansionState + InputOpenState),
+    token: Token,
+) where
     S: InputSource,
 {
     unread_tokens(input, stores, [token]);
 }
 
-fn unread_tokens<S, I>(input: &mut InputStack<S>, stores: &mut impl ExpansionState, tokens: I)
-where
+fn unread_tokens<S, I>(
+    input: &mut InputStack<S>,
+    stores: &mut (impl ExpansionState + InputOpenState),
+    tokens: I,
+) where
     S: InputSource,
     I: IntoIterator<Item = Token>,
 {
@@ -1044,7 +1050,7 @@ mod tests {
         PhysicalUnit, Scaled, round_decimal_fraction, scaled_from_decimal_parts,
     };
     use tex_state::token::{Catcode, Token};
-    use tex_state::{ExpansionState, Universe};
+    use tex_state::{ExpansionState, InputOpenState, Universe};
 
     use crate::scan_dimen::{
         DimensionDiagnostic, ScanDimenError, ScanDimenOptions, scan_dimen, scan_dimen_with_options,
@@ -1057,7 +1063,7 @@ mod tests {
 
     fn scan_with_stores(
         input_text: &str,
-        stores: &mut impl ExpansionState,
+        stores: &mut (impl ExpansionState + InputOpenState),
     ) -> (i32, Option<DimensionDiagnostic>, Option<Token>) {
         let mut input = InputStack::new(MemoryInput::new(input_text));
         let scanned = scan_dimen(&mut input, stores).expect("dimension scan should succeed");

@@ -223,15 +223,17 @@ Responsibility: the token-level rewriting system — macros, conditionals,
 - The implemented `tex-expand` scaffold exposes that loop over
   `tex-lex::InputStack` through the shared `ExpansionState` capability, not
   broad `&mut Universe`. Production callers wrap the owning `Universe` in
-  `ExpansionCtx` before entering the gullet. That capability allows meaning
+  `ExpansionContext` before entering the gullet. That capability allows meaning
   reads, immutable token/glue/font/node/register/parameter reads, token-list
   freezing, glue interning, magnification preparation, lexer control-sequence
-  interning, and `\csname`'s relaxed control-sequence interning. File reads
-  for `\input` live behind a separate `InputReadState` capability; driver
-  hooks receive an `InputOpenContext`, not `ExpansionState`, so hooks can
-  open input files without seeing meaning reads, Env/register writes,
-  code-table writes, grouping, snapshot, font-assignment, or general World
-  mutation APIs. Macro body replay uses
+  interning, and `\csname`'s relaxed control-sequence interning. `ExpansionState`
+  cannot construct input-read authority; the top-level expansion/dispatch path
+  additionally carries `InputOpenState` only so `\input` can create an
+  `InputOpenContext`. File reads for `\input` live behind the separate
+  `InputReadState` capability; driver hooks receive an `InputOpenContext`, not
+  `ExpansionState`, so hooks can open input files without seeing meaning reads,
+  Env/register writes, code-table writes, grouping, snapshot, font-assignment,
+  or general World mutation APIs. Macro body replay uses
   the body `TokenListId` directly plus frozen argument ids on the replay
   frame; it does not allocate a substituted body list. Token-list replay is
   naturally read-only; source-frame replay may intern newly encountered
@@ -292,10 +294,13 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   *unexpandable* — they are delivered to the stomach. This is TeX's own
   factoring, and the implementation follows it behaviorally: expansion
   routines receive `ExpansionState` for reads and for sanctioned immutable
-  content/interner/input operations only. Because that capability omits
-  barriered assignment methods such as meaning, register, code-table, group,
-  and font setters, "the gullet cannot mutate Env/register/code-table state"
-  is an enforced Rust API boundary rather than a convention.
+  content/interner operations only; expanded-token entry points also carry the
+  separate `InputOpenState` authority needed for `\input` dispatch. Because
+  `ExpansionState` omits input-open construction and barriered assignment
+  methods such as meaning, register, code-table, group, and font setters, "the
+  gullet cannot mutate Env/register/code-table state" and "ordinary scanner
+  helpers cannot open input files" are enforced Rust API boundaries rather than
+  conventions.
 
 ## 6. Execution engine (the stomach)
 

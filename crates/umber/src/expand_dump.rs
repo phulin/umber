@@ -6,7 +6,7 @@ use tex_lex::{InputStack, LexError, WorldInput};
 use tex_state::env::banks::IntParam;
 use tex_state::meaning::Meaning;
 use tex_state::token::Token;
-use tex_state::{ExpansionCtx, Universe, World, WorldError};
+use tex_state::{ExpansionContext, Universe, World, WorldError};
 
 use crate::format_token;
 
@@ -43,7 +43,7 @@ impl DumpDriver {
     }
 
     fn next_delivered(&mut self) -> Result<Option<Token>, ExpandDumpError> {
-        let mut expansion = ExpansionCtx::new(&mut self.stores);
+        let mut expansion = ExpansionContext::new(&mut self.stores);
         Ok(get_x_token_with_hooks(
             &mut self.input,
             &mut expansion,

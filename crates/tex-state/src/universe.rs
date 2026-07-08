@@ -48,10 +48,6 @@ use std::hash::{Hash, Hasher};
 /// code-table, font-parameter, grouping, snapshot, input-file reads, or World
 /// mutation APIs.
 pub trait ExpansionState {
-    type Input<'a>: InputReadState
-    where
-        Self: 'a;
-
     fn catcode(&self, ch: char) -> Catcode;
     fn lccode(&self, ch: char) -> LcCode;
     fn uccode(&self, ch: char) -> UcCode;
@@ -95,7 +91,6 @@ pub trait ExpansionState {
     fn glue_param(&self, param: GlueParam) -> GlueId;
     fn tok_param(&self, param: TokParam) -> TokenListId;
     fn input_stream_eof(&self, stream: StreamSlot) -> bool;
-    fn input_open_context(&mut self) -> Self::Input<'_>;
 }
 
 /// Input file reads available to driver-supplied `\input` hooks.
@@ -110,15 +105,27 @@ pub trait InputReadState {
     ) -> Result<crate::FileContent, crate::WorldError>;
 }
 
+/// State operations available only to the top-level `\input` dispatch path.
+///
+/// This is separate from [`ExpansionState`] so helper code that is generic over
+/// ordinary expansion authority cannot derive input-file read access.
+pub trait InputOpenState {
+    type Input<'a>: InputReadState
+    where
+        Self: 'a;
+
+    fn input_open_context(&mut self) -> Self::Input<'_>;
+}
+
 /// Production expansion capability over a [`Universe`].
 ///
 /// Pass this wrapper to lexer/expansion code instead of `&mut Universe` when
 /// the caller does not need the full top-level driver surface.
-pub struct ExpansionCtx<'a> {
+pub struct ExpansionContext<'a> {
     universe: &'a mut Universe,
 }
 
-impl<'a> ExpansionCtx<'a> {
+impl<'a> ExpansionContext<'a> {
     #[must_use]
     pub fn new(universe: &'a mut Universe) -> Self {
         Self { universe }
@@ -1074,11 +1081,6 @@ fn set_box_dimension_in_nodes(nodes: &mut [Node], dimension: BoxDimension, value
 }
 
 impl ExpansionState for Universe {
-    type Input<'a>
-        = InputOpenContext<'a>
-    where
-        Self: 'a;
-
     fn catcode(&self, ch: char) -> Catcode {
         Self::catcode(self, ch)
     }
@@ -1250,18 +1252,9 @@ impl ExpansionState for Universe {
     fn input_stream_eof(&self, stream: StreamSlot) -> bool {
         self.world.input_stream_eof(stream)
     }
-
-    fn input_open_context(&mut self) -> Self::Input<'_> {
-        InputOpenContext::new(self)
-    }
 }
 
-impl ExpansionState for ExpansionCtx<'_> {
-    type Input<'a>
-        = InputOpenContext<'a>
-    where
-        Self: 'a;
-
+impl ExpansionState for ExpansionContext<'_> {
     fn catcode(&self, ch: char) -> Catcode {
         self.universe.catcode(ch)
     }
@@ -1433,19 +1426,6 @@ impl ExpansionState for ExpansionCtx<'_> {
     fn input_stream_eof(&self, stream: StreamSlot) -> bool {
         self.universe.world.input_stream_eof(stream)
     }
-
-    fn input_open_context(&mut self) -> Self::Input<'_> {
-        InputOpenContext::new(self.universe)
-    }
-}
-
-impl InputReadState for Universe {
-    fn read_input_file(
-        &mut self,
-        path: &std::path::Path,
-    ) -> Result<crate::FileContent, crate::WorldError> {
-        self.world.read_file(path)
-    }
 }
 
 impl InputReadState for InputOpenContext<'_> {
@@ -1454,6 +1434,28 @@ impl InputReadState for InputOpenContext<'_> {
         path: &std::path::Path,
     ) -> Result<crate::FileContent, crate::WorldError> {
         self.universe.world.read_file(path)
+    }
+}
+
+impl InputOpenState for Universe {
+    type Input<'a>
+        = InputOpenContext<'a>
+    where
+        Self: 'a;
+
+    fn input_open_context(&mut self) -> Self::Input<'_> {
+        InputOpenContext::new(self)
+    }
+}
+
+impl InputOpenState for ExpansionContext<'_> {
+    type Input<'a>
+        = InputOpenContext<'a>
+    where
+        Self: 'a;
+
+    fn input_open_context(&mut self) -> Self::Input<'_> {
+        InputOpenContext::new(self.universe)
     }
 }
 
