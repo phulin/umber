@@ -1,0 +1,197 @@
+use tex_expand::ExpansionHooks;
+use tex_lex::{InputSource, InputStack};
+use tex_state::meaning::{ExpandablePrimitive, Meaning};
+use tex_state::stores::{GroupKind, GroupMismatch, Stores};
+use tex_state::token::{Catcode, Token};
+
+use crate::{ExecError, LogSink, Mode, NoopLogSink, assignments};
+
+/// Main-control progress counters.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ExecutionStats {
+    pub delivered_tokens: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DispatchAction {
+    Continue,
+    End,
+    NotConsumed,
+}
+
+/// Dispatches one gullet-delivered token in the current mode.
+pub fn dispatch_delivered_token<S, H>(
+    mode: Mode,
+    token: Token,
+    input: &mut InputStack<S>,
+    stores: &mut Stores,
+    hooks: &mut H,
+) -> Result<DispatchAction, ExecError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    dispatch_delivered_token_with_log_sink(mode, token, input, stores, hooks, &mut NoopLogSink)
+}
+
+/// Dispatches one delivered token while writing diagnostics to `log`.
+pub fn dispatch_delivered_token_with_log_sink<S, H, L>(
+    mode: Mode,
+    token: Token,
+    input: &mut InputStack<S>,
+    stores: &mut Stores,
+    hooks: &mut H,
+    log: &mut L,
+) -> Result<DispatchAction, ExecError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+    L: LogSink,
+{
+    let meaning = match token {
+        Token::Cs(symbol) => stores.meaning(symbol),
+        Token::Char {
+            cat: Catcode::BeginGroup,
+            ..
+        } => {
+            stores.enter_group_with_kind(GroupKind::Simple);
+            return Ok(DispatchAction::Continue);
+        }
+        Token::Char {
+            cat: Catcode::EndGroup,
+            ..
+        } => {
+            leave_group(input, stores, GroupKind::Simple)?;
+            return Ok(DispatchAction::Continue);
+        }
+        Token::Char {
+            cat: Catcode::Space,
+            ..
+        } => {
+            return Ok(DispatchAction::Continue);
+        }
+        Token::Char { .. } | Token::Param(_) => {
+            return Ok(DispatchAction::NotConsumed);
+        }
+    };
+
+    match meaning {
+        Meaning::Relax => Ok(DispatchAction::Continue),
+        Meaning::Undefined => Err(ExecError::UndefinedControlSequence {
+            name: stores.resolve_cs_name(token),
+        }),
+        Meaning::CharGiven(_) => unimplemented_typesetting(mode, token, "character token command"),
+        Meaning::Macro { .. } => Err(ExecError::UnexpectedMacroDelivery {
+            name: stores.resolve_cs_name(token),
+        }),
+        Meaning::ExpandablePrimitive(primitive) => dispatch_delivered_expandable(token, primitive),
+        Meaning::UnexpandablePrimitive(primitive) => {
+            assignments::execute_unexpandable(primitive, input, stores, hooks, log)
+        }
+        meaning @ (Meaning::CountRegister(_)
+        | Meaning::DimenRegister(_)
+        | Meaning::SkipRegister(_)
+        | Meaning::MuskipRegister(_)
+        | Meaning::ToksRegister(_)
+        | Meaning::IntParam(_)
+        | Meaning::DimenParam(_)
+        | Meaning::GlueParam(_)
+        | Meaning::TokParam(_)) => {
+            assignments::execute_assignment_meaning(meaning, input, stores, hooks)
+        }
+        Meaning::MathCharGiven(_) => {
+            unimplemented_typesetting(mode, token, "math character command")
+        }
+        Meaning::Unknown(raw) => Err(ExecError::UnsupportedCommand {
+            token,
+            opcode: raw.op(),
+        }),
+    }
+}
+
+fn dispatch_delivered_expandable(
+    token: Token,
+    primitive: ExpandablePrimitive,
+) -> Result<DispatchAction, ExecError> {
+    match primitive {
+        ExpandablePrimitive::EndCsName => Err(ExecError::ExtraEndCsName),
+        ExpandablePrimitive::Fi | ExpandablePrimitive::Else | ExpandablePrimitive::Or => {
+            Err(ExecError::ExtraConditionalControl(primitive))
+        }
+        _ => Err(ExecError::UnexpectedExpandableDelivery { token, primitive }),
+    }
+}
+
+pub(crate) fn leave_group<S>(
+    input: &mut InputStack<S>,
+    stores: &mut Stores,
+    expected: GroupKind,
+) -> Result<(), ExecError>
+where
+    S: InputSource,
+{
+    match stores.leave_group_with_kind(expected) {
+        Ok(tokens) => {
+            push_tokens(input, stores, tokens);
+            Ok(())
+        }
+        Err(mismatch) => Err(group_mismatch_error(expected, mismatch)),
+    }
+}
+
+fn group_mismatch_error(expected: GroupKind, mismatch: GroupMismatch) -> ExecError {
+    let no_open_group = mismatch.actual() == expected;
+    match (expected, mismatch.actual(), no_open_group) {
+        (GroupKind::Simple, _, true) => ExecError::TooManyRightBraces,
+        (GroupKind::Simple, GroupKind::SemiSimple, false) => {
+            ExecError::ExtraRightBraceOrForgottenEndgroup
+        }
+        (GroupKind::SemiSimple, _, true) => ExecError::ExtraEndGroup,
+        (GroupKind::SemiSimple, GroupKind::Simple, false) => ExecError::EndGroupMismatch {
+            started_by: mismatch.actual().start_text(),
+        },
+        (GroupKind::Simple, GroupKind::Simple, false)
+        | (GroupKind::SemiSimple, GroupKind::SemiSimple, false) => {
+            unreachable!("matching group kinds are returned as successful leaves, not mismatches")
+        }
+    }
+}
+
+pub(crate) fn push_tokens<S, I>(input: &mut InputStack<S>, stores: &mut Stores, tokens: I)
+where
+    S: InputSource,
+    I: IntoIterator<Item = Token>,
+{
+    let tokens: Vec<_> = tokens.into_iter().collect();
+    if tokens.is_empty() {
+        return;
+    }
+    let token_list = stores.intern_token_list(&tokens);
+    input.push_token_list(token_list, tex_lex::TokenListReplayKind::Inserted);
+}
+
+pub(crate) fn unimplemented_typesetting(
+    mode: Mode,
+    token: Token,
+    operation: &'static str,
+) -> Result<DispatchAction, ExecError> {
+    Err(ExecError::UnimplementedTypesetting {
+        mode,
+        token,
+        operation,
+    })
+}
+
+trait ResolveTokenName {
+    fn resolve_cs_name(&self, token: Token) -> String;
+}
+
+impl ResolveTokenName for Stores {
+    fn resolve_cs_name(&self, token: Token) -> String {
+        match token {
+            Token::Cs(symbol) => self.resolve(symbol).to_owned(),
+            Token::Char { ch, cat } => format!("{ch:?}/{cat:?}"),
+            Token::Param(slot) => format!("#{slot}"),
+        }
+    }
+}
