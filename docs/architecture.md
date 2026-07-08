@@ -208,6 +208,12 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   sequence names and reports a lexer error if a source token would require
   minting a new symbol. Future `\csname` work must pass its sanctioned
   interning capability explicitly.
+- Frame-control expandables are represented as input-frame rewrites:
+  `\expandafter` saves one raw token, performs one expansion step on the
+  following token, then pushes the saved token above the expansion result;
+  `\noexpand` pushes a one-token replay frame that suppresses expansion for
+  exactly the next `get_x_token` read. This keeps suppression frame-local and
+  avoids mutating `Env`.
 - **What the gullet never does**: mutate state. `\def`, `\advance`,
   register writes are *unexpandable* — they are delivered to the stomach.
   This is TeX's own factoring and we enforce it in the crate split:

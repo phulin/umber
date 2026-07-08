@@ -10,7 +10,7 @@ use std::fmt;
 
 use tex_lex::{InputSource, InputStack, LexError, MacroArguments, TokenListReplayKind};
 use tex_state::interner::Symbol;
-use tex_state::meaning::{Meaning, MeaningFlags};
+use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
 use tex_state::stores::Stores;
 use tex_state::token::Token;
 
@@ -81,7 +81,9 @@ pub enum ExpandableOpcode {
 /// Result of one expansion dispatch.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Dispatch {
+    Continue,
     Deliver(Token),
+    DeliverNoExpand(Token),
     Push {
         replay_kind: ExpansionReplayKind,
         token_list: tex_state::ids::TokenListId,
@@ -95,6 +97,7 @@ pub enum ExpandError {
     Lex(LexError),
     MacroCall(args::MacroCallError),
     UnimplementedExpandable(ExpandableOpcode),
+    MissingTokenAfterPrimitive(ExpandableOpcode),
 }
 
 impl fmt::Display for ExpandError {
@@ -105,6 +108,9 @@ impl fmt::Display for ExpandError {
             Self::UnimplementedExpandable(opcode) => {
                 write!(f, "expandable opcode {opcode:?} is not implemented yet")
             }
+            Self::MissingTokenAfterPrimitive(opcode) => {
+                write!(f, "missing token after expandable primitive {opcode:?}")
+            }
         }
     }
 }
@@ -114,7 +120,7 @@ impl std::error::Error for ExpandError {
         match self {
             Self::Lex(err) => Some(err),
             Self::MacroCall(err) => Some(err),
-            Self::UnimplementedExpandable(_) => None,
+            Self::UnimplementedExpandable(_) | Self::MissingTokenAfterPrimitive(_) => None,
         }
     }
 }
@@ -153,9 +159,14 @@ where
     R: ReadRecorder,
 {
     loop {
-        let Some(token) = input.next_token_readonly(stores)? else {
+        let Some(read) = input.next_expansion_token_readonly(stores)? else {
             return Ok(None);
         };
+        let token = read.token();
+
+        if read.suppress_expansion() {
+            return Ok(Some(token));
+        }
 
         let Token::Cs(symbol) = token else {
             return Ok(Some(token));
@@ -165,18 +176,9 @@ where
         recorder.record_meaning(symbol, meaning);
 
         match dispatch(token, input, stores, recorder, meaning)? {
-            Dispatch::Deliver(token) => return Ok(Some(token)),
-            Dispatch::Push {
-                replay_kind,
-                token_list,
-                macro_arguments,
-            } => {
-                if replay_kind == ExpansionReplayKind::MacroBody {
-                    input.push_macro_body(token_list, macro_arguments);
-                } else {
-                    input.push_token_list(token_list, replay_kind.as_lex_kind());
-                }
-            }
+            Dispatch::Continue => {}
+            Dispatch::Deliver(token) | Dispatch::DeliverNoExpand(token) => return Ok(Some(token)),
+            push @ Dispatch::Push { .. } => apply_dispatch_push(input, push),
         }
     }
 }
@@ -212,6 +214,18 @@ where
                 macro_arguments: arguments.as_macro_arguments(),
             })
         }
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::ExpandAfter) => {
+            expand_after(input, stores, recorder)?;
+            Ok(Dispatch::Continue)
+        }
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::NoExpand) => {
+            let Some(token) = input.next_token_readonly(stores)? else {
+                return Err(ExpandError::MissingTokenAfterPrimitive(
+                    ExpandableOpcode::NoExpand,
+                ));
+            };
+            Ok(Dispatch::DeliverNoExpand(token))
+        }
         Meaning::Macro { .. }
         | Meaning::Undefined
         | Meaning::Relax
@@ -228,8 +242,7 @@ const fn is_expandable_macro(flags: MeaningFlags) -> bool {
 pub fn dispatch_expandable_opcode(opcode: ExpandableOpcode) -> Result<(), ExpandError> {
     match opcode {
         ExpandableOpcode::Macro => Ok(()),
-        ExpandableOpcode::ExpandAfter => Err(unimplemented_expandable(opcode)),
-        ExpandableOpcode::NoExpand => Err(unimplemented_expandable(opcode)),
+        ExpandableOpcode::ExpandAfter | ExpandableOpcode::NoExpand => Ok(()),
         ExpandableOpcode::CsName => Err(unimplemented_expandable(opcode)),
         ExpandableOpcode::String => Err(unimplemented_expandable(opcode)),
         ExpandableOpcode::Number => Err(unimplemented_expandable(opcode)),
@@ -248,6 +261,87 @@ fn unimplemented_expandable(opcode: ExpandableOpcode) -> ExpandError {
     ExpandError::UnimplementedExpandable(opcode)
 }
 
+fn expand_after<S, R>(
+    input: &mut InputStack<S>,
+    stores: &mut Stores,
+    recorder: &mut R,
+) -> Result<(), ExpandError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+{
+    let Some(saved) = input.next_token_readonly(stores)? else {
+        return Err(ExpandError::MissingTokenAfterPrimitive(
+            ExpandableOpcode::ExpandAfter,
+        ));
+    };
+    let Some(target) = input.next_token_readonly(stores)? else {
+        return Err(ExpandError::MissingTokenAfterPrimitive(
+            ExpandableOpcode::ExpandAfter,
+        ));
+    };
+
+    let target_dispatch = dispatch_one_raw_token(target, input, stores, recorder)?;
+    push_dispatch_result(input, stores, target_dispatch);
+    push_inserted_token(input, stores, saved);
+    Ok(())
+}
+
+fn dispatch_one_raw_token<S, R>(
+    token: Token,
+    input: &mut InputStack<S>,
+    stores: &mut Stores,
+    recorder: &mut R,
+) -> Result<Dispatch, ExpandError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+{
+    let Token::Cs(symbol) = token else {
+        return Ok(Dispatch::Deliver(token));
+    };
+
+    let meaning = stores.meaning(symbol);
+    recorder.record_meaning(symbol, meaning);
+    dispatch(token, input, stores, recorder, meaning)
+}
+
+fn push_dispatch_result<S>(input: &mut InputStack<S>, stores: &mut Stores, dispatch: Dispatch) {
+    match dispatch {
+        Dispatch::Deliver(token) => push_inserted_token(input, stores, token),
+        Dispatch::DeliverNoExpand(token) => push_noexpand_token(input, stores, token),
+        Dispatch::Continue => {}
+        push @ Dispatch::Push { .. } => apply_dispatch_push(input, push),
+    }
+}
+
+fn apply_dispatch_push<S>(input: &mut InputStack<S>, dispatch: Dispatch) {
+    let Dispatch::Push {
+        replay_kind,
+        token_list,
+        macro_arguments,
+    } = dispatch
+    else {
+        return;
+    };
+
+    if replay_kind == ExpansionReplayKind::MacroBody {
+        input.push_macro_body(token_list, macro_arguments);
+    } else {
+        input.push_token_list(token_list, replay_kind.as_lex_kind());
+    }
+}
+
+fn push_inserted_token<S>(input: &mut InputStack<S>, stores: &mut Stores, token: Token) {
+    let token_list = stores.intern_token_list(&[token]);
+    input.push_token_list(token_list, TokenListReplayKind::Inserted);
+}
+
+fn push_noexpand_token<S>(input: &mut InputStack<S>, stores: &mut Stores, token: Token) {
+    let token_list = stores.intern_token_list(&[token]);
+    input.push_token_list(token_list, TokenListReplayKind::NoExpand);
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -257,7 +351,7 @@ mod tests {
     use tex_lex::{InputStack, MemoryInput, TokenListReplayKind};
     use tex_state::interner::Symbol;
     use tex_state::macro_store::MacroMeaning;
-    use tex_state::meaning::{Meaning, MeaningFlags};
+    use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
     use tex_state::stores::Stores;
     use tex_state::token::{Catcode, Token};
 
@@ -319,7 +413,9 @@ mod tests {
         for opcode in opcodes {
             let result = dispatch_expandable_opcode(opcode);
             match opcode {
-                ExpandableOpcode::Macro => assert!(result.is_ok()),
+                ExpandableOpcode::Macro
+                | ExpandableOpcode::ExpandAfter
+                | ExpandableOpcode::NoExpand => assert!(result.is_ok()),
                 _ => assert!(matches!(
                     result,
                     Err(super::ExpandError::UnimplementedExpandable(found)) if found == opcode
@@ -427,6 +523,128 @@ mod tests {
             Some(Token::Cs(relax))
         );
         assert_eq!(recorder.reads, 1);
+    }
+
+    #[test]
+    fn expandafter_expands_second_token_then_replays_saved_token_first() {
+        let mut stores = Stores::new();
+        let expandafter =
+            expandable_primitive(&mut stores, "expandafter", ExpandablePrimitive::ExpandAfter);
+        let macro_cs = stores.intern("m");
+        let params = stores.intern_token_list(&[]);
+        let body = stores.intern_token_list(&[char_token('x'), char_token('y')]);
+        stores.set_macro_meaning(
+            macro_cs,
+            MacroMeaning::new(MeaningFlags::EMPTY, params, body),
+        );
+
+        let input_list = stores.intern_token_list(&[
+            Token::Cs(expandafter),
+            char_token('a'),
+            Token::Cs(macro_cs),
+        ]);
+        let mut input = InputStack::new(MemoryInput::new(""));
+        input.push_token_list(input_list, TokenListReplayKind::Inserted);
+
+        assert_eq!(next_expanded_chars(&mut input, &mut stores), "axy");
+    }
+
+    #[test]
+    fn expandafter_chains_match_tex_pushback_order() {
+        let mut stores = Stores::new();
+        let expandafter =
+            expandable_primitive(&mut stores, "expandafter", ExpandablePrimitive::ExpandAfter);
+        let first = stores.intern("first");
+        let second = stores.intern("second");
+        let params = stores.intern_token_list(&[]);
+        let first_body = stores.intern_token_list(&[char_token('1')]);
+        let second_body = stores.intern_token_list(&[char_token('2')]);
+        stores.set_macro_meaning(
+            first,
+            MacroMeaning::new(MeaningFlags::EMPTY, params, first_body),
+        );
+        stores.set_macro_meaning(
+            second,
+            MacroMeaning::new(MeaningFlags::EMPTY, params, second_body),
+        );
+
+        let input_list = stores.intern_token_list(&[
+            Token::Cs(expandafter),
+            Token::Cs(expandafter),
+            Token::Cs(expandafter),
+            Token::Cs(first),
+            Token::Cs(second),
+        ]);
+        let mut input = InputStack::new(MemoryInput::new(""));
+        input.push_token_list(input_list, TokenListReplayKind::Inserted);
+
+        assert_eq!(next_expanded_chars(&mut input, &mut stores), "12");
+    }
+
+    #[test]
+    fn noexpand_suppresses_next_control_sequence_for_one_get_x_token() {
+        let mut stores = Stores::new();
+        let noexpand = expandable_primitive(&mut stores, "noexpand", ExpandablePrimitive::NoExpand);
+        let macro_cs = stores.intern("m");
+        let params = stores.intern_token_list(&[]);
+        let body = stores.intern_token_list(&[char_token('x')]);
+        stores.set_macro_meaning(
+            macro_cs,
+            MacroMeaning::new(MeaningFlags::EMPTY, params, body),
+        );
+        let input_list = stores.intern_token_list(&[
+            Token::Cs(noexpand),
+            Token::Cs(macro_cs),
+            Token::Cs(macro_cs),
+        ]);
+        let mut input = InputStack::new(MemoryInput::new(""));
+        input.push_token_list(input_list, TokenListReplayKind::Inserted);
+
+        assert_eq!(
+            get_x_token(&mut input, &mut stores).expect("expansion should succeed"),
+            Some(Token::Cs(macro_cs))
+        );
+        assert_eq!(
+            get_x_token(&mut input, &mut stores).expect("expansion should succeed"),
+            Some(char_token('x'))
+        );
+    }
+
+    #[test]
+    fn expandafter_preserves_noexpand_for_later_frame_step() {
+        let mut stores = Stores::new();
+        let expandafter =
+            expandable_primitive(&mut stores, "expandafter", ExpandablePrimitive::ExpandAfter);
+        let noexpand = expandable_primitive(&mut stores, "noexpand", ExpandablePrimitive::NoExpand);
+        let macro_cs = stores.intern("m");
+        let params = stores.intern_token_list(&[]);
+        let body = stores.intern_token_list(&[char_token('x')]);
+        stores.set_macro_meaning(
+            macro_cs,
+            MacroMeaning::new(MeaningFlags::EMPTY, params, body),
+        );
+        let input_list = stores.intern_token_list(&[
+            Token::Cs(expandafter),
+            char_token('a'),
+            Token::Cs(noexpand),
+            Token::Cs(macro_cs),
+            Token::Cs(macro_cs),
+        ]);
+        let mut input = InputStack::new(MemoryInput::new(""));
+        input.push_token_list(input_list, TokenListReplayKind::Inserted);
+
+        assert_eq!(
+            get_x_token(&mut input, &mut stores).expect("expansion should succeed"),
+            Some(char_token('a'))
+        );
+        assert_eq!(
+            get_x_token(&mut input, &mut stores).expect("expansion should succeed"),
+            Some(Token::Cs(macro_cs))
+        );
+        assert_eq!(
+            get_x_token(&mut input, &mut stores).expect("expansion should succeed"),
+            Some(char_token('x'))
+        );
     }
 
     #[test]
@@ -591,5 +809,15 @@ mod tests {
             _ => Catcode::Letter,
         };
         Token::Char { ch, cat }
+    }
+
+    fn expandable_primitive(
+        stores: &mut Stores,
+        name: &str,
+        primitive: ExpandablePrimitive,
+    ) -> Symbol {
+        let symbol = stores.intern(name);
+        stores.set_meaning(symbol, Meaning::ExpandablePrimitive(primitive));
+        symbol
     }
 }

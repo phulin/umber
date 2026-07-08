@@ -204,14 +204,14 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [ ] `\edef` - Defines a macro after expanding replacement text.
 - [ ] `\endcsname` - Terminates a `\csname` name scan.
 - [ ] `\endgroup` - Ends an explicit group.
-- [ ] `\expandafter` - Expands the token after the next token before continuing.
+- [x] `\expandafter` - Expands the token after the next token before continuing.
 - [ ] `\futurelet` - Assigns a control sequence to the following token while preserving input.
 - [ ] `\gdef` - Globally defines a macro without expanding replacement text.
 - [ ] `\global` - Prefix that makes the following assignment global.
 - [ ] `\globaldefs` - Overrides local or global assignment behavior by sign.
 - [ ] `\let` - Gives a control sequence the current meaning of another token.
 - [ ] `\long` - Prefix allowing a macro parameter to contain `\par`.
-- [ ] `\noexpand` - Suppresses expansion of the next token during expansion-only contexts.
+- [x] `\noexpand` - Suppresses expansion of the next token during expansion-only contexts.
 - [ ] `\outer` - Prefix marking a macro invalid in restricted scanning contexts.
 - [ ] `\relax` - No-op command that can terminate scans or absorb expansion.
 - [ ] `\the` - Expands an internal quantity or token register value.

@@ -160,6 +160,7 @@ impl SourceId {
 pub enum TokenListReplayKind {
     MacroBody,
     MacroArgument,
+    NoExpand,
     EveryPar,
     Mark,
     OutputRoutine,
@@ -387,7 +388,35 @@ struct LastSourceFrame {
 
 enum TokenReplay {
     Deliver(Token),
+    DeliverNoExpand(Token),
     PushArgument(TokenListId),
+}
+
+/// A token read from the input stack with expansion-control metadata.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ExpansionToken {
+    token: Token,
+    suppress_expansion: bool,
+}
+
+impl ExpansionToken {
+    #[must_use]
+    pub const fn new(token: Token, suppress_expansion: bool) -> Self {
+        Self {
+            token,
+            suppress_expansion,
+        }
+    }
+
+    #[must_use]
+    pub const fn token(self) -> Token {
+        self.token
+    }
+
+    #[must_use]
+    pub const fn suppress_expansion(self) -> bool {
+        self.suppress_expansion
+    }
 }
 
 /// TeX input stack for source frames and frozen token-list replay.
@@ -613,7 +642,9 @@ where
                             }));
                             continue;
                         }
-                        Some(TokenReplay::Deliver(token)) => return Ok(Some(token)),
+                        Some(TokenReplay::Deliver(token) | TokenReplay::DeliverNoExpand(token)) => {
+                            return Ok(Some(token));
+                        }
                         None => self.frames.pop(),
                     };
                 }
@@ -647,6 +678,15 @@ where
     }
 
     pub fn next_token_readonly(&mut self, stores: &Stores) -> Result<Option<Token>, LexError> {
+        Ok(self
+            .next_expansion_token_readonly(stores)?
+            .map(ExpansionToken::token))
+    }
+
+    pub fn next_expansion_token_readonly(
+        &mut self,
+        stores: &Stores,
+    ) -> Result<Option<ExpansionToken>, LexError> {
         loop {
             let Some(frame) = self.frames.last_mut() else {
                 return Ok(None);
@@ -663,13 +703,18 @@ where
                             }));
                             continue;
                         }
-                        Some(TokenReplay::Deliver(token)) => return Ok(Some(token)),
+                        Some(TokenReplay::Deliver(token)) => {
+                            return Ok(Some(ExpansionToken::new(token, false)));
+                        }
+                        Some(TokenReplay::DeliverNoExpand(token)) => {
+                            return Ok(Some(ExpansionToken::new(token, true)));
+                        }
                         None => self.frames.pop(),
                     };
                 }
                 InputFrame::Source(source) => {
                     if let Some(token) = source.frame.pending.pop_front() {
-                        return Ok(Some(token));
+                        return Ok(Some(ExpansionToken::new(token, false)));
                     }
 
                     if source.frame.offset >= source.frame.line.len() {
@@ -693,7 +738,7 @@ where
                     else {
                         continue;
                     };
-                    return Ok(Some(token));
+                    return Ok(Some(ExpansionToken::new(token, false)));
                 }
             }
         }
@@ -713,6 +758,10 @@ fn next_token_from_token_list_frame(
         && let Some(argument) = frame.macro_arguments.get(slot)
     {
         return Some(TokenReplay::PushArgument(argument));
+    }
+
+    if frame.replay_kind == TokenListReplayKind::NoExpand {
+        return Some(TokenReplay::DeliverNoExpand(token));
     }
 
     Some(TokenReplay::Deliver(token))

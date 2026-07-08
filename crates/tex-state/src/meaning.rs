@@ -10,6 +10,7 @@ const OP_UNDEFINED: u8 = 0;
 const OP_RELAX: u8 = 1;
 const OP_MACRO: u8 = 2;
 const OP_CHAR_GIVEN: u8 = 3;
+const OP_EXPANDABLE_PRIMITIVE: u8 = 4;
 
 /// Bitflags carried by meaning words.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -59,7 +60,34 @@ pub enum Meaning {
         definition: MacroDefinitionId,
     },
     CharGiven(char),
+    ExpandablePrimitive(ExpandablePrimitive),
     Unknown(RawMeaning),
+}
+
+/// Expandable primitive opcodes represented directly in meaning words.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ExpandablePrimitive {
+    ExpandAfter,
+    NoExpand,
+}
+
+impl ExpandablePrimitive {
+    #[must_use]
+    pub const fn operand(self) -> u64 {
+        match self {
+            Self::ExpandAfter => 0,
+            Self::NoExpand => 1,
+        }
+    }
+
+    #[must_use]
+    pub const fn from_operand(operand: u64) -> Option<Self> {
+        match operand {
+            0 => Some(Self::ExpandAfter),
+            1 => Some(Self::NoExpand),
+            _ => None,
+        }
+    }
 }
 
 /// An unknown raw meaning word decoded from environment storage.
@@ -103,6 +131,11 @@ impl Meaning {
             Self::Relax => pack(OP_RELAX, MeaningFlags::EMPTY, 0),
             Self::Macro { flags, definition } => pack(OP_MACRO, flags, definition.raw() as u64),
             Self::CharGiven(ch) => pack(OP_CHAR_GIVEN, MeaningFlags::EMPTY, ch as u64),
+            Self::ExpandablePrimitive(primitive) => pack(
+                OP_EXPANDABLE_PRIMITIVE,
+                MeaningFlags::EMPTY,
+                primitive.operand(),
+            ),
             Self::Unknown(raw) => pack(raw.op, MeaningFlags::EMPTY, raw.operand),
         }
     }
@@ -125,6 +158,10 @@ impl Meaning {
                 Some(ch) => Self::CharGiven(ch),
                 None => Self::Unknown(RawMeaning { op, operand }),
             },
+            OP_EXPANDABLE_PRIMITIVE => match ExpandablePrimitive::from_operand(operand) {
+                Some(primitive) => Self::ExpandablePrimitive(primitive),
+                None => Self::Unknown(RawMeaning { op, operand }),
+            },
             _ => Self::Unknown(RawMeaning { op, operand }),
         }
     }
@@ -144,7 +181,7 @@ const fn pack(op: u8, flags: MeaningFlags, operand: u64) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{Meaning, MeaningFlags, OPERAND_MASK, RawMeaning};
+    use super::{ExpandablePrimitive, Meaning, MeaningFlags, OPERAND_MASK, RawMeaning};
     use crate::ids::MacroDefinitionId;
 
     fn round_trip(meaning: Meaning) {
@@ -176,6 +213,10 @@ mod tests {
         });
         round_trip(Meaning::CharGiven('\0'));
         round_trip(Meaning::CharGiven(char::MAX));
+        round_trip(Meaning::ExpandablePrimitive(
+            ExpandablePrimitive::ExpandAfter,
+        ));
+        round_trip(Meaning::ExpandablePrimitive(ExpandablePrimitive::NoExpand));
         round_trip(Meaning::Unknown(RawMeaning::testing_new(u8::MAX, 0)));
         round_trip(Meaning::Unknown(RawMeaning::testing_new(
             u8::MAX,
