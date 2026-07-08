@@ -683,6 +683,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tex-exec"
+version = "0.1.0"
+dependencies = [
+ "tex-expand",
+ "tex-lex",
+ "tex-state",
+]
+
+[[package]]
 name = "tex-expand"
 version = "0.1.0"
 dependencies = [

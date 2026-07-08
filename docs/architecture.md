@@ -308,6 +308,17 @@ assignments, box building, and dispatch into the typesetting kernels.
   holds it as a plain argument — re-entrancy (e.g. `\output` routines,
   `\vsplit`-triggered mark extraction) is recursion in Rust, with the mode
   nest making it explicit and snapshot-summarizable.
+- The implemented `tex-exec` scaffold owns that explicit mode nest now. Its
+  summary is a vector of mode levels, each carrying one of TeX's six modes
+  (vertical/internal vertical, horizontal/restricted horizontal, math/display
+  math) plus a placeholder list-under-construction summary until node builders
+  arrive. Main control pulls only through `tex-expand`'s `get_x_token` loop;
+  the crate does not read raw lexer tokens. The gullet's mode predicates are
+  backed by the current nest level through `ExpansionHooks`, collapsing the
+  six modes into the three `\ifvmode`/`\ifhmode`/`\ifmmode` families and the
+  `\ifinner` bit. For this first slice, `\relax` is the only completed
+  execution command and all typesetting material fails through an explicit
+  "typesetting path is not implemented yet" diagnostic.
 
 ## 7. Typesetting kernels
 

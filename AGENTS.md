@@ -23,6 +23,7 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - `.agents/`: project-local agent skills and coordination workflow guidance.
 - `crates/`: Rust workspace crates.
 - `crates/tex-state`: engine state layer substrate.
+- `crates/tex-exec`: stomach execution scaffold, mode nest, and main-control dispatch.
 - `crates/umber`: CLI driver.
 - `crates/test-support`: shared fixture and parity-test helpers.
 - `tools/`: Rust workspace tools, including `refexec` for reference TeX execution.

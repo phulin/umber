@@ -1,0 +1,12 @@
+[package]
+name = "tex-exec"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tex-expand = { path = "../tex-expand" }
+tex-lex = { path = "../tex-lex" }
+tex-state = { path = "../tex-state" }
+
+[lints]
+workspace = true
