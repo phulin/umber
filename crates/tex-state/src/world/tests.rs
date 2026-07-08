@@ -82,6 +82,40 @@ fn input_stream_reads_are_pinned_and_snapshot_cursor_restores() {
 }
 
 #[test]
+fn terminal_input_cursor_is_snapshot_state() {
+    let mut world = World::memory();
+    world
+        .push_memory_terminal_line("one")
+        .expect("seed first terminal line");
+    world
+        .push_memory_terminal_line("two")
+        .expect("seed second terminal line");
+
+    assert_eq!(
+        world
+            .read_terminal_line()
+            .expect("read first terminal line"),
+        Some("one".to_owned())
+    );
+    let snapshot = world.snapshot();
+    assert_eq!(
+        world
+            .read_terminal_line()
+            .expect("read second terminal line"),
+        Some("two".to_owned())
+    );
+
+    world.rollback(&snapshot);
+
+    assert_eq!(
+        world
+            .read_terminal_line()
+            .expect("reread second terminal line"),
+        Some("two".to_owned())
+    );
+}
+
+#[test]
 fn rng_snapshot_restores_sequence() {
     let mut world = World::memory();
     let first = world.next_random_u64();

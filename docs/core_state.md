@@ -300,12 +300,15 @@ Nothing in the engine touches the OS directly. A single `World` object owns:
   return bytes plus a stable `ContentHash`, and append an `InputRecord` to
   the snapshot-owned World state. The real backend is the only engine code
   that uses host files; the in-memory backend exposes the same API for
-  hermetic tests and corpus drivers.
+  hermetic tests and corpus drivers. `\read` terminal input is also owned by
+  `World`; in-memory worlds keep a replayable terminal line buffer plus a
+  snapshot-owned cursor, while real worlds read stdin only through this
+  boundary.
 - **Output streams** (`\openout`/`\write`, aux/toc/idx): writes append to an
   effect log; stream buffer state *including partial lines* is snapshot
   state. TeX's own defer-`\write`-to-shipout semantics is the model —
   extended to every effect. `World` owns the 16 stream slots, terminal/log
-  sinks, partial-line buffers, and an append-only effect log. `\openout`,
+  sinks, partial-line buffers, terminal-input cursor, and an append-only effect log. `\openout`,
   `\closeout`, routed stream writes, special-class payloads, PDF object
   placeholders, and shell-escape requests append records only; no host bytes
   materialize until the commit barrier flushes a prefix.
@@ -410,8 +413,8 @@ pub struct Snapshot {
   trees do not depend on the Rust call stack. The hash also includes code
   table generation counters, nodes appended to the epoch arena since the
   previous cursor, the uncommitted World effect/input/shell-escape slices,
-  stream-buffer state, RNG state, job clock, interaction mode, and prepared
-  magnification. Font ids are deliberately omitted while they remain
+  stream-buffer state (including terminal-input cursor), RNG state, job clock,
+  interaction mode, and prepared magnification. Font ids are deliberately omitted while they remain
   placeholder handles; the font epic must replace that omission with
   content-backed font identity before font-dependent node hashes are
   convergence-grade.

@@ -14,7 +14,7 @@ use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
-use tex_state::{GroupKind, Universe};
+use tex_state::{GroupKind, InteractionMode, Universe};
 
 use crate::{DispatchAction, ExecError, Mode, diagnostics, dispatch_delivered_token, leave_group};
 

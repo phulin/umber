@@ -327,16 +327,106 @@ where
         return Err(ExecError::ReadNeedsTo);
     }
     let target = scan_control_sequence(input, stores, "\\read")?;
-    let Some(line) = stores.world_mut().read_stream_line(slot)? else {
-        return Err(ExecError::ReadNotImplemented);
-    };
-    let tokens = tokenize_read_line(&line, stores)?;
+    let tokens = scan_read_tokens(slot, target, stores)?;
     let replacement_text = stores.intern_token_list(&tokens);
     let parameter_text = stores.intern_token_list(&[]);
     stores.set_macro_meaning(
         target,
         MacroMeaning::new(MeaningFlags::EMPTY, parameter_text, replacement_text),
     );
+    Ok(())
+}
+
+fn scan_read_tokens(
+    slot: StreamSlot,
+    target: Symbol,
+    stores: &mut Universe,
+) -> Result<Vec<Token>, ExecError> {
+    let mut tokens = Vec::new();
+    let mut depth = 0usize;
+    let mut terminal_prompt = Some(read_prompt(stores, target));
+    loop {
+        let had_open_stream = stores
+            .world()
+            .stream_bufs()
+            .read_stream_target(slot)
+            .is_some();
+        let line = if had_open_stream {
+            stores.world_mut().read_stream_line(slot)?
+        } else {
+            read_terminal_read_line(stores, terminal_prompt.take())?
+        };
+        let Some(line) = line else {
+            return Err(ExecError::ReadNotImplemented);
+        };
+        scan_read_line_tokens(&line, stores, &mut tokens, &mut depth)?;
+        if depth == 0 {
+            return Ok(tokens);
+        }
+        if had_open_stream
+            && stores
+                .world()
+                .stream_bufs()
+                .read_stream_target(slot)
+                .is_none()
+        {
+            return Err(ExecError::FileEndedWithinRead);
+        }
+    }
+}
+
+fn read_terminal_read_line(
+    stores: &mut Universe,
+    prompt: Option<String>,
+) -> Result<Option<String>, ExecError> {
+    match stores.interaction_mode() {
+        InteractionMode::Batch | InteractionMode::Nonstop => {
+            return Err(ExecError::ReadNotImplemented);
+        }
+        InteractionMode::Scroll | InteractionMode::ErrorStop => {}
+    }
+    stores.world_mut().write_text(
+        tex_state::PrintSink::TerminalAndLog,
+        prompt.as_deref().unwrap_or(""),
+    );
+    stores
+        .world_mut()
+        .read_terminal_line()?
+        .map_or(Err(ExecError::TerminalReadEof), |line| Ok(Some(line)))
+}
+
+fn read_prompt(stores: &Universe, target: Symbol) -> String {
+    format!("\n\\{}=", stores.resolve(target))
+}
+
+fn scan_read_line_tokens(
+    line: &str,
+    stores: &mut Universe,
+    tokens: &mut Vec<Token>,
+    depth: &mut usize,
+) -> Result<(), ExecError> {
+    for token in tokenize_read_line(line, stores)? {
+        match token {
+            Token::Char {
+                cat: Catcode::BeginGroup,
+                ..
+            } => {
+                *depth += 1;
+                tokens.push(token);
+            }
+            Token::Char {
+                cat: Catcode::EndGroup,
+                ..
+            } => {
+                if *depth == 0 {
+                    return Ok(());
+                }
+                *depth -= 1;
+                tokens.push(token);
+            }
+            _ => tokens.push(token),
+        }
+    }
     Ok(())
 }
 

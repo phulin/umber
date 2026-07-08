@@ -332,6 +332,17 @@ impl Universe {
         &self.input_summary
     }
 
+    /// Returns the current interaction mode.
+    #[must_use]
+    pub const fn interaction_mode(&self) -> InteractionMode {
+        self.interaction_mode
+    }
+
+    /// Sets the current interaction mode.
+    pub fn set_interaction_mode(&mut self, mode: InteractionMode) {
+        self.interaction_mode = mode;
+    }
+
     /// Returns the current code-table generation vector.
     #[must_use]
     pub fn code_table_generations(&self) -> CodeTableGenerations {

@@ -225,6 +225,7 @@ pub struct StreamBufState {
     partial_lines: [String; STREAM_SLOT_COUNT],
     log_partial_line: String,
     terminal_partial_line: String,
+    terminal_input_next: usize,
 }
 
 impl StreamBufState {
@@ -258,6 +259,11 @@ impl StreamBufState {
     #[must_use]
     pub fn terminal_partial_line(&self) -> &str {
         &self.terminal_partial_line
+    }
+
+    #[must_use]
+    pub const fn terminal_input_next(&self) -> usize {
+        self.terminal_input_next
     }
 }
 
@@ -456,6 +462,7 @@ pub struct World {
     shell_escape_policy: ShellEscapePolicy,
     inputs: Vec<InputRecord>,
     input_contents: BTreeMap<ContentHash, Vec<u8>>,
+    terminal_inputs: Vec<String>,
     shell_escapes: Vec<ShellEscapeRecord>,
 }
 
@@ -491,6 +498,7 @@ impl World {
             shell_escape_policy: ShellEscapePolicy::default(),
             inputs: Vec::new(),
             input_contents: BTreeMap::new(),
+            terminal_inputs: Vec::new(),
             shell_escapes: Vec::new(),
         }
     }
@@ -509,6 +517,22 @@ impl World {
             ));
         };
         memory.files.insert(path.into(), bytes.into());
+        Ok(())
+    }
+
+    /// Adds one terminal input line to an in-memory world.
+    ///
+    /// The line should not include its trailing newline; real terminal reads
+    /// return the same normalized physical-line shape.
+    pub fn push_memory_terminal_line(&mut self, line: impl Into<String>) -> Result<(), WorldError> {
+        if !matches!(self.backend, WorldBackend::Memory(_)) {
+            return Err(WorldError::new(
+                "set terminal input",
+                None,
+                "world is not memory-backed",
+            ));
+        };
+        self.terminal_inputs.push(line.into());
         Ok(())
     }
 
@@ -582,9 +606,51 @@ impl World {
         };
         let lines = split_physical_lines(&String::from_utf8_lossy(bytes));
         let Some(line) = lines.get(target.next_line).cloned() else {
-            return Ok(None);
+            self.stream_bufs.read_streams[slot.index()] = None;
+            return Ok(Some(String::new()));
         };
         target.next_line += 1;
+        Ok(Some(line))
+    }
+
+    /// Reads one normalized physical line from the terminal input source.
+    pub fn read_terminal_line(&mut self) -> Result<Option<String>, WorldError> {
+        let line = if let Some(line) = self
+            .terminal_inputs
+            .get(self.stream_bufs.terminal_input_next)
+            .cloned()
+        {
+            line
+        } else {
+            match &mut self.backend {
+                WorldBackend::Real => {
+                    let mut line = String::new();
+                    let read = io::stdin()
+                        .read_line(&mut line)
+                        .map_err(|err| WorldError::new("read terminal", None, err.to_string()))?;
+                    if read == 0 {
+                        return Ok(None);
+                    }
+                    let line = normalize_terminal_line(line);
+                    self.terminal_inputs.push(line.clone());
+                    line
+                }
+                WorldBackend::Memory(_) => {
+                    return Ok(None);
+                }
+            }
+        };
+        self.stream_bufs.terminal_input_next += 1;
+        let bytes = line.as_bytes().to_vec();
+        let content = FileContent::new(PathBuf::from("<terminal>"), bytes);
+        self.input_contents
+            .entry(content.hash)
+            .or_insert_with(|| content.bytes.clone());
+        self.inputs.push(InputRecord {
+            path: content.path,
+            hash: content.hash,
+            len: content.bytes.len(),
+        });
         Ok(Some(line))
     }
 
@@ -1003,6 +1069,16 @@ fn split_physical_lines(input: &str) -> Vec<String> {
         lines.push(input[start..].to_owned());
     }
     lines
+}
+
+fn normalize_terminal_line(mut line: String) -> String {
+    if line.ends_with('\n') {
+        line.pop();
+        if line.ends_with('\r') {
+            line.pop();
+        }
+    }
+    line
 }
 
 fn splitmix64(mut value: u64) -> u64 {

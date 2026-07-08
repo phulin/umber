@@ -67,6 +67,8 @@ pub enum ExecError {
     },
     ReadNeedsTo,
     ReadNotImplemented,
+    FileEndedWithinRead,
+    TerminalReadEof,
     UnimplementedTypesetting {
         mode: Mode,
         token: Token,
@@ -140,6 +142,8 @@ impl fmt::Display for ExecError {
             }
             Self::ReadNeedsTo => write!(f, "Missing `to' inserted for \\read"),
             Self::ReadNotImplemented => write!(f, "I can't \\read from terminal in nonstop modes"),
+            Self::FileEndedWithinRead => write!(f, "File ended within \\read"),
+            Self::TerminalReadEof => write!(f, "End of file on the terminal"),
             Self::UnimplementedTypesetting {
                 mode,
                 token,
@@ -185,6 +189,8 @@ impl std::error::Error for ExecError {
             | Self::InvalidCode { .. }
             | Self::ReadNeedsTo
             | Self::ReadNotImplemented
+            | Self::FileEndedWithinRead
+            | Self::TerminalReadEof
             | Self::UnimplementedTypesetting { .. } => None,
         }
     }
