@@ -227,6 +227,14 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   `\noexpand` pushes a one-token replay frame that suppresses expansion for
   exactly the next `get_x_token` read. This keeps suppression frame-local and
   avoids mutating `Env`.
+- Core two-limb conditional predicates (`\iftrue`, `\iffalse`, `\if`,
+  `\ifcat`, and `\ifx`) evaluate in `tex-expand` and record their result by
+  pushing/updating `tex-lex` condition frames. `\if` and `\ifcat` expand only
+  to the two unexpandable comparison tokens; `\ifx` reads two raw tokens and
+  compares macro meanings by flags plus hash-consed macro-definition ids, with
+  non-macro control sequences falling back to meaning-word equality. The
+  broader `\ifcase`/`\or`, numeric/mode/register predicates, and complete
+  skip-control diagnostic surface remain separate conditional work.
 - Value-rendering expandables (`\string`, `\number`, `\romannumeral`,
   `\meaning`, and the currently supported `\the` classes) mint their visible
   output through the explicit token-list freezing capability. `\the` currently

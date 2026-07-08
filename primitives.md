@@ -173,25 +173,25 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 
 ## Conditionals
 
-- [ ] `\else` - Starts the false branch of a conditional.
-- [ ] `\fi` - Ends a conditional.
-- [ ] `\if` - Compares two character tokens by character code.
+- [ ] `\else` - Starts the false branch of a conditional. Core two-limb handling exists for implemented predicates; full skip-control diagnostics remain pending.
+- [ ] `\fi` - Ends a conditional. Core two-limb handling exists for implemented predicates; full skip-control diagnostics remain pending.
+- [x] `\if` - Compares two expanded unexpandable character tokens by character code.
 - [ ] `\ifcase` - Selects among numeric conditional branches.
-- [ ] `\ifcat` - Compares two tokens by category code.
+- [x] `\ifcat` - Compares two expanded unexpandable tokens by category code.
 - [ ] `\ifdim` - Compares two dimensions.
 - [ ] `\ifeof` - Tests whether an input stream is at end of file.
-- [ ] `\iffalse` - Starts a conditional that is always false.
+- [x] `\iffalse` - Starts a conditional that is always false.
 - [ ] `\ifhbox` - Tests whether a box register contains an hbox.
 - [ ] `\ifhmode` - Tests whether TeX is in horizontal mode.
 - [ ] `\ifinner` - Tests whether TeX is in an internal mode.
 - [ ] `\ifmmode` - Tests whether TeX is in math mode.
 - [ ] `\ifnum` - Compares two integers.
 - [ ] `\ifodd` - Tests whether an integer is odd.
-- [ ] `\iftrue` - Starts a conditional that is always true.
+- [x] `\iftrue` - Starts a conditional that is always true.
 - [ ] `\ifvbox` - Tests whether a box register contains a vbox.
 - [ ] `\ifvmode` - Tests whether TeX is in vertical mode.
 - [ ] `\ifvoid` - Tests whether a box register is void.
-- [ ] `\ifx` - Compares two tokens by meaning.
+- [x] `\ifx` - Compares two unexpanded tokens by meaning, including hash-consed macro definition identity.
 - [ ] `\or` - Separates branches in `\ifcase`.
 
 ## Macros, Expansion, And Grouping

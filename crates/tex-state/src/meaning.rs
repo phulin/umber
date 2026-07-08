@@ -85,6 +85,13 @@ pub enum ExpandablePrimitive {
     BotMark,
     SplitFirstMark,
     SplitBotMark,
+    IfTrue,
+    IfFalse,
+    If,
+    IfCat,
+    IfX,
+    Else,
+    Fi,
 }
 
 impl ExpandablePrimitive {
@@ -109,6 +116,13 @@ impl ExpandablePrimitive {
             Self::BotMark => 15,
             Self::SplitFirstMark => 16,
             Self::SplitBotMark => 17,
+            Self::IfTrue => 18,
+            Self::IfFalse => 19,
+            Self::If => 20,
+            Self::IfCat => 21,
+            Self::IfX => 22,
+            Self::Else => 23,
+            Self::Fi => 24,
         }
     }
 
@@ -133,6 +147,13 @@ impl ExpandablePrimitive {
             15 => Some(Self::BotMark),
             16 => Some(Self::SplitFirstMark),
             17 => Some(Self::SplitBotMark),
+            18 => Some(Self::IfTrue),
+            19 => Some(Self::IfFalse),
+            20 => Some(Self::If),
+            21 => Some(Self::IfCat),
+            22 => Some(Self::IfX),
+            23 => Some(Self::Else),
+            24 => Some(Self::Fi),
             _ => None,
         }
     }

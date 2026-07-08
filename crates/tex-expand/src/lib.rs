@@ -8,7 +8,10 @@
 
 use std::fmt;
 
-use tex_lex::{InputSource, InputStack, LexError, MacroArguments, TokenListReplayKind};
+use tex_lex::{
+    ConditionFrameSummary, ConditionKind, ConditionLimb, InputSource, InputStack, LexError,
+    MacroArguments, TokenListReplayKind,
+};
 use tex_state::env::banks::IntParam;
 use tex_state::ids::TokenListId;
 use tex_state::interner::Symbol;
@@ -115,6 +118,8 @@ pub enum ExpandError {
     ScanInt(Box<scan_int::ScanIntError>),
     ScanDimen(Box<scan_dimen::ScanDimenError>),
     UnsupportedTheTarget(Token),
+    IncompleteIf,
+    ExtraConditionalControl(&'static str),
 }
 
 impl fmt::Display for ExpandError {
@@ -147,6 +152,8 @@ impl fmt::Display for ExpandError {
             Self::UnsupportedTheTarget(token) => {
                 write!(f, "unsupported token {token:?} after \\the")
             }
+            Self::IncompleteIf => write!(f, "Incomplete \\if; all text was ignored after line"),
+            Self::ExtraConditionalControl(name) => write!(f, "Extra \\{name}"),
         }
     }
 }
@@ -165,7 +172,9 @@ impl std::error::Error for ExpandError {
             | Self::MissingInputName
             | Self::NonCharacterInInputName(_)
             | Self::InputOpen { .. }
-            | Self::UnsupportedTheTarget(_) => None,
+            | Self::UnsupportedTheTarget(_)
+            | Self::IncompleteIf
+            | Self::ExtraConditionalControl(_) => None,
         }
     }
 }
@@ -457,6 +466,50 @@ where
             // lists once mark nodes and page splitting exist.
             Ok(push_rendered_text(stores, ExpansionReplayKind::Mark, ""))
         }
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::IfTrue) => {
+            begin_if(input, stores, recorder, hooks, true)
+        }
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::IfFalse) => {
+            begin_if(input, stores, recorder, hooks, false)
+        }
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::If) => {
+            let left = scan_condition_x_token(input, stores, recorder, hooks)?;
+            let right = scan_condition_x_token(input, stores, recorder, hooks)?;
+            begin_if(input, stores, recorder, hooks, if_char_equal(left, right))
+        }
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::IfCat) => {
+            let left = scan_condition_x_token(input, stores, recorder, hooks)?;
+            let right = scan_condition_x_token(input, stores, recorder, hooks)?;
+            begin_if(input, stores, recorder, hooks, if_cat_equal(left, right))
+        }
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::IfX) => {
+            let Some(left) = input.next_token_readonly(stores)? else {
+                return Err(ExpandError::MissingTokenAfterPrimitive(
+                    ExpandableOpcode::If,
+                ));
+            };
+            let Some(right) = input.next_token_readonly(stores)? else {
+                return Err(ExpandError::MissingTokenAfterPrimitive(
+                    ExpandableOpcode::If,
+                ));
+            };
+            begin_if(
+                input,
+                stores,
+                recorder,
+                hooks,
+                ifx_equal(stores, left, right),
+            )
+        }
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::Else) => {
+            handle_else(input, stores, recorder, hooks)
+        }
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::Fi) => {
+            input
+                .pop_condition()
+                .ok_or(ExpandError::ExtraConditionalControl("fi"))?;
+            Ok(Dispatch::Continue)
+        }
         Meaning::Macro { .. }
         | Meaning::Undefined
         | Meaning::Relax
@@ -486,11 +539,11 @@ pub fn dispatch_expandable_opcode(opcode: ExpandableOpcode) -> Result<(), Expand
         | ExpandableOpcode::EndInput
         | ExpandableOpcode::JobName
         | ExpandableOpcode::FontName
-        | ExpandableOpcode::Mark => Ok(()),
-        ExpandableOpcode::If => Err(unimplemented_expandable(opcode)),
-        ExpandableOpcode::Else => Err(unimplemented_expandable(opcode)),
+        | ExpandableOpcode::Mark
+        | ExpandableOpcode::If
+        | ExpandableOpcode::Else
+        | ExpandableOpcode::Fi => Ok(()),
         ExpandableOpcode::Or => Err(unimplemented_expandable(opcode)),
-        ExpandableOpcode::Fi => Err(unimplemented_expandable(opcode)),
     }
 }
 
@@ -525,6 +578,234 @@ where
     push_dispatch_result(input, stores, target_dispatch);
     push_inserted_token(input, stores, saved);
     Ok(())
+}
+
+fn begin_if<S, R, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Stores,
+    recorder: &mut R,
+    hooks: &mut H,
+    condition: bool,
+) -> Result<Dispatch, ExpandError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    input.push_condition(ConditionFrameSummary::new_if(condition));
+    if !condition {
+        skip_false_limb(input, stores, recorder, hooks)?;
+    }
+    Ok(Dispatch::Continue)
+}
+
+fn handle_else<S, R, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Stores,
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<Dispatch, ExpandError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    let frame = input
+        .pop_condition()
+        .ok_or(ExpandError::ExtraConditionalControl("else"))?;
+    if frame.kind() != ConditionKind::If || frame.limb() == ConditionLimb::Else {
+        return Err(ExpandError::ExtraConditionalControl("else"));
+    }
+
+    let else_frame = frame.with_else_limb(!frame.any_limb_taken());
+    input.push_condition(else_frame);
+    if frame.any_limb_taken() {
+        skip_to_fi(input, stores, recorder, hooks)?;
+    }
+    Ok(Dispatch::Continue)
+}
+
+fn skip_false_limb<S, R, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Stores,
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<(), ExpandError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    skip_until(input, stores, recorder, hooks, SkipTarget::ElseOrFi)
+}
+
+fn skip_to_fi<S, R, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Stores,
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<(), ExpandError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    skip_until(input, stores, recorder, hooks, SkipTarget::Fi)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SkipTarget {
+    ElseOrFi,
+    Fi,
+}
+
+fn skip_until<S, R, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Stores,
+    recorder: &mut R,
+    _hooks: &mut H,
+    target: SkipTarget,
+) -> Result<(), ExpandError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    let mut nesting = 0_u32;
+    loop {
+        let Some(token) = input.next_token_readonly(stores)? else {
+            return Err(ExpandError::IncompleteIf);
+        };
+        let Some(primitive) = conditional_primitive(stores, token, recorder) else {
+            continue;
+        };
+
+        match primitive {
+            ConditionalPrimitive::If => {
+                nesting = nesting.saturating_add(1);
+            }
+            ConditionalPrimitive::Else if nesting == 0 && target == SkipTarget::ElseOrFi => {
+                move_current_if_to_else(input)?;
+                return Ok(());
+            }
+            ConditionalPrimitive::Fi if nesting == 0 => {
+                input
+                    .pop_condition()
+                    .ok_or(ExpandError::ExtraConditionalControl("fi"))?;
+                return Ok(());
+            }
+            ConditionalPrimitive::Fi => {
+                nesting = nesting.saturating_sub(1);
+            }
+            ConditionalPrimitive::Else => {}
+        }
+    }
+}
+
+fn move_current_if_to_else<S>(input: &mut InputStack<S>) -> Result<(), ExpandError> {
+    let frame = input
+        .pop_condition()
+        .ok_or(ExpandError::ExtraConditionalControl("else"))?;
+    if frame.kind() != ConditionKind::If || frame.limb() == ConditionLimb::Else {
+        return Err(ExpandError::ExtraConditionalControl("else"));
+    }
+    input.push_condition(frame.with_else_limb(!frame.any_limb_taken()));
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ConditionalPrimitive {
+    If,
+    Else,
+    Fi,
+}
+
+fn conditional_primitive<R>(
+    stores: &Stores,
+    token: Token,
+    recorder: &mut R,
+) -> Option<ConditionalPrimitive>
+where
+    R: ReadRecorder,
+{
+    let Token::Cs(symbol) = token else {
+        return None;
+    };
+    let meaning = stores.meaning(symbol);
+    recorder.record_meaning(symbol, meaning);
+    match meaning {
+        Meaning::ExpandablePrimitive(
+            ExpandablePrimitive::IfTrue
+            | ExpandablePrimitive::IfFalse
+            | ExpandablePrimitive::If
+            | ExpandablePrimitive::IfCat
+            | ExpandablePrimitive::IfX,
+        ) => Some(ConditionalPrimitive::If),
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::Else) => Some(ConditionalPrimitive::Else),
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::Fi) => Some(ConditionalPrimitive::Fi),
+        _ => None,
+    }
+}
+
+fn scan_condition_x_token<S, R, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Stores,
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<Token, ExpandError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?.ok_or(
+        ExpandError::MissingTokenAfterPrimitive(ExpandableOpcode::If),
+    )
+}
+
+fn if_char_equal(left: Token, right: Token) -> bool {
+    match (left, right) {
+        (Token::Char { ch: left, .. }, Token::Char { ch: right, .. }) => left == right,
+        _ => false,
+    }
+}
+
+fn if_cat_equal(left: Token, right: Token) -> bool {
+    match (left, right) {
+        (Token::Char { cat: left, .. }, Token::Char { cat: right, .. }) => left == right,
+        (Token::Cs(_), Token::Cs(_)) => true,
+        (Token::Param(_), Token::Param(_)) => true,
+        _ => false,
+    }
+}
+
+fn ifx_equal(stores: &Stores, left: Token, right: Token) -> bool {
+    match (left, right) {
+        (Token::Char { .. } | Token::Param(_), Token::Char { .. } | Token::Param(_)) => {
+            left == right
+        }
+        (Token::Cs(left), Token::Cs(right)) => meaning_words_ifx_equal(stores, left, right),
+        _ => false,
+    }
+}
+
+fn meaning_words_ifx_equal(stores: &Stores, left: Symbol, right: Symbol) -> bool {
+    let left = stores.meaning(left);
+    let right = stores.meaning(right);
+    match (left, right) {
+        (
+            Meaning::Macro {
+                flags: left_flags,
+                definition: left_definition,
+            },
+            Meaning::Macro {
+                flags: right_flags,
+                definition: right_definition,
+            },
+        ) => left_flags == right_flags && left_definition == right_definition,
+        (Meaning::Macro { .. }, _) | (_, Meaning::Macro { .. }) => false,
+        _ => left == right,
+    }
 }
 
 fn scan_csname<S, R, H>(
@@ -1097,7 +1378,10 @@ mod tests {
                 | ExpandableOpcode::EndInput
                 | ExpandableOpcode::JobName
                 | ExpandableOpcode::FontName
-                | ExpandableOpcode::Mark => assert!(result.is_ok()),
+                | ExpandableOpcode::Mark
+                | ExpandableOpcode::If
+                | ExpandableOpcode::Else
+                | ExpandableOpcode::Fi => assert!(result.is_ok()),
                 _ => assert!(matches!(
                     result,
                     Err(super::ExpandError::UnimplementedExpandable(found)) if found == opcode
@@ -1920,6 +2204,185 @@ mod tests {
         assert_eq!(next_expanded_chars(&mut input, &mut stores), "z");
     }
 
+    #[test]
+    fn iftrue_and_iffalse_select_expected_two_limb_branches() {
+        let mut stores = Stores::new();
+        let (iftrue, iffalse, else_cs, fi) = conditional_primitives(&mut stores);
+        let list = stores.intern_token_list(&[
+            Token::Cs(iftrue),
+            char_token('t'),
+            Token::Cs(else_cs),
+            char_token('f'),
+            Token::Cs(fi),
+            Token::Cs(iffalse),
+            char_token('f'),
+            Token::Cs(else_cs),
+            char_token('t'),
+            Token::Cs(fi),
+        ]);
+        let mut input = InputStack::new(MemoryInput::new(""));
+        input.push_token_list(list, TokenListReplayKind::Inserted);
+
+        assert_eq!(next_expanded_chars(&mut input, &mut stores), "tt");
+    }
+
+    #[test]
+    fn if_expands_to_two_unexpandable_character_tokens_before_comparing_charcodes() {
+        let mut stores = Stores::new();
+        let (_, _, else_cs, fi) = conditional_primitives(&mut stores);
+        let if_cs = expandable_primitive(&mut stores, "if", ExpandablePrimitive::If);
+        let left = stores.intern("left");
+        let right = stores.intern("right");
+        let params = stores.intern_token_list(&[]);
+        let left_body = stores.intern_token_list(&[char_token('a')]);
+        let right_body = stores.intern_token_list(&[Token::Char {
+            ch: 'a',
+            cat: Catcode::Other,
+        }]);
+        stores.set_macro_meaning(
+            left,
+            MacroMeaning::new(MeaningFlags::EMPTY, params, left_body),
+        );
+        stores.set_macro_meaning(
+            right,
+            MacroMeaning::new(MeaningFlags::EMPTY, params, right_body),
+        );
+        let list = stores.intern_token_list(&[
+            Token::Cs(if_cs),
+            Token::Cs(left),
+            Token::Cs(right),
+            char_token('y'),
+            Token::Cs(else_cs),
+            char_token('n'),
+            Token::Cs(fi),
+        ]);
+        let mut input = InputStack::new(MemoryInput::new(""));
+        input.push_token_list(list, TokenListReplayKind::Inserted);
+
+        assert_eq!(next_expanded_chars(&mut input, &mut stores), "y");
+    }
+
+    #[test]
+    fn ifcat_compares_category_codes_after_expansion() {
+        let mut stores = Stores::new();
+        let (_, _, else_cs, fi) = conditional_primitives(&mut stores);
+        let ifcat = expandable_primitive(&mut stores, "ifcat", ExpandablePrimitive::IfCat);
+        let macro_cs = stores.intern("letter");
+        let params = stores.intern_token_list(&[]);
+        let body = stores.intern_token_list(&[char_token('b')]);
+        stores.set_macro_meaning(
+            macro_cs,
+            MacroMeaning::new(MeaningFlags::EMPTY, params, body),
+        );
+        let list = stores.intern_token_list(&[
+            Token::Cs(ifcat),
+            char_token('a'),
+            Token::Cs(macro_cs),
+            char_token('y'),
+            Token::Cs(else_cs),
+            char_token('n'),
+            Token::Cs(fi),
+            Token::Cs(ifcat),
+            char_token('a'),
+            Token::Char {
+                ch: '1',
+                cat: Catcode::Other,
+            },
+            char_token('n'),
+            Token::Cs(else_cs),
+            char_token('y'),
+            Token::Cs(fi),
+        ]);
+        let mut input = InputStack::new(MemoryInput::new(""));
+        input.push_token_list(list, TokenListReplayKind::Inserted);
+
+        assert_eq!(next_expanded_chars(&mut input, &mut stores), "yy");
+    }
+
+    #[test]
+    fn ifx_compares_identical_macro_definitions_by_flags_and_hash_consed_ids() {
+        let mut stores = Stores::new();
+        let (_, _, else_cs, fi) = conditional_primitives(&mut stores);
+        let ifx = expandable_primitive(&mut stores, "ifx", ExpandablePrimitive::IfX);
+        let left = stores.intern("left");
+        let right = stores.intern("right");
+        let protected = stores.intern("protected");
+        let params = stores.intern_token_list(&[Token::param(1)]);
+        let left_body = stores.intern_token_list(&[Token::param(1), char_token('!')]);
+        let right_body = stores.intern_token_list(&[Token::param(1), char_token('!')]);
+        assert_eq!(left_body, right_body);
+        stores.set_macro_meaning(
+            left,
+            MacroMeaning::new(MeaningFlags::EMPTY, params, left_body),
+        );
+        stores.set_macro_meaning(
+            right,
+            MacroMeaning::new(MeaningFlags::EMPTY, params, right_body),
+        );
+        stores.set_macro_meaning(
+            protected,
+            MacroMeaning::new(MeaningFlags::PROTECTED, params, right_body),
+        );
+        let list = stores.intern_token_list(&[
+            Token::Cs(ifx),
+            Token::Cs(left),
+            Token::Cs(right),
+            char_token('y'),
+            Token::Cs(else_cs),
+            char_token('n'),
+            Token::Cs(fi),
+            Token::Cs(ifx),
+            Token::Cs(left),
+            Token::Cs(protected),
+            char_token('n'),
+            Token::Cs(else_cs),
+            char_token('y'),
+            Token::Cs(fi),
+        ]);
+        let mut input = InputStack::new(MemoryInput::new(""));
+        input.push_token_list(list, TokenListReplayKind::Inserted);
+
+        assert_eq!(next_expanded_chars(&mut input, &mut stores), "yy");
+    }
+
+    #[test]
+    fn ifx_uses_meaning_word_equality_for_non_macros_without_expansion() {
+        let mut stores = Stores::new();
+        let (_, _, else_cs, fi) = conditional_primitives(&mut stores);
+        let ifx = expandable_primitive(&mut stores, "ifx", ExpandablePrimitive::IfX);
+        let first = stores.intern("first");
+        let second = stores.intern("second");
+        let macro_cs = stores.intern("macro");
+        let params = stores.intern_token_list(&[]);
+        let body = stores.intern_token_list(&[char_token('a')]);
+        stores.set_meaning(first, Meaning::CharGiven('a'));
+        stores.set_meaning(second, Meaning::CharGiven('a'));
+        stores.set_macro_meaning(
+            macro_cs,
+            MacroMeaning::new(MeaningFlags::EMPTY, params, body),
+        );
+        let list = stores.intern_token_list(&[
+            Token::Cs(ifx),
+            Token::Cs(first),
+            Token::Cs(second),
+            char_token('y'),
+            Token::Cs(else_cs),
+            char_token('n'),
+            Token::Cs(fi),
+            Token::Cs(ifx),
+            Token::Cs(macro_cs),
+            char_token('a'),
+            char_token('n'),
+            Token::Cs(else_cs),
+            char_token('y'),
+            Token::Cs(fi),
+        ]);
+        let mut input = InputStack::new(MemoryInput::new(""));
+        input.push_token_list(list, TokenListReplayKind::Inserted);
+
+        assert_eq!(next_expanded_chars(&mut input, &mut stores), "yy");
+    }
+
     fn next_expanded_chars(input: &mut InputStack<MemoryInput>, stores: &mut Stores) -> String {
         let mut out = String::new();
         while let Some(token) = get_x_token(input, stores).expect("expansion should succeed") {
@@ -1994,6 +2457,15 @@ mod tests {
         (
             expandable_primitive(stores, "csname", ExpandablePrimitive::CsName),
             expandable_primitive(stores, "endcsname", ExpandablePrimitive::EndCsName),
+        )
+    }
+
+    fn conditional_primitives(stores: &mut Stores) -> (Symbol, Symbol, Symbol, Symbol) {
+        (
+            expandable_primitive(stores, "iftrue", ExpandablePrimitive::IfTrue),
+            expandable_primitive(stores, "iffalse", ExpandablePrimitive::IfFalse),
+            expandable_primitive(stores, "else", ExpandablePrimitive::Else),
+            expandable_primitive(stores, "fi", ExpandablePrimitive::Fi),
         )
     }
 
