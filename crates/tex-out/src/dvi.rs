@@ -230,9 +230,13 @@ impl<'a> DviWriter<'a> {
             | PageNode::Penalty(_)
             | PageNode::Rule { .. }
             | PageNode::Unset
+            | PageNode::Disc { .. }
+            | PageNode::Mark { .. }
+            | PageNode::Insert { .. }
             | PageNode::WhatsitAnchor { .. }
             | PageNode::MathOn
-            | PageNode::MathOff => {}
+            | PageNode::MathOff
+            | PageNode::Adjust(_) => {}
         }
         Ok(())
     }
@@ -293,7 +297,14 @@ impl<'a> DviWriter<'a> {
                 PageNode::WhatsitAnchor { effect_index } => {
                     self.out_what(page, *effect_index)?;
                 }
-                PageNode::Penalty(_) | PageNode::Unset | PageNode::MathOn | PageNode::MathOff => {}
+                PageNode::Penalty(_)
+                | PageNode::Unset
+                | PageNode::Disc { .. }
+                | PageNode::Mark { .. }
+                | PageNode::Insert { .. }
+                | PageNode::MathOn
+                | PageNode::MathOff
+                | PageNode::Adjust(_) => {}
             }
             self.cur_v = base_line;
         }
@@ -365,8 +376,12 @@ impl<'a> DviWriter<'a> {
                 | PageNode::Lig { .. }
                 | PageNode::Penalty(_)
                 | PageNode::Unset
+                | PageNode::Disc { .. }
+                | PageNode::Mark { .. }
+                | PageNode::Insert { .. }
                 | PageNode::MathOn
-                | PageNode::MathOff => {}
+                | PageNode::MathOff
+                | PageNode::Adjust(_) => {}
             }
         }
 
@@ -723,9 +738,13 @@ fn page_extent(node: &PageNode) -> PageExtent {
         | PageNode::Glue { .. }
         | PageNode::Penalty(_)
         | PageNode::Unset
+        | PageNode::Disc { .. }
+        | PageNode::Mark { .. }
+        | PageNode::Insert { .. }
         | PageNode::WhatsitAnchor { .. }
         | PageNode::MathOn
-        | PageNode::MathOff => PageExtent::default(),
+        | PageNode::MathOff
+        | PageNode::Adjust(_) => PageExtent::default(),
     }
 }
 

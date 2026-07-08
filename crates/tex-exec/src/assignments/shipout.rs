@@ -6,17 +6,18 @@ use tex_expand::{
 };
 use tex_lex::{InputSource, InputStack, MemoryInput, TokenListReplayKind};
 use tex_out::{
-    BoxNode as PageBoxNode, ContentHash as PageContentHash, DEFAULT_BANNER, EffectSink,
-    FontResource, GlueKind as PageGlueKind, GlueOrder as PageGlueOrder, GlueSign,
-    GlueSpec as PageGlueSpec, JobInfo, KernKind as PageKernKind, PageArtifact, PageEffect,
-    PageNode,
+    BoxNode as PageBoxNode, ContentHash as PageContentHash, DEFAULT_BANNER,
+    DiscKind as PageDiscKind, EffectSink, FontResource, GlueKind as PageGlueKind,
+    GlueOrder as PageGlueOrder, GlueSign, GlueSpec as PageGlueSpec, JobInfo,
+    KernKind as PageKernKind, PageArtifact, PageEffect, PageNode, PageToken, TokenCatcode,
 };
 use tex_state::glue::Order;
 use tex_state::ids::{FontId, NodeListId, TokenListId};
 use tex_state::node::{
-    BoxNode as StateBoxNode, GlueKind as StateGlueKind, KernKind as StateKernKind, Node, Sign,
-    Whatsit,
+    BoxNode as StateBoxNode, DiscKind as StateDiscKind, GlueKind as StateGlueKind,
+    KernKind as StateKernKind, Node, Sign, Whatsit,
 };
+use tex_state::token::{Catcode, Token};
 use tex_state::{ContentHash, EffectRecord, PrintSink, Universe};
 
 use super::scan_required_box_node;
@@ -120,18 +121,26 @@ where
             Node::Whatsit(whatsit) => self.lower_whatsit(whatsit)?,
             Node::MathOn => PageNode::MathOn,
             Node::MathOff => PageNode::MathOff,
-            Node::Disc { .. } => {
-                return Err(ExecError::UnsupportedShipoutNode { node: "disc" });
-            }
-            Node::Mark { .. } => {
-                return Err(ExecError::UnsupportedShipoutNode { node: "mark" });
-            }
-            Node::Ins { .. } => {
-                return Err(ExecError::UnsupportedShipoutNode { node: "insert" });
-            }
-            Node::Adjust(_) => {
-                return Err(ExecError::UnsupportedShipoutNode { node: "adjust" });
-            }
+            Node::Disc {
+                kind,
+                pre,
+                post,
+                replace,
+            } => PageNode::Disc {
+                kind: lower_disc_kind(kind),
+                pre: self.lower_node_list(pre)?,
+                post: self.lower_node_list(post)?,
+                replace: self.lower_node_list(replace)?,
+            },
+            Node::Mark { class, tokens } => PageNode::Mark {
+                class,
+                tokens: self.lower_tokens(tokens),
+            },
+            Node::Ins { class, content } => PageNode::Insert {
+                class,
+                content: self.lower_node_list(content)?,
+            },
+            Node::Adjust(content) => PageNode::Adjust(self.lower_node_list(content)?),
         })
     }
 
@@ -154,6 +163,25 @@ where
             .into_iter()
             .map(|node| self.lower_node(node))
             .collect()
+    }
+
+    fn lower_tokens(&self, list: TokenListId) -> Vec<PageToken> {
+        self.stores
+            .tokens(list)
+            .iter()
+            .map(|token| self.lower_token(*token))
+            .collect()
+    }
+
+    fn lower_token(&self, token: Token) -> PageToken {
+        match token {
+            Token::Char { ch, cat } => PageToken::Char {
+                ch: ch as u32,
+                cat: lower_token_catcode(cat),
+            },
+            Token::Cs(symbol) => PageToken::ControlSequence(self.stores.resolve(symbol).to_owned()),
+            Token::Param(slot) => PageToken::Param(slot),
+        }
     }
 
     fn lower_whatsit(&mut self, whatsit: Whatsit) -> Result<PageNode, ExecError> {
@@ -312,6 +340,14 @@ fn lower_kern_kind(kind: StateKernKind) -> PageKernKind {
     }
 }
 
+fn lower_disc_kind(kind: StateDiscKind) -> PageDiscKind {
+    match kind {
+        StateDiscKind::Discretionary => PageDiscKind::Discretionary,
+        StateDiscKind::ExplicitHyphen => PageDiscKind::ExplicitHyphen,
+        StateDiscKind::AutomaticHyphen => PageDiscKind::AutomaticHyphen,
+    }
+}
+
 fn lower_glue_kind(kind: StateGlueKind) -> PageGlueKind {
     match kind {
         StateGlueKind::Normal => PageGlueKind::Normal,
@@ -323,5 +359,26 @@ fn lower_glue_kind(kind: StateGlueKind) -> PageGlueKind {
         StateGlueKind::Leaders => PageGlueKind::Leaders,
         StateGlueKind::Cleaders => PageGlueKind::Cleaders,
         StateGlueKind::Xleaders => PageGlueKind::Xleaders,
+    }
+}
+
+fn lower_token_catcode(cat: Catcode) -> TokenCatcode {
+    match cat {
+        Catcode::Escape => TokenCatcode::Escape,
+        Catcode::BeginGroup => TokenCatcode::BeginGroup,
+        Catcode::EndGroup => TokenCatcode::EndGroup,
+        Catcode::MathShift => TokenCatcode::MathShift,
+        Catcode::AlignmentTab => TokenCatcode::AlignmentTab,
+        Catcode::EndLine => TokenCatcode::EndLine,
+        Catcode::Parameter => TokenCatcode::Parameter,
+        Catcode::Superscript => TokenCatcode::Superscript,
+        Catcode::Subscript => TokenCatcode::Subscript,
+        Catcode::Ignored => TokenCatcode::Ignored,
+        Catcode::Space => TokenCatcode::Space,
+        Catcode::Letter => TokenCatcode::Letter,
+        Catcode::Other => TokenCatcode::Other,
+        Catcode::Active => TokenCatcode::Active,
+        Catcode::Comment => TokenCatcode::Comment,
+        Catcode::Invalid => TokenCatcode::Invalid,
     }
 }

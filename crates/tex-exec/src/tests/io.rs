@@ -2,8 +2,11 @@ use super::support::*;
 use super::*;
 use tex_expand::ReadRecorder;
 use tex_out::dvi::write_dvi;
-use tex_out::{EffectSink, PageArtifact, PageEffect, PageNode};
+use tex_out::{
+    DiscKind as PageDiscKind, EffectSink, PageArtifact, PageEffect, PageNode, PageToken,
+};
 use tex_state::interner::Symbol;
+use tex_state::scaled::Scaled;
 
 #[test]
 fn openin_read_defines_control_sequence_from_world_stream() {
@@ -447,6 +450,133 @@ fn copied_special_reuses_scan_time_expansion() {
         artifact.effects.as_slice(),
         [PageEffect::Special { payload, .. }] if payload == b"1"
     ));
+}
+
+#[test]
+fn shipout_lowers_supported_whatsit_adjacent_nodes_without_reordering_effects() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let cs = stores.intern("markcs");
+    let mark_tokens = stores.intern_token_list(&[
+        Token::Char {
+            ch: 'm',
+            cat: Catcode::Letter,
+        },
+        Token::Cs(cs),
+        Token::param(2),
+    ]);
+    let disc_pre = stores.freeze_node_list(&[tex_state::node::Node::Kern {
+        amount: Scaled::from_raw(11),
+        kind: tex_state::node::KernKind::Explicit,
+    }]);
+    let disc_post = stores.freeze_node_list(&[tex_state::node::Node::Penalty(22)]);
+    let disc_replace = stores.freeze_node_list(&[tex_state::node::Node::Rule {
+        width: Some(Scaled::from_raw(33)),
+        height: Some(Scaled::from_raw(44)),
+        depth: Some(Scaled::from_raw(0)),
+    }]);
+    let insert_content = stores.freeze_node_list(&[tex_state::node::Node::Penalty(55)]);
+    let adjust_content = stores.freeze_node_list(&[tex_state::node::Node::Kern {
+        amount: Scaled::from_raw(66),
+        kind: tex_state::node::KernKind::Explicit,
+    }]);
+    let children = stores.freeze_node_list(&[
+        tex_state::node::Node::Whatsit(tex_state::node::Whatsit::Special {
+            class: "dvi".to_owned(),
+            payload: b"before".to_vec(),
+        }),
+        tex_state::node::Node::Disc {
+            kind: tex_state::node::DiscKind::Discretionary,
+            pre: disc_pre,
+            post: disc_post,
+            replace: disc_replace,
+        },
+        tex_state::node::Node::Mark {
+            class: 7,
+            tokens: mark_tokens,
+        },
+        tex_state::node::Node::Ins {
+            class: 3,
+            content: insert_content,
+        },
+        tex_state::node::Node::Adjust(adjust_content),
+        tex_state::node::Node::Whatsit(tex_state::node::Whatsit::Special {
+            class: "dvi".to_owned(),
+            payload: b"after".to_vec(),
+        }),
+    ]);
+    let root = tex_state::node::Node::HList(tex_state::node::BoxNode::new(
+        tex_state::node::BoxNodeFields {
+            width: Scaled::from_raw(0),
+            height: Scaled::from_raw(0),
+            depth: Scaled::from_raw(0),
+            shift: Scaled::from_raw(0),
+            glue_set: tex_state::scaled::GlueSetRatio::ZERO,
+            glue_sign: tex_state::node::Sign::Normal,
+            glue_order: tex_state::glue::Order::Normal,
+            children,
+        },
+    ));
+    let root_list = stores.freeze_node_list(&[root]);
+    stores.set_box_reg(0, root_list);
+    let mut input = InputStack::new(MemoryInput::new("\\shipout\\box0\\end"));
+
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("seeded shipout succeeds");
+
+    let bytes = stores
+        .world()
+        .read_artifact(stats.shipped_artifacts[0])
+        .expect("read artifact")
+        .expect("artifact stored");
+    let artifact = PageArtifact::from_bytes(&bytes).expect("artifact parses");
+    assert_eq!(artifact.to_bytes(), bytes);
+    assert!(matches!(
+        artifact.effects.as_slice(),
+        [
+            PageEffect::Special { payload: before, .. },
+            PageEffect::Special { payload: after, .. },
+        ] if before == b"before" && after == b"after"
+    ));
+    let PageNode::HList(box_node) = &artifact.root else {
+        panic!("shipout root should lower to hlist");
+    };
+    assert!(matches!(
+        box_node.children.as_slice(),
+        [
+            PageNode::WhatsitAnchor { effect_index: 0 },
+            PageNode::Disc {
+                kind: PageDiscKind::Discretionary,
+                pre,
+                post,
+                replace,
+            },
+            PageNode::Mark { class: 7, tokens },
+            PageNode::Insert { class: 3, content },
+            PageNode::Adjust(adjust),
+            PageNode::WhatsitAnchor { effect_index: 1 },
+        ] if matches!(pre.as_slice(), [PageNode::Kern { .. }])
+            && matches!(post.as_slice(), [PageNode::Penalty(22)])
+            && matches!(replace.as_slice(), [PageNode::Rule { .. }])
+            && matches!(
+                tokens.as_slice(),
+                [
+                    PageToken::Char { ch, .. },
+                    PageToken::ControlSequence(name),
+                    PageToken::Param(2),
+                ] if *ch == 'm' as u32 && name == "markcs"
+            )
+            && matches!(content.as_slice(), [PageNode::Penalty(55)])
+            && matches!(adjust.as_slice(), [PageNode::Kern { .. }])
+    ));
+
+    let dvi = write_dvi(std::slice::from_ref(&artifact)).expect("DVI writes");
+    assert_eq!(
+        dvi_special_payloads(&dvi),
+        vec![b"before".to_vec(), b"after".to_vec()]
+    );
 }
 
 #[derive(Default)]

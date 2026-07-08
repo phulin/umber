@@ -1,6 +1,7 @@
 use crate::{
-    BoxNode, ContentHash, EffectSink, FontResource, GlueKind, GlueOrder, GlueSetRatio, GlueSign,
-    GlueSpec, JobInfo, KernKind, PageArtifact, PageEffect, PageNode, ParseError,
+    BoxNode, ContentHash, DiscKind, EffectSink, FontResource, GlueKind, GlueOrder, GlueSetRatio,
+    GlueSign, GlueSpec, JobInfo, KernKind, PageArtifact, PageEffect, PageNode, PageToken,
+    ParseError, TokenCatcode,
 };
 use tex_arith::Scaled;
 
@@ -224,6 +225,38 @@ fn sample_artifact() -> PageArtifact {
                     depth: Some(Scaled::from_raw(7)),
                 },
                 PageNode::Penalty(-50),
+                PageNode::Disc {
+                    kind: DiscKind::ExplicitHyphen,
+                    pre: vec![PageNode::Char {
+                        font_id: 1,
+                        ch: '-' as u32,
+                        width: Scaled::from_raw(20),
+                    }],
+                    post: Vec::new(),
+                    replace: vec![PageNode::Penalty(10)],
+                },
+                PageNode::Mark {
+                    class: 2,
+                    tokens: vec![
+                        PageToken::Char {
+                            ch: 'x' as u32,
+                            cat: TokenCatcode::Letter,
+                        },
+                        PageToken::ControlSequence("foo".to_owned()),
+                        PageToken::Param(1),
+                    ],
+                },
+                PageNode::Insert {
+                    class: 4,
+                    content: vec![PageNode::Kern {
+                        amount: Scaled::from_raw(9),
+                        kind: KernKind::Explicit,
+                    }],
+                },
+                PageNode::Adjust(vec![PageNode::Glue {
+                    spec: glue,
+                    kind: GlueKind::Normal,
+                }]),
             ],
         }),
         effects: vec![

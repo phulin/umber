@@ -1,12 +1,12 @@
 use crate::{
-    BoxNode, ContentHash, EffectSink, FontResource, GlueKind, GlueOrder, GlueSetRatio, GlueSign,
-    GlueSpec, KernKind, PageArtifact, PageEffect, PageNode,
+    BoxNode, ContentHash, DiscKind, EffectSink, FontResource, GlueKind, GlueOrder, GlueSetRatio,
+    GlueSign, GlueSpec, KernKind, PageArtifact, PageEffect, PageNode, PageToken, TokenCatcode,
 };
 use std::fmt;
 use tex_arith::Scaled;
 
 const MAGIC: &[u8; 4] = b"UMPG";
-const VERSION: u8 = 3;
+const VERSION: u8 = 4;
 
 /// Binary parse failure.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -92,6 +92,10 @@ impl Writer {
     }
 
     fn u32(&mut self, value: u32) {
+        self.bytes.extend_from_slice(&value.to_le_bytes());
+    }
+
+    fn u16(&mut self, value: u16) {
         self.bytes.extend_from_slice(&value.to_le_bytes());
     }
 
@@ -236,12 +240,66 @@ impl Writer {
                 self.box_node(box_node);
             }
             PageNode::Unset => self.u8(8),
+            PageNode::Disc {
+                kind,
+                pre,
+                post,
+                replace,
+            } => {
+                self.u8(12);
+                self.u8(disc_kind_tag(*kind));
+                self.node_list(pre);
+                self.node_list(post);
+                self.node_list(replace);
+            }
+            PageNode::Mark { class, tokens } => {
+                self.u8(13);
+                self.u16(*class);
+                self.tokens(tokens);
+            }
+            PageNode::Insert { class, content } => {
+                self.u8(14);
+                self.u16(*class);
+                self.node_list(content);
+            }
             PageNode::WhatsitAnchor { effect_index } => {
                 self.u8(9);
                 self.u32(*effect_index);
             }
             PageNode::MathOn => self.u8(10),
             PageNode::MathOff => self.u8(11),
+            PageNode::Adjust(content) => {
+                self.u8(15);
+                self.node_list(content);
+            }
+        }
+    }
+
+    fn node_list(&mut self, nodes: &[PageNode]) {
+        self.len(nodes.len());
+        for node in nodes {
+            self.node(node);
+        }
+    }
+
+    fn tokens(&mut self, tokens: &[PageToken]) {
+        self.len(tokens.len());
+        for token in tokens {
+            match token {
+                PageToken::Char { ch, cat } => {
+                    self.u8(0);
+                    self.u32(*ch);
+                    self.u8(token_catcode_tag(*cat));
+                }
+                PageToken::ControlSequence(name) => {
+                    self.u8(1);
+                    self.str(name);
+                }
+                PageToken::Param(slot) => {
+                    self.u8(2);
+                    self.u8(*slot);
+                }
+            }
         }
     }
 
@@ -253,10 +311,7 @@ impl Writer {
         self.i32(box_node.glue_set.raw());
         self.u8(glue_sign_tag(box_node.glue_sign));
         self.u8(glue_order_tag(box_node.glue_order));
-        self.len(box_node.children.len());
-        for child in &box_node.children {
-            self.node(child);
-        }
+        self.node_list(&box_node.children);
     }
 
     fn glue_spec(&mut self, spec: GlueSpec) {
@@ -315,6 +370,12 @@ impl Reader<'_> {
         let mut bytes = [0; 4];
         bytes.copy_from_slice(self.take(4)?);
         Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn u16(&mut self) -> Result<u16, ParseError> {
+        let mut bytes = [0; 2];
+        bytes.copy_from_slice(self.take(2)?);
+        Ok(u16::from_le_bytes(bytes))
     }
 
     fn i32(&mut self) -> Result<i32, ParseError> {
@@ -450,8 +511,51 @@ impl Reader<'_> {
             }),
             10 => Ok(PageNode::MathOn),
             11 => Ok(PageNode::MathOff),
+            12 => Ok(PageNode::Disc {
+                kind: parse_disc_kind(self.u8()?)?,
+                pre: self.node_list()?,
+                post: self.node_list()?,
+                replace: self.node_list()?,
+            }),
+            13 => Ok(PageNode::Mark {
+                class: self.u16()?,
+                tokens: self.tokens()?,
+            }),
+            14 => Ok(PageNode::Insert {
+                class: self.u16()?,
+                content: self.node_list()?,
+            }),
+            15 => Ok(PageNode::Adjust(self.node_list()?)),
             tag => Err(ParseError::InvalidTag { kind: "node", tag }),
         }
+    }
+
+    fn node_list(&mut self) -> Result<Vec<PageNode>, ParseError> {
+        let len = self.len()?;
+        let mut nodes = Vec::with_capacity(len);
+        for _ in 0..len {
+            nodes.push(self.node()?);
+        }
+        Ok(nodes)
+    }
+
+    fn tokens(&mut self) -> Result<Vec<PageToken>, ParseError> {
+        let len = self.len()?;
+        let mut tokens = Vec::with_capacity(len);
+        for _ in 0..len {
+            tokens.push(match self.u8()? {
+                0 => PageToken::Char {
+                    ch: self.u32()?,
+                    cat: parse_token_catcode(self.u8()?)?,
+                },
+                1 => PageToken::ControlSequence(self.str()?),
+                2 => PageToken::Param(self.u8()?),
+                tag => {
+                    return Err(ParseError::InvalidTag { kind: "token", tag });
+                }
+            });
+        }
+        Ok(tokens)
     }
 
     fn box_node(&mut self) -> Result<BoxNode, ParseError> {
@@ -462,11 +566,7 @@ impl Reader<'_> {
         let glue_set = GlueSetRatio::from_raw(self.i32()?);
         let glue_sign = parse_glue_sign(self.u8()?)?;
         let glue_order = parse_glue_order(self.u8()?)?;
-        let len = self.len()?;
-        let mut children = Vec::with_capacity(len);
-        for _ in 0..len {
-            children.push(self.node()?);
-        }
+        let children = self.node_list()?;
         Ok(BoxNode {
             width,
             height,
@@ -552,6 +652,26 @@ fn parse_kern_kind(tag: u8) -> Result<KernKind, ParseError> {
     }
 }
 
+fn disc_kind_tag(kind: DiscKind) -> u8 {
+    match kind {
+        DiscKind::Discretionary => 0,
+        DiscKind::ExplicitHyphen => 1,
+        DiscKind::AutomaticHyphen => 2,
+    }
+}
+
+fn parse_disc_kind(tag: u8) -> Result<DiscKind, ParseError> {
+    match tag {
+        0 => Ok(DiscKind::Discretionary),
+        1 => Ok(DiscKind::ExplicitHyphen),
+        2 => Ok(DiscKind::AutomaticHyphen),
+        tag => Err(ParseError::InvalidTag {
+            kind: "disc kind",
+            tag,
+        }),
+    }
+}
+
 fn glue_kind_tag(kind: GlueKind) -> u8 {
     match kind {
         GlueKind::Normal => 0,
@@ -563,6 +683,52 @@ fn glue_kind_tag(kind: GlueKind) -> u8 {
         GlueKind::Leaders => 6,
         GlueKind::Cleaders => 7,
         GlueKind::Xleaders => 8,
+    }
+}
+
+fn token_catcode_tag(cat: TokenCatcode) -> u8 {
+    match cat {
+        TokenCatcode::Escape => 0,
+        TokenCatcode::BeginGroup => 1,
+        TokenCatcode::EndGroup => 2,
+        TokenCatcode::MathShift => 3,
+        TokenCatcode::AlignmentTab => 4,
+        TokenCatcode::EndLine => 5,
+        TokenCatcode::Parameter => 6,
+        TokenCatcode::Superscript => 7,
+        TokenCatcode::Subscript => 8,
+        TokenCatcode::Ignored => 9,
+        TokenCatcode::Space => 10,
+        TokenCatcode::Letter => 11,
+        TokenCatcode::Other => 12,
+        TokenCatcode::Active => 13,
+        TokenCatcode::Comment => 14,
+        TokenCatcode::Invalid => 15,
+    }
+}
+
+fn parse_token_catcode(tag: u8) -> Result<TokenCatcode, ParseError> {
+    match tag {
+        0 => Ok(TokenCatcode::Escape),
+        1 => Ok(TokenCatcode::BeginGroup),
+        2 => Ok(TokenCatcode::EndGroup),
+        3 => Ok(TokenCatcode::MathShift),
+        4 => Ok(TokenCatcode::AlignmentTab),
+        5 => Ok(TokenCatcode::EndLine),
+        6 => Ok(TokenCatcode::Parameter),
+        7 => Ok(TokenCatcode::Superscript),
+        8 => Ok(TokenCatcode::Subscript),
+        9 => Ok(TokenCatcode::Ignored),
+        10 => Ok(TokenCatcode::Space),
+        11 => Ok(TokenCatcode::Letter),
+        12 => Ok(TokenCatcode::Other),
+        13 => Ok(TokenCatcode::Active),
+        14 => Ok(TokenCatcode::Comment),
+        15 => Ok(TokenCatcode::Invalid),
+        tag => Err(ParseError::InvalidTag {
+            kind: "token catcode",
+            tag,
+        }),
     }
 }
 

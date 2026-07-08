@@ -507,7 +507,11 @@ Responsibility: accumulate the main vertical list, fire `\output`, commit.
   expanded at scan time, matching TeX82's `scan_toks(false,true)` behavior;
   shipout lowers each special whatsit into a `PageEffect::Special` and a
   `WhatsitAnchor` at the traversal position so DVI `xxx` output remains
-  ordered by the committed box tree.
+  ordered by the committed box tree. Discretionary, mark, insert, and adjust
+  nodes are also lowered into detached artifact nodes when they occur in a
+  shipped box; DVI currently treats them as non-emitting metadata, preserving
+  their payloads for later page-builder/mark/insert semantics without reaching
+  back into live state.
 
 ## 9. Fonts and metrics (`tex-arith`, `tex-fonts`, `tex-state`)
 

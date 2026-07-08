@@ -89,11 +89,26 @@ pub enum PageNode {
     HList(BoxNode),
     VList(BoxNode),
     Unset,
+    Disc {
+        kind: DiscKind,
+        pre: Vec<PageNode>,
+        post: Vec<PageNode>,
+        replace: Vec<PageNode>,
+    },
+    Mark {
+        class: u16,
+        tokens: Vec<PageToken>,
+    },
+    Insert {
+        class: u16,
+        content: Vec<PageNode>,
+    },
     WhatsitAnchor {
         effect_index: u32,
     },
     MathOn,
     MathOff,
+    Adjust(Vec<PageNode>),
 }
 
 /// A shipped hlist/vlist payload.
@@ -152,6 +167,40 @@ pub enum GlueKind {
     Leaders,
     Cleaders,
     Xleaders,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum DiscKind {
+    Discretionary,
+    ExplicitHyphen,
+    AutomaticHyphen,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum PageToken {
+    Char { ch: u32, cat: TokenCatcode },
+    ControlSequence(String),
+    Param(u8),
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum TokenCatcode {
+    Escape,
+    BeginGroup,
+    EndGroup,
+    MathShift,
+    AlignmentTab,
+    EndLine,
+    Parameter,
+    Superscript,
+    Subscript,
+    Ignored,
+    Space,
+    Letter,
+    Other,
+    Active,
+    Comment,
+    Invalid,
 }
 
 /// One committed side-effect payload associated with the page.
