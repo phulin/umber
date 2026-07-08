@@ -44,13 +44,28 @@ fn run() -> Result<(), CliError> {
             expand_dump::expand_dump(&path).map_err(CliError::ExpandDump)
         }
         Some("run") => {
-            let Some(path) = args.next() else {
-                return Err(CliError::Usage("missing input path for run"));
-            };
-            if args.next().is_some() {
-                return Err(CliError::Usage("run accepts exactly one input path"));
+            let mut show_fixtures = false;
+            let mut rest: Vec<String> = args.collect();
+            if rest.first().is_some_and(|arg| arg == "--show-fixtures") {
+                show_fixtures = true;
+                rest.remove(0);
             }
-            run_tex(&path)
+            if rest.last().is_some_and(|arg| arg == "--show-fixtures") {
+                show_fixtures = true;
+                rest.pop();
+            }
+            let [path] = rest.as_slice() else {
+                if rest.is_empty() {
+                    return Err(CliError::Usage("missing input path for run"));
+                }
+                return Err(CliError::Usage(
+                    "run accepts one input path and optional --show-fixtures",
+                ));
+            };
+            if path == "--show-fixtures" {
+                return Err(CliError::Usage("missing input path for run"));
+            }
+            run_tex(path, show_fixtures)
         }
         None => {
             println!("umber {}", env!("CARGO_PKG_VERSION"));
@@ -75,7 +90,7 @@ fn lex_dump(path: &str) -> Result<(), CliError> {
     Ok(())
 }
 
-fn run_tex(path: &str) -> Result<(), CliError> {
+fn run_tex(path: &str, _show_fixtures: bool) -> Result<(), CliError> {
     let path = Path::new(path);
     let mut stores = Universe::with_world(World::real());
     let content = stores.world_mut().read_file(path)?;

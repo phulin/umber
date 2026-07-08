@@ -1,0 +1,20 @@
+> \box30=
+\hbox(6.94444+0.0)x22.22226
+.\tenrm o
+.\tenrm ^^N (ligature ffi)
+.\tenrm c
+.\tenrm e
+
+! OK.
+
+> \box31=
+\hbox(6.94444+0.0)x33.33342
+.\tenrm d
+.\tenrm i
+.\tenrm ^^N (ligature ffi)
+.\tenrm c
+.\tenrm u
+.\tenrm l
+.\tenrm t
+
+! OK.

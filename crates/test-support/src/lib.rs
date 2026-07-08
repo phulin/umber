@@ -89,6 +89,14 @@ mod imp {
 
     pub mod normalize {
         pub fn exec_log(log: &str) -> String {
+            diagnostic_log(log)
+        }
+
+        pub fn box_dump(log: &str) -> String {
+            diagnostic_log(log)
+        }
+
+        fn diagnostic_log(log: &str) -> String {
             let mut lines = Vec::new();
             let mut skip_next_context = false;
 

@@ -18,6 +18,12 @@ future test explicitly needs a subdirectory. Expected files use:
 `umber run` output with normalized `pdftex` logs through the shared
 `test_support::normalize::exec_log` helper.
 
+`tests/corpus/typeset` contains fast box/list dump parity cases for the
+typesetting layer. These compare `umber run --show-fixtures` output with
+normalized `pdftex` logs through the shared
+`test_support::normalize::box_dump` helper; that helper uses the same
+diagnostic-log normalizer as `exec_log`.
+
 ```text
 <case>.expected.<kind>
 ```
@@ -37,6 +43,13 @@ UPDATE_FIXTURES=1 cargo test -p test-support --test hello
 
 The update run rewrites missing or mismatched expected files, then panics.
 Rerun without `UPDATE_FIXTURES` before committing.
+
+For typeset box-dump fixtures, run:
+
+```bash
+UPDATE_FIXTURES=1 cargo test -p umber --test cli run_typeset_corpus_matches_pdftex_box_dumps
+cargo test -p umber --test cli run_typeset_corpus_matches_pdftex_box_dumps
+```
 
 ## Cargo Test Scope
 

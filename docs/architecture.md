@@ -365,7 +365,11 @@ assignments, box building, and dispatch into the typesetting kernels.
   emitter walks frozen node lists through `Universe`, honors
   `\showboxbreadth` and `\showboxdepth`, and is intentionally reusable by
   future `\showlists` and `\tracingoutput` diagnostics rather than tied to
-  `\showbox` scanning.
+  `\showbox` scanning. The committed typeset corpus uses pdfTeX's box-dump
+  text as the comparison format: `umber run --show-fixtures` emits the same
+  diagnostic stream shape as `umber run`, while test support normalizes
+  banners, source line echoes, and memory-irrelevant trailer noise through one
+  shared diagnostic-log normalizer for both execution and box-dump fixtures.
 - **Paragraph and page hand-off**: paragraph start/end is stomach-owned.
   `\indent`, `\noindent`, implicit start from vertical-mode character
   material, `\parskip`, and `\everypar` replay are handled before entering

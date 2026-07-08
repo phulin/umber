@@ -106,9 +106,21 @@ fn expand_dump_usage_errors_follow_lex_dump_shape() {
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side corpus discovery and command execution.
 fn run_exec_corpus_matches_pdftex_diagnostics() {
+    run_corpus_matches_pdftex_diagnostics("exec", false);
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side corpus discovery and command execution.
+fn run_typeset_corpus_matches_pdftex_box_dumps() {
+    run_corpus_matches_pdftex_diagnostics("typeset", true);
+}
+
+#[allow(clippy::disallowed_methods)] // host-side corpus discovery and command execution.
+fn run_corpus_matches_pdftex_diagnostics(area: &str, show_fixtures: bool) {
     let corpus = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
-        .join("tests/corpus/exec");
+        .join("tests/corpus")
+        .join(area);
     let ref_tex = RefTex::locate().expect("reference TeX should be available");
 
     for entry in std::fs::read_dir(&corpus).expect("read exec corpus") {
@@ -121,14 +133,19 @@ fn run_exec_corpus_matches_pdftex_diagnostics() {
         let ref_output = ref_tex
             .run(&path, &RunOpts::default())
             .expect("reference TeX should run exec fixture");
-        let expected = normalize::exec_log(&ref_output.log);
-        assert_matches_fixture("exec", &stem, "log", &expected);
+        let expected = if show_fixtures {
+            normalize::box_dump(&ref_output.log)
+        } else {
+            normalize::exec_log(&ref_output.log)
+        };
+        assert_matches_fixture(area, &stem, "log", &expected);
 
-        let output = Command::new(env!("CARGO_BIN_EXE_umber"))
-            .arg("run")
-            .arg(&path)
-            .output()
-            .expect("run umber run");
+        let mut command = Command::new(env!("CARGO_BIN_EXE_umber"));
+        command.arg("run");
+        if show_fixtures {
+            command.arg("--show-fixtures");
+        }
+        let output = command.arg(&path).output().expect("run umber run");
         assert!(
             output.status.success(),
             "umber run failed for {}:\n{}",
@@ -136,11 +153,15 @@ fn run_exec_corpus_matches_pdftex_diagnostics() {
             String::from_utf8_lossy(&output.stderr)
         );
         let actual_stdout = String::from_utf8(output.stdout).expect("umber run output is utf-8");
-        let actual = normalize::exec_log(&actual_stdout);
+        let actual = if show_fixtures {
+            normalize::box_dump(&actual_stdout)
+        } else {
+            normalize::exec_log(&actual_stdout)
+        };
         assert_eq!(
             actual,
             expected,
-            "exec fixture mismatch for {}",
+            "{area} fixture mismatch for {}",
             path.display()
         );
     }
@@ -221,7 +242,18 @@ fn run_usage_errors_follow_existing_shape() {
     assert!(!extra.status.success());
     assert_eq!(
         String::from_utf8(extra.stderr).expect("stderr is utf-8"),
-        "umber: run accepts exactly one input path\n"
+        "umber: run accepts one input path and optional --show-fixtures\n"
+    );
+
+    let missing_show_fixtures = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .arg("run")
+        .arg("--show-fixtures")
+        .output()
+        .expect("run umber run with show-fixtures but without path");
+    assert!(!missing_show_fixtures.status.success());
+    assert_eq!(
+        String::from_utf8(missing_show_fixtures.stderr).expect("stderr is utf-8"),
+        "umber: missing input path for run\n"
     );
 }
 
