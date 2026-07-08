@@ -5,7 +5,11 @@ use super::{
     segment_offset, u16_index,
 };
 use crate::cell::{BankTag, CellId};
+#[cfg(feature = "shadow")]
+use crate::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use crate::epoch::Epoch;
+#[cfg(feature = "shadow")]
+use crate::ids::NodeListId;
 use crate::interner::Symbol;
 #[cfg(any(test, feature = "testing", feature = "shadow"))]
 use std::hash::{Hash as _, Hasher};
@@ -45,23 +49,41 @@ impl Env {
     /// Verifies the shadow mirror against real environment storage.
     #[cfg(feature = "shadow")]
     pub fn verify_shadow(&self) {
-        let real = self.semantic_non_default_words();
-        for (cell, real_word) in &real {
-            let shadow_word = self.shadow.get(cell).copied().unwrap_or(0);
-            assert_eq!(
-                shadow_word, *real_word,
-                "shadow mismatch at {cell:?}: shadow={shadow_word} real={real_word}"
-            );
-        }
-        for (&cell, &shadow_word) in &self.shadow {
-            let real_word = real
-                .iter()
-                .find_map(|(real_cell, real_word)| (*real_cell == cell).then_some(*real_word))
-                .unwrap_or(0);
+        self.for_each_semantic_non_default_word(|cell, real_word| {
+            let shadow_word = self.shadow.get(&cell).copied().unwrap_or(0);
             assert_eq!(
                 shadow_word, real_word,
                 "shadow mismatch at {cell:?}: shadow={shadow_word} real={real_word}"
             );
+        });
+        for (&cell, &shadow_word) in &self.shadow {
+            let real_word = self.semantic_word(cell);
+            assert_eq!(
+                shadow_word, real_word,
+                "shadow mismatch at {cell:?}: shadow={shadow_word} real={real_word}"
+            );
+        }
+    }
+
+    #[cfg(feature = "shadow")]
+    fn semantic_word(&self, cell: CellId) -> u64 {
+        let index = cell.index();
+        match cell.bank() {
+            BankTag::Meaning => self.get(Symbol::new(index)).encode(),
+            BankTag::Count => u64::from(self.count(u16_index(index)) as u32),
+            BankTag::Dimen => u64::from(self.dimen(u16_index(index)).raw() as u32),
+            BankTag::Skip => u64::from(self.skip(u16_index(index)).raw()),
+            BankTag::Toks => u64::from(self.toks(u16_index(index)).raw()),
+            BankTag::Box => NodeListId::encode_box_word(self.box_reg(u16_index(index))),
+            BankTag::Muskip => u64::from(self.muskip(u16_index(index)).raw()),
+            BankTag::IntParam => u64::from(self.int_param(IntParam::new(u16_index(index))) as u32),
+            BankTag::DimenParam => {
+                u64::from(self.dimen_param(DimenParam::new(u16_index(index))).raw() as u32)
+            }
+            BankTag::GlueParam => {
+                u64::from(self.glue_param(GlueParam::new(u16_index(index))).raw())
+            }
+            BankTag::TokParam => u64::from(self.tok_param(TokParam::new(u16_index(index))).raw()),
         }
     }
 
@@ -72,57 +94,55 @@ impl Env {
     #[cfg(any(test, feature = "testing", feature = "shadow"))]
     #[must_use]
     pub fn testing_state_hash(&self) -> u64 {
-        let mut pairs = self.semantic_non_default_words();
-        pairs.sort_by_key(|(cell, _)| *cell);
-
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        for (cell, word) in pairs {
+        self.for_each_semantic_non_default_word(|cell, word| {
             cell.hash(&mut hasher);
             word.hash(&mut hasher);
-        }
+        });
         self.aftergroup.hash(&mut hasher);
         self.afterassignment.hash(&mut hasher);
         hasher.finish()
     }
 
     #[cfg(any(test, feature = "testing", feature = "shadow"))]
-    pub(crate) fn semantic_non_default_words(&self) -> Vec<(CellId, u64)> {
-        let mut out = Vec::new();
+    pub(crate) fn for_each_semantic_non_default_word(&self, mut f: impl FnMut(CellId, u64)) {
         for (segment_index, segment) in self.meaning_cells.iter().enumerate() {
             for (offset, &word) in segment.iter().enumerate() {
                 if word != 0 {
                     let index = ((segment_index as u32) << super::SEGMENT_BITS) | offset as u32;
-                    out.push((CellId::new(BankTag::Meaning, index), word));
+                    f(CellId::new(BankTag::Meaning, index), word);
                 }
             }
         }
-        self.counts.non_default_words(BankTag::Count, &mut out);
-        self.dimens.non_default_words(BankTag::Dimen, &mut out);
-        self.skips.non_default_words(BankTag::Skip, &mut out);
-        self.toks.non_default_words(BankTag::Toks, &mut out);
-        self.boxes.non_default_words(BankTag::Box, &mut out);
-        self.muskips.non_default_words(BankTag::Muskip, &mut out);
+        self.counts
+            .for_each_non_default_word(BankTag::Count, &mut f);
+        self.dimens
+            .for_each_non_default_word(BankTag::Dimen, &mut f);
+        self.skips.for_each_non_default_word(BankTag::Skip, &mut f);
+        self.toks.for_each_non_default_word(BankTag::Toks, &mut f);
+        self.boxes.for_each_non_default_word(BankTag::Box, &mut f);
+        self.muskips
+            .for_each_non_default_word(BankTag::Muskip, &mut f);
         self.overflow_counts
-            .non_default_words(BankTag::Count, &mut out);
+            .for_each_non_default_word(BankTag::Count, &mut f);
         self.overflow_dimens
-            .non_default_words(BankTag::Dimen, &mut out);
+            .for_each_non_default_word(BankTag::Dimen, &mut f);
         self.overflow_skips
-            .non_default_words(BankTag::Skip, &mut out);
+            .for_each_non_default_word(BankTag::Skip, &mut f);
         self.overflow_toks
-            .non_default_words(BankTag::Toks, &mut out);
+            .for_each_non_default_word(BankTag::Toks, &mut f);
         self.overflow_boxes
-            .non_default_words(BankTag::Box, &mut out);
+            .for_each_non_default_word(BankTag::Box, &mut f);
         self.overflow_muskips
-            .non_default_words(BankTag::Muskip, &mut out);
+            .for_each_non_default_word(BankTag::Muskip, &mut f);
         self.int_params
-            .non_default_words(BankTag::IntParam, &mut out);
+            .for_each_non_default_word(BankTag::IntParam, &mut f);
         self.dimen_params
-            .non_default_words(BankTag::DimenParam, &mut out);
+            .for_each_non_default_word(BankTag::DimenParam, &mut f);
         self.glue_params
-            .non_default_words(BankTag::GlueParam, &mut out);
+            .for_each_non_default_word(BankTag::GlueParam, &mut f);
         self.tok_params
-            .non_default_words(BankTag::TokParam, &mut out);
-        out
+            .for_each_non_default_word(BankTag::TokParam, &mut f);
     }
 
     #[cfg(any(test, feature = "testing", feature = "shadow"))]

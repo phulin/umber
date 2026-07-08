@@ -688,16 +688,14 @@ impl Stores {
 
     #[cfg(any(test, feature = "testing", feature = "shadow"))]
     fn testing_hash_env_by_content(&self, hasher: &mut impl Hasher) {
-        let mut pairs = self.env.semantic_non_default_words();
-        pairs.sort_by_key(|(cell, _)| *cell);
-        for (cell, word) in pairs {
+        self.env.for_each_semantic_non_default_word(|cell, word| {
             cell.hash(hasher);
             if cell.bank() == BankTag::Box {
                 self.testing_hash_box_word(word, hasher);
             } else {
                 word.hash(hasher);
             }
-        }
+        });
         self.env.testing_aftergroup_payloads().hash(hasher);
         self.env.testing_afterassignment().hash(hasher);
     }

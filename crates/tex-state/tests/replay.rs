@@ -16,6 +16,7 @@ use tex_state::stores::{Snapshot, Stores};
 use tex_state::token::{Catcode, Token};
 
 const TREE_FROM_STORE_MAX_DEPTH: usize = 4096;
+const REPLAY_SHARDS: u32 = 8;
 
 #[derive(Clone, Debug)]
 enum Op {
@@ -71,17 +72,31 @@ struct Checkpoint {
     boxes: BoxOracle,
 }
 
-proptest! {
-    #![proptest_config(Config {
-        cases: prop_cases(),
-        ..Config::default()
-    })]
+macro_rules! replay_identity_shard {
+    ($name:ident, $shard:expr) => {
+        proptest! {
+            #![proptest_config(Config {
+                cases: prop_cases_for_shard($shard),
+                failure_persistence: None,
+                ..Config::default()
+            })]
 
-    #[test]
-    fn replay_identity_matches_checkpoint_hashes(ops in balanced_ops()) {
-        run_replay_identity(&ops);
-    }
+            #[test]
+            fn $name(ops in balanced_ops()) {
+                run_replay_identity(&ops);
+            }
+        }
+    };
 }
+
+replay_identity_shard!(replay_identity_matches_checkpoint_hashes_0, 0);
+replay_identity_shard!(replay_identity_matches_checkpoint_hashes_1, 1);
+replay_identity_shard!(replay_identity_matches_checkpoint_hashes_2, 2);
+replay_identity_shard!(replay_identity_matches_checkpoint_hashes_3, 3);
+replay_identity_shard!(replay_identity_matches_checkpoint_hashes_4, 4);
+replay_identity_shard!(replay_identity_matches_checkpoint_hashes_5, 5);
+replay_identity_shard!(replay_identity_matches_checkpoint_hashes_6, 6);
+replay_identity_shard!(replay_identity_matches_checkpoint_hashes_7, 7);
 
 #[test]
 fn group_exit_epoch_amendment_smoke() {
@@ -139,6 +154,7 @@ fn run_replay_identity(ops: &[Op]) {
     let mut stores = Stores::new();
     let mut oracle = Oracle::new();
     let mut box_oracle = BoxOracle::new();
+    let mut tree_cache = TreeCache::new();
     let mut glue_ids = vec![GlueId::ZERO];
     let mut built_lists = Vec::new();
     let cells = cell_universe();
@@ -159,6 +175,10 @@ fn run_replay_identity(ops: &[Op]) {
             Op::Set { cell, word, global } => {
                 cell.set(&mut stores, *word, *global);
                 oracle.set(*cell, *word, *global);
+                oracle.assert_cell_matches(stores.env(), *cell);
+                if *global {
+                    oracle.assert_matches(stores.env(), &cells);
+                }
             }
             Op::InternTokens(tokens) => {
                 stores.intern_token_list(tokens);
@@ -182,11 +202,16 @@ fn run_replay_identity(ops: &[Op]) {
                         stores.set_box_reg(*index, list.id);
                     }
                     box_oracle.set(*index, Some(list.tree.clone()), *global);
+                    box_oracle.assert_index_matches(*index, &stores, &mut tree_cache);
+                    if *global {
+                        box_oracle.assert_matches(&stores, &mut tree_cache);
+                    }
                 }
             }
             Op::TakeBoxReg(index) => {
                 stores.take_box_reg(*index);
                 box_oracle.set(*index, None, false);
+                box_oracle.assert_index_matches(*index, &stores, &mut tree_cache);
             }
             Op::EnterGroup => {
                 stores.enter_group();
@@ -200,8 +225,12 @@ fn run_replay_identity(ops: &[Op]) {
                 box_oracle.leave_group();
                 depth -= 1;
                 oracle.assert_matches(stores.env(), &cells);
+                box_oracle.assert_matches(&stores, &mut tree_cache);
             }
             Op::Checkpoint if depth == 0 => {
+                oracle.assert_matches(stores.env(), &cells);
+                box_oracle.assert_matches(&stores, &mut tree_cache);
+                verify_shadow(&stores);
                 let hash = stores.testing_state_hash();
                 checkpoints.push(Checkpoint {
                     snapshot: stores.checkpoint(),
@@ -212,9 +241,6 @@ fn run_replay_identity(ops: &[Op]) {
             }
             Op::Checkpoint => {}
         }
-        oracle.assert_matches(stores.env(), &cells);
-        box_oracle.assert_matches(&stores);
-        verify_shadow(&stores);
     }
 
     for checkpoint in checkpoints.into_iter().rev() {
@@ -231,7 +257,7 @@ fn run_replay_identity(ops: &[Op]) {
             "survivor slot leak across rollback to {:?}",
             checkpoint.snapshot
         );
-        checkpoint.boxes.assert_matches(&stores);
+        checkpoint.boxes.assert_matches(&stores, &mut tree_cache);
         verify_shadow(&stores);
     }
 
@@ -476,46 +502,85 @@ impl BoxOracle {
             .and_then(Option::as_ref)
     }
 
-    fn assert_matches(&self, stores: &Stores) {
+    fn assert_matches(&self, stores: &Stores, tree_cache: &mut TreeCache) {
+        tree_cache.clear();
         for index in (0..256).chain(256..320).chain(32_704..32_768) {
-            let real = stores.box_reg(index).map(|id| tree_from_store(stores, id));
-            assert_eq!(
-                real.as_ref(),
-                self.get(index),
-                "box oracle mismatch at {index}"
-            );
+            self.assert_index_matches_cached(index, stores, tree_cache);
         }
+    }
+
+    fn assert_index_matches(&self, index: u16, stores: &Stores, tree_cache: &mut TreeCache) {
+        tree_cache.clear();
+        self.assert_index_matches_cached(index, stores, tree_cache);
+    }
+
+    fn assert_index_matches_cached(&self, index: u16, stores: &Stores, tree_cache: &mut TreeCache) {
+        let real = stores
+            .box_reg(index)
+            .map(|id| tree_cache.tree_from_store(stores, id));
+        assert_eq!(
+            real.as_ref(),
+            self.get(index),
+            "box oracle mismatch at {index}"
+        );
     }
 }
 
-fn tree_from_store(stores: &Stores, id: NodeListId) -> TreeList {
-    tree_from_store_bounded(stores, id, 0)
+struct TreeCache {
+    lists: HashMap<NodeListId, TreeList>,
 }
 
-fn tree_from_store_bounded(stores: &Stores, id: NodeListId, depth: usize) -> TreeList {
-    assert!(
-        depth <= TREE_FROM_STORE_MAX_DEPTH,
-        "replay oracle exceeded maximum node-list nesting depth"
-    );
-    stores
-        .nodes(id)
-        .iter()
-        .map(|node| match node {
-            Node::Char { font, ch } => TreeNode::Char {
-                font: font.raw(),
-                ch: *ch,
-            },
-            Node::Kern { amount, .. } => TreeNode::Kern(amount.raw()),
-            Node::Glue { spec, kind } => TreeNode::Glue(stores.glue(*spec), *kind),
-            Node::HList(box_node) => TreeNode::HList(tree_from_store_bounded(
-                stores,
-                box_node.children,
-                depth + 1,
-            )),
-            Node::MathOn => TreeNode::MathOn,
-            other => panic!("unexpected replay node: {other:?}"),
-        })
-        .collect()
+impl TreeCache {
+    fn new() -> Self {
+        Self {
+            lists: HashMap::new(),
+        }
+    }
+
+    fn clear(&mut self) {
+        self.lists.clear();
+    }
+
+    fn tree_from_store(&mut self, stores: &Stores, id: NodeListId) -> TreeList {
+        self.tree_from_store_bounded(stores, id, 0)
+    }
+
+    fn tree_from_store_bounded(
+        &mut self,
+        stores: &Stores,
+        id: NodeListId,
+        depth: usize,
+    ) -> TreeList {
+        assert!(
+            depth <= TREE_FROM_STORE_MAX_DEPTH,
+            "replay oracle exceeded maximum node-list nesting depth"
+        );
+        if let Some(tree) = self.lists.get(&id) {
+            return tree.clone();
+        }
+
+        let tree = stores
+            .nodes(id)
+            .iter()
+            .map(|node| match node {
+                Node::Char { font, ch } => TreeNode::Char {
+                    font: font.raw(),
+                    ch: *ch,
+                },
+                Node::Kern { amount, .. } => TreeNode::Kern(amount.raw()),
+                Node::Glue { spec, kind } => TreeNode::Glue(stores.glue(*spec), *kind),
+                Node::HList(box_node) => TreeNode::HList(self.tree_from_store_bounded(
+                    stores,
+                    box_node.children,
+                    depth + 1,
+                )),
+                Node::MathOn => TreeNode::MathOn,
+                other => panic!("unexpected replay node: {other:?}"),
+            })
+            .collect();
+        self.lists.insert(id, tree);
+        self.lists.get(&id).expect("tree was just cached").clone()
+    }
 }
 
 fn prop_cases() -> u32 {
@@ -523,6 +588,13 @@ fn prop_cases() -> u32 {
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(100)
+}
+
+fn prop_cases_for_shard(shard: u32) -> u32 {
+    let cases = prop_cases();
+    let base = cases / REPLAY_SHARDS;
+    let remainder = cases % REPLAY_SHARDS;
+    base + u32::from(shard < remainder)
 }
 
 #[cfg(feature = "shadow")]
