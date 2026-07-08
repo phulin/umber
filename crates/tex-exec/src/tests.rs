@@ -243,13 +243,17 @@ fn input_expands_while_scanning_conditional_operands() {
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);
     let mut input = InputStack::new(MemoryInput::new(
         "\\ifdim\\input{left}<\\input{right}\\count0=1\\fi\
-         \\ifcat\\input{a}\\input{b}\\count1=1\\fi\\end",
+         \\ifcat\\input{a}\\input{b}\\count1=1\\fi\
+         \\ifnum 1 \\input{relation} 2\\count2=1\\fi\
+         \\ifeof\\input{stream}\\count3=1\\fi\\end",
     ));
     let mut hooks = MemoryInputHooks::new()
         .with_source("left", "1pt")
         .with_source("right", "2pt")
         .with_source("a", "a")
-        .with_source("b", "b");
+        .with_source("b", "b")
+        .with_source("relation", "<")
+        .with_source("stream", "15");
 
     Executor::new()
         .run_with_recorder_and_hooks(&mut input, &mut stores, &mut NoopRecorder, &mut hooks)
@@ -257,6 +261,8 @@ fn input_expands_while_scanning_conditional_operands() {
 
     assert_eq!(stores.count(0), 1);
     assert_eq!(stores.count(1), 1);
+    assert_eq!(stores.count(2), 1);
+    assert_eq!(stores.count(3), 1);
 }
 
 #[test]
