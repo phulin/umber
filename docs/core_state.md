@@ -133,6 +133,12 @@ Rules:
   restore walks use a crate-private
   `Env::restore_raw(CellId, u64)` primitive that bypasses the barrier; it is
   restore-only, not a semantic assignment API.
+- **Math glue provenance**: immutable glue nodes include diagnostic-only
+  variants for explicit `\mskip` and converted `\thinmuskip`, `\medmuskip`,
+  and `\thickmuskip` math spacing. These variants preserve `\showbox` /
+  `\showlists` labels after mlist conversion; shipout lowering treats all of
+  them as normal glue so serialized page artifacts do not gain DVI-visible
+  distinctions.
 - **Public boundary**: downstream crates may read `Env` through the owning
   aggregate, but they cannot construct or mutate a standalone `Env`; raw Env
   construction, group control, epoch advancement, and typed setters are

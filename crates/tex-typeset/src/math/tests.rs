@@ -1,6 +1,7 @@
 use super::*;
 use tex_fonts::metrics::CharTag;
 use tex_fonts::{CharMetrics, FontMetrics, LigKernCommand, LigKernInstruction, LoadedFont};
+use tex_state::env::banks::GlueParam;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::math::{
     FractionThickness, LimitType, MathChar, MathField, MathFontSize, MathFraction, MathNoad,
@@ -78,6 +79,25 @@ fn mlist_second_pass_inserts_spacing_and_penalties() {
     assert!(matches!(hlist.nodes[8], MathNode::Penalty(500)));
     assert_glue_width(&hlist.nodes[9], 360);
     assert!(matches!(hlist.nodes[10], MathNode::Char { ch: 'b', .. }));
+}
+
+#[test]
+fn mlist_second_pass_preserves_named_math_glue_provenance() {
+    assert_inserted_math_glue_kind(
+        &[NoadClass::Ord, NoadClass::Op],
+        MathGlueKind::ThinMuSkip,
+        180,
+    );
+    assert_inserted_math_glue_kind(
+        &[NoadClass::Ord, NoadClass::Bin, NoadClass::Ord],
+        MathGlueKind::MedMuSkip,
+        240,
+    );
+    assert_inserted_math_glue_kind(
+        &[NoadClass::Ord, NoadClass::Rel],
+        MathGlueKind::ThickMuSkip,
+        360,
+    );
 }
 
 #[test]
@@ -380,6 +400,29 @@ fn assert_glue_width(node: &MathNode, expected: i32) {
     assert_eq!(spec.width, sc(expected));
 }
 
+fn assert_inserted_math_glue_kind(classes: &[NoadClass], expected_kind: MathGlueKind, width: i32) {
+    let mut universe = setup_universe();
+    let input_nodes = classes
+        .iter()
+        .enumerate()
+        .map(|(index, class)| Node::MathNoad(noad(*class, char::from(b'a' + index as u8))))
+        .collect::<Vec<_>>();
+    let input = universe.freeze_node_list(&input_nodes);
+    let params = MathParams::read(&universe);
+
+    let hlist = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
+
+    assert!(
+        hlist.nodes.iter().any(|node| {
+            matches!(
+                node,
+                MathNode::Glue { spec, kind } if *kind == expected_kind && spec.width == sc(width)
+            )
+        }),
+        "expected {expected_kind:?} glue in {hlist:?}"
+    );
+}
+
 fn assert_radical_clearance(hlist: &FrozenHList, expected: Scaled) {
     let [MathNode::HList(radical)] = hlist.nodes.as_slice() else {
         panic!("expected radical hbox");
@@ -441,7 +484,7 @@ fn setup_universe() -> Universe {
             shrink: sc(0),
             shrink_order: Order::Normal,
         });
-        universe.set_muskip(index, id);
+        universe.set_glue_param(GlueParam::new(index), id);
     }
     universe
 }

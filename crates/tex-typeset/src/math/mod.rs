@@ -14,7 +14,7 @@ use tex_arith::x_over_n;
 use tex_fonts::metrics::ExtensibleRecipe as MetricExtensibleRecipe;
 use tex_fonts::{CharMetrics, LigKernChar, LigKernCommand};
 use tex_state::Universe;
-use tex_state::env::banks::{DimenParam, IntParam};
+use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
 use tex_state::ids::{FontId, GlueId, NodeListId};
 use tex_state::math::{MathChar, MathField, MathFontSize, MathNoad, NoadClass, NoadKind};
 use tex_state::node::{KernKind, Node};
@@ -44,7 +44,7 @@ pub trait MathTypesetState: TypesetState {
     fn font_skew_char(&self, font: FontId) -> i32;
     fn int_param(&self, param: IntParam) -> i32;
     fn dimen_param(&self, param: DimenParam) -> Scaled;
-    fn muskip(&self, index: u16) -> GlueId;
+    fn glue_param(&self, param: GlueParam) -> GlueId;
 }
 
 #[derive(Clone, Debug)]
@@ -346,15 +346,12 @@ fn second_pass<S: MathTypesetState>(
             WorkItem::Node(node) => output.nodes.push(node.clone()),
             WorkItem::Noad(noad) => {
                 if let Some(left) = previous
-                    && let Some(spec) = spacing::spacing_glue(
-                        spacing::inter_noad_spacing(left, noad.class, ctx.style),
-                        ctx.params,
-                        ctx.mu,
-                    )
+                    && let spacing = spacing::inter_noad_spacing(left, noad.class, ctx.style)
+                    && let Some(spec) = spacing::spacing_glue(spacing, ctx.params, ctx.mu)
                 {
                     output.nodes.push(MathNode::Glue {
                         spec,
-                        kind: MathGlueKind::MuSkip,
+                        kind: math_glue_kind_for_spacing(spacing),
                     });
                 }
                 output.nodes.extend(noad.hlist.nodes.iter().cloned());
@@ -377,15 +374,12 @@ fn second_pass<S: MathTypesetState>(
             }
             WorkItem::Delimiter(delimiter) => {
                 if let Some(left) = previous
-                    && let Some(spec) = spacing::spacing_glue(
-                        spacing::inter_noad_spacing(left, delimiter.class, ctx.style),
-                        ctx.params,
-                        ctx.mu,
-                    )
+                    && let spacing = spacing::inter_noad_spacing(left, delimiter.class, ctx.style)
+                    && let Some(spec) = spacing::spacing_glue(spacing, ctx.params, ctx.mu)
                 {
                     output.nodes.push(MathNode::Glue {
                         spec,
-                        kind: MathGlueKind::MuSkip,
+                        kind: math_glue_kind_for_spacing(spacing),
                     });
                 }
                 let target =
@@ -402,6 +396,15 @@ fn second_pass<S: MathTypesetState>(
         }
     }
     output
+}
+
+fn math_glue_kind_for_spacing(spacing: SpacingKind) -> MathGlueKind {
+    match spacing {
+        SpacingKind::None => MathGlueKind::MuSkip,
+        SpacingKind::Thin => MathGlueKind::ThinMuSkip,
+        SpacingKind::Med => MathGlueKind::MedMuSkip,
+        SpacingKind::Thick => MathGlueKind::ThickMuSkip,
+    }
 }
 
 pub(crate) fn clean_box(
@@ -624,8 +627,8 @@ impl MathTypesetState for Universe {
         Universe::dimen_param(self, param)
     }
 
-    fn muskip(&self, index: u16) -> GlueId {
-        Universe::muskip(self, index)
+    fn glue_param(&self, param: GlueParam) -> GlueId {
+        Universe::glue_param(self, param)
     }
 }
 

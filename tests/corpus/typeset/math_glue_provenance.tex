@@ -1,0 +1,26 @@
+\tracingonline=1
+\hbadness=10000
+\showboxbreadth=200
+\showboxdepth=100
+\font\tenrm=../../crates/tex-fonts/tests/fixtures/cm/cmr10
+\font\teni=../../crates/tex-fonts/tests/fixtures/cm/cmmi10
+\font\tensy=../../crates/tex-fonts/tests/fixtures/cm/cmsy10
+\textfont0=\tenrm \scriptfont0=\tenrm \scriptscriptfont0=\tenrm
+\textfont1=\teni \scriptfont1=\teni \scriptscriptfont1=\teni
+\textfont2=\tensy \scriptfont2=\tensy \scriptscriptfont2=\tensy
+\tenrm
+\mathcode`a="0061
+\mathcode`b="0062
+\mathcode`c="0063
+\mathcode`d="0064
+\mathcode`e="0065
+\mathcode`f="0066
+\mathcode`g="0067
+\thinmuskip=3mu
+\medmuskip=4mu
+\thickmuskip=6mu
+\binoppenalty=10000
+\relpenalty=10000
+\setbox0=\hbox{$\mathpunct a b\mathbin c d\mathrel e\mskip3mu f$}
+\showbox0
+\end

@@ -141,6 +141,9 @@ pub enum GlueKind {
     Cleaders,
     Xleaders,
     MuSkip,
+    ThinMuSkip,
+    MedMuSkip,
+    ThickMuSkip,
     NonScript,
 }
 

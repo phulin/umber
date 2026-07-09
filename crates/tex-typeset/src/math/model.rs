@@ -42,6 +42,9 @@ pub enum MathNode {
 pub enum MathGlueKind {
     Normal,
     MuSkip,
+    ThinMuSkip,
+    MedMuSkip,
+    ThickMuSkip,
     NonScript,
     Source,
 }

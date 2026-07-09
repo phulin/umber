@@ -1,6 +1,9 @@
 use super::support::terminal_effect_text;
 use super::*;
-use tex_state::math::{FractionThickness, LimitType, MathChoice, MathField, MathListNode};
+use tex_state::math::{
+    FractionThickness, LimitType, MathChoice, MathField, MathListNode, MathNoad, NoadClass,
+    NoadKind,
+};
 use tex_state::node::{GlueKind, KernKind, Node};
 
 #[test]
@@ -227,6 +230,89 @@ fn inline_math_finishing_emits_mathsurround_markers_and_penalties() {
     assert!(
         nodes.iter().all(|node| !matches!(node, Node::MathList(_))),
         "paragraph line breaking must see converted hlist nodes"
+    );
+}
+
+#[test]
+fn converted_math_glue_preserves_explicit_and_named_provenance() {
+    let mut stores = Universe::new();
+    let explicit = stores.intern_glue(tex_state::glue::GlueSpec::ZERO);
+    let content = stores.freeze_node_list(&[
+        Node::MathNoad(MathNoad::new(
+            NoadKind::Normal(NoadClass::Ord),
+            MathField::Empty,
+        )),
+        Node::MathNoad(MathNoad::new(
+            NoadKind::Operator(LimitType::NoLimits),
+            MathField::Empty,
+        )),
+        Node::MathNoad(MathNoad::new(
+            NoadKind::Normal(NoadClass::Ord),
+            MathField::Empty,
+        )),
+        Node::MathNoad(MathNoad::new(
+            NoadKind::Normal(NoadClass::Bin),
+            MathField::Empty,
+        )),
+        Node::MathNoad(MathNoad::new(
+            NoadKind::Normal(NoadClass::Ord),
+            MathField::Empty,
+        )),
+        Node::MathNoad(MathNoad::new(
+            NoadKind::Normal(NoadClass::Rel),
+            MathField::Empty,
+        )),
+        Node::Glue {
+            spec: explicit,
+            kind: GlueKind::MuSkip,
+        },
+    ]);
+    let list = MathListNode {
+        display: false,
+        content,
+    };
+
+    let nodes = crate::math::finish_math_list_node(&mut stores, list);
+
+    assert!(
+        nodes.iter().any(|node| matches!(
+            node,
+            Node::Glue {
+                kind: GlueKind::ThinMuSkip,
+                ..
+            }
+        )),
+        "ord-op spacing should lower as named thinmuskip"
+    );
+    assert!(
+        nodes.iter().any(|node| matches!(
+            node,
+            Node::Glue {
+                kind: GlueKind::MedMuSkip,
+                ..
+            }
+        )),
+        "ord-bin spacing should lower as named medmuskip"
+    );
+    assert!(
+        nodes.iter().any(|node| matches!(
+            node,
+            Node::Glue {
+                kind: GlueKind::ThickMuSkip,
+                ..
+            }
+        )),
+        "ord-rel spacing should lower as named thickmuskip"
+    );
+    assert!(
+        nodes.iter().any(|node| matches!(
+            node,
+            Node::Glue {
+                kind: GlueKind::MuSkip,
+                ..
+            }
+        )),
+        "explicit \\mskip should remain plain mu skip provenance"
     );
 }
 

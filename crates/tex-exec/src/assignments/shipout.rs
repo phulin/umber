@@ -387,7 +387,11 @@ fn lower_glue_kind(kind: StateGlueKind) -> PageGlueKind {
         StateGlueKind::Leaders => PageGlueKind::Leaders,
         StateGlueKind::Cleaders => PageGlueKind::Cleaders,
         StateGlueKind::Xleaders => PageGlueKind::Xleaders,
-        StateGlueKind::MuSkip | StateGlueKind::NonScript => PageGlueKind::Normal,
+        StateGlueKind::MuSkip
+        | StateGlueKind::ThinMuSkip
+        | StateGlueKind::MedMuSkip
+        | StateGlueKind::ThickMuSkip
+        | StateGlueKind::NonScript => PageGlueKind::Normal,
     }
 }
 

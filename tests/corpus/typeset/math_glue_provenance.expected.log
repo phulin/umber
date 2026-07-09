@@ -1,0 +1,20 @@
+> \box0=
+\hbox(6.94444+0.0)x43.55528
+.\mathon
+.\tenrm a
+.\glue(\thinmuskip) 1.66663
+.\tenrm b
+.\kern0.27779
+.\glue(\medmuskip) 2.22217
+.\tenrm c
+.\glue(\medmuskip) 2.22217
+.\tenrm d
+.\glue(\thickmuskip) 3.33325
+.\tenrm e
+.\glue 1.66663
+.\glue(\thickmuskip) 3.33325
+.\tenrm f
+.\kern0.77779
+.\mathoff
+
+! OK.

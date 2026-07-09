@@ -119,6 +119,9 @@ fn lower_math_glue_kind(kind: MathGlueKind) -> GlueKind {
     match kind {
         MathGlueKind::NonScript => GlueKind::NonScript,
         MathGlueKind::MuSkip => GlueKind::MuSkip,
+        MathGlueKind::ThinMuSkip => GlueKind::ThinMuSkip,
+        MathGlueKind::MedMuSkip => GlueKind::MedMuSkip,
+        MathGlueKind::ThickMuSkip => GlueKind::ThickMuSkip,
         MathGlueKind::Normal | MathGlueKind::Source => GlueKind::Normal,
     }
 }

@@ -570,7 +570,10 @@ impl GlueKindDump for GlueKind {
             Self::Leaders => "\\leaders \\glue ",
             Self::Cleaders => "\\cleaders \\glue ",
             Self::Xleaders => "\\xleaders \\glue ",
-            Self::MuSkip => "\\glue(\\medmuskip) ",
+            Self::MuSkip => "\\glue ",
+            Self::ThinMuSkip => "\\glue(\\thinmuskip) ",
+            Self::MedMuSkip => "\\glue(\\medmuskip) ",
+            Self::ThickMuSkip => "\\glue(\\thickmuskip) ",
             Self::NonScript => "\\glue(\\nonscript) ",
         }
     }
