@@ -600,10 +600,23 @@ pub struct Snapshot {
   input position; on match, splice the old suffix and stop. `state_hash`
   covers: cells touched since the previous checkpoint (from the journal
   slice), code-table generations, arena content hashes of the epoch slice,
-  effect-log slice, RNG. It must be a pure function of semantic state —
-  never of addresses or allocation order.
+  effect-log slice, RNG. Each slice hash must be a pure function of semantic
+  state — never of addresses or allocation order.
   The implemented f26.4 hash is maintained as
-  `combine(previous_checkpoint_hash, semantic_slice_hash)`. The slice query
+  `combine(previous_checkpoint_hash, semantic_slice_hash)`, a fold over the
+  checkpoint timeline. The checkpoint `state_hash` is therefore
+  **checkpoint-schedule-relative**, not a canonical fingerprint of the reached
+  semantic state: two runs produce equal hashes at a boundary only when they
+  applied the same semantic changes *and* took checkpoints at the same
+  positions under the same policy (hash-only checkpoints advance the fold
+  too). Incremental re-execution satisfies this by construction — the driver
+  replays the same checkpoint policy over the same suffix — and comparing
+  hashes across different checkpoint partitions can only produce false
+  non-convergence (a wasted re-execution), never a false match beyond
+  ordinary 64-bit collision odds. Decided (umber2-dur.15, tentative): the
+  hash stays schedule-relative; if a consumer ever needs a
+  schedule-independent semantic fingerprint, that is a new API, not a
+  reinterpretation of this one. The slice query
   collects journal cells between checkpoint cursors, canonicalizes global and
   local records to the same semantic cell, compares first-old vs final-live
   semantic content, and hashes only cells whose content changed. Meaning

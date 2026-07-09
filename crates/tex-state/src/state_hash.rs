@@ -3,6 +3,12 @@
 //! This module intentionally does not expose a generic `Hash` adapter. Callers
 //! feed only fields that are known to be semantic so raw handles and allocation
 //! identities do not accidentally become part of convergence hashes.
+//!
+//! Checkpoint hashes are folds of per-slice hashes via [`combine`], so they
+//! depend on where checkpoint boundaries fell, not only on the final semantic
+//! state: splitting one slice into two changes the fold. Convergence
+//! comparison is valid only between runs with identical checkpoint schedules;
+//! see `docs/core_state.md` §9.
 
 const MIX_INCREMENT: u64 = 0x9e37_79b9_7f4a_7c15;
 const INITIAL_STATE: u64 = 0x6a09_e667_f3bc_c909;

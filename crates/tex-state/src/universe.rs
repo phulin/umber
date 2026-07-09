@@ -240,7 +240,8 @@ impl ResumeBoundary {
         self.checkpoint_id
     }
 
-    /// Returns the semantic state hash captured at this resume boundary.
+    /// Returns the checkpoint-schedule-relative semantic state hash captured
+    /// at this resume boundary (see [`Snapshot::state_hash`]).
     #[must_use]
     pub const fn state_hash(self) -> u64 {
         self.state_hash
@@ -290,7 +291,8 @@ impl CheckpointMetadata {
         self.checkpoint_id
     }
 
-    /// Returns the semantic state hash captured at this checkpoint.
+    /// Returns the checkpoint-schedule-relative semantic state hash captured
+    /// at this checkpoint (see [`Snapshot::state_hash`]).
     #[must_use]
     pub const fn state_hash(self) -> u64 {
         self.state_hash
@@ -337,7 +339,13 @@ impl Snapshot {
 
     /// Returns the semantic convergence hash captured by this snapshot.
     ///
-    /// f26.4 replaces the placeholder value with the real hash computation.
+    /// The hash is a fold of semantic slice hashes over the checkpoint
+    /// timeline (`combine(previous_checkpoint_hash, slice_hash)`), so it is
+    /// checkpoint-schedule-relative: it witnesses "same semantic history
+    /// observed at the same checkpoint boundaries", not a canonical
+    /// fingerprint of the reached state. Compare hashes only between runs
+    /// that take checkpoints at the same positions under the same policy;
+    /// see `docs/core_state.md` §9 (convergence detection).
     #[must_use]
     pub const fn state_hash(&self) -> u64 {
         self.state_hash
