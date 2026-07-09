@@ -6,7 +6,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use corpus_manifest::{Document, Manifest, parse_manifest_file};
+use corpus_manifest::{Manifest, parse_manifest_file};
 use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone)]
@@ -55,9 +55,12 @@ pub fn sync_corpus(options: &SyncOptions) -> Result<SyncReport> {
     fs::create_dir_all(&options.dest_dir)
         .with_context(|| format!("failed to create {}", options.dest_dir.display()))?;
 
-    let mut documents = Vec::with_capacity(manifest.doc.len());
+    let mut documents = Vec::with_capacity(manifest.support.len() + manifest.doc.len());
+    for file in manifest.support {
+        documents.push(sync_file(&file.name, &file.url, &file.sha256, options)?);
+    }
     for doc in manifest.doc {
-        documents.push(sync_document(&doc, options)?);
+        documents.push(sync_file(&doc.name, &doc.url, &doc.sha256, options)?);
     }
 
     Ok(SyncReport { documents })
@@ -75,12 +78,17 @@ fn read_manifest(path: &Path) -> Result<Manifest> {
     Ok(parsed)
 }
 
-fn sync_document(doc: &Document, options: &SyncOptions) -> Result<DocumentStatus> {
-    let path = options.dest_dir.join(&doc.name);
+fn sync_file(
+    name: &str,
+    url: &str,
+    expected_sha256: &str,
+    options: &SyncOptions,
+) -> Result<DocumentStatus> {
+    let path = options.dest_dir.join(name);
     if path.exists() {
-        verify_existing(doc, &path)?;
+        verify_existing(name, expected_sha256, &path)?;
         return Ok(DocumentStatus::Verified {
-            name: doc.name.clone(),
+            name: name.to_string(),
             path,
         });
     }
@@ -88,24 +96,24 @@ fn sync_document(doc: &Document, options: &SyncOptions) -> Result<DocumentStatus
     if options.offline {
         bail!(
             "missing corpus document {} at {} while running --offline",
-            doc.name,
+            name,
             path.display()
         );
     }
 
-    let bytes = fetch_url(&doc.url).with_context(|| {
+    let bytes = fetch_url(url).with_context(|| {
         format!(
             "failed to fetch corpus document {} from {}",
-            doc.name, doc.url
+            name, url
         )
     })?;
     let actual = sha256_hex(&bytes);
-    if actual != doc.sha256 {
+    if actual != expected_sha256 {
         bail!(
             "sha256 mismatch for fetched {} from {}: expected {}, got {}; not writing {}",
-            doc.name,
-            doc.url,
-            doc.sha256,
+            name,
+            url,
+            expected_sha256,
             actual,
             path.display()
         );
@@ -118,20 +126,20 @@ fn sync_document(doc: &Document, options: &SyncOptions) -> Result<DocumentStatus
         .with_context(|| format!("failed to move {} into place", path.display()))?;
 
     Ok(DocumentStatus::Fetched {
-        name: doc.name.clone(),
+        name: name.to_string(),
         path,
     })
 }
 
-fn verify_existing(doc: &Document, path: &Path) -> Result<()> {
+fn verify_existing(name: &str, expected_sha256: &str, path: &Path) -> Result<()> {
     let bytes = fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
     let actual = sha256_hex(&bytes);
-    if actual != doc.sha256 {
+    if actual != expected_sha256 {
         bail!(
             "sha256 mismatch for cached {} at {}: expected {}, got {}; remove the file and rerun to refetch",
-            doc.name,
+            name,
             path.display(),
-            doc.sha256,
+            expected_sha256,
             actual
         );
     }
@@ -183,10 +191,16 @@ mod tests {
 
         assert_eq!(
             report.documents,
-            vec![DocumentStatus::Verified {
-                name: "sample.tex".to_string(),
-                path: dest.join("sample.tex")
-            }]
+            vec![
+                DocumentStatus::Verified {
+                    name: "plain.tex".to_string(),
+                    path: dest.join("plain.tex")
+                },
+                DocumentStatus::Verified {
+                    name: "sample.tex".to_string(),
+                    path: dest.join("sample.tex")
+                }
+            ]
         );
         Ok(())
     }
@@ -230,10 +244,16 @@ mod tests {
         assert_eq!(fs::read(dest.join("sample.tex"))?, body);
         assert_eq!(
             report.documents,
-            vec![DocumentStatus::Fetched {
-                name: "sample.tex".to_string(),
-                path: dest.join("sample.tex")
-            }]
+            vec![
+                DocumentStatus::Verified {
+                    name: "plain.tex".to_string(),
+                    path: dest.join("plain.tex")
+                },
+                DocumentStatus::Fetched {
+                    name: "sample.tex".to_string(),
+                    path: dest.join("sample.tex")
+                }
+            ]
         );
         Ok(())
     }
@@ -262,16 +282,29 @@ mod tests {
 
     fn write_manifest(dir: &Path, url: &str, content: &str) -> Result<PathBuf> {
         let sha = sha256_hex(content.as_bytes());
+        let support = b"format source";
+        let support_sha = sha256_hex(support);
+        let corpus = dir.join("corpus");
+        fs::create_dir_all(&corpus)?;
+        fs::write(corpus.join("plain.tex"), support)?;
         let manifest = dir.join("manifest.txt");
         fs::write(
             &manifest,
             format!(
                 "\
+support plain.tex
+url https://example.com/plain.tex
+sha256 {support_sha}
+license MIT
+redistributable true
+notes test format source
+
 doc sample.tex
 url {url}
 sha256 {sha}
 license MIT
 redistributable true
+format_source plain.tex
 expected_ref_dvi_sha256 {sha}
 notes test fixture
 "

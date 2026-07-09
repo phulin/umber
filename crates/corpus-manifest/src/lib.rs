@@ -8,7 +8,18 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Manifest {
+    pub support: Vec<SupportFile>,
     pub doc: Vec<Document>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct SupportFile {
+    pub name: String,
+    pub url: String,
+    pub sha256: String,
+    pub license: String,
+    pub redistributable: bool,
+    pub notes: String,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -18,6 +29,7 @@ pub struct Document {
     pub sha256: String,
     pub license: String,
     pub redistributable: bool,
+    pub format_source: String,
     pub expected_ref_dvi_sha256: String,
     pub notes: String,
 }
@@ -101,8 +113,14 @@ fn split_key_value(line: &str, line_number: usize) -> Result<(&str, &str), Manif
 
 #[derive(Default)]
 struct ManifestBuilder {
+    support: Vec<SupportFile>,
     documents: Vec<Document>,
-    current: Option<DocumentBuilder>,
+    current: Option<EntryBuilder>,
+}
+
+enum EntryBuilder {
+    Support(SupportBuilder),
+    Document(DocumentBuilder),
 }
 
 impl ManifestBuilder {
@@ -112,19 +130,26 @@ impl ManifestBuilder {
         value: &str,
         line_number: usize,
     ) -> Result<(), ManifestError> {
-        if key == "doc" {
+        if matches!(key, "support" | "doc") {
             self.finish_current()?;
-            self.current = Some(DocumentBuilder::new(value.to_string(), line_number));
+            self.current = Some(if key == "support" {
+                EntryBuilder::Support(SupportBuilder::new(value.to_string(), line_number))
+            } else {
+                EntryBuilder::Document(DocumentBuilder::new(value.to_string(), line_number))
+            });
             return Ok(());
         }
 
         let Some(current) = self.current.as_mut() else {
             return Err(ManifestError::new(
                 Some(line_number),
-                "manifest entries must begin with a doc line",
+                "manifest entries must begin with a support or doc line",
             ));
         };
-        current.set_field(key, value, line_number)
+        match current {
+            EntryBuilder::Support(current) => current.set_field(key, value, line_number),
+            EntryBuilder::Document(current) => current.set_field(key, value, line_number),
+        }
     }
 
     fn finish(mut self) -> Result<Manifest, ManifestError> {
@@ -135,16 +160,122 @@ impl ManifestBuilder {
                 "manifest does not contain any doc entries",
             ));
         }
+        let mut names = HashSet::new();
+        for file in &self.support {
+            if !names.insert(file.name.as_str()) {
+                return Err(ManifestError::new(
+                    None,
+                    format!("duplicate corpus file name: {}", file.name),
+                ));
+            }
+        }
+        for doc in &self.documents {
+            if !names.insert(doc.name.as_str()) {
+                return Err(ManifestError::new(
+                    None,
+                    format!("duplicate corpus file name: {}", doc.name),
+                ));
+            }
+            if !self
+                .support
+                .iter()
+                .any(|file| file.name == doc.format_source)
+            {
+                return Err(ManifestError::new(
+                    None,
+                    format!(
+                        "{} references missing format_source {}",
+                        doc.name, doc.format_source
+                    ),
+                ));
+            }
+        }
         Ok(Manifest {
+            support: self.support,
             doc: self.documents,
         })
     }
 
     fn finish_current(&mut self) -> Result<(), ManifestError> {
         if let Some(current) = self.current.take() {
-            self.documents.push(current.finish()?);
+            match current {
+                EntryBuilder::Support(current) => self.support.push(current.finish()?),
+                EntryBuilder::Document(current) => self.documents.push(current.finish()?),
+            }
         }
         Ok(())
+    }
+}
+
+struct SupportBuilder {
+    name: String,
+    start_line: usize,
+    seen: HashSet<&'static str>,
+    url: Option<String>,
+    sha256: Option<String>,
+    license: Option<String>,
+    redistributable: Option<bool>,
+    notes: Option<String>,
+}
+
+impl SupportBuilder {
+    fn new(name: String, start_line: usize) -> Self {
+        Self {
+            name,
+            start_line,
+            seen: HashSet::new(),
+            url: None,
+            sha256: None,
+            license: None,
+            redistributable: None,
+            notes: None,
+        }
+    }
+
+    fn set_field(
+        &mut self,
+        key: &str,
+        value: &str,
+        line_number: usize,
+    ) -> Result<(), ManifestError> {
+        let canonical = common_field(key, line_number)?;
+        if !self.seen.insert(canonical) {
+            return Err(ManifestError::new(
+                Some(line_number),
+                format!("duplicate manifest field: {key}"),
+            ));
+        }
+        set_common_field(
+            canonical,
+            value,
+            line_number,
+            &mut self.url,
+            &mut self.sha256,
+            &mut self.license,
+            &mut self.redistributable,
+            &mut self.notes,
+        )
+    }
+
+    fn finish(self) -> Result<SupportFile, ManifestError> {
+        let file = SupportFile {
+            name: self.name,
+            url: required(self.url, "url", self.start_line)?,
+            sha256: required(self.sha256, "sha256", self.start_line)?,
+            license: required(self.license, "license", self.start_line)?,
+            redistributable: required(self.redistributable, "redistributable", self.start_line)?,
+            notes: required(self.notes, "notes", self.start_line)?,
+        };
+        validate_file(
+            &file.name,
+            &file.url,
+            &file.sha256,
+            &file.license,
+            file.redistributable,
+            &file.notes,
+            self.start_line,
+        )?;
+        Ok(file)
     }
 }
 
@@ -156,6 +287,7 @@ struct DocumentBuilder {
     sha256: Option<String>,
     license: Option<String>,
     redistributable: Option<bool>,
+    format_source: Option<String>,
     expected_ref_dvi_sha256: Option<String>,
     notes: Option<String>,
 }
@@ -170,6 +302,7 @@ impl DocumentBuilder {
             sha256: None,
             license: None,
             redistributable: None,
+            format_source: None,
             expected_ref_dvi_sha256: None,
             notes: None,
         }
@@ -186,6 +319,7 @@ impl DocumentBuilder {
             "sha256" => "sha256",
             "license" => "license",
             "redistributable" => "redistributable",
+            "format_source" => "format_source",
             "expected_ref_dvi_sha256" => "expected_ref_dvi_sha256",
             "notes" => "notes",
             _ => {
@@ -209,6 +343,7 @@ impl DocumentBuilder {
             "redistributable" => {
                 self.redistributable = Some(parse_bool(value, line_number)?);
             }
+            "format_source" => self.format_source = Some(value.to_string()),
             "expected_ref_dvi_sha256" => {
                 self.expected_ref_dvi_sha256 = Some(value.to_string());
             }
@@ -225,6 +360,7 @@ impl DocumentBuilder {
             sha256: required(self.sha256, "sha256", self.start_line)?,
             license: required(self.license, "license", self.start_line)?,
             redistributable: required(self.redistributable, "redistributable", self.start_line)?,
+            format_source: required(self.format_source, "format_source", self.start_line)?,
             expected_ref_dvi_sha256: required(
                 self.expected_ref_dvi_sha256,
                 "expected_ref_dvi_sha256",
@@ -257,23 +393,59 @@ fn parse_bool(value: &str, line_number: usize) -> Result<bool, ManifestError> {
     }
 }
 
+fn common_field(key: &str, line_number: usize) -> Result<&'static str, ManifestError> {
+    match key {
+        "url" => Ok("url"),
+        "sha256" => Ok("sha256"),
+        "license" => Ok("license"),
+        "redistributable" => Ok("redistributable"),
+        "notes" => Ok("notes"),
+        _ => Err(ManifestError::new(
+            Some(line_number),
+            format!("unknown manifest field: {key}"),
+        )),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn set_common_field(
+    key: &str,
+    value: &str,
+    line_number: usize,
+    url: &mut Option<String>,
+    sha256: &mut Option<String>,
+    license: &mut Option<String>,
+    redistributable: &mut Option<bool>,
+    notes: &mut Option<String>,
+) -> Result<(), ManifestError> {
+    match key {
+        "url" => *url = Some(value.to_string()),
+        "sha256" => *sha256 = Some(value.to_string()),
+        "license" => *license = Some(value.to_string()),
+        "redistributable" => *redistributable = Some(parse_bool(value, line_number)?),
+        "notes" => *notes = Some(value.to_string()),
+        _ => unreachable!("validated common field"),
+    }
+    Ok(())
+}
+
 fn validate_document(doc: &Document, line_number: usize) -> Result<(), ManifestError> {
-    if !safe_file_name(&doc.name) {
+    validate_file(
+        &doc.name,
+        &doc.url,
+        &doc.sha256,
+        &doc.license,
+        doc.redistributable,
+        &doc.notes,
+        line_number,
+    )?;
+    if !safe_file_name(&doc.format_source) {
         return Err(ManifestError::new(
             Some(line_number),
-            format!("invalid corpus document name: {}", doc.name),
-        ));
-    }
-    if !(doc.url.starts_with("https://") || doc.url.starts_with("http://")) {
-        return Err(ManifestError::new(
-            Some(line_number),
-            format!("{} has unsupported URL scheme: {}", doc.name, doc.url),
-        ));
-    }
-    if !is_sha256(&doc.sha256) {
-        return Err(ManifestError::new(
-            Some(line_number),
-            format!("{} has invalid sha256: {}", doc.name, doc.sha256),
+            format!(
+                "{} has invalid format_source: {}",
+                doc.name, doc.format_source
+            ),
         ));
     }
     if !is_sha256(&doc.expected_ref_dvi_sha256) {
@@ -285,24 +457,53 @@ fn validate_document(doc: &Document, line_number: usize) -> Result<(), ManifestE
             ),
         ));
     }
-    if doc.license.trim().is_empty() {
+    Ok(())
+}
+
+fn validate_file(
+    name: &str,
+    url: &str,
+    sha256: &str,
+    license: &str,
+    redistributable: bool,
+    notes: &str,
+    line_number: usize,
+) -> Result<(), ManifestError> {
+    if !safe_file_name(name) {
         return Err(ManifestError::new(
             Some(line_number),
-            format!("{} has an empty license field", doc.name),
+            format!("invalid corpus file name: {name}"),
         ));
     }
-    if doc.notes.trim().is_empty() {
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
         return Err(ManifestError::new(
             Some(line_number),
-            format!("{} has empty licensing notes", doc.name),
+            format!("{name} has unsupported URL scheme: {url}"),
         ));
     }
-    if !doc.redistributable && doc.license != "no-redistribution" {
+    if !is_sha256(sha256) {
+        return Err(ManifestError::new(
+            Some(line_number),
+            format!("{name} has invalid sha256: {sha256}"),
+        ));
+    }
+    if license.trim().is_empty() {
+        return Err(ManifestError::new(
+            Some(line_number),
+            format!("{name} has an empty license field"),
+        ));
+    }
+    if notes.trim().is_empty() {
+        return Err(ManifestError::new(
+            Some(line_number),
+            format!("{name} has empty licensing notes"),
+        ));
+    }
+    if !redistributable && license != "no-redistribution" {
         return Err(ManifestError::new(
             Some(line_number),
             format!(
-                "{} is marked non-redistributable but license is {}; use no-redistribution",
-                doc.name, doc.license
+                "{name} is marked non-redistributable but license is {license}; use no-redistribution"
             ),
         ));
     }
@@ -322,168 +523,4 @@ fn safe_file_name(value: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    const HASH: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-
-    #[test]
-    fn parses_multiple_documents() {
-        let manifest = parse_manifest(&format!(
-            r#"
-# corpus
-
-doc story.tex
-url https://example.com/story.tex
-sha256 {HASH}
-license Knuth-CTAN
-redistributable true
-expected_ref_dvi_sha256 {HASH}
-notes fixture notes may contain spaces
-
-doc gentle.tex
-url http://example.com/gentle.tex
-sha256 {HASH}
-license MIT
-redistributable true
-expected_ref_dvi_sha256 {HASH}
-notes another fixture
-"#
-        ))
-        .expect("manifest should parse");
-
-        assert_eq!(manifest.doc.len(), 2);
-        assert_eq!(manifest.doc[0].name, "story.tex");
-        assert_eq!(manifest.doc[0].notes, "fixture notes may contain spaces");
-        assert_eq!(manifest.doc[1].url, "http://example.com/gentle.tex");
-    }
-
-    #[test]
-    fn parses_committed_manifest() {
-        let manifest = parse_manifest(include_str!("../../../tests/corpus-manifest.txt"))
-            .expect("committed manifest should parse");
-
-        assert!(!manifest.doc.is_empty());
-    }
-
-    #[test]
-    fn rejects_unknown_field() {
-        let error = parse_manifest(&format!(
-            r#"
-doc story.tex
-url https://example.com/story.tex
-sha256 {HASH}
-bogus value
-license MIT
-redistributable true
-expected_ref_dvi_sha256 {HASH}
-notes fixture
-"#
-        ))
-        .expect_err("unknown field should fail");
-
-        assert!(error.to_string().contains("unknown manifest field: bogus"));
-    }
-
-    #[test]
-    fn rejects_duplicate_field() {
-        let error = parse_manifest(&format!(
-            r#"
-doc story.tex
-url https://example.com/story.tex
-url https://example.com/other.tex
-sha256 {HASH}
-license MIT
-redistributable true
-expected_ref_dvi_sha256 {HASH}
-notes fixture
-"#
-        ))
-        .expect_err("duplicate field should fail");
-
-        assert!(error.to_string().contains("duplicate manifest field: url"));
-    }
-
-    #[test]
-    fn rejects_missing_field() {
-        let error = parse_manifest(&format!(
-            r#"
-doc story.tex
-url https://example.com/story.tex
-sha256 {HASH}
-license MIT
-expected_ref_dvi_sha256 {HASH}
-notes fixture
-"#
-        ))
-        .expect_err("missing field should fail");
-
-        assert!(
-            error
-                .to_string()
-                .contains("missing required field: redistributable")
-        );
-    }
-
-    #[test]
-    fn rejects_bad_hash() {
-        let error = parse_manifest(&format!(
-            r#"
-doc story.tex
-url https://example.com/story.tex
-sha256 nope
-license MIT
-redistributable true
-expected_ref_dvi_sha256 {HASH}
-notes fixture
-"#
-        ))
-        .expect_err("bad hash should fail");
-
-        assert!(error.to_string().contains("has invalid sha256"));
-    }
-
-    #[test]
-    fn rejects_path_traversal_document_name() {
-        let error = parse_manifest(&format!(
-            r#"
-doc ../story.tex
-url https://example.com/story.tex
-sha256 {HASH}
-license MIT
-redistributable true
-expected_ref_dvi_sha256 {HASH}
-notes fixture
-"#
-        ))
-        .expect_err("unsafe file name should fail");
-
-        assert!(
-            error
-                .to_string()
-                .contains("invalid corpus document name: ../story.tex")
-        );
-    }
-
-    #[test]
-    fn rejects_bad_bool() {
-        let error = parse_manifest(&format!(
-            r#"
-doc story.tex
-url https://example.com/story.tex
-sha256 {HASH}
-license MIT
-redistributable yes
-expected_ref_dvi_sha256 {HASH}
-notes fixture
-"#
-        ))
-        .expect_err("bad bool should fail");
-
-        assert!(
-            error
-                .to_string()
-                .contains("redistributable must be true or false")
-        );
-    }
-}
+mod tests;
