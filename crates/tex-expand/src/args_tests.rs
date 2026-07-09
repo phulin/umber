@@ -259,6 +259,55 @@ fn long_macro_accepts_paragraph_token_in_argument() {
 }
 
 #[test]
+fn non_long_delimited_argument_allows_par_from_failed_delimiter_prefix() {
+    let mut stores = Universe::new();
+    let par = stores.intern("par");
+    let bang = char_token('!', Catcode::Other);
+    let question = char_token('?', Catcode::Other);
+    let meaning = macro_meaning(
+        &mut stores,
+        MeaningFlags::EMPTY,
+        &[Token::param(1), Token::Cs(par), bang],
+    );
+
+    let args = match_from_list(
+        &mut stores,
+        meaning,
+        &[Token::Cs(par), question, Token::Cs(par), bang],
+    )
+    .expect("failed delimiter prefix should allow recovered par");
+
+    assert_eq!(args, vec![vec![Token::Cs(par), question]]);
+}
+
+#[test]
+fn non_long_delimited_argument_rejects_par_that_only_mismatches_delimiter() {
+    let mut stores = Universe::new();
+    let par = stores.intern("par");
+    let meaning = macro_meaning(
+        &mut stores,
+        MeaningFlags::EMPTY,
+        &[
+            Token::param(1),
+            char_token('a', Catcode::Letter),
+            char_token('b', Catcode::Letter),
+        ],
+    );
+
+    let err = match_from_list(
+        &mut stores,
+        meaning,
+        &[char_token('a', Catcode::Letter), Token::Cs(par)],
+    )
+    .expect_err("mismatching par should still end a non-long argument");
+
+    assert!(matches!(
+        err,
+        MacroCallError::ParagraphEndedBeforeComplete { ref macro_name } if macro_name == "\\m"
+    ));
+}
+
+#[test]
 fn rejects_outer_control_sequence_while_scanning_argument() {
     let mut stores = Universe::new();
     let outer = stores.intern("outer");
