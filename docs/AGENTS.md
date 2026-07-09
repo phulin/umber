@@ -7,3 +7,6 @@ When documenting tests or parity workflow, point fixture changes to `scripts/reg
 `provenance_performance.md` records durable benchmark and memory observations for packed token provenance; update it when provenance hot-path behavior or benchmark workloads change.
 
 `source_spans_and_provenance.md` specifies the compact source-map, source-span, and derived-provenance design plus its phased migration plan.
+
+`math_layout_arena.md` specifies the contiguous, span-backed Appendix G math
+conversion result and its pure lowering boundary.
