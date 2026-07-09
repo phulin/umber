@@ -10,6 +10,7 @@ use crate::PageArtifact;
 #[cfg(test)]
 mod tests;
 
+pub mod disasm;
 mod extent;
 mod fonts;
 mod framing;
