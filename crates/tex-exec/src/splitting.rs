@@ -5,7 +5,7 @@ use tex_state::glue::GlueSpec;
 use tex_state::ids::{GlueId, NodeListId};
 use tex_state::node::{BoxNode, GlueKind, Node};
 use tex_state::scaled::Scaled;
-use tex_typeset::{INF_BAD, PackSpec, VpackParams, vpack};
+use tex_typeset::{INF_BAD, PackSpec, VpackParams};
 
 use crate::ExecError;
 
@@ -48,7 +48,7 @@ pub(crate) fn prune_page_top(
 }
 
 pub(crate) fn natural_vlist_size(
-    stores: &Universe,
+    stores: &mut Universe,
     content: NodeListId,
 ) -> Result<Scaled, ExecError> {
     let packed = vpack_natural(stores, content);
@@ -58,8 +58,8 @@ pub(crate) fn natural_vlist_size(
         .ok_or(ExecError::ArithmeticOverflow)
 }
 
-pub(crate) fn vpack_natural(stores: &Universe, content: NodeListId) -> BoxNode {
-    vpack(
+pub(crate) fn vpack_natural(stores: &mut Universe, content: NodeListId) -> BoxNode {
+    crate::packing_params::vpack(
         stores,
         content,
         PackSpec::Natural,

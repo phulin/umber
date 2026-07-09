@@ -108,6 +108,7 @@ where
             }
             Ok(DispatchAction::Continue)
         }
+        Meaning::InternalInteger(_) => Err(ExecError::UnsupportedAssignmentTarget),
         meaning @ (Meaning::CountRegister(_)
         | Meaning::DimenRegister(_)
         | Meaning::SkipRegister(_)

@@ -6,11 +6,11 @@ use tex_state::Universe;
 use tex_state::ids::{GlueId, NodeListId};
 use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, Node, Sign, UnsetNode};
 use tex_state::scaled::{GLUE_SET_RATIO_SCALE, GlueSetRatio, Scaled};
-use tex_typeset::{HpackParams, PackSpec, hpack, vpack};
+use tex_typeset::{HpackParams, PackSpec};
 
 use crate::ExecError;
 use crate::mode::{AlignState, AlignmentKind, AlignmentPackSpec};
-use crate::packing_params::{hpack_params as read_hpack_params, vpack_params};
+use crate::packing_params::{hpack, hpack_params as read_hpack_params, vpack, vpack_params};
 
 pub(super) fn finish_alignment(
     state: &AlignState,

@@ -6,7 +6,7 @@ use tex_lex::{InputSource, InputStack, LexError, TokenListReplayKind};
 use tex_state::ExpansionState;
 use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::interner::Symbol;
-use tex_state::meaning::Meaning;
+use tex_state::meaning::{InternalInteger, Meaning};
 use tex_state::token::{Catcode, Token};
 
 use crate::{
@@ -402,6 +402,10 @@ where
         Meaning::IntParam(index) => {
             consume_optional_space(input, stores, recorder, hooks, expander)?;
             Ok(ScannedInt::new(stores.int_param(IntParam::new(index))))
+        }
+        Meaning::InternalInteger(InternalInteger::Badness) => {
+            consume_optional_space(input, stores, recorder, hooks, expander)?;
+            Ok(ScannedInt::new(stores.last_badness()))
         }
         Meaning::DimenParam(index) => {
             consume_optional_space(input, stores, recorder, hooks, expander)?;

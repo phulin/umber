@@ -473,6 +473,78 @@ fn box_dimension_writes_are_readable_by_the() {
 }
 
 #[test]
+fn uncopy_primitives_unbox_without_clearing_registers() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\setbox0=\\hbox{\\kern1pt}\
+         \\setbox1=\\hbox{\\unhcopy0}\
+         \\setbox2=\\vbox{\\kern2pt}\
+         \\setbox3=\\vbox{\\unvcopy2}",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("uncopy primitives execute");
+
+    assert!(stores.box_reg(0).is_some(), "\\unhcopy should not clear");
+    assert!(stores.box_reg(2).is_some(), "\\unvcopy should not clear");
+
+    let hcopy = stores.box_reg(1).expect("hcopy destination");
+    let [tex_state::node::Node::HList(hbox)] = stores.nodes(hcopy) else {
+        panic!("register 1 should hold an hbox");
+    };
+    assert!(matches!(
+        stores.nodes(hbox.children),
+        [tex_state::node::Node::Kern { .. }]
+    ));
+
+    let vcopy = stores.box_reg(3).expect("vcopy destination");
+    let [tex_state::node::Node::VList(vbox)] = stores.nodes(vcopy) else {
+        panic!("register 3 should hold a vbox");
+    };
+    assert!(matches!(
+        stores.nodes(vbox.children),
+        [tex_state::node::Node::Kern { .. }]
+    ));
+}
+
+#[test]
+fn badness_reads_most_recent_pack_and_is_not_assignable() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    install_expandable(&mut stores, "the", ExpandablePrimitive::The);
+    let mut input = InputStack::new(MemoryInput::new(
+        "{\\setbox0=\\hbox to 10pt{\\hskip0pt plus1pt}}\\count0=\\badness\\edef\\x{\\the\\badness}",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("badness reads execute");
+
+    assert_eq!(stores.count(0), tex_typeset::INF_BAD);
+    let x = stores.symbol("x").expect("x was interned");
+    let meaning = stores.macro_meaning(x).expect("x is a macro");
+    let rendered: String = stores
+        .tokens(meaning.replacement_text())
+        .iter()
+        .filter_map(|token| match token {
+            Token::Char { ch, .. } => Some(*ch),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(rendered, "10000");
+
+    let mut bad_assignment = InputStack::new(MemoryInput::new("\\badness=0"));
+    assert!(
+        Executor::new()
+            .run(&mut bad_assignment, &mut stores)
+            .is_err(),
+        "\\badness must remain read-only"
+    );
+}
+
+#[test]
 fn leaders_parse_box_and_rule_payloads_on_glue_nodes() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

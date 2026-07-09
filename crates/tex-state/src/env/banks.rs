@@ -171,6 +171,9 @@ impl IntParam {
     /// TeX's current math family parameter.
     pub const FAM: Self = Self::new(59);
 
+    /// Hidden backing cell for TeX's read-only `\badness` internal integer.
+    pub const LAST_BADNESS: Self = Self::new(60);
+
     /// TeX's `\showboxbreadth` integer parameter.
     pub const SHOW_BOX_BREADTH: Self = Self::new(24);
 

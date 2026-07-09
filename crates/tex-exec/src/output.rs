@@ -14,11 +14,12 @@ use tex_state::page::{
 use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::token::Token;
 use tex_state::{GroupKind, Universe};
-use tex_typeset::{INF_BAD, PackSpec, VpackParams, vpack};
+use tex_typeset::{INF_BAD, PackSpec, VpackParams};
 
 use crate::assignments::{self, shipout_node};
 use crate::executor::{MainControlExit, run_main_control_until};
 use crate::mode::IGNORE_DEPTH;
+use crate::packing_params::vpack;
 use crate::page_builder::build_page;
 use crate::splitting::{natural_vlist_size, prune_page_top, vpack_natural};
 use crate::{ExecError, ExecutionStats, Mode, ModeNest, leave_group};

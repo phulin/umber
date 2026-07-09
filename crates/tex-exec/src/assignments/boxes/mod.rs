@@ -136,9 +136,19 @@ where
             };
             append_box_register(nest, stores, id)?;
         }
-        UnexpandablePrimitive::UnHBox | UnexpandablePrimitive::UnVBox => {
+        UnexpandablePrimitive::UnHBox
+        | UnexpandablePrimitive::UnHCopy
+        | UnexpandablePrimitive::UnVBox
+        | UnexpandablePrimitive::UnVCopy => {
             let index = scan_register_index(input, stores, hooks)?;
-            let id = stores.take_box_reg_same_level(index);
+            let id = if matches!(
+                primitive,
+                UnexpandablePrimitive::UnHBox | UnexpandablePrimitive::UnVBox
+            ) {
+                stores.take_box_reg_same_level(index)
+            } else {
+                stores.box_reg(index)
+            };
             append_unboxed(nest, stores, id, primitive)?;
         }
         UnexpandablePrimitive::LastBox => {
@@ -400,8 +410,9 @@ fn append_unboxed(
         return Ok(());
     };
     match (primitive, node) {
-        (UnexpandablePrimitive::UnHBox, Node::HList(box_node))
-        | (UnexpandablePrimitive::UnVBox, Node::VList(box_node)) => {
+        (UnexpandablePrimitive::UnHBox | UnexpandablePrimitive::UnHCopy, Node::HList(box_node))
+        | (UnexpandablePrimitive::UnVBox | UnexpandablePrimitive::UnVCopy, Node::VList(box_node)) =>
+        {
             let children = stores.clone_node_list_to_epoch(box_node.children);
             for node in stores.nodes(children).to_vec() {
                 append_node_to_current_list(nest, stores, node)?;

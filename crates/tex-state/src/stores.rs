@@ -881,6 +881,17 @@ impl Stores {
         self.env.int_param(param)
     }
 
+    /// Reads TeX's most recent glue-setting badness.
+    #[must_use]
+    pub fn last_badness(&self) -> i32 {
+        self.int_param(IntParam::LAST_BADNESS)
+    }
+
+    /// Records TeX's most recent glue-setting badness as global engine state.
+    pub fn set_last_badness(&mut self, value: i32) {
+        self.set_int_param_global(IntParam::LAST_BADNESS, value);
+    }
+
     /// Reads TeX's current `\mag` parameter.
     #[must_use]
     pub fn mag(&self) -> i32 {

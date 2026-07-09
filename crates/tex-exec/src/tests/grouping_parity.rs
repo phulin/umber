@@ -83,6 +83,17 @@ fn box_register_cases_match_reference_micro_suite() {
         "reference box movement output changed:\n{}",
         movement
     );
+    let uncopy_badness = reference_fixture("box_uncopy_badness");
+    assert!(
+        uncopy_badness.contains("B:10000"),
+        "reference badness output changed:\n{}",
+        uncopy_badness
+    );
+    assert!(
+        uncopy_badness.contains("H:kept") && uncopy_badness.contains("V:kept"),
+        "reference uncopy register behavior changed:\n{}",
+        uncopy_badness
+    );
 
     let mut stores =
         run_umber_exec_with_box_expandables(r"\setbox0=\hbox to 10pt{}\wd0=12pt\ht0=3pt\dp0=2pt");
@@ -111,6 +122,12 @@ fn box_register_cases_match_reference_micro_suite() {
     stores = run_umber_exec_with_box_expandables(r"\setbox0=\hbox{}\setbox1=\copy0\box0");
     assert!(stores.box_reg(0).is_none());
     assert!(stores.box_reg(1).is_some());
+
+    stores = run_umber_exec_with_box_expandables(
+        r"\setbox0=\hbox to 10pt{\hskip0pt plus1pt}\count0=\badness\setbox1=\hbox{\unhcopy0}",
+    );
+    assert_eq!(stores.count(0), 10_000);
+    assert!(stores.box_reg(0).is_some());
 }
 
 fn reference_fixture(stem: &str) -> String {

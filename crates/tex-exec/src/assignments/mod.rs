@@ -436,7 +436,9 @@ where
             UnexpandablePrimitive::Box
             | UnexpandablePrimitive::Copy
             | UnexpandablePrimitive::UnHBox
+            | UnexpandablePrimitive::UnHCopy
             | UnexpandablePrimitive::UnVBox
+            | UnexpandablePrimitive::UnVCopy
             | UnexpandablePrimitive::LastBox
             | UnexpandablePrimitive::Raise
             | UnexpandablePrimitive::Lower

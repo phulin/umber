@@ -6,7 +6,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 
 ## Boxes And Rules
 
-- [ ] `\badness` - Reports the badness of the glue setting in the last box made.
+- [x] `\badness` - Reports the badness of the glue setting in the last box made. Implemented as a read-only internal integer backed by execution-side packing records.
 - [x] `\box` - Appends a box register's contents and clears that register.
 - [x] `\boxmaxdepth` - Sets the maximum depth allowed when building vertical boxes. Implemented as an assignable dimension parameter consumed by `tex-typeset` vertical packing.
 - [x] `\cleaders` - Builds centered leaders across glue. Payload parsing and glue-node storage are implemented; DVI repetition is tracked in the leaders output issue.
@@ -25,9 +25,9 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [x] `\prevdepth` - Depth of the previous box on the current vertical list. Implemented as a per-mode-list field; `\nointerlineskip` sets TeX's ignore sentinel.
 - [x] `\setbox` - Assigns a box register from an `\hbox`, `\vbox`, or `\vtop`.
 - [x] `\unhbox` - Unpacks an hbox register into the current list and clears it.
-- [ ] `\unhcopy` - Unpacks a copy of an hbox register into the current list.
+- [x] `\unhcopy` - Unpacks a copy of an hbox register into the current list.
 - [x] `\unvbox` - Unpacks a vbox register into the current list and clears it; vertical children are appended through the shared interline-glue path.
-- [ ] `\unvcopy` - Unpacks a copy of a vbox register into the current list.
+- [x] `\unvcopy` - Unpacks a copy of a vbox register into the current list.
 - [x] `\vbadness` - Threshold above which underfull or loose vboxes are reported. Implemented as an assignable integer parameter consumed by `tex-typeset` vertical packing diagnostics.
 - [x] `\vbox` - Builds a vertical box with normal baseline positioning.
 - [x] `\vfuzz` - Tolerance before overfull vboxes are reported. Implemented as an assignable dimension parameter consumed by `tex-typeset` vertical packing diagnostics.

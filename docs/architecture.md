@@ -568,8 +568,10 @@ makes box-level memoization (M4) sound.
   `hpack`, `vpack`, `vtop`, `vert_break`, and TeX.web §108 badness over frozen node lists.
   The crate reads `Universe` immutably, including frozen nodes, glue specs,
   and loaded font character metrics, copies packing parameters into plain
-  structs at entry, and returns box payloads plus diagnostics without writing
-  state. Stomach-side box-building primitives live in `tex-exec`; when hpack
+  structs at entry, and returns box payloads, diagnostics, and the plain
+  glue-setting badness without writing state. Stomach-side box-building
+  primitives live in `tex-exec`; execution records the latest packing badness
+  through `Universe` for the read-only `\badness` internal integer. When hpack
   diagnostics require TeX's overfull marker, `tex-exec` materializes the
   synthetic rule while freezing the final child list. The packing crate
   remains pure and has no `World` or `&mut Universe` surface.
