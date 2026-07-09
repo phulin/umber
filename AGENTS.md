@@ -42,7 +42,8 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 ## Development
 
 - Use `scripts/check.sh` (tests, clippy, format) as the local gate before committing.
-- For `UPDATE_FIXTURES=1` fixture regeneration, follow `tests/AGENTS.md`.
+- For fixture regeneration, follow `tests/AGENTS.md` and use
+  `scripts/regen-fixtures.sh`.
 
 ## Beads Issue Tracker
 

@@ -555,7 +555,7 @@ fn leader_payloads_participate_in_state_hash_and_rollback() {
 }
 
 #[test]
-fn showbox_dumps_leader_glue_payloads_like_pdftex() {
+fn showbox_dumps_leader_glue_payloads_like_reference() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(

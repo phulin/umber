@@ -4,13 +4,10 @@ mod imp {
     use std::path::{Path, PathBuf};
 
     use anyhow::{Context, Result};
-    use refexec::{DviComparison, RefTex, RunOpts, compare_dvi_bytes};
+    use refexec::{DviComparison, compare_dvi_bytes};
     use tempfile::TempDir;
 
-    use crate::{
-        copy_area_support_files, corpus_root, fixture_path, live_reference_enabled,
-        read_binary_fixture, update_fixtures_enabled, write_binary_fixture,
-    };
+    use crate::{copy_area_support_files, corpus_root};
 
     const PINNED_CM_TFMS: &[&str] = &["cmr10.tfm", "cmmi10.tfm", "cmsy10.tfm", "cmex10.tfm"];
 
@@ -108,68 +105,6 @@ mod imp {
         Ok(copied)
     }
 
-    pub fn expected_dvi_fixture(
-        area: &str,
-        case: &str,
-        setup: &DviCaseSetup,
-        ini: bool,
-    ) -> Vec<u8> {
-        if update_fixtures_enabled() || live_reference_enabled() {
-            let expected = reference_dvi(setup, ini);
-            if update_fixtures_enabled() {
-                update_dvi_fixture_if_changed(area, case, &expected);
-            }
-            if live_reference_enabled() {
-                let committed = read_binary_fixture(area, case, "dvi");
-                assert_dvi_matches(
-                    &expected,
-                    &committed,
-                    &format!("{area}/{case} committed fixture"),
-                );
-            }
-            expected
-        } else {
-            read_binary_fixture(area, case, "dvi")
-        }
-    }
-
-    pub fn reference_dvi(setup: &DviCaseSetup, ini: bool) -> Vec<u8> {
-        let output = RefTex::locate()
-            .expect("locate reference TeX")
-            .run(
-                setup.source_path(),
-                &RunOpts {
-                    dvi: true,
-                    ini,
-                    extra_inputs: setup.extra_inputs().to_vec(),
-                },
-            )
-            .expect("run reference DVI fixture");
-        assert!(
-            output.success,
-            "reference DVI fixture failed:\n{}",
-            output.log
-        );
-        output.dvi.expect("reference TeX should produce DVI")
-    }
-
-    pub fn update_dvi_fixture_if_changed(area: &str, case: &str, expected: &[u8]) {
-        let path = fixture_path(area, case, "dvi");
-        let unchanged = fs::read(&path)
-            .ok()
-            .and_then(|current| compare_dvi_bytes(expected, &current).ok())
-            == Some(DviComparison::Equal);
-        if unchanged {
-            return;
-        }
-
-        write_binary_fixture(area, case, "dvi", expected);
-        panic!(
-            "DVI fixture updated at {} -- rerun without UPDATE_FIXTURES",
-            path.display()
-        );
-    }
-
     pub fn assert_dvi_matches(expected: &[u8], actual: &[u8], label: &str) {
         let comparison = compare_dvi_bytes(expected, actual).expect("compare DVI bytes");
         assert_eq!(
@@ -180,7 +115,4 @@ mod imp {
     }
 }
 
-pub use imp::{
-    DviCaseSetup, assert_dvi_matches, expected_dvi_fixture, reference_dvi,
-    update_dvi_fixture_if_changed,
-};
+pub use imp::{DviCaseSetup, assert_dvi_matches};

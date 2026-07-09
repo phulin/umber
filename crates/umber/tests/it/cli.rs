@@ -1,10 +1,6 @@
 use std::{fs, process::Command};
 
-use refexec::{RefTex, RunOpts};
-use test_support::{
-    assert_matches_fixture, corpus_cases, dvi, live_reference_enabled, normalize,
-    read_binary_fixture, update_fixtures_enabled,
-};
+use test_support::{assert_matches_fixture, corpus_cases, dvi, normalize, read_binary_fixture};
 use tex_lex::{Lexer, WorldInput};
 use tex_state::env::banks::IntParam;
 use tex_state::token::{Catcode, Token};
@@ -88,35 +84,19 @@ fn expand_dump_usage_errors_follow_lex_dump_shape() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side corpus discovery and command execution.
-fn run_exec_corpus_matches_pdftex_diagnostics() {
-    run_corpus_matches_pdftex_diagnostics("exec", false);
+fn run_exec_corpus_matches_committed_diagnostics() {
+    run_corpus_matches_committed_log_fixtures("exec", false);
 }
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side corpus discovery and command execution.
-fn run_typeset_corpus_matches_pdftex_box_dumps() {
-    run_corpus_matches_pdftex_diagnostics("typeset", true);
+fn run_typeset_corpus_matches_committed_box_dumps() {
+    run_corpus_matches_committed_log_fixtures("typeset", true);
 }
 
 #[allow(clippy::disallowed_methods)] // host-side corpus discovery and command execution.
-fn run_corpus_matches_pdftex_diagnostics(area: &str, show_fixtures: bool) {
-    let ref_tex = (live_reference_enabled() || update_fixtures_enabled())
-        .then(|| RefTex::locate().expect("reference TeX should be available"));
-
+fn run_corpus_matches_committed_log_fixtures(area: &str, show_fixtures: bool) {
     for case in corpus_cases(area) {
-        let expected = ref_tex.as_ref().map(|ref_tex| {
-            let ref_output = ref_tex
-                .run(case.source_path(), &RunOpts::default())
-                .expect("reference TeX should run exec fixture");
-            let expected = if show_fixtures {
-                normalize::box_dump(&ref_output.log)
-            } else {
-                normalize::exec_log(&ref_output.log)
-            };
-            assert_matches_fixture(area, case.name(), "log", &expected);
-            expected
-        });
-
         let mut command = Command::new(env!("CARGO_BIN_EXE_umber"));
         command.arg("run");
         if show_fixtures {
@@ -138,76 +118,8 @@ fn run_corpus_matches_pdftex_diagnostics(area: &str, show_fixtures: bool) {
         } else {
             normalize::exec_log(&actual_stdout)
         };
-        if let Some(expected) = expected {
-            assert_eq!(
-                actual,
-                expected,
-                "{area} fixture mismatch for {}",
-                case.source_path().display()
-            );
-        } else {
-            assert_matches_fixture(area, case.name(), "log", &actual);
-        }
+        assert_matches_fixture(area, case.name(), "log", &actual);
     }
-}
-
-#[test]
-#[allow(clippy::disallowed_methods)] // host-side optional corpus and command execution.
-fn run_hyphen_showhyphens_corpus_matches_pdftex() {
-    if !live_reference_enabled() {
-        eprintln!("skipping hyphen showhyphens parity: set UMBER_LIVE_REF=1");
-        return;
-    }
-
-    let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let hyphen_tex = repo_root.join("third_party/hyphen/hyphen.tex");
-    if !hyphen_tex.exists() {
-        eprintln!(
-            "skipping hyphen showhyphens parity: {}; run scripts/fetch-hyphen-corpus.sh",
-            hyphen_tex.display()
-        );
-        return;
-    }
-    let ref_tex = match RefTex::locate() {
-        Ok(ref_tex) => ref_tex,
-        Err(error) => {
-            eprintln!("skipping hyphen showhyphens parity: {error:#}");
-            return;
-        }
-    };
-
-    assert_eq!(HYPHEN_PARITY_WORDS.len(), 200);
-    let temp_dir = tempfile::tempdir().expect("create hyphen parity temp dir");
-    fs::copy(&hyphen_tex, temp_dir.path().join("hyphen.tex")).expect("copy hyphen.tex");
-
-    let ref_input = temp_dir.path().join("pdftex-showhyphens.tex");
-    fs::write(&ref_input, showhyphens_source(false)).expect("write pdftex hyphen input");
-    let ref_output = ref_tex
-        .run(&ref_input, &RunOpts::default())
-        .expect("run pdftex hyphen corpus");
-    assert!(
-        ref_output.success,
-        "pdftex hyphen corpus failed:\n{}",
-        ref_output.log
-    );
-    let expected = normalize::showhyphens(&ref_output.log);
-
-    let umber_input = temp_dir.path().join("umber-showhyphens.tex");
-    fs::write(&umber_input, showhyphens_source(true)).expect("write umber hyphen input");
-    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
-        .arg("run")
-        .arg(&umber_input)
-        .output()
-        .expect("run umber hyphen corpus");
-    assert!(
-        output.status.success(),
-        "umber hyphen corpus failed:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let actual_stdout = String::from_utf8(output.stdout).expect("umber run output is utf-8");
-    let actual = normalize::showhyphens(&actual_stdout);
-
-    assert_eq!(actual, expected, "hyphen.tex showhyphens corpus drifted");
 }
 
 #[test]
@@ -393,223 +305,6 @@ fn run_show_fixtures_harvests_without_committing_immediate_stream_effects() {
         "--show-fixtures must not run the final commit for pending immediate effects"
     );
 }
-
-fn showhyphens_source(load_hyphen: bool) -> String {
-    let mut source = String::new();
-    if load_hyphen {
-        source.push_str("\\input hyphen\n");
-    }
-    for word in HYPHEN_PARITY_WORDS {
-        source.push_str("\\showhyphens{");
-        source.push_str(word);
-        source.push_str("}\n");
-    }
-    source.push_str("\\end\n");
-    source
-}
-
-const HYPHEN_PARITY_WORDS: &[&str] = &[
-    "hyphenation",
-    "representative",
-    "algorithm",
-    "computer",
-    "science",
-    "mathematics",
-    "language",
-    "programming",
-    "portable",
-    "implementation",
-    "comparison",
-    "diagnostic",
-    "normalization",
-    "exception",
-    "patterns",
-    "boundary",
-    "paragraph",
-    "typesetting",
-    "discretionary",
-    "ligature",
-    "kerning",
-    "baseline",
-    "dimension",
-    "magnification",
-    "assignment",
-    "primitive",
-    "expansion",
-    "conditionals",
-    "registers",
-    "universe",
-    "snapshot",
-    "rollback",
-    "terminal",
-    "transcript",
-    "ordinary",
-    "letters",
-    "lowercase",
-    "uppercase",
-    "character",
-    "sequence",
-    "interpreter",
-    "execution",
-    "analysis",
-    "architecture",
-    "reference",
-    "validation",
-    "fixture",
-    "corpus",
-    "future",
-    "stability",
-    "automatic",
-    "manual",
-    "associate",
-    "associates",
-    "declination",
-    "obligatory",
-    "philanthropic",
-    "reciprocity",
-    "recognizance",
-    "reformation",
-    "table",
-    "index",
-    "memory",
-    "format",
-    "plain",
-    "engine",
-    "workflow",
-    "coordinate",
-    "quality",
-    "testing",
-    "failure",
-    "success",
-    "visible",
-    "invisible",
-    "accurate",
-    "behavior",
-    "semantic",
-    "persistent",
-    "journal",
-    "content",
-    "storage",
-    "scanner",
-    "token",
-    "balanced",
-    "braces",
-    "spaces",
-    "control",
-    "symbol",
-    "mutable",
-    "immutable",
-    "history",
-    "version",
-    "document",
-    "process",
-    "builder",
-    "horizontal",
-    "vertical",
-    "material",
-    "natural",
-    "stretch",
-    "shrink",
-    "penalty",
-    "badness",
-    "tolerance",
-    "pretolerance",
-    "package",
-    "project",
-    "repository",
-    "portable",
-    "modern",
-    "performance",
-    "optimization",
-    "profile",
-    "correctness",
-    "parity",
-    "coverage",
-    "regression",
-    "represent",
-    "normalize",
-    "compare",
-    "output",
-    "input",
-    "source",
-    "available",
-    "optional",
-    "distribution",
-    "installation",
-    "developer",
-    "maintainer",
-    "interface",
-    "command",
-    "script",
-    "fetching",
-    "located",
-    "current",
-    "relative",
-    "absolute",
-    "directory",
-    "temporary",
-    "execution",
-    "captured",
-    "message",
-    "underfull",
-    "overfull",
-    "paragraphs",
-    "minimum",
-    "maximum",
-    "language",
-    "english",
-    "american",
-    "dictionary",
-    "exceptional",
-    "educational",
-    "institution",
-    "international",
-    "representation",
-    "responsibility",
-    "characteristic",
-    "configuration",
-    "communication",
-    "documentation",
-    "implementation",
-    "initialization",
-    "interpretation",
-    "localization",
-    "organization",
-    "presentation",
-    "recommendation",
-    "specification",
-    "transformation",
-    "verification",
-    "application",
-    "development",
-    "foundation",
-    "generation",
-    "operation",
-    "resolution",
-    "translation",
-    "variation",
-    "evaluation",
-    "iteration",
-    "integration",
-    "migration",
-    "selection",
-    "transaction",
-    "allocation",
-    "collection",
-    "definition",
-    "description",
-    "extension",
-    "function",
-    "location",
-    "notation",
-    "position",
-    "question",
-    "relation",
-    "solution",
-    "buffer",
-    "kernel",
-    "driver",
-];
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side corpus files, not engine I/O.

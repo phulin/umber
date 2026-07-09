@@ -6,11 +6,5 @@ edition.workspace = true
 [dependencies]
 tex-arith = { path = "../tex-arith" }
 
-[dev-dependencies]
-anyhow.workspace = true
-refexec = { path = "../../tools/refexec" }
-tempfile.workspace = true
-test-support = { path = "../test-support" }
-
 [lints]
 workspace = true

@@ -10,8 +10,8 @@ Scope: where Rust test code and fixtures should live in this workspace.
 Test placement should optimize for three things:
 
 1. **Fast local gates.** `cargo test --workspace --tests` should remain fast
-   enough to run often. Long parity runs belong in focused scripts, not in the
-   default cargo test path.
+   enough to run often and is the correctness gate against committed fixtures.
+   Live reference work belongs in fixture regeneration, not in cargo tests.
 2. **Clear production files.** Source files should stay short and focused so
    humans and agents can read implementation code without paging through large
    test tables, fixtures, or helper scaffolding.
@@ -22,7 +22,7 @@ Test placement should optimize for three things:
 
 ## 2. Test Tiers And Budgets
 
-The default tier is fixture-only and hermetic:
+The correctness tier is fixture-only and hermetic:
 
 ```bash
 cargo test --tests
@@ -31,25 +31,15 @@ scripts/check.sh
 ```
 
 These commands must not require `pdftex`, `tex`, `tftopl`, or other TeX tools
-on `PATH`. `scripts/check.sh` forces `UMBER_LIVE_REF=0` and
-`UPDATE_FIXTURES=0` so it remains the local fast gate even when a developer's
-shell has reference-mode variables set. The warmed `cargo test --tests` target
-is under 10 seconds on the current macOS development workspace; investigate a
-sustained run above 15 seconds or any default test that invokes live TeX. The
-broader `scripts/check.sh` gate also runs format and clippy, including release
-clippy, and should stay under a warmed two-minute local budget.
+on `PATH`. The warmed `cargo test --tests` target is under 10 seconds on the
+current macOS development workspace; investigate a sustained run above 15
+seconds or any default test that invokes live TeX. The broader
+`scripts/check.sh` gate also runs format and clippy, including release clippy,
+and should stay under a warmed two-minute local budget.
 
-The explicit slow parity tier is:
-
-```bash
-scripts/parity.sh
-```
-
-That script enables `UMBER_LIVE_REF=1`, runs live reference diagnostic checks,
-optional hyphenation parity when its corpus is present, and byte-identical DVI
-comparisons for the DVI, page, math, align, and leaders corpora. Regenerate
-committed fixtures only through `scripts/regen-fixtures.sh`, which is the
-blessed live-reference rewrite path.
+Regenerate committed fixtures only through `scripts/regen-fixtures.sh`, which
+is the blessed live-reference rewrite path. Its `--area fonts` mode owns the
+explicit live `tftopl` cross-check and does not rewrite fixtures.
 
 ## 3. Default Rule
 
@@ -156,15 +146,11 @@ fixtures and do not invoke live reference tools. `scripts/regen-fixtures.sh`
 owns DVI fixture regeneration: it runs the live reference engine through
 `tools/refexec`, copies the pinned local CM TFMs plus area support files, uses
 INITEX for the math corpus, and rewrites raw reference DVI only when the
-existing preamble-comment-only DVI comparison detects a change. The explicit
-slow tier remains in `scripts/parity.sh` until it is retired by the parity
-workflow cleanup.
+existing preamble-comment-only DVI comparison detects a change.
 
 Default cargo tests must not invoke live TeX tools. Fixture regeneration uses
-`scripts/regen-fixtures.sh`, while live reference checks use
-`UMBER_LIVE_REF=1`, `scripts/parity.sh`, or
-`scripts/regen-fixtures.sh --area fonts` for the live `tftopl` font
-cross-check.
+`scripts/regen-fixtures.sh`, which also builds `tools/fixturegen` for
+text/native fixture updates and the live `tftopl` font cross-check.
 
 `tex-out` also owns the cross-crate page-output float guard. Its unit tests
 scan the page node, packing, shipout lowering, artifact, DVI, and CLI DVI

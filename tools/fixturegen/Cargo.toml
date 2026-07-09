@@ -1,0 +1,17 @@
+[package]
+name = "fixturegen"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+refexec = { path = "../refexec" }
+tempfile.workspace = true
+test-support = { path = "../../crates/test-support" }
+tex-arith = { path = "../../crates/tex-arith" }
+tex-fonts = { path = "../../crates/tex-fonts" }
+tex-lex = { path = "../../crates/tex-lex" }
+tex-state = { path = "../../crates/tex-state" }
+
+[lints]
+workspace = true

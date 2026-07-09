@@ -1,8 +1,6 @@
 use super::support::*;
 use super::*;
-use test_support::{
-    assert_matches_fixture, live_reference_enabled, read_fixture, update_fixtures_enabled,
-};
+use test_support::{corpus_root, read_fixture};
 use tex_expand::ReadRecorder;
 use tex_out::dvi::write_dvi;
 use tex_out::{
@@ -281,13 +279,13 @@ fn shipout_commits_deferred_openout_closeout_whatsits() {
 }
 
 #[test]
-#[allow(clippy::disallowed_methods)] // host-side pdfTeX parity file.
+#[allow(clippy::disallowed_methods)] // host-side committed parity fixture.
 fn top_level_deferred_openout_closeout_ship_during_final_cleanup() {
-    let source = "\\openout0=top.out \\write0{top}\\closeout0\\end";
+    let source = read_io_source("top_open_close");
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(source));
+    let mut input = InputStack::new(MemoryInput::new(&source));
 
     let stats = Executor::new()
         .run(&mut input, &mut stores)
@@ -296,7 +294,7 @@ fn top_level_deferred_openout_closeout_ship_during_final_cleanup() {
     assert_eq!(stats.shipped_artifacts.len(), 1);
     assert_eq!(stores.world().memory_output("top.out"), Some(&b"top"[..]));
 
-    let reference = pdftex_file_output_fixture("top_open_close", source, "top.out");
+    let reference = read_fixture("tex_exec_io", "top_open_close", "out");
     assert_eq!(reference.as_bytes(), b"top\n");
 }
 
@@ -523,14 +521,13 @@ fn shipout_write_expansion_uses_active_read_recorder() {
 }
 
 #[test]
-#[allow(clippy::disallowed_methods)] // host-side pdfTeX parity file.
+#[allow(clippy::disallowed_methods)] // host-side committed parity fixture.
 fn source_special_lowers_to_anchored_dvi_xxx_payload() {
-    let source = "\\def\\payload{abc}\\count0=42\
-        \\shipout\\hbox{\\special{pre \\payload-\\the\\count0}}\\end";
+    let source = read_io_source("special_payload");
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(source));
+    let mut input = InputStack::new(MemoryInput::new(&source));
 
     let stats = Executor::new()
         .run(&mut input, &mut stores)
@@ -556,21 +553,18 @@ fn source_special_lowers_to_anchored_dvi_xxx_payload() {
     let dvi = write_dvi(std::slice::from_ref(&artifact)).expect("DVI writes");
     assert_eq!(
         format_special_payloads(&dvi_special_payloads(&dvi)),
-        pdftex_dvi_specials_fixture("special_payload", source)
+        read_fixture("tex_exec_io", "special_payload", "specials")
     );
 }
 
 #[test]
-#[allow(clippy::disallowed_methods)] // host-side pdfTeX parity file.
+#[allow(clippy::disallowed_methods)] // host-side committed parity fixture.
 fn leader_payload_suppresses_deferred_write_but_keeps_specials() {
-    let source = "\\shipout\\hbox to 4pt{\
-        \\leaders\\hbox{\\vrule width1pt height1pt depth0pt\
-            \\openout0=leader.out \\write0{leader-stream}\\closeout0\
-            \\write16{leader-write}\\special{leader-special}}\\hfil}\\end";
+    let source = read_io_source("leader_payload_effects");
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(source));
+    let mut input = InputStack::new(MemoryInput::new(&source));
 
     let stats = Executor::new()
         .run(&mut input, &mut stores)
@@ -616,23 +610,23 @@ fn leader_payload_suppresses_deferred_write_but_keeps_specials() {
         "leader-contained specials should still emit DVI xxx output"
     );
 
-    let reference_effects = pdftex_effects_fixture("leader_payload_effects", source);
+    let reference_effects = read_fixture("tex_exec_io", "leader_payload_effects", "effects");
     assert!(reference_effects.contains("leader.out: absent"));
     assert!(reference_effects.contains("leader-write-in-log: false"));
     assert_eq!(
         format_special_payloads(&actual_specials),
-        pdftex_dvi_specials_fixture("leader_payload_effects", source)
+        read_fixture("tex_exec_io", "leader_payload_effects", "specials")
     );
 }
 
 #[test]
-#[allow(clippy::disallowed_methods)] // host-side pdfTeX parity file.
-fn ordinary_shipped_openout_closeout_matches_pdftex_file_effect() {
-    let source = "\\shipout\\hbox{\\openout0=ordinary.out \\write0{ordinary}\\closeout0}\\end";
+#[allow(clippy::disallowed_methods)] // host-side committed parity fixture.
+fn ordinary_shipped_openout_closeout_matches_reference_file_effect() {
+    let source = read_io_source("ordinary_open_close");
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(source));
+    let mut input = InputStack::new(MemoryInput::new(&source));
 
     Executor::new()
         .run(&mut input, &mut stores)
@@ -643,7 +637,7 @@ fn ordinary_shipped_openout_closeout_matches_pdftex_file_effect() {
         Some(&b"ordinary"[..])
     );
 
-    let reference = pdftex_file_output_fixture("ordinary_open_close", source, "ordinary.out");
+    let reference = read_fixture("tex_exec_io", "ordinary_open_close", "out");
     assert_eq!(reference.as_bytes(), b"ordinary\n");
 }
 
@@ -818,79 +812,13 @@ impl ReadRecorder for SawTheRecorder {
     }
 }
 
-#[allow(clippy::disallowed_methods)] // host-side pdfTeX fixture regeneration.
-fn pdftex_file_output_fixture(stem: &str, source: &str, output_name: &str) -> String {
-    pdftex_text_fixture("tex_exec_io", stem, "out", || {
-        let temp_dir = tempfile::TempDir::new().expect("temporary TeX run directory");
-        run_reference_tex(temp_dir.path(), stem, source, false);
-        let bytes = std::fs::read(temp_dir.path().join(output_name))
-            .unwrap_or_else(|error| panic!("failed to read pdfTeX output {output_name}: {error}"));
-        String::from_utf8(bytes).expect("pdfTeX output should be utf-8")
-    })
-}
-
-#[allow(clippy::disallowed_methods)] // host-side pdfTeX fixture regeneration.
-fn pdftex_dvi_specials_fixture(stem: &str, source: &str) -> String {
-    pdftex_text_fixture("tex_exec_io", stem, "specials", || {
-        let temp_dir = tempfile::TempDir::new().expect("temporary TeX run directory");
-        run_reference_tex(temp_dir.path(), stem, source, true);
-        let dvi =
-            std::fs::read(temp_dir.path().join(format!("{stem}.dvi"))).expect("read reference DVI");
-        format_special_payloads(&dvi_special_payloads(&dvi))
-    })
-}
-
-#[allow(clippy::disallowed_methods)] // host-side pdfTeX fixture regeneration.
-fn pdftex_effects_fixture(stem: &str, source: &str) -> String {
-    pdftex_text_fixture("tex_exec_io", stem, "effects", || {
-        let temp_dir = tempfile::TempDir::new().expect("temporary TeX run directory");
-        let log = run_reference_tex(temp_dir.path(), stem, source, true);
-        let leader_out = if temp_dir.path().join("leader.out").exists() {
-            "present"
-        } else {
-            "absent"
-        };
-        format!(
-            "leader.out: {leader_out}\nleader-write-in-log: {}\n",
-            log.contains("leader-write")
-        )
-    })
-}
-
-fn pdftex_text_fixture<F>(area: &str, stem: &str, kind: &str, regenerate: F) -> String
-where
-    F: FnOnce() -> String,
-{
-    if update_fixtures_enabled() || live_reference_enabled() {
-        let fixture = regenerate();
-        assert_matches_fixture(area, stem, kind, &fixture);
-        fixture
-    } else {
-        read_fixture(area, stem, kind)
-    }
-}
-
-#[allow(clippy::disallowed_methods)] // host-side pdfTeX fixture regeneration.
-fn run_reference_tex(dir: &std::path::Path, stem: &str, source: &str, dvi: bool) -> String {
-    let tex_name = format!("{stem}.tex");
-    std::fs::write(dir.join(&tex_name), source).expect("write reference TeX source");
-    let engine = std::env::var_os("UMBER_REF_TEX")
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "pdftex".into());
-    let mut command = std::process::Command::new(engine);
-    command.current_dir(dir).arg("-interaction=batchmode");
-    if dvi {
-        command.arg("-output-format=dvi");
-    }
-    let reference = command.arg(&tex_name).output().expect("run reference TeX");
-    let log =
-        std::fs::read_to_string(dir.join(format!("{stem}.log"))).expect("read reference TeX log");
-    assert!(
-        reference.status.success(),
-        "reference TeX {stem} case failed:\n{log}\n{}",
-        String::from_utf8_lossy(&reference.stderr)
-    );
-    log
+#[allow(clippy::disallowed_methods)] // host-side committed fixture source read.
+fn read_io_source(stem: &str) -> String {
+    let path = corpus_root()
+        .join("tex_exec_io")
+        .join(format!("{stem}.tex"));
+    std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()))
 }
 
 fn format_special_payloads(payloads: &[Vec<u8>]) -> String {

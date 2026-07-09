@@ -342,7 +342,7 @@ fn valign_and_crcr_use_alignment_preamble_scanner() {
 }
 
 #[test]
-fn alignment_preamble_errors_match_pdftex_wording() {
+fn alignment_preamble_errors_match_reference_wording() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("{abc\\cr}"));
@@ -582,14 +582,14 @@ fn omit_skips_cell_templates() {
 }
 
 #[test]
-fn misplaced_omit_in_cell_body_reports_pdftex_primary_text() {
+fn misplaced_omit_in_cell_body_reports_reference_primary_text() {
     let err = run_alignment_source_err("\\setbox0=\\vbox{\\halign{#\\cr a \\omit b\\cr}}");
 
     assert_eq!(err.to_string(), "Misplaced \\omit.");
 }
 
 #[test]
-fn misplaced_noalign_outside_row_boundary_reports_pdftex_primary_text() {
+fn misplaced_noalign_outside_row_boundary_reports_reference_primary_text() {
     let err =
         run_alignment_source_err("\\setbox0=\\vbox{\\halign{#\\cr a \\noalign{\\hrule}\\cr}}");
 

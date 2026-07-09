@@ -7,7 +7,7 @@ pub mod dvi;
 mod imp {
     use std::env;
     use std::fs;
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
 
     use anyhow::{Context, Result};
     use similar::TextDiff;
@@ -36,20 +36,6 @@ mod imp {
         })
     }
 
-    pub fn write_binary_fixture(area: &str, case: &str, kind: &str, actual: &[u8]) {
-        let fixture_path = fixture_path(area, case, kind);
-        write_binary_fixture_inner(&fixture_path, actual)
-            .unwrap_or_else(|error| panic!("{error:#}"));
-    }
-
-    pub fn update_fixtures_enabled() -> bool {
-        env::var_os("UPDATE_FIXTURES").is_some_and(|value| value == "1")
-    }
-
-    pub fn live_reference_enabled() -> bool {
-        env::var_os("UMBER_LIVE_REF").is_some_and(|value| value == "1")
-    }
-
     pub fn assert_matches_fixture(area: &str, case: &str, kind: &str, actual: &str) {
         if let Err(error) = assert_matches_fixture_inner(area, case, kind, actual) {
             panic!("{error:#}");
@@ -66,9 +52,10 @@ mod imp {
 
         let expected = match fs::read_to_string(&fixture_path) {
             Ok(expected) => expected,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return update_or_missing_fixture(&fixture_path, actual);
-            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => panic!(
+                "missing fixture {}; regenerate with scripts/regen-fixtures.sh",
+                fixture_path.display()
+            ),
             Err(error) => {
                 return Err(error)
                     .with_context(|| format!("failed to read fixture {}", fixture_path.display()));
@@ -79,47 +66,8 @@ mod imp {
             return Ok(());
         }
 
-        if update_fixtures_enabled() {
-            write_fixture(&fixture_path, actual)?;
-            panic!("fixture updated -- rerun without UPDATE_FIXTURES");
-        }
-
         let diff = unified_diff(&expected, actual);
         panic!("fixture mismatch for {}\n{diff}", fixture_path.display());
-    }
-
-    fn update_or_missing_fixture(fixture_path: &std::path::Path, actual: &str) -> Result<()> {
-        if update_fixtures_enabled() {
-            write_fixture(fixture_path, actual)?;
-            panic!("fixture updated -- rerun without UPDATE_FIXTURES");
-        }
-
-        panic!(
-            "missing fixture {}; rerun with UPDATE_FIXTURES=1 to create it",
-            fixture_path.display()
-        );
-    }
-
-    fn write_fixture(fixture_path: &Path, actual: &str) -> Result<()> {
-        if let Some(parent) = fixture_path.parent() {
-            fs::create_dir_all(parent).with_context(|| {
-                format!("failed to create fixture directory {}", parent.display())
-            })?;
-        }
-
-        fs::write(fixture_path, actual)
-            .with_context(|| format!("failed to write fixture {}", fixture_path.display()))
-    }
-
-    fn write_binary_fixture_inner(fixture_path: &Path, actual: &[u8]) -> Result<()> {
-        if let Some(parent) = fixture_path.parent() {
-            fs::create_dir_all(parent).with_context(|| {
-                format!("failed to create fixture directory {}", parent.display())
-            })?;
-        }
-
-        fs::write(fixture_path, actual)
-            .with_context(|| format!("failed to write fixture {}", fixture_path.display()))
     }
 
     fn unified_diff(expected: &str, actual: &str) -> String {
@@ -785,8 +733,8 @@ mod imp {
 
 pub use corpus::{CorpusCase, copy_area_support_files, corpus_area, corpus_cases};
 pub use imp::{
-    assert_matches_fixture, corpus_root, fixture_path, live_reference_enabled, normalize, pl,
-    read_binary_fixture, read_fixture, update_fixtures_enabled, write_binary_fixture,
+    assert_matches_fixture, corpus_root, fixture_path, normalize, pl, read_binary_fixture,
+    read_fixture,
 };
 
 #[cfg(test)]

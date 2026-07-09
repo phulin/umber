@@ -226,7 +226,7 @@ fn mismatched_right_and_missing_right_use_tex_error_text() {
     ));
     assert!(
         terminal_effect_text(&missing_stores).contains("! Missing \\right. inserted."),
-        "missing right delimiter should use pdfTeX's primary wording"
+        "missing right delimiter should use reference primary wording"
     );
 }
 

@@ -1,15 +1,13 @@
-#![allow(clippy::disallowed_methods)] // host-side reference harness
+#![allow(clippy::disallowed_methods)] // host-side reference harness.
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate as tex_fonts;
 use anyhow::{Context, Result, bail};
 use refexec::RefTftopl;
-use test_support::{
-    live_reference_enabled,
-    pl::{PlCharacter, PlExtensibleRecipe, PlFont, PlLigCommand, PlLigLabel, PlNumber},
+use test_support::pl::{
+    PlCharacter, PlExtensibleRecipe, PlFont, PlLigCommand, PlLigLabel, PlNumber,
 };
 use tex_arith::{FontSizeSpec, Scaled, tfm_fix_word_to_scaled};
 use tex_fonts::tfm::Character;
@@ -25,66 +23,24 @@ const VARIANTS: &[(&str, FontSizeSpec)] = &[
     ("scaled_1200", FontSizeSpec::Scale(1200)),
 ];
 
-#[test]
-fn tftopl_crosscheck_computer_modern_corpus() -> Result<()> {
-    if !live_reference_enabled() {
-        eprintln!("skipping tftopl corpus cross-check: set UMBER_LIVE_REF=1");
-        return Ok(());
+pub fn run(repo_root: &Path) -> Result<()> {
+    let tftopl = RefTftopl::locate()?;
+
+    match corpus_font_paths(&repo_root.join("third_party/fonts")) {
+        Ok(font_paths) => {
+            for (name, path) in font_paths {
+                crosscheck_font(&tftopl, &name, &path)?;
+            }
+        }
+        Err(skip) => eprintln!("{skip}"),
     }
 
-    let font_paths = match corpus_font_paths(&third_party_fonts_root()) {
-        Ok(paths) => paths,
-        Err(skip) => {
-            eprintln!("{skip}");
-            return Ok(());
-        }
-    };
-    let tftopl = match RefTftopl::locate() {
-        Ok(tftopl) => tftopl,
-        Err(error) => {
-            eprintln!("skipping tftopl corpus cross-check: {error:#}");
-            return Ok(());
-        }
-    };
-
-    for (name, path) in font_paths {
-        crosscheck_font(&tftopl, &name, &path)?;
-    }
-
-    Ok(())
-}
-
-#[test]
-fn tftopl_crosscheck_edge_ligkern_fixtures() -> Result<()> {
-    if !live_reference_enabled() {
-        eprintln!("skipping tftopl edge-fixture cross-check: set UMBER_LIVE_REF=1");
-        return Ok(());
-    }
-
-    let tftopl = match RefTftopl::locate() {
-        Ok(tftopl) => tftopl,
-        Err(error) => {
-            eprintln!("skipping tftopl edge-fixture cross-check: {error:#}");
-            return Ok(());
-        }
-    };
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/edge");
-
+    let edge_root = repo_root.join("crates/tex-fonts/tests/fixtures/edge");
     for name in ["boundary-char", "ptmr8g-longjump"] {
-        crosscheck_font(&tftopl, name, &root.join(format!("{name}.tfm")))?;
+        crosscheck_font(&tftopl, name, &edge_root.join(format!("{name}.tfm")))?;
     }
 
     Ok(())
-}
-
-#[test]
-fn corpus_font_paths_reports_missing_fonts_as_skip() {
-    let temp_dir = tempfile::tempdir().expect("tempdir");
-    let skip = corpus_font_paths(temp_dir.path()).expect_err("empty corpus should skip");
-
-    assert!(skip.contains("skipping tftopl corpus cross-check"));
-    assert!(skip.contains("scripts/fetch-font-corpus.sh"));
-    assert!(skip.contains("cmr10.tfm"));
 }
 
 fn crosscheck_font(tftopl: &RefTftopl, name: &str, path: &Path) -> Result<()> {
@@ -368,10 +324,6 @@ fn corpus_font_paths(root: &Path) -> std::result::Result<Vec<(String, PathBuf)>,
             root.display()
         ))
     }
-}
-
-fn third_party_fonts_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../third_party/fonts")
 }
 
 fn pl_recipe_to_tfm(value: PlExtensibleRecipe) -> tex_fonts::ExtensibleRecipe {

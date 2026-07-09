@@ -12,7 +12,11 @@ if [[ "$target_dir" != /* ]]; then
   target_dir="${repo_root}/${target_dir}"
 fi
 refexec_bin="${target_dir}/debug/refexec"
+fixturegen_bin="${target_dir}/debug/fixturegen"
+umber_bin="${target_dir}/debug/umber"
 refexec_built=0
+fixturegen_built=0
+umber_built=0
 
 usage() {
   cat <<'EOF'
@@ -30,7 +34,8 @@ Fixture areas:
 
 Reference tools:
   Text and DVI reference regeneration requires pdftex or tex on PATH, or
-  UMBER_REF_TEX=/absolute/path/to/pdftex. DVI regeneration builds and runs the
+  UMBER_REF_TEX=/absolute/path/to/pdftex. Text/native regeneration builds and
+  runs the workspace fixturegen tool; DVI regeneration builds and runs the
   workspace refexec tool and copies pinned CM TFMs from
   crates/tex-fonts/tests/fixtures/cm plus area-local support files.
 
@@ -72,7 +77,7 @@ test_command_for_area() {
   local area="$1"
   case "$area" in
     hello)
-      printf '%s\n' 'cargo test -p test-support hello_reference_log_matches_fixture'
+      printf '%s\n' 'cargo test -p test-support hello_fixture_is_committed'
       ;;
     lexer)
       printf '%s\n' 'cargo test -p umber --test it lex_dump_prints_stable_token_format_for_corpus'
@@ -84,10 +89,10 @@ test_command_for_area() {
       printf '%s\n' 'cargo test -p umber --test it lexer_dynamic_corpus_covers_mutable_input_state'
       ;;
     exec)
-      printf '%s\n' 'cargo test -p umber --test it run_exec_corpus_matches_pdftex_diagnostics'
+      printf '%s\n' 'cargo test -p umber --test it run_exec_corpus_matches_committed_diagnostics'
       ;;
     typeset)
-      printf '%s\n' 'cargo test -p umber --test it run_typeset_corpus_matches_pdftex_box_dumps'
+      printf '%s\n' 'cargo test -p umber --test it run_typeset_corpus_matches_committed_box_dumps'
       ;;
     tex_exec)
       printf '%s\n' 'cargo test -p tex-exec --lib grouping_parity'
@@ -110,9 +115,6 @@ test_command_for_area() {
     leaders)
       printf '%s\n' 'cargo test -p umber --test it run_leaders_corpus_matches_committed_dvi'
       ;;
-    fonts)
-      printf '%s\n' 'cargo test --tests -p tex-fonts tftopl_crosscheck'
-      ;;
     *)
       die "unknown fixture area: ${area}"
       ;;
@@ -126,45 +128,36 @@ run_command() {
   "$@"
 }
 
-run_update_test() {
-  local area="$1"
-  shift
-  local attempts=0
-  local max_attempts=80
-  local log
-  local status
-
-  while :; do
-    attempts=$((attempts + 1))
-    log="$(mktemp)"
-    printf 'Regenerating %s fixtures (attempt %d)\n' "$area" "$attempts" >&2
-    set +e
-    env UPDATE_FIXTURES=1 UMBER_LIVE_REF=0 "$@" 2>&1 | tee "$log"
-    status=${PIPESTATUS[0]}
-    set -e
-    if [[ "$status" -eq 0 ]]; then
-      rm -f "$log"
-      break
-    fi
-    if ! grep -q 'fixture updated' "$log"; then
-      rm -f "$log"
-      exit "$status"
-    fi
-    rm -f "$log"
-    if [[ "$attempts" -ge "$max_attempts" ]]; then
-      die "fixture update loop exceeded ${max_attempts} attempts for ${area}"
-    fi
-  done
-
-  run_command "Validating ${area} fixtures" \
-    env UPDATE_FIXTURES=0 UMBER_LIVE_REF=0 "$@"
-}
-
 build_refexec_once() {
   if [[ "$refexec_built" -eq 0 ]]; then
     run_command 'Building refexec' cargo build -p refexec
     refexec_built=1
   fi
+}
+
+build_fixturegen_once() {
+  if [[ "$fixturegen_built" -eq 0 ]]; then
+    run_command 'Building fixturegen' cargo build -p fixturegen
+    fixturegen_built=1
+  fi
+}
+
+build_umber_once() {
+  if [[ "$umber_built" -eq 0 ]]; then
+    run_command 'Building umber' cargo build -p umber
+    umber_built=1
+  fi
+}
+
+fixturegen_needs_umber() {
+  case "$1" in
+    lexer|expand)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
 }
 
 copy_dvi_inputs() {
@@ -263,15 +256,21 @@ validate_dvi_area() {
   local command_string
   command_string="$(test_command_for_area "$area")"
   # shellcheck disable=SC2086
-  run_command "Validating ${area} DVI fixtures" env UPDATE_FIXTURES=0 UMBER_LIVE_REF=0 $command_string
+  run_command "Validating ${area} DVI fixtures" $command_string
 }
 
 regen_text_area() {
   local area="$1"
   local command_string
+  build_fixturegen_once
+  if fixturegen_needs_umber "$area"; then
+    build_umber_once
+  fi
+  run_command "Regenerating ${area} fixtures" \
+    env UMBER_BIN="$umber_bin" "$fixturegen_bin" --area "$area"
   command_string="$(test_command_for_area "$area")"
   # shellcheck disable=SC2086
-  run_update_test "$area" $command_string
+  run_command "Validating ${area} fixtures" $command_string
 }
 
 regen_dvi_area() {
@@ -288,10 +287,8 @@ regen_dvi_area() {
 }
 
 run_fonts_live_check() {
-  local command_string
-  command_string="$(test_command_for_area fonts)"
-  # shellcheck disable=SC2086
-  run_command 'Running live tftopl font cross-check' env UPDATE_FIXTURES=0 UMBER_LIVE_REF=1 $command_string
+  build_fixturegen_once
+  run_command 'Running live tftopl font cross-check' "$fixturegen_bin" --area fonts
 }
 
 regen_area() {
@@ -328,14 +325,22 @@ case_name_from_arg() {
 regen_case() {
   local area="$1"
   local case="$2"
+  local command_string
   is_known_area "$area" || die "unknown fixture area: ${area}"
   if is_dvi_area "$area"; then
     regen_dvi_case "$area" "$case"
     validate_dvi_area "$area"
   elif is_text_area "$area"; then
     printf 'Regenerating text area %s for requested case %s\n' "$area" "$case" >&2
-    printf 'Note: text fixtures regenerate through their owning test; unchanged cases are not rewritten.\n' >&2
-    regen_text_area "$area"
+    build_fixturegen_once
+    if fixturegen_needs_umber "$area"; then
+      build_umber_once
+    fi
+    run_command "Regenerating ${area}/${case} fixture" \
+      env UMBER_BIN="$umber_bin" "$fixturegen_bin" --case "$area" "$case"
+    command_string="$(test_command_for_area "$area")"
+    # shellcheck disable=SC2086
+    run_command "Validating ${area} fixtures" $command_string
   else
     die "--case is not meaningful for the fonts live check"
   fi
@@ -378,11 +383,7 @@ regen_incremental() {
             ;;
           *.expected.*)
             stem="${file%%.expected.*}"
-            if is_dvi_area "$area"; then
-              printf '%s/%s\n' "$area" "$stem" >>"$case_specs_file"
-            else
-              printf '%s\n' "$area" >>"$area_specs_file"
-            fi
+            printf '%s/%s\n' "$area" "$stem" >>"$case_specs_file"
             ;;
           *)
             printf '%s\n' "$area" >>"$area_specs_file"

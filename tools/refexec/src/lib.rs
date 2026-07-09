@@ -109,8 +109,16 @@ mod imp {
                 })?;
             }
 
+            self.run_in_dir(temp_dir.path(), Path::new(job_name), opts)
+        }
+
+        pub fn run_in_dir(&self, dir: &Path, tex_file: &Path, opts: &RunOpts) -> Result<RunOutput> {
+            let job_name = file_name(tex_file)?;
+            let stem = tex_file
+                .file_stem()
+                .ok_or_else(|| anyhow!("TeX input has no file stem: {}", tex_file.display()))?;
             let mut command = Command::new(&self.executable);
-            command.current_dir(temp_dir.path()).arg(if opts.dvi {
+            command.current_dir(dir).arg(if opts.dvi {
                 "-interaction=batchmode"
             } else {
                 "-interaction=nonstopmode"
@@ -132,15 +140,12 @@ mod imp {
             })?;
 
             let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-            let stem = tex_file
-                .file_stem()
-                .ok_or_else(|| anyhow!("TeX input has no file stem: {}", tex_file.display()))?;
-            let log_path = temp_dir.path().join(stem).with_extension("log");
+            let log_path = dir.join(stem).with_extension("log");
             let log = fs::read_to_string(&log_path).with_context(|| {
                 format!("failed to read reference TeX log {}", log_path.display())
             })?;
             let dvi = if opts.dvi {
-                let dvi_path = temp_dir.path().join(stem).with_extension("dvi");
+                let dvi_path = dir.join(stem).with_extension("dvi");
                 Some(fs::read(&dvi_path).with_context(|| {
                     format!("failed to read reference TeX DVI {}", dvi_path.display())
                 })?)

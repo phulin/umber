@@ -50,7 +50,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/tests/assignments.rs`: tests for registers, definitions, arithmetic, token assignments, and assignments.
 - `src/tests/core.rs`: tests for mode nest behavior, executor hooks, dispatch, and core errors.
 - `src/tests/fonts.rs`: tests for font loading, font parameters, and font-related grouping semantics.
-- `src/tests/grouping_parity.rs`: grouping, after-token, magnification, and box-register tests that read committed pdfTeX-derived micro fixtures by default.
+- `src/tests/grouping_parity.rs`: grouping, after-token, magnification, and box-register tests that read committed reference micro fixtures.
 - `src/tests/groups.rs`: tests for braces, explicit groups, `\globaldefs`, and aftergroup replay.
 - `src/tests/hyphenation.rs`: tests for hyphenation patterns, exceptions, minima, and paragraph hyphenation.
 - `src/tests/io.rs`: tests for input/output streams, reads, writes, immediate effects, and shipout effects.
@@ -60,4 +60,4 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 
 ## Validation
 
-Run `cargo test --tests -p tex-exec` after local changes. For CLI-visible behavior or shipout effects, also run the relevant `umber` integration tests or corpus fixture checks. Regenerate pdfTeX-derived `tex_exec`/`tex_exec_io` fixtures only with `UPDATE_FIXTURES=1`; live reference checks require `UMBER_LIVE_REF=1` or `scripts/parity.sh`.
+Run `cargo test --tests -p tex-exec` after local changes. For CLI-visible behavior or shipout effects, also run the relevant `umber` integration tests or corpus fixture checks. Regenerate `tex_exec`/`tex_exec_io` fixtures through `scripts/regen-fixtures.sh`.
