@@ -388,6 +388,10 @@ assignments, box building, and dispatch into the typesetting kernels.
   pre/post display penalties to the enclosing vertical list while resuming the
   paragraph with TeX's `prevgraf += 3` accounting. The only pure-kernel call in
   that path remains mlist-to-hlist conversion.
+  The committed math DVI corpus uses primitive-only INITEX fixtures with a
+  shared include that loads the Computer Modern text, math italic, symbol, and
+  extension families at 10pt/7pt/5pt; this keeps script and scriptscript metric
+  differences visible without depending on `plain.tex`.
 - **List diagnostics**: `\showbox` routes through `World` terminal/log
   effects and uses the shared node-list dump emitter in `tex-exec`. The
   emitter walks frozen node lists through `Universe`, honors
@@ -658,6 +662,10 @@ Responsibility: page artifacts → bytes on disk. Strictly downstream.
   `post_post`, and 223 padding) from committed artifacts, and traverses the
   committed box tree with TeX.web-style `hlist_out`/`vlist_out`, `movement()`
   w/x/y/z optimization, font switches, rules, glyphs, and DVI specials.
+  DVI font numbers are the driver-visible TeX font numbers derived from
+  `FontId` load order, not artifact-local dense renumbering, so INITEX parity
+  cases that load several sizes/families preserve reference font selection
+  bytes.
   The `umber run file.tex --dvi out.dvi` CLI path is a thin downstream
   composition over shipped artifact ids: it reads committed artifact bytes
   from `World`, parses them as `tex-out` page artifacts, and invokes the DVI

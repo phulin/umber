@@ -30,12 +30,14 @@ pub(super) fn make_fraction(
         ctx.style.denom_style(),
         ctx.params,
     );
+    // AppG rule 15a
     if numerator.width < denominator.width {
         rebox(&mut numerator, denominator.width);
     } else {
         rebox(&mut denominator, numerator.width);
     }
 
+    // AppG rule 15b
     let (mut shift_up, mut shift_down) = if ctx.style.is_display() {
         (size_params.symbols.num1, size_params.symbols.denom1)
     } else {
@@ -83,6 +85,7 @@ pub(super) fn make_fraction(
     } else {
         size_params.symbols.delim2
     };
+    // AppG rule 15e
     let left = make_delimiter(ctx, fraction.left_delimiter.unwrap_or(0), target);
     let right = make_delimiter(ctx, fraction.right_delimiter.unwrap_or(0), target);
     let boxed = hpack(FrozenHList {
@@ -155,7 +158,6 @@ fn fraction_vlist(
     shift_up: Scaled,
     shift_down: Scaled,
 ) -> MathBox {
-    // AppG rule 15e
     let width = numerator.width;
     let height = add(shift_up, numerator.height);
     let depth = add(denominator.depth, shift_down);
@@ -202,7 +204,6 @@ fn fraction_vlist(
 }
 
 fn rebox(boxed: &mut MathBox, width: Scaled) {
-    // AppG rule 15b
     let slack = sub(width, boxed.width);
     if slack.raw() != 0 && matches!(boxed.axis, super::BoxAxis::Horizontal) {
         let left = Scaled::from_raw(tex_arith::half(slack.raw()));

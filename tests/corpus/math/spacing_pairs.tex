@@ -1,0 +1,17 @@
+\input math_preamble.inc
+\def\SpacingCols{%
+  \ifnum\count21<8
+    \MathClass{\count20}{x}\MathClass{\count21}{y}\mskip12mu
+    \advance\count21 by 1
+    \SpacingCols
+  \fi}
+\def\SpacingRows{%
+  \ifnum\count20<8
+    \count21=0
+    \hbox{$\displaystyle\SpacingCols$}%
+    \advance\count20 by 1
+    \SpacingRows
+  \fi}
+\count20=0
+\shipout\vbox{\SpacingRows}
+\end

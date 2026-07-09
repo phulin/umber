@@ -24,10 +24,10 @@
 //! ```
 //!
 //! Font resources are serialized in caller-provided order and nodes refer to
-//! them by their artifact-local `font_id`. Node and effect variants are tagged
-//! with stable `u8` discriminants. Unknown tags or unsupported versions are
-//! parse errors. Glue-set ratios are stored as a fixed-point signed `i32`; the
-//! artifact path does not contain floats.
+//! them by their driver-visible TeX font number. Node and effect variants are
+//! tagged with stable `u8` discriminants. Unknown tags or unsupported versions
+//! are parse errors. Glue-set ratios are stored as a fixed-point signed `i32`;
+//! the artifact path does not contain floats.
 
 mod binary;
 pub mod dvi;

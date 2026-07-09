@@ -49,11 +49,13 @@ pub(crate) fn finish_math_list_node(
     );
     let mut nodes = Vec::new();
     if !list.display {
+        // AppG rule 22
         let surround = stores.dimen_param(DimenParam::MATH_SURROUND);
         nodes.push(Node::MathOn(surround));
     }
     nodes.extend(lower_math_hlist(stores, &hlist));
     if !list.display {
+        // AppG rule 22
         let surround = stores.dimen_param(DimenParam::MATH_SURROUND);
         nodes.push(Node::MathOff(surround));
     }
@@ -589,6 +591,7 @@ where
         Some(eq_no) => (eq_no.display, Some(content), eq_no.side == EqNoSide::Left),
         None => (content, None, false),
     };
+    // AppG rule 22
     let params = MathParams::read(stores);
     let display_hlist = mlist_to_hlist(stores, display_content, Style::DISPLAY, false, &params);
     let display_nodes = lower_math_hlist(stores, &display_hlist);

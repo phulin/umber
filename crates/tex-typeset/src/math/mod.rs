@@ -90,7 +90,6 @@ pub fn mlist_to_hlist(
     penalties: bool,
     params: &MathParams,
 ) -> FrozenHList {
-    // AppG rule 18
     let mut ctx = Context {
         state,
         params,
@@ -130,12 +129,12 @@ fn first_pass<S: MathTypesetState>(
     while index < input.len() {
         match input[index].clone() {
             Node::MathStyle(style) => {
-                // AppG rule 18
+                // AppG rule 3
                 ctx.set_style(Style::from_math_style(style));
                 out.push(WorkItem::Style(ctx.style));
             }
             Node::MathChoice(choice) => {
-                // AppG rule 18
+                // AppG rule 4
                 out.push(WorkItem::Style(ctx.style));
                 let selected = match ctx.style.family() {
                     StyleFamily::Display => choice.display,
@@ -153,7 +152,7 @@ fn first_pass<S: MathTypesetState>(
                 );
             }
             Node::Glue { spec, kind } => {
-                // AppG rule 18
+                // AppG rule 2
                 if matches!(kind, tex_state::node::GlueKind::NonScript)
                     && ctx.style.is_script_or_smaller()
                     && input
@@ -179,7 +178,7 @@ fn first_pass<S: MathTypesetState>(
                 }));
             }
             Node::Kern { amount, kind } => {
-                // AppG rule 18
+                // AppG rule 2
                 out.push(WorkItem::Node(MathNode::Kern {
                     amount: if matches!(kind, KernKind::Mu) {
                         spacing::math_kern(amount, ctx.mu)
@@ -205,13 +204,13 @@ fn first_pass<S: MathTypesetState>(
                     _ => unreachable!("guard restricts delimiter noads"),
                 };
                 if matches!(class, NoadClass::Close) {
+                    // AppG rule 6
                     convert_final_bin_to_ord(out);
                 }
                 r_type = Some(class);
                 out.push(WorkItem::Delimiter(WorkDelimiter { class, delimiter }));
             }
             Node::MathNoad(noad) => {
-                // AppG rule 18
                 if matches!(noad.kind, NoadKind::Normal(NoadClass::Ord)) {
                     operators::make_ord(ctx, &mut input, index);
                 }
@@ -232,11 +231,14 @@ fn first_pass<S: MathTypesetState>(
                         )
                     )
                 {
+                    // AppG rule 5
                     class = NoadClass::Ord;
                 }
                 if matches!(class, NoadClass::Rel | NoadClass::Close | NoadClass::Punct) {
+                    // AppG rule 6
                     convert_final_bin_to_ord(out);
                 }
+                // AppG rule 7: Open and Inner atoms fall through unchanged to Rule 17.
                 let work = translate_noad(ctx, &noad, class, penalty_params);
                 let packed = hpack(work.hlist.clone());
                 *max_height = (*max_height).max(packed.height);
@@ -257,7 +259,10 @@ fn first_pass<S: MathTypesetState>(
                     penalty: INF_PENALTY,
                 }));
             }
-            other => out.push(WorkItem::Node(source_node(ctx.state, &other))),
+            other => {
+                // AppG rule 1
+                out.push(WorkItem::Node(source_node(ctx.state, &other)));
+            }
         }
         index += 1;
     }
@@ -286,7 +291,10 @@ fn translate_noad<S: MathTypesetState>(
         }
         (NoadKind::Underline, _) => radicals::make_under(ctx, &noad.nucleus),
         (NoadKind::Overline, _) => radicals::make_over(ctx, &noad.nucleus),
-        (NoadKind::VCenter, _) => radicals::make_vcenter(ctx, &noad.nucleus),
+        (NoadKind::VCenter, _) => {
+            // AppG rule 8
+            radicals::make_vcenter(ctx, &noad.nucleus)
+        }
         (_, MathField::MathChar(ch) | MathField::MathTextChar(ch)) => make_character_nucleus(
             ctx,
             *ch,
@@ -337,7 +345,7 @@ fn second_pass<S: MathTypesetState>(
     max_height: Scaled,
     max_depth: Scaled,
 ) -> FrozenHList {
-    // AppG rule 18
+    // AppG rule 20
     let mut output = FrozenHList::default();
     let mut previous = None;
     for (index, item) in work.iter().enumerate() {
@@ -368,11 +376,13 @@ fn second_pass<S: MathTypesetState>(
                             )
                     })
                 {
+                    // AppG rule 21
                     output.nodes.push(MathNode::Penalty(noad.penalty));
                 }
                 previous = Some(noad.class);
             }
             WorkItem::Delimiter(delimiter) => {
+                // AppG rule 19
                 if let Some(left) = previous
                     && let spacing = spacing::inter_noad_spacing(left, delimiter.class, ctx.style)
                     && let Some(spec) = spacing::spacing_glue(spacing, ctx.params, ctx.mu)
@@ -441,7 +451,7 @@ fn make_character_nucleus<S: MathTypesetState>(
     subscript: &MathField,
     delta: &mut Scaled,
 ) -> FrozenHList {
-    // AppG rule 18
+    // AppG rule 17
     let Some(fetched) = fetch(ctx.state, ch, ctx.style) else {
         return FrozenHList::default();
     };
@@ -543,7 +553,10 @@ fn noad_class(noad: &MathNoad) -> NoadClass {
         | NoadKind::RightDelimiter { .. }
         | NoadKind::Underline
         | NoadKind::Overline
-        | NoadKind::VCenter => NoadClass::Ord,
+        | NoadKind::VCenter => {
+            // AppG rule 16
+            NoadClass::Ord
+        }
     }
 }
 
@@ -554,7 +567,7 @@ fn convert_final_bin_to_ord(work: &mut [WorkItem]) {
         .find(|item| matches!(item, WorkItem::Noad(_)))
         && noad.class == NoadClass::Bin
     {
-        // AppG rule 18
+        // AppG rule 20
         noad.class = NoadClass::Ord;
         noad.penalty = INF_PENALTY;
     }

@@ -228,75 +228,75 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 
 ## Math
 
-- [x] `\above` - Builds a fraction with explicit rule thickness and no delimiters. Parses to a generalized fraction noad; Appendix G layout is pending.
+- [x] `\above` - Builds a generalized fraction with explicit rule thickness and no delimiters; Appendix G layout is implemented by the math kernel.
 - [x] `\abovedisplayshortskip` - Glue above a display when the preceding line is short.
 - [x] `\abovedisplayskip` - Normal glue above a display.
-- [x] `\abovewithdelims` - Builds a generalized fraction with delimiters and explicit rule thickness. Parses to a generalized fraction noad; Appendix G delimiter sizing/layout is pending.
-- [x] `\atop` - Builds a fraction-like stack with no rule and no delimiters. Parses to a generalized fraction noad with zero thickness; Appendix G layout is pending.
-- [x] `\atopwithdelims` - Builds a fraction-like stack with delimiters and no rule. Parses to a generalized fraction noad with zero thickness; Appendix G delimiter sizing/layout is pending.
+- [x] `\abovewithdelims` - Builds a generalized fraction with delimiters and explicit rule thickness; Appendix G delimiter sizing/layout is implemented by the math kernel.
+- [x] `\atop` - Builds a fraction-like stack with no rule and no delimiters; Appendix G layout is implemented by the math kernel.
+- [x] `\atopwithdelims` - Builds a fraction-like stack with delimiters and no rule; Appendix G delimiter sizing/layout is implemented by the math kernel.
 - [x] `\belowdisplayshortskip` - Glue below a display when short-display spacing is used.
 - [x] `\belowdisplayskip` - Normal glue below a display.
-- [ ] `\binoppenalty` - Penalty for line breaks after binary operators in math.
+- [x] `\binoppenalty` - Penalty inserted after binary operators when inline math is converted for paragraph line breaking.
 - [x] `\defaultskewchar` - Default `\skewchar` value for newly loaded fonts; implemented as an integer parameter used when initializing font banks.
 - [x] `\delcode` - Reads or assigns a character's delimiter code; assignments use the code-table facade and bump generations.
-- [x] `\delimiter` - Adds a delimiter by numeric delimiter code. Math front-end parses it into the mlist; full delimiter sizing is pending in Appendix G layout.
-- [ ] `\delimiterfactor` - Scaling factor used to choose delimiter sizes.
-- [ ] `\delimitershortfall` - Allowed shortfall when choosing delimiter sizes.
+- [x] `\delimiter` - Adds a delimiter by numeric delimiter code; Appendix G variable delimiter sizing is implemented by the math kernel.
+- [x] `\delimiterfactor` - Scaling factor used to choose `\left...\right` delimiter sizes.
+- [x] `\delimitershortfall` - Allowed shortfall when choosing `\left...\right` delimiter sizes.
 - [x] `\displayindent` - Indentation applied to the current display.
-- [x] `\displaylimits` - Uses default limit placement for large operators. Stored on operator noads; layout is pending.
-- [x] `\displaystyle` - Selects display math style. Stored as an mlist style node; layout is pending.
+- [x] `\displaylimits` - Uses default limit placement for large operators, including display-style limits above and below.
+- [x] `\displaystyle` - Selects display math style during Appendix G conversion.
 - [x] `\displaywidowpenalty` - Penalty before a display after the penultimate paragraph line.
 - [x] `\displaywidth` - Line width available to the current display.
 - [x] `\eqno` - Adds a right-side equation number to a display.
 - [x] `\everydisplay` - Token list inserted when entering display math.
 - [x] `\everymath` - Token list inserted when entering inline math.
 - [x] `\fam` - Current math family for variable-family math characters.
-- [ ] `\left` - Starts a delimited math subformula with scalable left delimiter.
+- [x] `\left` - Starts a delimited math subformula with scalable left delimiter.
 - [x] `\leqno` - Adds a left-side equation number to a display.
-- [x] `\limits` - Forces limits above and below a large operator. Stored on operator noads; layout is pending.
-- [x] `\mathaccent` - Adds a math accent atom. Parses to an accent noad; accent placement is pending.
-- [x] `\mathbin` - Treats the following item as a binary operator atom. Parses to a bin noad; spacing is pending.
+- [x] `\limits` - Forces limits above and below a large operator.
+- [x] `\mathaccent` - Adds a math accent atom with Appendix G accent placement and skewchar kerning.
+- [x] `\mathbin` - Treats the following item as a binary operator atom with Appendix G spacing and penalties.
 - [x] `\mathchar` - Adds a math character by numeric math code.
 - [x] `\mathchardef` - Defines a control sequence as a math character command usable as an internal integer.
-- [x] `\mathchoice` - Provides alternatives for display, text, script, and scriptscript styles. Stores all four sublists; style selection is pending.
-- [x] `\mathclose` - Treats the following item as a closing atom. Parses to a close noad; spacing is pending.
+- [x] `\mathchoice` - Provides alternatives for display, text, script, and scriptscript styles; Appendix G selects the active arm during conversion.
+- [x] `\mathclose` - Treats the following item as a closing atom with Appendix G spacing.
 - [x] `\mathcode` - Reads or assigns a character's math code; assignments use the code-table facade and bump generations.
-- [x] `\mathinner` - Treats the following subformula as an inner atom. Parses to an inner noad; spacing is pending.
-- [x] `\mathop` - Treats the following item as a large-operator atom. Parses to an operator noad with limit controls; layout is pending.
-- [x] `\mathopen` - Treats the following item as an opening atom. Parses to an open noad; spacing is pending.
-- [x] `\mathord` - Treats the following item as an ordinary atom. Parses to an ord noad; spacing is pending.
-- [x] `\mathpunct` - Treats the following item as a punctuation atom. Parses to a punct noad; spacing is pending.
-- [x] `\mathrel` - Treats the following item as a relation atom. Parses to a rel noad; spacing is pending.
-- [ ] `\mathsurround` - Extra space inserted around inline math.
-- [ ] `\medmuskip` - Medium math glue between math atoms.
-- [x] `\mkern` - Adds a math kern. Stored as a mu kern node; style-dependent layout is pending.
-- [x] `\mskip` - Adds math glue. Stored as mu glue; style-dependent layout is pending.
+- [x] `\mathinner` - Treats the following subformula as an inner atom with Appendix G spacing.
+- [x] `\mathop` - Treats the following item as a large-operator atom with limit placement, larger display variants, and axis centering.
+- [x] `\mathopen` - Treats the following item as an opening atom with Appendix G spacing.
+- [x] `\mathord` - Treats the following item as an ordinary atom with Appendix G spacing and adjacent-symbol ligature/kern handling.
+- [x] `\mathpunct` - Treats the following item as a punctuation atom with Appendix G spacing.
+- [x] `\mathrel` - Treats the following item as a relation atom with Appendix G spacing and penalties.
+- [x] `\mathsurround` - Extra space inserted around inline math through math-on/math-off nodes.
+- [x] `\medmuskip` - Medium math glue between math atoms.
+- [x] `\mkern` - Adds a math kern converted from mu units during Appendix G conversion.
+- [x] `\mskip` - Adds math glue converted from mu units during Appendix G conversion.
 - [x] `\muskip` - Reads or assigns a math glue register, including sparse e-TeX indices.
 - [x] `\muskipdef` - Defines a symbolic name for a math glue register.
-- [x] `\nolimits` - Forces limits to the side of a large operator. Stored on operator noads; layout is pending.
-- [x] `\nonscript` - Suppresses following glue or kern in script styles. Stored as a nonscript glue marker; style pruning is pending.
-- [ ] `\nulldelimiterspace` - Width reserved for missing delimiters.
-- [x] `\over` - Builds a normal fraction with no delimiters. Parses through the TeX incomplete-fraction mechanism; Appendix G layout is pending.
-- [x] `\overline` - Places a rule over the following math item. Parses to an overline noad; rule placement is pending.
-- [x] `\overwithdelims` - Builds a normal fraction with delimiters. Parses through the TeX incomplete-fraction mechanism; delimiter sizing/layout is pending.
+- [x] `\nolimits` - Forces limits to the side of a large operator.
+- [x] `\nonscript` - Suppresses following glue or kern in script and smaller styles during Appendix G conversion.
+- [x] `\nulldelimiterspace` - Width reserved for missing delimiters.
+- [x] `\over` - Builds a normal fraction with no delimiters; Appendix G layout is implemented by the math kernel.
+- [x] `\overline` - Places a rule over the following math item with Appendix G clearance.
+- [x] `\overwithdelims` - Builds a normal fraction with delimiters; Appendix G delimiter sizing/layout is implemented by the math kernel.
 - [x] `\postdisplaypenalty` - Penalty inserted after a display.
 - [x] `\predisplaypenalty` - Penalty inserted before a display.
 - [x] `\predisplaysize` - Effective width of the line preceding a display.
-- [x] `\radical` - Builds a radical atom from a delimiter code and nucleus. Parses to a radical noad; radical layout is pending.
-- [ ] `\relpenalty` - Penalty for line breaks after relation atoms in math.
-- [ ] `\right` - Ends a delimited math subformula with scalable right delimiter.
-- [x] `\scriptfont` - Font used for a family in script style. Stored in Env math-family font selectors; glyph selection is pending.
-- [x] `\scriptscriptfont` - Font used for a family in scriptscript style. Stored in Env math-family font selectors; glyph selection is pending.
-- [x] `\scriptscriptstyle` - Selects scriptscript math style. Stored as an mlist style node; layout is pending.
-- [ ] `\scriptspace` - Extra space after subscripts and superscripts.
-- [x] `\scriptstyle` - Selects script math style. Stored as an mlist style node; layout is pending.
+- [x] `\radical` - Builds a radical atom from a delimiter code and nucleus with Appendix G clearance and extensible radical sizing.
+- [x] `\relpenalty` - Penalty inserted after relation atoms when inline math is converted for paragraph line breaking.
+- [x] `\right` - Ends a delimited math subformula with scalable right delimiter.
+- [x] `\scriptfont` - Font used for a family in script style during Appendix G glyph selection.
+- [x] `\scriptscriptfont` - Font used for a family in scriptscript style during Appendix G glyph selection.
+- [x] `\scriptscriptstyle` - Selects scriptscript math style during Appendix G conversion.
+- [x] `\scriptspace` - Extra space after subscripts and superscripts.
+- [x] `\scriptstyle` - Selects script math style during Appendix G conversion.
 - [x] `\skewchar` - Font-specific Env-backed character used to position math accents.
-- [x] `\textfont` - Font used for a family in text style. Stored in Env math-family font selectors; glyph selection is pending.
-- [x] `\textstyle` - Selects text math style. Stored as an mlist style node; layout is pending.
-- [ ] `\thickmuskip` - Thick math glue between math atoms.
-- [ ] `\thinmuskip` - Thin math glue between math atoms.
-- [x] `\underline` - Places a rule under the following math item. Parses to an underline noad; rule placement is pending.
-- [x] `\vcenter` - Builds a vertically centered box for math formulas. Parses a vertical box into a math field; final centering layout is pending.
+- [x] `\textfont` - Font used for a family in text style during Appendix G glyph selection.
+- [x] `\textstyle` - Selects text math style during Appendix G conversion.
+- [x] `\thickmuskip` - Thick math glue between math atoms.
+- [x] `\thinmuskip` - Thin math glue between math atoms.
+- [x] `\underline` - Places a rule under the following math item with Appendix G clearance.
+- [x] `\vcenter` - Builds a vertically centered box for math formulas and centers it on the math axis during Appendix G conversion.
 
 ## Page Builder
 

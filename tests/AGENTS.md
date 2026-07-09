@@ -28,16 +28,23 @@ collected terminal/log diagnostic text to stdout and does not commit pending
 
 `tests/corpus/dvi` contains committed TeX source fixtures for full-pipeline
 DVI parity. Do not commit generated DVI files here. `scripts/parity.sh`
-copies each source plus pinned `cmr10.tfm` into a temporary run directory,
-runs `umber run <case>.tex --dvi actual.dvi`, then asks `tools/refexec` to
-run the live reference engine and byte-compare DVI output with only preamble
-comment payload normalization.
+copies each source plus pinned CM TFMs into a temporary run directory, runs
+`umber run <case>.tex --dvi actual.dvi`, then asks `tools/refexec` to run the
+live reference engine and byte-compare DVI output with only preamble comment
+payload normalization.
 
 `tests/corpus/page` contains page-builder-focused DVI parity fixtures. It is
 run by the same `scripts/parity.sh` DVI comparison loop and should use small
 primitive-only preambles that pin plain-format defaults such as `\output`,
 `\maxdepth`, and interline glue whenever pdfTeX plain defaults would otherwise
 leak into byte output.
+
+`tests/corpus/math` contains primitive-only math DVI parity fixtures. Cases
+share `math_preamble.inc`; keep that include free of `plain.tex` dependencies
+and keep individual `.tex` cases small. The harness runs the reference engine
+in INITEX mode for this area, copies the shared include beside each case, and
+pins `cmr10`, `cmmi10`, `cmsy10`, and `cmex10` TFMs so text/script/
+scriptscript family selection observes the same metrics as Umber.
 
 ```text
 <case>.expected.<kind>

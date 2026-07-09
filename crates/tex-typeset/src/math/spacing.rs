@@ -18,7 +18,7 @@ pub enum SpacingKind {
 
 #[must_use]
 pub fn inter_noad_spacing(left: NoadClass, right: NoadClass, style: Style) -> SpacingKind {
-    // AppG rule 18
+    // AppG rule 20
     match SPACING[class_index(left) * 8 + class_index(right)] {
         b'0' | b'*' => SpacingKind::None,
         b'1' if !style.is_script_or_smaller() => SpacingKind::Thin,
@@ -34,7 +34,7 @@ pub fn inter_noad_spacing(left: NoadClass, right: NoadClass, style: Style) -> Sp
 
 #[must_use]
 pub fn spacing_glue(kind: SpacingKind, params: &MathParams, mu: Scaled) -> Option<GlueSpec> {
-    // AppG rule 18
+    // AppG rule 20
     let spec = match kind {
         SpacingKind::None => return None,
         SpacingKind::Thin => params.thin_mu_skip,
@@ -46,7 +46,7 @@ pub fn spacing_glue(kind: SpacingKind, params: &MathParams, mu: Scaled) -> Optio
 
 #[must_use]
 pub fn math_glue(spec: GlueSpec, mu: Scaled) -> GlueSpec {
-    // AppG rule 18
+    // AppG rule 2, rule 20
     GlueSpec {
         width: mu_mult(spec.width, mu),
         stretch: if spec.stretch_order == Order::Normal {
@@ -66,7 +66,7 @@ pub fn math_glue(spec: GlueSpec, mu: Scaled) -> GlueSpec {
 
 #[must_use]
 pub fn math_kern(amount: Scaled, mu: Scaled) -> Scaled {
-    // AppG rule 18
+    // AppG rule 2
     mu_mult(amount, mu)
 }
 

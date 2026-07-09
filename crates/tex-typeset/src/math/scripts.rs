@@ -129,6 +129,7 @@ fn script_pair(
     if shifts.down < size_params.symbols.sub2 {
         shifts.down = size_params.symbols.sub2;
     }
+    // AppG rule 18e
     let gap = sub(sub(shifts.up, sup.depth), sub(sub_box.height, shifts.down));
     let clr = sub(
         Scaled::from_raw(4 * size_params.extension.default_rule_thickness.raw()),
@@ -145,6 +146,7 @@ fn script_pair(
             shifts.down = sub(shifts.down, raised);
         }
     }
+    // AppG rule 18f
     sup.shift = delta;
     let kern = sub(sub(shifts.up, sup.depth), sub(sub_box.height, shifts.down));
     let list = FrozenHList {
