@@ -1,7 +1,8 @@
-use super::{
+use super::opcodes::{
     BOP, DEN, DOWN1, EOP, FNT_DEF1, FNT_NUM_0, FNT1, ID_BYTE, NUM, POST, POST_POST, PRE, PUT_RULE,
-    RIGHT1, SET_RULE, SET1, XXX1, XXX4, write_dvi,
+    RIGHT1, SET_RULE, SET1, XXX1, XXX4,
 };
+use super::write_dvi;
 use crate::{
     BoxNode, ContentHash, FontResource, GlueKind, GlueOrder, GlueSetRatio, GlueSign, GlueSpec,
     JobInfo, LeaderPayload, PageArtifact, PageEffect, PageNode,

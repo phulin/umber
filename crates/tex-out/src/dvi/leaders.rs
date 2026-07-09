@@ -2,7 +2,10 @@ use tex_arith::Scaled;
 
 use crate::{BoxNode, GlueKind, LeaderPayload, PageArtifact};
 
-use super::{DviError, DviWriter, add_scaled, sub_scaled};
+use super::{
+    DviError, DviWriter,
+    glue::{add_scaled, sub_scaled},
+};
 
 const LEADER_ROUNDING_COMPENSATION: Scaled = Scaled::from_raw(10);
 
