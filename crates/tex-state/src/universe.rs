@@ -32,6 +32,7 @@ use crate::page::{
     PageBreak, PageBuilderState, PageContents, PageDimension, PageFireUp, PageInsertion,
     PageInteger, PageMark,
 };
+use crate::provenance::ProvenanceStats;
 use crate::provenance::{
     InsertedOriginKind, OriginListBuilder, OriginRecord, SynthesizedOriginKind, SyntheticOriginKind,
 };
@@ -132,6 +133,7 @@ pub trait ExpansionState {
         token: Token,
         parent: OriginId,
     ) -> OriginId;
+    fn allocate_repeated_origin_list(&mut self, origin: OriginId, len: usize) -> OriginListId;
     fn origin_list_builder(&self) -> OriginListBuilder;
     fn finish_origin_list(&mut self, builder: &mut OriginListBuilder) -> OriginListId;
     fn origin_list(&self, id: OriginListId) -> &[OriginId];
@@ -1134,6 +1136,11 @@ impl Universe {
         self.stores.allocate_origin_list(origins)
     }
 
+    /// Allocates an origin-list span by repeating one live origin.
+    pub fn allocate_repeated_origin_list(&mut self, origin: OriginId, len: usize) -> OriginListId {
+        self.stores.allocate_repeated_origin_list(origin, len)
+    }
+
     /// Creates a fresh owned scratch origin-list builder.
     #[must_use]
     pub fn origin_list_builder(&self) -> OriginListBuilder {
@@ -1155,6 +1162,12 @@ impl Universe {
     #[must_use]
     pub fn origin_list_if_live(&self, id: OriginListId) -> Option<&[OriginId]> {
         self.stores.origin_list_if_live(id)
+    }
+
+    /// Returns live provenance arena length counters.
+    #[must_use]
+    pub fn provenance_stats(&self) -> ProvenanceStats {
+        self.stores.provenance_stats()
     }
 
     pub fn intern_glue(&mut self, spec: GlueSpec) -> GlueId {
@@ -2156,6 +2169,10 @@ impl ExpansionState for Universe {
         Self::inserted_origin(self, kind, token, parent)
     }
 
+    fn allocate_repeated_origin_list(&mut self, origin: OriginId, len: usize) -> OriginListId {
+        Self::allocate_repeated_origin_list(self, origin, len)
+    }
+
     fn origin_list_builder(&self) -> OriginListBuilder {
         Self::origin_list_builder(self)
     }
@@ -2406,6 +2423,10 @@ impl ExpansionState for ExpansionContext<'_> {
         parent: OriginId,
     ) -> OriginId {
         self.universe.inserted_origin(kind, token, parent)
+    }
+
+    fn allocate_repeated_origin_list(&mut self, origin: OriginId, len: usize) -> OriginListId {
+        self.universe.allocate_repeated_origin_list(origin, len)
     }
 
     fn origin_list_builder(&self) -> OriginListBuilder {

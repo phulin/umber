@@ -48,6 +48,27 @@ fn records_and_origin_lists_allocate_and_read_back() {
 }
 
 #[test]
+fn repeated_origin_lists_allocate_without_extra_records() {
+    let mut store = ProvenanceStore::new();
+    let source = store.allocate(OriginRecord::Source(SourceOrigin::new(
+        SourceId::new(2),
+        9,
+        1,
+        9,
+    )));
+    let before = store.stats();
+    let list = store.allocate_repeated_list(source, 4);
+    let after = store.stats();
+
+    assert_eq!(store.list(list), &[source, source, source, source]);
+    assert_eq!(after.origin_records(), before.origin_records());
+    assert_eq!(
+        after.saturating_sub(before),
+        super::ProvenanceStats::new(0, 1, 4)
+    );
+}
+
+#[test]
 fn all_mandatory_origin_record_kinds_round_trip() {
     let mut stores = Universe::new();
     let params = stores.intern_token_list(&[]);
@@ -128,4 +149,21 @@ fn rollback_mark_truncates_records_and_lists() {
         OriginRecord::Synthetic(SyntheticOrigin::new(SyntheticOriginKind::Format))
     );
     assert_eq!(store.list(reused_list), &[reused]);
+}
+
+#[test]
+fn universe_provenance_stats_measure_rollback_truncation() {
+    let mut stores = Universe::new();
+    let baseline = stores.provenance_stats();
+    let snapshot = stores.snapshot();
+    let source = stores.source_origin(SourceId::new(3), 30, 3, 1);
+    stores.allocate_repeated_origin_list(source, 128);
+
+    let grown = stores.provenance_stats();
+    assert_eq!(grown.saturating_sub(baseline).origin_records(), 1);
+    assert_eq!(grown.saturating_sub(baseline).origin_list_spans(), 1);
+    assert_eq!(grown.saturating_sub(baseline).origin_list_entries(), 128);
+
+    stores.rollback(&snapshot);
+    assert_eq!(stores.provenance_stats(), baseline);
 }

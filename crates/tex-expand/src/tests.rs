@@ -1,6 +1,6 @@
 use crate::{
-    EngineMode, ExpandableOpcode, ExpansionHooks, NoopRecorder, ReadRecorder, dispatch,
-    dispatch_expandable_opcode,
+    EngineMode, ExpandableOpcode, ExpansionHooks, NoopExpansionHooks, NoopRecorder, ReadRecorder,
+    dispatch, dispatch_expandable_opcode, dispatch_with_hooks, install_expandable_primitives,
 };
 use std::collections::HashMap;
 use tex_lex::{InputStack, MemoryInput, TokenListReplayKind};
@@ -696,6 +696,96 @@ fn macro_argument_replay_delivers_call_site_argument_origins() {
 
     assert_eq!(replayed.token(), Some(char_token('x')));
     assert_eq!(replayed.origin(), argument_origin);
+}
+
+#[test]
+fn macro_body_delivery_does_not_write_provenance_per_token() {
+    let mut stores = Universe::new();
+    let macro_cs = stores.intern("m");
+    let params = stores.intern_token_list(&[]);
+    let body_tokens = [char_token('a'), char_token('b'), char_token('c')];
+    let body = stores.intern_token_list(&body_tokens);
+    let definition_origin = stores.source_origin(tex_state::SourceId::new(1), 0, 1, 1);
+    let body_origins = stores.allocate_repeated_origin_list(definition_origin, body_tokens.len());
+    stores.set_macro_meaning_with_provenance(
+        macro_cs,
+        MacroMeaning::new(MeaningFlags::EMPTY, params, body),
+        MacroDefinitionProvenance::new(
+            definition_origin,
+            tex_state::ids::OriginListId::EMPTY,
+            body_origins,
+        ),
+    );
+    let invocation_origin = stores.source_origin(tex_state::SourceId::new(1), 10, 1, 11);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    let meaning = stores.meaning(macro_cs);
+    let crate::Dispatch::Push {
+        token_list,
+        origin_list,
+        macro_arguments,
+        macro_invocation,
+        ..
+    } = dispatch_with_hooks(
+        Token::Cs(macro_cs),
+        invocation_origin,
+        &mut input,
+        &mut stores,
+        &mut NoopRecorder,
+        &mut NoopExpansionHooks,
+        meaning,
+    )
+    .expect("macro dispatch should succeed")
+    else {
+        panic!("expected macro body push");
+    };
+    input.push_macro_body_with_origins_and_invocation(
+        token_list,
+        origin_list,
+        macro_arguments,
+        macro_invocation,
+    );
+    let after_dispatch = stores.provenance_stats();
+
+    assert_eq!(
+        collect_expanded(&mut input, &mut stores),
+        body_tokens.to_vec()
+    );
+    assert_eq!(stores.provenance_stats(), after_dispatch);
+}
+
+#[test]
+fn generated_value_tokens_share_one_synthesized_origin_record() {
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    let number = stores.symbol("number").expect("number primitive");
+    let input_tokens = [
+        Token::Cs(number),
+        char_token('1'),
+        char_token('2'),
+        char_token('3'),
+        char_token('4'),
+    ];
+    let input = stores.intern_token_list(&input_tokens);
+    let call_origin = stores.source_origin(tex_state::SourceId::new(4), 40, 4, 1);
+    let input_origins = stores.allocate_repeated_origin_list(call_origin, input_tokens.len());
+    let mut input_stack = InputStack::new(MemoryInput::new(""));
+    input_stack.push_token_list_with_origins(input, input_origins, TokenListReplayKind::Inserted);
+    let before = stores.provenance_stats();
+
+    assert_eq!(
+        collect_expanded(&mut input_stack, &mut stores),
+        vec![
+            char_token('1'),
+            char_token('2'),
+            char_token('3'),
+            char_token('4')
+        ]
+    );
+    let growth = stores.provenance_stats().saturating_sub(before);
+
+    assert_eq!(growth.origin_records(), 1);
+    assert_eq!(growth.origin_list_spans(), 1);
+    assert_eq!(growth.origin_list_entries(), 4);
 }
 
 #[test]

@@ -743,11 +743,7 @@ pub(crate) fn synthesized_origin_list(
     kind: SynthesizedOriginKind,
 ) -> tex_state::ids::OriginListId {
     let origin = stores.synthesized_origin(kind, parent);
-    let mut origins = stores.origin_list_builder();
-    for _ in 0..len {
-        origins.push(origin);
-    }
-    stores.finish_origin_list(&mut origins)
+    stores.allocate_repeated_origin_list(origin, len)
 }
 
 pub fn semantic_token(token: TracedTokenWord) -> Token {

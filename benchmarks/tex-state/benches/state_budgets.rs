@@ -1,14 +1,27 @@
 use criterion::{
     BatchSize, BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main,
 };
+use tex_expand::{get_x_token, install_expandable_primitives};
+use tex_lex::{InputStack, MemoryInput, TokenListReplayKind};
 use tex_state::Universe;
+use tex_state::ids::OriginListId;
+use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::meaning::Meaning;
+use tex_state::meaning::MeaningFlags;
+use tex_state::provenance::ProvenanceStats;
+use tex_state::token::{Catcode, Token};
+use tex_state::SourceId;
 
 const GROUP_SIZES: [usize; 3] = [4, 64, 512];
 const ROLLBACK_TOTAL_CELLS: [usize; 2] = [1024, 4096];
 const ROLLBACK_SLICE_WRITES: [usize; 3] = [4, 64, 512];
 const PAGE_DISTINCT_CELLS: usize = 500;
 const PAGE_TOTAL_WRITES: usize = 5_000;
+const SOURCE_HEAVY_LINES: usize = 512;
+const SOURCE_HEAVY_LINE: &str = "alpha beta gamma delta epsilon zeta eta theta";
+const MACRO_CALLS: usize = 2_048;
+const MACRO_BODY_LEN: usize = 16;
+const SCANNER_REPETITIONS: usize = 1_024;
 
 fn meaning_lookup(c: &mut Criterion) {
     let mut stores = Universe::new();
@@ -190,6 +203,106 @@ fn synthetic_page_journal_volume(c: &mut Criterion) {
     group.finish();
 }
 
+fn provenance_source_lexing(c: &mut Criterion) {
+    let input = source_heavy_text();
+    let token_count = source_heavy_token_count(&input);
+    let mut group = c.benchmark_group("provenance_source_lexing");
+    group.throughput(Throughput::Elements(token_count as u64));
+
+    group.bench_function("semantic_only_readonly", |b| {
+        b.iter_batched(
+            || (Universe::new(), InputStack::new(MemoryInput::new(input.clone()))),
+            |(stores, mut input)| {
+                let mut count = 0_usize;
+                while let Some(token) = input
+                    .next_token_readonly(&stores)
+                    .expect("source lexing should succeed")
+                {
+                    black_box(token);
+                    count += 1;
+                }
+                black_box(count);
+            },
+            BatchSize::SmallInput,
+        );
+    });
+
+    group.bench_function("traced_source_origins", |b| {
+        b.iter_batched(
+            || (Universe::new(), InputStack::new(MemoryInput::new(input.clone()))),
+            |(mut stores, mut input)| {
+                let before = stores.provenance_stats();
+                let mut count = 0_usize;
+                while let Some(token) = input
+                    .next_traced_token(&mut stores)
+                    .expect("source lexing should succeed")
+                {
+                    black_box(token);
+                    count += 1;
+                }
+                black_box((count, stores.provenance_stats().saturating_sub(before)));
+            },
+            BatchSize::SmallInput,
+        );
+    });
+
+    group.finish();
+}
+
+fn provenance_expansion(c: &mut Criterion) {
+    let mut group = c.benchmark_group("provenance_expansion");
+    group.throughput(Throughput::Elements(MACRO_CALLS as u64));
+
+    group.bench_function("macro_body_replay_invocation_origins", |b| {
+        b.iter_batched(
+            macro_heavy_case,
+            |(mut stores, mut input, baseline)| {
+                let count = drain_expansion(&mut stores, &mut input);
+                black_box((count, stores.provenance_stats().saturating_sub(baseline)));
+            },
+            BatchSize::SmallInput,
+        );
+    });
+
+    group.bench_function("scanner_number_runs", |b| {
+        b.iter_batched(
+            scanner_heavy_case,
+            |(mut stores, mut input, baseline)| {
+                let count = drain_expansion(&mut stores, &mut input);
+                black_box((count, stores.provenance_stats().saturating_sub(baseline)));
+            },
+            BatchSize::SmallInput,
+        );
+    });
+
+    group.bench_function("generated_value_origin_sharing", |b| {
+        b.iter_batched(
+            generated_run_case,
+            |(mut stores, mut input, baseline)| {
+                let count = drain_expansion(&mut stores, &mut input);
+                black_box((count, stores.provenance_stats().saturating_sub(baseline)));
+            },
+            BatchSize::SmallInput,
+        );
+    });
+
+    group.finish();
+}
+
+fn provenance_memory_invariants(c: &mut Criterion) {
+    let mut group = c.benchmark_group("provenance_memory");
+
+    group.bench_function("macro_long_run_arena_growth", |b| {
+        b.iter(|| black_box(macro_long_run_growth()));
+    });
+
+    group.bench_function("rollback_truncates_discarded_fork", |b| {
+        b.iter(|| black_box(discarded_fork_growth_after_rollback()));
+    });
+
+    group.finish();
+}
+
 fn synthetic_page_journal_bytes() -> usize {
     write_synthetic_page()
 }
@@ -238,6 +351,140 @@ fn raw_meaning(operand: u64) -> Meaning {
     Meaning::CharGiven(char::from_u32(32 + (operand as u32 % 95)).expect("ASCII graphic"))
 }
 
+fn source_heavy_text() -> String {
+    let mut input = String::new();
+    for _ in 0..SOURCE_HEAVY_LINES {
+        input.push_str(SOURCE_HEAVY_LINE);
+        input.push('\n');
+    }
+    input
+}
+
+fn source_heavy_token_count(input: &str) -> usize {
+    let stores = Universe::new();
+    let mut stack = InputStack::new(MemoryInput::new(input.to_owned()));
+    let mut count = 0;
+    while stack
+        .next_token_readonly(&stores)
+        .expect("source lexing should succeed")
+        .is_some()
+    {
+        count += 1;
+    }
+    count
+}
+
+fn macro_heavy_case() -> (Universe, InputStack<MemoryInput>, ProvenanceStats) {
+    let mut stores = Universe::new();
+    let macro_cs = stores.intern("hotmacro");
+    let params = stores.intern_token_list(&[]);
+    let body_tokens = (0..MACRO_BODY_LEN)
+        .map(|index| char_token(char::from(b'a' + (index % 26) as u8)))
+        .collect::<Vec<_>>();
+    let body = stores.intern_token_list(&body_tokens);
+    let definition_origin = stores.source_origin(SourceId::new(1), 0, 1, 1);
+    let body_origins = stores.allocate_repeated_origin_list(definition_origin, body_tokens.len());
+    stores.set_macro_meaning_with_provenance(
+        macro_cs,
+        MacroMeaning::new(MeaningFlags::EMPTY, params, body),
+        MacroDefinitionProvenance::new(definition_origin, OriginListId::EMPTY, body_origins),
+    );
+
+    let call_tokens = vec![Token::Cs(macro_cs); MACRO_CALLS];
+    let calls = stores.intern_token_list(&call_tokens);
+    let call_origin = stores.source_origin(SourceId::new(1), 80, 2, 1);
+    let call_origins = stores.allocate_repeated_origin_list(call_origin, call_tokens.len());
+    let baseline = stores.provenance_stats();
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list_with_origins(calls, call_origins, TokenListReplayKind::Inserted);
+    (stores, input, baseline)
+}
+
+fn scanner_heavy_case() -> (Universe, InputStack<MemoryInput>, ProvenanceStats) {
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    let number = stores.symbol("number").expect("number primitive");
+    let mut tokens = Vec::with_capacity(SCANNER_REPETITIONS * 7);
+    for _ in 0..SCANNER_REPETITIONS {
+        tokens.push(Token::Cs(number));
+        for digit in ['1', '2', '3', '4', '5'] {
+            tokens.push(char_token(digit));
+        }
+        tokens.push(space_token());
+    }
+    traced_token_list_input(stores, tokens)
+}
+
+fn generated_run_case() -> (Universe, InputStack<MemoryInput>, ProvenanceStats) {
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    let roman = stores.symbol("romannumeral").expect("romannumeral primitive");
+    let mut tokens = Vec::with_capacity(SCANNER_REPETITIONS * 6);
+    for _ in 0..SCANNER_REPETITIONS {
+        tokens.push(Token::Cs(roman));
+        for digit in ['3', '8', '8', '8'] {
+            tokens.push(char_token(digit));
+        }
+        tokens.push(space_token());
+    }
+    traced_token_list_input(stores, tokens)
+}
+
+fn traced_token_list_input(
+    mut stores: Universe,
+    tokens: Vec<Token>,
+) -> (Universe, InputStack<MemoryInput>, ProvenanceStats) {
+    let token_list = stores.intern_token_list(&tokens);
+    let origin = stores.source_origin(SourceId::new(2), 0, 1, 1);
+    let origins = stores.allocate_repeated_origin_list(origin, tokens.len());
+    let baseline = stores.provenance_stats();
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list_with_origins(token_list, origins, TokenListReplayKind::Inserted);
+    (stores, input, baseline)
+}
+
+fn drain_expansion(stores: &mut Universe, input: &mut InputStack<MemoryInput>) -> usize {
+    let mut count = 0;
+    while let Some(token) = get_x_token(input, stores).expect("expansion should succeed") {
+        black_box(token);
+        count += 1;
+    }
+    count
+}
+
+fn macro_long_run_growth() -> ProvenanceStats {
+    let (mut stores, mut input, baseline) = macro_heavy_case();
+    let count = drain_expansion(&mut stores, &mut input);
+    assert_eq!(count, MACRO_CALLS * MACRO_BODY_LEN);
+    stores.provenance_stats().saturating_sub(baseline)
+}
+
+fn discarded_fork_growth_after_rollback() -> ProvenanceStats {
+    let (mut stores, mut input, baseline) = generated_run_case();
+    let snapshot = stores.snapshot();
+    let _ = drain_expansion(&mut stores, &mut input);
+    stores.rollback(&snapshot);
+    stores.provenance_stats().saturating_sub(baseline)
+}
+
+fn char_token(ch: char) -> Token {
+    let cat = match ch {
+        '0'..='9' | '[' | ']' | '!' | '<' | '=' | '>' | '-' => Catcode::Other,
+        _ => Catcode::Letter,
+    };
+    Token::Char {
+        ch,
+        cat,
+    }
+}
+
+fn space_token() -> Token {
+    Token::Char {
+        ch: ' ',
+        cat: Catcode::Space,
+    }
+}
+
 criterion_group!(
     benches,
     meaning_lookup,
@@ -247,6 +494,9 @@ criterion_group!(
     group_cycle,
     rollback_scaling,
     group_global_compaction,
-    synthetic_page_journal_volume
+    synthetic_page_journal_volume,
+    provenance_source_lexing,
+    provenance_expansion,
+    provenance_memory_invariants
 );
 criterion_main!(benches);

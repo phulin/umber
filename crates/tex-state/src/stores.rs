@@ -25,8 +25,8 @@ use crate::node::Node;
 use crate::node_arena::{NodeArena, NodeArenaMark, NodeListBuilder};
 use crate::provenance::{
     InsertedOrigin, InsertedOriginKind, MacroInvocationOrigin, OriginListBuilder, OriginRecord,
-    ProvenanceStore, ProvenanceStoreMark, SourceOrigin, SynthesizedOrigin, SynthesizedOriginKind,
-    SyntheticOrigin, SyntheticOriginKind,
+    ProvenanceStats, ProvenanceStore, ProvenanceStoreMark, SourceOrigin, SynthesizedOrigin,
+    SynthesizedOriginKind, SyntheticOrigin, SyntheticOriginKind,
 };
 use crate::scaled::Scaled;
 use crate::survivor::SurvivorArena;
@@ -631,6 +631,12 @@ impl Stores {
         self.provenance.allocate_list(origins)
     }
 
+    /// Allocates an origin-list span by repeating one live origin.
+    pub fn allocate_repeated_origin_list(&mut self, origin: OriginId, len: usize) -> OriginListId {
+        self.assert_live_origin(origin);
+        self.provenance.allocate_repeated_list(origin, len)
+    }
+
     /// Creates a fresh owned scratch origin-list builder.
     #[must_use]
     pub fn origin_list_builder(&self) -> OriginListBuilder {
@@ -658,6 +664,12 @@ impl Stores {
         self.provenance
             .contains_list(id)
             .then(|| self.provenance.list(id))
+    }
+
+    /// Returns live provenance arena length counters.
+    #[must_use]
+    pub fn provenance_stats(&self) -> ProvenanceStats {
+        self.provenance.stats()
     }
 
     fn assert_origin_list_len_matches(&self, token_list: TokenListId, origin_list: OriginListId) {

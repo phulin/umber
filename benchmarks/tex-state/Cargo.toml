@@ -8,6 +8,8 @@ publish = false
 
 [dependencies]
 criterion = "0.5"
+tex-expand = { path = "../../crates/tex-expand" }
+tex-lex = { path = "../../crates/tex-lex" }
 tex-state = { path = "../../crates/tex-state" }
 
 [[bench]]

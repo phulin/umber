@@ -336,7 +336,9 @@ cells[i] = new
 - Allocation is infallible from the engine's perspective. Origin-record
   capacity overflow saturates to `OriginId(0)` so diagnostic provenance never
   aborts a TeX compile; origin-list capacity overflow degrades to the empty
-  origin-list span.
+  origin-list span. Generated token runs that share one synthesized origin may
+  allocate a repeated-origin span directly, avoiding a temporary builder buffer
+  while preserving the packed-list representation.
 - The public boundary is aggregate-owned. Callers allocate and read source,
   macro-invocation, inserted, synthesized, synthetic/bootstrap, and
   origin-list builder APIs through `Universe`/`Stores`-style APIs; raw
@@ -344,7 +346,9 @@ cells[i] = new
   internal or test-only. Macro-definition side-table reads are best-effort and
   resolve to unknown/empty provenance when an entry is absent. Provenance
   appends are not journaled and are not part of memo redo slices; execution
-  reconstructs them when replaying.
+  reconstructs them when replaying. `Universe` also exposes read-only
+  provenance arena statistics for benchmarks and diagnostics; the counters do
+  not expose raw store mutation or participate in semantic hashing.
 - User-facing provenance is resolved only at diagnostic formatting
   boundaries. `ProvenanceResolver` reads live origin records, input summaries,
   world input records, and interned names to render source labels, source

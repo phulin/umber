@@ -8,6 +8,7 @@
 use crate::ids::{MacroDefinitionId, OriginListId};
 use crate::input::{SourceId, TokenListReplayKind};
 use crate::token::{OriginId, Token};
+use std::mem;
 
 /// A rollback watermark for the provenance store.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -15,6 +16,64 @@ pub(crate) struct ProvenanceStoreMark {
     records: u32,
     spans: u32,
     origins: u32,
+}
+
+/// Live provenance arena size counters.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ProvenanceStats {
+    origin_records: usize,
+    origin_list_spans: usize,
+    origin_list_entries: usize,
+}
+
+impl ProvenanceStats {
+    #[must_use]
+    pub const fn new(
+        origin_records: usize,
+        origin_list_spans: usize,
+        origin_list_entries: usize,
+    ) -> Self {
+        Self {
+            origin_records,
+            origin_list_spans,
+            origin_list_entries,
+        }
+    }
+
+    #[must_use]
+    pub const fn origin_records(self) -> usize {
+        self.origin_records
+    }
+
+    #[must_use]
+    pub const fn origin_list_spans(self) -> usize {
+        self.origin_list_spans
+    }
+
+    #[must_use]
+    pub const fn origin_list_entries(self) -> usize {
+        self.origin_list_entries
+    }
+
+    #[must_use]
+    pub const fn estimated_bytes(self) -> usize {
+        self.origin_records * mem::size_of::<OriginRecord>()
+            + self.origin_list_spans * mem::size_of::<(u32, u32)>()
+            + self.origin_list_entries * mem::size_of::<OriginId>()
+    }
+
+    #[must_use]
+    pub const fn saturating_sub(self, baseline: Self) -> Self {
+        Self {
+            origin_records: self.origin_records.saturating_sub(baseline.origin_records),
+            origin_list_spans: self
+                .origin_list_spans
+                .saturating_sub(baseline.origin_list_spans),
+            origin_list_entries: self
+                .origin_list_entries
+                .saturating_sub(baseline.origin_list_entries),
+        }
+    }
 }
 
 /// An owned scratch buffer for building an origin list before freezing it.
@@ -332,6 +391,27 @@ impl ProvenanceStore {
         OriginListId::new(raw)
     }
 
+    /// Allocates an origin-list span by repeating one live origin.
+    pub(crate) fn allocate_repeated_list(&mut self, origin: OriginId, len: usize) -> OriginListId {
+        if len == 0 {
+            return OriginListId::EMPTY;
+        }
+        let (Some(start), Some(len), Some(raw)) = (
+            u32_len(self.origins.len()),
+            u32_len(len),
+            u32_index(self.spans.len()),
+        ) else {
+            return OriginListId::EMPTY;
+        };
+        let Some(_end) = start.checked_add(len) else {
+            return OriginListId::EMPTY;
+        };
+        self.origins
+            .resize(self.origins.len() + len as usize, origin);
+        self.spans.push((start, len));
+        OriginListId::new(raw)
+    }
+
     /// Reads a live origin record.
     #[must_use]
     pub(crate) fn get(&self, id: OriginId) -> OriginRecord {
@@ -362,6 +442,12 @@ impl ProvenanceStore {
     #[must_use]
     pub(crate) fn contains_list(&self, id: OriginListId) -> bool {
         (id.raw() as usize) < self.spans.len()
+    }
+
+    /// Returns live arena length counters.
+    #[must_use]
+    pub(crate) fn stats(&self) -> ProvenanceStats {
+        ProvenanceStats::new(self.records.len(), self.spans.len(), self.origins.len())
     }
 
     /// Takes a rollback watermark for aggregate snapshots.
