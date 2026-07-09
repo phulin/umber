@@ -41,11 +41,9 @@ where
     loop {
         let boundary = columns.len();
         ensure_boundary(&mut tabskips, boundary, scanner.current_tabskip());
-        scanner.set_current_boundary(boundary);
 
         let u_template = scan_u_template(&mut scanner)?;
         let (v_template, terminator) = scan_v_template(&mut scanner, end_template)?;
-        tabskips[boundary] = scanner.boundary_tabskip();
         columns.push(AlignColumn {
             u_template,
             v_template,
@@ -175,7 +173,6 @@ struct PreambleScanner<'a, S, H> {
     hooks: &'a mut H,
     lookahead: Option<Token>,
     current_tabskip: GlueId,
-    boundary_tabskip: GlueId,
 }
 
 impl<'a, S, H> PreambleScanner<'a, S, H>
@@ -191,20 +188,11 @@ where
             stores,
             hooks,
             lookahead: None,
-            boundary_tabskip: current_tabskip,
         }
     }
 
     fn current_tabskip(&self) -> GlueId {
         self.current_tabskip
-    }
-
-    fn set_current_boundary(&mut self, _boundary: usize) {
-        self.boundary_tabskip = self.current_tabskip;
-    }
-
-    fn boundary_tabskip(&self) -> GlueId {
-        self.boundary_tabskip
     }
 
     fn next_is_alignment_tab(&mut self) -> Result<bool, ExecError> {
@@ -266,7 +254,6 @@ where
             self.hooks,
         )?;
         self.current_tabskip = self.stores.glue_param(GlueParam::TAB_SKIP);
-        self.boundary_tabskip = self.current_tabskip;
         Ok(true)
     }
 }

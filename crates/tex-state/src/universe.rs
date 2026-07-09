@@ -2112,9 +2112,10 @@ fn hash_token_list_replay_kind(kind: TokenListReplayKind, hasher: &mut StateHash
         TokenListReplayKind::MacroArgument => 1,
         TokenListReplayKind::NoExpand => 2,
         TokenListReplayKind::EveryPar => 3,
-        TokenListReplayKind::Mark => 4,
-        TokenListReplayKind::OutputRoutine => 5,
-        TokenListReplayKind::Inserted => 6,
+        TokenListReplayKind::EveryCr => 4,
+        TokenListReplayKind::Mark => 5,
+        TokenListReplayKind::OutputRoutine => 6,
+        TokenListReplayKind::Inserted => 7,
     });
 }
 

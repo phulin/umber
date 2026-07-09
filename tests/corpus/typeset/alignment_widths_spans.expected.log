@@ -1,0 +1,44 @@
+> \box0=
+\vbox(18.94444+0.0)x10.55559
+.\hbox(6.94444+0.0)x10.55559
+..\glue(\tabskip) 0.0
+..\hbox(6.94444+0.0)x4.44444
+...\tenrm a
+...\tenrm b
+..\glue(\tabskip) 0.0
+..\hbox(0.0+0.0)x6.11115
+..\glue(\tabskip) 0.0
+.\glue(\baselineskip) 5.05556
+.\hbox(6.94444+0.0)x10.55559
+..\glue(\tabskip) 0.0
+..\hbox(6.94444+0.0)x4.44444
+...\tenrm c
+..\glue(\tabskip) 0.0
+..\hbox(6.94444+0.0)x6.11115
+...\tenrm d
+..\glue(\tabskip) 0.0
+
+! OK.
+
+> \box1=
+\vbox(0.0+0.0)x30.0
+.\hbox(0.0+0.0)x30.0, glue set 6.66667fil
+..\glue(\tabskip) 0.0 plus 1.0fil
+..\hbox(0.0+0.0)x5.0
+...\rule(0.0+0.0)x5.0
+..\glue(\tabskip) 0.0 plus 1.0fil
+..\hbox(0.0+0.0)x5.0
+...\rule(0.0+0.0)x5.0
+..\glue(\tabskip) 0.0 plus 1.0fil
+
+! OK.
+
+> \box2=
+\vbox(4.30554+0.0)x5.00002
+.\hbox(4.30554+0.0)x5.00002
+..\glue(\tabskip) 0.0
+..\hbox(4.30554+0.0)x5.00002
+...\tenrm a
+..\glue(\tabskip) 0.0
+
+! OK.

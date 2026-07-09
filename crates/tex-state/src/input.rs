@@ -84,6 +84,7 @@ pub enum TokenListReplayKind {
     MacroArgument,
     NoExpand,
     EveryPar,
+    EveryCr,
     Mark,
     OutputRoutine,
     Inserted,

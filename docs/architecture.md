@@ -510,10 +510,14 @@ makes box-level memoization (M4) sound.
   stomach alignment sub-mode now runs the row/cell loop, replays u/v
   templates through ordinary main control, recognizes unshielded `&`,
   `\span`, and `\cr` by meaning using an `AlignState` brace counter, and
-  packages cells/rows as unset node records. Span-time template expansion is
-  the explicit architecture-§7 exception inside `tex-exec::align`; two-pass
-  width resolution and final set-box conversion remain alignment follow-up
-  work.
+  packages cells/rows as unset node records. At `fin_align`,
+  `tex-exec::align::widths` runs TeX.web's span-chain width resolution over
+  those frozen rows, including tabskip-width subtraction and last-spanned-column
+  excess placement, then converts every reachable unset row/cell to ordinary
+  hlist/vlist nodes before the body is appended to the enclosing mode. Span-time
+  template expansion remains the explicit architecture-§7 exception inside
+  `tex-exec::align`; downstream page building, diagnostics, and shipout operate
+  only on set boxes.
 - **Vertical packing, `\vsplit`, marks**: operate on survivor-arena lists
   (they are reachable from box registers by definition); mark extraction
   reads are recorded like any state read. `\vsplit` clones the source vbox

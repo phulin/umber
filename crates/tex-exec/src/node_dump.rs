@@ -661,6 +661,7 @@ impl GlueKindDump for GlueKind {
     fn glue_dump_prefix(self) -> &'static str {
         match self {
             Self::Normal => "\\glue ",
+            Self::TabSkip => "\\glue(\\tabskip) ",
             Self::BaselineSkip => "\\glue(\\baselineskip) ",
             Self::LineSkip => "\\glue(\\lineskip) ",
             Self::TopSkip => "\\glue(\\topskip) ",

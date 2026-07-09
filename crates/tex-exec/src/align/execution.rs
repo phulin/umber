@@ -1,5 +1,6 @@
 use tex_expand::{ExpansionHooks, ReadRecorder, get_x_token_with_recorder_and_hooks};
 use tex_lex::{InputSource, InputStack, TokenListReplayKind};
+use tex_state::env::banks::TokParam;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::node::{GlueKind, Node, UnsetKind, UnsetNode, UnsetNodeFields};
 use tex_state::token::{Catcode, Token};
@@ -10,7 +11,7 @@ use crate::assignments::{flush_pending_hchars, next_non_space_x};
 use crate::dispatch::dispatch_delivered_token_with_recorder;
 use crate::executor::sync_engine_state;
 use crate::mode::{AlignState, AlignmentKind};
-use crate::vertical::append_node_to_current_list;
+use crate::vertical::{append_node_to_current_list, build_page_if_outer_vertical};
 use crate::{DispatchAction, ExecError, ExecutionStats, Mode, ModeNest, leave_group, push_tokens};
 
 pub(crate) fn execute_alignment<S, R, H>(
@@ -30,6 +31,7 @@ where
     nest.push(alignment_mode(alignment_kind));
     let align_level = nest.depth() - 1;
     nest.current_list_mut().set_align_state(state);
+    replay_everycr(input, stores);
 
     while let Some(first_token) = align_peek(align_level, nest, input, stores, hooks)? {
         init_row(align_level, nest)?;
@@ -43,15 +45,30 @@ where
             hooks,
         )?;
         fin_row(align_level, nest, stores)?;
+        replay_everycr(input, stores);
     }
 
-    let level = nest.pop()?;
+    let mut level = nest.pop()?;
+    let state = level
+        .list_mut()
+        .take_align_state()
+        .ok_or(ExecError::MissingToken {
+            context: "alignment state",
+        })?;
     let nodes = level.list().nodes().to_vec();
-    let children = stores.freeze_node_list(&nodes);
-    let unset_kind = final_unset_kind(alignment_kind);
-    let alignment = make_unset_node(stores, children, unset_kind, 1);
-    append_node_to_current_list(nest, stores, alignment)?;
+    let finished = super::widths::finish_alignment(&state, &nodes, stores)?;
+    for node in finished {
+        append_node_to_current_list(nest, stores, node)?;
+    }
+    build_page_if_outer_vertical(nest, stores)?;
     Ok(())
+}
+
+fn replay_everycr<S>(input: &mut InputStack<S>, stores: &Universe) {
+    let everycr = stores.tok_param(TokParam::EVERY_CR);
+    if !stores.tokens(everycr).is_empty() {
+        input.push_token_list(everycr, TokenListReplayKind::EveryCr);
+    }
 }
 
 fn align_peek<S, H>(
@@ -98,7 +115,7 @@ fn init_row(align_level: usize, nest: &mut ModeNest) -> Result<(), ExecError> {
     nest.push(row_mode(kind));
     nest.current_list_mut().push(Node::Glue {
         spec: first_tabskip,
-        kind: GlueKind::Normal,
+        kind: GlueKind::TabSkip,
     });
     Ok(())
 }
@@ -283,7 +300,7 @@ fn package_cell(
     let tabskip = align_state(nest, align_level)?.tabskip_for_boundary(next_boundary);
     nest.current_list_mut().push(Node::Glue {
         spec: tabskip,
-        kind: GlueKind::Normal,
+        kind: GlueKind::TabSkip,
     });
     Ok(())
 }
@@ -565,13 +582,6 @@ fn cell_unset_kind(kind: AlignmentKind) -> UnsetKind {
 
 fn row_unset_kind(kind: AlignmentKind) -> UnsetKind {
     cell_unset_kind(kind)
-}
-
-fn final_unset_kind(kind: AlignmentKind) -> UnsetKind {
-    match kind {
-        AlignmentKind::HAlign => UnsetKind::VBox,
-        AlignmentKind::VAlign => UnsetKind::HBox,
-    }
 }
 
 fn is_alignment_tab(stores: &Universe, token: Token) -> bool {

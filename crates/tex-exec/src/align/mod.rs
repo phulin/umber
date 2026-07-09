@@ -2,6 +2,7 @@
 
 mod execution;
 mod preamble;
+mod widths;
 
 use tex_expand::{ExpansionHooks, ReadRecorder};
 use tex_lex::{InputSource, InputStack};

@@ -800,6 +800,7 @@ fn hash_glue_kind(kind: GlueKind, hasher: &mut StateHasher) {
         GlueKind::ThinMuSkip => 17,
         GlueKind::MedMuSkip => 18,
         GlueKind::ThickMuSkip => 19,
+        GlueKind::TabSkip => 20,
     });
 }
 

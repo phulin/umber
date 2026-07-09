@@ -1,0 +1,14 @@
+\font\tenrm=../../crates/tex-fonts/tests/fixtures/cm/cmr10
+\tenrm
+\tracingonline=1
+\showboxbreadth=100
+\showboxdepth=100
+\baselineskip=12pt \lineskiplimit=0pt \boxmaxdepth=100pt
+\setbox0=\vbox{\halign{#&#\cr a\span b\cr c&d\cr}}
+\showbox0
+\setbox1=\vbox{\tabskip=0pt plus 1fil \halign to 30pt{\vrule width5pt height0pt depth0pt#&\vrule width5pt height0pt depth0pt#\cr {}&{}\cr}}
+\showbox1
+\tabskip=0pt
+\setbox2=\vbox{\halign{#&\tabskip=10pt#\cr a\cr}}
+\showbox2
+\end

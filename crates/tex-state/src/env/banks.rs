@@ -302,6 +302,9 @@ impl TokParam {
 
     /// TeX's `\everydisplay` token-list parameter.
     pub const EVERY_DISPLAY: Self = Self::new(3);
+
+    /// TeX's `\everycr` token-list parameter.
+    pub const EVERY_CR: Self = Self::new(7);
 }
 
 pub(crate) trait BankCodec {
