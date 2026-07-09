@@ -54,7 +54,9 @@ pub enum ScanGlueError {
         value: i32,
         context: TracedTokenWord,
     },
-    UnsupportedInternalGlue(TracedTokenWord),
+    UnsupportedInternalGlue {
+        context: TracedTokenWord,
+    },
 }
 
 impl fmt::Display for ScanGlueError {
@@ -67,11 +69,11 @@ impl fmt::Display for ScanGlueError {
             Self::RegisterNumberOutOfRange { value, .. } => {
                 write!(f, "register number {value} is out of range")
             }
-            Self::UnsupportedInternalGlue(token) => {
+            Self::UnsupportedInternalGlue { context } => {
                 write!(
                     f,
                     "unsupported internal glue token {:?}",
-                    semantic_token(*token)
+                    semantic_token(*context)
                 )
             }
         }
@@ -86,7 +88,7 @@ impl std::error::Error for ScanGlueError {
             Self::Dimen(err) => Some(err),
             Self::MissingNumber { .. }
             | Self::RegisterNumberOutOfRange { .. }
-            | Self::UnsupportedInternalGlue(_) => None,
+            | Self::UnsupportedInternalGlue { .. } => None,
         }
     }
 }
@@ -98,7 +100,7 @@ impl ScanGlueError {
             Self::MissingNumber { context } | Self::RegisterNumberOutOfRange { context, .. } => {
                 Some(context.origin())
             }
-            Self::UnsupportedInternalGlue(token) => Some(token.origin()),
+            Self::UnsupportedInternalGlue { context } => Some(context.origin()),
             Self::Dimen(err) => err.primary_origin(),
             Self::Expand(err) => err.primary_origin(),
             Self::Lex(_) => None,

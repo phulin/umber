@@ -63,7 +63,7 @@ where
     };
     let semantic = crate::semantic_token(token);
     let Token::Cs(symbol) = semantic else {
-        return Err(ExpandError::UnsupportedTheTarget(token));
+        return Err(ExpandError::UnsupportedTheTarget { context: token });
     };
 
     match stores.meaning(symbol) {
@@ -127,7 +127,7 @@ where
             tex_state::meaning::UnexpandablePrimitive::Font => {
                 let symbol = stores
                     .current_font_symbol()
-                    .ok_or(ExpandError::UnsupportedTheTarget(token))?;
+                    .ok_or(ExpandError::UnsupportedTheTarget { context: token })?;
                 Ok(Dispatch::Push {
                     replay_kind: ExpansionReplayKind::TheOutput,
                     token_list: stores.intern_token_list(&[Token::Cs(symbol)]),
@@ -147,7 +147,7 @@ where
                 )?
                 .value();
                 if !(1..=32_767).contains(&number) {
-                    return Err(ExpandError::UnsupportedTheTarget(token));
+                    return Err(ExpandError::UnsupportedTheTarget { context: token });
                 }
                 let font = scan_font_selector(input, stores, recorder, hooks, expander, token)?;
                 Ok(push_rendered_text(
@@ -259,7 +259,7 @@ where
                     cause_origin,
                 ))
             }
-            _ => Err(ExpandError::UnsupportedTheTarget(token)),
+            _ => Err(ExpandError::UnsupportedTheTarget { context: token }),
         },
         Meaning::CountRegister(index) => Ok(push_rendered_text(
             stores,
@@ -388,7 +388,7 @@ where
                 &stores.int_param(IntParam::ESCAPE_CHAR).to_string(),
                 cause_origin,
             )),
-            _ => Err(ExpandError::UnsupportedTheTarget(token)),
+            _ => Err(ExpandError::UnsupportedTheTarget { context: token }),
         },
     }
 }
@@ -701,7 +701,7 @@ where
     u32::try_from(value)
         .ok()
         .and_then(char::from_u32)
-        .ok_or(ExpandError::UnsupportedTheTarget(context))
+        .ok_or(ExpandError::UnsupportedTheTarget { context })
 }
 
 pub(crate) fn scan_font_selector<S, St, R, H, E>(
@@ -730,10 +730,10 @@ where
     };
     let semantic = crate::semantic_token(token);
     let Token::Cs(symbol) = semantic else {
-        return Err(ExpandError::UnsupportedTheTarget(token));
+        return Err(ExpandError::UnsupportedTheTarget { context: token });
     };
     match stores.meaning(symbol) {
         Meaning::Font(id) => Ok(id),
-        _ => Err(ExpandError::UnsupportedTheTarget(token)),
+        _ => Err(ExpandError::UnsupportedTheTarget { context: token }),
     }
 }

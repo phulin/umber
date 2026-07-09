@@ -194,7 +194,9 @@ fn append_input_name_token(name: &mut String, token: TracedTokenWord) -> Result<
             name.push(ch);
             Ok(())
         }
-        Token::Cs(_) | Token::Param(_) => Err(ExpandError::NonCharacterInInputName(token)),
+        Token::Cs(_) | Token::Param(_) => {
+            Err(ExpandError::NonCharacterInInputName { context: token })
+        }
     }
 }
 

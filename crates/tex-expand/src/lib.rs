@@ -246,7 +246,9 @@ pub enum ExpandError {
     MissingInputName {
         context: TracedTokenWord,
     },
-    NonCharacterInInputName(TracedTokenWord),
+    NonCharacterInInputName {
+        context: TracedTokenWord,
+    },
     InputOpen {
         name: String,
         message: String,
@@ -258,9 +260,15 @@ pub enum ExpandError {
     },
     ScanInt(Box<scan_int::ScanIntError>),
     ScanDimen(Box<scan_dimen::ScanDimenError>),
-    UnsupportedTheTarget(TracedTokenWord),
-    InvalidConditionalRelation(TracedTokenWord),
-    IncompleteIf(TracedTokenWord),
+    UnsupportedTheTarget {
+        context: TracedTokenWord,
+    },
+    InvalidConditionalRelation {
+        context: TracedTokenWord,
+    },
+    IncompleteIf {
+        context: TracedTokenWord,
+    },
     ExtraConditionalControl {
         name: &'static str,
         context: TracedTokenWord,
@@ -284,11 +292,11 @@ impl fmt::Display for ExpandError {
             }
             Self::MissingEndCsName { .. } => write!(f, "missing \\endcsname for \\csname"),
             Self::MissingInputName { .. } => write!(f, "missing file name after \\input"),
-            Self::NonCharacterInInputName(token) => {
+            Self::NonCharacterInInputName { context } => {
                 write!(
                     f,
                     "non-character token {:?} while scanning \\input file name",
-                    semantic_token(*token)
+                    semantic_token(*context)
                 )
             }
             Self::InputOpen { name, message, .. } => {
@@ -299,21 +307,23 @@ impl fmt::Display for ExpandError {
             }
             Self::ScanInt(err) => write!(f, "{err}"),
             Self::ScanDimen(err) => write!(f, "{err}"),
-            Self::UnsupportedTheTarget(token) => {
+            Self::UnsupportedTheTarget { context } => {
                 write!(
                     f,
                     "unsupported token {:?} after \\the",
-                    semantic_token(*token)
+                    semantic_token(*context)
                 )
             }
-            Self::InvalidConditionalRelation(token) => {
+            Self::InvalidConditionalRelation { context } => {
                 write!(
                     f,
                     "invalid conditional relation token {:?}",
-                    semantic_token(*token)
+                    semantic_token(*context)
                 )
             }
-            Self::IncompleteIf(_) => write!(f, "Incomplete \\if; all text was ignored after line"),
+            Self::IncompleteIf { .. } => {
+                write!(f, "Incomplete \\if; all text was ignored after line")
+            }
             Self::ExtraConditionalControl { name, .. } => write!(f, "Extra \\{name}"),
             Self::ForbiddenOuterTokenInSkippedConditional { name, .. } => {
                 write!(
@@ -336,12 +346,12 @@ impl std::error::Error for ExpandError {
             | Self::MissingTokenAfterPrimitive { .. }
             | Self::MissingEndCsName { .. }
             | Self::MissingInputName { .. }
-            | Self::NonCharacterInInputName(_)
+            | Self::NonCharacterInInputName { .. }
             | Self::InputOpen { .. }
             | Self::UndefinedControlSequence { .. }
-            | Self::UnsupportedTheTarget(_)
-            | Self::InvalidConditionalRelation(_)
-            | Self::IncompleteIf(_)
+            | Self::UnsupportedTheTarget { .. }
+            | Self::InvalidConditionalRelation { .. }
+            | Self::IncompleteIf { .. }
             | Self::ExtraConditionalControl { .. }
             | Self::ForbiddenOuterTokenInSkippedConditional { .. } => None,
         }
@@ -362,10 +372,10 @@ impl ExpandError {
             | Self::ForbiddenOuterTokenInSkippedConditional { context, .. } => {
                 Some(context.origin())
             }
-            Self::NonCharacterInInputName(token)
-            | Self::UnsupportedTheTarget(token)
-            | Self::InvalidConditionalRelation(token)
-            | Self::IncompleteIf(token) => Some(token.origin()),
+            Self::NonCharacterInInputName { context }
+            | Self::UnsupportedTheTarget { context }
+            | Self::InvalidConditionalRelation { context }
+            | Self::IncompleteIf { context } => Some(context.origin()),
             Self::ScanInt(err) => err.primary_origin(),
             Self::ScanDimen(err) => err.primary_origin(),
             Self::MacroCall(err) => err.primary_origin(),

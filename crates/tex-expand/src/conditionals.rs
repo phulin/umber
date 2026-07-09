@@ -54,7 +54,7 @@ where
 {
     let previous = input
         .update_current_condition(ConditionFrameSummary::new_if(context, condition))
-        .ok_or(ExpandError::IncompleteIf(context))?;
+        .ok_or(ExpandError::IncompleteIf { context })?;
     debug_assert!(previous.evaluating());
     if !condition {
         skip_false_limb(input, stores, recorder, hooks)?;
@@ -81,7 +81,7 @@ where
             context,
             take_initial_limb,
         ))
-        .ok_or(ExpandError::IncompleteIf(context))?;
+        .ok_or(ExpandError::IncompleteIf { context })?;
     debug_assert!(previous.evaluating());
     if !take_initial_limb {
         skip_ifcase_to_selected_limb(input, stores, recorder, hooks, selected_case)?;
@@ -295,7 +295,7 @@ where
                 .current_condition()
                 .expect("conditional skipping requires an open condition frame")
                 .context();
-            return Err(ExpandError::IncompleteIf(context));
+            return Err(ExpandError::IncompleteIf { context });
         };
         let Some(primitive) = skipped_conditional_control(stores, token, recorder)? else {
             continue;
@@ -570,7 +570,7 @@ where
         Token::Char { ch: '<', .. } => Ok(ConditionalRelation::Less),
         Token::Char { ch: '=', .. } => Ok(ConditionalRelation::Equal),
         Token::Char { ch: '>', .. } => Ok(ConditionalRelation::Greater),
-        _ => Err(ExpandError::InvalidConditionalRelation(token)),
+        _ => Err(ExpandError::InvalidConditionalRelation { context: token }),
     }
 }
 

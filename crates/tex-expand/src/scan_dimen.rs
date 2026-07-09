@@ -246,7 +246,9 @@ pub enum ScanDimenError {
     IncompatibleGlueUnits {
         context: TracedTokenWord,
     },
-    UnsupportedInternalDimension(TracedTokenWord),
+    UnsupportedInternalDimension {
+        context: TracedTokenWord,
+    },
 }
 
 impl fmt::Display for ScanDimenError {
@@ -261,11 +263,11 @@ impl fmt::Display for ScanDimenError {
                 write!(f, "register number {value} is out of range")
             }
             Self::IncompatibleGlueUnits { .. } => f.write_str("Incompatible glue units"),
-            Self::UnsupportedInternalDimension(token) => {
+            Self::UnsupportedInternalDimension { context } => {
                 write!(
                     f,
                     "unsupported internal dimension token {:?}",
-                    semantic_token(*token)
+                    semantic_token(*context)
                 )
             }
         }
@@ -282,7 +284,7 @@ impl std::error::Error for ScanDimenError {
             | Self::MissingUnit { .. }
             | Self::RegisterNumberOutOfRange { .. }
             | Self::IncompatibleGlueUnits { .. }
-            | Self::UnsupportedInternalDimension(_) => None,
+            | Self::UnsupportedInternalDimension { .. } => None,
         }
     }
 }
@@ -296,7 +298,7 @@ impl ScanDimenError {
             }
             Self::RegisterNumberOutOfRange { context, .. }
             | Self::IncompatibleGlueUnits { context } => Some(context.origin()),
-            Self::UnsupportedInternalDimension(token) => Some(token.origin()),
+            Self::UnsupportedInternalDimension { context } => Some(context.origin()),
             Self::Integer(err) => err.primary_origin(),
             Self::Expand(err) => err.primary_origin(),
             Self::Lex(_) => None,

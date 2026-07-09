@@ -136,7 +136,7 @@ fn invalid_conditional_relation_reports_offending_origin() {
     .expect_err("relation scanner should reject non-relation token");
 
     let primary = err.primary_origin();
-    let crate::ExpandError::InvalidConditionalRelation(token) = err else {
+    let crate::ExpandError::InvalidConditionalRelation { context: token } = err else {
         panic!("expected invalid relation error");
     };
     assert_eq!(primary, Some(token.origin()));
@@ -2015,7 +2015,7 @@ fn skipped_conditional_reports_incomplete_if_at_eof() {
 
     assert!(matches!(
         get_x_token(&mut input, &mut stores),
-        Err(crate::ExpandError::IncompleteIf(_))
+        Err(crate::ExpandError::IncompleteIf { .. })
     ));
 }
 

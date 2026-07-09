@@ -84,9 +84,15 @@ pub enum ScanToksError {
     TooManyParameters {
         context: TracedTokenWord,
     },
-    InvalidParameterTokenInParameterText(TracedTokenWord),
-    InvalidParameterTokenInReplacementText(TracedTokenWord),
-    MissingGeneralTextBeginGroup(TracedTokenWord),
+    InvalidParameterTokenInParameterText {
+        context: TracedTokenWord,
+    },
+    InvalidParameterTokenInReplacementText {
+        context: TracedTokenWord,
+    },
+    MissingGeneralTextBeginGroup {
+        context: TracedTokenWord,
+    },
 }
 
 impl fmt::Display for ScanToksError {
@@ -109,25 +115,25 @@ impl fmt::Display for ScanToksError {
             Self::TooManyParameters { .. } => {
                 write!(f, "macro definitions support only #1 through #9")
             }
-            Self::InvalidParameterTokenInParameterText(token) => {
+            Self::InvalidParameterTokenInParameterText { context } => {
                 write!(
                     f,
                     "invalid parameter token {:?} in macro parameter text",
-                    traced_semantic_token(*token)
+                    traced_semantic_token(*context)
                 )
             }
-            Self::InvalidParameterTokenInReplacementText(token) => {
+            Self::InvalidParameterTokenInReplacementText { context } => {
                 write!(
                     f,
                     "invalid parameter token {:?} in macro replacement text",
-                    traced_semantic_token(*token)
+                    traced_semantic_token(*context)
                 )
             }
-            Self::MissingGeneralTextBeginGroup(token) => {
+            Self::MissingGeneralTextBeginGroup { context } => {
                 write!(
                     f,
                     "expected begin-group token before general text, got {:?}",
-                    traced_semantic_token(*token)
+                    traced_semantic_token(*context)
                 )
             }
         }
@@ -166,9 +172,9 @@ impl ScanToksError {
             | Self::EndOfInputInReplacementText { context }
             | Self::ParameterNumberOutOfOrder { context, .. }
             | Self::TooManyParameters { context }
-            | Self::InvalidParameterTokenInParameterText(context)
-            | Self::InvalidParameterTokenInReplacementText(context)
-            | Self::MissingGeneralTextBeginGroup(context) => Some(context.origin()),
+            | Self::InvalidParameterTokenInParameterText { context }
+            | Self::InvalidParameterTokenInReplacementText { context }
+            | Self::MissingGeneralTextBeginGroup { context } => Some(context.origin()),
         }
     }
 }
@@ -558,7 +564,11 @@ where
                     push_scanned_token(&mut builder, &mut origins, traced, token);
                     return Ok(finish_traced_list(stores, &mut builder, &mut origins));
                 }
-                _ => return Err(ScanToksError::InvalidParameterTokenInParameterText(traced)),
+                _ => {
+                    return Err(ScanToksError::InvalidParameterTokenInParameterText {
+                        context: traced,
+                    });
+                }
             }
             continue;
         }
@@ -613,9 +623,9 @@ where
                     Token::param(token_digit(token).expect("digit token was matched")),
                 ),
                 _ => {
-                    return Err(ScanToksError::InvalidParameterTokenInReplacementText(
-                        traced,
-                    ));
+                    return Err(ScanToksError::InvalidParameterTokenInReplacementText {
+                        context: traced,
+                    });
                 }
             }
             continue;
@@ -665,7 +675,7 @@ where
             ..
         }
     ) {
-        return Err(ScanToksError::MissingGeneralTextBeginGroup(open));
+        return Err(ScanToksError::MissingGeneralTextBeginGroup { context: open });
     }
 
     let mut builder = stores.token_list_builder();

@@ -108,7 +108,9 @@ pub enum ScanIntError {
         value: i32,
         context: TracedTokenWord,
     },
-    UnsupportedInternalInteger(TracedTokenWord),
+    UnsupportedInternalInteger {
+        context: TracedTokenWord,
+    },
 }
 
 impl fmt::Display for ScanIntError {
@@ -120,11 +122,11 @@ impl fmt::Display for ScanIntError {
             Self::RegisterNumberOutOfRange { value, .. } => {
                 write!(f, "register number {value} is out of range")
             }
-            Self::UnsupportedInternalInteger(token) => {
+            Self::UnsupportedInternalInteger { context } => {
                 write!(
                     f,
                     "unsupported internal integer token {:?}",
-                    semantic_token(*token)
+                    semantic_token(*context)
                 )
             }
         }
@@ -138,7 +140,7 @@ impl std::error::Error for ScanIntError {
             Self::Lex(err) => Some(err),
             Self::MissingNumber { .. }
             | Self::RegisterNumberOutOfRange { .. }
-            | Self::UnsupportedInternalInteger(_) => None,
+            | Self::UnsupportedInternalInteger { .. } => None,
         }
     }
 }
@@ -150,7 +152,7 @@ impl ScanIntError {
             Self::MissingNumber { context } | Self::RegisterNumberOutOfRange { context, .. } => {
                 Some(context.origin())
             }
-            Self::UnsupportedInternalInteger(token) => Some(token.origin()),
+            Self::UnsupportedInternalInteger { context } => Some(context.origin()),
             Self::Expand(err) => err.primary_origin(),
             Self::Lex(_) => None,
         }
@@ -559,7 +561,7 @@ where
                         token,
                     ))
                 }
-                _ => Err(ScanIntError::UnsupportedInternalInteger(token)),
+                _ => Err(ScanIntError::UnsupportedInternalInteger { context: token }),
             }
         }
     }
@@ -645,7 +647,7 @@ where
             consume_optional_space(input, stores, recorder, hooks, expander)?;
             Ok(ScannedInt::new(value, token))
         }
-        _ => Err(ScanIntError::UnsupportedInternalInteger(token)),
+        _ => Err(ScanIntError::UnsupportedInternalInteger { context: token }),
     }
 }
 
