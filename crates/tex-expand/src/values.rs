@@ -5,7 +5,7 @@ use tex_state::ids::{FontId, TokenListId};
 use tex_state::meaning::{InternalInteger, Meaning, MeaningFlags};
 use tex_state::provenance::SynthesizedOriginKind;
 use tex_state::scaled::Scaled;
-use tex_state::token::{Catcode, OriginId, Token};
+use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{BoxDimension, ExpansionState};
 
 use crate::{
@@ -19,6 +19,7 @@ pub(crate) fn expand_the<S, R, H>(
     stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
+    context: TracedTokenWord,
 ) -> Result<Dispatch, ExpandError>
 where
     S: InputSource,
@@ -31,7 +32,7 @@ where
         recorder,
         hooks,
         &mut NoInputExpandNext,
-        OriginId::UNKNOWN,
+        context,
     )
 }
 
@@ -41,7 +42,7 @@ pub(crate) fn expand_the_with_expander_and_hooks<S, St, R, H, E>(
     recorder: &mut R,
     hooks: &mut H,
     expander: &mut E,
-    cause_origin: OriginId,
+    cause_context: TracedTokenWord,
 ) -> Result<Dispatch, ExpandError>
 where
     S: InputSource,
@@ -50,17 +51,19 @@ where
     H: ExpansionHooks<S>,
     E: ExpandNext<S, St, R, H>,
 {
+    let cause_origin = cause_context.origin();
     let Some(token) = scan_helpers::next_non_space_x_token_with_expander_and_hooks(
         input, stores, recorder, hooks, expander,
     )?
     else {
-        return Err(ExpandError::MissingTokenAfterPrimitive(
-            ExpandableOpcode::The,
-        ));
+        return Err(ExpandError::MissingTokenAfterPrimitive {
+            opcode: ExpandableOpcode::The,
+            context: cause_context,
+        });
     };
     let semantic = crate::semantic_token(token);
     let Token::Cs(symbol) = semantic else {
-        return Err(ExpandError::UnsupportedTheTarget(semantic));
+        return Err(ExpandError::UnsupportedTheTarget(token));
     };
 
     match stores.meaning(symbol) {
@@ -124,7 +127,7 @@ where
             tex_state::meaning::UnexpandablePrimitive::Font => {
                 let symbol = stores
                     .current_font_symbol()
-                    .ok_or(ExpandError::UnsupportedTheTarget(semantic))?;
+                    .ok_or(ExpandError::UnsupportedTheTarget(token))?;
                 Ok(Dispatch::Push {
                     replay_kind: ExpansionReplayKind::TheOutput,
                     token_list: stores.intern_token_list(&[Token::Cs(symbol)]),
@@ -144,9 +147,9 @@ where
                 )?
                 .value();
                 if !(1..=32_767).contains(&number) {
-                    return Err(ExpandError::UnsupportedTheTarget(semantic));
+                    return Err(ExpandError::UnsupportedTheTarget(token));
                 }
-                let font = scan_font_selector(input, stores, recorder, hooks, expander)?;
+                let font = scan_font_selector(input, stores, recorder, hooks, expander, token)?;
                 Ok(push_rendered_text(
                     stores,
                     ExpansionReplayKind::TheOutput,
@@ -155,7 +158,7 @@ where
                 ))
             }
             tex_state::meaning::UnexpandablePrimitive::HyphenChar => {
-                let font = scan_font_selector(input, stores, recorder, hooks, expander)?;
+                let font = scan_font_selector(input, stores, recorder, hooks, expander, token)?;
                 Ok(push_rendered_text(
                     stores,
                     ExpansionReplayKind::TheOutput,
@@ -164,7 +167,7 @@ where
                 ))
             }
             tex_state::meaning::UnexpandablePrimitive::SkewChar => {
-                let font = scan_font_selector(input, stores, recorder, hooks, expander)?;
+                let font = scan_font_selector(input, stores, recorder, hooks, expander, token)?;
                 Ok(push_rendered_text(
                     stores,
                     ExpansionReplayKind::TheOutput,
@@ -237,7 +240,7 @@ where
             | tex_state::meaning::UnexpandablePrimitive::SfCode
             | tex_state::meaning::UnexpandablePrimitive::MathCode
             | tex_state::meaning::UnexpandablePrimitive::DelCode => {
-                let ch = scan_code_table_char(input, stores, recorder, hooks, expander)?;
+                let ch = scan_code_table_char(input, stores, recorder, hooks, expander, token)?;
                 let value = match primitive {
                     tex_state::meaning::UnexpandablePrimitive::CatCode => stores.catcode(ch) as i32,
                     tex_state::meaning::UnexpandablePrimitive::LcCode => stores.lccode(ch) as i32,
@@ -256,7 +259,7 @@ where
                     cause_origin,
                 ))
             }
-            _ => Err(ExpandError::UnsupportedTheTarget(semantic)),
+            _ => Err(ExpandError::UnsupportedTheTarget(token)),
         },
         Meaning::CountRegister(index) => Ok(push_rendered_text(
             stores,
@@ -385,7 +388,7 @@ where
                 &stores.int_param(IntParam::ESCAPE_CHAR).to_string(),
                 cause_origin,
             )),
-            _ => Err(ExpandError::UnsupportedTheTarget(semantic)),
+            _ => Err(ExpandError::UnsupportedTheTarget(token)),
         },
     }
 }
@@ -525,6 +528,7 @@ pub fn scan_the_text_with_hooks<S, R, H>(
     stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
+    context: TracedTokenWord,
 ) -> Result<String, ExpandError>
 where
     S: InputSource,
@@ -537,7 +541,7 @@ where
         recorder,
         hooks,
         &mut NoInputExpandNext,
-        OriginId::UNKNOWN,
+        context,
     )?;
     Ok(match dispatch {
         Dispatch::Push { token_list, .. } => token_list_text(stores, token_list),
@@ -681,6 +685,7 @@ fn scan_code_table_char<S, St, R, H, E>(
     recorder: &mut R,
     hooks: &mut H,
     expander: &mut E,
+    context: TracedTokenWord,
 ) -> Result<char, ExpandError>
 where
     S: InputSource,
@@ -695,10 +700,7 @@ where
     u32::try_from(value)
         .ok()
         .and_then(char::from_u32)
-        .ok_or(ExpandError::UnsupportedTheTarget(Token::Char {
-            ch: '?',
-            cat: Catcode::Other,
-        }))
+        .ok_or(ExpandError::UnsupportedTheTarget(context))
 }
 
 pub(crate) fn scan_font_selector<S, St, R, H, E>(
@@ -707,6 +709,7 @@ pub(crate) fn scan_font_selector<S, St, R, H, E>(
     recorder: &mut R,
     hooks: &mut H,
     expander: &mut E,
+    context: TracedTokenWord,
 ) -> Result<FontId, ExpandError>
 where
     S: InputSource,
@@ -719,16 +722,17 @@ where
         input, stores, recorder, hooks, expander,
     )?
     else {
-        return Err(ExpandError::MissingTokenAfterPrimitive(
-            ExpandableOpcode::FontName,
-        ));
+        return Err(ExpandError::MissingTokenAfterPrimitive {
+            opcode: ExpandableOpcode::FontName,
+            context,
+        });
     };
     let semantic = crate::semantic_token(token);
     let Token::Cs(symbol) = semantic else {
-        return Err(ExpandError::UnsupportedTheTarget(semantic));
+        return Err(ExpandError::UnsupportedTheTarget(token));
     };
     match stores.meaning(symbol) {
         Meaning::Font(id) => Ok(id),
-        _ => Err(ExpandError::UnsupportedTheTarget(semantic)),
+        _ => Err(ExpandError::UnsupportedTheTarget(token)),
     }
 }

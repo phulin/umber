@@ -232,20 +232,43 @@ pub enum Dispatch {
 pub enum ExpandError {
     Lex(LexError),
     MacroCall(args::MacroCallError),
-    UnimplementedExpandable(ExpandableOpcode),
-    MissingTokenAfterPrimitive(ExpandableOpcode),
-    MissingEndCsName,
-    MissingInputName,
-    NonCharacterInInputName(Token),
-    InputOpen { name: String, message: String },
-    UndefinedControlSequence { name: String, origin: OriginId },
+    UnimplementedExpandable {
+        opcode: ExpandableOpcode,
+        context: TracedTokenWord,
+    },
+    MissingTokenAfterPrimitive {
+        opcode: ExpandableOpcode,
+        context: TracedTokenWord,
+    },
+    MissingEndCsName {
+        context: TracedTokenWord,
+    },
+    MissingInputName {
+        context: TracedTokenWord,
+    },
+    NonCharacterInInputName(TracedTokenWord),
+    InputOpen {
+        name: String,
+        message: String,
+        context: TracedTokenWord,
+    },
+    UndefinedControlSequence {
+        name: String,
+        context: TracedTokenWord,
+    },
     ScanInt(Box<scan_int::ScanIntError>),
     ScanDimen(Box<scan_dimen::ScanDimenError>),
-    UnsupportedTheTarget(Token),
+    UnsupportedTheTarget(TracedTokenWord),
     InvalidConditionalRelation(TracedTokenWord),
-    IncompleteIf,
-    ExtraConditionalControl(&'static str),
-    ForbiddenOuterTokenInSkippedConditional { name: String },
+    IncompleteIf(TracedTokenWord),
+    ExtraConditionalControl {
+        name: &'static str,
+        context: TracedTokenWord,
+    },
+    ForbiddenOuterTokenInSkippedConditional {
+        name: String,
+        context: TracedTokenWord,
+    },
 }
 
 impl fmt::Display for ExpandError {
@@ -253,21 +276,22 @@ impl fmt::Display for ExpandError {
         match self {
             Self::Lex(err) => write!(f, "{err}"),
             Self::MacroCall(err) => write!(f, "{err}"),
-            Self::UnimplementedExpandable(opcode) => {
+            Self::UnimplementedExpandable { opcode, .. } => {
                 write!(f, "expandable opcode {opcode:?} is not implemented yet")
             }
-            Self::MissingTokenAfterPrimitive(opcode) => {
+            Self::MissingTokenAfterPrimitive { opcode, .. } => {
                 write!(f, "missing token after expandable primitive {opcode:?}")
             }
-            Self::MissingEndCsName => write!(f, "missing \\endcsname for \\csname"),
-            Self::MissingInputName => write!(f, "missing file name after \\input"),
+            Self::MissingEndCsName { .. } => write!(f, "missing \\endcsname for \\csname"),
+            Self::MissingInputName { .. } => write!(f, "missing file name after \\input"),
             Self::NonCharacterInInputName(token) => {
                 write!(
                     f,
-                    "non-character token {token:?} while scanning \\input file name"
+                    "non-character token {:?} while scanning \\input file name",
+                    semantic_token(*token)
                 )
             }
-            Self::InputOpen { name, message } => {
+            Self::InputOpen { name, message, .. } => {
                 write!(f, "failed to open input {name:?}: {message}")
             }
             Self::UndefinedControlSequence { name, .. } => {
@@ -276,7 +300,11 @@ impl fmt::Display for ExpandError {
             Self::ScanInt(err) => write!(f, "{err}"),
             Self::ScanDimen(err) => write!(f, "{err}"),
             Self::UnsupportedTheTarget(token) => {
-                write!(f, "unsupported token {token:?} after \\the")
+                write!(
+                    f,
+                    "unsupported token {:?} after \\the",
+                    semantic_token(*token)
+                )
             }
             Self::InvalidConditionalRelation(token) => {
                 write!(
@@ -285,9 +313,9 @@ impl fmt::Display for ExpandError {
                     semantic_token(*token)
                 )
             }
-            Self::IncompleteIf => write!(f, "Incomplete \\if; all text was ignored after line"),
-            Self::ExtraConditionalControl(name) => write!(f, "Extra \\{name}"),
-            Self::ForbiddenOuterTokenInSkippedConditional { name } => {
+            Self::IncompleteIf(_) => write!(f, "Incomplete \\if; all text was ignored after line"),
+            Self::ExtraConditionalControl { name, .. } => write!(f, "Extra \\{name}"),
+            Self::ForbiddenOuterTokenInSkippedConditional { name, .. } => {
                 write!(
                     f,
                     "Forbidden control sequence found while scanning conditional text: {name}"
@@ -304,17 +332,17 @@ impl std::error::Error for ExpandError {
             Self::MacroCall(err) => Some(err),
             Self::ScanInt(err) => Some(err),
             Self::ScanDimen(err) => Some(err),
-            Self::UnimplementedExpandable(_)
-            | Self::MissingTokenAfterPrimitive(_)
-            | Self::MissingEndCsName
-            | Self::MissingInputName
+            Self::UnimplementedExpandable { .. }
+            | Self::MissingTokenAfterPrimitive { .. }
+            | Self::MissingEndCsName { .. }
+            | Self::MissingInputName { .. }
             | Self::NonCharacterInInputName(_)
             | Self::InputOpen { .. }
             | Self::UndefinedControlSequence { .. }
             | Self::UnsupportedTheTarget(_)
             | Self::InvalidConditionalRelation(_)
-            | Self::IncompleteIf
-            | Self::ExtraConditionalControl(_)
+            | Self::IncompleteIf(_)
+            | Self::ExtraConditionalControl { .. }
             | Self::ForbiddenOuterTokenInSkippedConditional { .. } => None,
         }
     }
@@ -324,22 +352,24 @@ impl ExpandError {
     #[must_use]
     pub fn primary_origin(&self) -> Option<OriginId> {
         match self {
-            Self::InvalidConditionalRelation(token) => Some(token.origin()),
-            Self::UndefinedControlSequence { origin, .. } => Some(*origin),
+            Self::UnimplementedExpandable { context, .. }
+            | Self::MissingTokenAfterPrimitive { context, .. }
+            | Self::MissingEndCsName { context }
+            | Self::MissingInputName { context }
+            | Self::InputOpen { context, .. }
+            | Self::UndefinedControlSequence { context, .. }
+            | Self::ExtraConditionalControl { context, .. }
+            | Self::ForbiddenOuterTokenInSkippedConditional { context, .. } => {
+                Some(context.origin())
+            }
+            Self::NonCharacterInInputName(token)
+            | Self::UnsupportedTheTarget(token)
+            | Self::InvalidConditionalRelation(token)
+            | Self::IncompleteIf(token) => Some(token.origin()),
             Self::ScanInt(err) => err.primary_origin(),
             Self::ScanDimen(err) => err.primary_origin(),
             Self::MacroCall(err) => err.primary_origin(),
-            Self::Lex(_)
-            | Self::UnimplementedExpandable(_)
-            | Self::MissingTokenAfterPrimitive(_)
-            | Self::MissingEndCsName
-            | Self::MissingInputName
-            | Self::NonCharacterInInputName(_)
-            | Self::InputOpen { .. }
-            | Self::UnsupportedTheTarget(_)
-            | Self::IncompleteIf
-            | Self::ExtraConditionalControl(_)
-            | Self::ForbiddenOuterTokenInSkippedConditional { .. } => None,
+            Self::Lex(_) => None,
         }
     }
 }

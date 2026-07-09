@@ -6,10 +6,14 @@ use super::{
 use tex_state::env::banks::IntParam;
 use tex_state::ids::OriginListId;
 use tex_state::provenance::{InsertedOriginKind, OriginRecord};
-use tex_state::token::{Catcode, Token};
+use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{ExpansionState, Universe};
 
 mod input_lines;
+
+fn condition_context() -> TracedTokenWord {
+    TracedTokenWord::pack(char_token('i', Catcode::Escape), OriginId::UNKNOWN)
+}
 
 #[test]
 fn strips_trailing_spaces_and_appends_endlinechar() {
@@ -672,7 +676,7 @@ fn condition_frames_round_trip_through_input_summary() {
     let mut stores = Universe::new();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
     let mut input = InputStack::new(MemoryInput::new("ab"));
-    let condition = ConditionFrameSummary::new_ifcase(false)
+    let condition = ConditionFrameSummary::new_ifcase(condition_context(), false)
         .with_or_limb(2, true)
         .with_skip_nesting(1);
 
@@ -715,7 +719,7 @@ fn open_condition_survives_checkpoint_rollback_resume_summary() {
     let mut stores = Universe::new();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
     let mut input = InputStack::new(MemoryInput::new("xy"));
-    input.push_condition(ConditionFrameSummary::new_if(true));
+    input.push_condition(ConditionFrameSummary::new_if(condition_context(), true));
 
     assert_eq!(
         input.next_token(&mut stores).expect("source token"),
@@ -724,14 +728,14 @@ fn open_condition_survives_checkpoint_rollback_resume_summary() {
     let checkpoint = stores.snapshot();
     let resume_summary = input.summary();
 
-    let updated = ConditionFrameSummary::new_if(true).with_else_limb(false);
+    let updated = ConditionFrameSummary::new_if(condition_context(), true).with_else_limb(false);
     assert_eq!(
         input.current_condition(),
-        Some(ConditionFrameSummary::new_if(true))
+        Some(ConditionFrameSummary::new_if(condition_context(), true))
     );
     assert_eq!(
         input.update_current_condition(updated),
-        Some(ConditionFrameSummary::new_if(true))
+        Some(ConditionFrameSummary::new_if(condition_context(), true))
     );
     stores.set_int_param(IntParam::END_LINE_CHAR, b'!' as i32);
     assert_eq!(

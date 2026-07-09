@@ -600,7 +600,7 @@ where
             }
             UnexpandablePrimitive::ShowThe => {
                 reject_all_prefixes(prefixes)?;
-                diagnostics::execute_showthe(input, stores, hooks)?;
+                diagnostics::execute_showthe(command.traced, input, stores, hooks)?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::ShowTokens => {

@@ -49,6 +49,7 @@ macro_rules! dispatch_match {
     ($token:ident, $call_origin:ident, $input:ident, $stores:ident, $recorder:ident, $hooks:ident, $meaning:ident, $expander:expr, $input_arm:block) => {{
         let token = $token;
         let call_origin = $call_origin;
+        let call_context = TracedTokenWord::pack(token, call_origin);
         let input = &mut *$input;
         let stores = &mut *$stores;
         let recorder = &mut *$recorder;
@@ -63,7 +64,7 @@ macro_rules! dispatch_match {
                     input,
                     stores,
                     recorder,
-                    TracedTokenWord::pack(token, call_origin),
+                    call_context,
                     macro_meaning,
                 )?;
                 Ok(Dispatch::Push {
@@ -79,14 +80,15 @@ macro_rules! dispatch_match {
                 })
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::ExpandAfter) => {
-                expand_after(input, stores, recorder, hooks)?;
+                expand_after(input, stores, recorder, hooks, call_context)?;
                 Ok(Dispatch::Continue)
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::NoExpand) => {
                 let Some(token) = input.next_traced_token(stores)? else {
-                    return Err(ExpandError::MissingTokenAfterPrimitive(
-                        ExpandableOpcode::NoExpand,
-                    ));
+                    return Err(ExpandError::MissingTokenAfterPrimitive {
+                        opcode: ExpandableOpcode::NoExpand,
+                        context: call_context,
+                    });
                 };
                 let semantic = crate::semantic_token(token);
                 Ok(Dispatch::DeliverNoExpand(TracedTokenWord::pack(
@@ -95,7 +97,7 @@ macro_rules! dispatch_match {
                 )))
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::CsName) => {
-                let name = scan_csname(input, stores, recorder, hooks)?;
+                let name = scan_csname(input, stores, recorder, hooks, call_context)?;
                 let symbol = stores.intern_relaxed_control_sequence(&name);
                 Ok(Dispatch::Push {
                     replay_kind: ExpansionReplayKind::Inserted,
@@ -115,9 +117,10 @@ macro_rules! dispatch_match {
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::String) => {
                 let Some(target) = input.next_traced_token(stores)? else {
-                    return Err(ExpandError::MissingTokenAfterPrimitive(
-                        ExpandableOpcode::String,
-                    ));
+                    return Err(ExpandError::MissingTokenAfterPrimitive {
+                        opcode: ExpandableOpcode::String,
+                        context: call_context,
+                    });
                 };
                 Ok(push_rendered_tokens(
                     stores,
@@ -158,9 +161,10 @@ macro_rules! dispatch_match {
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Meaning) => {
                 let Some(target) = input.next_traced_token(stores)? else {
-                    return Err(ExpandError::MissingTokenAfterPrimitive(
-                        ExpandableOpcode::Meaning,
-                    ));
+                    return Err(ExpandError::MissingTokenAfterPrimitive {
+                        opcode: ExpandableOpcode::Meaning,
+                        context: call_context,
+                    });
                 };
                 Ok(push_rendered_text(
                     stores,
@@ -176,7 +180,7 @@ macro_rules! dispatch_match {
                     recorder,
                     hooks,
                     &mut expander,
-                    call_origin,
+                    call_context,
                 )
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Input) => $input_arm,
@@ -191,7 +195,14 @@ macro_rules! dispatch_match {
                 call_origin,
             )),
             Meaning::ExpandablePrimitive(ExpandablePrimitive::FontName) => {
-                let font = scan_font_selector(input, stores, recorder, hooks, &mut expander)?;
+                let font = scan_font_selector(
+                    input,
+                    stores,
+                    recorder,
+                    hooks,
+                    &mut expander,
+                    call_context,
+                )?;
                 Ok(push_rendered_text(
                     stores,
                     ExpansionReplayKind::NumberOutput,
@@ -213,34 +224,78 @@ macro_rules! dispatch_match {
                 macro_invocation: OriginId::UNKNOWN,
             }),
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfTrue) => {
-                begin_if(input, stores, recorder, hooks, true)
+                begin_if(input, stores, recorder, hooks, true, call_context)
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfFalse) => {
-                begin_if(input, stores, recorder, hooks, false)
+                begin_if(input, stores, recorder, hooks, false, call_context)
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::If) => {
-                begin_if_evaluation(input);
-                let left = scan_condition_x_token(input, stores, recorder, hooks, &mut expander)?;
-                let right = scan_condition_x_token(input, stores, recorder, hooks, &mut expander)?;
-                complete_if_evaluation(input, stores, recorder, hooks, if_char_equal(left, right))
+                begin_if_evaluation(input, call_context);
+                let left = scan_condition_x_token(
+                    input,
+                    stores,
+                    recorder,
+                    hooks,
+                    &mut expander,
+                    call_context,
+                )?;
+                let right = scan_condition_x_token(
+                    input,
+                    stores,
+                    recorder,
+                    hooks,
+                    &mut expander,
+                    call_context,
+                )?;
+                complete_if_evaluation(
+                    input,
+                    stores,
+                    recorder,
+                    hooks,
+                    if_char_equal(left, right),
+                    call_context,
+                )
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfCat) => {
-                begin_if_evaluation(input);
-                let left = scan_condition_x_token(input, stores, recorder, hooks, &mut expander)?;
-                let right = scan_condition_x_token(input, stores, recorder, hooks, &mut expander)?;
-                complete_if_evaluation(input, stores, recorder, hooks, if_cat_equal(left, right))
+                begin_if_evaluation(input, call_context);
+                let left = scan_condition_x_token(
+                    input,
+                    stores,
+                    recorder,
+                    hooks,
+                    &mut expander,
+                    call_context,
+                )?;
+                let right = scan_condition_x_token(
+                    input,
+                    stores,
+                    recorder,
+                    hooks,
+                    &mut expander,
+                    call_context,
+                )?;
+                complete_if_evaluation(
+                    input,
+                    stores,
+                    recorder,
+                    hooks,
+                    if_cat_equal(left, right),
+                    call_context,
+                )
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfX) => {
-                begin_if_evaluation(input);
+                begin_if_evaluation(input, call_context);
                 let Some(left) = input.next_token(stores)? else {
-                    return Err(ExpandError::MissingTokenAfterPrimitive(
-                        ExpandableOpcode::If,
-                    ));
+                    return Err(ExpandError::MissingTokenAfterPrimitive {
+                        opcode: ExpandableOpcode::If,
+                        context: call_context,
+                    });
                 };
                 let Some(right) = input.next_token(stores)? else {
-                    return Err(ExpandError::MissingTokenAfterPrimitive(
-                        ExpandableOpcode::If,
-                    ));
+                    return Err(ExpandError::MissingTokenAfterPrimitive {
+                        opcode: ExpandableOpcode::If,
+                        context: call_context,
+                    });
                 };
                 complete_if_evaluation(
                     input,
@@ -248,10 +303,11 @@ macro_rules! dispatch_match {
                     recorder,
                     hooks,
                     ifx_equal(stores, left, right),
+                    call_context,
                 )
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfNum) => {
-                begin_if_evaluation(input);
+                begin_if_evaluation(input, call_context);
                 let left = scan_int::scan_int_with_expander_and_hooks(
                     input,
                     stores,
@@ -266,6 +322,7 @@ macro_rules! dispatch_match {
                     recorder,
                     hooks,
                     &mut expander,
+                    call_context,
                 )?;
                 let right = scan_int::scan_int_with_expander_and_hooks(
                     input,
@@ -281,10 +338,11 @@ macro_rules! dispatch_match {
                     recorder,
                     hooks,
                     compare_ordered(left, relation, right),
+                    call_context,
                 )
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfDim) => {
-                begin_if_evaluation(input);
+                begin_if_evaluation(input, call_context);
                 let left = scan_dimen::scan_dimen_with_expander_and_hooks(
                     input,
                     stores,
@@ -300,6 +358,7 @@ macro_rules! dispatch_match {
                     recorder,
                     hooks,
                     &mut expander,
+                    call_context,
                 )?;
                 let right = scan_dimen::scan_dimen_with_expander_and_hooks(
                     input,
@@ -316,10 +375,11 @@ macro_rules! dispatch_match {
                     recorder,
                     hooks,
                     compare_ordered(left, relation, right),
+                    call_context,
                 )
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfOdd) => {
-                begin_if_evaluation(input);
+                begin_if_evaluation(input, call_context);
                 let value = scan_int::scan_int_with_expander_and_hooks(
                     input,
                     stores,
@@ -328,10 +388,10 @@ macro_rules! dispatch_match {
                     &mut expander,
                 )?
                 .value();
-                complete_if_evaluation(input, stores, recorder, hooks, value % 2 != 0)
+                complete_if_evaluation(input, stores, recorder, hooks, value % 2 != 0, call_context)
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfCase) => {
-                begin_ifcase_evaluation(input);
+                begin_ifcase_evaluation(input, call_context);
                 let selected_case = scan_int::scan_int_with_expander_and_hooks(
                     input,
                     stores,
@@ -340,7 +400,14 @@ macro_rules! dispatch_match {
                     &mut expander,
                 )?
                 .value();
-                complete_ifcase_evaluation(input, stores, recorder, hooks, selected_case)
+                complete_ifcase_evaluation(
+                    input,
+                    stores,
+                    recorder,
+                    hooks,
+                    selected_case,
+                    call_context,
+                )
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfVMode) => begin_if(
                 input,
@@ -348,6 +415,7 @@ macro_rules! dispatch_match {
                 recorder,
                 hooks,
                 hooks.mode() == EngineMode::Vertical,
+                call_context,
             ),
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfHMode) => begin_if(
                 input,
@@ -355,6 +423,7 @@ macro_rules! dispatch_match {
                 recorder,
                 hooks,
                 hooks.mode() == EngineMode::Horizontal,
+                call_context,
             ),
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfMMode) => begin_if(
                 input,
@@ -362,12 +431,18 @@ macro_rules! dispatch_match {
                 recorder,
                 hooks,
                 hooks.mode() == EngineMode::Math,
+                call_context,
             ),
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::IfInner) => {
-                begin_if(input, stores, recorder, hooks, hooks.is_inner_mode())
-            }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::IfInner) => begin_if(
+                input,
+                stores,
+                recorder,
+                hooks,
+                hooks.is_inner_mode(),
+                call_context,
+            ),
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfVoid) => {
-                begin_if_evaluation(input);
+                begin_if_evaluation(input, call_context);
                 let index = scan_register_index_with_expander_and_hooks(
                     input,
                     stores,
@@ -381,10 +456,11 @@ macro_rules! dispatch_match {
                     recorder,
                     hooks,
                     stores.box_reg(index).is_none(),
+                    call_context,
                 )
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfHBox) => {
-                begin_if_evaluation(input);
+                begin_if_evaluation(input, call_context);
                 let index = scan_register_index_with_expander_and_hooks(
                     input,
                     stores,
@@ -398,10 +474,11 @@ macro_rules! dispatch_match {
                     recorder,
                     hooks,
                     box_register_has_kind(stores, index, BoxKind::HBox),
+                    call_context,
                 )
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfVBox) => {
-                begin_if_evaluation(input);
+                begin_if_evaluation(input, call_context);
                 let index = scan_register_index_with_expander_and_hooks(
                     input,
                     stores,
@@ -415,10 +492,11 @@ macro_rules! dispatch_match {
                     recorder,
                     hooks,
                     box_register_has_kind(stores, index, BoxKind::VBox),
+                    call_context,
                 )
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfEof) => {
-                begin_if_evaluation(input);
+                begin_if_evaluation(input, call_context);
                 let stream = scan_stream_number_with_expander_and_hooks(
                     input,
                     stores,
@@ -432,6 +510,7 @@ macro_rules! dispatch_match {
                     recorder,
                     hooks,
                     hooks.input_stream_eof(stores, stream),
+                    call_context,
                 )
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Else) => {
@@ -457,7 +536,7 @@ macro_rules! dispatch_match {
                 };
                 Err(ExpandError::UndefinedControlSequence {
                     name,
-                    origin: call_origin,
+                    context: call_context,
                 })
             }
             Meaning::Macro { .. }
@@ -511,12 +590,14 @@ where
         meaning,
         DriverExpandNext,
         {
-            let name = scan_input_name(input, stores, recorder, hooks)?;
+            let context = TracedTokenWord::pack(token, call_origin);
+            let name = scan_input_name(input, stores, recorder, hooks, context)?;
             let source = hooks
                 .open_input(&mut stores.input_open_context(), &name)
                 .map_err(|message| ExpandError::InputOpen {
                     name: name.clone(),
                     message,
+                    context,
                 })?;
             input.push_source(source);
             Ok(Dispatch::Continue)
@@ -548,9 +629,11 @@ where
         meaning,
         NoInputExpandNext,
         {
+            let context = TracedTokenWord::pack(token, call_origin);
             Err(ExpandError::InputOpen {
                 name: "\\input".to_owned(),
                 message: "\\input requires input-open authority".to_owned(),
+                context,
             })
         }
     )

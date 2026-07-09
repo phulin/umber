@@ -15,7 +15,7 @@ use tex_state::provenance::{
     SynthesizedOriginKind,
 };
 use tex_state::scaled::{GlueSetRatio, Scaled};
-use tex_state::token::{Catcode, OriginId, Token};
+use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{ExpansionState, InputOpenState, InputReadState, Universe};
 
 #[derive(Default)]
@@ -123,12 +123,15 @@ fn expandable_dispatch_table_covers_epic_opcode_families() {
 fn invalid_conditional_relation_reports_offending_origin() {
     let mut stores = Universe::new();
     let mut input = InputStack::new(MemoryInput::new("!"));
+    let ifnum = stores.intern("ifnum");
+    let context = TracedTokenWord::pack(Token::Cs(ifnum), OriginId::UNKNOWN);
     let err = crate::conditionals::scan_conditional_relation_with_expander_and_hooks(
         &mut input,
         &mut stores,
         &mut NoopRecorder,
         &mut crate::NoopExpansionHooks,
         &mut crate::NoInputExpandNext,
+        context,
     )
     .expect_err("relation scanner should reject non-relation token");
 
@@ -1997,7 +2000,7 @@ fn else_or_fi_report_extra_without_open_conditional() {
 
         assert!(matches!(
             get_x_token(&mut input, &mut stores),
-            Err(crate::ExpandError::ExtraConditionalControl(found)) if found == expected
+            Err(crate::ExpandError::ExtraConditionalControl { name: found, .. }) if found == expected
         ));
     }
 }
@@ -2012,7 +2015,7 @@ fn skipped_conditional_reports_incomplete_if_at_eof() {
 
     assert!(matches!(
         get_x_token(&mut input, &mut stores),
-        Err(crate::ExpandError::IncompleteIf)
+        Err(crate::ExpandError::IncompleteIf(_))
     ));
 }
 
@@ -2036,7 +2039,7 @@ fn skipped_conditional_rejects_outer_macro_tokens() {
 
     assert!(matches!(
         get_x_token(&mut input, &mut stores),
-        Err(crate::ExpandError::ForbiddenOuterTokenInSkippedConditional { ref name })
+        Err(crate::ExpandError::ForbiddenOuterTokenInSkippedConditional { ref name, .. })
             if name == "\\outer"
     ));
 }

@@ -11,12 +11,12 @@ use crate::{
     ReadRecorder, expandable_symbol, push_inserted_token, scan_helpers, scan_int, semantic_token,
 };
 
-pub(crate) fn begin_if_evaluation<S>(input: &mut InputStack<S>) {
-    input.push_condition(ConditionFrameSummary::evaluating_if());
+pub(crate) fn begin_if_evaluation<S>(input: &mut InputStack<S>, context: TracedTokenWord) {
+    input.push_condition(ConditionFrameSummary::evaluating_if(context));
 }
 
-pub(crate) fn begin_ifcase_evaluation<S>(input: &mut InputStack<S>) {
-    input.push_condition(ConditionFrameSummary::evaluating_ifcase());
+pub(crate) fn begin_ifcase_evaluation<S>(input: &mut InputStack<S>, context: TracedTokenWord) {
+    input.push_condition(ConditionFrameSummary::evaluating_ifcase(context));
 }
 
 pub(crate) fn begin_if<S, R, H>(
@@ -25,13 +25,14 @@ pub(crate) fn begin_if<S, R, H>(
     recorder: &mut R,
     hooks: &mut H,
     condition: bool,
+    context: TracedTokenWord,
 ) -> Result<Dispatch, ExpandError>
 where
     S: InputSource,
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    input.push_condition(ConditionFrameSummary::new_if(condition));
+    input.push_condition(ConditionFrameSummary::new_if(context, condition));
     if !condition {
         skip_false_limb(input, stores, recorder, hooks)?;
     }
@@ -44,6 +45,7 @@ pub(crate) fn complete_if_evaluation<S, R, H>(
     recorder: &mut R,
     hooks: &mut H,
     condition: bool,
+    context: TracedTokenWord,
 ) -> Result<Dispatch, ExpandError>
 where
     S: InputSource,
@@ -51,8 +53,8 @@ where
     H: ExpansionHooks<S>,
 {
     let previous = input
-        .update_current_condition(ConditionFrameSummary::new_if(condition))
-        .ok_or(ExpandError::IncompleteIf)?;
+        .update_current_condition(ConditionFrameSummary::new_if(context, condition))
+        .ok_or(ExpandError::IncompleteIf(context))?;
     debug_assert!(previous.evaluating());
     if !condition {
         skip_false_limb(input, stores, recorder, hooks)?;
@@ -66,6 +68,7 @@ pub(crate) fn complete_ifcase_evaluation<S, R, H>(
     recorder: &mut R,
     hooks: &mut H,
     selected_case: i32,
+    context: TracedTokenWord,
 ) -> Result<Dispatch, ExpandError>
 where
     S: InputSource,
@@ -74,8 +77,11 @@ where
 {
     let take_initial_limb = selected_case == 0;
     let previous = input
-        .update_current_condition(ConditionFrameSummary::new_ifcase(take_initial_limb))
-        .ok_or(ExpandError::IncompleteIf)?;
+        .update_current_condition(ConditionFrameSummary::new_ifcase(
+            context,
+            take_initial_limb,
+        ))
+        .ok_or(ExpandError::IncompleteIf(context))?;
     debug_assert!(previous.evaluating());
     if !take_initial_limb {
         skip_ifcase_to_selected_limb(input, stores, recorder, hooks, selected_case)?;
@@ -96,6 +102,7 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
+    let context = TracedTokenWord::pack(token, origin);
     if current_condition_is_evaluating(input) {
         insert_relax_before_token(token, origin, input, stores);
         return Ok(Dispatch::Continue);
@@ -103,9 +110,15 @@ where
 
     let frame = input
         .pop_condition()
-        .ok_or(ExpandError::ExtraConditionalControl("else"))?;
+        .ok_or(ExpandError::ExtraConditionalControl {
+            name: "else",
+            context,
+        })?;
     if matches!(frame.limb(), ConditionLimb::Else) {
-        return Err(ExpandError::ExtraConditionalControl("else"));
+        return Err(ExpandError::ExtraConditionalControl {
+            name: "else",
+            context,
+        });
     }
 
     let else_frame = frame.with_else_limb(!frame.any_limb_taken());
@@ -129,6 +142,7 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
+    let context = TracedTokenWord::pack(token, origin);
     if current_condition_is_evaluating(input) {
         insert_relax_before_token(token, origin, input, stores);
         return Ok(Dispatch::Continue);
@@ -136,9 +150,15 @@ where
 
     let frame = input
         .pop_condition()
-        .ok_or(ExpandError::ExtraConditionalControl("or"))?;
+        .ok_or(ExpandError::ExtraConditionalControl {
+            name: "or",
+            context,
+        })?;
     if frame.kind() != ConditionKind::IfCase || frame.limb() == ConditionLimb::Else {
-        return Err(ExpandError::ExtraConditionalControl("or"));
+        return Err(ExpandError::ExtraConditionalControl {
+            name: "or",
+            context,
+        });
     }
 
     let next_or_count = frame.ifcase_or_count().saturating_add(1);
@@ -158,6 +178,7 @@ pub(crate) fn handle_fi<S>(
 where
     S: InputSource,
 {
+    let context = TracedTokenWord::pack(token, origin);
     if current_condition_is_evaluating(input) {
         insert_relax_before_token(token, origin, input, stores);
         return Ok(Dispatch::Continue);
@@ -165,7 +186,10 @@ where
 
     input
         .pop_condition()
-        .ok_or(ExpandError::ExtraConditionalControl("fi"))?;
+        .ok_or(ExpandError::ExtraConditionalControl {
+            name: "fi",
+            context,
+        })?;
     Ok(Dispatch::Continue)
 }
 
@@ -267,7 +291,11 @@ where
     let mut nesting = 0_u32;
     loop {
         let Some(token) = input.next_traced_token(stores)? else {
-            return Err(ExpandError::IncompleteIf);
+            let context = input
+                .current_condition()
+                .expect("conditional skipping requires an open condition frame")
+                .context();
+            return Err(ExpandError::IncompleteIf(context));
         };
         let Some(primitive) = skipped_conditional_control(stores, token, recorder)? else {
             continue;
@@ -278,27 +306,30 @@ where
                 nesting = nesting.saturating_add(1);
             }
             ConditionalPrimitive::Else if nesting == 0 && target == SkipTarget::ElseOrFi => {
-                move_current_if_to_else(input)?;
+                move_current_if_to_else(input, token)?;
                 return Ok(());
             }
             ConditionalPrimitive::Else
                 if nesting == 0 && matches!(target, SkipTarget::IfCaseSelection(_)) =>
             {
-                move_current_ifcase_to_else(input)?;
+                move_current_ifcase_to_else(input, token)?;
                 return Ok(());
             }
             ConditionalPrimitive::Or
                 if nesting == 0
                     && matches!(target, SkipTarget::IfCaseSelection(selected_case) if selected_case >= 0) =>
             {
-                if move_current_ifcase_to_next_or(input, target)? {
+                if move_current_ifcase_to_next_or(input, target, token)? {
                     return Ok(());
                 }
             }
             ConditionalPrimitive::Fi if nesting == 0 => {
                 input
                     .pop_condition()
-                    .ok_or(ExpandError::ExtraConditionalControl("fi"))?;
+                    .ok_or(ExpandError::ExtraConditionalControl {
+                        name: "fi",
+                        context: token,
+                    })?;
                 return Ok(());
             }
             ConditionalPrimitive::Fi => {
@@ -309,12 +340,21 @@ where
     }
 }
 
-fn move_current_if_to_else<S>(input: &mut InputStack<S>) -> Result<(), ExpandError> {
+fn move_current_if_to_else<S>(
+    input: &mut InputStack<S>,
+    context: TracedTokenWord,
+) -> Result<(), ExpandError> {
     let frame = input
         .pop_condition()
-        .ok_or(ExpandError::ExtraConditionalControl("else"))?;
+        .ok_or(ExpandError::ExtraConditionalControl {
+            name: "else",
+            context,
+        })?;
     if frame.kind() != ConditionKind::If || frame.limb() == ConditionLimb::Else {
-        return Err(ExpandError::ExtraConditionalControl("else"));
+        return Err(ExpandError::ExtraConditionalControl {
+            name: "else",
+            context,
+        });
     }
     input.push_condition(frame.with_else_limb(!frame.any_limb_taken()));
     Ok(())
@@ -323,12 +363,19 @@ fn move_current_if_to_else<S>(input: &mut InputStack<S>) -> Result<(), ExpandErr
 fn move_current_ifcase_to_next_or<S>(
     input: &mut InputStack<S>,
     target: SkipTarget,
+    context: TracedTokenWord,
 ) -> Result<bool, ExpandError> {
     let frame = input
         .pop_condition()
-        .ok_or(ExpandError::ExtraConditionalControl("or"))?;
+        .ok_or(ExpandError::ExtraConditionalControl {
+            name: "or",
+            context,
+        })?;
     if frame.kind() != ConditionKind::IfCase || frame.limb() == ConditionLimb::Else {
-        return Err(ExpandError::ExtraConditionalControl("or"));
+        return Err(ExpandError::ExtraConditionalControl {
+            name: "or",
+            context,
+        });
     }
     let next_or_count = frame.ifcase_or_count().saturating_add(1);
     let current_limb_taken = matches!(
@@ -339,12 +386,21 @@ fn move_current_ifcase_to_next_or<S>(
     Ok(current_limb_taken)
 }
 
-fn move_current_ifcase_to_else<S>(input: &mut InputStack<S>) -> Result<(), ExpandError> {
+fn move_current_ifcase_to_else<S>(
+    input: &mut InputStack<S>,
+    context: TracedTokenWord,
+) -> Result<(), ExpandError> {
     let frame = input
         .pop_condition()
-        .ok_or(ExpandError::ExtraConditionalControl("else"))?;
+        .ok_or(ExpandError::ExtraConditionalControl {
+            name: "else",
+            context,
+        })?;
     if frame.kind() != ConditionKind::IfCase || frame.limb() == ConditionLimb::Else {
-        return Err(ExpandError::ExtraConditionalControl("else"));
+        return Err(ExpandError::ExtraConditionalControl {
+            name: "else",
+            context,
+        });
     }
     input.push_condition(frame.with_else_limb(!frame.any_limb_taken()));
     Ok(())
@@ -399,6 +455,7 @@ where
         Meaning::Macro { flags, .. } if flags.contains(MeaningFlags::OUTER) => {
             Err(ExpandError::ForbiddenOuterTokenInSkippedConditional {
                 name: format!("\\{}", stores.resolve(symbol)),
+                context: token,
             })
         }
         _ => Ok(None),
@@ -411,6 +468,7 @@ pub(crate) fn scan_condition_x_token<S, St, R, H, E>(
     recorder: &mut R,
     hooks: &mut H,
     expander: &mut E,
+    context: TracedTokenWord,
 ) -> Result<Token, ExpandError>
 where
     S: InputSource,
@@ -421,9 +479,10 @@ where
 {
     let token = expander
         .next_expanded_token(input, stores, recorder, hooks)?
-        .ok_or(ExpandError::MissingTokenAfterPrimitive(
-            ExpandableOpcode::If,
-        ))?;
+        .ok_or(ExpandError::MissingTokenAfterPrimitive {
+            opcode: ExpandableOpcode::If,
+            context,
+        })?;
     Ok(semantic_token(token))
 }
 
@@ -466,6 +525,7 @@ pub(crate) fn scan_conditional_relation<S, R, H>(
     stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
+    context: TracedTokenWord,
 ) -> Result<ConditionalRelation, ExpandError>
 where
     S: InputSource,
@@ -478,6 +538,7 @@ where
         recorder,
         hooks,
         &mut NoInputExpandNext,
+        context,
     )
 }
 
@@ -487,6 +548,7 @@ pub(crate) fn scan_conditional_relation_with_expander_and_hooks<S, St, R, H, E>(
     recorder: &mut R,
     hooks: &mut H,
     expander: &mut E,
+    context: TracedTokenWord,
 ) -> Result<ConditionalRelation, ExpandError>
 where
     S: InputSource,
@@ -499,9 +561,10 @@ where
         input, stores, recorder, hooks, expander,
     )?
     else {
-        return Err(ExpandError::MissingTokenAfterPrimitive(
-            ExpandableOpcode::If,
-        ));
+        return Err(ExpandError::MissingTokenAfterPrimitive {
+            opcode: ExpandableOpcode::If,
+            context,
+        });
     };
     match semantic_token(token) {
         Token::Char { ch: '<', .. } => Ok(ConditionalRelation::Less),

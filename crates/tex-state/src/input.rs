@@ -160,6 +160,7 @@ pub enum ConditionLimb {
 /// Snapshot-summary state for one open conditional.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct ConditionFrameSummary {
+    context: TracedTokenWord,
     kind: ConditionKind,
     limb: ConditionLimb,
     evaluating: bool,
@@ -172,8 +173,9 @@ pub struct ConditionFrameSummary {
 impl ConditionFrameSummary {
     /// Creates a regular `\if...` frame.
     #[must_use]
-    pub const fn new_if(current_limb_taken: bool) -> Self {
+    pub const fn new_if(context: TracedTokenWord, current_limb_taken: bool) -> Self {
         Self {
+            context,
             kind: ConditionKind::If,
             limb: ConditionLimb::If,
             evaluating: false,
@@ -186,8 +188,9 @@ impl ConditionFrameSummary {
 
     /// Creates an `\ifcase` frame at its initial limb.
     #[must_use]
-    pub const fn new_ifcase(current_limb_taken: bool) -> Self {
+    pub const fn new_ifcase(context: TracedTokenWord, current_limb_taken: bool) -> Self {
         Self {
+            context,
             kind: ConditionKind::IfCase,
             limb: ConditionLimb::If,
             evaluating: false,
@@ -201,8 +204,9 @@ impl ConditionFrameSummary {
     /// Creates a regular `\if...` frame whose operands are still being
     /// scanned.
     #[must_use]
-    pub const fn evaluating_if() -> Self {
+    pub const fn evaluating_if(context: TracedTokenWord) -> Self {
         Self {
+            context,
             kind: ConditionKind::If,
             limb: ConditionLimb::If,
             evaluating: true,
@@ -215,8 +219,9 @@ impl ConditionFrameSummary {
 
     /// Creates an `\ifcase` frame whose selector is still being scanned.
     #[must_use]
-    pub const fn evaluating_ifcase() -> Self {
+    pub const fn evaluating_ifcase(context: TracedTokenWord) -> Self {
         Self {
+            context,
             kind: ConditionKind::IfCase,
             limb: ConditionLimb::If,
             evaluating: true,
@@ -230,6 +235,11 @@ impl ConditionFrameSummary {
     #[must_use]
     pub const fn kind(self) -> ConditionKind {
         self.kind
+    }
+
+    #[must_use]
+    pub const fn context(self) -> TracedTokenWord {
+        self.context
     }
 
     #[must_use]

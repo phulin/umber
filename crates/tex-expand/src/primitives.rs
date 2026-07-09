@@ -2,7 +2,7 @@ use tex_lex::{InputSource, InputStack};
 use tex_state::ExpansionState;
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
 use tex_state::provenance::InsertedOriginKind;
-use tex_state::token::{Catcode, Token};
+use tex_state::token::{Catcode, Token, TracedTokenWord};
 
 use crate::{
     Dispatch, ExpandError, ExpandableOpcode, ExpansionHooks, ReadRecorder, apply_dispatch_push,
@@ -15,6 +15,7 @@ pub(crate) fn expand_after<S, R, H>(
     stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
+    context: TracedTokenWord,
 ) -> Result<(), ExpandError>
 where
     S: InputSource,
@@ -22,14 +23,16 @@ where
     H: ExpansionHooks<S>,
 {
     let Some(saved) = input.next_traced_token(stores)? else {
-        return Err(ExpandError::MissingTokenAfterPrimitive(
-            ExpandableOpcode::ExpandAfter,
-        ));
+        return Err(ExpandError::MissingTokenAfterPrimitive {
+            opcode: ExpandableOpcode::ExpandAfter,
+            context,
+        });
     };
     let Some(target) = input.next_traced_token(stores)? else {
-        return Err(ExpandError::MissingTokenAfterPrimitive(
-            ExpandableOpcode::ExpandAfter,
-        ));
+        return Err(ExpandError::MissingTokenAfterPrimitive {
+            opcode: ExpandableOpcode::ExpandAfter,
+            context,
+        });
     };
 
     let target_dispatch =
@@ -44,6 +47,7 @@ pub(crate) fn scan_csname<S, R, H>(
     stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
+    context: TracedTokenWord,
 ) -> Result<String, ExpandError>
 where
     S: InputSource,
@@ -54,7 +58,7 @@ where
 
     loop {
         let Some(read) = input.next_traced_expansion_token(stores)? else {
-            return Err(ExpandError::MissingEndCsName);
+            return Err(ExpandError::MissingEndCsName { context });
         };
         let token = read.token();
         let traced = read.traced_token();
@@ -126,6 +130,7 @@ pub(crate) fn scan_input_name<S, R, H>(
     stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
+    context: TracedTokenWord,
 ) -> Result<String, ExpandError>
 where
     S: InputSource,
@@ -135,7 +140,7 @@ where
     let Some(first) =
         scan_helpers::next_non_space_x_token_with_hooks(input, stores, recorder, hooks)?
     else {
-        return Err(ExpandError::MissingInputName);
+        return Err(ExpandError::MissingInputName { context });
     };
 
     if is_begin_group(crate::semantic_token(first)) {
@@ -143,22 +148,22 @@ where
         loop {
             let Some(token) = get_x_token_without_input_open(input, stores, recorder, hooks)?
             else {
-                return Err(ExpandError::MissingInputName);
+                return Err(ExpandError::MissingInputName { context });
             };
             let semantic = crate::semantic_token(token);
             if is_end_group(semantic) {
                 return if name.is_empty() {
-                    Err(ExpandError::MissingInputName)
+                    Err(ExpandError::MissingInputName { context })
                 } else {
                     Ok(name)
                 };
             }
-            append_input_name_token(&mut name, semantic)?;
+            append_input_name_token(&mut name, token)?;
         }
     }
 
     let mut name = String::new();
-    append_input_name_token(&mut name, crate::semantic_token(first))?;
+    append_input_name_token(&mut name, first)?;
     loop {
         let Some(token) = get_x_token_without_input_open(input, stores, recorder, hooks)? else {
             break;
@@ -173,18 +178,18 @@ where
         ) {
             break;
         }
-        append_input_name_token(&mut name, semantic)?;
+        append_input_name_token(&mut name, token)?;
     }
 
     if name.is_empty() {
-        Err(ExpandError::MissingInputName)
+        Err(ExpandError::MissingInputName { context })
     } else {
         Ok(name)
     }
 }
 
-fn append_input_name_token(name: &mut String, token: Token) -> Result<(), ExpandError> {
-    match token {
+fn append_input_name_token(name: &mut String, token: TracedTokenWord) -> Result<(), ExpandError> {
+    match crate::semantic_token(token) {
         Token::Char { ch, .. } => {
             name.push(ch);
             Ok(())

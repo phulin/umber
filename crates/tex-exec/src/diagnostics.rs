@@ -8,7 +8,7 @@ use tex_expand::{
 use tex_lex::{InputSource, InputStack};
 use tex_state::env::banks::IntParam;
 use tex_state::page::{PageContents, PageDimension};
-use tex_state::token::{Catcode, Token};
+use tex_state::token::{Catcode, Token, TracedTokenWord};
 use tex_state::{PrintSink, Universe};
 
 use crate::mode::IGNORE_DEPTH;
@@ -43,6 +43,7 @@ where
 }
 
 pub(crate) fn execute_showthe<S, H>(
+    context: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
@@ -52,7 +53,7 @@ where
     H: ExpansionHooks<S>,
 {
     let mut recorder = NoopRecorder;
-    let text = scan_the_text_with_hooks(input, stores, &mut recorder, hooks)?;
+    let text = scan_the_text_with_hooks(input, stores, &mut recorder, hooks, context)?;
     write_diagnostic(stores, &format!("\n> {text}.\n"));
     Ok(())
 }

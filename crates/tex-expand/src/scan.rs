@@ -345,9 +345,11 @@ where
         let meaning = stores.meaning(symbol);
         if meaning == Meaning::ExpandablePrimitive(ExpandablePrimitive::NoExpand) {
             let Some(suppressed) = input.next_traced_token(stores)? else {
-                return Err(
-                    ExpandError::MissingTokenAfterPrimitive(ExpandableOpcode::NoExpand).into(),
-                );
+                return Err(ExpandError::MissingTokenAfterPrimitive {
+                    opcode: ExpandableOpcode::NoExpand,
+                    context: traced,
+                }
+                .into());
             };
             builder.push(traced_semantic_token(suppressed));
             origins.push(stores.inserted_origin(
