@@ -7,8 +7,9 @@ use std::path::{Path, PathBuf};
 use crate as tex_fonts;
 use anyhow::{Context, Result, bail};
 use refexec::RefTftopl;
-use test_support::pl::{
-    PlCharacter, PlExtensibleRecipe, PlFont, PlLigCommand, PlLigLabel, PlNumber,
+use test_support::{
+    live_reference_enabled,
+    pl::{PlCharacter, PlExtensibleRecipe, PlFont, PlLigCommand, PlLigLabel, PlNumber},
 };
 use tex_arith::{FontSizeSpec, Scaled, tfm_fix_word_to_scaled};
 use tex_fonts::tfm::Character;
@@ -26,6 +27,11 @@ const VARIANTS: &[(&str, FontSizeSpec)] = &[
 
 #[test]
 fn tftopl_crosscheck_computer_modern_corpus() -> Result<()> {
+    if !live_reference_enabled() {
+        eprintln!("skipping tftopl corpus cross-check: set UMBER_LIVE_REF=1");
+        return Ok(());
+    }
+
     let font_paths = match corpus_font_paths(&third_party_fonts_root()) {
         Ok(paths) => paths,
         Err(skip) => {
@@ -50,6 +56,11 @@ fn tftopl_crosscheck_computer_modern_corpus() -> Result<()> {
 
 #[test]
 fn tftopl_crosscheck_edge_ligkern_fixtures() -> Result<()> {
+    if !live_reference_enabled() {
+        eprintln!("skipping tftopl edge-fixture cross-check: set UMBER_LIVE_REF=1");
+        return Ok(());
+    }
+
     let tftopl = match RefTftopl::locate() {
         Ok(tftopl) => tftopl,
         Err(error) => {

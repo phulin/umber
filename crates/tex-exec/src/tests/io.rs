@@ -1,5 +1,8 @@
 use super::support::*;
 use super::*;
+use test_support::{
+    assert_matches_fixture, live_reference_enabled, read_fixture, update_fixtures_enabled,
+};
 use tex_expand::ReadRecorder;
 use tex_out::dvi::write_dvi;
 use tex_out::{
@@ -293,27 +296,8 @@ fn top_level_deferred_openout_closeout_ship_during_final_cleanup() {
     assert_eq!(stats.shipped_artifacts.len(), 1);
     assert_eq!(stores.world().memory_output("top.out"), Some(&b"top"[..]));
 
-    let temp_dir = tempfile::TempDir::new().expect("temporary TeX run directory");
-    let tex_path = temp_dir.path().join("top_open_close.tex");
-    std::fs::write(&tex_path, source).expect("write reference TeX source");
-    let engine = std::env::var_os("UMBER_REF_TEX")
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "pdftex".into());
-    let reference = std::process::Command::new(engine)
-        .current_dir(temp_dir.path())
-        .arg("-interaction=batchmode")
-        .arg("top_open_close.tex")
-        .output()
-        .expect("run reference TeX");
-    assert!(
-        reference.status.success(),
-        "reference TeX top-level open/close case failed:\n{}",
-        String::from_utf8_lossy(&reference.stderr)
-    );
-    assert_eq!(
-        std::fs::read(temp_dir.path().join("top.out")).expect("read pdfTeX output"),
-        b"top\n",
-    );
+    let reference = pdftex_file_output_fixture("top_open_close", source, "top.out");
+    assert_eq!(reference.as_bytes(), b"top\n");
 }
 
 #[test]
@@ -570,29 +554,9 @@ fn source_special_lowers_to_anchored_dvi_xxx_payload() {
     ));
 
     let dvi = write_dvi(std::slice::from_ref(&artifact)).expect("DVI writes");
-    assert_eq!(dvi_special_payloads(&dvi), vec![b"pre abc-42".to_vec()]);
-
-    let temp_dir = tempfile::TempDir::new().expect("temporary TeX run directory");
-    let tex_path = temp_dir.path().join("special_payload.tex");
-    std::fs::write(&tex_path, source).expect("write reference TeX source");
-    let reference = refexec::RefTex::locate()
-        .expect("locate pdftex")
-        .run(
-            &tex_path,
-            &refexec::RunOpts {
-                dvi: true,
-                ..refexec::RunOpts::default()
-            },
-        )
-        .expect("run pdftex");
-    assert!(
-        reference.success,
-        "pdftex special payload case failed:\n{}",
-        reference.log
-    );
     assert_eq!(
-        dvi_special_payloads(reference.dvi.as_deref().expect("reference DVI")),
-        vec![b"pre abc-42".to_vec()]
+        format_special_payloads(&dvi_special_payloads(&dvi)),
+        pdftex_dvi_specials_fixture("special_payload", source)
     );
 }
 
@@ -652,32 +616,12 @@ fn leader_payload_suppresses_deferred_write_but_keeps_specials() {
         "leader-contained specials should still emit DVI xxx output"
     );
 
-    let temp_dir = tempfile::TempDir::new().expect("temporary TeX run directory");
-    let tex_path = temp_dir.path().join("leader_payload_effects.tex");
-    std::fs::write(&tex_path, source).expect("write reference TeX source");
-    let reference = refexec::RefTex::locate()
-        .expect("locate pdftex")
-        .run(
-            &tex_path,
-            &refexec::RunOpts {
-                dvi: true,
-                ..refexec::RunOpts::default()
-            },
-        )
-        .expect("run pdftex");
-    assert!(
-        reference.success,
-        "pdftex leader payload effect case failed:\n{}",
-        reference.log
-    );
-    assert!(
-        !temp_dir.path().join("leader.out").exists(),
-        "pdfTeX should suppress leader-contained openout/closeout"
-    );
-    assert!(!reference.log.contains("leader-write"));
+    let reference_effects = pdftex_effects_fixture("leader_payload_effects", source);
+    assert!(reference_effects.contains("leader.out: absent"));
+    assert!(reference_effects.contains("leader-write-in-log: false"));
     assert_eq!(
-        actual_specials,
-        dvi_special_payloads(reference.dvi.as_deref().expect("reference DVI"))
+        format_special_payloads(&actual_specials),
+        pdftex_dvi_specials_fixture("leader_payload_effects", source)
     );
 }
 
@@ -699,32 +643,8 @@ fn ordinary_shipped_openout_closeout_matches_pdftex_file_effect() {
         Some(&b"ordinary"[..])
     );
 
-    let temp_dir = tempfile::TempDir::new().expect("temporary TeX run directory");
-    let tex_path = temp_dir.path().join("ordinary_open_close.tex");
-    std::fs::write(&tex_path, source).expect("write reference TeX source");
-    let engine = std::env::var_os("UMBER_REF_TEX")
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "pdftex".into());
-    let reference = std::process::Command::new(engine)
-        .current_dir(temp_dir.path())
-        .arg("-interaction=batchmode")
-        .arg("ordinary_open_close.tex")
-        .output()
-        .expect("run reference TeX");
-    assert!(
-        reference.status.success(),
-        "reference TeX ordinary open/close case failed:\n{}",
-        String::from_utf8_lossy(&reference.stderr)
-    );
-    let output_path = temp_dir.path().join("ordinary.out");
-    assert!(
-        output_path.exists(),
-        "pdfTeX should commit ordinary shipped openout/closeout"
-    );
-    assert_eq!(
-        std::fs::read(output_path).expect("read pdfTeX output"),
-        b"ordinary\n",
-    );
+    let reference = pdftex_file_output_fixture("ordinary_open_close", source, "ordinary.out");
+    assert_eq!(reference.as_bytes(), b"ordinary\n");
 }
 
 #[test]
@@ -896,6 +816,90 @@ impl ReadRecorder for SawTheRecorder {
             self.saw_the = true;
         }
     }
+}
+
+#[allow(clippy::disallowed_methods)] // host-side pdfTeX fixture regeneration.
+fn pdftex_file_output_fixture(stem: &str, source: &str, output_name: &str) -> String {
+    pdftex_text_fixture("tex_exec_io", stem, "out", || {
+        let temp_dir = tempfile::TempDir::new().expect("temporary TeX run directory");
+        run_reference_tex(temp_dir.path(), stem, source, false);
+        let bytes = std::fs::read(temp_dir.path().join(output_name))
+            .unwrap_or_else(|error| panic!("failed to read pdfTeX output {output_name}: {error}"));
+        String::from_utf8(bytes).expect("pdfTeX output should be utf-8")
+    })
+}
+
+#[allow(clippy::disallowed_methods)] // host-side pdfTeX fixture regeneration.
+fn pdftex_dvi_specials_fixture(stem: &str, source: &str) -> String {
+    pdftex_text_fixture("tex_exec_io", stem, "specials", || {
+        let temp_dir = tempfile::TempDir::new().expect("temporary TeX run directory");
+        run_reference_tex(temp_dir.path(), stem, source, true);
+        let dvi =
+            std::fs::read(temp_dir.path().join(format!("{stem}.dvi"))).expect("read reference DVI");
+        format_special_payloads(&dvi_special_payloads(&dvi))
+    })
+}
+
+#[allow(clippy::disallowed_methods)] // host-side pdfTeX fixture regeneration.
+fn pdftex_effects_fixture(stem: &str, source: &str) -> String {
+    pdftex_text_fixture("tex_exec_io", stem, "effects", || {
+        let temp_dir = tempfile::TempDir::new().expect("temporary TeX run directory");
+        let log = run_reference_tex(temp_dir.path(), stem, source, true);
+        let leader_out = if temp_dir.path().join("leader.out").exists() {
+            "present"
+        } else {
+            "absent"
+        };
+        format!(
+            "leader.out: {leader_out}\nleader-write-in-log: {}\n",
+            log.contains("leader-write")
+        )
+    })
+}
+
+fn pdftex_text_fixture<F>(area: &str, stem: &str, kind: &str, regenerate: F) -> String
+where
+    F: FnOnce() -> String,
+{
+    if update_fixtures_enabled() || live_reference_enabled() {
+        let fixture = regenerate();
+        assert_matches_fixture(area, stem, kind, &fixture);
+        fixture
+    } else {
+        read_fixture(area, stem, kind)
+    }
+}
+
+#[allow(clippy::disallowed_methods)] // host-side pdfTeX fixture regeneration.
+fn run_reference_tex(dir: &std::path::Path, stem: &str, source: &str, dvi: bool) -> String {
+    let tex_name = format!("{stem}.tex");
+    std::fs::write(dir.join(&tex_name), source).expect("write reference TeX source");
+    let engine = std::env::var_os("UMBER_REF_TEX")
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "pdftex".into());
+    let mut command = std::process::Command::new(engine);
+    command.current_dir(dir).arg("-interaction=batchmode");
+    if dvi {
+        command.arg("-output-format=dvi");
+    }
+    let reference = command.arg(&tex_name).output().expect("run reference TeX");
+    let log =
+        std::fs::read_to_string(dir.join(format!("{stem}.log"))).expect("read reference TeX log");
+    assert!(
+        reference.status.success(),
+        "reference TeX {stem} case failed:\n{log}\n{}",
+        String::from_utf8_lossy(&reference.stderr)
+    );
+    log
+}
+
+fn format_special_payloads(payloads: &[Vec<u8>]) -> String {
+    let mut output = String::new();
+    for payload in payloads {
+        output.push_str(&String::from_utf8_lossy(payload));
+        output.push('\n');
+    }
+    output
 }
 
 fn memory_terminal_text(stores: &Universe) -> String {

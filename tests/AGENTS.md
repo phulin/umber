@@ -15,12 +15,14 @@ Place any small area-local support files beside the case input unless a
 future test explicitly needs a subdirectory. Expected files use:
 
 `tests/corpus/exec` contains fast execution-core parity cases. These compare
-`umber run` output with normalized `pdftex` logs through the shared
-`test_support::normalize::exec_log` helper.
+`umber run` output with committed normalized `pdftex` log fixtures through the
+shared `test_support::normalize::exec_log` helper. Normal test runs read the
+committed `<case>.expected.log` files; `UPDATE_FIXTURES=1` regenerates those
+fixtures from a live reference engine.
 
 `tests/corpus/typeset` contains fast box/list dump parity cases for the
 typesetting layer. These compare `umber run --show-fixtures` output with
-normalized `pdftex` logs through the shared
+committed normalized `pdftex` log fixtures through the shared
 `test_support::normalize::box_dump` helper; that helper uses the same
 diagnostic-log normalizer as `exec_log`. In this mode, `umber` writes only the
 collected terminal/log diagnostic text to stdout and skips the CLI's extra
@@ -30,17 +32,27 @@ output files even under `--show-fixtures`; pending immediate stream effects do
 not materialize because their final commit is skipped.
 
 `tests/corpus/dvi` contains committed TeX source fixtures for full-pipeline
-DVI parity. Do not commit generated DVI files here. `scripts/parity.sh`
-copies each source plus pinned CM TFMs into a temporary run directory, runs
-`umber run <case>.tex --dvi actual.dvi`, then asks `tools/refexec` to run the
-live reference engine and byte-compare DVI output with only preamble comment
-payload normalization.
+DVI parity. The `umber` cargo smoke tests also commit selected
+`<case>.expected.dvi` reference fixtures here so default tests remain
+hermetic. `scripts/parity.sh` still copies every source plus pinned CM TFMs
+into a temporary run directory, runs `umber run <case>.tex --dvi actual.dvi`,
+then asks `tools/refexec` to run the live reference engine and byte-compare
+DVI output with only preamble comment payload normalization.
 
 `tests/corpus/page` contains page-builder-focused DVI parity fixtures. It is
-run by the same `scripts/parity.sh` DVI comparison loop and should use small
-primitive-only preambles that pin plain-format defaults such as `\output`,
-`\maxdepth`, and interline glue whenever pdfTeX plain defaults would otherwise
-leak into byte output.
+run by the same `scripts/parity.sh` DVI comparison loop. The `umber` cargo
+page-corpus smoke test also reads committed `<case>.expected.dvi` reference
+fixtures from this directory. Page cases should use small primitive-only
+preambles that pin plain-format defaults such as `\output`, `\maxdepth`, and
+interline glue whenever pdfTeX plain defaults would otherwise leak into byte
+output.
+
+`tests/corpus/tex_exec` contains small normalized pdfTeX reference observations
+used by `tex-exec` crate-internal tests for grouping, after-token ordering,
+magnification diagnostics, and box-register behavior.
+
+`tests/corpus/tex_exec_io` contains small pdfTeX-derived file-effect and DVI
+special-payload observations used by `tex-exec` I/O and shipout tests.
 
 `tests/corpus/math` contains primitive-only math DVI parity fixtures. Cases
 share `math_preamble.inc`; keep that include free of `plain.tex` dependencies
@@ -75,12 +87,41 @@ UPDATE_FIXTURES=1 cargo test -p test-support hello_reference_log_matches_fixture
 The update run rewrites missing or mismatched expected files, then panics.
 Rerun without `UPDATE_FIXTURES` before committing.
 
-For typeset box-dump fixtures, run:
+For `umber` execution and typeset diagnostic fixtures, run:
 
 ```bash
+UPDATE_FIXTURES=1 cargo test -p umber --test it run_exec_corpus_matches_pdftex_diagnostics
 UPDATE_FIXTURES=1 cargo test -p umber --test it run_typeset_corpus_matches_pdftex_box_dumps
+```
+
+For `umber` DVI smoke/page fixtures, run the focused test for the changed case
+or page corpus:
+
+```bash
+UPDATE_FIXTURES=1 cargo test -p umber --test it run_dvi_smoke_matches_pdftex_single_glyph
+UPDATE_FIXTURES=1 cargo test -p umber --test it run_page_corpus_matches_pdftex_dvi
+```
+
+For `tex-exec` pdfTeX-derived micro fixtures, run:
+
+```bash
+UPDATE_FIXTURES=1 cargo test -p tex-exec --lib grouping_parity
+UPDATE_FIXTURES=1 cargo test -p tex-exec --lib io::
+```
+
+Fixture update runs require a live reference TeX (`pdftex` or `UMBER_REF_TEX`)
+and may stop after rewriting the first changed fixture. Repeat the focused
+command until it passes, then rerun without `UPDATE_FIXTURES` before
+committing:
+
+```bash
 cargo test -p umber --test it run_typeset_corpus_matches_pdftex_box_dumps
 ```
+
+For live reference checks without rewriting fixtures, run `scripts/parity.sh`
+or set `UMBER_LIVE_REF=1` on the focused cargo test. Ordinary `cargo test
+--tests` must not set `UMBER_LIVE_REF` and must not require TeX tools on
+`PATH`.
 
 ## Cargo Test Scope
 
@@ -96,9 +137,10 @@ installation with:
 scripts/fetch-font-corpus.sh
 ```
 
-When those files are absent, the `tftopl` corpus cross-check prints a clear
-skip message and returns success so the fast suite still runs on machines
-without TeX fonts.
+The live `tftopl` corpus cross-check runs only when `UMBER_LIVE_REF=1` is set.
+When those files are absent in that explicit mode, it prints a clear skip
+message and returns success so the fast suite still runs on machines without
+TeX fonts.
 
 ## Proptest Budgets
 

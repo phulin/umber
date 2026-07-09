@@ -1,0 +1,12 @@
+success: false
+stdout:
+! Incompatible magnification (2000);
+> 0.83333pt.
+<to be read again>
+log:
+! Incompatible magnification (2000);
+I can handle only one magnification ratio per job. So I've
+reverted to the magnification you used earlier on this run.
+
+> 0.83333pt.
+<to be read again>

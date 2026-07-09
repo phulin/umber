@@ -23,10 +23,10 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `src/lib.rs`: public run harness helpers for preparing state, executing input stacks or memory sources, and collecting shipout artifact ids.
 - `src/main.rs`: `umber` binary entry point, CLI argument parsing, `lex-dump`/`expand-dump`/`run` dispatch, token formatting, and real-run file hooks.
 - `tests/it.rs`: integration-test module root wiring the CLI, replay identity, and effectful replay test suites.
-- `tests/it/cli.rs`: integration tests for CLI success, usage errors, corpus dump output, pdfTeX diagnostic parity, and hyphenation parity.
+- `tests/it/cli.rs`: integration tests for CLI success, usage errors, corpus dump output, committed pdfTeX diagnostic/DVI fixture parity, and opt-in live hyphenation parity.
 - `tests/it/effectful_replay.rs`: property tests for rollback and commit identity across terminal, log, stream, input, read, and shipout effects.
 - `tests/it/replay_identity.rs`: property and regression tests that generated primitive programs rollback to identical state.
 
 ## Validation
 
-Run `cargo test --tests -p umber` after CLI or composed-runner changes. For behavior that changes emitted diagnostics or fixtures, follow `tests/AGENTS.md` and update fixtures deliberately.
+Run `cargo test --tests -p umber` after CLI or composed-runner changes. For behavior that changes emitted diagnostics or fixtures, follow `tests/AGENTS.md` and update fixtures deliberately. Live reference comparisons require `UMBER_LIVE_REF=1` or `scripts/parity.sh`; ordinary tests should consume committed fixtures.

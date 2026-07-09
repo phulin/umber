@@ -1,0 +1,7 @@
+success: false
+stdout:
+! Too many }'s.
+log:
+! Too many }'s.
+You've closed more groups than you opened.
+Such booboos are generally harmless, so keep going.

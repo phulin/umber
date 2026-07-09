@@ -23,7 +23,7 @@ Use this crate for font-domain parsing and metric representation that does not r
 - `src/metrics.rs`: immutable loaded-font records and backend-neutral metric query types.
 - `src/tests.rs`: crate-internal test module declarations for TFM parsing and cross-checks.
 - `src/tests/tfm_parse.rs`: unit tests and helpers for parsing fixtures, metrics conversion, and malformed TFM validation.
-- `src/tests/tftopl_crosscheck.rs`: optional reference cross-checks against `tftopl` PL output.
+- `src/tests/tftopl_crosscheck.rs`: optional live reference cross-checks against `tftopl` PL output, gated by `UMBER_LIVE_REF=1`.
 - `src/tfm/error.rs`: structured TFM parse error variants and display messages.
 - `src/tfm/mod.rs`: TFM module boundary and public re-exports.
 - `src/tfm/parse.rs`: binary TFM parser, table decoding, scaling, and validation logic.
@@ -38,4 +38,4 @@ Use this crate for font-domain parsing and metric representation that does not r
 
 ## Validation
 
-Run `cargo test --tests -p tex-fonts` after changes. Parser or metric-shape changes should keep the TFM fixture tests and `tftopl` cross-checks passing.
+Run `cargo test --tests -p tex-fonts` after changes. Parser or metric-shape changes should keep the TFM fixture tests passing. Run `UMBER_LIVE_REF=1 cargo test --tests -p tex-fonts tftopl_crosscheck` for the optional live `tftopl` tier.

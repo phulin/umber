@@ -5,54 +5,50 @@ use std::fs;
 use crate::{Executor, install_unexpandable_primitives};
 use refexec::{RefTex, RunOpts};
 use tempfile::tempdir;
+use test_support::{
+    assert_matches_fixture, live_reference_enabled, normalize, read_fixture,
+    update_fixtures_enabled,
+};
 use tex_lex::{InputStack, MemoryInput};
 use tex_state::Universe;
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
 
 #[test]
 fn grouping_after_tokens_match_pdftex_micro_suite() {
-    let temp_dir = tempdir().expect("create reftex temp dir");
-
-    let grouping = run_pdftex(
-        temp_dir.path(),
+    let grouping = pdftex_reference_fixture(
         "grouping",
         r"{\count100=1\global\count101=2}\message{G:\the\count100,\the\count101}\end",
     );
     assert!(
-        grouping.success,
+        grouping.contains("success: true"),
         "pdftex grouping case failed:\n{}",
-        grouping.stdout
+        grouping
     );
     assert!(
-        grouping.stdout.contains("G:0,2"),
+        grouping.contains("G:0,2"),
         "pdftex grouping output changed:\n{}",
-        grouping.stdout
+        grouping
     );
 
-    let after = run_pdftex(
-        temp_dir.path(),
+    let after = pdftex_reference_fixture(
         "after",
         r"\def\A{\message{A}}\def\B{\message{B}}{\aftergroup\B\afterassignment\A\count1=7}\end",
     );
     assert!(
-        after.success,
+        after.contains("success: true"),
         "pdftex after-token case failed:\n{}",
-        after.stdout
+        after
     );
     assert!(
-        after.stdout.contains("A B"),
+        after.contains("A B"),
         "pdftex after-token ordering changed:\n{}",
-        after.stdout
+        after
     );
 
-    let too_many = run_pdftex(temp_dir.path(), "too_many", "}\n\\end");
-    assert!(too_many.log.contains("! Too many }'s."));
-    let wrong_close = run_pdftex(temp_dir.path(), "wrong_close", "\\begingroup}\n\\end");
-    assert!(
-        wrong_close
-            .log
-            .contains("! Extra }, or forgotten \\endgroup.")
-    );
+    let too_many = pdftex_reference_fixture("too_many", "}\n\\end");
+    assert!(too_many.contains("! Too many }'s."));
+    let wrong_close = pdftex_reference_fixture("wrong_close", "\\begingroup}\n\\end");
+    assert!(wrong_close.contains("! Extra }, or forgotten \\endgroup."));
 
     let stores = run_umber_exec(
         r"{\count100=1\global\count101=2}\def\A{\global\count0=1}\def\B{\global\count0=2}{\aftergroup\B\afterassignment\A\count102=7}",
@@ -65,35 +61,19 @@ fn grouping_after_tokens_match_pdftex_micro_suite() {
 
 #[test]
 fn prepare_mag_cases_match_pdftex_micro_suite() {
-    let temp_dir = tempdir().expect("create reftex temp dir");
-
-    let illegal = run_pdftex(
-        temp_dir.path(),
+    let illegal = pdftex_reference_fixture(
         "illegal_mag",
         r"\mag=40000\dimen0=1truept\showthe\dimen0\end",
     );
-    assert!(
-        illegal
-            .log
-            .contains("! Illegal magnification has been changed to 1000 (40000).")
-    );
+    assert!(illegal.contains("! Illegal magnification has been changed to 1000 (40000)."));
 
-    let incompatible = run_pdftex(
-        temp_dir.path(),
+    let incompatible = pdftex_reference_fixture(
         "incompatible_mag",
         r"\mag=1200\dimen0=1truept\mag=2000\dimen1=1truept\showthe\dimen1\end",
     );
-    assert!(
-        incompatible
-            .log
-            .contains("! Incompatible magnification (2000);")
-    );
-    assert!(
-        incompatible
-            .log
-            .contains("the previous value will be retained")
-    );
-    assert!(incompatible.log.contains("> 0.83333pt."));
+    assert!(incompatible.contains("! Incompatible magnification (2000);"));
+    assert!(incompatible.contains("reverted to the magnification you used earlier"));
+    assert!(incompatible.contains("> 0.83333pt."));
 
     let stores = run_umber_exec(r"\mag=1200\dimen0=1truept\mag=2000\dimen1=1truept");
     assert_eq!(stores.mag(), 1200);
@@ -109,28 +89,24 @@ fn prepare_mag_cases_match_pdftex_micro_suite() {
 
 #[test]
 fn box_register_cases_match_pdftex_micro_suite() {
-    let temp_dir = tempdir().expect("create reftex temp dir");
-
-    let dimensions = run_pdftex(
-        temp_dir.path(),
+    let dimensions = pdftex_reference_fixture(
         "box_dimensions",
         r"\setbox0=\hbox to 10pt{}\wd0=12pt\ht0=3pt\dp0=2pt\message{B:\the\wd0,\the\ht0,\the\dp0}\end",
     );
     assert!(
-        dimensions.stdout.contains("B:12.0pt,3.0pt,2.0pt"),
+        dimensions.contains("B:12.0pt,3.0pt,2.0pt"),
         "pdftex box dimension output changed:\n{}",
-        dimensions.stdout
+        dimensions
     );
 
-    let movement = run_pdftex(
-        temp_dir.path(),
+    let movement = pdftex_reference_fixture(
         "box_movement",
         r"\setbox0=\hbox{}\setbox1=\copy0\box0\message{M:\ifvoid0 void\else full\fi,\ifvoid1 full\else void\fi}\end",
     );
     assert!(
-        movement.stdout.contains("M:void,void"),
+        movement.contains("M:void,void"),
         "pdftex box movement output changed:\n{}",
-        movement.stdout
+        movement
     );
 
     let mut stores =
@@ -162,6 +138,18 @@ fn box_register_cases_match_pdftex_micro_suite() {
     assert!(stores.box_reg(1).is_some());
 }
 
+fn pdftex_reference_fixture(stem: &str, input: &str) -> String {
+    if update_fixtures_enabled() || live_reference_enabled() {
+        let temp_dir = tempdir().expect("create reftex temp dir");
+        let output = run_pdftex(temp_dir.path(), stem, input);
+        let fixture = format_pdftex_reference(&output);
+        assert_matches_fixture("tex_exec", stem, "ref", &fixture);
+        fixture
+    } else {
+        read_fixture("tex_exec", stem, "ref")
+    }
+}
+
 fn run_pdftex(dir: &std::path::Path, stem: &str, input: &str) -> refexec::RunOutput {
     let tex_file = dir.join(format!("{stem}.tex"));
     fs::write(&tex_file, input).expect("write reftex input");
@@ -169,6 +157,36 @@ fn run_pdftex(dir: &std::path::Path, stem: &str, input: &str) -> refexec::RunOut
         .expect("locate pdftex")
         .run(&tex_file, &RunOpts::default())
         .expect("run pdftex")
+}
+
+fn format_pdftex_reference(output: &refexec::RunOutput) -> String {
+    format!(
+        "success: {}\nstdout:\n{}log:\n{}",
+        output.success,
+        normalize_micro_reference_text(&output.stdout),
+        normalize_micro_reference_text(&output.log)
+    )
+}
+
+fn normalize_micro_reference_text(text: &str) -> String {
+    let mut lines = Vec::new();
+    for line in normalize::exec_log(text).lines() {
+        let line = line.split_once(" [").map_or(line, |(message, _)| message);
+        if line.starts_with("Output written on ")
+            || line.starts_with("pdftex/")
+            || line.starts_with("lic/")
+            || line.starts_with("</")
+        {
+            continue;
+        }
+        lines.push(line.to_owned());
+    }
+
+    if lines.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n", lines.join("\n"))
+    }
 }
 
 fn run_umber_exec(input: &str) -> Universe {

@@ -8,12 +8,22 @@ use tempfile::tempdir;
 
 #[test]
 fn locate_finds_pdftex() -> Result<()> {
+    if !live_reference_enabled() {
+        eprintln!("skipping live refexec locate test: set UMBER_LIVE_REF=1");
+        return Ok(());
+    }
+
     RefTex::locate()?;
     Ok(())
 }
 
 #[test]
 fn run_trivial_tex_and_capture_log() -> Result<()> {
+    if !live_reference_enabled() {
+        eprintln!("skipping live refexec run test: set UMBER_LIVE_REF=1");
+        return Ok(());
+    }
+
     let temp_dir = tempdir()?;
     let tex_file = temp_dir.path().join("hello.tex");
     fs::write(&tex_file, r"\message{refexec-ok}\end")?;
@@ -27,6 +37,11 @@ fn run_trivial_tex_and_capture_log() -> Result<()> {
 
 #[test]
 fn dvi_run_captures_dvi_preamble() -> Result<()> {
+    if !live_reference_enabled() {
+        eprintln!("skipping live refexec DVI test: set UMBER_LIVE_REF=1");
+        return Ok(());
+    }
+
     let temp_dir = tempdir()?;
     let tex_file = temp_dir.path().join("page.tex");
     fs::write(&tex_file, r"\shipout\hbox{}\end")?;
@@ -62,4 +77,8 @@ fn dvi_compare_normalizes_only_preamble_comment_payload() -> Result<()> {
     };
     assert_eq!(diff.offset, 18);
     Ok(())
+}
+
+fn live_reference_enabled() -> bool {
+    std::env::var_os("UMBER_LIVE_REF").is_some_and(|value| value == "1")
 }

@@ -4,6 +4,9 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
+export UMBER_LIVE_REF="${UMBER_LIVE_REF:-1}"
+
+cargo test -p umber --test it run_exec_corpus_matches_pdftex_diagnostics
 cargo test -p umber --test it run_typeset_corpus_matches_pdftex_box_dumps
 
 if [[ -f third_party/hyphen/hyphen.tex ]]; then

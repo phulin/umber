@@ -4,7 +4,7 @@ Read the repository-level `AGENTS.md` before editing here. This crate contains h
 
 ## Crate Role
 
-`test-support` owns shared helpers used by workspace tests, especially committed corpus fixture assertions, fixture update behavior, normalized diagnostic/log comparison, and small parsers used to cross-check reference tool output. It may depend on ordinary host libraries such as `anyhow` and diffing utilities because it runs only in tests.
+`test-support` owns shared helpers used by workspace tests, especially committed corpus fixture assertions, fixture update behavior, normalized diagnostic/log comparison, explicit live-reference gating, and small parsers used to cross-check reference tool output. It may depend on ordinary host libraries such as `anyhow` and diffing utilities because it runs only in tests.
 
 Keep reusable test harness code here when multiple crates or integration tests need the same fixture, normalization, or reference-comparison behavior. Keep crate-specific assertions near the crate that owns the behavior unless they are clearly shared.
 
@@ -12,8 +12,8 @@ Keep reusable test harness code here when multiple crates or integration tests n
 
 - `AGENTS.md`: crate-specific guidance, boundaries, validation notes, and this file map.
 - `Cargo.toml`: crate manifest, host-side dependencies, `refexec` dev-dependency, and workspace lint settings.
-- `src/lib.rs`: public fixture assertion helpers, TeX/reference log normalizers, and PL font parsing utilities.
-- `src/tests.rs`: crate self-test that runs the hello corpus through reference TeX and checks the normalized log fixture.
+- `src/lib.rs`: public fixture assertion/read helpers, TeX/reference log normalizers, `UPDATE_FIXTURES`/`UMBER_LIVE_REF` checks, and PL font parsing utilities.
+- `src/tests.rs`: crate self-test that reads the committed hello fixture by default and regenerates it from reference TeX only under `UPDATE_FIXTURES=1`.
 
 ## Boundaries
 

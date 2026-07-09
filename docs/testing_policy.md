@@ -116,15 +116,22 @@ Committed corpus fixtures belong under the workspace-level `tests/corpus`
 tree. Keep small area-local support files beside the fixture input. See
 `tests/AGENTS.md` for fixture layout and update commands.
 
-The DVI corpora under `tests/corpus/dvi`, `tests/corpus/page`,
-`tests/corpus/math`, and `tests/corpus/align` commit TeX source files only.
-Golden DVI bytes are not checked in; `scripts/parity.sh` runs
-`umber run --dvi` and the live reference engine over the same temporary inputs
-with pinned local TFMs, then compares the generated DVI bytes through
-`tools/refexec`. The math corpus is intentionally excluded from
-`cargo test --workspace --tests`; it uses a shared primitive-only
-`tests/corpus/math/math_preamble.inc` include and the parity script runs its
-reference side in INITEX mode so the cases do not depend on `plain.tex`.
+The DVI corpora under `tests/corpus/dvi` and `tests/corpus/page` commit TeX
+source files plus selected `.expected.dvi` reference fixtures for the default
+`umber` cargo smoke tests. Those tests compare DVI bytes through
+`tools/refexec` with only preamble comment payload normalization. The broader
+DVI corpora, including `tests/corpus/math` and `tests/corpus/align`, remain in
+the live reference tier: `scripts/parity.sh` runs `umber run --dvi` and the
+live reference engine over the same temporary inputs with pinned local TFMs,
+then compares generated DVI bytes through `tools/refexec`. The math corpus is
+intentionally excluded from `cargo test --workspace --tests`; it uses a shared
+primitive-only `tests/corpus/math/math_preamble.inc` include and the parity
+script runs its reference side in INITEX mode so the cases do not depend on
+`plain.tex`.
+
+Default cargo tests must not invoke live TeX tools. Fixture regeneration uses
+`UPDATE_FIXTURES=1` and focused tests, while live reference checks use
+`UMBER_LIVE_REF=1` or `scripts/parity.sh`.
 
 `tex-out` also owns the cross-crate page-output float guard. Its unit tests
 scan the page node, packing, shipout lowering, artifact, DVI, and CLI DVI

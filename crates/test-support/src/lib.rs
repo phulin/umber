@@ -4,13 +4,47 @@
 mod imp {
     use std::env;
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     use anyhow::{Context, Result};
     use similar::TextDiff;
 
     pub fn corpus_root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus")
+    }
+
+    pub fn fixture_path(area: &str, case: &str, kind: &str) -> PathBuf {
+        corpus_root()
+            .join(area)
+            .join(format!("{case}.expected.{kind}"))
+    }
+
+    pub fn read_fixture(area: &str, case: &str, kind: &str) -> String {
+        let fixture_path = fixture_path(area, case, kind);
+        fs::read_to_string(&fixture_path).unwrap_or_else(|error| {
+            panic!("failed to read fixture {}: {error}", fixture_path.display())
+        })
+    }
+
+    pub fn read_binary_fixture(area: &str, case: &str, kind: &str) -> Vec<u8> {
+        let fixture_path = fixture_path(area, case, kind);
+        fs::read(&fixture_path).unwrap_or_else(|error| {
+            panic!("failed to read fixture {}: {error}", fixture_path.display())
+        })
+    }
+
+    pub fn write_binary_fixture(area: &str, case: &str, kind: &str, actual: &[u8]) {
+        let fixture_path = fixture_path(area, case, kind);
+        write_binary_fixture_inner(&fixture_path, actual)
+            .unwrap_or_else(|error| panic!("{error:#}"));
+    }
+
+    pub fn update_fixtures_enabled() -> bool {
+        env::var_os("UPDATE_FIXTURES").is_some_and(|value| value == "1")
+    }
+
+    pub fn live_reference_enabled() -> bool {
+        env::var_os("UMBER_LIVE_REF").is_some_and(|value| value == "1")
     }
 
     pub fn assert_matches_fixture(area: &str, case: &str, kind: &str, actual: &str) {
@@ -25,9 +59,7 @@ mod imp {
         kind: &str,
         actual: &str,
     ) -> Result<()> {
-        let fixture_path = corpus_root()
-            .join(area)
-            .join(format!("{case}.expected.{kind}"));
+        let fixture_path = fixture_path(area, case, kind);
 
         let expected = match fs::read_to_string(&fixture_path) {
             Ok(expected) => expected,
@@ -44,7 +76,7 @@ mod imp {
             return Ok(());
         }
 
-        if should_update_fixtures() {
+        if update_fixtures_enabled() {
             write_fixture(&fixture_path, actual)?;
             panic!("fixture updated -- rerun without UPDATE_FIXTURES");
         }
@@ -54,7 +86,7 @@ mod imp {
     }
 
     fn update_or_missing_fixture(fixture_path: &std::path::Path, actual: &str) -> Result<()> {
-        if should_update_fixtures() {
+        if update_fixtures_enabled() {
             write_fixture(fixture_path, actual)?;
             panic!("fixture updated -- rerun without UPDATE_FIXTURES");
         }
@@ -65,11 +97,18 @@ mod imp {
         );
     }
 
-    fn should_update_fixtures() -> bool {
-        env::var_os("UPDATE_FIXTURES").is_some_and(|value| value == "1")
+    fn write_fixture(fixture_path: &Path, actual: &str) -> Result<()> {
+        if let Some(parent) = fixture_path.parent() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!("failed to create fixture directory {}", parent.display())
+            })?;
+        }
+
+        fs::write(fixture_path, actual)
+            .with_context(|| format!("failed to write fixture {}", fixture_path.display()))
     }
 
-    fn write_fixture(fixture_path: &std::path::Path, actual: &str) -> Result<()> {
+    fn write_binary_fixture_inner(fixture_path: &Path, actual: &[u8]) -> Result<()> {
         if let Some(parent) = fixture_path.parent() {
             fs::create_dir_all(parent).with_context(|| {
                 format!("failed to create fixture directory {}", parent.display())
@@ -741,7 +780,10 @@ mod imp {
     }
 }
 
-pub use imp::{assert_matches_fixture, corpus_root, normalize, pl};
+pub use imp::{
+    assert_matches_fixture, corpus_root, fixture_path, live_reference_enabled, normalize, pl,
+    read_binary_fixture, read_fixture, update_fixtures_enabled, write_binary_fixture,
+};
 
 #[cfg(test)]
 mod tests;

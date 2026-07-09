@@ -1,7 +1,10 @@
 use std::{fs, process::Command};
 
-use refexec::{DviComparison, RefTex, RunOpts};
-use test_support::{assert_matches_fixture, normalize};
+use refexec::{DviComparison, RefTex, RunOpts, compare_dvi_bytes};
+use test_support::{
+    assert_matches_fixture, fixture_path, live_reference_enabled, normalize, read_binary_fixture,
+    read_fixture, update_fixtures_enabled, write_binary_fixture,
+};
 use tex_lex::{Lexer, WorldInput};
 use tex_state::env::banks::IntParam;
 use tex_state::token::{Catcode, Token};
@@ -121,7 +124,8 @@ fn run_corpus_matches_pdftex_diagnostics(area: &str, show_fixtures: bool) {
         .join("../..")
         .join("tests/corpus")
         .join(area);
-    let ref_tex = RefTex::locate().expect("reference TeX should be available");
+    let ref_tex = (live_reference_enabled() || update_fixtures_enabled())
+        .then(|| RefTex::locate().expect("reference TeX should be available"));
 
     for entry in std::fs::read_dir(&corpus).expect("read exec corpus") {
         let path = entry.expect("read corpus entry").path();
@@ -130,15 +134,20 @@ fn run_corpus_matches_pdftex_diagnostics(area: &str, show_fixtures: bool) {
         }
         let stem = path.file_stem().expect("fixture stem").to_string_lossy();
 
-        let ref_output = ref_tex
-            .run(&path, &RunOpts::default())
-            .expect("reference TeX should run exec fixture");
-        let expected = if show_fixtures {
-            normalize::box_dump(&ref_output.log)
+        let expected = if let Some(ref_tex) = &ref_tex {
+            let ref_output = ref_tex
+                .run(&path, &RunOpts::default())
+                .expect("reference TeX should run exec fixture");
+            let expected = if show_fixtures {
+                normalize::box_dump(&ref_output.log)
+            } else {
+                normalize::exec_log(&ref_output.log)
+            };
+            assert_matches_fixture(area, &stem, "log", &expected);
+            expected
         } else {
-            normalize::exec_log(&ref_output.log)
+            read_fixture(area, &stem, "log")
         };
-        assert_matches_fixture(area, &stem, "log", &expected);
 
         let mut command = Command::new(env!("CARGO_BIN_EXE_umber"));
         command.arg("run");
@@ -170,6 +179,11 @@ fn run_corpus_matches_pdftex_diagnostics(area: &str, show_fixtures: bool) {
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side optional corpus and command execution.
 fn run_hyphen_showhyphens_corpus_matches_pdftex() {
+    if !live_reference_enabled() {
+        eprintln!("skipping hyphen showhyphens parity: set UMBER_LIVE_REF=1");
+        return;
+    }
+
     let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let hyphen_tex = repo_root.join("third_party/hyphen/hyphen.tex");
     if !hyphen_tex.exists() {
@@ -354,18 +368,80 @@ fn assert_dvi_case_in_area_matches_pdftex(area: &str, case: &str) {
     );
 
     let actual = fs::read(&actual_path).expect("read umber DVI");
-    let comparison = RefTex::locate()
+    let expected = expected_dvi_fixture(area, case, &case_path, &tfm_path);
+    assert_dvi_matches(&expected, &actual, &format!("{area}/{case}"));
+}
+
+fn expected_dvi_fixture(
+    area: &str,
+    case: &str,
+    case_path: &std::path::Path,
+    tfm_path: &std::path::Path,
+) -> Vec<u8> {
+    if update_fixtures_enabled() || live_reference_enabled() {
+        let expected = reference_dvi(case_path, tfm_path);
+        if update_fixtures_enabled() {
+            update_dvi_fixture_if_changed(area, case, &expected);
+        }
+        if live_reference_enabled() {
+            let committed = read_binary_fixture(area, case, "dvi");
+            assert_dvi_matches(
+                &expected,
+                &committed,
+                &format!("{area}/{case} committed fixture"),
+            );
+        }
+        expected
+    } else {
+        read_binary_fixture(area, case, "dvi")
+    }
+}
+
+fn reference_dvi(case_path: &std::path::Path, tfm_path: &std::path::Path) -> Vec<u8> {
+    let output = RefTex::locate()
         .expect("locate pdftex")
-        .compare_dvi(
-            &case_path,
-            &actual,
+        .run(
+            case_path,
             &RunOpts {
-                extra_inputs: vec![tfm_path],
+                dvi: true,
+                extra_inputs: vec![tfm_path.to_path_buf()],
                 ..RunOpts::default()
             },
         )
-        .expect("compare reference DVI");
-    assert_eq!(comparison, DviComparison::Equal);
+        .expect("run reference DVI fixture");
+    assert!(
+        output.success,
+        "reference DVI fixture failed:\n{}",
+        output.log
+    );
+    output.dvi.expect("reference TeX should produce DVI")
+}
+
+#[allow(clippy::disallowed_methods)] // host-side binary fixture update check.
+fn update_dvi_fixture_if_changed(area: &str, case: &str, expected: &[u8]) {
+    let path = fixture_path(area, case, "dvi");
+    let unchanged = fs::read(&path)
+        .ok()
+        .and_then(|current| compare_dvi_bytes(expected, &current).ok())
+        == Some(DviComparison::Equal);
+    if unchanged {
+        return;
+    }
+
+    write_binary_fixture(area, case, "dvi", expected);
+    panic!(
+        "DVI fixture updated at {} -- rerun without UPDATE_FIXTURES",
+        path.display()
+    );
+}
+
+fn assert_dvi_matches(expected: &[u8], actual: &[u8], label: &str) {
+    let comparison = compare_dvi_bytes(expected, actual).expect("compare DVI bytes");
+    assert_eq!(
+        comparison,
+        DviComparison::Equal,
+        "DVI fixture mismatch for {label}"
+    );
 }
 
 #[test]

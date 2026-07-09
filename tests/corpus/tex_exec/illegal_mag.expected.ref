@@ -1,0 +1,11 @@
+success: false
+stdout:
+! Illegal magnification has been changed to 1000 (40000).
+> 1.0pt.
+<to be read again>
+log:
+! Illegal magnification has been changed to 1000 (40000).
+The magnification ratio must be between 1 and 32768.
+
+> 1.0pt.
+<to be read again>
