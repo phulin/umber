@@ -192,7 +192,7 @@ fn break_current_paragraph(
     if let Some(shape) = params.par_shape.clone() {
         nest.current_list_mut().set_par_shape(shape);
     }
-    let hlist = crate::math::finish_math_lists(stores, level.list().nodes());
+    let hlist = crate::math::finish_math_lists(stores, level.list().nodes(), true);
     let line_params = line_break_params(&params);
     let hyphenated = super::hyphenation::hyphenated_hlist(stores, &hlist);
     let mut hook = ExecHyphenationHook { hyphenated };

@@ -347,6 +347,24 @@ fn nolimits_operator_splits_italic_correction_into_script_placement() {
 }
 
 #[test]
+fn nolimits_operator_centers_nucleus_on_math_axis() {
+    let mut universe = setup_universe();
+    let op = MathNoad::new(
+        NoadKind::Operator(LimitType::NoLimits),
+        MathField::MathChar(math_char('c')),
+    );
+    let input = universe.freeze_node_list(&[Node::MathNoad(op)]);
+    let params = MathParams::read(&universe);
+
+    let hlist = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
+
+    let [MathNode::HList(op_box)] = hlist.nodes.as_slice() else {
+        panic!("expected operator hbox");
+    };
+    assert_eq!(op_box.shift, sc(-1));
+}
+
+#[test]
 fn radical_clearance_uses_display_and_nondisplay_formulas() {
     let mut universe = setup_universe();
     let noad = MathNoad::new(

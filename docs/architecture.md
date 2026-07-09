@@ -483,8 +483,10 @@ makes box-level memoization (M4) sound.
   surface. The implementation replays TeX.web's two passes: pass one resolves
   styles, math choices, mu glue/kerns, noad classes, nuclei, and scripts while
   tracking top-level dimensions; pass two inserts the 8x8 inter-class spacing
-  table and optional `\binoppenalty`/`\relpenalty` nodes for the outer inline
-  conversion. Converted inter-noad glue preserves diagnostic provenance for
+  table and, when the stomach is converting unrestricted paragraph math for
+  line breaking, optional `\binoppenalty`/`\relpenalty` nodes. Restricted
+  `\hbox` math uses the same inline style conversion without those line-break
+  penalties. Converted inter-noad glue preserves diagnostic provenance for
   `\thinmuskip`, `\medmuskip`, and `\thickmuskip`, while explicit `\mskip`
   remains distinct; lowering and shipout treat those variants as ordinary glue
   for DVI-visible behavior. Symbol, extension, delimiter, and math penalty

@@ -560,7 +560,7 @@ where
     scan_box_group(&mut inner, input, stores, hooks)?;
     let level = inner.pop()?;
     let nodes = if kind == BoxKind::HBox {
-        crate::math::finish_math_lists(stores, level.list().nodes())
+        crate::math::finish_math_lists(stores, level.list().nodes(), false)
     } else {
         level.list().nodes().to_vec()
     };

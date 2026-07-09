@@ -1,0 +1,14 @@
+> \box0=
+\hbox(6.94444+0.83333)x22.22226
+.\mathon
+.\tenrm b
+.\glue(\medmuskip) 0.0
+.\tenrm +
+.\glue(\medmuskip) 0.0
+.\tenrm c
+.\glue(\thinmuskip) 0.0
+.\hbox(4.30554+0.0)x4.44444, shifted -0.34723
+..\tenrm c
+.\mathoff
+
+! OK.

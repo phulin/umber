@@ -29,14 +29,24 @@ mod support;
 use scan::*;
 use support::*;
 
-pub(crate) fn finish_math_list_node(stores: &mut Universe, list: MathListNode) -> Vec<Node> {
+pub(crate) fn finish_math_list_node(
+    stores: &mut Universe,
+    list: MathListNode,
+    insert_penalties: bool,
+) -> Vec<Node> {
     let params = MathParams::read(stores);
     let style = if list.display {
         Style::DISPLAY
     } else {
         Style::TEXT
     };
-    let hlist = mlist_to_hlist(stores, list.content, style, !list.display, &params);
+    let hlist = mlist_to_hlist(
+        stores,
+        list.content,
+        style,
+        insert_penalties && !list.display,
+        &params,
+    );
     let mut nodes = Vec::new();
     if !list.display {
         let surround = stores.dimen_param(DimenParam::MATH_SURROUND);
@@ -50,11 +60,17 @@ pub(crate) fn finish_math_list_node(stores: &mut Universe, list: MathListNode) -
     nodes
 }
 
-pub(crate) fn finish_math_lists(stores: &mut Universe, nodes: &[Node]) -> Vec<Node> {
+pub(crate) fn finish_math_lists(
+    stores: &mut Universe,
+    nodes: &[Node],
+    insert_penalties: bool,
+) -> Vec<Node> {
     let mut out = Vec::with_capacity(nodes.len());
     for node in nodes {
         match node {
-            Node::MathList(list) => out.extend(finish_math_list_node(stores, *list)),
+            Node::MathList(list) => {
+                out.extend(finish_math_list_node(stores, *list, insert_penalties))
+            }
             node => out.push(node.clone()),
         }
     }

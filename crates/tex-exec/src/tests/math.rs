@@ -209,7 +209,7 @@ fn inline_math_finishing_emits_mathsurround_markers_and_penalties() {
         .pop()
         .expect("inline math list should be present");
 
-    let nodes = crate::math::finish_math_list_node(&mut stores, list);
+    let nodes = crate::math::finish_math_list_node(&mut stores, list, true);
 
     assert!(matches!(
         nodes.first(),
@@ -230,6 +230,23 @@ fn inline_math_finishing_emits_mathsurround_markers_and_penalties() {
     assert!(
         nodes.iter().all(|node| !matches!(node, Node::MathList(_))),
         "paragraph line breaking must see converted hlist nodes"
+    );
+}
+
+#[test]
+fn restricted_inline_math_finishing_suppresses_line_break_penalties() {
+    let (mut stores, executor) = run_math_source(r"$a\mathbin+b\mathrel=c$");
+    let list = math_list_nodes(&executor)
+        .pop()
+        .expect("inline math list should be present");
+
+    let nodes = crate::math::finish_math_list_node(&mut stores, list, false);
+
+    assert!(
+        nodes
+            .iter()
+            .all(|node| !matches!(node, Node::Penalty(700 | 500))),
+        "restricted hbox math conversion should not emit line-break penalties"
     );
 }
 
@@ -272,7 +289,7 @@ fn converted_math_glue_preserves_explicit_and_named_provenance() {
         content,
     };
 
-    let nodes = crate::math::finish_math_list_node(&mut stores, list);
+    let nodes = crate::math::finish_math_list_node(&mut stores, list, true);
 
     assert!(
         nodes.iter().any(|node| matches!(
