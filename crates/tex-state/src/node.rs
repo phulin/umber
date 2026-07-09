@@ -6,7 +6,7 @@ use crate::ids::{FontId, GlueId, NodeListId, TokenListId};
 use crate::math::MathField;
 use crate::math::{MathChoice, MathFraction, MathListNode, MathNoad, MathStyle};
 use crate::scaled::{GlueSetRatio, Scaled};
-use crate::world::PrintSink;
+use crate::world::{PrintSink, StreamSlot};
 
 /// A frozen TeX node.
 #[derive(Clone, Debug, PartialEq)]
@@ -236,6 +236,13 @@ pub enum Sign {
 /// Extension nodes whose effects are interpreted by later subsystems.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum Whatsit {
+    OpenOut {
+        slot: StreamSlot,
+        path: String,
+    },
+    CloseOut {
+        slot: StreamSlot,
+    },
     DeferredWrite {
         sink: PrintSink,
         tokens: TokenListId,

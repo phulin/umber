@@ -23,8 +23,11 @@ typesetting layer. These compare `umber run --show-fixtures` output with
 normalized `pdftex` logs through the shared
 `test_support::normalize::box_dump` helper; that helper uses the same
 diagnostic-log normalizer as `exec_log`. In this mode, `umber` writes only the
-collected terminal/log diagnostic text to stdout and does not commit pending
-`World` stream effects such as `\openout` files.
+collected terminal/log diagnostic text to stdout and skips the CLI's extra
+final `World` effect commit. TeX shipouts still commit their own effect prefix,
+so stream whatsits shipped by `\shipout` or final cleanup can materialize
+output files even under `--show-fixtures`; pending immediate stream effects do
+not materialize because their final commit is skipped.
 
 `tests/corpus/dvi` contains committed TeX source fixtures for full-pipeline
 DVI parity. Do not commit generated DVI files here. `scripts/parity.sh`

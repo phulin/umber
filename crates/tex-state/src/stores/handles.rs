@@ -122,7 +122,11 @@ impl Stores {
             Node::Whatsit(crate::node::Whatsit::DeferredWrite { tokens, .. }) => {
                 self.assert_live_token_list(*tokens);
             }
-            Node::Whatsit(crate::node::Whatsit::Special { .. }) => {}
+            Node::Whatsit(
+                crate::node::Whatsit::OpenOut { .. }
+                | crate::node::Whatsit::CloseOut { .. }
+                | crate::node::Whatsit::Special { .. },
+            ) => {}
             Node::Kern { .. }
             | Node::Penalty(_)
             | Node::Rule { .. }

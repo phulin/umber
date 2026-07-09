@@ -169,24 +169,194 @@ fn read_missing_stream_in_errorstop_mode_uses_terminal_line() {
 }
 
 #[test]
-fn openout_closeout_append_world_effect_records() {
+fn openout_closeout_append_deferred_whatsits_before_shipout() {
     let mut stores = Universe::new();
     crate::install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new("\\openout2=out.aux \\closeout2\\end"));
+    let mut input = InputStack::new(MemoryInput::new("\\openout2=out.aux \\closeout2"));
 
     Executor::new()
         .run(&mut input, &mut stores)
         .expect("openout closeout");
 
+    assert!(
+        stores.world().effect_records().is_empty(),
+        "non-immediate openout/closeout should wait for shipout"
+    );
+    assert!(matches!(
+        stores.page_contributions(),
+        [
+            tex_state::node::Node::Whatsit(tex_state::node::Whatsit::OpenOut { slot, path }),
+            tex_state::node::Node::Whatsit(tex_state::node::Whatsit::CloseOut { slot: close_slot })
+        ] if *slot == tex_state::StreamSlot::new(2)
+            && *close_slot == tex_state::StreamSlot::new(2)
+            && path == "out.aux"
+    ));
+}
+
+#[test]
+fn immediate_openout_write_closeout_append_world_effect_records() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\count0=3 \
+         \\immediate\\openout2=imm.out \
+         \\immediate\\write2{p:\\the\\count0}\
+         \\immediate\\closeout2",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("immediate stream commands");
+
     assert!(matches!(
         stores.world().effect_records(),
         [
             EffectRecord::StreamOpen { slot, target },
-            EffectRecord::StreamClose { slot: close_slot }
+            EffectRecord::StreamWrite {
+                sink: tex_state::PrintSink::Stream(write_slot),
+                text
+            },
+            EffectRecord::StreamClose { slot: close_slot },
         ] if *slot == tex_state::StreamSlot::new(2)
+            && *write_slot == tex_state::StreamSlot::new(2)
             && *close_slot == tex_state::StreamSlot::new(2)
-            && target.path() == std::path::Path::new("out.aux")
+            && target.path() == std::path::Path::new("imm.out")
+            && text == "p:3"
     ));
+}
+
+#[test]
+fn shipout_commits_deferred_openout_closeout_whatsits() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\shipout\\hbox{\\openout2=out.aux \\write2{alpha}\\closeout2}\\end",
+    ));
+
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("shipout succeeds");
+
+    assert_eq!(stats.shipped_artifacts.len(), 1);
+    assert_eq!(stores.world().memory_output("out.aux"), Some(&b"alpha"[..]));
+    assert!(
+        stores.world().effect_records().is_empty(),
+        "shipout should flush deferred open/write/close effects"
+    );
+
+    let bytes = stores
+        .world()
+        .read_artifact(stats.shipped_artifacts[0])
+        .expect("read artifact")
+        .expect("artifact stored");
+    let artifact = PageArtifact::from_bytes(&bytes).expect("artifact parses");
+    assert!(matches!(
+        artifact.effects.as_slice(),
+        [
+            PageEffect::OpenOut { stream: 2, path },
+            PageEffect::Write {
+                sink: EffectSink::Stream(2),
+                text
+            },
+            PageEffect::CloseOut { stream: 2 },
+        ] if path == "out.aux" && text == "alpha"
+    ));
+    assert!(matches!(
+        artifact.root,
+        PageNode::HList(ref box_node)
+            if matches!(
+                box_node.children.as_slice(),
+                [
+                    PageNode::WhatsitAnchor { effect_index: 0 },
+                    PageNode::WhatsitAnchor { effect_index: 1 },
+                    PageNode::WhatsitAnchor { effect_index: 2 },
+                ]
+            )
+    ));
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side pdfTeX parity file.
+fn top_level_deferred_openout_closeout_ship_during_final_cleanup() {
+    let source = "\\openout0=top.out \\write0{top}\\closeout0\\end";
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(source));
+
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("final cleanup succeeds");
+
+    assert_eq!(stats.shipped_artifacts.len(), 1);
+    assert_eq!(stores.world().memory_output("top.out"), Some(&b"top"[..]));
+
+    let temp_dir = tempfile::TempDir::new().expect("temporary TeX run directory");
+    let tex_path = temp_dir.path().join("top_open_close.tex");
+    std::fs::write(&tex_path, source).expect("write reference TeX source");
+    let engine = std::env::var_os("UMBER_REF_TEX")
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "pdftex".into());
+    let reference = std::process::Command::new(engine)
+        .current_dir(temp_dir.path())
+        .arg("-interaction=batchmode")
+        .arg("top_open_close.tex")
+        .output()
+        .expect("run reference TeX");
+    assert!(
+        reference.status.success(),
+        "reference TeX top-level open/close case failed:\n{}",
+        String::from_utf8_lossy(&reference.stderr)
+    );
+    assert_eq!(
+        std::fs::read(temp_dir.path().join("top.out")).expect("read pdfTeX output"),
+        b"top\n",
+    );
+}
+
+#[test]
+fn copied_box_replays_deferred_openout_closeout_per_shipout() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\setbox0=\\hbox{\\openout2=copy.out \\write2{p:\\the\\count0}\\closeout2}\
+         \\count0=1 \\shipout\\copy0\
+         \\count0=2 \\shipout\\copy0\\end",
+    ));
+
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("shipout copies succeed");
+
+    assert_eq!(stats.shipped_artifacts.len(), 2);
+    assert_eq!(
+        stores.world().memory_output("copy.out"),
+        Some(&b"p:2"[..]),
+        "second replayed openout truncates the stream like TeX"
+    );
+
+    for (index, expected) in stats.shipped_artifacts.iter().zip(["p:1", "p:2"]) {
+        let bytes = stores
+            .world()
+            .read_artifact(*index)
+            .expect("read artifact")
+            .expect("artifact stored");
+        let artifact = PageArtifact::from_bytes(&bytes).expect("artifact parses");
+        assert!(matches!(
+            artifact.effects.as_slice(),
+            [
+                PageEffect::OpenOut { stream: 2, path },
+                PageEffect::Write {
+                    sink: EffectSink::Stream(2),
+                    text
+                },
+                PageEffect::CloseOut { stream: 2 },
+            ] if path == "copy.out" && text == expected
+        ));
+    }
 }
 
 #[test]
@@ -431,6 +601,7 @@ fn source_special_lowers_to_anchored_dvi_xxx_payload() {
 fn leader_payload_suppresses_deferred_write_but_keeps_specials() {
     let source = "\\shipout\\hbox to 4pt{\
         \\leaders\\hbox{\\vrule width1pt height1pt depth0pt\
+            \\openout0=leader.out \\write0{leader-stream}\\closeout0\
             \\write16{leader-write}\\special{leader-special}}\\hfil}\\end";
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);
@@ -446,6 +617,7 @@ fn leader_payload_suppresses_deferred_write_but_keeps_specials() {
         .expect("final commit is idempotent");
 
     assert_eq!(stats.shipped_artifacts.len(), 1);
+    assert_eq!(stores.world().memory_output("leader.out"), None);
     assert!(!memory_terminal_text(&stores).contains("leader-write"));
     assert!(!memory_log_text(&stores).contains("leader-write"));
     assert!(
@@ -464,7 +636,7 @@ fn leader_payload_suppresses_deferred_write_but_keeps_specials() {
             .effects
             .iter()
             .all(|effect| matches!(effect, PageEffect::Special { .. })),
-        "leader-contained deferred writes should not become page effects"
+        "leader-contained deferred stream whatsits should not become page effects"
     );
     assert!(
         artifact
@@ -498,10 +670,60 @@ fn leader_payload_suppresses_deferred_write_but_keeps_specials() {
         "pdftex leader payload effect case failed:\n{}",
         reference.log
     );
+    assert!(
+        !temp_dir.path().join("leader.out").exists(),
+        "pdfTeX should suppress leader-contained openout/closeout"
+    );
     assert!(!reference.log.contains("leader-write"));
     assert_eq!(
         actual_specials,
         dvi_special_payloads(reference.dvi.as_deref().expect("reference DVI"))
+    );
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side pdfTeX parity file.
+fn ordinary_shipped_openout_closeout_matches_pdftex_file_effect() {
+    let source = "\\shipout\\hbox{\\openout0=ordinary.out \\write0{ordinary}\\closeout0}\\end";
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(source));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("shipout succeeds");
+
+    assert_eq!(
+        stores.world().memory_output("ordinary.out"),
+        Some(&b"ordinary"[..])
+    );
+
+    let temp_dir = tempfile::TempDir::new().expect("temporary TeX run directory");
+    let tex_path = temp_dir.path().join("ordinary_open_close.tex");
+    std::fs::write(&tex_path, source).expect("write reference TeX source");
+    let engine = std::env::var_os("UMBER_REF_TEX")
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "pdftex".into());
+    let reference = std::process::Command::new(engine)
+        .current_dir(temp_dir.path())
+        .arg("-interaction=batchmode")
+        .arg("ordinary_open_close.tex")
+        .output()
+        .expect("run reference TeX");
+    assert!(
+        reference.status.success(),
+        "reference TeX ordinary open/close case failed:\n{}",
+        String::from_utf8_lossy(&reference.stderr)
+    );
+    let output_path = temp_dir.path().join("ordinary.out");
+    assert!(
+        output_path.exists(),
+        "pdfTeX should commit ordinary shipped openout/closeout"
+    );
+    assert_eq!(
+        std::fs::read(output_path).expect("read pdfTeX output"),
+        b"ordinary\n",
     );
 }
 

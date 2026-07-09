@@ -366,20 +366,29 @@ Nothing in the engine touches the OS directly. A single `World` object owns:
   sinks, partial-line buffers, terminal-input cursor, and an append-only effect log. `\openout`,
   `\closeout`, routed stream writes, special-class payloads, PDF object
   placeholders, and shell-escape requests append records only; no host bytes
-  materialize until the commit barrier flushes a prefix.
-- **Deferred-write token lists** are expanded at shipout against the state
-  *at the commit barrier*; read-set tracking must therefore cover
-  shipout-time expansion, not just mainline execution. Deferred `\write`
-  whatsits carry the resolved `PrintSink` plus the unexpanded `TokenListId`;
-  shipout replays that token list through the ordinary gullet and appends the
-  resulting routed stream-write effect record immediately before committing
-  the page prefix. When that whatsit is contained in a leader payload, shipout
-  lowering follows TeX.web's `doing_leaders` rule and suppresses the deferred
-  stream effect instead of expanding or anchoring it. In contrast, source
-  `\special` expands its balanced text when the primitive is scanned and
-  stores detached DVI-class payload bytes in a whatsit; shipout anchors that
-  already-expanded payload into the committed page effect slice even inside
-  leaders, so the DVI writer can emit `xxx` output for each repeated payload.
+  materialize until the commit barrier flushes a prefix. Immediate output
+  commands append these `World` records at execution time and rely on the
+  final job commit unless a shipout commits them earlier; non-immediate
+  `\openout`, `\write`, and `\closeout` reach `World` only when their whatsit
+  nodes are shipped.
+- **Deferred stream whatsits** model non-immediate `\openout`, `\write`, and
+  `\closeout` as node-list content, so copied boxes replay them once per
+  shipout. Deferred `\openout` whatsits carry the stream slot plus scanned
+  target path, deferred `\closeout` whatsits carry the stream slot, and
+  deferred `\write` whatsits carry the resolved `PrintSink` plus the
+  unexpanded `TokenListId`. Deferred-write token lists are expanded at shipout
+  against the state *at the commit barrier*; read-set tracking must therefore
+  cover shipout-time expansion, not just mainline execution. Shipout fires
+  these whatsits in node order by appending the corresponding stream-open,
+  stream-write, and stream-close records immediately before committing the
+  page prefix. When any of these whatsits is contained in a leader payload,
+  shipout lowering follows TeX.web's `doing_leaders` rule and suppresses the
+  deferred stream effect instead of opening, expanding, closing, or anchoring
+  it. In contrast, source `\special` expands its balanced text when the
+  primitive is scanned and stores detached DVI-class payload bytes in a
+  whatsit; shipout anchors that already-expanded payload into the committed
+  page effect slice even inside leaders, so the DVI writer can emit `xxx`
+  output for each repeated payload.
 - **Shell escape, PDF object stream, log file**: same discipline — buffered,
   committed at shipout, discarded on rollback. Shell escapes are record-only
   and the execution policy defaults to disabled.

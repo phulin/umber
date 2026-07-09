@@ -636,16 +636,20 @@ Responsibility: accumulate the main vertical list, fire `\output`, commit.
   bytes/ids, not live node handles.
 - The implemented stomach shipout path consumes the same box syntax as TeX's
   box primitives (`\shipout\hbox{...}`, `\shipout\boxN`, `\shipout\copyN`),
-  traverses the box tree in node order, expands deferred-write whatsits
-  through the ordinary gullet, serializes the `tex-out` artifact, and commits
-  it through `Universe::commit_shipout`, which stores the artifact bytes,
-  flushes the committed effect prefix, releases shipout-local epoch nodes, and
-  takes the next checkpoint as one boundary. The same lowering traversal
-  carries TeX.web's leader context: deferred stream writes inside leader
-  payload boxes are ignored, while specials still become anchored page effects
-  that the DVI leader loop emits for each repeated payload. The executor
-  records shipped artifact ids for the CLI/driver layer. Shipout also prepares
-  the job magnification before artifact construction and reports any
+  traverses the box tree in node order, fires deferred stream whatsits, expands
+  deferred-write token lists through the ordinary gullet, serializes the
+  `tex-out` artifact, and commits it through `Universe::commit_shipout`, which
+  stores the artifact bytes, flushes the committed effect prefix, releases
+  shipout-local epoch nodes, and takes the next checkpoint as one boundary.
+  Deferred `\openout` and `\closeout` whatsits append the same World stream
+  records as `\immediate` stream commands, while deferred `\write` appends the
+  routed stream-write record after shipout-time expansion. The same lowering
+  traversal carries TeX.web's leader context: deferred stream open, write, and
+  close whatsits inside leader payload boxes are ignored, while specials still
+  become anchored page effects that the DVI leader loop emits for each
+  repeated payload. The executor records shipped artifact ids for the
+  CLI/driver layer. Shipout also prepares the job magnification before artifact
+  construction and reports any
   recoverable `prepare_mag` diagnostic through the execution diagnostic/log
   path; `tex-out` only sees the resulting effective magnification in detached
   job metadata. Source-level

@@ -443,14 +443,20 @@ fn run_usage_errors_follow_existing_shape() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side fixture command execution and file checks.
-fn run_show_fixtures_harvests_without_committing_stream_effects() {
+fn run_show_fixtures_harvests_without_committing_immediate_stream_effects() {
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let normal_dir = temp_dir.path().join("normal");
     let fixture_dir = temp_dir.path().join("fixture");
     fs::create_dir_all(&normal_dir).expect("create normal dir");
     fs::create_dir_all(&fixture_dir).expect("create fixture dir");
     let input = temp_dir.path().join("stream_effect.tex");
-    fs::write(&input, "\\openout0=side-effect.txt\n\\closeout0\n\\end\n").expect("write input");
+    fs::write(
+        &input,
+        "\\immediate\\openout0=side-effect.txt\n\
+         \\immediate\\write0{immediate-effect}\n\
+         \\immediate\\closeout0\n\\end\n",
+    )
+    .expect("write input");
 
     let normal = Command::new(env!("CARGO_BIN_EXE_umber"))
         .current_dir(&normal_dir)
@@ -465,7 +471,7 @@ fn run_show_fixtures_harvests_without_committing_stream_effects() {
     );
     assert!(
         normal_dir.join("side-effect.txt").exists(),
-        "ordinary run should commit \\openout effects"
+        "ordinary run should commit immediate stream effects at final commit"
     );
 
     let fixture = Command::new(env!("CARGO_BIN_EXE_umber"))
@@ -482,7 +488,7 @@ fn run_show_fixtures_harvests_without_committing_stream_effects() {
     );
     assert!(
         !fixture_dir.join("side-effect.txt").exists(),
-        "--show-fixtures must not commit pending stream effects"
+        "--show-fixtures must not run the final commit for pending immediate effects"
     );
 }
 

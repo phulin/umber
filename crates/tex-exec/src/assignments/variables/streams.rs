@@ -1,4 +1,7 @@
 use super::*;
+use tex_expand::{NoopExpansionHooks, ReadRecorder, token_text};
+use tex_lex::{MemoryInput, TokenListReplayKind};
+use tex_state::ids::TokenListId;
 use tex_state::macro_store::MacroMeaning;
 use tex_state::node::{Node, Whatsit};
 use tex_state::{PrintSink, StreamSlot};
@@ -7,6 +10,7 @@ use crate::vertical::append_node_to_current_list;
 
 pub(in crate::assignments) fn execute_stream_command<S, H>(
     primitive: UnexpandablePrimitive,
+    nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
@@ -28,10 +32,39 @@ where
         UnexpandablePrimitive::OpenOut => {
             skip_optional_equals_x(input, stores, hooks)?;
             let name = scan_file_name(input, stores, hooks, "\\openout")?;
+            append_node_to_current_list(
+                nest,
+                stores,
+                Node::Whatsit(Whatsit::OpenOut { slot, path: name }),
+            )?;
+        }
+        UnexpandablePrimitive::CloseOut => {
+            append_node_to_current_list(nest, stores, Node::Whatsit(Whatsit::CloseOut { slot }))?;
+        }
+        _ => unreachable!("caller restricts stream primitive"),
+    }
+    Ok(())
+}
+
+pub(in crate::assignments) fn execute_immediate_stream_command<S, H>(
+    primitive: UnexpandablePrimitive,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    hooks: &mut H,
+) -> Result<(), ExecError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    let slot = scan_stream_slot(input, stores, hooks)?;
+    match primitive {
+        UnexpandablePrimitive::OpenOut => {
+            skip_optional_equals_x(input, stores, hooks)?;
+            let name = scan_file_name(input, stores, hooks, "\\openout")?;
             stores.world_mut().open_out(slot, name);
         }
         UnexpandablePrimitive::CloseOut => stores.world_mut().close_out(slot),
-        _ => unreachable!("caller restricts stream primitive"),
+        _ => unreachable!("caller restricts immediate stream primitive"),
     }
     Ok(())
 }
@@ -82,6 +115,24 @@ where
     )
 }
 
+pub(in crate::assignments) fn execute_immediate_write<S, R, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<(), ExecError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    let sink = scan_write_sink(input, stores, hooks)?;
+    let scanned = scan_toks(input, stores, MeaningFlags::EMPTY)?;
+    let text = expand_write_tokens(stores, recorder, scanned.meaning().replacement_text())?;
+    stores.world_mut().write_text(sink, &text);
+    Ok(())
+}
+
 pub(in crate::assignments) fn execute_special<S, H>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
@@ -102,6 +153,26 @@ where
             payload,
         }),
     )
+}
+
+fn expand_write_tokens<R>(
+    stores: &mut Universe,
+    recorder: &mut R,
+    tokens: TokenListId,
+) -> Result<String, ExecError>
+where
+    R: ReadRecorder,
+{
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list(tokens, TokenListReplayKind::Inserted);
+    let mut hooks = NoopExpansionHooks;
+    let mut text = String::new();
+    while let Some(token) =
+        get_x_token_with_recorder_and_hooks(&mut input, stores, recorder, &mut hooks)?
+    {
+        text.push_str(&token_text(stores, token));
+    }
+    Ok(text)
 }
 
 fn scan_read_tokens(

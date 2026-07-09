@@ -6,7 +6,7 @@ use tex_expand::scan::{
 use tex_expand::{
     DriverExpandNext, ExpandError, ExpansionHooks, NoopRecorder, ReadRecorder,
     get_x_token_with_recorder_and_hooks, scan_dimen, scan_glue, scan_int,
-    scan_optional_keyword_with_hooks, token_text,
+    scan_optional_keyword_with_hooks,
 };
 use tex_lex::{InputSource, InputStack, LexError, TokenListReplayKind};
 use tex_state::code_tables::{DelCode, LcCode, MathCode, SfCode, UcCode};
@@ -111,12 +111,50 @@ where
         reject_all_prefixes(prefixes)?;
         return Ok(DispatchAction::End);
     }
+    if command == PrefixedCommand::Primitive(UnexpandablePrimitive::Immediate) {
+        reject_all_prefixes(prefixes)?;
+        let outcome = execute_immediate(input, stores, recorder, hooks)?;
+        if outcome.assigned {
+            fire_afterassignment(input, stores);
+        }
+        return Ok(outcome.action);
+    }
     let outcome =
         execute_prefixed_command(command, prefixes, nest, input, stores, recorder, hooks)?;
     if outcome.assigned {
         fire_afterassignment(input, stores);
     }
     Ok(outcome.action)
+}
+
+fn execute_immediate<S, R, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<CommandOutcome, ExecError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    let token = next_non_space_x(input, stores, hooks)?.ok_or(ExecError::MissingPrefixedCommand)?;
+    let Token::Cs(symbol) = token else {
+        return Err(ExecError::PrefixWithNonAssignment { token });
+    };
+    match stores.meaning(symbol) {
+        Meaning::UnexpandablePrimitive(
+            primitive @ (UnexpandablePrimitive::OpenOut | UnexpandablePrimitive::CloseOut),
+        ) => {
+            execute_immediate_stream_command(primitive, input, stores, hooks)?;
+            Ok(CommandOutcome::assigned())
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Write) => {
+            execute_immediate_write(input, stores, recorder, hooks)?;
+            Ok(CommandOutcome::continue_only())
+        }
+        _ => Err(ExecError::PrefixWithNonAssignment { token }),
+    }
 }
 
 pub(crate) fn execute_assignment_meaning<S, H>(
@@ -493,7 +531,7 @@ where
             | UnexpandablePrimitive::CloseIn
             | UnexpandablePrimitive::OpenOut
             | UnexpandablePrimitive::CloseOut => {
-                execute_stream_command(primitive, input, stores, hooks)?;
+                execute_stream_command(primitive, nest, input, stores, hooks)?;
                 Ok(CommandOutcome::assigned())
             }
             UnexpandablePrimitive::Show => {
@@ -607,6 +645,7 @@ where
             | UnexpandablePrimitive::Long
             | UnexpandablePrimitive::Outer
             | UnexpandablePrimitive::Protected
+            | UnexpandablePrimitive::Immediate
             | UnexpandablePrimitive::End => unreachable!("prefixes are accumulated first"),
         },
         PrefixedCommand::Meaning(meaning) => {

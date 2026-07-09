@@ -607,6 +607,15 @@ impl Stores {
 
     fn hash_whatsit(&self, whatsit: Whatsit, hasher: &mut StateHasher) {
         match whatsit {
+            Whatsit::OpenOut { slot, path } => {
+                hasher.tag(13);
+                hasher.u8(slot.raw());
+                hasher.str(&path);
+            }
+            Whatsit::CloseOut { slot } => {
+                hasher.tag(14);
+                hasher.u8(slot.raw());
+            }
             Whatsit::DeferredWrite { sink, tokens } => {
                 hasher.tag(12);
                 hash_print_sink(sink, hasher);

@@ -63,7 +63,7 @@ where
             fonts: Vec::new(),
             font_map: BTreeMap::new(),
             effects: pending_effects,
-            suppress_deferred_writes: false,
+            suppress_deferred_streams: false,
         };
         let root = lowerer.lower_root_node(node)?;
         (root, lowerer.fonts, lowerer.effects)
@@ -92,7 +92,7 @@ struct ShipoutLowerer<'a, R> {
     fonts: Vec<FontResource>,
     font_map: BTreeMap<FontId, u32>,
     effects: Vec<PageEffect>,
-    suppress_deferred_writes: bool,
+    suppress_deferred_streams: bool,
 }
 
 impl<R> ShipoutLowerer<'_, R>
@@ -221,10 +221,10 @@ where
         &mut self,
         box_node: StateBoxNode,
     ) -> Result<PageBoxNode, ExecError> {
-        let outer = self.suppress_deferred_writes;
-        self.suppress_deferred_writes = true;
+        let outer = self.suppress_deferred_streams;
+        self.suppress_deferred_streams = true;
         let lowered = self.lower_box(box_node);
-        self.suppress_deferred_writes = outer;
+        self.suppress_deferred_streams = outer;
         lowered
     }
 
@@ -260,8 +260,36 @@ where
 
     fn lower_whatsit(&mut self, whatsit: Whatsit) -> Result<Option<PageNode>, ExecError> {
         match whatsit {
+            Whatsit::OpenOut { slot, path } => {
+                if self.suppress_deferred_streams {
+                    return Ok(None);
+                }
+                let effect_index = self.effects.len();
+                self.stores.world_mut().open_out(slot, path.clone());
+                self.effects.push(PageEffect::OpenOut {
+                    stream: slot.raw(),
+                    path,
+                });
+                Ok(Some(PageNode::WhatsitAnchor {
+                    effect_index: u32::try_from(effect_index)
+                        .map_err(|_| ExecError::ArithmeticOverflow)?,
+                }))
+            }
+            Whatsit::CloseOut { slot } => {
+                if self.suppress_deferred_streams {
+                    return Ok(None);
+                }
+                let effect_index = self.effects.len();
+                self.stores.world_mut().close_out(slot);
+                self.effects
+                    .push(PageEffect::CloseOut { stream: slot.raw() });
+                Ok(Some(PageNode::WhatsitAnchor {
+                    effect_index: u32::try_from(effect_index)
+                        .map_err(|_| ExecError::ArithmeticOverflow)?,
+                }))
+            }
             Whatsit::DeferredWrite { sink, tokens } => {
-                if self.suppress_deferred_writes {
+                if self.suppress_deferred_streams {
                     return Ok(None);
                 }
                 let text = expand_write_tokens(self.stores, self.recorder, tokens)?;

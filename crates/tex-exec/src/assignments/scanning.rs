@@ -60,6 +60,7 @@ pub(super) fn is_assignment_meaning(meaning: Meaning) -> bool {
                 | UnexpandablePrimitive::CloseIn
                 | UnexpandablePrimitive::OpenOut
                 | UnexpandablePrimitive::CloseOut
+                | UnexpandablePrimitive::Immediate
                 | UnexpandablePrimitive::Write
                 | UnexpandablePrimitive::Read
         ),
