@@ -1,7 +1,7 @@
 use super::{
-    ConditionFrameSummary, ConditionKind, ConditionLimb, InputFrame, InputFrameSummary, InputStack,
-    LexError, Lexer, LexerState, LineEvent, LineReader, MacroArguments, MemoryInput,
-    TokenListReplayKind, load_next_line,
+    ConditionFrameSummary, ConditionKind, ConditionLimb, InputFrame, InputFrameSummary,
+    InputSource, InputStack, LexError, Lexer, LexerState, LineEvent, LineReader, MacroArguments,
+    MemoryInput, TokenListReplayKind, load_next_line,
 };
 use tex_state::env::banks::IntParam;
 use tex_state::ids::OriginListId;
@@ -323,9 +323,65 @@ fn ignored_and_invalid_catcodes_follow_tex_rules() {
         Some(char_token('a', Catcode::Letter))
     );
     match lexer.next_token(&mut stores) {
-        Err(LexError::InvalidCharacter('?')) => {}
+        Err(LexError::InvalidCharacter { ch: '?', context }) => {
+            assert_eq!(context.source_id(), tex_state::SourceId::new(0));
+            assert_eq!(context.byte_offset(), 2);
+            assert_eq!(context.line(), 1);
+            assert_eq!(context.column(), 2);
+        }
         other => panic!("expected invalid-character error, got {other:?}"),
     }
+}
+
+#[test]
+fn readonly_missing_control_sequence_retains_source_context() {
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::END_LINE_CHAR, 13);
+    let mut input = InputStack::new(MemoryInput::new("\n"));
+
+    let error = input
+        .next_token_readonly(&stores)
+        .expect_err("readonly lexing cannot intern the inserted par token");
+    match error {
+        LexError::MissingControlSequence { name, context } => {
+            assert_eq!(name, "par");
+            assert_eq!(context.source_id(), tex_state::SourceId::new(0));
+            assert_eq!(context.byte_offset(), 0);
+            assert_eq!(context.line(), 1);
+            assert_eq!(context.column(), 0);
+        }
+        other => panic!("expected missing-control-sequence error, got {other:?}"),
+    }
+}
+
+#[test]
+fn input_failure_retains_next_line_source_context() {
+    #[derive(Debug)]
+    struct FailingInput(Option<tex_state::WorldError>);
+
+    impl InputSource for FailingInput {
+        fn read_line(&mut self) -> Result<Option<String>, tex_state::WorldError> {
+            Err(self.0.take().expect("failing input is read only once"))
+        }
+    }
+
+    let mut stores = Universe::new();
+    let world_error = stores
+        .world_mut()
+        .read_file(std::path::Path::new("missing-lex-input.tex"))
+        .expect_err("test input should be absent");
+    let mut input = InputStack::new(FailingInput(Some(world_error)));
+
+    let error = input
+        .next_traced_token(&mut stores)
+        .expect_err("source read should fail");
+    let LexError::Input { context, .. } = error else {
+        panic!("expected input error");
+    };
+    assert_eq!(context.source_id(), tex_state::SourceId::new(0));
+    assert_eq!(context.byte_offset(), 0);
+    assert_eq!(context.line(), 1);
+    assert_eq!(context.column(), 0);
 }
 
 #[test]

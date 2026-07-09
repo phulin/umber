@@ -552,26 +552,66 @@ impl<S> InputStack<S> {
     }
 }
 
+/// Mandatory source coordinates for failures that occur before a valid TeX token exists.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LexSourceContext {
+    source_id: SourceId,
+    byte_offset: u64,
+    line: u32,
+    column: u32,
+}
+
+impl LexSourceContext {
+    #[must_use]
+    pub const fn source_id(self) -> SourceId {
+        self.source_id
+    }
+
+    #[must_use]
+    pub const fn byte_offset(self) -> u64 {
+        self.byte_offset
+    }
+
+    #[must_use]
+    pub const fn line(self) -> u32 {
+        self.line
+    }
+
+    #[must_use]
+    pub const fn column(self) -> u32 {
+        self.column
+    }
+}
+
 /// Errors produced while converting characters to TeX tokens.
 #[derive(Debug)]
 pub enum LexError {
-    Input(WorldError),
-    InvalidCharacter(char),
-    MissingControlSequence(String),
+    Input {
+        error: WorldError,
+        context: LexSourceContext,
+    },
+    InvalidCharacter {
+        ch: char,
+        context: LexSourceContext,
+    },
+    MissingControlSequence {
+        name: String,
+        context: LexSourceContext,
+    },
 }
 
 impl fmt::Display for LexError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Input(err) => write!(f, "input read failed: {err}"),
-            Self::InvalidCharacter(ch) => {
+            Self::Input { error, .. } => write!(f, "input read failed: {error}"),
+            Self::InvalidCharacter { ch, .. } => {
                 write!(
                     f,
                     "input contains invalid TeX character U+{:04X}",
                     *ch as u32
                 )
             }
-            Self::MissingControlSequence(name) => {
+            Self::MissingControlSequence { name, .. } => {
                 write!(f, "control sequence {name:?} is not interned")
             }
         }
@@ -581,16 +621,20 @@ impl fmt::Display for LexError {
 impl std::error::Error for LexError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Input(err) => Some(err),
-            Self::InvalidCharacter(_) => None,
-            Self::MissingControlSequence(_) => None,
+            Self::Input { error, .. } => Some(error),
+            Self::InvalidCharacter { .. } | Self::MissingControlSequence { .. } => None,
         }
     }
 }
 
-impl From<WorldError> for LexError {
-    fn from(value: WorldError) -> Self {
-        Self::Input(value)
+impl LexError {
+    #[must_use]
+    pub const fn source_context(&self) -> LexSourceContext {
+        match self {
+            Self::Input { context, .. }
+            | Self::InvalidCharacter { context, .. }
+            | Self::MissingControlSequence { context, .. } => *context,
+        }
     }
 }
 
@@ -1060,7 +1104,12 @@ fn load_next_line_readonly<S>(
 where
     S: InputSource,
 {
-    match source.lines.next_event(stores)? {
+    let context = next_line_source_context(source);
+    match source
+        .lines
+        .next_event(stores)
+        .map_err(|error| LexError::Input { error, context })?
+    {
         Some(LineEvent::Text(line)) => {
             source.frame.state = LexerState::NewLine;
             source.frame.line = line.chars().collect();
@@ -1082,7 +1131,12 @@ fn load_next_line<S>(
 where
     S: InputSource,
 {
-    match source.lines.next_event(stores)? {
+    let context = next_line_source_context(source);
+    match source
+        .lines
+        .next_event(stores)
+        .map_err(|error| LexError::Input { error, context })?
+    {
         Some(LineEvent::Text(line)) => {
             source.frame.state = LexerState::NewLine;
             source.frame.line = line.chars().collect();
@@ -1097,21 +1151,22 @@ where
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-struct SourceCoordinate {
-    source_id: SourceId,
-    byte_offset: u64,
-    line: u32,
-    column: u32,
-}
-
-fn source_coordinate<S>(source: &SourceInputFrame<S>) -> SourceCoordinate {
+fn source_coordinate<S>(source: &SourceInputFrame<S>) -> LexSourceContext {
     source_coordinate_from_frame(source.source_id, &source.frame)
 }
 
-fn source_coordinate_from_frame(source_id: SourceId, frame: &SourceFrame) -> SourceCoordinate {
+fn next_line_source_context<S>(source: &SourceInputFrame<S>) -> LexSourceContext {
+    LexSourceContext {
+        source_id: source.source_id,
+        byte_offset: u64::try_from(source.next_source_offset).unwrap_or(u64::MAX),
+        line: u32::try_from(source.frame.line_number.saturating_add(1)).unwrap_or(u32::MAX),
+        column: 0,
+    }
+}
+
+fn source_coordinate_from_frame(source_id: SourceId, frame: &SourceFrame) -> LexSourceContext {
     let byte_offset = frame.buffer_offset + byte_offset_for_char_offset(frame);
-    SourceCoordinate {
+    LexSourceContext {
         source_id,
         byte_offset: u64::try_from(byte_offset).unwrap_or(u64::MAX),
         line: u32::try_from(frame.line_number).unwrap_or(u32::MAX),
@@ -1131,7 +1186,7 @@ fn byte_offset_for_char_offset(frame: &SourceFrame) -> usize {
 fn traced_source_token(
     stores: &mut impl ExpansionState,
     token: Token,
-    coordinate: SourceCoordinate,
+    coordinate: LexSourceContext,
 ) -> TracedTokenWord {
     let origin = allocate_source_origin(stores, coordinate);
     TracedTokenWord::pack(token, origin)
@@ -1139,7 +1194,7 @@ fn traced_source_token(
 
 fn allocate_source_origin(
     stores: &mut impl ExpansionState,
-    coordinate: SourceCoordinate,
+    coordinate: LexSourceContext,
 ) -> OriginId {
     stores.source_origin(
         coordinate.source_id,
@@ -1175,7 +1230,7 @@ fn next_token_from_line<S>(
     let cat = stores.catcode(ch);
     match cat {
         Catcode::Ignored => Ok(None),
-        Catcode::Invalid => Err(LexError::InvalidCharacter(ch)),
+        Catcode::Invalid => Err(LexError::InvalidCharacter { ch, context: start }),
         Catcode::Comment => {
             source.frame.offset = source.frame.line.len();
             Ok(None)
@@ -1250,11 +1305,12 @@ fn next_token_from_line_readonly<S>(
     stores: &impl ExpansionState,
     unicode_superscript_notation: bool,
 ) -> Result<Option<Token>, LexError> {
+    let start = source_coordinate(source);
     let ch = read_expanded_char(source, stores, unicode_superscript_notation);
     let cat = stores.catcode(ch);
     match cat {
         Catcode::Ignored => Ok(None),
-        Catcode::Invalid => Err(LexError::InvalidCharacter(ch)),
+        Catcode::Invalid => Err(LexError::InvalidCharacter { ch, context: start }),
         Catcode::Comment => {
             source.frame.offset = source.frame.line.len();
             Ok(None)
@@ -1263,7 +1319,10 @@ fn next_token_from_line_readonly<S>(
             let token = match source.frame.state {
                 LexerState::NewLine => {
                     let Some(par) = stores.symbol("par") else {
-                        return Err(LexError::MissingControlSequence("par".to_owned()));
+                        return Err(LexError::MissingControlSequence {
+                            name: "par".to_owned(),
+                            context: start,
+                        });
                     };
                     Token::Cs(par)
                 }
@@ -1290,6 +1349,7 @@ fn next_token_from_line_readonly<S>(
             source,
             stores,
             unicode_superscript_notation,
+            start,
         )?)),
         Catcode::Letter | Catcode::Superscript => {
             source.frame.state = LexerState::MidLine;
@@ -1313,7 +1373,7 @@ fn scan_control_sequence<S>(
     source: &mut SourceInputFrame<S>,
     stores: &mut impl ExpansionState,
     unicode_superscript_notation: bool,
-    start: SourceCoordinate,
+    start: LexSourceContext,
 ) -> TracedTokenWord {
     if source.frame.offset >= source.frame.line.len() {
         source.frame.state = LexerState::SkippingBlanks;
@@ -1350,16 +1410,17 @@ fn scan_control_sequence_readonly<S>(
     source: &mut SourceInputFrame<S>,
     stores: &impl ExpansionState,
     unicode_superscript_notation: bool,
+    context: LexSourceContext,
 ) -> Result<Token, LexError> {
     if source.frame.offset >= source.frame.line.len() {
         source.frame.state = LexerState::SkippingBlanks;
-        return readonly_cs_token(stores, "");
+        return readonly_cs_token(stores, "", context);
     }
 
     let ch = read_expanded_char(source, stores, unicode_superscript_notation);
     if stores.catcode(ch) != Catcode::Letter {
         source.frame.state = LexerState::MidLine;
-        return readonly_cs_token(stores, &ch.to_string());
+        return readonly_cs_token(stores, &ch.to_string(), context);
     }
 
     let mut name = String::from(ch);
@@ -1376,14 +1437,21 @@ fn scan_control_sequence_readonly<S>(
         }
     }
     source.frame.state = LexerState::SkippingBlanks;
-    readonly_cs_token(stores, &name)
+    readonly_cs_token(stores, &name, context)
 }
 
-fn readonly_cs_token(stores: &impl ExpansionState, name: &str) -> Result<Token, LexError> {
+fn readonly_cs_token(
+    stores: &impl ExpansionState,
+    name: &str,
+    context: LexSourceContext,
+) -> Result<Token, LexError> {
     stores
         .symbol(name)
         .map(Token::Cs)
-        .ok_or_else(|| LexError::MissingControlSequence(name.to_owned()))
+        .ok_or_else(|| LexError::MissingControlSequence {
+            name: name.to_owned(),
+            context,
+        })
 }
 
 fn read_expanded_char<S>(
