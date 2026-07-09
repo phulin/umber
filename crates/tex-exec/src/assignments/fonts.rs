@@ -20,7 +20,12 @@ where
     let font_name = scan_font_file_name(input, stores, hooks)?;
     let size_spec = scan_font_size_spec(input, stores, hooks)?;
     let path = tfm_path(&font_name);
-    let content = stores.world_mut().read_file(&path)?;
+    let content = hooks
+        .open_font(&mut stores.input_open_context(), &path)
+        .map_err(|message| ExecError::FontOpen {
+            name: font_name.clone(),
+            message,
+        })?;
     let tfm = tex_fonts::TfmFont::parse_with_size(content.bytes(), size_spec)?;
     let parameters = tfm
         .parameters

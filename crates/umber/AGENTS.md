@@ -20,8 +20,8 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `AGENTS.md`: crate-local guidance for CLI-driver ownership, boundaries, validation, and this file map.
 - `Cargo.toml`: package metadata, feature flags, workspace lint inheritance, and engine/test dependencies.
 - `src/expand_dump.rs`: implementation of the `expand-dump` CLI command, including file input hooks and dump primitive setup.
-- `src/input_search.rs`: deterministic driver-owned TeX input path resolution through World-backed reads.
-- `src/input_search/tests.rs`: focused TeX input area ordering, extension, and input-record coverage.
+- `src/input_search.rs`: deterministic driver-owned TeX input and TFM font path resolution through World-backed reads.
+- `src/input_search/tests.rs`: focused TeX input/font area ordering, extension, and input-record coverage.
 - `src/lib.rs`: public run harness helpers for preparing state, executing input stacks or memory sources, and collecting shipout artifact ids.
 - `src/main.rs`: `umber` binary entry point, CLI argument parsing, `lex-dump`/`expand-dump`/`run` dispatch, token formatting, and real-run file hooks.
 - `tests/it.rs`: integration-test module root wiring the CLI, replay identity, and effectful replay test suites.

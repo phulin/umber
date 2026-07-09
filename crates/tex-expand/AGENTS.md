@@ -6,7 +6,7 @@ Read the repository-level `AGENTS.md` before editing here. This crate owns TeX's
 
 `tex-expand` implements the `get_x_token`-style expansion loop over `tex-lex::InputStack`. It reads meanings through `tex-state::Universe`, expands expandable primitives and macros, manages conditional skipping, replays frozen token lists through the lexer stack, and provides shared scanners for integers, dimensions, glue, token lists, and expansion-derived textual values.
 
-Use this crate for behavior that is defined before stomach execution sees an unexpandable token. Expansion should be explicit about hooks for file input, job names, and other driver-owned facts; the crate should not open files or perform host effects itself.
+Use this crate for behavior that is defined before stomach execution sees an unexpandable token. Expansion should be explicit about hooks for file input, font reads requested by the executor, job names, and other driver-owned facts; the crate should not open files or perform host effects itself.
 
 ## Boundaries
 

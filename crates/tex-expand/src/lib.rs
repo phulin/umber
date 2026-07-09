@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 
 use std::fmt;
+use std::path::Path;
 
 use tex_lex::{InputSource, InputStack, LexError, MacroArguments, TokenListReplayKind};
 use tex_state::glue::GlueSpec;
@@ -15,7 +16,7 @@ use tex_state::meaning::Meaning;
 use tex_state::provenance::{InsertedOriginKind, SynthesizedOriginKind};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
-use tex_state::{ExpansionState, InputOpenState, InputReadState, Universe};
+use tex_state::{ExpansionState, FileContent, InputOpenState, InputReadState, Universe};
 
 pub mod args;
 pub mod scan;
@@ -344,13 +345,21 @@ impl ExpandError {
     }
 }
 
-/// Driver hooks for expandable primitives that need outside-world state.
+/// Driver hooks for engine operations that need outside-world state.
 ///
-/// `tex-expand` never opens files itself. A driver or test harness supplies
-/// sources through this trait; the eventual `World` implementation is expected
-/// to record and snapshot those reads.
+/// Engine crates never apply host file-search policy themselves. A driver or
+/// test harness supplies input sources and resolves font files through this
+/// trait; `World` records and snapshots the resulting reads.
 pub trait ExpansionHooks<S> {
     fn open_input<C: InputReadState>(&mut self, input: &mut C, name: &str) -> Result<S, String>;
+
+    fn open_font<C: InputReadState>(
+        &mut self,
+        input: &mut C,
+        path: &Path,
+    ) -> Result<FileContent, String> {
+        input.read_input_file(path).map_err(|err| err.to_string())
+    }
 
     fn job_name(&self) -> &str {
         "texput"

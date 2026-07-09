@@ -21,7 +21,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `Cargo.toml`: crate manifest declaring execution-layer dependencies and workspace lints.
 - `src/assignments/arithmetic.rs`: checked arithmetic helpers for `\advance`, `\multiply`, and `\divide`.
 - `src/assignments/boxes/`: box-making, `\setbox`, leader payload/glue scanning, `\vsplit`, packing scans, and box list contribution; `mod.rs` holds command-facing handlers while `leaders.rs`, `packaging.rs`, and `vsplit.rs` hold focused helpers.
-- `src/assignments/fonts.rs`: `\font`, font parameter, hyphenchar, and skewchar assignment behavior.
+- `src/assignments/fonts.rs`: `\font` scanning and driver-resolved TFM loading, plus font parameter, hyphenchar, and skewchar assignment behavior.
 - `src/assignments/hmode.rs`: horizontal-mode character, glue, kern, discretionary, and ligature handling.
 - `src/assignments/hyphenation.rs`: `\patterns`, `\hyphenation`, and `\showhyphens` execution support.
 - `src/assignments/macros.rs`: macro-definition primitives plus `\aftergroup` and `\afterassignment`.

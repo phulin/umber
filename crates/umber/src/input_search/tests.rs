@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use tex_state::{InputOpenState, World};
 
-use super::TexInputSearchPath;
+use super::{TexFontSearchPath, TexInputSearchPath};
 
 #[test]
 fn area_less_input_uses_ordered_system_areas_and_records_resolved_path() {
@@ -84,4 +84,74 @@ fn absolute_input_is_used_without_area_prefixes() {
         .expect("resolve absolute input");
 
     assert_eq!(content.path(), Path::new("/absolute/input.tex"));
+}
+
+#[test]
+fn area_less_font_uses_ordered_font_areas_and_records_resolved_content() {
+    let mut world = World::memory();
+    world
+        .set_memory_file("/texlive/fonts/tfm/public/cm/cmr10.tfm", b"tfm".to_vec())
+        .expect("seed searched font");
+    let mut universe = tex_state::Universe::with_world(world);
+    let search = TexFontSearchPath::new(
+        "/job",
+        [
+            PathBuf::from("/texlive/fonts/tfm/local"),
+            PathBuf::from("/texlive/fonts/tfm/public/cm"),
+        ],
+    );
+
+    let content = search
+        .read(&mut universe.input_open_context(), Path::new("cmr10"))
+        .expect("resolve TFM through ordered font areas");
+
+    assert_eq!(
+        content.path(),
+        Path::new("/texlive/fonts/tfm/public/cm/cmr10.tfm")
+    );
+    assert_eq!(universe.world().input_records().len(), 1);
+    assert_eq!(universe.world().input_records()[0].path(), content.path());
+    assert_eq!(universe.world().input_records()[0].hash(), content.hash());
+}
+
+#[test]
+fn principal_input_area_wins_before_configured_font_areas() {
+    let mut world = World::memory();
+    world
+        .set_memory_file("/job/cmr10.tfm", b"job".to_vec())
+        .expect("seed job font");
+    world
+        .set_memory_file("/texlive/cmr10.tfm", b"tree".to_vec())
+        .expect("seed tree font");
+    let mut universe = tex_state::Universe::with_world(world);
+    let search = TexFontSearchPath::new("/job", [PathBuf::from("/texlive")]);
+
+    let content = search
+        .read(&mut universe.input_open_context(), Path::new("cmr10.tfm"))
+        .expect("resolve principal-area TFM first");
+
+    assert_eq!(content.path(), Path::new("/job/cmr10.tfm"));
+    assert_eq!(content.bytes(), b"job");
+}
+
+#[test]
+fn explicit_font_area_does_not_fall_through_to_configured_font_areas() {
+    let mut world = World::memory();
+    world
+        .set_memory_file("/job/sub/cmr10.tfm", b"job".to_vec())
+        .expect("seed principal-area font");
+    world
+        .set_memory_file("/texlive/sub/cmr10.tfm", b"tree".to_vec())
+        .expect("seed tree font");
+    let mut universe = tex_state::Universe::with_world(world);
+    let search = TexFontSearchPath::new("/job", [PathBuf::from("/texlive")]);
+
+    let err = search
+        .read(&mut universe.input_open_context(), Path::new("sub/cmr10"))
+        .expect_err("explicit font area must be used as written");
+
+    assert!(err.contains("sub/cmr10.tfm"));
+    assert!(!err.contains("/job/sub/cmr10.tfm"));
+    assert!(!err.contains("/texlive/sub/cmr10.tfm"));
+    assert!(universe.world().input_records().is_empty());
 }

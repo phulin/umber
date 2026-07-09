@@ -447,6 +447,14 @@ where
             .map(ReplacementSource::Driver)
     }
 
+    fn open_font<C: InputReadState>(
+        &mut self,
+        input: &mut C,
+        path: &std::path::Path,
+    ) -> Result<tex_state::FileContent, String> {
+        self.inner.open_font(input, path)
+    }
+
     fn job_name(&self) -> &str {
         self.inner.job_name()
     }

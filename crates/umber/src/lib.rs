@@ -8,7 +8,7 @@ use tex_state::{ContentHash, EffectRecord, PrintSink, Universe, WorldError};
 
 mod input_search;
 
-pub use input_search::TexInputSearchPath;
+pub use input_search::{TexFontSearchPath, TexInputSearchPath};
 
 /// Result of running TeX through the batch executor.
 #[derive(Clone, Debug, Eq, PartialEq)]

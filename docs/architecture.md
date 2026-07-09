@@ -761,6 +761,13 @@ immutable tables, with mutable font state kept behind the state timeline.
   compatibility; OpenType/TrueType via a
   vendored shaper for the modern path. All file access through `World`
   (fonts are inputs; cross-run memo sharing needs them pinned).
+- `tex-exec` applies TeX82's TFM filename rule (`.tfm` by default), then asks
+  the driver hook to resolve the path through the narrow `InputReadState`
+  capability. The CLI probes the principal input directory followed by the
+  ordered nonempty directories in `TEXFONTS` for area-less names; an explicit
+  font area is used as written, matching `read_font_info`'s `aire` branch.
+  The successful read is the ordinary content-addressed `World` input record,
+  so font search adds no engine-owned or non-checkpointable state.
 - A loaded font is an immutable object; `FontId` is the state-layer handle
   (`core_state.md` §10.3) minted at load time; `\font` assignment is an
   ordinary barriered `Env` write. Per-font mutable parameters

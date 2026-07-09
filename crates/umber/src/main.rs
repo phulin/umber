@@ -7,7 +7,7 @@ use tex_lex::{InputSource, InputStack, Lexer, MemoryInput, WorldInput};
 use tex_state::env::banks::IntParam;
 use tex_state::token::Token;
 use tex_state::{Universe, World, WorldError};
-use umber::TexInputSearchPath;
+use umber::{TexFontSearchPath, TexInputSearchPath};
 
 mod expand_dump;
 
@@ -156,7 +156,14 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
                 .collect()
         })
         .unwrap_or_default();
-    let mut hooks = RunHooks::new(path, tex_input_areas);
+    let tex_font_areas = env::var_os("TEXFONTS")
+        .map(|value| {
+            env::split_paths(&value)
+                .filter(|path| !path.as_os_str().is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut hooks = RunHooks::new(path, tex_input_areas, tex_font_areas);
     let run = match umber::run_input_collecting_artifacts(&mut input, &mut stores, &mut hooks) {
         Ok(run) => run,
         Err(err) => {
@@ -250,11 +257,12 @@ impl InputSource for RunInputSource {
 
 struct RunHooks {
     input_search: TexInputSearchPath,
+    font_search: TexFontSearchPath,
     job_name: String,
 }
 
 impl RunHooks {
-    fn new(path: &Path, tex_input_areas: Vec<PathBuf>) -> Self {
+    fn new(path: &Path, tex_input_areas: Vec<PathBuf>, tex_font_areas: Vec<PathBuf>) -> Self {
         let base_dir = path.parent().unwrap_or_else(|| Path::new(".")).to_owned();
         let job_name = path
             .file_stem()
@@ -262,7 +270,8 @@ impl RunHooks {
             .unwrap_or("texput")
             .to_owned();
         Self {
-            input_search: TexInputSearchPath::new(base_dir, tex_input_areas),
+            input_search: TexInputSearchPath::new(&base_dir, tex_input_areas),
+            font_search: TexFontSearchPath::new(base_dir, tex_font_areas),
             job_name,
         }
     }
@@ -278,6 +287,14 @@ impl ExpansionHooks<RunInputSource> for RunHooks {
             .read(input, name)
             .map(WorldInput::from_content)
             .map(RunInputSource::World)
+    }
+
+    fn open_font<C: tex_state::InputReadState>(
+        &mut self,
+        input: &mut C,
+        path: &Path,
+    ) -> Result<tex_state::FileContent, String> {
+        self.font_search.read(input, path)
     }
 
     fn job_name(&self) -> &str {
