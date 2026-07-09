@@ -1,0 +1,14 @@
+\font\tenrm=cmr10
+\tenrm
+\count0=1
+\baselineskip=0pt
+\lineskip=0pt
+\lineskiplimit=0pt
+\count2=48
+\def\marktemplate{\char\count2 \advance\count2 by 1 }
+\shipout\vbox{%
+  \halign{#&\marktemplate#&\marktemplate#\cr
+    A\span B\span C\cr
+    D&E&F\cr}%
+}
+\end

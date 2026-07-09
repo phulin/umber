@@ -134,7 +134,9 @@ mod imp {
                     }
                     continue;
                 }
-                lines.push(line.trim_end_matches(" )").trim_end().to_owned());
+                lines.push(normalize_diagnostic_line(
+                    line.trim_end_matches(" )").trim_end(),
+                ));
             }
 
             while lines.first().is_some_and(|line| line.is_empty()) {
@@ -161,6 +163,15 @@ mod imp {
             } else {
                 format!("{normalized}\n")
             }
+        }
+
+        fn normalize_diagnostic_line(line: &str) -> String {
+            if let Some((prefix, _)) = line.split_once(" mode entered at line ")
+                && prefix.starts_with("### ")
+            {
+                return format!("{prefix} mode entered at line 0");
+            }
+            line.to_owned()
         }
 
         pub fn tex_log(log: &str) -> String {

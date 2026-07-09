@@ -46,6 +46,12 @@ in INITEX mode for this area, copies the shared include beside each case, and
 pins `cmr10`, `cmmi10`, `cmsy10`, and `cmex10` TFMs so text/script/
 scriptscript family selection observes the same metrics as Umber.
 
+`tests/corpus/align` contains alignment-focused DVI parity fixtures for
+`\halign`, `\valign`, spans, omission, `\noalign`, nested alignment, and
+display alignment. It is run by `scripts/parity.sh` with the same pinned CM
+TFMs as the other DVI corpora; keep cases primitive-only and do not commit
+generated DVI files.
+
 ```text
 <case>.expected.<kind>
 ```

@@ -116,12 +116,13 @@ Committed corpus fixtures belong under the workspace-level `tests/corpus`
 tree. Keep small area-local support files beside the fixture input. See
 `tests/AGENTS.md` for fixture layout and update commands.
 
-The DVI corpora under `tests/corpus/dvi`, `tests/corpus/page`, and
-`tests/corpus/math` commit TeX source files only. Golden DVI bytes are not
-checked in; `scripts/parity.sh` runs `umber run --dvi` and the live reference
-engine over the same temporary inputs with pinned local TFMs, then compares the
-generated DVI bytes through `tools/refexec`. The math corpus is intentionally
-excluded from `cargo test --workspace --tests`; it uses a shared primitive-only
+The DVI corpora under `tests/corpus/dvi`, `tests/corpus/page`,
+`tests/corpus/math`, and `tests/corpus/align` commit TeX source files only.
+Golden DVI bytes are not checked in; `scripts/parity.sh` runs
+`umber run --dvi` and the live reference engine over the same temporary inputs
+with pinned local TFMs, then compares the generated DVI bytes through
+`tools/refexec`. The math corpus is intentionally excluded from
+`cargo test --workspace --tests`; it uses a shared primitive-only
 `tests/corpus/math/math_preamble.inc` include and the parity script runs its
 reference side in INITEX mode so the cases do not depend on `plain.tex`.
 

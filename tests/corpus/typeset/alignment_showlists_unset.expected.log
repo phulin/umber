@@ -1,0 +1,21 @@
+### restricted horizontal mode entered at line 0
+spacefactor 1000
+### restricted horizontal mode entered at line 0
+\glue(\tabskip) 0.0
+spacefactor 0
+### internal vertical mode entered at line 0
+\unsetbox(6.94444+0.0)x10.55559
+.\glue(\tabskip) 0.0
+.\unsetbox(4.30554+0.0)x5.00002
+..\tenrm a
+.\glue(\tabskip) 0.0
+.\unsetbox(6.94444+0.0)x5.55557
+..\tenrm b
+.\glue(\tabskip) 0.0
+prevdepth 0.0
+### internal vertical mode entered at line 0
+prevdepth ignored
+### vertical mode entered at line 0
+prevdepth ignored
+
+! OK.

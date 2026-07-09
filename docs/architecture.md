@@ -520,8 +520,12 @@ makes box-level memoization (M4) sound.
   resolution over those frozen rows, including tabskip-width subtraction and
   last-spanned-column excess placement, converts every reachable unset row/cell
   to ordinary hlist/vlist nodes, and emits row interline glue before the final
-  raw splice so `\noalign` material resets row-to-row baseline insertion in
-  TeX order. A `\halign` encountered as the first display-math item takes the
+  raw splice for `\halign` so `\noalign` material resets row-to-row baseline
+  insertion in TeX order. `\valign` uses the transposed path: cells execute in
+  internal vertical mode with paragraph material finished before cell
+  packaging, tabskip boundaries remain vertical glue inside each source-row
+  vbox, and no row-to-row baseline glue is inserted between the side-by-side
+  vboxes. A `\halign` encountered as the first display-math item takes the
   display-alignment branch: the alignment body is finished as vertical material
   between display penalties/skips, the closing `$$` is checked in the display
   path, and no `\eqno` material is accepted alongside it. Span-time template
