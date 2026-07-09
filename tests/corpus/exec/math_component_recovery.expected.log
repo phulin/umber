@@ -1,0 +1,13 @@
+! Missing $ inserted.
+<inserted text>
+<to be read again>
+I've inserted a begin-math/end-math symbol since I think
+you left one out. Proceed, with fingers crossed.
+
+> \box0=
+\hbox(0.0+0.0)x0.0
+.\mathon
+.\hbox(0.0+0.0)x0.0
+.\mathoff
+
+! OK.

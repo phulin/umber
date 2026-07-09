@@ -8,13 +8,14 @@ use tex_state::glue::GlueSpec;
 use tex_state::math::{MathChar, MathField, MathListNode, NoadClass, NoadKind};
 use tex_state::meaning::{ExpandablePrimitive, Meaning, UnexpandablePrimitive};
 use tex_state::node::{GlueKind, KernKind, Node};
+use tex_state::provenance::InsertedOriginKind;
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::assignments;
 use crate::executor::sync_engine_state;
 use crate::mode::DisplayInterrupt;
-use crate::{DispatchAction, ExecError, Mode, ModeNest, push_tokens};
+use crate::{DispatchAction, ExecError, Mode, ModeNest, push_tokens, push_traced_tokens};
 
 mod display;
 mod lower;
@@ -40,18 +41,20 @@ where
 {
     let opening_mode = nest.current_mode();
     let can_display = !matches!(opening_mode, Mode::RestrictedHorizontal);
-    let display = match input.next_token(stores)? {
-        Some(
-            token @ Token::Char {
-                cat: Catcode::MathShift,
-                ..
-            },
-        ) if can_display => {
-            let _ = token;
+    let display = match input.next_traced_token(stores)? {
+        Some(traced)
+            if matches!(
+                tex_expand::semantic_token(traced),
+                Token::Char {
+                    cat: Catcode::MathShift,
+                    ..
+                }
+            ) && can_display =>
+        {
             true
         }
-        Some(token) => {
-            push_tokens(input, stores, [token]);
+        Some(traced) => {
+            push_traced_tokens(input, stores, [traced]);
             false
         }
         None => false,
@@ -106,6 +109,32 @@ where
     push_tokens(input, stores, tokens);
     sync_engine_state::<S, _>(hooks, nest, stores);
     Ok(DispatchAction::Continue)
+}
+
+pub(crate) fn insert_dollar_sign<S>(
+    traced: TracedTokenWord,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+) where
+    S: InputSource,
+{
+    let origin = traced.origin();
+    let math_shift_token = Token::Char {
+        ch: '$',
+        cat: Catcode::MathShift,
+    };
+    let math_shift_origin =
+        stores.inserted_origin(InsertedOriginKind::ErrorRecovery, math_shift_token, origin);
+    let math_shift = TracedTokenWord::pack(math_shift_token, math_shift_origin);
+    push_traced_tokens(input, stores, [math_shift, traced]);
+    stores.world_mut().write_text(
+        tex_state::PrintSink::TerminalAndLog,
+        "\n! Missing $ inserted.\n\
+         <inserted text>\n\
+         <to be read again>\n\
+         I've inserted a begin-math/end-math symbol since I think\n\
+         you left one out. Proceed, with fingers crossed.\n",
+    );
 }
 
 pub(crate) fn dispatch_math_token_with_recorder<S, R, H>(

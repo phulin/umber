@@ -284,6 +284,29 @@ where
     input.push_token_list(token_list, tex_lex::TokenListReplayKind::Inserted);
 }
 
+pub(crate) fn push_traced_tokens<S, I>(input: &mut InputStack<S>, stores: &mut Universe, tokens: I)
+where
+    S: InputSource,
+    I: IntoIterator<Item = TracedTokenWord>,
+{
+    let traced: Vec<_> = tokens.into_iter().collect();
+    if traced.is_empty() {
+        return;
+    }
+    let semantic: Vec<_> = traced
+        .iter()
+        .map(|token| tex_expand::semantic_token(*token))
+        .collect();
+    let origins: Vec<_> = traced.iter().map(|token| token.origin()).collect();
+    let token_list = stores.intern_token_list(&semantic);
+    let origin_list = stores.allocate_origin_list(&origins);
+    input.push_token_list_with_origins(
+        token_list,
+        origin_list,
+        tex_lex::TokenListReplayKind::Inserted,
+    );
+}
+
 pub(crate) fn unimplemented_typesetting(
     mode: Mode,
     token: Token,

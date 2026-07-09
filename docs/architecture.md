@@ -486,6 +486,12 @@ assignments, box building, and dispatch into the typesetting kernels.
   sub-mlist; delimiter sizing remains a pure conversion-time responsibility.
   The mode-list summary carries the pending incomplete fraction so snapshots
   preserve TeX's `\over`/`\atop`/`\above` state.
+  When a `math_comp` constructor such as `\mathopen` is delivered outside
+  math mode, main control follows TeX82's missing-dollar recovery: it replays
+  a traced math-shift token before the original traced constructor, reports
+  the diagnostic, and lets ordinary math entry and noad construction rescan
+  both tokens. The inserted replay and math-entry lookahead retain the
+  triggering token's origin and remain part of the checkpointed input stack.
   `\mathcode"8000` redispatches through the current active-character meaning
   at use time, and family font selectors live in the barriered Env font state.
   Display math is packaged stomach-side: entering `$$` from unrestricted

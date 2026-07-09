@@ -30,7 +30,7 @@ pub use mode::{
     ModeNest, ModeNestSummary,
 };
 
-pub(crate) use dispatch::{leave_group, leave_group_with_origin, push_tokens};
+pub(crate) use dispatch::{leave_group, leave_group_with_origin, push_tokens, push_traced_tokens};
 
 #[cfg(test)]
 mod tests;

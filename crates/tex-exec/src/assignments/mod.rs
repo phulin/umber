@@ -705,16 +705,6 @@ where
             }
             UnexpandablePrimitive::MathChar
             | UnexpandablePrimitive::Delimiter
-            | UnexpandablePrimitive::MathOrd
-            | UnexpandablePrimitive::MathOp
-            | UnexpandablePrimitive::MathBin
-            | UnexpandablePrimitive::MathRel
-            | UnexpandablePrimitive::MathOpen
-            | UnexpandablePrimitive::MathClose
-            | UnexpandablePrimitive::MathPunct
-            | UnexpandablePrimitive::MathInner
-            | UnexpandablePrimitive::Underline
-            | UnexpandablePrimitive::Overline
             | UnexpandablePrimitive::Limits
             | UnexpandablePrimitive::NoLimits
             | UnexpandablePrimitive::DisplayLimits
@@ -745,6 +735,20 @@ where
                     origin: command.origin,
                     operation: "math primitive",
                 })
+            }
+            UnexpandablePrimitive::MathOrd
+            | UnexpandablePrimitive::MathOp
+            | UnexpandablePrimitive::MathBin
+            | UnexpandablePrimitive::MathRel
+            | UnexpandablePrimitive::MathOpen
+            | UnexpandablePrimitive::MathClose
+            | UnexpandablePrimitive::MathPunct
+            | UnexpandablePrimitive::MathInner
+            | UnexpandablePrimitive::Underline
+            | UnexpandablePrimitive::Overline => {
+                reject_all_prefixes(prefixes)?;
+                crate::math::insert_dollar_sign(command.traced, input, stores);
+                Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::NoAlign => Err(ExecError::MisplacedNoAlign),
             UnexpandablePrimitive::Omit => Err(ExecError::MisplacedOmit),

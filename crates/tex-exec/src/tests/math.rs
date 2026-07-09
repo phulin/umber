@@ -184,6 +184,77 @@ fn par_in_math_finishes_math_with_tex_error_text() {
 }
 
 #[test]
+fn math_component_in_restricted_horizontal_mode_inserts_math_shift_and_builds_noad() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(r"\mathopen a$"));
+    let mut executor = Executor::new();
+    executor.nest_mut().push(Mode::RestrictedHorizontal);
+    executor
+        .run(&mut input, &mut stores)
+        .expect("restricted horizontal recovery executes");
+    let Some(Node::MathList(math)) = executor.nest().current_list().nodes().first() else {
+        panic!("recovered list should begin with one inline math list");
+    };
+    let [Node::MathNoad(noad)] = stores.nodes(math.content) else {
+        panic!("recovered math list should contain one noad");
+    };
+
+    assert!(matches!(noad.kind, NoadKind::Normal(NoadClass::Open)));
+    assert_math_char(&noad.nucleus, 0, 'a');
+    assert!(terminal_effect_text(&stores).contains("! Missing $ inserted."));
+}
+
+#[test]
+fn math_component_recovery_preserves_the_offending_token_origin_across_math_entry() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mathopen = stores.symbol("mathopen").expect("installed primitive");
+    let origin = stores.synthetic_origin(tex_state::provenance::SyntheticOriginKind::Test);
+    let traced = TracedTokenWord::pack(Token::Cs(mathopen), origin);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    let mut nest = ModeNest::new();
+    nest.push(Mode::RestrictedHorizontal);
+    let mut hooks = NoopExecHooks;
+
+    let action = dispatch_delivered_token(&mut nest, traced, &mut input, &mut stores, &mut hooks)
+        .expect("math component recovery");
+    assert_eq!(action, DispatchAction::Continue);
+
+    let inserted = input
+        .next_traced_token(&mut stores)
+        .expect("inserted math shift")
+        .expect("inserted math shift token");
+    assert!(matches!(
+        tex_expand::semantic_token(inserted),
+        Token::Char {
+            cat: Catcode::MathShift,
+            ..
+        }
+    ));
+    let tex_state::provenance::OriginRecord::Inserted(inserted_origin) =
+        stores.origin(inserted.origin())
+    else {
+        panic!("math shift should carry an inserted recovery origin");
+    };
+    assert_eq!(
+        inserted_origin.kind(),
+        tex_state::provenance::InsertedOriginKind::ErrorRecovery
+    );
+    assert_eq!(inserted_origin.parent(), origin);
+
+    crate::math::enter_math(&mut nest, &mut input, &mut stores, &mut hooks)
+        .expect("enter recovered math mode");
+    let replayed = input
+        .next_traced_token(&mut stores)
+        .expect("replayed math component")
+        .expect("replayed math component token");
+    assert_eq!(tex_expand::semantic_token(replayed), Token::Cs(mathopen));
+    assert_eq!(replayed.origin(), origin);
+}
+
+#[test]
 fn left_right_scans_nested_list_as_inner_noad() {
     let (stores, executor) = run_math_source(r"$\left. a \right.$");
     let nodes = math_nodes(&stores, &executor);
