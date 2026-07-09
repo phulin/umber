@@ -3,13 +3,14 @@ use tex_lex::{InputStack, MemoryInput};
 use tex_state::Universe;
 use tex_state::meaning::MeaningFlags;
 use tex_state::provenance::{OriginRecord, SourceOrigin};
-use tex_state::token::{Catcode, Token};
+use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 fn scan(input: &str) -> (Universe, Vec<Token>, Vec<Token>) {
     let mut stores = Universe::new();
     let mut input = InputStack::new(MemoryInput::new(input));
-    let scanned =
-        scan_toks(&mut input, &mut stores, MeaningFlags::EMPTY).expect("scan should succeed");
+    let context = TracedTokenWord::pack(Token::Cs(stores.intern("def")), OriginId::UNKNOWN);
+    let scanned = scan_toks(&mut input, &mut stores, MeaningFlags::EMPTY, context)
+        .expect("scan should succeed");
     let params = stores.tokens(scanned.parameter_text()).to_vec();
     let replacement = stores.tokens(scanned.replacement_text()).to_vec();
     (stores, params, replacement)
@@ -46,9 +47,10 @@ fn scans_all_nine_parameters_in_order() {
 fn freezes_parameter_and_replacement_origin_lists_from_source_tokens() {
     let mut stores = Universe::new();
     let mut input = InputStack::new(MemoryInput::new("#1{#1x}"));
+    let context = TracedTokenWord::pack(Token::Cs(stores.intern("def")), OriginId::UNKNOWN);
 
-    let scanned =
-        scan_toks(&mut input, &mut stores, MeaningFlags::EMPTY).expect("scan should succeed");
+    let scanned = scan_toks(&mut input, &mut stores, MeaningFlags::EMPTY, context)
+        .expect("scan should succeed");
     let provenance = scanned.provenance();
     let parameter_origins = stores.origin_list(provenance.parameter_origins());
     let replacement_origins = stores.origin_list(provenance.replacement_origins());
@@ -79,7 +81,8 @@ fn rejects_out_of_order_parameter_numbers() {
     let mut stores = Universe::new();
     let mut input = InputStack::new(MemoryInput::new("#2{}"));
 
-    let err = scan_toks(&mut input, &mut stores, MeaningFlags::EMPTY)
+    let context = TracedTokenWord::pack(Token::Cs(stores.intern("def")), OriginId::UNKNOWN);
+    let err = scan_toks(&mut input, &mut stores, MeaningFlags::EMPTY, context)
         .expect_err("scan should reject out-of-order parameter");
 
     assert!(matches!(

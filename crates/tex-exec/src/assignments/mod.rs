@@ -167,7 +167,7 @@ where
             Ok(CommandOutcome::assigned())
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Write) => {
-            execute_immediate_write(input, stores, recorder, hooks)?;
+            execute_immediate_write(traced, input, stores, recorder, hooks)?;
             Ok(CommandOutcome::continue_only())
         }
         _ => Err(ExecError::PrefixWithNonAssignment { token, origin }),
@@ -219,6 +219,7 @@ pub(crate) enum PrefixedCommand {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct TracedPrefixedCommand {
     command: PrefixedCommand,
+    traced: TracedTokenWord,
     token: Token,
     origin: OriginId,
 }
@@ -290,6 +291,7 @@ where
         let PrefixedCommand::Primitive(primitive) = command else {
             return Ok(TracedPrefixedCommand {
                 command,
+                traced,
                 token,
                 origin,
             });
@@ -304,6 +306,7 @@ where
             _ => {
                 return Ok(TracedPrefixedCommand {
                     command,
+                    traced,
                     token,
                     origin,
                 });
@@ -366,7 +369,12 @@ where
             }
             UnexpandablePrimitive::EndGroup => {
                 reject_all_prefixes(prefixes)?;
-                leave_group_with_origin(input, stores, GroupKind::SemiSimple, command.origin)?;
+                leave_group_with_origin(
+                    input,
+                    stores,
+                    GroupKind::SemiSimple,
+                    command.traced.origin(),
+                )?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::AfterGroup => {
@@ -544,7 +552,7 @@ where
             | UnexpandablePrimitive::VAdjust
             | UnexpandablePrimitive::Insert => {
                 reject_all_prefixes(prefixes)?;
-                execute_hmode_material(primitive, nest, input, stores, hooks)?;
+                execute_hmode_material(command.traced, primitive, nest, input, stores, hooks)?;
                 Ok(CommandOutcome::assigned_if(
                     primitive == UnexpandablePrimitive::SpaceFactor,
                 ))
@@ -559,7 +567,7 @@ where
                 Ok(CommandOutcome::assigned())
             }
             UnexpandablePrimitive::Write => {
-                execute_write(nest, input, stores, hooks)?;
+                execute_write(command.traced, nest, input, stores, hooks)?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::Special => {

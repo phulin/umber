@@ -86,6 +86,7 @@ where
 
 pub(super) struct TracedDefinitionTarget {
     pub symbol: Symbol,
+    pub traced: TracedTokenWord,
     pub origin: OriginId,
 }
 
@@ -118,6 +119,7 @@ where
     };
     Ok(TracedDefinitionTarget {
         symbol,
+        traced,
         origin: traced.origin(),
     })
 }

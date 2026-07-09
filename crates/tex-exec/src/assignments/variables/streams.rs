@@ -95,6 +95,7 @@ where
 }
 
 pub(in crate::assignments) fn execute_write<S, H>(
+    context: TracedTokenWord,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
@@ -105,7 +106,7 @@ where
     H: ExpansionHooks<S>,
 {
     let sink = scan_write_sink(input, stores, hooks)?;
-    let scanned = scan_toks(input, stores, MeaningFlags::EMPTY)?;
+    let scanned = scan_toks(input, stores, MeaningFlags::EMPTY, context)?;
     append_node_to_current_list(
         nest,
         stores,
@@ -117,6 +118,7 @@ where
 }
 
 pub(in crate::assignments) fn execute_immediate_write<S, R, H>(
+    context: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
@@ -128,7 +130,7 @@ where
     H: ExpansionHooks<S>,
 {
     let sink = scan_write_sink(input, stores, hooks)?;
-    let scanned = scan_toks(input, stores, MeaningFlags::EMPTY)?;
+    let scanned = scan_toks(input, stores, MeaningFlags::EMPTY, context)?;
     let text = expand_write_tokens(stores, recorder, scanned.meaning().replacement_text())?;
     stores.world_mut().write_text(sink, &text);
     Ok(())

@@ -81,6 +81,7 @@ pub(crate) fn flush_pending_hchars(
 }
 
 pub(super) fn execute_hmode_material<S, H>(
+    context: TracedTokenWord,
     primitive: UnexpandablePrimitive,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
@@ -179,7 +180,7 @@ where
         UnexpandablePrimitive::Accent => execute_accent(nest, input, stores, hooks)?,
         UnexpandablePrimitive::Mark => {
             flush_pending_hchars(nest, stores)?;
-            let tokens = scan_general_text_expanded_with_driver(input, stores, hooks)?;
+            let tokens = scan_general_text_expanded_with_driver(input, stores, hooks, context)?;
             append_vertical_contribution(nest, stores, Node::Mark { class: 0, tokens });
         }
         UnexpandablePrimitive::VAdjust => execute_vadjust(nest, input, stores, hooks)?,

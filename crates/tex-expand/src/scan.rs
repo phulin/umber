@@ -70,8 +70,12 @@ impl ScannedMacro {
 pub enum ScanToksError {
     Lex(LexError),
     Expand(ExpandError),
-    EndOfInputInParameterText,
-    EndOfInputInReplacementText,
+    EndOfInputInParameterText {
+        context: TracedTokenWord,
+    },
+    EndOfInputInReplacementText {
+        context: TracedTokenWord,
+    },
     ParameterNumberOutOfOrder {
         expected: u8,
         found: u8,
@@ -90,10 +94,10 @@ impl fmt::Display for ScanToksError {
         match self {
             Self::Lex(err) => write!(f, "{err}"),
             Self::Expand(err) => write!(f, "{err}"),
-            Self::EndOfInputInParameterText => {
+            Self::EndOfInputInParameterText { .. } => {
                 write!(f, "end of input while scanning macro parameter text")
             }
-            Self::EndOfInputInReplacementText => {
+            Self::EndOfInputInReplacementText { .. } => {
                 write!(f, "end of input while scanning macro replacement text")
             }
             Self::ParameterNumberOutOfOrder {
@@ -162,12 +166,13 @@ pub fn scan_toks<S>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     flags: MeaningFlags,
+    context: TracedTokenWord,
 ) -> Result<ScannedMacro, ScanToksError>
 where
     S: InputSource,
 {
-    let parameter_text = scan_parameter_text(input, stores)?;
-    let replacement_text = scan_replacement_text(input, stores)?;
+    let parameter_text = scan_parameter_text(input, stores, context)?;
+    let replacement_text = scan_replacement_text(input, stores, context)?;
     Ok(ScannedMacro {
         meaning: MacroMeaning::new(
             flags,
@@ -187,13 +192,14 @@ pub fn scan_toks_expanded<S, H>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     flags: MeaningFlags,
+    context: TracedTokenWord,
     hooks: &mut H,
 ) -> Result<ScannedMacro, ScanToksError>
 where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    let scanned = scan_toks(input, stores, flags)?;
+    let scanned = scan_toks(input, stores, flags, context)?;
     let meaning = scanned.meaning();
     let replacement_text = expand_replacement_text(
         stores,
@@ -220,6 +226,7 @@ pub fn scan_toks_expanded_with_driver<S, St, H>(
     input: &mut InputStack<S>,
     stores: &mut St,
     flags: MeaningFlags,
+    context: TracedTokenWord,
     hooks: &mut H,
 ) -> Result<ScannedMacro, ScanToksError>
 where
@@ -227,7 +234,7 @@ where
     St: ExpansionState + tex_state::InputOpenState,
     H: ExpansionHooks<S>,
 {
-    let scanned = scan_toks(input, stores, flags)?;
+    let scanned = scan_toks(input, stores, flags, context)?;
     let meaning = scanned.meaning();
     let replacement_text = expand_replacement_text(
         stores,
@@ -259,13 +266,14 @@ pub fn scan_general_text_expanded_with_driver<S, St, H>(
     input: &mut InputStack<S>,
     stores: &mut St,
     hooks: &mut H,
+    context: TracedTokenWord,
 ) -> Result<TokenListId, ScanToksError>
 where
     S: InputSource,
     St: ExpansionState + tex_state::InputOpenState,
     H: ExpansionHooks<S>,
 {
-    let raw_text = scan_general_text(input, stores)?;
+    let raw_text = scan_general_text(input, stores, context)?;
     Ok(expand_replacement_text(
         stores,
         raw_text.token_list(),
@@ -487,6 +495,7 @@ where
 fn scan_parameter_text<S>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
+    context: TracedTokenWord,
 ) -> Result<TracedTokenList, ScanToksError>
 where
     S: InputSource,
@@ -499,7 +508,7 @@ where
     loop {
         let traced = input
             .next_traced_token(stores)?
-            .ok_or(ScanToksError::EndOfInputInParameterText)?;
+            .ok_or(ScanToksError::EndOfInputInParameterText { context })?;
         let token = traced_semantic_token(traced);
 
         if pending_parameter {
@@ -552,6 +561,7 @@ where
 fn scan_replacement_text<S>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
+    context: TracedTokenWord,
 ) -> Result<TracedTokenList, ScanToksError>
 where
     S: InputSource,
@@ -564,7 +574,7 @@ where
     loop {
         let traced = input
             .next_traced_token(stores)?
-            .ok_or(ScanToksError::EndOfInputInReplacementText)?;
+            .ok_or(ScanToksError::EndOfInputInReplacementText { context })?;
         let token = traced_semantic_token(traced);
 
         if pending_parameter {
@@ -622,12 +632,13 @@ where
 fn scan_general_text<S>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
+    context: TracedTokenWord,
 ) -> Result<TracedTokenList, ScanToksError>
 where
     S: InputSource,
 {
-    let open =
-        next_non_space_token(input, stores)?.ok_or(ScanToksError::EndOfInputInReplacementText)?;
+    let open = next_non_space_token(input, stores)?
+        .ok_or(ScanToksError::EndOfInputInReplacementText { context })?;
     if !matches!(
         traced_semantic_token(open),
         Token::Char {
@@ -644,7 +655,7 @@ where
     loop {
         let traced = input
             .next_traced_token(stores)?
-            .ok_or(ScanToksError::EndOfInputInReplacementText)?;
+            .ok_or(ScanToksError::EndOfInputInReplacementText { context })?;
         let token = traced_semantic_token(traced);
         match token {
             Token::Char {

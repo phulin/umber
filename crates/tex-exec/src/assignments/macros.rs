@@ -59,9 +59,9 @@ where
             UnexpandablePrimitive::Gdef | UnexpandablePrimitive::Xdef
         );
     let scanned = if expanded {
-        scan_toks_expanded_with_driver(input, stores, prefixes.flags, hooks)?
+        scan_toks_expanded_with_driver(input, stores, prefixes.flags, target.traced, hooks)?
     } else {
-        scan_toks(input, stores, prefixes.flags)?
+        scan_toks(input, stores, prefixes.flags, target.traced)?
     }
     .with_definition_origin(target.origin);
     if apply_globaldefs(global, stores) {
