@@ -632,6 +632,16 @@ impl Stores {
                 hasher.bytes(class.as_bytes());
                 hasher.bytes(&payload);
             }
+            Whatsit::Language {
+                language,
+                left_hyphen_min,
+                right_hyphen_min,
+            } => {
+                hasher.tag(17);
+                hasher.u8(language);
+                hasher.u8(left_hyphen_min);
+                hasher.u8(right_hyphen_min);
+            }
         }
     }
 

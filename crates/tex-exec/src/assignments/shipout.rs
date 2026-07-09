@@ -312,6 +312,7 @@ where
                         .map_err(|_| ExecError::ArithmeticOverflow)?,
                 }))
             }
+            Whatsit::Language { .. } => Ok(None),
         }
     }
 

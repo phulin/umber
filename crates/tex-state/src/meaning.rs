@@ -439,6 +439,7 @@ pub enum UnexpandablePrimitive {
     ScriptScriptStyle,
     End,
     Dump,
+    SetLanguage,
 }
 
 impl UnexpandablePrimitive {
@@ -616,6 +617,7 @@ impl UnexpandablePrimitive {
             Self::LeftEqNo => 155,
             Self::End => 54,
             Self::Dump => 170,
+            Self::SetLanguage => 171,
         }
     }
 
@@ -793,6 +795,7 @@ impl UnexpandablePrimitive {
             155 => Some(Self::LeftEqNo),
             54 => Some(Self::End),
             170 => Some(Self::Dump),
+            171 => Some(Self::SetLanguage),
             _ => None,
         }
     }

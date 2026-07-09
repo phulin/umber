@@ -134,7 +134,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [x] `\lefthyphenmin` - Minimum characters before the first automatic hyphen; consumed by hlist hyphenation and `\showhyphens`.
 - [x] `\patterns` - Adds lccode-normalized INITEX-style Liang patterns for language 0 into the snapshot-covered hyphenation trie.
 - [x] `\righthyphenmin` - Minimum characters after the last automatic hyphen; consumed by hlist hyphenation and `\showhyphens`.
-- [ ] `\setlanguage` - Inserts a language whatsit into the current horizontal list.
+- [x] `\setlanguage` - Scans a TeX82 language number in horizontal mode and inserts a language whatsit carrying normalized language and hyphen minima.
 - [x] `\uchyph` - Enables hyphenation of words beginning with uppercase letters when positive.
 
 ## Insertions And Splits

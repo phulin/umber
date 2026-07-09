@@ -584,6 +584,35 @@ where
                 execute_special(nest, input, stores, hooks)?;
                 Ok(CommandOutcome::continue_only())
             }
+            UnexpandablePrimitive::SetLanguage => {
+                reject_all_prefixes(prefixes)?;
+                if !matches!(
+                    nest.current_mode(),
+                    crate::Mode::Horizontal | crate::Mode::RestrictedHorizontal
+                ) {
+                    return Err(ExecError::UnimplementedTypesetting {
+                        mode: nest.current_mode(),
+                        token: command.token,
+                        origin: command.origin,
+                        operation: "setlanguage outside horizontal mode",
+                    });
+                }
+                let language = scan_i32(input, stores, hooks)?;
+                let language = u8::try_from(language).unwrap_or(0);
+                let normalize_min = |value: i32| u8::try_from(value.clamp(1, 63)).unwrap_or(1);
+                crate::vertical::append_node_to_current_list(
+                    nest,
+                    stores,
+                    tex_state::node::Node::Whatsit(tex_state::node::Whatsit::Language {
+                        language,
+                        left_hyphen_min: normalize_min(stores.int_param(IntParam::LEFT_HYPHEN_MIN)),
+                        right_hyphen_min: normalize_min(
+                            stores.int_param(IntParam::RIGHT_HYPHEN_MIN),
+                        ),
+                    }),
+                )?;
+                Ok(CommandOutcome::continue_only())
+            }
             UnexpandablePrimitive::Shipout => {
                 reject_all_prefixes(prefixes)?;
                 let hash = execute_shipout(input, stores, recorder, hooks)?;

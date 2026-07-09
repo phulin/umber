@@ -121,6 +121,7 @@ pub fn install_unexpandable_primitives(stores: &mut Universe) {
         ("immediate", UnexpandablePrimitive::Immediate),
         ("write", UnexpandablePrimitive::Write),
         ("special", UnexpandablePrimitive::Special),
+        ("setlanguage", UnexpandablePrimitive::SetLanguage),
         ("read", UnexpandablePrimitive::Read),
         ("shipout", UnexpandablePrimitive::Shipout),
         ("show", UnexpandablePrimitive::Show),

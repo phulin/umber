@@ -148,7 +148,8 @@ impl Stores {
             Node::Whatsit(
                 crate::node::Whatsit::OpenOut { .. }
                 | crate::node::Whatsit::CloseOut { .. }
-                | crate::node::Whatsit::Special { .. },
+                | crate::node::Whatsit::Special { .. }
+                | crate::node::Whatsit::Language { .. },
             ) => {}
             Node::Kern { .. }
             | Node::Penalty(_)

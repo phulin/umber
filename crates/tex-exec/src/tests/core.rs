@@ -122,6 +122,34 @@ fn inputlineno_reports_current_physical_source_line() {
 }
 
 #[test]
+fn setlanguage_appends_normalized_language_whatsit_in_hmode() {
+    let mut stores = Universe::new();
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        r"\lefthyphenmin=0 \righthyphenmin=99 \setbox0=\hbox{\setlanguage7}",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("setlanguage should append a language whatsit");
+
+    let box0 = stores.box_reg(0).expect("box should be assigned");
+    let [tex_state::node::Node::HList(box_node)] = stores.nodes(box0) else {
+        panic!("register 0 should hold an hbox");
+    };
+    assert!(matches!(
+        stores.nodes(box_node.children),
+        [tex_state::node::Node::Whatsit(
+            tex_state::node::Whatsit::Language {
+                language: 7,
+                left_hyphen_min: 1,
+                right_hyphen_min: 63,
+            }
+        )]
+    ));
+}
+
+#[test]
 fn internal_integer_assignment_leaves_following_expandafter_unexpanded() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);
