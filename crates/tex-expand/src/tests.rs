@@ -120,6 +120,30 @@ fn expandable_dispatch_table_covers_epic_opcode_families() {
 }
 
 #[test]
+fn invalid_conditional_relation_reports_offending_origin() {
+    let mut stores = Universe::new();
+    let mut input = InputStack::new(MemoryInput::new("!"));
+    let err = crate::conditionals::scan_conditional_relation_with_expander_and_hooks(
+        &mut input,
+        &mut stores,
+        &mut NoopRecorder,
+        &mut crate::NoopExpansionHooks,
+        &mut crate::NoInputExpandNext,
+    )
+    .expect_err("relation scanner should reject non-relation token");
+
+    let primary = err.primary_origin();
+    let crate::ExpandError::InvalidConditionalRelation(token) = err else {
+        panic!("expected invalid relation error");
+    };
+    assert_eq!(primary, Some(token.origin()));
+    assert!(matches!(
+        stores.origin(token.origin()),
+        OriginRecord::Source(_)
+    ));
+}
+
+#[test]
 fn get_x_token_delivers_unexpandable_control_sequence() {
     let mut stores = Universe::new();
     let relax = stores.intern("relax");

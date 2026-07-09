@@ -296,6 +296,7 @@ impl ConditionFrameSummary {
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub struct InputSummary {
     frames: Vec<InputFrameSummary>,
+    last_source_id: Option<SourceId>,
     last_source_frame: Option<SourceFrameSummary>,
 }
 
@@ -303,10 +304,12 @@ impl InputSummary {
     #[must_use]
     pub fn new(
         frames: Vec<InputFrameSummary>,
+        last_source_id: Option<SourceId>,
         last_source_frame: Option<SourceFrameSummary>,
     ) -> Self {
         Self {
             frames,
+            last_source_id,
             last_source_frame,
         }
     }
@@ -331,6 +334,12 @@ impl InputSummary {
     #[must_use]
     pub fn last_source_frame(&self) -> Option<&SourceFrameSummary> {
         self.last_source_frame.as_ref()
+    }
+
+    /// The stable id for [`Self::last_source_frame`], when one is retained.
+    #[must_use]
+    pub const fn last_source_id(&self) -> Option<SourceId> {
+        self.last_source_id
     }
 }
 

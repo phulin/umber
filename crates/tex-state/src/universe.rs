@@ -2584,6 +2584,12 @@ fn hash_input_summary_fields(stores: &Stores, summary: &InputSummary, hasher: &m
     match summary.last_source_frame() {
         Some(source) => {
             hasher.bool(true);
+            hasher.u32(
+                summary
+                    .last_source_id()
+                    .expect("last source frame must retain its source id")
+                    .raw(),
+            );
             hasher.usize(source.buffer_offset());
             hasher.usize(source.next_source_offset());
             hasher.usize(source.line_number());

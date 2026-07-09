@@ -2,6 +2,7 @@ use tex_lex::{InputStack, MemoryInput};
 use tex_state::Universe;
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
+use tex_state::provenance::{OriginRecord, SourceOrigin};
 use tex_state::scaled::{PhysicalUnit, Scaled, round_decimal_fraction, scaled_from_decimal_parts};
 use tex_state::token::{Catcode, Token};
 
@@ -235,6 +236,29 @@ fn restores_partially_matched_true_keyword_tokens() {
 }
 
 #[test]
+fn partially_matched_keyword_pushback_preserves_source_origins() {
+    let mut stores = Universe::new();
+    let mut input = InputStack::new(MemoryInput::new("1truxpt"));
+    let scanned = scan_dimen(&mut input, &mut stores).expect("bad true keyword recovers");
+
+    assert_eq!(
+        scanned.diagnostic(),
+        Some(DimensionDiagnostic::IllegalUnit {
+            inserted: InsertedUnit::Pt
+        })
+    );
+    let replayed = input
+        .next_traced_token(&mut stores)
+        .expect("token should replay")
+        .expect("partial keyword should be unread");
+    assert_eq!(replayed.token(), Some(char_token('t', Catcode::Letter)));
+    assert_eq!(
+        stores.origin(replayed.origin()),
+        OriginRecord::Source(SourceOrigin::new(tex_state::SourceId::new(0), 1, 1, 1))
+    );
+}
+
+#[test]
 fn missing_number_recovers_zero_then_inserted_pt() {
     let mut stores = Universe::new();
     let mut input = InputStack::new(MemoryInput::new("x"));
@@ -254,6 +278,21 @@ fn missing_number_recovers_zero_then_inserted_pt() {
         input.next_token(&mut stores).expect("token should replay"),
         Some(char_token('x', Catcode::Letter))
     );
+}
+
+#[test]
+fn eof_missing_dimension_uses_current_input_origin() {
+    let mut stores = Universe::new();
+    let mut input = InputStack::new(MemoryInput::new(""));
+    let scanned = scan_dimen(&mut input, &mut stores).expect("missing dimension recovers");
+    let origins = scanned.diagnostic_origins().collect::<Vec<_>>();
+
+    assert_eq!(
+        scanned.diagnostics().collect::<Vec<_>>(),
+        vec![DimensionDiagnostic::MissingNumber]
+    );
+    assert_eq!(origins.len(), 1);
+    assert!(matches!(stores.origin(origins[0]), OriginRecord::Source(_)));
 }
 
 #[test]

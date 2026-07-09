@@ -134,8 +134,9 @@ supply.
   Source reopen identity is owned by the `World` input record in the outer
   snapshot: it pins file/editor content by content hash, reopens that exact
   source, then applies the lexer-owned source-frame summary.
-  `last_source_frame` is also summarized so snapshots taken just after a
-  source pops still have final source coordinates.
+  `last_source_frame` is also summarized with its source id so snapshots taken
+  just after a source pops still have final source coordinates for EOF/current
+  input diagnostics.
 - Line-oriented details TeX cares about (`\endlinechar`, trailing-space
   trimming, `%` line ends) live here, driven by parameters read through the
   aggregate state API. The implemented `tex-lex` input layer exposes a local
@@ -240,7 +241,13 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   caller, and glue scanning keeps scanning `plus`/`minus` components after those
   recovered values. Execution-side assignment callers route all scanner
   diagnostics through TeX's terminal/log diagnostic path before applying the
-  recovered value. `true` physical units call the
+  recovered value. Scanner pushback of already-read tokens preserves the
+  original traced token origins instead of wrapping them in fresh unread
+  provenance, so diagnostics can continue to point at the source token that
+  caused the scan decision. Scanner errors and recoverable scanner diagnostics
+  attach primary origins from the offending token; when a scanner fails at end
+  of input, the origin is allocated from the current source frame or the
+  retained `last_source_frame` coordinates. `true` physical units call the
   `Universe::prepare_mag` boundary before scaling, so illegal magnifications
   are coerced and the job-level magnification is frozen in snapshot-covered
   state for later shipout/font paths. Font-relative `em`/`ex` units remain

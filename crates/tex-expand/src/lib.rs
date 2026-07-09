@@ -242,7 +242,7 @@ pub enum ExpandError {
     ScanInt(Box<scan_int::ScanIntError>),
     ScanDimen(Box<scan_dimen::ScanDimenError>),
     UnsupportedTheTarget(Token),
-    InvalidConditionalRelation(Token),
+    InvalidConditionalRelation(TracedTokenWord),
     IncompleteIf,
     ExtraConditionalControl(&'static str),
     ForbiddenOuterTokenInSkippedConditional { name: String },
@@ -279,7 +279,11 @@ impl fmt::Display for ExpandError {
                 write!(f, "unsupported token {token:?} after \\the")
             }
             Self::InvalidConditionalRelation(token) => {
-                write!(f, "invalid conditional relation token {token:?}")
+                write!(
+                    f,
+                    "invalid conditional relation token {:?}",
+                    semantic_token(*token)
+                )
             }
             Self::IncompleteIf => write!(f, "Incomplete \\if; all text was ignored after line"),
             Self::ExtraConditionalControl(name) => write!(f, "Extra \\{name}"),
@@ -309,6 +313,30 @@ impl std::error::Error for ExpandError {
             | Self::UndefinedControlSequence { .. }
             | Self::UnsupportedTheTarget(_)
             | Self::InvalidConditionalRelation(_)
+            | Self::IncompleteIf
+            | Self::ExtraConditionalControl(_)
+            | Self::ForbiddenOuterTokenInSkippedConditional { .. } => None,
+        }
+    }
+}
+
+impl ExpandError {
+    #[must_use]
+    pub fn primary_origin(&self) -> Option<OriginId> {
+        match self {
+            Self::InvalidConditionalRelation(token) => Some(token.origin()),
+            Self::ScanInt(err) => err.primary_origin(),
+            Self::ScanDimen(err) => err.primary_origin(),
+            Self::MacroCall(err) => err.primary_origin(),
+            Self::Lex(_)
+            | Self::UnimplementedExpandable(_)
+            | Self::MissingTokenAfterPrimitive(_)
+            | Self::MissingEndCsName
+            | Self::MissingInputName
+            | Self::NonCharacterInInputName(_)
+            | Self::InputOpen { .. }
+            | Self::UndefinedControlSequence { .. }
+            | Self::UnsupportedTheTarget(_)
             | Self::IncompleteIf
             | Self::ExtraConditionalControl(_)
             | Self::ForbiddenOuterTokenInSkippedConditional { .. } => None,

@@ -2,6 +2,7 @@ use tex_lex::{InputStack, MemoryInput};
 use tex_state::env::banks::IntParam;
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
+use tex_state::provenance::{OriginRecord, SourceOrigin};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
 use tex_state::{ExpansionState, Universe};
@@ -154,6 +155,24 @@ fn missing_number_recovers_zero_and_replays_offending_token() {
     assert_eq!(value, 0);
     assert_eq!(diagnostic, Some(IntegerDiagnostic::MissingNumber));
     assert_eq!(next, Some(char_token('x', Catcode::Letter)));
+}
+
+#[test]
+fn missing_number_diagnostic_uses_offending_token_origin() {
+    let mut stores = Universe::new();
+    let mut input = InputStack::new(MemoryInput::new("x"));
+    let scanned = scan_int(&mut input, &mut stores).expect("scan should recover");
+    let replayed = input
+        .next_traced_token(&mut stores)
+        .expect("token should replay")
+        .expect("offending token should be unread");
+
+    assert_eq!(scanned.diagnostic(), Some(IntegerDiagnostic::MissingNumber));
+    assert_eq!(scanned.diagnostic_origin(), Some(replayed.origin()));
+    assert_eq!(
+        stores.origin(replayed.origin()),
+        OriginRecord::Source(SourceOrigin::new(tex_state::SourceId::new(0), 0, 1, 0))
+    );
 }
 
 #[test]

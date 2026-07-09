@@ -503,12 +503,11 @@ where
             ExpandableOpcode::If,
         ));
     };
-    let semantic = semantic_token(token);
-    match semantic {
+    match semantic_token(token) {
         Token::Char { ch: '<', .. } => Ok(ConditionalRelation::Less),
         Token::Char { ch: '=', .. } => Ok(ConditionalRelation::Equal),
         Token::Char { ch: '>', .. } => Ok(ConditionalRelation::Greater),
-        _ => Err(ExpandError::InvalidConditionalRelation(semantic)),
+        _ => Err(ExpandError::InvalidConditionalRelation(token)),
     }
 }
 

@@ -1,6 +1,5 @@
 use tex_lex::{InputSource, InputStack, TokenListReplayKind};
 use tex_state::ExpansionState;
-use tex_state::provenance::InsertedOriginKind;
 use tex_state::token::{Catcode, Token, TracedTokenWord};
 
 use crate::{
@@ -254,11 +253,7 @@ where
     let token_list = stores.intern_token_list(&tokens);
     let mut origins = stores.origin_list_builder();
     for token in traced_tokens {
-        origins.push(stores.inserted_origin(
-            InsertedOriginKind::Unread,
-            semantic_token(token),
-            token.origin(),
-        ));
+        origins.push(token.origin());
     }
     let origin_list = stores.finish_origin_list(&mut origins);
     input.push_token_list_with_origins(token_list, origin_list, TokenListReplayKind::Inserted);

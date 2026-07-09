@@ -7,9 +7,8 @@ use tex_state::ExpansionState;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::GlueId;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
-use tex_state::provenance::InsertedOriginKind;
 use tex_state::scaled::Scaled;
-use tex_state::token::{Catcode, Token, TracedTokenWord};
+use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::scan_dimen::{self, DimensionDiagnostic, ScanDimenError, ScanDimenOptions};
 use crate::{
@@ -22,6 +21,7 @@ use crate::{
 pub struct ScannedGlue {
     id: GlueId,
     diagnostics: [Option<DimensionDiagnostic>; 8],
+    diagnostic_origins: [Option<OriginId>; 8],
 }
 
 impl ScannedGlue {
@@ -33,6 +33,13 @@ impl ScannedGlue {
     pub fn diagnostics(self) -> impl Iterator<Item = DimensionDiagnostic> {
         self.diagnostics.into_iter().flatten()
     }
+
+    pub fn diagnostic_records(self) -> impl Iterator<Item = (DimensionDiagnostic, OriginId)> {
+        self.diagnostics
+            .into_iter()
+            .zip(self.diagnostic_origins)
+            .filter_map(|(diagnostic, origin)| Some((diagnostic?, origin?)))
+    }
 }
 
 #[derive(Debug)]
@@ -40,9 +47,9 @@ pub enum ScanGlueError {
     Expand(ExpandError),
     Lex(LexError),
     Dimen(ScanDimenError),
-    MissingNumber,
+    MissingNumber { origin: OriginId },
     RegisterNumberOutOfRange(i32),
-    UnsupportedInternalGlue(Token),
+    UnsupportedInternalGlue(TracedTokenWord),
 }
 
 impl fmt::Display for ScanGlueError {
@@ -51,12 +58,16 @@ impl fmt::Display for ScanGlueError {
             Self::Expand(err) => write!(f, "{err}"),
             Self::Lex(err) => write!(f, "{err}"),
             Self::Dimen(err) => write!(f, "{err}"),
-            Self::MissingNumber => f.write_str("Missing number"),
+            Self::MissingNumber { .. } => f.write_str("Missing number"),
             Self::RegisterNumberOutOfRange(value) => {
                 write!(f, "register number {value} is out of range")
             }
             Self::UnsupportedInternalGlue(token) => {
-                write!(f, "unsupported internal glue token {token:?}")
+                write!(
+                    f,
+                    "unsupported internal glue token {:?}",
+                    semantic_token(*token)
+                )
             }
         }
     }
@@ -68,9 +79,22 @@ impl std::error::Error for ScanGlueError {
             Self::Expand(err) => Some(err),
             Self::Lex(err) => Some(err),
             Self::Dimen(err) => Some(err),
-            Self::MissingNumber
+            Self::MissingNumber { .. }
             | Self::RegisterNumberOutOfRange(_)
             | Self::UnsupportedInternalGlue(_) => None,
+        }
+    }
+}
+
+impl ScanGlueError {
+    #[must_use]
+    pub fn primary_origin(&self) -> Option<OriginId> {
+        match self {
+            Self::MissingNumber { origin } => Some(*origin),
+            Self::UnsupportedInternalGlue(token) => Some(token.origin()),
+            Self::Dimen(err) => err.primary_origin(),
+            Self::Expand(err) => err.primary_origin(),
+            Self::Lex(_) | Self::RegisterNumberOutOfRange(_) => None,
         }
     }
 }
@@ -163,7 +187,9 @@ where
 {
     let (negative, first) = scan_signs(input, stores, recorder, hooks, expander)?;
     let Some(first) = first else {
-        return Err(ScanGlueError::MissingNumber);
+        return Err(ScanGlueError::MissingNumber {
+            origin: input.current_input_origin(stores),
+        });
     };
 
     if let Token::Cs(symbol) = semantic_token(first) {
@@ -236,7 +262,8 @@ where
         dimen_options(mu),
     )?;
     let mut diagnostics = [None; 8];
-    append_dimension_diagnostics(&mut diagnostics, width);
+    let mut diagnostic_origins = [None; 8];
+    append_dimension_diagnostics(&mut diagnostics, &mut diagnostic_origins, width);
     let mut spec = GlueSpec {
         width: width.value(),
         stretch: Scaled::from_raw(0),
@@ -257,7 +284,7 @@ where
             expander,
             dimen_options(mu).with_infinite_units(),
         )?;
-        append_dimension_diagnostics(&mut diagnostics, stretch);
+        append_dimension_diagnostics(&mut diagnostics, &mut diagnostic_origins, stretch);
         spec.stretch = stretch.value();
         spec.stretch_order = stretch.order();
     }
@@ -270,12 +297,17 @@ where
             expander,
             dimen_options(mu).with_infinite_units(),
         )?;
-        append_dimension_diagnostics(&mut diagnostics, shrink);
+        append_dimension_diagnostics(&mut diagnostics, &mut diagnostic_origins, shrink);
         spec.shrink = shrink.value();
         spec.shrink_order = shrink.order();
     }
 
-    Ok(intern_spec_with_diagnostics(stores, spec, diagnostics))
+    Ok(intern_spec_with_diagnostics(
+        stores,
+        spec,
+        diagnostics,
+        diagnostic_origins,
+    ))
 }
 
 fn dimen_options(mu: bool) -> ScanDimenOptions {
@@ -287,27 +319,31 @@ fn dimen_options(mu: bool) -> ScanDimenOptions {
 }
 
 fn intern_spec(stores: &mut impl ExpansionState, spec: GlueSpec) -> ScannedGlue {
-    intern_spec_with_diagnostics(stores, spec, [None; 8])
+    intern_spec_with_diagnostics(stores, spec, [None; 8], [None; 8])
 }
 
 fn intern_spec_with_diagnostics(
     stores: &mut impl ExpansionState,
     spec: GlueSpec,
     diagnostics: [Option<DimensionDiagnostic>; 8],
+    diagnostic_origins: [Option<OriginId>; 8],
 ) -> ScannedGlue {
     ScannedGlue {
         id: stores.intern_glue(spec),
         diagnostics,
+        diagnostic_origins,
     }
 }
 
 fn append_dimension_diagnostics(
     diagnostics: &mut [Option<DimensionDiagnostic>; 8],
+    diagnostic_origins: &mut [Option<OriginId>; 8],
     dimen: scan_dimen::ScannedDimen,
 ) {
-    for diagnostic in dimen.diagnostics() {
-        if let Some(slot) = diagnostics.iter_mut().find(|slot| slot.is_none()) {
-            *slot = Some(diagnostic);
+    for (diagnostic, origin) in dimen.diagnostic_records() {
+        if let Some(index) = diagnostics.iter().position(Option::is_none) {
+            diagnostics[index] = Some(diagnostic);
+            diagnostic_origins[index] = Some(origin);
         }
     }
 }
@@ -462,11 +498,7 @@ where
     let token_list = stores.intern_token_list(&tokens);
     let mut origins = stores.origin_list_builder();
     for token in traced_tokens {
-        origins.push(stores.inserted_origin(
-            InsertedOriginKind::Unread,
-            semantic_token(token),
-            token.origin(),
-        ));
+        origins.push(token.origin());
     }
     let origin_list = stores.finish_origin_list(&mut origins);
     input.push_token_list_with_origins(token_list, origin_list, TokenListReplayKind::Inserted);

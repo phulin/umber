@@ -13,7 +13,7 @@ use tex_state::TracedTokenList;
 use tex_state::ids::TokenListId;
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{Meaning, MeaningFlags};
-use tex_state::token::{Catcode, Token, TracedTokenWord};
+use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::{NoopRecorder, ReadRecorder};
 
@@ -109,6 +109,13 @@ impl std::error::Error for MacroCallError {
 impl From<LexError> for MacroCallError {
     fn from(value: LexError) -> Self {
         Self::Lex(value)
+    }
+}
+
+impl MacroCallError {
+    #[must_use]
+    pub fn primary_origin(&self) -> Option<OriginId> {
+        None
     }
 }
 

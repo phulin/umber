@@ -342,9 +342,8 @@ fn unread_token<S>(
 {
     let semantic = crate::semantic_token(token);
     let token_list = stores.intern_token_list(&[semantic]);
-    let origin = stores.inserted_origin(InsertedOriginKind::Unread, semantic, token.origin());
     let mut origins = stores.origin_list_builder();
-    origins.push(origin);
+    origins.push(token.origin());
     let origin_list = stores.finish_origin_list(&mut origins);
     input.push_token_list_with_origins(token_list, origin_list, TokenListReplayKind::Inserted);
 }

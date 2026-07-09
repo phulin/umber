@@ -7,12 +7,11 @@ use tex_state::BoxDimension;
 use tex_state::glue::Order;
 use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
-use tex_state::provenance::InsertedOriginKind;
 use tex_state::scaled::{
     DimensionError, PhysicalUnit, Scaled, nx_plus_y, round_decimal_fraction,
     scaled_from_decimal_parts, xn_over_d,
 };
-use tex_state::token::{Catcode, Token, TracedTokenWord};
+use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{ExpansionState, PrepareMagDiagnostic};
 
 use crate::{
@@ -69,6 +68,7 @@ pub struct ScannedDimen {
     value: Scaled,
     order: Order,
     diagnostics: [Option<DimensionDiagnostic>; 4],
+    diagnostic_origins: [Option<OriginId>; 4],
 }
 
 impl ScannedDimen {
@@ -78,14 +78,20 @@ impl ScannedDimen {
             value,
             order: Order::Normal,
             diagnostics: [None; 4],
+            diagnostic_origins: [None; 4],
         }
     }
 
-    pub const fn with_diagnostic(value: Scaled, diagnostic: DimensionDiagnostic) -> Self {
+    pub const fn with_diagnostic(
+        value: Scaled,
+        diagnostic: DimensionDiagnostic,
+        origin: OriginId,
+    ) -> Self {
         Self {
             value,
             order: Order::Normal,
             diagnostics: [Some(diagnostic), None, None, None],
+            diagnostic_origins: [Some(origin), None, None, None],
         }
     }
 
@@ -108,27 +114,51 @@ impl ScannedDimen {
         self.diagnostics.into_iter().flatten()
     }
 
-    fn with_added_diagnostic(mut self, diagnostic: DimensionDiagnostic) -> Self {
-        if let Some(slot) = self.diagnostics.iter_mut().find(|slot| slot.is_none()) {
-            *slot = Some(diagnostic);
+    pub fn diagnostic_origins(self) -> impl Iterator<Item = OriginId> {
+        self.diagnostic_origins.into_iter().flatten()
+    }
+
+    pub fn diagnostic_records(self) -> impl Iterator<Item = (DimensionDiagnostic, OriginId)> {
+        self.diagnostics
+            .into_iter()
+            .zip(self.diagnostic_origins)
+            .filter_map(|(diagnostic, origin)| Some((diagnostic?, origin?)))
+    }
+
+    fn with_added_diagnostic(mut self, diagnostic: DimensionDiagnostic, origin: OriginId) -> Self {
+        if let Some(index) = self.diagnostics.iter().position(Option::is_none) {
+            self.diagnostics[index] = Some(diagnostic);
+            self.diagnostic_origins[index] = Some(origin);
         }
         self
     }
 
-    fn with_leading_diagnostic(mut self, diagnostic: DimensionDiagnostic) -> Self {
+    fn with_leading_diagnostic(
+        mut self,
+        diagnostic: DimensionDiagnostic,
+        origin: OriginId,
+    ) -> Self {
         self.diagnostics.rotate_right(1);
+        self.diagnostic_origins.rotate_right(1);
         self.diagnostics[0] = Some(diagnostic);
+        self.diagnostic_origins[0] = Some(origin);
         self
     }
 
-    fn with_integer_diagnostic(self, diagnostic: Option<scan_int::IntegerDiagnostic>) -> Self {
+    fn with_integer_diagnostic(
+        self,
+        diagnostic: Option<scan_int::IntegerDiagnostic>,
+        origin: Option<OriginId>,
+    ) -> Self {
         match diagnostic {
-            Some(scan_int::IntegerDiagnostic::MissingNumber) => {
-                self.with_leading_diagnostic(DimensionDiagnostic::MissingNumber)
-            }
-            Some(scan_int::IntegerDiagnostic::NumberTooBig) => {
-                self.with_added_diagnostic(DimensionDiagnostic::TooLarge)
-            }
+            Some(scan_int::IntegerDiagnostic::MissingNumber) => self.with_leading_diagnostic(
+                DimensionDiagnostic::MissingNumber,
+                origin.unwrap_or(OriginId::UNKNOWN),
+            ),
+            Some(scan_int::IntegerDiagnostic::NumberTooBig) => self.with_added_diagnostic(
+                DimensionDiagnostic::TooLarge,
+                origin.unwrap_or(OriginId::UNKNOWN),
+            ),
             None => self,
         }
     }
@@ -203,11 +233,11 @@ pub enum ScanDimenError {
     Expand(ExpandError),
     Lex(LexError),
     Integer(scan_int::ScanIntError),
-    MissingNumber,
-    MissingUnit,
+    MissingNumber { origin: OriginId },
+    MissingUnit { origin: OriginId },
     RegisterNumberOutOfRange(i32),
     IncompatibleGlueUnits,
-    UnsupportedInternalDimension(Token),
+    UnsupportedInternalDimension(TracedTokenWord),
 }
 
 impl fmt::Display for ScanDimenError {
@@ -216,14 +246,18 @@ impl fmt::Display for ScanDimenError {
             Self::Expand(err) => write!(f, "{err}"),
             Self::Lex(err) => write!(f, "{err}"),
             Self::Integer(err) => write!(f, "{err}"),
-            Self::MissingNumber => f.write_str("Missing number"),
-            Self::MissingUnit => f.write_str("Illegal unit of measure"),
+            Self::MissingNumber { .. } => f.write_str("Missing number"),
+            Self::MissingUnit { .. } => f.write_str("Illegal unit of measure"),
             Self::RegisterNumberOutOfRange(value) => {
                 write!(f, "register number {value} is out of range")
             }
             Self::IncompatibleGlueUnits => f.write_str("Incompatible glue units"),
             Self::UnsupportedInternalDimension(token) => {
-                write!(f, "unsupported internal dimension token {token:?}")
+                write!(
+                    f,
+                    "unsupported internal dimension token {:?}",
+                    semantic_token(*token)
+                )
             }
         }
     }
@@ -235,11 +269,24 @@ impl std::error::Error for ScanDimenError {
             Self::Expand(err) => Some(err),
             Self::Lex(err) => Some(err),
             Self::Integer(err) => Some(err),
-            Self::MissingNumber
-            | Self::MissingUnit
+            Self::MissingNumber { .. }
+            | Self::MissingUnit { .. }
             | Self::RegisterNumberOutOfRange(_)
             | Self::IncompatibleGlueUnits
             | Self::UnsupportedInternalDimension(_) => None,
+        }
+    }
+}
+
+impl ScanDimenError {
+    #[must_use]
+    pub fn primary_origin(&self) -> Option<OriginId> {
+        match self {
+            Self::MissingNumber { origin } | Self::MissingUnit { origin } => Some(*origin),
+            Self::UnsupportedInternalDimension(token) => Some(token.origin()),
+            Self::Integer(err) => err.primary_origin(),
+            Self::Expand(err) => err.primary_origin(),
+            Self::Lex(_) | Self::RegisterNumberOutOfRange(_) | Self::IncompatibleGlueUnits => None,
         }
     }
 }
@@ -341,6 +388,7 @@ where
         return Ok(ScannedDimen::with_diagnostic(
             Scaled::from_raw(0),
             DimensionDiagnostic::MissingNumber,
+            input.current_input_origin(stores),
         ));
     };
 
@@ -446,8 +494,9 @@ where
         ),
         _ => {
             unread_token(input, stores, token);
-            let recovered = recover_missing_unit(0, 0, options, stores)?;
-            Ok(recovered.with_leading_diagnostic(DimensionDiagnostic::MissingNumber))
+            let recovered = recover_missing_unit(0, 0, options, stores, token.origin())?;
+            Ok(recovered
+                .with_leading_diagnostic(DimensionDiagnostic::MissingNumber, token.origin()))
         }
     }
 }
@@ -501,7 +550,8 @@ where
     E: ExpandNext<S, St, R, H>,
 {
     let Some(token) = next_x(input, stores, recorder, hooks, expander)? else {
-        return coerce_or_recover_missing_unit(integer, options, stores);
+        let origin = input.current_input_origin(stores);
+        return coerce_or_recover_missing_unit(integer, options, stores, origin);
     };
 
     if is_decimal_point(token) {
@@ -514,7 +564,10 @@ where
         None if options.coerce_integer_to_sp => {
             convert_decimal(integer, 0, PhysicalUnit::Sp, false, stores.mag())
         }
-        None => recover_missing_unit(integer, 0, options, stores),
+        None => {
+            let origin = input.current_input_origin(stores);
+            recover_missing_unit(integer, 0, options, stores, origin)
+        }
     }
 }
 
@@ -536,7 +589,8 @@ where
 {
     let fraction = scan_fraction(input, stores, recorder, hooks, expander)?;
     let Some(unit) = scan_unit(input, stores, recorder, hooks, expander, options)? else {
-        return recover_missing_unit(integer, fraction, options, stores);
+        let origin = input.current_input_origin(stores);
+        return recover_missing_unit(integer, fraction, options, stores, origin);
     };
     convert_scanned_unit(stores, integer, fraction, unit)
 }
@@ -656,20 +710,27 @@ where
         return Ok(ScannedDimen::with_diagnostic(
             Scaled::MAX_DIMEN,
             DimensionDiagnostic::TooLarge,
+            scanned.diagnostic_origin().unwrap_or(token.origin()),
         ));
     }
 
     let integer = scanned.value();
     let Some(unit) = scan_unit(input, stores, recorder, hooks, expander, options)? else {
         if options.coerce_integer_to_sp {
-            return convert_decimal(integer, 0, PhysicalUnit::Sp, false, stores.mag())
-                .map(|dimen| dimen.with_integer_diagnostic(scanned.diagnostic()));
+            return convert_decimal(integer, 0, PhysicalUnit::Sp, false, stores.mag()).map(
+                |dimen| {
+                    dimen.with_integer_diagnostic(scanned.diagnostic(), scanned.diagnostic_origin())
+                },
+            );
         }
-        return recover_missing_unit(integer, 0, options, stores)
-            .map(|dimen| dimen.with_integer_diagnostic(scanned.diagnostic()));
+        let origin = input.current_input_origin(stores);
+        return recover_missing_unit(integer, 0, options, stores, origin).map(|dimen| {
+            dimen.with_integer_diagnostic(scanned.diagnostic(), scanned.diagnostic_origin())
+        });
     };
-    convert_scanned_unit(stores, integer, 0, unit)
-        .map(|dimen| dimen.with_integer_diagnostic(scanned.diagnostic()))
+    convert_scanned_unit(stores, integer, 0, unit).map(|dimen| {
+        dimen.with_integer_diagnostic(scanned.diagnostic(), scanned.diagnostic_origin())
+    })
 }
 
 fn scan_integer_constant_with_unit<S, St, R, H, E>(
@@ -695,18 +756,25 @@ where
         return Ok(ScannedDimen::with_diagnostic(
             Scaled::MAX_DIMEN,
             DimensionDiagnostic::TooLarge,
+            scanned.diagnostic_origin().unwrap_or(token.origin()),
         ));
     }
     let Some(unit) = scan_unit(input, stores, recorder, hooks, expander, options)? else {
         if options.coerce_integer_to_sp {
-            return convert_decimal(scanned.value(), 0, PhysicalUnit::Sp, false, stores.mag())
-                .map(|dimen| dimen.with_integer_diagnostic(scanned.diagnostic()));
+            return convert_decimal(scanned.value(), 0, PhysicalUnit::Sp, false, stores.mag()).map(
+                |dimen| {
+                    dimen.with_integer_diagnostic(scanned.diagnostic(), scanned.diagnostic_origin())
+                },
+            );
         }
-        return recover_missing_unit(scanned.value(), 0, options, stores)
-            .map(|dimen| dimen.with_integer_diagnostic(scanned.diagnostic()));
+        let origin = input.current_input_origin(stores);
+        return recover_missing_unit(scanned.value(), 0, options, stores, origin).map(|dimen| {
+            dimen.with_integer_diagnostic(scanned.diagnostic(), scanned.diagnostic_origin())
+        });
     };
-    convert_scanned_unit(stores, scanned.value(), 0, unit)
-        .map(|dimen| dimen.with_integer_diagnostic(scanned.diagnostic()))
+    convert_scanned_unit(stores, scanned.value(), 0, unit).map(|dimen| {
+        dimen.with_integer_diagnostic(scanned.diagnostic(), scanned.diagnostic_origin())
+    })
 }
 
 fn scan_register_index<S, St, R, H, E>(
@@ -950,6 +1018,7 @@ fn convert_decimal(
                 return Ok(ScannedDimen::with_diagnostic(
                     Scaled::MAX_DIMEN,
                     DimensionDiagnostic::from(error),
+                    OriginId::UNKNOWN,
                 ));
             }
         }
@@ -962,6 +1031,7 @@ fn convert_decimal(
         Err(error) => Ok(ScannedDimen::with_diagnostic(
             Scaled::MAX_DIMEN,
             DimensionDiagnostic::from(error),
+            OriginId::UNKNOWN,
         )),
     }
 }
@@ -1004,6 +1074,7 @@ fn convert_font_relative_unit(
             return Ok(ScannedDimen::with_diagnostic(
                 Scaled::MAX_DIMEN,
                 DimensionDiagnostic::from(error),
+                OriginId::UNKNOWN,
             ));
         }
     };
@@ -1016,6 +1087,7 @@ fn convert_font_relative_unit(
         Err(_) => Ok(ScannedDimen::with_diagnostic(
             Scaled::MAX_DIMEN,
             DimensionDiagnostic::TooLarge,
+            OriginId::UNKNOWN,
         )),
     }
 }
@@ -1034,7 +1106,8 @@ fn convert_physical_unit(
     };
     let mut scanned = convert_decimal(integer, fraction, unit, true_unit, mag)?;
     if let Some(diagnostic) = mag_diagnostic {
-        scanned = scanned.with_added_diagnostic(DimensionDiagnostic::from(diagnostic));
+        scanned =
+            scanned.with_added_diagnostic(DimensionDiagnostic::from(diagnostic), OriginId::UNKNOWN);
     }
     Ok(scanned)
 }
@@ -1059,11 +1132,12 @@ fn coerce_or_recover_missing_unit(
     integer: i32,
     options: ScanDimenOptions,
     stores: &impl ExpansionState,
+    origin: OriginId,
 ) -> Result<ScannedDimen, ScanDimenError> {
     if options.coerce_integer_to_sp {
         convert_decimal(integer, 0, PhysicalUnit::Sp, false, stores.mag())
     } else {
-        recover_missing_unit(integer, 0, options, stores)
+        recover_missing_unit(integer, 0, options, stores, origin)
     }
 }
 
@@ -1072,8 +1146,9 @@ fn recover_missing_unit(
     fraction: i32,
     options: ScanDimenOptions,
     stores: &impl ExpansionState,
+    origin: OriginId,
 ) -> Result<ScannedDimen, ScanDimenError> {
-    recover_missing_unit_with_mag(integer, fraction, options, stores.mag())
+    recover_missing_unit_with_mag(integer, fraction, options, stores.mag(), origin)
 }
 
 fn recover_missing_unit_with_mag(
@@ -1081,14 +1156,16 @@ fn recover_missing_unit_with_mag(
     fraction: i32,
     options: ScanDimenOptions,
     mag: i32,
+    origin: OriginId,
 ) -> Result<ScannedDimen, ScanDimenError> {
     let inserted = if options.require_mu_unit {
         InsertedUnit::Mu
     } else {
         InsertedUnit::Pt
     };
-    convert_decimal(integer, fraction, PhysicalUnit::Pt, false, mag)
-        .map(|dimen| dimen.with_added_diagnostic(DimensionDiagnostic::IllegalUnit { inserted }))
+    convert_decimal(integer, fraction, PhysicalUnit::Pt, false, mag).map(|dimen| {
+        dimen.with_added_diagnostic(DimensionDiagnostic::IllegalUnit { inserted }, origin)
+    })
 }
 
 fn apply_sign(scanned: ScannedDimen, negative: bool) -> ScannedDimen {
@@ -1101,6 +1178,7 @@ fn apply_sign(scanned: ScannedDimen, negative: bool) -> ScannedDimen {
         value,
         order: scanned.order(),
         diagnostics: scanned.diagnostics,
+        diagnostic_origins: scanned.diagnostic_origins,
     }
 }
 
@@ -1176,11 +1254,7 @@ where
     let token_list = stores.intern_token_list(&tokens);
     let mut origins = stores.origin_list_builder();
     for token in traced_tokens {
-        origins.push(stores.inserted_origin(
-            InsertedOriginKind::Unread,
-            semantic_token(token),
-            token.origin(),
-        ));
+        origins.push(token.origin());
     }
     let origin_list = stores.finish_origin_list(&mut origins);
     input.push_token_list_with_origins(token_list, origin_list, TokenListReplayKind::Inserted);

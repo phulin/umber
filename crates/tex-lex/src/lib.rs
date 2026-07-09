@@ -8,7 +8,7 @@ use std::collections::VecDeque;
 use std::fmt;
 
 use tex_state::ids::{OriginListId, TokenListId};
-use tex_state::provenance::InsertedOriginKind;
+use tex_state::provenance::{InsertedOriginKind, SyntheticOriginKind};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{ExpansionState, FileContent, WorldError};
 
@@ -210,6 +210,7 @@ enum InputFrame<S> {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct LastSourceFrame {
+    source_id: SourceId,
     frame: SourceFrame,
     next_source_offset: usize,
 }
@@ -369,6 +370,9 @@ impl<S> InputStack<S> {
             }),
             unicode_superscript_notation: true,
             last_source_frame: summary.last_source_frame().map(|source| LastSourceFrame {
+                source_id: summary
+                    .last_source_id()
+                    .expect("last source frame must retain its source id"),
                 frame: SourceFrame::from_summary(source),
                 next_source_offset: source.next_source_offset(),
             }),
@@ -485,6 +489,7 @@ impl<S> InputStack<S> {
                     InputFrame::Condition(condition) => InputFrameSummary::Condition(*condition),
                 })
                 .collect(),
+            self.last_source_frame.as_ref().map(|last| last.source_id),
             self.last_source_frame
                 .as_ref()
                 .map(|last| last.frame.summary(last.next_source_offset)),
@@ -498,6 +503,22 @@ impl<S> InputStack<S> {
             InputFrame::TokenList(_) | InputFrame::Condition(_) => None,
         });
         current.or_else(|| self.last_source_frame.as_ref().map(|last| &last.frame))
+    }
+
+    pub fn current_input_origin(&mut self, stores: &mut impl ExpansionState) -> OriginId {
+        if let Some(source) = self.frames.iter().rev().find_map(|frame| match frame {
+            InputFrame::Source(source) => Some(source),
+            InputFrame::TokenList(_) | InputFrame::Condition(_) => None,
+        }) {
+            return allocate_source_origin(stores, source_coordinate(source));
+        }
+        if let Some(last) = &self.last_source_frame {
+            return allocate_source_origin(
+                stores,
+                source_coordinate_from_frame(last.source_id, &last.frame),
+            );
+        }
+        stores.synthetic_origin(SyntheticOriginKind::Engine)
     }
 
     #[must_use]
@@ -694,6 +715,7 @@ where
                             let popped = self.frames.remove(frame_index);
                             if let InputFrame::Source(source) = popped {
                                 self.last_source_frame = Some(LastSourceFrame {
+                                    source_id: source.source_id,
                                     frame: source.frame,
                                     next_source_offset: source.next_source_offset,
                                 });
@@ -704,6 +726,7 @@ where
                             let popped = self.frames.remove(frame_index);
                             if let InputFrame::Source(source) = popped {
                                 self.last_source_frame = Some(LastSourceFrame {
+                                    source_id: source.source_id,
                                     frame: source.frame,
                                     next_source_offset: source.next_source_offset,
                                 });
@@ -787,6 +810,7 @@ where
                             let popped = self.frames.remove(frame_index);
                             if let InputFrame::Source(source) = popped {
                                 self.last_source_frame = Some(LastSourceFrame {
+                                    source_id: source.source_id,
                                     frame: source.frame,
                                     next_source_offset: source.next_source_offset,
                                 });
@@ -797,6 +821,7 @@ where
                             let popped = self.frames.remove(frame_index);
                             if let InputFrame::Source(source) = popped {
                                 self.last_source_frame = Some(LastSourceFrame {
+                                    source_id: source.source_id,
                                     frame: source.frame,
                                     next_source_offset: source.next_source_offset,
                                 });
@@ -862,6 +887,7 @@ where
                             let popped = self.frames.remove(frame_index);
                             if let InputFrame::Source(source) = popped {
                                 self.last_source_frame = Some(LastSourceFrame {
+                                    source_id: source.source_id,
                                     frame: source.frame,
                                     next_source_offset: source.next_source_offset,
                                 });
@@ -872,6 +898,7 @@ where
                             let popped = self.frames.remove(frame_index);
                             if let InputFrame::Source(source) = popped {
                                 self.last_source_frame = Some(LastSourceFrame {
+                                    source_id: source.source_id,
                                     frame: source.frame,
                                     next_source_offset: source.next_source_offset,
                                 });
@@ -1079,12 +1106,16 @@ struct SourceCoordinate {
 }
 
 fn source_coordinate<S>(source: &SourceInputFrame<S>) -> SourceCoordinate {
-    let byte_offset = source.frame.buffer_offset + byte_offset_for_char_offset(&source.frame);
+    source_coordinate_from_frame(source.source_id, &source.frame)
+}
+
+fn source_coordinate_from_frame(source_id: SourceId, frame: &SourceFrame) -> SourceCoordinate {
+    let byte_offset = frame.buffer_offset + byte_offset_for_char_offset(frame);
     SourceCoordinate {
-        source_id: source.source_id,
+        source_id,
         byte_offset: u64::try_from(byte_offset).unwrap_or(u64::MAX),
-        line: u32::try_from(source.frame.line_number).unwrap_or(u32::MAX),
-        column: u32::try_from(source.frame.column).unwrap_or(u32::MAX),
+        line: u32::try_from(frame.line_number).unwrap_or(u32::MAX),
+        column: u32::try_from(frame.column).unwrap_or(u32::MAX),
     }
 }
 

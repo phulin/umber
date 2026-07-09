@@ -7,8 +7,7 @@ use tex_state::ExpansionState;
 use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::interner::Symbol;
 use tex_state::meaning::{InternalInteger, Meaning};
-use tex_state::provenance::InsertedOriginKind;
-use tex_state::token::{Catcode, Token, TracedTokenWord};
+use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::{
     ExpandError, ExpandNext, ExpansionHooks, NoInputExpandNext, NoopExpansionHooks, NoopRecorder,
@@ -23,6 +22,7 @@ const MAX_REGISTER: i32 = 32_767;
 pub struct ScannedInt {
     value: i32,
     diagnostic: Option<IntegerDiagnostic>,
+    diagnostic_origin: Option<OriginId>,
 }
 
 impl ScannedInt {
@@ -31,14 +31,20 @@ impl ScannedInt {
         Self {
             value,
             diagnostic: None,
+            diagnostic_origin: None,
         }
     }
 
     #[must_use]
-    pub const fn with_diagnostic(value: i32, diagnostic: IntegerDiagnostic) -> Self {
+    pub const fn with_diagnostic(
+        value: i32,
+        diagnostic: IntegerDiagnostic,
+        origin: OriginId,
+    ) -> Self {
         Self {
             value,
             diagnostic: Some(diagnostic),
+            diagnostic_origin: Some(origin),
         }
     }
 
@@ -50,6 +56,11 @@ impl ScannedInt {
     #[must_use]
     pub const fn diagnostic(self) -> Option<IntegerDiagnostic> {
         self.diagnostic
+    }
+
+    #[must_use]
+    pub const fn diagnostic_origin(self) -> Option<OriginId> {
+        self.diagnostic_origin
     }
 }
 
@@ -74,9 +85,9 @@ impl fmt::Display for IntegerDiagnostic {
 pub enum ScanIntError {
     Expand(ExpandError),
     Lex(LexError),
-    MissingNumber,
+    MissingNumber { origin: OriginId },
     RegisterNumberOutOfRange(i32),
-    UnsupportedInternalInteger(Token),
+    UnsupportedInternalInteger(TracedTokenWord),
 }
 
 impl fmt::Display for ScanIntError {
@@ -84,12 +95,16 @@ impl fmt::Display for ScanIntError {
         match self {
             Self::Expand(err) => write!(f, "{err}"),
             Self::Lex(err) => write!(f, "{err}"),
-            Self::MissingNumber => f.write_str("Missing number"),
+            Self::MissingNumber { .. } => f.write_str("Missing number"),
             Self::RegisterNumberOutOfRange(value) => {
                 write!(f, "register number {value} is out of range")
             }
             Self::UnsupportedInternalInteger(token) => {
-                write!(f, "unsupported internal integer token {token:?}")
+                write!(
+                    f,
+                    "unsupported internal integer token {:?}",
+                    semantic_token(*token)
+                )
             }
         }
     }
@@ -100,9 +115,21 @@ impl std::error::Error for ScanIntError {
         match self {
             Self::Expand(err) => Some(err),
             Self::Lex(err) => Some(err),
-            Self::MissingNumber
+            Self::MissingNumber { .. }
             | Self::RegisterNumberOutOfRange(_)
             | Self::UnsupportedInternalInteger(_) => None,
+        }
+    }
+}
+
+impl ScanIntError {
+    #[must_use]
+    pub fn primary_origin(&self) -> Option<OriginId> {
+        match self {
+            Self::MissingNumber { origin } => Some(*origin),
+            Self::UnsupportedInternalInteger(token) => Some(token.origin()),
+            Self::Expand(err) => err.primary_origin(),
+            Self::Lex(_) | Self::RegisterNumberOutOfRange(_) => None,
         }
     }
 }
@@ -168,6 +195,7 @@ where
         return Ok(ScannedInt::with_diagnostic(
             0,
             IntegerDiagnostic::MissingNumber,
+            input.current_input_origin(stores),
         ));
     };
 
@@ -270,7 +298,7 @@ where
         }
         _ => {
             unread_token(input, stores, token);
-            Ok(missing_number())
+            Ok(missing_number(token.origin()))
         }
     }
 }
@@ -291,11 +319,11 @@ where
     E: ExpandNext<S, St, R, H>,
 {
     let Some(token) = next_x(input, stores, recorder, hooks, expander)? else {
-        return Ok(missing_number());
+        return Ok(missing_number(input.current_input_origin(stores)));
     };
     let Some(digit) = token_digit_for_radix(token, radix) else {
         unread_token(input, stores, token);
-        return Ok(missing_number());
+        return Ok(missing_number(token.origin()));
     };
     scan_radix_digits(input, stores, recorder, hooks, expander, digit, radix)
 }
@@ -318,6 +346,7 @@ where
 {
     let mut value = first_digit;
     let mut overflow = value > INT_MAX;
+    let mut overflow_origin = None;
     loop {
         let Some(token) = next_x(input, stores, recorder, hooks, expander)? else {
             break;
@@ -335,12 +364,13 @@ where
             Some(next) if next <= INT_MAX => value = next,
             _ => {
                 overflow = true;
+                overflow_origin.get_or_insert(token.origin());
                 value = INT_MAX;
             }
         }
     }
 
-    Ok(scanned_unsigned(value, overflow))
+    Ok(scanned_unsigned(value, overflow, overflow_origin))
 }
 
 fn scan_backtick_constant<S, St, R, H, E>(
@@ -358,7 +388,7 @@ where
     E: ExpandNext<S, St, R, H>,
 {
     let Some(token) = next_x(input, stores, recorder, hooks, expander)? else {
-        return Ok(missing_number());
+        return Ok(missing_number(input.current_input_origin(stores)));
     };
     let value = match semantic_token(token) {
         Token::Char { ch, .. } => ch as i32,
@@ -368,7 +398,7 @@ where
             .next()
             .map(|ch| ch as i32)
             .unwrap_or(0),
-        Token::Param(_) => return Ok(missing_number()),
+        Token::Param(_) => return Ok(missing_number(token.origin())),
     };
     consume_optional_space(input, stores, recorder, hooks, expander)?;
     Ok(ScannedInt::new(value))
@@ -433,7 +463,7 @@ where
         }
         Meaning::Relax => {
             unread_token(input, stores, token);
-            Ok(missing_number())
+            Ok(missing_number(token.origin()))
         }
         Meaning::UnexpandablePrimitive(primitive) => scan_internal_integer_primitive(
             input, stores, recorder, hooks, expander, token, primitive,
@@ -457,9 +487,7 @@ where
                     consume_optional_space(input, stores, recorder, hooks, expander)?;
                     Ok(ScannedInt::new(stores.int_param(IntParam::END_LINE_CHAR)))
                 }
-                _ => Err(ScanIntError::UnsupportedInternalInteger(semantic_token(
-                    token,
-                ))),
+                _ => Err(ScanIntError::UnsupportedInternalInteger(token)),
             }
         }
     }
@@ -542,9 +570,7 @@ where
             consume_optional_space(input, stores, recorder, hooks, expander)?;
             Ok(ScannedInt::new(value))
         }
-        _ => Err(ScanIntError::UnsupportedInternalInteger(semantic_token(
-            token,
-        ))),
+        _ => Err(ScanIntError::UnsupportedInternalInteger(token)),
     }
 }
 
@@ -600,7 +626,7 @@ fn unread_token<S>(
     let semantic = semantic_token(token);
     let token_list = stores.intern_token_list(&[semantic]);
     let mut origins = stores.origin_list_builder();
-    origins.push(stores.inserted_origin(InsertedOriginKind::Unread, semantic, token.origin()));
+    origins.push(token.origin());
     let origin_list = stores.finish_origin_list(&mut origins);
     input.push_token_list_with_origins(token_list, origin_list, TokenListReplayKind::Inserted);
 }
@@ -614,19 +640,24 @@ fn apply_sign(scanned: ScannedInt, negative: bool) -> ScannedInt {
     ScannedInt {
         value,
         diagnostic: scanned.diagnostic(),
+        diagnostic_origin: scanned.diagnostic_origin(),
     }
 }
 
-fn scanned_unsigned(value: i64, overflow: bool) -> ScannedInt {
+fn scanned_unsigned(value: i64, overflow: bool, overflow_origin: Option<OriginId>) -> ScannedInt {
     if overflow {
-        ScannedInt::with_diagnostic(i32::MAX, IntegerDiagnostic::NumberTooBig)
+        ScannedInt::with_diagnostic(
+            i32::MAX,
+            IntegerDiagnostic::NumberTooBig,
+            overflow_origin.unwrap_or(OriginId::UNKNOWN),
+        )
     } else {
         ScannedInt::new(value as i32)
     }
 }
 
-const fn missing_number() -> ScannedInt {
-    ScannedInt::with_diagnostic(0, IntegerDiagnostic::MissingNumber)
+const fn missing_number(origin: OriginId) -> ScannedInt {
+    ScannedInt::with_diagnostic(0, IntegerDiagnostic::MissingNumber, origin)
 }
 
 fn token_digit_for_radix(token: TracedTokenWord, radix: i64) -> Option<i64> {
