@@ -119,7 +119,7 @@ supply.
   must summarize (`InputSummary`): a vector of frames, each either a
   *source frame* (source id + source byte offsets + line/col + current
   normalized line + in-line char/byte offsets + lexer state + pending
-  synthetic tokens) or a *token-list frame* (`TokenListId` + index + replay
+  traced synthetic tokens) or a *token-list frame* (`TokenListId` + index + replay
   kind: macro body, `\everypar`, mark, ...). Macro-body token-list frames
   additionally carry up to nine frozen argument `TokenListId`s; replaying a
   `Param(slot)` token pushes the corresponding argument list as a nested
@@ -142,8 +142,10 @@ supply.
   line by trimming trailing spaces and appending the current `\endlinechar`
   when valid, including for blank/all-space physical lines, and owns an
   `InputStack` whose `InputSummary` records resume-complete lexer-owned
-  source frame state and token-list replay progress. Token-list frames read
-  frozen content only through `Universe::tokens`; durable source identity is
+  source frame state and token-list replay progress. Mutable input-stack
+  delivery carries `TracedTokenWord`; plain-`Token` methods are compatibility
+  shims that decode and drop origins. Token-list frames read frozen content only
+  through `Universe::tokens`; durable source identity is
   the `World` input record captured in `Universe` snapshots, which pins file
   bytes by content hash so a driver can reopen the exact source and apply the
   lexer summary. `\endinput` is represented as a source-frame flag that lets

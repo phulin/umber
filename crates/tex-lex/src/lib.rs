@@ -8,7 +8,8 @@ use std::collections::VecDeque;
 use std::fmt;
 
 use tex_state::ids::TokenListId;
-use tex_state::token::{Catcode, Token};
+use tex_state::provenance::InsertedOriginKind;
+use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{ExpansionState, FileContent, WorldError};
 
 pub use tex_state::{
@@ -101,7 +102,7 @@ pub struct SourceFrame {
     state: LexerState,
     line: Vec<char>,
     offset: usize,
-    pending: VecDeque<Token>,
+    pending: VecDeque<TracedTokenWord>,
     buffer_offset: usize,
     line_number: usize,
     column: usize,
@@ -217,6 +218,12 @@ enum TokenReplay {
     PushArgument(TokenListId),
 }
 
+enum TracedTokenReplay {
+    Deliver(TracedTokenWord),
+    DeliverNoExpand(TracedTokenWord),
+    PushArgument(TokenListId),
+}
+
 /// A token read from the input stack with expansion-control metadata.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ExpansionToken {
@@ -236,6 +243,43 @@ impl ExpansionToken {
     #[must_use]
     pub const fn token(self) -> Token {
         self.token
+    }
+
+    #[must_use]
+    pub const fn suppress_expansion(self) -> bool {
+        self.suppress_expansion
+    }
+}
+
+/// A traced token read from the input stack with expansion-control metadata.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TracedExpansionToken {
+    token: TracedTokenWord,
+    suppress_expansion: bool,
+}
+
+impl TracedExpansionToken {
+    #[must_use]
+    pub const fn new(token: TracedTokenWord, suppress_expansion: bool) -> Self {
+        Self {
+            token,
+            suppress_expansion,
+        }
+    }
+
+    #[must_use]
+    pub const fn traced_token(self) -> TracedTokenWord {
+        self.token
+    }
+
+    #[must_use]
+    pub fn token(self) -> Token {
+        decode_traced_token(self.token)
+    }
+
+    #[must_use]
+    pub const fn origin(self) -> OriginId {
+        self.token.origin()
     }
 
     #[must_use]
@@ -544,6 +588,13 @@ where
     ) -> Result<Option<Token>, LexError> {
         self.input.next_token(stores)
     }
+
+    pub fn next_traced_token(
+        &mut self,
+        stores: &mut impl ExpansionState,
+    ) -> Result<Option<TracedTokenWord>, LexError> {
+        self.input.next_traced_token(stores)
+    }
 }
 
 impl<S> InputStack<S>
@@ -554,14 +605,21 @@ where
         &mut self,
         stores: &mut impl ExpansionState,
     ) -> Result<Option<Token>, LexError> {
+        Ok(self.next_traced_token(stores)?.map(decode_traced_token))
+    }
+
+    pub fn next_traced_token(
+        &mut self,
+        stores: &mut impl ExpansionState,
+    ) -> Result<Option<TracedTokenWord>, LexError> {
         loop {
             let Some(frame_index) = self.current_token_frame_index() else {
                 return Ok(None);
             };
             match &mut self.frames[frame_index] {
                 InputFrame::TokenList(token_list) => {
-                    match next_token_from_token_list_frame(token_list, stores) {
-                        Some(TokenReplay::PushArgument(argument)) => {
+                    match next_traced_token_from_token_list_frame(token_list, stores) {
+                        Some(TracedTokenReplay::PushArgument(argument)) => {
                             self.frames.push(InputFrame::TokenList(TokenListInputFrame {
                                 token_list: argument,
                                 replay_kind: TokenListReplayKind::MacroArgument,
@@ -570,9 +628,10 @@ where
                             }));
                             continue;
                         }
-                        Some(TokenReplay::Deliver(token) | TokenReplay::DeliverNoExpand(token)) => {
-                            return Ok(Some(token));
-                        }
+                        Some(
+                            TracedTokenReplay::Deliver(token)
+                            | TracedTokenReplay::DeliverNoExpand(token),
+                        ) => return Ok(Some(token)),
                         None => {
                             self.frames.remove(frame_index);
                         }
@@ -633,14 +692,23 @@ where
         &mut self,
         stores: &mut impl ExpansionState,
     ) -> Result<Option<ExpansionToken>, LexError> {
+        Ok(self
+            .next_traced_expansion_token(stores)?
+            .map(|token| ExpansionToken::new(token.token(), token.suppress_expansion())))
+    }
+
+    pub fn next_traced_expansion_token(
+        &mut self,
+        stores: &mut impl ExpansionState,
+    ) -> Result<Option<TracedExpansionToken>, LexError> {
         loop {
             let Some(frame_index) = self.current_token_frame_index() else {
                 return Ok(None);
             };
             match &mut self.frames[frame_index] {
                 InputFrame::TokenList(token_list) => {
-                    match next_token_from_token_list_frame(token_list, stores) {
-                        Some(TokenReplay::PushArgument(argument)) => {
+                    match next_traced_token_from_token_list_frame(token_list, stores) {
+                        Some(TracedTokenReplay::PushArgument(argument)) => {
                             self.frames.push(InputFrame::TokenList(TokenListInputFrame {
                                 token_list: argument,
                                 replay_kind: TokenListReplayKind::MacroArgument,
@@ -649,11 +717,11 @@ where
                             }));
                             continue;
                         }
-                        Some(TokenReplay::Deliver(token)) => {
-                            return Ok(Some(ExpansionToken::new(token, false)));
+                        Some(TracedTokenReplay::Deliver(token)) => {
+                            return Ok(Some(TracedExpansionToken::new(token, false)));
                         }
-                        Some(TokenReplay::DeliverNoExpand(token)) => {
-                            return Ok(Some(ExpansionToken::new(token, true)));
+                        Some(TracedTokenReplay::DeliverNoExpand(token)) => {
+                            return Ok(Some(TracedExpansionToken::new(token, true)));
                         }
                         None => {
                             self.frames.remove(frame_index);
@@ -662,7 +730,7 @@ where
                 }
                 InputFrame::Source(source) => {
                     if let Some(token) = source.frame.pending.pop_front() {
-                        return Ok(Some(ExpansionToken::new(token, false)));
+                        return Ok(Some(TracedExpansionToken::new(token, false)));
                     }
 
                     if source.frame.offset >= source.frame.line.len() {
@@ -693,7 +761,7 @@ where
                     else {
                         continue;
                     };
-                    return Ok(Some(ExpansionToken::new(token, false)));
+                    return Ok(Some(TracedExpansionToken::new(token, false)));
                 }
                 InputFrame::Condition(_) => {
                     unreachable!("current_token_frame_index skips conditions")
@@ -735,7 +803,7 @@ where
                 }
                 InputFrame::Source(source) => {
                     if let Some(token) = source.frame.pending.pop_front() {
-                        return Ok(Some(ExpansionToken::new(token, false)));
+                        return Ok(Some(ExpansionToken::new(decode_traced_token(token), false)));
                     }
 
                     if source.frame.offset >= source.frame.line.len() {
@@ -856,6 +924,35 @@ fn next_token_from_token_list_frame(
     Some(TokenReplay::Deliver(token))
 }
 
+fn next_traced_token_from_token_list_frame(
+    frame: &mut TokenListInputFrame,
+    stores: &mut impl ExpansionState,
+) -> Option<TracedTokenReplay> {
+    let tokens = stores.tokens(frame.token_list);
+    let token = tokens.get(frame.index).copied()?;
+    frame.index += 1;
+
+    if frame.replay_kind == TokenListReplayKind::MacroBody
+        && let Token::Param(slot) = token
+        && let Some(argument) = frame.macro_arguments.get(slot)
+    {
+        return Some(TracedTokenReplay::PushArgument(argument));
+    }
+
+    let parent = stores.bootstrap_origin();
+    let origin = stores.inserted_origin(
+        InsertedOriginKind::TokenListReplay(frame.replay_kind),
+        token,
+        parent,
+    );
+    let token = TracedTokenWord::pack(token, origin);
+    if frame.replay_kind == TokenListReplayKind::NoExpand {
+        return Some(TracedTokenReplay::DeliverNoExpand(token));
+    }
+
+    Some(TracedTokenReplay::Deliver(token))
+}
+
 fn load_next_line_readonly<S>(
     source: &mut SourceInputFrame<S>,
     stores: &impl ExpansionState,
@@ -900,11 +997,76 @@ where
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+struct SourceCoordinate {
+    source_id: SourceId,
+    byte_offset: u64,
+    line: u32,
+    column: u32,
+}
+
+fn source_coordinate<S>(source: &SourceInputFrame<S>) -> SourceCoordinate {
+    let byte_offset = source.frame.buffer_offset + byte_offset_for_char_offset(&source.frame);
+    SourceCoordinate {
+        source_id: source.source_id,
+        byte_offset: u64::try_from(byte_offset).unwrap_or(u64::MAX),
+        line: u32::try_from(source.frame.line_number).unwrap_or(u32::MAX),
+        column: u32::try_from(source.frame.column).unwrap_or(u32::MAX),
+    }
+}
+
+fn byte_offset_for_char_offset(frame: &SourceFrame) -> usize {
+    frame
+        .line
+        .iter()
+        .take(frame.offset)
+        .map(|ch| ch.len_utf8())
+        .sum()
+}
+
+fn traced_source_token(
+    stores: &mut impl ExpansionState,
+    token: Token,
+    coordinate: SourceCoordinate,
+) -> TracedTokenWord {
+    let origin = allocate_source_origin(stores, coordinate);
+    TracedTokenWord::pack(token, origin)
+}
+
+fn allocate_source_origin(
+    stores: &mut impl ExpansionState,
+    coordinate: SourceCoordinate,
+) -> OriginId {
+    stores.source_origin(
+        coordinate.source_id,
+        coordinate.byte_offset,
+        coordinate.line,
+        coordinate.column,
+    )
+}
+
+fn traced_inserted_token(
+    stores: &mut impl ExpansionState,
+    kind: InsertedOriginKind,
+    token: Token,
+    parent: OriginId,
+) -> TracedTokenWord {
+    let origin = stores.inserted_origin(kind, token, parent);
+    TracedTokenWord::pack(token, origin)
+}
+
+fn decode_traced_token(token: TracedTokenWord) -> Token {
+    token
+        .token()
+        .expect("input stack must only deliver valid traced tokens")
+}
+
 fn next_token_from_line<S>(
     source: &mut SourceInputFrame<S>,
     stores: &mut impl ExpansionState,
     unicode_superscript_notation: bool,
-) -> Result<Option<Token>, LexError> {
+) -> Result<Option<TracedTokenWord>, LexError> {
+    let start = source_coordinate(source);
     let ch = read_expanded_char(source, stores, unicode_superscript_notation);
     let cat = stores.catcode(ch);
     match cat {
@@ -915,27 +1077,35 @@ fn next_token_from_line<S>(
             Ok(None)
         }
         Catcode::EndLine => {
-            let token = match source.frame.state {
+            let parent = allocate_source_origin(stores, start);
+            let (token, kind) = match source.frame.state {
                 LexerState::NewLine => {
                     let par = stores.intern("par");
-                    Token::Cs(par)
+                    (Token::Cs(par), InsertedOriginKind::Paragraph)
                 }
-                LexerState::MidLine => Token::Char {
-                    ch: ' ',
-                    cat: Catcode::Space,
-                },
+                LexerState::MidLine => (
+                    Token::Char {
+                        ch: ' ',
+                        cat: Catcode::Space,
+                    },
+                    InsertedOriginKind::EndLine,
+                ),
                 LexerState::SkippingBlanks => return Ok(None),
             };
             source.frame.state = LexerState::NewLine;
-            Ok(Some(token))
+            Ok(Some(traced_inserted_token(stores, kind, token, parent)))
         }
         Catcode::Space => match source.frame.state {
             LexerState::MidLine => {
                 source.frame.state = LexerState::SkippingBlanks;
-                Ok(Some(Token::Char {
-                    ch: ' ',
-                    cat: Catcode::Space,
-                }))
+                Ok(Some(traced_source_token(
+                    stores,
+                    Token::Char {
+                        ch: ' ',
+                        cat: Catcode::Space,
+                    },
+                    start,
+                )))
             }
             LexerState::NewLine | LexerState::SkippingBlanks => Ok(None),
         },
@@ -943,10 +1113,15 @@ fn next_token_from_line<S>(
             source,
             stores,
             unicode_superscript_notation,
+            start,
         ))),
         Catcode::Letter | Catcode::Superscript => {
             source.frame.state = LexerState::MidLine;
-            Ok(Some(Token::Char { ch, cat }))
+            Ok(Some(traced_source_token(
+                stores,
+                Token::Char { ch, cat },
+                start,
+            )))
         }
         Catcode::BeginGroup
         | Catcode::EndGroup
@@ -957,7 +1132,11 @@ fn next_token_from_line<S>(
         | Catcode::Other
         | Catcode::Active => {
             source.frame.state = LexerState::MidLine;
-            Ok(Some(Token::Char { ch, cat }))
+            Ok(Some(traced_source_token(
+                stores,
+                Token::Char { ch, cat },
+                start,
+            )))
         }
     }
 }
@@ -1030,16 +1209,19 @@ fn scan_control_sequence<S>(
     source: &mut SourceInputFrame<S>,
     stores: &mut impl ExpansionState,
     unicode_superscript_notation: bool,
-) -> Token {
+    start: SourceCoordinate,
+) -> TracedTokenWord {
     if source.frame.offset >= source.frame.line.len() {
         source.frame.state = LexerState::SkippingBlanks;
-        return Token::Cs(stores.intern(""));
+        let token = Token::Cs(stores.intern(""));
+        return traced_source_token(stores, token, start);
     }
 
     let ch = read_expanded_char(source, stores, unicode_superscript_notation);
     if stores.catcode(ch) != Catcode::Letter {
         source.frame.state = LexerState::MidLine;
-        return Token::Cs(stores.intern(&ch.to_string()));
+        let token = Token::Cs(stores.intern(&ch.to_string()));
+        return traced_source_token(stores, token, start);
     }
 
     let mut name = String::from(ch);
@@ -1056,7 +1238,8 @@ fn scan_control_sequence<S>(
         }
     }
     source.frame.state = LexerState::SkippingBlanks;
-    Token::Cs(stores.intern(&name))
+    let token = Token::Cs(stores.intern(&name));
+    traced_source_token(stores, token, start)
 }
 
 fn scan_control_sequence_readonly<S>(

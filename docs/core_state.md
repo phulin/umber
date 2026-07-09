@@ -310,8 +310,11 @@ cells[i] = new
 ### Provenance store
 
 - Token provenance is mandatory diagnostic side-channel data, not semantic
-  token identity. `OriginId(0)` is the reserved Unknown/Bootstrap record.
-  `OriginListId::EMPTY` is the reserved empty origin-list span.
+  token identity. Source-frame pending queues store packed traced token words,
+  but input-summary equality and semantic hashing decode them back to `Token`
+  so origin differences do not affect snapshot convergence. `OriginId(0)` is
+  the reserved Unknown/Bootstrap record. `OriginListId::EMPTY` is the reserved
+  empty origin-list span.
 - The store owns one append-only `OriginRecord` arena and one append-only
   packed `OriginId` arena addressed by `OriginListId` spans. It is deliberately
   per-instance and not hash-consed: identical origin records or lists may have
@@ -512,7 +515,7 @@ pub struct Snapshot {
 - **Input restoration**: `InputSummary` carries the lexer-owned source-frame
   state required after a source is reopened: source-local offsets, current
   normalized line, in-line char/byte offsets, lexer N/M/S state, queued
-  synthetic tokens such as a blank-line `\par`, token-list replay positions,
+  traced synthetic tokens such as a blank-line `\par`, token-list replay positions,
   macro-body replay argument slots, open condition frames, and the last
   popped source frame. Condition frames are snapshot-owned input frames; each
   carries its conditional family (`\if...` or `\ifcase`), current limb

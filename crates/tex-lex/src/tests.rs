@@ -4,6 +4,7 @@ use super::{
     load_next_line,
 };
 use tex_state::env::banks::IntParam;
+use tex_state::provenance::{InsertedOriginKind, OriginRecord};
 use tex_state::token::{Catcode, Token};
 use tex_state::{ExpansionState, Universe};
 
@@ -343,6 +344,71 @@ fn superscript_notation_is_expanded_before_catcode_lookup() {
 }
 
 #[test]
+fn traced_source_origins_use_token_start_coordinates() {
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::END_LINE_CHAR, -1);
+    let mut lexer = Lexer::new(MemoryInput::new("aé\\foo ^^41"));
+
+    let first = lexer
+        .next_traced_token(&mut stores)
+        .expect("first token")
+        .expect("first token");
+    assert_eq!(first.token(), Some(char_token('a', Catcode::Letter)));
+    assert_source_origin(&stores, first.origin(), 0, 1, 0);
+
+    let second = lexer
+        .next_traced_token(&mut stores)
+        .expect("second token")
+        .expect("second token");
+    assert_eq!(second.token(), Some(char_token('é', Catcode::Other)));
+    assert_source_origin(&stores, second.origin(), 1, 1, 1);
+
+    let control = lexer
+        .next_traced_token(&mut stores)
+        .expect("control sequence")
+        .expect("control sequence");
+    assert_eq!(control.token(), Some(cs_token(&mut stores, "foo")));
+    assert_source_origin(&stores, control.origin(), 3, 1, 2);
+
+    let superscript = lexer
+        .next_traced_token(&mut stores)
+        .expect("superscript token")
+        .expect("superscript token");
+    assert_eq!(superscript.token(), Some(char_token('A', Catcode::Letter)));
+    assert_source_origin(&stores, superscript.origin(), 8, 1, 7);
+}
+
+#[test]
+fn endline_derived_tokens_have_inserted_origins() {
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::END_LINE_CHAR, 13);
+    let mut lexer = Lexer::new(MemoryInput::new("a\n\n"));
+
+    let first = lexer
+        .next_traced_token(&mut stores)
+        .expect("source token")
+        .expect("source token");
+    assert_eq!(first.token(), Some(char_token('a', Catcode::Letter)));
+    assert_source_origin(&stores, first.origin(), 0, 1, 0);
+
+    let space = lexer
+        .next_traced_token(&mut stores)
+        .expect("endline space")
+        .expect("endline space");
+    assert_eq!(space.token(), Some(char_token(' ', Catcode::Space)));
+    let space_parent = assert_inserted_origin(&stores, space.origin(), InsertedOriginKind::EndLine);
+    assert_source_origin(&stores, space_parent, 1, 1, 1);
+
+    let par = lexer
+        .next_traced_token(&mut stores)
+        .expect("paragraph token")
+        .expect("paragraph token");
+    assert_eq!(par.token(), Some(cs_token(&mut stores, "par")));
+    let par_parent = assert_inserted_origin(&stores, par.origin(), InsertedOriginKind::Paragraph);
+    assert_source_origin(&stores, par_parent, 2, 2, 0);
+}
+
+#[test]
 fn every_non_ignored_non_invalid_char_catcode_emits_char_token() {
     let cases = [
         ('{', Catcode::BeginGroup),
@@ -655,4 +721,32 @@ fn char_token(ch: char, cat: Catcode) -> Token {
 
 fn cs_token(stores: &mut impl ExpansionState, name: &str) -> Token {
     Token::Cs(stores.intern(name))
+}
+
+fn assert_source_origin(
+    stores: &Universe,
+    origin: tex_state::token::OriginId,
+    byte_offset: u64,
+    line: u32,
+    column: u32,
+) {
+    let OriginRecord::Source(source) = stores.origin(origin) else {
+        panic!("expected source origin, got {:?}", stores.origin(origin));
+    };
+    assert_eq!(source.source().raw(), 0);
+    assert_eq!(source.byte_offset(), byte_offset);
+    assert_eq!(source.line(), line);
+    assert_eq!(source.column(), column);
+}
+
+fn assert_inserted_origin(
+    stores: &Universe,
+    origin: tex_state::token::OriginId,
+    kind: InsertedOriginKind,
+) -> tex_state::token::OriginId {
+    let OriginRecord::Inserted(inserted) = stores.origin(origin) else {
+        panic!("expected inserted origin, got {:?}", stores.origin(origin));
+    };
+    assert_eq!(inserted.kind(), kind);
+    inserted.parent()
 }

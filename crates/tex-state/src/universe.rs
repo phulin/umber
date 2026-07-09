@@ -42,7 +42,7 @@ use crate::stores::{
     FontParameterError, GroupKind, GroupMismatch, PrepareMagDiagnostic, ShipoutNodeMark,
     StoreSnapshot, Stores,
 };
-use crate::token::{Catcode, OriginId, Token};
+use crate::token::{Catcode, OriginId, Token, TracedTokenWord};
 use crate::token_store::TokenListBuilder;
 use crate::world::{
     ContentHash, EffectPos, EffectRecord, JobClock, PrintSink, ShellEscapePolicy,
@@ -109,6 +109,20 @@ pub trait ExpansionState {
     fn glue_param(&self, param: GlueParam) -> GlueId;
     fn tok_param(&self, param: TokParam) -> TokenListId;
     fn input_stream_eof(&self, stream: StreamSlot) -> bool;
+    fn bootstrap_origin(&self) -> OriginId;
+    fn source_origin(
+        &mut self,
+        source: SourceId,
+        byte_offset: u64,
+        line: u32,
+        column: u32,
+    ) -> OriginId;
+    fn inserted_origin(
+        &mut self,
+        kind: InsertedOriginKind,
+        token: Token,
+        parent: OriginId,
+    ) -> OriginId;
 }
 
 /// Input file reads available to driver-supplied `\input` hooks.
@@ -2029,6 +2043,29 @@ impl ExpansionState for Universe {
         Self::tok_param(self, param)
     }
 
+    fn bootstrap_origin(&self) -> OriginId {
+        Self::bootstrap_origin(self)
+    }
+
+    fn source_origin(
+        &mut self,
+        source: SourceId,
+        byte_offset: u64,
+        line: u32,
+        column: u32,
+    ) -> OriginId {
+        Self::source_origin(self, source, byte_offset, line, column)
+    }
+
+    fn inserted_origin(
+        &mut self,
+        kind: InsertedOriginKind,
+        token: Token,
+        parent: OriginId,
+    ) -> OriginId {
+        Self::inserted_origin(self, kind, token, parent)
+    }
+
     fn input_stream_eof(&self, stream: StreamSlot) -> bool {
         self.world.input_stream_eof(stream)
     }
@@ -2223,6 +2260,30 @@ impl ExpansionState for ExpansionContext<'_> {
         self.universe.tok_param(param)
     }
 
+    fn bootstrap_origin(&self) -> OriginId {
+        self.universe.bootstrap_origin()
+    }
+
+    fn source_origin(
+        &mut self,
+        source: SourceId,
+        byte_offset: u64,
+        line: u32,
+        column: u32,
+    ) -> OriginId {
+        self.universe
+            .source_origin(source, byte_offset, line, column)
+    }
+
+    fn inserted_origin(
+        &mut self,
+        kind: InsertedOriginKind,
+        token: Token,
+        parent: OriginId,
+    ) -> OriginId {
+        self.universe.inserted_origin(kind, token, parent)
+    }
+
     fn input_stream_eof(&self, stream: StreamSlot) -> bool {
         self.universe.world.input_stream_eof(stream)
     }
@@ -2359,7 +2420,7 @@ fn hash_input_summary_fields(stores: &Stores, summary: &InputSummary, hasher: &m
                 hasher.usize(source.line_byte_offset());
                 hasher.usize(source.pending().len());
                 for token in source.pending() {
-                    hash_token(stores, *token, hasher);
+                    hash_traced_token_semantic(stores, *token, hasher);
                 }
                 hasher.bool(source.end_after_current_line());
             }
@@ -2407,12 +2468,19 @@ fn hash_input_summary_fields(stores: &Stores, summary: &InputSummary, hasher: &m
             hasher.usize(source.line_byte_offset());
             hasher.usize(source.pending().len());
             for token in source.pending() {
-                hash_token(stores, *token, hasher);
+                hash_traced_token_semantic(stores, *token, hasher);
             }
             hasher.bool(source.end_after_current_line());
         }
         None => hasher.bool(false),
     }
+}
+
+fn hash_traced_token_semantic(stores: &Stores, token: TracedTokenWord, hasher: &mut StateHasher) {
+    let token = token
+        .token()
+        .expect("input-summary pending tokens must be valid traced tokens");
+    hash_token(stores, token, hasher);
 }
 
 fn hash_token(stores: &Stores, token: Token, hasher: &mut StateHasher) {

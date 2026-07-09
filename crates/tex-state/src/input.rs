@@ -1,7 +1,8 @@
 //! Snapshot-ready input stack summary shared by the lexer and `Universe`.
 
 use crate::ids::TokenListId;
-use crate::token::Token;
+use crate::token::{Token, TracedTokenWord};
+use std::hash::{Hash, Hasher};
 
 /// Maximum number of macro arguments TeX permits in one macro body.
 pub const MACRO_ARGUMENT_SLOTS: usize = 9;
@@ -306,7 +307,7 @@ pub enum InputFrameSummary {
 /// reopen key is intentionally not stored here because `World` input records
 /// own file/content identity and reopen sources by content hash before this
 /// summary's offsets and normalized-line state are applied.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct SourceFrameSummary {
     buffer_offset: usize,
     next_source_offset: usize,
@@ -316,7 +317,7 @@ pub struct SourceFrameSummary {
     normalized_line: String,
     line_char_offset: usize,
     line_byte_offset: usize,
-    pending: Vec<Token>,
+    pending: Vec<TracedTokenWord>,
     end_after_current_line: bool,
 }
 
@@ -331,7 +332,7 @@ impl SourceFrameSummary {
         lexer_state: LexerState,
         normalized_line: String,
         line_char_offset: usize,
-        pending: Vec<Token>,
+        pending: Vec<TracedTokenWord>,
         end_after_current_line: bool,
     ) -> Self {
         let line: Vec<_> = normalized_line.chars().collect();
@@ -390,7 +391,7 @@ impl SourceFrameSummary {
     }
 
     #[must_use]
-    pub fn pending(&self) -> &[Token] {
+    pub fn pending(&self) -> &[TracedTokenWord] {
         &self.pending
     }
 
@@ -407,6 +408,55 @@ impl SourceFrameSummary {
             && self.line_byte_offset <= self.normalized_line.len()
             && self.normalized_line.is_char_boundary(self.line_byte_offset)
     }
+}
+
+impl PartialEq for SourceFrameSummary {
+    fn eq(&self, other: &Self) -> bool {
+        self.buffer_offset == other.buffer_offset
+            && self.next_source_offset == other.next_source_offset
+            && self.line_number == other.line_number
+            && self.column == other.column
+            && self.lexer_state == other.lexer_state
+            && self.normalized_line == other.normalized_line
+            && self.line_char_offset == other.line_char_offset
+            && self.line_byte_offset == other.line_byte_offset
+            && self.end_after_current_line == other.end_after_current_line
+            && traced_pending_tokens_eq(&self.pending, &other.pending)
+    }
+}
+
+impl Eq for SourceFrameSummary {}
+
+impl Hash for SourceFrameSummary {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.buffer_offset.hash(state);
+        self.next_source_offset.hash(state);
+        self.line_number.hash(state);
+        self.column.hash(state);
+        self.lexer_state.hash(state);
+        self.normalized_line.hash(state);
+        self.line_char_offset.hash(state);
+        self.line_byte_offset.hash(state);
+        self.pending.len().hash(state);
+        for token in &self.pending {
+            semantic_token(*token).hash(state);
+        }
+        self.end_after_current_line.hash(state);
+    }
+}
+
+fn traced_pending_tokens_eq(left: &[TracedTokenWord], right: &[TracedTokenWord]) -> bool {
+    left.len() == right.len()
+        && left
+            .iter()
+            .zip(right)
+            .all(|(left, right)| semantic_token(*left) == semantic_token(*right))
+}
+
+fn semantic_token(token: TracedTokenWord) -> Token {
+    token
+        .token()
+        .expect("source-frame pending tokens must be valid traced tokens")
 }
 
 fn byte_offset_for_char_offset(line: &[char], char_offset: usize) -> usize {
