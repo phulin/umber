@@ -11,8 +11,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 ## File Map
 
 - `AGENTS.md`: Local guidance for agents working in the `tex-state` crate.
-- `Cargo.toml`: Crate manifest, dependencies, features, library target, integration test, and Criterion bench wiring.
-- `benches/state_budgets.rs`: Criterion benchmarks for meaning lookup, barrier writes, snapshots, state hashing, and group cycles.
+- `Cargo.toml`: Crate manifest, dependencies, features, library target, and integration test wiring.
 - `src/cell.rs`: Packed environment cell identifiers and bank tags used by journals and raw storage.
 - `src/cell/tests.rs`: Unit tests for cell id packing, bank decoding, and global-bit handling.
 - `src/code_tables.rs`: Sparse paged TeX catcode, lc/uc/sf/math/delcode tables with generation stamps and snapshots.
@@ -86,3 +85,4 @@ All production mutation of live TeX state should pass through `Universe` or simi
 ## Validation
 
 Run `cargo test --tests -p tex-state` for state changes. For boundary-sensitive changes, include the live-boundary, replay, shadow, and trybuild coverage that exercises the affected facade.
+State performance benchmarks live in the standalone `benchmarks/tex-state` crate and are run explicitly with `cargo bench --manifest-path benchmarks/tex-state/Cargo.toml --bench state_budgets`.
