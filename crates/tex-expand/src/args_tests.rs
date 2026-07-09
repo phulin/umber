@@ -1,8 +1,10 @@
 use crate::args::{MacroCallError, match_macro_call};
 use tex_lex::{InputStack, MemoryInput, TokenListReplayKind};
+use tex_state::TracedTokenList;
+use tex_state::ids::OriginListId;
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::MeaningFlags;
-use tex_state::token::{Catcode, Token};
+use tex_state::token::{Catcode, OriginId, Token};
 use tex_state::{ExpansionState, Universe};
 
 fn char_token(ch: char, cat: Catcode) -> Token {
@@ -40,6 +42,26 @@ fn match_from_list(
                 .to_vec()
         })
         .collect())
+}
+
+fn match_traced_from_list(
+    stores: &mut impl ExpansionState,
+    meaning: MacroMeaning,
+    input_tokens: &[Token],
+    input_origins: OriginListId,
+) -> Result<Vec<TracedTokenList>, MacroCallError> {
+    let call = cs_token(stores, "m");
+    let input_list = stores.intern_token_list(input_tokens);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list_with_origins(input_list, input_origins, TokenListReplayKind::Inserted);
+    let matched = match_macro_call(&mut input, stores, call, meaning)?;
+    Ok((1..=matched.len())
+        .map(|slot| matched.get_traced(slot as u8).expect("slot"))
+        .collect())
+}
+
+fn source_origin(stores: &mut impl ExpansionState, line: u32, column: u32) -> OriginId {
+    stores.source_origin(tex_state::SourceId::new(1), u64::from(column), line, column)
 }
 
 #[test]
@@ -91,6 +113,35 @@ fn matches_undelimited_balanced_group_without_outer_braces() {
 }
 
 #[test]
+fn undelimited_argument_freezes_call_site_origins() {
+    let mut stores = Universe::new();
+    let meaning = macro_meaning(&mut stores, MeaningFlags::EMPTY, &[Token::param(1)]);
+    let skipped_space = source_origin(&mut stores, 1, 1);
+    let argument_origin = source_origin(&mut stores, 1, 2);
+    let input_origins = stores.allocate_origin_list(&[skipped_space, argument_origin]);
+
+    let args = match_traced_from_list(
+        &mut stores,
+        meaning,
+        &[
+            char_token(' ', Catcode::Space),
+            char_token('x', Catcode::Letter),
+        ],
+        input_origins,
+    )
+    .expect("argument should match");
+
+    assert_eq!(
+        stores.tokens(args[0].token_list()),
+        &[char_token('x', Catcode::Letter)]
+    );
+    assert_eq!(
+        stores.origin_list(args[0].origin_list()),
+        &[argument_origin]
+    );
+}
+
+#[test]
 fn matches_delimited_argument_runs() {
     let mut stores = Universe::new();
     let meaning = macro_meaning(
@@ -128,6 +179,39 @@ fn matches_delimited_argument_runs() {
 }
 
 #[test]
+fn delimited_argument_freezes_only_argument_origins() {
+    let mut stores = Universe::new();
+    let meaning = macro_meaning(
+        &mut stores,
+        MeaningFlags::EMPTY,
+        &[Token::param(1), char_token(',', Catcode::Other)],
+    );
+    let argument_origin = source_origin(&mut stores, 2, 1);
+    let delimiter_origin = source_origin(&mut stores, 2, 2);
+    let input_origins = stores.allocate_origin_list(&[argument_origin, delimiter_origin]);
+
+    let args = match_traced_from_list(
+        &mut stores,
+        meaning,
+        &[
+            char_token('x', Catcode::Letter),
+            char_token(',', Catcode::Other),
+        ],
+        input_origins,
+    )
+    .expect("argument should match");
+
+    assert_eq!(
+        stores.tokens(args[0].token_list()),
+        &[char_token('x', Catcode::Letter)]
+    );
+    assert_eq!(
+        stores.origin_list(args[0].origin_list()),
+        &[argument_origin]
+    );
+}
+
+#[test]
 fn delimited_argument_matching_handles_overlapping_prefixes() {
     let mut stores = Universe::new();
     let meaning = macro_meaning(
@@ -152,6 +236,46 @@ fn delimited_argument_matching_handles_overlapping_prefixes() {
     .expect("overlapping delimiter prefix should match");
 
     assert_eq!(args, vec![vec![char_token('a', Catcode::Letter)]]);
+}
+
+#[test]
+fn delimited_argument_preserves_recovered_prefix_origins() {
+    let mut stores = Universe::new();
+    let meaning = macro_meaning(
+        &mut stores,
+        MeaningFlags::EMPTY,
+        &[
+            Token::param(1),
+            char_token('a', Catcode::Letter),
+            char_token('b', Catcode::Letter),
+        ],
+    );
+    let recovered_origin = source_origin(&mut stores, 3, 1);
+    let delimiter_a_origin = source_origin(&mut stores, 3, 2);
+    let delimiter_b_origin = source_origin(&mut stores, 3, 3);
+    let input_origins =
+        stores.allocate_origin_list(&[recovered_origin, delimiter_a_origin, delimiter_b_origin]);
+
+    let args = match_traced_from_list(
+        &mut stores,
+        meaning,
+        &[
+            char_token('a', Catcode::Letter),
+            char_token('a', Catcode::Letter),
+            char_token('b', Catcode::Letter),
+        ],
+        input_origins,
+    )
+    .expect("overlapping delimiter prefix should match");
+
+    assert_eq!(
+        stores.tokens(args[0].token_list()),
+        &[char_token('a', Catcode::Letter)]
+    );
+    assert_eq!(
+        stores.origin_list(args[0].origin_list()),
+        &[recovered_origin]
+    );
 }
 
 #[test]

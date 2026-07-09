@@ -521,6 +521,59 @@ fn macro_body_replay_substitutes_frozen_argument_lists() {
 }
 
 #[test]
+fn macro_argument_replay_delivers_call_site_argument_origins() {
+    let mut stores = Universe::new();
+    let macro_cs = stores.intern("m");
+    let params = stores.intern_token_list(&[Token::param(1)]);
+    let body = stores.intern_token_list(&[Token::param(1)]);
+    stores.set_macro_meaning(
+        macro_cs,
+        MacroMeaning::new(MeaningFlags::EMPTY, params, body),
+    );
+    let argument_origin = stores.source_origin(tex_state::SourceId::new(9), 70, 7, 5);
+    let invocation = stores.intern_token_list(&[char_token('x')]);
+    let invocation_origins = stores.allocate_origin_list(&[argument_origin]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list_with_origins(
+        invocation,
+        invocation_origins,
+        TokenListReplayKind::Inserted,
+    );
+    let meaning = stores.meaning(macro_cs);
+    let crate::Dispatch::Push {
+        token_list,
+        origin_list,
+        macro_arguments,
+        macro_invocation,
+        ..
+    } = dispatch(
+        Token::Cs(macro_cs),
+        &mut input,
+        &mut stores,
+        &mut NoopRecorder,
+        meaning,
+    )
+    .expect("macro dispatch should succeed")
+    else {
+        panic!("expected macro body push");
+    };
+    input.push_macro_body_with_origins_and_invocation(
+        token_list,
+        origin_list,
+        macro_arguments,
+        macro_invocation,
+    );
+
+    let replayed = input
+        .next_traced_token(&mut stores)
+        .expect("replay should succeed")
+        .expect("argument token should replay");
+
+    assert_eq!(replayed.token(), Some(char_token('x')));
+    assert_eq!(replayed.origin(), argument_origin);
+}
+
+#[test]
 fn nested_macro_calls_replay_arguments_from_outer_frozen_frame() {
     let mut stores = Universe::new();
     let wrap = stores.intern("wrap");
