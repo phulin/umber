@@ -1,0 +1,11 @@
+\input math_preamble.inc
+\def\Lparen{\delimiter"028300 }
+\def\Rparen{\delimiter"029301 }
+\def\Lbracket{\delimiter"05B302 }
+\def\Rbracket{\delimiter"05D303 }
+\shipout\vbox{%
+  \hbox{$\displaystyle \left\Lparen {a\over b} \right\Rparen$}%
+  \hbox{$\displaystyle \left\Lbracket \vcenter{\hbox{x}\hbox{y}} \right\Rbracket$}%
+  \hbox{$\displaystyle {a+b\overwithdelims\Lparen\Rparen c+d}$}%
+}
+\end

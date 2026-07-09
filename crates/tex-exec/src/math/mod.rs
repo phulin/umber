@@ -347,7 +347,7 @@ where
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::Delimiter => {
-            let delimiter = scan_delimiter_code(input, stores, hooks)?;
+            let delimiter = scan_delimiter_code(input, stores, recorder, hooks)?;
             let ch = char::from_u32(delimiter & 0xff).unwrap_or('\0');
             append_noad(
                 nest,
@@ -396,11 +396,11 @@ where
         | UnexpandablePrimitive::OverWithDelims
         | UnexpandablePrimitive::AtopWithDelims
         | UnexpandablePrimitive::AboveWithDelims => {
-            start_fraction(primitive, nest, input, stores, hooks)?;
+            start_fraction(primitive, nest, input, stores, recorder, hooks)?;
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::Radical => {
-            let delimiter = scan_delimiter_code(input, stores, hooks)?;
+            let delimiter = scan_delimiter_code(input, stores, recorder, hooks)?;
             let field = scan_math_field(nest, input, stores, recorder, hooks)?;
             append_noad(nest, NoadKind::Radical { delimiter }, field);
             Ok(DispatchAction::Continue)
@@ -481,11 +481,11 @@ where
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::Left => {
-            start_left_group(nest, input, stores, hooks)?;
+            start_left_group(nest, input, stores, recorder, hooks)?;
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::Right => {
-            finish_left_group(nest, input, stores, hooks)?;
+            finish_left_group(nest, input, stores, recorder, hooks)?;
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::DisplayStyle

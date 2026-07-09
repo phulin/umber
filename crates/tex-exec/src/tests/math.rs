@@ -322,6 +322,61 @@ fn left_right_scans_nested_list_as_inner_noad() {
 }
 
 #[test]
+fn left_right_accepts_plain_style_delimiter_macros() {
+    let (stores, executor) = run_math_source(
+        r#"\def\lbrace{\delimiter"4266308 }\def\rbrace{\delimiter"5267309 }$\left\lbrace a\right\rbrace$"#,
+    );
+    let nodes = math_nodes(&stores, &executor);
+    let inner = math_noad(&nodes[0]);
+    let MathField::SubMlist(list) = inner.nucleus else {
+        panic!("expected left/right inner noad to hold a sub-mlist");
+    };
+    let enclosed = stores.nodes(list);
+    assert!(matches!(
+        math_noad(&enclosed[0]).kind,
+        NoadKind::LeftDelimiter {
+            delimiter: 0x0426_6308
+        }
+    ));
+    assert_math_char(&math_noad(&enclosed[1]).nucleus, 0, 'a');
+    assert!(matches!(
+        math_noad(&enclosed[2]).kind,
+        NoadKind::RightDelimiter {
+            delimiter: 0x0526_7309
+        }
+    ));
+}
+
+#[test]
+fn invalid_and_out_of_range_delimiters_recover_to_null() {
+    let (invalid_stores, invalid_executor) = run_math_source(r"$\left\relax? a\right.$");
+    let invalid_nodes = math_nodes(&invalid_stores, &invalid_executor);
+    let invalid_inner = math_noad(&invalid_nodes[0]);
+    let MathField::SubMlist(invalid_list) = invalid_inner.nucleus else {
+        panic!("expected recovered inner noad");
+    };
+    let invalid_enclosed = invalid_stores.nodes(invalid_list);
+    assert!(matches!(
+        math_noad(&invalid_enclosed[0]).kind,
+        NoadKind::LeftDelimiter { delimiter: 0 }
+    ));
+    assert_math_char(&math_noad(&invalid_enclosed[1]).nucleus, 0, '?');
+    assert!(terminal_effect_text(&invalid_stores).contains("! Missing delimiter (. inserted)."));
+
+    let (range_stores, range_executor) = run_math_source(r#"$\left\delimiter"8000000 a\right.$"#);
+    let range_nodes = math_nodes(&range_stores, &range_executor);
+    let range_inner = math_noad(&range_nodes[0]);
+    let MathField::SubMlist(range_list) = range_inner.nucleus else {
+        panic!("expected range-recovered inner noad");
+    };
+    assert!(matches!(
+        math_noad(&range_stores.nodes(range_list)[0]).kind,
+        NoadKind::LeftDelimiter { delimiter: 0 }
+    ));
+    assert!(terminal_effect_text(&range_stores).contains("! Bad delimiter code."));
+}
+
+#[test]
 fn mismatched_right_and_missing_right_use_tex_error_text() {
     let (extra_stores, extra_executor) = run_math_source(r"$a\right.$");
     let extra_nodes = math_nodes(&extra_stores, &extra_executor);

@@ -489,6 +489,12 @@ assignments, box building, and dispatch into the typesetting kernels.
   frozen `tex-state` math node payloads. A matching `\right` closes the
   nested math level and appends an inner noad whose nucleus is the delimited
   sub-mlist; delimiter sizing remains a pure conversion-time responsibility.
+  Non-radical delimiter scanning follows TeX82's `scan_delimiter`: expansion
+  skips blanks and `\relax`, character delimiters read `\delcode`, and the
+  unexpandable `\delimiter` command scans the exact 27-bit small-family,
+  small-character, large-family, large-character word. Invalid tokens are
+  replayed with their original traced origin before null-delimiter recovery,
+  so later diagnostics and restored input checkpoints retain the same source.
   The mode-list summary carries the pending incomplete fraction so snapshots
   preserve TeX's `\over`/`\atop`/`\above` state.
   When a `math_comp` constructor such as `\mathopen` is delivered outside
