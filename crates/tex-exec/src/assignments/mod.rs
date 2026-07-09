@@ -563,6 +563,8 @@ where
             | UnexpandablePrimitive::MKern
             | UnexpandablePrimitive::NonScript
             | UnexpandablePrimitive::MathChoice
+            | UnexpandablePrimitive::Left
+            | UnexpandablePrimitive::Right
             | UnexpandablePrimitive::DisplayStyle
             | UnexpandablePrimitive::TextStyle
             | UnexpandablePrimitive::ScriptStyle

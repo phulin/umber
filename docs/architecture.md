@@ -369,9 +369,12 @@ assignments, box building, and dispatch into the typesetting kernels.
 - **Math front-end**: `tex-exec` owns math-mode entry/exit and Appendix G
   mlist construction. It turns math characters, explicit noad constructors,
   scripts, generalized fractions, radicals, accents, `\vcenter`, style
-  switches, mu glue/kerns, and `\mathchoice` into frozen `tex-state` math
-  node payloads. The mode-list summary carries the pending incomplete
-  fraction so snapshots preserve TeX's `\over`/`\atop`/`\above` state.
+  switches, mu glue/kerns, `\mathchoice`, and `\left...\right` groups into
+  frozen `tex-state` math node payloads. A matching `\right` closes the
+  nested math level and appends an inner noad whose nucleus is the delimited
+  sub-mlist; delimiter sizing remains a pure conversion-time responsibility.
+  The mode-list summary carries the pending incomplete fraction so snapshots
+  preserve TeX's `\over`/`\atop`/`\above` state.
   `\mathcode"8000` redispatches through the current active-character meaning
   at use time, and family font selectors live in the barriered Env font state.
 - **List diagnostics**: `\showbox` routes through `World` terminal/log
@@ -392,11 +395,13 @@ assignments, box building, and dispatch into the typesetting kernels.
   material, `\parskip`, and `\everypar` replay are handled before entering
   unrestricted horizontal mode. When horizontal material ends (`\par` or
   `\endgraf`), the stomach performs TeX's final paragraph-list preparation
-  (trailing-glue removal and `\penalty10000` plus `\parfillskip`), snapshots
-  paragraph-shape and line-breaking parameters, calls the pure line breaker
-  over the prepared hlist, runs separate post-line-break surgery, freezes each
-  resulting line list, hpack's it to the captured line width, and appends the
-  hboxes through the shared vertical append routine. Fresh engine state
+  (trailing-glue removal and `\penalty10000` plus `\parfillskip`), expands
+  finished inline math lists into hlist nodes bracketed by `\mathsurround`
+  `MathOn`/`MathOff` markers, snapshots paragraph-shape and line-breaking
+  parameters, calls the pure line breaker over the prepared hlist, runs
+  separate post-line-break surgery, freezes each resulting line list, hpack's
+  it to the captured line width, and appends the hboxes through the shared
+  vertical append routine. Fresh engine state
   installs the plain-format paragraph/layout defaults that affect this hand-off
   (`\pretolerance=100`, `\tolerance=200`, `\baselineskip=12pt`,
   `\parfillskip=0pt plus 1fil`, `\overfullrule=5pt`, and `\maxdepth=4pt`) so
@@ -467,8 +472,9 @@ makes box-level memoization (M4) sound.
   surface. The implementation replays TeX.web's two passes: pass one resolves
   styles, math choices, mu glue/kerns, noad classes, nuclei, and scripts while
   tracking top-level dimensions; pass two inserts the 8x8 inter-class spacing
-  table and optional penalties. Symbol, extension, and delimiter parameters
-  are copied before entry, and the style helpers carry cramped propagation for
+  table and optional `\binoppenalty`/`\relpenalty` nodes for the outer inline
+  conversion. Symbol, extension, delimiter, and math penalty parameters are
+  copied before entry, and the style helpers carry cramped propagation for
   recursive sublists. The pure kernel includes Appendix G compound builders
   for generalized fractions, radicals, big operators with displayed limits,
   variable delimiters and extensible recipes, math accents, over/under lines,

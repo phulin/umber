@@ -56,8 +56,8 @@ pub enum Node {
         content: NodeListId,
     },
     Whatsit(Whatsit),
-    MathOn,
-    MathOff,
+    MathOn(Scaled),
+    MathOff(Scaled),
     MathNoad(MathNoad),
     FractionNoad(MathFraction),
     MathStyle(MathStyle),
@@ -204,8 +204,8 @@ impl Node {
             | Self::Unset
             | Self::Mark { .. }
             | Self::Whatsit(_)
-            | Self::MathOn
-            | Self::MathOff
+            | Self::MathOn(_)
+            | Self::MathOff(_)
             | Self::MathStyle(_)
             | Self::Nonscript => {}
         }

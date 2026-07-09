@@ -428,13 +428,15 @@ fn legal_breakpoints<S: TypesetState>(
                     state.nodes(*replace).len(),
                 ),
             }),
-            Node::MathOff => out.push(Breakpoint {
-                position: i + 1,
-                width_position: i + 1,
-                penalty: 0,
-                hyphenated: false,
-                add_width: Widths::zero(),
-            }),
+            Node::MathOff(_) if matches!(nodes.get(i + 1), Some(Node::Glue { .. })) => {
+                out.push(Breakpoint {
+                    position: i + 1,
+                    width_position: i + 1,
+                    penalty: 0,
+                    hyphenated: false,
+                    add_width: Widths::zero(),
+                });
+            }
             _ => {}
         }
     }
@@ -453,7 +455,11 @@ fn legal_breakpoints<S: TypesetState>(
 fn is_discardable(node: &Node) -> bool {
     matches!(
         node,
-        Node::Glue { .. } | Node::Kern { .. } | Node::Penalty(_) | Node::MathOn | Node::MathOff
+        Node::Glue { .. }
+            | Node::Kern { .. }
+            | Node::Penalty(_)
+            | Node::MathOn(_)
+            | Node::MathOff(_)
     )
 }
 

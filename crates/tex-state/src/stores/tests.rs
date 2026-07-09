@@ -206,13 +206,19 @@ fn paragraph_layout_defaults_match_plain_tex_format() {
 fn node_list_builder_finishes_through_stores_boundary() {
     let mut stores = Stores::new();
     let mut builder = stores.node_list_builder();
-    builder.push(Node::MathOn);
-    builder.push(Node::MathOff);
+    builder.push(Node::MathOn(Scaled::from_raw(0)));
+    builder.push(Node::MathOff(Scaled::from_raw(0)));
 
     let id = stores.finish_node_list(&mut builder);
 
     assert!(builder.is_empty());
-    assert_eq!(stores.nodes(id), &[Node::MathOn, Node::MathOff]);
+    assert_eq!(
+        stores.nodes(id),
+        &[
+            Node::MathOn(Scaled::from_raw(0)),
+            Node::MathOff(Scaled::from_raw(0))
+        ]
+    );
 
     builder.push(Node::Char {
         font: NULL_FONT,

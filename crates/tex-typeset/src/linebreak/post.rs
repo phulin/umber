@@ -64,6 +64,9 @@ fn push_line_segment<S: TypesetState>(
                 post.extend_from_slice(state.nodes(*post_list));
             }
             Node::Glue { .. } if absolute + 1 == end && end < nodes.len() => {}
+            Node::MathOff(_) if absolute + 1 == end && end < nodes.len() => {
+                out.push(Node::MathOff(tex_state::scaled::Scaled::from_raw(0)));
+            }
             _ => out.push(node.clone()),
         }
     }
@@ -103,6 +106,10 @@ fn line_penalty_after(
 fn is_discardable(node: &Node) -> bool {
     matches!(
         node,
-        Node::Glue { .. } | Node::Kern { .. } | Node::Penalty(_) | Node::MathOn | Node::MathOff
+        Node::Glue { .. }
+            | Node::Kern { .. }
+            | Node::Penalty(_)
+            | Node::MathOn(_)
+            | Node::MathOff(_)
     )
 }

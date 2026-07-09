@@ -130,8 +130,12 @@ fn dump_node(stores: &Universe, node: &Node, config: &DumpConfig, depth: i32, ou
             out.push_str("\\vadjust\n");
             dump_list(stores, *list, config, depth + 1, out);
         }
-        Node::MathOn => out.push_str("\\mathon\n"),
-        Node::MathOff => out.push_str("\\mathoff\n"),
+        Node::MathOn(width) => {
+            dump_math_marker("\\mathon", *width, out);
+        }
+        Node::MathOff(width) => {
+            dump_math_marker("\\mathoff", *width, out);
+        }
         Node::MathNoad(noad) => dump_math_noad(stores, noad, config, depth, out),
         Node::FractionNoad(fraction) => dump_fraction(stores, fraction, config, depth, out),
         Node::MathStyle(style) => {
@@ -159,6 +163,12 @@ fn dump_math_noad(
             out.push_str("\\accent");
             dump_math_char_inline(*accent, out);
         }
+        NoadKind::LeftDelimiter { delimiter } => {
+            let _ = write!(out, "\\left\"{delimiter:X}");
+        }
+        NoadKind::RightDelimiter { delimiter } => {
+            let _ = write!(out, "\\right\"{delimiter:X}");
+        }
         _ => out.push_str(noad_name(&noad.kind)),
     }
     match &noad.kind {
@@ -170,6 +180,18 @@ fn dump_math_noad(
     dump_math_field(stores, &noad.nucleus, config, depth + 1, '.', out);
     dump_math_field(stores, &noad.superscript, config, depth + 1, '^', out);
     dump_math_field(stores, &noad.subscript, config, depth + 1, '_', out);
+}
+
+fn dump_math_marker(name: &str, width: Scaled, out: &mut String) {
+    if width.raw() == 0 {
+        let _ = writeln!(out, "{name}");
+    } else {
+        let _ = writeln!(
+            out,
+            "{name}, surrounded {}",
+            format_scaled_without_unit(width)
+        );
+    }
 }
 
 fn noad_name(kind: &NoadKind) -> &'static str {
@@ -184,6 +206,8 @@ fn noad_name(kind: &NoadKind) -> &'static str {
         NoadKind::Normal(NoadClass::Inner) => "\\mathinner",
         NoadKind::Radical { .. } => "\\radical",
         NoadKind::Accent { .. } => "\\accent",
+        NoadKind::LeftDelimiter { .. } => "\\left",
+        NoadKind::RightDelimiter { .. } => "\\right",
         NoadKind::Underline => "\\underline",
         NoadKind::Overline => "\\overline",
         NoadKind::VCenter => "\\vcenter",

@@ -150,6 +150,8 @@ pub fn install_unexpandable_primitives(stores: &mut Universe) {
         ("mkern", UnexpandablePrimitive::MKern),
         ("nonscript", UnexpandablePrimitive::NonScript),
         ("mathchoice", UnexpandablePrimitive::MathChoice),
+        ("left", UnexpandablePrimitive::Left),
+        ("right", UnexpandablePrimitive::Right),
         ("displaystyle", UnexpandablePrimitive::DisplayStyle),
         ("textstyle", UnexpandablePrimitive::TextStyle),
         ("scriptstyle", UnexpandablePrimitive::ScriptStyle),

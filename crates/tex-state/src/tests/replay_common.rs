@@ -175,6 +175,8 @@ impl Oracle {
         let mut root = HashMap::new();
         root.insert(TestCell::IntParam(IntParam::PRETOLERANCE.raw()), 100);
         root.insert(TestCell::IntParam(IntParam::TOLERANCE.raw()), 200);
+        root.insert(TestCell::IntParam(IntParam::BIN_OP_PENALTY.raw()), 700);
+        root.insert(TestCell::IntParam(IntParam::REL_PENALTY.raw()), 500);
         root.insert(
             TestCell::DimenParam(DimenParam::MAX_DEPTH.raw()),
             u64::from((4 * Scaled::UNITY) as u32),

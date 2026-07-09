@@ -377,6 +377,8 @@ pub enum UnexpandablePrimitive {
     MKern,
     NonScript,
     MathChoice,
+    Left,
+    Right,
     DisplayStyle,
     TextStyle,
     ScriptStyle,
@@ -539,6 +541,8 @@ impl UnexpandablePrimitive {
             Self::TextStyle => 149,
             Self::ScriptStyle => 150,
             Self::ScriptScriptStyle => 151,
+            Self::Left => 152,
+            Self::Right => 153,
             Self::End => 54,
         }
     }
@@ -697,6 +701,8 @@ impl UnexpandablePrimitive {
             149 => Some(Self::TextStyle),
             150 => Some(Self::ScriptStyle),
             151 => Some(Self::ScriptScriptStyle),
+            152 => Some(Self::Left),
+            153 => Some(Self::Right),
             54 => Some(Self::End),
             _ => None,
         }

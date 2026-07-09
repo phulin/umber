@@ -87,8 +87,8 @@ pub(crate) fn build_page(stores: &mut Universe) -> Result<(), ExecError> {
             | Node::Lig { .. }
             | Node::Unset
             | Node::Disc { .. }
-            | Node::MathOn
-            | Node::MathOff
+            | Node::MathOn(_)
+            | Node::MathOff(_)
             | Node::MathNoad(_)
             | Node::FractionNoad(_)
             | Node::MathStyle(_)
@@ -516,7 +516,11 @@ fn ensure_max_depth(stores: &mut Universe) -> Result<(), ExecError> {
 fn precedes_break(node: &Node) -> bool {
     !matches!(
         node,
-        Node::Glue { .. } | Node::Kern { .. } | Node::Penalty(_) | Node::MathOn | Node::MathOff
+        Node::Glue { .. }
+            | Node::Kern { .. }
+            | Node::Penalty(_)
+            | Node::MathOn(_)
+            | Node::MathOff(_)
     )
 }
 

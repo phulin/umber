@@ -234,8 +234,8 @@ impl<'a> DviWriter<'a> {
             | PageNode::Mark { .. }
             | PageNode::Insert { .. }
             | PageNode::WhatsitAnchor { .. }
-            | PageNode::MathOn
-            | PageNode::MathOff
+            | PageNode::MathOn(_)
+            | PageNode::MathOff(_)
             | PageNode::Adjust(_) => {}
         }
         Ok(())
@@ -294,6 +294,9 @@ impl<'a> DviWriter<'a> {
                 PageNode::Kern { amount, .. } => {
                     self.cur_h = add_scaled(self.cur_h, *amount)?;
                 }
+                PageNode::MathOn(width) | PageNode::MathOff(width) => {
+                    self.cur_h = add_scaled(self.cur_h, *width)?;
+                }
                 PageNode::WhatsitAnchor { effect_index } => {
                     self.out_what(page, *effect_index)?;
                 }
@@ -302,8 +305,6 @@ impl<'a> DviWriter<'a> {
                 | PageNode::Disc { .. }
                 | PageNode::Mark { .. }
                 | PageNode::Insert { .. }
-                | PageNode::MathOn
-                | PageNode::MathOff
                 | PageNode::Adjust(_) => {}
             }
             self.cur_v = base_line;
@@ -379,8 +380,8 @@ impl<'a> DviWriter<'a> {
                 | PageNode::Disc { .. }
                 | PageNode::Mark { .. }
                 | PageNode::Insert { .. }
-                | PageNode::MathOn
-                | PageNode::MathOff
+                | PageNode::MathOn(_)
+                | PageNode::MathOff(_)
                 | PageNode::Adjust(_) => {}
             }
         }
@@ -732,6 +733,10 @@ fn page_extent(node: &PageNode) -> PageExtent {
             height_depth: optional_raw(*height) + optional_raw(*depth),
             width: optional_raw(*width),
         },
+        PageNode::MathOn(width) | PageNode::MathOff(width) => PageExtent {
+            height_depth: 0,
+            width: width.raw(),
+        },
         PageNode::Char { .. }
         | PageNode::Lig { .. }
         | PageNode::Kern { .. }
@@ -742,8 +747,6 @@ fn page_extent(node: &PageNode) -> PageExtent {
         | PageNode::Mark { .. }
         | PageNode::Insert { .. }
         | PageNode::WhatsitAnchor { .. }
-        | PageNode::MathOn
-        | PageNode::MathOff
         | PageNode::Adjust(_) => PageExtent::default(),
     }
 }

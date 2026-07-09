@@ -314,6 +314,89 @@ where
     }
 }
 
+pub(super) fn start_left_group<S, H>(
+    nest: &mut ModeNest,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    hooks: &mut H,
+) -> Result<(), ExecError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    let delimiter = scan_delimiter_token(input, stores, hooks)?;
+    nest.push(Mode::Math);
+    nest.current_list_mut().push(Node::MathNoad(MathNoad::new(
+        NoadKind::LeftDelimiter { delimiter },
+        MathField::Empty,
+    )));
+    sync_engine_state::<S, _>(hooks, nest, stores);
+    Ok(())
+}
+
+pub(super) fn finish_left_group<S, H>(
+    nest: &mut ModeNest,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    hooks: &mut H,
+) -> Result<(), ExecError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    let delimiter = scan_delimiter_token(input, stores, hooks)?;
+    if !current_list_is_left_group(nest) {
+        report_math_error(stores, "Extra \\right");
+        return Ok(());
+    }
+    close_left_group(nest, stores, delimiter)?;
+    sync_engine_state::<S, _>(hooks, nest, stores);
+    Ok(())
+}
+
+pub(super) fn close_missing_left_group(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+) -> Result<bool, ExecError> {
+    if !current_list_is_left_group(nest) {
+        return Ok(false);
+    }
+    report_math_error(stores, "Missing \\right. inserted");
+    close_left_group(nest, stores, 0)?;
+    Ok(true)
+}
+
+fn current_list_is_left_group(nest: &ModeNest) -> bool {
+    matches!(
+        nest.current_list().nodes().first(),
+        Some(Node::MathNoad(MathNoad {
+            kind: NoadKind::LeftDelimiter { .. },
+            ..
+        }))
+    )
+}
+
+fn close_left_group(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    right_delimiter: u32,
+) -> Result<(), ExecError> {
+    nest.current_list_mut().push(Node::MathNoad(MathNoad::new(
+        NoadKind::RightDelimiter {
+            delimiter: right_delimiter,
+        },
+        MathField::Empty,
+    )));
+    let content = finish_current_math_list(nest, stores);
+    let _ = nest.pop()?;
+    append_noad(
+        nest,
+        NoadKind::Normal(NoadClass::Inner),
+        MathField::SubMlist(content),
+    );
+    Ok(())
+}
+
 pub(super) fn finish_current_math_list(
     nest: &mut ModeNest,
     stores: &mut Universe,

@@ -133,11 +133,11 @@ pub(super) fn end_paragraph(nest: &mut ModeNest, stores: &mut Universe) -> Resul
         kind: GlueKind::ParFillSkip,
     });
     let level = nest.pop()?;
-    let hlist = level.list().nodes();
+    let hlist = crate::math::finish_math_lists(stores, level.list().nodes());
     let line_params = line_break_params(&params);
-    let hyphenated = super::hyphenation::hyphenated_hlist(stores, hlist);
+    let hyphenated = super::hyphenation::hyphenated_hlist(stores, &hlist);
     let mut hook = ExecHyphenationHook { hyphenated };
-    let decisions = line_break(stores, hlist, line_params, &mut hook);
+    let decisions = line_break(stores, &hlist, line_params, &mut hook);
     let post_params = post_line_break_params(&params);
     let mut line_count = 0i32;
     for mut broken in post_line_break(stores, &decisions.nodes, &decisions.breaks, post_params) {

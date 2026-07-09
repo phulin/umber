@@ -3,12 +3,16 @@
 use tex_expand::{ExpansionHooks, ReadRecorder};
 use tex_lex::{InputSource, InputStack};
 use tex_state::Universe;
-use tex_state::env::banks::TokParam;
-use tex_state::glue::GlueSpec;
+use tex_state::env::banks::{DimenParam, TokParam};
+use tex_state::glue::{GlueSpec, Order};
 use tex_state::math::{MathChar, MathField, MathListNode, NoadClass, NoadKind};
 use tex_state::meaning::{ExpandablePrimitive, Meaning, UnexpandablePrimitive};
-use tex_state::node::{GlueKind, KernKind, Node};
+use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, KernKind, Node, Sign};
+use tex_state::scaled::GlueSetRatio;
 use tex_state::token::{Catcode, Token};
+use tex_typeset::math::{
+    FrozenHList, MathBox, MathGlueKind, MathNode, MathParams, Style, mlist_to_hlist,
+};
 
 use crate::assignments;
 use crate::executor::sync_engine_state;
@@ -19,6 +23,98 @@ mod support;
 
 use scan::*;
 use support::*;
+
+pub(crate) fn finish_math_list_node(stores: &mut Universe, list: MathListNode) -> Vec<Node> {
+    let params = MathParams::read(stores);
+    let style = if list.display {
+        Style::DISPLAY
+    } else {
+        Style::TEXT
+    };
+    let hlist = mlist_to_hlist(stores, list.content, style, !list.display, &params);
+    let mut nodes = Vec::new();
+    if !list.display {
+        let surround = stores.dimen_param(DimenParam::MATH_SURROUND);
+        nodes.push(Node::MathOn(surround));
+    }
+    nodes.extend(lower_math_hlist(stores, &hlist));
+    if !list.display {
+        let surround = stores.dimen_param(DimenParam::MATH_SURROUND);
+        nodes.push(Node::MathOff(surround));
+    }
+    nodes
+}
+
+pub(crate) fn finish_math_lists(stores: &mut Universe, nodes: &[Node]) -> Vec<Node> {
+    let mut out = Vec::with_capacity(nodes.len());
+    for node in nodes {
+        match node {
+            Node::MathList(list) => out.extend(finish_math_list_node(stores, *list)),
+            node => out.push(node.clone()),
+        }
+    }
+    out
+}
+
+fn lower_math_hlist(stores: &mut Universe, hlist: &FrozenHList) -> Vec<Node> {
+    hlist
+        .nodes
+        .iter()
+        .map(|node| lower_math_node(stores, node))
+        .collect()
+}
+
+fn lower_math_node(stores: &mut Universe, node: &MathNode) -> Node {
+    match node {
+        MathNode::Char { font, ch, .. } => Node::Char {
+            font: *font,
+            ch: *ch,
+        },
+        MathNode::Kern { amount, kind } => Node::Kern {
+            amount: *amount,
+            kind: *kind,
+        },
+        MathNode::Glue { spec, kind } => Node::Glue {
+            spec: stores.intern_glue(*spec),
+            kind: lower_math_glue_kind(*kind),
+        },
+        MathNode::Penalty(penalty) => Node::Penalty(*penalty),
+        MathNode::Rule {
+            width,
+            height,
+            depth,
+        } => Node::Rule {
+            width: *width,
+            height: *height,
+            depth: *depth,
+        },
+        MathNode::HList(boxed) => Node::HList(lower_math_box(stores, boxed)),
+        MathNode::VList(boxed) => Node::VList(lower_math_box(stores, boxed)),
+        MathNode::Opaque(node) => node.clone(),
+    }
+}
+
+fn lower_math_box(stores: &mut Universe, boxed: &MathBox) -> BoxNode {
+    let lowered = lower_math_hlist(stores, &boxed.list);
+    let children = stores.freeze_node_list(&lowered);
+    BoxNode::new(BoxNodeFields {
+        width: boxed.width,
+        height: boxed.height,
+        depth: boxed.depth,
+        shift: boxed.shift,
+        glue_set: GlueSetRatio::from_raw(0),
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children,
+    })
+}
+
+fn lower_math_glue_kind(kind: MathGlueKind) -> GlueKind {
+    match kind {
+        MathGlueKind::NonScript => GlueKind::NonScript,
+        MathGlueKind::MuSkip | MathGlueKind::Normal | MathGlueKind::Source => GlueKind::Normal,
+    }
+}
 
 pub(crate) fn enter_math<S, H>(
     nest: &mut ModeNest,
@@ -149,6 +245,9 @@ fn finish_math<S>(
 where
     S: InputSource,
 {
+    if close_missing_left_group(nest, stores)? {
+        return finish_math(nest, input, stores);
+    }
     let display = nest.current_mode() == Mode::DisplayMath;
     if display {
         match input.next_token(stores)? {
@@ -346,6 +445,14 @@ where
         }
         UnexpandablePrimitive::MathChoice => {
             append_math_choice(nest, input, stores, recorder, hooks)?;
+            Ok(DispatchAction::Continue)
+        }
+        UnexpandablePrimitive::Left => {
+            start_left_group(nest, input, stores, hooks)?;
+            Ok(DispatchAction::Continue)
+        }
+        UnexpandablePrimitive::Right => {
+            finish_left_group(nest, input, stores, hooks)?;
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::DisplayStyle

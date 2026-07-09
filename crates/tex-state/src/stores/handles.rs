@@ -119,8 +119,8 @@ impl Stores {
             | Node::Penalty(_)
             | Node::Rule { .. }
             | Node::Unset
-            | Node::MathOn
-            | Node::MathOff
+            | Node::MathOn(_)
+            | Node::MathOff(_)
             | Node::MathStyle(_)
             | Node::Nonscript => {}
         }

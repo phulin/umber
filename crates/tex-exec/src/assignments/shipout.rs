@@ -132,8 +132,8 @@ where
             Node::VList(box_node) => PageNode::VList(self.lower_box(box_node)?),
             Node::Unset => PageNode::Unset,
             Node::Whatsit(whatsit) => self.lower_whatsit(whatsit)?,
-            Node::MathOn => PageNode::MathOn,
-            Node::MathOff => PageNode::MathOff,
+            Node::MathOn(width) => PageNode::MathOn(width),
+            Node::MathOff(width) => PageNode::MathOff(width),
             Node::Disc {
                 kind,
                 pre,

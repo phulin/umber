@@ -81,6 +81,12 @@ impl IntParam {
     /// TeX's widow-line penalty.
     pub const WIDOW_PENALTY: Self = Self::new(6);
 
+    /// TeX's penalty inserted after binary operators in inline math.
+    pub const BIN_OP_PENALTY: Self = Self::new(9);
+
+    /// TeX's penalty inserted after relations in inline math.
+    pub const REL_PENALTY: Self = Self::new(10);
+
     /// TeX's post-hyphenated-line penalty.
     pub const BROKEN_PENALTY: Self = Self::new(8);
 
@@ -175,6 +181,9 @@ impl IntParam {
 impl DimenParam {
     /// TeX's `\parindent` dimension parameter.
     pub const PAR_INDENT: Self = Self::new(0);
+
+    /// TeX's `\mathsurround` dimension parameter.
+    pub const MATH_SURROUND: Self = Self::new(1);
 
     /// TeX's `\lineskiplimit` dimension parameter.
     pub const LINE_SKIP_LIMIT: Self = Self::new(2);

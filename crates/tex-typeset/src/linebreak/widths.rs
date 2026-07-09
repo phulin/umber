@@ -86,6 +86,7 @@ fn node_width<S: TypesetState>(state: &S, node: &Node) -> Widths {
             }
         }
         Node::Kern { amount, .. } => widths.natural = add(widths.natural, *amount),
+        Node::MathOn(width) | Node::MathOff(width) => widths.natural = add(widths.natural, *width),
         Node::Glue { spec, .. } => add_glue(&mut widths, state.glue(*spec)),
         Node::Rule { width, .. } => {
             if let Some(width) = width {
@@ -108,8 +109,6 @@ fn node_width<S: TypesetState>(state: &S, node: &Node) -> Widths {
         | Node::Mark { .. }
         | Node::Ins { .. }
         | Node::Whatsit(_)
-        | Node::MathOn
-        | Node::MathOff
         | Node::MathNoad(_)
         | Node::FractionNoad(_)
         | Node::MathStyle(_)

@@ -282,8 +282,8 @@ fn remap_node_children(
         | Node::Unset
         | Node::Mark { .. }
         | Node::Whatsit(_)
-        | Node::MathOn
-        | Node::MathOff
+        | Node::MathOn(_)
+        | Node::MathOff(_)
         | Node::MathStyle(_)
         | Node::Nonscript => {}
     }
@@ -331,8 +331,8 @@ fn rewrite_node_root_ids(node: &mut Node, root: SurvivorRootId) {
         | Node::Unset
         | Node::Mark { .. }
         | Node::Whatsit(_)
-        | Node::MathOn
-        | Node::MathOff
+        | Node::MathOn(_)
+        | Node::MathOff(_)
         | Node::MathStyle(_)
         | Node::Nonscript => {}
     }

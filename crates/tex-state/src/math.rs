@@ -79,6 +79,8 @@ pub enum NoadKind {
     Operator(LimitType),
     Radical { delimiter: u32 },
     Accent { accent: MathChar },
+    LeftDelimiter { delimiter: u32 },
+    RightDelimiter { delimiter: u32 },
     Underline,
     Overline,
     VCenter,

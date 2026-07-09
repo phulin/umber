@@ -70,14 +70,44 @@ fn mlist_second_pass_inserts_spacing_and_penalties() {
     assert!(matches!(hlist.nodes[0], MathNode::Char { ch: 'b', .. }));
     assert_glue_width(&hlist.nodes[1], 240);
     assert!(matches!(hlist.nodes[2], MathNode::Char { ch: '+', .. }));
-    assert!(matches!(hlist.nodes[3], MathNode::Penalty(BIN_OP_PENALTY)));
+    assert!(matches!(hlist.nodes[3], MathNode::Penalty(700)));
     assert_glue_width(&hlist.nodes[4], 240);
     assert!(matches!(hlist.nodes[5], MathNode::Char { ch: 'c', .. }));
     assert_glue_width(&hlist.nodes[6], 360);
     assert!(matches!(hlist.nodes[7], MathNode::Char { ch: '=', .. }));
-    assert!(matches!(hlist.nodes[8], MathNode::Penalty(REL_PENALTY)));
+    assert!(matches!(hlist.nodes[8], MathNode::Penalty(500)));
     assert_glue_width(&hlist.nodes[9], 360);
     assert!(matches!(hlist.nodes[10], MathNode::Char { ch: 'b', .. }));
+}
+
+#[test]
+fn mlist_penalties_use_current_parameters_and_infinite_threshold() {
+    let mut universe = setup_universe();
+    universe.set_int_param(IntParam::BIN_OP_PENALTY, 12_345);
+    universe.set_int_param(IntParam::REL_PENALTY, 99);
+    let input = universe.freeze_node_list(&[
+        Node::MathNoad(noad(NoadClass::Ord, 'b')),
+        Node::MathNoad(noad(NoadClass::Bin, '+')),
+        Node::MathNoad(noad(NoadClass::Ord, 'c')),
+        Node::MathNoad(noad(NoadClass::Rel, '=')),
+        Node::MathNoad(noad(NoadClass::Ord, 'd')),
+    ]);
+    let params = MathParams::read(&universe);
+
+    let hlist = mlist_to_hlist(&universe, input, Style::TEXT, true, &params);
+
+    assert!(
+        !hlist
+            .nodes
+            .iter()
+            .any(|node| matches!(node, MathNode::Penalty(12_345)))
+    );
+    assert!(
+        hlist
+            .nodes
+            .iter()
+            .any(|node| matches!(node, MathNode::Penalty(99)))
+    );
 }
 
 #[test]
@@ -203,6 +233,43 @@ fn make_fraction_uses_default_rule_and_delimiter_target() {
             MathNode::Kern { .. },
             MathNode::HList(_),
         ] if *thickness == sc(4)
+    ));
+}
+
+#[test]
+fn left_right_delimiters_size_to_enclosed_list() {
+    let mut universe = setup_universe();
+    let tall_box = universe.freeze_node_list(&[Node::Rule {
+        width: Some(sc(4)),
+        height: Some(sc(40)),
+        depth: Some(sc(10)),
+    }]);
+    let delimiter = delimiter_code(1, b'(', 1, b'|');
+    let input = universe.freeze_node_list(&[
+        Node::MathNoad(MathNoad::new(
+            NoadKind::LeftDelimiter { delimiter },
+            MathField::Empty,
+        )),
+        Node::MathNoad(MathNoad::new(
+            NoadKind::Normal(NoadClass::Ord),
+            MathField::SubBox(tall_box),
+        )),
+        Node::MathNoad(MathNoad::new(
+            NoadKind::RightDelimiter { delimiter },
+            MathField::Empty,
+        )),
+    ]);
+    let params = MathParams::read(&universe);
+
+    let hlist = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
+
+    assert!(matches!(
+        hlist.nodes.first(),
+        Some(MathNode::VList(MathBox { list, .. })) if list.nodes.len() > 3
+    ));
+    assert!(matches!(
+        hlist.nodes.last(),
+        Some(MathNode::VList(MathBox { list, .. })) if list.nodes.len() > 3
     ));
 }
 

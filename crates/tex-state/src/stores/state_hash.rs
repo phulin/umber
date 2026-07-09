@@ -463,8 +463,14 @@ impl Stores {
                 stack.push(NodeFrame::List(content));
             }
             Node::Whatsit(whatsit) => self.hash_whatsit(whatsit, hasher),
-            Node::MathOn => hasher.tag(13),
-            Node::MathOff => hasher.tag(14),
+            Node::MathOn(width) => {
+                hasher.tag(13);
+                hasher.i32(width.raw());
+            }
+            Node::MathOff(width) => {
+                hasher.tag(14);
+                hasher.i32(width.raw());
+            }
             Node::Adjust(content) => {
                 hasher.tag(15);
                 stack.push(NodeFrame::List(content));
@@ -805,9 +811,17 @@ fn hash_noad_kind(kind: &crate::math::NoadKind, hasher: &mut StateHasher) {
             hasher.tag(3);
             hash_math_char(*accent, hasher);
         }
-        crate::math::NoadKind::Underline => hasher.tag(4),
-        crate::math::NoadKind::Overline => hasher.tag(5),
-        crate::math::NoadKind::VCenter => hasher.tag(6),
+        crate::math::NoadKind::LeftDelimiter { delimiter } => {
+            hasher.tag(4);
+            hasher.u32(*delimiter);
+        }
+        crate::math::NoadKind::RightDelimiter { delimiter } => {
+            hasher.tag(5);
+            hasher.u32(*delimiter);
+        }
+        crate::math::NoadKind::Underline => hasher.tag(6),
+        crate::math::NoadKind::Overline => hasher.tag(7),
+        crate::math::NoadKind::VCenter => hasher.tag(8),
     }
 }
 

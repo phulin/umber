@@ -78,8 +78,8 @@ pub fn vert_break(
                 | Node::Lig { .. }
                 | Node::Unset
                 | Node::Disc { .. }
-                | Node::MathOn
-                | Node::MathOff
+                | Node::MathOn(_)
+                | Node::MathOff(_)
                 | Node::MathNoad(_)
                 | Node::FractionNoad(_)
                 | Node::MathStyle(_)
@@ -208,7 +208,11 @@ fn vertical_break_badness(
 fn precedes_break(node: &Node) -> bool {
     !matches!(
         node,
-        Node::Glue { .. } | Node::Kern { .. } | Node::Penalty(_) | Node::MathOn | Node::MathOff
+        Node::Glue { .. }
+            | Node::Kern { .. }
+            | Node::Penalty(_)
+            | Node::MathOn(_)
+            | Node::MathOff(_)
     )
 }
 

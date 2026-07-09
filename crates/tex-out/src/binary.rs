@@ -266,8 +266,14 @@ impl Writer {
                 self.u8(9);
                 self.u32(*effect_index);
             }
-            PageNode::MathOn => self.u8(10),
-            PageNode::MathOff => self.u8(11),
+            PageNode::MathOn(width) => {
+                self.u8(10);
+                self.scaled(*width);
+            }
+            PageNode::MathOff(width) => {
+                self.u8(11);
+                self.scaled(*width);
+            }
             PageNode::Adjust(content) => {
                 self.u8(15);
                 self.node_list(content);
@@ -509,8 +515,8 @@ impl Reader<'_> {
             9 => Ok(PageNode::WhatsitAnchor {
                 effect_index: self.u32()?,
             }),
-            10 => Ok(PageNode::MathOn),
-            11 => Ok(PageNode::MathOff),
+            10 => Ok(PageNode::MathOn(self.scaled()?)),
+            11 => Ok(PageNode::MathOff(self.scaled()?)),
             12 => Ok(PageNode::Disc {
                 kind: parse_disc_kind(self.u8()?)?,
                 pre: self.node_list()?,

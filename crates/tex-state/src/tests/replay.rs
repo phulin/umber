@@ -78,7 +78,7 @@ enum TreeNode {
     Kern(i32),
     Glue(GlueSpec, GlueKind),
     HList(TreeList),
-    MathOn,
+    MathOn(i32),
 }
 
 type TreeList = Vec<TreeNode>;
@@ -154,10 +154,10 @@ fn group_exit_epoch_amendment_smoke() {
 #[test]
 fn rollback_keeps_box_register_ids_resolvable() {
     let mut stores = Universe::new();
-    let baseline = stores.freeze_node_list(&[Node::MathOn]);
+    let baseline = stores.freeze_node_list(&[Node::MathOn(Scaled::from_raw(0))]);
     stores.set_box_reg(0, baseline);
     let snapshot = stores.snapshot();
-    let temporary = stores.freeze_node_list(&[Node::MathOff]);
+    let temporary = stores.freeze_node_list(&[Node::MathOff(Scaled::from_raw(0))]);
     stores.set_box_reg(0, temporary);
     stores.set_box_reg(257, temporary);
 
@@ -737,7 +737,7 @@ impl TreeCache {
                     box_node.children,
                     depth + 1,
                 )),
-                Node::MathOn => TreeNode::MathOn,
+                Node::MathOn(width) => TreeNode::MathOn(width.raw()),
                 other => panic!("unexpected replay node: {other:?}"),
             })
             .collect();

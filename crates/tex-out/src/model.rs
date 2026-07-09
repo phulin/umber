@@ -106,8 +106,8 @@ pub enum PageNode {
     WhatsitAnchor {
         effect_index: u32,
     },
-    MathOn,
-    MathOff,
+    MathOn(Scaled),
+    MathOff(Scaled),
     Adjust(Vec<PageNode>),
 }
 

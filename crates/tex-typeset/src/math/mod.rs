@@ -55,8 +55,15 @@ struct WorkNoad {
 }
 
 #[derive(Clone, Debug)]
+struct WorkDelimiter {
+    class: NoadClass,
+    delimiter: u32,
+}
+
+#[derive(Clone, Debug)]
 enum WorkItem {
     Noad(WorkNoad),
+    Delimiter(WorkDelimiter),
     Node(MathNode),
     Style(Style),
 }
@@ -69,8 +76,11 @@ struct FetchedChar {
 }
 
 const INF_PENALTY: i32 = 10_000;
-const BIN_OP_PENALTY: i32 = 700;
-const REL_PENALTY: i32 = 500;
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct MathPenaltyParams {
+    bin_op: i32,
+    rel: i32,
+}
 
 #[must_use]
 pub fn mlist_to_hlist(
@@ -87,6 +97,10 @@ pub fn mlist_to_hlist(
         style,
         mu: math_unit(params, style),
     };
+    let penalty_params = MathPenaltyParams {
+        bin_op: state.int_param(IntParam::BIN_OP_PENALTY),
+        rel: state.int_param(IntParam::REL_PENALTY),
+    };
     let mut work = Vec::new();
     let mut max_height = Scaled::from_raw(0);
     let mut max_depth = Scaled::from_raw(0);
@@ -96,9 +110,10 @@ pub fn mlist_to_hlist(
         &mut work,
         &mut max_height,
         &mut max_depth,
+        penalty_params,
     );
     convert_final_bin_to_ord(&mut work);
-    second_pass(&mut ctx, &work, penalties)
+    second_pass(&mut ctx, style, &work, penalties, max_height, max_depth)
 }
 
 fn first_pass<S: MathTypesetState>(
@@ -107,6 +122,7 @@ fn first_pass<S: MathTypesetState>(
     out: &mut Vec<WorkItem>,
     max_height: &mut Scaled,
     max_depth: &mut Scaled,
+    penalty_params: MathPenaltyParams,
 ) {
     let mut input = input.to_vec();
     let mut r_type = Some(NoadClass::Op);
@@ -127,7 +143,14 @@ fn first_pass<S: MathTypesetState>(
                     StyleFamily::Script => choice.script,
                     StyleFamily::ScriptScript => choice.script_script,
                 };
-                first_pass(ctx, ctx.state.nodes(selected), out, max_height, max_depth);
+                first_pass(
+                    ctx,
+                    ctx.state.nodes(selected),
+                    out,
+                    max_height,
+                    max_depth,
+                    penalty_params,
+                );
             }
             Node::Glue { spec, kind } => {
                 // AppG rule 18
@@ -170,6 +193,23 @@ fn first_pass<S: MathTypesetState>(
                     },
                 }));
             }
+            Node::MathNoad(noad)
+                if matches!(
+                    noad.kind,
+                    NoadKind::LeftDelimiter { .. } | NoadKind::RightDelimiter { .. }
+                ) =>
+            {
+                let (class, delimiter) = match noad.kind {
+                    NoadKind::LeftDelimiter { delimiter } => (NoadClass::Open, delimiter),
+                    NoadKind::RightDelimiter { delimiter } => (NoadClass::Close, delimiter),
+                    _ => unreachable!("guard restricts delimiter noads"),
+                };
+                if matches!(class, NoadClass::Close) {
+                    convert_final_bin_to_ord(out);
+                }
+                r_type = Some(class);
+                out.push(WorkItem::Delimiter(WorkDelimiter { class, delimiter }));
+            }
             Node::MathNoad(noad) => {
                 // AppG rule 18
                 if matches!(noad.kind, NoadKind::Normal(NoadClass::Ord)) {
@@ -197,7 +237,7 @@ fn first_pass<S: MathTypesetState>(
                 if matches!(class, NoadClass::Rel | NoadClass::Close | NoadClass::Punct) {
                     convert_final_bin_to_ord(out);
                 }
-                let work = translate_noad(ctx, &noad, class);
+                let work = translate_noad(ctx, &noad, class, penalty_params);
                 let packed = hpack(work.hlist.clone());
                 *max_height = (*max_height).max(packed.height);
                 *max_depth = (*max_depth).max(packed.depth);
@@ -227,6 +267,7 @@ fn translate_noad<S: MathTypesetState>(
     ctx: &Context<'_, S>,
     noad: &MathNoad,
     class: NoadClass,
+    penalties: MathPenaltyParams,
 ) -> WorkNoad {
     let mut delta = Scaled::from_raw(0);
     let mut scripts_handled = false;
@@ -281,8 +322,8 @@ fn translate_noad<S: MathTypesetState>(
         class,
         hlist,
         penalty: match class {
-            NoadClass::Bin => BIN_OP_PENALTY,
-            NoadClass::Rel => REL_PENALTY,
+            NoadClass::Bin => penalties.bin_op,
+            NoadClass::Rel => penalties.rel,
             _ => INF_PENALTY,
         },
     }
@@ -290,8 +331,11 @@ fn translate_noad<S: MathTypesetState>(
 
 fn second_pass<S: MathTypesetState>(
     ctx: &mut Context<'_, S>,
+    base_style: Style,
     work: &[WorkItem],
     penalties: bool,
+    max_height: Scaled,
+    max_depth: Scaled,
 ) -> FrozenHList {
     // AppG rule 18
     let mut output = FrozenHList::default();
@@ -330,6 +374,30 @@ fn second_pass<S: MathTypesetState>(
                     output.nodes.push(MathNode::Penalty(noad.penalty));
                 }
                 previous = Some(noad.class);
+            }
+            WorkItem::Delimiter(delimiter) => {
+                if let Some(left) = previous
+                    && let Some(spec) = spacing::spacing_glue(
+                        spacing::inter_noad_spacing(left, delimiter.class, ctx.style),
+                        ctx.params,
+                        ctx.mu,
+                    )
+                {
+                    output.nodes.push(MathNode::Glue {
+                        spec,
+                        kind: MathGlueKind::MuSkip,
+                    });
+                }
+                let target =
+                    left_right_delimiter_target(ctx.params, base_style, max_height, max_depth);
+                output.nodes.push(boxed_node(delimiters::var_delimiter(
+                    ctx.state,
+                    ctx.params,
+                    delimiter.delimiter,
+                    base_style.size(),
+                    target,
+                )));
+                previous = Some(delimiter.class);
             }
         }
     }
@@ -468,6 +536,8 @@ fn noad_class(noad: &MathNoad) -> NoadClass {
         NoadKind::Operator(_) => NoadClass::Op,
         NoadKind::Radical { .. }
         | NoadKind::Accent { .. }
+        | NoadKind::LeftDelimiter { .. }
+        | NoadKind::RightDelimiter { .. }
         | NoadKind::Underline
         | NoadKind::Overline
         | NoadKind::VCenter => NoadClass::Ord,

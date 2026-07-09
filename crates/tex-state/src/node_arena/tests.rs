@@ -103,15 +103,21 @@ fn builder_reuse_after_finish_leaves_buffer_empty() {
     let survivors = crate::survivor::SurvivorArena::new();
     let mut builder = NodeListBuilder::new();
 
-    builder.push(Node::MathOn);
+    builder.push(Node::MathOn(Scaled::from_raw(0)));
     let first = builder.finish(&mut arena);
     assert!(builder.is_empty());
 
-    builder.push(Node::MathOff);
+    builder.push(Node::MathOff(Scaled::from_raw(0)));
     let second = builder.finish(&mut arena);
 
-    assert_eq!(arena.get(first, &survivors), &[Node::MathOn]);
-    assert_eq!(arena.get(second, &survivors), &[Node::MathOff]);
+    assert_eq!(
+        arena.get(first, &survivors),
+        &[Node::MathOn(Scaled::from_raw(0))]
+    );
+    assert_eq!(
+        arena.get(second, &survivors),
+        &[Node::MathOff(Scaled::from_raw(0))]
+    );
     assert!(builder.is_empty());
 }
 

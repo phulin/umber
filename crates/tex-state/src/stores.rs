@@ -201,6 +201,8 @@ impl Stores {
     fn initialize_plain_layout_defaults(&mut self) {
         self.set_int_param(IntParam::PRETOLERANCE, 100);
         self.set_int_param(IntParam::TOLERANCE, 200);
+        self.set_int_param(IntParam::BIN_OP_PENALTY, 700);
+        self.set_int_param(IntParam::REL_PENALTY, 500);
         self.set_dimen_param(
             DimenParam::OVERFULL_RULE,
             Scaled::from_raw(5 * Scaled::UNITY),
@@ -1187,8 +1189,8 @@ impl Stores {
                 box_node.glue_order.hash(hasher);
                 self.testing_hash_node_list_content_bounded(box_node.children, hasher, depth + 1);
             }
-            Node::MathOn
-            | Node::MathOff
+            Node::MathOn(_)
+            | Node::MathOff(_)
             | Node::MathNoad(_)
             | Node::FractionNoad(_)
             | Node::MathStyle(_)

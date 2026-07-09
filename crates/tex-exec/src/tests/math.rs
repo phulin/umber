@@ -153,6 +153,84 @@ fn par_in_math_finishes_math_with_tex_error_text() {
 }
 
 #[test]
+fn left_right_scans_nested_list_as_inner_noad() {
+    let (stores, executor) = run_math_source(r"$\left. a \right.$");
+    let nodes = math_nodes(&stores, &executor);
+
+    assert_eq!(nodes.len(), 1);
+    let inner = math_noad(&nodes[0]);
+    assert!(matches!(
+        inner.kind,
+        tex_state::math::NoadKind::Normal(tex_state::math::NoadClass::Inner)
+    ));
+    let MathField::SubMlist(list) = inner.nucleus else {
+        panic!("expected left/right inner noad to hold a sub-mlist");
+    };
+    let enclosed = stores.nodes(list);
+    assert!(matches!(
+        math_noad(&enclosed[0]).kind,
+        tex_state::math::NoadKind::LeftDelimiter { delimiter: 0 }
+    ));
+    assert_math_char(&math_noad(&enclosed[1]).nucleus, 0, 'a');
+    assert!(matches!(
+        math_noad(&enclosed[2]).kind,
+        tex_state::math::NoadKind::RightDelimiter { delimiter: 0 }
+    ));
+}
+
+#[test]
+fn mismatched_right_and_missing_right_use_tex_error_text() {
+    let (extra_stores, extra_executor) = run_math_source(r"$a\right.$");
+    let extra_nodes = math_nodes(&extra_stores, &extra_executor);
+    assert_eq!(extra_nodes.len(), 1);
+    assert_math_char(&math_noad(&extra_nodes[0]).nucleus, 0, 'a');
+    assert!(terminal_effect_text(&extra_stores).contains("! Extra \\right."));
+
+    let (missing_stores, missing_executor) = run_math_source(r"$\left. a$");
+    let missing_nodes = math_nodes(&missing_stores, &missing_executor);
+    assert_eq!(missing_nodes.len(), 1);
+    assert!(matches!(
+        math_noad(&missing_nodes[0]).kind,
+        tex_state::math::NoadKind::Normal(tex_state::math::NoadClass::Inner)
+    ));
+    assert!(
+        terminal_effect_text(&missing_stores).contains("! Missing \\right. inserted."),
+        "missing right delimiter should use pdfTeX's primary wording"
+    );
+}
+
+#[test]
+fn inline_math_finishing_emits_mathsurround_markers_and_penalties() {
+    let (mut stores, executor) = run_math_source(r"\mathsurround=3pt $a\mathbin+b\mathrel=c$");
+    let list = math_list_nodes(&executor)
+        .pop()
+        .expect("inline math list should be present");
+
+    let nodes = crate::math::finish_math_list_node(&mut stores, list);
+
+    assert!(matches!(
+        nodes.first(),
+        Some(Node::MathOn(width)) if width.raw() == 3 * tex_state::scaled::Scaled::UNITY
+    ));
+    assert!(matches!(
+        nodes.last(),
+        Some(Node::MathOff(width)) if width.raw() == 3 * tex_state::scaled::Scaled::UNITY
+    ));
+    assert!(
+        nodes.iter().any(|node| matches!(node, Node::Penalty(700))),
+        "binoppenalty should be inserted in outer inline conversion"
+    );
+    assert!(
+        nodes.iter().any(|node| matches!(node, Node::Penalty(500))),
+        "relpenalty should be inserted in outer inline conversion"
+    );
+    assert!(
+        nodes.iter().all(|node| !matches!(node, Node::MathList(_))),
+        "paragraph line breaking must see converted hlist nodes"
+    );
+}
+
+#[test]
 fn delimiter_radical_accent_and_vcenter_parse_to_math_noads() {
     let (stores, executor) = run_math_source(
         r#"$\delimiter"1234 \radical"270370 x \mathaccent"7013 y \vcenter{\hrule width1pt}$"#,

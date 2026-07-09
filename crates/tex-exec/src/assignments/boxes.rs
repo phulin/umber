@@ -559,7 +559,12 @@ where
     inner.push(mode);
     scan_box_group(&mut inner, input, stores, hooks)?;
     let level = inner.pop()?;
-    let children = stores.freeze_node_list(level.list().nodes());
+    let nodes = if kind == BoxKind::HBox {
+        crate::math::finish_math_lists(stores, level.list().nodes())
+    } else {
+        level.list().nodes().to_vec()
+    };
+    let children = stores.freeze_node_list(&nodes);
     let node = match kind {
         BoxKind::HBox => Node::HList(hpack_with_overfull_rule(stores, children, spec)),
         BoxKind::VBox => Node::VList(vpack(stores, children, spec, VpackParams::read(stores)).node),

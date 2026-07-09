@@ -183,6 +183,67 @@ fn break_glue_does_not_contribute_to_preceding_line_width() {
 }
 
 #[test]
+fn mathoff_breaks_only_before_following_glue_and_zeroes_break_width() {
+    let mut universe = Universe::new();
+    let glue = universe.intern_glue(GlueSpec {
+        width: sp(1000),
+        stretch: sp(0),
+        stretch_order: Order::Normal,
+        shrink: sp(0),
+        shrink_order: Order::Normal,
+    });
+    let nodes = vec![
+        rule(10),
+        Node::MathOff(sp(5)),
+        Node::Glue {
+            spec: glue,
+            kind: GlueKind::Normal,
+        },
+        rule(10),
+    ];
+    let breakpoints = legal_breakpoints(&universe, &nodes, &params(15), false);
+
+    assert_eq!(breakpoints.first().map(|br| br.position), Some(2));
+    let zero = universe.intern_glue(GlueSpec::ZERO);
+    let breaks = vec![
+        BreakDecision {
+            position: 2,
+            penalty: 0,
+            hyphenated: false,
+        },
+        BreakDecision {
+            position: nodes.len(),
+            penalty: -10_000,
+            hyphenated: false,
+        },
+    ];
+    let lines = post_line_break(
+        &universe,
+        &nodes,
+        &breaks,
+        PostLineBreakParams {
+            left_skip: zero,
+            right_skip: zero,
+            interline_penalty: 0,
+            club_penalty: 0,
+            widow_penalty: 0,
+            broken_penalty: 0,
+            shape: LineShape::natural(sp(15)),
+        },
+    );
+    assert!(
+        lines[0]
+            .nodes
+            .iter()
+            .any(|node| matches!(node, Node::MathOff(width) if width.raw() == 0))
+    );
+
+    let nodes_without_glue = vec![rule(10), Node::MathOff(sp(5)), rule(10)];
+    let breakpoints = legal_breakpoints(&universe, &nodes_without_glue, &params(15), false);
+    assert!(!breakpoints.iter().any(|br| br.position == 2));
+}
+
+#[test]
 fn final_pass_deactivates_unshrinkable_active_line() {
     let mut universe = Universe::new();
     let glue = universe.intern_glue(GlueSpec {
