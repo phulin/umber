@@ -29,8 +29,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/glue/tests.rs`: Unit tests for glue interning, canonical zero glue, rollback, and hash-index rebuilds.
 - `src/hyphenation.rs`: Hyphenation pattern trie and exception table implementing Liang-style position lookup.
 - `src/hyphenation/tests.rs`: Unit tests for hyphenation patterns, exceptions, bounds, and overlapping matches.
-- `src/ids.rs`: Opaque ids for token lists, macros, glue, fonts, snapshots, survivor roots, and node-list spans.
-- `src/ids/tests.rs`: Unit tests for opaque id raw values and node-list span metadata.
+- `src/ids.rs`: Opaque ids for token lists, origin lists, macros, glue, fonts, snapshots, survivor roots, and node-list spans.
+- `src/ids/tests.rs`: Unit tests for opaque id raw values and node/origin-list span metadata.
 - `src/input.rs`: Snapshot-ready lexer/input stack summaries, macro argument slots, source ids, and replay frame metadata.
 - `src/interner.rs`: Control-sequence name interner with dense symbols, lookup, hashing, and rollback marks.
 - `src/interner/tests.rs`: Unit tests for symbol interning, resolution, rollback, and content hashing.
@@ -45,10 +45,12 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/node_arena.rs`: Epoch arena for immutable node-list slices with watermarks and rollback.
 - `src/node_arena/tests.rs`: Unit tests for node-list allocation, lookup, rollback, and arena liveness.
 - `src/page.rs`: Snapshot-owned page-builder state, page dimensions/integers, contribution/current-page queues, and fire-up records.
+- `src/provenance.rs`: Diagnostic origin-record and origin-list arenas with rollback watermarks.
+- `src/provenance/tests.rs`: Unit tests for provenance allocation, readback, and rollback marks.
 - `src/scaled.rs`: Compatibility re-export for shared TeX scaled-point arithmetic.
 - `src/state_hash.rs`: Deterministic semantic state hasher used by snapshots and replay convergence checks.
-- `src/stores.rs`: Internal aggregate store tuple that coordinates interner, env, token, glue, node, font, survivor, input, and rollback state.
-- `src/stores/handles.rs`: Store-boundary liveness checks for symbols, token lists, glue, fonts, macros, and node handles.
+- `src/stores.rs`: Internal aggregate store tuple that coordinates interner, env, token, provenance, glue, node, font, survivor, input, and rollback state.
+- `src/stores/handles.rs`: Store-boundary liveness checks for symbols, token lists, origins, glue, fonts, macros, and node handles.
 - `src/stores/state_hash.rs`: Store snapshot cursor and semantic hashing implementation for changed cells and store-owned slices.
 - `src/stores/tests.rs`: Unit tests for aggregate store rollback, builders, handle validation, parameters, boxes, and state hashes.
 - `src/survivor.rs`: Survivor arena for node lists that escape epoch rollback boundaries.

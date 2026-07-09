@@ -174,8 +174,10 @@ Responsibility: characters → tokens, under mutable catcode law.
   31..0 are `OriginId`. Character payloads store a 21-bit Unicode scalar value
   plus 4-bit catcode, control-sequence payloads store `Symbol::raw()`, and
   parameter payloads store the 4-bit slot. `OriginId(0)` is the reserved
-  Unknown/Bootstrap origin; provenance overflow later saturates to that id
-  rather than aborting semantic compilation.
+  Unknown/Bootstrap origin; provenance allocation overflow saturates to that
+  id rather than aborting semantic compilation. Origin records and packed
+  origin-list spans live in `tex-state` as rollback-coupled, hash-neutral
+  diagnostic side-channel arenas.
 - The lexer holds **no state outside the input stack frame** (its N/M/S
   state is part of the frame). Nothing here needs journaling.
 

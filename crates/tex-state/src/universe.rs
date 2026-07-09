@@ -17,9 +17,10 @@ use crate::font::{
 };
 use crate::glue::GlueSpec;
 use crate::hyphenation::{ExceptionSpec, PatternSpec};
-use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, TokenListId};
+use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, OriginListId, TokenListId};
 use crate::input::{
-    ConditionKind, ConditionLimb, InputFrameSummary, InputSummary, LexerState, TokenListReplayKind,
+    ConditionKind, ConditionLimb, InputFrameSummary, InputSummary, LexerState, SourceId,
+    TokenListReplayKind,
 };
 use crate::interner::Symbol;
 use crate::macro_store::MacroMeaning;
@@ -31,6 +32,9 @@ use crate::page::{
     PageBreak, PageBuilderState, PageContents, PageDimension, PageFireUp, PageInsertion,
     PageInteger, PageMark,
 };
+use crate::provenance::{
+    InsertedOriginKind, OriginRecord, SynthesizedOriginKind, SyntheticOriginKind,
+};
 use crate::scaled::Scaled;
 use crate::state_hash::{INITIAL_STATE_HASH, StateHasher, combine};
 use crate::stores::StoreStateHashCursor;
@@ -38,7 +42,7 @@ use crate::stores::{
     FontParameterError, GroupKind, GroupMismatch, PrepareMagDiagnostic, ShipoutNodeMark,
     StoreSnapshot, Stores,
 };
-use crate::token::{Catcode, Token};
+use crate::token::{Catcode, OriginId, Token};
 use crate::token_store::TokenListBuilder;
 use crate::world::{
     ContentHash, EffectPos, EffectRecord, JobClock, PrintSink, ShellEscapePolicy,
@@ -999,6 +1003,75 @@ impl Universe {
     #[must_use]
     pub fn tokens(&self, id: TokenListId) -> &[Token] {
         self.stores.tokens(id)
+    }
+
+    /// Returns the reserved unknown/bootstrap provenance origin.
+    #[must_use]
+    pub fn bootstrap_origin(&self) -> OriginId {
+        self.stores.bootstrap_origin()
+    }
+
+    /// Allocates a source-coordinate origin.
+    pub fn source_origin(
+        &mut self,
+        source: SourceId,
+        byte_offset: u64,
+        line: u32,
+        column: u32,
+    ) -> OriginId {
+        self.stores.source_origin(source, byte_offset, line, column)
+    }
+
+    /// Allocates a macro-related origin.
+    pub fn macro_origin(
+        &mut self,
+        definition: MacroDefinitionId,
+        invocation: OriginId,
+        definition_origin: OriginId,
+    ) -> OriginId {
+        self.stores
+            .macro_origin(definition, invocation, definition_origin)
+    }
+
+    /// Allocates an inserted-token origin.
+    pub fn inserted_origin(
+        &mut self,
+        kind: InsertedOriginKind,
+        token: Token,
+        parent: OriginId,
+    ) -> OriginId {
+        self.stores.inserted_origin(kind, token, parent)
+    }
+
+    /// Allocates a synthesized-token origin.
+    pub fn synthesized_origin(
+        &mut self,
+        kind: SynthesizedOriginKind,
+        parent: OriginId,
+    ) -> OriginId {
+        self.stores.synthesized_origin(kind, parent)
+    }
+
+    /// Allocates a synthetic/bootstrap origin.
+    pub fn synthetic_origin(&mut self, kind: SyntheticOriginKind) -> OriginId {
+        self.stores.synthetic_origin(kind)
+    }
+
+    /// Reads a live origin record.
+    #[must_use]
+    pub fn origin(&self, id: OriginId) -> OriginRecord {
+        self.stores.origin(id)
+    }
+
+    /// Allocates an origin-list span.
+    pub fn allocate_origin_list(&mut self, origins: &[OriginId]) -> OriginListId {
+        self.stores.allocate_origin_list(origins)
+    }
+
+    /// Reads a live origin-list span.
+    #[must_use]
+    pub fn origin_list(&self, id: OriginListId) -> &[OriginId] {
+        self.stores.origin_list(id)
     }
 
     pub fn intern_glue(&mut self, spec: GlueSpec) -> GlueId {

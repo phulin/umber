@@ -17,6 +17,7 @@ pub mod meaning;
 pub mod node;
 pub mod node_arena;
 pub mod page;
+pub mod provenance;
 pub mod scaled;
 pub(crate) mod state_hash;
 mod stores;

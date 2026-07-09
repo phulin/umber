@@ -15,17 +15,22 @@ use crate::font::{
 };
 use crate::glue::{GlueSpec, GlueStore, GlueStoreMark, Order};
 use crate::hyphenation::{ExceptionSpec, HyphenationTable, PatternSpec};
-use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, TokenListId};
+use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, OriginListId, TokenListId};
+use crate::input::SourceId;
 use crate::interner::{Interner, InternerError, InternerMark, Symbol};
 use crate::macro_store::{MacroMeaning, MacroStore, MacroStoreMark};
 use crate::math::MathFontSize;
 use crate::meaning::Meaning;
 use crate::node::Node;
 use crate::node_arena::{NodeArena, NodeArenaMark, NodeListBuilder};
+use crate::provenance::{
+    InsertedOrigin, InsertedOriginKind, MacroOrigin, OriginRecord, ProvenanceStore,
+    ProvenanceStoreMark, SourceOrigin, SynthesizedOrigin, SynthesizedOriginKind, SyntheticOrigin,
+    SyntheticOriginKind,
+};
 use crate::scaled::Scaled;
 use crate::survivor::SurvivorArena;
-use crate::token::Catcode;
-use crate::token::Token;
+use crate::token::{Catcode, OriginId, Token};
 use crate::token_store::{TokenListBuilder, TokenStore, TokenStoreMark};
 use std::hash::BuildHasher;
 #[cfg(any(test, feature = "testing", feature = "shadow"))]
@@ -48,6 +53,7 @@ pub(crate) struct StoreSnapshot {
     env_snapshot: EnvSnapshot,
     interner_mark: InternerMark,
     token_mark: TokenStoreMark,
+    provenance_mark: ProvenanceStoreMark,
     macro_mark: MacroStoreMark,
     glue_mark: GlueStoreMark,
     font_mark: FontStoreMark,
@@ -113,6 +119,7 @@ pub struct Stores {
     env: Env,
     interner: Interner,
     tokens: TokenStore,
+    provenance: ProvenanceStore,
     macros: MacroStore,
     glue: GlueStore,
     fonts: FontStore,
@@ -152,6 +159,7 @@ impl Clone for Stores {
             env: self.env.clone(),
             interner: self.interner.clone(),
             tokens: self.tokens.clone(),
+            provenance: self.provenance.clone(),
             macros: self.macros.clone(),
             glue: self.glue.clone(),
             fonts: self.fonts.clone(),
@@ -174,6 +182,7 @@ impl Stores {
             env: Env::new(),
             interner: Interner::new(),
             tokens: TokenStore::new(),
+            provenance: ProvenanceStore::new(),
             macros: MacroStore::new(),
             glue: GlueStore::new(),
             fonts: FontStore::new(),
@@ -438,6 +447,107 @@ impl Stores {
     pub fn tokens(&self, id: TokenListId) -> &[Token] {
         self.assert_live_token_list(id);
         self.tokens.get(id)
+    }
+
+    /// Returns the reserved unknown/bootstrap provenance origin.
+    #[must_use]
+    pub fn bootstrap_origin(&self) -> OriginId {
+        ProvenanceStore::unknown_id()
+    }
+
+    /// Allocates a source-coordinate origin.
+    pub fn source_origin(
+        &mut self,
+        source: SourceId,
+        byte_offset: u64,
+        line: u32,
+        column: u32,
+    ) -> OriginId {
+        self.provenance
+            .allocate(OriginRecord::Source(SourceOrigin::new(
+                source,
+                byte_offset,
+                line,
+                column,
+            )))
+    }
+
+    /// Allocates a macro-related origin.
+    pub fn macro_origin(
+        &mut self,
+        definition: MacroDefinitionId,
+        invocation: OriginId,
+        definition_origin: OriginId,
+    ) -> OriginId {
+        self.assert_live_macro_definition(definition);
+        self.assert_live_origin(invocation);
+        self.assert_live_origin(definition_origin);
+        self.provenance
+            .allocate(OriginRecord::Macro(MacroOrigin::new(
+                definition,
+                invocation,
+                definition_origin,
+            )))
+    }
+
+    /// Allocates an inserted-token origin.
+    pub fn inserted_origin(
+        &mut self,
+        kind: InsertedOriginKind,
+        token: Token,
+        parent: OriginId,
+    ) -> OriginId {
+        self.assert_live_token(token);
+        self.assert_live_origin(parent);
+        self.provenance
+            .allocate(OriginRecord::Inserted(InsertedOrigin::new(
+                kind, token, parent,
+            )))
+    }
+
+    /// Allocates a synthesized-token origin.
+    pub fn synthesized_origin(
+        &mut self,
+        kind: SynthesizedOriginKind,
+        parent: OriginId,
+    ) -> OriginId {
+        self.assert_live_origin(parent);
+        self.provenance
+            .allocate(OriginRecord::Synthesized(SynthesizedOrigin::new(
+                kind, parent,
+            )))
+    }
+
+    /// Allocates a synthetic/bootstrap origin.
+    pub fn synthetic_origin(&mut self, kind: SyntheticOriginKind) -> OriginId {
+        match kind {
+            SyntheticOriginKind::Bootstrap => ProvenanceStore::unknown_id(),
+            _ => self
+                .provenance
+                .allocate(OriginRecord::Synthetic(SyntheticOrigin::new(kind))),
+        }
+    }
+
+    /// Reads a live origin record.
+    #[must_use]
+    pub fn origin(&self, id: OriginId) -> OriginRecord {
+        self.assert_live_origin(id);
+        self.provenance.get(id)
+    }
+
+    /// Allocates an origin-list span.
+    pub fn allocate_origin_list(&mut self, origins: &[OriginId]) -> OriginListId {
+        for &origin in origins {
+            self.assert_live_origin(origin);
+        }
+        self.provenance.allocate_list(origins)
+    }
+
+    /// Reads a live origin-list span.
+    #[must_use]
+    pub fn origin_list(&self, id: OriginListId) -> &[OriginId] {
+        self.assert_live_origin_list(id);
+        self.provenance.list(id)
     }
 
     /// Interns a frozen glue specification in the owned glue store.
@@ -1019,6 +1129,7 @@ impl Stores {
             env_snapshot: self.env.checkpoint(),
             interner_mark: self.interner.watermark(),
             token_mark: self.tokens.watermark(),
+            provenance_mark: self.provenance.watermark(),
             macro_mark: self.macros.watermark(),
             glue_mark: self.glue.watermark(),
             font_mark: self.fonts.watermark(),
@@ -1056,6 +1167,7 @@ impl Stores {
         self.env.rollback_to(snapshot.env_snapshot);
         self.interner.truncate_to(snapshot.interner_mark);
         self.tokens.truncate_to(snapshot.token_mark);
+        self.provenance.truncate_to(snapshot.provenance_mark);
         self.macros.truncate_to(snapshot.macro_mark);
         self.glue.truncate_to(snapshot.glue_mark);
         self.fonts.truncate_to(snapshot.font_mark);

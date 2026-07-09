@@ -1,8 +1,9 @@
 //! Opaque store handles.
 //!
-//! `TokenListId` is minted by the token store. `GlueId` is minted by the glue
-//! store. `NodeListId` is minted by node arenas. `FontId` is minted by the
-//! loaded font store. `SnapshotId` becomes real in State M3.
+//! `TokenListId` is minted by the token store. `OriginListId` is minted by the
+//! provenance store. `GlueId` is minted by the glue store. `NodeListId` is
+//! minted by node arenas. `FontId` is minted by the loaded font store.
+//! `SnapshotId` becomes real in State M3.
 
 macro_rules! opaque_id {
     ($name:ident) => {
@@ -31,6 +32,7 @@ macro_rules! opaque_id {
 }
 
 opaque_id!(TokenListId);
+opaque_id!(OriginListId);
 opaque_id!(MacroDefinitionId);
 opaque_id!(GlueId);
 opaque_id!(FontId);
@@ -43,6 +45,11 @@ impl GlueId {
 
 impl TokenListId {
     /// The canonical empty token-list id, pre-interned by every token store.
+    pub const EMPTY: Self = Self(0);
+}
+
+impl OriginListId {
+    /// The canonical empty origin-list id, preallocated by every provenance store.
     pub const EMPTY: Self = Self(0);
 }
 

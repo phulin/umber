@@ -1,11 +1,14 @@
 use super::Stores;
 use crate::cell::BankTag;
 use crate::env::EnvSnapshot;
-use crate::ids::{ArenaRef, FontId, GlueId, MacroDefinitionId, NodeListId, TokenListId};
+use crate::ids::{
+    ArenaRef, FontId, GlueId, MacroDefinitionId, NodeListId, OriginListId, TokenListId,
+};
 use crate::interner::Symbol;
 use crate::math::MathField;
 use crate::meaning::Meaning;
 use crate::node::{LeaderPayload, Node};
+use crate::token::{OriginId, Token};
 
 impl Stores {
     pub(super) fn assert_live_symbol(&self, symbol: Symbol) {
@@ -41,6 +44,26 @@ impl Stores {
             self.macros.contains(id),
             "macro definition id is not live in this Universe timeline"
         );
+    }
+
+    pub(super) fn assert_live_origin(&self, id: OriginId) {
+        assert!(
+            self.provenance.contains_origin(id),
+            "origin id is not live in this Universe timeline"
+        );
+    }
+
+    pub(super) fn assert_live_origin_list(&self, id: OriginListId) {
+        assert!(
+            self.provenance.contains_list(id),
+            "origin list id is not live in this Universe timeline"
+        );
+    }
+
+    pub(super) fn assert_live_token(&self, token: Token) {
+        if let Token::Cs(symbol) = token {
+            self.assert_live_symbol(symbol);
+        }
     }
 
     pub(super) fn assert_live_node_list(&self, id: NodeListId) {

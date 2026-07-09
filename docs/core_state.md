@@ -59,6 +59,7 @@ supporting untracked mutation "for performance" anywhere, ever.
 | Register overflow | e-TeX sparse registers (256..32767) | barriered writes | journal + page roots |
 | Code tables | catcode/lccode/uccode/sfcode/mathcode/delcode over Unicode | copy-on-write pages | root pointer + generation |
 | Token store | immutable, hash-consed token lists | frozen at birth | watermark |
+| Provenance store | diagnostic origin records and packed `OriginId` list spans | append-only, not hash-consed | watermark |
 | Glue store | immutable, hash-consed glue specs (`GlueId`) | frozen at birth | watermark |
 | Node arenas | per-epoch bump arenas + survivor arena | frozen at birth; promotion on escape | watermark; refcounts (survivors) |
 | Hyphenation | language-0 Liang trie + exception map | pattern/exception loads through `Universe` | cloned in store snapshot (v1) |
@@ -305,6 +306,26 @@ cells[i] = new
   across snapshots automatically.
 - Backing: bump arena + hash index; rollback = watermark truncation + lazy
   index repair (same policy as interner).
+
+### Provenance store
+
+- Token provenance is mandatory diagnostic side-channel data, not semantic
+  token identity. `OriginId(0)` is the reserved Unknown/Bootstrap record.
+  `OriginListId::EMPTY` is the reserved empty origin-list span.
+- The store owns one append-only `OriginRecord` arena and one append-only
+  packed `OriginId` arena addressed by `OriginListId` spans. It is deliberately
+  per-instance and not hash-consed: identical origin records or lists may have
+  different ids, and rollback only truncates arenas to the snapshot mark.
+- Allocation is infallible from the engine's perspective. Origin-record
+  capacity overflow saturates to `OriginId(0)` so diagnostic provenance never
+  aborts a TeX compile; origin-list capacity overflow degrades to the empty
+  origin-list span.
+- The public boundary is aggregate-owned. Callers allocate and read source,
+  macro, inserted, synthesized, and synthetic/bootstrap origins through
+  `Universe`/`Stores`-style APIs; raw provenance store mutation and unchecked
+  `OriginListId` construction remain internal or test-only. Provenance appends
+  are not journaled and are not part of memo redo slices; execution
+  reconstructs them when replaying.
 
 ### Glue store
 
@@ -560,7 +581,8 @@ pub struct Snapshot {
   interaction mode, prepared magnification, and font-dependent content by
   following `FontId` handles to the loaded font's semantic identity (font name,
   input path/content hash, checksum, design size, and selected size) rather
-  than hashing raw dense ids.
+  than hashing raw dense ids. Diagnostic provenance records and origin-list
+  arenas are explicitly excluded from semantic hashes.
 
 Derived queries (these fall out; do not build separate instrumentation):
 

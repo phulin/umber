@@ -5,8 +5,9 @@ use crate::macro_store::MacroMeaning;
 use crate::meaning::{Meaning, MeaningFlags};
 use crate::node::{BoxNode, BoxNodeFields, GlueKind, KernKind, Node, Sign};
 use crate::page::{PageDimension, PageInteger};
+use crate::provenance::{OriginRecord, SourceOrigin, SyntheticOriginKind};
 use crate::scaled::{GlueSetRatio, Scaled};
-use crate::token::{Catcode, Token};
+use crate::token::{Catcode, OriginId, Token};
 use crate::world::{ContentHash, JobClock, PrintSink, StreamSlot, World};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
@@ -37,6 +38,37 @@ fn rollback_restores_store_tuple_and_placeholder_scalars() {
     universe.rollback(&snapshot);
 
     assert_eq!(universe.meaning(symbol), Meaning::Undefined);
+}
+
+#[test]
+fn provenance_is_accessible_through_universe_boundary() {
+    let mut universe = Universe::new();
+    let source = universe.source_origin(crate::input::SourceId::new(11), 80, 6, 4);
+    let synthetic = universe.synthetic_origin(SyntheticOriginKind::Engine);
+    let list = universe.allocate_origin_list(&[source, synthetic]);
+
+    assert_eq!(universe.bootstrap_origin(), OriginId::UNKNOWN);
+    assert_eq!(
+        universe.origin(source),
+        OriginRecord::Source(SourceOrigin::new(crate::input::SourceId::new(11), 80, 6, 4))
+    );
+    assert_eq!(universe.origin_list(list), &[source, synthetic]);
+}
+
+#[test]
+fn semantic_hash_ignores_provenance_allocations() {
+    let mut universe = Universe::new();
+    let base_snapshot = universe.snapshot();
+    let base_checkpoint_hash = base_snapshot.state_hash();
+    let base_testing_hash = universe.testing_state_hash();
+
+    let source = universe.source_origin(crate::input::SourceId::new(1), 0, 1, 1);
+    let synthetic = universe.synthetic_origin(SyntheticOriginKind::Engine);
+    let _list = universe.allocate_origin_list(&[source, synthetic]);
+    let after_snapshot = universe.snapshot();
+
+    assert_eq!(after_snapshot.state_hash(), base_checkpoint_hash);
+    assert_eq!(universe.testing_state_hash(), base_testing_hash);
 }
 
 #[test]

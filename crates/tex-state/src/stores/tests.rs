@@ -2,13 +2,20 @@ use super::{PrepareMagDiagnostic, Stores};
 use crate::env::banks::{DimenParam, GlueParam, IntParam};
 use crate::font::NULL_FONT;
 use crate::glue::{GlueSpec, Order};
-use crate::ids::{ArenaRef, NodeListId};
+use crate::ids::{ArenaRef, NodeListId, OriginListId};
 use crate::macro_store::MacroMeaning;
 use crate::meaning::Meaning;
 use crate::meaning::MeaningFlags;
 use crate::node::{BoxNode, BoxNodeFields, Node, Sign};
 use crate::scaled::{GlueSetRatio, Scaled};
-use crate::token::{Catcode, Token};
+use crate::token::{Catcode, OriginId, Token};
+use crate::{
+    input::SourceId,
+    provenance::{
+        InsertedOrigin, InsertedOriginKind, MacroOrigin, OriginRecord, SourceOrigin,
+        SynthesizedOrigin, SynthesizedOriginKind, SyntheticOrigin, SyntheticOriginKind,
+    },
+};
 
 #[test]
 fn rollback_restores_env_and_interner_as_one_tuple() {
@@ -64,6 +71,86 @@ fn token_list_builder_finishes_through_stores_boundary() {
     builder.push(crate::token::Token::param(2));
     let reused = stores.finish_token_list(&mut builder);
     assert_eq!(stores.tokens(reused), &[crate::token::Token::param(2)]);
+}
+
+#[test]
+fn provenance_records_and_lists_round_trip_through_stores_boundary() {
+    let mut stores = Stores::new();
+    let symbol = stores.intern("m");
+    let params = stores.intern_token_list(&[]);
+    let body = stores.intern_token_list(&[Token::Cs(symbol)]);
+    let definition = stores.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, params, body));
+    let source = stores.source_origin(SourceId::new(3), 40, 5, 2);
+    let macro_origin = stores.macro_origin(definition, source, OriginId::UNKNOWN);
+    let inserted = stores.inserted_origin(
+        InsertedOriginKind::Paragraph,
+        Token::Char {
+            ch: 'p',
+            cat: Catcode::Letter,
+        },
+        macro_origin,
+    );
+    let synthesized = stores.synthesized_origin(SynthesizedOriginKind::Expansion, inserted);
+    let synthetic = stores.synthetic_origin(SyntheticOriginKind::Engine);
+    let list = stores.allocate_origin_list(&[source, macro_origin, inserted, synthesized]);
+
+    assert_eq!(stores.bootstrap_origin(), OriginId::UNKNOWN);
+    assert_eq!(
+        stores.origin(source),
+        OriginRecord::Source(SourceOrigin::new(SourceId::new(3), 40, 5, 2))
+    );
+    assert_eq!(
+        stores.origin(macro_origin),
+        OriginRecord::Macro(MacroOrigin::new(definition, source, OriginId::UNKNOWN))
+    );
+    assert_eq!(
+        stores.origin(inserted),
+        OriginRecord::Inserted(InsertedOrigin::new(
+            InsertedOriginKind::Paragraph,
+            Token::Char {
+                ch: 'p',
+                cat: Catcode::Letter,
+            },
+            macro_origin,
+        ))
+    );
+    assert_eq!(
+        stores.origin(synthesized),
+        OriginRecord::Synthesized(SynthesizedOrigin::new(
+            SynthesizedOriginKind::Expansion,
+            inserted,
+        ))
+    );
+    assert_eq!(
+        stores.origin(synthetic),
+        OriginRecord::Synthetic(SyntheticOrigin::new(SyntheticOriginKind::Engine))
+    );
+    assert_eq!(
+        stores.origin_list(list),
+        &[source, macro_origin, inserted, synthesized]
+    );
+    assert_eq!(stores.origin_list(OriginListId::EMPTY), &[]);
+}
+
+#[test]
+fn rollback_restores_provenance_as_part_of_snapshot_tuple() {
+    let mut stores = Stores::new();
+    let kept = stores.synthetic_origin(SyntheticOriginKind::Engine);
+    let snapshot = stores.checkpoint();
+    let stale = stores.synthetic_origin(SyntheticOriginKind::Primitive);
+    let stale_list = stores.allocate_origin_list(&[kept, stale]);
+
+    stores.rollback(&snapshot);
+    let reused = stores.synthetic_origin(SyntheticOriginKind::Format);
+    let reused_list = stores.allocate_origin_list(&[kept, reused]);
+
+    assert_eq!(reused.raw(), stale.raw());
+    assert_eq!(reused_list.raw(), stale_list.raw());
+    assert_eq!(
+        stores.origin(reused),
+        OriginRecord::Synthetic(SyntheticOrigin::new(SyntheticOriginKind::Format))
+    );
+    assert_eq!(stores.origin_list(reused_list), &[kept, reused]);
 }
 
 #[test]
