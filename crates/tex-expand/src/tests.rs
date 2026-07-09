@@ -354,7 +354,7 @@ fn csname_expands_name_pieces_before_interning() {
 }
 
 #[test]
-fn csname_reports_non_character_material_after_expansion() {
+fn csname_recovers_from_non_character_material_after_expansion() {
     let mut stores = Universe::new();
     let (csname, endcsname) = csname_primitives(&mut stores);
     let relax = stores.intern("relax");
@@ -364,10 +364,22 @@ fn csname_reports_non_character_material_after_expansion() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(input_list, TokenListReplayKind::Inserted);
 
-    assert!(matches!(
-        get_x_token(&mut input, &mut stores),
-        Err(crate::ExpandError::NonCharacterInCsName(Token::Cs(found))) if found == relax
-    ));
+    let Some(Token::Cs(empty)) =
+        get_x_token(&mut input, &mut stores).expect("csname recovery should succeed")
+    else {
+        panic!("expected recovered empty control sequence");
+    };
+    assert_eq!(stores.resolve(empty), "");
+    assert_eq!(stores.meaning(empty), Meaning::Relax);
+
+    assert_eq!(
+        get_x_token(&mut input, &mut stores).expect("pushed-back token should expand"),
+        Some(Token::Cs(relax))
+    );
+    assert_eq!(
+        get_x_token(&mut input, &mut stores).expect("remaining endcsname should be delivered"),
+        Some(Token::Cs(endcsname))
+    );
 }
 
 #[test]

@@ -58,12 +58,18 @@ where
         let token = read.token();
 
         if read.suppress_expansion() {
-            append_csname_token(&mut name, token)?;
+            if append_csname_token(&mut name, token) == CsNameAppend::Recover {
+                push_inserted_token(input, stores, token);
+                return Ok(name);
+            }
             continue;
         }
 
         let Token::Cs(symbol) = token else {
-            append_csname_token(&mut name, token)?;
+            if append_csname_token(&mut name, token) == CsNameAppend::Recover {
+                push_inserted_token(input, stores, token);
+                return Ok(name);
+            }
             continue;
         };
 
@@ -79,20 +85,29 @@ where
         )? {
             Dispatch::Continue => {}
             Dispatch::Deliver(token) | Dispatch::DeliverNoExpand(token) => {
-                append_csname_token(&mut name, token)?;
+                if append_csname_token(&mut name, token) == CsNameAppend::Recover {
+                    push_inserted_token(input, stores, token);
+                    return Ok(name);
+                }
             }
             push @ Dispatch::Push { .. } => apply_dispatch_push(input, push),
         }
     }
 }
 
-fn append_csname_token(name: &mut String, token: Token) -> Result<(), ExpandError> {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CsNameAppend {
+    Appended,
+    Recover,
+}
+
+fn append_csname_token(name: &mut String, token: Token) -> CsNameAppend {
     match token {
         Token::Char { ch, .. } => {
             name.push(ch);
-            Ok(())
+            CsNameAppend::Appended
         }
-        Token::Cs(_) | Token::Param(_) => Err(ExpandError::NonCharacterInCsName(token)),
+        Token::Cs(_) | Token::Param(_) => CsNameAppend::Recover,
     }
 }
 

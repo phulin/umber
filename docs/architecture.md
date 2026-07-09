@@ -258,9 +258,12 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   frame; it does not allocate a substituted body list. Token-list replay is
   naturally read-only; source-frame replay may intern newly encountered
   control sequence names through the lexer/interner capability. `\csname` uses a dedicated
-  expansion scan that stops on `\endcsname`, validates that expanded name
-  material is character tokens, and interns/relaxes the resulting control
-  sequence through the same aggregate boundary. Primitive installation and
+  expansion scan that stops on `\endcsname`, accumulates only expanded character
+  tokens, and interns/relaxes the resulting control sequence through the same
+  aggregate boundary. If expansion yields a non-character token before
+  `\endcsname`, the scanner follows TeX82 recovery by treating a missing
+  `\endcsname` as inserted and pushing the offending token back through an
+  inserted-token replay frame. Primitive installation and
   stomach assignment/test setup helpers still receive `&mut Universe`, but
   the production token-reading and scanner path is Rust-enforced against
   Env/register/code-table writes.
