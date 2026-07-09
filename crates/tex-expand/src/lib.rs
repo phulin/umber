@@ -13,7 +13,7 @@ use tex_state::glue::GlueSpec;
 use tex_state::interner::Symbol;
 use tex_state::meaning::Meaning;
 use tex_state::scaled::Scaled;
-use tex_state::token::{Catcode, Token};
+use tex_state::token::{Catcode, OriginId, Token};
 use tex_state::{ExpansionState, InputOpenState, InputReadState, Universe};
 
 pub mod args;
@@ -222,6 +222,7 @@ pub enum Dispatch {
         token_list: tex_state::ids::TokenListId,
         origin_list: tex_state::ids::OriginListId,
         macro_arguments: MacroArguments,
+        macro_invocation: OriginId,
     },
 }
 
@@ -507,7 +508,7 @@ where
     H: ExpansionHooks<S>,
 {
     loop {
-        let Some(read) = input.next_expansion_token(stores)? else {
+        let Some(read) = input.next_traced_expansion_token(stores)? else {
             return Ok(None);
         };
         let token = read.token();
@@ -524,7 +525,15 @@ where
         let meaning = stores.meaning(symbol);
         recorder.record_meaning(symbol, meaning);
 
-        match dispatch_with_hooks(token, input, stores, recorder, hooks, meaning)? {
+        match dispatch_with_hooks(
+            token,
+            read.origin(),
+            input,
+            stores,
+            recorder,
+            hooks,
+            meaning,
+        )? {
             Dispatch::Continue => {}
             Dispatch::Deliver(token) | Dispatch::DeliverNoExpand(token) => return Ok(Some(token)),
             push @ Dispatch::Push { .. } => apply_dispatch_push(input, push),
@@ -544,7 +553,7 @@ where
     H: ExpansionHooks<S>,
 {
     loop {
-        let Some(read) = input.next_expansion_token(stores)? else {
+        let Some(read) = input.next_traced_expansion_token(stores)? else {
             return Ok(None);
         };
         let token = read.token();
@@ -561,8 +570,15 @@ where
         let meaning = stores.meaning(symbol);
         recorder.record_meaning(symbol, meaning);
 
-        match dispatch::dispatch_without_input_open(token, input, stores, recorder, hooks, meaning)?
-        {
+        match dispatch::dispatch_without_input_open(
+            token,
+            read.origin(),
+            input,
+            stores,
+            recorder,
+            hooks,
+            meaning,
+        )? {
             Dispatch::Continue => {}
             Dispatch::Deliver(token) | Dispatch::DeliverNoExpand(token) => return Ok(Some(token)),
             push @ Dispatch::Push { .. } => apply_dispatch_push(input, push),
@@ -589,7 +605,15 @@ where
 
     let meaning = stores.meaning(symbol);
     recorder.record_meaning(symbol, meaning);
-    dispatch::dispatch_without_input_open(token, input, stores, recorder, hooks, meaning)
+    dispatch::dispatch_without_input_open(
+        token,
+        OriginId::UNKNOWN,
+        input,
+        stores,
+        recorder,
+        hooks,
+        meaning,
+    )
 }
 
 pub(crate) fn expandable_symbol(stores: &mut impl ExpansionState, token: Token) -> Option<Symbol> {
@@ -622,13 +646,19 @@ pub(crate) fn apply_dispatch_push<S>(input: &mut InputStack<S>, dispatch: Dispat
         token_list,
         origin_list,
         macro_arguments,
+        macro_invocation,
     } = dispatch
     else {
         return;
     };
 
     if replay_kind == ExpansionReplayKind::MacroBody {
-        input.push_macro_body_with_origins(token_list, origin_list, macro_arguments);
+        input.push_macro_body_with_origins_and_invocation(
+            token_list,
+            origin_list,
+            macro_arguments,
+            macro_invocation,
+        );
     } else {
         input.push_token_list_with_origins(token_list, origin_list, replay_kind.as_lex_kind());
     }

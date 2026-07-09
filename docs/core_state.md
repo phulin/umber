@@ -175,16 +175,20 @@ Rules:
   `macro`, the public flag byte (`\long`, `\outer`, `\protected`, plus the
   reserved frozen bit), and a 48-bit operand naming an immutable
   `MacroDefinitionId`. That definition is owned by the aggregate
-  `Universe` boundary and contains two frozen token-list ids plus their
-  per-definition origin-list ids: parameter text and replacement text.
+  `Universe` boundary and contains two frozen token-list ids: parameter text
+  and replacement text. Diagnostic definition provenance lives in a side table
+  keyed by `MacroDefinitionId`; it records the definition origin plus
+  parameter/replacement `OriginListId`s and is not part of `MacroMeaning`.
   Downstream code may decode macro
   meanings through public aggregate facades into the `MacroMeaning` aggregate,
   but it cannot mint live macro-definition ids or inspect the raw store.
   Identical token lists are hash-consed by the token store, so separately
   scanned identical replacement bodies receive the same `TokenListId` even
-  when their origin lists differ. Macro-definition semantic hashing and
-  `\ifx` comparison use flags plus semantic parameter/replacement token-list
-  content, not origin-list identity.
+  when their origin lists differ. Separately scanned macro definitions receive
+  distinct `MacroDefinitionId`s so the side table can retain their different
+  provenance. Macro-definition semantic hashing and `\ifx` comparison use
+  flags plus semantic parameter/replacement token-list content, not
+  definition-id or origin-list identity.
 - Addresses of `cells` are stable for the process lifetime (no reallocation:
   size the array to the interner's max, grow by chunked segments if needed —
   segments never move).
@@ -334,10 +338,12 @@ cells[i] = new
   aborts a TeX compile; origin-list capacity overflow degrades to the empty
   origin-list span.
 - The public boundary is aggregate-owned. Callers allocate and read source,
-  macro, inserted, synthesized, synthetic/bootstrap, and origin-list builder
-  APIs through `Universe`/`Stores`-style APIs; raw provenance store mutation and unchecked
-  `OriginListId` construction remain internal or test-only. Provenance appends
-  are not journaled and are not part of memo redo slices; execution
+  macro-invocation, inserted, synthesized, synthetic/bootstrap, and
+  origin-list builder APIs through `Universe`/`Stores`-style APIs; raw
+  provenance store mutation and unchecked `OriginListId` construction remain
+  internal or test-only. Macro-definition side-table reads are best-effort and
+  resolve to unknown/empty provenance when an entry is absent. Provenance
+  appends are not journaled and are not part of memo redo slices; execution
   reconstructs them when replaying.
 
 ### Glue store

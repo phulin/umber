@@ -1,7 +1,7 @@
 use tex_lex::{InputSource, InputStack};
 use tex_state::ExpansionState;
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
-use tex_state::token::{Catcode, Token};
+use tex_state::token::{Catcode, OriginId, Token};
 
 use crate::{
     Dispatch, ExpandError, ExpandableOpcode, ExpansionHooks, ReadRecorder, apply_dispatch_push,
@@ -81,7 +81,13 @@ where
         }
 
         match crate::dispatch::dispatch_without_input_open(
-            token, input, stores, recorder, hooks, meaning,
+            token,
+            OriginId::UNKNOWN,
+            input,
+            stores,
+            recorder,
+            hooks,
+            meaning,
         )? {
             Dispatch::Continue => {}
             Dispatch::Deliver(token) | Dispatch::DeliverNoExpand(token) => {

@@ -48,7 +48,7 @@ where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    let target = scan_definition_target(input, stores, "macro definition")?;
+    let target = scan_traced_definition_target(input, stores, "macro definition")?;
     let expanded = matches!(
         primitive,
         UnexpandablePrimitive::Edef | UnexpandablePrimitive::Xdef
@@ -62,11 +62,20 @@ where
         scan_toks_expanded_with_driver(input, stores, prefixes.flags, hooks)?
     } else {
         scan_toks(input, stores, prefixes.flags)?
-    };
+    }
+    .with_definition_origin(target.origin);
     if apply_globaldefs(global, stores) {
-        stores.set_macro_meaning_global(target, scanned.meaning());
+        stores.set_macro_meaning_global_with_provenance(
+            target.symbol,
+            scanned.meaning(),
+            scanned.provenance(),
+        );
     } else {
-        stores.set_macro_meaning(target, scanned.meaning());
+        stores.set_macro_meaning_with_provenance(
+            target.symbol,
+            scanned.meaning(),
+            scanned.provenance(),
+        );
     }
     Ok(())
 }

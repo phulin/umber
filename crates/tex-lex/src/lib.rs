@@ -198,6 +198,7 @@ struct TokenListInputFrame {
     replay_kind: TokenListReplayKind,
     index: usize,
     macro_arguments: MacroArguments,
+    macro_invocation: OriginId,
 }
 
 #[derive(Debug)]
@@ -346,12 +347,14 @@ impl<S> InputStack<S> {
                     replay_kind,
                     index,
                     macro_arguments,
+                    macro_invocation,
                 } => frames.push(InputFrame::TokenList(TokenListInputFrame {
                     token_list: *token_list,
                     origin_list: *origin_list,
                     replay_kind: *replay_kind,
                     index: *index,
                     macro_arguments: *macro_arguments,
+                    macro_invocation: *macro_invocation,
                 })),
                 InputFrameSummary::Condition(condition) => {
                     frames.push(InputFrame::Condition(*condition));
@@ -388,6 +391,7 @@ impl<S> InputStack<S> {
             replay_kind,
             index: 0,
             macro_arguments: MacroArguments::new(),
+            macro_invocation: OriginId::UNKNOWN,
         }));
     }
 
@@ -401,12 +405,28 @@ impl<S> InputStack<S> {
         origin_list: OriginListId,
         macro_arguments: MacroArguments,
     ) {
+        self.push_macro_body_with_origins_and_invocation(
+            token_list,
+            origin_list,
+            macro_arguments,
+            OriginId::UNKNOWN,
+        );
+    }
+
+    pub fn push_macro_body_with_origins_and_invocation(
+        &mut self,
+        token_list: TokenListId,
+        origin_list: OriginListId,
+        macro_arguments: MacroArguments,
+        macro_invocation: OriginId,
+    ) {
         self.frames.push(InputFrame::TokenList(TokenListInputFrame {
             token_list,
             origin_list,
             replay_kind: TokenListReplayKind::MacroBody,
             index: 0,
             macro_arguments,
+            macro_invocation,
         }));
     }
 
@@ -460,6 +480,7 @@ impl<S> InputStack<S> {
                         replay_kind: token_list.replay_kind,
                         index: token_list.index,
                         macro_arguments: token_list.macro_arguments,
+                        macro_invocation: token_list.macro_invocation,
                     },
                     InputFrame::Condition(condition) => InputFrameSummary::Condition(*condition),
                 })
@@ -650,6 +671,7 @@ where
                                 replay_kind: TokenListReplayKind::MacroArgument,
                                 index: 0,
                                 macro_arguments: MacroArguments::new(),
+                                macro_invocation: OriginId::UNKNOWN,
                             }));
                             continue;
                         }
@@ -740,6 +762,7 @@ where
                                 replay_kind: TokenListReplayKind::MacroArgument,
                                 index: 0,
                                 macro_arguments: MacroArguments::new(),
+                                macro_invocation: OriginId::UNKNOWN,
                             }));
                             continue;
                         }
@@ -814,6 +837,7 @@ where
                                 replay_kind: TokenListReplayKind::MacroArgument,
                                 index: 0,
                                 macro_arguments: MacroArguments::new(),
+                                macro_invocation: OriginId::UNKNOWN,
                             }));
                             continue;
                         }
@@ -981,6 +1005,9 @@ fn replay_origin(
     token: Token,
 ) -> OriginId {
     if frame.origin_list == OriginListId::EMPTY {
+        if frame.replay_kind == TokenListReplayKind::MacroBody {
+            return OriginId::UNKNOWN;
+        }
         let parent = stores.bootstrap_origin();
         return stores.inserted_origin(
             InsertedOriginKind::TokenListReplay(frame.replay_kind),

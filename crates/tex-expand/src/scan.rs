@@ -9,7 +9,7 @@ use std::{fmt, marker::PhantomData};
 
 use tex_lex::{InputSource, InputStack, LexError, MemoryInput, TokenListReplayKind};
 use tex_state::ids::{OriginListId, TokenListId};
-use tex_state::macro_store::MacroMeaning;
+use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
 use tex_state::provenance::OriginListBuilder;
 use tex_state::token::{Catcode, Token, TracedTokenWord};
@@ -25,12 +25,33 @@ use crate::{
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ScannedMacro {
     meaning: MacroMeaning,
+    provenance: MacroDefinitionProvenance,
 }
 
 impl ScannedMacro {
     #[must_use]
     pub const fn meaning(self) -> MacroMeaning {
         self.meaning
+    }
+
+    #[must_use]
+    pub const fn provenance(self) -> MacroDefinitionProvenance {
+        self.provenance
+    }
+
+    #[must_use]
+    pub const fn with_definition_origin(
+        self,
+        definition_origin: tex_state::token::OriginId,
+    ) -> Self {
+        Self {
+            provenance: MacroDefinitionProvenance::new(
+                definition_origin,
+                self.provenance.parameter_origins(),
+                self.provenance.replacement_origins(),
+            ),
+            ..self
+        }
     }
 
     #[must_use]
@@ -135,11 +156,14 @@ where
     let parameter_text = scan_parameter_text(input, stores)?;
     let replacement_text = scan_replacement_text(input, stores)?;
     Ok(ScannedMacro {
-        meaning: MacroMeaning::with_origins(
+        meaning: MacroMeaning::new(
             flags,
             parameter_text.token_list(),
-            parameter_text.origin_list(),
             replacement_text.token_list(),
+        ),
+        provenance: MacroDefinitionProvenance::new(
+            tex_state::token::OriginId::UNKNOWN,
+            parameter_text.origin_list(),
             replacement_text.origin_list(),
         ),
     })
@@ -161,16 +185,19 @@ where
     let replacement_text = expand_replacement_text(
         stores,
         meaning.replacement_text(),
-        meaning.replacement_origins(),
+        scanned.provenance().replacement_origins(),
         hooks,
         &mut NoInputExpandNext,
     )?;
     Ok(ScannedMacro {
-        meaning: MacroMeaning::with_origins(
+        meaning: MacroMeaning::new(
             flags,
             meaning.parameter_text(),
-            meaning.parameter_origins(),
             replacement_text.token_list(),
+        ),
+        provenance: MacroDefinitionProvenance::new(
+            scanned.provenance().definition_origin(),
+            scanned.provenance().parameter_origins(),
             replacement_text.origin_list(),
         ),
     })
@@ -192,16 +219,19 @@ where
     let replacement_text = expand_replacement_text(
         stores,
         meaning.replacement_text(),
-        meaning.replacement_origins(),
+        scanned.provenance().replacement_origins(),
         hooks,
         &mut DriverExpandNext,
     )?;
     Ok(ScannedMacro {
-        meaning: MacroMeaning::with_origins(
+        meaning: MacroMeaning::new(
             flags,
             meaning.parameter_text(),
-            meaning.parameter_origins(),
             replacement_text.token_list(),
+        ),
+        provenance: MacroDefinitionProvenance::new(
+            scanned.provenance().definition_origin(),
+            scanned.provenance().parameter_origins(),
             replacement_text.origin_list(),
         ),
     })

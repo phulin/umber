@@ -23,7 +23,7 @@ use crate::input::{
     TokenListReplayKind,
 };
 use crate::interner::Symbol;
-use crate::macro_store::MacroMeaning;
+use crate::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use crate::math::MathFontSize;
 use crate::meaning::Meaning;
 use crate::node::Node;
@@ -69,6 +69,7 @@ pub trait ExpansionState {
     fn delcode(&self, ch: char) -> DelCode;
     fn meaning(&self, symbol: Symbol) -> Meaning;
     fn macro_definition(&self, id: MacroDefinitionId) -> MacroMeaning;
+    fn macro_definition_provenance(&self, id: MacroDefinitionId) -> MacroDefinitionProvenance;
     fn macro_meaning(&self, symbol: Symbol) -> Option<MacroMeaning>;
     fn intern_relaxed_control_sequence(&mut self, name: &str) -> Symbol;
     fn intern(&mut self, name: &str) -> Symbol;
@@ -117,6 +118,12 @@ pub trait ExpansionState {
         byte_offset: u64,
         line: u32,
         column: u32,
+    ) -> OriginId;
+    fn macro_invocation_origin(
+        &mut self,
+        definition: MacroDefinitionId,
+        invocation: OriginId,
+        definition_origin: OriginId,
     ) -> OriginId;
     fn inserted_origin(
         &mut self,
@@ -973,17 +980,51 @@ impl Universe {
         self.stores.intern_macro(macro_meaning)
     }
 
+    pub fn intern_macro_with_provenance(
+        &mut self,
+        macro_meaning: MacroMeaning,
+        provenance: MacroDefinitionProvenance,
+    ) -> MacroDefinitionId {
+        self.stores
+            .intern_macro_with_provenance(macro_meaning, Some(provenance))
+    }
+
     #[must_use]
     pub fn macro_definition(&self, id: MacroDefinitionId) -> MacroMeaning {
         self.stores.macro_definition(id)
+    }
+
+    #[must_use]
+    pub fn macro_definition_provenance(&self, id: MacroDefinitionId) -> MacroDefinitionProvenance {
+        self.stores.macro_definition_provenance(id)
     }
 
     pub fn set_macro_meaning(&mut self, symbol: Symbol, macro_meaning: MacroMeaning) {
         self.stores.set_macro_meaning(symbol, macro_meaning);
     }
 
+    pub fn set_macro_meaning_with_provenance(
+        &mut self,
+        symbol: Symbol,
+        macro_meaning: MacroMeaning,
+        provenance: MacroDefinitionProvenance,
+    ) {
+        self.stores
+            .set_macro_meaning_with_provenance(symbol, macro_meaning, provenance);
+    }
+
     pub fn set_macro_meaning_global(&mut self, symbol: Symbol, macro_meaning: MacroMeaning) {
         self.stores.set_macro_meaning_global(symbol, macro_meaning);
+    }
+
+    pub fn set_macro_meaning_global_with_provenance(
+        &mut self,
+        symbol: Symbol,
+        macro_meaning: MacroMeaning,
+        provenance: MacroDefinitionProvenance,
+    ) {
+        self.stores
+            .set_macro_meaning_global_with_provenance(symbol, macro_meaning, provenance);
     }
 
     #[must_use]
@@ -1040,15 +1081,15 @@ impl Universe {
         self.stores.source_origin(source, byte_offset, line, column)
     }
 
-    /// Allocates a macro-related origin.
-    pub fn macro_origin(
+    /// Allocates a macro-invocation origin.
+    pub fn macro_invocation_origin(
         &mut self,
         definition: MacroDefinitionId,
         invocation: OriginId,
         definition_origin: OriginId,
     ) -> OriginId {
         self.stores
-            .macro_origin(definition, invocation, definition_origin)
+            .macro_invocation_origin(definition, invocation, definition_origin)
     }
 
     /// Allocates an inserted-token origin.
@@ -1902,6 +1943,10 @@ impl ExpansionState for Universe {
         Self::macro_definition(self, id)
     }
 
+    fn macro_definition_provenance(&self, id: MacroDefinitionId) -> MacroDefinitionProvenance {
+        Self::macro_definition_provenance(self, id)
+    }
+
     fn macro_meaning(&self, symbol: Symbol) -> Option<MacroMeaning> {
         Self::macro_meaning(self, symbol)
     }
@@ -2076,6 +2121,15 @@ impl ExpansionState for Universe {
         Self::source_origin(self, source, byte_offset, line, column)
     }
 
+    fn macro_invocation_origin(
+        &mut self,
+        definition: MacroDefinitionId,
+        invocation: OriginId,
+        definition_origin: OriginId,
+    ) -> OriginId {
+        Self::macro_invocation_origin(self, definition, invocation, definition_origin)
+    }
+
     fn inserted_origin(
         &mut self,
         kind: InsertedOriginKind,
@@ -2133,6 +2187,10 @@ impl ExpansionState for ExpansionContext<'_> {
 
     fn macro_definition(&self, id: MacroDefinitionId) -> MacroMeaning {
         self.universe.macro_definition(id)
+    }
+
+    fn macro_definition_provenance(&self, id: MacroDefinitionId) -> MacroDefinitionProvenance {
+        self.universe.macro_definition_provenance(id)
     }
 
     fn macro_meaning(&self, symbol: Symbol) -> Option<MacroMeaning> {
@@ -2310,6 +2368,16 @@ impl ExpansionState for ExpansionContext<'_> {
             .source_origin(source, byte_offset, line, column)
     }
 
+    fn macro_invocation_origin(
+        &mut self,
+        definition: MacroDefinitionId,
+        invocation: OriginId,
+        definition_origin: OriginId,
+    ) -> OriginId {
+        self.universe
+            .macro_invocation_origin(definition, invocation, definition_origin)
+    }
+
     fn inserted_origin(
         &mut self,
         kind: InsertedOriginKind,
@@ -2477,6 +2545,7 @@ fn hash_input_summary_fields(stores: &Stores, summary: &InputSummary, hasher: &m
                 replay_kind,
                 index,
                 macro_arguments,
+                macro_invocation: _,
             } => {
                 hasher.tag(1);
                 stores.hash_token_list_semantic(*token_list, hasher);

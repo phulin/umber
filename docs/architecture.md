@@ -278,9 +278,9 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   so hooks can open input files without seeing meaning reads, Env/register
   writes, code-table writes, grouping, snapshot, font-assignment, or general
   World mutation APIs. Macro body replay uses
-  the body `TokenListId` directly plus its definition-time `OriginListId` and
-  frozen argument token/origin pairs on the replay frame; it does not allocate
-  a substituted body list. Token-list replay is
+  the body `TokenListId` directly plus its definition-time `OriginListId`, a
+  one-per-call macro-invocation origin, and frozen argument token/origin pairs
+  on the replay frame; it does not allocate a substituted body list. Token-list replay is
   naturally read-only; source-frame replay may intern newly encountered
   control sequence names through the lexer/interner capability. `\csname` uses a dedicated
   expansion scan that stops on `\endcsname`, accumulates only expanded character
@@ -301,9 +301,9 @@ Responsibility: the token-level rewriting system — macros, conditionals,
 - Implemented conditional predicates evaluate in `tex-expand` and record their
   result by pushing/updating `tex-lex` condition frames. `\if` and `\ifcat`
   expand only to the two unexpandable comparison tokens; `\ifx` reads two raw
-  tokens and compares macro meanings by flags plus hash-consed
-  macro-definition ids, with non-macro control sequences falling back to
-  meaning-word equality. `\ifnum`, `\ifdim`, `\ifodd`, and `\ifcase` reuse the
+  tokens and compares macro meanings by flags plus semantic
+  parameter/replacement token-list contents, with non-macro control sequences
+  falling back to meaning-word equality. `\ifnum`, `\ifdim`, `\ifodd`, and `\ifcase` reuse the
   shared integer/dimension scanners, including `\ifcase` `\or` limb selection.
   Mode predicates read only a driver-supplied query trait; box predicates read
   only the `Universe` box-register facade; `\ifeof` reads the `World` input

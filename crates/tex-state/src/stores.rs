@@ -18,13 +18,13 @@ use crate::hyphenation::{ExceptionSpec, HyphenationTable, PatternSpec};
 use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, OriginListId, TokenListId};
 use crate::input::SourceId;
 use crate::interner::{Interner, InternerError, InternerMark, Symbol};
-use crate::macro_store::{MacroMeaning, MacroStore, MacroStoreMark};
+use crate::macro_store::{MacroDefinitionProvenance, MacroMeaning, MacroStore, MacroStoreMark};
 use crate::math::MathFontSize;
 use crate::meaning::Meaning;
 use crate::node::Node;
 use crate::node_arena::{NodeArena, NodeArenaMark, NodeListBuilder};
 use crate::provenance::{
-    InsertedOrigin, InsertedOriginKind, MacroOrigin, OriginListBuilder, OriginRecord,
+    InsertedOrigin, InsertedOriginKind, MacroInvocationOrigin, OriginListBuilder, OriginRecord,
     ProvenanceStore, ProvenanceStoreMark, SourceOrigin, SynthesizedOrigin, SynthesizedOriginKind,
     SyntheticOrigin, SyntheticOriginKind,
 };
@@ -357,19 +357,32 @@ impl Stores {
 
     /// Interns a frozen macro definition in the owned macro-definition store.
     pub fn intern_macro(&mut self, macro_meaning: MacroMeaning) -> MacroDefinitionId {
+        self.intern_macro_with_provenance(macro_meaning, None)
+    }
+
+    /// Interns a frozen macro definition with optional diagnostic provenance.
+    pub fn intern_macro_with_provenance(
+        &mut self,
+        macro_meaning: MacroMeaning,
+        provenance: Option<MacroDefinitionProvenance>,
+    ) -> MacroDefinitionId {
         self.assert_live_token_list(macro_meaning.parameter_text());
         self.assert_live_token_list(macro_meaning.replacement_text());
-        self.assert_live_origin_list(macro_meaning.parameter_origins());
-        self.assert_live_origin_list(macro_meaning.replacement_origins());
-        self.assert_origin_list_len_matches(
-            macro_meaning.parameter_text(),
-            macro_meaning.parameter_origins(),
-        );
-        self.assert_origin_list_len_matches(
-            macro_meaning.replacement_text(),
-            macro_meaning.replacement_origins(),
-        );
-        self.macros.intern(macro_meaning)
+        if let Some(provenance) = provenance {
+            self.assert_live_origin(provenance.definition_origin());
+            self.assert_live_origin_list(provenance.parameter_origins());
+            self.assert_live_origin_list(provenance.replacement_origins());
+            self.assert_origin_list_len_matches(
+                macro_meaning.parameter_text(),
+                provenance.parameter_origins(),
+            );
+            self.assert_origin_list_len_matches(
+                macro_meaning.replacement_text(),
+                provenance.replacement_origins(),
+            );
+        }
+        self.macros
+            .intern_with_provenance(macro_meaning, provenance)
     }
 
     /// Reads a live frozen macro definition.
@@ -377,6 +390,29 @@ impl Stores {
     pub fn macro_definition(&self, id: MacroDefinitionId) -> MacroMeaning {
         self.assert_live_macro_definition(id);
         self.macros.get(id)
+    }
+
+    /// Reads diagnostic provenance for a macro definition, degrading to
+    /// unknown when the optional side-table entry is absent or stale.
+    #[must_use]
+    pub fn macro_definition_provenance(&self, id: MacroDefinitionId) -> MacroDefinitionProvenance {
+        let Some(provenance) = self.macros.provenance(id) else {
+            return MacroDefinitionProvenance::unknown();
+        };
+        if self
+            .provenance
+            .contains_origin(provenance.definition_origin())
+            && self
+                .provenance
+                .contains_list(provenance.parameter_origins())
+            && self
+                .provenance
+                .contains_list(provenance.replacement_origins())
+        {
+            provenance
+        } else {
+            MacroDefinitionProvenance::unknown()
+        }
     }
 
     /// Sets a local macro meaning by freezing its public aggregate first.
@@ -391,9 +427,43 @@ impl Stores {
         );
     }
 
+    /// Sets a local macro meaning with diagnostic definition provenance.
+    pub fn set_macro_meaning_with_provenance(
+        &mut self,
+        symbol: Symbol,
+        macro_meaning: MacroMeaning,
+        provenance: MacroDefinitionProvenance,
+    ) {
+        let definition = self.intern_macro_with_provenance(macro_meaning, Some(provenance));
+        self.set_meaning(
+            symbol,
+            Meaning::Macro {
+                flags: macro_meaning.flags(),
+                definition,
+            },
+        );
+    }
+
     /// Sets a global macro meaning by freezing its public aggregate first.
     pub fn set_macro_meaning_global(&mut self, symbol: Symbol, macro_meaning: MacroMeaning) {
         let definition = self.intern_macro(macro_meaning);
+        self.set_meaning_global(
+            symbol,
+            Meaning::Macro {
+                flags: macro_meaning.flags(),
+                definition,
+            },
+        );
+    }
+
+    /// Sets a global macro meaning with diagnostic definition provenance.
+    pub fn set_macro_meaning_global_with_provenance(
+        &mut self,
+        symbol: Symbol,
+        macro_meaning: MacroMeaning,
+        provenance: MacroDefinitionProvenance,
+    ) {
+        let definition = self.intern_macro_with_provenance(macro_meaning, Some(provenance));
         self.set_meaning_global(
             symbol,
             Meaning::Macro {
@@ -482,8 +552,8 @@ impl Stores {
             )))
     }
 
-    /// Allocates a macro-related origin.
-    pub fn macro_origin(
+    /// Allocates a macro-invocation origin.
+    pub fn macro_invocation_origin(
         &mut self,
         definition: MacroDefinitionId,
         invocation: OriginId,
@@ -493,7 +563,7 @@ impl Stores {
         self.assert_live_origin(invocation);
         self.assert_live_origin(definition_origin);
         self.provenance
-            .allocate(OriginRecord::Macro(MacroOrigin::new(
+            .allocate(OriginRecord::MacroInvocation(MacroInvocationOrigin::new(
                 definition,
                 invocation,
                 definition_origin,

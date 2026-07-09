@@ -6,10 +6,11 @@ use std::collections::HashMap;
 use tex_lex::{InputStack, MemoryInput, TokenListReplayKind};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::interner::Symbol;
-use tex_state::macro_store::MacroMeaning;
+use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::node::{BoxNode, BoxNodeFields, Node, Sign};
 use tex_state::page::PageMark;
+use tex_state::provenance::{MacroInvocationOrigin, OriginRecord};
 use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::token::{Catcode, Token};
 use tex_state::{ExpansionState, InputOpenState, InputReadState, Universe};
@@ -161,13 +162,30 @@ fn get_x_token_pushes_macro_body_frame_and_continues() {
         },
     ]);
     let params = stores.intern_token_list(&[]);
-    stores.set_macro_meaning(
+    let definition_origin = stores.source_origin(tex_state::SourceId::new(7), 30, 3, 4);
+    let body_origin = stores.source_origin(tex_state::SourceId::new(7), 40, 3, 14);
+    let body_origins = stores.allocate_origin_list(&[body_origin, body_origin]);
+    stores.set_macro_meaning_with_provenance(
         macro_cs,
         MacroMeaning::new(MeaningFlags::EMPTY, params, body),
+        MacroDefinitionProvenance::new(
+            definition_origin,
+            tex_state::ids::OriginListId::EMPTY,
+            body_origins,
+        ),
     );
+    let Meaning::Macro { definition, .. } = stores.meaning(macro_cs) else {
+        panic!("expected macro meaning");
+    };
     let invocation = stores.intern_token_list(&[Token::Cs(macro_cs)]);
+    let call_origin = stores.source_origin(tex_state::SourceId::new(8), 50, 5, 1);
+    let invocation_origins = stores.allocate_origin_list(&[call_origin]);
     let mut input = InputStack::new(MemoryInput::new(""));
-    input.push_token_list(invocation, TokenListReplayKind::Inserted);
+    input.push_token_list_with_origins(
+        invocation,
+        invocation_origins,
+        TokenListReplayKind::Inserted,
+    );
 
     assert_eq!(
         get_x_token(&mut input, &mut stores).expect("expansion should succeed"),
@@ -183,8 +201,19 @@ fn get_x_token_pushes_macro_body_frame_and_continues() {
             replay_kind: TokenListReplayKind::MacroBody,
             index: 1,
             macro_arguments,
+            macro_invocation,
             ..
-        }) if *token_list == body && macro_arguments.is_empty()
+        }) if *token_list == body
+            && macro_arguments.is_empty()
+            && matches!(
+                stores.origin(*macro_invocation),
+                OriginRecord::MacroInvocation(origin)
+                    if origin == MacroInvocationOrigin::new(
+                        definition,
+                        call_origin,
+                        definition_origin
+                    )
+            )
     ));
     assert_eq!(
         get_x_token(&mut input, &mut stores).expect("expansion should succeed"),
@@ -1162,25 +1191,15 @@ fn ifx_compares_macro_definitions_semantically_ignoring_origin_lists() {
     let param_origins = stores.allocate_origin_list(&[left_origin]);
     let left_origins = stores.allocate_origin_list(&[left_origin, left_origin]);
     let right_origins = stores.allocate_origin_list(&[right_origin, right_origin]);
-    stores.set_macro_meaning(
+    stores.set_macro_meaning_with_provenance(
         left,
-        MacroMeaning::with_origins(
-            MeaningFlags::EMPTY,
-            params,
-            param_origins,
-            left_body,
-            left_origins,
-        ),
+        MacroMeaning::new(MeaningFlags::EMPTY, params, left_body),
+        MacroDefinitionProvenance::new(left_origin, param_origins, left_origins),
     );
-    stores.set_macro_meaning(
+    stores.set_macro_meaning_with_provenance(
         right,
-        MacroMeaning::with_origins(
-            MeaningFlags::EMPTY,
-            params,
-            param_origins,
-            right_body,
-            right_origins,
-        ),
+        MacroMeaning::new(MeaningFlags::EMPTY, params, right_body),
+        MacroDefinitionProvenance::new(right_origin, param_origins, right_origins),
     );
     stores.set_macro_meaning(
         protected,

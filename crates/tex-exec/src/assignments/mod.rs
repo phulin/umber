@@ -17,7 +17,7 @@ use tex_state::interner::Symbol;
 use tex_state::math::MathFontSize;
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::scaled::Scaled;
-use tex_state::token::{Catcode, Token};
+use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{GroupKind, InteractionMode, Universe};
 
 use crate::ModeNest;

@@ -3,7 +3,7 @@ use crate::env::banks::{DimenParam, GlueParam, IntParam};
 use crate::font::NULL_FONT;
 use crate::glue::{GlueSpec, Order};
 use crate::ids::{ArenaRef, NodeListId, OriginListId};
-use crate::macro_store::MacroMeaning;
+use crate::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use crate::meaning::Meaning;
 use crate::meaning::MeaningFlags;
 use crate::node::{BoxNode, BoxNodeFields, Node, Sign};
@@ -12,7 +12,7 @@ use crate::token::{Catcode, OriginId, Token};
 use crate::{
     input::SourceId,
     provenance::{
-        InsertedOrigin, InsertedOriginKind, MacroOrigin, OriginRecord, SourceOrigin,
+        InsertedOrigin, InsertedOriginKind, MacroInvocationOrigin, OriginRecord, SourceOrigin,
         SynthesizedOrigin, SynthesizedOriginKind, SyntheticOrigin, SyntheticOriginKind,
     },
 };
@@ -81,7 +81,7 @@ fn provenance_records_and_lists_round_trip_through_stores_boundary() {
     let body = stores.intern_token_list(&[Token::Cs(symbol)]);
     let definition = stores.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, params, body));
     let source = stores.source_origin(SourceId::new(3), 40, 5, 2);
-    let macro_origin = stores.macro_origin(definition, source, OriginId::UNKNOWN);
+    let macro_origin = stores.macro_invocation_origin(definition, source, OriginId::UNKNOWN);
     let inserted = stores.inserted_origin(
         InsertedOriginKind::Paragraph,
         Token::Char {
@@ -101,7 +101,11 @@ fn provenance_records_and_lists_round_trip_through_stores_boundary() {
     );
     assert_eq!(
         stores.origin(macro_origin),
-        OriginRecord::Macro(MacroOrigin::new(definition, source, OriginId::UNKNOWN))
+        OriginRecord::MacroInvocation(MacroInvocationOrigin::new(
+            definition,
+            source,
+            OriginId::UNKNOWN
+        ))
     );
     assert_eq!(
         stores.origin(inserted),
@@ -205,7 +209,7 @@ fn separately_created_identical_macro_bodies_share_token_list_identity() {
 }
 
 #[test]
-fn identical_macro_definitions_share_definition_identity() {
+fn identical_macro_definitions_get_distinct_definition_identity() {
     let mut stores = Stores::new();
     let symbol = stores.intern("same");
     let params = stores.intern_token_list(&[]);
@@ -215,7 +219,74 @@ fn identical_macro_definitions_share_definition_identity() {
     let first = stores.intern_macro(macro_meaning);
     let second = stores.intern_macro(macro_meaning);
 
-    assert_eq!(first, second);
+    assert_ne!(first, second);
+    assert!(
+        stores
+            .macro_definition(first)
+            .semantic_eq(stores.macro_definition(second))
+    );
+}
+
+#[test]
+fn identical_macro_definitions_keep_distinct_provenance() {
+    let mut stores = Stores::new();
+    let symbol = stores.intern("same");
+    let params = stores.intern_token_list(&[]);
+    let body = stores.intern_token_list(&[Token::Cs(symbol)]);
+    let macro_meaning = MacroMeaning::new(MeaningFlags::PROTECTED, params, body);
+    let first_origin = stores.source_origin(SourceId::new(1), 10, 2, 3);
+    let second_origin = stores.source_origin(SourceId::new(2), 20, 4, 5);
+    let first_body_origins = stores.allocate_origin_list(&[first_origin]);
+    let second_body_origins = stores.allocate_origin_list(&[second_origin]);
+
+    let first = stores.intern_macro_with_provenance(
+        macro_meaning,
+        Some(MacroDefinitionProvenance::new(
+            first_origin,
+            OriginListId::EMPTY,
+            first_body_origins,
+        )),
+    );
+    let second = stores.intern_macro_with_provenance(
+        macro_meaning,
+        Some(MacroDefinitionProvenance::new(
+            second_origin,
+            OriginListId::EMPTY,
+            second_body_origins,
+        )),
+    );
+
+    assert_ne!(first, second);
+    assert!(
+        stores
+            .macro_definition(first)
+            .semantic_eq(stores.macro_definition(second))
+    );
+    assert_eq!(
+        stores
+            .macro_definition_provenance(first)
+            .definition_origin(),
+        first_origin
+    );
+    assert_eq!(
+        stores
+            .macro_definition_provenance(second)
+            .replacement_origins(),
+        second_body_origins
+    );
+}
+
+#[test]
+fn missing_macro_definition_provenance_degrades_to_unknown() {
+    let mut stores = Stores::new();
+    let params = stores.intern_token_list(&[]);
+    let body = stores.intern_token_list(&[]);
+    let definition = stores.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, params, body));
+
+    assert_eq!(
+        stores.macro_definition_provenance(definition),
+        MacroDefinitionProvenance::unknown()
+    );
 }
 
 #[test]

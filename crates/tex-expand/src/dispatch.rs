@@ -1,7 +1,7 @@
 use tex_lex::{InputSource, InputStack, MacroArguments};
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
 use tex_state::page::PageMark;
-use tex_state::token::Token;
+use tex_state::token::{OriginId, Token};
 use tex_state::{ExpansionState, InputOpenState};
 
 use crate::{
@@ -24,6 +24,7 @@ where
 {
     dispatch_with_hooks(
         token,
+        OriginId::UNKNOWN,
         input,
         stores,
         recorder,
@@ -44,8 +45,9 @@ fn page_mark_for_primitive(primitive: ExpandablePrimitive) -> PageMark {
 }
 
 macro_rules! dispatch_match {
-    ($token:ident, $input:ident, $stores:ident, $recorder:ident, $hooks:ident, $meaning:ident, $expander:expr, $input_arm:block) => {{
+    ($token:ident, $call_origin:ident, $input:ident, $stores:ident, $recorder:ident, $hooks:ident, $meaning:ident, $expander:expr, $input_arm:block) => {{
         let token = $token;
+        let call_origin = $call_origin;
         let input = &mut *$input;
         let stores = &mut *$stores;
         let recorder = &mut *$recorder;
@@ -55,6 +57,7 @@ macro_rules! dispatch_match {
         match meaning {
             Meaning::Macro { flags, definition } if is_expandable_macro(flags) => {
                 let macro_meaning = stores.macro_definition(definition);
+                let provenance = stores.macro_definition_provenance(definition);
                 let arguments = args::match_macro_call_with_recorder(
                     input,
                     stores,
@@ -65,8 +68,13 @@ macro_rules! dispatch_match {
                 Ok(Dispatch::Push {
                     replay_kind: ExpansionReplayKind::MacroBody,
                     token_list: macro_meaning.replacement_text(),
-                    origin_list: macro_meaning.replacement_origins(),
+                    origin_list: provenance.replacement_origins(),
                     macro_arguments: arguments.as_macro_arguments(),
+                    macro_invocation: stores.macro_invocation_origin(
+                        definition,
+                        call_origin,
+                        provenance.definition_origin(),
+                    ),
                 })
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::ExpandAfter) => {
@@ -173,6 +181,7 @@ macro_rules! dispatch_match {
                 token_list: stores.page_mark(page_mark_for_primitive(primitive)),
                 origin_list: tex_state::ids::OriginListId::EMPTY,
                 macro_arguments: MacroArguments::new(),
+                macro_invocation: OriginId::UNKNOWN,
             }),
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfTrue) => {
                 begin_if(input, stores, recorder, hooks, true)
@@ -446,6 +455,7 @@ macro_rules! dispatch_match {
 
 pub fn dispatch_with_hooks<S, R, H>(
     token: Token,
+    call_origin: OriginId,
     input: &mut InputStack<S>,
     stores: &mut (impl ExpansionState + InputOpenState),
     recorder: &mut R,
@@ -459,6 +469,7 @@ where
 {
     dispatch_match!(
         token,
+        call_origin,
         input,
         stores,
         recorder,
@@ -481,6 +492,7 @@ where
 
 pub(crate) fn dispatch_without_input_open<S, R, H>(
     token: Token,
+    call_origin: OriginId,
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     recorder: &mut R,
@@ -494,6 +506,7 @@ where
 {
     dispatch_match!(
         token,
+        call_origin,
         input,
         stores,
         recorder,

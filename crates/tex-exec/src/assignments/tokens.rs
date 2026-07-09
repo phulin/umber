@@ -77,6 +77,38 @@ where
     }
 }
 
+pub(super) struct TracedDefinitionTarget {
+    pub symbol: Symbol,
+    pub origin: OriginId,
+}
+
+pub(super) fn scan_traced_definition_target<S>(
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    context: &'static str,
+) -> Result<TracedDefinitionTarget, ExecError>
+where
+    S: InputSource,
+{
+    let traced = next_non_space_traced_raw(input, stores)?
+        .ok_or(ExecError::MissingControlSequence { context })?;
+    let token = traced
+        .token()
+        .expect("input stack must only deliver valid traced tokens");
+    let symbol = match token {
+        Token::Cs(symbol) => symbol,
+        Token::Char {
+            ch,
+            cat: Catcode::Active,
+        } => active_character_symbol(stores, ch),
+        _ => return Err(ExecError::ExpectedControlSequence { context, token }),
+    };
+    Ok(TracedDefinitionTarget {
+        symbol,
+        origin: traced.origin(),
+    })
+}
+
 pub(crate) fn active_character_symbol(stores: &mut Universe, ch: char) -> Symbol {
     stores.intern(&ch.to_string())
 }
@@ -132,6 +164,26 @@ where
             return Ok(None);
         };
         if !is_space(token) {
+            return Ok(Some(token));
+        }
+    }
+}
+
+pub(super) fn next_non_space_traced_raw<S>(
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+) -> Result<Option<TracedTokenWord>, LexError>
+where
+    S: InputSource,
+{
+    loop {
+        let Some(token) = input.next_traced_token(stores)? else {
+            return Ok(None);
+        };
+        let semantic = token
+            .token()
+            .expect("input stack must only deliver valid traced tokens");
+        if !is_space(semantic) {
             return Ok(Some(token));
         }
     }

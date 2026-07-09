@@ -2,22 +2,20 @@
 //!
 //! Macro meanings keep one compact operand in Env. The operand names a frozen
 //! macro definition here, and the definition names separately frozen parameter
-//! text and replacement-body token lists.
+//! text and replacement-body token lists. Diagnostic provenance for a
+//! definition is stored beside the semantic definition and is not part of
+//! [`MacroMeaning`].
 
 use crate::ids::{MacroDefinitionId, OriginListId, TokenListId};
 use crate::meaning::MeaningFlags;
-use std::collections::HashMap;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
+use crate::token::OriginId;
 
 /// Public macro meaning aggregate used at the Universe boundary.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct MacroMeaning {
     flags: MeaningFlags,
     parameter_text: TokenListId,
-    parameter_origins: OriginListId,
     replacement_text: TokenListId,
-    replacement_origins: OriginListId,
 }
 
 impl MacroMeaning {
@@ -28,30 +26,10 @@ impl MacroMeaning {
         parameter_text: TokenListId,
         replacement_text: TokenListId,
     ) -> Self {
-        Self::with_origins(
-            flags,
-            parameter_text,
-            OriginListId::EMPTY,
-            replacement_text,
-            OriginListId::EMPTY,
-        )
-    }
-
-    /// Creates a macro meaning over frozen token lists and their origin lists.
-    #[must_use]
-    pub const fn with_origins(
-        flags: MeaningFlags,
-        parameter_text: TokenListId,
-        parameter_origins: OriginListId,
-        replacement_text: TokenListId,
-        replacement_origins: OriginListId,
-    ) -> Self {
         Self {
             flags,
             parameter_text,
-            parameter_origins,
             replacement_text,
-            replacement_origins,
         }
     }
 
@@ -66,18 +44,8 @@ impl MacroMeaning {
     }
 
     #[must_use]
-    pub const fn parameter_origins(self) -> OriginListId {
-        self.parameter_origins
-    }
-
-    #[must_use]
     pub const fn replacement_text(self) -> TokenListId {
         self.replacement_text
-    }
-
-    #[must_use]
-    pub const fn replacement_origins(self) -> OriginListId {
-        self.replacement_origins
     }
 
     #[must_use]
@@ -88,18 +56,66 @@ impl MacroMeaning {
     }
 }
 
+/// Diagnostic provenance captured while scanning a macro definition.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct MacroDefinitionProvenance {
+    definition_origin: OriginId,
+    parameter_origins: OriginListId,
+    replacement_origins: OriginListId,
+}
+
+impl MacroDefinitionProvenance {
+    /// Creates a definition-provenance side-table record.
+    #[must_use]
+    pub const fn new(
+        definition_origin: OriginId,
+        parameter_origins: OriginListId,
+        replacement_origins: OriginListId,
+    ) -> Self {
+        Self {
+            definition_origin,
+            parameter_origins,
+            replacement_origins,
+        }
+    }
+
+    /// Unknown provenance used when side-table data is absent or stale.
+    #[must_use]
+    pub const fn unknown() -> Self {
+        Self {
+            definition_origin: OriginId::UNKNOWN,
+            parameter_origins: OriginListId::EMPTY,
+            replacement_origins: OriginListId::EMPTY,
+        }
+    }
+
+    #[must_use]
+    pub const fn definition_origin(self) -> OriginId {
+        self.definition_origin
+    }
+
+    #[must_use]
+    pub const fn parameter_origins(self) -> OriginListId {
+        self.parameter_origins
+    }
+
+    #[must_use]
+    pub const fn replacement_origins(self) -> OriginListId {
+        self.replacement_origins
+    }
+}
+
 /// A rollback watermark for the macro-definition store.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct MacroStoreMark {
     definitions: u32,
 }
 
-/// Hash-consed immutable macro-definition table.
+/// Immutable macro-definition table.
 #[derive(Clone, Debug)]
 pub struct MacroStore {
     definitions: Vec<MacroMeaning>,
-    index: HashMap<u64, Vec<MacroDefinitionId>>,
-    index_dirty: bool,
+    provenance: Vec<Option<MacroDefinitionProvenance>>,
 }
 
 impl MacroStore {
@@ -107,31 +123,21 @@ impl MacroStore {
     pub(crate) fn new() -> Self {
         Self {
             definitions: Vec::new(),
-            index: HashMap::new(),
-            index_dirty: false,
+            provenance: Vec::new(),
         }
     }
 
-    pub(crate) fn intern(&mut self, meaning: MacroMeaning) -> MacroDefinitionId {
-        if self.index_dirty {
-            self.rebuild_index();
-        }
-
-        let hash = content_hash(meaning);
-        if let Some(candidates) = self.index.get(&hash) {
-            for &id in candidates {
-                if self.get(id) == meaning {
-                    return id;
-                }
-            }
-        }
-
+    pub(crate) fn intern_with_provenance(
+        &mut self,
+        meaning: MacroMeaning,
+        provenance: Option<MacroDefinitionProvenance>,
+    ) -> MacroDefinitionId {
         let id = MacroDefinitionId::new(u32_len(
             self.definitions.len(),
             "macro definition table exceeds u32 entries",
         ));
         self.definitions.push(meaning);
-        self.index.entry(hash).or_default().push(id);
+        self.provenance.push(provenance);
         id
     }
 
@@ -141,6 +147,11 @@ impl MacroStore {
             .get(id.raw() as usize)
             .copied()
             .expect("macro definition id is not live")
+    }
+
+    #[must_use]
+    pub(crate) fn provenance(&self, id: MacroDefinitionId) -> Option<MacroDefinitionProvenance> {
+        self.provenance.get(id.raw() as usize).copied().flatten()
     }
 
     #[must_use]
@@ -165,25 +176,8 @@ impl MacroStore {
             "macro-store mark has too many definitions"
         );
         self.definitions.truncate(definitions);
-        self.index_dirty = true;
+        self.provenance.truncate(definitions);
     }
-
-    fn rebuild_index(&mut self) {
-        self.index.clear();
-        for raw in 0..self.definitions.len() {
-            let id =
-                MacroDefinitionId::new(u32_len(raw, "macro definition table exceeds u32 entries"));
-            let hash = content_hash(self.get(id));
-            self.index.entry(hash).or_default().push(id);
-        }
-        self.index_dirty = false;
-    }
-}
-
-fn content_hash(meaning: MacroMeaning) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    meaning.hash(&mut hasher);
-    hasher.finish()
 }
 
 fn u32_len(value: usize, message: &str) -> u32 {

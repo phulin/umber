@@ -1,9 +1,10 @@
 use super::{
     ConditionFrameSummary, ConditionKind, ConditionLimb, InputFrame, InputFrameSummary, InputStack,
-    LexError, Lexer, LexerState, LineEvent, LineReader, MemoryInput, TokenListReplayKind,
-    load_next_line,
+    LexError, Lexer, LexerState, LineEvent, LineReader, MacroArguments, MemoryInput,
+    TokenListReplayKind, load_next_line,
 };
 use tex_state::env::banks::IntParam;
+use tex_state::ids::OriginListId;
 use tex_state::provenance::{InsertedOriginKind, OriginRecord};
 use tex_state::token::{Catcode, Token};
 use tex_state::{ExpansionState, Universe};
@@ -496,6 +497,8 @@ fn token_list_replay_uses_frame_origin_list_without_changing_semantic_identity()
     let mut right = InputStack::new(MemoryInput::new(""));
     right.push_token_list_with_origins(right_list, right_origins, TokenListReplayKind::Inserted);
 
+    assert_eq!(left.summary(), right.summary());
+
     let left_replayed = left
         .next_traced_token(&mut stores)
         .expect("token-list replay")
@@ -509,6 +512,59 @@ fn token_list_replay_uses_frame_origin_list_without_changing_semantic_identity()
     assert_eq!(right_replayed.token(), Some(tokens[0]));
     assert_eq!(left_replayed.origin(), left_origin);
     assert_eq!(right_replayed.origin(), right_origin);
+}
+
+#[test]
+fn macro_body_frame_invocation_origin_does_not_affect_summary_equality() {
+    let mut stores = Universe::new();
+    let token = char_token('x', Catcode::Letter);
+    let token_list = stores.intern_token_list(&[token]);
+    let definition_origin = stores.source_origin(tex_state::SourceId::new(1), 10, 2, 3);
+    let left_call = stores.source_origin(tex_state::SourceId::new(2), 20, 4, 5);
+    let right_call = stores.source_origin(tex_state::SourceId::new(3), 30, 6, 7);
+    let origins = stores.allocate_origin_list(&[definition_origin]);
+    let params = stores.intern_token_list(&[]);
+    let definition = stores.intern_macro(tex_state::macro_store::MacroMeaning::new(
+        tex_state::meaning::MeaningFlags::EMPTY,
+        params,
+        token_list,
+    ));
+    let left_invocation = stores.macro_invocation_origin(definition, left_call, definition_origin);
+    let right_invocation =
+        stores.macro_invocation_origin(definition, right_call, definition_origin);
+    let mut left = InputStack::new(MemoryInput::new(""));
+    left.push_macro_body_with_origins_and_invocation(
+        token_list,
+        origins,
+        MacroArguments::new(),
+        left_invocation,
+    );
+    let mut right = InputStack::new(MemoryInput::new(""));
+    right.push_macro_body_with_origins_and_invocation(
+        token_list,
+        origins,
+        MacroArguments::new(),
+        right_invocation,
+    );
+
+    assert_eq!(left.summary(), right.summary());
+}
+
+#[test]
+fn macro_body_replay_without_origin_list_delivers_unknown_origin() {
+    let mut stores = Universe::new();
+    let token = char_token('x', Catcode::Letter);
+    let token_list = stores.intern_token_list(&[token]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_macro_body_with_origins(token_list, OriginListId::EMPTY, MacroArguments::new());
+
+    let replayed = input
+        .next_traced_token(&mut stores)
+        .expect("token-list replay")
+        .expect("token");
+
+    assert_eq!(replayed.token(), Some(token));
+    assert_eq!(replayed.origin(), tex_state::token::OriginId::UNKNOWN);
 }
 
 #[test]

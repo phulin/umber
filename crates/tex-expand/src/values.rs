@@ -4,7 +4,7 @@ use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::{FontId, TokenListId};
 use tex_state::meaning::{InternalInteger, Meaning, MeaningFlags};
 use tex_state::scaled::Scaled;
-use tex_state::token::{Catcode, Token};
+use tex_state::token::{Catcode, OriginId, Token};
 use tex_state::{BoxDimension, ExpansionState};
 
 use crate::{
@@ -104,6 +104,7 @@ where
                     token_list: stores.toks(index),
                     origin_list: tex_state::ids::OriginListId::EMPTY,
                     macro_arguments: MacroArguments::new(),
+                    macro_invocation: OriginId::UNKNOWN,
                 })
             }
             tex_state::meaning::UnexpandablePrimitive::Font => {
@@ -115,6 +116,7 @@ where
                     token_list: stores.intern_token_list(&[Token::Cs(symbol)]),
                     origin_list: crate::synthetic_origin_list(stores),
                     macro_arguments: MacroArguments::new(),
+                    macro_invocation: OriginId::UNKNOWN,
                 })
             }
             tex_state::meaning::UnexpandablePrimitive::FontDimen => {
@@ -251,6 +253,7 @@ where
             token_list: stores.toks(index),
             origin_list: tex_state::ids::OriginListId::EMPTY,
             macro_arguments: MacroArguments::new(),
+            macro_invocation: OriginId::UNKNOWN,
         }),
         Meaning::IntParam(index) => Ok(push_rendered_text(
             stores,
@@ -292,6 +295,7 @@ where
             token_list: stores.tok_param(TokParam::new(index)),
             origin_list: tex_state::ids::OriginListId::EMPTY,
             macro_arguments: MacroArguments::new(),
+            macro_invocation: OriginId::UNKNOWN,
         }),
         _ => match stores.resolve(symbol) {
             "count" => {
@@ -323,6 +327,7 @@ where
                     token_list: stores.toks(index),
                     origin_list: tex_state::ids::OriginListId::EMPTY,
                     macro_arguments: MacroArguments::new(),
+                    macro_invocation: OriginId::UNKNOWN,
                 })
             }
             "endlinechar" => Ok(push_rendered_text(
@@ -363,6 +368,7 @@ where
         token_list,
         origin_list: synthetic_origin_list_for_tokens(stores, tokens.len()),
         macro_arguments: MacroArguments::new(),
+        macro_invocation: OriginId::UNKNOWN,
     }
 }
 

@@ -107,16 +107,16 @@ impl SourceOrigin {
     }
 }
 
-/// Provenance for a token delivered from macro-related replay.
+/// Provenance for one live macro invocation frame.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct MacroOrigin {
+pub struct MacroInvocationOrigin {
     definition: MacroDefinitionId,
     invocation: OriginId,
     definition_origin: OriginId,
 }
 
-impl MacroOrigin {
-    /// Creates a macro-origin record.
+impl MacroInvocationOrigin {
+    /// Creates a macro-invocation origin record.
     #[must_use]
     pub const fn new(
         definition: MacroDefinitionId,
@@ -263,7 +263,7 @@ pub enum OriginRecord {
     /// Reserved record for unknown, bootstrap, or lost provenance.
     UnknownBootstrap,
     Source(SourceOrigin),
-    Macro(MacroOrigin),
+    MacroInvocation(MacroInvocationOrigin),
     Inserted(InsertedOrigin),
     Synthesized(SynthesizedOrigin),
     Synthetic(SyntheticOrigin),

@@ -335,7 +335,7 @@ impl InputSummary {
 }
 
 /// Snapshot summary for one input frame.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum InputFrameSummary {
     Source {
         source_id: SourceId,
@@ -347,8 +347,90 @@ pub enum InputFrameSummary {
         replay_kind: TokenListReplayKind,
         index: usize,
         macro_arguments: MacroArguments,
+        macro_invocation: crate::token::OriginId,
     },
     Condition(ConditionFrameSummary),
+}
+
+impl PartialEq for InputFrameSummary {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                Self::Source {
+                    source_id: left_id,
+                    source: left,
+                },
+                Self::Source {
+                    source_id: right_id,
+                    source: right,
+                },
+            ) => left_id == right_id && left == right,
+            (
+                Self::TokenList {
+                    token_list: left_token_list,
+                    replay_kind: left_replay_kind,
+                    index: left_index,
+                    macro_arguments: left_arguments,
+                    ..
+                },
+                Self::TokenList {
+                    token_list: right_token_list,
+                    replay_kind: right_replay_kind,
+                    index: right_index,
+                    macro_arguments: right_arguments,
+                    ..
+                },
+            ) => {
+                left_token_list == right_token_list
+                    && left_replay_kind == right_replay_kind
+                    && left_index == right_index
+                    && macro_arguments_semantic_eq(*left_arguments, *right_arguments)
+            }
+            (Self::Condition(left), Self::Condition(right)) => left == right,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for InputFrameSummary {}
+
+impl Hash for InputFrameSummary {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            Self::Source { source_id, source } => {
+                0_u8.hash(state);
+                source_id.hash(state);
+                source.hash(state);
+            }
+            Self::TokenList {
+                token_list,
+                replay_kind,
+                index,
+                macro_arguments,
+                ..
+            } => {
+                1_u8.hash(state);
+                token_list.hash(state);
+                replay_kind.hash(state);
+                index.hash(state);
+                hash_macro_arguments_semantic(*macro_arguments, state);
+            }
+            Self::Condition(condition) => {
+                2_u8.hash(state);
+                condition.hash(state);
+            }
+        }
+    }
+}
+
+fn macro_arguments_semantic_eq(left: MacroArguments, right: MacroArguments) -> bool {
+    (1..=MACRO_ARGUMENT_SLOTS as u8).all(|slot| left.get(slot) == right.get(slot))
+}
+
+fn hash_macro_arguments_semantic<H: Hasher>(arguments: MacroArguments, state: &mut H) {
+    for slot in 1..=MACRO_ARGUMENT_SLOTS as u8 {
+        arguments.get(slot).hash(state);
+    }
 }
 
 /// Snapshot summary for one source frame.
