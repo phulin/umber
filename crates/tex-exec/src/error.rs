@@ -69,6 +69,8 @@ pub enum ExecError {
         value: i32,
     },
     BadPrevGraf(i32),
+    MissingHashInAlignmentPreamble,
+    ExtraHashInAlignmentPreamble,
     HRuleHereExceptLeaders,
     CannotDeleteFromCurrentPage {
         command: &'static str,
@@ -160,6 +162,12 @@ impl fmt::Display for ExecError {
                 write!(f, "Invalid code ({value}) while scanning {context}")
             }
             Self::BadPrevGraf(value) => write!(f, "Bad \\prevgraf ({value})"),
+            Self::MissingHashInAlignmentPreamble => {
+                write!(f, "Missing # inserted in alignment preamble.")
+            }
+            Self::ExtraHashInAlignmentPreamble => {
+                write!(f, "Only one # is allowed per tab.")
+            }
             Self::HRuleHereExceptLeaders => {
                 write!(f, "You can't use `\\hrule' here except with leaders.")
             }
@@ -229,6 +237,8 @@ impl std::error::Error for ExecError {
             | Self::ArithmeticOverflow
             | Self::InvalidCode { .. }
             | Self::BadPrevGraf(_)
+            | Self::MissingHashInAlignmentPreamble
+            | Self::ExtraHashInAlignmentPreamble
             | Self::HRuleHereExceptLeaders
             | Self::CannotDeleteFromCurrentPage { .. }
             | Self::ReadNeedsTo

@@ -50,7 +50,9 @@ pub(crate) use paragraph::{
 };
 pub use primitives::install_unexpandable_primitives;
 use scanning::*;
-pub(crate) use scanning::{next_non_space_x, scan_glue_id, scan_i32, scan_scaled};
+pub(crate) use scanning::{
+    next_non_space_x, scan_glue_id, scan_i32, scan_optional_keyword_x, scan_scaled,
+};
 pub(crate) use shipout::shipout_node;
 use shipout::*;
 use tokens::*;
@@ -374,6 +376,11 @@ where
                         || primitive == UnexpandablePrimitive::PrevGraf,
                 ))
             }
+            UnexpandablePrimitive::HAlign | UnexpandablePrimitive::VAlign => {
+                reject_macro_prefixes(prefixes)?;
+                crate::align::execute_alignment(primitive, nest, input, stores, hooks)?;
+                Ok(CommandOutcome::continue_only())
+            }
             UnexpandablePrimitive::HBox
             | UnexpandablePrimitive::VBox
             | UnexpandablePrimitive::VTop
@@ -579,6 +586,14 @@ where
                     operation: "math primitive",
                 })
             }
+            UnexpandablePrimitive::NoAlign
+            | UnexpandablePrimitive::Cr
+            | UnexpandablePrimitive::CrCr
+            | UnexpandablePrimitive::Span => Err(ExecError::UnimplementedTypesetting {
+                mode: nest.current_mode(),
+                token: Token::Cs(stores.intern(&format!("{primitive:?}"))),
+                operation: "alignment primitive",
+            }),
             UnexpandablePrimitive::Global
             | UnexpandablePrimitive::Long
             | UnexpandablePrimitive::Outer

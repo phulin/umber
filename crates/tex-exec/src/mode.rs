@@ -2,9 +2,11 @@ use tex_expand::EngineMode;
 use tex_state::ids::FontId;
 use tex_state::ids::GlueId;
 use tex_state::ids::NodeListId;
+use tex_state::ids::TokenListId;
 use tex_state::math::FractionThickness;
 use tex_state::node::Node;
 use tex_state::scaled::Scaled;
+use tex_state::token::Token;
 
 use crate::ExecError;
 
@@ -96,6 +98,7 @@ impl Mode {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ModeList {
     nodes: Vec<Node>,
+    align_state: Option<AlignState>,
     incomplete_fraction: Option<IncompleteFraction>,
     display_interrupt: Option<DisplayInterrupt>,
     display_eq_no: Option<DisplayEqNo>,
@@ -208,6 +211,19 @@ impl ModeList {
     }
 
     #[must_use]
+    pub fn align_state(&self) -> Option<&AlignState> {
+        self.align_state.as_ref()
+    }
+
+    pub fn set_align_state(&mut self, state: AlignState) {
+        self.align_state = Some(state);
+    }
+
+    pub fn take_align_state(&mut self) -> Option<AlignState> {
+        self.align_state.take()
+    }
+
+    #[must_use]
     pub fn incomplete_fraction(&self) -> Option<&IncompleteFraction> {
         self.incomplete_fraction.as_ref()
     }
@@ -244,6 +260,130 @@ impl ModeList {
 
     pub fn take_display_eq_no(&mut self) -> Option<DisplayEqNo> {
         self.display_eq_no.take()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AlignmentKind {
+    HAlign,
+    VAlign,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AlignmentPackSpec {
+    Natural,
+    Exactly(Scaled),
+    Spread(Scaled),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AlignColumn {
+    pub u_template: TokenListId,
+    pub v_template: TokenListId,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AlignState {
+    kind: AlignmentKind,
+    pack_spec: AlignmentPackSpec,
+    columns: Vec<AlignColumn>,
+    tabskips: Vec<GlueId>,
+    default_tabskip: GlueId,
+    loop_start: Option<usize>,
+    current_row: usize,
+    current_col: usize,
+    end_template: Token,
+}
+
+impl AlignState {
+    #[must_use]
+    pub fn new(
+        kind: AlignmentKind,
+        pack_spec: AlignmentPackSpec,
+        columns: Vec<AlignColumn>,
+        tabskips: Vec<GlueId>,
+        default_tabskip: GlueId,
+        loop_start: Option<usize>,
+        end_template: Token,
+    ) -> Self {
+        Self {
+            kind,
+            pack_spec,
+            columns,
+            tabskips,
+            default_tabskip,
+            loop_start,
+            current_row: 0,
+            current_col: 0,
+            end_template,
+        }
+    }
+
+    #[must_use]
+    pub const fn kind(&self) -> AlignmentKind {
+        self.kind
+    }
+
+    #[must_use]
+    pub const fn pack_spec(&self) -> AlignmentPackSpec {
+        self.pack_spec
+    }
+
+    #[must_use]
+    pub fn columns(&self) -> &[AlignColumn] {
+        &self.columns
+    }
+
+    #[must_use]
+    pub fn tabskips(&self) -> &[GlueId] {
+        &self.tabskips
+    }
+
+    #[must_use]
+    pub const fn default_tabskip(&self) -> GlueId {
+        self.default_tabskip
+    }
+
+    #[must_use]
+    pub const fn loop_start(&self) -> Option<usize> {
+        self.loop_start
+    }
+
+    #[must_use]
+    pub const fn current_row(&self) -> usize {
+        self.current_row
+    }
+
+    #[must_use]
+    pub const fn current_col(&self) -> usize {
+        self.current_col
+    }
+
+    #[must_use]
+    pub const fn end_template(&self) -> Token {
+        self.end_template
+    }
+
+    #[must_use]
+    pub fn column_for(&self, column: usize) -> Option<&AlignColumn> {
+        if column < self.columns.len() {
+            return self.columns.get(column);
+        }
+        let loop_start = self.loop_start?;
+        let repeat_len = self.columns.len().checked_sub(loop_start)?;
+        if repeat_len == 0 {
+            return None;
+        }
+        let resolved = loop_start + (column - loop_start) % repeat_len;
+        self.columns.get(resolved)
+    }
+
+    #[must_use]
+    pub fn tabskip_for_boundary(&self, boundary: usize) -> GlueId {
+        self.tabskips
+            .get(boundary)
+            .copied()
+            .unwrap_or(self.default_tabskip)
     }
 }
 

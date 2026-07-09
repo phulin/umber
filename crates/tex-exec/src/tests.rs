@@ -10,6 +10,7 @@ use tex_state::token::{Catcode, Token};
 use tex_state::{EffectRecord, PrintSink};
 use tex_state::{InteractionMode, Universe};
 
+mod align;
 mod assignments;
 mod core;
 mod fonts;

@@ -365,7 +365,7 @@ where
     }
 }
 
-pub(super) fn scan_optional_keyword_x<S, H>(
+pub(crate) fn scan_optional_keyword_x<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,

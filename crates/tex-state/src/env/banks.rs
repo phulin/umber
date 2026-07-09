@@ -256,6 +256,9 @@ impl GlueParam {
     /// TeX's `\splittopskip` glue parameter.
     pub const SPLIT_TOP_SKIP: Self = Self::new(10);
 
+    /// TeX's `\tabskip` glue parameter.
+    pub const TAB_SKIP: Self = Self::new(11);
+
     /// TeX's `\spaceskip` glue parameter.
     pub const SPACE_SKIP: Self = Self::new(12);
 

@@ -75,6 +75,10 @@ fn meaning_variants_round_trip() {
     round_trip(Meaning::UnexpandablePrimitive(
         UnexpandablePrimitive::PrevGraf,
     ));
+    round_trip(Meaning::UnexpandablePrimitive(
+        UnexpandablePrimitive::HAlign,
+    ));
+    round_trip(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::CrCr));
     round_trip(Meaning::PageDimension(PageDimension::Goal));
     round_trip(Meaning::PageDimension(PageDimension::FilllStretch));
     round_trip(Meaning::PageInteger(PageInteger::DeadCycles));

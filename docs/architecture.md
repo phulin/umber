@@ -503,7 +503,12 @@ makes box-level memoization (M4) sound.
   template expansion interleaves with the gullet by design. It is
   structured as a stomach sub-mode (it re-enters main control per cell),
   not as a kernel function, and is therefore excluded from kernel-level
-  memoization (page-level still covers it).
+  memoization (page-level still covers it). The implemented first slice in
+  `tex-exec` parses alignment preambles into snapshot-covered `AlignState`
+  on the mode-list level: frozen u/v template token lists, frozen tabskip
+  boundary glue ids, an end-template sentinel token, and optional `&&`
+  repeat metadata. Cell replay and row materialization remain stomach
+  follow-up work.
 - **Vertical packing, `\vsplit`, marks**: operate on survivor-arena lists
   (they are reachable from box registers by definition); mark extraction
   reads are recorded like any state read. `\vsplit` clones the source vbox

@@ -6,6 +6,7 @@
 
 #![forbid(unsafe_code)]
 
+mod align;
 mod assignments;
 mod diagnostics;
 mod dispatch;
@@ -23,7 +24,10 @@ pub use assignments::{install_unexpandable_primitives, try_execute_assignment};
 pub use dispatch::{DispatchAction, ExecutionStats, dispatch_delivered_token};
 pub use error::ExecError;
 pub use executor::Executor;
-pub use mode::{Mode, ModeLevelSummary, ModeList, ModeNest, ModeNestSummary};
+pub use mode::{
+    AlignColumn, AlignState, AlignmentKind, AlignmentPackSpec, Mode, ModeLevelSummary, ModeList,
+    ModeNest, ModeNestSummary,
+};
 
 pub(crate) use dispatch::{leave_group, push_tokens};
 
