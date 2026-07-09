@@ -310,7 +310,7 @@ fn display_operator_uses_larger_variant_and_places_limits() {
     let [MathNode::VList(limits)] = hlist.nodes.as_slice() else {
         panic!("expected displayed-limits vbox");
     };
-    assert_eq!(limits.width, sc(14));
+    assert_eq!(limits.width, sc(16));
     assert!(limits.list.nodes.iter().any(|node| match node {
         MathNode::HList(MathBox {
             list: FrozenHList { nodes },
@@ -326,6 +326,24 @@ fn display_operator_uses_larger_variant_and_places_limits() {
         }),
         _ => false,
     }));
+}
+
+#[test]
+fn display_limits_operator_without_scripts_keeps_italic_correction_width() {
+    let mut universe = setup_universe();
+    let op = MathNoad::new(
+        NoadKind::Operator(LimitType::DisplayLimits),
+        MathField::MathChar(math_char('o')),
+    );
+    let input = universe.freeze_node_list(&[Node::MathNoad(op)]);
+    let params = MathParams::read(&universe);
+
+    let hlist = mlist_to_hlist(&universe, input, Style::DISPLAY, false, &params);
+
+    let [MathNode::VList(limits)] = hlist.nodes.as_slice() else {
+        panic!("expected displayed-limits vbox");
+    };
+    assert_eq!(limits.width, sc(16));
 }
 
 #[test]

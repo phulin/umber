@@ -120,8 +120,8 @@ fn operator_nucleus(
             };
             *delta = fetched.metrics.italic_correction;
             let mut boxed = char_box(fetched);
-            if matches!(effective_limits, LimitType::Limits)
-                || !matches!(noad.subscript, MathField::Empty)
+            if !matches!(effective_limits, LimitType::Limits)
+                && !matches!(noad.subscript, MathField::Empty)
             {
                 boxed.width = sub(boxed.width, *delta);
             }
