@@ -140,18 +140,32 @@ where
                 })
             }
             tex_state::meaning::UnexpandablePrimitive::FontDimen => {
-                let number = scan_int::scan_int_with_expander_and_hooks(
+                let scanned = scan_int::scan_int_with_expander_and_hooks(
                     input, stores, recorder, hooks, expander,
-                )?
-                .value();
-                if !(1..=32_767).contains(&number) {
-                    return Err(ExpandError::UnsupportedTheTarget(semantic));
-                }
+                )?;
+                let number = scanned.value();
                 let font = scan_font_selector(input, stores, recorder, hooks, expander)?;
+                let available = stores.font_parameter_count(font);
+                let Ok(number) = u16::try_from(number) else {
+                    return Err(ExpandError::FontDimenOutOfRange {
+                        font_name: font_identifier_name(stores, font),
+                        number,
+                        available,
+                        origin: scanned.diagnostic_origin().unwrap_or(cause_origin),
+                    });
+                };
+                if number == 0 || number > available {
+                    return Err(ExpandError::FontDimenOutOfRange {
+                        font_name: font_identifier_name(stores, font),
+                        number: i32::from(number),
+                        available,
+                        origin: scanned.diagnostic_origin().unwrap_or(cause_origin),
+                    });
+                }
                 Ok(push_rendered_text(
                     stores,
                     ExpansionReplayKind::TheOutput,
-                    &format_scaled(stores.font_dimen(font, number as u16)),
+                    &format_scaled(stores.font_dimen(font, number)),
                     cause_origin,
                 ))
             }
@@ -743,6 +757,19 @@ where
     };
     match stores.meaning(symbol) {
         Meaning::Font(id) => Ok(id),
-        _ => Err(ExpandError::UnsupportedTheTarget(semantic)),
+        Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::Font) => {
+            Ok(stores.current_font())
+        }
+        _ => Err(ExpandError::MissingFontIdentifier(token)),
     }
+}
+
+fn font_identifier_name(stores: &impl ExpansionState, font: FontId) -> String {
+    stores
+        .current_font_symbol()
+        .filter(|_| stores.current_font() == font)
+        .map_or_else(
+            || stores.font_name(font),
+            |symbol| stores.resolve(symbol).to_owned(),
+        )
 }

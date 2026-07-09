@@ -864,6 +864,12 @@ impl Stores {
         self.env.font_dimen(font, number)
     }
 
+    #[must_use]
+    pub fn font_parameter_count(&self, font: FontId) -> u16 {
+        self.assert_live_font(font);
+        self.env.font_param_len(font)
+    }
+
     pub fn set_font_dimen(
         &mut self,
         font: FontId,

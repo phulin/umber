@@ -88,6 +88,7 @@ pub trait ExpansionState {
     fn font_name(&self, id: FontId) -> String;
     fn font_parameter(&self, font: FontId, number: u16) -> Scaled;
     fn font_dimen(&self, font: FontId, number: u16) -> Scaled;
+    fn font_parameter_count(&self, font: FontId) -> u16;
     fn font_hyphen_char(&self, font: FontId) -> i32;
     fn font_skew_char(&self, font: FontId) -> i32;
     fn current_font(&self) -> FontId;
@@ -1367,6 +1368,11 @@ impl Universe {
         self.stores.font_dimen(font, number)
     }
 
+    #[must_use]
+    pub fn font_parameter_count(&self, font: FontId) -> u16 {
+        self.stores.font_parameter_count(font)
+    }
+
     pub fn set_font_dimen(
         &mut self,
         font: FontId,
@@ -2114,6 +2120,10 @@ impl ExpansionState for Universe {
         Self::font_dimen(self, font, number)
     }
 
+    fn font_parameter_count(&self, font: FontId) -> u16 {
+        Self::font_parameter_count(self, font)
+    }
+
     fn font_hyphen_char(&self, font: FontId) -> i32 {
         Self::font_hyphen_char(self, font)
     }
@@ -2389,6 +2399,10 @@ impl ExpansionState for ExpansionContext<'_> {
 
     fn font_dimen(&self, font: FontId, number: u16) -> Scaled {
         self.universe.font_dimen(font, number)
+    }
+
+    fn font_parameter_count(&self, font: FontId) -> u16 {
+        self.universe.font_parameter_count(font)
     }
 
     fn font_hyphen_char(&self, font: FontId) -> i32 {

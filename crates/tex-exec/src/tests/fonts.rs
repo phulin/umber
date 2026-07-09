@@ -94,6 +94,21 @@ fn fontdimen_assignment_is_grouping_aware() {
 }
 
 #[test]
+fn the_fontdimen_reads_the_current_font_selector() {
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\font\\f=cmr10 \\fontdimen1\\f=1.5pt \\f\\message{slant=\\the\\fontdimen1\\font}\\end",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("current-font fontdimen expands");
+
+    assert!(terminal_effect_text(&stores).contains("slant=1.5pt"));
+}
+
+#[test]
 fn fontdimen_growth_is_limited_to_most_recently_loaded_font() {
     let mut stores = stores_with_fonts();
     let mut ok = InputStack::new(MemoryInput::new(

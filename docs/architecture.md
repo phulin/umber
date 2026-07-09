@@ -365,8 +365,11 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   `\medmuskip`, and `\thickmuskip` are exposed as muglue assignment targets
   while their values remain in the glue-parameter bank at TeX's parameter
   indices. Font dimensions, box dimensions, page state, and
-  time/job parameters not yet backed by `Env` remain documented TODOs until
-  those classes are semantically available.
+  Font dimensions use TeX82's `scan_font_ident` forms, including `\font` for
+  the current font, and validate reads against the snapshot-covered Env-side
+  parameter count before rendering the exact scaled value. Time/job parameters
+  not yet backed by `Env` remain documented TODOs until those classes are
+  semantically available.
 - Input/job expandables use explicit driver hooks: `tex-expand` scans the
   `\input` file name and asks the caller for a new `InputSource`, while
   `\jobname` renders the caller-provided job name. This preserves the rule

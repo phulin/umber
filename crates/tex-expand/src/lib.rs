@@ -238,15 +238,30 @@ pub enum ExpandError {
     MissingEndCsName,
     MissingInputName,
     NonCharacterInInputName(Token),
-    InputOpen { name: String, message: String },
-    UndefinedControlSequence { name: String, origin: OriginId },
+    InputOpen {
+        name: String,
+        message: String,
+    },
+    UndefinedControlSequence {
+        name: String,
+        origin: OriginId,
+    },
     ScanInt(Box<scan_int::ScanIntError>),
     ScanDimen(Box<scan_dimen::ScanDimenError>),
     UnsupportedTheTarget(Token),
+    MissingFontIdentifier(TracedTokenWord),
+    FontDimenOutOfRange {
+        font_name: String,
+        number: i32,
+        available: u16,
+        origin: OriginId,
+    },
     InvalidConditionalRelation(TracedTokenWord),
     IncompleteIf,
     ExtraConditionalControl(&'static str),
-    ForbiddenOuterTokenInSkippedConditional { name: String },
+    ForbiddenOuterTokenInSkippedConditional {
+        name: String,
+    },
 }
 
 impl fmt::Display for ExpandError {
@@ -278,6 +293,24 @@ impl fmt::Display for ExpandError {
             Self::ScanDimen(err) => write!(f, "{err}"),
             Self::UnsupportedTheTarget(token) => {
                 write!(f, "unsupported token {token:?} after \\the")
+            }
+            Self::MissingFontIdentifier(token) => {
+                write!(
+                    f,
+                    "missing font identifier at token {:?}",
+                    semantic_token(*token)
+                )
+            }
+            Self::FontDimenOutOfRange {
+                font_name,
+                number: _,
+                available,
+                origin: _,
+            } => {
+                write!(
+                    f,
+                    "Font \\{font_name} has only {available} fontdimen parameters"
+                )
             }
             Self::InvalidConditionalRelation(token) => {
                 write!(
@@ -313,6 +346,8 @@ impl std::error::Error for ExpandError {
             | Self::InputOpen { .. }
             | Self::UndefinedControlSequence { .. }
             | Self::UnsupportedTheTarget(_)
+            | Self::MissingFontIdentifier(_)
+            | Self::FontDimenOutOfRange { .. }
             | Self::InvalidConditionalRelation(_)
             | Self::IncompleteIf
             | Self::ExtraConditionalControl(_)
@@ -326,6 +361,8 @@ impl ExpandError {
     pub fn primary_origin(&self) -> Option<OriginId> {
         match self {
             Self::InvalidConditionalRelation(token) => Some(token.origin()),
+            Self::MissingFontIdentifier(token) => Some(token.origin()),
+            Self::FontDimenOutOfRange { origin, .. } => Some(*origin),
             Self::UndefinedControlSequence { origin, .. } => Some(*origin),
             Self::ScanInt(err) => err.primary_origin(),
             Self::ScanDimen(err) => err.primary_origin(),

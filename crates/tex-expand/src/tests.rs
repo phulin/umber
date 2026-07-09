@@ -1427,6 +1427,127 @@ fn fontname_renders_real_font_selector_name() {
 }
 
 #[test]
+fn the_fontdimen_accepts_current_font_with_exact_output_and_trace() {
+    #[derive(Default)]
+    struct SymbolRecorder(Vec<Symbol>);
+
+    impl ReadRecorder for SymbolRecorder {
+        fn record_meaning(&mut self, symbol: Symbol, _meaning: Meaning) {
+            self.0.push(symbol);
+        }
+    }
+
+    let mut stores = Universe::new();
+    let the = expandable_primitive(&mut stores, "the", ExpandablePrimitive::The);
+    let fontdimen = stores.intern("fontdimen");
+    stores.set_meaning(
+        fontdimen,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::FontDimen),
+    );
+    let font = stores.intern("font");
+    stores.set_meaning(
+        font,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Font),
+    );
+    let nullfont = stores.intern("nullfont");
+    stores.set_meaning(nullfont, Meaning::Font(tex_state::font::NULL_FONT));
+    stores.set_current_font_selector(nullfont, tex_state::font::NULL_FONT);
+    stores
+        .set_font_dimen(
+            tex_state::font::NULL_FONT,
+            1,
+            Scaled::from_raw(Scaled::UNITY + Scaled::UNITY / 2),
+            true,
+        )
+        .expect("current font parameter is writable");
+
+    let invocation = stores.source_origin(tex_state::SourceId::new(9), 90, 9, 1);
+    let tokens = stores.intern_token_list(&[
+        Token::Cs(the),
+        Token::Cs(fontdimen),
+        char_token('1'),
+        Token::Cs(font),
+    ]);
+    let origins = stores.allocate_repeated_origin_list(invocation, 4);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list_with_origins(tokens, origins, TokenListReplayKind::Inserted);
+    let mut recorder = SymbolRecorder::default();
+    let mut output = Vec::new();
+    while let Some(token) = crate::get_x_token_with_recorder(&mut input, &mut stores, &mut recorder)
+        .expect("fontdimen expansion should succeed")
+    {
+        output.push(token);
+    }
+
+    let text = output
+        .iter()
+        .map(
+            |token| match token.token().expect("rendered token decodes") {
+                Token::Char { ch, .. } => ch,
+                token => panic!("expected rendered character, got {token:?}"),
+            },
+        )
+        .collect::<String>();
+    assert_eq!(text, "1.5pt");
+    assert!(recorder.0.contains(&the));
+    assert!(recorder.0.contains(&fontdimen));
+    assert!(recorder.0.contains(&font));
+
+    let rendered_origin = output[0].origin();
+    assert!(output.iter().all(|token| token.origin() == rendered_origin));
+    assert_eq!(
+        stores.origin(rendered_origin),
+        OriginRecord::Synthesized(SynthesizedOrigin::new(
+            SynthesizedOriginKind::ValueRendering,
+            invocation,
+        ))
+    );
+}
+
+#[test]
+fn the_fontdimen_checks_parameter_count_after_scanning_font() {
+    let mut stores = Universe::new();
+    let the = expandable_primitive(&mut stores, "the", ExpandablePrimitive::The);
+    let fontdimen = stores.intern("fontdimen");
+    stores.set_meaning(
+        fontdimen,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::FontDimen),
+    );
+    let font = stores.intern("font");
+    stores.set_meaning(
+        font,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Font),
+    );
+    let nullfont = stores.intern("nullfont");
+    stores.set_meaning(nullfont, Meaning::Font(tex_state::font::NULL_FONT));
+    stores.set_current_font_selector(nullfont, tex_state::font::NULL_FONT);
+    assert_eq!(stores.font_parameter_count(tex_state::font::NULL_FONT), 7);
+
+    let invocation = stores.source_origin(tex_state::SourceId::new(10), 100, 10, 1);
+    let tokens = stores.intern_token_list(&[
+        Token::Cs(the),
+        Token::Cs(fontdimen),
+        char_token('8'),
+        Token::Cs(font),
+    ]);
+    let origins = stores.allocate_repeated_origin_list(invocation, 4);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list_with_origins(tokens, origins, TokenListReplayKind::Inserted);
+
+    let error = crate::get_x_token(&mut input, &mut stores)
+        .expect_err("an unavailable fontdimen must diagnose");
+    assert!(matches!(
+        error,
+        crate::ExpandError::FontDimenOutOfRange {
+            number: 8,
+            available: 7,
+            ..
+        }
+    ));
+    assert_eq!(error.primary_origin(), Some(invocation));
+}
+
+#[test]
 fn mark_family_primitives_expand_stored_page_marks() {
     let mut stores = Universe::new();
     for (name, primitive) in [
