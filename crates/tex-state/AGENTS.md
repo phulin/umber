@@ -65,14 +65,11 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/world.rs`: External-effect boundary for files, streams, clocks, randomness, shell policy, printing, and effect records.
 - `src/world/tests.rs`: Unit tests for world snapshots, file records, streams, printing, randomness, shell escape, and effect replay.
 - `tests/it.rs`: Integration test harness that includes capability-boundary and live-boundary test modules.
-- `tests/it/capability_boundaries.rs`: Trybuild integration tests asserting restricted expansion and input capabilities fail to compile.
+- `tests/it/capability_boundaries.rs`: Compile-fail integration tests asserting restricted expansion and input capabilities fail to compile.
 - `tests/it/live_boundary.rs`: Downstream probe tests ensuring private stores and raw environment mutation stay inaccessible.
-- `tests/ui/expansion_context_forbidden.rs`: Trybuild fixture that attempts forbidden privileged calls from `ExpansionContext`.
-- `tests/ui/expansion_context_forbidden.stderr`: Expected compiler diagnostics for the forbidden `ExpansionContext` fixture.
-- `tests/ui/expansion_state_input_forbidden.rs`: Trybuild fixture that attempts input opening through generic `ExpansionState`.
-- `tests/ui/expansion_state_input_forbidden.stderr`: Expected compiler diagnostics for the generic `ExpansionState` input fixture.
-- `tests/ui/input_open_context_forbidden.rs`: Trybuild fixture that attempts forbidden reads, world access, and mutations from `InputOpenContext`.
-- `tests/ui/input_open_context_forbidden.stderr`: Expected compiler diagnostics for the forbidden `InputOpenContext` fixture.
+- `tests/ui/expansion_context_forbidden.rs`: Compile-fail fixture that attempts forbidden privileged calls from `ExpansionContext`.
+- `tests/ui/expansion_state_input_forbidden.rs`: Compile-fail fixture that attempts input opening through generic `ExpansionState`.
+- `tests/ui/input_open_context_forbidden.rs`: Compile-fail fixture that attempts forbidden reads, world access, and mutations from `InputOpenContext`.
 
 ## Boundaries
 
@@ -84,5 +81,5 @@ All production mutation of live TeX state should pass through `Universe` or simi
 
 ## Validation
 
-Run `cargo test --tests -p tex-state` for state changes. For boundary-sensitive changes, include the live-boundary, replay, shadow, and trybuild coverage that exercises the affected facade.
+Run `cargo test --tests -p tex-state` for state changes. For boundary-sensitive changes, include the live-boundary, replay, shadow, and compile-fail coverage that exercises the affected facade.
 State performance benchmarks live in the standalone `benchmarks/tex-state` crate and are run explicitly with `cargo bench --manifest-path benchmarks/tex-state/Cargo.toml --bench state_budgets`.

@@ -8,7 +8,7 @@ tex-lex = { path = "../tex-lex" }
 tex-state = { path = "../tex-state" }
 
 [dev-dependencies]
-trybuild.workspace = true
+test-support = { path = "../test-support" }
 
 [lints]
 workspace = true

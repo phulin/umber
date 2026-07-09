@@ -1,5 +1,6 @@
 //! Shared host-side support for parity and fixture tests.
 
+mod compile_fail;
 mod corpus;
 pub mod dvi;
 
@@ -731,6 +732,7 @@ mod imp {
     }
 }
 
+pub use compile_fail::{CompileFailDependency, assert_compile_fail};
 pub use corpus::{CorpusCase, copy_area_support_files, corpus_area, corpus_cases};
 pub use imp::{
     assert_matches_fixture, corpus_root, fixture_path, normalize, pl, read_binary_fixture,

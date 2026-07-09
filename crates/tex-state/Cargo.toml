@@ -21,5 +21,5 @@ workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+test-support = { path = "../test-support" }
 tempfile.workspace = true
-trybuild.workspace = true

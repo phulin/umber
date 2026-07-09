@@ -36,9 +36,8 @@ Use this crate for behavior that is defined before stomach execution sees an une
 - `src/scan_int/tests.rs`: unit tests for integer scanner behavior.
 - `src/tests.rs`: crate-level tests for expansion dispatch and public expansion behavior.
 - `src/values.rs`: rendering and expansion of value-producing primitives such as `\the`, `\meaning`, and token text.
-- `tests/capability_boundaries.rs`: trybuild integration test enforcing scanner helper capability boundaries.
+- `tests/capability_boundaries.rs`: Compile-fail integration test enforcing scanner helper capability boundaries.
 - `tests/ui/scanner_helper_input_open_forbidden.rs`: compile-fail fixture proving scanner helpers cannot require input-opening capabilities.
-- `tests/ui/scanner_helper_input_open_forbidden.stderr`: expected compiler diagnostics for the scanner helper compile-fail fixture.
 
 ## Validation
 
