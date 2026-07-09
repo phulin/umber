@@ -242,14 +242,18 @@ mod imp {
     }
 
     pub fn compare_dvi_bytes(expected: &[u8], actual: &[u8]) -> Result<DviComparison> {
-        let mut expected = expected.to_vec();
-        let mut actual = actual.to_vec();
-        normalize_dvi_preamble_comment(&mut expected)?;
-        normalize_dvi_preamble_comment(&mut actual)?;
+        let expected = normalized_dvi_for_comparison(expected)?;
+        let actual = normalized_dvi_for_comparison(actual)?;
         if expected == actual {
             return Ok(DviComparison::Equal);
         }
         Ok(DviComparison::Different(first_dvi_diff(&expected, &actual)))
+    }
+
+    pub fn normalized_dvi_for_comparison(bytes: &[u8]) -> Result<Vec<u8>> {
+        let mut normalized = bytes.to_vec();
+        normalize_dvi_preamble_comment(&mut normalized)?;
+        Ok(normalized)
     }
 
     fn normalize_dvi_preamble_comment(bytes: &mut [u8]) -> Result<()> {
@@ -351,4 +355,7 @@ mod imp {
     }
 }
 
-pub use imp::{DviComparison, DviDiff, RefTex, RefTftopl, RunOpts, RunOutput, compare_dvi_bytes};
+pub use imp::{
+    DviComparison, DviDiff, RefTex, RefTftopl, RunOpts, RunOutput, compare_dvi_bytes,
+    normalized_dvi_for_comparison,
+};

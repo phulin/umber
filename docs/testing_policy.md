@@ -161,6 +161,26 @@ SHA-256 after DVI preamble banner normalization. `scripts/parity.sh` runs
 `--offline` mode. Do not commit fetched corpus documents unless a later issue
 explicitly changes the redistribution policy.
 
+Full external-document DVI parity is an explicit script tier, not a cargo-test
+tier:
+
+```bash
+scripts/parity.sh e2e
+scripts/parity.sh e2e --offline
+```
+
+This mode verifies acquisition, runs reference TeX through `tools/refexec`,
+checks the manifest-pinned normalized reference DVI hash for environment
+drift, runs `umber run --dvi`, and byte-compares the normalized DVI files. On
+reference drift, Umber failure, or mismatch it writes a triage bundle under
+`target/parity-triage/<doc-name>/` with byte context, page-limited
+dvitype-style disassemblies, a unified disassembly diff, tracing-output logs,
+and a summary that names the divergent page and opcode when a page can be
+recovered from DVI backpointers. `scripts/parity.sh self-test` exercises the
+bundle writer with synthetic DVI and remains fast enough for local tooling
+checks, but the external corpus itself must stay outside
+`cargo test --workspace --tests`.
+
 `tex-out` also owns the cross-crate page-output float guard. Its unit tests
 scan the page node, packing, shipout lowering, artifact, DVI, and CLI DVI
 composition sources and fail if float types or float rounding APIs enter that
