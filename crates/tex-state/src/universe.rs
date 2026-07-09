@@ -175,7 +175,8 @@ pub struct Snapshot {
     state_hash_base: StateHashBase,
     checkpoint_id: CheckpointId,
     resume_kind: CheckpointResumeKind,
-    resume_boundary: Option<ResumeBoundary>,
+    resume_fallback: Option<ResumeFallback>,
+    last_resume_boundary: Option<ResumeBoundarySnapshot>,
 }
 
 /// Timeline-local identifier for one semantic checkpoint.
@@ -213,13 +214,40 @@ impl ResumeBoundary {
     }
 }
 
+/// Whether execution can roll back directly to a checkpoint's resume boundary.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum ResumeFallback {
+    /// The fallback boundary's effect history is still retained, so direct
+    /// rollback to that boundary is available.
+    DirectRollback(ResumeBoundary),
+    /// The fallback boundary is known for replay/convergence, but bounded
+    /// effect history has dropped the prefix needed for direct rollback.
+    Unavailable(ResumeBoundary),
+}
+
+impl ResumeFallback {
+    /// Returns the resume-valid checkpoint identity for this fallback.
+    #[must_use]
+    pub const fn boundary(self) -> ResumeBoundary {
+        match self {
+            Self::DirectRollback(boundary) | Self::Unavailable(boundary) => boundary,
+        }
+    }
+
+    /// Returns true when callers can roll back directly to the fallback.
+    #[must_use]
+    pub const fn direct_rollback_available(self) -> bool {
+        matches!(self, Self::DirectRollback(_))
+    }
+}
+
 /// Public metadata for the most recent semantic checkpoint.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct CheckpointMetadata {
     checkpoint_id: CheckpointId,
     state_hash: u64,
     resume_kind: CheckpointResumeKind,
-    resume_boundary: Option<ResumeBoundary>,
+    resume_fallback: Option<ResumeFallback>,
 }
 
 impl CheckpointMetadata {
@@ -241,14 +269,16 @@ impl CheckpointMetadata {
         self.resume_kind
     }
 
-    /// Returns the resume-valid boundary to use for execution resume.
+    /// Returns the fallback boundary to use for execution resume.
     ///
-    /// For a resume-valid checkpoint this is the checkpoint itself. For a
-    /// hash-only checkpoint this is the previous resume-valid boundary, when
-    /// one has been established on the current timeline.
+    /// For a resume-valid checkpoint this is the checkpoint itself with
+    /// direct rollback available. For a hash-only checkpoint this is the
+    /// previous resume-valid boundary, when one has been established on the
+    /// current timeline. Hash-only fallbacks can be unavailable for direct
+    /// rollback when bounded effect history has already dropped their prefix.
     #[must_use]
-    pub const fn resume_boundary(self) -> Option<ResumeBoundary> {
-        self.resume_boundary
+    pub const fn resume_fallback(self) -> Option<ResumeFallback> {
+        self.resume_fallback
     }
 }
 
@@ -298,13 +328,15 @@ impl Snapshot {
         matches!(self.resume_kind, CheckpointResumeKind::ResumeValid)
     }
 
-    /// Returns the resume-valid boundary to use for execution resume.
+    /// Returns the fallback boundary to use for execution resume.
     ///
     /// Hash-only checkpoints are still valid rollback/hash checkpoints, but
-    /// callers that need to restart execution must resume from this boundary.
+    /// callers that need to restart execution must use this fallback. If the
+    /// fallback is unavailable, bounded effect history no longer retains
+    /// enough state for direct rollback to that boundary.
     #[must_use]
-    pub const fn resume_boundary(&self) -> Option<ResumeBoundary> {
-        self.resume_boundary
+    pub const fn resume_fallback(&self) -> Option<ResumeFallback> {
+        self.resume_fallback
     }
 
     /// Returns the public metadata for this checkpoint.
@@ -314,9 +346,15 @@ impl Snapshot {
             checkpoint_id: self.checkpoint_id,
             state_hash: self.state_hash,
             resume_kind: self.resume_kind,
-            resume_boundary: self.resume_boundary,
+            resume_fallback: self.resume_fallback,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ResumeBoundarySnapshot {
+    boundary: ResumeBoundary,
+    effect_pos: EffectPos,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -389,7 +427,7 @@ pub struct Universe {
     state_hash_base: StateHashBase,
     next_checkpoint_id: u64,
     hash_only_checkpoint_depth: u32,
-    last_resume_boundary: Option<ResumeBoundary>,
+    last_resume_boundary: Option<ResumeBoundarySnapshot>,
     last_checkpoint: Option<CheckpointMetadata>,
 }
 
@@ -505,18 +543,28 @@ impl Universe {
             checkpoint_id,
             state_hash,
         };
-        let resume_boundary = match resume_kind {
-            CheckpointResumeKind::ResumeValid => Some(own_boundary),
+        let own_boundary_snapshot = ResumeBoundarySnapshot {
+            boundary: own_boundary,
+            effect_pos: self.world.effect_pos(),
+        };
+        let resume_fallback = match resume_kind {
+            CheckpointResumeKind::ResumeValid => Some(ResumeFallback::DirectRollback(own_boundary)),
+            CheckpointResumeKind::HashOnly => self
+                .last_resume_boundary
+                .map(|boundary| self.resume_fallback_for(boundary)),
+        };
+        let last_resume_boundary = match resume_kind {
+            CheckpointResumeKind::ResumeValid => Some(own_boundary_snapshot),
             CheckpointResumeKind::HashOnly => self.last_resume_boundary,
         };
         let checkpoint = CheckpointMetadata {
             checkpoint_id,
             state_hash,
             resume_kind,
-            resume_boundary,
+            resume_fallback,
         };
         if resume_kind == CheckpointResumeKind::ResumeValid {
-            self.last_resume_boundary = Some(own_boundary);
+            self.last_resume_boundary = Some(own_boundary_snapshot);
         }
         self.last_checkpoint = Some(checkpoint);
         self.state_hash_base = next_hash_base.clone();
@@ -532,7 +580,16 @@ impl Universe {
             state_hash_base: next_hash_base,
             checkpoint_id,
             resume_kind,
-            resume_boundary,
+            resume_fallback,
+            last_resume_boundary,
+        }
+    }
+
+    fn resume_fallback_for(&self, boundary: ResumeBoundarySnapshot) -> ResumeFallback {
+        if self.world.effect_pos_is_retained(boundary.effect_pos) {
+            ResumeFallback::DirectRollback(boundary.boundary)
+        } else {
+            ResumeFallback::Unavailable(boundary.boundary)
         }
     }
 
@@ -577,19 +634,14 @@ impl Universe {
     /// Rolls the whole timeline back to `snapshot` atomically.
     pub fn rollback(&mut self, snapshot: &Snapshot) {
         self.assert_valid_snapshot(snapshot);
+        self.world.assert_snapshot_retained(&snapshot.world);
         self.stores.rollback(&snapshot.store);
         self.world.rollback(&snapshot.world);
         self.input_summary = snapshot.input_summary.clone();
         self.interaction_mode = snapshot.interaction_mode;
         self.page = snapshot.page.clone();
         self.state_hash_base = snapshot.state_hash_base.clone();
-        self.last_resume_boundary = match snapshot.resume_kind {
-            CheckpointResumeKind::ResumeValid => Some(ResumeBoundary {
-                checkpoint_id: snapshot.checkpoint_id,
-                state_hash: snapshot.state_hash,
-            }),
-            CheckpointResumeKind::HashOnly => snapshot.resume_boundary,
-        };
+        self.last_resume_boundary = snapshot.last_resume_boundary;
         self.last_checkpoint = Some(snapshot.checkpoint_metadata());
     }
 

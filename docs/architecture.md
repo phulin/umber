@@ -737,7 +737,12 @@ degenerate case (run once, commit every page, never look back).
   A matching checkpoint is directly restartable only when its metadata says
   it is resume-valid. A hash-only checkpoint can still prove convergence, but
   any execution resume must fall back to the checkpoint's recorded
-  resume-valid boundary and replay the intervening nested continuation.
+  resume-valid boundary and replay the intervening nested continuation. That
+  fallback is separately marked direct-rollback-available or unavailable: a
+  nested hash-only shipout that commits effects may drop the `World` effect
+  prefix containing the fallback snapshot, in which case incremental drivers
+  must restart from an earlier retained checkpoint or replay from a larger
+  root instead of rolling directly to the fallback.
 - **Memoization**: keyed by (input span or token-list id, read-set epochs,
   code-table generations); value = (journal redo slice, effect slice,
   artifact ids). First target is box/paragraph-level (M4). The memo store

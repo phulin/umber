@@ -1,4 +1,4 @@
-use super::{CheckpointResumeKind, Universe};
+use super::{CheckpointResumeKind, ResumeFallback, Universe};
 use crate::font::NULL_FONT;
 use crate::glue::{GlueSpec, Order};
 use crate::macro_store::MacroMeaning;
@@ -8,6 +8,7 @@ use crate::page::{PageDimension, PageInteger};
 use crate::scaled::{GlueSetRatio, Scaled};
 use crate::token::{Catcode, Token};
 use crate::world::{ContentHash, JobClock, PrintSink, StreamSlot, World};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 #[test]
 fn universe_is_send() {
@@ -43,9 +44,10 @@ fn hash_only_checkpoint_records_previous_resume_boundary() {
     let mut universe = Universe::new();
     let symbol = universe.intern("x");
     let resume = universe.snapshot();
-    let resume_boundary = resume
-        .resume_boundary()
-        .expect("resume-valid snapshot is its own resume boundary");
+    let resume_fallback = resume
+        .resume_fallback()
+        .expect("resume-valid snapshot is its own resume fallback");
+    let resume_boundary = resume_fallback.boundary();
 
     let hash_only = universe.with_hash_only_checkpoints(|universe| {
         universe.set_meaning(symbol, Meaning::Relax);
@@ -53,8 +55,15 @@ fn hash_only_checkpoint_records_previous_resume_boundary() {
     });
 
     assert_eq!(resume.resume_kind(), CheckpointResumeKind::ResumeValid);
+    assert_eq!(
+        resume_fallback,
+        ResumeFallback::DirectRollback(resume_boundary)
+    );
     assert_eq!(hash_only.resume_kind(), CheckpointResumeKind::HashOnly);
-    assert_eq!(hash_only.resume_boundary(), Some(resume_boundary));
+    assert_eq!(
+        hash_only.resume_fallback(),
+        Some(ResumeFallback::DirectRollback(resume_boundary))
+    );
     assert_eq!(
         universe.last_checkpoint(),
         Some(hash_only.checkpoint_metadata())
@@ -67,8 +76,69 @@ fn hash_only_checkpoint_records_previous_resume_boundary() {
         universe.snapshot()
     });
     assert_eq!(replayed.resume_kind(), CheckpointResumeKind::HashOnly);
-    assert_eq!(replayed.resume_boundary(), Some(resume_boundary));
+    assert_eq!(
+        replayed.resume_fallback(),
+        Some(ResumeFallback::DirectRollback(resume_boundary))
+    );
     assert_eq!(replayed.state_hash(), hash_only.state_hash());
+}
+
+#[test]
+fn effectful_hash_only_commit_marks_resume_fallback_unavailable() {
+    let mut universe = Universe::new();
+    let resume = universe.snapshot();
+    let resume_boundary = resume
+        .resume_fallback()
+        .expect("resume-valid snapshot is its own resume fallback")
+        .boundary();
+
+    universe.with_hash_only_checkpoints(|universe| {
+        universe
+            .world_mut()
+            .write_text(PrintSink::TerminalAndLog, "nested shipout effect\n");
+        let effect_pos = universe.world().effect_pos();
+        universe
+            .commit_effects(effect_pos)
+            .expect("memory world commit succeeds");
+    });
+
+    let checkpoint = universe
+        .last_checkpoint()
+        .expect("hash-only commit should checkpoint");
+    assert_eq!(checkpoint.resume_kind(), CheckpointResumeKind::HashOnly);
+    assert_eq!(
+        checkpoint.resume_fallback(),
+        Some(ResumeFallback::Unavailable(resume_boundary))
+    );
+    assert!(
+        !checkpoint
+            .resume_fallback()
+            .expect("fallback should be recorded")
+            .direct_rollback_available()
+    );
+}
+
+#[test]
+fn rollback_rejects_dropped_effect_snapshot_before_mutating_stores() {
+    let mut universe = Universe::new();
+    let symbol = universe.intern("x");
+    let snapshot = universe.snapshot();
+
+    universe.set_meaning(symbol, Meaning::Relax);
+    universe
+        .world_mut()
+        .write_text(PrintSink::TerminalAndLog, "committed\n");
+    let effect_pos = universe.world().effect_pos();
+    universe
+        .commit_effects(effect_pos)
+        .expect("memory world commit succeeds");
+    let live_hash = universe.testing_state_hash();
+
+    let result = catch_unwind(AssertUnwindSafe(|| universe.rollback(&snapshot)));
+
+    assert!(result.is_err());
+    assert_eq!(universe.meaning(symbol), Meaning::Relax);
+    assert_eq!(universe.testing_state_hash(), live_hash);
 }
 
 #[test]

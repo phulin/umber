@@ -5,7 +5,7 @@ use tex_state::ids::GlueId;
 use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::node::{BoxNode, GlueKind, Node, Sign, UnsetKind, UnsetNode, UnsetNodeFields};
 use tex_state::scaled::Scaled;
-use tex_state::{CheckpointMetadata, CheckpointResumeKind};
+use tex_state::{CheckpointMetadata, CheckpointResumeKind, ResumeFallback};
 
 fn scan_halign_preamble(source: &str) -> (Universe, AlignState) {
     let mut stores = Universe::new();
@@ -106,19 +106,43 @@ fn assert_nested_shipout_replays_from_resume_boundary(source: &str) {
     let mut stores = support::stores_with_fonts();
     let resume = stores.snapshot();
     let resume_boundary = resume
-        .resume_boundary()
-        .expect("initial checkpoint should be resume-valid");
+        .resume_fallback()
+        .expect("initial checkpoint should be resume-valid")
+        .boundary();
 
     let first = run_nested_shipout_source(&mut stores, source);
     assert_eq!(first.resume_kind(), CheckpointResumeKind::HashOnly);
-    assert_eq!(first.resume_boundary(), Some(resume_boundary));
+    assert_eq!(
+        first.resume_fallback(),
+        Some(ResumeFallback::DirectRollback(resume_boundary))
+    );
 
     stores.rollback(&resume);
 
     let second = run_nested_shipout_source(&mut stores, source);
     assert_eq!(second.resume_kind(), CheckpointResumeKind::HashOnly);
-    assert_eq!(second.resume_boundary(), Some(resume_boundary));
+    assert_eq!(
+        second.resume_fallback(),
+        Some(ResumeFallback::DirectRollback(resume_boundary))
+    );
     assert_eq!(second.state_hash(), first.state_hash());
+}
+
+fn assert_effectful_nested_shipout_fallback_unavailable(source: &str) {
+    let mut stores = support::stores_with_fonts();
+    let resume_boundary = stores
+        .snapshot()
+        .resume_fallback()
+        .expect("initial checkpoint should be resume-valid")
+        .boundary();
+
+    let checkpoint = run_nested_shipout_source(&mut stores, source);
+
+    assert_eq!(checkpoint.resume_kind(), CheckpointResumeKind::HashOnly);
+    assert_eq!(
+        checkpoint.resume_fallback(),
+        Some(ResumeFallback::Unavailable(resume_boundary))
+    );
 }
 
 fn box_zero_vlist(stores: &Universe) -> &BoxNode {
@@ -449,6 +473,13 @@ fn box_group_shipout_checkpoint_is_hash_only_and_replays_from_boundary() {
 fn alignment_shipout_checkpoint_is_hash_only_and_replays_from_boundary() {
     assert_nested_shipout_replays_from_resume_boundary(
         "\\setbox0=\\vbox{\\halign{#\\cr \\shipout\\hbox{A}x\\cr}}\\end",
+    );
+}
+
+#[test]
+fn effectful_box_group_shipout_checkpoint_marks_fallback_unavailable() {
+    assert_effectful_nested_shipout_fallback_unavailable(
+        "\\setbox0=\\hbox{\\shipout\\hbox{\\write16{nested}}B}\\end",
     );
 }
 

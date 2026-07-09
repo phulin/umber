@@ -976,6 +976,11 @@ impl World {
     }
 
     #[must_use]
+    pub(crate) fn effect_pos_is_retained(&self, effect_pos: EffectPos) -> bool {
+        self.effect_base <= effect_pos && effect_pos <= self.effect_pos()
+    }
+
+    #[must_use]
     pub(crate) fn effect_records_since(&self, cursor: &WorldStateHashCursor) -> &[EffectRecord] {
         assert!(
             cursor.effect_pos >= self.effect_base,
@@ -1057,11 +1062,15 @@ impl World {
         }
     }
 
-    pub(crate) fn rollback(&mut self, snapshot: &WorldSnapshot) {
+    pub(crate) fn assert_snapshot_retained(&self, snapshot: &WorldSnapshot) {
         assert!(
-            snapshot.effect_pos >= self.effect_base,
+            self.effect_pos_is_retained(snapshot.effect_pos),
             "World snapshot effect position has already been committed and dropped"
         );
+    }
+
+    pub(crate) fn rollback(&mut self, snapshot: &WorldSnapshot) {
+        self.assert_snapshot_retained(snapshot);
         self.effects
             .truncate((snapshot.effect_pos.raw() - self.effect_base.raw()) as usize);
         self.stream_bufs = snapshot.stream_bufs.clone();

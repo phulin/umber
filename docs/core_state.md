@@ -75,9 +75,12 @@ checkpoint may be **resume-valid**, meaning the executor was at a quiescent
 boundary with no hidden Rust-stack continuation, or **hash-only**, meaning
 the store/world tuple is valid for rollback and convergence hashing but not
 for direct execution restart. Hash-only checkpoints record the previous
-resume-valid checkpoint id/hash as their resume boundary; the driver must
-roll back to that boundary and replay forward rather than trying to restart
-inside the hidden continuation.
+resume-valid checkpoint id/hash as their resume fallback. The fallback also
+records whether direct rollback is still available under bounded effect
+history. If a commit has dropped the needed `World` effect prefix, the
+checkpoint remains useful for convergence but the driver must restart from an
+earlier retained boundary or replay from a larger root rather than treating
+that fallback as rollback-ready.
 
 ---
 
@@ -392,7 +395,10 @@ Rollback discards the uncommitted suffix of the effect log. Commit accepts an
 prefix in order, and then drops the flushed prefix from memory; committing the
 same or an older position is a no-op, so each record reaches `World`'s real
 backend exactly once. Snapshots older than the dropped prefix must be discarded
-by the caller as part of the bounded-history policy.
+by the caller as part of the bounded-history policy. `Universe` reflects this
+in checkpoint metadata: a hash-only fallback whose snapshot predates the
+retained effect history is marked unavailable for direct rollback instead of
+being exposed as a resume-ready boundary.
 
 `World` is storage for external facts, not a public timeline-control object.
 Its authority is split conceptually into two downstream-safe capabilities plus
@@ -440,7 +446,7 @@ pub struct Snapshot {
     state_hash: u64,               // for convergence detection
     checkpoint_id: CheckpointId,
     resume_kind: ResumeValid | HashOnly,
-    resume_boundary: Option<ResumeBoundary>, // checkpoint id + state hash
+    resume_fallback: Option<ResumeFallback>, // boundary id/hash + direct rollback availability
 }
 ```
 
@@ -455,9 +461,10 @@ pub struct Snapshot {
   resume-valid. Checkpoints taken while the stomach is executing a nested
   continuation whose phase still lives on the Rust call stack are hash-only:
   they advance the semantic checkpoint hash, but their metadata points resume
-  to the previous resume-valid boundary. Alignment row/cell execution,
-  `\noalign` groups, template replay, and box-group scanning use this
-  conservative fallback until those continuations are serialized explicitly.
+  to the previous resume-valid boundary and says whether direct rollback to
+  that boundary is still retained. Alignment row/cell execution, `\noalign`
+  groups, template replay, and box-group scanning use this conservative
+  fallback until those continuations are serialized explicitly.
 - **Input restoration**: `InputSummary` carries the lexer-owned source-frame
   state required after a source is reopened: source-local offsets, current
   normalized line, in-line char/byte offsets, lexer N/M/S state, queued
@@ -500,6 +507,12 @@ pub struct Snapshot {
   already-committed effect records or released page-local nodes. If shipout
   occurs while a hash-only stomach continuation scope is active, this commit
   checkpoint is also hash-only and records the previous resume-valid boundary.
+  If the shipout committed any effects and dropped the prefix that contained
+  that boundary's `World` snapshot position, the hash-only checkpoint marks
+  the fallback unavailable for direct rollback. This is the current
+  conservative contract: editor/incremental worlds may later choose a
+  stronger retention or delayed-materialization policy, but until then callers
+  must not interpret an unavailable fallback as resume-valid.
 - **Convergence detection**: after re-executing from an edit, compare
   `state_hash` at each checkpoint with the prior run's hash at the same
   input position; on match, splice the old suffix and stop. `state_hash`
