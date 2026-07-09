@@ -7,7 +7,7 @@ Usage: scripts/sync-github-issues.sh [options] [-- bd-github-sync-args...]
 
 Sync GitHub issues with local Beads state.
 
-The script first runs `bd github sync`, then:
+The script first runs `bd github sync --push-only`, then:
   - closes GitHub issues whose local bead status is `closed`
   - reopens GitHub issues whose local bead status is not `closed`
   - creates one GitHub label per epic and adds it to the epic and descendants
@@ -25,7 +25,7 @@ Options:
   --no-projects              Skip GitHub project creation/item membership.
   -h, --help                 Show this help.
 
-Arguments after `--` are passed to `bd github sync`.
+Arguments after `--` are appended to `bd github sync --push-only`.
 
 Prerequisites:
   bd, gh, jq, and GitHub CLI authentication. If GH_TOKEN is unset but
@@ -163,13 +163,13 @@ trap 'rm -rf "$workdir"' EXIT
 
 echo "==> Running bd github sync"
 if ((dry_run)); then
-  bd_sync_cmd=(bd github sync --dry-run)
+  bd_sync_cmd=(bd github sync --push-only --dry-run)
   if ((${#bd_sync_args[@]})); then
     bd_sync_cmd+=("${bd_sync_args[@]}")
   fi
   run "${bd_sync_cmd[@]}"
 else
-  bd_sync_cmd=(bd github sync)
+  bd_sync_cmd=(bd github sync --push-only)
   if ((${#bd_sync_args[@]})); then
     bd_sync_cmd+=("${bd_sync_args[@]}")
   fi
