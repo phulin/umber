@@ -4,7 +4,7 @@ use tex_state::TracedTokenList;
 use tex_state::ids::OriginListId;
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::MeaningFlags;
-use tex_state::token::{Catcode, OriginId, Token};
+use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{ExpansionState, Universe};
 
 fn char_token(ch: char, cat: Catcode) -> Token {
@@ -34,7 +34,12 @@ fn match_from_list(
     let input_list = stores.intern_token_list(input_tokens);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(input_list, TokenListReplayKind::Inserted);
-    let matched = match_macro_call(&mut input, stores, call, meaning)?;
+    let matched = match_macro_call(
+        &mut input,
+        stores,
+        TracedTokenWord::pack(call, OriginId::UNKNOWN),
+        meaning,
+    )?;
     Ok((1..=matched.len())
         .map(|slot| {
             stores
@@ -54,7 +59,12 @@ fn match_traced_from_list(
     let input_list = stores.intern_token_list(input_tokens);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list_with_origins(input_list, input_origins, TokenListReplayKind::Inserted);
-    let matched = match_macro_call(&mut input, stores, call, meaning)?;
+    let matched = match_macro_call(
+        &mut input,
+        stores,
+        TracedTokenWord::pack(call, OriginId::UNKNOWN),
+        meaning,
+    )?;
     Ok((1..=matched.len())
         .map(|slot| matched.get_traced(slot as u8).expect("slot"))
         .collect())
@@ -349,7 +359,7 @@ fn leading_parameter_text_mismatch_reports_tex_message() {
 
     assert!(matches!(
         err,
-        MacroCallError::DoesNotMatchDefinition { ref macro_name } if macro_name == "\\m"
+        MacroCallError::DoesNotMatchDefinition { ref macro_name, .. } if macro_name == "\\m"
     ));
     assert_eq!(err.to_string(), "Use of \\m doesn't match its definition");
 }
@@ -365,7 +375,7 @@ fn non_long_macro_rejects_paragraph_token_in_argument() {
 
     assert!(matches!(
         err,
-        MacroCallError::ParagraphEndedBeforeComplete { ref macro_name } if macro_name == "\\m"
+        MacroCallError::ParagraphEndedBeforeComplete { ref macro_name, .. } if macro_name == "\\m"
     ));
     assert_eq!(err.to_string(), "Paragraph ended before \\m was complete");
 }
@@ -427,7 +437,7 @@ fn non_long_delimited_argument_rejects_par_that_only_mismatches_delimiter() {
 
     assert!(matches!(
         err,
-        MacroCallError::ParagraphEndedBeforeComplete { ref macro_name } if macro_name == "\\m"
+        MacroCallError::ParagraphEndedBeforeComplete { ref macro_name, .. } if macro_name == "\\m"
     ));
 }
 
@@ -445,7 +455,7 @@ fn rejects_outer_control_sequence_while_scanning_argument() {
 
     assert!(matches!(
         err,
-        MacroCallError::ForbiddenOuterToken { ref macro_name } if macro_name == "\\m"
+        MacroCallError::ForbiddenOuterToken { ref macro_name, .. } if macro_name == "\\m"
     ));
     assert_eq!(
         err.to_string(),

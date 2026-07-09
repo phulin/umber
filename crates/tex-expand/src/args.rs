@@ -68,26 +68,38 @@ impl MatchedArguments {
 #[derive(Debug)]
 pub enum MacroCallError {
     Lex(LexError),
-    EndOfInput { macro_name: String },
-    DoesNotMatchDefinition { macro_name: String },
-    ParagraphEndedBeforeComplete { macro_name: String },
-    ForbiddenOuterToken { macro_name: String },
+    EndOfInput {
+        macro_name: String,
+        context: TracedTokenWord,
+    },
+    DoesNotMatchDefinition {
+        macro_name: String,
+        context: TracedTokenWord,
+    },
+    ParagraphEndedBeforeComplete {
+        macro_name: String,
+        context: TracedTokenWord,
+    },
+    ForbiddenOuterToken {
+        macro_name: String,
+        context: TracedTokenWord,
+    },
 }
 
 impl fmt::Display for MacroCallError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Lex(err) => write!(f, "{err}"),
-            Self::EndOfInput { macro_name } => {
+            Self::EndOfInput { macro_name, .. } => {
                 write!(f, "File ended while scanning use of {macro_name}")
             }
-            Self::DoesNotMatchDefinition { macro_name } => {
+            Self::DoesNotMatchDefinition { macro_name, .. } => {
                 write!(f, "Use of {macro_name} doesn't match its definition")
             }
-            Self::ParagraphEndedBeforeComplete { macro_name } => {
+            Self::ParagraphEndedBeforeComplete { macro_name, .. } => {
                 write!(f, "Paragraph ended before {macro_name} was complete")
             }
-            Self::ForbiddenOuterToken { macro_name } => {
+            Self::ForbiddenOuterToken { macro_name, .. } => {
                 write!(
                     f,
                     "Forbidden control sequence found while scanning use of {macro_name}"
@@ -115,7 +127,13 @@ impl From<LexError> for MacroCallError {
 impl MacroCallError {
     #[must_use]
     pub fn primary_origin(&self) -> Option<OriginId> {
-        None
+        match self {
+            Self::Lex(_) => None,
+            Self::EndOfInput { context, .. }
+            | Self::DoesNotMatchDefinition { context, .. }
+            | Self::ParagraphEndedBeforeComplete { context, .. }
+            | Self::ForbiddenOuterToken { context, .. } => Some(context.origin()),
+        }
     }
 }
 
@@ -140,7 +158,7 @@ struct PendingArgumentToken {
 pub fn match_macro_call<S>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
-    call_token: Token,
+    call_token: TracedTokenWord,
     meaning: MacroMeaning,
 ) -> Result<MatchedArguments, MacroCallError>
 where
@@ -153,14 +171,14 @@ pub(crate) fn match_macro_call_with_recorder<S, R>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     recorder: &mut R,
-    call_token: Token,
+    call_token: TracedTokenWord,
     meaning: MacroMeaning,
 ) -> Result<MatchedArguments, MacroCallError>
 where
     S: InputSource,
     R: ReadRecorder,
 {
-    let macro_name = macro_name(stores, call_token);
+    let macro_name = macro_name(stores, traced_semantic_token(call_token));
     let pattern = parse_parameter_text(stores.tokens(meaning.parameter_text()));
     match_exact_tokens(
         input,
@@ -169,12 +187,20 @@ where
         meaning.flags(),
         &macro_name,
         &pattern.leading,
+        call_token,
     )?;
 
     let mut matched = MatchedArguments::default();
     for spec in &pattern.specs {
         let id = if spec.delimiter.is_empty() {
-            scan_undelimited_argument(input, stores, recorder, meaning.flags(), &macro_name)?
+            scan_undelimited_argument(
+                input,
+                stores,
+                recorder,
+                meaning.flags(),
+                &macro_name,
+                call_token,
+            )?
         } else {
             scan_delimited_argument(
                 input,
@@ -183,6 +209,7 @@ where
                 meaning.flags(),
                 &macro_name,
                 &spec.delimiter,
+                call_token,
             )?
         };
         matched.push(id);
@@ -229,16 +256,18 @@ fn match_exact_tokens<S, R>(
     flags: MeaningFlags,
     macro_name: &str,
     expected: &[Token],
+    call_context: TracedTokenWord,
 ) -> Result<(), MacroCallError>
 where
     S: InputSource,
     R: ReadRecorder,
 {
     for &expected_token in expected {
-        let token = next_checked_token(input, stores, recorder, flags, macro_name)?;
+        let token = next_checked_token(input, stores, recorder, flags, macro_name, call_context)?;
         if traced_semantic_token(token) != expected_token {
             return Err(MacroCallError::DoesNotMatchDefinition {
                 macro_name: macro_name.to_owned(),
+                context: token,
             });
         }
     }
@@ -251,19 +280,28 @@ fn scan_undelimited_argument<S, R>(
     recorder: &mut R,
     flags: MeaningFlags,
     macro_name: &str,
+    call_context: TracedTokenWord,
 ) -> Result<TracedTokenList, MacroCallError>
 where
     S: InputSource,
     R: ReadRecorder,
 {
-    let mut token = next_checked_token(input, stores, recorder, flags, macro_name)?;
+    let mut token = next_checked_token(input, stores, recorder, flags, macro_name, call_context)?;
     while is_space_token(traced_semantic_token(token)) {
-        token = next_checked_token(input, stores, recorder, flags, macro_name)?;
+        token = next_checked_token(input, stores, recorder, flags, macro_name, call_context)?;
     }
 
     let mut tokens = Vec::new();
     if is_begin_group(traced_semantic_token(token)) {
-        scan_balanced_group(input, stores, recorder, flags, macro_name, &mut tokens)?;
+        scan_balanced_group(
+            input,
+            stores,
+            recorder,
+            flags,
+            macro_name,
+            call_context,
+            &mut tokens,
+        )?;
     } else {
         tokens.push(token);
     }
@@ -276,6 +314,7 @@ fn scan_balanced_group<S, R>(
     recorder: &mut R,
     flags: MeaningFlags,
     macro_name: &str,
+    call_context: TracedTokenWord,
     tokens: &mut Vec<TracedTokenWord>,
 ) -> Result<(), MacroCallError>
 where
@@ -284,7 +323,7 @@ where
 {
     let mut level = 1_u32;
     loop {
-        let token = next_checked_token(input, stores, recorder, flags, macro_name)?;
+        let token = next_checked_token(input, stores, recorder, flags, macro_name, call_context)?;
         match traced_semantic_token(token) {
             Token::Char {
                 cat: Catcode::BeginGroup,
@@ -315,6 +354,7 @@ fn scan_delimited_argument<S, R>(
     flags: MeaningFlags,
     macro_name: &str,
     delimiter: &[Token],
+    call_context: TracedTokenWord,
 ) -> Result<TracedTokenList, MacroCallError>
 where
     S: InputSource,
@@ -325,14 +365,27 @@ where
     let mut level = 0_u32;
 
     loop {
-        let scanned = next_or_pending_token(input, stores, recorder, macro_name, &mut pending)?;
+        let scanned = next_or_pending_token(
+            input,
+            stores,
+            recorder,
+            macro_name,
+            call_context,
+            &mut pending,
+        )?;
         let token = traced_semantic_token(scanned.token);
         if level == 0 && token == delimiter[0] {
             let mut candidate = vec![scanned];
             let mut matched = true;
             for &expected in &delimiter[1..] {
-                let next =
-                    next_or_pending_token(input, stores, recorder, macro_name, &mut pending)?;
+                let next = next_or_pending_token(
+                    input,
+                    stores,
+                    recorder,
+                    macro_name,
+                    call_context,
+                    &mut pending,
+                )?;
                 candidate.push(next);
                 if traced_semantic_token(next.token) != expected {
                     matched = false;
@@ -365,6 +418,7 @@ fn next_or_pending_token<S, R>(
     stores: &mut impl ExpansionState,
     recorder: &mut R,
     macro_name: &str,
+    call_context: TracedTokenWord,
     pending: &mut VecDeque<PendingArgumentToken>,
 ) -> Result<PendingArgumentToken, MacroCallError>
 where
@@ -375,7 +429,7 @@ where
         Ok(token)
     } else {
         Ok(PendingArgumentToken {
-            token: next_token_without_par_check(input, stores, recorder, macro_name)?,
+            token: next_token_without_par_check(input, stores, recorder, macro_name, call_context)?,
             allow_par: false,
         })
     }
@@ -393,6 +447,7 @@ fn check_argument_par(
     {
         return Err(MacroCallError::ParagraphEndedBeforeComplete {
             macro_name: macro_name.to_owned(),
+            context: scanned.token,
         });
     }
     Ok(())
@@ -404,16 +459,18 @@ fn next_checked_token<S, R>(
     recorder: &mut R,
     flags: MeaningFlags,
     macro_name: &str,
+    call_context: TracedTokenWord,
 ) -> Result<TracedTokenWord, MacroCallError>
 where
     S: InputSource,
     R: ReadRecorder,
 {
-    let token = next_token_without_par_check(input, stores, recorder, macro_name)?;
+    let token = next_token_without_par_check(input, stores, recorder, macro_name, call_context)?;
 
     if is_par_token(stores, traced_semantic_token(token)) && !flags.contains(MeaningFlags::LONG) {
         return Err(MacroCallError::ParagraphEndedBeforeComplete {
             macro_name: macro_name.to_owned(),
+            context: token,
         });
     }
 
@@ -425,6 +482,7 @@ fn next_token_without_par_check<S, R>(
     stores: &mut impl ExpansionState,
     recorder: &mut R,
     macro_name: &str,
+    call_context: TracedTokenWord,
 ) -> Result<TracedTokenWord, MacroCallError>
 where
     S: InputSource,
@@ -434,6 +492,7 @@ where
         .next_traced_token(stores)?
         .ok_or_else(|| MacroCallError::EndOfInput {
             macro_name: macro_name.to_owned(),
+            context: call_context,
         })?;
 
     if let Token::Cs(symbol) = traced_semantic_token(token) {
@@ -444,6 +503,7 @@ where
         {
             return Err(MacroCallError::ForbiddenOuterToken {
                 macro_name: macro_name.to_owned(),
+                context: token,
             });
         }
     }

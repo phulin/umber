@@ -63,7 +63,7 @@ macro_rules! dispatch_match {
                     input,
                     stores,
                     recorder,
-                    token,
+                    TracedTokenWord::pack(token, call_origin),
                     macro_meaning,
                 )?;
                 Ok(Dispatch::Push {
