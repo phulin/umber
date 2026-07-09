@@ -584,7 +584,15 @@ where
             | UnexpandablePrimitive::VAdjust
             | UnexpandablePrimitive::Insert => {
                 reject_all_prefixes(prefixes)?;
-                execute_hmode_material(command.traced, primitive, nest, input, stores, hooks)?;
+                execute_hmode_material(
+                    command.traced,
+                    primitive,
+                    nest,
+                    input,
+                    stores,
+                    recorder,
+                    hooks,
+                )?;
                 Ok(CommandOutcome::assigned_if(
                     primitive == UnexpandablePrimitive::SpaceFactor,
                 ))

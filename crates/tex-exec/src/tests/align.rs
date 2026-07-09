@@ -774,3 +774,12 @@ fn right_brace_before_cr_uses_missing_cr_recovery() {
     assert_eq!(cell_text(&stores, cells[0]), "x");
     assert!(support::terminal_effect_text(&stores).contains("Missing \\cr inserted"));
 }
+
+#[test]
+fn empty_accent_group_preserves_later_alignment_delimiters() {
+    let stores = run_alignment_source("\\setbox0=\\vbox{\\halign{#\\cr {\\accent18}\\cr X\\cr}}");
+
+    assert!(stores.box_reg(0).is_some());
+    let vbox = box_zero_vlist(&stores);
+    assert_eq!(vlist_rows(&stores, vbox).len(), 2);
+}
