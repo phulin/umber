@@ -375,6 +375,32 @@ same or an older position is a no-op, so each record reaches `World`'s real
 backend exactly once. Snapshots older than the dropped prefix must be discarded
 by the caller as part of the bounded-history policy.
 
+`World` is storage for external facts, not a public timeline-control object.
+Its authority is split conceptually into two downstream-safe capabilities plus
+one aggregate-only authority:
+
+- **Read-only world view**: inspect already-recorded facts such as the current
+  effect position, pending effect records, input records, committed artifacts,
+  stream-buffer summaries, and in-memory backend outputs. This view cannot
+  mutate the effect log or commit anything.
+- **Operational world I/O**: perform ordinary engine operations that must be
+  virtualized by `World`: content-addressed file reads, TeX stream
+  open/close/read/write recording, terminal/log effect recording, deferred
+  write/special/shell-escape recording, RNG consumption, and test-memory
+  seeding where a hermetic backend is in use. This capability may append
+  rollback-covered records, but it cannot drop committed prefixes or take
+  snapshots.
+- **Timeline control**: snapshot, rollback, state-hash cursors, page-artifact
+  commit, and effect-prefix commit are aggregate `Universe` operations. Raw
+  `World` commit/rollback helpers remain crate-private implementation details,
+  because dropping an effect prefix also requires `Universe` to retarget hash
+  cursors and advance the aggregate checkpoint.
+
+The public API should preserve that split. Downstream crates may record and
+inspect world effects through narrow capabilities, but they must not obtain a
+general `&mut World` that can commit or roll back part of the aggregate state
+without `Universe` bookkeeping.
+
 ## 9. Snapshots, rollback, commit
 
 ```rust

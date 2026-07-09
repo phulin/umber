@@ -710,11 +710,15 @@ to native code that plays by the rules.
 3. **Kernels are pure.** Typesetting algorithms read parameters at entry
    and never mutate. Alignment is the documented exception and is
    structured as stomach recursion instead.
-4. **Effects only via `World`; commit only at shipout.** Any new
+4. **Effects only via `World`; commits only via `Universe`.** Any new
    primitive with an observable side effect gets an effect-log entry kind,
    not an I/O call. Uncommitted records are rollback state; committed
    prefixes are materialized through `World` and then discarded from the
-   in-memory log.
+   in-memory log, but the public commit boundary is `Universe`: it flushes the
+   `World` prefix and updates aggregate checkpoint/hash bookkeeping as one
+   operation. Downstream code may receive narrow world view/I/O capabilities;
+   it must not receive timeline-control authority such as raw effect commits,
+   snapshots, rollbacks, or hash cursors.
 5. **One interpreter loop.** Expansion and execution share the
    `get_x_token` core; there are not two token-reading engines with subtly
    different semantics (a classic source of TeX-clone divergence).
