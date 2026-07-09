@@ -1,3 +1,4 @@
+use tex_state::glue::GlueSpec;
 use tex_state::node::{GlueKind, Node};
 
 use crate::TypesetState;
@@ -16,10 +17,12 @@ pub fn post_line_break<S: TypesetState>(
     for (line_no, decision) in breaks.iter().enumerate() {
         let mut line = Vec::new();
         let dimensions = params.shape.dimensions(line_no + 1);
-        line.push(Node::Glue {
-            spec: params.left_skip,
-            kind: GlueKind::LeftSkip,
-        });
+        if state.glue(params.left_skip) != GlueSpec::ZERO {
+            line.push(Node::Glue {
+                spec: params.left_skip,
+                kind: GlueKind::LeftSkip,
+            });
+        }
         line.append(&mut pending_post);
         let post = push_line_segment(state, nodes, start, decision, &mut line);
         pending_post = post;

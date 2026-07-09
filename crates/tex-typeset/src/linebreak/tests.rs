@@ -343,12 +343,86 @@ fn post_line_break_keeps_migrating_nodes_for_execution_layer() {
     assert!(matches!(
         lines[0].nodes.as_slice(),
         [
-            Node::Glue { .. },
             Node::Rule { .. },
             Node::Mark { class: 0, tokens },
             Node::Adjust(list),
             Node::Penalty(-10_000),
             Node::Glue { .. },
         ] if *tokens == mark_tokens && *list == adjust_content
+    ));
+}
+
+#[test]
+fn post_line_break_omits_only_zero_leftskip() {
+    let mut universe = Universe::new();
+    let zero = universe.intern_glue(GlueSpec::ZERO);
+    let nonzero = universe.intern_glue(GlueSpec {
+        width: sp(3),
+        stretch: sp(0),
+        stretch_order: Order::Normal,
+        shrink: sp(0),
+        shrink_order: Order::Normal,
+    });
+    let nodes = vec![rule(10), Node::Penalty(10_000)];
+    let breaks = vec![BreakDecision {
+        position: nodes.len(),
+        penalty: 10_000,
+        hyphenated: false,
+    }];
+
+    let zero_left = post_line_break(
+        &universe,
+        &nodes,
+        &breaks,
+        PostLineBreakParams {
+            left_skip: zero,
+            right_skip: zero,
+            interline_penalty: 0,
+            club_penalty: 0,
+            widow_penalty: 0,
+            broken_penalty: 0,
+            shape: LineShape::natural(sp(100)),
+        },
+    );
+    assert!(matches!(
+        zero_left[0].nodes.as_slice(),
+        [
+            Node::Rule { .. },
+            Node::Penalty(10_000),
+            Node::Glue {
+                spec,
+                kind: GlueKind::RightSkip,
+            },
+        ] if *spec == zero
+    ));
+
+    let nonzero_left = post_line_break(
+        &universe,
+        &nodes,
+        &breaks,
+        PostLineBreakParams {
+            left_skip: nonzero,
+            right_skip: zero,
+            interline_penalty: 0,
+            club_penalty: 0,
+            widow_penalty: 0,
+            broken_penalty: 0,
+            shape: LineShape::natural(sp(100)),
+        },
+    );
+    assert!(matches!(
+        nonzero_left[0].nodes.as_slice(),
+        [
+            Node::Glue {
+                spec: left,
+                kind: GlueKind::LeftSkip,
+            },
+            Node::Rule { .. },
+            Node::Penalty(10_000),
+            Node::Glue {
+                spec: right,
+                kind: GlueKind::RightSkip,
+            },
+        ] if *left == nonzero && *right == zero
     ));
 }
