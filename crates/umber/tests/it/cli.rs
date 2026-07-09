@@ -269,6 +269,29 @@ fn run_error_renders_primary_source_context() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn run_expansion_error_renders_primary_source_context() {
+    let temp_dir = tempfile::tempdir().expect("create expansion diagnostic temp dir");
+    let source = temp_dir.path().join("undefined.tex");
+    fs::write(&source, "\\undefined\n").expect("write expansion diagnostic fixture");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .arg("run")
+        .arg(&source)
+        .output()
+        .expect("run umber expansion diagnostic fixture");
+
+    assert!(!output.status.success(), "undefined run should fail");
+    let stderr = String::from_utf8(output.stderr).expect("stderr is utf-8");
+    assert!(stderr.contains("Undefined control sequence \\undefined"));
+    assert!(stderr.contains("undefined.tex:1:1"));
+    assert!(stderr.contains("  1 | \\undefined"));
+    assert!(stderr.contains("    | ^"));
+    assert!(!stderr.contains("unknown origin"));
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
 fn run_macro_error_renders_bounded_expansion_trace() {
     let temp_dir = tempfile::tempdir().expect("create macro diagnostic temp dir");
     let source = temp_dir.path().join("macro.tex");

@@ -168,10 +168,14 @@ fn get_x_token_reports_undefined_control_sequence_and_forgets_it() {
     let list = stores.intern_token_list(&[Token::Cs(undefined), Token::Cs(after)]);
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
+    let err =
+        get_x_token(&mut input, &mut stores).expect_err("undefined control sequence is rejected");
     assert!(matches!(
-        get_x_token(&mut input, &mut stores),
-        Err(crate::ExpandError::UndefinedControlSequence { ref name }) if name == "missing"
+        err,
+        crate::ExpandError::UndefinedControlSequence { ref name, .. } if name == "missing"
     ));
+    let origin = err.primary_origin().expect("undefined control origin");
+    assert_ne!(origin, OriginId::UNKNOWN);
     assert_eq!(
         get_x_token(&mut input, &mut stores).expect("following token should still be readable"),
         Some(Token::Cs(after))
@@ -187,10 +191,32 @@ fn conditional_operand_scan_reports_undefined_control_sequence() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
+    let err =
+        get_x_token(&mut input, &mut stores).expect_err("undefined control sequence is rejected");
     assert!(matches!(
-        get_x_token(&mut input, &mut stores),
-        Err(crate::ExpandError::UndefinedControlSequence { ref name }) if name == "missing"
+        err,
+        crate::ExpandError::UndefinedControlSequence { ref name, .. } if name == "missing"
     ));
+    assert_ne!(
+        err.primary_origin().expect("undefined control origin"),
+        OriginId::UNKNOWN
+    );
+}
+
+#[test]
+fn undefined_control_sequence_from_source_reports_source_origin() {
+    let mut stores = Universe::new();
+    let mut input = InputStack::new(MemoryInput::new("\\missing"));
+
+    let err =
+        get_x_token(&mut input, &mut stores).expect_err("undefined control sequence is rejected");
+
+    assert!(matches!(
+        err,
+        crate::ExpandError::UndefinedControlSequence { ref name, .. } if name == "missing"
+    ));
+    let origin = err.primary_origin().expect("undefined control origin");
+    assert!(matches!(stores.origin(origin), OriginRecord::Source(_)));
 }
 
 #[test]

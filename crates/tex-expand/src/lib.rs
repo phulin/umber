@@ -238,7 +238,7 @@ pub enum ExpandError {
     MissingInputName,
     NonCharacterInInputName(Token),
     InputOpen { name: String, message: String },
-    UndefinedControlSequence { name: String },
+    UndefinedControlSequence { name: String, origin: OriginId },
     ScanInt(Box<scan_int::ScanIntError>),
     ScanDimen(Box<scan_dimen::ScanDimenError>),
     UnsupportedTheTarget(Token),
@@ -270,7 +270,7 @@ impl fmt::Display for ExpandError {
             Self::InputOpen { name, message } => {
                 write!(f, "failed to open input {name:?}: {message}")
             }
-            Self::UndefinedControlSequence { name } => {
+            Self::UndefinedControlSequence { name, .. } => {
                 write!(f, "Undefined control sequence \\{name}")
             }
             Self::ScanInt(err) => write!(f, "{err}"),
@@ -325,6 +325,7 @@ impl ExpandError {
     pub fn primary_origin(&self) -> Option<OriginId> {
         match self {
             Self::InvalidConditionalRelation(token) => Some(token.origin()),
+            Self::UndefinedControlSequence { origin, .. } => Some(*origin),
             Self::ScanInt(err) => err.primary_origin(),
             Self::ScanDimen(err) => err.primary_origin(),
             Self::MacroCall(err) => err.primary_origin(),
@@ -335,7 +336,6 @@ impl ExpandError {
             | Self::MissingInputName
             | Self::NonCharacterInInputName(_)
             | Self::InputOpen { .. }
-            | Self::UndefinedControlSequence { .. }
             | Self::UnsupportedTheTarget(_)
             | Self::IncompleteIf
             | Self::ExtraConditionalControl(_)

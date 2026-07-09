@@ -447,7 +447,10 @@ macro_rules! dispatch_match {
                     }
                     Token::Char { .. } | Token::Param(_) => format!("{token:?}"),
                 };
-                Err(ExpandError::UndefinedControlSequence { name })
+                Err(ExpandError::UndefinedControlSequence {
+                    name,
+                    origin: call_origin,
+                })
             }
             Meaning::Macro { .. }
             | Meaning::Relax
