@@ -1,0 +1,6 @@
+\setbox0=\hbox to 10pt{\hskip0pt plus1pt}\message{B:\the\badness}
+\setbox1=\hbox{\kern1pt}\setbox2=\hbox{\unhcopy1}
+\ifvoid1 \message{H:void}\else \message{H:kept}\fi
+\setbox3=\vbox{\kern2pt}\setbox4=\vbox{\unvcopy3}
+\ifvoid3 \message{V:void}\else \message{V:kept}\fi
+\end

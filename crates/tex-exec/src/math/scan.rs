@@ -12,11 +12,12 @@ use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::node::Node;
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
-use tex_typeset::{PackSpec, vpack};
+use tex_typeset::PackSpec;
 
 use crate::assignments;
 use crate::executor::sync_engine_state;
 use crate::mode::IncompleteFraction;
+use crate::packing_params::vpack;
 use crate::{DispatchAction, ExecError, Mode, ModeNest};
 
 use super::{dispatch_math_token_with_recorder, support::report_math_error};

@@ -45,6 +45,7 @@ pub enum PackDiagnostic {
 #[derive(Clone, Debug, PartialEq)]
 pub struct PackedBox {
     pub node: BoxNode,
+    pub badness: i32,
     pub diagnostics: Vec<PackDiagnostic>,
 }
 
@@ -102,6 +103,7 @@ pub fn hpack(
             glue_order: glue.order,
             children: list,
         }),
+        badness: glue.badness,
         diagnostics,
     }
 }
@@ -130,6 +132,7 @@ pub fn vpack(
             glue_order: glue.order,
             children: list,
         }),
+        badness: glue.badness,
         diagnostics,
     }
 }
@@ -155,6 +158,7 @@ struct Measurement {
     depth: Scaled,
     stretch: [Scaled; 4],
     shrink: [Scaled; 4],
+    has_glue: bool,
 }
 
 impl Measurement {
@@ -164,6 +168,7 @@ impl Measurement {
         depth: Scaled::from_raw(0),
         stretch: [Scaled::from_raw(0); 4],
         shrink: [Scaled::from_raw(0); 4],
+        has_glue: false,
     };
 }
 
@@ -186,7 +191,7 @@ fn target_size(natural: Scaled, spec: PackSpec) -> Scaled {
 
 fn set_glue(target: Scaled, natural: Scaled, meas: &Measurement) -> GlueSetting {
     let diff = target.raw() - natural.raw();
-    if diff == 0 {
+    if diff == 0 || (diff > 0 && !meas.has_glue) {
         return GlueSetting {
             ratio: GlueSetRatio::ZERO,
             sign: Sign::Normal,
@@ -326,6 +331,7 @@ fn measure_hlist(state: &impl TypesetState, nodes: &[Node]) -> Measurement {
                 meas.width = add(meas.width, replacement.width);
                 meas.height = meas.height.max(replacement.height);
                 meas.depth = meas.depth.max(replacement.depth);
+                meas.has_glue |= replacement.has_glue;
             }
             Node::Mark { .. }
             | Node::Ins { .. }
@@ -408,6 +414,7 @@ enum Axis {
 }
 
 fn add_glue(meas: &mut Measurement, spec: GlueSpec, axis: Axis) {
+    meas.has_glue = true;
     match axis {
         Axis::Horizontal => meas.width = add(meas.width, spec.width),
         Axis::Vertical => add_vertical_spacing(meas, spec.width),

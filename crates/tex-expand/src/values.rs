@@ -2,7 +2,7 @@ use tex_lex::{InputSource, InputStack, MacroArguments};
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::{FontId, TokenListId};
-use tex_state::meaning::{Meaning, MeaningFlags};
+use tex_state::meaning::{InternalInteger, Meaning, MeaningFlags};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
 use tex_state::{BoxDimension, ExpansionState};
@@ -254,6 +254,11 @@ where
             ExpansionReplayKind::TheOutput,
             &stores.int_param(IntParam::new(index)).to_string(),
         )),
+        Meaning::InternalInteger(InternalInteger::Badness) => Ok(push_rendered_text(
+            stores,
+            ExpansionReplayKind::TheOutput,
+            &stores.last_badness().to_string(),
+        )),
         Meaning::DimenParam(index) => Ok(push_rendered_text(
             stores,
             ExpansionReplayKind::TheOutput,
@@ -398,6 +403,7 @@ pub fn meaning_text(stores: &impl ExpansionState, token: Token) -> String {
             Meaning::MuskipRegister(index) => format!("\\muskip{index}"),
             Meaning::ToksRegister(index) => format!("\\toks{index}"),
             Meaning::IntParam(_)
+            | Meaning::InternalInteger(_)
             | Meaning::DimenParam(_)
             | Meaning::GlueParam(_)
             | Meaning::MuGlueParam(_)

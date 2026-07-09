@@ -6,11 +6,11 @@ use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::node::{BoxNode, GlueKind, KernKind, Node, Sign};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
+use tex_typeset::PackSpec;
 use tex_typeset::math::{MathParams, Style, mlist_to_hlist};
-use tex_typeset::{PackSpec, hpack as hpack_nodes};
 
 use crate::mode::{DisplayEqNo, DisplayInterrupt, EqNoSide};
-use crate::packing_params::hpack_params;
+use crate::packing_params::{hpack as hpack_nodes, hpack_params};
 use crate::vertical::{
     append_node_to_vertical_list, append_vertical_contribution, build_page_if_outer_vertical,
 };

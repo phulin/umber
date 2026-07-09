@@ -4,9 +4,9 @@ use tex_state::ids::NodeListId;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::node::Node;
 use tex_state::{GroupKind, Universe};
-use tex_typeset::{PackDiagnostic, PackSpec, hpack, vpack, vtop};
+use tex_typeset::{PackDiagnostic, PackSpec};
 
-use crate::packing_params::{hpack_params, vpack_params};
+use crate::packing_params::{hpack, hpack_params, vpack, vpack_params, vtop};
 use crate::{ExecError, Mode, ModeNest, leave_group};
 
 use super::super::{

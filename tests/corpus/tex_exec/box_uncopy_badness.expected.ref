@@ -1,0 +1,11 @@
+success: true
+stdout:
+Underfull \hbox (badness 10000) detected at line 1
+B:10000 H:kept V:kept
+log:
+Underfull \hbox (badness 10000) detected at line 1
+
+\hbox(0.0+0.0)x10.0, glue set 10.0
+.\glue 0.0 plus 1.0
+
+B:10000 H:kept V:kept

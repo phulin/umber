@@ -407,6 +407,7 @@ macro_rules! dispatch_match {
             | Meaning::MuskipRegister(_)
             | Meaning::ToksRegister(_)
             | Meaning::IntParam(_)
+            | Meaning::InternalInteger(_)
             | Meaning::DimenParam(_)
             | Meaning::GlueParam(_)
             | Meaning::MuGlueParam(_)

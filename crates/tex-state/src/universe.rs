@@ -96,6 +96,7 @@ pub trait ExpansionState {
     fn page_integer(&self, integer: PageInteger) -> i32;
     fn page_mark(&self, mark: PageMark) -> TokenListId;
     fn int_param(&self, param: IntParam) -> i32;
+    fn last_badness(&self) -> i32;
     fn mag(&self) -> i32;
     fn prepared_mag(&self) -> Option<i32>;
     fn prepare_mag(&mut self) -> (i32, Option<PrepareMagDiagnostic>);
@@ -1611,6 +1612,15 @@ impl Universe {
     }
 
     #[must_use]
+    pub fn last_badness(&self) -> i32 {
+        self.stores.last_badness()
+    }
+
+    pub fn set_last_badness(&mut self, value: i32) {
+        self.stores.set_last_badness(value);
+    }
+
+    #[must_use]
     pub fn mag(&self) -> i32 {
         self.stores.mag()
     }
@@ -1914,6 +1924,10 @@ impl ExpansionState for Universe {
         Self::int_param(self, param)
     }
 
+    fn last_badness(&self) -> i32 {
+        Self::last_badness(self)
+    }
+
     fn mag(&self) -> i32 {
         Self::mag(self)
     }
@@ -2102,6 +2116,10 @@ impl ExpansionState for ExpansionContext<'_> {
 
     fn int_param(&self, param: IntParam) -> i32 {
         self.universe.int_param(param)
+    }
+
+    fn last_badness(&self) -> i32 {
+        self.universe.last_badness()
     }
 
     fn mag(&self) -> i32 {

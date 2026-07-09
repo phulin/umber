@@ -8,10 +8,11 @@ use tex_state::node::{DiscKind, GlueKind, KernKind, Node};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
 use tex_state::{PrintSink, Universe};
-use tex_typeset::{INF_BAD, PackSpec, VpackParams, vpack};
+use tex_typeset::{INF_BAD, PackSpec, VpackParams};
 
 use super::paragraph::ensure_horizontal_for_character;
 use super::*;
+use crate::packing_params::vpack;
 use crate::vertical::{append_vertical_contribution, build_page_if_outer_vertical};
 use crate::{ExecError, Mode, ModeNest};
 

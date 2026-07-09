@@ -4,7 +4,9 @@ use crate::glue::GlueSpec;
 use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, TokenListId};
 use crate::interner::Symbol;
 use crate::journal::Entry;
-use crate::meaning::{ExpandablePrimitive, Meaning, RawMeaning, UnexpandablePrimitive};
+use crate::meaning::{
+    ExpandablePrimitive, InternalInteger, Meaning, RawMeaning, UnexpandablePrimitive,
+};
 use crate::node::{BoxNode, GlueKind, KernKind, LeaderPayload, Node, Sign, Whatsit};
 use crate::node_arena::NodeArenaMark;
 use crate::state_hash::StateHasher;
@@ -307,6 +309,10 @@ impl Stores {
             Meaning::PageInteger(integer) => {
                 hasher.tag(19);
                 hasher.u8(integer.index());
+            }
+            Meaning::InternalInteger(integer) => {
+                hasher.tag(22);
+                hash_internal_integer(integer, hasher);
             }
             Meaning::Font(id) => {
                 hasher.tag(17);
@@ -904,6 +910,12 @@ fn hash_optional_delimiter(delimiter: Option<u32>, hasher: &mut StateHasher) {
             hasher.u32(delimiter);
         }
         None => hasher.bool(false),
+    }
+}
+
+fn hash_internal_integer(integer: InternalInteger, hasher: &mut StateHasher) {
+    match integer {
+        InternalInteger::Badness => hasher.tag(0),
     }
 }
 

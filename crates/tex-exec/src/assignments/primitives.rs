@@ -1,4 +1,5 @@
 use super::*;
+use tex_state::meaning::InternalInteger;
 use tex_state::page::{PageDimension, PageInteger};
 
 pub fn install_unexpandable_primitives(stores: &mut Universe) {
@@ -68,7 +69,9 @@ pub fn install_unexpandable_primitives(stores: &mut Universe) {
         ("copy", UnexpandablePrimitive::Copy),
         ("vsplit", UnexpandablePrimitive::VSplit),
         ("unhbox", UnexpandablePrimitive::UnHBox),
+        ("unhcopy", UnexpandablePrimitive::UnHCopy),
         ("unvbox", UnexpandablePrimitive::UnVBox),
+        ("unvcopy", UnexpandablePrimitive::UnVCopy),
         ("lastbox", UnexpandablePrimitive::LastBox),
         ("wd", UnexpandablePrimitive::Wd),
         ("ht", UnexpandablePrimitive::Ht),
@@ -185,6 +188,8 @@ pub fn install_unexpandable_primitives(stores: &mut Universe) {
     stores.set_current_font_selector_global(nullfont, tex_state::font::NULL_FONT);
     install_parameter_meanings(stores);
     install_page_meanings(stores);
+    let badness = stores.intern("badness");
+    stores.set_meaning(badness, Meaning::InternalInteger(InternalInteger::Badness));
 }
 
 fn install_parameter_meanings(stores: &mut Universe) {

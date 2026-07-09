@@ -29,6 +29,7 @@ const OP_PAGE_DIMENSION: u8 = 17;
 const OP_PAGE_INTEGER: u8 = 18;
 const OP_MU_GLUE_PARAM: u8 = 19;
 const OP_CHAR_TOKEN: u8 = 20;
+const OP_INTERNAL_INTEGER: u8 = 21;
 
 /// Bitflags carried by meaning words.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -95,10 +96,35 @@ pub enum Meaning {
     TokParam(u16),
     PageDimension(PageDimension),
     PageInteger(PageInteger),
+    InternalInteger(InternalInteger),
     Font(FontId),
     ExpandablePrimitive(ExpandablePrimitive),
     UnexpandablePrimitive(UnexpandablePrimitive),
     Unknown(RawMeaning),
+}
+
+/// Read-only internal integer quantities.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InternalInteger {
+    /// Badness of the most recent glue setting.
+    Badness,
+}
+
+impl InternalInteger {
+    #[must_use]
+    pub const fn operand(self) -> u64 {
+        match self {
+            Self::Badness => 0,
+        }
+    }
+
+    #[must_use]
+    pub const fn from_operand(operand: u64) -> Option<Self> {
+        match operand {
+            0 => Some(Self::Badness),
+            _ => None,
+        }
+    }
 }
 
 /// Expandable primitive opcodes represented directly in meaning words.
@@ -299,7 +325,9 @@ pub enum UnexpandablePrimitive {
     Copy,
     VSplit,
     UnHBox,
+    UnHCopy,
     UnVBox,
+    UnVCopy,
     LastBox,
     Wd,
     Ht,
@@ -473,7 +501,9 @@ impl UnexpandablePrimitive {
             Self::Copy => 61,
             Self::VSplit => 116,
             Self::UnHBox => 62,
+            Self::UnHCopy => 168,
             Self::UnVBox => 63,
+            Self::UnVCopy => 169,
             Self::LastBox => 64,
             Self::Wd => 65,
             Self::Ht => 66,
@@ -647,7 +677,9 @@ impl UnexpandablePrimitive {
             61 => Some(Self::Copy),
             116 => Some(Self::VSplit),
             62 => Some(Self::UnHBox),
+            168 => Some(Self::UnHCopy),
             63 => Some(Self::UnVBox),
+            169 => Some(Self::UnVCopy),
             64 => Some(Self::LastBox),
             65 => Some(Self::Wd),
             66 => Some(Self::Ht),
@@ -832,6 +864,9 @@ impl Meaning {
             Self::PageInteger(integer) => {
                 pack(OP_PAGE_INTEGER, MeaningFlags::EMPTY, integer.index() as u64)
             }
+            Self::InternalInteger(integer) => {
+                pack(OP_INTERNAL_INTEGER, MeaningFlags::EMPTY, integer.operand())
+            }
             Self::Font(id) => pack(OP_FONT, MeaningFlags::EMPTY, id.raw() as u64),
             Self::ExpandablePrimitive(primitive) => pack(
                 OP_EXPANDABLE_PRIMITIVE,
@@ -898,6 +933,10 @@ impl Meaning {
                     None => Self::Unknown(RawMeaning { op, operand }),
                 }
             }
+            OP_INTERNAL_INTEGER => match InternalInteger::from_operand(operand) {
+                Some(integer) => Self::InternalInteger(integer),
+                None => Self::Unknown(RawMeaning { op, operand }),
+            },
             OP_FONT if operand <= u32::MAX as u64 => Self::Font(FontId::new(operand as u32)),
             OP_EXPANDABLE_PRIMITIVE => match ExpandablePrimitive::from_operand(operand) {
                 Some(primitive) => Self::ExpandablePrimitive(primitive),

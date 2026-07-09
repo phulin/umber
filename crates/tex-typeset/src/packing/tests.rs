@@ -19,6 +19,48 @@ fn badness_matches_tex_web_boundaries() {
 }
 
 #[test]
+fn hpack_records_zero_badness_for_empty_underfull_box() {
+    let mut universe = Universe::new();
+    let empty = universe.freeze_node_list(&[]);
+    let empty_packed = hpack(
+        &universe,
+        empty,
+        PackSpec::Exactly(sp(10)),
+        HpackParams {
+            hbadness: 0,
+            hfuzz: sp(0),
+            overfull_rule: sp(0),
+        },
+    );
+    assert_eq!(empty_packed.badness, 0);
+    assert!(empty_packed.diagnostics.is_empty());
+
+    let zero_glue = universe.intern_glue(GlueSpec {
+        width: sp(0),
+        stretch: sp(0),
+        stretch_order: Order::Normal,
+        shrink: sp(0),
+        shrink_order: Order::Normal,
+    });
+    let list = universe.freeze_node_list(&[Node::Glue {
+        spec: zero_glue,
+        kind: GlueKind::Normal,
+        leader: None,
+    }]);
+    let glue_packed = hpack(
+        &universe,
+        list,
+        PackSpec::Exactly(sp(10)),
+        HpackParams {
+            hbadness: 0,
+            hfuzz: sp(0),
+            overfull_rule: sp(0),
+        },
+    );
+    assert_eq!(glue_packed.badness, INF_BAD);
+}
+
+#[test]
 fn hpack_sets_finite_stretch_order_and_ratio() {
     let mut universe = Universe::new();
     let glue = universe.intern_glue(GlueSpec {

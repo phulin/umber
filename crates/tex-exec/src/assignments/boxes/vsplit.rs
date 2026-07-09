@@ -6,11 +6,11 @@ use tex_state::glue::Order;
 use tex_state::node::Node;
 use tex_state::page::PageMark;
 use tex_state::scaled::Scaled;
-use tex_typeset::{PackSpec, VerticalBreakError, vert_break, vpack};
+use tex_typeset::{PackSpec, VerticalBreakError, vert_break};
 
 use crate::ExecError;
 use crate::diagnostics;
-use crate::packing_params::vpack_params;
+use crate::packing_params::{vpack, vpack_params};
 use crate::splitting::{prune_page_top, vpack_natural};
 
 use super::super::{scan_optional_keyword_x, scan_register_index, scan_scaled};
