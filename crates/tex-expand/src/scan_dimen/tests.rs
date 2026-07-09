@@ -1,7 +1,7 @@
 use tex_lex::{InputStack, MemoryInput};
 use tex_state::Universe;
 use tex_state::macro_store::MacroMeaning;
-use tex_state::meaning::MeaningFlags;
+use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::scaled::{PhysicalUnit, Scaled, round_decimal_fraction, scaled_from_decimal_parts};
 use tex_state::token::{Catcode, Token};
 
@@ -166,7 +166,11 @@ fn rejects_bare_integer_without_coercion() {
 #[test]
 fn scans_supported_internal_dimensions() {
     let mut stores = Universe::new();
-    stores.intern("dimen");
+    let dimen = stores.intern("dimen");
+    stores.set_meaning(
+        dimen,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen),
+    );
     stores.set_dimen(3, Scaled::from_raw(42_000));
 
     let (value, diagnostic, next) = scan_with_stores("\\dimen3 x", &mut stores);
@@ -179,7 +183,11 @@ fn scans_supported_internal_dimensions() {
 #[test]
 fn scans_integer_like_internal_values_with_units() {
     let mut stores = Universe::new();
-    stores.intern("count");
+    let count = stores.intern("count");
+    stores.set_meaning(
+        count,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Count),
+    );
     stores.set_count(4, 2);
 
     assert_eq!(scan_with_stores("\\count4pt x", &mut stores).0, 131_072);

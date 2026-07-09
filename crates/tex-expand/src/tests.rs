@@ -7,7 +7,7 @@ use tex_lex::{InputStack, MemoryInput, TokenListReplayKind};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::interner::Symbol;
 use tex_state::macro_store::MacroMeaning;
-use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
+use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::node::{BoxNode, BoxNodeFields, Node, Sign};
 use tex_state::page::PageMark;
 use tex_state::scaled::{GlueSetRatio, Scaled};
@@ -89,6 +89,41 @@ fn get_x_token_delivers_unexpandable_control_sequence() {
         get_x_token(&mut input, &mut stores).expect("expansion should succeed"),
         Some(Token::Cs(relax))
     );
+}
+
+#[test]
+fn get_x_token_reports_undefined_control_sequence_and_forgets_it() {
+    let mut stores = Universe::new();
+    let undefined = stores.intern("missing");
+    let after = stores.intern("after");
+    stores.set_meaning(after, Meaning::Relax);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    let list = stores.intern_token_list(&[Token::Cs(undefined), Token::Cs(after)]);
+    input.push_token_list(list, TokenListReplayKind::Inserted);
+
+    assert!(matches!(
+        get_x_token(&mut input, &mut stores),
+        Err(crate::ExpandError::UndefinedControlSequence { ref name }) if name == "missing"
+    ));
+    assert_eq!(
+        get_x_token(&mut input, &mut stores).expect("following token should still be readable"),
+        Some(Token::Cs(after))
+    );
+}
+
+#[test]
+fn conditional_operand_scan_reports_undefined_control_sequence() {
+    let mut stores = Universe::new();
+    let if_cs = expandable_primitive(&mut stores, "if", ExpandablePrimitive::If);
+    let undefined = stores.intern("missing");
+    let list = stores.intern_token_list(&[Token::Cs(if_cs), Token::Cs(undefined), char_token('x')]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list(list, TokenListReplayKind::Inserted);
+
+    assert!(matches!(
+        get_x_token(&mut input, &mut stores),
+        Err(crate::ExpandError::UndefinedControlSequence { ref name }) if name == "missing"
+    ));
 }
 
 #[test]
@@ -683,12 +718,12 @@ fn the_renders_assignable_registers_parameters_and_code_tables() {
     let count = stores.intern("count");
     stores.set_meaning(
         count,
-        Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::Count),
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Count),
     );
     let catcode = stores.intern("catcode");
     stores.set_meaning(
         catcode,
-        Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::CatCode),
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::CatCode),
     );
     let foo = stores.intern("foo");
     stores.set_meaning(foo, Meaning::CountRegister(300));
@@ -799,6 +834,18 @@ fn the_renders_supported_registers_and_token_registers() {
     let count = stores.intern("count");
     let dimen = stores.intern("dimen");
     let toks = stores.intern("toks");
+    stores.set_meaning(
+        count,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Count),
+    );
+    stores.set_meaning(
+        dimen,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen),
+    );
+    stores.set_meaning(
+        toks,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks),
+    );
     stores.set_count(2, -42);
     stores.set_dimen(3, tex_state::scaled::Scaled::from_raw(65_537));
     let toks_value = stores.intern_token_list(&[
@@ -1179,6 +1226,14 @@ fn ifnum_and_ifdim_compare_scanned_values() {
     stores.set_dimen(3, Scaled::from_raw(Scaled::UNITY));
     let count = stores.intern("count");
     let dimen = stores.intern("dimen");
+    stores.set_meaning(
+        count,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Count),
+    );
+    stores.set_meaning(
+        dimen,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen),
+    );
     let list = stores.intern_token_list(&[
         Token::Cs(ifnum),
         Token::Cs(count),
@@ -1214,6 +1269,10 @@ fn ifnum_internal_operand_inserts_relax_before_else_during_evaluation() {
     let ifnum = expandable_primitive(&mut stores, "ifnum", ExpandablePrimitive::IfNum);
     let count = stores.intern("count");
     let limit = stores.intern("limit");
+    stores.set_meaning(
+        count,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Count),
+    );
     stores.set_meaning(limit, Meaning::CountRegister(20));
     stores.set_count(11, 10);
     stores.set_count(20, 255);

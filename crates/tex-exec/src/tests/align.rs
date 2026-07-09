@@ -69,7 +69,9 @@ fn unset_for_test(
 
 fn run_alignment_source(source: &str) -> Universe {
     let mut stores = support::stores_with_fonts();
-    let mut input = InputStack::new(MemoryInput::new(format!("\\font\\f=cmr10 \\f {source}")));
+    let mut input = InputStack::new(MemoryInput::new(format!(
+        "\\font\\f=cmr10 \\relax \\f {source}"
+    )));
     Executor::new()
         .run(&mut input, &mut stores)
         .expect("alignment source executes");
@@ -78,7 +80,9 @@ fn run_alignment_source(source: &str) -> Universe {
 
 fn run_alignment_source_err(source: &str) -> ExecError {
     let mut stores = support::stores_with_fonts();
-    let mut input = InputStack::new(MemoryInput::new(format!("\\font\\f=cmr10 \\f {source}")));
+    let mut input = InputStack::new(MemoryInput::new(format!(
+        "\\font\\f=cmr10 \\relax \\f {source}"
+    )));
     Executor::new()
         .run(&mut input, &mut stores)
         .expect_err("alignment source should fail")
@@ -89,7 +93,9 @@ fn run_boxed_alignment_source(source: &str) -> Universe {
 }
 
 fn run_nested_shipout_source(stores: &mut Universe, source: &str) -> CheckpointMetadata {
-    let mut input = InputStack::new(MemoryInput::new(format!("\\font\\f=cmr10 \\f {source}")));
+    let mut input = InputStack::new(MemoryInput::new(format!(
+        "\\font\\f=cmr10 \\relax \\f {source}"
+    )));
     let stats = Executor::new()
         .run(&mut input, stores)
         .expect("nested shipout source executes");

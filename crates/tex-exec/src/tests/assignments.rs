@@ -168,7 +168,7 @@ fn code_table_assignment_validates_and_bumps_generation_on_same_value() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
     let before = stores.code_table_generations();
-    let mut input = InputStack::new(MemoryInput::new("\\catcode`\\@=12 \\catcode`\\@=12"));
+    let mut input = InputStack::new(MemoryInput::new("\\catcode`@=12 \\catcode`@=12"));
 
     Executor::new()
         .run(&mut input, &mut stores)
