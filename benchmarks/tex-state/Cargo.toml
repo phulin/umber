@@ -1,0 +1,15 @@
+[package]
+name = "tex-state-benchmarks"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+criterion = "0.5"
+tex-state = { path = "../../crates/tex-state" }
+
+[[bench]]
+name = "state_budgets"
+harness = false

@@ -34,6 +34,7 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - `crates/umber`: CLI driver.
 - `crates/test-support`: shared fixture and parity-test helpers.
 - `tools/`: Rust workspace tools, including `refexec` for reference TeX execution.
+- `benchmarks/`: opt-in standalone benchmark crates kept outside the root workspace.
 - `tests/`: committed fixtures and parity test definitions.
 - `docs/`: architecture, phase, and design documents.
 - `scripts/`: local development scripts and versioned git hook templates.
