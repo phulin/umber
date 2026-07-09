@@ -1,17 +1,24 @@
 [package]
 name = "fixturegen"
-version.workspace = true
-edition.workspace = true
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
 
 [dependencies]
-anyhow.workspace = true
+anyhow = "1"
 refexec = { path = "../refexec" }
-tempfile.workspace = true
+tempfile = "3"
 test-support = { path = "../../crates/test-support" }
 tex-arith = { path = "../../crates/tex-arith" }
 tex-fonts = { path = "../../crates/tex-fonts" }
 tex-lex = { path = "../../crates/tex-lex" }
 tex-state = { path = "../../crates/tex-state" }
 
-[lints]
-workspace = true
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+unwrap_used = "deny"

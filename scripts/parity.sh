@@ -42,7 +42,7 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 printf '%s\n' 'Building corpus-sync' >&2
-cargo build -p corpus-sync
+cargo build --manifest-path tools/corpus-sync/Cargo.toml --target-dir "$target_dir"
 
 printf '%s\n' 'Fetching/verifying external corpus' >&2
 if [[ "$offline" -eq 1 ]]; then

@@ -33,7 +33,7 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - `crates/tex-out`: committed page artifact model, hashing, and binary serialization.
 - `crates/umber`: CLI driver.
 - `crates/test-support`: shared fixture and parity-test helpers.
-- `tools/`: Rust workspace tools, including `refexec` for reference TeX execution.
+- `tools/`: Rust tooling crates. `refexec` remains in the root workspace for committed DVI fixture comparison; regeneration-only tools such as `fixturegen` and external-corpus tools such as `corpus-sync` are standalone and built explicitly by scripts.
 - `benchmarks/`: opt-in standalone benchmark crates kept outside the root workspace.
 - `tests/`: committed fixtures and parity test definitions.
 - `docs/`: architecture, phase, and design documents.

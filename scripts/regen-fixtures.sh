@@ -142,7 +142,7 @@ build_refexec_once() {
 
 build_fixturegen_once() {
   if [[ "$fixturegen_built" -eq 0 ]]; then
-    run_command 'Building fixturegen' cargo build -p fixturegen
+    run_command 'Building fixturegen' cargo build --manifest-path tools/fixturegen/Cargo.toml --target-dir "$target_dir"
     fixturegen_built=1
   fi
 }
