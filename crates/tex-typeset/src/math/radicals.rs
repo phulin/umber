@@ -1,12 +1,13 @@
 use tex_fonts::{LigKernChar, LigKernCommand};
 use tex_state::math::{MathChar, MathField, MathNoad};
-use tex_state::node::KernKind;
+use tex_state::node::{KernKind, Node};
 use tex_state::scaled::Scaled;
 
 use super::delimiters::make_delimiter;
 use super::{
-    Context, FetchedChar, FrozenHList, MathBox, MathNode, MathTypesetState, add, boxed_node,
-    char_box, clean_box, fetch, hpack, make_character_nucleus, scripts, sub, vpack,
+    BoxAxis, Context, FetchedChar, FrozenHList, MathBox, MathNode, MathTypesetState, add,
+    boxed_node, char_box, clean_box, fetch, hpack, make_character_nucleus, scripts, source_node,
+    sub, vpack,
 };
 
 pub(super) struct AccentResult {
@@ -72,7 +73,7 @@ pub(super) fn make_vcenter(
     nucleus: &MathField,
 ) -> FrozenHList {
     // AppG rule 18d
-    let mut centered = clean_box(ctx.state, nucleus, ctx.style, ctx.params);
+    let mut centered = clean_vcenter_box(ctx, nucleus);
     let delta = add(centered.height, centered.depth);
     centered.height = add(
         ctx.params.for_size(ctx.style.size()).symbols.axis_height,
@@ -82,6 +83,29 @@ pub(super) fn make_vcenter(
     FrozenHList {
         nodes: vec![boxed_node(centered)],
     }
+}
+
+fn clean_vcenter_box(ctx: &Context<'_, impl MathTypesetState>, nucleus: &MathField) -> MathBox {
+    if let MathField::SubBox(list) = nucleus
+        && let [Node::VList(boxed)] = ctx.state.nodes(*list)
+    {
+        return MathBox {
+            width: boxed.width,
+            height: boxed.height,
+            depth: boxed.depth,
+            shift: boxed.shift,
+            list: FrozenHList {
+                nodes: ctx
+                    .state
+                    .nodes(boxed.children)
+                    .iter()
+                    .map(|node| source_node(ctx.state, node))
+                    .collect(),
+            },
+            axis: BoxAxis::Vertical,
+        };
+    }
+    clean_box(ctx.state, nucleus, ctx.style, ctx.params)
 }
 
 pub(super) fn make_radical(
