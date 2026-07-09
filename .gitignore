@@ -6,6 +6,7 @@ target/
 /third_party/corpus/
 /third_party/fonts/
 /third_party/hyphen/
+/third_party/trip/
 
 .codex
 .claude
