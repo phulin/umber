@@ -252,6 +252,26 @@ pub(crate) fn is_begin_group(token: Token) -> bool {
     )
 }
 
+pub(crate) fn has_catcode_meaning(stores: &Universe, token: Token, expected: Catcode) -> bool {
+    match token {
+        Token::Char {
+            ch,
+            cat: Catcode::Active,
+        } => stores.symbol(&ch.to_string()).is_some_and(|symbol| {
+            matches!(
+                stores.meaning(symbol),
+                Meaning::CharToken { cat, .. } if cat == expected
+            )
+        }),
+        Token::Char { cat, .. } => cat == expected,
+        Token::Cs(symbol) => matches!(
+            stores.meaning(symbol),
+            Meaning::CharToken { cat, .. } if cat == expected
+        ),
+        Token::Param(_) => false,
+    }
+}
+
 pub(crate) fn is_end_group(token: Token) -> bool {
     matches!(
         token,

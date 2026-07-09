@@ -513,6 +513,12 @@ assignments, box building, and dispatch into the typesetting kernels.
   not create unrelated host-side files. Test support still normalizes banners,
   source line echoes, and memory-irrelevant trailer noise through one shared
   diagnostic-log normalizer for both execution and box-dump fixtures.
+- **Insertion building** follows the same meaning-based group boundary as box
+  building: `\insert` accepts `\let` aliases of begin/end-group characters,
+  preserves the traced opener while classifying its current meaning, and runs
+  the internal vertical builder inside a journal-backed `Universe` group.
+  Insertion parameters and content are captured before group exit, while only
+  global assignments made inside the insertion survive in the enclosing state.
 - **Paragraph and page hand-off**: paragraph start/end is stomach-owned.
   `\indent`, `\noindent`, implicit start from vertical-mode character
   material, `\parskip`, and `\everypar` replay are handled before entering

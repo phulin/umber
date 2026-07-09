@@ -162,6 +162,44 @@ fn box_register_cases_match_reference_micro_suite() {
     );
 }
 
+#[test]
+fn insert_group_delimiters_match_reference_micro_suite() {
+    let insertion = reference_fixture("insert_brace_aliases");
+    assert!(
+        insertion.contains("I:1,3"),
+        "reference insertion grouping changed:\n{}",
+        insertion
+    );
+
+    let stores = run_umber_exec(
+        r"\let\bgroup={\let\egroup=}\count0=1\splittopskip=1pt\insert7\bgroup\count0=2\global\count1=3\splittopskip=9pt\hrule height4pt\egroup",
+    );
+    assert_eq!(stores.count(0), 1);
+    assert_eq!(stores.count(1), 3);
+    assert_eq!(
+        stores
+            .glue(stores.glue_param(tex_state::env::banks::GlueParam::SPLIT_TOP_SKIP))
+            .width,
+        tex_state::scaled::Scaled::from_raw(tex_state::scaled::Scaled::UNITY)
+    );
+    let insertion_split_top_skip = stores
+        .current_page_nodes()
+        .iter()
+        .find_map(|node| match node {
+            tex_state::node::Node::Ins {
+                class: 7,
+                split_top_skip,
+                ..
+            } => Some(stores.glue(*split_top_skip).width),
+            _ => None,
+        })
+        .expect("insertion node");
+    assert_eq!(
+        insertion_split_top_skip,
+        tex_state::scaled::Scaled::from_raw(9 * tex_state::scaled::Scaled::UNITY)
+    );
+}
+
 fn reference_fixture(stem: &str) -> String {
     read_fixture("tex_exec", stem, "ref")
 }

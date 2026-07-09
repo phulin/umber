@@ -11,8 +11,8 @@ use crate::packing_params::{hpack, hpack_params, vpack, vpack_params, vtop};
 use crate::{ExecError, Mode, ModeNest, leave_group};
 
 use super::super::{
-    flush_pending_hchars, next_non_space_traced_x, next_non_space_x, scan_optional_keyword_x,
-    scan_register_index, scan_scaled,
+    flush_pending_hchars, has_catcode_meaning, next_non_space_traced_x, next_non_space_x,
+    scan_optional_keyword_x, scan_register_index, scan_scaled,
 };
 use super::vsplit::scan_vsplit_node;
 
@@ -89,7 +89,7 @@ where
     let opener = next_non_space_traced_x(input, stores, hooks)?.ok_or(ExecError::MissingToken {
         context: "box group",
     })?;
-    if !token_has_catcode_meaning(
+    if !has_catcode_meaning(
         stores,
         tex_expand::semantic_token(opener),
         Catcode::BeginGroup,
@@ -170,10 +170,10 @@ where
             })?;
             let semantic = tex_expand::semantic_token(token);
             let math_mode = matches!(nest.current_mode(), Mode::Math | Mode::DisplayMath);
-            if !math_mode && token_has_catcode_meaning(stores, semantic, Catcode::BeginGroup) {
+            if !math_mode && has_catcode_meaning(stores, semantic, Catcode::BeginGroup) {
                 brace_depth += 1;
             }
-            if !math_mode && token_has_catcode_meaning(stores, semantic, Catcode::EndGroup) {
+            if !math_mode && has_catcode_meaning(stores, semantic, Catcode::EndGroup) {
                 brace_depth -= 1;
                 if brace_depth == 0 {
                     flush_pending_hchars(nest, stores)?;
@@ -195,26 +195,6 @@ where
             }
         }
     })
-}
-
-fn token_has_catcode_meaning(stores: &Universe, token: Token, expected: Catcode) -> bool {
-    match token {
-        Token::Char {
-            ch,
-            cat: Catcode::Active,
-        } => stores.symbol(&ch.to_string()).is_some_and(|symbol| {
-            matches!(
-                stores.meaning(symbol),
-                Meaning::CharToken { cat, .. } if cat == expected
-            )
-        }),
-        Token::Char { cat, .. } => cat == expected,
-        Token::Cs(symbol) => matches!(
-            stores.meaning(symbol),
-            Meaning::CharToken { cat, .. } if cat == expected
-        ),
-        Token::Param(_) => false,
-    }
 }
 
 fn scan_pack_spec<S, H>(

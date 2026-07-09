@@ -208,15 +208,20 @@ where
             value,
         });
     }
-    let opener = next_non_space_x(input, stores, hooks)?.ok_or(ExecError::MissingToken {
+    let opener = next_non_space_traced_x(input, stores, hooks)?.ok_or(ExecError::MissingToken {
         context: "\\insert group",
     })?;
-    if !is_begin_group(opener) {
+    if !has_catcode_meaning(
+        stores,
+        tex_expand::semantic_token(opener),
+        Catcode::BeginGroup,
+    ) {
         return Err(ExecError::MissingToken {
             context: "\\insert group",
         });
     }
 
+    stores.enter_group_with_kind(tex_state::GroupKind::Simple);
     let mut inner = ModeNest::new();
     inner.push(Mode::InternalVertical);
     scan_box_group(&mut inner, input, stores, hooks)?;
@@ -237,6 +242,11 @@ where
         .height
         .checked_add(packed.node.depth)
         .ok_or(ExecError::ArithmeticOverflow)?;
+    let split_top_skip = stores.glue_param(GlueParam::SPLIT_TOP_SKIP);
+    let split_max_depth = stores.dimen_param(DimenParam::SPLIT_MAX_DEPTH);
+    let floating_penalty = stores.int_param(IntParam::FLOATING_PENALTY);
+
+    crate::leave_group(input, stores, tex_state::GroupKind::Simple)?;
 
     append_vertical_contribution(
         nest,
@@ -244,9 +254,9 @@ where
         Node::Ins {
             class: value as u16,
             size,
-            split_top_skip: stores.glue_param(GlueParam::SPLIT_TOP_SKIP),
-            split_max_depth: stores.dimen_param(DimenParam::SPLIT_MAX_DEPTH),
-            floating_penalty: stores.int_param(IntParam::FLOATING_PENALTY),
+            split_top_skip,
+            split_max_depth,
+            floating_penalty,
             content,
         },
     );
