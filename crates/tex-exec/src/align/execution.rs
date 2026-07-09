@@ -2,7 +2,7 @@ use tex_expand::{ExpansionHooks, ReadRecorder, get_x_token_with_recorder_and_hoo
 use tex_lex::{InputSource, InputStack, TokenListReplayKind};
 use tex_state::env::banks::TokParam;
 use tex_state::node::{GlueKind, Node};
-use tex_state::token::Token;
+use tex_state::token::{Token, TracedTokenWord};
 use tex_state::{ExpansionContext, PrintSink, Universe};
 
 use super::support::{
@@ -10,12 +10,14 @@ use super::support::{
     is_begin_group, is_cr, is_end_group, is_noalign, is_omit, is_span, row_mode,
     set_align_brace_depth,
 };
-use crate::assignments::{flush_pending_hchars, next_non_space_x};
+use crate::assignments::{flush_pending_hchars, next_non_space_traced_x};
 use crate::dispatch::dispatch_delivered_token_with_recorder;
 use crate::executor::sync_engine_state;
 use crate::mode::{AlignState, AlignmentKind};
 use crate::vertical::{append_vertical_contribution, build_page_if_outer_vertical};
-use crate::{DispatchAction, ExecError, ExecutionStats, Mode, ModeNest, leave_group, push_tokens};
+use crate::{
+    DispatchAction, ExecError, ExecutionStats, Mode, ModeNest, leave_group, push_traced_tokens,
+};
 
 pub(crate) fn execute_alignment<S, R, H>(
     state: AlignState,
@@ -153,28 +155,29 @@ fn align_peek<S, H>(
     stores: &mut Universe,
     recorder: &mut impl ReadRecorder,
     hooks: &mut H,
-) -> Result<Option<Token>, ExecError>
+) -> Result<Option<TracedTokenWord>, ExecError>
 where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
     loop {
         set_align_brace_depth(nest, align_level, 1_000_000);
-        let Some(token) = next_non_space_x(input, stores, hooks)? else {
+        let Some(token) = next_non_space_traced_x(input, stores, hooks)? else {
             return Err(ExecError::MissingToken {
                 context: "alignment row",
             });
         };
         set_align_brace_depth(nest, align_level, 0);
-        if is_noalign(stores, token) {
+        let semantic = tex_expand::semantic_token(token);
+        if is_noalign(stores, semantic) {
             super::noalign::execute_noalign(align_level, nest, input, stores, recorder, hooks)?;
             continue;
         }
-        if is_end_group(stores, token) {
+        if is_end_group(stores, semantic) {
             leave_group(input, stores, tex_state::GroupKind::Simple)?;
             return Ok(None);
         }
-        if is_cr(stores, token) {
+        if is_cr(stores, semantic) {
             continue;
         }
         return Ok(Some(token));
@@ -199,7 +202,7 @@ fn init_row(align_level: usize, nest: &mut ModeNest) -> Result<(), ExecError> {
 
 fn execute_row<S, R, H>(
     align_level: usize,
-    first_token: Token,
+    first_token: TracedTokenWord,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
@@ -230,7 +233,7 @@ where
         if result.ended_row {
             return Ok(());
         }
-        start_token = Some(next_non_space_x(input, stores, hooks)?.ok_or(
+        start_token = Some(next_non_space_traced_x(input, stores, hooks)?.ok_or(
             ExecError::MissingToken {
                 context: "alignment cell",
             },
@@ -271,7 +274,7 @@ struct CellResult {
 
 struct CellStart {
     column: usize,
-    first_token: Option<Token>,
+    first_token: Option<TracedTokenWord>,
 }
 
 fn execute_cell<S, R, H>(
@@ -300,7 +303,9 @@ where
     let mut first_token = start.first_token;
     loop {
         let initial = first_token.take();
-        let omit = initial.is_some_and(|token| is_omit(stores, token));
+        let omit = initial
+            .map(tex_expand::semantic_token)
+            .is_some_and(|token| is_omit(stores, token));
         align_state_mut(nest, align_level)?.start_cell(column, span_count);
         let column_templates = align_state(nest, align_level)?
             .column_for(column)
@@ -310,7 +315,7 @@ where
             })?;
         if !omit {
             if let Some(token) = initial {
-                push_tokens(input, stores, [token]);
+                push_traced_tokens(input, stores, [token]);
             }
             if span_count > 1 {
                 super::template::expand_spanned_column_template_at_span_time(
@@ -357,7 +362,7 @@ where
                 span_count = span_count
                     .checked_add(1)
                     .ok_or(ExecError::ArithmeticOverflow)?;
-                first_token = next_non_space_x(input, stores, hooks)?;
+                first_token = next_non_space_traced_x(input, stores, hooks)?;
             }
             CellTerminator::AlignmentTab | CellTerminator::Cr => {
                 let next_column = column + 1;
@@ -458,7 +463,7 @@ where
             }
             if is_end_group(stores, semantic) {
                 report_missing_cr_inserted(stores);
-                push_tokens(input, stores, [semantic]);
+                push_traced_tokens(input, stores, [token]);
                 return Ok(CellTerminator::Cr);
             }
         }

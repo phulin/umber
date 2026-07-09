@@ -630,6 +630,19 @@ fn restricted_horizontal_u_template_ending_in_macro_stops_before_cell_input() {
 }
 
 #[test]
+fn grouped_plain_style_accent_survives_at_cell_start_and_mid_cell() {
+    let stores = run_boxed_alignment_source(
+        "\\def\\tilde#1{{\\accent\"7E #1}}\\halign{\\hfil#\\hfil\\cr \\tilde{}\\cr x\\tilde{}y\\cr}",
+    );
+    let vbox = box_zero_vlist(&stores);
+    let rows = vlist_rows(&stores, vbox);
+
+    assert_eq!(rows.len(), 2);
+    assert_eq!(cell_text(&stores, row_cells(&stores, rows[0])[0]), "~");
+    assert_eq!(cell_text(&stores, row_cells(&stores, rows[1])[0]), "x~y");
+}
+
+#[test]
 fn let_aliased_alignment_tab_terminates_cell_by_meaning() {
     let stores = run_boxed_alignment_source("\\let\\t=&\\halign{#&#\\cr a\\t b\\cr}");
     let vbox = box_zero_vlist(&stores);

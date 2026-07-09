@@ -1057,6 +1057,46 @@ impl<S> InputStack<S> {
         })
     }
 
+    /// Retires a marked replay once it and every token-list replay above it
+    /// are exhausted, without reading the next token from the underlying
+    /// input frame.
+    ///
+    /// TeX82 performs this cleanup in `end_token_list` before `get_next`
+    /// resumes the input below a u-template. Macro and argument frames can be
+    /// exhausted above that template, so checking only the current frame
+    /// would read one token beyond the template boundary.
+    pub fn finish_exhausted_token_list_replay(
+        &mut self,
+        marker: TokenListReplayMarker,
+        stores: &impl ExpansionState,
+    ) -> bool {
+        let Some(marked_index) = self.frames.iter().position(|frame| {
+            matches!(
+                frame,
+                InputFrame::TokenList(frame) if frame.replay_marker == Some(marker)
+            )
+        }) else {
+            return true;
+        };
+
+        let can_finish = self.frames[marked_index..].iter().all(|frame| match frame {
+            InputFrame::TokenList(frame) => frame.index >= stores.tokens(frame.token_list).len(),
+            InputFrame::Condition(_) => true,
+            InputFrame::Source(_) => false,
+        });
+        if !can_finish {
+            return false;
+        }
+
+        let mut index = 0usize;
+        self.frames.retain(|frame| {
+            let keep = index < marked_index || !matches!(frame, InputFrame::TokenList(_));
+            index += 1;
+            keep
+        });
+        true
+    }
+
     fn current_token_frame_index(&self) -> Option<usize> {
         self.frames
             .iter()

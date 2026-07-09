@@ -69,6 +69,9 @@ fn template_finished<S>(
     replay_marker: tex_lex::TokenListReplayMarker,
     sentinel: Option<Token>,
 ) -> bool {
+    if input.finish_exhausted_token_list_replay(replay_marker, stores) {
+        return true;
+    }
     if !input.contains_token_list_replay_marker(replay_marker) {
         return true;
     }

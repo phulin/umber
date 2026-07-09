@@ -500,6 +500,32 @@ fn replay_markers_distinguish_frames_with_identical_content() {
 }
 
 #[test]
+fn exhausted_nested_replays_finish_before_reading_below_marked_boundary() {
+    let mut stores = Universe::new();
+    let list = stores.intern_token_list(&[char_token('x', Catcode::Letter)]);
+    let mut input = InputStack::new(MemoryInput::new("a"));
+    let template = input.push_token_list(list, TokenListReplayKind::Inserted);
+
+    assert_eq!(
+        input.next_token(&mut stores).expect("template replay"),
+        Some(char_token('x', Catcode::Letter))
+    );
+    input.push_macro_body(list, MacroArguments::new());
+    assert_eq!(
+        input.next_token(&mut stores).expect("nested macro replay"),
+        Some(char_token('x', Catcode::Letter))
+    );
+
+    assert!(input.finish_exhausted_token_list_replay(template, &stores));
+    assert_eq!(
+        input
+            .next_token(&mut stores)
+            .expect("source after boundary"),
+        Some(char_token('a', Catcode::Letter))
+    );
+}
+
+#[test]
 fn token_list_replay_uses_frame_origin_list_without_changing_semantic_identity() {
     let mut stores = Universe::new();
     let tokens = [
