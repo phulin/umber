@@ -299,6 +299,69 @@ fn main() {
 
 #[test]
 #[allow(clippy::disallowed_methods)]
+fn downstream_crate_cannot_construct_raw_origin_or_traced_words() {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let probe_workspace = tempfile::tempdir().expect("create token boundary probe workspace");
+    let probe_dir = probe_workspace.path().join("token-boundary-probe");
+    let src_dir = probe_dir.join("src");
+
+    fs::create_dir_all(&src_dir).expect("create token boundary probe src dir");
+    fs::write(
+        probe_dir.join("Cargo.toml"),
+        format!(
+            r#"[package]
+name = "token-boundary-probe"
+version = "0.0.0"
+edition = "2024"
+
+[workspace]
+
+[dependencies]
+tex-state = {{ path = "{manifest_dir}" }}
+"#
+        ),
+    )
+    .expect("write token boundary probe manifest");
+    fs::write(
+        src_dir.join("main.rs"),
+        r#"use tex_state::token::{OriginId, TracedTokenWord};
+
+fn main() {
+    let _origin = OriginId::from_raw(123);
+    let _word = TracedTokenWord::from_raw(456);
+}
+"#,
+    )
+    .expect("write token boundary probe main");
+
+    let output = Command::new(env!("CARGO"))
+        .arg("check")
+        .arg("--quiet")
+        .arg("--manifest-path")
+        .arg(probe_dir.join("Cargo.toml"))
+        .arg("--target-dir")
+        .arg(probe_dir.join("target"))
+        .output()
+        .expect("run token boundary probe");
+
+    assert!(
+        !output.status.success(),
+        "downstream raw token probe unexpectedly compiled"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("E0624") && stderr.contains("OriginId::from_raw"),
+        "probe failed for an unexpected reason while checking OriginId::from_raw:\n{stderr}"
+    );
+    assert!(
+        (stderr.contains("E0624") && stderr.contains("TracedTokenWord::from_raw"))
+            || (stderr.contains("E0599") && stderr.contains("from_raw")),
+        "probe failed for an unexpected reason while checking TracedTokenWord::from_raw:\n{stderr}"
+    );
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)]
 fn downstream_crate_cannot_commit_world_effects_without_universe_boundary() {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let probe_workspace = tempfile::tempdir().expect("create world boundary probe workspace");

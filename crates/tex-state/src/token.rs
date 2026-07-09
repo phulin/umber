@@ -71,7 +71,7 @@ impl OriginId {
 
     /// Reconstructs an origin id from its packed representation.
     #[must_use]
-    pub const fn from_raw(raw: u32) -> Self {
+    pub(crate) const fn from_raw(raw: u32) -> Self {
         Self(raw)
     }
 }
@@ -128,8 +128,9 @@ impl TracedTokenWord {
     }
 
     /// Reconstructs a traced word from raw bits.
+    #[cfg(test)]
     #[must_use]
-    pub const fn from_raw(raw: u64) -> Self {
+    pub(crate) const fn from_raw(raw: u64) -> Self {
         Self(raw)
     }
 
