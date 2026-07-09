@@ -1,7 +1,8 @@
 use tex_lex::{InputSource, InputStack};
 use tex_state::ExpansionState;
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
-use tex_state::token::{Catcode, OriginId, Token};
+use tex_state::provenance::InsertedOriginKind;
+use tex_state::token::{Catcode, Token};
 
 use crate::{
     Dispatch, ExpandError, ExpandableOpcode, ExpansionHooks, ReadRecorder, apply_dispatch_push,
@@ -20,12 +21,12 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    let Some(saved) = input.next_token(stores)? else {
+    let Some(saved) = input.next_traced_token(stores)? else {
         return Err(ExpandError::MissingTokenAfterPrimitive(
             ExpandableOpcode::ExpandAfter,
         ));
     };
-    let Some(target) = input.next_token(stores)? else {
+    let Some(target) = input.next_traced_token(stores)? else {
         return Err(ExpandError::MissingTokenAfterPrimitive(
             ExpandableOpcode::ExpandAfter,
         ));
@@ -34,7 +35,7 @@ where
     let target_dispatch =
         dispatch_one_raw_token_with_hooks(target, input, stores, recorder, hooks)?;
     push_dispatch_result(input, stores, target_dispatch);
-    push_inserted_token(input, stores, saved);
+    push_inserted_token(input, stores, saved, InsertedOriginKind::ExpandAfter);
     Ok(())
 }
 
@@ -52,14 +53,15 @@ where
     let mut name = String::new();
 
     loop {
-        let Some(read) = input.next_expansion_token(stores)? else {
+        let Some(read) = input.next_traced_expansion_token(stores)? else {
             return Err(ExpandError::MissingEndCsName);
         };
         let token = read.token();
+        let traced = read.traced_token();
 
         if read.suppress_expansion() {
             if append_csname_token(&mut name, token) == CsNameAppend::Recover {
-                push_inserted_token(input, stores, token);
+                push_inserted_token(input, stores, traced, InsertedOriginKind::Unread);
                 return Ok(name);
             }
             continue;
@@ -67,7 +69,7 @@ where
 
         let Token::Cs(symbol) = token else {
             if append_csname_token(&mut name, token) == CsNameAppend::Recover {
-                push_inserted_token(input, stores, token);
+                push_inserted_token(input, stores, traced, InsertedOriginKind::Unread);
                 return Ok(name);
             }
             continue;
@@ -82,7 +84,7 @@ where
 
         match crate::dispatch::dispatch_without_input_open(
             token,
-            OriginId::UNKNOWN,
+            traced.origin(),
             input,
             stores,
             recorder,
@@ -91,8 +93,10 @@ where
         )? {
             Dispatch::Continue => {}
             Dispatch::Deliver(token) | Dispatch::DeliverNoExpand(token) => {
-                if append_csname_token(&mut name, token) == CsNameAppend::Recover {
-                    push_inserted_token(input, stores, token);
+                if append_csname_token(&mut name, crate::semantic_token(token))
+                    == CsNameAppend::Recover
+                {
+                    push_inserted_token(input, stores, token, InsertedOriginKind::Unread);
                     return Ok(name);
                 }
             }
@@ -134,32 +138,34 @@ where
         return Err(ExpandError::MissingInputName);
     };
 
-    if is_begin_group(first) {
+    if is_begin_group(crate::semantic_token(first)) {
         let mut name = String::new();
         loop {
             let Some(token) = get_x_token_without_input_open(input, stores, recorder, hooks)?
             else {
                 return Err(ExpandError::MissingInputName);
             };
-            if is_end_group(token) {
+            let semantic = crate::semantic_token(token);
+            if is_end_group(semantic) {
                 return if name.is_empty() {
                     Err(ExpandError::MissingInputName)
                 } else {
                     Ok(name)
                 };
             }
-            append_input_name_token(&mut name, token)?;
+            append_input_name_token(&mut name, semantic)?;
         }
     }
 
     let mut name = String::new();
-    append_input_name_token(&mut name, first)?;
+    append_input_name_token(&mut name, crate::semantic_token(first))?;
     loop {
         let Some(token) = get_x_token_without_input_open(input, stores, recorder, hooks)? else {
             break;
         };
+        let semantic = crate::semantic_token(token);
         if matches!(
-            token,
+            semantic,
             Token::Char {
                 cat: Catcode::Space,
                 ..
@@ -167,7 +173,7 @@ where
         ) {
             break;
         }
-        append_input_name_token(&mut name, token)?;
+        append_input_name_token(&mut name, semantic)?;
     }
 
     if name.is_empty() {

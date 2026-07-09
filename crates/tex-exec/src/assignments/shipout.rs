@@ -362,6 +362,7 @@ where
     let mut text = String::new();
     while let Some(token) =
         get_x_token_with_recorder_and_hooks(&mut input, stores, recorder, &mut hooks)?
+            .map(tex_expand::semantic_token)
     {
         text.push_str(&token_text(stores, token));
     }

@@ -202,6 +202,7 @@ where
     let mut recorder = NoopRecorder;
     while let Some(token) =
         get_x_token_with_recorder_and_hooks(input, stores, &mut recorder, hooks)?
+            .map(tex_expand::semantic_token)
     {
         match token {
             Token::Char {

@@ -7,16 +7,17 @@ use tex_state::BoxDimension;
 use tex_state::glue::Order;
 use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
+use tex_state::provenance::InsertedOriginKind;
 use tex_state::scaled::{
     DimensionError, PhysicalUnit, Scaled, nx_plus_y, round_decimal_fraction,
     scaled_from_decimal_parts, xn_over_d,
 };
-use tex_state::token::{Catcode, Token};
+use tex_state::token::{Catcode, Token, TracedTokenWord};
 use tex_state::{ExpansionState, PrepareMagDiagnostic};
 
 use crate::{
     ExpandError, ExpandNext, ExpansionHooks, NoInputExpandNext, NoopExpansionHooks, NoopRecorder,
-    ReadRecorder, scan_helpers, scan_int,
+    ReadRecorder, scan_helpers, scan_int, semantic_token,
 };
 use scan_helpers::ExpandedKeywordMatch;
 
@@ -355,7 +356,7 @@ fn scan_signs<S, St, R, H, E>(
     recorder: &mut R,
     hooks: &mut H,
     expander: &mut E,
-) -> Result<(bool, Option<Token>), ScanDimenError>
+) -> Result<(bool, Option<TracedTokenWord>), ScanDimenError>
 where
     S: InputSource,
     R: ReadRecorder,
@@ -388,7 +389,7 @@ fn next_x<S, St, R, H, E>(
     recorder: &mut R,
     hooks: &mut H,
     expander: &mut E,
-) -> Result<Option<Token>, ScanDimenError>
+) -> Result<Option<TracedTokenWord>, ScanDimenError>
 where
     S: InputSource,
     St: ExpansionState,
@@ -405,7 +406,7 @@ fn scan_unsigned_after_first_token<S, St, R, H, E>(
     recorder: &mut R,
     hooks: &mut H,
     expander: &mut E,
-    token: Token,
+    token: TracedTokenWord,
     options: ScanDimenOptions,
 ) -> Result<ScannedDimen, ScanDimenError>
 where
@@ -415,7 +416,7 @@ where
     St: ExpansionState,
     E: ExpandNext<S, St, R, H>,
 {
-    match token {
+    match semantic_token(token) {
         Token::Char {
             ch,
             cat: Catcode::Other,
@@ -577,7 +578,7 @@ fn scan_internal_or_numeric_dimension<S, St, R, H, E>(
     recorder: &mut R,
     hooks: &mut H,
     expander: &mut E,
-    token: Token,
+    token: TracedTokenWord,
     symbol: Symbol,
     options: ScanDimenOptions,
 ) -> Result<ScannedDimen, ScanDimenError>
@@ -677,7 +678,7 @@ fn scan_integer_constant_with_unit<S, St, R, H, E>(
     recorder: &mut R,
     hooks: &mut H,
     expander: &mut E,
-    token: Token,
+    token: TracedTokenWord,
     options: ScanDimenOptions,
 ) -> Result<ScannedDimen, ScanDimenError>
 where
@@ -804,7 +805,7 @@ fn scan_unit_keyword<S, St, R, H, E>(
     recorder: &mut R,
     hooks: &mut H,
     expander: &mut E,
-    first: Token,
+    first: TracedTokenWord,
     true_unit: bool,
 ) -> Result<Option<ScannedUnit>, ScanDimenError>
 where
@@ -819,7 +820,7 @@ where
         return Ok(None);
     };
 
-    match unit_from_tokens(first, second) {
+    match unit_from_tokens(semantic_token(first), semantic_token(second)) {
         Some(ScannedUnit::Physical { unit, .. }) => {
             Ok(Some(ScannedUnit::Physical { unit, true_unit }))
         }
@@ -846,7 +847,7 @@ fn keyword_matches<S, St, R, H, E>(
     recorder: &mut R,
     hooks: &mut H,
     expander: &mut E,
-    first: Token,
+    first: TracedTokenWord,
     keyword: &str,
 ) -> Result<ExpandedKeywordMatch, ScanDimenError>
 where
@@ -1151,8 +1152,11 @@ where
     }
 }
 
-fn unread_token<S>(input: &mut InputStack<S>, stores: &mut impl ExpansionState, token: Token)
-where
+fn unread_token<S>(
+    input: &mut InputStack<S>,
+    stores: &mut impl ExpansionState,
+    token: TracedTokenWord,
+) where
     S: InputSource,
 {
     unread_tokens(input, stores, [token]);
@@ -1161,18 +1165,32 @@ where
 fn unread_tokens<S, I>(input: &mut InputStack<S>, stores: &mut impl ExpansionState, tokens: I)
 where
     S: InputSource,
-    I: IntoIterator<Item = Token>,
+    I: IntoIterator<Item = TracedTokenWord>,
 {
-    let tokens = tokens.into_iter().collect::<Vec<_>>();
+    let traced_tokens = tokens.into_iter().collect::<Vec<_>>();
+    let tokens = traced_tokens
+        .iter()
+        .copied()
+        .map(semantic_token)
+        .collect::<Vec<_>>();
     let token_list = stores.intern_token_list(&tokens);
-    input.push_token_list(token_list, TokenListReplayKind::Inserted);
+    let mut origins = stores.origin_list_builder();
+    for token in traced_tokens {
+        origins.push(stores.inserted_origin(
+            InsertedOriginKind::Unread,
+            semantic_token(token),
+            token.origin(),
+        ));
+    }
+    let origin_list = stores.finish_origin_list(&mut origins);
+    input.push_token_list_with_origins(token_list, origin_list, TokenListReplayKind::Inserted);
 }
 
-fn decimal_digit(token: Token) -> Option<i32> {
+fn decimal_digit(token: TracedTokenWord) -> Option<i32> {
     let Token::Char {
         ch,
         cat: Catcode::Other,
-    } = token
+    } = semantic_token(token)
     else {
         return None;
     };
@@ -1186,9 +1204,9 @@ fn digit_value(ch: char) -> Option<i32> {
     }
 }
 
-fn is_space(token: Token) -> bool {
+fn is_space(token: TracedTokenWord) -> bool {
     matches!(
-        token,
+        semantic_token(token),
         Token::Char {
             cat: Catcode::Space,
             ..
@@ -1196,9 +1214,9 @@ fn is_space(token: Token) -> bool {
     )
 }
 
-fn is_decimal_point(token: Token) -> bool {
+fn is_decimal_point(token: TracedTokenWord) -> bool {
     matches!(
-        token,
+        semantic_token(token),
         Token::Char {
             ch: '.' | ',',
             cat: Catcode::Other
@@ -1206,9 +1224,9 @@ fn is_decimal_point(token: Token) -> bool {
     )
 }
 
-fn is_other_char(token: Token, expected: char) -> bool {
+fn is_other_char(token: TracedTokenWord, expected: char) -> bool {
     matches!(
-        token,
+        semantic_token(token),
         Token::Char {
             ch,
             cat: Catcode::Other

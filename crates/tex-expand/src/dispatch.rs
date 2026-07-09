@@ -1,7 +1,8 @@
 use tex_lex::{InputSource, InputStack, MacroArguments};
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
 use tex_state::page::PageMark;
-use tex_state::token::{OriginId, Token};
+use tex_state::provenance::{InsertedOriginKind, SynthesizedOriginKind};
+use tex_state::token::{OriginId, Token, TracedTokenWord};
 use tex_state::{ExpansionState, InputOpenState};
 
 use crate::{
@@ -82,23 +83,30 @@ macro_rules! dispatch_match {
                 Ok(Dispatch::Continue)
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::NoExpand) => {
-                let Some(token) = input.next_token(stores)? else {
+                let Some(token) = input.next_traced_token(stores)? else {
                     return Err(ExpandError::MissingTokenAfterPrimitive(
                         ExpandableOpcode::NoExpand,
                     ));
                 };
-                Ok(Dispatch::DeliverNoExpand(token))
+                let semantic = crate::semantic_token(token);
+                Ok(Dispatch::DeliverNoExpand(TracedTokenWord::pack(
+                    semantic,
+                    stores.inserted_origin(InsertedOriginKind::NoExpand, semantic, token.origin()),
+                )))
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::CsName) => {
                 let name = scan_csname(input, stores, recorder, hooks)?;
                 let symbol = stores.intern_relaxed_control_sequence(&name);
-                Ok(Dispatch::Deliver(Token::Cs(symbol)))
+                Ok(Dispatch::Deliver(TracedTokenWord::pack(
+                    Token::Cs(symbol),
+                    stores.synthesized_origin(SynthesizedOriginKind::Expansion, call_origin),
+                )))
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::EndCsName) => {
-                Ok(Dispatch::Deliver(token))
+                Ok(Dispatch::Deliver(TracedTokenWord::pack(token, call_origin)))
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::String) => {
-                let Some(target) = input.next_token(stores)? else {
+                let Some(target) = input.next_traced_token(stores)? else {
                     return Err(ExpandError::MissingTokenAfterPrimitive(
                         ExpandableOpcode::String,
                     ));
@@ -106,7 +114,8 @@ macro_rules! dispatch_match {
                 Ok(push_rendered_tokens(
                     stores,
                     ExpansionReplayKind::NumberOutput,
-                    string_tokens(stores, target),
+                    string_tokens(stores, crate::semantic_token(target)),
+                    call_origin,
                 ))
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Number) => {
@@ -121,6 +130,7 @@ macro_rules! dispatch_match {
                     stores,
                     ExpansionReplayKind::NumberOutput,
                     &scanned.value().to_string(),
+                    call_origin,
                 ))
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::RomanNumeral) => {
@@ -135,10 +145,11 @@ macro_rules! dispatch_match {
                     stores,
                     ExpansionReplayKind::NumberOutput,
                     &roman_numeral(scanned.value()),
+                    call_origin,
                 ))
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Meaning) => {
-                let Some(target) = input.next_token(stores)? else {
+                let Some(target) = input.next_traced_token(stores)? else {
                     return Err(ExpandError::MissingTokenAfterPrimitive(
                         ExpandableOpcode::Meaning,
                     ));
@@ -146,11 +157,19 @@ macro_rules! dispatch_match {
                 Ok(push_rendered_text(
                     stores,
                     ExpansionReplayKind::NumberOutput,
-                    &meaning_text(stores, target),
+                    &meaning_text(stores, crate::semantic_token(target)),
+                    call_origin,
                 ))
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::The) => {
-                expand_the_with_expander_and_hooks(input, stores, recorder, hooks, &mut expander)
+                expand_the_with_expander_and_hooks(
+                    input,
+                    stores,
+                    recorder,
+                    hooks,
+                    &mut expander,
+                    call_origin,
+                )
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Input) => $input_arm,
             Meaning::ExpandablePrimitive(ExpandablePrimitive::EndInput) => {
@@ -161,6 +180,7 @@ macro_rules! dispatch_match {
                 stores,
                 ExpansionReplayKind::JobName,
                 hooks.job_name(),
+                call_origin,
             )),
             Meaning::ExpandablePrimitive(ExpandablePrimitive::FontName) => {
                 let font = scan_font_selector(input, stores, recorder, hooks, &mut expander)?;
@@ -168,6 +188,7 @@ macro_rules! dispatch_match {
                     stores,
                     ExpansionReplayKind::NumberOutput,
                     &stores.font_name(font),
+                    call_origin,
                 ))
             }
             Meaning::ExpandablePrimitive(
@@ -406,13 +427,13 @@ macro_rules! dispatch_match {
                 )
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Else) => {
-                handle_else(token, input, stores, recorder, hooks)
+                handle_else(token, call_origin, input, stores, recorder, hooks)
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Or) => {
-                handle_or(token, input, stores, recorder, hooks)
+                handle_or(token, call_origin, input, stores, recorder, hooks)
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Fi) => {
-                handle_fi(token, input, stores)
+                handle_fi(token, call_origin, input, stores)
             }
             Meaning::Undefined => {
                 let name = match token {
@@ -448,7 +469,9 @@ macro_rules! dispatch_match {
             | Meaning::PageInteger(_)
             | Meaning::Font(_)
             | Meaning::UnexpandablePrimitive(_)
-            | Meaning::Unknown(_) => Ok(Dispatch::Deliver(token)),
+            | Meaning::Unknown(_) => {
+                Ok(Dispatch::Deliver(TracedTokenWord::pack(token, call_origin)))
+            }
         }
     }};
 }

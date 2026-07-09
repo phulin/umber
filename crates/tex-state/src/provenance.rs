@@ -188,6 +188,9 @@ pub enum InsertedOriginKind {
     Paragraph,
     AfterGroup,
     AfterAssignment,
+    NoExpand,
+    ExpandAfter,
+    Unread,
     TokenListReplay(TokenListReplayKind),
     ErrorRecovery,
 }

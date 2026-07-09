@@ -157,6 +157,7 @@ where
         let token = {
             let mut expansion = ExpansionContext::new(stores);
             get_x_token_with_recorder_and_hooks(input, &mut expansion, recorder, hooks)?
+                .map(tex_expand::semantic_token)
         };
         let Some(token) = token else {
             assignments::flush_pending_hchars(nest, stores)?;

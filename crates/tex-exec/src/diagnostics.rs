@@ -441,6 +441,7 @@ where
     let mut tokens = Vec::new();
     while let Some(token) =
         get_x_token_with_recorder_and_hooks(input, stores, &mut recorder, hooks)?
+            .map(tex_expand::semantic_token)
     {
         if is_begin_group(token) {
             depth += 1;
@@ -485,6 +486,7 @@ where
     let mut recorder = NoopRecorder;
     while let Some(token) =
         get_x_token_with_recorder_and_hooks(input, stores, &mut recorder, hooks)?
+            .map(tex_expand::semantic_token)
     {
         if !is_space(token) {
             return Ok(Some(token));

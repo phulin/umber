@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use tex_exec::try_execute_assignment;
-use tex_expand::{ExpandError, ExpansionHooks, get_x_token_with_hooks};
+use tex_expand::{ExpandError, ExpansionHooks, get_x_token_with_hooks, semantic_token};
 use tex_lex::{InputStack, LexError, WorldInput};
 use tex_state::env::banks::IntParam;
 use tex_state::meaning::Meaning;
@@ -44,11 +44,10 @@ impl DumpDriver {
 
     fn next_delivered(&mut self) -> Result<Option<Token>, ExpandDumpError> {
         let mut expansion = ExpansionContext::new(&mut self.stores);
-        Ok(get_x_token_with_hooks(
-            &mut self.input,
-            &mut expansion,
-            &mut self.hooks,
-        )?)
+        Ok(
+            get_x_token_with_hooks(&mut self.input, &mut expansion, &mut self.hooks)?
+                .map(semantic_token),
+        )
     }
 }
 

@@ -3,11 +3,12 @@ use tex_state::ExpansionState;
 use tex_state::interner::Symbol;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
 use tex_state::node::Node;
-use tex_state::token::Token;
+use tex_state::provenance::InsertedOriginKind;
+use tex_state::token::{OriginId, Token, TracedTokenWord};
 
 use crate::{
     Dispatch, ExpandError, ExpandNext, ExpandableOpcode, ExpansionHooks, NoInputExpandNext,
-    ReadRecorder, expandable_symbol, push_inserted_token, scan_helpers, scan_int,
+    ReadRecorder, expandable_symbol, push_inserted_token, scan_helpers, scan_int, semantic_token,
 };
 
 pub(crate) fn begin_if_evaluation<S>(input: &mut InputStack<S>) {
@@ -84,6 +85,7 @@ where
 
 pub(crate) fn handle_else<S, R, H>(
     token: Token,
+    origin: OriginId,
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     recorder: &mut R,
@@ -95,7 +97,7 @@ where
     H: ExpansionHooks<S>,
 {
     if current_condition_is_evaluating(input) {
-        insert_relax_before_token(token, input, stores);
+        insert_relax_before_token(token, origin, input, stores);
         return Ok(Dispatch::Continue);
     }
 
@@ -116,6 +118,7 @@ where
 
 pub(crate) fn handle_or<S, R, H>(
     token: Token,
+    origin: OriginId,
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     recorder: &mut R,
@@ -127,7 +130,7 @@ where
     H: ExpansionHooks<S>,
 {
     if current_condition_is_evaluating(input) {
-        insert_relax_before_token(token, input, stores);
+        insert_relax_before_token(token, origin, input, stores);
         return Ok(Dispatch::Continue);
     }
 
@@ -148,6 +151,7 @@ where
 
 pub(crate) fn handle_fi<S>(
     token: Token,
+    origin: OriginId,
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
 ) -> Result<Dispatch, ExpandError>
@@ -155,7 +159,7 @@ where
     S: InputSource,
 {
     if current_condition_is_evaluating(input) {
-        insert_relax_before_token(token, input, stores);
+        insert_relax_before_token(token, origin, input, stores);
         return Ok(Dispatch::Continue);
     }
 
@@ -173,12 +177,23 @@ fn current_condition_is_evaluating<S>(input: &InputStack<S>) -> bool {
 
 fn insert_relax_before_token<S>(
     token: Token,
+    origin: OriginId,
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
 ) {
     let relax = stores.intern_relaxed_control_sequence("relax");
-    push_inserted_token(input, stores, token);
-    push_inserted_token(input, stores, Token::Cs(relax));
+    push_inserted_token(
+        input,
+        stores,
+        TracedTokenWord::pack(token, origin),
+        InsertedOriginKind::Unread,
+    );
+    push_inserted_token(
+        input,
+        stores,
+        TracedTokenWord::pack(Token::Cs(relax), origin),
+        InsertedOriginKind::ErrorRecovery,
+    );
 }
 
 fn skip_false_limb<S, R, H>(
@@ -251,7 +266,7 @@ where
 {
     let mut nesting = 0_u32;
     loop {
-        let Some(token) = input.next_token(stores)? else {
+        let Some(token) = input.next_traced_token(stores)? else {
             return Err(ExpandError::IncompleteIf);
         };
         let Some(primitive) = skipped_conditional_control(stores, token, recorder)? else {
@@ -345,7 +360,7 @@ enum ConditionalPrimitive {
 
 fn skipped_conditional_control<R>(
     stores: &mut impl ExpansionState,
-    token: Token,
+    token: TracedTokenWord,
     recorder: &mut R,
 ) -> Result<Option<ConditionalPrimitive>, ExpandError>
 where
@@ -404,11 +419,12 @@ where
     H: ExpansionHooks<S>,
     E: ExpandNext<S, St, R, H>,
 {
-    expander
+    let token = expander
         .next_expanded_token(input, stores, recorder, hooks)?
         .ok_or(ExpandError::MissingTokenAfterPrimitive(
             ExpandableOpcode::If,
-        ))
+        ))?;
+    Ok(semantic_token(token))
 }
 
 pub(crate) fn if_char_equal(left: Token, right: Token) -> bool {
@@ -487,11 +503,12 @@ where
             ExpandableOpcode::If,
         ));
     };
-    match token {
+    let semantic = semantic_token(token);
+    match semantic {
         Token::Char { ch: '<', .. } => Ok(ConditionalRelation::Less),
         Token::Char { ch: '=', .. } => Ok(ConditionalRelation::Equal),
         Token::Char { ch: '>', .. } => Ok(ConditionalRelation::Greater),
-        _ => Err(ExpandError::InvalidConditionalRelation(token)),
+        _ => Err(ExpandError::InvalidConditionalRelation(semantic)),
     }
 }
 

@@ -7,11 +7,12 @@ use tex_state::ExpansionState;
 use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::interner::Symbol;
 use tex_state::meaning::{InternalInteger, Meaning};
-use tex_state::token::{Catcode, Token};
+use tex_state::provenance::InsertedOriginKind;
+use tex_state::token::{Catcode, Token, TracedTokenWord};
 
 use crate::{
     ExpandError, ExpandNext, ExpansionHooks, NoInputExpandNext, NoopExpansionHooks, NoopRecorder,
-    ReadRecorder,
+    ReadRecorder, semantic_token,
 };
 
 const INT_MAX: i64 = i32::MAX as i64;
@@ -180,7 +181,7 @@ fn next_x<S, St, R, H, E>(
     recorder: &mut R,
     hooks: &mut H,
     expander: &mut E,
-) -> Result<Option<Token>, ScanIntError>
+) -> Result<Option<TracedTokenWord>, ScanIntError>
 where
     S: InputSource,
     St: ExpansionState,
@@ -197,7 +198,7 @@ fn scan_signs<S, St, R, H, E>(
     recorder: &mut R,
     hooks: &mut H,
     expander: &mut E,
-) -> Result<(bool, Option<Token>), ScanIntError>
+) -> Result<(bool, Option<TracedTokenWord>), ScanIntError>
 where
     S: InputSource,
     St: ExpansionState,
@@ -230,7 +231,7 @@ fn scan_unsigned_after_first_token<S, St, R, H, E>(
     recorder: &mut R,
     hooks: &mut H,
     expander: &mut E,
-    token: Token,
+    token: TracedTokenWord,
 ) -> Result<ScannedInt, ScanIntError>
 where
     S: InputSource,
@@ -239,7 +240,7 @@ where
     H: ExpansionHooks<S>,
     E: ExpandNext<S, St, R, H>,
 {
-    match token {
+    match semantic_token(token) {
         Token::Char {
             ch,
             cat: Catcode::Other,
@@ -359,7 +360,7 @@ where
     let Some(token) = next_x(input, stores, recorder, hooks, expander)? else {
         return Ok(missing_number());
     };
-    let value = match token {
+    let value = match semantic_token(token) {
         Token::Char { ch, .. } => ch as i32,
         Token::Cs(symbol) => stores
             .resolve(symbol)
@@ -379,7 +380,7 @@ fn scan_internal_integer<S, St, R, H, E>(
     recorder: &mut R,
     hooks: &mut H,
     expander: &mut E,
-    token: Token,
+    token: TracedTokenWord,
     symbol: Symbol,
 ) -> Result<ScannedInt, ScanIntError>
 where
@@ -456,7 +457,9 @@ where
                     consume_optional_space(input, stores, recorder, hooks, expander)?;
                     Ok(ScannedInt::new(stores.int_param(IntParam::END_LINE_CHAR)))
                 }
-                _ => Err(ScanIntError::UnsupportedInternalInteger(token)),
+                _ => Err(ScanIntError::UnsupportedInternalInteger(semantic_token(
+                    token,
+                ))),
             }
         }
     }
@@ -468,7 +471,7 @@ fn scan_internal_integer_primitive<S, St, R, H, E>(
     recorder: &mut R,
     hooks: &mut H,
     expander: &mut E,
-    token: Token,
+    token: TracedTokenWord,
     primitive: tex_state::meaning::UnexpandablePrimitive,
 ) -> Result<ScannedInt, ScanIntError>
 where
@@ -539,7 +542,9 @@ where
             consume_optional_space(input, stores, recorder, hooks, expander)?;
             Ok(ScannedInt::new(value))
         }
-        _ => Err(ScanIntError::UnsupportedInternalInteger(token)),
+        _ => Err(ScanIntError::UnsupportedInternalInteger(semantic_token(
+            token,
+        ))),
     }
 }
 
@@ -587,9 +592,17 @@ where
     Ok(())
 }
 
-fn unread_token<S>(input: &mut InputStack<S>, stores: &mut impl ExpansionState, token: Token) {
-    let token_list = stores.intern_token_list(&[token]);
-    input.push_token_list(token_list, TokenListReplayKind::Inserted);
+fn unread_token<S>(
+    input: &mut InputStack<S>,
+    stores: &mut impl ExpansionState,
+    token: TracedTokenWord,
+) {
+    let semantic = semantic_token(token);
+    let token_list = stores.intern_token_list(&[semantic]);
+    let mut origins = stores.origin_list_builder();
+    origins.push(stores.inserted_origin(InsertedOriginKind::Unread, semantic, token.origin()));
+    let origin_list = stores.finish_origin_list(&mut origins);
+    input.push_token_list_with_origins(token_list, origin_list, TokenListReplayKind::Inserted);
 }
 
 fn apply_sign(scanned: ScannedInt, negative: bool) -> ScannedInt {
@@ -616,8 +629,8 @@ const fn missing_number() -> ScannedInt {
     ScannedInt::with_diagnostic(0, IntegerDiagnostic::MissingNumber)
 }
 
-fn token_digit_for_radix(token: Token, radix: i64) -> Option<i64> {
-    let Token::Char { ch, .. } = token else {
+fn token_digit_for_radix(token: TracedTokenWord, radix: i64) -> Option<i64> {
+    let Token::Char { ch, .. } = semantic_token(token) else {
         return None;
     };
     let digit = digit_value(ch)?;
@@ -633,9 +646,9 @@ fn digit_value(ch: char) -> Option<i64> {
     }
 }
 
-fn is_space(token: Token) -> bool {
+fn is_space(token: TracedTokenWord) -> bool {
     matches!(
-        token,
+        semantic_token(token),
         Token::Char {
             cat: Catcode::Space,
             ..
@@ -643,9 +656,9 @@ fn is_space(token: Token) -> bool {
     )
 }
 
-fn is_char(token: Token, expected: char) -> bool {
+fn is_char(token: TracedTokenWord, expected: char) -> bool {
     matches!(
-        token,
+        semantic_token(token),
         Token::Char {
             ch,
             cat: Catcode::Other

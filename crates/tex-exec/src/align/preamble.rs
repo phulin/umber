@@ -235,12 +235,15 @@ where
 
     fn next_expanded(&mut self) -> Result<Option<Token>, ExecError> {
         let mut recorder = NoopRecorder;
-        Ok(get_x_token_with_recorder_and_hooks(
-            self.input,
-            self.stores,
-            &mut recorder,
-            self.hooks,
-        )?)
+        Ok(
+            get_x_token_with_recorder_and_hooks(
+                self.input,
+                self.stores,
+                &mut recorder,
+                self.hooks,
+            )?
+            .map(tex_expand::semantic_token),
+        )
     }
 
     fn try_scan_tabskip_assignment(&mut self, token: Token) -> Result<bool, ExecError> {

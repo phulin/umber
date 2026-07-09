@@ -1,15 +1,19 @@
 use tex_lex::{InputSource, InputStack, TokenListReplayKind};
 use tex_state::ExpansionState;
-use tex_state::token::{Catcode, Token};
+use tex_state::provenance::InsertedOriginKind;
+use tex_state::token::{Catcode, Token, TracedTokenWord};
 
-use crate::{ExpandError, ExpandNext, ExpansionHooks, NoInputExpandNext, ReadRecorder, scan_int};
+use crate::{
+    ExpandError, ExpandNext, ExpansionHooks, NoInputExpandNext, ReadRecorder, scan_int,
+    semantic_token,
+};
 
 pub(crate) fn next_non_space_x_token_with_hooks<S, R, H>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
-) -> Result<Option<Token>, ExpandError>
+) -> Result<Option<TracedTokenWord>, ExpandError>
 where
     S: InputSource,
     R: ReadRecorder,
@@ -30,7 +34,7 @@ pub(crate) fn next_non_space_x_token_with_expander_and_hooks<S, St, R, H, E>(
     recorder: &mut R,
     hooks: &mut H,
     expander: &mut E,
-) -> Result<Option<Token>, ExpandError>
+) -> Result<Option<TracedTokenWord>, ExpandError>
 where
     S: InputSource,
     St: ExpansionState,
@@ -43,7 +47,7 @@ where
             return Ok(None);
         };
         if !matches!(
-            token,
+            semantic_token(token),
             Token::Char {
                 cat: Catcode::Space,
                 ..
@@ -165,7 +169,7 @@ pub fn scan_keyword_after_first_with_hooks<S, R, H>(
     stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
-    first: Token,
+    first: TracedTokenWord,
     keyword: &str,
 ) -> Result<ExpandedKeywordMatch, ExpandError>
 where
@@ -190,7 +194,7 @@ pub fn scan_keyword_after_first_with_expander_and_hooks<S, St, R, H, E>(
     recorder: &mut R,
     hooks: &mut H,
     expander: &mut E,
-    first: Token,
+    first: TracedTokenWord,
     keyword: &str,
 ) -> Result<ExpandedKeywordMatch, ExpandError>
 where
@@ -226,8 +230,11 @@ where
     Ok(ExpandedKeywordMatch::Matched)
 }
 
-fn unread_token<S>(input: &mut InputStack<S>, stores: &mut impl ExpansionState, token: Token)
-where
+fn unread_token<S>(
+    input: &mut InputStack<S>,
+    stores: &mut impl ExpansionState,
+    token: TracedTokenWord,
+) where
     S: InputSource,
 {
     unread_tokens(input, stores, [token]);
@@ -236,18 +243,32 @@ where
 fn unread_tokens<S, I>(input: &mut InputStack<S>, stores: &mut impl ExpansionState, tokens: I)
 where
     S: InputSource,
-    I: IntoIterator<Item = Token>,
+    I: IntoIterator<Item = TracedTokenWord>,
 {
-    let tokens = tokens.into_iter().collect::<Vec<_>>();
+    let traced_tokens = tokens.into_iter().collect::<Vec<_>>();
+    let tokens = traced_tokens
+        .iter()
+        .copied()
+        .map(semantic_token)
+        .collect::<Vec<_>>();
     let token_list = stores.intern_token_list(&tokens);
-    input.push_token_list(token_list, TokenListReplayKind::Inserted);
+    let mut origins = stores.origin_list_builder();
+    for token in traced_tokens {
+        origins.push(stores.inserted_origin(
+            InsertedOriginKind::Unread,
+            semantic_token(token),
+            token.origin(),
+        ));
+    }
+    let origin_list = stores.finish_origin_list(&mut origins);
+    input.push_token_list_with_origins(token_list, origin_list, TokenListReplayKind::Inserted);
 }
 
-fn token_matches_keyword_byte(token: Token, expected: u8) -> bool {
+fn token_matches_keyword_byte(token: TracedTokenWord, expected: u8) -> bool {
     let Token::Char {
         ch,
         cat: Catcode::Letter | Catcode::Other,
-    } = token
+    } = semantic_token(token)
     else {
         return false;
     };

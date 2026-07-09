@@ -159,6 +159,7 @@ where
             let token = {
                 let mut recorder = NoopRecorder;
                 get_x_token_with_recorder_and_hooks(input, stores, &mut recorder, hooks)?
+                    .map(tex_expand::semantic_token)
             }
             .ok_or(ExecError::MissingToken {
                 context: "box closing brace",

@@ -170,6 +170,7 @@ where
     let mut text = String::new();
     while let Some(token) =
         get_x_token_with_recorder_and_hooks(&mut input, stores, recorder, &mut hooks)?
+            .map(tex_expand::semantic_token)
     {
         text.push_str(&token_text(stores, token));
     }
@@ -320,6 +321,7 @@ where
     let mut recorder = NoopRecorder;
     while let Some(token) =
         get_x_token_with_recorder_and_hooks(input, stores, &mut recorder, hooks)?
+            .map(tex_expand::semantic_token)
     {
         match token {
             Token::Char {
@@ -375,6 +377,7 @@ where
     let mut tokens = Vec::new();
     while let Some(token) =
         get_x_token_with_recorder_and_hooks(input, stores, &mut recorder, hooks)?
+            .map(tex_expand::semantic_token)
     {
         if is_begin_group(token) {
             depth += 1;

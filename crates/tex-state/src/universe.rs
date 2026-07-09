@@ -112,6 +112,7 @@ pub trait ExpansionState {
     fn input_stream_eof(&self, stream: StreamSlot) -> bool;
     fn bootstrap_origin(&self) -> OriginId;
     fn synthetic_origin(&mut self, kind: SyntheticOriginKind) -> OriginId;
+    fn synthesized_origin(&mut self, kind: SynthesizedOriginKind, parent: OriginId) -> OriginId;
     fn source_origin(
         &mut self,
         source: SourceId,
@@ -2111,6 +2112,10 @@ impl ExpansionState for Universe {
         Self::synthetic_origin(self, kind)
     }
 
+    fn synthesized_origin(&mut self, kind: SynthesizedOriginKind, parent: OriginId) -> OriginId {
+        Self::synthesized_origin(self, kind, parent)
+    }
+
     fn source_origin(
         &mut self,
         source: SourceId,
@@ -2355,6 +2360,10 @@ impl ExpansionState for ExpansionContext<'_> {
 
     fn synthetic_origin(&mut self, kind: SyntheticOriginKind) -> OriginId {
         self.universe.synthetic_origin(kind)
+    }
+
+    fn synthesized_origin(&mut self, kind: SynthesizedOriginKind, parent: OriginId) -> OriginId {
+        self.universe.synthesized_origin(kind, parent)
     }
 
     fn source_origin(

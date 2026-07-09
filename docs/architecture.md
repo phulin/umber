@@ -192,11 +192,14 @@ Responsibility: characters → tokens, under mutable catcode law.
 Responsibility: the token-level rewriting system — macros, conditionals,
 `\expandafter`, `\csname`, `\the`, `\number`, e-TeX expandables.
 
-- **Structure**: a `get_x_token` loop. Pull a token; look up its meaning
-  word in `Env` (one load); if expandable, push its expansion as a
-  token-list frame and continue; else deliver it downstream. Control-sequence
-  tokens address their interned symbol directly; active character tokens
-  address the same one-character symbol used by definition assignments.
+- **Structure**: a `get_x_token` loop. Pull a traced token word; look up its
+  semantic token's meaning word in `Env` (one load); if expandable, push its
+  expansion as a token-list frame and continue; else deliver the same
+  `TracedTokenWord` downstream. Control-sequence tokens address their interned
+  symbol directly; active character tokens address the same one-character
+  symbol used by definition assignments. Compatibility callers that still need
+  plain `Token` values decode only at their boundary and do not fabricate
+  replacement origins.
   Undefined control sequences follow TeX82's expansion path: `get_x_token`
   reports an expansion error and forgets the consumed token rather than
   delivering it as an unexpandable command.
@@ -214,7 +217,7 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   the body, ever (bodies are shared `TokenListId`s).
 - **Macro definition scanning**: `tex-expand` exposes the shared
   `scan_toks`-style scanner for `\def`/`\edef` syntax. It scans parameter
-  text and a brace-balanced replacement body into frozen token lists,
+  text and a brace-balanced replacement body into frozen token/origin lists,
   including TeX's ordered `#1`..`#9` parameter markers, trailing `#{`, and
   doubled `##` replacement-body escapes. The scanner may freeze content
   through `Universe`, but it does not assign meanings; the stomach/future
@@ -250,7 +253,7 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   `\ifcase` `\or` count, and skip nesting so rollback can restore an open
   conditional without reconstructing hidden gullet state.
 - **`\csname`** interns through the same interner; **`\the`/`\showthe`**
-  read `Env` and mint fresh frozen token lists.
+  read `Env` and mint fresh frozen token/origin lists.
 - **Read-set recording** hooks live here and in the stomach: when the
   incremental engine asks for it, meaning lookups record `(cell, epoch)`
   pairs (`core_state.md` §9). Off by default, zero-cost when off (the
@@ -265,7 +268,7 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   cannot construct input-read authority; the top-level expansion/dispatch path
   additionally carries `InputOpenState` only so `\input` can create an
   `InputOpenContext`. Scanner and helper recursion does not receive that
-  authority directly. Instead recursive expanded-token reads go through the
+  authority directly. Instead recursive traced expanded-token reads go through the
   narrow `ExpandNext` capability; the top-level driver supplies a
   `DriverExpandNext` implementation that can re-enter dispatch with `\input`
   authority, while ordinary helper-only paths use a no-input implementation.
@@ -288,14 +291,18 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   aggregate boundary. If expansion yields a non-character token before
   `\endcsname`, the scanner follows TeX82 recovery by treating a missing
   `\endcsname` as inserted and pushing the offending token back through an
-  inserted-token replay frame. Primitive installation and
+  `Inserted(Unread)` replay frame. Value-producing expandables such as
+  `\number`, `\romannumeral`, `\string`, `\meaning`, `\the`, `\fontname`,
+  and `\csname` allocate one shared `Synthesized` origin for each generated
+  run, parented by the primitive token that caused the run. Primitive installation and
   stomach assignment/test setup helpers still receive `&mut Universe`, but
   the production token-reading and scanner path is Rust-enforced against
   Env/register/code-table writes.
 - Frame-control expandables are represented as input-frame rewrites:
   `\expandafter` saves one raw token, performs one expansion step on the
-  following token, then pushes the saved token above the expansion result;
-  `\noexpand` pushes a one-token replay frame that suppresses expansion for
+  following token, then pushes the saved token above the expansion result with
+  an `Inserted(ExpandAfter)` origin; `\noexpand` delivers or replays the next
+  token with an `Inserted(NoExpand)` origin and suppresses expansion for
   exactly the next `get_x_token` read. This keeps suppression frame-local and
   avoids mutating `Env`.
 - Implemented conditional predicates evaluate in `tex-expand` and record their

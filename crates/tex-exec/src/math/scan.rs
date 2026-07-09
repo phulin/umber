@@ -114,11 +114,11 @@ where
     nest.push(Mode::Math);
     loop {
         sync_engine_state::<S, _>(hooks, nest, stores);
-        let token = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?.ok_or(
-            ExecError::MissingToken {
+        let token = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
+            .map(tex_expand::semantic_token)
+            .ok_or(ExecError::MissingToken {
                 context: "math group closing brace",
-            },
-        )?;
+            })?;
         if assignments::is_end_group(token) {
             let list = finish_current_math_list(nest, stores);
             let _ = nest.pop()?;
@@ -501,6 +501,7 @@ where
 {
     loop {
         let Some(token) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
+            .map(tex_expand::semantic_token)
         else {
             return Ok(None);
         };

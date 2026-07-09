@@ -11,7 +11,7 @@ use tex_lex::{InputSource, InputStack, LexError, MemoryInput, TokenListReplayKin
 use tex_state::ids::{OriginListId, TokenListId};
 use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
-use tex_state::provenance::OriginListBuilder;
+use tex_state::provenance::{InsertedOriginKind, OriginListBuilder};
 use tex_state::token::{Catcode, Token, TracedTokenWord};
 use tex_state::token_store::TokenListBuilder;
 use tex_state::{ExpansionState, InputReadState, TracedTokenList};
@@ -292,13 +292,14 @@ where
             break;
         };
         let token = read.token();
+        let traced = read.traced_token();
         if read.suppress_expansion() {
             builder.push(token);
             origins.push(read.origin());
             continue;
         }
 
-        let Some(symbol) = crate::expandable_symbol(stores, token) else {
+        let Some(symbol) = crate::expandable_symbol(stores, traced) else {
             builder.push(token);
             origins.push(read.origin());
             continue;
@@ -311,18 +312,20 @@ where
                 );
             };
             builder.push(traced_semantic_token(suppressed));
-            origins.push(suppressed.origin());
+            origins.push(stores.inserted_origin(
+                InsertedOriginKind::NoExpand,
+                traced_semantic_token(suppressed),
+                suppressed.origin(),
+            ));
             continue;
         }
 
-        unread_token(&mut input, stores, token);
+        unread_token(&mut input, stores, traced);
         if let Some(expanded) =
             expander.next_expanded_token(&mut input, stores, &mut recorder, &mut hooks)?
         {
-            builder.push(expanded);
-            let origin =
-                stores.synthetic_origin(tex_state::provenance::SyntheticOriginKind::Engine);
-            origins.push(origin);
+            builder.push(crate::semantic_token(expanded));
+            origins.push(expanded.origin());
         }
     }
     let token_list = stores.finish_token_list(&mut builder);
@@ -330,12 +333,16 @@ where
     Ok(TracedTokenList::new(token_list, origin_list))
 }
 
-fn unread_token<S>(input: &mut InputStack<S>, stores: &mut impl ExpansionState, token: Token)
-where
+fn unread_token<S>(
+    input: &mut InputStack<S>,
+    stores: &mut impl ExpansionState,
+    token: TracedTokenWord,
+) where
     S: InputSource,
 {
-    let token_list = stores.intern_token_list(&[token]);
-    let origin = stores.synthetic_origin(tex_state::provenance::SyntheticOriginKind::Engine);
+    let semantic = crate::semantic_token(token);
+    let token_list = stores.intern_token_list(&[semantic]);
+    let origin = stores.inserted_origin(InsertedOriginKind::Unread, semantic, token.origin());
     let mut origins = stores.origin_list_builder();
     origins.push(origin);
     let origin_list = stores.finish_origin_list(&mut origins);

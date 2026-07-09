@@ -1,6 +1,6 @@
 use crate::{
     EngineMode, ExpandableOpcode, ExpansionHooks, NoopRecorder, ReadRecorder, dispatch,
-    dispatch_expandable_opcode, get_x_token, get_x_token_with_hooks, get_x_token_with_recorder,
+    dispatch_expandable_opcode,
 };
 use std::collections::HashMap;
 use tex_lex::{InputStack, MemoryInput, TokenListReplayKind};
@@ -10,7 +10,10 @@ use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::node::{BoxNode, BoxNodeFields, Node, Sign};
 use tex_state::page::PageMark;
-use tex_state::provenance::{MacroInvocationOrigin, OriginRecord};
+use tex_state::provenance::{
+    InsertedOrigin, InsertedOriginKind, MacroInvocationOrigin, OriginRecord, SynthesizedOrigin,
+    SynthesizedOriginKind,
+};
 use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::token::{Catcode, Token};
 use tex_state::{ExpansionState, InputOpenState, InputReadState, Universe};
@@ -24,6 +27,42 @@ impl ReadRecorder for CountingRecorder {
     fn record_meaning(&mut self, _symbol: Symbol, _meaning: Meaning) {
         self.reads += 1;
     }
+}
+
+fn get_x_token<S>(
+    input: &mut InputStack<S>,
+    stores: &mut (impl ExpansionState + InputOpenState),
+) -> Result<Option<Token>, crate::ExpandError>
+where
+    S: tex_lex::InputSource,
+{
+    crate::get_x_token(input, stores).map(|token| token.map(crate::semantic_token))
+}
+
+fn get_x_token_with_recorder<S, R>(
+    input: &mut InputStack<S>,
+    stores: &mut (impl ExpansionState + InputOpenState),
+    recorder: &mut R,
+) -> Result<Option<Token>, crate::ExpandError>
+where
+    S: tex_lex::InputSource,
+    R: ReadRecorder,
+{
+    crate::get_x_token_with_recorder(input, stores, recorder)
+        .map(|token| token.map(crate::semantic_token))
+}
+
+fn get_x_token_with_hooks<S, H>(
+    input: &mut InputStack<S>,
+    stores: &mut (impl ExpansionState + InputOpenState),
+    hooks: &mut H,
+) -> Result<Option<Token>, crate::ExpandError>
+where
+    S: tex_lex::InputSource,
+    H: ExpansionHooks<S>,
+{
+    crate::get_x_token_with_hooks(input, stores, hooks)
+        .map(|token| token.map(crate::semantic_token))
 }
 
 #[test]
@@ -47,7 +86,10 @@ fn dispatch_delivers_unexpandable_tokens() {
             Meaning::Relax,
         )
         .expect("dispatch should succeed"),
-        crate::Dispatch::Deliver(token)
+        crate::Dispatch::Deliver(tex_state::token::TracedTokenWord::pack(
+            token,
+            tex_state::token::OriginId::UNKNOWN,
+        ))
     );
 }
 
@@ -321,6 +363,33 @@ fn noexpand_suppresses_next_control_sequence_for_one_get_x_token() {
     assert_eq!(
         get_x_token(&mut input, &mut stores).expect("expansion should succeed"),
         Some(char_token('x'))
+    );
+}
+
+#[test]
+fn noexpand_delivers_inserted_origin_for_suppressed_token() {
+    let mut stores = Universe::new();
+    let noexpand = expandable_primitive(&mut stores, "noexpand", ExpandablePrimitive::NoExpand);
+    let relax = stores.intern_relaxed_control_sequence("relax");
+    let noexpand_origin = stores.source_origin(tex_state::SourceId::new(20), 100, 10, 1);
+    let target_origin = stores.source_origin(tex_state::SourceId::new(20), 110, 10, 11);
+    let input_list = stores.intern_token_list(&[Token::Cs(noexpand), Token::Cs(relax)]);
+    let origins = stores.allocate_origin_list(&[noexpand_origin, target_origin]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list_with_origins(input_list, origins, TokenListReplayKind::Inserted);
+
+    let traced = crate::get_x_token(&mut input, &mut stores)
+        .expect("noexpand should succeed")
+        .expect("suppressed token should be delivered");
+
+    assert_eq!(traced.token(), Some(Token::Cs(relax)));
+    assert_eq!(
+        stores.origin(traced.origin()),
+        OriginRecord::Inserted(InsertedOrigin::new(
+            InsertedOriginKind::NoExpand,
+            Token::Cs(relax),
+            target_origin,
+        ))
     );
 }
 
@@ -1008,6 +1077,36 @@ fn rendered_output_is_frozen_and_rollback_removes_it() {
     assert!(
         err.is_err(),
         "rendered output must be rollback-coupled frozen content"
+    );
+}
+
+#[test]
+fn number_output_tokens_share_synthesized_origin_from_primitive() {
+    let mut stores = Universe::new();
+    let number = expandable_primitive(&mut stores, "number", ExpandablePrimitive::Number);
+    let number_origin = stores.source_origin(tex_state::SourceId::new(21), 120, 12, 1);
+    let digit_origin = stores.source_origin(tex_state::SourceId::new(21), 128, 12, 9);
+    let list = stores.intern_token_list(&[Token::Cs(number), char_token('4'), char_token('2')]);
+    let origins = stores.allocate_origin_list(&[number_origin, digit_origin, digit_origin]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list_with_origins(list, origins, TokenListReplayKind::Inserted);
+
+    let first = crate::get_x_token(&mut input, &mut stores)
+        .expect("number should expand")
+        .expect("first digit should be delivered");
+    let second = crate::get_x_token(&mut input, &mut stores)
+        .expect("number should continue")
+        .expect("second digit should be delivered");
+
+    assert_eq!(first.token(), Some(char_token('4')));
+    assert_eq!(second.token(), Some(char_token('2')));
+    assert_eq!(first.origin(), second.origin());
+    assert_eq!(
+        stores.origin(first.origin()),
+        OriginRecord::Synthesized(SynthesizedOrigin::new(
+            SynthesizedOriginKind::ValueRendering,
+            number_origin,
+        ))
     );
 }
 

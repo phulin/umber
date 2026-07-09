@@ -7,13 +7,14 @@ use tex_state::ExpansionState;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::GlueId;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
+use tex_state::provenance::InsertedOriginKind;
 use tex_state::scaled::Scaled;
-use tex_state::token::{Catcode, Token};
+use tex_state::token::{Catcode, Token, TracedTokenWord};
 
 use crate::scan_dimen::{self, DimensionDiagnostic, ScanDimenError, ScanDimenOptions};
 use crate::{
     ExpandError, ExpandNext, ExpansionHooks, NoInputExpandNext, NoopExpansionHooks, NoopRecorder,
-    ReadRecorder, scan_helpers, scan_int,
+    ReadRecorder, scan_helpers, scan_int, semantic_token,
 };
 
 /// A successfully scanned glue specification.
@@ -165,7 +166,7 @@ where
         return Err(ScanGlueError::MissingNumber);
     };
 
-    if let Token::Cs(symbol) = first {
+    if let Token::Cs(symbol) = semantic_token(first) {
         match stores.meaning(symbol) {
             Meaning::SkipRegister(index) if !mu => {
                 consume_optional_space(input, stores, recorder, hooks, expander)?;
@@ -326,7 +327,7 @@ fn scan_signs<S, St, R, H, E>(
     recorder: &mut R,
     hooks: &mut H,
     expander: &mut E,
-) -> Result<(bool, Option<Token>), ScanGlueError>
+) -> Result<(bool, Option<TracedTokenWord>), ScanGlueError>
 where
     S: InputSource,
     St: ExpansionState,
@@ -359,7 +360,7 @@ fn next_x<S, St, R, H, E>(
     recorder: &mut R,
     hooks: &mut H,
     expander: &mut E,
-) -> Result<Option<Token>, ScanGlueError>
+) -> Result<Option<TracedTokenWord>, ScanGlueError>
 where
     S: InputSource,
     St: ExpansionState,
@@ -437,8 +438,11 @@ where
     Ok(())
 }
 
-fn unread_token<S>(input: &mut InputStack<S>, stores: &mut impl ExpansionState, token: Token)
-where
+fn unread_token<S>(
+    input: &mut InputStack<S>,
+    stores: &mut impl ExpansionState,
+    token: TracedTokenWord,
+) where
     S: InputSource,
 {
     unread_tokens(input, stores, [token]);
@@ -447,16 +451,30 @@ where
 fn unread_tokens<S, I>(input: &mut InputStack<S>, stores: &mut impl ExpansionState, tokens: I)
 where
     S: InputSource,
-    I: IntoIterator<Item = Token>,
+    I: IntoIterator<Item = TracedTokenWord>,
 {
-    let tokens = tokens.into_iter().collect::<Vec<_>>();
+    let traced_tokens = tokens.into_iter().collect::<Vec<_>>();
+    let tokens = traced_tokens
+        .iter()
+        .copied()
+        .map(semantic_token)
+        .collect::<Vec<_>>();
     let token_list = stores.intern_token_list(&tokens);
-    input.push_token_list(token_list, TokenListReplayKind::Inserted);
+    let mut origins = stores.origin_list_builder();
+    for token in traced_tokens {
+        origins.push(stores.inserted_origin(
+            InsertedOriginKind::Unread,
+            semantic_token(token),
+            token.origin(),
+        ));
+    }
+    let origin_list = stores.finish_origin_list(&mut origins);
+    input.push_token_list_with_origins(token_list, origin_list, TokenListReplayKind::Inserted);
 }
 
-fn is_space(token: Token) -> bool {
+fn is_space(token: TracedTokenWord) -> bool {
     matches!(
-        token,
+        semantic_token(token),
         Token::Char {
             cat: Catcode::Space,
             ..
@@ -464,9 +482,9 @@ fn is_space(token: Token) -> bool {
     )
 }
 
-fn is_other_char(token: Token, expected: char) -> bool {
+fn is_other_char(token: TracedTokenWord, expected: char) -> bool {
     matches!(
-        token,
+        semantic_token(token),
         Token::Char {
             ch,
             cat: Catcode::Other

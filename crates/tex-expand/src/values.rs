@@ -3,6 +3,7 @@ use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::{FontId, TokenListId};
 use tex_state::meaning::{InternalInteger, Meaning, MeaningFlags};
+use tex_state::provenance::SynthesizedOriginKind;
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token};
 use tex_state::{BoxDimension, ExpansionState};
@@ -24,7 +25,14 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    expand_the_with_expander_and_hooks(input, stores, recorder, hooks, &mut NoInputExpandNext)
+    expand_the_with_expander_and_hooks(
+        input,
+        stores,
+        recorder,
+        hooks,
+        &mut NoInputExpandNext,
+        OriginId::UNKNOWN,
+    )
 }
 
 pub(crate) fn expand_the_with_expander_and_hooks<S, St, R, H, E>(
@@ -33,6 +41,7 @@ pub(crate) fn expand_the_with_expander_and_hooks<S, St, R, H, E>(
     recorder: &mut R,
     hooks: &mut H,
     expander: &mut E,
+    cause_origin: OriginId,
 ) -> Result<Dispatch, ExpandError>
 where
     S: InputSource,
@@ -49,8 +58,9 @@ where
             ExpandableOpcode::The,
         ));
     };
-    let Token::Cs(symbol) = token else {
-        return Err(ExpandError::UnsupportedTheTarget(token));
+    let semantic = crate::semantic_token(token);
+    let Token::Cs(symbol) = semantic else {
+        return Err(ExpandError::UnsupportedTheTarget(semantic));
     };
 
     match stores.meaning(symbol) {
@@ -63,6 +73,7 @@ where
                     stores,
                     ExpansionReplayKind::TheOutput,
                     &stores.count(index).to_string(),
+                    cause_origin,
                 ))
             }
             tex_state::meaning::UnexpandablePrimitive::Dimen => {
@@ -73,6 +84,7 @@ where
                     stores,
                     ExpansionReplayKind::TheOutput,
                     &format_scaled(stores.dimen(index)),
+                    cause_origin,
                 ))
             }
             tex_state::meaning::UnexpandablePrimitive::Skip => {
@@ -83,6 +95,7 @@ where
                     stores,
                     ExpansionReplayKind::TheOutput,
                     &format_glue(stores.glue(stores.skip(index))),
+                    cause_origin,
                 ))
             }
             tex_state::meaning::UnexpandablePrimitive::Muskip => {
@@ -93,6 +106,7 @@ where
                     stores,
                     ExpansionReplayKind::TheOutput,
                     &format_muglue(stores.glue(stores.muskip(index))),
+                    cause_origin,
                 ))
             }
             tex_state::meaning::UnexpandablePrimitive::Toks => {
@@ -110,11 +124,16 @@ where
             tex_state::meaning::UnexpandablePrimitive::Font => {
                 let symbol = stores
                     .current_font_symbol()
-                    .ok_or(ExpandError::UnsupportedTheTarget(token))?;
+                    .ok_or(ExpandError::UnsupportedTheTarget(semantic))?;
                 Ok(Dispatch::Push {
                     replay_kind: ExpansionReplayKind::TheOutput,
                     token_list: stores.intern_token_list(&[Token::Cs(symbol)]),
-                    origin_list: crate::synthetic_origin_list(stores),
+                    origin_list: crate::synthesized_origin_list(
+                        stores,
+                        1,
+                        cause_origin,
+                        SynthesizedOriginKind::ValueRendering,
+                    ),
                     macro_arguments: MacroArguments::new(),
                     macro_invocation: OriginId::UNKNOWN,
                 })
@@ -125,13 +144,14 @@ where
                 )?
                 .value();
                 if !(1..=32_767).contains(&number) {
-                    return Err(ExpandError::UnsupportedTheTarget(token));
+                    return Err(ExpandError::UnsupportedTheTarget(semantic));
                 }
                 let font = scan_font_selector(input, stores, recorder, hooks, expander)?;
                 Ok(push_rendered_text(
                     stores,
                     ExpansionReplayKind::TheOutput,
                     &format_scaled(stores.font_dimen(font, number as u16)),
+                    cause_origin,
                 ))
             }
             tex_state::meaning::UnexpandablePrimitive::HyphenChar => {
@@ -140,6 +160,7 @@ where
                     stores,
                     ExpansionReplayKind::TheOutput,
                     &stores.font_hyphen_char(font).to_string(),
+                    cause_origin,
                 ))
             }
             tex_state::meaning::UnexpandablePrimitive::SkewChar => {
@@ -148,6 +169,7 @@ where
                     stores,
                     ExpansionReplayKind::TheOutput,
                     &stores.font_skew_char(font).to_string(),
+                    cause_origin,
                 ))
             }
             tex_state::meaning::UnexpandablePrimitive::Wd
@@ -170,37 +192,44 @@ where
                             .box_dimension(index, dimension)
                             .unwrap_or_else(|| Scaled::from_raw(0)),
                     ),
+                    cause_origin,
                 ))
             }
             tex_state::meaning::UnexpandablePrimitive::SpaceFactor => Ok(push_rendered_text(
                 stores,
                 ExpansionReplayKind::TheOutput,
                 &hooks.space_factor().to_string(),
+                cause_origin,
             )),
             tex_state::meaning::UnexpandablePrimitive::PrevDepth => Ok(push_rendered_text(
                 stores,
                 ExpansionReplayKind::TheOutput,
                 &format_scaled(hooks.prev_depth()),
+                cause_origin,
             )),
             tex_state::meaning::UnexpandablePrimitive::PrevGraf => Ok(push_rendered_text(
                 stores,
                 ExpansionReplayKind::TheOutput,
                 &hooks.prev_graf().to_string(),
+                cause_origin,
             )),
             tex_state::meaning::UnexpandablePrimitive::LastPenalty => Ok(push_rendered_text(
                 stores,
                 ExpansionReplayKind::TheOutput,
                 &hooks.last_penalty().to_string(),
+                cause_origin,
             )),
             tex_state::meaning::UnexpandablePrimitive::LastKern => Ok(push_rendered_text(
                 stores,
                 ExpansionReplayKind::TheOutput,
                 &format_scaled(hooks.last_kern()),
+                cause_origin,
             )),
             tex_state::meaning::UnexpandablePrimitive::LastSkip => Ok(push_rendered_text(
                 stores,
                 ExpansionReplayKind::TheOutput,
                 &format_glue(hooks.last_skip()),
+                cause_origin,
             )),
             tex_state::meaning::UnexpandablePrimitive::CatCode
             | tex_state::meaning::UnexpandablePrimitive::LcCode
@@ -224,29 +253,34 @@ where
                     stores,
                     ExpansionReplayKind::TheOutput,
                     &value.to_string(),
+                    cause_origin,
                 ))
             }
-            _ => Err(ExpandError::UnsupportedTheTarget(token)),
+            _ => Err(ExpandError::UnsupportedTheTarget(semantic)),
         },
         Meaning::CountRegister(index) => Ok(push_rendered_text(
             stores,
             ExpansionReplayKind::TheOutput,
             &stores.count(index).to_string(),
+            cause_origin,
         )),
         Meaning::DimenRegister(index) => Ok(push_rendered_text(
             stores,
             ExpansionReplayKind::TheOutput,
             &format_scaled(stores.dimen(index)),
+            cause_origin,
         )),
         Meaning::SkipRegister(index) => Ok(push_rendered_text(
             stores,
             ExpansionReplayKind::TheOutput,
             &format_glue(stores.glue(stores.skip(index))),
+            cause_origin,
         )),
         Meaning::MuskipRegister(index) => Ok(push_rendered_text(
             stores,
             ExpansionReplayKind::TheOutput,
             &format_muglue(stores.glue(stores.muskip(index))),
+            cause_origin,
         )),
         Meaning::ToksRegister(index) => Ok(Dispatch::Push {
             replay_kind: ExpansionReplayKind::TheOutput,
@@ -259,36 +293,43 @@ where
             stores,
             ExpansionReplayKind::TheOutput,
             &stores.int_param(IntParam::new(index)).to_string(),
+            cause_origin,
         )),
         Meaning::InternalInteger(InternalInteger::Badness) => Ok(push_rendered_text(
             stores,
             ExpansionReplayKind::TheOutput,
             &stores.last_badness().to_string(),
+            cause_origin,
         )),
         Meaning::DimenParam(index) => Ok(push_rendered_text(
             stores,
             ExpansionReplayKind::TheOutput,
             &format_scaled(stores.dimen_param(DimenParam::new(index))),
+            cause_origin,
         )),
         Meaning::PageDimension(dimension) => Ok(push_rendered_text(
             stores,
             ExpansionReplayKind::TheOutput,
             &format_scaled(stores.page_dimension(dimension)),
+            cause_origin,
         )),
         Meaning::PageInteger(integer) => Ok(push_rendered_text(
             stores,
             ExpansionReplayKind::TheOutput,
             &stores.page_integer(integer).to_string(),
+            cause_origin,
         )),
         Meaning::GlueParam(index) => Ok(push_rendered_text(
             stores,
             ExpansionReplayKind::TheOutput,
             &format_glue(stores.glue(stores.glue_param(GlueParam::new(index)))),
+            cause_origin,
         )),
         Meaning::MuGlueParam(index) => Ok(push_rendered_text(
             stores,
             ExpansionReplayKind::TheOutput,
             &format_muglue(stores.glue(stores.glue_param(GlueParam::new(index)))),
+            cause_origin,
         )),
         Meaning::TokParam(index) => Ok(Dispatch::Push {
             replay_kind: ExpansionReplayKind::TheOutput,
@@ -306,6 +347,7 @@ where
                     stores,
                     ExpansionReplayKind::TheOutput,
                     &stores.count(index).to_string(),
+                    cause_origin,
                 ))
             }
             "dimen" => {
@@ -316,6 +358,7 @@ where
                     stores,
                     ExpansionReplayKind::TheOutput,
                     &format_scaled(stores.dimen(index)),
+                    cause_origin,
                 ))
             }
             "toks" => {
@@ -334,13 +377,15 @@ where
                 stores,
                 ExpansionReplayKind::TheOutput,
                 &stores.int_param(IntParam::END_LINE_CHAR).to_string(),
+                cause_origin,
             )),
             "escapechar" => Ok(push_rendered_text(
                 stores,
                 ExpansionReplayKind::TheOutput,
                 &stores.int_param(IntParam::ESCAPE_CHAR).to_string(),
+                cause_origin,
             )),
-            _ => Err(ExpandError::UnsupportedTheTarget(token)),
+            _ => Err(ExpandError::UnsupportedTheTarget(semantic)),
         },
     }
 }
@@ -349,14 +394,16 @@ pub(crate) fn push_rendered_text(
     stores: &mut impl ExpansionState,
     replay_kind: ExpansionReplayKind,
     text: &str,
+    parent: OriginId,
 ) -> Dispatch {
-    push_rendered_tokens(stores, replay_kind, text_tokens(text))
+    push_rendered_tokens(stores, replay_kind, text_tokens(text), parent)
 }
 
 pub(crate) fn push_rendered_tokens<I>(
     stores: &mut impl ExpansionState,
     replay_kind: ExpansionReplayKind,
     tokens: I,
+    parent: OriginId,
 ) -> Dispatch
 where
     I: IntoIterator<Item = Token>,
@@ -366,7 +413,12 @@ where
     Dispatch::Push {
         replay_kind,
         token_list,
-        origin_list: synthetic_origin_list_for_tokens(stores, tokens.len()),
+        origin_list: crate::synthesized_origin_list(
+            stores,
+            tokens.len(),
+            parent,
+            SynthesizedOriginKind::ValueRendering,
+        ),
         macro_arguments: MacroArguments::new(),
         macro_invocation: OriginId::UNKNOWN,
     }
@@ -374,18 +426,6 @@ where
 
 fn freeze_output_tokens(stores: &mut impl ExpansionState, tokens: &[Token]) -> TokenListId {
     stores.intern_token_list(tokens)
-}
-
-fn synthetic_origin_list_for_tokens(
-    stores: &mut impl ExpansionState,
-    len: usize,
-) -> tex_state::ids::OriginListId {
-    let origin = stores.synthetic_origin(tex_state::provenance::SyntheticOriginKind::Engine);
-    let mut origins = stores.origin_list_builder();
-    for _ in 0..len {
-        origins.push(origin);
-    }
-    stores.finish_origin_list(&mut origins)
 }
 
 pub(crate) fn string_tokens(stores: &impl ExpansionState, token: Token) -> Vec<Token> {
@@ -491,11 +531,19 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    let dispatch =
-        expand_the_with_expander_and_hooks(input, stores, recorder, hooks, &mut NoInputExpandNext)?;
+    let dispatch = expand_the_with_expander_and_hooks(
+        input,
+        stores,
+        recorder,
+        hooks,
+        &mut NoInputExpandNext,
+        OriginId::UNKNOWN,
+    )?;
     Ok(match dispatch {
         Dispatch::Push { token_list, .. } => token_list_text(stores, token_list),
-        Dispatch::Deliver(token) | Dispatch::DeliverNoExpand(token) => token_text(stores, token),
+        Dispatch::Deliver(token) | Dispatch::DeliverNoExpand(token) => {
+            token_text(stores, crate::semantic_token(token))
+        }
         Dispatch::Continue => String::new(),
     })
 }
@@ -675,11 +723,12 @@ where
             ExpandableOpcode::FontName,
         ));
     };
-    let Token::Cs(symbol) = token else {
-        return Err(ExpandError::UnsupportedTheTarget(token));
+    let semantic = crate::semantic_token(token);
+    let Token::Cs(symbol) = semantic else {
+        return Err(ExpandError::UnsupportedTheTarget(semantic));
     };
     match stores.meaning(symbol) {
         Meaning::Font(id) => Ok(id),
-        _ => Err(ExpandError::UnsupportedTheTarget(token)),
+        _ => Err(ExpandError::UnsupportedTheTarget(semantic)),
     }
 }

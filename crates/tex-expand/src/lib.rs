@@ -12,8 +12,9 @@ use tex_lex::{InputSource, InputStack, LexError, MacroArguments, TokenListReplay
 use tex_state::glue::GlueSpec;
 use tex_state::interner::Symbol;
 use tex_state::meaning::Meaning;
+use tex_state::provenance::{InsertedOriginKind, SynthesizedOriginKind};
 use tex_state::scaled::Scaled;
-use tex_state::token::{Catcode, OriginId, Token};
+use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{ExpansionState, InputOpenState, InputReadState, Universe};
 
 pub mod args;
@@ -215,8 +216,8 @@ impl Default for EngineStateSnapshot {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Dispatch {
     Continue,
-    Deliver(Token),
-    DeliverNoExpand(Token),
+    Deliver(TracedTokenWord),
+    DeliverNoExpand(TracedTokenWord),
     Push {
         replay_kind: ExpansionReplayKind,
         token_list: tex_state::ids::TokenListId,
@@ -376,7 +377,7 @@ pub trait ExpandNext<S, St: ExpansionState, R, H> {
         stores: &mut St,
         recorder: &mut R,
         hooks: &mut H,
-    ) -> Result<Option<Token>, ExpandError>
+    ) -> Result<Option<TracedTokenWord>, ExpandError>
     where
         S: InputSource,
         R: ReadRecorder,
@@ -399,7 +400,7 @@ where
         stores: &mut St,
         recorder: &mut R,
         hooks: &mut H,
-    ) -> Result<Option<Token>, ExpandError> {
+    ) -> Result<Option<TracedTokenWord>, ExpandError> {
         get_x_token_without_input_open(input, stores, recorder, hooks)
     }
 }
@@ -420,7 +421,7 @@ where
         stores: &mut St,
         recorder: &mut R,
         hooks: &mut H,
-    ) -> Result<Option<Token>, ExpandError> {
+    ) -> Result<Option<TracedTokenWord>, ExpandError> {
         get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)
     }
 }
@@ -462,7 +463,7 @@ impl From<scan_dimen::ScanDimenError> for ExpandError {
 pub fn get_x_token<S>(
     input: &mut InputStack<S>,
     stores: &mut (impl ExpansionState + InputOpenState),
-) -> Result<Option<Token>, ExpandError>
+) -> Result<Option<TracedTokenWord>, ExpandError>
 where
     S: InputSource,
 {
@@ -474,7 +475,7 @@ pub fn get_x_token_with_recorder<S, R>(
     input: &mut InputStack<S>,
     stores: &mut (impl ExpansionState + InputOpenState),
     recorder: &mut R,
-) -> Result<Option<Token>, ExpandError>
+) -> Result<Option<TracedTokenWord>, ExpandError>
 where
     S: InputSource,
     R: ReadRecorder,
@@ -487,7 +488,7 @@ pub fn get_x_token_with_hooks<S, H>(
     input: &mut InputStack<S>,
     stores: &mut (impl ExpansionState + InputOpenState),
     hooks: &mut H,
-) -> Result<Option<Token>, ExpandError>
+) -> Result<Option<TracedTokenWord>, ExpandError>
 where
     S: InputSource,
     H: ExpansionHooks<S>,
@@ -501,7 +502,7 @@ pub fn get_x_token_with_recorder_and_hooks<S, R, H>(
     stores: &mut (impl ExpansionState + InputOpenState),
     recorder: &mut R,
     hooks: &mut H,
-) -> Result<Option<Token>, ExpandError>
+) -> Result<Option<TracedTokenWord>, ExpandError>
 where
     S: InputSource,
     R: ReadRecorder,
@@ -512,14 +513,15 @@ where
             return Ok(None);
         };
         let token = read.token();
+        let traced = read.traced_token();
 
         if read.suppress_expansion() {
-            return Ok(Some(token));
+            return Ok(Some(read.traced_token()));
         }
 
-        let symbol = match expandable_symbol(stores, token) {
+        let symbol = match expandable_symbol(stores, traced) {
             Some(symbol) => symbol,
-            None => return Ok(Some(token)),
+            None => return Ok(Some(traced)),
         };
 
         let meaning = stores.meaning(symbol);
@@ -546,7 +548,7 @@ pub(crate) fn get_x_token_without_input_open<S, R, H>(
     stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
-) -> Result<Option<Token>, ExpandError>
+) -> Result<Option<TracedTokenWord>, ExpandError>
 where
     S: InputSource,
     R: ReadRecorder,
@@ -557,14 +559,15 @@ where
             return Ok(None);
         };
         let token = read.token();
+        let traced = read.traced_token();
 
         if read.suppress_expansion() {
-            return Ok(Some(token));
+            return Ok(Some(read.traced_token()));
         }
 
-        let symbol = match expandable_symbol(stores, token) {
+        let symbol = match expandable_symbol(stores, traced) {
             Some(symbol) => symbol,
-            None => return Ok(Some(token)),
+            None => return Ok(Some(traced)),
         };
 
         let meaning = stores.meaning(symbol);
@@ -587,7 +590,7 @@ where
 }
 
 pub(crate) fn dispatch_one_raw_token_with_hooks<S, R, H>(
-    token: Token,
+    token: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     recorder: &mut R,
@@ -598,6 +601,7 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
+    let semantic = semantic_token(token);
     let symbol = match expandable_symbol(stores, token) {
         Some(symbol) => symbol,
         None => return Ok(Dispatch::Deliver(token)),
@@ -606,8 +610,8 @@ where
     let meaning = stores.meaning(symbol);
     recorder.record_meaning(symbol, meaning);
     dispatch::dispatch_without_input_open(
-        token,
-        OriginId::UNKNOWN,
+        semantic,
+        token.origin(),
         input,
         stores,
         recorder,
@@ -616,8 +620,11 @@ where
     )
 }
 
-pub(crate) fn expandable_symbol(stores: &mut impl ExpansionState, token: Token) -> Option<Symbol> {
-    match token {
+pub(crate) fn expandable_symbol(
+    stores: &mut impl ExpansionState,
+    token: TracedTokenWord,
+) -> Option<Symbol> {
+    match semantic_token(token) {
         Token::Cs(symbol) => Some(symbol),
         Token::Char {
             ch,
@@ -633,7 +640,9 @@ pub(crate) fn push_dispatch_result<S>(
     dispatch: Dispatch,
 ) {
     match dispatch {
-        Dispatch::Deliver(token) => push_inserted_token(input, stores, token),
+        Dispatch::Deliver(token) => {
+            push_inserted_token(input, stores, token, InsertedOriginKind::ExpandAfter);
+        }
         Dispatch::DeliverNoExpand(token) => push_noexpand_token(input, stores, token),
         Dispatch::Continue => {}
         push @ Dispatch::Push { .. } => apply_dispatch_push(input, push),
@@ -667,28 +676,54 @@ pub(crate) fn apply_dispatch_push<S>(input: &mut InputStack<S>, dispatch: Dispat
 pub(crate) fn push_inserted_token<S>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
-    token: Token,
+    token: TracedTokenWord,
+    kind: InsertedOriginKind,
 ) {
-    let token_list = stores.intern_token_list(&[token]);
-    let origin_list = synthetic_origin_list(stores);
+    let semantic = semantic_token(token);
+    let token_list = stores.intern_token_list(&[semantic]);
+    let origin_list = inserted_origin_list(stores, &[token], kind);
     input.push_token_list_with_origins(token_list, origin_list, TokenListReplayKind::Inserted);
 }
 
 pub(crate) fn push_noexpand_token<S>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
-    token: Token,
+    token: TracedTokenWord,
 ) {
-    let token_list = stores.intern_token_list(&[token]);
-    let origin_list = synthetic_origin_list(stores);
+    let semantic = semantic_token(token);
+    let token_list = stores.intern_token_list(&[semantic]);
+    let origin_list = inserted_origin_list(stores, &[token], InsertedOriginKind::NoExpand);
     input.push_token_list_with_origins(token_list, origin_list, TokenListReplayKind::NoExpand);
 }
 
-pub(crate) fn synthetic_origin_list(
+pub(crate) fn inserted_origin_list(
     stores: &mut impl ExpansionState,
+    tokens: &[TracedTokenWord],
+    kind: InsertedOriginKind,
 ) -> tex_state::ids::OriginListId {
-    let origin = stores.synthetic_origin(tex_state::provenance::SyntheticOriginKind::Engine);
     let mut origins = stores.origin_list_builder();
-    origins.push(origin);
+    for &token in tokens {
+        origins.push(stores.inserted_origin(kind, semantic_token(token), token.origin()));
+    }
     stores.finish_origin_list(&mut origins)
+}
+
+pub(crate) fn synthesized_origin_list(
+    stores: &mut impl ExpansionState,
+    len: usize,
+    parent: OriginId,
+    kind: SynthesizedOriginKind,
+) -> tex_state::ids::OriginListId {
+    let origin = stores.synthesized_origin(kind, parent);
+    let mut origins = stores.origin_list_builder();
+    for _ in 0..len {
+        origins.push(origin);
+    }
+    stores.finish_origin_list(&mut origins)
+}
+
+pub fn semantic_token(token: TracedTokenWord) -> Token {
+    token
+        .token()
+        .expect("expansion must only receive valid traced tokens")
 }

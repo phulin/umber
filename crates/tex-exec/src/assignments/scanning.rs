@@ -362,6 +362,7 @@ where
     let mut recorder = NoopRecorder;
     loop {
         let Some(token) = get_x_token_with_recorder_and_hooks(input, stores, &mut recorder, hooks)?
+            .map(tex_expand::semantic_token)
         else {
             return Ok(None);
         };
