@@ -174,43 +174,33 @@ fn displayed_limits(
     let mut list = Vec::new();
     if !matches!(noad.superscript, MathField::Empty) {
         let shift_up = sub(size_params.big_op_spacing3, sup.depth).max(size_params.big_op_spacing1);
+        let sup_extent = add(add(sup.height, sup.depth), shift_up);
         list.push(MathNode::Kern {
             amount: size_params.big_op_spacing5,
             kind: KernKind::Explicit,
         });
-        list.push(MathNode::HList(sup.clone()));
+        list.push(MathNode::HList(sup));
         list.push(MathNode::Kern {
             amount: shift_up,
             kind: KernKind::Explicit,
         });
-        height = add(
-            height,
-            add(
-                size_params.big_op_spacing5,
-                add(add(sup.height, sup.depth), shift_up),
-            ),
-        );
+        height = add(height, add(size_params.big_op_spacing5, sup_extent));
     }
     list.push(MathNode::HList(op));
     if !matches!(noad.subscript, MathField::Empty) {
         let shift_down =
             sub(size_params.big_op_spacing4, sub_box.height).max(size_params.big_op_spacing2);
+        let sub_extent = add(add(sub_box.height, sub_box.depth), shift_down);
         list.push(MathNode::Kern {
             amount: shift_down,
             kind: KernKind::Explicit,
         });
-        list.push(MathNode::HList(sub_box.clone()));
+        list.push(MathNode::HList(sub_box));
         list.push(MathNode::Kern {
             amount: size_params.big_op_spacing5,
             kind: KernKind::Explicit,
         });
-        depth = add(
-            depth,
-            add(
-                size_params.big_op_spacing5,
-                add(add(sub_box.height, sub_box.depth), shift_down),
-            ),
-        );
+        depth = add(depth, add(size_params.big_op_spacing5, sub_extent));
     }
     FrozenHList {
         nodes: vec![MathNode::VList(MathBox {

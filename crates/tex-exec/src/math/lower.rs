@@ -32,7 +32,7 @@ pub(crate) fn finish_math_list_node(
         let surround = stores.dimen_param(DimenParam::MATH_SURROUND);
         nodes.push(Node::MathOn(surround));
     }
-    nodes.extend(lower_math_hlist(stores, &hlist));
+    nodes.extend(lower_math_hlist(stores, hlist));
     if !list.display {
         // AppG rule 22
         let surround = stores.dimen_param(DimenParam::MATH_SURROUND);
@@ -58,47 +58,41 @@ pub(crate) fn finish_math_lists(
     out
 }
 
-pub(super) fn lower_math_hlist(stores: &mut Universe, hlist: &FrozenHList) -> Vec<Node> {
+pub(super) fn lower_math_hlist(stores: &mut Universe, hlist: FrozenHList) -> Vec<Node> {
     hlist
         .nodes
-        .iter()
+        .into_iter()
         .map(|node| lower_math_node(stores, node))
         .collect()
 }
 
-fn lower_math_node(stores: &mut Universe, node: &MathNode) -> Node {
+fn lower_math_node(stores: &mut Universe, node: MathNode) -> Node {
     match node {
-        MathNode::Char { font, ch, .. } => Node::Char {
-            font: *font,
-            ch: *ch,
-        },
-        MathNode::Kern { amount, kind } => Node::Kern {
-            amount: *amount,
-            kind: *kind,
-        },
+        MathNode::Char { font, ch, .. } => Node::Char { font, ch },
+        MathNode::Kern { amount, kind } => Node::Kern { amount, kind },
         MathNode::Glue { spec, kind } => Node::Glue {
-            spec: stores.intern_glue(*spec),
-            kind: lower_math_glue_kind(*kind),
+            spec: stores.intern_glue(spec),
+            kind: lower_math_glue_kind(kind),
             leader: None,
         },
-        MathNode::Penalty(penalty) => Node::Penalty(*penalty),
+        MathNode::Penalty(penalty) => Node::Penalty(penalty),
         MathNode::Rule {
             width,
             height,
             depth,
         } => Node::Rule {
-            width: *width,
-            height: *height,
-            depth: *depth,
+            width,
+            height,
+            depth,
         },
         MathNode::HList(boxed) => Node::HList(lower_math_box(stores, boxed)),
         MathNode::VList(boxed) => Node::VList(lower_math_box(stores, boxed)),
-        MathNode::Opaque(node) => node.clone(),
+        MathNode::Opaque(node) => node,
     }
 }
 
-fn lower_math_box(stores: &mut Universe, boxed: &MathBox) -> BoxNode {
-    let lowered = lower_math_hlist(stores, &boxed.list);
+fn lower_math_box(stores: &mut Universe, boxed: MathBox) -> BoxNode {
+    let lowered = lower_math_hlist(stores, boxed.list);
     let children = stores.freeze_node_list(&lowered);
     BoxNode::new(BoxNodeFields {
         width: boxed.width,

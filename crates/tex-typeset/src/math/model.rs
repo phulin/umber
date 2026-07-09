@@ -80,6 +80,11 @@ pub(crate) fn hpack(list: FrozenHList) -> MathBox {
     }
 }
 
+pub(crate) fn hlist_extents(list: &FrozenHList) -> (Scaled, Scaled) {
+    let meas = measure_hlist(list);
+    (meas.height, meas.depth)
+}
+
 pub(crate) fn vpack(list: FrozenHList) -> MathBox {
     // AppG rule 18d
     let meas = measure_vlist(&list);

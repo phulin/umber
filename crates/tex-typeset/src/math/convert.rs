@@ -34,19 +34,20 @@ pub fn mlist_to_hlist(
         style,
         mu: math_unit(params, style),
     };
-    let mut work = Vec::new();
+    let input = state.nodes(input);
+    let mut work = Vec::with_capacity(input.len());
     let mut max_height = Scaled::from_raw(0);
     let mut max_depth = Scaled::from_raw(0);
     first_pass(
         &mut ctx,
-        state.nodes(input),
+        input,
         &mut work,
         &mut max_height,
         &mut max_depth,
         params,
     );
     convert_final_bin_to_ord(&mut work);
-    second_pass(&mut ctx, style, &work, penalties, max_height, max_depth)
+    second_pass(&mut ctx, style, work, penalties, max_height, max_depth)
 }
 
 #[derive(Clone, Debug)]
@@ -82,10 +83,16 @@ fn first_pass<S: MathTypesetState>(
     let mut r_type = Some(NoadClass::Op);
     let mut index = 0;
     while index < input.len() {
-        match input[index].clone() {
+        if matches!(
+            &input[index],
+            Node::MathNoad(noad) if matches!(noad.kind, NoadKind::Normal(NoadClass::Ord))
+        ) {
+            operators::make_ord(ctx, &mut input, index);
+        }
+        match &input[index] {
             Node::MathStyle(style) => {
                 // AppG rule 3
-                ctx.set_style(Style::from_math_style(style));
+                ctx.set_style(Style::from_math_style(*style));
                 out.push(WorkItem::Style(ctx.style));
             }
             Node::MathChoice(choice) => {
@@ -117,9 +124,9 @@ fn first_pass<S: MathTypesetState>(
                     index += 1;
                 }
                 let spec = if matches!(kind, tex_state::node::GlueKind::MuSkip) {
-                    spacing::math_glue(ctx.state.glue(spec), ctx.mu)
+                    spacing::math_glue(ctx.state.glue(*spec), ctx.mu)
                 } else {
-                    ctx.state.glue(spec)
+                    ctx.state.glue(*spec)
                 };
                 out.push(WorkItem::Node(MathNode::Glue {
                     spec,
@@ -136,14 +143,14 @@ fn first_pass<S: MathTypesetState>(
                 // AppG rule 2
                 out.push(WorkItem::Node(MathNode::Kern {
                     amount: if matches!(kind, KernKind::Mu) {
-                        spacing::math_kern(amount, ctx.mu)
+                        spacing::math_kern(*amount, ctx.mu)
                     } else {
-                        amount
+                        *amount
                     },
                     kind: if matches!(kind, KernKind::Mu) {
                         KernKind::Explicit
                     } else {
-                        kind
+                        *kind
                     },
                 }));
             }
@@ -166,14 +173,7 @@ fn first_pass<S: MathTypesetState>(
                 out.push(WorkItem::Delimiter(WorkDelimiter { class, delimiter }));
             }
             Node::MathNoad(noad) => {
-                if matches!(noad.kind, NoadKind::Normal(NoadClass::Ord)) {
-                    operators::make_ord(ctx, &mut input, index);
-                }
-                let Node::MathNoad(noad) = input[index].clone() else {
-                    index += 1;
-                    continue;
-                };
-                let mut class = noad_class(&noad);
+                let mut class = noad_class(noad);
                 if class == NoadClass::Bin
                     && matches!(
                         r_type,
@@ -194,19 +194,19 @@ fn first_pass<S: MathTypesetState>(
                     convert_final_bin_to_ord(out);
                 }
                 // AppG rule 7: Open and Inner atoms fall through unchanged to Rule 17.
-                let work = translate_noad(ctx, &noad, class, params);
-                let packed = hpack(work.hlist.clone());
-                *max_height = (*max_height).max(packed.height);
-                *max_depth = (*max_depth).max(packed.depth);
+                let work = translate_noad(ctx, noad, class, params);
+                let (height, depth) = super::hlist_extents(&work.hlist);
+                *max_height = (*max_height).max(height);
+                *max_depth = (*max_depth).max(depth);
                 r_type = Some(work.class);
                 out.push(WorkItem::Noad(work));
             }
             Node::FractionNoad(fraction) => {
                 // AppG rule 15
-                let hlist = fractions::make_fraction(ctx, &fraction);
-                let packed = hpack(hlist.clone());
-                *max_height = (*max_height).max(packed.height);
-                *max_depth = (*max_depth).max(packed.depth);
+                let hlist = fractions::make_fraction(ctx, fraction);
+                let (height, depth) = super::hlist_extents(&hlist);
+                *max_height = (*max_height).max(height);
+                *max_depth = (*max_depth).max(depth);
                 r_type = Some(NoadClass::Ord);
                 out.push(WorkItem::Noad(WorkNoad {
                     class: NoadClass::Ord,
@@ -216,7 +216,7 @@ fn first_pass<S: MathTypesetState>(
             }
             other => {
                 // AppG rule 1
-                out.push(WorkItem::Node(source_node(ctx.state, &other)));
+                out.push(WorkItem::Node(source_node(ctx.state, other)));
             }
         }
         index += 1;
@@ -295,19 +295,22 @@ fn translate_noad<S: MathTypesetState>(
 fn second_pass<S: MathTypesetState>(
     ctx: &mut Context<'_, S>,
     base_style: Style,
-    work: &[WorkItem],
+    work: Vec<WorkItem>,
     penalties: bool,
     max_height: Scaled,
     max_depth: Scaled,
 ) -> FrozenHList {
     // AppG rule 20
-    let mut output = FrozenHList::default();
+    let mut output = FrozenHList {
+        nodes: Vec::with_capacity(work.len().saturating_mul(2)),
+    };
     let mut previous = None;
-    for (index, item) in work.iter().enumerate() {
+    let mut work = work.into_iter().peekable();
+    while let Some(item) = work.next() {
         match item {
-            WorkItem::Style(style) => ctx.set_style(*style),
-            WorkItem::Node(node) => output.nodes.push(node.clone()),
-            WorkItem::Noad(noad) => {
+            WorkItem::Style(style) => ctx.set_style(style),
+            WorkItem::Node(node) => output.nodes.push(node),
+            WorkItem::Noad(mut noad) => {
                 if let Some(left) = previous
                     && let spacing = spacing::inter_noad_spacing(left, noad.class, ctx.style)
                     && let Some(spec) = spacing::spacing_glue(spacing, ctx.params, ctx.mu)
@@ -317,10 +320,10 @@ fn second_pass<S: MathTypesetState>(
                         kind: math_glue_kind_for_spacing(spacing),
                     });
                 }
-                output.nodes.extend(noad.hlist.nodes.iter().cloned());
+                output.nodes.append(&mut noad.hlist.nodes);
                 if penalties
                     && noad.penalty < INF_PENALTY
-                    && work.get(index + 1).is_some_and(|next| {
+                    && work.peek().is_some_and(|next| {
                         !matches!(next, WorkItem::Node(MathNode::Penalty(_)))
                             && !matches!(
                                 next,

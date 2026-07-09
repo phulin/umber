@@ -29,7 +29,7 @@ pub(crate) use convert::{
 };
 pub use delimiters::{left_right_delimiter_target, var_delimiter};
 pub use model::{BoxAxis, FrozenHList, MathBox, MathGlueKind, MathNode};
-pub(crate) use model::{boxed_node, hpack, node_is_char, vpack};
+pub(crate) use model::{boxed_node, hlist_extents, hpack, node_is_char, vpack};
 pub use params::{ExtensionParams, MathParamState, MathParams, SizeParams, SymbolParams};
 pub use spacing::{SpacingKind, inter_noad_spacing, math_glue, math_kern};
 pub use style::{Style, StyleFamily};

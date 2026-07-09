@@ -161,12 +161,13 @@ fn fraction_vlist(
     let width = numerator.width;
     let height = add(shift_up, numerator.height);
     let depth = add(denominator.depth, shift_down);
+    let numerator_depth = numerator.depth;
     let nodes = if thickness.raw() == 0 {
         vec![
-            MathNode::HList(numerator.clone()),
+            MathNode::HList(numerator),
             MathNode::Kern {
                 amount: sub(
-                    sub(shift_up, numerator.depth),
+                    sub(shift_up, numerator_depth),
                     sub(denominator.height, shift_down),
                 ),
                 kind: KernKind::Explicit,
@@ -176,9 +177,9 @@ fn fraction_vlist(
     } else {
         let delta = Scaled::from_raw(tex_arith::half(thickness.raw()));
         vec![
-            MathNode::HList(numerator.clone()),
+            MathNode::HList(numerator),
             MathNode::Kern {
-                amount: sub(sub(shift_up, numerator.depth), add(axis_height, delta)),
+                amount: sub(sub(shift_up, numerator_depth), add(axis_height, delta)),
                 kind: KernKind::Explicit,
             },
             MathNode::Rule {

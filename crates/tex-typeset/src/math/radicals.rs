@@ -46,22 +46,24 @@ pub(super) fn make_under(
         .extension
         .default_rule_thickness;
     let base = clean_box(ctx.state, nucleus, ctx.style, ctx.params);
+    let base_height = base.height;
+    let base_width = base.width;
     let mut under = vpack(FrozenHList {
         nodes: vec![
-            MathNode::HList(base.clone()),
+            MathNode::HList(base),
             MathNode::Kern {
                 amount: Scaled::from_raw(3 * thickness.raw()),
                 kind: KernKind::Explicit,
             },
             MathNode::Rule {
-                width: Some(base.width),
+                width: Some(base_width),
                 height: Some(thickness),
                 depth: Some(Scaled::from_raw(0)),
             },
         ],
     });
     let delta = add(add(under.height, under.depth), thickness);
-    under.height = base.height;
+    under.height = base_height;
     under.depth = sub(delta, under.height);
     FrozenHList {
         nodes: vec![boxed_node(under)],
@@ -108,12 +110,16 @@ fn clean_vcenter_box(ctx: &Context<'_, impl MathTypesetState>, nucleus: &MathFie
     clean_box(ctx.state, nucleus, ctx.style, ctx.params)
 }
 
-fn unwrap_single_vlist(boxed: MathBox) -> MathBox {
+fn unwrap_single_vlist(mut boxed: MathBox) -> MathBox {
     if boxed.axis == BoxAxis::Horizontal
         && boxed.shift.raw() == 0
-        && let [MathNode::VList(inner)] = boxed.list.nodes.as_slice()
+        && boxed.list.nodes.len() == 1
+        && matches!(boxed.list.nodes.first(), Some(MathNode::VList(_)))
     {
-        return inner.clone();
+        let Some(MathNode::VList(inner)) = boxed.list.nodes.pop() else {
+            unreachable!("single vlist checked above")
+        };
+        return inner;
     }
     boxed
 }
@@ -230,6 +236,7 @@ pub(super) fn make_math_accent(
     );
     accent_box.width = Scaled::from_raw(0);
 
+    let accentee_width = accentee.width;
     let mut packed = vpack(FrozenHList {
         nodes: vec![
             MathNode::HList(accent_box),
@@ -237,10 +244,10 @@ pub(super) fn make_math_accent(
                 amount: Scaled::from_raw(-delta.raw()),
                 kind: KernKind::Accent,
             },
-            MathNode::HList(accentee.clone()),
+            MathNode::HList(accentee),
         ],
     });
-    packed.width = accentee.width;
+    packed.width = accentee_width;
     if packed.height < accentee_height {
         packed.list.nodes.insert(
             0,

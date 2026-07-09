@@ -6,8 +6,8 @@ use tex_state::scaled::Scaled;
 use super::params::MathParams;
 use super::style::Style;
 use super::{
-    FrozenHList, MathBox, MathNode, MathTypesetState, boxed_node, clean_box, hpack, node_is_char,
-    vpack,
+    FrozenHList, MathBox, MathNode, MathTypesetState, boxed_node, clean_box, hlist_extents,
+    node_is_char, vpack,
 };
 
 pub fn make_scripts(
@@ -24,7 +24,7 @@ pub fn make_scripts(
     let (mut shift_up, mut shift_down) = if base.nodes.first().is_some_and(node_is_char) {
         (Scaled::from_raw(0), Scaled::from_raw(0))
     } else {
-        let z = hpack(base.clone());
+        let (height, depth) = hlist_extents(base);
         let t = if style.is_script_or_smaller() {
             tex_state::math::MathFontSize::ScriptScript
         } else {
@@ -32,8 +32,8 @@ pub fn make_scripts(
         };
         let t_params = params.for_size(t).symbols;
         (
-            sub(z.height, t_params.sup_drop),
-            add(z.depth, t_params.sub_drop),
+            sub(height, t_params.sup_drop),
+            add(depth, t_params.sub_drop),
         )
     };
 

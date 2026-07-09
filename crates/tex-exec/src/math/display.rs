@@ -65,7 +65,7 @@ where
     // AppG rule 22
     let params = MathParams::read(stores);
     let display_hlist = mlist_to_hlist(stores, display_content, Style::DISPLAY, false, &params);
-    let display_nodes = lower_math_hlist(stores, &display_hlist);
+    let display_nodes = lower_math_hlist(stores, display_hlist);
     let shrink = hlist_shrink(stores, &display_nodes);
     let display_list = stores.freeze_node_list(&display_nodes);
     let mut display_box = hpack_nodes(
@@ -80,7 +80,7 @@ where
 
     let mut eq_box = eq_no_content.map(|content| {
         let eq_hlist = mlist_to_hlist(stores, content, Style::TEXT, false, &params);
-        let eq_nodes = lower_math_hlist(stores, &eq_hlist);
+        let eq_nodes = lower_math_hlist(stores, eq_hlist);
         let eq_list = stores.freeze_node_list(&eq_nodes);
         let mut node = hpack_nodes(stores, eq_list, PackSpec::Natural, hpack_params(stores)).node;
         node.display = true;
