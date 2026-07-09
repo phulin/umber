@@ -247,6 +247,9 @@ fn init_row(align_level: usize, nest: &mut ModeNest) -> Result<(), ExecError> {
     let first_tabskip = align_state(nest, align_level)?.tabskip_for_boundary(0);
     align_state_mut(nest, align_level)?.start_row();
     nest.push(row_mode(kind));
+    if kind == AlignmentKind::HAlign {
+        nest.current_list_mut().set_space_factor(0);
+    }
     nest.current_list_mut().push(Node::Glue {
         spec: first_tabskip,
         kind: GlueKind::TabSkip,
@@ -306,6 +309,11 @@ fn fin_row(
     let nodes = row_level.list().nodes().to_vec();
     let children = stores.freeze_node_list(&nodes);
     let row = make_unset_node(stores, children, row_unset_kind(kind), 1);
+    if kind == AlignmentKind::HAlign
+        && let Node::Unset(unset) = &row
+    {
+        nest.current_list_mut().set_prev_depth(unset.depth);
+    }
     nest.current_list_mut().push(row);
     align_state_mut(nest, align_level)?.finish_row();
     Ok(())
@@ -336,7 +344,12 @@ where
     H: ExpansionHooks<S>,
 {
     let kind = align_kind(nest, align_level)?;
+    stores.enter_group_with_kind(tex_state::GroupKind::Simple);
     nest.push(cell_mode(kind));
+    if kind == AlignmentKind::VAlign {
+        nest.current_list_mut()
+            .set_prev_depth(crate::mode::IGNORE_DEPTH);
+    }
     let mut column = start.column;
     let mut span_count = 1u16;
     let mut first_token = start.first_token;
@@ -404,6 +417,7 @@ where
             CellTerminator::AlignmentTab | CellTerminator::Cr => {
                 let next_column = column + 1;
                 package_cell(align_level, kind, span_count, next_column, nest, stores)?;
+                leave_group(input, stores, tex_state::GroupKind::Simple)?;
                 align_state_mut(nest, align_level)?.finish_cell(next_column);
                 return Ok(CellResult {
                     next_column,
@@ -422,6 +436,9 @@ fn package_cell(
     nest: &mut ModeNest,
     stores: &mut Universe,
 ) -> Result<(), ExecError> {
+    if kind == AlignmentKind::VAlign && nest.current_mode() == Mode::Horizontal {
+        crate::assignments::end_paragraph(nest, stores)?;
+    }
     flush_pending_hchars(nest, stores)?;
     let cell_level = nest.pop()?;
     let nodes = if kind == AlignmentKind::HAlign {

@@ -150,6 +150,11 @@ impl ModeList {
         }
     }
 
+    #[must_use]
+    pub const fn raw_space_factor(&self) -> i32 {
+        self.space_factor
+    }
+
     pub fn set_space_factor(&mut self, value: i32) {
         self.space_factor = value;
     }
@@ -574,7 +579,11 @@ impl ModeNest {
     }
 
     pub fn push(&mut self, mode: Mode) {
-        self.levels.push(ModeLevelSummary::new(mode));
+        let mut level = ModeLevelSummary::new(mode);
+        if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal) {
+            level.list_mut().set_space_factor(1000);
+        }
+        self.levels.push(level);
     }
 
     pub fn pop(&mut self) -> Result<ModeLevelSummary, ExecError> {

@@ -120,7 +120,7 @@ fn append_indent_box(nest: &mut ModeNest, stores: &mut Universe) -> Result<(), E
     Ok(())
 }
 
-pub(super) fn end_paragraph(nest: &mut ModeNest, stores: &mut Universe) -> Result<(), ExecError> {
+pub(crate) fn end_paragraph(nest: &mut ModeNest, stores: &mut Universe) -> Result<(), ExecError> {
     if !matches!(nest.current_mode(), Mode::Horizontal) {
         return Ok(());
     }

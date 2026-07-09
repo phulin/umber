@@ -166,7 +166,7 @@ pub(crate) fn execute_showlists(stores: &mut Universe, nest: &ModeNest) {
             }
             Mode::Horizontal | Mode::RestrictedHorizontal => {
                 text.push_str("spacefactor ");
-                text.push_str(&level.list().space_factor().to_string());
+                text.push_str(&level.list().raw_space_factor().to_string());
                 text.push('\n');
             }
             Mode::Math | Mode::DisplayMath => {}

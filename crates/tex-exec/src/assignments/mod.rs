@@ -46,7 +46,8 @@ use hyphenation::*;
 use macros::*;
 use paragraph::*;
 pub(crate) use paragraph::{
-    display_line_dimensions, ensure_horizontal_for_character, interrupt_paragraph_for_display,
+    display_line_dimensions, end_paragraph, ensure_horizontal_for_character,
+    interrupt_paragraph_for_display,
 };
 pub use primitives::install_unexpandable_primitives;
 use scanning::*;

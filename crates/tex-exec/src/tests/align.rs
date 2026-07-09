@@ -76,12 +76,34 @@ fn box_zero_vlist(stores: &Universe) -> &BoxNode {
     vbox
 }
 
+fn box_zero_hlist(stores: &Universe) -> &BoxNode {
+    let root = stores.box_reg(0).expect("box0 should be assigned");
+    let [Node::HList(hbox)] = stores.nodes(root) else {
+        panic!(
+            "expected box0 to contain one hbox, got {:?}",
+            stores.nodes(root)
+        );
+    };
+    hbox
+}
+
 fn vlist_rows<'a>(stores: &'a Universe, vbox: &'a BoxNode) -> Vec<&'a BoxNode> {
     stores
         .nodes(vbox.children)
         .iter()
         .filter_map(|node| match node {
             Node::HList(row) => Some(row),
+            _ => None,
+        })
+        .collect()
+}
+
+fn hlist_vboxes<'a>(stores: &'a Universe, hbox: &'a BoxNode) -> Vec<&'a BoxNode> {
+    stores
+        .nodes(hbox.children)
+        .iter()
+        .filter_map(|node| match node {
+            Node::VList(vbox) => Some(vbox),
             _ => None,
         })
         .collect()
@@ -396,6 +418,22 @@ fn omit_span_chain_merges_template_free_cells() {
 }
 
 #[test]
+fn span_template_side_effects_are_local_to_alignment_entry() {
+    let stores = run_boxed_alignment_source(
+        "\\count2=48 \\def\\m{\\char\\count2 \\advance\\count2 by1 }\
+         \\halign{#&\\m#&\\m#\\cr A\\span B\\span C\\cr D&E&F\\cr}",
+    );
+    let vbox = box_zero_vlist(&stores);
+    let rows = vlist_rows(&stores, vbox);
+    let first = row_cells(&stores, rows[0]);
+    let second = row_cells(&stores, rows[1]);
+
+    assert_eq!(cell_text(&stores, first[0]), "A0B1C");
+    assert_eq!(cell_text(&stores, second[1]), "0E");
+    assert_eq!(cell_text(&stores, second[2]), "0F");
+}
+
+#[test]
 fn noalign_material_is_spliced_between_finished_rows() {
     let stores =
         run_boxed_alignment_source("\\halign{#\\cr a\\cr\\noalign{\\hrule height2pt}b\\cr}");
@@ -480,6 +518,23 @@ fn nested_alignment_executes_inside_cell() {
             .any(|node| matches!(node, Node::HList(_)))
     );
     assert_no_unset(&stores, stores.nodes(vbox.children));
+}
+
+#[test]
+fn valign_finishes_paragraph_cells_before_packaging() {
+    let stores = run_alignment_source("\\setbox0=\\hbox{\\valign{#\\cr a\\cr b\\cr}}");
+    let hbox = box_zero_hlist(&stores);
+    let columns = hlist_vboxes(&stores, hbox);
+
+    assert_eq!(columns.len(), 2);
+    assert_eq!(columns[0].height, columns[1].height);
+    assert!(
+        stores
+            .nodes(columns[0].children)
+            .iter()
+            .any(|node| matches!(node, Node::VList(_)))
+    );
+    assert_no_unset(&stores, stores.nodes(hbox.children));
 }
 
 #[test]

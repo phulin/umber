@@ -225,11 +225,17 @@ fn set_alignment_nodes(
     for node in rows {
         match node {
             Node::Unset(row) => {
-                if let Some(previous_depth) = previous_row_depth {
+                if config.kind == AlignmentKind::HAlign
+                    && let Some(previous_depth) = previous_row_depth
+                {
                     out.push(baseline_glue(previous_depth, row.height, stores)?);
                 }
                 let set = set_row(config, row, stores)?;
-                previous_row_depth = row_depth(&set);
+                previous_row_depth = if config.kind == AlignmentKind::HAlign {
+                    row_depth(&set)
+                } else {
+                    None
+                };
                 out.push(set);
             }
             _ => {
