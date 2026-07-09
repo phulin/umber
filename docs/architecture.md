@@ -64,10 +64,11 @@ Two flows to keep distinct when reading this document:
   barrier. The pipeline stages hold **no hidden semantic state of their own**
   beyond what the snapshot tuple captures (input stack summary, mode nest,
   stream buffers — see `core_state.md` §9). In the current recursive
-  interpreter, snapshots are resume-valid at explicit engine quiescence
-  boundaries such as shipout/page checkpoints and top-level driver resumes;
-  continuations inside nested stomach scanners remain Rust-stack state until
-  a future incremental executor defines serialized continuation points.
+  interpreter, snapshots are resume-valid only at explicit engine quiescence
+  boundaries. Checkpoints taken while a nested stomach scanner is active are
+  hash-only: they advance convergence hashing, but their metadata points
+  execution resume back to the previous resume-valid boundary until a future
+  incremental executor defines serialized continuation points.
 
 ## 2. Crate map
 
@@ -433,7 +434,13 @@ assignments, box building, and dispatch into the typesetting kernels.
 - The stomach is the *only* pipeline stage holding `&mut Universe`, and it
   holds it as a plain argument — re-entrancy (e.g. `\output` routines,
   `\vsplit`-triggered mark extraction) is recursion in Rust, with the mode
-  nest making it explicit and snapshot-summarizable.
+  nest making it explicit and snapshot-summarizable. Recursive stomach
+  scanners whose continuation phase is not serialized must bracket their work
+  as hash-only checkpoint scopes. The current implementation does this for
+  box-group scanning, alignment row/cell execution, `\noalign` groups, and
+  alignment template replay; snapshots inside those scopes remain rollback
+  and hash checkpoints, but drivers must resume from the previous
+  resume-valid boundary and replay forward.
 - The implemented `tex-exec` scaffold owns that explicit mode nest now. Its
   summary is a vector of mode levels, each carrying one of TeX's six modes
   (vertical/internal vertical, horizontal/restricted horizontal, math/display
@@ -536,10 +543,10 @@ makes box-level memoization (M4) sound.
   `tex-exec::align`; downstream page building, diagnostics, and shipout operate
   only on set boxes. Mid-alignment `AlignState` and unset rows/cells are part
   of the mode-list summary and rollback-covered node data, but the current
-  interpreter does not promise restartable resume from an arbitrary alignment
-  call-stack frame; incremental drivers should roll back to the nearest
-  resume-valid boundary before the alignment until resumable continuations are
-  designed explicitly.
+  interpreter marks checkpoints taken inside alignment execution as hash-only.
+  Incremental drivers should use those hashes for convergence, then roll back
+  to the recorded resume-valid boundary before the alignment and replay
+  forward until resumable continuations are designed explicitly.
 - **Vertical packing, `\vsplit`, marks**: operate on survivor-arena lists
   (they are reachable from box registers by definition); mark extraction
   reads are recorded like any state read. `\vsplit` clones the source vbox
@@ -727,6 +734,10 @@ degenerate case (run once, commit every page, never look back).
   content handles are followed to token/glue/node/macro contents, control
   sequences are keyed by name, and checkpoint hashes are combined from the
   previous checkpoint plus the current semantic slice.
+  A matching checkpoint is directly restartable only when its metadata says
+  it is resume-valid. A hash-only checkpoint can still prove convergence, but
+  any execution resume must fall back to the checkpoint's recorded
+  resume-valid boundary and replay the intervening nested continuation.
 - **Memoization**: keyed by (input span or token-list id, read-set epochs,
   code-table generations); value = (journal redo slice, effect slice,
   artifact ids). First target is box/paragraph-level (M4). The memo store

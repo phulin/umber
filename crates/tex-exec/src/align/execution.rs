@@ -27,33 +27,36 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    let alignment_kind = state.kind();
-    nest.push(alignment_mode(alignment_kind));
-    let align_level = nest.depth() - 1;
-    nest.current_list_mut().set_align_state(state);
-    replay_everycr(input, stores);
-
-    while let Some(first_token) = align_peek(align_level, nest, input, stores, recorder, hooks)? {
-        init_row(align_level, nest)?;
-        execute_row(
-            align_level,
-            first_token,
-            nest,
-            input,
-            stores,
-            recorder,
-            hooks,
-        )?;
-        fin_row(align_level, nest, stores)?;
+    stores.with_hash_only_checkpoints(|stores| {
+        let alignment_kind = state.kind();
+        nest.push(alignment_mode(alignment_kind));
+        let align_level = nest.depth() - 1;
+        nest.current_list_mut().set_align_state(state);
         replay_everycr(input, stores);
-    }
 
-    let finished = finish_alignment_level(nest, stores)?;
-    for node in finished {
-        append_finished_alignment_node(nest, stores, node);
-    }
-    build_page_if_outer_vertical(nest, stores)?;
-    Ok(())
+        while let Some(first_token) = align_peek(align_level, nest, input, stores, recorder, hooks)?
+        {
+            init_row(align_level, nest)?;
+            execute_row(
+                align_level,
+                first_token,
+                nest,
+                input,
+                stores,
+                recorder,
+                hooks,
+            )?;
+            fin_row(align_level, nest, stores)?;
+            replay_everycr(input, stores);
+        }
+
+        let finished = finish_alignment_level(nest, stores)?;
+        for node in finished {
+            append_finished_alignment_node(nest, stores, node);
+        }
+        build_page_if_outer_vertical(nest, stores)?;
+        Ok(())
+    })
 }
 
 fn append_finished_alignment_node(nest: &mut ModeNest, stores: &mut Universe, node: Node) {
@@ -90,28 +93,31 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    let alignment_kind = state.kind();
-    nest.push(alignment_mode(alignment_kind));
-    let align_level = nest.depth() - 1;
-    nest.current_list_mut().set_align_state(state);
-    replay_everycr(input, stores);
-
-    while let Some(first_token) = align_peek(align_level, nest, input, stores, recorder, hooks)? {
-        init_row(align_level, nest)?;
-        execute_row(
-            align_level,
-            first_token,
-            nest,
-            input,
-            stores,
-            recorder,
-            hooks,
-        )?;
-        fin_row(align_level, nest, stores)?;
+    stores.with_hash_only_checkpoints(|stores| {
+        let alignment_kind = state.kind();
+        nest.push(alignment_mode(alignment_kind));
+        let align_level = nest.depth() - 1;
+        nest.current_list_mut().set_align_state(state);
         replay_everycr(input, stores);
-    }
 
-    finish_alignment_level(nest, stores)
+        while let Some(first_token) = align_peek(align_level, nest, input, stores, recorder, hooks)?
+        {
+            init_row(align_level, nest)?;
+            execute_row(
+                align_level,
+                first_token,
+                nest,
+                input,
+                stores,
+                recorder,
+                hooks,
+            )?;
+            fin_row(align_level, nest, stores)?;
+            replay_everycr(input, stores);
+        }
+
+        finish_alignment_level(nest, stores)
+    })
 }
 
 fn finish_alignment_level(
@@ -185,24 +191,26 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    let opener = next_non_space_x(input, stores, hooks)?.ok_or(ExecError::MissingToken {
-        context: "\\noalign group",
-    })?;
-    if !is_begin_group(stores, opener) {
-        report_missing_left_brace_inserted(stores);
-        push_tokens(input, stores, [opener]);
-    }
-    stores.enter_group_with_kind(tex_state::GroupKind::Simple);
-    nest.push(Mode::InternalVertical);
-    scan_noalign_group(nest, input, stores, recorder, hooks)?;
-    let level = nest.pop()?;
-    let nodes = level.list().nodes().to_vec();
-    leave_group(input, stores, tex_state::GroupKind::Simple)?;
-    let align_list = nest.list_mut(align_level).ok_or(ExecError::MissingToken {
-        context: "alignment state",
-    })?;
-    align_list.append(nodes);
-    Ok(())
+    stores.with_hash_only_checkpoints(|stores| {
+        let opener = next_non_space_x(input, stores, hooks)?.ok_or(ExecError::MissingToken {
+            context: "\\noalign group",
+        })?;
+        if !is_begin_group(stores, opener) {
+            report_missing_left_brace_inserted(stores);
+            push_tokens(input, stores, [opener]);
+        }
+        stores.enter_group_with_kind(tex_state::GroupKind::Simple);
+        nest.push(Mode::InternalVertical);
+        scan_noalign_group(nest, input, stores, recorder, hooks)?;
+        let level = nest.pop()?;
+        let nodes = level.list().nodes().to_vec();
+        leave_group(input, stores, tex_state::GroupKind::Simple)?;
+        let align_list = nest.list_mut(align_level).ok_or(ExecError::MissingToken {
+            context: "alignment state",
+        })?;
+        align_list.append(nodes);
+        Ok(())
+    })
 }
 
 fn scan_noalign_group<S, R, H>(
@@ -471,17 +479,19 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    if stores.tokens(template).is_empty() {
-        return Ok(());
-    }
-    input.push_token_list(template, TokenListReplayKind::Inserted);
-    let mut stats = ExecutionStats::default();
-    loop {
-        if template_finished(input, stores, template, sentinel) {
+    stores.with_hash_only_checkpoints(|stores| {
+        if stores.tokens(template).is_empty() {
             return Ok(());
         }
-        run_one_main_control_token(nest, input, stores, recorder, hooks, &mut stats)?;
-    }
+        input.push_token_list(template, TokenListReplayKind::Inserted);
+        let mut stats = ExecutionStats::default();
+        loop {
+            if template_finished(input, stores, template, sentinel) {
+                return Ok(());
+            }
+            run_one_main_control_token(nest, input, stores, recorder, hooks, &mut stats)?;
+        }
+    })
 }
 
 fn expand_spanned_column_template_at_span_time<S, R, H>(

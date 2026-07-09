@@ -609,40 +609,42 @@ where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    let mut brace_depth = 1usize;
-    loop {
-        crate::executor::sync_engine_state::<S, _>(hooks, nest, stores);
-        let token = {
-            let mut recorder = NoopRecorder;
-            get_x_token_with_recorder_and_hooks(input, stores, &mut recorder, hooks)?
-        }
-        .ok_or(ExecError::MissingToken {
-            context: "box closing brace",
-        })?;
-        let math_mode = matches!(nest.current_mode(), Mode::Math | Mode::DisplayMath);
-        if !math_mode && is_begin_group(token) {
-            brace_depth += 1;
-        }
-        if !math_mode && is_end_group(token) {
-            brace_depth -= 1;
-            if brace_depth == 0 {
-                flush_pending_hchars(nest, stores)?;
-                return Ok(());
+    stores.with_hash_only_checkpoints(|stores| {
+        let mut brace_depth = 1usize;
+        loop {
+            crate::executor::sync_engine_state::<S, _>(hooks, nest, stores);
+            let token = {
+                let mut recorder = NoopRecorder;
+                get_x_token_with_recorder_and_hooks(input, stores, &mut recorder, hooks)?
+            }
+            .ok_or(ExecError::MissingToken {
+                context: "box closing brace",
+            })?;
+            let math_mode = matches!(nest.current_mode(), Mode::Math | Mode::DisplayMath);
+            if !math_mode && is_begin_group(token) {
+                brace_depth += 1;
+            }
+            if !math_mode && is_end_group(token) {
+                brace_depth -= 1;
+                if brace_depth == 0 {
+                    flush_pending_hchars(nest, stores)?;
+                    return Ok(());
+                }
+            }
+            match crate::dispatch_delivered_token(nest, token, input, stores, hooks)? {
+                crate::DispatchAction::Continue => {}
+                crate::DispatchAction::Shipout(_) => {}
+                crate::DispatchAction::End => return Ok(()),
+                crate::DispatchAction::NotConsumed => {
+                    return Err(ExecError::UnimplementedTypesetting {
+                        mode: nest.current_mode(),
+                        token,
+                        operation: "box content",
+                    });
+                }
             }
         }
-        match crate::dispatch_delivered_token(nest, token, input, stores, hooks)? {
-            crate::DispatchAction::Continue => {}
-            crate::DispatchAction::Shipout(_) => {}
-            crate::DispatchAction::End => return Ok(()),
-            crate::DispatchAction::NotConsumed => {
-                return Err(ExecError::UnimplementedTypesetting {
-                    mode: nest.current_mode(),
-                    token,
-                    operation: "box content",
-                });
-            }
-        }
-    }
+    })
 }
 
 fn scan_pack_spec<S, H>(

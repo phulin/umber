@@ -70,6 +70,15 @@ supporting untracked mutation "for performance" anywhere, ever.
 A **snapshot is a tuple of positions and roots** into these stores — a few
 dozen words, O(1) to take (§7).
 
+Snapshots also carry checkpoint metadata for incremental consumers. A
+checkpoint may be **resume-valid**, meaning the executor was at a quiescent
+boundary with no hidden Rust-stack continuation, or **hash-only**, meaning
+the store/world tuple is valid for rollback and convergence hashing but not
+for direct execution restart. Hash-only checkpoints record the previous
+resume-valid checkpoint id/hash as their resume boundary; the driver must
+roll back to that boundary and replay forward rather than trying to restart
+inside the hidden continuation.
+
 ---
 
 ## 3. Identity: the interner
@@ -429,6 +438,9 @@ pub struct Snapshot {
     input_stack: InputSummary,     // lexer-owned state needed to resume the mouth
     page: PageBuilderState,        // current page, contributions, page scalars
     state_hash: u64,               // for convergence detection
+    checkpoint_id: CheckpointId,
+    resume_kind: ResumeValid | HashOnly,
+    resume_boundary: Option<ResumeBoundary>, // checkpoint id + state hash
 }
 ```
 
@@ -438,6 +450,14 @@ pub struct Snapshot {
   inside a TeX group are valid only while that enclosing group is still open;
   leaving the group truncates the journal below the checkpoint position and
   invalidates those snapshots instead of permitting partial rollback.
+- **Resume validity**: `Universe` distinguishes hash checkpoints from
+  restartable execution checkpoints. Top-level/quiescent checkpoints are
+  resume-valid. Checkpoints taken while the stomach is executing a nested
+  continuation whose phase still lives on the Rust call stack are hash-only:
+  they advance the semantic checkpoint hash, but their metadata points resume
+  to the previous resume-valid boundary. Alignment row/cell execution,
+  `\noalign` groups, template replay, and box-group scanning use this
+  conservative fallback until those continuations are serialized explicitly.
 - **Input restoration**: `InputSummary` carries the lexer-owned source-frame
   state required after a source is reopened: source-local offsets, current
   normalized line, in-line char/byte offsets, lexer N/M/S state, queued
@@ -477,7 +497,9 @@ pub struct Snapshot {
   uncommitted suffix and the committed backend stream state. History is
   bounded. The implemented boundary retargets hash cursors past dropped effect
   prefixes before checkpointing, so later shipout checkpoints never try to hash
-  already-committed effect records or released page-local nodes.
+  already-committed effect records or released page-local nodes. If shipout
+  occurs while a hash-only stomach continuation scope is active, this commit
+  checkpoint is also hash-only and records the previous resume-valid boundary.
 - **Convergence detection**: after re-executing from an edit, compare
   `state_hash` at each checkpoint with the prior run's hash at the same
   input position; on match, splice the old suffix and stop. `state_hash`

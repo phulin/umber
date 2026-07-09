@@ -37,8 +37,9 @@ pub use page::{
 };
 pub use stores::{FontParameterError, GroupKind, GroupMismatch, PrepareMagDiagnostic};
 pub use universe::{
-    BoxDimension, ExpansionContext, ExpansionState, InputOpenContext, InputOpenState,
-    InputReadState, InteractionMode, Snapshot, Universe,
+    BoxDimension, CheckpointId, CheckpointMetadata, CheckpointResumeKind, ExpansionContext,
+    ExpansionState, InputOpenContext, InputOpenState, InputReadState, InteractionMode,
+    ResumeBoundary, Snapshot, Universe,
 };
 pub use world::{
     ContentHash, EffectPos, EffectRecord, FileContent, InputRecord, JobClock, PrintSink,

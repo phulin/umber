@@ -5,6 +5,7 @@ use tex_state::ids::GlueId;
 use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::node::{BoxNode, GlueKind, Node, Sign, UnsetKind, UnsetNode, UnsetNodeFields};
 use tex_state::scaled::Scaled;
+use tex_state::{CheckpointMetadata, CheckpointResumeKind};
 
 fn scan_halign_preamble(source: &str) -> (Universe, AlignState) {
     let mut stores = Universe::new();
@@ -85,6 +86,39 @@ fn run_alignment_source_err(source: &str) -> ExecError {
 
 fn run_boxed_alignment_source(source: &str) -> Universe {
     run_alignment_source(&format!("\\setbox0=\\vbox{{{source}}}"))
+}
+
+fn run_nested_shipout_source(stores: &mut Universe, source: &str) -> CheckpointMetadata {
+    let mut input = InputStack::new(MemoryInput::new(format!("\\font\\f=cmr10 \\f {source}")));
+    let stats = Executor::new()
+        .run(&mut input, stores)
+        .expect("nested shipout source executes");
+    assert!(
+        stats.shipped_artifacts.is_empty(),
+        "nested shipout artifacts are intentionally not surfaced through top-level stats"
+    );
+    stores
+        .last_checkpoint()
+        .expect("nested shipout should create a checkpoint")
+}
+
+fn assert_nested_shipout_replays_from_resume_boundary(source: &str) {
+    let mut stores = support::stores_with_fonts();
+    let resume = stores.snapshot();
+    let resume_boundary = resume
+        .resume_boundary()
+        .expect("initial checkpoint should be resume-valid");
+
+    let first = run_nested_shipout_source(&mut stores, source);
+    assert_eq!(first.resume_kind(), CheckpointResumeKind::HashOnly);
+    assert_eq!(first.resume_boundary(), Some(resume_boundary));
+
+    stores.rollback(&resume);
+
+    let second = run_nested_shipout_source(&mut stores, source);
+    assert_eq!(second.resume_kind(), CheckpointResumeKind::HashOnly);
+    assert_eq!(second.resume_boundary(), Some(resume_boundary));
+    assert_eq!(second.state_hash(), first.state_hash());
 }
 
 fn box_zero_vlist(stores: &Universe) -> &BoxNode {
@@ -401,6 +435,20 @@ fn shipout_rejects_unset_alignment_nodes() {
     assert_eq!(
         err.to_string(),
         "shipout artifact lowering does not support unset alignment nodes yet"
+    );
+}
+
+#[test]
+fn box_group_shipout_checkpoint_is_hash_only_and_replays_from_boundary() {
+    assert_nested_shipout_replays_from_resume_boundary(
+        "\\setbox0=\\hbox{\\shipout\\hbox{A}B}\\end",
+    );
+}
+
+#[test]
+fn alignment_shipout_checkpoint_is_hash_only_and_replays_from_boundary() {
+    assert_nested_shipout_replays_from_resume_boundary(
+        "\\setbox0=\\vbox{\\halign{#\\cr \\shipout\\hbox{A}x\\cr}}\\end",
     );
 }
 

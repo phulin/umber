@@ -1,4 +1,4 @@
-use super::Universe;
+use super::{CheckpointResumeKind, Universe};
 use crate::font::NULL_FONT;
 use crate::glue::{GlueSpec, Order};
 use crate::macro_store::MacroMeaning;
@@ -36,6 +36,39 @@ fn rollback_restores_store_tuple_and_placeholder_scalars() {
     universe.rollback(&snapshot);
 
     assert_eq!(universe.meaning(symbol), Meaning::Undefined);
+}
+
+#[test]
+fn hash_only_checkpoint_records_previous_resume_boundary() {
+    let mut universe = Universe::new();
+    let symbol = universe.intern("x");
+    let resume = universe.snapshot();
+    let resume_boundary = resume
+        .resume_boundary()
+        .expect("resume-valid snapshot is its own resume boundary");
+
+    let hash_only = universe.with_hash_only_checkpoints(|universe| {
+        universe.set_meaning(symbol, Meaning::Relax);
+        universe.snapshot()
+    });
+
+    assert_eq!(resume.resume_kind(), CheckpointResumeKind::ResumeValid);
+    assert_eq!(hash_only.resume_kind(), CheckpointResumeKind::HashOnly);
+    assert_eq!(hash_only.resume_boundary(), Some(resume_boundary));
+    assert_eq!(
+        universe.last_checkpoint(),
+        Some(hash_only.checkpoint_metadata())
+    );
+
+    universe.rollback(&resume);
+
+    let replayed = universe.with_hash_only_checkpoints(|universe| {
+        universe.set_meaning(symbol, Meaning::Relax);
+        universe.snapshot()
+    });
+    assert_eq!(replayed.resume_kind(), CheckpointResumeKind::HashOnly);
+    assert_eq!(replayed.resume_boundary(), Some(resume_boundary));
+    assert_eq!(replayed.state_hash(), hash_only.state_hash());
 }
 
 #[test]

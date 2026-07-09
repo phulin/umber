@@ -173,6 +173,83 @@ pub struct Snapshot {
     page: PageBuilderState,
     state_hash: u64,
     state_hash_base: StateHashBase,
+    checkpoint_id: CheckpointId,
+    resume_kind: CheckpointResumeKind,
+    resume_boundary: Option<ResumeBoundary>,
+}
+
+/// Timeline-local identifier for one semantic checkpoint.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct CheckpointId(u64);
+
+/// Whether a checkpoint can be used as a direct execution resume point.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum CheckpointResumeKind {
+    /// The executor was at a quiescent boundary and can restart directly here.
+    ResumeValid,
+    /// The checkpoint is valid for convergence hashing, but execution must
+    /// resume from the recorded previous resume-valid boundary.
+    HashOnly,
+}
+
+/// The checkpoint a hash-only checkpoint should resume from.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct ResumeBoundary {
+    checkpoint_id: CheckpointId,
+    state_hash: u64,
+}
+
+impl ResumeBoundary {
+    /// Returns the timeline-local checkpoint id for this resume boundary.
+    #[must_use]
+    pub const fn checkpoint_id(self) -> CheckpointId {
+        self.checkpoint_id
+    }
+
+    /// Returns the semantic state hash captured at this resume boundary.
+    #[must_use]
+    pub const fn state_hash(self) -> u64 {
+        self.state_hash
+    }
+}
+
+/// Public metadata for the most recent semantic checkpoint.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct CheckpointMetadata {
+    checkpoint_id: CheckpointId,
+    state_hash: u64,
+    resume_kind: CheckpointResumeKind,
+    resume_boundary: Option<ResumeBoundary>,
+}
+
+impl CheckpointMetadata {
+    /// Returns the timeline-local checkpoint id.
+    #[must_use]
+    pub const fn checkpoint_id(self) -> CheckpointId {
+        self.checkpoint_id
+    }
+
+    /// Returns the semantic state hash captured at this checkpoint.
+    #[must_use]
+    pub const fn state_hash(self) -> u64 {
+        self.state_hash
+    }
+
+    /// Returns whether this checkpoint can be resumed directly.
+    #[must_use]
+    pub const fn resume_kind(self) -> CheckpointResumeKind {
+        self.resume_kind
+    }
+
+    /// Returns the resume-valid boundary to use for execution resume.
+    ///
+    /// For a resume-valid checkpoint this is the checkpoint itself. For a
+    /// hash-only checkpoint this is the previous resume-valid boundary, when
+    /// one has been established on the current timeline.
+    #[must_use]
+    pub const fn resume_boundary(self) -> Option<ResumeBoundary> {
+        self.resume_boundary
+    }
 }
 
 /// Opaque state mark for one in-progress shipout operation.
@@ -201,6 +278,44 @@ impl Snapshot {
     #[must_use]
     pub const fn state_hash(&self) -> u64 {
         self.state_hash
+    }
+
+    /// Returns this checkpoint's timeline-local id.
+    #[must_use]
+    pub const fn checkpoint_id(&self) -> CheckpointId {
+        self.checkpoint_id
+    }
+
+    /// Returns whether this checkpoint can be resumed directly.
+    #[must_use]
+    pub const fn resume_kind(&self) -> CheckpointResumeKind {
+        self.resume_kind
+    }
+
+    /// Returns true when the executor can restart directly from this snapshot.
+    #[must_use]
+    pub const fn is_resume_valid(&self) -> bool {
+        matches!(self.resume_kind, CheckpointResumeKind::ResumeValid)
+    }
+
+    /// Returns the resume-valid boundary to use for execution resume.
+    ///
+    /// Hash-only checkpoints are still valid rollback/hash checkpoints, but
+    /// callers that need to restart execution must resume from this boundary.
+    #[must_use]
+    pub const fn resume_boundary(&self) -> Option<ResumeBoundary> {
+        self.resume_boundary
+    }
+
+    /// Returns the public metadata for this checkpoint.
+    #[must_use]
+    pub const fn checkpoint_metadata(&self) -> CheckpointMetadata {
+        CheckpointMetadata {
+            checkpoint_id: self.checkpoint_id,
+            state_hash: self.state_hash,
+            resume_kind: self.resume_kind,
+            resume_boundary: self.resume_boundary,
+        }
     }
 }
 
@@ -272,6 +387,10 @@ pub struct Universe {
     input_summary: InputSummary,
     page: PageBuilderState,
     state_hash_base: StateHashBase,
+    next_checkpoint_id: u64,
+    hash_only_checkpoint_depth: u32,
+    last_resume_boundary: Option<ResumeBoundary>,
+    last_checkpoint: Option<CheckpointMetadata>,
 }
 
 impl Clone for Universe {
@@ -293,6 +412,10 @@ impl Clone for Universe {
             input_summary: self.input_summary.clone(),
             page: self.page.clone(),
             state_hash_base,
+            next_checkpoint_id: self.next_checkpoint_id,
+            hash_only_checkpoint_depth: self.hash_only_checkpoint_depth,
+            last_resume_boundary: None,
+            last_checkpoint: None,
         }
     }
 }
@@ -335,6 +458,10 @@ impl Universe {
             input_summary: InputSummary::default(),
             page: PageBuilderState::default(),
             state_hash_base,
+            next_checkpoint_id: 1,
+            hash_only_checkpoint_depth: 0,
+            last_resume_boundary: None,
+            last_checkpoint: None,
         }
     }
 
@@ -368,6 +495,30 @@ impl Universe {
             page: self.page.clone(),
             checkpoint_hash: state_hash,
         };
+        let checkpoint_id = self.allocate_checkpoint_id();
+        let resume_kind = if self.hash_only_checkpoint_depth == 0 {
+            CheckpointResumeKind::ResumeValid
+        } else {
+            CheckpointResumeKind::HashOnly
+        };
+        let own_boundary = ResumeBoundary {
+            checkpoint_id,
+            state_hash,
+        };
+        let resume_boundary = match resume_kind {
+            CheckpointResumeKind::ResumeValid => Some(own_boundary),
+            CheckpointResumeKind::HashOnly => self.last_resume_boundary,
+        };
+        let checkpoint = CheckpointMetadata {
+            checkpoint_id,
+            state_hash,
+            resume_kind,
+            resume_boundary,
+        };
+        if resume_kind == CheckpointResumeKind::ResumeValid {
+            self.last_resume_boundary = Some(own_boundary);
+        }
+        self.last_checkpoint = Some(checkpoint);
         self.state_hash_base = next_hash_base.clone();
         Snapshot {
             owner: self.owner.snapshot_owner(),
@@ -379,7 +530,19 @@ impl Universe {
             page: self.page.clone(),
             state_hash,
             state_hash_base: next_hash_base,
+            checkpoint_id,
+            resume_kind,
+            resume_boundary,
         }
+    }
+
+    fn allocate_checkpoint_id(&mut self) -> CheckpointId {
+        let id = self.next_checkpoint_id;
+        self.next_checkpoint_id = self
+            .next_checkpoint_id
+            .checked_add(1)
+            .expect("checkpoint id overflow");
+        CheckpointId(id)
     }
 
     fn retarget_hash_base_after_committed_boundary(
@@ -420,6 +583,14 @@ impl Universe {
         self.interaction_mode = snapshot.interaction_mode;
         self.page = snapshot.page.clone();
         self.state_hash_base = snapshot.state_hash_base.clone();
+        self.last_resume_boundary = match snapshot.resume_kind {
+            CheckpointResumeKind::ResumeValid => Some(ResumeBoundary {
+                checkpoint_id: snapshot.checkpoint_id,
+                state_hash: snapshot.state_hash,
+            }),
+            CheckpointResumeKind::HashOnly => snapshot.resume_boundary,
+        };
+        self.last_checkpoint = Some(snapshot.checkpoint_metadata());
     }
 
     fn state_hash_slice(&self, hash_base: &StateHashBase, store: &StoreSnapshot) -> u64 {
@@ -583,6 +754,27 @@ impl Universe {
         }
         let _checkpoint = self.checkpoint_after_committed_boundary(hash_base);
         Ok(())
+    }
+
+    /// Runs `f` while checkpoints are marked hash-only.
+    ///
+    /// State snapshots taken in this scope remain valid for rollback and
+    /// convergence hashing, but their metadata points execution resume back to
+    /// the latest resume-valid boundary established before the scope.
+    pub fn with_hash_only_checkpoints<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
+        self.hash_only_checkpoint_depth = self
+            .hash_only_checkpoint_depth
+            .checked_add(1)
+            .expect("hash-only checkpoint scope overflow");
+        let result = f(self);
+        self.hash_only_checkpoint_depth -= 1;
+        result
+    }
+
+    /// Returns the metadata for the latest checkpoint created on this timeline.
+    #[must_use]
+    pub const fn last_checkpoint(&self) -> Option<CheckpointMetadata> {
+        self.last_checkpoint
     }
 
     /// Records the current lexer-owned input stack state for the next snapshot.
