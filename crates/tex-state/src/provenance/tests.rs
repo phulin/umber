@@ -1,9 +1,12 @@
 use super::{
-    InsertedOrigin, InsertedOriginKind, OriginRecord, ProvenanceStore, SourceOrigin,
-    SyntheticOrigin, SyntheticOriginKind,
+    InsertedOrigin, InsertedOriginKind, MacroInvocationOrigin, OriginRecord, ProvenanceStore,
+    SourceOrigin, SynthesizedOrigin, SynthesizedOriginKind, SyntheticOrigin, SyntheticOriginKind,
 };
+use crate::Universe;
 use crate::ids::OriginListId;
-use crate::input::SourceId;
+use crate::input::{SourceId, TokenListReplayKind};
+use crate::macro_store::MacroMeaning;
+use crate::meaning::MeaningFlags;
 use crate::token::{Catcode, OriginId, Token};
 
 #[test]
@@ -42,6 +45,62 @@ fn records_and_origin_lists_allocate_and_read_back() {
         OriginRecord::Source(SourceOrigin::new(SourceId::new(7), 123, 4, 9))
     );
     assert_eq!(store.list(list), &[source, inserted]);
+}
+
+#[test]
+fn all_mandatory_origin_record_kinds_round_trip() {
+    let mut stores = Universe::new();
+    let params = stores.intern_token_list(&[]);
+    let body = stores.intern_token_list(&[Token::Char {
+        ch: 'x',
+        cat: Catcode::Letter,
+    }]);
+    let definition = stores.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, params, body));
+    let source = stores.source_origin(SourceId::new(9), 88, 6, 4);
+    let invocation = stores.source_origin(SourceId::new(10), 144, 8, 12);
+    let macro_origin = stores.macro_invocation_origin(definition, invocation, source);
+    let inserted = stores.inserted_origin(
+        InsertedOriginKind::TokenListReplay(TokenListReplayKind::MacroBody),
+        Token::param(1),
+        macro_origin,
+    );
+    let synthesized = stores.synthesized_origin(SynthesizedOriginKind::ValueRendering, inserted);
+    let synthetic = stores.synthetic_origin(SyntheticOriginKind::Test);
+
+    assert_eq!(
+        stores.origin(source),
+        OriginRecord::Source(SourceOrigin::new(SourceId::new(9), 88, 6, 4))
+    );
+    assert_eq!(
+        stores.origin(macro_origin),
+        OriginRecord::MacroInvocation(MacroInvocationOrigin::new(definition, invocation, source))
+    );
+    assert_eq!(
+        stores.origin(inserted),
+        OriginRecord::Inserted(InsertedOrigin::new(
+            InsertedOriginKind::TokenListReplay(TokenListReplayKind::MacroBody),
+            Token::param(1),
+            macro_origin,
+        ))
+    );
+    assert_eq!(
+        stores.origin(synthesized),
+        OriginRecord::Synthesized(SynthesizedOrigin::new(
+            SynthesizedOriginKind::ValueRendering,
+            inserted,
+        ))
+    );
+    assert_eq!(
+        stores.origin(synthetic),
+        OriginRecord::Synthetic(SyntheticOrigin::new(SyntheticOriginKind::Test))
+    );
+}
+
+#[test]
+fn provenance_capacity_index_guards_reserve_overflow_values() {
+    assert_eq!(super::u32_len(u32::MAX as usize), Some(u32::MAX));
+    assert_eq!(super::u32_index(u32::MAX as usize - 1), Some(u32::MAX - 1));
+    assert_eq!(super::u32_index(u32::MAX as usize), None);
 }
 
 #[test]

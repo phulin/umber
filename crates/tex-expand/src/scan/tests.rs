@@ -2,6 +2,7 @@ use super::{ScanToksError, scan_toks};
 use tex_lex::{InputStack, MemoryInput};
 use tex_state::Universe;
 use tex_state::meaning::MeaningFlags;
+use tex_state::provenance::{OriginRecord, SourceOrigin};
 use tex_state::token::{Catcode, Token};
 
 fn scan(input: &str) -> (Universe, Vec<Token>, Vec<Token>) {
@@ -39,6 +40,38 @@ fn scans_all_nine_parameters_in_order() {
 
     assert_eq!(params, (1_u8..=9).map(Token::param).collect::<Vec<_>>());
     assert_eq!(replacement, vec![Token::param(9), Token::param(1)]);
+}
+
+#[test]
+fn freezes_parameter_and_replacement_origin_lists_from_source_tokens() {
+    let mut stores = Universe::new();
+    let mut input = InputStack::new(MemoryInput::new("#1{#1x}"));
+
+    let scanned =
+        scan_toks(&mut input, &mut stores, MeaningFlags::EMPTY).expect("scan should succeed");
+    let provenance = scanned.provenance();
+    let parameter_origins = stores.origin_list(provenance.parameter_origins());
+    let replacement_origins = stores.origin_list(provenance.replacement_origins());
+
+    assert_eq!(stores.tokens(scanned.parameter_text()), &[Token::param(1)]);
+    assert_eq!(
+        stores.tokens(scanned.replacement_text()),
+        &[Token::param(1), char_token('x', Catcode::Letter)]
+    );
+    assert_eq!(parameter_origins.len(), 1);
+    assert_eq!(replacement_origins.len(), 2);
+    assert_eq!(
+        stores.origin(parameter_origins[0]),
+        OriginRecord::Source(SourceOrigin::new(tex_state::SourceId::new(0), 1, 1, 1))
+    );
+    assert_eq!(
+        stores.origin(replacement_origins[0]),
+        OriginRecord::Source(SourceOrigin::new(tex_state::SourceId::new(0), 4, 1, 4))
+    );
+    assert_eq!(
+        stores.origin(replacement_origins[1]),
+        OriginRecord::Source(SourceOrigin::new(tex_state::SourceId::new(0), 5, 1, 5))
+    );
 }
 
 #[test]

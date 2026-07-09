@@ -15,7 +15,7 @@ use tex_state::provenance::{
     SynthesizedOriginKind,
 };
 use tex_state::scaled::{GlueSetRatio, Scaled};
-use tex_state::token::{Catcode, Token};
+use tex_state::token::{Catcode, OriginId, Token};
 use tex_state::{ExpansionState, InputOpenState, InputReadState, Universe};
 
 #[derive(Default)]
@@ -288,6 +288,38 @@ fn get_x_token_pushes_macro_body_frame_and_continues() {
             cat: Catcode::Letter,
         })
     );
+}
+
+#[test]
+fn macro_replay_without_definition_provenance_degrades_to_unknown_origins() {
+    let mut stores = Universe::new();
+    let macro_cs = stores.intern("memoized");
+    let body_token = Token::Char {
+        ch: 'z',
+        cat: Catcode::Letter,
+    };
+    let body = stores.intern_token_list(&[body_token]);
+    let params = stores.intern_token_list(&[]);
+    stores.set_macro_meaning(
+        macro_cs,
+        MacroMeaning::new(MeaningFlags::EMPTY, params, body),
+    );
+    let invocation = stores.intern_token_list(&[Token::Cs(macro_cs)]);
+    let call_origin = stores.source_origin(tex_state::SourceId::new(12), 90, 9, 1);
+    let invocation_origins = stores.allocate_origin_list(&[call_origin]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list_with_origins(
+        invocation,
+        invocation_origins,
+        TokenListReplayKind::Inserted,
+    );
+
+    let expanded = crate::get_x_token(&mut input, &mut stores)
+        .expect("expansion should not fail without side-table provenance")
+        .expect("macro body token");
+
+    assert_eq!(crate::semantic_token(expanded), body_token);
+    assert_eq!(expanded.origin(), OriginId::UNKNOWN);
 }
 
 #[test]

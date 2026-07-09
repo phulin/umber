@@ -314,6 +314,18 @@ fn shipout_commits_deferred_openout_closeout_whatsits() {
 }
 
 #[test]
+fn shipout_artifacts_ignore_source_token_provenance() {
+    let left = shipout_artifact_bytes("\\shipout\\hbox{}\\end");
+    let right = shipout_artifact_bytes("   \\shipout\\hbox{}\\end");
+
+    assert_eq!(left, right);
+    assert_eq!(
+        tex_state::ContentHash::from_bytes(&left),
+        tex_state::ContentHash::from_bytes(&right)
+    );
+}
+
+#[test]
 fn newlinechar_is_honored_by_deferred_shipout_write() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);
@@ -940,6 +952,22 @@ fn format_special_payloads(payloads: &[Vec<u8>]) -> String {
         output.push('\n');
     }
     output
+}
+
+fn shipout_artifact_bytes(source: &str) -> Vec<u8> {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(source));
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("shipout succeeds");
+    assert_eq!(stats.shipped_artifacts.len(), 1);
+    stores
+        .world()
+        .read_artifact(stats.shipped_artifacts[0])
+        .expect("read artifact")
+        .expect("artifact stored")
 }
 
 fn format_output_presence(stores: &Universe, paths: &[&str]) -> String {

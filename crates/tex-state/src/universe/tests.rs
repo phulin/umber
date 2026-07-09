@@ -1,13 +1,17 @@
 use super::{CheckpointResumeKind, ResumeFallback, Universe};
 use crate::font::NULL_FONT;
 use crate::glue::{GlueSpec, Order};
+use crate::input::{
+    InputFrameSummary, InputSummary, LexerState, MacroArguments, SourceFrameSummary,
+    TokenListReplayKind, TracedTokenList,
+};
 use crate::macro_store::MacroMeaning;
 use crate::meaning::{Meaning, MeaningFlags};
 use crate::node::{BoxNode, BoxNodeFields, GlueKind, KernKind, Node, Sign};
 use crate::page::{PageDimension, PageInteger};
 use crate::provenance::{OriginRecord, SourceOrigin, SyntheticOriginKind};
 use crate::scaled::{GlueSetRatio, Scaled};
-use crate::token::{Catcode, OriginId, Token};
+use crate::token::{Catcode, OriginId, Token, TracedTokenWord};
 use crate::world::{ContentHash, JobClock, PrintSink, StreamSlot, World};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
@@ -69,6 +73,81 @@ fn semantic_hash_ignores_provenance_allocations() {
 
     assert_eq!(after_snapshot.state_hash(), base_checkpoint_hash);
     assert_eq!(universe.testing_state_hash(), base_testing_hash);
+}
+
+#[test]
+fn semantic_hash_ignores_pending_source_token_origins() {
+    let mut universe = Universe::new();
+    let token = Token::Char {
+        ch: 'x',
+        cat: Catcode::Letter,
+    };
+    let left_origin = universe.source_origin(crate::input::SourceId::new(1), 0, 1, 1);
+    let right_origin = universe.source_origin(crate::input::SourceId::new(1), 14, 3, 9);
+    let left_summary = pending_source_summary(token, left_origin);
+    let right_summary = pending_source_summary(token, right_origin);
+    assert_eq!(left_summary, right_summary);
+
+    universe.set_input_summary(left_summary);
+    let left_hash = universe.snapshot().state_hash();
+    universe.set_input_summary(right_summary);
+    let right_hash = universe.snapshot().state_hash();
+
+    assert_eq!(left_hash, right_hash);
+}
+
+#[test]
+fn snapshot_reuses_hash_base_for_origin_only_input_summary_changes() {
+    let mut universe = Universe::new();
+    let body_token = Token::Char {
+        ch: 'm',
+        cat: Catcode::Letter,
+    };
+    let body = universe.intern_token_list(&[body_token]);
+    let params = universe.intern_token_list(&[]);
+    let definition = universe.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, params, body));
+    let argument = universe.intern_token_list(&[Token::param(1)]);
+    let left_origin = universe.source_origin(crate::input::SourceId::new(1), 10, 2, 3);
+    let right_origin = universe.source_origin(crate::input::SourceId::new(2), 20, 4, 5);
+    let left_origins = universe.allocate_origin_list(&[left_origin]);
+    let right_origins = universe.allocate_origin_list(&[right_origin]);
+    let left_invocation = universe.macro_invocation_origin(definition, left_origin, left_origin);
+    let right_invocation = universe.macro_invocation_origin(definition, right_origin, right_origin);
+    let left_summary = macro_replay_summary(body, argument, left_origins, left_invocation);
+    let right_summary = macro_replay_summary(body, argument, right_origins, right_invocation);
+    assert_eq!(left_summary, right_summary);
+
+    universe.set_input_summary(left_summary);
+    let first = universe.snapshot();
+    universe.set_input_summary(right_summary);
+    let second = universe.snapshot();
+
+    assert_eq!(first.state_hash(), second.state_hash());
+}
+
+#[test]
+fn universe_rollback_truncates_provenance_and_replay_reuses_origin_ids() {
+    let mut universe = Universe::new();
+    let mark = universe.snapshot();
+
+    let stale = universe.source_origin(crate::input::SourceId::new(7), 70, 8, 9);
+    let stale_list = universe.allocate_origin_list(&[stale]);
+    assert!(universe.origin_if_live(stale).is_some());
+    assert!(universe.origin_list_if_live(stale_list).is_some());
+
+    universe.rollback(&mark);
+    assert_eq!(universe.origin_if_live(stale), None);
+    assert_eq!(universe.origin_list_if_live(stale_list), None);
+
+    let replayed = universe.source_origin(crate::input::SourceId::new(7), 70, 8, 9);
+    let replayed_list = universe.allocate_origin_list(&[replayed]);
+    assert_eq!(replayed.raw(), stale.raw());
+    assert_eq!(replayed_list.raw(), stale_list.raw());
+    assert_eq!(
+        universe.origin(replayed),
+        OriginRecord::Source(SourceOrigin::new(crate::input::SourceId::new(7), 70, 8, 9))
+    );
+    assert_eq!(universe.origin_list(replayed_list), &[replayed]);
 }
 
 #[test]
@@ -575,5 +654,48 @@ fn test_font(name: &str, bytes: &[u8]) -> crate::font::LoadedFont {
         Scaled::from_raw(10 * Scaled::UNITY),
         vec![Scaled::from_raw(0); 7],
         crate::font::FontMetrics::default(),
+    )
+}
+
+fn pending_source_summary(token: Token, origin: OriginId) -> InputSummary {
+    InputSummary::new(
+        vec![InputFrameSummary::Source {
+            source_id: crate::input::SourceId::new(1),
+            source: SourceFrameSummary::new(
+                0,
+                1,
+                1,
+                0,
+                LexerState::MidLine,
+                "x".to_owned(),
+                0,
+                vec![TracedTokenWord::pack(token, origin)],
+                false,
+            ),
+        }],
+        None,
+        None,
+    )
+}
+
+fn macro_replay_summary(
+    body: crate::ids::TokenListId,
+    argument: crate::ids::TokenListId,
+    origins: crate::ids::OriginListId,
+    invocation: OriginId,
+) -> InputSummary {
+    let mut arguments = MacroArguments::new();
+    arguments.set_traced(1, TracedTokenList::new(argument, origins));
+    InputSummary::new(
+        vec![InputFrameSummary::TokenList {
+            token_list: body,
+            origin_list: origins,
+            replay_kind: TokenListReplayKind::MacroBody,
+            index: 0,
+            macro_arguments: arguments,
+            macro_invocation: invocation,
+        }],
+        None,
+        None,
     )
 }
