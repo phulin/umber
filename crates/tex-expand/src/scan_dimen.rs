@@ -643,64 +643,10 @@ where
     St: ExpansionState,
     E: ExpandNext<S, St, R, H>,
 {
-    match stores.meaning(symbol) {
-        Meaning::DimenRegister(index) => {
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
-            return Ok(ScannedDimen::new(stores.dimen(index)));
-        }
-        Meaning::DimenParam(index) => {
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
-            return Ok(ScannedDimen::new(
-                stores.dimen_param(tex_state::env::banks::DimenParam::new(index)),
-            ));
-        }
-        Meaning::PageDimension(dimension) => {
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
-            return Ok(ScannedDimen::new(stores.page_dimension(dimension)));
-        }
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen) => {
-            let index = scan_register_index(input, stores, recorder, hooks, expander)?;
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
-            return Ok(ScannedDimen::new(stores.dimen(index)));
-        }
-        Meaning::UnexpandablePrimitive(
-            primitive @ (UnexpandablePrimitive::Wd
-            | UnexpandablePrimitive::Ht
-            | UnexpandablePrimitive::Dp),
-        ) => {
-            let index = scan_register_index(input, stores, recorder, hooks, expander)?;
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
-            let dimension = match primitive {
-                UnexpandablePrimitive::Wd => BoxDimension::Width,
-                UnexpandablePrimitive::Ht => BoxDimension::Height,
-                UnexpandablePrimitive::Dp => BoxDimension::Depth,
-                _ => unreachable!("outer match restricts primitive"),
-            };
-            return Ok(ScannedDimen::new(
-                stores
-                    .box_dimension(index, dimension)
-                    .unwrap_or_else(|| Scaled::from_raw(0)),
-            ));
-        }
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PrevDepth) => {
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
-            return Ok(ScannedDimen::new(hooks.prev_depth()));
-        }
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastKern) => {
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
-            return Ok(ScannedDimen::new(hooks.last_kern()));
-        }
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastSkip) => {
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
-            return Ok(ScannedDimen::new(hooks.last_skip().width));
-        }
-        _ => {}
-    }
-
-    if stores.resolve(symbol) == "dimen" {
-        let index = scan_register_index(input, stores, recorder, hooks, expander)?;
+    if let Some(value) = scan_internal_dimension(input, stores, recorder, hooks, expander, symbol)?
+    {
         consume_optional_space(input, stores, recorder, hooks, expander)?;
-        return Ok(ScannedDimen::new(stores.dimen(index)));
+        return Ok(ScannedDimen::new(value));
     }
 
     unread_token(input, stores, token);
@@ -731,6 +677,74 @@ where
     convert_scanned_unit(stores, integer, 0, unit).map(|dimen| {
         dimen.with_integer_diagnostic(scanned.diagnostic(), scanned.diagnostic_origin())
     })
+}
+
+fn scan_internal_dimension<S, St, R, H, E>(
+    input: &mut InputStack<S>,
+    stores: &mut St,
+    recorder: &mut R,
+    hooks: &mut H,
+    expander: &mut E,
+    symbol: Symbol,
+) -> Result<Option<Scaled>, ScanDimenError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+    St: ExpansionState,
+    E: ExpandNext<S, St, R, H>,
+{
+    match stores.meaning(symbol) {
+        Meaning::DimenRegister(index) => {
+            return Ok(Some(stores.dimen(index)));
+        }
+        Meaning::DimenParam(index) => {
+            return Ok(Some(
+                stores.dimen_param(tex_state::env::banks::DimenParam::new(index)),
+            ));
+        }
+        Meaning::PageDimension(dimension) => {
+            return Ok(Some(stores.page_dimension(dimension)));
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen) => {
+            let index = scan_register_index(input, stores, recorder, hooks, expander)?;
+            return Ok(Some(stores.dimen(index)));
+        }
+        Meaning::UnexpandablePrimitive(
+            primitive @ (UnexpandablePrimitive::Wd
+            | UnexpandablePrimitive::Ht
+            | UnexpandablePrimitive::Dp),
+        ) => {
+            let index = scan_register_index(input, stores, recorder, hooks, expander)?;
+            let dimension = match primitive {
+                UnexpandablePrimitive::Wd => BoxDimension::Width,
+                UnexpandablePrimitive::Ht => BoxDimension::Height,
+                UnexpandablePrimitive::Dp => BoxDimension::Depth,
+                _ => unreachable!("outer match restricts primitive"),
+            };
+            return Ok(Some(
+                stores
+                    .box_dimension(index, dimension)
+                    .unwrap_or_else(|| Scaled::from_raw(0)),
+            ));
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PrevDepth) => {
+            return Ok(Some(hooks.prev_depth()));
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastKern) => {
+            return Ok(Some(hooks.last_kern()));
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastSkip) => {
+            return Ok(Some(hooks.last_skip().width));
+        }
+        _ => {}
+    }
+
+    if stores.resolve(symbol) == "dimen" {
+        let index = scan_register_index(input, stores, recorder, hooks, expander)?;
+        return Ok(Some(stores.dimen(index)));
+    }
+    Ok(None)
 }
 
 fn scan_integer_constant_with_unit<S, St, R, H, E>(
@@ -821,6 +835,13 @@ where
         None => return Ok(None),
     };
 
+    if let Token::Cs(symbol) = semantic_token(first)
+        && let Some(unit) =
+            scan_internal_dimension(input, stores, recorder, hooks, expander, symbol)?
+    {
+        return Ok(Some(ScannedUnit::Internal(unit)));
+    }
+
     if options.allow_infinite_units {
         match keyword_matches(input, stores, recorder, hooks, expander, first, "fil")? {
             ExpandedKeywordMatch::Matched => {
@@ -899,6 +920,9 @@ where
             unit: stores.font_parameter(stores.current_font(), 5),
         })),
         Some(ScannedUnit::Infinite(_)) => unreachable!("unit keywords never return infinity"),
+        Some(ScannedUnit::Internal(_)) => {
+            unreachable!("unit keywords never return internal dimensions")
+        }
         Some(ScannedUnit::FontRelative { .. }) => {
             unreachable!("unit keywords never return resolved font-relative units")
         }
@@ -967,6 +991,7 @@ where
 enum ScannedUnit {
     Physical { unit: PhysicalUnit, true_unit: bool },
     Infinite(Order),
+    Internal(Scaled),
     FontRelative { unit: Scaled },
     Em,
     Ex,
@@ -1052,12 +1077,14 @@ fn convert_scanned_unit(
             scanned.order = order;
             Ok(scanned)
         }
-        ScannedUnit::FontRelative { unit } => convert_font_relative_unit(integer, fraction, unit),
+        ScannedUnit::Internal(unit) | ScannedUnit::FontRelative { unit } => {
+            convert_relative_unit(integer, fraction, unit)
+        }
         ScannedUnit::Em | ScannedUnit::Ex => unreachable!("font units are handled while scanning"),
     }
 }
 
-fn convert_font_relative_unit(
+fn convert_relative_unit(
     integer: i32,
     fraction: i32,
     unit: Scaled,

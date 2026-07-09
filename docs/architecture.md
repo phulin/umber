@@ -244,7 +244,8 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   understands TeX integer constants and currently readable integer-like state (`\count`, chardef
   values, `\endlinechar`, and raw-sp `\dimen` coercion), while the dimension
   scanner parses decimal constants, physical units, `true` units, supported
-  internal dimensions, `mu` dimensions for muglue callers, infinite `fil`
+  internal dimensions (including decimal factors applied to internal units),
+  `mu` dimensions for muglue callers, infinite `fil`
   orders for glue components, and opt-in integer-to-sp coercion. The glue
   scanner parses optional `plus`/`minus` components and interns immutable glue
   specs through `Universe`. These scanners report recoverable numeric diagnostics

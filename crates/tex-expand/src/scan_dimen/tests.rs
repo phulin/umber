@@ -187,6 +187,37 @@ fn scans_supported_internal_dimensions() {
 }
 
 #[test]
+fn decimal_factor_multiplies_dimension_register_unit_with_tex_rounding() {
+    let mut stores = Universe::new();
+    let p_unit = stores.intern("punit");
+    stores.set_meaning(p_unit, Meaning::DimenRegister(3));
+    stores.set_dimen(3, Scaled::from_raw(65_537));
+
+    let (value, diagnostic, next) = scan_with_stores("8.5\\punit x", &mut stores);
+
+    assert_eq!(value, 557_064);
+    assert_eq!(diagnostic, None);
+    assert_eq!(next, Some(char_token('x', Catcode::Letter)));
+}
+
+#[test]
+fn decimal_factor_multiplies_primitive_dimension_register_unit() {
+    let mut stores = Universe::new();
+    let dimen = stores.intern("dimen");
+    stores.set_meaning(
+        dimen,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen),
+    );
+    stores.set_dimen(3, Scaled::from_raw(42_001));
+
+    let (value, diagnostic, next) = scan_with_stores("8.5\\dimen3 x", &mut stores);
+
+    assert_eq!(value, 357_008);
+    assert_eq!(diagnostic, None);
+    assert_eq!(next, Some(char_token('x', Catcode::Letter)));
+}
+
+#[test]
 fn scans_integer_like_internal_values_with_units() {
     let mut stores = Universe::new();
     let count = stores.intern("count");
