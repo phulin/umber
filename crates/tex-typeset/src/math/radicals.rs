@@ -108,6 +108,16 @@ fn clean_vcenter_box(ctx: &Context<'_, impl MathTypesetState>, nucleus: &MathFie
     clean_box(ctx.state, nucleus, ctx.style, ctx.params)
 }
 
+fn unwrap_single_vlist(boxed: MathBox) -> MathBox {
+    if boxed.axis == BoxAxis::Horizontal
+        && boxed.shift.raw() == 0
+        && let [MathNode::VList(inner)] = boxed.list.nodes.as_slice()
+    {
+        return inner.clone();
+    }
+    boxed
+}
+
 pub(super) fn make_radical(
     ctx: &Context<'_, impl MathTypesetState>,
     noad: &MathNoad,
@@ -116,12 +126,12 @@ pub(super) fn make_radical(
     // AppG rule 11
     let size_params = ctx.params.for_size(ctx.style.size());
     let thickness = size_params.extension.default_rule_thickness;
-    let x = clean_box(
+    let x = unwrap_single_vlist(clean_box(
         ctx.state,
         &noad.nucleus,
         ctx.style.cramped_style(),
         ctx.params,
-    );
+    ));
     let mut clearance = if ctx.style.is_display() {
         add(
             thickness,
@@ -266,7 +276,7 @@ fn overbar(base: MathBox, clearance: Scaled, thickness: Scaled) -> MathBox {
                 amount: clearance,
                 kind: KernKind::Explicit,
             },
-            MathNode::HList(base),
+            boxed_node(base),
         ],
     })
 }
