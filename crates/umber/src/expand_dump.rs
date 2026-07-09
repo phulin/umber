@@ -22,7 +22,13 @@ pub fn expand_dump(path: &str) -> Result<(), ExpandDumpError> {
         stores,
         hooks: FileHooks::new(path),
     };
-    driver.dump()
+    match driver.dump() {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            driver.stores.set_input_summary(driver.input.summary());
+            Err(err.render_with_provenance(&driver.stores))
+        }
+    }
 }
 
 struct DumpDriver {
@@ -129,6 +135,7 @@ pub enum ExpandDumpError {
     Exec(tex_exec::ExecError),
     Lex(LexError),
     Expand(ExpandError),
+    Rendered(String),
 }
 
 impl std::fmt::Display for ExpandDumpError {
@@ -138,6 +145,7 @@ impl std::fmt::Display for ExpandDumpError {
             Self::Exec(err) => write!(f, "{err}"),
             Self::Lex(err) => write!(f, "{err}"),
             Self::Expand(err) => write!(f, "{err}"),
+            Self::Rendered(text) => f.write_str(text),
         }
     }
 }
@@ -149,6 +157,7 @@ impl std::error::Error for ExpandDumpError {
             Self::Exec(err) => Some(err),
             Self::Lex(err) => Some(err),
             Self::Expand(err) => Some(err),
+            Self::Rendered(_) => None,
         }
     }
 }
@@ -174,5 +183,22 @@ impl From<LexError> for ExpandDumpError {
 impl From<ExpandError> for ExpandDumpError {
     fn from(value: ExpandError) -> Self {
         Self::Expand(value)
+    }
+}
+
+impl ExpandDumpError {
+    fn render_with_provenance(self, stores: &Universe) -> Self {
+        match self {
+            Self::Exec(err) => {
+                Self::Rendered(err.format_with_provenance(stores).trim_end().to_owned())
+            }
+            Self::Expand(err) => Self::Rendered(
+                tex_state::ProvenanceResolver::new(stores)
+                    .render_diagnostic(&err.to_string(), err.primary_origin())
+                    .trim_end()
+                    .to_owned(),
+            ),
+            err => err,
+        }
     }
 }

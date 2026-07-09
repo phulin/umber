@@ -365,7 +365,10 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   `umber expand-dump` driver delegates those primitives to `tex-exec` before
   printing delivered tokens; its remaining local assignment handling is
   limited to dump-corpus scaffolding such as `\chardef` and `\catcode` until
-  those stomach assignments land.
+  those stomach assignments land. Expansion and execution failures are
+  rendered through the provenance resolver while the driver's live input and
+  universe state remain available, so this diagnostic-only command reports
+  source snippets and bounded macro traces like a normal run.
 - **What the gullet never does semantically**: perform TeX assignments.
   `\def`, `\advance`, register writes, and code-table writes are
   *unexpandable* — they are delivered to the stomach. This is TeX's own

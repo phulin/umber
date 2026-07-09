@@ -90,6 +90,78 @@ fn expand_dump_usage_errors_follow_lex_dump_shape() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn expand_dump_expansion_error_renders_primary_source_context() {
+    let temp_dir = tempfile::tempdir().expect("create diagnostic temp dir");
+    let source = temp_dir.path().join("undefined.tex");
+    fs::write(&source, "\\undefined\n").expect("write diagnostic fixture");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .arg("expand-dump")
+        .arg(&source)
+        .output()
+        .expect("run umber expand-dump diagnostic fixture");
+
+    assert!(
+        !output.status.success(),
+        "undefined expand-dump should fail"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr is utf-8");
+    assert!(stderr.contains("Undefined control sequence \\undefined"));
+    assert!(stderr.contains("undefined.tex:1:1"));
+    assert!(stderr.contains("  1 | \\undefined"));
+    assert!(stderr.contains("    | ^"));
+    assert!(!stderr.contains("unknown origin"));
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn expand_dump_macro_error_renders_bounded_expansion_trace() {
+    let temp_dir = tempfile::tempdir().expect("create macro diagnostic temp dir");
+    let source = temp_dir.path().join("macro.tex");
+    fs::write(&source, "\\def\\a{\\undefined X}\\a\n").expect("write diagnostic fixture");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .arg("expand-dump")
+        .arg(&source)
+        .output()
+        .expect("run umber expand-dump macro diagnostic fixture");
+
+    assert!(!output.status.success(), "macro expand-dump should fail");
+    let stderr = String::from_utf8(output.stderr).expect("stderr is utf-8");
+    assert!(stderr.contains("Undefined control sequence \\undefined"));
+    assert!(stderr.contains("macro.tex:1:8"));
+    assert!(stderr.contains("expansion trace:"));
+    assert!(stderr.contains("invoked at"));
+    assert!(stderr.contains("defined at"));
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn expand_dump_execution_error_renders_primary_source_context() {
+    let temp_dir = tempfile::tempdir().expect("create execution diagnostic temp dir");
+    let source = temp_dir.path().join("prefix.tex");
+    fs::write(&source, "\\global X\n").expect("write diagnostic fixture");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .arg("expand-dump")
+        .arg(&source)
+        .output()
+        .expect("run umber expand-dump execution diagnostic fixture");
+
+    assert!(!output.status.success(), "prefix expand-dump should fail");
+    let stderr = String::from_utf8(output.stderr).expect("stderr is utf-8");
+    assert!(stderr.contains("You can't use a prefix"));
+    assert!(stderr.contains("prefix.tex:1:9"));
+    assert!(stderr.contains("  1 | \\global X"));
+    assert!(stderr.contains("|         ^"));
+    assert!(!stderr.contains("unknown origin"));
+}
+
+#[test]
 #[allow(clippy::disallowed_methods)] // host-side corpus discovery and command execution.
 fn run_exec_corpus_matches_committed_diagnostics() {
     run_corpus_matches_committed_log_fixtures("exec", false);
