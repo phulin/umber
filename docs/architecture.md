@@ -459,11 +459,19 @@ makes box-level memoization (M4) sound.
   after-line penalties to the enclosing vertical list in TeX order. Remaining
   pdfTeX corpus parity details are
   tracked as follow-up work rather than weakening this purity boundary.
-- **Math typesetter**: mlist → hlist conversion, styles, fraction/radical
-  layout, math fonts. Same contract: frozen mlist in, frozen hlist out; the
-  front-end already freezes mlist nodes as `Node::MathList` and the remaining
-  kernel work lowers those lists to ordinary horizontal lists. (OpenType MATH
-  is the target metrics model; TFM math as fallback.)
+- **Math list conversion**: `tex-typeset::math` owns the pure Appendix G
+  kernel for the core noad-to-hlist pass. It consumes frozen mlist node lists,
+  a starting style, a penalty flag, a plain `MathParams` snapshot, and
+  read-only font/list/glue access; it returns an owned immutable hlist tree
+  rather than freezing nodes itself, so the kernel has no `&mut Universe`
+  surface. The implementation replays TeX.web's two passes: pass one resolves
+  styles, math choices, mu glue/kerns, noad classes, nuclei, and scripts while
+  tracking top-level dimensions; pass two inserts the 8x8 inter-class spacing
+  table and optional penalties. Symbol and extension fontdimens are copied
+  before entry, and the style helpers carry cramped propagation for recursive
+  sublists. Fractions, radicals, big operators with displayed limits,
+  delimiters, and accents remain follow-up Appendix G kernels layered on the
+  same owned-output contract.
 - **Alignment (`\halign`/`\valign`)**: the one kernel that is *not* pure —
   template expansion interleaves with the gullet by design. It is
   structured as a stomach sub-mode (it re-enters main control per cell),

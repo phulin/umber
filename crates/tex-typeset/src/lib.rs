@@ -5,6 +5,7 @@
 //! before doing arithmetic, and never mutate `Universe`.
 
 pub mod linebreak;
+pub mod math;
 mod packing;
 mod vertical_break;
 

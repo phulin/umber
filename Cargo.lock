@@ -803,6 +803,7 @@ dependencies = [
 name = "tex-typeset"
 version = "0.1.0"
 dependencies = [
+ "tex-arith",
  "tex-fonts",
  "tex-state",
 ]
