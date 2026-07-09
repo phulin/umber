@@ -86,7 +86,8 @@ fn rejects_out_of_order_parameter_numbers() {
         err,
         ScanToksError::ParameterNumberOutOfOrder {
             expected: 1,
-            found: 2
+            found: 2,
+            ..
         }
     ));
 }

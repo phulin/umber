@@ -72,11 +72,17 @@ pub enum ScanToksError {
     Expand(ExpandError),
     EndOfInputInParameterText,
     EndOfInputInReplacementText,
-    ParameterNumberOutOfOrder { expected: u8, found: u8 },
-    TooManyParameters,
-    InvalidParameterTokenInParameterText(Token),
-    InvalidParameterTokenInReplacementText(Token),
-    MissingGeneralTextBeginGroup(Token),
+    ParameterNumberOutOfOrder {
+        expected: u8,
+        found: u8,
+        context: TracedTokenWord,
+    },
+    TooManyParameters {
+        context: TracedTokenWord,
+    },
+    InvalidParameterTokenInParameterText(TracedTokenWord),
+    InvalidParameterTokenInReplacementText(TracedTokenWord),
+    MissingGeneralTextBeginGroup(TracedTokenWord),
 }
 
 impl fmt::Display for ScanToksError {
@@ -90,27 +96,34 @@ impl fmt::Display for ScanToksError {
             Self::EndOfInputInReplacementText => {
                 write!(f, "end of input while scanning macro replacement text")
             }
-            Self::ParameterNumberOutOfOrder { expected, found } => write!(
+            Self::ParameterNumberOutOfOrder {
+                expected, found, ..
+            } => write!(
                 f,
                 "macro parameter number out of order: expected #{expected}, found #{found}"
             ),
-            Self::TooManyParameters => write!(f, "macro definitions support only #1 through #9"),
+            Self::TooManyParameters { .. } => {
+                write!(f, "macro definitions support only #1 through #9")
+            }
             Self::InvalidParameterTokenInParameterText(token) => {
                 write!(
                     f,
-                    "invalid parameter token {token:?} in macro parameter text"
+                    "invalid parameter token {:?} in macro parameter text",
+                    traced_semantic_token(*token)
                 )
             }
             Self::InvalidParameterTokenInReplacementText(token) => {
                 write!(
                     f,
-                    "invalid parameter token {token:?} in macro replacement text"
+                    "invalid parameter token {:?} in macro replacement text",
+                    traced_semantic_token(*token)
                 )
             }
             Self::MissingGeneralTextBeginGroup(token) => {
                 write!(
                     f,
-                    "expected begin-group token before general text, got {token:?}"
+                    "expected begin-group token before general text, got {:?}",
+                    traced_semantic_token(*token)
                 )
             }
         }
@@ -501,13 +514,14 @@ where
                         return Err(ScanToksError::ParameterNumberOutOfOrder {
                             expected: next_parameter,
                             found,
+                            context: traced,
                         });
                     }
                     push_scanned_token(&mut builder, &mut origins, traced, Token::param(found));
                     next_parameter = next_parameter
                         .checked_add(1)
                         .filter(|value| *value <= 10)
-                        .ok_or(ScanToksError::TooManyParameters)?;
+                        .ok_or(ScanToksError::TooManyParameters { context: traced })?;
                 }
                 Token::Char {
                     cat: Catcode::BeginGroup,
@@ -516,7 +530,7 @@ where
                     push_scanned_token(&mut builder, &mut origins, traced, token);
                     return Ok(finish_traced_list(stores, &mut builder, &mut origins));
                 }
-                _ => return Err(ScanToksError::InvalidParameterTokenInParameterText(token)),
+                _ => return Err(ScanToksError::InvalidParameterTokenInParameterText(traced)),
             }
             continue;
         }
@@ -569,7 +583,11 @@ where
                     traced,
                     Token::param(token_digit(token).expect("digit token was matched")),
                 ),
-                _ => return Err(ScanToksError::InvalidParameterTokenInReplacementText(token)),
+                _ => {
+                    return Err(ScanToksError::InvalidParameterTokenInReplacementText(
+                        traced,
+                    ));
+                }
             }
             continue;
         }
@@ -611,7 +629,7 @@ where
     let open =
         next_non_space_token(input, stores)?.ok_or(ScanToksError::EndOfInputInReplacementText)?;
     if !matches!(
-        open,
+        traced_semantic_token(open),
         Token::Char {
             cat: Catcode::BeginGroup,
             ..
@@ -654,16 +672,16 @@ where
 fn next_non_space_token<S>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
-) -> Result<Option<Token>, ScanToksError>
+) -> Result<Option<TracedTokenWord>, ScanToksError>
 where
     S: InputSource,
 {
     loop {
-        let Some(token) = input.next_token(stores)? else {
+        let Some(token) = input.next_traced_token(stores)? else {
             return Ok(None);
         };
         if !matches!(
-            token,
+            traced_semantic_token(token),
             Token::Char {
                 cat: Catcode::Space,
                 ..
