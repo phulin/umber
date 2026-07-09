@@ -33,7 +33,7 @@ fn memory_and_file_sources_share_tex_line_handling() {
         memory_events,
         vec![
             LineEvent::Text("abc!".to_owned()),
-            LineEvent::Par,
+            LineEvent::Text("!".to_owned()),
             LineEvent::Text("def!".to_owned()),
         ]
     );

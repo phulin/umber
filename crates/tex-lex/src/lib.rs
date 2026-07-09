@@ -87,9 +87,6 @@ pub enum LineEvent {
     /// A line after trailing spaces were removed and `\endlinechar` was
     /// appended when it names a valid Unicode scalar value.
     Text(String),
-    /// A blank/all-space line whose valid appended `\endlinechar` should
-    /// produce TeX's `\par` behavior.
-    Par,
 }
 
 /// Drives TeX line normalization for an input source.
@@ -877,18 +874,6 @@ where
             source.next_source_offset += line.len();
             Ok(true)
         }
-        Some(LineEvent::Par) => {
-            source.frame.state = LexerState::NewLine;
-            source.frame.line_number += 1;
-            source.frame.column = 0;
-            source.frame.buffer_offset = source.next_source_offset;
-            source.next_source_offset += 1;
-            let Some(par) = stores.symbol("par") else {
-                return Err(LexError::MissingControlSequence("par".to_owned()));
-            };
-            source.frame.pending.push_back(Token::Cs(par));
-            Ok(true)
-        }
         None => Ok(false),
     }
 }
@@ -909,16 +894,6 @@ where
             source.frame.line_number += 1;
             source.frame.column = 0;
             source.next_source_offset += line.len();
-            Ok(true)
-        }
-        Some(LineEvent::Par) => {
-            source.frame.state = LexerState::NewLine;
-            source.frame.line_number += 1;
-            source.frame.column = 0;
-            source.frame.buffer_offset = source.next_source_offset;
-            source.next_source_offset += 1;
-            let par = stores.intern("par");
-            source.frame.pending.push_back(Token::Cs(par));
             Ok(true)
         }
         None => Ok(false),
@@ -1238,10 +1213,6 @@ fn normalize_line(line: &str, endlinechar: i32) -> LineEvent {
     if let Ok(value) = u32::try_from(endlinechar)
         && let Some(ch) = char::from_u32(value)
     {
-        if stripped.is_empty() {
-            return LineEvent::Par;
-        }
-
         let mut normalized = stripped.to_owned();
         normalized.push(ch);
         return LineEvent::Text(normalized);

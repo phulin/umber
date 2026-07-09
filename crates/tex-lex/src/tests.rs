@@ -30,7 +30,7 @@ fn strips_trailing_spaces_and_appends_endlinechar() {
 }
 
 #[test]
-fn empty_lines_emit_par_event() {
+fn empty_lines_append_endlinechar_event() {
     let mut stores = Universe::new();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
     let mut reader = LineReader::new(MemoryInput::new("   \n\nx\n"));
@@ -39,13 +39,13 @@ fn empty_lines_emit_par_event() {
         reader
             .next_event(&stores)
             .expect("memory input should read"),
-        Some(LineEvent::Par)
+        Some(LineEvent::Text("\r".to_owned()))
     );
     assert_eq!(
         reader
             .next_event(&stores)
             .expect("memory input should read"),
-        Some(LineEvent::Par)
+        Some(LineEvent::Text("\r".to_owned()))
     );
     assert_eq!(
         reader
@@ -92,6 +92,43 @@ fn letters_spaces_and_endline_state_match_tex_rules() {
         ]
     );
     assert_eq!(lexer.frame().state(), LexerState::NewLine);
+}
+
+#[test]
+fn blank_line_endlinechar_uses_current_catcode() {
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::END_LINE_CHAR, 13);
+    stores.set_catcode('\r', Catcode::Other);
+    let mut lexer = Lexer::new(MemoryInput::new("\n"));
+
+    assert_eq!(
+        collect_tokens(&mut lexer, &mut stores),
+        vec![char_token('\r', Catcode::Other)]
+    );
+    assert_eq!(lexer.frame().state(), LexerState::MidLine);
+}
+
+#[test]
+fn blank_line_endlinechar_catcode_changes_before_line_load() {
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::END_LINE_CHAR, 13);
+    let mut lexer = Lexer::new(MemoryInput::new("a\n\n"));
+
+    assert_eq!(
+        lexer.next_token(&mut stores).expect("first token"),
+        Some(char_token('a', Catcode::Letter))
+    );
+    assert_eq!(
+        lexer.next_token(&mut stores).expect("first line ending"),
+        Some(char_token(' ', Catcode::Space))
+    );
+
+    stores.set_catcode('\r', Catcode::Active);
+
+    assert_eq!(
+        collect_tokens(&mut lexer, &mut stores),
+        vec![char_token('\r', Catcode::Active)]
+    );
 }
 
 #[test]
@@ -428,7 +465,7 @@ fn source_summary_is_resume_complete_inside_current_line() {
 }
 
 #[test]
-fn source_summary_captures_pending_synthetic_par() {
+fn source_summary_captures_blank_line_with_endlinechar() {
     let mut stores = Universe::new();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
     let mut input = InputStack::new(MemoryInput::new("\nnext"));
@@ -442,12 +479,17 @@ fn source_summary_captures_pending_synthetic_par() {
         panic!("expected one source frame");
     };
 
-    assert_eq!(source.normalized_line(), "");
+    assert_eq!(source.normalized_line(), "\r");
     assert_eq!(source.line_char_offset(), 0);
     assert_eq!(source.line_byte_offset(), 0);
     assert_eq!(source.line_number(), 1);
-    assert_eq!(source.pending(), &[cs_token(&mut stores, "par")]);
+    assert!(source.pending().is_empty());
     assert!(source.is_resume_complete());
+
+    assert_eq!(
+        input.next_token(&mut stores).expect("blank line token"),
+        Some(cs_token(&mut stores, "par"))
+    );
 }
 
 #[test]

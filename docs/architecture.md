@@ -140,9 +140,7 @@ supply.
   aggregate state API. The implemented `tex-lex` input layer exposes a local
   `InputSource` trait for memory buffers and files, normalizes each physical
   line by trimming trailing spaces and appending the current `\endlinechar`
-  when valid, reports blank/all-space lines with a valid appended endline
-  character as a structured paragraph boundary event for the semantic lexer
-  to turn into `\par`, and owns an
+  when valid, including for blank/all-space physical lines, and owns an
   `InputStack` whose `InputSummary` records resume-complete lexer-owned
   source frame state and token-list replay progress. Token-list frames read
   frozen content only through `Universe::tokens`; durable source identity is
