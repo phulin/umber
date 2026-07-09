@@ -252,3 +252,54 @@ fn scaled_from_i64(value: i64) -> Result<Scaled, DviError> {
         .map(Scaled::from_raw)
         .map_err(|_| DviError::PositionOverflow)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sp(raw: i32) -> Scaled {
+        Scaled::from_raw(raw)
+    }
+
+    #[test]
+    fn aligned_leader_start_uses_first_grid_position_not_less_than_current() {
+        assert_eq!(
+            leader_start(LeaderKind::Aligned, sp(23), sp(0), sp(40), sp(10))
+                .expect("aligned positive leader start"),
+            (sp(30), sp(0))
+        );
+        assert_eq!(
+            leader_start(LeaderKind::Aligned, sp(-11), sp(0), sp(40), sp(10))
+                .expect("aligned negative leader start below grid"),
+            (sp(-10), sp(0))
+        );
+        assert_eq!(
+            leader_start(LeaderKind::Aligned, sp(-9), sp(0), sp(40), sp(10))
+                .expect("aligned negative leader start above grid"),
+            (sp(0), sp(0))
+        );
+    }
+
+    #[test]
+    fn centered_leader_start_places_half_remainder_at_each_end() {
+        assert_eq!(
+            leader_start(LeaderKind::Centered, sp(20), sp(0), sp(37), sp(10))
+                .expect("centered leader start"),
+            (sp(23), sp(0))
+        );
+    }
+
+    #[test]
+    fn expanded_leader_start_matches_tex_web_integer_spacing() {
+        assert_eq!(
+            leader_start(LeaderKind::Expanded, sp(20), sp(0), sp(37), sp(10))
+                .expect("expanded leader start"),
+            (sp(22), sp(1))
+        );
+        assert_eq!(
+            leader_start(LeaderKind::Expanded, sp(20), sp(0), sp(8), sp(10))
+                .expect("expanded leader start shorter than payload"),
+            (sp(28), sp(8))
+        );
+    }
+}
