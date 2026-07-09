@@ -5,3 +5,5 @@
 `tools/fixturegen` is the script-owned fixture regeneration tool used by `scripts/regen-fixtures.sh` for text/native fixtures and the explicit live font check. It may invoke `refexec`, `umber`, and `tftopl`, but cargo tests must not.
 
 `refexec` also wraps `tftopl` for the font metric check owned by `tools/fixturegen`. When running that tier, it locates `tftopl` on `PATH`; set `UMBER_REF_TFTOPL=/absolute/path/to/tftopl` to point regeneration at a specific TeX installation.
+
+`tools/corpus-sync` is the script-owned external document acquisition tool used by `scripts/parity.sh`. It reads `tests/corpus-manifest.toml`, fetches exact bytes into gitignored `third_party/corpus/`, verifies SHA-256, and treats cached hash matches as a no-op so offline runs can succeed after the corpus has been populated. Do not normalize line endings or commit fetched corpus documents; licensing determinations live in the manifest notes.
