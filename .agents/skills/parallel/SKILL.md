@@ -31,7 +31,8 @@ in `{ISSUE_SLUG}`, `{BASE_REF}`, and optional WIP-import notes:
    `git -C /Users/phulin/Documents/Projects/umber worktree add /Users/phulin/Documents/Projects/umber/.worktrees/umber-{ISSUE_SLUG} umber-{ISSUE_SLUG}`
 4. {OPTIONAL: import partial WIP from a prior wave; list files/stashes}
 5. `cd` into the worktree; all edits, tests, and commits happen there only.
-   Do not modify the main checkout.
+   Do not modify the main checkout. If you have an `apply_patch` skill, it
+   needs the full path to the in-worktree file every time you call it.
 ```
 
 `{BASE_REF}` is usually `main`. Use a more specific ref only when the issue
