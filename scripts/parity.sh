@@ -32,7 +32,7 @@ cm_tfms=(
 tmp_root="$(mktemp -d)"
 trap 'rm -rf "$tmp_root"' EXIT
 
-for corpus_name in dvi page math align; do
+for corpus_name in dvi page math align leaders; do
   corpus_dir="${repo_root}/tests/corpus/${corpus_name}"
   for source in "${corpus_dir}"/*.tex; do
     case_name="$(basename "$source")"

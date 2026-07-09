@@ -1,0 +1,17 @@
+\font\tenrm=cmr10
+\tenrm
+\count0=1
+\baselineskip=0pt
+\lineskip=0pt
+\lineskiplimit=0pt
+\def\dotfill{\cleaders\hbox to 5pt{\hfil.\hfil}\hfill}
+\def\hrulefill{\leaders\hrule height.4pt depth0pt\hfill}
+\def\xdotfill{\xleaders\hbox to 5pt{\hfil.\hfil}\hfill}
+\shipout\vbox{%
+  \hbox to 80pt{A\dotfill B}%
+  \kern4pt%
+  \hbox to 80pt{C\hrulefill D}%
+  \kern4pt%
+  \hbox to 80pt{E\xdotfill F}%
+}
+\end

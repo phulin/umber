@@ -67,6 +67,11 @@ display alignment. It is run by `scripts/parity.sh` with the same pinned CM
 TFMs as the other DVI corpora; keep cases primitive-only and do not commit
 generated DVI files.
 
+`tests/corpus/leaders` contains leader-focused DVI byte-parity fixtures for
+`\leaders`, `\cleaders`, and `\xleaders`. It is an explicit live-reference
+parity corpus run by `scripts/parity.sh`; keep it out of default cargo tests
+and do not commit generated DVI files.
+
 ```text
 <case>.expected.<kind>
 ```

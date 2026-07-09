@@ -47,7 +47,7 @@ scripts/parity.sh
 
 That script enables `UMBER_LIVE_REF=1`, runs live reference diagnostic checks,
 optional hyphenation parity when its corpus is present, and byte-identical DVI
-comparisons for the DVI, page, math, and align corpora. Use focused
+comparisons for the DVI, page, math, align, and leaders corpora. Use focused
 `UPDATE_FIXTURES=1` commands only when deliberately regenerating committed
 fixtures.
 
@@ -151,14 +151,14 @@ The DVI corpora under `tests/corpus/dvi` and `tests/corpus/page` commit TeX
 source files plus selected `.expected.dvi` reference fixtures for the default
 `umber` cargo smoke tests. Those tests compare DVI bytes through
 `tools/refexec` with only preamble comment payload normalization. The broader
-DVI corpora, including `tests/corpus/math` and `tests/corpus/align`, remain in
-the live reference tier: `scripts/parity.sh` runs `umber run --dvi` and the
-live reference engine over the same temporary inputs with pinned local TFMs,
-then compares generated DVI bytes through `tools/refexec`. The math corpus is
-intentionally excluded from `cargo test --workspace --tests`; it uses a shared
-primitive-only `tests/corpus/math/math_preamble.inc` include and the parity
-script runs its reference side in INITEX mode so the cases do not depend on
-`plain.tex`.
+DVI corpora, including `tests/corpus/math`, `tests/corpus/align`, and
+`tests/corpus/leaders`, remain in the live reference tier: `scripts/parity.sh`
+runs `umber run --dvi` and the live reference engine over the same temporary
+inputs with pinned local TFMs, then compares generated DVI bytes through
+`tools/refexec`. The math corpus is intentionally excluded from
+`cargo test --workspace --tests`; it uses a shared primitive-only
+`tests/corpus/math/math_preamble.inc` include and the parity script runs its
+reference side in INITEX mode so the cases do not depend on `plain.tex`.
 
 Default cargo tests must not invoke live TeX tools. Fixture regeneration uses
 `UPDATE_FIXTURES=1` and focused tests, while live reference checks use
