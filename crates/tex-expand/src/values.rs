@@ -92,7 +92,7 @@ where
                 Ok(push_rendered_text(
                     stores,
                     ExpansionReplayKind::TheOutput,
-                    &format_glue(stores.glue(stores.muskip(index))),
+                    &format_muglue(stores.glue(stores.muskip(index))),
                 ))
             }
             tex_state::meaning::UnexpandablePrimitive::Toks => {
@@ -242,7 +242,7 @@ where
         Meaning::MuskipRegister(index) => Ok(push_rendered_text(
             stores,
             ExpansionReplayKind::TheOutput,
-            &format_glue(stores.glue(stores.muskip(index))),
+            &format_muglue(stores.glue(stores.muskip(index))),
         )),
         Meaning::ToksRegister(index) => Ok(Dispatch::Push {
             replay_kind: ExpansionReplayKind::TheOutput,
@@ -273,6 +273,11 @@ where
             stores,
             ExpansionReplayKind::TheOutput,
             &format_glue(stores.glue(stores.glue_param(GlueParam::new(index)))),
+        )),
+        Meaning::MuGlueParam(index) => Ok(push_rendered_text(
+            stores,
+            ExpansionReplayKind::TheOutput,
+            &format_muglue(stores.glue(stores.glue_param(GlueParam::new(index)))),
         )),
         Meaning::TokParam(index) => Ok(Dispatch::Push {
             replay_kind: ExpansionReplayKind::TheOutput,
@@ -390,6 +395,7 @@ pub fn meaning_text(stores: &impl ExpansionState, token: Token) -> String {
             Meaning::IntParam(_)
             | Meaning::DimenParam(_)
             | Meaning::GlueParam(_)
+            | Meaning::MuGlueParam(_)
             | Meaning::TokParam(_)
             | Meaning::PageDimension(_)
             | Meaning::PageInteger(_) => {
@@ -540,26 +546,45 @@ fn format_scaled(value: Scaled) -> String {
 }
 
 fn format_glue(spec: GlueSpec) -> String {
+    format_glue_with_unit(spec, "pt")
+}
+
+fn format_muglue(spec: GlueSpec) -> String {
+    format_glue_with_unit(spec, "mu")
+}
+
+fn format_glue_with_unit(spec: GlueSpec, unit: &str) -> String {
     let mut text = format_scaled(spec.width);
+    replace_unit(&mut text, unit);
     if spec.stretch.raw() != 0 {
         text.push_str(" plus ");
-        text.push_str(&format_scaled_without_unit(spec.stretch));
-        text.push_str(order_unit(spec.stretch_order));
+        text.push_str(&format_scaled_without_unit(spec.stretch, unit));
+        text.push_str(component_unit(spec.stretch_order, unit));
     }
     if spec.shrink.raw() != 0 {
         text.push_str(" minus ");
-        text.push_str(&format_scaled_without_unit(spec.shrink));
-        text.push_str(order_unit(spec.shrink_order));
+        text.push_str(&format_scaled_without_unit(spec.shrink, unit));
+        text.push_str(component_unit(spec.shrink_order, unit));
     }
     text
 }
 
-fn format_scaled_without_unit(value: Scaled) -> String {
-    format_scaled(value).trim_end_matches("pt").to_owned()
+fn format_scaled_without_unit(value: Scaled, unit: &str) -> String {
+    let mut text = format_scaled(value);
+    replace_unit(&mut text, unit);
+    text.trim_end_matches(unit).to_owned()
 }
 
-fn order_unit(order: Order) -> &'static str {
+fn replace_unit(text: &mut String, unit: &str) {
+    if unit != "pt" {
+        text.truncate(text.len() - "pt".len());
+        text.push_str(unit);
+    }
+}
+
+fn component_unit(order: Order, normal_unit: &str) -> &'static str {
     match order {
+        Order::Normal if normal_unit == "mu" => "mu",
         Order::Normal => "pt",
         Order::Fil => "fil",
         Order::Fill => "fill",

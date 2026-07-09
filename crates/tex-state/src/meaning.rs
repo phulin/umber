@@ -26,6 +26,7 @@ const OP_TOK_PARAM: u8 = 15;
 const OP_FONT: u8 = 16;
 const OP_PAGE_DIMENSION: u8 = 17;
 const OP_PAGE_INTEGER: u8 = 18;
+const OP_MU_GLUE_PARAM: u8 = 19;
 
 /// Bitflags carried by meaning words.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -84,6 +85,7 @@ pub enum Meaning {
     IntParam(u16),
     DimenParam(u16),
     GlueParam(u16),
+    MuGlueParam(u16),
     TokParam(u16),
     PageDimension(PageDimension),
     PageInteger(PageInteger),
@@ -767,6 +769,7 @@ impl Meaning {
             Self::IntParam(index) => pack(OP_INT_PARAM, MeaningFlags::EMPTY, index as u64),
             Self::DimenParam(index) => pack(OP_DIMEN_PARAM, MeaningFlags::EMPTY, index as u64),
             Self::GlueParam(index) => pack(OP_GLUE_PARAM, MeaningFlags::EMPTY, index as u64),
+            Self::MuGlueParam(index) => pack(OP_MU_GLUE_PARAM, MeaningFlags::EMPTY, index as u64),
             Self::TokParam(index) => pack(OP_TOK_PARAM, MeaningFlags::EMPTY, index as u64),
             Self::PageDimension(dimension) => pack(
                 OP_PAGE_DIMENSION,
@@ -820,6 +823,7 @@ impl Meaning {
             OP_INT_PARAM if operand <= u16::MAX as u64 => Self::IntParam(operand as u16),
             OP_DIMEN_PARAM if operand <= u16::MAX as u64 => Self::DimenParam(operand as u16),
             OP_GLUE_PARAM if operand <= u16::MAX as u64 => Self::GlueParam(operand as u16),
+            OP_MU_GLUE_PARAM if operand <= u16::MAX as u64 => Self::MuGlueParam(operand as u16),
             OP_TOK_PARAM if operand <= u16::MAX as u64 => Self::TokParam(operand as u16),
             OP_PAGE_DIMENSION if operand <= u8::MAX as u64 => {
                 match PageDimension::from_index(operand as u8) {

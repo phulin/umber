@@ -109,6 +109,46 @@ fn glue_arithmetic_preserves_fil_order_rules() {
 }
 
 #[test]
+fn named_math_glue_parameters_scan_muglue_without_aliasing_muskip_registers() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\thinmuskip=3mu \
+         \\medmuskip=4mu plus 2mu minus 4mu \
+         \\thickmuskip=5mu \
+         {\\advance\\thinmuskip by 1mu \\showthe\\thinmuskip}\
+         \\showthe\\thinmuskip \\showthe\\medmuskip \\showthe\\thickmuskip",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("named muglue parameters execute");
+
+    let thin = stores.glue(stores.glue_param(GlueParam::new(15)));
+    assert_eq!(thin.width.raw(), 3 * tex_state::scaled::Scaled::UNITY);
+    assert_eq!(stores.muskip(15), tex_state::ids::GlueId::ZERO);
+    let output = terminal_effect_text(&stores);
+    assert!(output.contains("> 4.0mu."));
+    assert!(output.contains("> 3.0mu."));
+    assert!(output.contains("> 4.0mu plus 2.0mu minus 4.0mu."));
+    assert!(output.contains("> 5.0mu."));
+}
+
+#[test]
+fn ordinary_glue_parameters_still_reject_mu_units() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\baselineskip=3mu"));
+
+    let err = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect_err("ordinary glue parameter should reject mu units");
+
+    assert_eq!(err.to_string(), "Illegal unit of measure");
+}
+
+#[test]
 fn arithmetic_overflow_reports_tex_error_text() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

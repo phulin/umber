@@ -79,6 +79,7 @@ fn meaning_variants_round_trip() {
     round_trip(Meaning::PageDimension(PageDimension::FilllStretch));
     round_trip(Meaning::PageInteger(PageInteger::DeadCycles));
     round_trip(Meaning::PageInteger(PageInteger::InsertPenalties));
+    round_trip(Meaning::MuGlueParam(17));
     round_trip(Meaning::Unknown(RawMeaning::testing_new(u8::MAX, 0)));
     round_trip(Meaning::Unknown(RawMeaning::testing_new(
         u8::MAX,

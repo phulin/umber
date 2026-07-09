@@ -55,6 +55,7 @@ pub(super) fn read_glue_variable(stores: &Universe, target: Variable) -> GlueId 
     match target {
         Variable::GlueRegister(index) => stores.skip(index),
         Variable::GlueParam(index) => stores.glue_param(GlueParam::new(index)),
+        Variable::MuGlueParam(index) => stores.glue_param(GlueParam::new(index)),
         _ => unreachable!("caller restricts target"),
     }
 }
@@ -69,6 +70,7 @@ pub(super) fn write_glue_variable(
     match target {
         Variable::GlueRegister(_) => set_glue_register(stores, index, value, global),
         Variable::GlueParam(_) => set_glue_param(stores, index, value, global),
+        Variable::MuGlueParam(_) => set_glue_param(stores, index, value, global),
         _ => unreachable!("caller restricts target"),
     }
 }

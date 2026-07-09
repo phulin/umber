@@ -178,6 +178,12 @@ where
                     stores.glue(stores.glue_param(tex_state::env::banks::GlueParam::new(index)));
                 return Ok(intern_spec(stores, signed_spec(spec, negative)));
             }
+            Meaning::MuGlueParam(index) if mu => {
+                consume_optional_space(input, stores, recorder, hooks, expander)?;
+                let spec =
+                    stores.glue(stores.glue_param(tex_state::env::banks::GlueParam::new(index)));
+                return Ok(intern_spec(stores, signed_spec(spec, negative)));
+            }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Skip) if !mu => {
                 let index = scan_register_index(input, stores, recorder, hooks, expander)?;
                 consume_optional_space(input, stores, recorder, hooks, expander)?;

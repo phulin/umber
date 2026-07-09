@@ -90,6 +90,7 @@ pub(super) fn math_allows_assignment_meaning(meaning: Meaning) -> bool {
             | Meaning::IntParam(_)
             | Meaning::DimenParam(_)
             | Meaning::GlueParam(_)
+            | Meaning::MuGlueParam(_)
             | Meaning::TokParam(_)
             | Meaning::PageDimension(_)
             | Meaning::PageInteger(_)

@@ -142,6 +142,7 @@ where
         | Meaning::IntParam(_)
         | Meaning::DimenParam(_)
         | Meaning::GlueParam(_)
+        | Meaning::MuGlueParam(_)
         | Meaning::TokParam(_)
         | Meaning::PageDimension(_)
         | Meaning::PageInteger(_)) => {

@@ -17,6 +17,7 @@ pub(super) enum Variable {
     IntParam(u16),
     DimenParam(u16),
     GlueParam(u16),
+    MuGlueParam(u16),
     TokParam(u16),
     PageDimension(PageDimension),
     PageInteger(PageInteger),
@@ -107,6 +108,10 @@ where
         }
         Variable::GlueParam(index) => {
             let value = scan_glue_id(input, stores, hooks, false)?;
+            set_glue_param(stores, index, value, global);
+        }
+        Variable::MuGlueParam(index) => {
+            let value = scan_glue_id(input, stores, hooks, true)?;
             set_glue_param(stores, index, value, global);
         }
         Variable::TokParam(index) => {
@@ -289,6 +294,13 @@ where
             let value = arithmetic_glue(primitive, old, rhs)?;
             let id = stores.intern_glue(value);
             write_glue_variable(stores, target, index, id, global);
+        }
+        Variable::MuGlueParam(index) => {
+            let old = stores.glue(stores.glue_param(GlueParam::new(index)));
+            let rhs = scan_glue_or_factor(primitive, input, stores, hooks, true)?;
+            let value = arithmetic_glue(primitive, old, rhs)?;
+            let id = stores.intern_glue(value);
+            set_glue_param(stores, index, id, global);
         }
         Variable::MuGlueRegister(index) => {
             let old = stores.glue(stores.muskip(index));

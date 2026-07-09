@@ -280,8 +280,11 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   `\meaning`, and the currently supported `\the` classes) mint their visible
   output through the explicit token-list freezing capability. `\the` covers
   integer, dimension, glue, muglue, and token registers; register aliases;
-  integer, dimension, glue, and token parameters represented in `Env`; and
-  code-table values. Font dimensions, box dimensions, page state, and
+  integer, dimension, glue, muglue, and token parameters represented in `Env`;
+  and code-table values. Named math glue parameters such as `\thinmuskip`,
+  `\medmuskip`, and `\thickmuskip` are exposed as muglue assignment targets
+  while their values remain in the glue-parameter bank at TeX's parameter
+  indices. Font dimensions, box dimensions, page state, and
   time/job parameters not yet backed by `Env` remain documented TODOs until
   those classes are semantically available.
 - Input/job expandables use explicit driver hooks: `tex-expand` scans the

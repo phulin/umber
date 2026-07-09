@@ -186,6 +186,10 @@ fn install_parameter_meanings(stores: &mut Universe) {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::GlueParam(index));
     }
+    for &(name, index) in MU_GLUE_PARAMS {
+        let symbol = stores.intern(name);
+        stores.set_meaning(symbol, Meaning::MuGlueParam(index));
+    }
     for &(name, index) in TOK_PARAMS {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::TokParam(index));
@@ -301,10 +305,10 @@ const GLUE_PARAMS: &[(&str, u16)] = &[
     ("spaceskip", 12),
     ("xspaceskip", 13),
     ("parfillskip", 14),
-    ("thinmuskip", 15),
-    ("medmuskip", 16),
-    ("thickmuskip", 17),
 ];
+
+const MU_GLUE_PARAMS: &[(&str, u16)] =
+    &[("thinmuskip", 15), ("medmuskip", 16), ("thickmuskip", 17)];
 
 const TOK_PARAMS: &[(&str, u16)] = &[
     ("output", 0),

@@ -126,7 +126,11 @@ Rules:
   `Universe` facade, which validates that the `Symbol` is live in the
   same interner timeline before calling Env's crate-private barriered setter.
   Same for every register bank and parameter table: semantic assignment runs
-  the barrier (§6). Journal restore walks use a crate-private
+  the barrier (§6). TeX's named math glue parameters (`\thinmuskip`,
+  `\medmuskip`, and `\thickmuskip`) use distinct muglue meanings in the
+  command table so scanners accept `mu` units, but their values are still
+  journaled glue-parameter cells keyed by TeX's parameter indices. Journal
+  restore walks use a crate-private
   `Env::restore_raw(CellId, u64)` primitive that bypasses the barrier; it is
   restore-only, not a semantic assignment API.
 - **Public boundary**: downstream crates may read `Env` through the owning

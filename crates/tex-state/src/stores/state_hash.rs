@@ -294,6 +294,7 @@ impl Stores {
             Meaning::DimenParam(index) => hash_register_alias(11, index, hasher),
             Meaning::GlueParam(index) => hash_register_alias(12, index, hasher),
             Meaning::TokParam(index) => hash_register_alias(13, index, hasher),
+            Meaning::MuGlueParam(index) => hash_register_alias(20, index, hasher),
             Meaning::PageDimension(dimension) => {
                 hasher.tag(18);
                 hasher.u8(dimension.index());

@@ -695,6 +695,8 @@ fn the_renders_assignable_registers_parameters_and_code_tables() {
     stores.set_count(300, 42);
     let parskip = stores.intern("parskip");
     stores.set_meaning(parskip, Meaning::GlueParam(2));
+    let thinmuskip = stores.intern("thinmuskip");
+    stores.set_meaning(thinmuskip, Meaning::MuGlueParam(15));
     let glue = stores.intern_glue(GlueSpec {
         width: Scaled::from_raw(Scaled::UNITY),
         stretch: Scaled::from_raw(2 * Scaled::UNITY),
@@ -703,17 +705,25 @@ fn the_renders_assignable_registers_parameters_and_code_tables() {
         shrink_order: Order::Normal,
     });
     stores.set_glue_param(tex_state::env::banks::GlueParam::new(2), glue);
+    let muglue = stores.intern_glue(GlueSpec {
+        width: Scaled::from_raw(3 * Scaled::UNITY),
+        stretch: Scaled::from_raw(4 * Scaled::UNITY),
+        stretch_order: Order::Normal,
+        shrink: Scaled::from_raw(5 * Scaled::UNITY),
+        shrink_order: Order::Normal,
+    });
+    stores.set_glue_param(tex_state::env::banks::GlueParam::new(15), muglue);
     let everypar = stores.intern("everypar");
     stores.set_meaning(everypar, Meaning::TokParam(1));
     let hi = stores.intern_token_list(&[char_token('h'), char_token('i')]);
     stores.set_tok_param(tex_state::env::banks::TokParam::new(1), hi);
     let mut input = InputStack::new(MemoryInput::new(
-        "\\the\\count300 \\the\\foo \\the\\parskip \\the\\everypar \\the\\catcode`x",
+        "\\the\\count300 \\the\\foo \\the\\parskip \\the\\thinmuskip \\the\\everypar \\the\\catcode`x",
     ));
 
     assert_eq!(
         next_expanded_chars(&mut input, &mut stores),
-        "42421.0pt plus 2.0filhi11"
+        "42421.0pt plus 2.0fil3.0mu plus 4.0mu minus 5.0muhi11"
     );
 }
 
