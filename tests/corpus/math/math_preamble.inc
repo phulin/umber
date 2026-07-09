@@ -1,13 +1,13 @@
-\catcode`\\=0
-\catcode`\{=1
-\catcode`\}=2
-\catcode`\$=3
-\catcode`\&=4
-\catcode`\#=6
-\catcode`\^=7
-\catcode`\_=8
-\catcode`\ =10
-\catcode`\%=14
+\catcode92=0
+\catcode123=1
+\catcode125=2
+\catcode36=3
+\catcode38=4
+\catcode35=6
+\catcode94=7
+\catcode95=8
+\catcode32=10
+\catcode37=14
 \font\tenrm=cmr10
 \font\sevenrm=cmr10 at 7pt
 \font\fiverm=cmr10 at 5pt
@@ -77,7 +77,7 @@
 \mathcode`v="7176 \mathcode`w="7177 \mathcode`x="7178
 \mathcode`y="7179 \mathcode`z="717A
 \mathcode`+="202B
-\mathcode`\-="2200
+\mathcode`-="2200
 \mathcode`=="303D
 \mathcode`<="313C
 \mathcode`>="313E

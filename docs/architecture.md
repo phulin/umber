@@ -182,6 +182,9 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   token-list frame and continue; else deliver it downstream. Control-sequence
   tokens address their interned symbol directly; active character tokens
   address the same one-character symbol used by definition assignments.
+  Undefined control sequences follow TeX82's expansion path: `get_x_token`
+  reports an expansion error and forgets the consumed token rather than
+  delivering it as an unexpandable command.
 - **Macro call**: match delimited/undelimited parameters against the
   incoming stream (argument scanning is the gullet's inner loop and the
   #1 profile target); arguments are built with token builders and frozen.

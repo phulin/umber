@@ -1,6 +1,7 @@
 use tex_lex::{InputStack, MemoryInput};
 use tex_state::Universe;
 use tex_state::glue::{GlueSpec, Order};
+use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
 
@@ -75,7 +76,11 @@ fn omitted_components_stay_zero() {
 #[test]
 fn scans_internal_skip_values() {
     let mut stores = Universe::new();
-    stores.intern("skip");
+    let skip = stores.intern("skip");
+    stores.set_meaning(
+        skip,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Skip),
+    );
     let id = stores.intern_glue(GlueSpec {
         width: Scaled::from_raw(10),
         stretch: Scaled::from_raw(20),
@@ -107,7 +112,11 @@ fn scans_muglue_with_mu_units() {
 #[test]
 fn scans_internal_muskip_values() {
     let mut stores = Universe::new();
-    stores.intern("muskip");
+    let muskip = stores.intern("muskip");
+    stores.set_meaning(
+        muskip,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Muskip),
+    );
     let id = stores.intern_glue(GlueSpec {
         width: Scaled::from_raw(10),
         stretch: Scaled::from_raw(20),

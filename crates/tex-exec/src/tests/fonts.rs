@@ -22,7 +22,7 @@ fn fontdimen_assignment_is_grouping_aware() {
     let mut stores = stores_with_fonts();
     tex_expand::install_expandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
-        "\\font\\f=cmr10 \\fontdimen2\\f=10pt {\\fontdimen2\\f=20pt \\message{in=\\the\\fontdimen2\\f}}\\message{out=\\the\\fontdimen2\\f}\\end",
+        "\\font\\f=cmr10 \\relax \\fontdimen2\\f=10pt {\\fontdimen2\\f=20pt \\message{in=\\the\\fontdimen2\\f}}\\message{out=\\the\\fontdimen2\\f}\\end",
     ));
 
     Executor::new()
@@ -58,7 +58,7 @@ fn fontdimen_growth_is_limited_to_most_recently_loaded_font() {
 fn scanner_em_ex_units_use_current_font_parameters() {
     let mut stores = stores_with_fonts();
     let mut input = InputStack::new(MemoryInput::new(
-        "\\font\\f=cmr10 \\f\\dimen0=1em \\dimen1=1ex \\end",
+        "\\font\\f=cmr10 \\relax \\f\\dimen0=1em \\dimen1=1ex \\end",
     ));
 
     Executor::new()
@@ -87,7 +87,7 @@ fn scanner_em_ex_units_are_zero_for_nullfont() {
 fn scanner_em_unit_observes_runtime_fontdimen_write() {
     let mut stores = stores_with_fonts();
     let mut input = InputStack::new(MemoryInput::new(
-        "\\font\\f=cmr10 \\f\\fontdimen6\\f=12pt \\dimen0=1em \\end",
+        "\\font\\f=cmr10 \\relax \\f\\fontdimen6\\f=12pt \\dimen0=1em \\end",
     ));
 
     Executor::new()
@@ -102,7 +102,7 @@ fn nullfont_the_font_and_fontname_render_from_font_state() {
     let mut stores = stores_with_fonts();
     tex_expand::install_expandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
-        "\\message{A=\\the\\font|N=\\fontname\\nullfont}\\font\\foo=cmr10 \\foo\\message{B=\\the\\font|F=\\fontname\\foo}\\font\\bar=cmr10 at 12pt \\message{C=\\fontname\\bar}\\end",
+        "\\message{A=\\the\\font|N=\\fontname\\nullfont}\\font\\foo=cmr10 \\relax \\foo\\message{B=\\the\\font|F=\\fontname\\foo}\\font\\bar=cmr10 at 12pt \\message{C=\\fontname\\bar}\\end",
     ));
 
     Executor::new()

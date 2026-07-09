@@ -233,7 +233,7 @@ fn newlinechar_is_honored_by_message_and_immediate_write() {
     tex_expand::install_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
-        "\\newlinechar=`\\| \
+        "\\newlinechar=`| \
          \\message{m|n}\
          \\errmessage{e|f}\
          \\immediate\\openout2=nl.out \
@@ -319,7 +319,7 @@ fn newlinechar_is_honored_by_deferred_shipout_write() {
     tex_expand::install_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
-        "\\newlinechar=`\\| \
+        "\\newlinechar=`| \
          \\shipout\\hbox{\\openout2=ship.out \\write2{s|t}\\closeout2}\\end",
     ));
 

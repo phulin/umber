@@ -403,8 +403,21 @@ macro_rules! dispatch_match {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Fi) => {
                 handle_fi(token, input, stores)
             }
+            Meaning::Undefined => {
+                let name = match token {
+                    Token::Cs(symbol) => stores.resolve(symbol).to_owned(),
+                    Token::Char {
+                        ch,
+                        cat: tex_state::token::Catcode::Active,
+                    } => {
+                        let symbol = stores.intern(&ch.to_string());
+                        stores.resolve(symbol).to_owned()
+                    }
+                    Token::Char { .. } | Token::Param(_) => format!("{token:?}"),
+                };
+                Err(ExpandError::UndefinedControlSequence { name })
+            }
             Meaning::Macro { .. }
-            | Meaning::Undefined
             | Meaning::Relax
             | Meaning::CharGiven(_)
             | Meaning::CharToken { .. }

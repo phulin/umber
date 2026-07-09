@@ -1,7 +1,7 @@
 use tex_lex::{InputStack, MemoryInput};
 use tex_state::env::banks::IntParam;
 use tex_state::macro_store::MacroMeaning;
-use tex_state::meaning::{Meaning, MeaningFlags};
+use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
 use tex_state::{ExpansionState, Universe};
@@ -54,7 +54,8 @@ fn scans_backtick_character_and_control_sequence_constants() {
     assert_eq!(next, Some(char_token('x', Catcode::Letter)));
 
     let mut stores = Universe::new();
-    stores.intern("alpha");
+    let alpha = stores.intern("alpha");
+    stores.set_meaning(alpha, Meaning::Relax);
     let (value, next) = scan_with_stores("`\\alpha x", &mut stores);
     assert_eq!(value, i32::from(b'a'));
     assert_eq!(next, Some(char_token('x', Catcode::Letter)));
@@ -79,9 +80,21 @@ fn leaves_non_space_terminator_available() {
 #[test]
 fn scans_supported_internal_integers() {
     let mut stores = Universe::new();
-    stores.intern("count");
-    stores.intern("dimen");
-    stores.intern("endlinechar");
+    let count = stores.intern("count");
+    let dimen = stores.intern("dimen");
+    let endlinechar = stores.intern("endlinechar");
+    stores.set_meaning(
+        count,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Count),
+    );
+    stores.set_meaning(
+        dimen,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen),
+    );
+    stores.set_meaning(
+        endlinechar,
+        Meaning::IntParam(IntParam::END_LINE_CHAR.raw()),
+    );
     stores.set_count(12, -34);
     stores.set_dimen(3, Scaled::from_raw(65_536));
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
@@ -137,7 +150,11 @@ fn reports_number_too_big_and_caps_value() {
 #[test]
 fn rejects_out_of_range_register_numbers() {
     let mut stores = Universe::new();
-    stores.intern("count");
+    let count = stores.intern("count");
+    stores.set_meaning(
+        count,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Count),
+    );
     let mut input = InputStack::new(MemoryInput::new("\\count32768"));
     let err = scan_int(&mut input, &mut stores).expect_err("register should be rejected");
 

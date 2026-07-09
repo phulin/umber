@@ -235,6 +235,7 @@ pub enum ExpandError {
     MissingInputName,
     NonCharacterInInputName(Token),
     InputOpen { name: String, message: String },
+    UndefinedControlSequence { name: String },
     ScanInt(Box<scan_int::ScanIntError>),
     ScanDimen(Box<scan_dimen::ScanDimenError>),
     UnsupportedTheTarget(Token),
@@ -265,6 +266,9 @@ impl fmt::Display for ExpandError {
             }
             Self::InputOpen { name, message } => {
                 write!(f, "failed to open input {name:?}: {message}")
+            }
+            Self::UndefinedControlSequence { name } => {
+                write!(f, "Undefined control sequence \\{name}")
             }
             Self::ScanInt(err) => write!(f, "{err}"),
             Self::ScanDimen(err) => write!(f, "{err}"),
@@ -299,6 +303,7 @@ impl std::error::Error for ExpandError {
             | Self::MissingInputName
             | Self::NonCharacterInInputName(_)
             | Self::InputOpen { .. }
+            | Self::UndefinedControlSequence { .. }
             | Self::UnsupportedTheTarget(_)
             | Self::InvalidConditionalRelation(_)
             | Self::IncompleteIf

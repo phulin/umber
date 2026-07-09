@@ -152,6 +152,7 @@ fn edef_omits_noexpand_command_and_freezes_the_output() {
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);
     let a = stores.intern("a");
     let b = stores.intern("b");
+    stores.set_meaning(b, Meaning::Relax);
     let toks_body = stores.intern_token_list(&[Token::Cs(b)]);
     stores.set_toks(0, toks_body);
     let mut input = InputStack::new(MemoryInput::new("\\edef\\e{\\noexpand\\a\\the\\toks0}"));
@@ -473,7 +474,7 @@ fn box_primitives_round_trip_through_registers() {
 fn control_space_appends_normal_font_space_glue() {
     let mut stores = stores_with_fonts();
     let mut input = InputStack::new(MemoryInput::new(
-        "\\font\\f=cmr10 \\f\
+        "\\font\\f=cmr10 \\relax \\f\
          \\fontdimen2\\f=10pt \\fontdimen3\\f=2pt \\fontdimen4\\f=3pt \
          \\spaceskip=20pt \\xspaceskip=30pt \
          \\setbox0=\\hbox{A\\spacefactor=3000\\ B}",
@@ -936,7 +937,7 @@ fn prevgraf_reads_writes_and_tracks_finished_paragraph_lines() {
     let mut stores = stores_with_fonts();
     tex_expand::install_expandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
-        "\\font\\tenrm=cmr10 \\tenrm\
+        "\\font\\tenrm=cmr10 \\relax \\tenrm\
          \\parindent=0pt \\hsize=20pt \\parfillskip=0pt\
          \\prevgraf=5 \\edef\\pg{\\the\\prevgraf}\
          a\\penalty-10000 b\\penalty-10000 c\\par",

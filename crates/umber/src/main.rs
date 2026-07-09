@@ -13,7 +13,7 @@ mod expand_dump;
 const PLAIN_CORPUS_BOOTSTRAP: &str = r##"
 % Minimal plain-format prelude for external corpus parity.
 % This is not plain.tex; umber2-sfc.1 owns full plain.tex bring-up.
-\catcode`\@=11
+\catcode`@=11
 \font\tenrm=cmr10
 \font\tenbf=cmbx10
 \font\tensl=cmsl10
@@ -73,7 +73,7 @@ const PLAIN_CORPUS_BOOTSTRAP: &str = r##"
 \let\ifwritinganswers=\iffalse
 \def\writinganswerstrue{\let\ifwritinganswers=\iftrue}
 \def\writinganswersfalse{\let\ifwritinganswers=\iffalse}
-\catcode`\@=12
+\catcode`@=12
 "##;
 
 fn main() -> ExitCode {
