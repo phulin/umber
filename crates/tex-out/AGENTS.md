@@ -14,6 +14,9 @@ Use this crate for stable, driver-facing artifact structures and serialization c
 - `Cargo.toml`: Crate manifest declaring the `tex-out` package, `tex-arith` dependency, and workspace lint settings.
 - `src/binary.rs`: Versioned compact binary writer/reader for page artifacts plus parse error types.
 - `src/dvi.rs`: DVI writer entry point, shared writer state, error type, and submodule wiring.
+- `src/bin/texout-dvitype.rs`: Small host-side DVI disassembly binary for parity triage.
+- `src/dvi/disasm.rs`: Backpointer-based DVI page scanner and dvitype-style page disassembler.
+- `src/dvi/disasm/tests.rs`: Focused tests for page recovery and command lookup.
 - `src/dvi/extent.rs`: Page extent accounting for DVI postamble maximum dimensions.
 - `src/dvi/fonts.rs`: DVI font selection, first-use font definitions, and postamble font definition emission.
 - `src/dvi/framing.rs`: DVI file framing, page `bop`/`eop`, preamble/postamble, and byte emission helpers.

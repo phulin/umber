@@ -2,6 +2,7 @@
 members = [
     "crates/*",
     "tools/refexec",
+    "tools/parity-harness",
 ]
 exclude = [
     "tools/corpus-sync",
@@ -18,6 +19,9 @@ anyhow = "1"
 tempfile = "3"
 similar = "2"
 proptest = "1"
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+toml = "0.8"
 
 [profile.test]
 opt-level = 3
