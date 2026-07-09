@@ -185,6 +185,13 @@ available. `scripts/parity.sh self-test` runs a synthetic fast bundle check
 that intentionally changes one DVI movement opcode and verifies the summary
 pinpoints page/opcode; it does not run the external corpus.
 
+The official Knuth TeX82 TRIP conformance materials are pinned separately in
+`tests/trip-manifest.txt`. They are fetched into gitignored `third_party/trip/`
+only by `scripts/trip.sh`; do not commit the fetched CTAN files or fold this
+gate into `cargo test --workspace --tests`. The TRIP harness requires the
+special INITEX build documented by `tripman.tex` Appendix A and writes
+comparison work products under `target/trip/`.
+
 ## Proptest Budgets
 
 Replay-identity proptests use `PROPTEST_CASES` for their case budget. Leave

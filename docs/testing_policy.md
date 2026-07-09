@@ -188,6 +188,37 @@ bundle writer with synthetic DVI and remains fast enough for local tooling
 checks, but the external corpus itself must stay outside
 `cargo test --workspace --tests`.
 
+The original Knuth TeX82 TRIP test is a separate explicit conformance tier,
+not part of the default Rust test tier and not part of the later e-TRIP work:
+
+```bash
+scripts/trip.sh
+scripts/trip.sh --offline
+scripts/trip.sh self-test
+```
+
+`scripts/trip.sh` reads `tests/trip-manifest.txt`, fetches exact official
+TRIP bytes into gitignored `third_party/trip/`, and verifies every SHA-256
+before running. It rebuilds `trip.tfm` from `trip.pl` with PLtoTF, converts it
+back with TFtoPL, compares the generated TFM to the canonical CTAN TFM, then
+runs the documented INITEX and format-loaded TRIP phases. This tier requires
+Knuth's special TRIP INITEX build described in `tripman.tex` Appendix A; stock
+`pdftex -ini` or `tex -ini` is useful only as a failing sanity check because
+the official log line widths, memory limits, and capacity statistics depend on
+that special build. Set `UMBER_TRIP_INITEX=/absolute/path/to/initex` to select
+it. The harness also uses `UMBER_REF_PLTOTF`, `UMBER_REF_TFTOPL`, and
+`UMBER_REF_DVITYPE` overrides when the TeXware tools are not on `PATH`.
+
+Allowed TRIP normalizations are intentionally narrower than Knuth's prose
+allows for manual inspection: transcript date/time suffixes, local `./trip.tex`
+path spelling, DVItype banner packaging text, the DVItype rendering of the DVI
+preamble timestamp, and the DVI preamble comment bytes. All other transcript,
+terminal photo, DVItype, `tripos.tex`, and DVI bytes must match. Failures write
+unified diffs or byte contexts under `target/trip/diffs/`; `scripts/trip.sh
+self-test` deliberately perturbs a copied text artifact and verifies that this
+diff path is actionable without fetching or running TeX.
+See [trip.md](trip.md) for the exact source pins and normalization policy.
+
 `tex-out` also owns the cross-crate page-output float guard. Its unit tests
 scan the page node, packing, shipout lowering, artifact, DVI, and CLI DVI
 composition sources and fail if float types or float rounding APIs enter that
