@@ -68,36 +68,7 @@ where
     }
     let meaning = match token {
         Token::Cs(symbol) => stores.meaning(symbol),
-        Token::Char {
-            cat: Catcode::BeginGroup,
-            ..
-        } => {
-            stores.enter_group_with_kind(GroupKind::Simple);
-            return Ok(DispatchAction::Continue);
-        }
-        Token::Char {
-            cat: Catcode::EndGroup,
-            ..
-        } => {
-            leave_group(input, stores, GroupKind::Simple)?;
-            return Ok(DispatchAction::Continue);
-        }
-        Token::Char {
-            cat: Catcode::Space,
-            ..
-        } => {
-            if assignments::try_append_character(nest, token, stores)? {
-                return Ok(DispatchAction::Continue);
-            }
-            return Ok(DispatchAction::Continue);
-        }
-        Token::Char { ch, .. } => {
-            if assignments::try_append_character(nest, token, stores)? {
-                return Ok(DispatchAction::Continue);
-            }
-            assignments::append_given_char(nest, input, stores, ch)?;
-            return Ok(DispatchAction::Continue);
-        }
+        Token::Char { .. } => return dispatch_character_token(nest, token, input, stores, hooks),
         Token::Param(_) => {
             return Ok(DispatchAction::NotConsumed);
         }
@@ -116,6 +87,9 @@ where
         Meaning::CharGiven(ch) => {
             assignments::append_given_char(nest, input, stores, ch)?;
             Ok(DispatchAction::Continue)
+        }
+        Meaning::CharToken { ch, cat } => {
+            dispatch_character_token(nest, Token::Char { ch, cat }, input, stores, hooks)
         }
         Meaning::Macro { .. } => Err(ExecError::UnexpectedMacroDelivery {
             name: stores.resolve_cs_name(token),
@@ -155,6 +129,54 @@ where
             token,
             opcode: raw.op(),
         }),
+    }
+}
+
+fn dispatch_character_token<S, H>(
+    nest: &mut ModeNest,
+    token: Token,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    hooks: &mut H,
+) -> Result<DispatchAction, ExecError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    match token {
+        Token::Char {
+            cat: Catcode::BeginGroup,
+            ..
+        } => {
+            stores.enter_group_with_kind(GroupKind::Simple);
+            Ok(DispatchAction::Continue)
+        }
+        Token::Char {
+            cat: Catcode::EndGroup,
+            ..
+        } => {
+            leave_group(input, stores, GroupKind::Simple)?;
+            Ok(DispatchAction::Continue)
+        }
+        Token::Char {
+            cat: Catcode::MathShift,
+            ..
+        } => crate::math::enter_math(nest, input, stores, hooks),
+        Token::Char {
+            cat: Catcode::Space,
+            ..
+        } => {
+            let _ = assignments::try_append_character(nest, token, stores)?;
+            Ok(DispatchAction::Continue)
+        }
+        Token::Char { ch, .. } => {
+            if assignments::try_append_character(nest, token, stores)? {
+                return Ok(DispatchAction::Continue);
+            }
+            assignments::append_given_char(nest, input, stores, ch)?;
+            Ok(DispatchAction::Continue)
+        }
+        Token::Cs(_) | Token::Param(_) => unreachable!("caller passes a character token"),
     }
 }
 

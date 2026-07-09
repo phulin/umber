@@ -101,7 +101,7 @@ where
 pub(super) fn token_meaning_for_let(token: Token, stores: &Universe) -> Result<Meaning, ExecError> {
     match token {
         Token::Cs(symbol) => Ok(stores.meaning(symbol)),
-        Token::Char { ch, .. } => Ok(Meaning::CharGiven(ch)),
+        Token::Char { ch, cat } => Ok(Meaning::CharToken { ch, cat }),
         Token::Param(_) => Err(ExecError::InvalidLetRhs { token }),
     }
 }

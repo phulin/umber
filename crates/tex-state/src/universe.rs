@@ -1281,6 +1281,10 @@ impl Universe {
                 box_node.children = self.clone_node_list_to_epoch(box_node.children);
                 Node::VList(box_node)
             }
+            Node::Unset(mut unset) => {
+                unset.children = self.clone_node_list_to_epoch(unset.children);
+                Node::Unset(unset)
+            }
             Node::Disc {
                 kind,
                 pre,

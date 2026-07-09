@@ -76,7 +76,7 @@ pub fn vert_break(
                 | Node::Ins { .. }
                 | Node::Char { .. }
                 | Node::Lig { .. }
-                | Node::Unset
+                | Node::Unset(_)
                 | Node::Disc { .. }
                 | Node::MathOn(_)
                 | Node::MathOff(_)

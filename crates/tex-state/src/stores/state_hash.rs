@@ -281,6 +281,11 @@ impl Stores {
                 hasher.tag(3);
                 hasher.u32(ch as u32);
             }
+            Meaning::CharToken { ch, cat } => {
+                hasher.tag(21);
+                hasher.u32(ch as u32);
+                hash_catcode(cat, hasher);
+            }
             Meaning::MathCharGiven(value) => {
                 hasher.tag(4);
                 hasher.u16(value);
@@ -425,7 +430,22 @@ impl Stores {
             }
             Node::HList(box_node) => self.hash_box_node(6, box_node, hasher, stack),
             Node::VList(box_node) => self.hash_box_node(7, box_node, hasher, stack),
-            Node::Unset => hasher.tag(8),
+            Node::Unset(unset) => {
+                hasher.tag(8);
+                hasher.u8(match unset.kind {
+                    crate::node::UnsetKind::HBox => 0,
+                    crate::node::UnsetKind::VBox => 1,
+                });
+                hasher.i32(unset.width.raw());
+                hasher.i32(unset.height.raw());
+                hasher.i32(unset.depth.raw());
+                hasher.u16(unset.span_count);
+                hasher.i32(unset.stretch.raw());
+                hasher.u8(unset.stretch_order as u8);
+                hasher.i32(unset.shrink.raw());
+                hasher.u8(unset.shrink_order as u8);
+                stack.push(NodeFrame::List(unset.children));
+            }
             Node::Disc {
                 kind,
                 pre,

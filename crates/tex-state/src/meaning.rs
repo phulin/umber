@@ -2,6 +2,7 @@
 
 use crate::ids::{FontId, MacroDefinitionId};
 use crate::page::{PageDimension, PageInteger};
+use crate::token::Catcode;
 
 const OPCODE_SHIFT: u32 = 56;
 const FLAGS_SHIFT: u32 = 48;
@@ -27,6 +28,7 @@ const OP_FONT: u8 = 16;
 const OP_PAGE_DIMENSION: u8 = 17;
 const OP_PAGE_INTEGER: u8 = 18;
 const OP_MU_GLUE_PARAM: u8 = 19;
+const OP_CHAR_TOKEN: u8 = 20;
 
 /// Bitflags carried by meaning words.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -76,6 +78,10 @@ pub enum Meaning {
         definition: MacroDefinitionId,
     },
     CharGiven(char),
+    CharToken {
+        ch: char,
+        cat: Catcode,
+    },
     MathCharGiven(u16),
     CountRegister(u16),
     DimenRegister(u16),
@@ -281,6 +287,7 @@ pub enum UnexpandablePrimitive {
     HAlign,
     VAlign,
     NoAlign,
+    Omit,
     Cr,
     CrCr,
     Span,
@@ -449,6 +456,7 @@ impl UnexpandablePrimitive {
             Self::HAlign => 156,
             Self::VAlign => 157,
             Self::NoAlign => 158,
+            Self::Omit => 162,
             Self::Cr => 159,
             Self::CrCr => 160,
             Self::Span => 161,
@@ -617,6 +625,7 @@ impl UnexpandablePrimitive {
             156 => Some(Self::HAlign),
             157 => Some(Self::VAlign),
             158 => Some(Self::NoAlign),
+            162 => Some(Self::Omit),
             159 => Some(Self::Cr),
             160 => Some(Self::CrCr),
             161 => Some(Self::Span),
@@ -776,6 +785,11 @@ impl Meaning {
             Self::Relax => pack(OP_RELAX, MeaningFlags::EMPTY, 0),
             Self::Macro { flags, definition } => pack(OP_MACRO, flags, definition.raw() as u64),
             Self::CharGiven(ch) => pack(OP_CHAR_GIVEN, MeaningFlags::EMPTY, ch as u64),
+            Self::CharToken { ch, cat } => pack(
+                OP_CHAR_TOKEN,
+                MeaningFlags::EMPTY,
+                ((ch as u64) << 4) | cat as u64,
+            ),
             Self::MathCharGiven(value) => {
                 pack(OP_MATH_CHAR_GIVEN, MeaningFlags::EMPTY, value as u64)
             }
@@ -836,6 +850,14 @@ impl Meaning {
                 Some(ch) => Self::CharGiven(ch),
                 None => Self::Unknown(RawMeaning { op, operand }),
             },
+            OP_CHAR_TOKEN => {
+                let ch = char::from_u32((operand >> 4) as u32);
+                let cat = catcode_from_raw((operand & 0xF) as u8);
+                match (ch, cat) {
+                    (Some(ch), Some(cat)) => Self::CharToken { ch, cat },
+                    _ => Self::Unknown(RawMeaning { op, operand }),
+                }
+            }
             OP_MATH_CHAR_GIVEN if operand <= u16::MAX as u64 => Self::MathCharGiven(operand as u16),
             OP_COUNT_REGISTER if operand <= u16::MAX as u64 => Self::CountRegister(operand as u16),
             OP_DIMEN_REGISTER if operand <= u16::MAX as u64 => Self::DimenRegister(operand as u16),
@@ -885,6 +907,28 @@ impl Meaning {
 const fn pack(op: u8, flags: MeaningFlags, operand: u64) -> u64 {
     assert!(operand <= OPERAND_MASK, "meaning operand exceeds 48 bits");
     ((op as u64) << OPCODE_SHIFT) | ((flags.bits() as u64) << FLAGS_SHIFT) | operand
+}
+
+const fn catcode_from_raw(raw: u8) -> Option<Catcode> {
+    match raw {
+        0 => Some(Catcode::Escape),
+        1 => Some(Catcode::BeginGroup),
+        2 => Some(Catcode::EndGroup),
+        3 => Some(Catcode::MathShift),
+        4 => Some(Catcode::AlignmentTab),
+        5 => Some(Catcode::EndLine),
+        6 => Some(Catcode::Parameter),
+        7 => Some(Catcode::Superscript),
+        8 => Some(Catcode::Subscript),
+        9 => Some(Catcode::Ignored),
+        10 => Some(Catcode::Space),
+        11 => Some(Catcode::Letter),
+        12 => Some(Catcode::Other),
+        13 => Some(Catcode::Active),
+        14 => Some(Catcode::Comment),
+        15 => Some(Catcode::Invalid),
+        _ => None,
+    }
 }
 
 #[cfg(test)]

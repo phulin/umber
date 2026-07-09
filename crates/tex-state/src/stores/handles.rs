@@ -76,6 +76,9 @@ impl Stores {
             Node::HList(box_node) | Node::VList(box_node) => {
                 self.assert_live_child_node_list(box_node.children);
             }
+            Node::Unset(unset) => {
+                self.assert_live_child_node_list(unset.children);
+            }
             Node::Disc {
                 pre, post, replace, ..
             } => {
@@ -118,7 +121,6 @@ impl Stores {
             Node::Kern { .. }
             | Node::Penalty(_)
             | Node::Rule { .. }
-            | Node::Unset
             | Node::MathOn(_)
             | Node::MathOff(_)
             | Node::MathStyle(_)

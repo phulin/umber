@@ -91,6 +91,7 @@ pub(crate) fn is_outer_vertical(nest: &ModeNest) -> bool {
 fn vertical_baseline_dimensions(node: &Node) -> Option<(Scaled, Scaled)> {
     match node {
         Node::HList(box_node) | Node::VList(box_node) => Some((box_node.height, box_node.depth)),
+        Node::Unset(unset) => Some((unset.height, unset.depth)),
         Node::Rule { height, depth, .. } => Some((
             height.unwrap_or(Scaled::from_raw(0)),
             depth.unwrap_or(Scaled::from_raw(0)),

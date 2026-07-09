@@ -16,7 +16,8 @@ use tex_state::node::Node;
 use tex_state::scaled::Scaled;
 
 pub use packing::{
-    HpackParams, PackDiagnostic, PackSpec, PackedBox, VpackParams, hpack, vpack, vtop,
+    HpackParams, PackDiagnostic, PackSpec, PackedBox, UnsetMetrics, VpackParams, hpack,
+    measure_unset, vpack, vtop,
 };
 pub use vertical_break::{VerticalBreak, VerticalBreakError, vert_break};
 

@@ -56,6 +56,7 @@ pub fn install_unexpandable_primitives(stores: &mut Universe) {
         ("halign", UnexpandablePrimitive::HAlign),
         ("valign", UnexpandablePrimitive::VAlign),
         ("noalign", UnexpandablePrimitive::NoAlign),
+        ("omit", UnexpandablePrimitive::Omit),
         ("cr", UnexpandablePrimitive::Cr),
         ("crcr", UnexpandablePrimitive::CrCr),
         ("span", UnexpandablePrimitive::Span),

@@ -273,13 +273,16 @@ fn remap_node_children(
             list.content = remap_list(list.content, epoch, out, pending);
             out[index] = Node::MathList(list);
         }
+        Node::Unset(mut unset) => {
+            unset.children = remap_list(unset.children, epoch, out, pending);
+            out[index] = Node::Unset(unset);
+        }
         Node::Char { .. }
         | Node::Lig { .. }
         | Node::Kern { .. }
         | Node::Glue { .. }
         | Node::Penalty(_)
         | Node::Rule { .. }
-        | Node::Unset
         | Node::Mark { .. }
         | Node::Whatsit(_)
         | Node::MathOn(_)
@@ -322,13 +325,15 @@ fn rewrite_node_root_ids(node: &mut Node, root: SurvivorRootId) {
         Node::MathList(list) => {
             list.content = with_root(list.content, root);
         }
+        Node::Unset(unset) => {
+            unset.children = with_root(unset.children, root);
+        }
         Node::Char { .. }
         | Node::Lig { .. }
         | Node::Kern { .. }
         | Node::Glue { .. }
         | Node::Penalty(_)
         | Node::Rule { .. }
-        | Node::Unset
         | Node::Mark { .. }
         | Node::Whatsit(_)
         | Node::MathOn(_)

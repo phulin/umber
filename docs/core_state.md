@@ -117,11 +117,14 @@ Rules:
   registers. Dense register banks and parameter tables follow the same
   discipline: storage is raw `u64` words, and typed accessors encode/decode
   `i32`, `Scaled`, and content ids at the API boundary. Meaning words and
-  register values are `Copy`; no references into the array escape. Unknown
-  opcode words decode through a crate-private stored-word codec into an
-  opaque raw-meaning value whose fields can be read and re-encoded after
-  `Env::get`, but downstream crates cannot decode arbitrary raw words or
-  construct arbitrary raw meanings in production builds.
+  register values are `Copy`; no references into the array escape. Character
+  token meanings preserve both character and category code so `\let`
+  aliases such as `\let\x=&` retain delimiter meaning where TeX requires
+  command-code comparisons. Unknown opcode words decode through a
+  crate-private stored-word codec into an opaque raw-meaning value whose
+  fields can be read and re-encoded after `Env::get`, but downstream crates
+  cannot decode arbitrary raw words or construct arbitrary raw meanings in
+  production builds.
 - **Writes**: symbol-keyed meaning writes are exposed through the owning
   `Universe` facade, which validates that the `Symbol` is live in the
   same interner timeline before calling Env's crate-private barriered setter.

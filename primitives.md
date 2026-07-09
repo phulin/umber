@@ -378,12 +378,12 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 
 ## Alignments
 
-- [ ] `\cr` - Ends an alignment row.
-- [ ] `\crcr` - Ends an alignment row unless a row just ended.
+- [x] `\cr` - Ends an implemented alignment cell/row in the unset-record sub-mode; final width resolution is pending.
+- [x] `\crcr` - Ends or skips alignment rows in the implemented unset-record sub-mode; `\everycr` is pending.
 - [ ] `\everycr` - Token list inserted after `\cr` or nonredundant `\crcr`.
-- [ ] `\halign` - Builds a horizontal alignment.
+- [x] `\halign` - Parses preambles and executes rows/cells into unset records; two-pass width resolution is pending.
 - [ ] `\noalign` - Inserts vertical material between alignment rows.
-- [ ] `\omit` - Ignores the current alignment entry template.
-- [ ] `\span` - Combines adjacent alignment columns.
-- [ ] `\tabskip` - Glue inserted between alignment columns.
-- [ ] `\valign` - Builds a vertical alignment.
+- [x] `\omit` - Ignores the current alignment entry template in the implemented alignment sub-mode.
+- [x] `\span` - Combines adjacent alignment columns in the implemented unset-record sub-mode; final span width distribution is pending.
+- [x] `\tabskip` - Glue captured from preambles and inserted between unset alignment cells/rows.
+- [x] `\valign` - Parses preambles and executes rows/cells into unset records; transposition and final width resolution are pending.

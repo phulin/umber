@@ -1200,7 +1200,7 @@ impl Stores {
             | Node::Nonscript
             | Node::Lig { .. }
             | Node::Rule { .. }
-            | Node::Unset
+            | Node::Unset(_)
             | Node::Disc { .. }
             | Node::Mark { .. }
             | Node::Ins { .. }

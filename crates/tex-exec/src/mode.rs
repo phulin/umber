@@ -219,6 +219,10 @@ impl ModeList {
         self.align_state = Some(state);
     }
 
+    pub fn align_state_mut(&mut self) -> Option<&mut AlignState> {
+        self.align_state.as_mut()
+    }
+
     pub fn take_align_state(&mut self) -> Option<AlignState> {
         self.align_state.take()
     }
@@ -292,6 +296,8 @@ pub struct AlignState {
     loop_start: Option<usize>,
     current_row: usize,
     current_col: usize,
+    current_span: u16,
+    brace_depth: i32,
     end_template: Token,
 }
 
@@ -315,6 +321,8 @@ impl AlignState {
             loop_start,
             current_row: 0,
             current_col: 0,
+            current_span: 1,
+            brace_depth: 0,
             end_template,
         }
     }
@@ -360,6 +368,16 @@ impl AlignState {
     }
 
     #[must_use]
+    pub const fn current_span(&self) -> u16 {
+        self.current_span
+    }
+
+    #[must_use]
+    pub const fn brace_depth(&self) -> i32 {
+        self.brace_depth
+    }
+
+    #[must_use]
     pub const fn end_template(&self) -> Token {
         self.end_template
     }
@@ -384,6 +402,43 @@ impl AlignState {
             .get(boundary)
             .copied()
             .unwrap_or(self.default_tabskip)
+    }
+
+    pub fn start_row(&mut self) {
+        self.current_col = 0;
+        self.current_span = 1;
+        self.brace_depth = 0;
+    }
+
+    pub fn start_cell(&mut self, column: usize, span_count: u16) {
+        self.current_col = column;
+        self.current_span = span_count;
+        self.brace_depth = 0;
+    }
+
+    pub fn finish_cell(&mut self, next_column: usize) {
+        self.current_col = next_column;
+        self.current_span = 1;
+        self.brace_depth = 0;
+    }
+
+    pub fn finish_row(&mut self) {
+        self.current_row += 1;
+        self.current_col = 0;
+        self.current_span = 1;
+        self.brace_depth = 0;
+    }
+
+    pub fn increment_brace_depth(&mut self) {
+        self.brace_depth += 1;
+    }
+
+    pub fn decrement_brace_depth(&mut self) {
+        self.brace_depth -= 1;
+    }
+
+    pub fn set_brace_depth(&mut self, value: i32) {
+        self.brace_depth = value;
     }
 }
 
@@ -544,6 +599,14 @@ impl ModeNest {
             .last_mut()
             .expect("ModeNest always has at least one level")
             .list_mut()
+    }
+
+    pub(crate) fn list(&self, index: usize) -> Option<&ModeList> {
+        self.levels.get(index).map(ModeLevelSummary::list)
+    }
+
+    pub(crate) fn list_mut(&mut self, index: usize) -> Option<&mut ModeList> {
+        self.levels.get_mut(index).map(ModeLevelSummary::list_mut)
     }
 
     #[must_use]

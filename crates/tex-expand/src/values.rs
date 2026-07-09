@@ -386,6 +386,11 @@ pub fn meaning_text(stores: &impl ExpansionState, token: Token) -> String {
             Meaning::Undefined => "undefined".to_owned(),
             Meaning::Relax => "\\relax".to_owned(),
             Meaning::CharGiven(ch) => format!("the character {ch}"),
+            Meaning::CharToken {
+                ch,
+                cat: Catcode::Letter,
+            } => format!("the letter {ch}"),
+            Meaning::CharToken { ch, .. } => format!("the character {ch}"),
             Meaning::MathCharGiven(value) => format!("\\mathchar\"{value:X}"),
             Meaning::CountRegister(index) => format!("\\count{index}"),
             Meaning::DimenRegister(index) => format!("\\dimen{index}"),

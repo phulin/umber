@@ -2,7 +2,7 @@ use tex_state::Universe;
 use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::NodeListId;
-use tex_state::node::{BoxNode, BoxNodeFields, Node, Sign};
+use tex_state::node::{BoxNode, BoxNodeFields, Node, Sign, UnsetKind};
 use tex_state::scaled::{GlueSetRatio, Scaled};
 
 use crate::{INF_BAD, TypesetState, badness};
@@ -70,6 +70,37 @@ pub enum PackDiagnostic {
 pub struct PackedBox {
     pub node: BoxNode,
     pub diagnostics: Vec<PackDiagnostic>,
+}
+
+/// Natural dimensions and glue totals for an unset alignment box.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct UnsetMetrics {
+    pub width: Scaled,
+    pub height: Scaled,
+    pub depth: Scaled,
+    pub stretch: Scaled,
+    pub stretch_order: Order,
+    pub shrink: Scaled,
+    pub shrink_order: Order,
+}
+
+#[must_use]
+pub fn measure_unset(state: &impl TypesetState, list: NodeListId, kind: UnsetKind) -> UnsetMetrics {
+    let meas = match kind {
+        UnsetKind::HBox => measure_hlist(state, state.nodes(list)),
+        UnsetKind::VBox => measure_vlist(state, state.nodes(list)),
+    };
+    let stretch_order = highest_order(meas.stretch);
+    let shrink_order = highest_order(meas.shrink);
+    UnsetMetrics {
+        width: meas.width,
+        height: meas.height,
+        depth: meas.depth,
+        stretch: meas.stretch[stretch_order as usize],
+        stretch_order,
+        shrink: meas.shrink[shrink_order as usize],
+        shrink_order,
+    }
 }
 
 #[must_use]
@@ -281,7 +312,6 @@ fn measure_hlist(state: &impl TypesetState, nodes: &[Node]) -> Measurement {
                     meas.depth = meas.depth.max(metrics.depth);
                 }
             }
-            Node::Unset => {}
             Node::Kern { amount, .. } => meas.width = add(meas.width, *amount),
             Node::Glue { spec, .. } => add_glue(&mut meas, state.glue(*spec), Axis::Horizontal),
             Node::Rule {
@@ -303,6 +333,11 @@ fn measure_hlist(state: &impl TypesetState, nodes: &[Node]) -> Measurement {
                 meas.width = add(meas.width, box_node.width);
                 meas.height = meas.height.max(add(box_node.height, box_node.shift));
                 meas.depth = meas.depth.max(sub(box_node.depth, box_node.shift));
+            }
+            Node::Unset(unset) => {
+                meas.width = add(meas.width, unset.width);
+                meas.height = meas.height.max(unset.height);
+                meas.depth = meas.depth.max(unset.depth);
             }
             Node::Penalty(_) => {}
             Node::Disc { replace, .. } => {
@@ -338,6 +373,11 @@ fn measure_vlist(state: &impl TypesetState, nodes: &[Node]) -> Measurement {
                 meas.depth = box_node.depth;
                 meas.width = meas.width.max(add(box_node.width, box_node.shift));
             }
+            Node::Unset(unset) => {
+                meas.height = add(add(meas.height, meas.depth), unset.height);
+                meas.depth = unset.depth;
+                meas.width = meas.width.max(unset.width);
+            }
             Node::Rule {
                 width,
                 height,
@@ -357,7 +397,6 @@ fn measure_vlist(state: &impl TypesetState, nodes: &[Node]) -> Measurement {
             Node::Penalty(_) => {}
             Node::Char { .. }
             | Node::Lig { .. }
-            | Node::Unset
             | Node::Disc { .. }
             | Node::Mark { .. }
             | Node::Ins { .. }

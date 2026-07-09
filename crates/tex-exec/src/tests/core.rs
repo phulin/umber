@@ -300,7 +300,10 @@ fn let_assigns_control_sequence_and_implicit_character_meanings() {
     );
     assert_eq!(
         stores.meaning(stores.symbol("c").expect("c was interned")),
-        Meaning::CharGiven('Z')
+        Meaning::CharToken {
+            ch: 'Z',
+            cat: Catcode::Letter
+        }
     );
 }
 
@@ -322,7 +325,13 @@ fn futurelet_assigns_second_token_meaning_and_preserves_order() {
     .expect("futurelet executes");
 
     let n = stores.symbol("n").expect("n was interned");
-    assert_eq!(stores.meaning(n), Meaning::CharGiven('x'));
+    assert_eq!(
+        stores.meaning(n),
+        Meaning::CharToken {
+            ch: 'x',
+            cat: Catcode::Letter
+        }
+    );
     assert_eq!(
         input.next_token(&mut stores).expect("first replayed"),
         Some(Token::Cs(stores.symbol("first").expect("first")))

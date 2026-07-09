@@ -11,7 +11,7 @@ use tex_state::math::{
     FractionThickness, LimitType, MathChar, MathChoice, MathField, MathFraction, MathListNode,
     MathNoad, MathStyle, NoadClass, NoadKind,
 };
-use tex_state::node::{BoxNode, GlueKind, KernKind, Node, Sign};
+use tex_state::node::{BoxNode, GlueKind, KernKind, Node, Sign, UnsetKind, UnsetNode};
 use tex_state::scaled::{GLUE_SET_RATIO_SCALE, GlueSetRatio, Scaled};
 
 pub(crate) struct DumpConfig {
@@ -122,6 +122,9 @@ fn dump_node(
         Node::VList(box_node) => {
             dump_box("vbox", stores, box_node, config, depth, context, out);
         }
+        Node::Unset(unset) => {
+            dump_unset(stores, unset, config, depth, out);
+        }
         Node::Rule {
             width,
             height,
@@ -166,7 +169,7 @@ fn dump_node(
         Node::MathChoice(choice) => dump_math_choice(stores, choice, config, depth, out),
         Node::MathList(list) => dump_math_list(stores, list, config, depth, out),
         Node::Nonscript => out.push_str("\\glue(\\nonscript)\n"),
-        Node::Unset | Node::Ins { .. } | Node::Whatsit(_) => out.push_str("[]\n"),
+        Node::Ins { .. } | Node::Whatsit(_) => out.push_str("[]\n"),
     }
 }
 
@@ -483,6 +486,66 @@ fn dump_box(
     dump_list(
         stores,
         box_node.children,
+        config,
+        depth + 1,
+        child_context,
+        out,
+    );
+}
+
+fn dump_unset(
+    stores: &Universe,
+    unset: &UnsetNode,
+    config: &DumpConfig,
+    depth: i32,
+    out: &mut String,
+) {
+    let name = match unset.kind {
+        UnsetKind::HBox => "unsetbox",
+        UnsetKind::VBox => "unsetvbox",
+    };
+    let _ = write!(
+        out,
+        "\\{}({}+{})x{}",
+        name,
+        format_scaled_without_unit(unset.height),
+        format_scaled_without_unit(unset.depth),
+        format_scaled_without_unit(unset.width)
+    );
+    if unset.span_count > 1 {
+        let _ = write!(out, ", spans {}", unset.span_count);
+    }
+    if unset.stretch.raw() != 0 {
+        let _ = write!(
+            out,
+            ", stretch {}{}",
+            format_scaled_without_unit(unset.stretch),
+            order_unit(unset.stretch_order)
+        );
+    }
+    if unset.shrink.raw() != 0 {
+        let _ = write!(
+            out,
+            ", shrink {}{}",
+            format_scaled_without_unit(unset.shrink),
+            order_unit(unset.shrink_order)
+        );
+    }
+    if depth + 1 >= config.depth {
+        if !stores.nodes(unset.children).is_empty() {
+            out.push_str(" []");
+        }
+        out.push('\n');
+        return;
+    }
+    out.push('\n');
+    let child_context = match unset.kind {
+        UnsetKind::HBox => ListContext::HList,
+        UnsetKind::VBox => ListContext::VList,
+    };
+    dump_list(
+        stores,
+        unset.children,
         config,
         depth + 1,
         child_context,

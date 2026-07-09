@@ -96,6 +96,9 @@ fn node_width<S: TypesetState>(state: &S, node: &Node) -> Widths {
         Node::HList(box_node) | Node::VList(box_node) => {
             widths.natural = add(widths.natural, box_node.width);
         }
+        Node::Unset(unset) => {
+            widths.natural = add(widths.natural, unset.width);
+        }
         Node::Disc { replace, .. } => {
             widths.add_assign(line_widths(
                 state,
@@ -105,7 +108,6 @@ fn node_width<S: TypesetState>(state: &S, node: &Node) -> Widths {
             ));
         }
         Node::Penalty(_)
-        | Node::Unset
         | Node::Mark { .. }
         | Node::Ins { .. }
         | Node::Whatsit(_)

@@ -2,6 +2,7 @@ use super::*;
 use tex_state::env::banks::GlueParam;
 use tex_state::ids::GlueId;
 use tex_state::meaning::UnexpandablePrimitive;
+use tex_state::node::{Node, UnsetKind};
 
 fn scan_halign_preamble(source: &str) -> (Universe, AlignState) {
     let mut stores = Universe::new();
@@ -35,6 +36,56 @@ fn scan_valign_preamble(source: &str) -> (Universe, AlignState) {
 
 fn char_token(ch: char, cat: Catcode) -> Token {
     Token::Char { ch, cat }
+}
+
+fn run_alignment_source(source: &str) -> Universe {
+    let mut stores = support::stores_with_fonts();
+    let mut input = InputStack::new(MemoryInput::new(format!("\\font\\f=cmr10 \\f {source}")));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("alignment source executes");
+    stores
+}
+
+fn page_alignment(stores: &Universe) -> &tex_state::node::UnsetNode {
+    let [Node::Unset(alignment)] = stores.page_contributions() else {
+        panic!(
+            "expected one unset alignment, got {:?}",
+            stores.page_contributions()
+        );
+    };
+    assert_eq!(alignment.kind, UnsetKind::VBox);
+    alignment
+}
+
+fn unset_children<'a>(stores: &'a Universe, unset: &tex_state::node::UnsetNode) -> &'a [Node] {
+    stores.nodes(unset.children)
+}
+
+fn row_cells<'a>(
+    stores: &'a Universe,
+    row: &'a tex_state::node::UnsetNode,
+) -> Vec<&'a tex_state::node::UnsetNode> {
+    stores
+        .nodes(row.children)
+        .iter()
+        .filter_map(|node| match node {
+            Node::Unset(cell) => Some(cell),
+            _ => None,
+        })
+        .collect()
+}
+
+fn cell_text(stores: &Universe, cell: &tex_state::node::UnsetNode) -> String {
+    stores
+        .nodes(cell.children)
+        .iter()
+        .filter_map(|node| match node {
+            Node::Char { ch, .. } => Some(*ch),
+            Node::Lig { ch, .. } => Some(*ch),
+            _ => None,
+        })
+        .collect()
 }
 
 #[test]
@@ -176,4 +227,116 @@ fn alignment_preamble_errors_match_pdftex_wording() {
     )
     .expect_err("extra hash should be rejected");
     assert_eq!(err.to_string(), "Only one # is allowed per tab.");
+}
+
+#[test]
+fn executes_rows_and_replays_u_and_v_templates_into_unset_cells() {
+    let stores = run_alignment_source("\\halign{u#v\\cr x\\cr}");
+    let alignment = page_alignment(&stores);
+    let [Node::Unset(row)] = unset_children(&stores, alignment) else {
+        panic!("expected one unset row");
+    };
+    let cells = row_cells(&stores, row);
+
+    assert_eq!(cells.len(), 1);
+    assert_eq!(cell_text(&stores, cells[0]), "uxv");
+    assert_eq!(cells[0].span_count, 1);
+}
+
+#[test]
+fn let_aliased_alignment_tab_terminates_cell_by_meaning() {
+    let stores = run_alignment_source("\\let\\t=&\\halign{#&#\\cr a\\t b\\cr}");
+    let alignment = page_alignment(&stores);
+    let [Node::Unset(row)] = unset_children(&stores, alignment) else {
+        panic!("expected one unset row");
+    };
+    let cells = row_cells(&stores, row);
+
+    assert_eq!(cells.len(), 2);
+    assert_eq!(cell_text(&stores, cells[0]), "a");
+    assert_eq!(cell_text(&stores, cells[1]), "b");
+}
+
+#[test]
+fn grouped_alignment_tab_does_not_terminate_outer_cell() {
+    let stores = run_alignment_source("\\halign{#&#\\cr {a&b}&c\\cr}");
+    let alignment = page_alignment(&stores);
+    let [Node::Unset(row)] = unset_children(&stores, alignment) else {
+        panic!("expected one unset row");
+    };
+    let cells = row_cells(&stores, row);
+
+    assert_eq!(cells.len(), 2);
+    assert_eq!(cell_text(&stores, cells[0]), "a&b");
+    assert_eq!(cell_text(&stores, cells[1]), "c");
+}
+
+#[test]
+fn span_replays_next_column_template_at_span_time_and_packages_one_cell() {
+    let stores = run_alignment_source("\\halign{<#>&[#]\\cr a\\span b\\cr}");
+    let alignment = page_alignment(&stores);
+    let [Node::Unset(row)] = unset_children(&stores, alignment) else {
+        panic!("expected one unset row");
+    };
+    let cells = row_cells(&stores, row);
+
+    assert_eq!(cells.len(), 1);
+    assert_eq!(cells[0].span_count, 2);
+    assert_eq!(cell_text(&stores, cells[0]), "<a>[b]");
+}
+
+#[test]
+fn omit_skips_cell_templates() {
+    let stores = run_alignment_source("\\halign{u#v\\cr \\omit x\\cr}");
+    let alignment = page_alignment(&stores);
+    let [Node::Unset(row)] = unset_children(&stores, alignment) else {
+        panic!("expected one unset row");
+    };
+    let cells = row_cells(&stores, row);
+
+    assert_eq!(cells.len(), 1);
+    assert_eq!(cell_text(&stores, cells[0]), "x");
+}
+
+#[test]
+fn nested_alignment_executes_inside_cell() {
+    let stores = run_alignment_source("\\halign{#\\cr \\halign{#\\cr x\\cr}\\cr}");
+    let alignment = page_alignment(&stores);
+    let [Node::Unset(row)] = unset_children(&stores, alignment) else {
+        panic!("expected one outer unset row");
+    };
+    let cells = row_cells(&stores, row);
+
+    assert_eq!(cells.len(), 1);
+    assert!(
+        stores
+            .nodes(cells[0].children)
+            .iter()
+            .any(|node| matches!(node, Node::Unset(unset) if unset.kind == UnsetKind::VBox))
+    );
+}
+
+#[test]
+fn showlists_inside_cell_reports_alignment_submode_nest() {
+    let stores = run_alignment_source(
+        "\\showboxbreadth=100 \\showboxdepth=100 \\halign{#\\cr x\\showlists\\cr}",
+    );
+    let log = support::terminal_effect_text(&stores);
+
+    assert!(log.contains("### restricted horizontal mode entered at line 0"));
+    assert!(log.contains("### internal vertical mode entered at line 0"));
+}
+
+#[test]
+fn right_brace_before_cr_uses_missing_cr_recovery() {
+    let stores = run_alignment_source("\\halign{#\\cr x}");
+    let alignment = page_alignment(&stores);
+    let [Node::Unset(row)] = unset_children(&stores, alignment) else {
+        panic!("expected recovered unset row");
+    };
+    let cells = row_cells(&stores, row);
+
+    assert_eq!(cells.len(), 1);
+    assert_eq!(cell_text(&stores, cells[0]), "x");
+    assert!(support::terminal_effect_text(&stores).contains("Missing \\cr inserted"));
 }

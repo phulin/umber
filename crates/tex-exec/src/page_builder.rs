@@ -85,7 +85,7 @@ pub(crate) fn build_page(stores: &mut Universe) -> Result<(), ExecError> {
             }
             Node::Char { .. }
             | Node::Lig { .. }
-            | Node::Unset
+            | Node::Unset(_)
             | Node::Disc { .. }
             | Node::MathOn(_)
             | Node::MathOff(_)

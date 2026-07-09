@@ -34,7 +34,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/assignments/variables.rs`: register, parameter, font variable, and stream assignment routing.
 - `src/assignments/variables/streams.rs`: `\openin`, `\read`, `\openout`, `\write`, and stream whatsit execution.
 - `src/assignments/variables/variable_access.rs`: typed read/write accessors for registers, parameters, and font variables.
-- `src/align/`: alignment stomach sub-mode machinery; `preamble.rs` scans `\halign`/`\valign` preambles into frozen u/v templates, tabskip boundaries, and repeat metadata.
+- `src/align/`: alignment stomach sub-mode machinery; `preamble.rs` scans `\halign`/`\valign` preambles into frozen u/v templates, tabskip boundaries, and repeat metadata, while `execution.rs` runs the row/cell sub-mode and packages unset alignment records.
 - `src/diagnostics.rs`: diagnostic primitives such as `\show`, `\showthe`, `\showbox`, and message writing.
 - `src/dispatch.rs`: main-control token dispatch, group exits, token replay, and execution statistics.
 - `src/error.rs`: execution error enum, conversions, and display text.

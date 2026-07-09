@@ -399,6 +399,7 @@ macro_rules! dispatch_match {
             | Meaning::Undefined
             | Meaning::Relax
             | Meaning::CharGiven(_)
+            | Meaning::CharToken { .. }
             | Meaning::MathCharGiven(_)
             | Meaning::CountRegister(_)
             | Meaning::DimenRegister(_)

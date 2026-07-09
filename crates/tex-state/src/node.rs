@@ -36,7 +36,7 @@ pub enum Node {
     },
     HList(BoxNode),
     VList(BoxNode),
-    Unset,
+    Unset(UnsetNode),
     Disc {
         kind: DiscKind,
         pre: NodeListId,
@@ -113,6 +113,62 @@ pub struct BoxNodeFields {
     pub children: NodeListId,
 }
 
+/// A TeX unset box used while alignments are being measured and resolved.
+#[derive(Clone, Debug, PartialEq)]
+pub struct UnsetNode {
+    pub kind: UnsetKind,
+    pub width: Scaled,
+    pub height: Scaled,
+    pub depth: Scaled,
+    pub span_count: u16,
+    pub stretch: Scaled,
+    pub stretch_order: Order,
+    pub shrink: Scaled,
+    pub shrink_order: Order,
+    pub children: NodeListId,
+}
+
+impl UnsetNode {
+    /// Creates an unset box payload.
+    #[must_use]
+    pub fn new(fields: UnsetNodeFields) -> Self {
+        Self {
+            kind: fields.kind,
+            width: fields.width,
+            height: fields.height,
+            depth: fields.depth,
+            span_count: fields.span_count,
+            stretch: fields.stretch,
+            stretch_order: fields.stretch_order,
+            shrink: fields.shrink,
+            shrink_order: fields.shrink_order,
+            children: fields.children,
+        }
+    }
+}
+
+/// Construction fields for an unset alignment box.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct UnsetNodeFields {
+    pub kind: UnsetKind,
+    pub width: Scaled,
+    pub height: Scaled,
+    pub depth: Scaled,
+    pub span_count: u16,
+    pub stretch: Scaled,
+    pub stretch_order: Order,
+    pub shrink: Scaled,
+    pub shrink_order: Order,
+    pub children: NodeListId,
+}
+
+/// Whether an unset node was packaged with horizontal or vertical metrics.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum UnsetKind {
+    HBox,
+    VBox,
+}
+
 /// The source of a kern node.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum KernKind {
@@ -181,6 +237,7 @@ impl Node {
     pub(crate) fn child_lists(&self, out: &mut Vec<NodeListId>) {
         match self {
             Self::HList(box_node) | Self::VList(box_node) => out.push(box_node.children),
+            Self::Unset(unset) => out.push(unset.children),
             Self::Disc {
                 pre, post, replace, ..
             } => {
@@ -211,7 +268,6 @@ impl Node {
             | Self::Glue { .. }
             | Self::Penalty(_)
             | Self::Rule { .. }
-            | Self::Unset
             | Self::Mark { .. }
             | Self::Whatsit(_)
             | Self::MathOn(_)

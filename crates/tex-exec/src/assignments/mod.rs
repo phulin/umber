@@ -378,7 +378,7 @@ where
             }
             UnexpandablePrimitive::HAlign | UnexpandablePrimitive::VAlign => {
                 reject_macro_prefixes(prefixes)?;
-                crate::align::execute_alignment(primitive, nest, input, stores, hooks)?;
+                crate::align::execute_alignment(primitive, nest, input, stores, recorder, hooks)?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::HBox
@@ -587,6 +587,7 @@ where
                 })
             }
             UnexpandablePrimitive::NoAlign
+            | UnexpandablePrimitive::Omit
             | UnexpandablePrimitive::Cr
             | UnexpandablePrimitive::CrCr
             | UnexpandablePrimitive::Span => Err(ExecError::UnimplementedTypesetting {
