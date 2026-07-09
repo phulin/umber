@@ -232,7 +232,6 @@ pub enum ExpandError {
     UnimplementedExpandable(ExpandableOpcode),
     MissingTokenAfterPrimitive(ExpandableOpcode),
     MissingEndCsName,
-    NonCharacterInCsName(Token),
     MissingInputName,
     NonCharacterInInputName(Token),
     InputOpen { name: String, message: String },
@@ -257,9 +256,6 @@ impl fmt::Display for ExpandError {
                 write!(f, "missing token after expandable primitive {opcode:?}")
             }
             Self::MissingEndCsName => write!(f, "missing \\endcsname for \\csname"),
-            Self::NonCharacterInCsName(token) => {
-                write!(f, "non-character token {token:?} while scanning \\csname")
-            }
             Self::MissingInputName => write!(f, "missing file name after \\input"),
             Self::NonCharacterInInputName(token) => {
                 write!(
@@ -300,7 +296,6 @@ impl std::error::Error for ExpandError {
             Self::UnimplementedExpandable(_)
             | Self::MissingTokenAfterPrimitive(_)
             | Self::MissingEndCsName
-            | Self::NonCharacterInCsName(_)
             | Self::MissingInputName
             | Self::NonCharacterInInputName(_)
             | Self::InputOpen { .. }
