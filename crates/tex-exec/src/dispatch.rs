@@ -1,7 +1,7 @@
 use tex_expand::{ExpansionHooks, NoopRecorder, ReadRecorder};
 use tex_lex::{InputSource, InputStack};
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
-use tex_state::token::{Catcode, Token};
+use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{ContentHash, GroupKind, GroupMismatch, Universe};
 
 use crate::executor::sync_engine_state;
@@ -25,7 +25,7 @@ pub enum DispatchAction {
 /// Dispatches one gullet-delivered token in the current mode.
 pub fn dispatch_delivered_token<S, H>(
     nest: &mut ModeNest,
-    token: Token,
+    traced: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
@@ -35,12 +35,12 @@ where
     H: ExpansionHooks<S>,
 {
     let mut recorder = NoopRecorder;
-    dispatch_delivered_token_with_recorder(nest, token, input, stores, &mut recorder, hooks)
+    dispatch_delivered_token_with_recorder(nest, traced, input, stores, &mut recorder, hooks)
 }
 
 pub(crate) fn dispatch_delivered_token_with_recorder<S, R, H>(
     nest: &mut ModeNest,
-    token: Token,
+    traced: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
@@ -51,10 +51,12 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
+    let token = tex_expand::semantic_token(traced);
+    let origin = traced.origin();
     let mode = nest.current_mode();
     if matches!(mode, Mode::Math | Mode::DisplayMath) {
         return crate::math::dispatch_math_token_with_recorder(
-            nest, token, input, stores, recorder, hooks,
+            nest, traced, input, stores, recorder, hooks,
         );
     }
     if matches!(
@@ -75,7 +77,7 @@ where
             let symbol = assignments::active_character_symbol(stores, ch);
             stores.meaning(symbol)
         }
-        Token::Char { .. } => return dispatch_character_token(nest, token, input, stores, hooks),
+        Token::Char { .. } => return dispatch_character_token(nest, traced, input, stores, hooks),
         Token::Param(_) => {
             return Ok(DispatchAction::NotConsumed);
         }
@@ -90,21 +92,29 @@ where
         Meaning::Relax => Ok(DispatchAction::Continue),
         Meaning::Undefined => Err(ExecError::UndefinedControlSequence {
             name: stores.resolve_cs_name(token),
+            origin,
         }),
         Meaning::CharGiven(ch) => {
             assignments::append_given_char(nest, input, stores, ch)?;
             Ok(DispatchAction::Continue)
         }
-        Meaning::CharToken { ch, cat } => {
-            dispatch_character_token(nest, Token::Char { ch, cat }, input, stores, hooks)
-        }
+        Meaning::CharToken { ch, cat } => dispatch_character_token(
+            nest,
+            TracedTokenWord::pack(Token::Char { ch, cat }, origin),
+            input,
+            stores,
+            hooks,
+        ),
         Meaning::Macro { .. } => Err(ExecError::UnexpectedMacroDelivery {
             name: stores.resolve_cs_name(token),
+            origin,
         }),
-        Meaning::ExpandablePrimitive(primitive) => dispatch_delivered_expandable(token, primitive),
+        Meaning::ExpandablePrimitive(primitive) => {
+            dispatch_delivered_expandable(token, primitive, origin)
+        }
         Meaning::UnexpandablePrimitive(primitive) => {
             assignments::execute_unexpandable_with_recorder(
-                primitive, nest, input, stores, recorder, hooks,
+                primitive, traced, nest, input, stores, recorder, hooks,
             )
         }
         Meaning::Font(id) => {
@@ -128,21 +138,22 @@ where
         | Meaning::TokParam(_)
         | Meaning::PageDimension(_)
         | Meaning::PageInteger(_)) => {
-            assignments::execute_assignment_meaning(meaning, input, stores, hooks)
+            assignments::execute_assignment_meaning(meaning, traced, input, stores, hooks)
         }
         Meaning::MathCharGiven(_) => {
-            unimplemented_typesetting(mode, token, "math character command")
+            unimplemented_typesetting(mode, token, origin, "math character command")
         }
         Meaning::Unknown(raw) => Err(ExecError::UnsupportedCommand {
             token,
             opcode: raw.op(),
+            origin,
         }),
     }
 }
 
 fn dispatch_character_token<S, H>(
     nest: &mut ModeNest,
-    token: Token,
+    traced: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
@@ -151,6 +162,8 @@ where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
+    let token = tex_expand::semantic_token(traced);
+    let origin = traced.origin();
     match token {
         Token::Char {
             cat: Catcode::BeginGroup,
@@ -163,7 +176,7 @@ where
             cat: Catcode::EndGroup,
             ..
         } => {
-            leave_group(input, stores, GroupKind::Simple)?;
+            leave_group_with_origin(input, stores, GroupKind::Simple, origin)?;
             Ok(DispatchAction::Continue)
         }
         Token::Char {
@@ -191,13 +204,18 @@ where
 fn dispatch_delivered_expandable(
     token: Token,
     primitive: ExpandablePrimitive,
+    origin: OriginId,
 ) -> Result<DispatchAction, ExecError> {
     match primitive {
-        ExpandablePrimitive::EndCsName => Err(ExecError::ExtraEndCsName),
+        ExpandablePrimitive::EndCsName => Err(ExecError::ExtraEndCsName { origin }),
         ExpandablePrimitive::Fi | ExpandablePrimitive::Else | ExpandablePrimitive::Or => {
-            Err(ExecError::ExtraConditionalControl(primitive))
+            Err(ExecError::ExtraConditionalControl { primitive, origin })
         }
-        _ => Err(ExecError::UnexpectedExpandableDelivery { token, primitive }),
+        _ => Err(ExecError::UnexpectedExpandableDelivery {
+            token,
+            primitive,
+            origin,
+        }),
     }
 }
 
@@ -209,25 +227,42 @@ pub(crate) fn leave_group<S>(
 where
     S: InputSource,
 {
+    leave_group_with_origin(input, stores, expected, OriginId::UNKNOWN)
+}
+
+pub(crate) fn leave_group_with_origin<S>(
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    expected: GroupKind,
+    origin: OriginId,
+) -> Result<(), ExecError>
+where
+    S: InputSource,
+{
     match stores.leave_group_with_kind(expected) {
         Ok(tokens) => {
             push_tokens(input, stores, tokens);
             Ok(())
         }
-        Err(mismatch) => Err(group_mismatch_error(expected, mismatch)),
+        Err(mismatch) => Err(group_mismatch_error(expected, mismatch, origin)),
     }
 }
 
-fn group_mismatch_error(expected: GroupKind, mismatch: GroupMismatch) -> ExecError {
+fn group_mismatch_error(
+    expected: GroupKind,
+    mismatch: GroupMismatch,
+    origin: OriginId,
+) -> ExecError {
     let no_open_group = mismatch.actual() == expected;
     match (expected, mismatch.actual(), no_open_group) {
-        (GroupKind::Simple, _, true) => ExecError::TooManyRightBraces,
+        (GroupKind::Simple, _, true) => ExecError::TooManyRightBraces { origin },
         (GroupKind::Simple, GroupKind::SemiSimple, false) => {
-            ExecError::ExtraRightBraceOrForgottenEndgroup
+            ExecError::ExtraRightBraceOrForgottenEndgroup { origin }
         }
-        (GroupKind::SemiSimple, _, true) => ExecError::ExtraEndGroup,
+        (GroupKind::SemiSimple, _, true) => ExecError::ExtraEndGroup { origin },
         (GroupKind::SemiSimple, GroupKind::Simple, false) => ExecError::EndGroupMismatch {
             started_by: mismatch.actual().start_text(),
+            origin,
         },
         (GroupKind::Simple, GroupKind::Simple, false)
         | (GroupKind::SemiSimple, GroupKind::SemiSimple, false) => {
@@ -252,11 +287,13 @@ where
 pub(crate) fn unimplemented_typesetting(
     mode: Mode,
     token: Token,
+    origin: OriginId,
     operation: &'static str,
 ) -> Result<DispatchAction, ExecError> {
     Err(ExecError::UnimplementedTypesetting {
         mode,
         token,
+        origin,
         operation,
     })
 }

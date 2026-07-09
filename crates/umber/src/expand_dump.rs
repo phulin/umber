@@ -5,7 +5,7 @@ use tex_expand::{ExpandError, ExpansionHooks, get_x_token_with_hooks, semantic_t
 use tex_lex::{InputStack, LexError, WorldInput};
 use tex_state::env::banks::IntParam;
 use tex_state::meaning::Meaning;
-use tex_state::token::Token;
+use tex_state::token::TracedTokenWord;
 use tex_state::{ExpansionContext, Universe, World, WorldError};
 
 use crate::format_token;
@@ -37,17 +37,18 @@ impl DumpDriver {
             if try_execute_assignment(token, &mut self.input, &mut self.stores, &mut self.hooks)? {
                 continue;
             }
-            println!("{}", format_token(token, &self.stores));
+            println!("{}", format_token(semantic_token(token), &self.stores));
         }
         Ok(())
     }
 
-    fn next_delivered(&mut self) -> Result<Option<Token>, ExpandDumpError> {
+    fn next_delivered(&mut self) -> Result<Option<TracedTokenWord>, ExpandDumpError> {
         let mut expansion = ExpansionContext::new(&mut self.stores);
-        Ok(
-            get_x_token_with_hooks(&mut self.input, &mut expansion, &mut self.hooks)?
-                .map(semantic_token),
-        )
+        Ok(get_x_token_with_hooks(
+            &mut self.input,
+            &mut expansion,
+            &mut self.hooks,
+        )?)
     }
 }
 

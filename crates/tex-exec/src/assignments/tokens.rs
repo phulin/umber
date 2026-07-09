@@ -2,14 +2,14 @@ use super::*;
 
 pub(super) fn reject_macro_prefixes(prefixes: Prefixes) -> Result<(), ExecError> {
     if prefixes.flags != MeaningFlags::EMPTY {
-        return Err(ExecError::PrefixWithNonDefinition);
+        return Err(ExecError::PrefixWithNonDefinition { origin: None });
     }
     Ok(())
 }
 
 pub(super) fn reject_all_prefixes(prefixes: Prefixes) -> Result<(), ExecError> {
     if prefixes.global || prefixes.flags != MeaningFlags::EMPTY {
-        return Err(ExecError::PrefixWithNonDefinition);
+        return Err(ExecError::PrefixWithNonDefinition { origin: None });
     }
     Ok(())
 }
@@ -67,15 +67,20 @@ pub(super) fn scan_definition_target<S>(
 where
     S: InputSource,
 {
-    let token =
-        next_non_space_raw(input, stores)?.ok_or(ExecError::MissingControlSequence { context })?;
+    let traced = next_non_space_traced_raw(input, stores)?
+        .ok_or(ExecError::MissingControlSequence { context })?;
+    let token = tex_expand::semantic_token(traced);
     match token {
         Token::Cs(symbol) => Ok(symbol),
         Token::Char {
             ch,
             cat: Catcode::Active,
         } => Ok(active_character_symbol(stores, ch)),
-        _ => Err(ExecError::ExpectedControlSequence { context, token }),
+        _ => Err(ExecError::ExpectedControlSequence {
+            context,
+            token,
+            origin: traced.origin(),
+        }),
     }
 }
 
@@ -103,7 +108,13 @@ where
             ch,
             cat: Catcode::Active,
         } => active_character_symbol(stores, ch),
-        _ => return Err(ExecError::ExpectedControlSequence { context, token }),
+        _ => {
+            return Err(ExecError::ExpectedControlSequence {
+                context,
+                token,
+                origin: traced.origin(),
+            });
+        }
     };
     Ok(TracedDefinitionTarget {
         symbol,
@@ -118,29 +129,39 @@ pub(crate) fn active_character_symbol(stores: &mut Universe, ch: char) -> Symbol
 pub(super) fn scan_optional_equals_one_space<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-) -> Result<Token, ExecError>
+) -> Result<TracedTokenWord, ExecError>
 where
     S: InputSource,
 {
-    let first = input.next_token(stores)?.ok_or(ExecError::MissingToken {
-        context: "\\let right-hand side",
-    })?;
-    if !is_other_equals(first) {
+    let first = input
+        .next_traced_token(stores)?
+        .ok_or(ExecError::MissingToken {
+            context: "\\let right-hand side",
+        })?;
+    if !is_other_equals(tex_expand::semantic_token(first)) {
         return Ok(first);
     }
-    let next = input.next_token(stores)?.ok_or(ExecError::MissingToken {
-        context: "\\let right-hand side",
-    })?;
-    if is_space(next) {
-        input.next_token(stores)?.ok_or(ExecError::MissingToken {
+    let next = input
+        .next_traced_token(stores)?
+        .ok_or(ExecError::MissingToken {
             context: "\\let right-hand side",
-        })
+        })?;
+    if is_space(tex_expand::semantic_token(next)) {
+        input
+            .next_traced_token(stores)?
+            .ok_or(ExecError::MissingToken {
+                context: "\\let right-hand side",
+            })
     } else {
         Ok(next)
     }
 }
 
-pub(super) fn token_meaning_for_let(token: Token, stores: &Universe) -> Result<Meaning, ExecError> {
+pub(super) fn token_meaning_for_let(
+    traced: TracedTokenWord,
+    stores: &Universe,
+) -> Result<Meaning, ExecError> {
+    let token = tex_expand::semantic_token(traced);
     match token {
         Token::Cs(symbol) => Ok(stores.meaning(symbol)),
         Token::Char {
@@ -150,7 +171,10 @@ pub(super) fn token_meaning_for_let(token: Token, stores: &Universe) -> Result<M
             .symbol(&ch.to_string())
             .map_or(Ok(Meaning::Undefined), |symbol| Ok(stores.meaning(symbol))),
         Token::Char { ch, cat } => Ok(Meaning::CharToken { ch, cat }),
-        Token::Param(_) => Err(ExecError::InvalidLetRhs { token }),
+        Token::Param(_) => Err(ExecError::InvalidLetRhs {
+            token,
+            origin: traced.origin(),
+        }),
     }
 }
 

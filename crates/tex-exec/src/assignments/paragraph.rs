@@ -106,6 +106,7 @@ where
         mode => Err(ExecError::UnimplementedTypesetting {
             mode,
             token: tex_state::token::Token::Cs(stores.intern("par")),
+            origin: OriginId::UNKNOWN,
             operation: "paragraph start",
         }),
     }

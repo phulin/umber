@@ -6,7 +6,7 @@ use tex_lex::{InputSource, InputStack};
 use tex_state::glue::GlueSpec;
 use tex_state::node::Node;
 use tex_state::scaled::Scaled;
-use tex_state::token::Token;
+use tex_state::token::TracedTokenWord;
 use tex_state::{ExpansionContext, Universe};
 
 use crate::dispatch::{dispatch_delivered_token_with_recorder, unimplemented_typesetting};
@@ -117,7 +117,8 @@ impl Executor {
             }
             MainControlExit::NotConsumed { token } => Err(unimplemented_typesetting(
                 self.nest.current_mode(),
-                token,
+                tex_expand::semantic_token(token),
+                token.origin(),
                 "non-assignment command",
             )
             .expect_err("unimplemented_typesetting always returns Err")),
@@ -129,8 +130,8 @@ impl Executor {
 pub(crate) enum MainControlExit {
     EndOfInput,
     Stopped,
-    End { token: Token },
-    NotConsumed { token: Token },
+    End { token: TracedTokenWord },
+    NotConsumed { token: TracedTokenWord },
 }
 
 pub(crate) fn run_main_control_until<S, R, H, F>(
@@ -157,7 +158,6 @@ where
         let token = {
             let mut expansion = ExpansionContext::new(stores);
             get_x_token_with_recorder_and_hooks(input, &mut expansion, recorder, hooks)?
-                .map(tex_expand::semantic_token)
         };
         let Some(token) = token else {
             assignments::flush_pending_hchars(nest, stores)?;

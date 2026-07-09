@@ -9,7 +9,7 @@ use tex_state::math::{MathChar, MathField, MathListNode, NoadClass, NoadKind};
 use tex_state::meaning::{ExpandablePrimitive, Meaning, UnexpandablePrimitive};
 use tex_state::node::{GlueKind, KernKind, Node};
 use tex_state::scaled::Scaled;
-use tex_state::token::{Catcode, Token};
+use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::assignments;
 use crate::executor::sync_engine_state;
@@ -110,7 +110,7 @@ where
 
 pub(crate) fn dispatch_math_token_with_recorder<S, R, H>(
     nest: &mut ModeNest,
-    token: Token,
+    traced: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
@@ -121,6 +121,8 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
+    let token = tex_expand::semantic_token(traced);
+    let origin = traced.origin();
     match token {
         Token::Char {
             cat: Catcode::MathShift,
@@ -145,7 +147,7 @@ where
         Token::Char {
             cat: Catcode::EndGroup,
             ..
-        } => Err(ExecError::TooManyRightBraces),
+        } => Err(ExecError::TooManyRightBraces { origin }),
         Token::Char {
             cat: Catcode::Superscript,
             ..
@@ -172,7 +174,7 @@ where
             Ok(DispatchAction::Continue)
         }
         Token::Cs(symbol) => {
-            dispatch_math_control(nest, token, symbol, input, stores, recorder, hooks)
+            dispatch_math_control(nest, traced, symbol, input, stores, recorder, hooks)
         }
         Token::Param(_) => Ok(DispatchAction::NotConsumed),
     }
@@ -211,6 +213,7 @@ where
             ExecError::UnimplementedTypesetting {
                 mode: Mode::DisplayMath,
                 token: Token::Cs(stores.intern("display")),
+                origin: OriginId::UNKNOWN,
                 operation: "display interrupt state",
             },
         )?;
@@ -224,7 +227,7 @@ where
 
 fn dispatch_math_control<S, R, H>(
     nest: &mut ModeNest,
-    token: Token,
+    traced: TracedTokenWord,
     symbol: tex_state::interner::Symbol,
     input: &mut InputStack<S>,
     stores: &mut Universe,
@@ -236,12 +239,15 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
+    let token = tex_expand::semantic_token(traced);
+    let origin = traced.origin();
     let meaning = stores.meaning(symbol);
     recorder.record_meaning(symbol, meaning);
     match meaning {
         Meaning::Relax => Ok(DispatchAction::Continue),
         Meaning::Undefined => Err(ExecError::UndefinedControlSequence {
             name: stores.resolve(symbol).to_owned(),
+            origin,
         }),
         Meaning::CharGiven(ch) => {
             append_mathcode_char(nest, input, stores, ch)?;
@@ -252,20 +258,25 @@ where
             Ok(DispatchAction::Continue)
         }
         Meaning::UnexpandablePrimitive(primitive) => {
-            dispatch_math_primitive(primitive, nest, input, stores, recorder, hooks)
+            dispatch_math_primitive(primitive, traced, nest, input, stores, recorder, hooks)
         }
         Meaning::ExpandablePrimitive(primitive) => match primitive {
             ExpandablePrimitive::Fi | ExpandablePrimitive::Else | ExpandablePrimitive::Or => {
-                Err(ExecError::ExtraConditionalControl(primitive))
+                Err(ExecError::ExtraConditionalControl { primitive, origin })
             }
-            ExpandablePrimitive::EndCsName => Err(ExecError::ExtraEndCsName),
-            _ => Err(ExecError::UnexpectedExpandableDelivery { token, primitive }),
+            ExpandablePrimitive::EndCsName => Err(ExecError::ExtraEndCsName { origin }),
+            _ => Err(ExecError::UnexpectedExpandableDelivery {
+                token,
+                primitive,
+                origin,
+            }),
         },
         Meaning::Macro { .. } => Err(ExecError::UnexpectedMacroDelivery {
             name: stores.resolve(symbol).to_owned(),
+            origin,
         }),
         meaning if math_allows_assignment_meaning(meaning) => {
-            assignments::execute_assignment_meaning(meaning, input, stores, hooks)
+            assignments::execute_assignment_meaning(meaning, traced, input, stores, hooks)
         }
         Meaning::Font(id) => {
             stores.set_current_font_selector(symbol, id);
@@ -274,6 +285,7 @@ where
         Meaning::Unknown(raw) => Err(ExecError::UnsupportedCommand {
             token,
             opcode: raw.op(),
+            origin,
         }),
         _ => Ok(DispatchAction::NotConsumed),
     }
@@ -281,6 +293,7 @@ where
 
 fn dispatch_math_primitive<S, R, H>(
     primitive: UnexpandablePrimitive,
+    traced: TracedTokenWord,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
@@ -292,6 +305,8 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
+    let token = tex_expand::semantic_token(traced);
+    let origin = traced.origin();
     match primitive {
         UnexpandablePrimitive::Par | UnexpandablePrimitive::EndGraf => {
             report_math_error(stores, "Missing $ inserted");
@@ -428,12 +443,13 @@ where
         }
         primitive if math_allows_assignment_primitive(primitive) => {
             assignments::execute_unexpandable_with_recorder(
-                primitive, nest, input, stores, recorder, hooks,
+                primitive, traced, nest, input, stores, recorder, hooks,
             )
         }
         _ => Err(ExecError::UnimplementedTypesetting {
             mode: nest.current_mode(),
-            token: Token::Cs(stores.intern(&format!("{primitive:?}"))),
+            token,
+            origin,
             operation: "math primitive",
         }),
     }
@@ -455,6 +471,7 @@ where
         return Err(ExecError::UnimplementedTypesetting {
             mode: Mode::DisplayMath,
             token: Token::Cs(stores.intern("halign")),
+            origin: OriginId::UNKNOWN,
             operation: "display alignment with math material",
         });
     }
@@ -466,6 +483,7 @@ where
             .ok_or(ExecError::UnimplementedTypesetting {
                 mode: Mode::DisplayMath,
                 token: Token::Cs(stores.intern("display")),
+                origin: OriginId::UNKNOWN,
                 operation: "display interrupt state",
             })?;
     let nodes = crate::align::execute_display_halign(nest, input, stores, recorder, hooks)?;

@@ -59,6 +59,7 @@ where
                 ch,
                 cat: Catcode::Other,
             },
+            origin: OriginId::UNKNOWN,
             operation: "character",
         }),
     }
@@ -266,6 +267,7 @@ where
         return Err(ExecError::UnimplementedTypesetting {
             mode: nest.current_mode(),
             token: Token::Cs(stores.intern("vadjust")),
+            origin: OriginId::UNKNOWN,
             operation: "\\vadjust",
         });
     }

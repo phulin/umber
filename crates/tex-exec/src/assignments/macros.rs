@@ -113,16 +113,18 @@ where
     let first = input.next_token(stores)?.ok_or(ExecError::MissingToken {
         context: "\\futurelet lookahead",
     })?;
-    let second = input.next_token(stores)?.ok_or(ExecError::MissingToken {
-        context: "\\futurelet lookahead",
-    })?;
+    let second = input
+        .next_traced_token(stores)?
+        .ok_or(ExecError::MissingToken {
+            context: "\\futurelet lookahead",
+        })?;
     let meaning = token_meaning_for_let(second, stores)?;
     if apply_globaldefs(prefixes.global, stores) {
         stores.set_meaning_global(target, meaning);
     } else {
         stores.set_meaning(target, meaning);
     }
-    push_tokens(input, stores, [first, second]);
+    push_tokens(input, stores, [first, tex_expand::semantic_token(second)]);
     Ok(())
 }
 

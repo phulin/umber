@@ -80,7 +80,7 @@ fn dispatch_relax_continues_without_state_mutation() {
     assert_eq!(
         dispatch_delivered_token(
             &mut ModeNest::new(),
-            Token::Cs(relax),
+            TracedTokenWord::pack(Token::Cs(relax), OriginId::UNKNOWN),
             &mut input,
             &mut stores,
             &mut hooks
@@ -103,10 +103,98 @@ fn dispatch_character_hits_loud_typesetting_stub() {
 
     nest.push(Mode::Horizontal);
     assert_eq!(
-        dispatch_delivered_token(&mut nest, token, &mut input, &mut stores, &mut hooks)
-            .expect("character dispatch"),
+        dispatch_delivered_token(
+            &mut nest,
+            TracedTokenWord::pack(token, OriginId::UNKNOWN),
+            &mut input,
+            &mut stores,
+            &mut hooks,
+        )
+        .expect("character dispatch"),
         DispatchAction::Continue
     );
+}
+
+#[test]
+fn dispatch_errors_expose_primary_origins() {
+    let mut stores = Universe::new();
+    let undefined = stores.intern("undefined");
+    let origin = stores.source_origin(tex_state::SourceId::new(1), 12, 3, 4);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    let mut hooks = NoopExecHooks;
+
+    let err = dispatch_delivered_token(
+        &mut ModeNest::new(),
+        TracedTokenWord::pack(Token::Cs(undefined), origin),
+        &mut input,
+        &mut stores,
+        &mut hooks,
+    )
+    .expect_err("undefined control sequence");
+
+    assert_eq!(err.primary_origin(), Some(origin));
+    assert!(matches!(
+        err,
+        ExecError::UndefinedControlSequence {
+            name,
+            origin: reported
+        } if name == "undefined" && reported == origin
+    ));
+}
+
+#[test]
+fn extra_expandable_delivery_exposes_responsible_token_origin() {
+    let mut stores = Universe::new();
+    install_expandable(&mut stores, "endcsname", ExpandablePrimitive::EndCsName);
+    let endcsname = stores.symbol("endcsname").expect("endcsname");
+    let origin = stores.source_origin(tex_state::SourceId::new(2), 20, 5, 6);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    let mut hooks = NoopExecHooks;
+
+    let err = dispatch_delivered_token(
+        &mut ModeNest::new(),
+        TracedTokenWord::pack(Token::Cs(endcsname), origin),
+        &mut input,
+        &mut stores,
+        &mut hooks,
+    )
+    .expect_err("extra endcsname");
+
+    assert_eq!(err.primary_origin(), Some(origin));
+    assert!(matches!(err, ExecError::ExtraEndCsName { origin: reported } if reported == origin));
+}
+
+#[test]
+fn prefix_error_uses_scanned_token_origin() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let global = stores.symbol("global").expect("global");
+    let prefix_origin = stores.source_origin(tex_state::SourceId::new(3), 30, 7, 8);
+    let mut input = InputStack::new(MemoryInput::new("x"));
+    let mut hooks = NoopExecHooks;
+
+    let err = dispatch_delivered_token(
+        &mut ModeNest::new(),
+        TracedTokenWord::pack(Token::Cs(global), prefix_origin),
+        &mut input,
+        &mut stores,
+        &mut hooks,
+    )
+    .expect_err("prefix before non-assignment");
+
+    let reported = err.primary_origin().expect("prefix error origin");
+    assert_ne!(reported, OriginId::UNKNOWN);
+    assert_ne!(reported, prefix_origin);
+    assert!(matches!(
+        err,
+        ExecError::PrefixWithNonAssignment {
+            token: Token::Char {
+                ch: 'x',
+                cat: Catcode::Letter
+            },
+            origin
+        } if origin == reported
+    ));
 }
 
 #[test]
@@ -319,7 +407,7 @@ fn futurelet_assigns_second_token_meaning_and_preserves_order() {
 
     dispatch_delivered_token(
         &mut ModeNest::new(),
-        Token::Cs(futurelet),
+        TracedTokenWord::pack(Token::Cs(futurelet), OriginId::UNKNOWN),
         &mut input,
         &mut stores,
         &mut hooks,
@@ -390,7 +478,10 @@ fn futurelet_accepts_active_character_target() {
 
     dispatch_delivered_token(
         &mut ModeNest::new(),
-        Token::Cs(stores.symbol("futurelet").expect("futurelet")),
+        TracedTokenWord::pack(
+            Token::Cs(stores.symbol("futurelet").expect("futurelet")),
+            OriginId::UNKNOWN,
+        ),
         &mut input,
         &mut stores,
         &mut hooks,

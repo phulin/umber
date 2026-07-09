@@ -252,6 +252,7 @@ where
         }
         assignments::execute_assignment_meaning(
             Meaning::GlueParam(GlueParam::TAB_SKIP.raw()),
+            tex_state::token::TracedTokenWord::pack(token, tex_state::token::OriginId::UNKNOWN),
             self.input,
             self.stores,
             self.hooks,

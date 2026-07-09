@@ -434,35 +434,35 @@ where
         let token = {
             let mut expansion = ExpansionContext::new(stores);
             get_x_token_with_recorder_and_hooks(input, &mut expansion, recorder, hooks)?
-                .map(tex_expand::semantic_token)
         }
         .ok_or(ExecError::MissingToken {
             context: "alignment cell",
         })?;
+        let semantic = tex_expand::semantic_token(token);
         stats.delivered_tokens += 1;
         if align_state(nest, align_level)?.brace_depth() == 0 {
-            if is_alignment_tab(stores, token) {
+            if is_alignment_tab(stores, semantic) {
                 return Ok(CellTerminator::AlignmentTab);
             }
-            if is_cr(stores, token) {
+            if is_cr(stores, semantic) {
                 return Ok(CellTerminator::Cr);
             }
-            if is_span(stores, token) {
+            if is_span(stores, semantic) {
                 return Ok(CellTerminator::Span);
             }
-            if is_noalign(stores, token) {
+            if is_noalign(stores, semantic) {
                 return Err(ExecError::MisplacedNoAlign);
             }
-            if is_omit(stores, token) {
+            if is_omit(stores, semantic) {
                 return Err(ExecError::MisplacedOmit);
             }
-            if is_end_group(stores, token) {
+            if is_end_group(stores, semantic) {
                 report_missing_cr_inserted(stores);
-                push_tokens(input, stores, [token]);
+                push_tokens(input, stores, [semantic]);
                 return Ok(CellTerminator::Cr);
             }
         }
-        update_cell_brace_depth(align_level, nest, stores, token)?;
+        update_cell_brace_depth(align_level, nest, stores, semantic)?;
         dispatch_and_drain(nest, token, input, stores, recorder, hooks, &mut stats)?;
     }
 }
@@ -484,7 +484,6 @@ where
     let token = {
         let mut expansion = ExpansionContext::new(stores);
         get_x_token_with_recorder_and_hooks(input, &mut expansion, recorder, hooks)?
-            .map(tex_expand::semantic_token)
     }
     .ok_or(ExecError::MissingToken {
         context: "alignment template",
@@ -495,7 +494,7 @@ where
 
 pub(super) fn dispatch_and_drain<S, R, H>(
     nest: &mut ModeNest,
-    token: Token,
+    token: tex_state::token::TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
@@ -520,7 +519,8 @@ where
         DispatchAction::End => Ok(()),
         DispatchAction::NotConsumed => Err(ExecError::UnimplementedTypesetting {
             mode: nest.current_mode(),
-            token,
+            token: tex_expand::semantic_token(token),
+            origin: token.origin(),
             operation: "alignment cell",
         }),
     }

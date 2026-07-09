@@ -159,16 +159,16 @@ where
             let token = {
                 let mut recorder = NoopRecorder;
                 get_x_token_with_recorder_and_hooks(input, stores, &mut recorder, hooks)?
-                    .map(tex_expand::semantic_token)
             }
             .ok_or(ExecError::MissingToken {
                 context: "box closing brace",
             })?;
+            let semantic = tex_expand::semantic_token(token);
             let math_mode = matches!(nest.current_mode(), Mode::Math | Mode::DisplayMath);
-            if !math_mode && is_begin_group(token) {
+            if !math_mode && is_begin_group(semantic) {
                 brace_depth += 1;
             }
-            if !math_mode && is_end_group(token) {
+            if !math_mode && is_end_group(semantic) {
                 brace_depth -= 1;
                 if brace_depth == 0 {
                     flush_pending_hchars(nest, stores)?;
@@ -182,7 +182,8 @@ where
                 crate::DispatchAction::NotConsumed => {
                     return Err(ExecError::UnimplementedTypesetting {
                         mode: nest.current_mode(),
-                        token,
+                        token: semantic,
+                        origin: token.origin(),
                         operation: "box content",
                     });
                 }

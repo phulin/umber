@@ -381,9 +381,15 @@ assignments, box building, and dispatch into the typesetting kernels.
 
 - **Main control** is a loop over (current mode × delivered token meaning):
   vertical, horizontal, math, and their internal/restricted variants. The
-  mode stack (nest) tracks the list under construction per level; the
-  current list is an *unfrozen node builder* (§7 of `core_state.md` —
-  builder-then-freeze applies to node lists exactly as to token lists).
+  gullet delivers `TracedTokenWord` values to the stomach; execution decodes
+  the semantic `Token` only for meaning dispatch and mode behavior while the
+  raw `OriginId` rides alongside for diagnostics. Execution errors that are
+  caused by a consumed command token store that primary origin directly; a
+  later diagnostic renderer must resolve it before rollback can invalidate
+  the provenance arena entry. The mode stack (nest) tracks the list under
+  construction per level; the current list is an *unfrozen node builder* (§7
+  of `core_state.md` — builder-then-freeze applies to node lists exactly as
+  to token lists).
 - **Assignments** are thin: decode operand, scan value (number/dimen/glue
   scanning lives here — it consumes expanded tokens), call `Env::set` /
   register setters. `\global` maps to the tagged journal write. Grouping

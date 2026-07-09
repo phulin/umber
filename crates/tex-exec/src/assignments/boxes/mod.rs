@@ -271,6 +271,7 @@ where
             return Err(ExecError::UnimplementedTypesetting {
                 mode,
                 token: Token::Cs(stores.intern("hrule")),
+                origin: OriginId::UNKNOWN,
                 operation: "\\hrule",
             });
         }
@@ -361,6 +362,7 @@ where
         return Err(ExecError::UnimplementedTypesetting {
             mode: nest.current_mode(),
             token: Token::Cs(stores.intern("vskip")),
+            origin: OriginId::UNKNOWN,
             operation: "\\vskip",
         });
     }

@@ -114,13 +114,15 @@ where
     H: ExpansionHooks<S>,
 {
     let mut recorder = NoopRecorder;
-    let token = next_non_space_x(input, stores, hooks)?.ok_or(ExecError::MissingToken {
+    let traced = next_non_space_traced_x(input, stores, hooks)?.ok_or(ExecError::MissingToken {
         context: "arithmetic target",
     })?;
+    let token = tex_expand::semantic_token(traced);
     let Token::Cs(symbol) = token else {
         return Err(ExecError::ExpectedControlSequence {
             context: "arithmetic target",
             token,
+            origin: traced.origin(),
         });
     };
     let meaning = stores.meaning(symbol);
@@ -367,6 +369,27 @@ where
             return Ok(None);
         };
         if !is_space(token) {
+            return Ok(Some(token));
+        }
+    }
+}
+
+pub(crate) fn next_non_space_traced_x<S, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    hooks: &mut H,
+) -> Result<Option<TracedTokenWord>, ExecError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    let mut recorder = NoopRecorder;
+    loop {
+        let Some(token) = get_x_token_with_recorder_and_hooks(input, stores, &mut recorder, hooks)?
+        else {
+            return Ok(None);
+        };
+        if !is_space(tex_expand::semantic_token(token)) {
             return Ok(Some(token));
         }
     }

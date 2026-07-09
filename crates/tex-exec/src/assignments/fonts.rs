@@ -132,13 +132,15 @@ where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    let token = next_non_space_x(input, stores, hooks)?.ok_or(ExecError::MissingToken {
+    let traced = next_non_space_traced_x(input, stores, hooks)?.ok_or(ExecError::MissingToken {
         context: "font selector",
     })?;
+    let token = tex_expand::semantic_token(traced);
     let Token::Cs(symbol) = token else {
         return Err(ExecError::ExpectedControlSequence {
             context: "font selector",
             token,
+            origin: traced.origin(),
         });
     };
     match stores.meaning(symbol) {
@@ -154,6 +156,7 @@ where
         _ => Err(ExecError::ExpectedControlSequence {
             context: "font selector",
             token,
+            origin: traced.origin(),
         }),
     }
 }

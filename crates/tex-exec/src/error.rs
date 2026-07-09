@@ -6,7 +6,7 @@ use tex_lex::LexError;
 use tex_state::FontParameterError;
 use tex_state::WorldError;
 use tex_state::meaning::ExpandablePrimitive;
-use tex_state::token::Token;
+use tex_state::token::{OriginId, Token};
 
 use crate::Mode;
 
@@ -23,43 +23,64 @@ pub enum ExecError {
     CannotPopBaseMode,
     UndefinedControlSequence {
         name: String,
+        origin: OriginId,
     },
     UnexpectedMacroDelivery {
         name: String,
+        origin: OriginId,
     },
     UnexpectedExpandableDelivery {
         token: Token,
         primitive: ExpandablePrimitive,
+        origin: OriginId,
     },
-    ExtraConditionalControl(ExpandablePrimitive),
-    ExtraEndCsName,
-    TooManyRightBraces,
-    ExtraRightBraceOrForgottenEndgroup,
-    ExtraEndGroup,
+    ExtraConditionalControl {
+        primitive: ExpandablePrimitive,
+        origin: OriginId,
+    },
+    ExtraEndCsName {
+        origin: OriginId,
+    },
+    TooManyRightBraces {
+        origin: OriginId,
+    },
+    ExtraRightBraceOrForgottenEndgroup {
+        origin: OriginId,
+    },
+    ExtraEndGroup {
+        origin: OriginId,
+    },
     EndGroupMismatch {
         started_by: &'static str,
+        origin: OriginId,
     },
     UnsupportedCommand {
         token: Token,
         opcode: u8,
+        origin: OriginId,
     },
     MissingPrefixedCommand,
     PrefixWithNonAssignment {
         token: Token,
+        origin: OriginId,
     },
-    PrefixWithNonDefinition,
+    PrefixWithNonDefinition {
+        origin: Option<OriginId>,
+    },
     MissingControlSequence {
         context: &'static str,
     },
     ExpectedControlSequence {
         context: &'static str,
         token: Token,
+        origin: OriginId,
     },
     MissingToken {
         context: &'static str,
     },
     InvalidLetRhs {
         token: Token,
+        origin: OriginId,
     },
     UnsupportedAssignmentTarget,
     RegisterNumberOutOfRange(i32),
@@ -86,6 +107,7 @@ pub enum ExecError {
     UnimplementedTypesetting {
         mode: Mode,
         token: Token,
+        origin: OriginId,
         operation: &'static str,
     },
     UnsupportedShipoutNode {
@@ -111,50 +133,54 @@ impl fmt::Display for ExecError {
             Self::FontParameter(err) => write!(f, "{err:?}"),
             Self::EmptyModeNestSummary => write!(f, "mode nest summary has no levels"),
             Self::CannotPopBaseMode => write!(f, "cannot pop the base vertical mode level"),
-            Self::UndefinedControlSequence { name } => {
+            Self::UndefinedControlSequence { name, .. } => {
                 write!(f, "undefined control sequence \\{name}")
             }
-            Self::UnexpectedMacroDelivery { name } => {
+            Self::UnexpectedMacroDelivery { name, .. } => {
                 write!(f, "macro \\{name} reached execution without expansion")
             }
-            Self::UnexpectedExpandableDelivery { token, primitive } => write!(
+            Self::UnexpectedExpandableDelivery {
+                token, primitive, ..
+            } => write!(
                 f,
                 "expandable primitive {primitive:?} reached execution as delivered token {token:?}"
             ),
-            Self::ExtraConditionalControl(primitive) => {
+            Self::ExtraConditionalControl { primitive, .. } => {
                 write!(f, "extra conditional control {primitive:?}")
             }
-            Self::ExtraEndCsName => write!(f, "extra \\endcsname"),
-            Self::TooManyRightBraces => write!(f, "Too many }}'s."),
-            Self::ExtraRightBraceOrForgottenEndgroup => {
+            Self::ExtraEndCsName { .. } => write!(f, "extra \\endcsname"),
+            Self::TooManyRightBraces { .. } => write!(f, "Too many }}'s."),
+            Self::ExtraRightBraceOrForgottenEndgroup { .. } => {
                 write!(f, "Extra }}, or forgotten \\endgroup.")
             }
-            Self::ExtraEndGroup => write!(f, "Extra \\endgroup."),
-            Self::EndGroupMismatch { started_by } => {
+            Self::ExtraEndGroup { .. } => write!(f, "Extra \\endgroup."),
+            Self::EndGroupMismatch { started_by, .. } => {
                 write!(f, "\\endgroup ended a group started by {started_by}")
             }
-            Self::UnsupportedCommand { token, opcode } => {
+            Self::UnsupportedCommand { token, opcode, .. } => {
                 write!(
                     f,
                     "unsupported unexpandable opcode {opcode} for token {token:?}"
                 )
             }
             Self::MissingPrefixedCommand => write!(f, "You can't use a prefix with `end of input'"),
-            Self::PrefixWithNonAssignment { token } => {
+            Self::PrefixWithNonAssignment { token, .. } => {
                 write!(f, "You can't use a prefix with `{token:?}'")
             }
-            Self::PrefixWithNonDefinition => write!(f, "You can't use a prefix with `\\let'"),
+            Self::PrefixWithNonDefinition { .. } => {
+                write!(f, "You can't use a prefix with `\\let'")
+            }
             Self::MissingControlSequence { context } => {
                 write!(f, "missing control sequence after {context}")
             }
-            Self::ExpectedControlSequence { context, token } => {
+            Self::ExpectedControlSequence { context, token, .. } => {
                 write!(
                     f,
                     "expected control sequence after {context}, got {token:?}"
                 )
             }
             Self::MissingToken { context } => write!(f, "missing token while scanning {context}"),
-            Self::InvalidLetRhs { token } => {
+            Self::InvalidLetRhs { token, .. } => {
                 write!(f, "\\let cannot assign macro parameter token {token:?}")
             }
             Self::UnsupportedAssignmentTarget => write!(f, "unsupported assignment target"),
@@ -192,6 +218,7 @@ impl fmt::Display for ExecError {
                 mode,
                 token,
                 operation,
+                ..
             } => write!(
                 f,
                 "typesetting path is not implemented yet: {operation} in {mode:?} for token {token:?}"
@@ -228,16 +255,16 @@ impl std::error::Error for ExecError {
             | Self::UndefinedControlSequence { .. }
             | Self::UnexpectedMacroDelivery { .. }
             | Self::UnexpectedExpandableDelivery { .. }
-            | Self::ExtraConditionalControl(_)
-            | Self::ExtraEndCsName
-            | Self::TooManyRightBraces
-            | Self::ExtraRightBraceOrForgottenEndgroup
-            | Self::ExtraEndGroup
+            | Self::ExtraConditionalControl { .. }
+            | Self::ExtraEndCsName { .. }
+            | Self::TooManyRightBraces { .. }
+            | Self::ExtraRightBraceOrForgottenEndgroup { .. }
+            | Self::ExtraEndGroup { .. }
             | Self::EndGroupMismatch { .. }
             | Self::UnsupportedCommand { .. }
             | Self::MissingPrefixedCommand
             | Self::PrefixWithNonAssignment { .. }
-            | Self::PrefixWithNonDefinition
+            | Self::PrefixWithNonDefinition { .. }
             | Self::MissingControlSequence { .. }
             | Self::ExpectedControlSequence { .. }
             | Self::MissingToken { .. }
@@ -261,6 +288,63 @@ impl std::error::Error for ExecError {
             | Self::TerminalReadEof
             | Self::FontParameter(_)
             | Self::UnimplementedTypesetting { .. }
+            | Self::UnsupportedShipoutNode { .. }
+            | Self::VSplitNeedsVBox
+            | Self::Box255NotVoidBeforeOutput
+            | Self::OutputRoutineBox255NotVoid
+            | Self::OutputLoop { .. } => None,
+        }
+    }
+}
+
+impl ExecError {
+    #[must_use]
+    pub fn primary_origin(&self) -> Option<OriginId> {
+        match self {
+            Self::Expand(err) => err.primary_origin(),
+            Self::ScanGlue(err) => err.primary_origin(),
+            Self::UndefinedControlSequence { origin, .. }
+            | Self::UnexpectedMacroDelivery { origin, .. }
+            | Self::UnexpectedExpandableDelivery { origin, .. }
+            | Self::ExtraConditionalControl { origin, .. }
+            | Self::ExtraEndCsName { origin }
+            | Self::TooManyRightBraces { origin }
+            | Self::ExtraRightBraceOrForgottenEndgroup { origin }
+            | Self::ExtraEndGroup { origin }
+            | Self::EndGroupMismatch { origin, .. }
+            | Self::UnsupportedCommand { origin, .. }
+            | Self::PrefixWithNonAssignment { origin, .. }
+            | Self::ExpectedControlSequence { origin, .. }
+            | Self::InvalidLetRhs { origin, .. }
+            | Self::UnimplementedTypesetting { origin, .. } => Some(*origin),
+            Self::PrefixWithNonDefinition { origin } => *origin,
+            Self::Lex(_)
+            | Self::ScanToks(_)
+            | Self::World(_)
+            | Self::FontParse(_)
+            | Self::FontParameter(_)
+            | Self::EmptyModeNestSummary
+            | Self::CannotPopBaseMode
+            | Self::MissingPrefixedCommand
+            | Self::MissingControlSequence { .. }
+            | Self::MissingToken { .. }
+            | Self::UnsupportedAssignmentTarget
+            | Self::RegisterNumberOutOfRange(_)
+            | Self::ArithmeticOverflow
+            | Self::InvalidCode { .. }
+            | Self::BadPrevGraf(_)
+            | Self::MissingHashInAlignmentPreamble
+            | Self::ExtraHashInAlignmentPreamble
+            | Self::MisplacedNoAlign
+            | Self::MisplacedOmit
+            | Self::MissingLeaderPayload
+            | Self::LeadersNotFollowedByProperGlue
+            | Self::HRuleHereExceptLeaders
+            | Self::CannotDeleteFromCurrentPage { .. }
+            | Self::ReadNeedsTo
+            | Self::ReadNotImplemented
+            | Self::FileEndedWithinRead
+            | Self::TerminalReadEof
             | Self::UnsupportedShipoutNode { .. }
             | Self::VSplitNeedsVBox
             | Self::Box255NotVoidBeforeOutput

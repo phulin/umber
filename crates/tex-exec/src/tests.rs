@@ -6,7 +6,7 @@ use tex_lex::{InputStack, MemoryInput};
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::GlueSpec;
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
-use tex_state::token::{Catcode, Token};
+use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{EffectRecord, PrintSink};
 use tex_state::{InteractionMode, Universe};
 

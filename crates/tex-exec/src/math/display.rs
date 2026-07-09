@@ -5,7 +5,7 @@ use tex_state::glue::Order;
 use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::node::{BoxNode, GlueKind, KernKind, Node, Sign};
 use tex_state::scaled::Scaled;
-use tex_state::token::{Catcode, Token};
+use tex_state::token::{Catcode, OriginId, Token};
 use tex_typeset::PackSpec;
 use tex_typeset::math::{MathParams, Style, mlist_to_hlist};
 
@@ -32,6 +32,7 @@ pub(super) fn start_eq_no(
             } else {
                 "leqno"
             })),
+            origin: OriginId::UNKNOWN,
             operation: "equation number",
         });
     }

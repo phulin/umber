@@ -11,7 +11,7 @@ use tex_state::math::{
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::node::Node;
 use tex_state::scaled::Scaled;
-use tex_state::token::{Catcode, Token};
+use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_typeset::PackSpec;
 
 use crate::assignments;
@@ -83,7 +83,7 @@ where
                 temp.push(nest.current_mode());
                 dispatch_math_token_with_recorder(
                     &mut temp,
-                    Token::Cs(symbol),
+                    TracedTokenWord::pack(Token::Cs(symbol), OriginId::UNKNOWN),
                     input,
                     stores,
                     recorder,
@@ -114,12 +114,13 @@ where
     nest.push(Mode::Math);
     loop {
         sync_engine_state::<S, _>(hooks, nest, stores);
-        let token = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
-            .map(tex_expand::semantic_token)
-            .ok_or(ExecError::MissingToken {
+        let token = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?.ok_or(
+            ExecError::MissingToken {
                 context: "math group closing brace",
-            })?;
-        if assignments::is_end_group(token) {
+            },
+        )?;
+        let semantic = tex_expand::semantic_token(token);
+        if assignments::is_end_group(semantic) {
             let list = finish_current_math_list(nest, stores);
             let _ = nest.pop()?;
             return Ok(list);
@@ -134,7 +135,8 @@ where
             DispatchAction::NotConsumed => {
                 return Err(ExecError::UnimplementedTypesetting {
                     mode: nest.current_mode(),
-                    token,
+                    token: semantic,
+                    origin: token.origin(),
                     operation: "math group",
                 });
             }

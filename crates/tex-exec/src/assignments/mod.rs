@@ -21,7 +21,9 @@ use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{GroupKind, InteractionMode, Universe};
 
 use crate::ModeNest;
-use crate::{DispatchAction, ExecError, diagnostics, dispatch_delivered_token, leave_group};
+use crate::{
+    DispatchAction, ExecError, diagnostics, dispatch_delivered_token, leave_group_with_origin,
+};
 
 mod arithmetic;
 mod boxes;
@@ -52,7 +54,8 @@ pub(crate) use paragraph::{
 pub use primitives::install_unexpandable_primitives;
 use scanning::*;
 pub(crate) use scanning::{
-    next_non_space_x, scan_glue_id, scan_i32, scan_optional_keyword_x, scan_scaled,
+    next_non_space_traced_x, next_non_space_x, scan_glue_id, scan_i32, scan_optional_keyword_x,
+    scan_scaled,
 };
 pub(crate) use shipout::shipout_node;
 use shipout::*;
@@ -62,7 +65,7 @@ use variables::*;
 
 /// Executes a delivered token if it is an assignment/prefix primitive.
 pub fn try_execute_assignment<S, H>(
-    token: Token,
+    traced: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
@@ -71,6 +74,7 @@ where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
+    let token = tex_expand::semantic_token(traced);
     let Token::Cs(symbol) = token else {
         return Ok(false);
     };
@@ -79,7 +83,7 @@ where
         return Ok(false);
     }
     let mut nest = ModeNest::new();
-    match dispatch_delivered_token(&mut nest, token, input, stores, hooks)? {
+    match dispatch_delivered_token(&mut nest, traced, input, stores, hooks)? {
         DispatchAction::Continue => Ok(true),
         DispatchAction::End => Ok(true),
         DispatchAction::Shipout(_) => Ok(true),
@@ -89,6 +93,7 @@ where
 
 pub(crate) fn execute_unexpandable_with_recorder<S, R, H>(
     primitive: UnexpandablePrimitive,
+    traced: TracedTokenWord,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
@@ -103,15 +108,16 @@ where
     let mut prefixes = Prefixes::default();
     let command = accumulate_prefixes(
         PrefixedCommand::Primitive(primitive),
+        traced,
         &mut prefixes,
         input,
         stores,
     )?;
-    if command == PrefixedCommand::Primitive(UnexpandablePrimitive::End) {
+    if command.command == PrefixedCommand::Primitive(UnexpandablePrimitive::End) {
         reject_all_prefixes(prefixes)?;
         return Ok(DispatchAction::End);
     }
-    if command == PrefixedCommand::Primitive(UnexpandablePrimitive::Immediate) {
+    if command.command == PrefixedCommand::Primitive(UnexpandablePrimitive::Immediate) {
         reject_all_prefixes(prefixes)?;
         let outcome = execute_immediate(input, stores, recorder, hooks)?;
         if outcome.assigned {
@@ -138,9 +144,20 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    let token = next_non_space_x(input, stores, hooks)?.ok_or(ExecError::MissingPrefixedCommand)?;
+    let mut noop = NoopRecorder;
+    let traced = loop {
+        let Some(traced) = get_x_token_with_recorder_and_hooks(input, stores, &mut noop, hooks)?
+        else {
+            return Err(ExecError::MissingPrefixedCommand);
+        };
+        if !is_space(tex_expand::semantic_token(traced)) {
+            break traced;
+        }
+    };
+    let token = tex_expand::semantic_token(traced);
+    let origin = traced.origin();
     let Token::Cs(symbol) = token else {
-        return Err(ExecError::PrefixWithNonAssignment { token });
+        return Err(ExecError::PrefixWithNonAssignment { token, origin });
     };
     match stores.meaning(symbol) {
         Meaning::UnexpandablePrimitive(
@@ -153,12 +170,13 @@ where
             execute_immediate_write(input, stores, recorder, hooks)?;
             Ok(CommandOutcome::continue_only())
         }
-        _ => Err(ExecError::PrefixWithNonAssignment { token }),
+        _ => Err(ExecError::PrefixWithNonAssignment { token, origin }),
     }
 }
 
 pub(crate) fn execute_assignment_meaning<S, H>(
     meaning: Meaning,
+    traced: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
@@ -170,6 +188,7 @@ where
     let mut prefixes = Prefixes::default();
     let command = accumulate_prefixes(
         PrefixedCommand::Meaning(meaning),
+        traced,
         &mut prefixes,
         input,
         stores,
@@ -195,6 +214,13 @@ where
 pub(crate) enum PrefixedCommand {
     Primitive(UnexpandablePrimitive),
     Meaning(Meaning),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct TracedPrefixedCommand {
+    command: PrefixedCommand,
+    token: Token,
+    origin: OriginId,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -250,16 +276,23 @@ impl CommandOutcome {
 
 fn accumulate_prefixes<S>(
     mut command: PrefixedCommand,
+    traced: TracedTokenWord,
     prefixes: &mut Prefixes,
     input: &mut InputStack<S>,
     stores: &mut Universe,
-) -> Result<PrefixedCommand, ExecError>
+) -> Result<TracedPrefixedCommand, ExecError>
 where
     S: InputSource,
 {
+    let mut token = tex_expand::semantic_token(traced);
+    let mut origin = traced.origin();
     loop {
         let PrefixedCommand::Primitive(primitive) = command else {
-            return Ok(command);
+            return Ok(TracedPrefixedCommand {
+                command,
+                token,
+                origin,
+            });
         };
         match primitive {
             UnexpandablePrimitive::Global => prefixes.global = true,
@@ -268,23 +301,32 @@ where
             UnexpandablePrimitive::Protected => {
                 prefixes.flags = prefixes.flags | MeaningFlags::PROTECTED;
             }
-            _ => return Ok(command),
+            _ => {
+                return Ok(TracedPrefixedCommand {
+                    command,
+                    token,
+                    origin,
+                });
+            }
         }
 
-        let token = next_non_space_raw(input, stores)?.ok_or(ExecError::MissingPrefixedCommand)?;
+        let traced =
+            next_non_space_traced_raw(input, stores)?.ok_or(ExecError::MissingPrefixedCommand)?;
+        token = tex_expand::semantic_token(traced);
+        origin = traced.origin();
         let Token::Cs(symbol) = token else {
-            return Err(ExecError::PrefixWithNonAssignment { token });
+            return Err(ExecError::PrefixWithNonAssignment { token, origin });
         };
         command = match stores.meaning(symbol) {
             Meaning::UnexpandablePrimitive(primitive) => PrefixedCommand::Primitive(primitive),
             meaning if is_assignment_target_meaning(meaning) => PrefixedCommand::Meaning(meaning),
-            _ => return Err(ExecError::PrefixWithNonAssignment { token }),
+            _ => return Err(ExecError::PrefixWithNonAssignment { token, origin }),
         };
     }
 }
 
 fn execute_prefixed_command<S, H>(
-    command: PrefixedCommand,
+    command: TracedPrefixedCommand,
     prefixes: Prefixes,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
@@ -296,7 +338,7 @@ where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    match command {
+    match command.command {
         PrefixedCommand::Primitive(primitive) => match primitive {
             UnexpandablePrimitive::Def
             | UnexpandablePrimitive::Edef
@@ -324,7 +366,7 @@ where
             }
             UnexpandablePrimitive::EndGroup => {
                 reject_all_prefixes(prefixes)?;
-                leave_group(input, stores, GroupKind::SemiSimple)?;
+                leave_group_with_origin(input, stores, GroupKind::SemiSimple, command.origin)?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::AfterGroup => {
@@ -631,7 +673,8 @@ where
             | UnexpandablePrimitive::ScriptScriptStyle => {
                 Err(ExecError::UnimplementedTypesetting {
                     mode: nest.current_mode(),
-                    token: Token::Cs(stores.intern(&format!("{primitive:?}"))),
+                    token: command.token,
+                    origin: command.origin,
                     operation: "math primitive",
                 })
             }
@@ -641,7 +684,8 @@ where
             | UnexpandablePrimitive::CrCr
             | UnexpandablePrimitive::Span => Err(ExecError::UnimplementedTypesetting {
                 mode: nest.current_mode(),
-                token: Token::Cs(stores.intern(&format!("{primitive:?}"))),
+                token: command.token,
+                origin: command.origin,
                 operation: "alignment primitive",
             }),
             UnexpandablePrimitive::Global

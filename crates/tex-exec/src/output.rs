@@ -407,14 +407,16 @@ where
         MainControlExit::End { token } => {
             return Err(ExecError::UnimplementedTypesetting {
                 mode: nest.current_mode(),
-                token,
+                token: tex_expand::semantic_token(token),
+                origin: token.origin(),
                 operation: "\\end inside \\output",
             });
         }
         MainControlExit::NotConsumed { token } => {
             return Err(ExecError::UnimplementedTypesetting {
                 mode: nest.current_mode(),
-                token,
+                token: tex_expand::semantic_token(token),
+                origin: token.origin(),
                 operation: "output routine",
             });
         }

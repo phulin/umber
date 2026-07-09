@@ -60,15 +60,15 @@ where
         let token = {
             let mut expansion = ExpansionContext::new(stores);
             get_x_token_with_recorder_and_hooks(input, &mut expansion, recorder, hooks)?
-                .map(tex_expand::semantic_token)
         }
         .ok_or(ExecError::MissingToken {
             context: "\\noalign closing brace",
         })?;
-        if super::support::is_begin_group(stores, token) {
+        let semantic = tex_expand::semantic_token(token);
+        if super::support::is_begin_group(stores, semantic) {
             brace_depth += 1;
         }
-        if super::support::is_end_group(stores, token) {
+        if super::support::is_end_group(stores, semantic) {
             brace_depth -= 1;
             if brace_depth == 0 {
                 flush_pending_hchars(nest, stores)?;
