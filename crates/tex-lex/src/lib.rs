@@ -361,6 +361,14 @@ impl<S> InputStack<S> {
         Some(std::mem::replace(frame, condition))
     }
 
+    #[must_use]
+    pub fn current_condition(&self) -> Option<ConditionFrameSummary> {
+        self.frames.iter().rev().find_map(|frame| match frame {
+            InputFrame::Condition(condition) => Some(*condition),
+            InputFrame::Source(_) | InputFrame::TokenList(_) => None,
+        })
+    }
+
     pub fn pop_condition(&mut self) -> Option<ConditionFrameSummary> {
         let index = self
             .frames

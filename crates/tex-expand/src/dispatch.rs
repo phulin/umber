@@ -179,16 +179,19 @@ macro_rules! dispatch_match {
                 begin_if(input, stores, recorder, hooks, false)
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::If) => {
+                begin_if_evaluation(input);
                 let left = scan_condition_x_token(input, stores, recorder, hooks, &mut expander)?;
                 let right = scan_condition_x_token(input, stores, recorder, hooks, &mut expander)?;
-                begin_if(input, stores, recorder, hooks, if_char_equal(left, right))
+                complete_if_evaluation(input, stores, recorder, hooks, if_char_equal(left, right))
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfCat) => {
+                begin_if_evaluation(input);
                 let left = scan_condition_x_token(input, stores, recorder, hooks, &mut expander)?;
                 let right = scan_condition_x_token(input, stores, recorder, hooks, &mut expander)?;
-                begin_if(input, stores, recorder, hooks, if_cat_equal(left, right))
+                complete_if_evaluation(input, stores, recorder, hooks, if_cat_equal(left, right))
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfX) => {
+                begin_if_evaluation(input);
                 let Some(left) = input.next_token(stores)? else {
                     return Err(ExpandError::MissingTokenAfterPrimitive(
                         ExpandableOpcode::If,
@@ -199,7 +202,7 @@ macro_rules! dispatch_match {
                         ExpandableOpcode::If,
                     ));
                 };
-                begin_if(
+                complete_if_evaluation(
                     input,
                     stores,
                     recorder,
@@ -208,6 +211,7 @@ macro_rules! dispatch_match {
                 )
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfNum) => {
+                begin_if_evaluation(input);
                 let left = scan_int::scan_int_with_expander_and_hooks(
                     input,
                     stores,
@@ -231,7 +235,7 @@ macro_rules! dispatch_match {
                     &mut expander,
                 )?
                 .value();
-                begin_if(
+                complete_if_evaluation(
                     input,
                     stores,
                     recorder,
@@ -240,6 +244,7 @@ macro_rules! dispatch_match {
                 )
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfDim) => {
+                begin_if_evaluation(input);
                 let left = scan_dimen::scan_dimen_with_expander_and_hooks(
                     input,
                     stores,
@@ -265,7 +270,7 @@ macro_rules! dispatch_match {
                     scan_dimen::ScanDimenOptions::STANDARD,
                 )?
                 .value();
-                begin_if(
+                complete_if_evaluation(
                     input,
                     stores,
                     recorder,
@@ -274,6 +279,7 @@ macro_rules! dispatch_match {
                 )
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfOdd) => {
+                begin_if_evaluation(input);
                 let value = scan_int::scan_int_with_expander_and_hooks(
                     input,
                     stores,
@@ -282,9 +288,10 @@ macro_rules! dispatch_match {
                     &mut expander,
                 )?
                 .value();
-                begin_if(input, stores, recorder, hooks, value % 2 != 0)
+                complete_if_evaluation(input, stores, recorder, hooks, value % 2 != 0)
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfCase) => {
+                begin_ifcase_evaluation(input);
                 let selected_case = scan_int::scan_int_with_expander_and_hooks(
                     input,
                     stores,
@@ -293,7 +300,7 @@ macro_rules! dispatch_match {
                     &mut expander,
                 )?
                 .value();
-                begin_ifcase(input, stores, recorder, hooks, selected_case)
+                complete_ifcase_evaluation(input, stores, recorder, hooks, selected_case)
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfVMode) => begin_if(
                 input,
@@ -320,6 +327,7 @@ macro_rules! dispatch_match {
                 begin_if(input, stores, recorder, hooks, hooks.is_inner_mode())
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfVoid) => {
+                begin_if_evaluation(input);
                 let index = scan_register_index_with_expander_and_hooks(
                     input,
                     stores,
@@ -327,7 +335,7 @@ macro_rules! dispatch_match {
                     hooks,
                     &mut expander,
                 )?;
-                begin_if(
+                complete_if_evaluation(
                     input,
                     stores,
                     recorder,
@@ -336,6 +344,7 @@ macro_rules! dispatch_match {
                 )
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfHBox) => {
+                begin_if_evaluation(input);
                 let index = scan_register_index_with_expander_and_hooks(
                     input,
                     stores,
@@ -343,7 +352,7 @@ macro_rules! dispatch_match {
                     hooks,
                     &mut expander,
                 )?;
-                begin_if(
+                complete_if_evaluation(
                     input,
                     stores,
                     recorder,
@@ -352,6 +361,7 @@ macro_rules! dispatch_match {
                 )
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfVBox) => {
+                begin_if_evaluation(input);
                 let index = scan_register_index_with_expander_and_hooks(
                     input,
                     stores,
@@ -359,7 +369,7 @@ macro_rules! dispatch_match {
                     hooks,
                     &mut expander,
                 )?;
-                begin_if(
+                complete_if_evaluation(
                     input,
                     stores,
                     recorder,
@@ -368,6 +378,7 @@ macro_rules! dispatch_match {
                 )
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfEof) => {
+                begin_if_evaluation(input);
                 let stream = scan_stream_number_with_expander_and_hooks(
                     input,
                     stores,
@@ -375,7 +386,7 @@ macro_rules! dispatch_match {
                     hooks,
                     &mut expander,
                 )?;
-                begin_if(
+                complete_if_evaluation(
                     input,
                     stores,
                     recorder,
@@ -384,16 +395,13 @@ macro_rules! dispatch_match {
                 )
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Else) => {
-                handle_else(input, stores, recorder, hooks)
+                handle_else(token, input, stores, recorder, hooks)
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Or) => {
-                handle_or(input, stores, recorder, hooks)
+                handle_or(token, input, stores, recorder, hooks)
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Fi) => {
-                input
-                    .pop_condition()
-                    .ok_or(ExpandError::ExtraConditionalControl("fi"))?;
-                Ok(Dispatch::Continue)
+                handle_fi(token, input, stores)
             }
             Meaning::Macro { .. }
             | Meaning::Undefined

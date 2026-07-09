@@ -127,9 +127,9 @@ supply.
   Open conditionals are summarized as condition frames in the same vector,
   not as expansion-owned side state. A condition frame records whether it is
   a regular `\if...` or `\ifcase`, the current limb (`\if`, `\or`, or
-  `\else`), whether the current and any previous limb has been taken, the
-  `\ifcase` `\or` count, and the nested conditional depth observed during
-  skip/resume scanning.
+  `\else`), whether the condition is still evaluating its operands, whether
+  the current and any previous limb has been taken, the `\ifcase` `\or`
+  count, and the nested conditional depth observed during skip/resume scanning.
   Source reopen identity is owned by the `World` input record in the outer
   snapshot: it pins file/editor content by content hash, reopens that exact
   source, then applies the lexer-owned source-frame summary.
@@ -222,8 +222,9 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   marks the frame; `\else`/`\fi` skipping is a token-level scan that the
   fast lexer can accelerate (skip mode only needs catcode classes for
   `\`-detection). The condition stack is part of `InputSummary` and carries
-  limb/taken state, `\ifcase` `\or` count, and skip nesting so rollback can
-  restore an open conditional without reconstructing hidden gullet state.
+  limb/taken state, an operand-evaluation bit matching TeX82's `if_limit`,
+  `\ifcase` `\or` count, and skip nesting so rollback can restore an open
+  conditional without reconstructing hidden gullet state.
 - **`\csname`** interns through the same interner; **`\the`/`\showthe`**
   read `Env` and mint fresh frozen token lists.
 - **Read-set recording** hooks live here and in the stomach: when the
@@ -283,7 +284,9 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   skipped by reading raw tokens from `tex-lex` under the active catcode table,
   while `\else`, `\or`, and `\fi` update the input-stack condition frame and
   report extra-control, incomplete-conditional, and skipped-outer-token
-  diagnostics.
+  diagnostics. A delimiter expanded while the current condition is still
+  evaluating its operands is handled like TeX.web's `insert_relax`: the
+  delimiter is pushed back and a relaxed token is inserted ahead of it.
 - Value-rendering expandables (`\string`, `\number`, `\romannumeral`,
   `\meaning`, and the currently supported `\the` classes) mint their visible
   output through the explicit token-list freezing capability. `\the` covers

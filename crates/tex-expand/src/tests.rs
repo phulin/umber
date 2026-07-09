@@ -1208,6 +1208,38 @@ fn ifnum_and_ifdim_compare_scanned_values() {
 }
 
 #[test]
+fn ifnum_internal_operand_inserts_relax_before_else_during_evaluation() {
+    let mut stores = Universe::new();
+    let (_, _, else_cs, fi) = conditional_primitives(&mut stores);
+    let ifnum = expandable_primitive(&mut stores, "ifnum", ExpandablePrimitive::IfNum);
+    let count = stores.intern("count");
+    let limit = stores.intern("limit");
+    stores.set_meaning(limit, Meaning::CountRegister(20));
+    stores.set_count(11, 10);
+    stores.set_count(20, 255);
+    let list = stores.intern_token_list(&[
+        Token::Cs(ifnum),
+        Token::Cs(count),
+        char_token('1'),
+        char_token('1'),
+        char_token('<'),
+        Token::Cs(limit),
+        Token::Cs(else_cs),
+        char_token('n'),
+        Token::Cs(fi),
+        char_token('y'),
+    ]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list(list, TokenListReplayKind::Inserted);
+    let relax = stores.intern_relaxed_control_sequence("relax");
+
+    assert_eq!(
+        collect_expanded(&mut input, &mut stores),
+        vec![Token::Cs(relax), char_token('y')]
+    );
+}
+
+#[test]
 fn ifodd_and_ifcase_select_expected_limb() {
     let mut stores = Universe::new();
     let (_, _, else_cs, fi) = conditional_primitives(&mut stores);

@@ -491,8 +491,9 @@ pub struct Snapshot {
   macro-body replay argument slots, open condition frames, and the last
   popped source frame. Condition frames are snapshot-owned input frames; each
   carries its conditional family (`\if...` or `\ifcase`), current limb
-  (`\if`, `\or`, or `\else`), current/previous taken bits, `\ifcase`
-  `\or` count, and skip nesting depth needed to resume token-level skipping.
+  (`\if`, `\or`, or `\else`), whether condition operands are still being
+  evaluated, current/previous taken bits, `\ifcase` `\or` count, and skip
+  nesting depth needed to resume token-level skipping.
   Durable source reopen identity is not a `tex-lex` field; it is part of the
   `World` input/effect snapshot that pins file/editor content by content hash
   and recreates the `InputSource` before these frame summaries are applied.

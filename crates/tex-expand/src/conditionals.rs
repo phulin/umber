@@ -7,8 +7,16 @@ use tex_state::token::Token;
 
 use crate::{
     Dispatch, ExpandError, ExpandNext, ExpandableOpcode, ExpansionHooks, NoInputExpandNext,
-    ReadRecorder, scan_helpers, scan_int,
+    ReadRecorder, push_inserted_token, scan_helpers, scan_int,
 };
+
+pub(crate) fn begin_if_evaluation<S>(input: &mut InputStack<S>) {
+    input.push_condition(ConditionFrameSummary::evaluating_if());
+}
+
+pub(crate) fn begin_ifcase_evaluation<S>(input: &mut InputStack<S>) {
+    input.push_condition(ConditionFrameSummary::evaluating_ifcase());
+}
 
 pub(crate) fn begin_if<S, R, H>(
     input: &mut InputStack<S>,
@@ -29,7 +37,29 @@ where
     Ok(Dispatch::Continue)
 }
 
-pub(crate) fn begin_ifcase<S, R, H>(
+pub(crate) fn complete_if_evaluation<S, R, H>(
+    input: &mut InputStack<S>,
+    stores: &mut impl ExpansionState,
+    recorder: &mut R,
+    hooks: &mut H,
+    condition: bool,
+) -> Result<Dispatch, ExpandError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    let previous = input
+        .update_current_condition(ConditionFrameSummary::new_if(condition))
+        .ok_or(ExpandError::IncompleteIf)?;
+    debug_assert!(previous.evaluating());
+    if !condition {
+        skip_false_limb(input, stores, recorder, hooks)?;
+    }
+    Ok(Dispatch::Continue)
+}
+
+pub(crate) fn complete_ifcase_evaluation<S, R, H>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     recorder: &mut R,
@@ -42,7 +72,10 @@ where
     H: ExpansionHooks<S>,
 {
     let take_initial_limb = selected_case == 0;
-    input.push_condition(ConditionFrameSummary::new_ifcase(take_initial_limb));
+    let previous = input
+        .update_current_condition(ConditionFrameSummary::new_ifcase(take_initial_limb))
+        .ok_or(ExpandError::IncompleteIf)?;
+    debug_assert!(previous.evaluating());
     if !take_initial_limb {
         skip_ifcase_to_selected_limb(input, stores, recorder, hooks, selected_case)?;
     }
@@ -50,6 +83,7 @@ where
 }
 
 pub(crate) fn handle_else<S, R, H>(
+    token: Token,
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     recorder: &mut R,
@@ -60,6 +94,11 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
+    if current_condition_is_evaluating(input) {
+        insert_relax_before_token(token, input, stores);
+        return Ok(Dispatch::Continue);
+    }
+
     let frame = input
         .pop_condition()
         .ok_or(ExpandError::ExtraConditionalControl("else"))?;
@@ -76,6 +115,7 @@ where
 }
 
 pub(crate) fn handle_or<S, R, H>(
+    token: Token,
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     recorder: &mut R,
@@ -86,6 +126,11 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
+    if current_condition_is_evaluating(input) {
+        insert_relax_before_token(token, input, stores);
+        return Ok(Dispatch::Continue);
+    }
+
     let frame = input
         .pop_condition()
         .ok_or(ExpandError::ExtraConditionalControl("or"))?;
@@ -99,6 +144,41 @@ where
         skip_to_fi(input, stores, recorder, hooks)?;
     }
     Ok(Dispatch::Continue)
+}
+
+pub(crate) fn handle_fi<S>(
+    token: Token,
+    input: &mut InputStack<S>,
+    stores: &mut impl ExpansionState,
+) -> Result<Dispatch, ExpandError>
+where
+    S: InputSource,
+{
+    if current_condition_is_evaluating(input) {
+        insert_relax_before_token(token, input, stores);
+        return Ok(Dispatch::Continue);
+    }
+
+    input
+        .pop_condition()
+        .ok_or(ExpandError::ExtraConditionalControl("fi"))?;
+    Ok(Dispatch::Continue)
+}
+
+fn current_condition_is_evaluating<S>(input: &InputStack<S>) -> bool {
+    input
+        .current_condition()
+        .is_some_and(ConditionFrameSummary::evaluating)
+}
+
+fn insert_relax_before_token<S>(
+    token: Token,
+    input: &mut InputStack<S>,
+    stores: &mut impl ExpansionState,
+) {
+    let relax = stores.intern_relaxed_control_sequence("relax");
+    push_inserted_token(input, stores, token);
+    push_inserted_token(input, stores, Token::Cs(relax));
 }
 
 fn skip_false_limb<S, R, H>(

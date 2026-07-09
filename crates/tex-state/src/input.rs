@@ -112,6 +112,7 @@ pub enum ConditionLimb {
 pub struct ConditionFrameSummary {
     kind: ConditionKind,
     limb: ConditionLimb,
+    evaluating: bool,
     current_limb_taken: bool,
     any_limb_taken: bool,
     ifcase_or_count: u32,
@@ -125,6 +126,7 @@ impl ConditionFrameSummary {
         Self {
             kind: ConditionKind::If,
             limb: ConditionLimb::If,
+            evaluating: false,
             current_limb_taken,
             any_limb_taken: current_limb_taken,
             ifcase_or_count: 0,
@@ -138,8 +140,38 @@ impl ConditionFrameSummary {
         Self {
             kind: ConditionKind::IfCase,
             limb: ConditionLimb::If,
+            evaluating: false,
             current_limb_taken,
             any_limb_taken: current_limb_taken,
+            ifcase_or_count: 0,
+            skip_nesting: 0,
+        }
+    }
+
+    /// Creates a regular `\if...` frame whose operands are still being
+    /// scanned.
+    #[must_use]
+    pub const fn evaluating_if() -> Self {
+        Self {
+            kind: ConditionKind::If,
+            limb: ConditionLimb::If,
+            evaluating: true,
+            current_limb_taken: false,
+            any_limb_taken: false,
+            ifcase_or_count: 0,
+            skip_nesting: 0,
+        }
+    }
+
+    /// Creates an `\ifcase` frame whose selector is still being scanned.
+    #[must_use]
+    pub const fn evaluating_ifcase() -> Self {
+        Self {
+            kind: ConditionKind::IfCase,
+            limb: ConditionLimb::If,
+            evaluating: true,
+            current_limb_taken: false,
+            any_limb_taken: false,
             ifcase_or_count: 0,
             skip_nesting: 0,
         }
@@ -153,6 +185,11 @@ impl ConditionFrameSummary {
     #[must_use]
     pub const fn limb(self) -> ConditionLimb {
         self.limb
+    }
+
+    #[must_use]
+    pub const fn evaluating(self) -> bool {
+        self.evaluating
     }
 
     #[must_use]
@@ -180,6 +217,7 @@ impl ConditionFrameSummary {
     #[must_use]
     pub const fn with_or_limb(mut self, ifcase_or_count: u32, current_limb_taken: bool) -> Self {
         self.limb = ConditionLimb::Or;
+        self.evaluating = false;
         self.ifcase_or_count = ifcase_or_count;
         self.current_limb_taken = current_limb_taken;
         self.any_limb_taken = self.any_limb_taken || current_limb_taken;
@@ -190,6 +228,7 @@ impl ConditionFrameSummary {
     #[must_use]
     pub const fn with_else_limb(mut self, current_limb_taken: bool) -> Self {
         self.limb = ConditionLimb::Else;
+        self.evaluating = false;
         self.current_limb_taken = current_limb_taken;
         self.any_limb_taken = self.any_limb_taken || current_limb_taken;
         self

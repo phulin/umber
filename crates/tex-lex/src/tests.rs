@@ -471,6 +471,7 @@ fn condition_frames_round_trip_through_input_summary() {
             InputFrameSummary::Condition(frame),
         ] if frame.kind() == ConditionKind::IfCase
             && frame.limb() == ConditionLimb::Or
+            && !frame.evaluating()
             && frame.current_limb_taken()
             && frame.any_limb_taken()
             && frame.ifcase_or_count() == 2
@@ -508,6 +509,10 @@ fn open_condition_survives_checkpoint_rollback_resume_summary() {
 
     let updated = ConditionFrameSummary::new_if(true).with_else_limb(false);
     assert_eq!(
+        input.current_condition(),
+        Some(ConditionFrameSummary::new_if(true))
+    );
+    assert_eq!(
         input.update_current_condition(updated),
         Some(ConditionFrameSummary::new_if(true))
     );
@@ -528,6 +533,7 @@ fn open_condition_survives_checkpoint_rollback_resume_summary() {
         ] if source.column() == 1
             && frame.kind() == ConditionKind::If
             && frame.limb() == ConditionLimb::If
+            && !frame.evaluating()
             && frame.current_limb_taken()
             && frame.any_limb_taken()
             && frame.ifcase_or_count() == 0
