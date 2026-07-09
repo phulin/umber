@@ -1495,6 +1495,31 @@ fn skipped_false_limb_tracks_nested_conditionals() {
 }
 
 #[test]
+fn skipped_false_limb_resolves_active_conditional_meanings() {
+    let mut stores = Universe::new();
+    let (_, iffalse, _, _) = conditional_primitives(&mut stores);
+    let active_iftrue = active_expandable_primitive(&mut stores, '?', ExpandablePrimitive::IfTrue);
+    let active_else = active_expandable_primitive(&mut stores, '~', ExpandablePrimitive::Else);
+    let active_fi = active_expandable_primitive(&mut stores, '!', ExpandablePrimitive::Fi);
+    let list = stores.intern_token_list(&[
+        Token::Cs(iffalse),
+        char_token('x'),
+        active_iftrue,
+        char_token('y'),
+        active_else,
+        char_token('z'),
+        active_fi,
+        active_else,
+        char_token('t'),
+        active_fi,
+    ]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list(list, TokenListReplayKind::Inserted);
+
+    assert_eq!(next_expanded_chars(&mut input, &mut stores), "t");
+}
+
+#[test]
 fn ifcase_selects_selected_limb_and_else_fallback() {
     let mut stores = Universe::new();
     let (_, _, else_cs, fi) = conditional_primitives(&mut stores);
@@ -1659,6 +1684,23 @@ fn char_token(ch: char) -> Token {
         _ => Catcode::Letter,
     };
     Token::Char { ch, cat }
+}
+
+fn active_token(ch: char) -> Token {
+    Token::Char {
+        ch,
+        cat: Catcode::Active,
+    }
+}
+
+fn active_expandable_primitive(
+    stores: &mut Universe,
+    ch: char,
+    primitive: ExpandablePrimitive,
+) -> Token {
+    let symbol = stores.intern(&ch.to_string());
+    stores.set_meaning(symbol, Meaning::ExpandablePrimitive(primitive));
+    active_token(ch)
 }
 
 #[derive(Clone, Copy)]

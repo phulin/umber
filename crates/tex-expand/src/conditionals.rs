@@ -7,7 +7,7 @@ use tex_state::token::Token;
 
 use crate::{
     Dispatch, ExpandError, ExpandNext, ExpandableOpcode, ExpansionHooks, NoInputExpandNext,
-    ReadRecorder, push_inserted_token, scan_helpers, scan_int,
+    ReadRecorder, expandable_symbol, push_inserted_token, scan_helpers, scan_int,
 };
 
 pub(crate) fn begin_if_evaluation<S>(input: &mut InputStack<S>) {
@@ -344,14 +344,14 @@ enum ConditionalPrimitive {
 }
 
 fn skipped_conditional_control<R>(
-    stores: &impl ExpansionState,
+    stores: &mut impl ExpansionState,
     token: Token,
     recorder: &mut R,
 ) -> Result<Option<ConditionalPrimitive>, ExpandError>
 where
     R: ReadRecorder,
 {
-    let Token::Cs(symbol) = token else {
+    let Some(symbol) = expandable_symbol(stores, token) else {
         return Ok(None);
     };
     let meaning = stores.meaning(symbol);
