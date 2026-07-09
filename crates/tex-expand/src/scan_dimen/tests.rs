@@ -1,5 +1,7 @@
 use tex_lex::{InputStack, MemoryInput};
 use tex_state::Universe;
+use tex_state::env::banks::{DimenParam, GlueParam};
+use tex_state::glue::{GlueSpec, Order};
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::provenance::{OriginRecord, SourceOrigin};
@@ -180,6 +182,44 @@ fn scans_supported_internal_dimensions() {
     stores.set_dimen(3, Scaled::from_raw(42_000));
 
     let (value, diagnostic, next) = scan_with_stores("\\dimen3 x", &mut stores);
+
+    assert_eq!(value, 42_000);
+    assert_eq!(diagnostic, None);
+    assert_eq!(next, Some(char_token('x', Catcode::Letter)));
+}
+
+#[test]
+fn scans_named_dimension_parameter() {
+    let mut stores = Universe::new();
+    let hsize = stores.intern("hsize");
+    stores.set_meaning(hsize, Meaning::DimenParam(DimenParam::H_SIZE.raw()));
+    stores.set_dimen_param(DimenParam::H_SIZE, Scaled::from_raw(42_000));
+
+    let (value, diagnostic, next) = scan_with_stores("\\hsize x", &mut stores);
+
+    assert_eq!(value, 42_000);
+    assert_eq!(diagnostic, None);
+    assert_eq!(next, Some(char_token('x', Catcode::Letter)));
+}
+
+#[test]
+fn coerces_named_glue_parameter_width_to_internal_dimension() {
+    let mut stores = Universe::new();
+    let split_top_skip = stores.intern("splittopskip");
+    stores.set_meaning(
+        split_top_skip,
+        Meaning::GlueParam(GlueParam::SPLIT_TOP_SKIP.raw()),
+    );
+    let glue = stores.intern_glue(GlueSpec {
+        width: Scaled::from_raw(42_000),
+        stretch: Scaled::from_raw(7_000),
+        stretch_order: Order::Fil,
+        shrink: Scaled::from_raw(3_000),
+        shrink_order: Order::Normal,
+    });
+    stores.set_glue_param(GlueParam::SPLIT_TOP_SKIP, glue);
+
+    let (value, diagnostic, next) = scan_with_stores("\\splittopskip x", &mut stores);
 
     assert_eq!(value, 42_000);
     assert_eq!(diagnostic, None);

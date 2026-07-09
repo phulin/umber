@@ -163,6 +163,34 @@ fn box_register_cases_match_reference_micro_suite() {
 }
 
 #[test]
+fn named_parameters_match_reference_as_internal_dimensions() {
+    let parameters = reference_fixture("internal_dimension_params");
+    assert!(
+        parameters.contains("D:11.0pt,7.0pt"),
+        "reference internal-dimension output changed:\n{}",
+        parameters
+    );
+
+    let stores = run_umber_exec(
+        r"\hsize=11pt\splittopskip=7pt plus 2fil minus 1pt\setbox0=\vbox to\hsize{}\setbox1=\vbox to\splittopskip{}",
+    );
+    assert_eq!(
+        stores
+            .box_dimension(0, tex_state::BoxDimension::Height)
+            .expect("dimension parameter should size the box")
+            .raw(),
+        11 * tex_state::scaled::Scaled::UNITY
+    );
+    assert_eq!(
+        stores
+            .box_dimension(1, tex_state::BoxDimension::Height)
+            .expect("glue parameter width should size the box")
+            .raw(),
+        7 * tex_state::scaled::Scaled::UNITY
+    );
+}
+
+#[test]
 fn insert_group_delimiters_match_reference_micro_suite() {
     let insertion = reference_fixture("insert_brace_aliases");
     assert!(

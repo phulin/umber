@@ -4,6 +4,7 @@ use std::fmt;
 
 use tex_lex::{InputSource, InputStack, LexError, TokenListReplayKind};
 use tex_state::BoxDimension;
+use tex_state::env::banks::{DimenParam, GlueParam};
 use tex_state::glue::Order;
 use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
@@ -694,14 +695,18 @@ where
     St: ExpansionState,
     E: ExpandNext<S, St, R, H>,
 {
-    match stores.meaning(symbol) {
+    let meaning = stores.meaning(symbol);
+    recorder.record_meaning(symbol, meaning);
+    match meaning {
         Meaning::DimenRegister(index) => {
             return Ok(Some(stores.dimen(index)));
         }
         Meaning::DimenParam(index) => {
-            return Ok(Some(
-                stores.dimen_param(tex_state::env::banks::DimenParam::new(index)),
-            ));
+            return Ok(Some(stores.dimen_param(DimenParam::new(index))));
+        }
+        Meaning::GlueParam(index) => {
+            let glue = stores.glue_param(GlueParam::new(index));
+            return Ok(Some(stores.glue(glue).width));
         }
         Meaning::PageDimension(dimension) => {
             return Ok(Some(stores.page_dimension(dimension)));
