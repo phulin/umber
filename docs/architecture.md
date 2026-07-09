@@ -113,6 +113,14 @@ supply.
   The concrete file source used by `tex-lex` is `WorldInput`, built from a
   `World::read_file`/`\openin` `FileContent`; `tex-lex` itself owns line
   normalization and frame state, not host file handles.
+  The CLI driver's TeX input policy follows TeX82's `start_input` ordering:
+  after adding the default `.tex` extension, it probes the principal input's
+  directory first and, only for names without an explicit directory, probes
+  the ordered directories in `TEXINPUTS`. Empty `TEXINPUTS` elements are
+  ignored rather than acquiring an implicit host-dependent default. Every
+  probe uses the narrow `InputReadState` capability, so the successful path
+  and bytes become the ordinary content-addressed `World` input record and
+  require no additional checkpointed engine state.
 - **Decoding**: UTF-8 native. Legacy 8-bit input is a per-source decoder
   selected up front, not a per-character branch in the lexer.
 - **The input stack** is the one piece of pipeline-owned state the snapshot

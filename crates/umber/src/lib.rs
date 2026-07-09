@@ -6,6 +6,10 @@ use tex_out::dvi::{DviError, write_dvi};
 use tex_state::env::banks::IntParam;
 use tex_state::{ContentHash, EffectRecord, PrintSink, Universe, WorldError};
 
+mod input_search;
+
+pub use input_search::TexInputSearchPath;
+
 /// Result of running TeX through the batch executor.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RunResult {

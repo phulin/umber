@@ -7,6 +7,7 @@ use tex_lex::{InputSource, InputStack, Lexer, MemoryInput, WorldInput};
 use tex_state::env::banks::IntParam;
 use tex_state::token::Token;
 use tex_state::{Universe, World, WorldError};
+use umber::TexInputSearchPath;
 
 mod expand_dump;
 
@@ -148,7 +149,14 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
             PLAIN_CORPUS_BOOTSTRAP,
         )));
     }
-    let mut hooks = RunHooks::new(path);
+    let tex_input_areas = env::var_os("TEXINPUTS")
+        .map(|value| {
+            env::split_paths(&value)
+                .filter(|path| !path.as_os_str().is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut hooks = RunHooks::new(path, tex_input_areas);
     let run = match umber::run_input_collecting_artifacts(&mut input, &mut stores, &mut hooks) {
         Ok(run) => run,
         Err(err) => {
@@ -241,19 +249,22 @@ impl InputSource for RunInputSource {
 }
 
 struct RunHooks {
-    base_dir: PathBuf,
+    input_search: TexInputSearchPath,
     job_name: String,
 }
 
 impl RunHooks {
-    fn new(path: &Path) -> Self {
+    fn new(path: &Path, tex_input_areas: Vec<PathBuf>) -> Self {
         let base_dir = path.parent().unwrap_or_else(|| Path::new(".")).to_owned();
         let job_name = path
             .file_stem()
             .and_then(std::ffi::OsStr::to_str)
             .unwrap_or("texput")
             .to_owned();
-        Self { base_dir, job_name }
+        Self {
+            input_search: TexInputSearchPath::new(base_dir, tex_input_areas),
+            job_name,
+        }
     }
 }
 
@@ -263,15 +274,10 @@ impl ExpansionHooks<RunInputSource> for RunHooks {
         input: &mut C,
         name: &str,
     ) -> Result<RunInputSource, String> {
-        let mut path = self.base_dir.join(name);
-        if path.extension().is_none() {
-            path.set_extension("tex");
-        }
-        input
-            .read_input_file(&path)
+        self.input_search
+            .read(input, name)
             .map(WorldInput::from_content)
             .map(RunInputSource::World)
-            .map_err(|err| format!("{} ({err})", path.display()))
     }
 
     fn job_name(&self) -> &str {

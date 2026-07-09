@@ -474,6 +474,39 @@ fn run_plain_format_bootstrap_defines_corpus_plain_macros() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn run_resolves_area_less_input_through_texinputs_and_advances() {
+    let temp_dir = tempfile::tempdir().expect("create TeX input search temp dir");
+    let job_dir = temp_dir.path().join("plain/base");
+    let search_dir = temp_dir.path().join("generic/hyphen");
+    fs::create_dir_all(&job_dir).expect("create principal input directory");
+    fs::create_dir_all(&search_dir).expect("create TeX input search directory");
+    let source = job_dir.join("plain.tex");
+    fs::write(&source, "\\input hyphen \\message{after-hyphen}\\end\n")
+        .expect("write principal input");
+    fs::write(search_dir.join("hyphen.tex"), "\\message{loaded-hyphen}\n")
+        .expect("write searched input");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .env("TEXINPUTS", &search_dir)
+        .arg("run")
+        .arg(&source)
+        .arg("--show-fixtures")
+        .output()
+        .expect("run input search smoke");
+
+    assert!(
+        output.status.success(),
+        "input search run failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
+    assert!(stdout.contains("loaded-hyphen"));
+    assert!(stdout.contains("after-hyphen"));
+}
+
+#[test]
 #[allow(clippy::disallowed_methods)] // host-side fixture command execution and file checks.
 fn run_show_fixtures_harvests_without_committing_immediate_stream_effects() {
     let temp_dir = tempfile::tempdir().expect("create temp dir");
