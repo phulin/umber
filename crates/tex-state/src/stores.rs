@@ -1105,8 +1105,7 @@ impl Stores {
     }
 
     pub fn take_box_reg(&mut self, index: u16) -> Option<NodeListId> {
-        let old = self.env.box_reg(index);
-        let rec = self.env.set_box_reg(index, None);
+        let (old, rec) = self.env.take_box_reg(index);
         self.account_box_write(old, rec);
         old
     }
@@ -1497,6 +1496,18 @@ impl Stores {
     #[must_use]
     pub fn testing_survivor_refcount(&self, id: NodeListId) -> u32 {
         self.survivors.testing_refcount(id)
+    }
+
+    #[cfg(any(test, feature = "testing"))]
+    #[must_use]
+    pub fn testing_survivor_recycled_buffer_uses(&self) -> usize {
+        self.survivors.testing_recycled_buffer_uses()
+    }
+
+    #[cfg(any(test, feature = "testing"))]
+    #[must_use]
+    pub fn testing_survivor_root_slot_count(&self) -> usize {
+        self.survivors.testing_root_slot_count()
     }
 }
 

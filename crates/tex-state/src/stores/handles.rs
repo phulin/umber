@@ -235,17 +235,21 @@ impl Stores {
     pub(super) fn account_box_write(
         &mut self,
         old: Option<NodeListId>,
-        rec: Option<crate::journal::UndoRec>,
+        outcome: crate::env::banks::BoxWriteOutcome,
     ) {
-        let Some(rec) = rec else {
-            return;
-        };
-
-        if rec.old() == rec.new_value() {
-            self.inc_survivor_ref(NodeListId::decode_box_word(rec.old()));
-        }
-        if rec.old() == 0 {
-            self.dec_survivor_ref_opt(old);
+        match outcome {
+            crate::env::banks::BoxWriteOutcome::Unchanged => {}
+            crate::env::banks::BoxWriteOutcome::Journaled { rec, .. } => {
+                if rec.old() == rec.new_value() {
+                    self.inc_survivor_ref(NodeListId::decode_box_word(rec.old()));
+                }
+                if rec.old() == 0 {
+                    self.dec_survivor_ref_opt(old);
+                }
+            }
+            crate::env::banks::BoxWriteOutcome::Coalesced { displaced } => {
+                self.dec_survivor_ref_opt(NodeListId::decode_box_word(displaced));
+            }
         }
     }
 

@@ -14,18 +14,16 @@ pub(crate) mod overflow;
 pub(crate) mod raw;
 
 use self::banks::{
-    BankJournalContext, BankSetContext, DENSE_REGISTER_COUNT, DimenParam, FixedBank, FontIdCodec,
-    GlueIdCodec, GlueParam, I32Codec, IntParam, NodeListIdCodec, PARAMETER_COUNT, ScaledCodec,
-    TokParam, TokenListIdCodec,
+    BankJournalContext, BankSetContext, BoxWriteOutcome, DENSE_REGISTER_COUNT, DimenParam,
+    FixedBank, FontIdCodec, GlueIdCodec, GlueParam, I32Codec, IntParam, NodeListIdCodec,
+    PARAMETER_COUNT, ScaledCodec, TokParam, TokenListIdCodec,
 };
 use self::overflow::{REGISTER_COUNT, SparseBank};
 use crate::cell::{BankTag, CellId};
 use crate::epoch::Epoch;
 use crate::ids::{FontId, GlueId, NodeListId, TokenListId};
 use crate::interner::Symbol;
-#[cfg(test)]
-use crate::journal::JournalPos;
-use crate::journal::{Entry, Journal, UndoRec};
+use crate::journal::{Entry, Journal, JournalPos, UndoRec};
 use crate::math::{MATH_FAMILY_COUNT, MathFontSize};
 use crate::meaning::Meaning;
 use crate::scaled::Scaled;
@@ -162,6 +160,7 @@ pub struct Env {
     current_font: WordStamp,
     math_family_fonts: FixedBank<FontIdCodec, MATH_FAMILY_FONT_COUNT>,
     journal: Journal,
+    box_journal_positions: BTreeMap<(u16, u32), JournalPos>,
     aftergroup: Vec<Token>,
     afterassignment: Option<Token>,
     group_depth: u32,
@@ -200,6 +199,7 @@ impl Env {
             current_font: WordStamp::default(),
             math_family_fonts: FixedBank::new(),
             journal: Journal::new(),
+            box_journal_positions: BTreeMap::new(),
             aftergroup: Vec::new(),
             afterassignment: None,
             group_depth: 0,
@@ -315,8 +315,21 @@ impl Env {
     }
 
     /// Sets a local box register value validated by the owning store.
-    pub(crate) fn set_box_reg(&mut self, index: u16, value: Option<NodeListId>) -> Option<UndoRec> {
-        if is_dense_register(index) {
+    pub(crate) fn set_box_reg(&mut self, index: u16, value: Option<NodeListId>) -> BoxWriteOutcome {
+        self.set_box_reg_local(index, value, true)
+    }
+
+    fn set_box_reg_local(
+        &mut self,
+        index: u16,
+        value: Option<NodeListId>,
+        coalesce: bool,
+    ) -> BoxWriteOutcome {
+        let key = (index, self.group_depth);
+        let coalesce_pos = coalesce
+            .then(|| self.box_journal_positions.get(&key).copied())
+            .flatten();
+        let outcome = if is_dense_register(index) {
             self.boxes.set_always_journal(
                 index,
                 value,
@@ -326,6 +339,7 @@ impl Env {
                     shadow: &mut self.shadow,
                     bank: BankTag::Box,
                     global: false,
+                    coalesce_pos,
                 },
             )
         } else {
@@ -338,9 +352,14 @@ impl Env {
                     shadow: &mut self.shadow,
                     bank: BankTag::Box,
                     global: false,
+                    coalesce_pos,
                 },
             )
+        };
+        if let BoxWriteOutcome::Journaled { pos, .. } = outcome {
+            self.box_journal_positions.insert(key, pos);
         }
+        outcome
     }
 
     /// Sets a global box register value validated by the owning store.
@@ -348,7 +367,9 @@ impl Env {
         &mut self,
         index: u16,
         value: Option<NodeListId>,
-    ) -> Option<UndoRec> {
+    ) -> BoxWriteOutcome {
+        self.box_journal_positions
+            .retain(|&(box_index, _), _| box_index != index);
         if is_dense_register(index) {
             self.boxes.set_always_journal(
                 index,
@@ -359,6 +380,7 @@ impl Env {
                     shadow: &mut self.shadow,
                     bank: BankTag::Box,
                     global: true,
+                    coalesce_pos: None,
                 },
             )
         } else {
@@ -371,6 +393,7 @@ impl Env {
                     shadow: &mut self.shadow,
                     bank: BankTag::Box,
                     global: true,
+                    coalesce_pos: None,
                 },
             )
         }
@@ -381,7 +404,7 @@ impl Env {
         &mut self,
         index: u16,
         value: Option<NodeListId>,
-    ) -> Option<UndoRec> {
+    ) -> BoxWriteOutcome {
         if self.box_reg_is_local_to_current_group(index) {
             self.set_box_reg(index, value)
         } else {
@@ -397,14 +420,22 @@ impl Env {
     pub(crate) fn take_box_reg_same_level(
         &mut self,
         index: u16,
-    ) -> (Option<NodeListId>, Option<UndoRec>) {
+    ) -> (Option<NodeListId>, BoxWriteOutcome) {
         let old = self.box_reg(index);
         let rec = if self.box_reg_is_local_to_current_group(index) {
-            self.set_box_reg(index, None)
+            self.set_box_reg_local(index, None, false)
         } else {
             self.set_box_reg_global(index, None)
         };
         (old, rec)
+    }
+
+    /// Takes a local box while retaining its returned handle in a distinct
+    /// undo record until the caller has consumed it.
+    pub(crate) fn take_box_reg(&mut self, index: u16) -> (Option<NodeListId>, BoxWriteOutcome) {
+        let old = self.box_reg(index);
+        let outcome = self.set_box_reg_local(index, None, false);
+        (old, outcome)
     }
 
     fn box_reg_is_local_to_current_group(&self, index: u16) -> bool {

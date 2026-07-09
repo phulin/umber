@@ -1,7 +1,9 @@
 //! Sparse e-TeX register overflow banks.
 
 use crate::cell::CellId;
-use crate::env::banks::{BankCodec, BankJournalContext, BankSetContext, DENSE_REGISTER_COUNT};
+use crate::env::banks::{
+    BankCodec, BankJournalContext, BankSetContext, BoxWriteOutcome, DENSE_REGISTER_COUNT,
+};
 use crate::env::barrier;
 use crate::epoch::Epoch;
 use crate::journal::UndoRec;
@@ -70,7 +72,7 @@ where
         index: u16,
         value: C::Value,
         ctx: BankJournalContext<'_>,
-    ) -> Option<UndoRec> {
+    ) -> BoxWriteOutcome {
         let (page, offset) = sparse_location(index);
         let page = self.pages[page].get_or_insert_with(|| Box::new(Page::default()));
         let cell_id = if ctx.global {
@@ -81,14 +83,23 @@ where
         let old = page.values[offset];
         let new = C::encode(value);
         if old == new && !ctx.global {
-            return None;
+            return BoxWriteOutcome::Unchanged;
         }
         let rec = UndoRec::new(cell_id, old, new);
-        ctx.journal.push_undo(rec);
+        let outcome = if ctx.global {
+            let pos = ctx.journal.push_undo(rec);
+            BoxWriteOutcome::Journaled { rec, pos }
+        } else if let Some(pos) = ctx.coalesce_pos {
+            ctx.journal.replace_undo_new_value(pos, new);
+            BoxWriteOutcome::Coalesced { displaced: old }
+        } else {
+            let pos = ctx.journal.push_undo(rec);
+            BoxWriteOutcome::Journaled { rec, pos }
+        };
         page.values[offset] = new;
         #[cfg(feature = "shadow")]
         crate::env::shadow_set(ctx.shadow, CellId::new(ctx.bank, u32::from(index)), new);
-        Some(rec)
+        outcome
     }
 
     #[allow(dead_code)]

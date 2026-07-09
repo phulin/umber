@@ -4,7 +4,7 @@ use crate::cell::{BankTag, CellId};
 use crate::env::barrier;
 use crate::epoch::Epoch;
 use crate::ids::{FontId, GlueId, NodeListId, TokenListId};
-use crate::journal::{Journal, UndoRec};
+use crate::journal::{Journal, JournalPos, UndoRec};
 use crate::scaled::Scaled;
 use core::marker::PhantomData;
 #[cfg(feature = "shadow")]
@@ -341,6 +341,7 @@ pub(crate) struct BankJournalContext<'a> {
     pub(crate) shadow: &'a mut HashMap<CellId, u64>,
     pub(crate) bank: BankTag,
     pub(crate) global: bool,
+    pub(crate) coalesce_pos: Option<JournalPos>,
 }
 
 impl BankJournalContext<'_> {
@@ -354,6 +355,13 @@ pub(crate) struct FixedBank<C, const N: usize> {
     values: [u64; N],
     stamps: [Epoch; N],
     _codec: PhantomData<C>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum BoxWriteOutcome {
+    Unchanged,
+    Journaled { rec: UndoRec, pos: JournalPos },
+    Coalesced { displaced: u64 },
 }
 
 impl<C, const N: usize> FixedBank<C, N>
@@ -392,20 +400,29 @@ where
         index: u16,
         value: C::Value,
         ctx: BankJournalContext<'_>,
-    ) -> Option<UndoRec> {
+    ) -> BoxWriteOutcome {
         let offset = checked_index::<N>(index);
         let cell_id = ctx.cell_id(index);
         let old = self.values[offset];
         let new = C::encode(value);
         if old == new && !ctx.global {
-            return None;
+            return BoxWriteOutcome::Unchanged;
         }
         let rec = UndoRec::new(cell_id, old, new);
-        ctx.journal.push_undo(rec);
+        let outcome = if ctx.global {
+            let pos = ctx.journal.push_undo(rec);
+            BoxWriteOutcome::Journaled { rec, pos }
+        } else if let Some(pos) = ctx.coalesce_pos {
+            ctx.journal.replace_undo_new_value(pos, new);
+            BoxWriteOutcome::Coalesced { displaced: old }
+        } else {
+            let pos = ctx.journal.push_undo(rec);
+            BoxWriteOutcome::Journaled { rec, pos }
+        };
         self.values[offset] = new;
         #[cfg(feature = "shadow")]
         crate::env::shadow_set(ctx.shadow, CellId::new(ctx.bank, u32::from(index)), new);
-        Some(rec)
+        outcome
     }
 
     #[allow(dead_code)]

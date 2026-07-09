@@ -663,6 +663,65 @@ fn same_epoch_list_stored_twice_promotes_to_independent_roots() {
 }
 
 #[test]
+fn repeated_survivor_replacement_recycles_buffers_without_reviving_stale_ids() {
+    const REPLACEMENTS: usize = 20_000;
+
+    let mut stores = Stores::new();
+    let first = one_char(&mut stores, 'a');
+    let mut live = stores.prepare_box_value(first);
+    let stale = live;
+
+    for index in 1..REPLACEMENTS {
+        let replacement = one_char(&mut stores, if index % 2 == 0 { 'a' } else { 'b' });
+        let replacement = stores.prepare_box_value(replacement);
+        stores.dec_survivor_ref(live);
+        live = replacement;
+    }
+
+    assert!(!stores.survivors.contains(stale));
+    assert_ne!(stale.arena(), live.arena());
+    assert_eq!(stores.testing_live_survivor_slot_count(), 1);
+    assert_eq!(stores.testing_survivor_root_slot_count(), REPLACEMENTS);
+    // Two buffers cover the old and replacement roots; every later
+    // promotion reuses one of them.
+    assert_eq!(
+        stores.testing_survivor_recycled_buffer_uses(),
+        REPLACEMENTS - 2
+    );
+}
+
+#[test]
+fn coalesced_box_replacements_roll_back_to_the_checkpoint_owner() {
+    const REPLACEMENTS: usize = 20_000;
+
+    let mut stores = Stores::new();
+    let baseline = one_char(&mut stores, 'o');
+    stores.set_box_reg(0, baseline);
+    let baseline = stores.box_reg(0).expect("baseline box should be stored");
+    let snapshot = stores.checkpoint();
+    let mut stale = None;
+
+    for index in 0..REPLACEMENTS {
+        let replacement = one_char(&mut stores, if index % 2 == 0 { 'a' } else { 'b' });
+        stores.set_box_reg(0, replacement);
+        stale.get_or_insert_with(|| stores.box_reg(0).expect("replacement should be stored"));
+    }
+
+    let stale = stale.expect("at least one replacement should be stored");
+    assert!(!stores.survivors.contains(stale));
+    assert_eq!(stores.testing_live_survivor_slot_count(), 2);
+    assert_eq!(
+        stores.testing_survivor_recycled_buffer_uses(),
+        REPLACEMENTS - 2
+    );
+
+    stores.rollback(&snapshot);
+    assert_eq!(stores.box_reg(0), Some(baseline));
+    assert_eq!(stores.testing_live_survivor_slot_count(), 1);
+    assert_eq!(stores.testing_survivor_refcount(baseline), 1);
+}
+
+#[test]
 fn storing_survivor_in_second_register_shares_refcount_until_release() {
     let mut stores = Stores::new();
     let list = one_char(&mut stores, 'a');

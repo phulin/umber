@@ -98,6 +98,7 @@ impl Env {
     /// Records a checkpoint position and starts a fresh epoch for later writes.
     #[must_use]
     pub(crate) fn checkpoint(&mut self) -> EnvSnapshot {
+        self.box_journal_positions.clear();
         let snapshot = EnvSnapshot {
             journal_pos: self.journal.pos(),
             aftergroup_len: u32_len(
@@ -206,6 +207,9 @@ impl Env {
         else {
             panic!("leave_group without matching group marker");
         };
+        let exiting_depth = self.group_depth;
+        self.box_journal_positions
+            .retain(|&(_, depth), _| depth != exiting_depth);
         self.group_depth = self
             .group_depth
             .checked_sub(1)
@@ -282,6 +286,7 @@ impl Env {
 
     /// Rolls back all environment state after `snapshot`.
     pub(crate) fn rollback_to(&mut self, snapshot: EnvSnapshot) {
+        self.box_journal_positions.clear();
         let snapshot_index = snapshot.journal_pos.raw() as usize;
         let rollback_end = self.journal.len();
         for index in (snapshot_index..rollback_end).rev() {

@@ -1961,6 +1961,18 @@ impl Universe {
     pub fn testing_survivor_refcount(&self, id: NodeListId) -> u32 {
         self.stores.testing_survivor_refcount(id)
     }
+
+    #[cfg(any(test, feature = "testing"))]
+    #[must_use]
+    pub fn testing_survivor_recycled_buffer_uses(&self) -> usize {
+        self.stores.testing_survivor_recycled_buffer_uses()
+    }
+
+    #[cfg(any(test, feature = "testing"))]
+    #[must_use]
+    pub fn testing_survivor_root_slot_count(&self) -> usize {
+        self.stores.testing_survivor_root_slot_count()
+    }
 }
 
 /// A mutable dimension field of a box register's top-level box.

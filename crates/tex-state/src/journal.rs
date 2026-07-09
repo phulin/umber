@@ -53,6 +53,11 @@ impl UndoRec {
     pub(crate) const fn new_value(self) -> u64 {
         self.new
     }
+
+    #[must_use]
+    pub(crate) const fn with_new_value(self, new: u64) -> Self {
+        Self { new, ..self }
+    }
 }
 
 /// Structural journal markers.
@@ -98,8 +103,22 @@ impl Journal {
     }
 
     /// Appends an undo+redo record.
-    pub(crate) fn push_undo(&mut self, rec: UndoRec) {
+    pub(crate) fn push_undo(&mut self, rec: UndoRec) -> JournalPos {
+        let pos = self.pos();
         self.entries.push(Entry::Undo(rec));
+        pos
+    }
+
+    /// Replaces the forward value of an existing undo entry.
+    pub(crate) fn replace_undo_new_value(&mut self, pos: JournalPos, new: u64) {
+        let index = checked_pos(pos, self.entries.len());
+        let Some(entry) = self.entries.get_mut(index) else {
+            panic!("journal position does not name an undo entry");
+        };
+        let Entry::Undo(rec) = entry else {
+            panic!("journal position does not name an undo entry");
+        };
+        *rec = rec.with_new_value(new);
     }
 
     /// Appends a structural marker.

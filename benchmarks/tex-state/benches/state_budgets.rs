@@ -145,6 +145,41 @@ fn transient_box_overwrite_checkpoint(c: &mut Criterion) {
     });
 }
 
+fn survivor_root_recycling(c: &mut Criterion) {
+    c.bench_function("survivor_root_recycling/fixed_shape_overwrites", |b| {
+        b.iter_batched(
+            Universe::new,
+            |mut stores| {
+                for amount in 0..TRANSIENT_BOX_OVERWRITES {
+                    let children = stores.freeze_node_list(&[Node::Kern {
+                        amount: Scaled::from_raw(amount as i32),
+                        kind: KernKind::Explicit,
+                    }]);
+                    let list =
+                        stores.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
+                            width: Scaled::from_raw(amount as i32),
+                            height: Scaled::from_raw(0),
+                            depth: Scaled::from_raw(0),
+                            shift: Scaled::from_raw(0),
+                            display: false,
+                            glue_set: GlueSetRatio::ZERO,
+                            glue_sign: Sign::Normal,
+                            glue_order: Order::Normal,
+                            children,
+                        }))]);
+                    stores.set_box_reg(0, list);
+                }
+                assert!(
+                    stores.testing_survivor_recycled_buffer_uses()
+                        >= TRANSIENT_BOX_OVERWRITES - 2
+                );
+                black_box(stores);
+            },
+            BatchSize::SmallInput,
+        );
+    });
+}
+
 fn group_cycle(c: &mut Criterion) {
     let mut group = c.benchmark_group("group_cycle");
 
@@ -538,6 +573,7 @@ criterion_group!(
     snapshot_take,
     checkpoint_state_hash,
     transient_box_overwrite_checkpoint,
+    survivor_root_recycling,
     group_cycle,
     rollback_scaling,
     group_global_compaction,

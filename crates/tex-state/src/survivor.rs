@@ -11,13 +11,17 @@ use crate::node_arena::NodeArena;
 /// Arena for promoted node-list roots.
 #[derive(Clone, Debug)]
 pub struct SurvivorArena {
+    // Root ids are never reused: a copied stale NodeListId must not become
+    // live again merely because its old storage was recycled.
     slots: Vec<Option<SurvivorRoot>>,
-    free: Vec<SurvivorRootId>,
+    // Node storage is independent of identity and can safely cross root ids.
+    recycled: Vec<Vec<Node>>,
+    recycled_buffer_uses: usize,
 }
 
 #[derive(Clone, Debug)]
 struct SurvivorRoot {
-    nodes: Box<[Node]>,
+    nodes: Vec<Node>,
     refcount: u32,
 }
 
@@ -27,7 +31,8 @@ impl SurvivorArena {
     pub(crate) fn new() -> Self {
         Self {
             slots: Vec::new(),
-            free: Vec::new(),
+            recycled: Vec::new(),
+            recycled_buffer_uses: 0,
         }
     }
 
@@ -38,8 +43,9 @@ impl SurvivorArena {
             "only epoch node lists are promoted"
         );
 
-        let (nodes, start, len) = copy_list_iterative(id, epoch);
-        let root = self.allocate_root(nodes.into_boxed_slice());
+        let mut nodes = self.take_recycled_buffer();
+        let (start, len) = copy_list_iterative(id, epoch, &mut nodes);
+        let root = self.allocate_root(nodes);
         self.rewrite_root_ids(root);
         let promoted = NodeListId::new_survivor(root, start, len);
         self.debug_assert_no_epoch_ids(promoted);
@@ -82,8 +88,11 @@ impl SurvivorArena {
             .checked_sub(1)
             .expect("survivor root refcount underflow");
         if slot.refcount == 0 {
-            self.slots[root.raw() as usize] = None;
-            self.free.push(root);
+            let mut root = self.slots[root.raw() as usize]
+                .take()
+                .expect("survivor root is not live");
+            root.nodes.clear();
+            self.recycled.push(root.nodes);
         }
     }
 
@@ -116,16 +125,37 @@ impl SurvivorArena {
         self.root(root).refcount
     }
 
-    fn allocate_root(&mut self, nodes: Box<[Node]>) -> SurvivorRootId {
+    #[cfg(any(test, feature = "testing"))]
+    #[must_use]
+    pub fn testing_recycled_buffer_uses(&self) -> usize {
+        self.recycled_buffer_uses
+    }
+
+    #[cfg(any(test, feature = "testing"))]
+    #[must_use]
+    pub fn testing_root_slot_count(&self) -> usize {
+        self.slots.len()
+    }
+
+    fn take_recycled_buffer(&mut self) -> Vec<Node> {
+        let Some((index, _)) = self
+            .recycled
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, nodes)| nodes.capacity())
+        else {
+            return Vec::new();
+        };
+        self.recycled_buffer_uses += 1;
+        self.recycled.swap_remove(index)
+    }
+
+    fn allocate_root(&mut self, nodes: Vec<Node>) -> SurvivorRootId {
         let slot = SurvivorRoot { nodes, refcount: 1 };
-        if let Some(root) = self.free.pop() {
-            self.slots[root.raw() as usize] = Some(slot);
-            root
-        } else {
-            let raw = u32_len(self.slots.len(), "survivor arena exceeds u32 roots");
-            self.slots.push(Some(slot));
-            SurvivorRootId::new(raw)
-        }
+        let raw = u32_len(self.slots.len(), "survivor arena exceeds u32 roots");
+        assert!(raw < (1 << 20), "survivor root id exceeds encoding");
+        self.slots.push(Some(slot));
+        SurvivorRootId::new(raw)
     }
 
     fn root(&self, root: SurvivorRootId) -> &SurvivorRoot {
@@ -160,18 +190,18 @@ impl SurvivorArena {
     fn debug_assert_no_epoch_ids(&self, _id: NodeListId) {}
 }
 
-fn copy_list_iterative(id: NodeListId, epoch: &NodeArena) -> (Vec<Node>, u32, u32) {
-    let mut out = Vec::new();
-    let (root_start, root_len) = append_list(id, epoch, &mut out);
+fn copy_list_iterative(id: NodeListId, epoch: &NodeArena, out: &mut Vec<Node>) -> (u32, u32) {
+    debug_assert!(out.is_empty(), "recycled survivor buffer must be empty");
+    let (root_start, root_len) = append_list(id, epoch, out);
     let mut pending: Vec<usize> = (root_start as usize..root_start as usize + root_len as usize)
         .rev()
         .collect();
 
     while let Some(index) = pending.pop() {
-        remap_node_children(index, epoch, &mut out, &mut pending);
+        remap_node_children(index, epoch, out, &mut pending);
     }
 
-    (out, root_start, root_len)
+    (root_start, root_len)
 }
 
 fn append_list(id: NodeListId, epoch: &NodeArena, out: &mut Vec<Node>) -> (u32, u32) {
