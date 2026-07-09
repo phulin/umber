@@ -156,6 +156,23 @@ impl From<ExpandError> for ScanToksError {
     }
 }
 
+impl ScanToksError {
+    #[must_use]
+    pub fn primary_origin(&self) -> Option<tex_state::token::OriginId> {
+        match self {
+            Self::Lex(_) => None,
+            Self::Expand(error) => error.primary_origin(),
+            Self::EndOfInputInParameterText { context }
+            | Self::EndOfInputInReplacementText { context }
+            | Self::ParameterNumberOutOfOrder { context, .. }
+            | Self::TooManyParameters { context }
+            | Self::InvalidParameterTokenInParameterText(context)
+            | Self::InvalidParameterTokenInReplacementText(context)
+            | Self::MissingGeneralTextBeginGroup(context) => Some(context.origin()),
+        }
+    }
+}
+
 /// Scans a macro definition from the current input position.
 ///
 /// The control sequence being defined is already consumed by the caller. This
