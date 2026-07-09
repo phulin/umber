@@ -215,6 +215,8 @@ jq -r \
   def github_number:
     ([
       field(["github_number", "githubIssueNumber", "github_issue_number"])
+      , .external_ref?
+      , .externalRef?
       , .github.number?
       , .github.issue_number?
       , .metadata.github.number?
@@ -231,6 +233,8 @@ jq -r \
   def github_url($number):
     ([
       field(["github_url", "githubUrl"])
+      , .external_ref?
+      , .externalRef?
       , .github.url?
       , .metadata.github.url?
       , .metadata.github_url?
