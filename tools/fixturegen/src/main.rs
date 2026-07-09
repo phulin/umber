@@ -200,7 +200,7 @@ fn regenerate_tex_exec_io_case(case: &str) -> Result<()> {
     )
     .with_context(|| format!("failed to copy tex_exec_io/{case}.tex"))?;
 
-    let needs_dvi = spec.effects || spec.specials;
+    let needs_dvi = matches!(spec.effects, Some(IoEffects::LeaderPayload)) || spec.specials;
     let output = RefTex::locate()?.run_in_dir(
         temp_dir.path(),
         Path::new(&source_name),
@@ -222,16 +222,21 @@ fn regenerate_tex_exec_io_case(case: &str) -> Result<()> {
         let text = String::from_utf8(bytes).context("reference output was not utf-8")?;
         write_text_fixture("tex_exec_io", case, "out", &text)?;
     }
-    if spec.effects {
-        let leader_out = if temp_dir.path().join("leader.out").exists() {
-            "present"
-        } else {
-            "absent"
+    if let Some(effects) = spec.effects {
+        let text = match effects {
+            IoEffects::LeaderPayload => {
+                let leader_out = if temp_dir.path().join("leader.out").exists() {
+                    "present"
+                } else {
+                    "absent"
+                };
+                format!(
+                    "leader.out: {leader_out}\nleader-write-in-log: {}\n",
+                    output.log.contains("leader-write")
+                )
+            }
+            IoEffects::OutputPresence(paths) => format_output_presence(temp_dir.path(), paths)?,
         };
-        let text = format!(
-            "leader.out: {leader_out}\nleader-write-in-log: {}\n",
-            output.log.contains("leader-write")
-        );
         write_text_fixture("tex_exec_io", case, "effects", &text)?;
     }
     if spec.specials {
@@ -280,34 +285,66 @@ fn normalize_micro_reference_text(text: &str) -> String {
 #[derive(Clone, Copy)]
 struct IoCaseSpec {
     output_name: Option<&'static str>,
-    effects: bool,
+    effects: Option<IoEffects>,
     specials: bool,
+}
+
+#[derive(Clone, Copy)]
+enum IoEffects {
+    LeaderPayload,
+    OutputPresence(&'static [&'static str]),
 }
 
 fn io_case_spec(case: &str) -> Result<IoCaseSpec> {
     match case {
         "top_open_close" => Ok(IoCaseSpec {
             output_name: Some("top.out"),
-            effects: false,
+            effects: None,
             specials: false,
         }),
         "ordinary_open_close" => Ok(IoCaseSpec {
             output_name: Some("ordinary.out"),
-            effects: false,
+            effects: None,
+            specials: false,
+        }),
+        "open_close_without_write" => Ok(IoCaseSpec {
+            output_name: None,
+            effects: Some(IoEffects::OutputPresence(&[
+                "immediate.out",
+                "shipped.out",
+                "boxed.out",
+                "top.out",
+            ])),
             specials: false,
         }),
         "special_payload" => Ok(IoCaseSpec {
             output_name: None,
-            effects: false,
+            effects: None,
             specials: true,
         }),
         "leader_payload_effects" => Ok(IoCaseSpec {
             output_name: None,
-            effects: true,
+            effects: Some(IoEffects::LeaderPayload),
             specials: true,
         }),
         _ => bail!("unknown tex_exec_io case: {case}"),
     }
+}
+
+fn format_output_presence(run_dir: &Path, paths: &[&str]) -> Result<String> {
+    let mut output = String::new();
+    for path in paths {
+        let state = match fs::metadata(run_dir.join(path)) {
+            Ok(metadata) => format!("present:{} bytes", metadata.len()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => "absent".to_owned(),
+            Err(error) => bail!("failed to stat reference output {path}: {error}"),
+        };
+        output.push_str(path);
+        output.push_str(": ");
+        output.push_str(&state);
+        output.push('\n');
+    }
+    Ok(output)
 }
 
 fn write_text_fixture(area: &str, case: &str, kind: &str, actual: &str) -> Result<()> {

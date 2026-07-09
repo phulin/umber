@@ -279,6 +279,25 @@ fn shipout_commits_deferred_openout_closeout_whatsits() {
 }
 
 #[test]
+fn top_level_deferred_openout_closeout_without_write_materializes_empty_output() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\openout2=empty.out \\closeout2\\end"));
+
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("final cleanup succeeds");
+
+    assert_eq!(stats.shipped_artifacts.len(), 1);
+    assert_eq!(stores.world().memory_output("empty.out"), Some(&b""[..]));
+    assert!(
+        stores.world().effect_records().is_empty(),
+        "final cleanup should commit the shipped open/close effects"
+    );
+}
+
+#[test]
 #[allow(clippy::disallowed_methods)] // host-side committed parity fixture.
 fn top_level_deferred_openout_closeout_ship_during_final_cleanup() {
     let source = read_io_source("top_open_close");
@@ -642,6 +661,29 @@ fn ordinary_shipped_openout_closeout_matches_reference_file_effect() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // host-side committed parity fixture.
+fn openout_closeout_without_write_matches_reference_materialization() {
+    let source = read_io_source("open_close_without_write");
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(&source));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("open close without writes succeeds");
+
+    let actual = format_output_presence(
+        &stores,
+        &["immediate.out", "shipped.out", "boxed.out", "top.out"],
+    );
+    assert_eq!(
+        actual,
+        read_fixture("tex_exec_io", "open_close_without_write", "effects")
+    );
+}
+
+#[test]
 fn copied_special_reuses_scan_time_expansion() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);
@@ -825,6 +867,23 @@ fn format_special_payloads(payloads: &[Vec<u8>]) -> String {
     let mut output = String::new();
     for payload in payloads {
         output.push_str(&String::from_utf8_lossy(payload));
+        output.push('\n');
+    }
+    output
+}
+
+fn format_output_presence(stores: &Universe, paths: &[&str]) -> String {
+    let mut output = String::new();
+    for path in paths {
+        let state = stores
+            .world()
+            .memory_output(path)
+            .map_or("absent".to_owned(), |bytes| {
+                format!("present:{} bytes", bytes.len())
+            });
+        output.push_str(path);
+        output.push_str(": ");
+        output.push_str(&state);
         output.push('\n');
     }
     output

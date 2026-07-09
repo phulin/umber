@@ -229,6 +229,39 @@ fn real_output_does_not_materialize_before_commit() {
 }
 
 #[test]
+fn open_close_without_write_materializes_empty_output_only_at_commit() {
+    let temp_dir = tempfile::tempdir().expect("temp dir");
+    let output = temp_dir.path().join("empty.aux");
+    let mut world = World::real();
+    let slot = StreamSlot::new(1);
+
+    world.open_out(slot, &output);
+    world.close_out(slot);
+
+    assert!(!output.exists());
+
+    world
+        .commit_effects(world.effect_pos())
+        .expect("commit open close");
+
+    assert_eq!(std::fs::read(&output).expect("committed output"), b"");
+}
+
+#[test]
+fn memory_open_close_without_write_materializes_empty_output() {
+    let mut world = World::memory();
+    let slot = StreamSlot::new(1);
+
+    world.open_out(slot, "empty.aux");
+    world.close_out(slot);
+    world
+        .commit_effects(world.effect_pos())
+        .expect("commit open close");
+
+    assert_eq!(world.memory_output("empty.aux"), Some(&b""[..]));
+}
+
+#[test]
 fn commit_flushes_prefix_once_and_drops_history() {
     let mut world = World::memory();
     let slot = StreamSlot::new(2);
