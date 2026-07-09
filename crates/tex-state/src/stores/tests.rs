@@ -179,6 +179,7 @@ fn paragraph_layout_defaults_match_plain_tex_format() {
     assert_eq!(stores.int_param(IntParam::PRETOLERANCE), 100);
     assert_eq!(stores.int_param(IntParam::TOLERANCE), 200);
     assert_eq!(stores.dimen_param(DimenParam::OVERFULL_RULE), scaled_pt(5));
+    assert_eq!(stores.dimen_param(DimenParam::MAX_DEPTH), scaled_pt(4));
     assert_eq!(
         stores.glue(stores.glue_param(GlueParam::BASELINE_SKIP)),
         GlueSpec {

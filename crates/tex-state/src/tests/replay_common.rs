@@ -176,6 +176,10 @@ impl Oracle {
         root.insert(TestCell::IntParam(IntParam::PRETOLERANCE.raw()), 100);
         root.insert(TestCell::IntParam(IntParam::TOLERANCE.raw()), 200);
         root.insert(
+            TestCell::DimenParam(DimenParam::MAX_DEPTH.raw()),
+            u64::from((4 * Scaled::UNITY) as u32),
+        );
+        root.insert(
             TestCell::GlueParam(GlueParam::BASELINE_SKIP.raw()),
             u64::from(GlueId::new(1).raw()),
         );

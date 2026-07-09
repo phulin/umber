@@ -391,9 +391,10 @@ assignments, box building, and dispatch into the typesetting kernels.
   hboxes through the shared vertical append routine. Fresh engine state
   installs the plain-format paragraph/layout defaults that affect this hand-off
   (`\pretolerance=100`, `\tolerance=200`, `\baselineskip=12pt`,
-  `\parfillskip=0pt plus 1fil`, and `\overfullrule=5pt`) so parity fixtures
-  only restate them when a case intentionally overrides the format baseline.
-  The page builder (§8) observes appends to the main vertical list.
+  `\parfillskip=0pt plus 1fil`, `\overfullrule=5pt`, and `\maxdepth=4pt`) so
+  parity fixtures only restate them when a case intentionally overrides the
+  format baseline. The page builder (§8) observes appends to the main vertical
+  list.
 - The stomach is the *only* pipeline stage holding `&mut Universe`, and it
   holds it as a plain argument — re-entrancy (e.g. `\output` routines,
   `\vsplit`-triggered mark extraction) is recursion in Rust, with the mode

@@ -203,6 +203,7 @@ impl Stores {
             DimenParam::OVERFULL_RULE,
             Scaled::from_raw(5 * Scaled::UNITY),
         );
+        self.set_dimen_param(DimenParam::MAX_DEPTH, Scaled::from_raw(4 * Scaled::UNITY));
 
         let baseline_skip = self.intern_glue(GlueSpec {
             width: Scaled::from_raw(12 * Scaled::UNITY),
