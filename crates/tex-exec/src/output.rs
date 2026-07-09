@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use tex_expand::{ExpansionHooks, ReadRecorder, get_x_token_with_recorder_and_hooks};
+use tex_expand::{ExpansionHooks, ReadRecorder};
 use tex_lex::{InputSource, InputStack, TokenListReplayKind};
 use tex_state::env::banks::{DimenParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
@@ -13,16 +13,15 @@ use tex_state::page::{
 };
 use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::token::Token;
-use tex_state::{ExpansionContext, GroupKind, Universe};
+use tex_state::{GroupKind, Universe};
 use tex_typeset::{INF_BAD, PackSpec, VpackParams, vpack};
 
 use crate::assignments::{self, shipout_node};
-use crate::dispatch::dispatch_delivered_token_with_recorder;
-use crate::executor::sync_engine_state;
+use crate::executor::{MainControlExit, run_main_control_until};
 use crate::mode::IGNORE_DEPTH;
 use crate::page_builder::build_page;
 use crate::splitting::{natural_vlist_size, prune_page_top, vpack_natural};
-use crate::{DispatchAction, ExecError, ExecutionStats, Mode, ModeNest, leave_group};
+use crate::{ExecError, ExecutionStats, Mode, ModeNest, leave_group};
 
 pub(crate) fn drain_pending_output<S, R, H>(
     nest: &mut ModeNest,
@@ -378,48 +377,45 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    let base_input_depth = input.depth();
     stores.enter_group_with_kind(GroupKind::Simple);
     nest.push(Mode::InternalVertical);
     nest.current_list_mut().set_prev_depth(IGNORE_DEPTH);
     let output_frame = delimited_output_tokens(stores, output);
     input.push_token_list(output_frame, TokenListReplayKind::OutputRoutine);
 
-    while input.contains_token_list_frame(output_frame, TokenListReplayKind::OutputRoutine)
-        || input.depth() > base_input_depth
-    {
-        if pop_finished_output_frame(input, stores, output_frame) {
-            break;
-        }
-        sync_engine_state::<S, _>(hooks, nest, stores);
-        let Some(token) = ({
-            let mut expansion = ExpansionContext::new(stores);
-            get_x_token_with_recorder_and_hooks(input, &mut expansion, recorder, hooks)?
-        }) else {
+    match run_main_control_until(
+        nest,
+        input,
+        stores,
+        recorder,
+        hooks,
+        stats,
+        |input, stores| pop_finished_output_frame(input, stores, output_frame),
+    )? {
+        MainControlExit::Stopped => {}
+        MainControlExit::EndOfInput => {
             if !input.contains_token_list_frame(output_frame, TokenListReplayKind::OutputRoutine) {
-                break;
+                // Expansion can discard the exhausted output frame while
+                // looking for the next token; that is still a normal stop.
+            } else {
+                return Err(ExecError::MissingToken {
+                    context: "output routine",
+                });
             }
-            return Err(ExecError::MissingToken {
-                context: "output routine",
+        }
+        MainControlExit::End { token } => {
+            return Err(ExecError::UnimplementedTypesetting {
+                mode: nest.current_mode(),
+                token,
+                operation: "\\end inside \\output",
             });
-        };
-        match dispatch_delivered_token_with_recorder(nest, token, input, stores, recorder, hooks)? {
-            DispatchAction::Continue => {}
-            DispatchAction::Shipout(artifact) => stats.shipped_artifacts.push(artifact),
-            DispatchAction::End => {
-                return Err(ExecError::UnimplementedTypesetting {
-                    mode: nest.current_mode(),
-                    token,
-                    operation: "\\end inside \\output",
-                });
-            }
-            DispatchAction::NotConsumed => {
-                return Err(ExecError::UnimplementedTypesetting {
-                    mode: nest.current_mode(),
-                    token,
-                    operation: "output routine",
-                });
-            }
+        }
+        MainControlExit::NotConsumed { token } => {
+            return Err(ExecError::UnimplementedTypesetting {
+                mode: nest.current_mode(),
+                token,
+                operation: "output routine",
+            });
         }
     }
 
@@ -439,15 +435,14 @@ fn pop_finished_output_frame<S>(
     stores: &Universe,
     output: tex_state::ids::TokenListId,
 ) -> bool {
-    let Some((token_list, replay_kind, index)) = input.current_token_list_frame() else {
-        return false;
-    };
-    if token_list == output
-        && replay_kind == TokenListReplayKind::OutputRoutine
-        && index >= stores.tokens(token_list).len()
-    {
+    while let Some((token_list, replay_kind, index)) = input.current_token_list_frame() {
+        if index < stores.tokens(token_list).len() {
+            return false;
+        }
         input.pop_current_token_list_frame(token_list, replay_kind);
-        return true;
+        if token_list == output && replay_kind == TokenListReplayKind::OutputRoutine {
+            return true;
+        }
     }
     false
 }

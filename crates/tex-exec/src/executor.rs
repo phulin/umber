@@ -6,6 +6,7 @@ use tex_lex::{InputSource, InputStack};
 use tex_state::glue::GlueSpec;
 use tex_state::node::Node;
 use tex_state::scaled::Scaled;
+use tex_state::token::Token;
 use tex_state::{ExpansionContext, Universe};
 
 use crate::dispatch::{dispatch_delivered_token_with_recorder, unimplemented_typesetting};
@@ -89,71 +90,93 @@ impl Executor {
     {
         let mut exec_hooks = ExecExpansionHooks::new(hooks);
         let mut stats = ExecutionStats::default();
-        loop {
-            sync_engine_state::<S, _>(&mut exec_hooks, &self.nest, stores);
-            let token = {
-                let mut expansion = ExpansionContext::new(stores);
-                get_x_token_with_recorder_and_hooks(
+        let exit = run_main_control_until(
+            &mut self.nest,
+            input,
+            stores,
+            recorder,
+            &mut exec_hooks,
+            &mut stats,
+            |_, _| false,
+        )?;
+        match exit {
+            MainControlExit::EndOfInput => Ok(stats),
+            MainControlExit::Stopped => {
+                unreachable!("top-level main control has no stop condition")
+            }
+            MainControlExit::End { .. } => {
+                output::finish_end(
+                    &mut self.nest,
                     input,
-                    &mut expansion,
+                    stores,
                     recorder,
                     &mut exec_hooks,
-                )?
-            };
-            let Some(token) = token else {
-                assignments::flush_pending_hchars(&mut self.nest, stores)?;
-                return Ok(stats);
-            };
-            stats.delivered_tokens += 1;
-            match dispatch_delivered_token_with_recorder(
-                &mut self.nest,
+                    &mut stats,
+                )?;
+                Ok(stats)
+            }
+            MainControlExit::NotConsumed { token } => Err(unimplemented_typesetting(
+                self.nest.current_mode(),
                 token,
-                input,
-                stores,
-                recorder,
-                &mut exec_hooks,
-            )? {
-                DispatchAction::Continue => {
-                    output::drain_pending_output(
-                        &mut self.nest,
-                        input,
-                        stores,
-                        recorder,
-                        &mut exec_hooks,
-                        &mut stats,
-                    )?;
-                }
-                DispatchAction::Shipout(artifact) => {
-                    stats.shipped_artifacts.push(artifact);
-                    output::drain_pending_output(
-                        &mut self.nest,
-                        input,
-                        stores,
-                        recorder,
-                        &mut exec_hooks,
-                        &mut stats,
-                    )?;
-                }
-                DispatchAction::End => {
-                    assignments::flush_pending_hchars(&mut self.nest, stores)?;
-                    output::finish_end(
-                        &mut self.nest,
-                        input,
-                        stores,
-                        recorder,
-                        &mut exec_hooks,
-                        &mut stats,
-                    )?;
-                    return Ok(stats);
-                }
-                DispatchAction::NotConsumed => {
-                    return Err(unimplemented_typesetting(
-                        self.nest.current_mode(),
-                        token,
-                        "non-assignment command",
-                    )
-                    .expect_err("unimplemented_typesetting always returns Err"));
-                }
+                "non-assignment command",
+            )
+            .expect_err("unimplemented_typesetting always returns Err")),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MainControlExit {
+    EndOfInput,
+    Stopped,
+    End { token: Token },
+    NotConsumed { token: Token },
+}
+
+pub(crate) fn run_main_control_until<S, R, H, F>(
+    nest: &mut ModeNest,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    recorder: &mut R,
+    hooks: &mut H,
+    stats: &mut ExecutionStats,
+    mut should_stop: F,
+) -> Result<MainControlExit, ExecError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+    F: FnMut(&mut InputStack<S>, &Universe) -> bool,
+{
+    loop {
+        if should_stop(input, stores) {
+            return Ok(MainControlExit::Stopped);
+        }
+
+        sync_engine_state::<S, _>(hooks, nest, stores);
+        let token = {
+            let mut expansion = ExpansionContext::new(stores);
+            get_x_token_with_recorder_and_hooks(input, &mut expansion, recorder, hooks)?
+        };
+        let Some(token) = token else {
+            assignments::flush_pending_hchars(nest, stores)?;
+            return Ok(MainControlExit::EndOfInput);
+        };
+        stats.delivered_tokens += 1;
+        match dispatch_delivered_token_with_recorder(nest, token, input, stores, recorder, hooks)? {
+            DispatchAction::Continue => {
+                output::drain_pending_output(nest, input, stores, recorder, hooks, stats)?;
+            }
+            DispatchAction::Shipout(artifact) => {
+                stats.shipped_artifacts.push(artifact);
+                output::drain_pending_output(nest, input, stores, recorder, hooks, stats)?;
+            }
+            DispatchAction::End => {
+                assignments::flush_pending_hchars(nest, stores)?;
+                return Ok(MainControlExit::End { token });
+            }
+            DispatchAction::NotConsumed => {
+                return Ok(MainControlExit::NotConsumed { token });
             }
         }
     }
