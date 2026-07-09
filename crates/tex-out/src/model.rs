@@ -88,7 +88,6 @@ pub enum PageNode {
     },
     HList(BoxNode),
     VList(BoxNode),
-    Unset,
     Disc {
         kind: DiscKind,
         pre: Vec<PageNode>,

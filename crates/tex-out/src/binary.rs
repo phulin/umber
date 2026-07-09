@@ -6,7 +6,7 @@ use std::fmt;
 use tex_arith::Scaled;
 
 const MAGIC: &[u8; 4] = b"UMPG";
-const VERSION: u8 = 4;
+const VERSION: u8 = 5;
 
 /// Binary parse failure.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -239,7 +239,6 @@ impl Writer {
                 self.u8(7);
                 self.box_node(box_node);
             }
-            PageNode::Unset => self.u8(8),
             PageNode::Disc {
                 kind,
                 pre,
@@ -511,7 +510,6 @@ impl Reader<'_> {
             }),
             6 => Ok(PageNode::HList(self.box_node()?)),
             7 => Ok(PageNode::VList(self.box_node()?)),
-            8 => Ok(PageNode::Unset),
             9 => Ok(PageNode::WhatsitAnchor {
                 effect_index: self.u32()?,
             }),

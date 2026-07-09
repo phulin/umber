@@ -229,7 +229,6 @@ impl<'a> DviWriter<'a> {
             | PageNode::Glue { .. }
             | PageNode::Penalty(_)
             | PageNode::Rule { .. }
-            | PageNode::Unset
             | PageNode::Disc { .. }
             | PageNode::Mark { .. }
             | PageNode::Insert { .. }
@@ -301,7 +300,6 @@ impl<'a> DviWriter<'a> {
                     self.out_what(page, *effect_index)?;
                 }
                 PageNode::Penalty(_)
-                | PageNode::Unset
                 | PageNode::Disc { .. }
                 | PageNode::Mark { .. }
                 | PageNode::Insert { .. }
@@ -376,7 +374,6 @@ impl<'a> DviWriter<'a> {
                 PageNode::Char { .. }
                 | PageNode::Lig { .. }
                 | PageNode::Penalty(_)
-                | PageNode::Unset
                 | PageNode::Disc { .. }
                 | PageNode::Mark { .. }
                 | PageNode::Insert { .. }
@@ -746,7 +743,6 @@ fn page_extent(node: &PageNode) -> PageExtent {
         | PageNode::Kern { .. }
         | PageNode::Glue { .. }
         | PageNode::Penalty(_)
-        | PageNode::Unset
         | PageNode::Disc { .. }
         | PageNode::Mark { .. }
         | PageNode::Insert { .. }

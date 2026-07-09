@@ -3,7 +3,7 @@ use tex_state::env::banks::GlueParam;
 use tex_state::glue::Order;
 use tex_state::ids::GlueId;
 use tex_state::meaning::UnexpandablePrimitive;
-use tex_state::node::{BoxNode, Node, Sign};
+use tex_state::node::{BoxNode, GlueKind, Node, Sign, UnsetKind, UnsetNode, UnsetNodeFields};
 use tex_state::scaled::Scaled;
 
 fn scan_halign_preamble(source: &str) -> (Universe, AlignState) {
@@ -42,6 +42,28 @@ fn char_token(ch: char, cat: Catcode) -> Token {
 
 fn sp(points: i32) -> Scaled {
     Scaled::from_raw(points * Scaled::UNITY)
+}
+
+fn unset_for_test(
+    stores: &mut Universe,
+    kind: UnsetKind,
+    children: &[Node],
+    span_count: u16,
+) -> Node {
+    let children = stores.freeze_node_list(children);
+    let metrics = tex_typeset::measure_unset(stores, children, kind);
+    Node::Unset(UnsetNode::new(UnsetNodeFields {
+        kind,
+        width: metrics.width,
+        height: metrics.height,
+        depth: metrics.depth,
+        span_count,
+        stretch: metrics.stretch,
+        stretch_order: metrics.stretch_order,
+        shrink: metrics.shrink,
+        shrink_order: metrics.shrink_order,
+        children,
+    }))
 }
 
 fn run_alignment_source(source: &str) -> Universe {
@@ -288,6 +310,98 @@ fn alignment_preamble_errors_match_pdftex_wording() {
     )
     .expect_err("extra hash should be rejected");
     assert_eq!(err.to_string(), "Only one # is allowed per tab.");
+}
+
+#[test]
+fn mid_alignment_snapshot_rollback_restores_summary_and_unset_rows() {
+    let (mut stores, state) = scan_halign_preamble("{#&#\\cr}");
+    let input = InputStack::new(MemoryInput::new("b&c\\cr}"));
+    let input_summary = input.summary();
+    let mut nest = ModeNest::new();
+    nest.push(Mode::InternalVertical);
+    nest.current_list_mut().set_align_state(state);
+
+    let cell = unset_for_test(
+        &mut stores,
+        UnsetKind::HBox,
+        &[Node::Rule {
+            width: Some(sp(3)),
+            height: Some(sp(1)),
+            depth: Some(Scaled::from_raw(0)),
+        }],
+        1,
+    );
+    let row = unset_for_test(
+        &mut stores,
+        UnsetKind::HBox,
+        &[
+            Node::Glue {
+                spec: GlueId::ZERO,
+                kind: GlueKind::TabSkip,
+            },
+            cell,
+            Node::Glue {
+                spec: GlueId::ZERO,
+                kind: GlueKind::TabSkip,
+            },
+        ],
+        1,
+    );
+
+    {
+        let list = nest.current_list_mut();
+        list.push(row);
+        let state = list.align_state_mut().expect("alignment state");
+        state.start_row();
+        state.start_cell(1, 2);
+        state.increment_brace_depth();
+    }
+    stores.set_input_summary(input_summary.clone());
+    let snapshot = stores.snapshot();
+    let summary = nest.summary();
+
+    let _temporary = stores.freeze_node_list(&[Node::Penalty(99)]);
+    stores.set_input_summary(tex_state::InputSummary::default());
+    {
+        let list = nest.current_list_mut();
+        list.push(Node::Penalty(123));
+        let state = list.align_state_mut().expect("alignment state");
+        state.start_cell(0, 1);
+        state.set_brace_depth(0);
+    }
+
+    stores.rollback(&snapshot);
+    let restored = ModeNest::from_summary(summary.clone()).expect("restored alignment summary");
+
+    assert_eq!(stores.input_summary(), &input_summary);
+    assert_eq!(restored.summary(), summary);
+    let restored_state = restored
+        .current_list()
+        .align_state()
+        .expect("restored alignment state");
+    assert_eq!(restored_state.current_col(), 1);
+    assert_eq!(restored_state.current_span(), 2);
+    assert_eq!(restored_state.brace_depth(), 1);
+    let [Node::Unset(row)] = restored.current_list().nodes() else {
+        panic!(
+            "expected a partial unset alignment row, got {:?}",
+            restored.current_list().nodes()
+        );
+    };
+    assert_eq!(stores.nodes(row.children).len(), 3);
+}
+
+#[test]
+fn shipout_rejects_unset_alignment_nodes() {
+    let mut stores = Universe::new();
+    let unset = unset_for_test(&mut stores, UnsetKind::HBox, &[], 1);
+    let err = crate::assignments::shipout_node(unset, &mut stores, &mut NoopRecorder)
+        .expect_err("unset alignment node must not lower to shipout artifact");
+
+    assert_eq!(
+        err.to_string(),
+        "shipout artifact lowering does not support unset alignment nodes yet"
+    );
 }
 
 #[test]

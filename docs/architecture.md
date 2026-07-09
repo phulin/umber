@@ -61,10 +61,13 @@ Two flows to keep distinct when reading this document:
   which changes lexing of text not yet read.
 - **The state flow** (everything touching the box at the bottom): every
   stage reads meanings/codes from `Universe` and writes through the
-  barrier. The pipeline stages hold **no hidden state of their own** beyond
-  what the snapshot tuple captures (input stack summary, stream buffers —
-  see `core_state.md` §9). That is the invariant that makes a snapshot
-  sufficient to resume anywhere.
+  barrier. The pipeline stages hold **no hidden semantic state of their own**
+  beyond what the snapshot tuple captures (input stack summary, mode nest,
+  stream buffers — see `core_state.md` §9). In the current recursive
+  interpreter, snapshots are resume-valid at explicit engine quiescence
+  boundaries such as shipout/page checkpoints and top-level driver resumes;
+  continuations inside nested stomach scanners remain Rust-stack state until
+  a future incremental executor defines serialized continuation points.
 
 ## 2. Crate map
 
@@ -531,7 +534,12 @@ makes box-level memoization (M4) sound.
   path, and no `\eqno` material is accepted alongside it. Span-time template
   expansion remains the explicit architecture-§7 exception inside
   `tex-exec::align`; downstream page building, diagnostics, and shipout operate
-  only on set boxes.
+  only on set boxes. Mid-alignment `AlignState` and unset rows/cells are part
+  of the mode-list summary and rollback-covered node data, but the current
+  interpreter does not promise restartable resume from an arbitrary alignment
+  call-stack frame; incremental drivers should roll back to the nearest
+  resume-valid boundary before the alignment until resumable continuations are
+  designed explicitly.
 - **Vertical packing, `\vsplit`, marks**: operate on survivor-arena lists
   (they are reachable from box registers by definition); mark extraction
   reads are recorded like any state read. `\vsplit` clones the source vbox

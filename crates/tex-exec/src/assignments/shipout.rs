@@ -130,7 +130,11 @@ where
             },
             Node::HList(box_node) => PageNode::HList(self.lower_box(box_node)?),
             Node::VList(box_node) => PageNode::VList(self.lower_box(box_node)?),
-            Node::Unset(_) => PageNode::Unset,
+            Node::Unset(_) => {
+                return Err(ExecError::UnsupportedShipoutNode {
+                    node: "unset alignment",
+                });
+            }
             Node::Whatsit(whatsit) => self.lower_whatsit(whatsit)?,
             Node::MathOn(width) => PageNode::MathOn(width),
             Node::MathOff(width) => PageNode::MathOff(width),
