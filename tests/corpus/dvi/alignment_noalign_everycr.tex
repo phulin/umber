@@ -1,0 +1,14 @@
+\font\tenrm=cmr10
+\tenrm
+\count0=1
+\baselineskip=0pt
+\lineskip=0pt
+\shipout\vbox{%
+  \halign{#\cr
+    A\cr
+    \noalign{\hrule height2pt}
+    B\cr}%
+  \everycr{\noalign{\hrule height1pt}}%
+  \halign{#\cr C\cr D\cr}%
+}
+\end

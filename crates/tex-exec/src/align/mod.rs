@@ -29,3 +29,19 @@ where
     let state = scan_preamble(primitive, input, stores, hooks)?;
     execution::execute_alignment(state, nest, input, stores, recorder, hooks)
 }
+
+pub(crate) fn execute_display_halign<S, R, H>(
+    nest: &mut ModeNest,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<Vec<tex_state::node::Node>, ExecError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    let state = scan_preamble(UnexpandablePrimitive::HAlign, input, stores, hooks)?;
+    execution::execute_alignment_to_nodes(state, nest, input, stores, recorder, hooks)
+}

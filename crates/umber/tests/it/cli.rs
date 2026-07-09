@@ -259,6 +259,18 @@ fn run_dvi_smoke_matches_pdftex_insert_split_footnote() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn run_dvi_smoke_matches_pdftex_alignment_noalign_everycr() {
+    assert_dvi_case_matches_pdftex("alignment_noalign_everycr");
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn run_dvi_smoke_matches_pdftex_display_halign() {
+    assert_dvi_case_matches_pdftex("display_halign");
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
 fn run_page_corpus_matches_pdftex_dvi() {
     assert_dvi_area_matches_pdftex("page");
 }

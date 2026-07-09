@@ -513,13 +513,19 @@ makes box-level memoization (M4) sound.
   end-template sentinel token, and optional `&&` repeat metadata. The
   stomach alignment sub-mode now runs the row/cell loop, replays u/v
   templates through ordinary main control, recognizes unshielded `&`,
-  `\span`, and `\cr` by meaning using an `AlignState` brace counter, and
-  packages cells/rows as unset node records. At `fin_align`,
-  `tex-exec::align::widths` runs TeX.web's span-chain width resolution over
-  those frozen rows, including tabskip-width subtraction and last-spanned-column
-  excess placement, then converts every reachable unset row/cell to ordinary
-  hlist/vlist nodes before the body is appended to the enclosing mode. Span-time
-  template expansion remains the explicit architecture-§7 exception inside
+  `\span`, and `\cr` by meaning using an `AlignState` brace counter, buffers
+  `\noalign{...}` material as ordinary internal-vertical nodes interleaved
+  with the unset rows, and packages cells/rows as unset node records. At
+  `fin_align`, `tex-exec::align::widths` runs TeX.web's span-chain width
+  resolution over those frozen rows, including tabskip-width subtraction and
+  last-spanned-column excess placement, converts every reachable unset row/cell
+  to ordinary hlist/vlist nodes, and emits row interline glue before the final
+  raw splice so `\noalign` material resets row-to-row baseline insertion in
+  TeX order. A `\halign` encountered as the first display-math item takes the
+  display-alignment branch: the alignment body is finished as vertical material
+  between display penalties/skips, the closing `$$` is checked in the display
+  path, and no `\eqno` material is accepted alongside it. Span-time template
+  expansion remains the explicit architecture-§7 exception inside
   `tex-exec::align`; downstream page building, diagnostics, and shipout operate
   only on set boxes.
 - **Vertical packing, `\vsplit`, marks**: operate on survivor-arena lists

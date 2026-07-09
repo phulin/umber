@@ -1,4 +1,6 @@
 use tex_state::Universe;
+use tex_state::env::banks::{DimenParam, GlueParam};
+use tex_state::glue::GlueSpec;
 use tex_state::glue::Order;
 use tex_state::ids::{GlueId, NodeListId};
 use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, Node, Sign, UnsetNode};
@@ -219,15 +221,93 @@ fn set_alignment_nodes(
         empty,
     };
     let mut out = Vec::with_capacity(rows.len());
+    let mut previous_row_depth = None;
     for node in rows {
         match node {
             Node::Unset(row) => {
-                out.push(set_row(config, row, stores)?);
+                if let Some(previous_depth) = previous_row_depth {
+                    out.push(baseline_glue(previous_depth, row.height, stores)?);
+                }
+                let set = set_row(config, row, stores)?;
+                previous_row_depth = row_depth(&set);
+                out.push(set);
             }
-            _ => out.push(node.clone()),
+            _ => {
+                previous_row_depth = None;
+                out.push(set_noalign_node(
+                    config.kind,
+                    node,
+                    &config.prototype.box_node,
+                ));
+            }
         }
     }
     Ok(out)
+}
+
+fn baseline_glue(
+    previous_depth: Scaled,
+    height: Scaled,
+    stores: &mut Universe,
+) -> Result<Node, ExecError> {
+    let baseline = stores.glue(stores.glue_param(GlueParam::BASELINE_SKIP));
+    let requested = baseline
+        .width
+        .checked_sub(previous_depth)
+        .and_then(|value| value.checked_sub(height))
+        .ok_or(ExecError::ArithmeticOverflow)?;
+    let (spec, kind) = if requested.raw() < stores.dimen_param(DimenParam::LINE_SKIP_LIMIT).raw() {
+        (stores.glue_param(GlueParam::LINE_SKIP), GlueKind::LineSkip)
+    } else {
+        (
+            stores.intern_glue(GlueSpec {
+                width: requested,
+                stretch: baseline.stretch,
+                stretch_order: baseline.stretch_order,
+                shrink: baseline.shrink,
+                shrink_order: baseline.shrink_order,
+            }),
+            GlueKind::BaselineSkip,
+        )
+    };
+    Ok(Node::Glue { spec, kind })
+}
+
+fn row_depth(node: &Node) -> Option<Scaled> {
+    match node {
+        Node::HList(box_node) | Node::VList(box_node) => Some(box_node.depth),
+        _ => None,
+    }
+}
+
+fn set_noalign_node(kind: AlignmentKind, node: &Node, prototype: &BoxNode) -> Node {
+    match (kind, node) {
+        (
+            AlignmentKind::HAlign,
+            Node::Rule {
+                width: None,
+                height,
+                depth,
+            },
+        ) => Node::Rule {
+            width: Some(prototype.width),
+            height: *height,
+            depth: *depth,
+        },
+        (
+            AlignmentKind::VAlign,
+            Node::Rule {
+                width,
+                height: None,
+                depth,
+            },
+        ) => Node::Rule {
+            width: *width,
+            height: Some(prototype.height),
+            depth: *depth,
+        },
+        _ => node.clone(),
+    }
 }
 
 fn set_row(

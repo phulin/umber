@@ -404,6 +404,10 @@ where
             start_eq_no(nest, stores, primitive)?;
             Ok(DispatchAction::Continue)
         }
+        UnexpandablePrimitive::HAlign if nest.current_mode() == Mode::DisplayMath => {
+            finish_display_halign(nest, input, stores, recorder, hooks)?;
+            Ok(DispatchAction::Continue)
+        }
         UnexpandablePrimitive::Left => {
             start_left_group(nest, input, stores, hooks)?;
             Ok(DispatchAction::Continue)
@@ -430,5 +434,79 @@ where
             token: Token::Cs(stores.intern(&format!("{primitive:?}"))),
             operation: "math primitive",
         }),
+    }
+}
+
+fn finish_display_halign<S, R, H>(
+    nest: &mut ModeNest,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<(), ExecError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    if !nest.current_list().nodes().is_empty() || nest.current_list().display_eq_no().is_some() {
+        return Err(ExecError::UnimplementedTypesetting {
+            mode: Mode::DisplayMath,
+            token: Token::Cs(stores.intern("halign")),
+            operation: "display alignment with math material",
+        });
+    }
+    let mut level = nest.pop()?;
+    let interrupt =
+        level
+            .list_mut()
+            .take_display_interrupt()
+            .ok_or(ExecError::UnimplementedTypesetting {
+                mode: Mode::DisplayMath,
+                token: Token::Cs(stores.intern("display")),
+                operation: "display interrupt state",
+            })?;
+    let nodes = crate::align::execute_display_halign(nest, input, stores, recorder, hooks)?;
+    consume_display_alignment_closer(input, stores)?;
+    finish_display_alignment(nest, input, stores, interrupt, nodes)
+}
+
+fn consume_display_alignment_closer<S>(
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+) -> Result<(), ExecError>
+where
+    S: InputSource,
+{
+    match input.next_token(stores)? {
+        Some(Token::Char {
+            cat: Catcode::MathShift,
+            ..
+        }) => {}
+        Some(token) => {
+            push_tokens(input, stores, [token]);
+            report_math_error(stores, "Missing $$ inserted");
+            return Ok(());
+        }
+        None => {
+            report_math_error(stores, "Missing $$ inserted");
+            return Ok(());
+        }
+    }
+
+    match input.next_token(stores)? {
+        Some(Token::Char {
+            cat: Catcode::MathShift,
+            ..
+        }) => Ok(()),
+        Some(token) => {
+            push_tokens(input, stores, [token]);
+            report_math_error(stores, "Missing $$ inserted");
+            Ok(())
+        }
+        None => {
+            report_math_error(stores, "Missing $$ inserted");
+            Ok(())
+        }
     }
 }

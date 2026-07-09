@@ -42,3 +42,67 @@
 ..\glue(\tabskip) 0.0
 
 ! OK.
+
+> \box3=
+\vbox(13.24998+0.0)x5.55557
+.\hbox(4.30554+0.0)x5.55557
+..\glue(\tabskip) 0.0
+..\hbox(4.30554+0.0)x5.55557
+...\tenrm a
+..\glue(\tabskip) 0.0
+.\rule(2.0+0.0)x5.55557
+.\hbox(6.94444+0.0)x5.55557
+..\glue(\tabskip) 0.0
+..\hbox(6.94444+0.0)x5.55557
+...\tenrm b
+..\glue(\tabskip) 0.0
+
+! OK.
+
+> \box4=
+\vbox(14.24998+0.0)x5.55557
+.\rule(1.0+0.0)x5.55557
+.\hbox(4.30554+0.0)x5.55557
+..\glue(\tabskip) 0.0
+..\hbox(4.30554+0.0)x5.55557
+...\tenrm a
+..\glue(\tabskip) 0.0
+.\rule(1.0+0.0)x5.55557
+.\hbox(6.94444+0.0)x5.55557
+..\glue(\tabskip) 0.0
+..\hbox(6.94444+0.0)x5.55557
+...\tenrm b
+..\glue(\tabskip) 0.0
+.\rule(1.0+0.0)x5.55557
+
+! OK.
+
+> \box5=
+\vbox(6.94444+0.0)x15.00003
+.\hbox(6.94444+0.0)x15.00003
+..\glue(\tabskip) 0.0
+..\hbox(6.94444+0.0)x0.0
+...\tenrm a
+...\tenrm b
+...\tenrm c
+..\glue(\tabskip) 0.0
+..\hbox(0.0+0.0)x0.0
+..\glue(\tabskip) 0.0
+..\hbox(0.0+0.0)x15.00003
+..\glue(\tabskip) 0.0
+
+! OK.
+
+> \box6=
+\vbox(11.30554+0.0)x5.00002
+.\penalty 11
+.\glue(\abovedisplayskip) 3.0
+.\hbox(4.30554+0.0)x5.00002, display
+..\glue(\tabskip) 0.0
+..\hbox(4.30554+0.0)x5.00002
+...\tenrm a
+..\glue(\tabskip) 0.0
+.\penalty 22
+.\glue(\belowdisplayskip) 4.0
+
+! OK.

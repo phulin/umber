@@ -586,9 +586,9 @@ where
                     operation: "math primitive",
                 })
             }
-            UnexpandablePrimitive::NoAlign
-            | UnexpandablePrimitive::Omit
-            | UnexpandablePrimitive::Cr
+            UnexpandablePrimitive::NoAlign => Err(ExecError::MisplacedNoAlign),
+            UnexpandablePrimitive::Omit => Err(ExecError::MisplacedOmit),
+            UnexpandablePrimitive::Cr
             | UnexpandablePrimitive::CrCr
             | UnexpandablePrimitive::Span => Err(ExecError::UnimplementedTypesetting {
                 mode: nest.current_mode(),

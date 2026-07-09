@@ -53,6 +53,14 @@ fn run_alignment_source(source: &str) -> Universe {
     stores
 }
 
+fn run_alignment_source_err(source: &str) -> ExecError {
+    let mut stores = support::stores_with_fonts();
+    let mut input = InputStack::new(MemoryInput::new(format!("\\font\\f=cmr10 \\f {source}")));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect_err("alignment source should fail")
+}
+
 fn run_boxed_alignment_source(source: &str) -> Universe {
     run_alignment_source(&format!("\\setbox0=\\vbox{{{source}}}"))
 }
@@ -357,6 +365,79 @@ fn omit_skips_cell_templates() {
 }
 
 #[test]
+fn misplaced_omit_in_cell_body_reports_pdftex_primary_text() {
+    let err = run_alignment_source_err("\\setbox0=\\vbox{\\halign{#\\cr a \\omit b\\cr}}");
+
+    assert_eq!(err.to_string(), "Misplaced \\omit.");
+}
+
+#[test]
+fn misplaced_noalign_outside_row_boundary_reports_pdftex_primary_text() {
+    let err =
+        run_alignment_source_err("\\setbox0=\\vbox{\\halign{#\\cr a \\noalign{\\hrule}\\cr}}");
+
+    assert_eq!(err.to_string(), "Misplaced \\noalign.");
+}
+
+#[test]
+fn omit_span_chain_merges_template_free_cells() {
+    let stores = run_boxed_alignment_source(
+        "\\halign{<#>&[#]&( # )\\cr \\omit a\\span\\omit b\\span\\omit c\\cr}",
+    );
+    let vbox = box_zero_vlist(&stores);
+    let rows = vlist_rows(&stores, vbox);
+    let cells = row_cells(&stores, rows[0]);
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(cells.len(), 3);
+    assert_eq!(cell_text(&stores, cells[0]), "abc");
+    assert!(stores.nodes(cells[1].children).is_empty());
+    assert!(stores.nodes(cells[2].children).is_empty());
+}
+
+#[test]
+fn noalign_material_is_spliced_between_finished_rows() {
+    let stores =
+        run_boxed_alignment_source("\\halign{#\\cr a\\cr\\noalign{\\hrule height2pt}b\\cr}");
+    let vbox = box_zero_vlist(&stores);
+    let nodes = stores.nodes(vbox.children);
+    let first_row = nodes
+        .iter()
+        .position(|node| matches!(node, Node::HList(_)))
+        .expect("first row");
+    let rule = nodes
+        .iter()
+        .position(|node| matches!(node, Node::Rule { .. }))
+        .expect("noalign rule");
+    let second_row = nodes
+        .iter()
+        .enumerate()
+        .skip(rule + 1)
+        .find_map(|(index, node)| matches!(node, Node::HList(_)).then_some(index))
+        .expect("second row");
+
+    assert!(first_row < rule);
+    assert!(rule < second_row);
+    assert_eq!(vlist_rows(&stores, vbox).len(), 2);
+}
+
+#[test]
+fn everycr_can_insert_noalign_material() {
+    let stores = run_boxed_alignment_source(
+        "\\everycr{\\noalign{\\hrule height1pt}}\\halign{#\\cr a\\cr b\\cr}",
+    );
+    let vbox = box_zero_vlist(&stores);
+    let rule_count = stores
+        .nodes(vbox.children)
+        .iter()
+        .filter(|node| matches!(node, Node::Rule { .. }))
+        .count();
+
+    assert_eq!(vlist_rows(&stores, vbox).len(), 2);
+    assert_eq!(rule_count, 3);
+}
+
+#[test]
 fn everycr_replayed_crcr_is_ignored_around_rows_and_after_last_cr() {
     let stores = run_boxed_alignment_source("\\everycr{\\crcr}\\halign{#\\cr a\\cr b\\cr}");
     let vbox = box_zero_vlist(&stores);
@@ -365,6 +446,22 @@ fn everycr_replayed_crcr_is_ignored_around_rows_and_after_last_cr() {
     assert_eq!(rows.len(), 2);
     assert_eq!(cell_text(&stores, row_cells(&stores, rows[0])[0]), "a");
     assert_eq!(cell_text(&stores, row_cells(&stores, rows[1])[0]), "b");
+}
+
+#[test]
+fn display_halign_appends_display_vertical_material() {
+    let stores = run_alignment_source(
+        "\\setbox0=\\vbox{\\hsize=50pt \\predisplaypenalty=11 \\postdisplaypenalty=22 \
+         \\abovedisplayskip=3pt \\belowdisplayskip=4pt \
+         \\noindent$$\\halign{#\\cr a\\cr}$$\\par}",
+    );
+    let vbox = box_zero_vlist(&stores);
+    let nodes = stores.nodes(vbox.children);
+
+    assert!(nodes.iter().any(|node| matches!(node, Node::Penalty(11))));
+    assert!(nodes.iter().any(|node| matches!(node, Node::Penalty(22))));
+    assert!(nodes.iter().any(|node| matches!(node, Node::Glue { .. })));
+    assert!(nodes.iter().any(|node| matches!(node, Node::HList(_))));
 }
 
 #[test]

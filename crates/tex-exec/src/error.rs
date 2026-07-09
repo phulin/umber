@@ -71,6 +71,8 @@ pub enum ExecError {
     BadPrevGraf(i32),
     MissingHashInAlignmentPreamble,
     ExtraHashInAlignmentPreamble,
+    MisplacedNoAlign,
+    MisplacedOmit,
     HRuleHereExceptLeaders,
     CannotDeleteFromCurrentPage {
         command: &'static str,
@@ -168,6 +170,8 @@ impl fmt::Display for ExecError {
             Self::ExtraHashInAlignmentPreamble => {
                 write!(f, "Only one # is allowed per tab.")
             }
+            Self::MisplacedNoAlign => write!(f, "Misplaced \\noalign."),
+            Self::MisplacedOmit => write!(f, "Misplaced \\omit."),
             Self::HRuleHereExceptLeaders => {
                 write!(f, "You can't use `\\hrule' here except with leaders.")
             }
@@ -239,6 +243,8 @@ impl std::error::Error for ExecError {
             | Self::BadPrevGraf(_)
             | Self::MissingHashInAlignmentPreamble
             | Self::ExtraHashInAlignmentPreamble
+            | Self::MisplacedNoAlign
+            | Self::MisplacedOmit
             | Self::HRuleHereExceptLeaders
             | Self::CannotDeleteFromCurrentPage { .. }
             | Self::ReadNeedsTo

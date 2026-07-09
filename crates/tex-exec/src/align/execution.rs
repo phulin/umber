@@ -11,7 +11,7 @@ use crate::assignments::{flush_pending_hchars, next_non_space_x};
 use crate::dispatch::dispatch_delivered_token_with_recorder;
 use crate::executor::sync_engine_state;
 use crate::mode::{AlignState, AlignmentKind};
-use crate::vertical::{append_node_to_current_list, build_page_if_outer_vertical};
+use crate::vertical::{append_vertical_contribution, build_page_if_outer_vertical};
 use crate::{DispatchAction, ExecError, ExecutionStats, Mode, ModeNest, leave_group, push_tokens};
 
 pub(crate) fn execute_alignment<S, R, H>(
@@ -33,7 +33,7 @@ where
     nest.current_list_mut().set_align_state(state);
     replay_everycr(input, stores);
 
-    while let Some(first_token) = align_peek(align_level, nest, input, stores, hooks)? {
+    while let Some(first_token) = align_peek(align_level, nest, input, stores, recorder, hooks)? {
         init_row(align_level, nest)?;
         execute_row(
             align_level,
@@ -48,6 +48,76 @@ where
         replay_everycr(input, stores);
     }
 
+    let finished = finish_alignment_level(nest, stores)?;
+    for node in finished {
+        append_finished_alignment_node(nest, stores, node);
+    }
+    build_page_if_outer_vertical(nest, stores)?;
+    Ok(())
+}
+
+fn append_finished_alignment_node(nest: &mut ModeNest, stores: &mut Universe, node: Node) {
+    if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
+        update_prev_depth_for_finished_alignment_node(nest, &node);
+        append_vertical_contribution(nest, stores, node);
+    } else {
+        nest.current_list_mut().push(node);
+    }
+}
+
+fn update_prev_depth_for_finished_alignment_node(nest: &mut ModeNest, node: &Node) {
+    match node {
+        Node::HList(box_node) | Node::VList(box_node) => {
+            nest.current_list_mut().set_prev_depth(box_node.depth);
+        }
+        Node::Rule { .. } => nest
+            .current_list_mut()
+            .set_prev_depth(crate::mode::IGNORE_DEPTH),
+        _ => {}
+    }
+}
+
+pub(super) fn execute_alignment_to_nodes<S, R, H>(
+    state: AlignState,
+    nest: &mut ModeNest,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<Vec<Node>, ExecError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    let alignment_kind = state.kind();
+    nest.push(alignment_mode(alignment_kind));
+    let align_level = nest.depth() - 1;
+    nest.current_list_mut().set_align_state(state);
+    replay_everycr(input, stores);
+
+    while let Some(first_token) = align_peek(align_level, nest, input, stores, recorder, hooks)? {
+        init_row(align_level, nest)?;
+        execute_row(
+            align_level,
+            first_token,
+            nest,
+            input,
+            stores,
+            recorder,
+            hooks,
+        )?;
+        fin_row(align_level, nest, stores)?;
+        replay_everycr(input, stores);
+    }
+
+    finish_alignment_level(nest, stores)
+}
+
+fn finish_alignment_level(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+) -> Result<Vec<Node>, ExecError> {
     let mut level = nest.pop()?;
     let state = level
         .list_mut()
@@ -57,11 +127,7 @@ where
         })?;
     let nodes = level.list().nodes().to_vec();
     let finished = super::widths::finish_alignment(&state, &nodes, stores)?;
-    for node in finished {
-        append_node_to_current_list(nest, stores, node)?;
-    }
-    build_page_if_outer_vertical(nest, stores)?;
-    Ok(())
+    Ok(finished)
 }
 
 fn replay_everycr<S>(input: &mut InputStack<S>, stores: &Universe) {
@@ -76,6 +142,7 @@ fn align_peek<S, H>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
+    recorder: &mut impl ReadRecorder,
     hooks: &mut H,
 ) -> Result<Option<Token>, ExecError>
 where
@@ -91,11 +158,8 @@ where
         };
         set_align_brace_depth(nest, align_level, 0);
         if is_noalign(stores, token) {
-            return Err(ExecError::UnimplementedTypesetting {
-                mode: nest.current_mode(),
-                token,
-                operation: "\\noalign in alignment",
-            });
+            execute_noalign(align_level, nest, input, stores, recorder, hooks)?;
+            continue;
         }
         if is_end_group(stores, token) {
             leave_group(input, stores, tex_state::GroupKind::Simple)?;
@@ -105,6 +169,76 @@ where
             continue;
         }
         return Ok(Some(token));
+    }
+}
+
+fn execute_noalign<S, R, H>(
+    align_level: usize,
+    nest: &mut ModeNest,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<(), ExecError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    let opener = next_non_space_x(input, stores, hooks)?.ok_or(ExecError::MissingToken {
+        context: "\\noalign group",
+    })?;
+    if !is_begin_group(stores, opener) {
+        report_missing_left_brace_inserted(stores);
+        push_tokens(input, stores, [opener]);
+    }
+    stores.enter_group_with_kind(tex_state::GroupKind::Simple);
+    nest.push(Mode::InternalVertical);
+    scan_noalign_group(nest, input, stores, recorder, hooks)?;
+    let level = nest.pop()?;
+    let nodes = level.list().nodes().to_vec();
+    leave_group(input, stores, tex_state::GroupKind::Simple)?;
+    let align_list = nest.list_mut(align_level).ok_or(ExecError::MissingToken {
+        context: "alignment state",
+    })?;
+    align_list.append(nodes);
+    Ok(())
+}
+
+fn scan_noalign_group<S, R, H>(
+    nest: &mut ModeNest,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<(), ExecError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    let mut stats = ExecutionStats::default();
+    let mut brace_depth = 1usize;
+    loop {
+        sync_engine_state::<S, _>(hooks, nest, stores);
+        let token = {
+            let mut expansion = ExpansionContext::new(stores);
+            get_x_token_with_recorder_and_hooks(input, &mut expansion, recorder, hooks)?
+        }
+        .ok_or(ExecError::MissingToken {
+            context: "\\noalign closing brace",
+        })?;
+        if is_begin_group(stores, token) {
+            brace_depth += 1;
+        }
+        if is_end_group(stores, token) {
+            brace_depth -= 1;
+            if brace_depth == 0 {
+                flush_pending_hchars(nest, stores)?;
+                return Ok(());
+            }
+        }
+        dispatch_and_drain(nest, token, input, stores, recorder, hooks, &mut stats)?;
     }
 }
 
@@ -260,6 +394,7 @@ where
         }
         match terminator {
             CellTerminator::Span => {
+                flush_pending_hchars(nest, stores)?;
                 column = column.checked_add(1).ok_or(ExecError::ArithmeticOverflow)?;
                 span_count = span_count
                     .checked_add(1)
@@ -416,6 +551,12 @@ where
             if is_span(stores, token) {
                 return Ok(CellTerminator::Span);
             }
+            if is_noalign(stores, token) {
+                return Err(ExecError::MisplacedNoAlign);
+            }
+            if is_omit(stores, token) {
+                return Err(ExecError::MisplacedOmit);
+            }
             if is_end_group(stores, token) {
                 report_missing_cr_inserted(stores);
                 push_tokens(input, stores, [token]);
@@ -524,6 +665,12 @@ fn report_missing_cr_inserted(stores: &mut Universe) {
     stores
         .world_mut()
         .write_text(PrintSink::TerminalAndLog, "\n! Missing \\cr inserted.\n");
+}
+
+fn report_missing_left_brace_inserted(stores: &mut Universe) {
+    stores
+        .world_mut()
+        .write_text(PrintSink::TerminalAndLog, "\n! Missing { inserted.\n");
 }
 
 fn align_state(nest: &ModeNest, align_level: usize) -> Result<&AlignState, ExecError> {

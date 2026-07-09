@@ -235,6 +235,119 @@ where
     Ok(())
 }
 
+pub(super) fn finish_display_alignment<S>(
+    nest: &mut ModeNest,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    interrupt: DisplayInterrupt,
+    nodes: Vec<Node>,
+) -> Result<(), ExecError>
+where
+    S: InputSource,
+{
+    append_vertical_contribution(
+        nest,
+        stores,
+        Node::Penalty(stores.int_param(IntParam::PRE_DISPLAY_PENALTY)),
+    );
+
+    let above = GlueParam::ABOVE_DISPLAY_SKIP;
+    let spec = stores.glue_param(above);
+    append_vertical_contribution(
+        nest,
+        stores,
+        Node::Glue {
+            spec,
+            kind: above_display_glue_kind(above),
+        },
+    );
+
+    let display_indent = stores.dimen_param(DimenParam::DISPLAY_INDENT);
+    for node in nodes {
+        let node = display_alignment_node(node, display_indent);
+        append_vertical_contribution(nest, stores, node);
+    }
+
+    append_vertical_contribution(
+        nest,
+        stores,
+        Node::Penalty(stores.int_param(IntParam::POST_DISPLAY_PENALTY)),
+    );
+    let spec = stores.glue_param(GlueParam::BELOW_DISPLAY_SKIP);
+    append_vertical_contribution(
+        nest,
+        stores,
+        Node::Glue {
+            spec,
+            kind: GlueKind::BelowDisplaySkip,
+        },
+    );
+
+    restore_display_dimensions(stores, interrupt);
+    resume_after_display_alignment(nest, input, stores)?;
+    Ok(())
+}
+
+fn display_alignment_node(mut node: Node, display_indent: Scaled) -> Node {
+    if let Node::HList(box_node) | Node::VList(box_node) = &mut node {
+        box_node.display = true;
+        box_node.shift = display_indent;
+    }
+    node
+}
+
+fn resume_after_display_alignment<S>(
+    nest: &mut ModeNest,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+) -> Result<(), ExecError>
+where
+    S: InputSource,
+{
+    let prev_graf = nest.enclosing_vertical_prev_graf().saturating_add(3);
+    nest.set_enclosing_vertical_prev_graf(prev_graf);
+    let par_shape = nest.current_list().par_shape().cloned();
+    match input.next_token(stores)? {
+        Some(Token::Char {
+            cat: Catcode::Space,
+            ..
+        }) => {}
+        Some(token) if is_par_or_end_group(stores, token) => push_tokens(input, stores, [token]),
+        Some(token) => {
+            nest.push(Mode::Horizontal);
+            if let Some(shape) = par_shape {
+                nest.current_list_mut().set_par_shape(shape);
+            }
+            nest.current_list_mut().set_space_factor(1000);
+            push_tokens(input, stores, [token]);
+        }
+        None => {}
+    }
+    build_page_if_outer_vertical(nest, stores)?;
+    Ok(())
+}
+
+fn is_par_or_end_group(stores: &Universe, token: Token) -> bool {
+    if matches!(
+        token,
+        Token::Char {
+            cat: Catcode::EndGroup,
+            ..
+        }
+    ) {
+        return true;
+    }
+    let Token::Cs(symbol) = token else {
+        return false;
+    };
+    matches!(
+        stores.meaning(symbol),
+        tex_state::meaning::Meaning::UnexpandablePrimitive(
+            UnexpandablePrimitive::Par | UnexpandablePrimitive::EndGraf
+        )
+    )
+}
+
 fn above_display_glue_kind(param: GlueParam) -> GlueKind {
     if param == GlueParam::ABOVE_DISPLAY_SHORT_SKIP {
         GlueKind::AboveDisplayShortSkip

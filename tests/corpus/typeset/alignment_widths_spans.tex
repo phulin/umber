@@ -11,4 +11,14 @@
 \tabskip=0pt
 \setbox2=\vbox{\halign{#&\tabskip=10pt#\cr a\cr}}
 \showbox2
+\setbox3=\vbox{\halign{#\cr a\cr\noalign{\hrule height2pt}b\cr}}
+\showbox3
+\setbox4=\vbox{\everycr{\noalign{\hrule height1pt}}\halign{#\cr a\cr b\cr}}
+\showbox4
+\setbox5=\vbox{\halign{<#>&[#]&( # )\cr \omit a\span\omit b\span\omit c\cr}}
+\showbox5
+\setbox6=\vbox{\hsize=50pt \predisplaypenalty=11 \postdisplaypenalty=22
+  \abovedisplayskip=3pt \belowdisplayskip=4pt
+  \noindent$$\halign{#\cr a\cr}$$\par}
+\showbox6
 \end
