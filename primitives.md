@@ -150,7 +150,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 
 ## Job Control
 
-- [x] `\day` - Current day of the month. Assignable integer parameter; job-start clock initialization is tracked in the conformance epic.
+- [x] `\day` - Job-start day of the month. Assignable integer parameter initialized from `World`'s job clock; parity regeneration pins `SOURCE_DATE_EPOCH` for both Umber and reference TeX.
 - [x] `\deadcycles` - Number of output routine calls since the last `\shipout`; read/write page-builder counter.
 - [ ] `\dump` - Writes a format file in INITEX; otherwise ends the job.
 - [x] `\end` - Ends the job with TeX's final cleanup, flushing remaining page material through the output routine before exiting the batch loop.
@@ -158,9 +158,9 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [x] `\jobname` - Expands to the driver-provided job name as rendered character tokens.
 - [x] `\mag` - Magnification ratio, scaled by 1000; implemented as an assignable integer parameter used by true-unit scanning.
 - [x] `\maxdeadcycles` - Maximum allowed output routine cycles without shipout; consumed by the output-routine loop guard.
-- [x] `\month` - Current month number. Assignable integer parameter; job-start clock initialization is tracked in the conformance epic.
-- [x] `\time` - Current minutes after midnight. Assignable integer parameter; job-start clock initialization is tracked in the conformance epic.
-- [x] `\year` - Current year. Assignable integer parameter; job-start clock initialization is tracked in the conformance epic.
+- [x] `\month` - Job-start month number. Assignable integer parameter initialized from `World`'s job clock; parity regeneration pins `SOURCE_DATE_EPOCH` for both Umber and reference TeX.
+- [x] `\time` - Job-start minutes after midnight. Assignable integer parameter initialized from `World`'s job clock; parity regeneration pins `SOURCE_DATE_EPOCH` for both Umber and reference TeX.
+- [x] `\year` - Job-start year. Assignable integer parameter initialized from `World`'s job clock; parity regeneration pins `SOURCE_DATE_EPOCH` for both Umber and reference TeX.
 
 ## Kerns And Box Motion
 

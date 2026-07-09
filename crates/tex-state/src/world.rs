@@ -9,6 +9,7 @@
 use crate::env::banks::IntParam;
 use crate::ids::TokenListId;
 use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::fmt;
 use std::fs::OpenOptions;
 use std::io::{self, Write};
@@ -1249,6 +1250,19 @@ fn splitmix64(mut value: u64) -> u64 {
 }
 
 fn real_job_clock() -> JobClock {
+    source_date_epoch().map_or_else(system_clock_seconds, unix_seconds_to_job_clock)
+}
+
+fn source_date_epoch() -> Option<u64> {
+    parse_source_date_epoch(std::env::var_os("SOURCE_DATE_EPOCH"))
+}
+
+fn parse_source_date_epoch(value: Option<OsString>) -> Option<u64> {
+    let value = value?;
+    value.to_str()?.parse().ok()
+}
+
+fn system_clock_seconds() -> JobClock {
     let seconds = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |duration| duration.as_secs());

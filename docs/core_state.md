@@ -394,7 +394,9 @@ Nothing in the engine touches the OS directly. A single `World` object owns:
   and the execution policy defaults to disabled.
 - **RNG state and clock reads**: owned by `World`, journaled/snapshotted.
   The clock is read once when constructing a real `World`; `Universe` copies
-  that job-start clock into `\time`, `\day`, `\month`, and `\year`.
+  that job-start clock into `\time`, `\day`, `\month`, and `\year`. Real
+  worlds honor `SOURCE_DATE_EPOCH` before consulting the host clock so parity
+  regeneration can pin Umber and the reference TeX to one timestamp.
 - **Inputs** (file reads) are content-addressed and recorded, so a snapshot
   pins exactly what it read (needed for cross-run memo sharing).
 - **Page artifacts** are committed through `Universe::commit_shipout`, which

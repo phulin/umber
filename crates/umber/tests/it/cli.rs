@@ -6,9 +6,12 @@ use tex_state::env::banks::IntParam;
 use tex_state::token::{Catcode, Token};
 use tex_state::{Universe, World};
 
+const PINNED_SOURCE_DATE_EPOCH: &str = "1783604160";
+
 #[test]
 fn exits_successfully() {
     let status = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
         .status()
         .expect("failed to run umber binary");
 
@@ -20,6 +23,7 @@ fn exits_successfully() {
 fn lex_dump_prints_stable_token_format_for_corpus() {
     for case in corpus_cases("lexer") {
         let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+            .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
             .arg("lex-dump")
             .arg(case.source_path())
             .output()
@@ -41,6 +45,7 @@ fn lex_dump_prints_stable_token_format_for_corpus() {
 fn expand_dump_prints_stable_token_format_for_corpus() {
     for case in corpus_cases("expand") {
         let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+            .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
             .arg("expand-dump")
             .arg(case.source_path())
             .output()
@@ -60,6 +65,7 @@ fn expand_dump_prints_stable_token_format_for_corpus() {
 #[test]
 fn expand_dump_usage_errors_follow_lex_dump_shape() {
     let missing = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
         .arg("expand-dump")
         .output()
         .expect("run umber expand-dump without path");
@@ -70,6 +76,7 @@ fn expand_dump_usage_errors_follow_lex_dump_shape() {
     );
 
     let extra = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
         .arg("expand-dump")
         .arg("one.tex")
         .arg("two.tex")
@@ -98,6 +105,7 @@ fn run_typeset_corpus_matches_committed_box_dumps() {
 fn run_corpus_matches_committed_log_fixtures(area: &str, show_fixtures: bool) {
     for case in corpus_cases(area) {
         let mut command = Command::new(env!("CARGO_BIN_EXE_umber"));
+        command.env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH);
         command.arg("run");
         if show_fixtures {
             command.arg("--show-fixtures");
@@ -152,6 +160,34 @@ fn run_leaders_corpus_matches_committed_dvi() {
     assert_dvi_area_matches_committed_fixture("leaders");
 }
 
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn run_initializes_clock_parameters_from_source_date_epoch() {
+    let temp_dir = tempfile::tempdir().expect("create clock temp dir");
+    let source = temp_dir.path().join("clock.tex");
+    fs::write(
+        &source,
+        "\\message{clock=\\the\\time/\\the\\day/\\the\\month/\\the\\year}\\end\n",
+    )
+    .expect("write clock fixture");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .arg("run")
+        .arg("--show-fixtures")
+        .arg(&source)
+        .output()
+        .expect("run umber clock fixture");
+
+    assert!(
+        output.status.success(),
+        "clock run failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
+    assert!(stdout.contains("clock=816/9/7/2026"));
+}
+
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
 fn assert_dvi_area_matches_committed_fixture(area: &str) {
     for case in corpus_cases(area) {
@@ -164,6 +200,7 @@ fn assert_dvi_case_matches_committed_fixture(area: &str, case: &str) {
     let setup = dvi::DviCaseSetup::new(area, case);
 
     let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
         .current_dir(setup.run_dir())
         .arg("run")
         .arg(setup.source_file_name())
@@ -197,6 +234,7 @@ fn run_reports_deadcycles_overflow_primary_text() {
     .expect("write deadcycles fixture");
 
     let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
         .arg("run")
         .arg(&source)
         .output()
@@ -210,6 +248,7 @@ fn run_reports_deadcycles_overflow_primary_text() {
 #[test]
 fn run_usage_errors_follow_existing_shape() {
     let missing = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
         .arg("run")
         .output()
         .expect("run umber run without path");
@@ -220,6 +259,7 @@ fn run_usage_errors_follow_existing_shape() {
     );
 
     let extra = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
         .arg("run")
         .arg("one.tex")
         .arg("two.tex")
@@ -232,6 +272,7 @@ fn run_usage_errors_follow_existing_shape() {
     );
 
     let missing_show_fixtures = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
         .arg("run")
         .arg("--show-fixtures")
         .output()
@@ -243,6 +284,7 @@ fn run_usage_errors_follow_existing_shape() {
     );
 
     let missing_dvi_path = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
         .arg("run")
         .arg("one.tex")
         .arg("--dvi")
@@ -273,6 +315,7 @@ fn run_show_fixtures_harvests_without_committing_immediate_stream_effects() {
     .expect("write input");
 
     let normal = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
         .current_dir(&normal_dir)
         .arg("run")
         .arg(&input)
@@ -289,6 +332,7 @@ fn run_show_fixtures_harvests_without_committing_immediate_stream_effects() {
     );
 
     let fixture = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
         .current_dir(&fixture_dir)
         .arg("run")
         .arg("--show-fixtures")

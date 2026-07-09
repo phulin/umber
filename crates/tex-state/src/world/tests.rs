@@ -207,6 +207,29 @@ fn unix_clock_conversion_matches_epoch() {
 }
 
 #[test]
+fn unix_clock_conversion_uses_utc_minutes_and_date() {
+    assert_eq!(
+        unix_seconds_to_job_clock(1_783_604_160),
+        JobClock {
+            time: 816,
+            day: 9,
+            month: 7,
+            year: 2026,
+        }
+    );
+}
+
+#[test]
+fn source_date_epoch_parser_accepts_unsigned_epoch_seconds() {
+    assert_eq!(
+        parse_source_date_epoch(Some("1783604160".into())),
+        Some(1_783_604_160)
+    );
+    assert_eq!(parse_source_date_epoch(Some("not-an-epoch".into())), None);
+    assert_eq!(parse_source_date_epoch(None), None);
+}
+
+#[test]
 fn real_output_does_not_materialize_before_commit() {
     let temp_dir = tempfile::tempdir().expect("temp dir");
     let output = temp_dir.path().join("job.aux");

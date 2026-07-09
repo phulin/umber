@@ -11,6 +11,8 @@ mod imp {
     use anyhow::{Context, Result, anyhow};
     use tempfile::TempDir;
 
+    const DEFAULT_SOURCE_DATE_EPOCH: &str = "1783604160";
+
     #[derive(Debug, Clone)]
     pub struct RefTex {
         executable: PathBuf,
@@ -130,6 +132,7 @@ mod imp {
             if opts.ini {
                 command.arg("-ini");
             }
+            command.env("SOURCE_DATE_EPOCH", source_date_epoch());
             command.arg(job_name);
 
             let output = command.output().with_context(|| {
@@ -230,6 +233,12 @@ mod imp {
     fn file_name(path: &Path) -> Result<&std::ffi::OsStr> {
         path.file_name()
             .ok_or_else(|| anyhow!("path has no file name: {}", path.display()))
+    }
+
+    fn source_date_epoch() -> std::ffi::OsString {
+        env::var_os("SOURCE_DATE_EPOCH")
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| DEFAULT_SOURCE_DATE_EPOCH.into())
     }
 
     pub fn compare_dvi_bytes(expected: &[u8], actual: &[u8]) -> Result<DviComparison> {
