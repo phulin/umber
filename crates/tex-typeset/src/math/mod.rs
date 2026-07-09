@@ -25,7 +25,7 @@ use crate::TypesetState;
 pub use delimiters::{left_right_delimiter_target, var_delimiter};
 pub use model::{BoxAxis, FrozenHList, MathBox, MathGlueKind, MathNode};
 pub(crate) use model::{boxed_node, hpack, node_is_char, vpack};
-pub use params::{ExtensionParams, MathParams, SizeParams, SymbolParams};
+pub use params::{ExtensionParams, MathParamState, MathParams, SizeParams, SymbolParams};
 pub use spacing::{SpacingKind, inter_noad_spacing, math_glue, math_kern};
 pub use style::{Style, StyleFamily};
 
@@ -42,9 +42,43 @@ pub trait MathTypesetState: TypesetState {
         right: LigKernChar,
     ) -> Option<LigKernCommand>;
     fn font_skew_char(&self, font: FontId) -> i32;
-    fn int_param(&self, param: IntParam) -> i32;
-    fn dimen_param(&self, param: DimenParam) -> Scaled;
-    fn glue_param(&self, param: GlueParam) -> GlueId;
+}
+
+#[derive(Clone, Copy, Debug)]
+struct FetchedChar {
+    font: FontId,
+    ch: char,
+    metrics: CharMetrics,
+}
+
+const INF_PENALTY: i32 = 10_000;
+#[must_use]
+pub fn mlist_to_hlist(
+    state: &impl MathTypesetState,
+    input: NodeListId,
+    style: Style,
+    penalties: bool,
+    params: &MathParams,
+) -> FrozenHList {
+    let mut ctx = Context {
+        state,
+        params,
+        style,
+        mu: math_unit(params, style),
+    };
+    let mut work = Vec::new();
+    let mut max_height = Scaled::from_raw(0);
+    let mut max_depth = Scaled::from_raw(0);
+    first_pass(
+        &mut ctx,
+        state.nodes(input),
+        &mut work,
+        &mut max_height,
+        &mut max_depth,
+        params,
+    );
+    convert_final_bin_to_ord(&mut work);
+    second_pass(&mut ctx, style, &work, penalties, max_height, max_depth)
 }
 
 #[derive(Clone, Debug)]
@@ -68,60 +102,13 @@ enum WorkItem {
     Style(Style),
 }
 
-#[derive(Clone, Copy, Debug)]
-struct FetchedChar {
-    font: FontId,
-    ch: char,
-    metrics: CharMetrics,
-}
-
-const INF_PENALTY: i32 = 10_000;
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct MathPenaltyParams {
-    bin_op: i32,
-    rel: i32,
-}
-
-#[must_use]
-pub fn mlist_to_hlist(
-    state: &impl MathTypesetState,
-    input: NodeListId,
-    style: Style,
-    penalties: bool,
-    params: &MathParams,
-) -> FrozenHList {
-    let mut ctx = Context {
-        state,
-        params,
-        style,
-        mu: math_unit(params, style),
-    };
-    let penalty_params = MathPenaltyParams {
-        bin_op: state.int_param(IntParam::BIN_OP_PENALTY),
-        rel: state.int_param(IntParam::REL_PENALTY),
-    };
-    let mut work = Vec::new();
-    let mut max_height = Scaled::from_raw(0);
-    let mut max_depth = Scaled::from_raw(0);
-    first_pass(
-        &mut ctx,
-        state.nodes(input),
-        &mut work,
-        &mut max_height,
-        &mut max_depth,
-        penalty_params,
-    );
-    convert_final_bin_to_ord(&mut work);
-    second_pass(&mut ctx, style, &work, penalties, max_height, max_depth)
-}
-
 fn first_pass<S: MathTypesetState>(
     ctx: &mut Context<'_, S>,
     input: &[Node],
     out: &mut Vec<WorkItem>,
     max_height: &mut Scaled,
     max_depth: &mut Scaled,
-    penalty_params: MathPenaltyParams,
+    params: &MathParams,
 ) {
     let mut input = input.to_vec();
     let mut r_type = Some(NoadClass::Op);
@@ -148,7 +135,7 @@ fn first_pass<S: MathTypesetState>(
                     out,
                     max_height,
                     max_depth,
-                    penalty_params,
+                    params,
                 );
             }
             Node::Glue { spec, kind } => {
@@ -239,7 +226,7 @@ fn first_pass<S: MathTypesetState>(
                     convert_final_bin_to_ord(out);
                 }
                 // AppG rule 7: Open and Inner atoms fall through unchanged to Rule 17.
-                let work = translate_noad(ctx, &noad, class, penalty_params);
+                let work = translate_noad(ctx, &noad, class, params);
                 let packed = hpack(work.hlist.clone());
                 *max_height = (*max_height).max(packed.height);
                 *max_depth = (*max_depth).max(packed.depth);
@@ -272,7 +259,7 @@ fn translate_noad<S: MathTypesetState>(
     ctx: &Context<'_, S>,
     noad: &MathNoad,
     class: NoadClass,
-    penalties: MathPenaltyParams,
+    params: &MathParams,
 ) -> WorkNoad {
     let mut delta = Scaled::from_raw(0);
     let mut scripts_handled = false;
@@ -330,8 +317,8 @@ fn translate_noad<S: MathTypesetState>(
         class,
         hlist,
         penalty: match class {
-            NoadClass::Bin => penalties.bin_op,
-            NoadClass::Rel => penalties.rel,
+            NoadClass::Bin => params.bin_op_penalty,
+            NoadClass::Rel => params.rel_penalty,
             _ => INF_PENALTY,
         },
     }
@@ -631,7 +618,9 @@ impl MathTypesetState for Universe {
     fn font_skew_char(&self, font: FontId) -> i32 {
         Universe::font_skew_char(self, font)
     }
+}
 
+impl MathParamState for Universe {
     fn int_param(&self, param: IntParam) -> i32 {
         Universe::int_param(self, param)
     }

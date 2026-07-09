@@ -1,9 +1,17 @@
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
 use tex_state::glue::GlueSpec;
+use tex_state::ids::GlueId;
 use tex_state::math::MathFontSize;
 use tex_state::scaled::Scaled;
 
 use super::MathTypesetState;
+
+/// Mutable state reads needed only while taking an Appendix G parameter snapshot.
+pub trait MathParamState: MathTypesetState {
+    fn int_param(&self, param: IntParam) -> i32;
+    fn dimen_param(&self, param: DimenParam) -> Scaled;
+    fn glue_param(&self, param: GlueParam) -> GlueId;
+}
 
 /// Math-symbol font parameters for one TeX math size.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -51,6 +59,8 @@ pub struct MathParams {
     pub thin_mu_skip: GlueSpec,
     pub med_mu_skip: GlueSpec,
     pub thick_mu_skip: GlueSpec,
+    pub bin_op_penalty: i32,
+    pub rel_penalty: i32,
 }
 
 /// Per-size math parameters.
@@ -62,19 +72,26 @@ pub struct SizeParams {
 
 impl MathParams {
     #[must_use]
-    pub fn read(state: &impl MathTypesetState) -> Self {
-        // AppG rule 17
+    pub fn read(state: &impl MathParamState) -> Self {
         Self {
+            // AppG rules 9-18 use the family-2 and family-3 math fontdimens.
             text: SizeParams::read(state, MathFontSize::Text),
             script: SizeParams::read(state, MathFontSize::Script),
             script_script: SizeParams::read(state, MathFontSize::ScriptScript),
+            // AppG rule 19.
             delimiter_factor: state.int_param(IntParam::DELIMITER_FACTOR),
             delimiter_shortfall: state.dimen_param(DimenParam::DELIMITER_SHORTFALL),
+            // AppG rules 15 and 19.
             null_delimiter_space: state.dimen_param(DimenParam::NULL_DELIMITER_SPACE),
+            // AppG rule 18.
             script_space: state.dimen_param(DimenParam::new(12)),
+            // AppG rule 20.
             thin_mu_skip: state.glue(state.glue_param(GlueParam::new(15))),
             med_mu_skip: state.glue(state.glue_param(GlueParam::new(16))),
             thick_mu_skip: state.glue(state.glue_param(GlueParam::new(17))),
+            // AppG rule 21.
+            bin_op_penalty: state.int_param(IntParam::BIN_OP_PENALTY),
+            rel_penalty: state.int_param(IntParam::REL_PENALTY),
         }
     }
 

@@ -113,6 +113,8 @@ fn mlist_penalties_use_current_parameters_and_infinite_threshold() {
         Node::MathNoad(noad(NoadClass::Ord, 'd')),
     ]);
     let params = MathParams::read(&universe);
+    universe.set_int_param(IntParam::BIN_OP_PENALTY, 1);
+    universe.set_int_param(IntParam::REL_PENALTY, 2);
 
     let hlist = mlist_to_hlist(&universe, input, Style::TEXT, true, &params);
 
@@ -127,6 +129,12 @@ fn mlist_penalties_use_current_parameters_and_infinite_threshold() {
             .nodes
             .iter()
             .any(|node| matches!(node, MathNode::Penalty(99)))
+    );
+    assert!(
+        !hlist
+            .nodes
+            .iter()
+            .any(|node| matches!(node, MathNode::Penalty(2)))
     );
 }
 
