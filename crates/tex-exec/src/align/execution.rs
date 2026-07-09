@@ -467,7 +467,7 @@ where
                 return Ok(CellTerminator::Cr);
             }
         }
-        update_cell_brace_depth(align_level, nest, stores, semantic)?;
+        update_persistent_cell_brace_depth(align_level, nest, stores, semantic)?;
         dispatch_and_drain(nest, token, input, stores, recorder, hooks, &mut stats)?;
     }
 }
@@ -531,12 +531,26 @@ where
     }
 }
 
-fn update_cell_brace_depth(
+fn update_persistent_cell_brace_depth(
     align_level: usize,
     nest: &mut ModeNest,
     stores: &Universe,
     token: Token,
 ) -> Result<(), ExecError> {
+    // TeX82 updates align_state in get_next for both braces of a math group.
+    // Our math dispatcher scans that whole group synchronously after receiving
+    // its opening brace, so neither boundary persists across cell-loop pulls.
+    if matches!(nest.current_mode(), Mode::Math | Mode::DisplayMath)
+        && matches!(
+            token,
+            Token::Char {
+                cat: tex_state::token::Catcode::BeginGroup,
+                ..
+            }
+        )
+    {
+        return Ok(());
+    }
     if is_begin_group(stores, token) {
         align_state_mut(nest, align_level)?.increment_brace_depth();
     } else if is_end_group(stores, token) {

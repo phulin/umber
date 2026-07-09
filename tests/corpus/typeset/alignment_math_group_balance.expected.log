@@ -1,0 +1,11 @@
+> \box0=
+\vbox(0.0+0.0)x0.0
+.\hbox(0.0+0.0)x0.0
+..\glue(\tabskip) 0.0
+..\hbox(0.0+0.0)x0.0
+...\mathon
+...\hbox(0.0+0.0)x0.0
+...\mathoff
+..\glue(\tabskip) 0.0
+
+! OK.

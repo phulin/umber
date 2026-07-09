@@ -69,13 +69,17 @@ fn unset_for_test(
 
 fn run_alignment_source(source: &str) -> Universe {
     let mut stores = support::stores_with_fonts();
+    run_alignment_source_in(&mut stores, source);
+    stores
+}
+
+fn run_alignment_source_in(stores: &mut Universe, source: &str) {
     let mut input = InputStack::new(MemoryInput::new(format!(
         "\\font\\f=cmr10 \\relax \\f {source}"
     )));
     Executor::new()
-        .run(&mut input, &mut stores)
+        .run(&mut input, stores)
         .expect("alignment source executes");
-    stores
 }
 
 fn run_alignment_source_err(source: &str) -> ExecError {
@@ -348,6 +352,32 @@ fn halign_in_restricted_horizontal_mode_retains_off_save_recovery() {
     assert_eq!(inserted_origin.parent(), command_origin);
     assert_eq!(replayed, command);
     assert!(support::terminal_effect_text(&stores).contains("Missing } inserted"));
+}
+
+#[test]
+fn math_group_scanned_inside_cell_does_not_hide_row_terminator() {
+    let stores = run_boxed_alignment_source("\\halign{#\\cr ${}^1$\\cr}");
+    let rows = vlist_rows(&stores, box_zero_vlist(&stores));
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(row_cells(&stores, rows[0]).len(), 1);
+}
+
+#[test]
+fn math_group_cell_alignment_replays_identically_after_rollback() {
+    let mut stores = support::stores_with_fonts();
+    let checkpoint = stores.snapshot();
+    let source = "\\setbox0=\\vbox{\\halign{#\\cr ${}^1$\\cr}}";
+
+    run_alignment_source_in(&mut stores, source);
+    let first_box = stores.box_reg(0);
+    let first_hash = stores.snapshot().state_hash();
+
+    stores.rollback(&checkpoint);
+    run_alignment_source_in(&mut stores, source);
+
+    assert_eq!(stores.box_reg(0), first_box);
+    assert_eq!(stores.snapshot().state_hash(), first_hash);
 }
 
 #[test]
