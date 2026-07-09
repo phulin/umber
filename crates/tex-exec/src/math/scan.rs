@@ -1,0 +1,600 @@
+use tex_expand::{
+    DriverExpandNext, ExpandError, ExpansionHooks, ReadRecorder,
+    get_x_token_with_recorder_and_hooks, scan_dimen,
+};
+use tex_lex::{InputSource, InputStack};
+use tex_state::Universe;
+use tex_state::env::banks::IntParam;
+use tex_state::math::{
+    FractionThickness, LimitType, MathChar, MathChoice, MathField, MathFraction, MathNoad,
+    NoadClass, NoadKind,
+};
+use tex_state::meaning::{Meaning, UnexpandablePrimitive};
+use tex_state::node::Node;
+use tex_state::scaled::Scaled;
+use tex_state::token::{Catcode, Token};
+use tex_typeset::{PackSpec, VpackParams, vpack};
+
+use crate::assignments;
+use crate::executor::sync_engine_state;
+use crate::mode::IncompleteFraction;
+use crate::{DispatchAction, ExecError, Mode, ModeNest, push_tokens};
+
+use super::{dispatch_math_token_with_recorder, support::report_math_error};
+
+pub(super) fn append_mathcode_char<S>(
+    nest: &mut ModeNest,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    ch: char,
+) -> Result<(), ExecError>
+where
+    S: InputSource,
+{
+    let value = stores.mathcode(ch);
+    if value == 0x8000 {
+        redispatch_active_char(input, stores, ch);
+        return Ok(());
+    }
+    let (class, math_char) = math_char_from_mathcode(ch, value, stores)?;
+    append_noad(
+        nest,
+        NoadKind::Normal(class),
+        MathField::MathChar(math_char),
+    );
+    Ok(())
+}
+
+pub(super) fn append_math_char_code(
+    nest: &mut ModeNest,
+    stores: &Universe,
+    code: u32,
+) -> Result<(), ExecError> {
+    let (class, math_char) = math_char_from_math_char_code(code, stores)?;
+    append_noad(
+        nest,
+        NoadKind::Normal(class),
+        MathField::MathChar(math_char),
+    );
+    Ok(())
+}
+
+fn math_char_from_math_char_code(
+    code: u32,
+    stores: &Universe,
+) -> Result<(NoadClass, MathChar), ExecError> {
+    if code > 0x7fff {
+        return Err(ExecError::InvalidCode {
+            context: "\\mathchar",
+            value: code as i32,
+        });
+    }
+    let class = ((code >> 12) & 0x7) as u8;
+    let family = ((code >> 8) & 0xf) as u8;
+    let ch = char::from_u32(code & 0xff).unwrap_or('\0');
+    Ok(resolve_math_class_family(class, family, ch, stores))
+}
+
+pub(super) fn math_char_from_code(code: u32, stores: &Universe) -> Result<MathChar, ExecError> {
+    Ok(math_char_from_math_char_code(code, stores)?.1)
+}
+
+fn math_char_from_mathcode(
+    original: char,
+    code: u32,
+    stores: &Universe,
+) -> Result<(NoadClass, MathChar), ExecError> {
+    if code > 0x7fff {
+        return Ok((
+            NoadClass::Ord,
+            MathChar {
+                family: 0,
+                character: original,
+            },
+        ));
+    }
+    let class = ((code >> 12) & 0x7) as u8;
+    let family = ((code >> 8) & 0xf) as u8;
+    let ch = char::from_u32(code & 0xff).unwrap_or(original);
+    Ok(resolve_math_class_family(class, family, ch, stores))
+}
+
+fn resolve_math_class_family(
+    class: u8,
+    code_family: u8,
+    ch: char,
+    stores: &Universe,
+) -> (NoadClass, MathChar) {
+    let mut family = code_family;
+    let class = match class {
+        0 => NoadClass::Ord,
+        1 => NoadClass::Op,
+        2 => NoadClass::Bin,
+        3 => NoadClass::Rel,
+        4 => NoadClass::Open,
+        5 => NoadClass::Close,
+        6 => NoadClass::Punct,
+        7 => {
+            let fam = stores.int_param(IntParam::FAM);
+            if (0..=15).contains(&fam) {
+                family = fam as u8;
+            }
+            NoadClass::Ord
+        }
+        _ => unreachable!("math class is three bits"),
+    };
+    (
+        class,
+        MathChar {
+            family,
+            character: ch,
+        },
+    )
+}
+
+pub(super) fn redispatch_active_char<S>(input: &mut InputStack<S>, stores: &mut Universe, ch: char)
+where
+    S: InputSource,
+{
+    let symbol = stores.intern(&ch.to_string());
+    push_tokens(input, stores, [Token::Cs(symbol)]);
+}
+
+pub(super) fn append_noad(nest: &mut ModeNest, kind: NoadKind, nucleus: MathField) {
+    nest.current_list_mut()
+        .push(Node::MathNoad(MathNoad::new(kind, nucleus)));
+}
+
+pub(super) fn attach_script<S, R, H>(
+    nest: &mut ModeNest,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    recorder: &mut R,
+    hooks: &mut H,
+    superscript: bool,
+) -> Result<(), ExecError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    let field = scan_math_field(nest, input, stores, recorder, hooks)?;
+    let Some(mut node) = nest.current_list_mut().pop_last_node() else {
+        push_scripted_empty_noad(nest, field, superscript);
+        return Ok(());
+    };
+    let Node::MathNoad(noad) = &mut node else {
+        nest.current_list_mut().push(node);
+        push_scripted_empty_noad(nest, field, superscript);
+        return Ok(());
+    };
+    let target = if superscript {
+        &mut noad.superscript
+    } else {
+        &mut noad.subscript
+    };
+    if !matches!(target, MathField::Empty) {
+        nest.current_list_mut().push(node);
+        report_math_error(
+            stores,
+            if superscript {
+                "Double superscript"
+            } else {
+                "Double subscript"
+            },
+        );
+        push_scripted_empty_noad(nest, field, superscript);
+    } else {
+        *target = field;
+        nest.current_list_mut().push(node);
+    }
+    Ok(())
+}
+
+fn push_scripted_empty_noad(nest: &mut ModeNest, field: MathField, superscript: bool) {
+    let mut noad = MathNoad::new(NoadKind::Normal(NoadClass::Ord), MathField::Empty);
+    if superscript {
+        noad.superscript = field;
+    } else {
+        noad.subscript = field;
+    }
+    nest.current_list_mut().push(Node::MathNoad(noad));
+}
+
+pub(super) fn scan_math_field<S, R, H>(
+    nest: &mut ModeNest,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<MathField, ExecError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    let token =
+        next_non_space_x(input, stores, recorder, hooks)?.ok_or(ExecError::MissingToken {
+            context: "math field",
+        })?;
+    match token {
+        Token::Char {
+            cat: Catcode::BeginGroup,
+            ..
+        } => Ok(MathField::SubMlist(scan_math_group_after_open(
+            nest, input, stores, recorder, hooks,
+        )?)),
+        Token::Char {
+            ch,
+            cat: Catcode::Active,
+        } => {
+            redispatch_active_char(input, stores, ch);
+            scan_math_field(nest, input, stores, recorder, hooks)
+        }
+        Token::Char { ch, .. } => {
+            let value = stores.mathcode(ch);
+            if value == 0x8000 {
+                redispatch_active_char(input, stores, ch);
+                scan_math_field(nest, input, stores, recorder, hooks)
+            } else {
+                let (_, math_char) = math_char_from_mathcode(ch, value, stores)?;
+                Ok(MathField::MathChar(math_char))
+            }
+        }
+        Token::Cs(symbol) => match stores.meaning(symbol) {
+            Meaning::CharGiven(ch) => {
+                let (_, math_char) = math_char_from_mathcode(ch, stores.mathcode(ch), stores)?;
+                Ok(MathField::MathChar(math_char))
+            }
+            Meaning::MathCharGiven(value) => Ok(MathField::MathChar(math_char_from_code(
+                u32::from(value),
+                stores,
+            )?)),
+            _ => {
+                let mut temp = ModeNest::new();
+                temp.push(nest.current_mode());
+                dispatch_math_token_with_recorder(
+                    &mut temp,
+                    Token::Cs(symbol),
+                    input,
+                    stores,
+                    recorder,
+                    hooks,
+                )?;
+                let id = finish_current_math_list(&mut temp, stores);
+                Ok(MathField::SubMlist(id))
+            }
+        },
+        Token::Param(_) => Err(ExecError::MissingToken {
+            context: "math field",
+        }),
+    }
+}
+
+pub(super) fn scan_math_group_after_open<S, R, H>(
+    nest: &mut ModeNest,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<tex_state::ids::NodeListId, ExecError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    nest.push(Mode::Math);
+    loop {
+        sync_engine_state::<S, _>(hooks, nest, stores);
+        let token = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?.ok_or(
+            ExecError::MissingToken {
+                context: "math group closing brace",
+            },
+        )?;
+        if assignments::is_end_group(token) {
+            let list = finish_current_math_list(nest, stores);
+            let _ = nest.pop()?;
+            return Ok(list);
+        }
+        match dispatch_math_token_with_recorder(nest, token, input, stores, recorder, hooks)? {
+            DispatchAction::Continue | DispatchAction::Shipout(_) => {}
+            DispatchAction::End => {
+                return Err(ExecError::MissingToken {
+                    context: "math group closing brace",
+                });
+            }
+            DispatchAction::NotConsumed => {
+                return Err(ExecError::UnimplementedTypesetting {
+                    mode: nest.current_mode(),
+                    token,
+                    operation: "math group",
+                });
+            }
+        }
+    }
+}
+
+pub(super) fn finish_current_math_list(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+) -> tex_state::ids::NodeListId {
+    let (nodes, incomplete) = {
+        let list = nest.current_list_mut();
+        (list.take_nodes(), list.take_incomplete_fraction())
+    };
+    let nodes = if let Some(incomplete) = incomplete {
+        let denominator = stores.freeze_node_list(&nodes);
+        vec![Node::FractionNoad(MathFraction {
+            numerator: incomplete.numerator,
+            denominator,
+            thickness: incomplete.thickness,
+            left_delimiter: incomplete.left_delimiter,
+            right_delimiter: incomplete.right_delimiter,
+        })]
+    } else {
+        nodes
+    };
+    stores.freeze_node_list(&nodes)
+}
+
+pub(super) fn start_fraction<S, H>(
+    primitive: UnexpandablePrimitive,
+    nest: &mut ModeNest,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    hooks: &mut H,
+) -> Result<(), ExecError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    if nest.current_list().incomplete_fraction().is_some() {
+        report_math_error(stores, "Ambiguous; you need another { and }");
+        return Ok(());
+    }
+    let (left_delimiter, right_delimiter) = match primitive {
+        UnexpandablePrimitive::OverWithDelims
+        | UnexpandablePrimitive::AtopWithDelims
+        | UnexpandablePrimitive::AboveWithDelims => (
+            Some(scan_delimiter_token(input, stores, hooks)?),
+            Some(scan_delimiter_token(input, stores, hooks)?),
+        ),
+        _ => (None, None),
+    };
+    let thickness = match primitive {
+        UnexpandablePrimitive::Atop | UnexpandablePrimitive::AtopWithDelims => {
+            FractionThickness::Explicit(Scaled::from_raw(0))
+        }
+        UnexpandablePrimitive::Above | UnexpandablePrimitive::AboveWithDelims => {
+            FractionThickness::Explicit(assignments::scan_scaled(input, stores, hooks)?)
+        }
+        _ => FractionThickness::Default,
+    };
+    let numerator_nodes = nest.current_list_mut().take_nodes();
+    let numerator = stores.freeze_node_list(&numerator_nodes);
+    nest.current_list_mut()
+        .set_incomplete_fraction(IncompleteFraction {
+            numerator,
+            thickness,
+            left_delimiter,
+            right_delimiter,
+        });
+    Ok(())
+}
+
+pub(super) fn apply_limit_switch(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    primitive: UnexpandablePrimitive,
+) {
+    let limit_type = match primitive {
+        UnexpandablePrimitive::Limits => LimitType::Limits,
+        UnexpandablePrimitive::NoLimits => LimitType::NoLimits,
+        UnexpandablePrimitive::DisplayLimits => LimitType::DisplayLimits,
+        _ => unreachable!("caller restricts limit primitive"),
+    };
+    let Some(Node::MathNoad(noad)) = nest.current_list_mut().last_node_mut() else {
+        report_math_error(stores, "Limit controls must follow a math operator");
+        return;
+    };
+    match noad.kind {
+        NoadKind::Operator(_) => noad.kind = NoadKind::Operator(limit_type),
+        _ => report_math_error(stores, "Limit controls must follow a math operator"),
+    }
+}
+
+pub(super) fn append_math_choice<S, R, H>(
+    nest: &mut ModeNest,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<(), ExecError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    let display = scan_required_math_group(nest, input, stores, recorder, hooks, "\\mathchoice")?;
+    let text = scan_required_math_group(nest, input, stores, recorder, hooks, "\\mathchoice")?;
+    let script = scan_required_math_group(nest, input, stores, recorder, hooks, "\\mathchoice")?;
+    let script_script =
+        scan_required_math_group(nest, input, stores, recorder, hooks, "\\mathchoice")?;
+    nest.current_list_mut().push(Node::MathChoice(MathChoice {
+        display,
+        text,
+        script,
+        script_script,
+    }));
+    Ok(())
+}
+
+fn scan_required_math_group<S, R, H>(
+    nest: &mut ModeNest,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    recorder: &mut R,
+    hooks: &mut H,
+    context: &'static str,
+) -> Result<tex_state::ids::NodeListId, ExecError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    let opener = next_non_space_x(input, stores, recorder, hooks)?
+        .ok_or(ExecError::MissingToken { context })?;
+    if !assignments::is_begin_group(opener) {
+        return Err(ExecError::MissingToken { context });
+    }
+    scan_math_group_after_open(nest, input, stores, recorder, hooks)
+}
+
+pub(super) fn scan_vcenter_field<S, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    hooks: &mut H,
+) -> Result<MathField, ExecError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    let opener =
+        assignments::next_non_space_x(input, stores, hooks)?.ok_or(ExecError::MissingToken {
+            context: "\\vcenter",
+        })?;
+    if !assignments::is_begin_group(opener) {
+        return Err(ExecError::MissingToken {
+            context: "\\vcenter",
+        });
+    }
+    let mut inner = ModeNest::new();
+    inner.push(Mode::InternalVertical);
+    assignments::scan_box_group(&mut inner, input, stores, hooks)?;
+    let level = inner.pop()?;
+    let children = stores.freeze_node_list(level.list().nodes());
+    let vbox = Node::VList(
+        vpack(
+            stores,
+            children,
+            PackSpec::Natural,
+            VpackParams::read(stores),
+        )
+        .node,
+    );
+    let boxed = stores.freeze_node_list(&[vbox]);
+    Ok(MathField::SubBox(boxed))
+}
+
+pub(super) fn scan_math_char_code<S, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    hooks: &mut H,
+) -> Result<u32, ExecError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    let value = assignments::scan_i32(input, stores, hooks)?;
+    if !(0..=32_767).contains(&value) {
+        return Err(ExecError::InvalidCode {
+            context: "\\mathchar",
+            value,
+        });
+    }
+    Ok(value as u32)
+}
+
+pub(super) fn scan_delimiter_code<S, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    hooks: &mut H,
+) -> Result<u32, ExecError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    let value = assignments::scan_i32(input, stores, hooks)?;
+    if !(0..=0x07ff_ffff).contains(&value) {
+        return Err(ExecError::InvalidCode {
+            context: "\\delimiter",
+            value,
+        });
+    }
+    Ok(value as u32)
+}
+
+fn scan_delimiter_token<S, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    hooks: &mut H,
+) -> Result<u32, ExecError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    let token =
+        assignments::next_non_space_x(input, stores, hooks)?.ok_or(ExecError::MissingToken {
+            context: "delimiter",
+        })?;
+    match token {
+        Token::Char { ch: '.', .. } => Ok(0),
+        Token::Char { ch, .. } => {
+            let code = stores.delcode(ch);
+            Ok(if code >= 0 { code as u32 } else { 0 })
+        }
+        Token::Cs(symbol) => match stores.meaning(symbol) {
+            Meaning::MathCharGiven(value) => Ok(u32::from(value)),
+            _ => Err(ExecError::MissingToken {
+                context: "delimiter",
+            }),
+        },
+        Token::Param(_) => Err(ExecError::MissingToken {
+            context: "delimiter",
+        }),
+    }
+}
+
+pub(super) fn scan_mu_dimen<S, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    hooks: &mut H,
+) -> Result<Scaled, ExecError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    let mut recorder = tex_expand::NoopRecorder;
+    let scanned = scan_dimen::scan_dimen_with_expander_and_hooks(
+        input,
+        stores,
+        &mut recorder,
+        hooks,
+        &mut DriverExpandNext,
+        scan_dimen::ScanDimenOptions::STANDARD.requiring_mu_unit(),
+    )
+    .map_err(ExpandError::from)?;
+    Ok(scanned.value())
+}
+
+fn next_non_space_x<S, R, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<Option<Token>, ExecError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    loop {
+        let Some(token) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
+        else {
+            return Ok(None);
+        };
+        if !assignments::is_space(token) {
+            return Ok(Some(token));
+        }
+    }
+}

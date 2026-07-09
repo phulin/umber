@@ -154,6 +154,14 @@ where
                 content: self.lower_node_list(content)?,
             },
             Node::Adjust(content) => PageNode::Adjust(self.lower_node_list(content)?),
+            Node::MathNoad(_)
+            | Node::FractionNoad(_)
+            | Node::MathStyle(_)
+            | Node::MathChoice(_)
+            | Node::MathList(_)
+            | Node::Nonscript => {
+                return Err(ExecError::UnsupportedShipoutNode { node: "math" });
+            }
         })
     }
 
@@ -350,6 +358,7 @@ fn lower_kern_kind(kind: StateKernKind) -> PageKernKind {
         StateKernKind::Explicit => PageKernKind::Explicit,
         StateKernKind::Font => PageKernKind::Font,
         StateKernKind::Accent => PageKernKind::Accent,
+        StateKernKind::Mu => PageKernKind::Explicit,
     }
 }
 
@@ -373,6 +382,7 @@ fn lower_glue_kind(kind: StateGlueKind) -> PageGlueKind {
         StateGlueKind::Leaders => PageGlueKind::Leaders,
         StateGlueKind::Cleaders => PageGlueKind::Cleaders,
         StateGlueKind::Xleaders => PageGlueKind::Xleaders,
+        StateGlueKind::MuSkip | StateGlueKind::NonScript => PageGlueKind::Normal,
     }
 }
 

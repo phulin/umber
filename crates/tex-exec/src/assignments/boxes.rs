@@ -592,7 +592,7 @@ pub(super) fn hpack_with_overfull_rule(
     packed.node
 }
 
-pub(super) fn scan_box_group<S, H>(
+pub(crate) fn scan_box_group<S, H>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,

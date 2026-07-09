@@ -52,6 +52,20 @@ where
     H: ExpansionHooks<S>,
 {
     let mode = nest.current_mode();
+    if matches!(mode, Mode::Math | Mode::DisplayMath) {
+        return crate::math::dispatch_math_token_with_recorder(
+            nest, token, input, stores, recorder, hooks,
+        );
+    }
+    if matches!(
+        token,
+        Token::Char {
+            cat: Catcode::MathShift,
+            ..
+        }
+    ) {
+        return crate::math::enter_math(nest, input, stores, hooks);
+    }
     let meaning = match token {
         Token::Cs(symbol) => stores.meaning(symbol),
         Token::Char {

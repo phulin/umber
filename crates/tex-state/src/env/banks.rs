@@ -3,7 +3,7 @@
 use crate::cell::{BankTag, CellId};
 use crate::env::barrier;
 use crate::epoch::Epoch;
-use crate::ids::{GlueId, NodeListId, TokenListId};
+use crate::ids::{FontId, GlueId, NodeListId, TokenListId};
 use crate::journal::{Journal, UndoRec};
 use crate::scaled::Scaled;
 use core::marker::PhantomData;
@@ -147,6 +147,9 @@ impl IntParam {
     /// TeX's `\floatingpenalty` insertion parameter.
     pub const FLOATING_PENALTY: Self = Self::new(58);
 
+    /// TeX's current math family parameter.
+    pub const FAM: Self = Self::new(59);
+
     /// TeX's `\showboxbreadth` integer parameter.
     pub const SHOW_BOX_BREADTH: Self = Self::new(24);
 
@@ -242,6 +245,12 @@ impl TokParam {
 
     /// TeX's `\everypar` token-list parameter.
     pub const EVERY_PAR: Self = Self::new(1);
+
+    /// TeX's `\everymath` token-list parameter.
+    pub const EVERY_MATH: Self = Self::new(2);
+
+    /// TeX's `\everydisplay` token-list parameter.
+    pub const EVERY_DISPLAY: Self = Self::new(3);
 }
 
 pub(crate) trait BankCodec {
@@ -405,6 +414,21 @@ impl BankCodec for GlueIdCodec {
 
     fn decode(word: u64) -> Self::Value {
         GlueId::new(decode_u32(word))
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct FontIdCodec;
+
+impl BankCodec for FontIdCodec {
+    type Value = FontId;
+
+    fn encode(value: Self::Value) -> u64 {
+        u64::from(value.raw())
+    }
+
+    fn decode(word: u64) -> Self::Value {
+        FontId::new(decode_u32(word))
     }
 }
 

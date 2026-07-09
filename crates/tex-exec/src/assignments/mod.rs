@@ -14,6 +14,7 @@ use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::GlueId;
 use tex_state::interner::Symbol;
+use tex_state::math::MathFontSize;
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
@@ -36,18 +37,22 @@ mod tokens;
 mod variables;
 
 use arithmetic::*;
+pub(crate) use boxes::scan_box_group;
 use boxes::*;
 use fonts::*;
 use hmode::*;
 pub(crate) use hmode::{append_given_char, flush_pending_hchars, try_append_character};
 use hyphenation::*;
 use macros::*;
+pub(crate) use paragraph::ensure_horizontal_for_character;
 use paragraph::*;
 pub use primitives::install_unexpandable_primitives;
 use scanning::*;
+pub(crate) use scanning::{next_non_space_x, scan_glue_id, scan_i32, scan_scaled};
 pub(crate) use shipout::shipout_node;
 use shipout::*;
 use tokens::*;
+pub(crate) use tokens::{is_begin_group, is_end_group, is_space};
 use variables::*;
 
 /// Executes a delivered token if it is an assignment/prefix primitive.
@@ -328,6 +333,12 @@ where
                 execute_font_definition(prefixes, input, stores, hooks)?;
                 Ok(CommandOutcome::assigned())
             }
+            UnexpandablePrimitive::TextFont
+            | UnexpandablePrimitive::ScriptFont
+            | UnexpandablePrimitive::ScriptScriptFont => {
+                execute_math_family_font_assignment(primitive, prefixes, input, stores, hooks)?;
+                Ok(CommandOutcome::assigned())
+            }
             UnexpandablePrimitive::FontDimen
             | UnexpandablePrimitive::HyphenChar
             | UnexpandablePrimitive::SkewChar => {
@@ -523,6 +534,44 @@ where
                 reject_all_prefixes(prefixes)?;
                 diagnostics::execute_ignorespaces(input, stores)?;
                 Ok(CommandOutcome::continue_only())
+            }
+            UnexpandablePrimitive::MathChar
+            | UnexpandablePrimitive::Delimiter
+            | UnexpandablePrimitive::MathOrd
+            | UnexpandablePrimitive::MathOp
+            | UnexpandablePrimitive::MathBin
+            | UnexpandablePrimitive::MathRel
+            | UnexpandablePrimitive::MathOpen
+            | UnexpandablePrimitive::MathClose
+            | UnexpandablePrimitive::MathPunct
+            | UnexpandablePrimitive::MathInner
+            | UnexpandablePrimitive::Underline
+            | UnexpandablePrimitive::Overline
+            | UnexpandablePrimitive::Limits
+            | UnexpandablePrimitive::NoLimits
+            | UnexpandablePrimitive::DisplayLimits
+            | UnexpandablePrimitive::Over
+            | UnexpandablePrimitive::Atop
+            | UnexpandablePrimitive::Above
+            | UnexpandablePrimitive::OverWithDelims
+            | UnexpandablePrimitive::AtopWithDelims
+            | UnexpandablePrimitive::AboveWithDelims
+            | UnexpandablePrimitive::Radical
+            | UnexpandablePrimitive::MathAccent
+            | UnexpandablePrimitive::VCenter
+            | UnexpandablePrimitive::MSkip
+            | UnexpandablePrimitive::MKern
+            | UnexpandablePrimitive::NonScript
+            | UnexpandablePrimitive::MathChoice
+            | UnexpandablePrimitive::DisplayStyle
+            | UnexpandablePrimitive::TextStyle
+            | UnexpandablePrimitive::ScriptStyle
+            | UnexpandablePrimitive::ScriptScriptStyle => {
+                Err(ExecError::UnimplementedTypesetting {
+                    mode: nest.current_mode(),
+                    token: Token::Cs(stores.intern(&format!("{primitive:?}"))),
+                    operation: "math primitive",
+                })
             }
             UnexpandablePrimitive::Global
             | UnexpandablePrimitive::Long

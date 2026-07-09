@@ -110,6 +110,12 @@ fn node_width<S: TypesetState>(state: &S, node: &Node) -> Widths {
         | Node::Whatsit(_)
         | Node::MathOn
         | Node::MathOff
+        | Node::MathNoad(_)
+        | Node::FractionNoad(_)
+        | Node::MathStyle(_)
+        | Node::MathChoice(_)
+        | Node::MathList(_)
+        | Node::Nonscript
         | Node::Adjust(_) => {}
     }
     widths

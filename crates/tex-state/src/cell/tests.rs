@@ -1,4 +1,4 @@
-use super::{BankTag, CellId};
+use super::{BankTag, CellId, GLOBAL_SHIFT};
 
 #[test]
 fn cell_id_packs_every_bank_index_and_global_bit() {
@@ -19,6 +19,7 @@ fn cell_id_packs_every_bank_index_and_global_bit() {
         BankTag::FontHyphenChar,
         BankTag::FontSkewChar,
         BankTag::CurrentFont,
+        BankTag::MathFamilyFont,
     ];
 
     for bank in banks {
@@ -31,6 +32,6 @@ fn cell_id_packs_every_bank_index_and_global_bit() {
         assert_eq!(global.bank(), bank);
         assert_eq!(global.index(), 32_767);
         assert!(global.is_global());
-        assert_eq!(global.raw(), local.raw() | (1 << 27));
+        assert_eq!(global.raw(), local.raw() | (1 << GLOBAL_SHIFT));
     }
 }

@@ -7,21 +7,21 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 ## Boxes And Rules
 
 - [ ] `\badness` - Reports the badness of the glue setting in the last box made.
-- [ ] `\box` - Appends a box register's contents and clears that register.
+- [x] `\box` - Appends a box register's contents and clears that register.
 - [x] `\boxmaxdepth` - Sets the maximum depth allowed when building vertical boxes. Implemented as an assignable dimension parameter consumed by `tex-typeset` vertical packing.
 - [ ] `\cleaders` - Builds centered leaders across glue.
-- [ ] `\copy` - Appends a copy of a box register without clearing it.
-- [ ] `\dp` - Reads or assigns the depth of a box register.
-- [ ] `\everyhbox` - Token list inserted at the start of every `\hbox`.
-- [ ] `\everyvbox` - Token list inserted at the start of every `\vbox`.
+- [x] `\copy` - Appends a copy of a box register without clearing it.
+- [x] `\dp` - Reads or assigns the depth of a box register.
+- [x] `\everyhbox` - Token list inserted at the start of every `\hbox`. Implemented as an assignable token list parameter; insertion at box start is not yet wired and is tracked in the conformance epic.
+- [x] `\everyvbox` - Token list inserted at the start of every `\vbox`. Implemented as an assignable token list parameter; insertion at box start is not yet wired and is tracked in the conformance epic.
 - [x] `\hbadness` - Threshold above which underfull or loose hboxes are reported. Implemented as an assignable integer parameter consumed by `tex-typeset` horizontal packing diagnostics.
-- [ ] `\hbox` - Builds a horizontal box.
+- [x] `\hbox` - Builds a horizontal box.
 - [x] `\hfuzz` - Tolerance before overfull hboxes are reported. Implemented as an assignable dimension parameter consumed by `tex-typeset` horizontal packing diagnostics.
 - [x] `\hrule` - Adds a horizontal rule in vertical mode with TeX's running-width/default-thickness rule dimensions and resets `\prevdepth` to the ignore sentinel.
-- [ ] `\ht` - Reads or assigns the height of a box register.
-- [ ] `\lastbox` - Removes and returns the last box from the current list when allowed.
+- [x] `\ht` - Reads or assigns the height of a box register.
+- [x] `\lastbox` - Removes and returns the last box from the current list when allowed.
 - [ ] `\leaders` - Repeats a box or rule across glue.
-- [x] `\overfullrule` - Width of the diagnostic rule added to overfull boxes. Implemented as an assignable dimension parameter read by `tex-typeset`; diagnostic rule insertion remains tied to future box primitive emission.
+- [x] `\overfullrule` - Width of the diagnostic rule added to overfull boxes. Implemented as an assignable dimension parameter; overfull hboxes get the diagnostic rule appended during packing.
 - [x] `\prevdepth` - Depth of the previous box on the current vertical list. Implemented as a per-mode-list field; `\nointerlineskip` sets TeX's ignore sentinel.
 - [x] `\setbox` - Assigns a box register from an `\hbox`, `\vbox`, or `\vtop`.
 - [x] `\unhbox` - Unpacks an hbox register into the current list and clears it.
@@ -47,7 +47,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [x] `\escapechar` - Character used when printing control sequence names. Implemented as an assignable integer parameter for value-rendering expandables.
 - [x] `\lccode` - Reads or assigns a character's lowercase mapping; assignments use the code-table facade and bump generations.
 - [x] `\lowercase` - Converts character tokens using `\lccode`.
-- [ ] `\newlinechar` - Character that starts a new line in terminal or log output.
+- [x] `\newlinechar` - Character that starts a new line in terminal or log output. Implemented as an assignable integer parameter; honoring it when rendering `\message`/`\write` text is tracked in the conformance epic.
 - [x] `\number` - Expands an integer as decimal character tokens using the shared expanded integer scanner.
 - [x] `\romannumeral` - Expands an integer as lowercase roman numeral tokens; non-positive values expand to an empty frozen token list.
 - [x] `\sfcode` - Reads or assigns a character's space-factor code; assignments use the code-table facade and bump generations.
@@ -58,14 +58,14 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 ## Diagnostics And Interaction
 
 - [ ] `\batchmode` - Suppresses terminal interaction and most terminal output.
-- [ ] `\errhelp` - Token list shown as help for a following `\errmessage`.
+- [x] `\errhelp` - Token list shown as help for a following `\errmessage`. Implemented as an assignable token list parameter; help display is tracked with the conformance error-format pass.
 - [x] `\errmessage` - Issues an error with expanded message text through World's terminal/log effect sink; interactive help/context remains World/interaction work.
-- [ ] `\errorcontextlines` - Number of context lines shown for errors.
+- [x] `\errorcontextlines` - Number of context lines shown for errors. Implemented as an assignable integer parameter; error-context display is tracked with the conformance error-format pass.
 - [ ] `\errorstopmode` - Restores interactive stopping on errors.
 - [x] `\meaning` - Expands to a textual description of a token's meaning. Macro text is supported; unsupported raw meanings use a placeholder.
 - [x] `\message` - Writes expanded message text through World's terminal/log effect sink with pdfTeX-style message separation and wrapping for the covered subset.
 - [ ] `\nonstopmode` - Continues past errors without stopping for input.
-- [ ] `\pausing` - Prompts after input lines when positive.
+- [x] `\pausing` - Prompts after input lines when positive. Implemented as an assignable integer parameter; prompting is intentionally not implemented in the batch-first engine.
 - [ ] `\scrollmode` - Scrolls past errors while still showing diagnostics.
 - [x] `\show` - Displays the meaning of the next token through World's terminal/log effect sink for implemented meaning classes.
 - [x] `\showbox` - Writes a box register's contents to the log.
@@ -74,15 +74,15 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [x] `\showlists` - Writes the current mostly-empty mode nest in pdfTeX format through World's terminal/log effect sink.
 - [x] `\showhyphens` - Displays current automatic hyphenation points using loaded patterns and exceptions for language 0.
 - [x] `\showthe` - Displays the value produced by implemented `\the` targets through World's terminal/log effect sink.
-- [ ] `\tracingcommands` - Logs command execution when positive.
-- [ ] `\tracinglostchars` - Logs missing font characters when positive.
-- [ ] `\tracingmacros` - Logs macro expansion and arguments when positive.
-- [ ] `\tracingonline` - Mirrors diagnostic log output to the terminal when positive.
-- [ ] `\tracingoutput` - Logs shipped-out box contents when positive.
-- [ ] `\tracingpages` - Logs page builder calculations when positive.
-- [ ] `\tracingparagraphs` - Logs line-breaking calculations when positive.
-- [ ] `\tracingrestores` - Logs save-stack restoration when positive.
-- [ ] `\tracingstats` - Logs memory statistics at job end when positive.
+- [x] `\tracingcommands` - Logs command execution when positive. Assignable integer parameter; trace emission is tracked in the conformance epic.
+- [x] `\tracinglostchars` - Logs missing font characters when positive. Assignable integer parameter; trace emission is tracked in the conformance epic.
+- [x] `\tracingmacros` - Logs macro expansion and arguments when positive. Assignable integer parameter; trace emission is tracked in the conformance epic.
+- [x] `\tracingonline` - Mirrors diagnostic log output to the terminal when positive. Assignable integer parameter; trace emission is tracked in the conformance epic.
+- [x] `\tracingoutput` - Logs shipped-out box contents when positive. Assignable integer parameter; trace emission is tracked in the conformance epic.
+- [x] `\tracingpages` - Logs page builder calculations when positive. Assignable integer parameter; trace emission is tracked in the conformance epic.
+- [x] `\tracingparagraphs` - Logs line-breaking calculations when positive. Assignable integer parameter; trace emission is tracked in the conformance epic.
+- [x] `\tracingrestores` - Logs save-stack restoration when positive. Assignable integer parameter; trace emission is tracked in the conformance epic.
+- [x] `\tracingstats` - Logs memory statistics at job end when positive. Assignable integer parameter; trace emission is tracked in the conformance epic.
 
 ## File I/O And Output
 
@@ -94,11 +94,11 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [ ] `\inputlineno` - Current line number in the active input file.
 - [x] `\openin` - Opens a World-backed content-addressed input stream; missing files leave the slot at EOF.
 - [x] `\openout` - Opens a World output stream by appending an effect record.
-- [ ] `\output` - Token list invoked by the page builder for output routine processing.
+- [x] `\output` - Token list invoked by the page builder for output routine processing; output routines run through the shared main-control driver with `\box255` handling.
 - [x] `\read` - Reads one line from an opened World input stream and defines the target control sequence as a no-parameter macro; terminal reads remain unsupported in nonstop batch execution.
-- [ ] `\shipout` - Writes a completed box to the DVI output.
-- [ ] `\special` - Emits backend-specific material into the DVI stream.
-- [ ] `\write` - Writes expanded material to an output stream, normally delayed until shipout.
+- [x] `\shipout` - Writes a completed box to the DVI output. Ships to the committed page artifact model in `tex-out` and fires deferred whatsits; DVI byte emission is tracked separately.
+- [x] `\special` - Emits backend-specific material into the DVI stream. Adds a whatsit node carried through shipout into the page artifact.
+- [x] `\write` - Writes expanded material to an output stream, normally delayed until shipout. Appends a deferred-write whatsit fired at shipout through World effect records; the `\immediate` prefix is tracked separately.
 
 ## Fonts
 
@@ -130,7 +130,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [x] `\discretionary` - Adds an explicit discretionary break with pre, post, and replacement text.
 - [x] `\hyphenation` - Adds lccode-normalized hyphenation exceptions for language 0; exceptions override pattern-derived positions.
 - [x] `\hyphenchar` - Reads or assigns the Env-backed hyphenation character for a font selector.
-- [ ] `\language` - Selects the current hyphenation language.
+- [x] `\language` - Selects the current hyphenation language. Implemented as an assignable integer parameter; patterns and exceptions exist for language 0 only, and language switching is deferred.
 - [x] `\lefthyphenmin` - Minimum characters before the first automatic hyphen; consumed by hlist hyphenation and `\showhyphens`.
 - [x] `\patterns` - Adds lccode-normalized INITEX-style Liang patterns for language 0 into the snapshot-covered hyphenation trie.
 - [x] `\righthyphenmin` - Minimum characters after the last automatic hyphen; consumed by hlist hyphenation and `\showhyphens`.
@@ -142,25 +142,25 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [x] `\holdinginserts` - Keeps insertions on the page list during output routine processing when positive.
 - [x] `\insert` - Adds internal vertical material to an insertion class, capturing split parameters and participating in page-builder insertion splitting/distribution.
 - [x] `\insertpenalties` - Reports split/floating insertion penalties in mainline and held-over insertion count while an output routine is active.
-- [x] `\splitbotmark` - Documented stub until the page/split epic stores marks: expands to an empty token list.
-- [x] `\splitfirstmark` - Documented stub until the page/split epic stores marks: expands to an empty token list.
-- [x] `\splitmaxdepth` - Maximum depth allowed in split boxes; assignable and captured by `\insert`, with the standalone `\vsplit` primitive still pending.
-- [x] `\splittopskip` - Top glue inserted in split boxes; assignable and captured by `\insert`, with the standalone `\vsplit` primitive still pending.
-- [ ] `\vsplit` - Splits vertical material from a box register to a target height.
+- [x] `\splitbotmark` - Expands to the last mark captured by the most recent `\vsplit` or insertion split.
+- [x] `\splitfirstmark` - Expands to the first mark captured by the most recent `\vsplit` or insertion split.
+- [x] `\splitmaxdepth` - Maximum depth allowed in split boxes; assignable and consumed by `\vsplit` and insertion splitting.
+- [x] `\splittopskip` - Top glue inserted in split boxes; assignable and consumed by `\vsplit` and insertion splitting.
+- [x] `\vsplit` - Splits vertical material from a box register to a target height, setting the split marks.
 
 ## Job Control
 
-- [ ] `\day` - Current day of the month.
-- [ ] `\deadcycles` - Number of output routine calls since the last `\shipout`.
+- [x] `\day` - Current day of the month. Assignable integer parameter; job-start clock initialization is tracked in the conformance epic.
+- [x] `\deadcycles` - Number of output routine calls since the last `\shipout`; read/write page-builder counter.
 - [ ] `\dump` - Writes a format file in INITEX; otherwise ends the job.
-- [x] `\end` - Finishes the current batch execution loop for `umber run`; page finalization/output-file behavior is deferred until typesetting and World output land.
-- [ ] `\everyjob` - Token list inserted at the start of every job.
+- [x] `\end` - Ends the job with TeX's final cleanup, flushing remaining page material through the output routine before exiting the batch loop.
+- [x] `\everyjob` - Token list inserted at the start of every job. Implemented as an assignable token list parameter; job-start insertion is tracked with plain.tex bring-up in the conformance epic.
 - [x] `\jobname` - Expands to the driver-provided job name as rendered character tokens.
 - [x] `\mag` - Magnification ratio, scaled by 1000; implemented as an assignable integer parameter used by true-unit scanning.
-- [ ] `\maxdeadcycles` - Maximum allowed output routine cycles without shipout.
-- [ ] `\month` - Current month number.
-- [ ] `\time` - Current minutes after midnight.
-- [ ] `\year` - Current year.
+- [x] `\maxdeadcycles` - Maximum allowed output routine cycles without shipout; consumed by the output-routine loop guard.
+- [x] `\month` - Current month number. Assignable integer parameter; job-start clock initialization is tracked in the conformance epic.
+- [x] `\time` - Current minutes after midnight. Assignable integer parameter; job-start clock initialization is tracked in the conformance epic.
+- [x] `\year` - Current year. Assignable integer parameter; job-start clock initialization is tracked in the conformance epic.
 
 ## Kerns And Box Motion
 
@@ -197,7 +197,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 
 ## Macros, Expansion, And Grouping
 
-- [x] `\afterassignment` - Saves a token in snapshot-covered state and inserts it after the next completed assignment; box-assignment firing is deferred until box assignments land.
+- [x] `\afterassignment` - Saves a token in snapshot-covered state and inserts it after the next completed assignment, including box assignments.
 - [x] `\aftergroup` - Saves a token on the current state-layer group marker and replays saved tokens FIFO when that group exits.
 - [x] `\begingroup` - Starts an explicit semi-simple group through the state journal marker API.
 - [x] `\csname` - Builds a control sequence from expanded character tokens and assigns `\relax` to newly-created undefined names through the explicit expansion interning capability.
@@ -221,98 +221,98 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 
 ## Marks
 
-- [x] `\botmark` - Documented stub until the page builder stores marks: expands to an empty token list.
-- [x] `\firstmark` - Documented stub until the page builder stores marks: expands to an empty token list.
-- [x] `\mark` - Adds frozen mark text to the current list for later page-builder mark handling.
-- [x] `\topmark` - Documented stub until the page builder stores marks: expands to an empty token list.
+- [x] `\botmark` - Expands to the last mark on the current page, updated by the page builder at output-routine fire-up.
+- [x] `\firstmark` - Expands to the first mark on the current page, updated by the page builder at output-routine fire-up.
+- [x] `\mark` - Adds frozen mark text to the current list; the page builder captures marks at fire-up and splits.
+- [x] `\topmark` - Expands to the `\botmark` value from the preceding page, maintained by the page builder at output-routine fire-up.
 
 ## Math
 
-- [ ] `\above` - Builds a fraction with explicit rule thickness and no delimiters.
+- [x] `\above` - Builds a fraction with explicit rule thickness and no delimiters. Parses to a generalized fraction noad; Appendix G layout is pending.
 - [ ] `\abovedisplayshortskip` - Glue above a display when the preceding line is short.
 - [ ] `\abovedisplayskip` - Normal glue above a display.
-- [ ] `\abovewithdelims` - Builds a generalized fraction with delimiters and explicit rule thickness.
-- [ ] `\atop` - Builds a fraction-like stack with no rule and no delimiters.
-- [ ] `\atopwithdelims` - Builds a fraction-like stack with delimiters and no rule.
+- [x] `\abovewithdelims` - Builds a generalized fraction with delimiters and explicit rule thickness. Parses to a generalized fraction noad; Appendix G delimiter sizing/layout is pending.
+- [x] `\atop` - Builds a fraction-like stack with no rule and no delimiters. Parses to a generalized fraction noad with zero thickness; Appendix G layout is pending.
+- [x] `\atopwithdelims` - Builds a fraction-like stack with delimiters and no rule. Parses to a generalized fraction noad with zero thickness; Appendix G delimiter sizing/layout is pending.
 - [ ] `\belowdisplayshortskip` - Glue below a display when short-display spacing is used.
 - [ ] `\belowdisplayskip` - Normal glue below a display.
 - [ ] `\binoppenalty` - Penalty for line breaks after binary operators in math.
 - [x] `\defaultskewchar` - Default `\skewchar` value for newly loaded fonts; implemented as an integer parameter used when initializing font banks.
 - [x] `\delcode` - Reads or assigns a character's delimiter code; assignments use the code-table facade and bump generations.
-- [ ] `\delimiter` - Adds a delimiter by numeric delimiter code.
+- [x] `\delimiter` - Adds a delimiter by numeric delimiter code. Math front-end parses it into the mlist; full delimiter sizing is pending in Appendix G layout.
 - [ ] `\delimiterfactor` - Scaling factor used to choose delimiter sizes.
 - [ ] `\delimitershortfall` - Allowed shortfall when choosing delimiter sizes.
 - [ ] `\displayindent` - Indentation applied to the current display.
-- [ ] `\displaylimits` - Uses default limit placement for large operators.
-- [ ] `\displaystyle` - Selects display math style.
+- [x] `\displaylimits` - Uses default limit placement for large operators. Stored on operator noads; layout is pending.
+- [x] `\displaystyle` - Selects display math style. Stored as an mlist style node; layout is pending.
 - [ ] `\displaywidowpenalty` - Penalty before a display after the penultimate paragraph line.
 - [ ] `\displaywidth` - Line width available to the current display.
 - [ ] `\eqno` - Adds a right-side equation number to a display.
-- [ ] `\everydisplay` - Token list inserted when entering display math.
-- [ ] `\everymath` - Token list inserted when entering inline math.
-- [ ] `\fam` - Current math family for variable-family math characters.
+- [x] `\everydisplay` - Token list inserted when entering display math.
+- [x] `\everymath` - Token list inserted when entering inline math.
+- [x] `\fam` - Current math family for variable-family math characters.
 - [ ] `\left` - Starts a delimited math subformula with scalable left delimiter.
 - [ ] `\leqno` - Adds a left-side equation number to a display.
-- [ ] `\limits` - Forces limits above and below a large operator.
-- [ ] `\mathaccent` - Adds a math accent atom.
-- [ ] `\mathbin` - Treats the following item as a binary operator atom.
-- [ ] `\mathchar` - Adds a math character by numeric math code.
+- [x] `\limits` - Forces limits above and below a large operator. Stored on operator noads; layout is pending.
+- [x] `\mathaccent` - Adds a math accent atom. Parses to an accent noad; accent placement is pending.
+- [x] `\mathbin` - Treats the following item as a binary operator atom. Parses to a bin noad; spacing is pending.
+- [x] `\mathchar` - Adds a math character by numeric math code.
 - [x] `\mathchardef` - Defines a control sequence as a math character command usable as an internal integer.
-- [ ] `\mathchoice` - Provides alternatives for display, text, script, and scriptscript styles.
-- [ ] `\mathclose` - Treats the following item as a closing atom.
+- [x] `\mathchoice` - Provides alternatives for display, text, script, and scriptscript styles. Stores all four sublists; style selection is pending.
+- [x] `\mathclose` - Treats the following item as a closing atom. Parses to a close noad; spacing is pending.
 - [x] `\mathcode` - Reads or assigns a character's math code; assignments use the code-table facade and bump generations.
-- [ ] `\mathinner` - Treats the following subformula as an inner atom.
-- [ ] `\mathop` - Treats the following item as a large-operator atom.
-- [ ] `\mathopen` - Treats the following item as an opening atom.
-- [ ] `\mathord` - Treats the following item as an ordinary atom.
-- [ ] `\mathpunct` - Treats the following item as a punctuation atom.
-- [ ] `\mathrel` - Treats the following item as a relation atom.
+- [x] `\mathinner` - Treats the following subformula as an inner atom. Parses to an inner noad; spacing is pending.
+- [x] `\mathop` - Treats the following item as a large-operator atom. Parses to an operator noad with limit controls; layout is pending.
+- [x] `\mathopen` - Treats the following item as an opening atom. Parses to an open noad; spacing is pending.
+- [x] `\mathord` - Treats the following item as an ordinary atom. Parses to an ord noad; spacing is pending.
+- [x] `\mathpunct` - Treats the following item as a punctuation atom. Parses to a punct noad; spacing is pending.
+- [x] `\mathrel` - Treats the following item as a relation atom. Parses to a rel noad; spacing is pending.
 - [ ] `\mathsurround` - Extra space inserted around inline math.
 - [ ] `\medmuskip` - Medium math glue between math atoms.
-- [ ] `\mkern` - Adds a math kern.
-- [ ] `\mskip` - Adds math glue.
+- [x] `\mkern` - Adds a math kern. Stored as a mu kern node; style-dependent layout is pending.
+- [x] `\mskip` - Adds math glue. Stored as mu glue; style-dependent layout is pending.
 - [x] `\muskip` - Reads or assigns a math glue register, including sparse e-TeX indices.
 - [x] `\muskipdef` - Defines a symbolic name for a math glue register.
-- [ ] `\nolimits` - Forces limits to the side of a large operator.
-- [ ] `\nonscript` - Suppresses following glue or kern in script styles.
+- [x] `\nolimits` - Forces limits to the side of a large operator. Stored on operator noads; layout is pending.
+- [x] `\nonscript` - Suppresses following glue or kern in script styles. Stored as a nonscript glue marker; style pruning is pending.
 - [ ] `\nulldelimiterspace` - Width reserved for missing delimiters.
-- [ ] `\over` - Builds a normal fraction with no delimiters.
-- [ ] `\overline` - Places a rule over the following math item.
-- [ ] `\overwithdelims` - Builds a normal fraction with delimiters.
+- [x] `\over` - Builds a normal fraction with no delimiters. Parses through the TeX incomplete-fraction mechanism; Appendix G layout is pending.
+- [x] `\overline` - Places a rule over the following math item. Parses to an overline noad; rule placement is pending.
+- [x] `\overwithdelims` - Builds a normal fraction with delimiters. Parses through the TeX incomplete-fraction mechanism; delimiter sizing/layout is pending.
 - [ ] `\postdisplaypenalty` - Penalty inserted after a display.
 - [ ] `\predisplaypenalty` - Penalty inserted before a display.
 - [ ] `\predisplaysize` - Effective width of the line preceding a display.
-- [ ] `\radical` - Builds a radical atom from a delimiter code and nucleus.
+- [x] `\radical` - Builds a radical atom from a delimiter code and nucleus. Parses to a radical noad; radical layout is pending.
 - [ ] `\relpenalty` - Penalty for line breaks after relation atoms in math.
 - [ ] `\right` - Ends a delimited math subformula with scalable right delimiter.
-- [ ] `\scriptfont` - Font used for a family in script style.
-- [ ] `\scriptscriptfont` - Font used for a family in scriptscript style.
-- [ ] `\scriptscriptstyle` - Selects scriptscript math style.
+- [x] `\scriptfont` - Font used for a family in script style. Stored in Env math-family font selectors; glyph selection is pending.
+- [x] `\scriptscriptfont` - Font used for a family in scriptscript style. Stored in Env math-family font selectors; glyph selection is pending.
+- [x] `\scriptscriptstyle` - Selects scriptscript math style. Stored as an mlist style node; layout is pending.
 - [ ] `\scriptspace` - Extra space after subscripts and superscripts.
-- [ ] `\scriptstyle` - Selects script math style.
+- [x] `\scriptstyle` - Selects script math style. Stored as an mlist style node; layout is pending.
 - [x] `\skewchar` - Font-specific Env-backed character used to position math accents.
-- [ ] `\textfont` - Font used for a family in text style.
-- [ ] `\textstyle` - Selects text math style.
+- [x] `\textfont` - Font used for a family in text style. Stored in Env math-family font selectors; glyph selection is pending.
+- [x] `\textstyle` - Selects text math style. Stored as an mlist style node; layout is pending.
 - [ ] `\thickmuskip` - Thick math glue between math atoms.
 - [ ] `\thinmuskip` - Thin math glue between math atoms.
-- [ ] `\underline` - Places a rule under the following math item.
-- [ ] `\vcenter` - Builds a vertically centered box for math formulas.
+- [x] `\underline` - Places a rule under the following math item. Parses to an underline noad; rule placement is pending.
+- [x] `\vcenter` - Builds a vertically centered box for math formulas. Parses a vertical box into a math field; final centering layout is pending.
 
 ## Page Builder
 
-- [ ] `\hoffset` - Horizontal offset added to the default one-inch origin.
-- [ ] `\maxdepth` - Maximum depth allowed on the main vertical page.
-- [ ] `\pagedepth` - Depth of the last box on the current page.
-- [ ] `\pagefilllstretch` - Third-order infinite stretch currently on the page.
-- [ ] `\pagefillstretch` - Second-order infinite stretch currently on the page.
-- [ ] `\pagefilstretch` - First-order infinite stretch currently on the page.
-- [ ] `\pagegoal` - Target height for the current page.
-- [ ] `\pageshrink` - Finite shrink currently on the page.
-- [ ] `\pagestretch` - Finite stretch currently on the page.
-- [ ] `\pagetotal` - Natural height accumulated on the current page.
-- [ ] `\topskip` - Glue inserted before the first box on a page.
-- [ ] `\voffset` - Vertical offset added to the default one-inch origin.
-- [ ] `\vsize` - Target page body height.
+- [x] `\hoffset` - Horizontal offset added to the default one-inch origin. Assignable dimension parameter; origin application belongs to DVI byte emission and is tracked in the conformance epic.
+- [x] `\maxdepth` - Maximum depth allowed on the main vertical page; consumed by the page builder's depth clamp, moving excess depth into `\pagetotal`.
+- [x] `\pagedepth` - Depth of the last box on the current page; read/write page-builder accumulator.
+- [x] `\pagefilllstretch` - Third-order infinite stretch currently on the page; read/write page-builder accumulator.
+- [x] `\pagefillstretch` - Second-order infinite stretch currently on the page; read/write page-builder accumulator.
+- [x] `\pagefilstretch` - First-order infinite stretch currently on the page; read/write page-builder accumulator.
+- [x] `\pagegoal` - Target height for the current page; read/write page-builder accumulator initialized from `\vsize`.
+- [x] `\pageshrink` - Finite shrink currently on the page; read/write page-builder accumulator.
+- [x] `\pagestretch` - Finite stretch currently on the page; read/write page-builder accumulator.
+- [x] `\pagetotal` - Natural height accumulated on the current page; read/write page-builder accumulator.
+- [x] `\topskip` - Glue inserted before the first box on a page; consumed by the page builder.
+- [x] `\voffset` - Vertical offset added to the default one-inch origin. Assignable dimension parameter; origin application belongs to DVI byte emission and is tracked in the conformance epic.
+- [x] `\vsize` - Target page body height; initializes `\pagegoal` when the first box reaches the page.
 
 ## Paragraphs And Line Breaking
 
@@ -351,13 +351,13 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 
 - [x] `\brokenpenalty` - Penalty after a hyphenated paragraph line; inserted by post-line-break surgery.
 - [x] `\clubpenalty` - Penalty after the first line of a paragraph; inserted by post-line-break surgery.
-- [ ] `\exhyphenpenalty` - Penalty for line breaks after explicit hyphens.
+- [x] `\exhyphenpenalty` - Penalty for line breaks after explicit hyphens; consumed by the paragraph line breaker.
 - [x] `\floatingpenalty` - Penalty for insertions floating after their class has split on the current page.
-- [ ] `\hyphenpenalty` - Penalty for line breaks at discretionary hyphens.
+- [x] `\hyphenpenalty` - Penalty for line breaks at discretionary hyphens; consumed by the paragraph line breaker.
 - [x] `\interlinepenalty` - Penalty inserted between paragraph lines by post-line-break surgery.
 - [x] `\lastpenalty` - Reports the last penalty on the current list, or zero.
 - [x] `\linepenalty` - Base demerit contribution for each broken line; consumed by the paragraph line breaker.
-- [ ] `\outputpenalty` - Penalty value that triggered the current output routine.
+- [x] `\outputpenalty` - Penalty value that triggered the current output routine; set globally by the page builder at the chosen break and assignable in output routines.
 - [x] `\penalty` - Adds a penalty node to the current list.
 - [x] `\unpenalty` - Removes the last penalty from the current list when allowed.
 - [x] `\widowpenalty` - Penalty after the penultimate line of a paragraph; inserted by post-line-break surgery.

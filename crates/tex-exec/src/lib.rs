@@ -11,6 +11,7 @@ mod diagnostics;
 mod dispatch;
 mod error;
 mod executor;
+mod math;
 mod mode;
 mod node_dump;
 mod output;

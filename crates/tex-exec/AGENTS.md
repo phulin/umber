@@ -39,6 +39,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/error.rs`: execution error enum, conversions, and display text.
 - `src/executor.rs`: `Executor` run loop and expansion-hook integration for engine mode and recovery.
 - `src/lib.rs`: public crate surface and module wiring for the TeX execution engine.
+- `src/math/`: math-mode stomach front-end that builds frozen mlists, noads, fractions, choices, styles, and mu nodes.
 - `src/mode.rs`: mode nest, mode summaries, pending horizontal chars, paragraph state, and list metadata.
 - `src/node_dump.rs`: TeX-style node-list dumping used by diagnostic output.
 - `src/output.rs`: output-routine fire-up, `\box255` packaging, held-over material, deadcycle handling, and final `\end` page cleanup.
@@ -52,6 +53,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/tests/groups.rs`: tests for braces, explicit groups, `\globaldefs`, and aftergroup replay.
 - `src/tests/hyphenation.rs`: tests for hyphenation patterns, exceptions, minima, and paragraph hyphenation.
 - `src/tests/io.rs`: tests for input/output streams, reads, writes, immediate effects, and shipout effects.
+- `src/tests/math.rs`: tests for math-mode parsing, noad construction, scripts, fractions, choices, families, and mu material.
 - `src/tests/support.rs`: shared test helpers for seeded fonts, terminal output, and meaning lookup.
 - `src/vertical.rs`: vertical-list appends, baseline skip insertion, prevdepth, and list contribution helpers.
 

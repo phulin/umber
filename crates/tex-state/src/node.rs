@@ -2,6 +2,9 @@
 
 use crate::glue::Order;
 use crate::ids::{FontId, GlueId, NodeListId, TokenListId};
+#[cfg(debug_assertions)]
+use crate::math::MathField;
+use crate::math::{MathChoice, MathFraction, MathListNode, MathNoad, MathStyle};
 use crate::scaled::{GlueSetRatio, Scaled};
 use crate::world::PrintSink;
 
@@ -55,6 +58,12 @@ pub enum Node {
     Whatsit(Whatsit),
     MathOn,
     MathOff,
+    MathNoad(MathNoad),
+    FractionNoad(MathFraction),
+    MathStyle(MathStyle),
+    MathChoice(MathChoice),
+    MathList(MathListNode),
+    Nonscript,
     Adjust(NodeListId),
 }
 
@@ -107,6 +116,7 @@ pub enum KernKind {
     Explicit,
     Font,
     Accent,
+    Mu,
 }
 
 /// The source of a glue node.
@@ -123,6 +133,8 @@ pub enum GlueKind {
     Leaders,
     Cleaders,
     Xleaders,
+    MuSkip,
+    NonScript,
 }
 
 /// The source of a discretionary node.
@@ -167,6 +179,22 @@ impl Node {
                 out.push(*replace);
             }
             Self::Ins { content, .. } | Self::Adjust(content) => out.push(*content),
+            Self::MathNoad(noad) => {
+                push_math_field_child(&noad.nucleus, out);
+                push_math_field_child(&noad.subscript, out);
+                push_math_field_child(&noad.superscript, out);
+            }
+            Self::FractionNoad(fraction) => {
+                out.push(fraction.numerator);
+                out.push(fraction.denominator);
+            }
+            Self::MathChoice(choice) => {
+                out.push(choice.display);
+                out.push(choice.text);
+                out.push(choice.script);
+                out.push(choice.script_script);
+            }
+            Self::MathList(list) => out.push(list.content),
             Self::Char { .. }
             | Self::Lig { .. }
             | Self::Kern { .. }
@@ -177,7 +205,17 @@ impl Node {
             | Self::Mark { .. }
             | Self::Whatsit(_)
             | Self::MathOn
-            | Self::MathOff => {}
+            | Self::MathOff
+            | Self::MathStyle(_)
+            | Self::Nonscript => {}
         }
+    }
+}
+
+#[cfg(debug_assertions)]
+fn push_math_field_child(field: &MathField, out: &mut Vec<NodeListId>) {
+    match field {
+        MathField::SubBox(list) | MathField::SubMlist(list) => out.push(*list),
+        MathField::Empty | MathField::MathChar(_) | MathField::MathTextChar(_) => {}
     }
 }

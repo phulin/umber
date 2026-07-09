@@ -46,6 +46,9 @@ impl Env {
                 restore_font_bank_word(&mut self.font_skew_chars, cell.index(), word);
             }
             BankTag::CurrentFont => self.current_font.word = word,
+            BankTag::MathFamilyFont => self
+                .math_family_fonts
+                .restore_word(u16_index(cell.index()), word),
         }
         #[cfg(feature = "shadow")]
         shadow_set(
@@ -106,6 +109,9 @@ impl Env {
                 .get(&index)
                 .map_or(0, |entry| entry.word),
             BankTag::CurrentFont => self.current_font.word,
+            BankTag::MathFamilyFont => {
+                u64::from(self.math_family_fonts.get(u16_index(index)).raw())
+            }
         }
     }
 
@@ -165,6 +171,8 @@ impl Env {
             .for_each_non_default_word(BankTag::GlueParam, &mut f);
         self.tok_params
             .for_each_non_default_word(BankTag::TokParam, &mut f);
+        self.math_family_fonts
+            .for_each_non_default_word(BankTag::MathFamilyFont, &mut f);
         for_each_font_bank_word(BankTag::FontDimen, &self.font_dimens, &mut f);
         for_each_font_bank_word(BankTag::FontParamLen, &self.font_param_lens, &mut f);
         for_each_font_bank_word(BankTag::FontHyphenChar, &self.font_hyphen_chars, &mut f);

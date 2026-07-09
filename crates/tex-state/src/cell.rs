@@ -1,7 +1,7 @@
 //! Packed environment cell identifiers.
 
-const BANK_SHIFT: u32 = 28;
-const GLOBAL_SHIFT: u32 = 27;
+const BANK_SHIFT: u32 = 27;
+const GLOBAL_SHIFT: u32 = 26;
 const INDEX_MASK: u32 = (1 << GLOBAL_SHIFT) - 1;
 
 /// The bank tag encoded in a [`CellId`].
@@ -24,6 +24,7 @@ pub enum BankTag {
     FontHyphenChar = 13,
     FontSkewChar = 14,
     CurrentFont = 15,
+    MathFamilyFont = 16,
 }
 
 impl BankTag {
@@ -45,25 +46,26 @@ impl BankTag {
             13 => Self::FontHyphenChar,
             14 => Self::FontSkewChar,
             15 => Self::CurrentFont,
+            16 => Self::MathFamilyFont,
             _ => panic!("unknown cell bank tag"),
         }
     }
 }
 
-/// A packed environment cell id: `bank:4 | global:1 | index:27`.
+/// A packed environment cell id: `bank:5 | global:1 | index:26`.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct CellId(u32);
 
 impl CellId {
     #[allow(dead_code)]
     pub(crate) const fn new(bank: BankTag, index: u32) -> Self {
-        assert!(index <= INDEX_MASK, "cell index exceeds 27 bits");
+        assert!(index <= INDEX_MASK, "cell index exceeds 26 bits");
         Self(((bank as u32) << BANK_SHIFT) | index)
     }
 
     #[allow(dead_code)]
     pub(crate) const fn new_global(bank: BankTag, index: u32) -> Self {
-        assert!(index <= INDEX_MASK, "cell index exceeds 27 bits");
+        assert!(index <= INDEX_MASK, "cell index exceeds 26 bits");
         Self(((bank as u32) << BANK_SHIFT) | (1 << GLOBAL_SHIFT) | index)
     }
 

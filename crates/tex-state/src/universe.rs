@@ -22,6 +22,7 @@ use crate::input::{
 };
 use crate::interner::Symbol;
 use crate::macro_store::MacroMeaning;
+use crate::math::MathFontSize;
 use crate::meaning::Meaning;
 use crate::node::Node;
 use crate::node_arena::NodeListBuilder;
@@ -81,6 +82,7 @@ pub trait ExpansionState {
     fn font_skew_char(&self, font: FontId) -> i32;
     fn current_font(&self) -> FontId;
     fn current_font_symbol(&self) -> Option<Symbol>;
+    fn math_family_font(&self, size: MathFontSize, family: u8) -> FontId;
     fn nodes(&self, id: NodeListId) -> &[Node];
     fn box_dimension(&self, index: u16, dimension: BoxDimension) -> Option<Scaled>;
     fn count(&self, index: u16) -> i32;
@@ -851,6 +853,21 @@ impl Universe {
     }
 
     #[must_use]
+    pub fn math_family_font(&self, size: MathFontSize, family: u8) -> FontId {
+        self.stores.math_family_font(size, family)
+    }
+
+    pub fn set_math_family_font(
+        &mut self,
+        size: MathFontSize,
+        family: u8,
+        id: FontId,
+        global: bool,
+    ) {
+        self.stores.set_math_family_font(size, family, id, global);
+    }
+
+    #[must_use]
     pub fn font_dimen(&self, font: FontId, number: u16) -> Scaled {
         self.stores.font_dimen(font, number)
     }
@@ -1283,7 +1300,44 @@ impl Universe {
                 content: self.clone_node_list_to_epoch(content),
             },
             Node::Adjust(content) => Node::Adjust(self.clone_node_list_to_epoch(content)),
+            Node::MathNoad(mut noad) => {
+                noad.nucleus = self.clone_math_field_to_epoch(noad.nucleus);
+                noad.subscript = self.clone_math_field_to_epoch(noad.subscript);
+                noad.superscript = self.clone_math_field_to_epoch(noad.superscript);
+                Node::MathNoad(noad)
+            }
+            Node::FractionNoad(mut fraction) => {
+                fraction.numerator = self.clone_node_list_to_epoch(fraction.numerator);
+                fraction.denominator = self.clone_node_list_to_epoch(fraction.denominator);
+                Node::FractionNoad(fraction)
+            }
+            Node::MathChoice(mut choice) => {
+                choice.display = self.clone_node_list_to_epoch(choice.display);
+                choice.text = self.clone_node_list_to_epoch(choice.text);
+                choice.script = self.clone_node_list_to_epoch(choice.script);
+                choice.script_script = self.clone_node_list_to_epoch(choice.script_script);
+                Node::MathChoice(choice)
+            }
+            Node::MathList(mut list) => {
+                list.content = self.clone_node_list_to_epoch(list.content);
+                Node::MathList(list)
+            }
             node => node,
+        }
+    }
+
+    fn clone_math_field_to_epoch(
+        &mut self,
+        field: crate::math::MathField,
+    ) -> crate::math::MathField {
+        match field {
+            crate::math::MathField::SubBox(list) => {
+                crate::math::MathField::SubBox(self.clone_node_list_to_epoch(list))
+            }
+            crate::math::MathField::SubMlist(list) => {
+                crate::math::MathField::SubMlist(self.clone_node_list_to_epoch(list))
+            }
+            field => field,
         }
     }
 
@@ -1552,6 +1606,10 @@ impl ExpansionState for Universe {
         Self::current_font_symbol(self)
     }
 
+    fn math_family_font(&self, size: MathFontSize, family: u8) -> FontId {
+        Self::math_family_font(self, size, family)
+    }
+
     fn nodes(&self, id: NodeListId) -> &[Node] {
         Self::nodes(self, id)
     }
@@ -1736,6 +1794,10 @@ impl ExpansionState for ExpansionContext<'_> {
 
     fn current_font_symbol(&self) -> Option<Symbol> {
         self.universe.current_font_symbol()
+    }
+
+    fn math_family_font(&self, size: MathFontSize, family: u8) -> FontId {
+        self.universe.math_family_font(size, family)
     }
 
     fn nodes(&self, id: NodeListId) -> &[Node] {

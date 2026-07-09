@@ -1,6 +1,8 @@
 use tex_expand::EngineMode;
 use tex_state::ids::FontId;
 use tex_state::ids::GlueId;
+use tex_state::ids::NodeListId;
+use tex_state::math::FractionThickness;
 use tex_state::node::Node;
 use tex_state::scaled::Scaled;
 
@@ -94,6 +96,7 @@ impl Mode {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ModeList {
     nodes: Vec<Node>,
+    incomplete_fraction: Option<IncompleteFraction>,
     prev_depth: Option<Scaled>,
     prev_graf: i32,
     par_shape: Option<ParagraphShape>,
@@ -106,6 +109,10 @@ impl ModeList {
     #[must_use]
     pub fn nodes(&self) -> &[Node] {
         &self.nodes
+    }
+
+    pub fn take_nodes(&mut self) -> Vec<Node> {
+        std::mem::take(&mut self.nodes)
     }
 
     #[must_use]
@@ -193,12 +200,37 @@ impl ModeList {
     pub fn pop_last_node(&mut self) -> Option<Node> {
         self.nodes.pop()
     }
+
+    pub fn last_node_mut(&mut self) -> Option<&mut Node> {
+        self.nodes.last_mut()
+    }
+
+    #[must_use]
+    pub fn incomplete_fraction(&self) -> Option<&IncompleteFraction> {
+        self.incomplete_fraction.as_ref()
+    }
+
+    pub fn set_incomplete_fraction(&mut self, fraction: IncompleteFraction) {
+        self.incomplete_fraction = Some(fraction);
+    }
+
+    pub fn take_incomplete_fraction(&mut self) -> Option<IncompleteFraction> {
+        self.incomplete_fraction.take()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PendingHChar {
     pub font: FontId,
     pub ch: char,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct IncompleteFraction {
+    pub numerator: NodeListId,
+    pub thickness: FractionThickness,
+    pub left_delimiter: Option<u32>,
+    pub right_delimiter: Option<u32>,
 }
 
 /// Snapshot-summary state for one mode level.

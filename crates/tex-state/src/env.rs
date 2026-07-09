@@ -14,9 +14,9 @@ pub(crate) mod overflow;
 pub(crate) mod raw;
 
 use self::banks::{
-    BankJournalContext, BankSetContext, DENSE_REGISTER_COUNT, DimenParam, FixedBank, GlueIdCodec,
-    GlueParam, I32Codec, IntParam, NodeListIdCodec, PARAMETER_COUNT, ScaledCodec, TokParam,
-    TokenListIdCodec,
+    BankJournalContext, BankSetContext, DENSE_REGISTER_COUNT, DimenParam, FixedBank, FontIdCodec,
+    GlueIdCodec, GlueParam, I32Codec, IntParam, NodeListIdCodec, PARAMETER_COUNT, ScaledCodec,
+    TokParam, TokenListIdCodec,
 };
 use self::overflow::{REGISTER_COUNT, SparseBank};
 use crate::cell::{BankTag, CellId};
@@ -26,6 +26,7 @@ use crate::interner::Symbol;
 #[cfg(test)]
 use crate::journal::JournalPos;
 use crate::journal::{Entry, Journal, UndoRec};
+use crate::math::{MATH_FAMILY_COUNT, MathFontSize};
 use crate::meaning::Meaning;
 use crate::scaled::Scaled;
 use crate::token::Token;
@@ -38,6 +39,7 @@ const SEGMENT_LEN: usize = 1 << SEGMENT_BITS;
 const SEGMENT_MASK: u32 = (SEGMENT_LEN as u32) - 1;
 const FONT_DIMEN_BITS: u32 = 15;
 const FONT_DIMEN_MASK: u32 = (1 << FONT_DIMEN_BITS) - 1;
+const MATH_FAMILY_FONT_COUNT: usize = 3 * MATH_FAMILY_COUNT as usize;
 
 type MeaningSegment = Box<[u64; SEGMENT_LEN]>;
 type StampSegment = Box<[Epoch; SEGMENT_LEN]>;
@@ -158,6 +160,7 @@ pub struct Env {
     font_hyphen_chars: BTreeMap<u32, WordStamp>,
     font_skew_chars: BTreeMap<u32, WordStamp>,
     current_font: WordStamp,
+    math_family_fonts: FixedBank<FontIdCodec, MATH_FAMILY_FONT_COUNT>,
     journal: Journal,
     aftergroup: Vec<Token>,
     afterassignment: Option<Token>,
@@ -195,6 +198,7 @@ impl Env {
             font_hyphen_chars: BTreeMap::new(),
             font_skew_chars: BTreeMap::new(),
             current_font: WordStamp::default(),
+            math_family_fonts: FixedBank::new(),
             journal: Journal::new(),
             aftergroup: Vec::new(),
             afterassignment: None,
@@ -602,6 +606,50 @@ impl Env {
         self.set_current_font_word(pack_current_font(Some(symbol), value), true);
     }
 
+    /// Returns the font selected for a math family and size.
+    #[must_use]
+    pub fn math_family_font(&self, size: MathFontSize, family: u8) -> FontId {
+        self.math_family_fonts
+            .get(math_family_font_index(size, family))
+    }
+
+    /// Sets a local math-family font selector.
+    pub(crate) fn set_math_family_font(&mut self, size: MathFontSize, family: u8, value: FontId) {
+        self.math_family_fonts.set(
+            math_family_font_index(size, family),
+            value,
+            BankSetContext {
+                journal: &mut self.journal,
+                #[cfg(feature = "shadow")]
+                shadow: &mut self.shadow,
+                epoch: self.epoch,
+                bank: BankTag::MathFamilyFont,
+                global: false,
+            },
+        );
+    }
+
+    /// Sets a global math-family font selector.
+    pub(crate) fn set_math_family_font_global(
+        &mut self,
+        size: MathFontSize,
+        family: u8,
+        value: FontId,
+    ) {
+        self.math_family_fonts.set(
+            math_family_font_index(size, family),
+            value,
+            BankSetContext {
+                journal: &mut self.journal,
+                #[cfg(feature = "shadow")]
+                shadow: &mut self.shadow,
+                epoch: self.epoch,
+                bank: BankTag::MathFamilyFont,
+                global: true,
+            },
+        );
+    }
+
     #[must_use]
     pub fn font_dimen(&self, font: FontId, number: u16) -> Scaled {
         Scaled::from_raw(decode_i32(font_bank_word(
@@ -829,6 +877,11 @@ fn font_dimen_index(font: FontId, number: u16) -> u32 {
         "font id exceeds fontdimen cell range"
     );
     (font << FONT_DIMEN_BITS) | (u32::from(number - 1) & FONT_DIMEN_MASK)
+}
+
+fn math_family_font_index(size: MathFontSize, family: u8) -> u16 {
+    assert!(family < MATH_FAMILY_COUNT, "math family index out of range");
+    size.index() * u16::from(MATH_FAMILY_COUNT) + u16::from(family)
 }
 
 fn font_bank_word(map: &BTreeMap<u32, WordStamp>, index: u32) -> u64 {

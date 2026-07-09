@@ -17,4 +17,5 @@ mod grouping_parity;
 mod groups;
 mod hyphenation;
 mod io;
+mod math;
 mod support;

@@ -264,6 +264,7 @@ impl Stores {
             BankTag::FontParamLen => hasher.u16(decode_u16(word)),
             BankTag::FontHyphenChar | BankTag::FontSkewChar => hasher.i32(word as u32 as i32),
             BankTag::CurrentFont => self.hash_current_font_word(word, hasher),
+            BankTag::MathFamilyFont => self.hash_font(FontId::new(decode_u32(word)), hasher),
         }
     }
 
@@ -467,6 +468,70 @@ impl Stores {
             Node::Adjust(content) => {
                 hasher.tag(15);
                 stack.push(NodeFrame::List(content));
+            }
+            Node::MathNoad(noad) => {
+                hasher.tag(16);
+                hash_noad_kind(&noad.kind, hasher);
+                self.hash_math_field(noad.nucleus, hasher, stack);
+                self.hash_math_field(noad.subscript, hasher, stack);
+                self.hash_math_field(noad.superscript, hasher, stack);
+            }
+            Node::FractionNoad(fraction) => {
+                hasher.tag(17);
+                stack.push(NodeFrame::List(fraction.denominator));
+                stack.push(NodeFrame::List(fraction.numerator));
+                hash_fraction_thickness(fraction.thickness, hasher);
+                hash_optional_delimiter(fraction.left_delimiter, hasher);
+                hash_optional_delimiter(fraction.right_delimiter, hasher);
+            }
+            Node::MathStyle(style) => {
+                hasher.tag(18);
+                hasher.u8(match style {
+                    crate::math::MathStyle::Display => 0,
+                    crate::math::MathStyle::Text => 1,
+                    crate::math::MathStyle::Script => 2,
+                    crate::math::MathStyle::ScriptScript => 3,
+                });
+            }
+            Node::MathChoice(choice) => {
+                hasher.tag(19);
+                stack.push(NodeFrame::List(choice.script_script));
+                stack.push(NodeFrame::List(choice.script));
+                stack.push(NodeFrame::List(choice.text));
+                stack.push(NodeFrame::List(choice.display));
+            }
+            Node::MathList(list) => {
+                hasher.tag(20);
+                hasher.u8(u8::from(list.display));
+                stack.push(NodeFrame::List(list.content));
+            }
+            Node::Nonscript => hasher.tag(21),
+        }
+    }
+
+    fn hash_math_field(
+        &self,
+        field: crate::math::MathField,
+        hasher: &mut StateHasher,
+        stack: &mut Vec<NodeFrame>,
+    ) {
+        match field {
+            crate::math::MathField::Empty => hasher.tag(0),
+            crate::math::MathField::MathChar(ch) => {
+                hasher.tag(1);
+                hash_math_char(ch, hasher);
+            }
+            crate::math::MathField::MathTextChar(ch) => {
+                hasher.tag(2);
+                hash_math_char(ch, hasher);
+            }
+            crate::math::MathField::SubBox(list) => {
+                hasher.tag(3);
+                stack.push(NodeFrame::List(list));
+            }
+            crate::math::MathField::SubMlist(list) => {
+                hasher.tag(4);
+                stack.push(NodeFrame::List(list));
             }
         }
     }
@@ -682,6 +747,7 @@ fn hash_kern_kind(kind: KernKind, hasher: &mut StateHasher) {
         KernKind::Explicit => 0,
         KernKind::Font => 1,
         KernKind::Accent => 2,
+        KernKind::Mu => 3,
     });
 }
 
@@ -698,7 +764,71 @@ fn hash_glue_kind(kind: GlueKind, hasher: &mut StateHasher) {
         GlueKind::Leaders => 8,
         GlueKind::Cleaders => 9,
         GlueKind::Xleaders => 10,
+        GlueKind::MuSkip => 11,
+        GlueKind::NonScript => 12,
     });
+}
+
+fn hash_math_char(ch: crate::math::MathChar, hasher: &mut StateHasher) {
+    hasher.u8(ch.family);
+    hasher.u32(ch.character as u32);
+}
+
+fn hash_noad_kind(kind: &crate::math::NoadKind, hasher: &mut StateHasher) {
+    match kind {
+        crate::math::NoadKind::Normal(class) => {
+            hasher.tag(0);
+            hasher.u8(match class {
+                crate::math::NoadClass::Ord => 0,
+                crate::math::NoadClass::Op => 1,
+                crate::math::NoadClass::Bin => 2,
+                crate::math::NoadClass::Rel => 3,
+                crate::math::NoadClass::Open => 4,
+                crate::math::NoadClass::Close => 5,
+                crate::math::NoadClass::Punct => 6,
+                crate::math::NoadClass::Inner => 7,
+            });
+        }
+        crate::math::NoadKind::Operator(limit_type) => {
+            hasher.tag(1);
+            hasher.u8(match limit_type {
+                crate::math::LimitType::DisplayLimits => 0,
+                crate::math::LimitType::Limits => 1,
+                crate::math::LimitType::NoLimits => 2,
+            });
+        }
+        crate::math::NoadKind::Radical { delimiter } => {
+            hasher.tag(2);
+            hasher.u32(*delimiter);
+        }
+        crate::math::NoadKind::Accent { accent } => {
+            hasher.tag(3);
+            hash_math_char(*accent, hasher);
+        }
+        crate::math::NoadKind::Underline => hasher.tag(4),
+        crate::math::NoadKind::Overline => hasher.tag(5),
+        crate::math::NoadKind::VCenter => hasher.tag(6),
+    }
+}
+
+fn hash_fraction_thickness(thickness: crate::math::FractionThickness, hasher: &mut StateHasher) {
+    match thickness {
+        crate::math::FractionThickness::Default => hasher.tag(0),
+        crate::math::FractionThickness::Explicit(value) => {
+            hasher.tag(1);
+            hasher.i32(value.raw());
+        }
+    }
+}
+
+fn hash_optional_delimiter(delimiter: Option<u32>, hasher: &mut StateHasher) {
+    match delimiter {
+        Some(delimiter) => {
+            hasher.bool(true);
+            hasher.u32(delimiter);
+        }
+        None => hasher.bool(false),
+    }
 }
 
 fn hash_sign(sign: Sign, hasher: &mut StateHasher) {
@@ -737,6 +867,7 @@ fn bank_order(bank: BankTag) -> u8 {
         BankTag::FontHyphenChar => 13,
         BankTag::FontSkewChar => 14,
         BankTag::CurrentFont => 15,
+        BankTag::MathFamilyFont => 16,
     }
 }
 

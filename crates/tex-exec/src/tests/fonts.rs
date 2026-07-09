@@ -114,3 +114,25 @@ fn nullfont_the_font_and_fontname_render_from_font_state() {
     assert!(output.contains("B=\\foo |F=cmr10"));
     assert!(output.contains("C=cmr10 at 12.0pt"));
 }
+
+#[test]
+fn math_family_font_selectors_are_grouping_aware() {
+    let mut stores = stores_with_fonts();
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\font\\a=cmr10 \\font\\b=cmtt10 \\textfont2=\\a {\\textfont2=\\b \\scriptfont2=\\b}",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("math family font assignments execute");
+
+    let a = font_meaning(&stores, "a");
+    assert_eq!(
+        stores.math_family_font(tex_state::math::MathFontSize::Text, 2),
+        a
+    );
+    assert_eq!(
+        stores.math_family_font(tex_state::math::MathFontSize::Script, 2),
+        tex_state::font::NULL_FONT
+    );
+}

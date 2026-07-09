@@ -55,7 +55,8 @@ impl ScanDimenOptions {
         self
     }
 
-    pub(crate) const fn requiring_mu_unit(mut self) -> Self {
+    #[must_use]
+    pub const fn requiring_mu_unit(mut self) -> Self {
         self.require_mu_unit = true;
         self
     }

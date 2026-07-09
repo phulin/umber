@@ -7,6 +7,10 @@ use tex_state::Universe;
 use tex_state::env::banks::IntParam;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::{NodeListId, TokenListId};
+use tex_state::math::{
+    FractionThickness, LimitType, MathChar, MathChoice, MathField, MathFraction, MathListNode,
+    MathNoad, MathStyle, NoadClass, NoadKind,
+};
 use tex_state::node::{BoxNode, GlueKind, KernKind, Node, Sign};
 use tex_state::scaled::{GLUE_SET_RATIO_SCALE, GlueSetRatio, Scaled};
 
@@ -78,6 +82,9 @@ fn dump_node(stores: &Universe, node: &Node, config: &DumpConfig, depth: i32, ou
                     format_scaled_without_unit(*amount)
                 );
             }
+            KernKind::Mu => {
+                let _ = writeln!(out, "\\mkern{}mu", format_scaled_without_unit(*amount));
+            }
         },
         Node::Glue { spec, kind } => {
             let _ = writeln!(
@@ -125,7 +132,189 @@ fn dump_node(stores: &Universe, node: &Node, config: &DumpConfig, depth: i32, ou
         }
         Node::MathOn => out.push_str("\\mathon\n"),
         Node::MathOff => out.push_str("\\mathoff\n"),
+        Node::MathNoad(noad) => dump_math_noad(stores, noad, config, depth, out),
+        Node::FractionNoad(fraction) => dump_fraction(stores, fraction, config, depth, out),
+        Node::MathStyle(style) => {
+            let _ = writeln!(out, "\\{}", math_style_name(*style));
+        }
+        Node::MathChoice(choice) => dump_math_choice(stores, choice, config, depth, out),
+        Node::MathList(list) => dump_math_list(stores, list, config, depth, out),
+        Node::Nonscript => out.push_str("\\glue(\\nonscript)\n"),
         Node::Unset | Node::Ins { .. } | Node::Whatsit(_) => out.push_str("[]\n"),
+    }
+}
+
+fn dump_math_noad(
+    stores: &Universe,
+    noad: &MathNoad,
+    config: &DumpConfig,
+    depth: i32,
+    out: &mut String,
+) {
+    match &noad.kind {
+        NoadKind::Radical { delimiter } => {
+            let _ = write!(out, "\\radical\"{delimiter:X}");
+        }
+        NoadKind::Accent { accent } => {
+            out.push_str("\\accent");
+            dump_math_char_inline(*accent, out);
+        }
+        _ => out.push_str(noad_name(&noad.kind)),
+    }
+    match &noad.kind {
+        NoadKind::Operator(LimitType::Limits) => out.push_str("\\limits"),
+        NoadKind::Operator(LimitType::NoLimits) => out.push_str("\\nolimits"),
+        _ => {}
+    }
+    out.push('\n');
+    dump_math_field(stores, &noad.nucleus, config, depth + 1, '.', out);
+    dump_math_field(stores, &noad.superscript, config, depth + 1, '^', out);
+    dump_math_field(stores, &noad.subscript, config, depth + 1, '_', out);
+}
+
+fn noad_name(kind: &NoadKind) -> &'static str {
+    match kind {
+        NoadKind::Normal(NoadClass::Ord) => "\\mathord",
+        NoadKind::Normal(NoadClass::Op) | NoadKind::Operator(_) => "\\mathop",
+        NoadKind::Normal(NoadClass::Bin) => "\\mathbin",
+        NoadKind::Normal(NoadClass::Rel) => "\\mathrel",
+        NoadKind::Normal(NoadClass::Open) => "\\mathopen",
+        NoadKind::Normal(NoadClass::Close) => "\\mathclose",
+        NoadKind::Normal(NoadClass::Punct) => "\\mathpunct",
+        NoadKind::Normal(NoadClass::Inner) => "\\mathinner",
+        NoadKind::Radical { .. } => "\\radical",
+        NoadKind::Accent { .. } => "\\accent",
+        NoadKind::Underline => "\\underline",
+        NoadKind::Overline => "\\overline",
+        NoadKind::VCenter => "\\vcenter",
+    }
+}
+
+fn dump_math_field(
+    stores: &Universe,
+    field: &MathField,
+    config: &DumpConfig,
+    depth: i32,
+    marker: char,
+    out: &mut String,
+) {
+    match field {
+        MathField::Empty => {}
+        MathField::MathChar(ch) | MathField::MathTextChar(ch) => {
+            write_prefix(depth - 1, out);
+            out.push(marker);
+            dump_math_char(*ch, out);
+        }
+        MathField::SubBox(list) | MathField::SubMlist(list) => {
+            let old_len = out.len();
+            dump_list(stores, *list, config, depth, out);
+            if old_len < out.len() {
+                out.replace_range(old_len..old_len + 1, &marker.to_string());
+            }
+        }
+    }
+}
+
+fn dump_math_char(ch: MathChar, out: &mut String) {
+    let _ = writeln!(out, "\\fam{} {}", ch.family, dump_char(ch.character));
+}
+
+fn dump_math_char_inline(ch: MathChar, out: &mut String) {
+    let _ = write!(out, "\\fam{} {}", ch.family, dump_char(ch.character));
+}
+
+fn dump_fraction(
+    stores: &Universe,
+    fraction: &MathFraction,
+    config: &DumpConfig,
+    depth: i32,
+    out: &mut String,
+) {
+    out.push_str("\\fraction, thickness");
+    match fraction.thickness {
+        FractionThickness::Default => out.push_str(" = default"),
+        FractionThickness::Explicit(value) => {
+            let _ = write!(out, " {}", format_scaled_without_unit(value));
+        }
+    }
+    if let Some(left) = fraction.left_delimiter {
+        let _ = write!(out, ", left-delimiter \"{left:X}");
+    }
+    if let Some(right) = fraction.right_delimiter {
+        let _ = write!(out, ", right-delimiter \"{right:X}");
+    }
+    out.push('\n');
+    dump_fraction_part(stores, fraction.numerator, config, depth + 1, "\\", out);
+    dump_fraction_part(stores, fraction.denominator, config, depth + 1, "/", out);
+}
+
+fn dump_fraction_part(
+    stores: &Universe,
+    list: NodeListId,
+    config: &DumpConfig,
+    depth: i32,
+    marker: &str,
+    out: &mut String,
+) {
+    let old_len = out.len();
+    dump_list(stores, list, config, depth, out);
+    if old_len < out.len() {
+        out.replace_range(old_len..old_len + 1, marker);
+    }
+}
+
+fn dump_math_choice(
+    stores: &Universe,
+    choice: &MathChoice,
+    config: &DumpConfig,
+    depth: i32,
+    out: &mut String,
+) {
+    out.push_str("\\mathchoice\n");
+    dump_choice_arm(stores, choice.display, config, depth + 1, 'D', out);
+    dump_choice_arm(stores, choice.text, config, depth + 1, 'T', out);
+    dump_choice_arm(stores, choice.script, config, depth + 1, 'S', out);
+    dump_choice_arm(stores, choice.script_script, config, depth + 1, 's', out);
+}
+
+fn dump_choice_arm(
+    stores: &Universe,
+    list: NodeListId,
+    config: &DumpConfig,
+    depth: i32,
+    marker: char,
+    out: &mut String,
+) {
+    let old_len = out.len();
+    dump_list(stores, list, config, depth, out);
+    if old_len < out.len() {
+        out.replace_range(old_len..old_len + 1, &marker.to_string());
+    }
+}
+
+fn dump_math_list(
+    stores: &Universe,
+    list: &MathListNode,
+    config: &DumpConfig,
+    depth: i32,
+    out: &mut String,
+) {
+    let name = if list.display {
+        "\\displaymath"
+    } else {
+        "\\math"
+    };
+    out.push_str(name);
+    out.push('\n');
+    dump_list(stores, list.content, config, depth + 1, out);
+}
+
+fn math_style_name(style: MathStyle) -> &'static str {
+    match style {
+        MathStyle::Display => "displaystyle",
+        MathStyle::Text => "textstyle",
+        MathStyle::Script => "scriptstyle",
+        MathStyle::ScriptScript => "scriptscriptstyle",
     }
 }
 
@@ -350,6 +539,8 @@ impl GlueKindDump for GlueKind {
             Self::Leaders => "\\leaders \\glue ",
             Self::Cleaders => "\\cleaders \\glue ",
             Self::Xleaders => "\\xleaders \\glue ",
+            Self::MuSkip => "\\glue(\\mskip) ",
+            Self::NonScript => "\\glue(\\nonscript) ",
         }
     }
 }

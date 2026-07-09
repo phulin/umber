@@ -4,6 +4,7 @@
 //! and rewrites child spans to be relative to the survivor root.
 
 use crate::ids::{ArenaRef, NodeListId, SurvivorRootId};
+use crate::math::MathField;
 use crate::node::Node;
 use crate::node_arena::NodeArena;
 
@@ -250,6 +251,28 @@ fn remap_node_children(
             queue_children(start, len, pending);
             out[index] = Node::Adjust(NodeListId::new_survivor(SurvivorRootId::new(0), start, len));
         }
+        Node::MathNoad(mut noad) => {
+            remap_math_field(&mut noad.nucleus, epoch, out, pending);
+            remap_math_field(&mut noad.subscript, epoch, out, pending);
+            remap_math_field(&mut noad.superscript, epoch, out, pending);
+            out[index] = Node::MathNoad(noad);
+        }
+        Node::FractionNoad(mut fraction) => {
+            fraction.numerator = remap_list(fraction.numerator, epoch, out, pending);
+            fraction.denominator = remap_list(fraction.denominator, epoch, out, pending);
+            out[index] = Node::FractionNoad(fraction);
+        }
+        Node::MathChoice(mut choice) => {
+            choice.display = remap_list(choice.display, epoch, out, pending);
+            choice.text = remap_list(choice.text, epoch, out, pending);
+            choice.script = remap_list(choice.script, epoch, out, pending);
+            choice.script_script = remap_list(choice.script_script, epoch, out, pending);
+            out[index] = Node::MathChoice(choice);
+        }
+        Node::MathList(mut list) => {
+            list.content = remap_list(list.content, epoch, out, pending);
+            out[index] = Node::MathList(list);
+        }
         Node::Char { .. }
         | Node::Lig { .. }
         | Node::Kern { .. }
@@ -260,7 +283,9 @@ fn remap_node_children(
         | Node::Mark { .. }
         | Node::Whatsit(_)
         | Node::MathOn
-        | Node::MathOff => {}
+        | Node::MathOff
+        | Node::MathStyle(_)
+        | Node::Nonscript => {}
     }
 }
 
@@ -279,6 +304,24 @@ fn rewrite_node_root_ids(node: &mut Node, root: SurvivorRootId) {
         Node::Ins { content, .. } | Node::Adjust(content) => {
             *content = with_root(*content, root);
         }
+        Node::MathNoad(noad) => {
+            rewrite_math_field_root(&mut noad.nucleus, root);
+            rewrite_math_field_root(&mut noad.subscript, root);
+            rewrite_math_field_root(&mut noad.superscript, root);
+        }
+        Node::FractionNoad(fraction) => {
+            fraction.numerator = with_root(fraction.numerator, root);
+            fraction.denominator = with_root(fraction.denominator, root);
+        }
+        Node::MathChoice(choice) => {
+            choice.display = with_root(choice.display, root);
+            choice.text = with_root(choice.text, root);
+            choice.script = with_root(choice.script, root);
+            choice.script_script = with_root(choice.script_script, root);
+        }
+        Node::MathList(list) => {
+            list.content = with_root(list.content, root);
+        }
         Node::Char { .. }
         | Node::Lig { .. }
         | Node::Kern { .. }
@@ -289,7 +332,37 @@ fn rewrite_node_root_ids(node: &mut Node, root: SurvivorRootId) {
         | Node::Mark { .. }
         | Node::Whatsit(_)
         | Node::MathOn
-        | Node::MathOff => {}
+        | Node::MathOff
+        | Node::MathStyle(_)
+        | Node::Nonscript => {}
+    }
+}
+
+fn remap_list(
+    id: NodeListId,
+    epoch: &NodeArena,
+    out: &mut Vec<Node>,
+    pending: &mut Vec<usize>,
+) -> NodeListId {
+    let (start, len) = append_list(id, epoch, out);
+    queue_children(start, len, pending);
+    NodeListId::new_survivor(SurvivorRootId::new(0), start, len)
+}
+
+fn remap_math_field(
+    field: &mut MathField,
+    epoch: &NodeArena,
+    out: &mut Vec<Node>,
+    pending: &mut Vec<usize>,
+) {
+    if let MathField::SubBox(list) | MathField::SubMlist(list) = field {
+        *list = remap_list(*list, epoch, out, pending);
+    }
+}
+
+fn rewrite_math_field_root(field: &mut MathField, root: SurvivorRootId) {
+    if let MathField::SubBox(list) | MathField::SubMlist(list) = field {
+        *list = with_root(*list, root);
     }
 }
 

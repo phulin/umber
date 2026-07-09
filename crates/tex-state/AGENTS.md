@@ -39,9 +39,10 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/journal/tests.rs`: Unit tests for journal positions, markers, entry traversal, and truncation.
 - `src/lib.rs`: Public module declarations and re-exports forming the `tex-state` API surface.
 - `src/macro_store.rs`: Immutable macro-definition store and macro meaning metadata.
+- `src/math.rs`: Immutable math-list model for noads, fields, fractions, styles, choices, and math font families.
 - `src/meaning.rs`: TeX meaning representation, primitive enums, flags, and packed raw meaning encode/decode logic.
 - `src/meaning/tests.rs`: Unit tests for meaning round trips, flag packing, and primitive encoding.
-- `src/node.rs`: Immutable TeX node, box, glue, kern, penalty, rule, whatsit, discretionary, and list-field model.
+- `src/node.rs`: Immutable TeX node, box, glue, kern, penalty, rule, whatsit, math-list, discretionary, and list-field model.
 - `src/node_arena.rs`: Epoch arena for immutable node-list slices with watermarks and rollback.
 - `src/node_arena/tests.rs`: Unit tests for node-list allocation, lookup, rollback, and arena liveness.
 - `src/page.rs`: Snapshot-owned page-builder state, page dimensions/integers, contribution/current-page queues, and fire-up records.

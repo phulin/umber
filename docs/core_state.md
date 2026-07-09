@@ -55,7 +55,7 @@ supporting untracked mutation "for performance" anywhere, ever.
 | Store | Contents | Mutation discipline | Snapshot mechanism |
 |---|---|---|---|
 | Interner | csnames, key strings → `Symbol` | append-only | watermark |
-| Environment | meaning word + epoch per symbol; parameters; dense registers | barriered in-place writes | journal |
+| Environment | meaning word + epoch per symbol; parameters; dense registers; current-font and math-family font selectors | barriered in-place writes | journal |
 | Register overflow | e-TeX sparse registers (256..32767) | barriered writes | journal + page roots |
 | Code tables | catcode/lccode/uccode/sfcode/mathcode/delcode over Unicode | copy-on-write pages | root pointer + generation |
 | Token store | immutable, hash-consed token lists | frozen at birth | watermark |
@@ -551,10 +551,14 @@ handles, and the builder types returned by `Universe`; their constructors and
 raw store-finish hooks are crate-private unless compiled for crate-local tests.
 Loaded fonts follow the same aggregate rule: `Universe::intern_font`,
 `Universe::font`, `Universe::font_name`, and the font parameter/current-font
-facades are the public boundary. Font store rollback is watermark based like
-the interner and other immutable content stores; rolling back a `Universe`
-snapshot truncates fonts loaded after the snapshot, while ordinary TeX group
-exit only restores Env-side meanings/current-font/fontdimen banks through the
+facades are the public boundary. The three-by-sixteen TeX math-family font
+selectors (`\textfont`, `\scriptfont`, `\scriptscriptfont`) are Env-side
+font cells beside the current-font selector, so local/global assignment,
+group exit, and snapshot rollback use the same barriered journal path as
+other TeX state. Font store rollback is watermark based like the interner and
+other immutable content stores; rolling back a `Universe` snapshot truncates
+fonts loaded after the snapshot, while ordinary TeX group exit only restores
+Env-side meanings/current-font/math-family/fontdimen banks through the
 journal and does not unload immutable font objects.
 
 ### 10.5 Effects as capability

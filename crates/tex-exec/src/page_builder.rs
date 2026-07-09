@@ -89,6 +89,12 @@ pub(crate) fn build_page(stores: &mut Universe) -> Result<(), ExecError> {
             | Node::Disc { .. }
             | Node::MathOn
             | Node::MathOff
+            | Node::MathNoad(_)
+            | Node::FractionNoad(_)
+            | Node::MathStyle(_)
+            | Node::MathChoice(_)
+            | Node::MathList(_)
+            | Node::Nonscript
             | Node::Adjust(_) => {
                 contribute_front(stores)?;
             }
@@ -518,6 +524,12 @@ fn vertical_height(node: &Node) -> Scaled {
     match node {
         Node::HList(box_node) | Node::VList(box_node) => box_node.height,
         Node::Rule { height, .. } => height.unwrap_or_else(|| Scaled::from_raw(0)),
+        Node::MathNoad(_)
+        | Node::FractionNoad(_)
+        | Node::MathStyle(_)
+        | Node::MathChoice(_)
+        | Node::MathList(_)
+        | Node::Nonscript => Scaled::from_raw(0),
         _ => Scaled::from_raw(0),
     }
 }

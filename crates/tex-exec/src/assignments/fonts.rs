@@ -79,6 +79,50 @@ where
     }
 }
 
+pub(super) fn execute_math_family_font_assignment<S, H>(
+    primitive: UnexpandablePrimitive,
+    prefixes: Prefixes,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    hooks: &mut H,
+) -> Result<(), ExecError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    reject_macro_prefixes(prefixes)?;
+    let size = math_font_size_for_primitive(primitive);
+    let family = scan_math_family(input, stores, hooks)?;
+    skip_optional_equals_x(input, stores, hooks)?;
+    let font = scan_font_selector(input, stores, hooks)?;
+    stores.set_math_family_font(
+        size,
+        family,
+        font,
+        apply_globaldefs(prefixes.global, stores),
+    );
+    Ok(())
+}
+
+pub(super) fn scan_math_family<S, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    hooks: &mut H,
+) -> Result<u8, ExecError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    let family = scan_i32(input, stores, hooks)?;
+    if !(0..=15).contains(&family) {
+        return Err(ExecError::InvalidCode {
+            context: "math family",
+            value: family,
+        });
+    }
+    Ok(family as u8)
+}
+
 pub(super) fn scan_font_selector<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
@@ -99,10 +143,27 @@ where
     };
     match stores.meaning(symbol) {
         Meaning::Font(id) => Ok(id),
+        Meaning::UnexpandablePrimitive(
+            primitive @ (UnexpandablePrimitive::TextFont
+            | UnexpandablePrimitive::ScriptFont
+            | UnexpandablePrimitive::ScriptScriptFont),
+        ) => {
+            let family = scan_math_family(input, stores, hooks)?;
+            Ok(stores.math_family_font(math_font_size_for_primitive(primitive), family))
+        }
         _ => Err(ExecError::ExpectedControlSequence {
             context: "font selector",
             token,
         }),
+    }
+}
+
+fn math_font_size_for_primitive(primitive: UnexpandablePrimitive) -> MathFontSize {
+    match primitive {
+        UnexpandablePrimitive::TextFont => MathFontSize::Text,
+        UnexpandablePrimitive::ScriptFont => MathFontSize::Script,
+        UnexpandablePrimitive::ScriptScriptFont => MathFontSize::ScriptScript,
+        _ => unreachable!("caller restricts math font primitive"),
     }
 }
 

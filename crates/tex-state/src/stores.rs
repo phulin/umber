@@ -18,6 +18,7 @@ use crate::hyphenation::{ExceptionSpec, HyphenationTable, PatternSpec};
 use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, TokenListId};
 use crate::interner::{Interner, InternerMark, Symbol};
 use crate::macro_store::{MacroMeaning, MacroStore, MacroStoreMark};
+use crate::math::MathFontSize;
 use crate::meaning::Meaning;
 use crate::node::Node;
 use crate::node_arena::{NodeArena, NodeArenaMark, NodeListBuilder};
@@ -187,6 +188,7 @@ impl Stores {
         stores.set_int_param(IntParam::ESCAPE_CHAR, b'\\'.into());
         stores.set_int_param(IntParam::DEFAULT_HYPHEN_CHAR, b'-'.into());
         stores.set_int_param(IntParam::DEFAULT_SKEW_CHAR, -1);
+        stores.set_int_param(IntParam::FAM, -1);
         stores.set_int_param(IntParam::UC_HYPH, 1);
         stores.set_int_param(IntParam::LEFT_HYPHEN_MIN, 2);
         stores.set_int_param(IntParam::RIGHT_HYPHEN_MIN, 3);
@@ -550,6 +552,28 @@ impl Stores {
         self.assert_live_symbol(symbol);
         self.assert_live_font(id);
         self.env.set_current_font_selector_global(symbol, id);
+    }
+
+    #[must_use]
+    pub fn math_family_font(&self, size: MathFontSize, family: u8) -> FontId {
+        let id = self.env.math_family_font(size, family);
+        self.assert_live_font(id);
+        id
+    }
+
+    pub fn set_math_family_font(
+        &mut self,
+        size: MathFontSize,
+        family: u8,
+        id: FontId,
+        global: bool,
+    ) {
+        self.assert_live_font(id);
+        if global {
+            self.env.set_math_family_font_global(size, family, id);
+        } else {
+            self.env.set_math_family_font(size, family, id);
+        }
     }
 
     #[must_use]
@@ -1160,6 +1184,12 @@ impl Stores {
             }
             Node::MathOn
             | Node::MathOff
+            | Node::MathNoad(_)
+            | Node::FractionNoad(_)
+            | Node::MathStyle(_)
+            | Node::MathChoice(_)
+            | Node::MathList(_)
+            | Node::Nonscript
             | Node::Lig { .. }
             | Node::Rule { .. }
             | Node::Unset

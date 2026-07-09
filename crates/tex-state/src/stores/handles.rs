@@ -3,6 +3,7 @@ use crate::cell::BankTag;
 use crate::env::EnvSnapshot;
 use crate::ids::{ArenaRef, FontId, GlueId, MacroDefinitionId, NodeListId, TokenListId};
 use crate::interner::Symbol;
+use crate::math::MathField;
 use crate::meaning::Meaning;
 use crate::node::Node;
 
@@ -94,6 +95,22 @@ impl Stores {
             Node::Adjust(content) => {
                 self.assert_live_child_node_list(*content);
             }
+            Node::MathNoad(noad) => {
+                self.assert_live_handles_in_math_field(&noad.nucleus);
+                self.assert_live_handles_in_math_field(&noad.subscript);
+                self.assert_live_handles_in_math_field(&noad.superscript);
+            }
+            Node::FractionNoad(fraction) => {
+                self.assert_live_child_node_list(fraction.numerator);
+                self.assert_live_child_node_list(fraction.denominator);
+            }
+            Node::MathChoice(choice) => {
+                self.assert_live_child_node_list(choice.display);
+                self.assert_live_child_node_list(choice.text);
+                self.assert_live_child_node_list(choice.script);
+                self.assert_live_child_node_list(choice.script_script);
+            }
+            Node::MathList(list) => self.assert_live_child_node_list(list.content),
             Node::Whatsit(crate::node::Whatsit::DeferredWrite { tokens, .. }) => {
                 self.assert_live_token_list(*tokens);
             }
@@ -103,7 +120,18 @@ impl Stores {
             | Node::Rule { .. }
             | Node::Unset
             | Node::MathOn
-            | Node::MathOff => {}
+            | Node::MathOff
+            | Node::MathStyle(_)
+            | Node::Nonscript => {}
+        }
+    }
+
+    fn assert_live_handles_in_math_field(&self, field: &MathField) {
+        match field {
+            MathField::SubBox(list) | MathField::SubMlist(list) => {
+                self.assert_live_child_node_list(*list);
+            }
+            MathField::Empty | MathField::MathChar(_) | MathField::MathTextChar(_) => {}
         }
     }
 

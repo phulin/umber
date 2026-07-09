@@ -1,0 +1,287 @@
+use super::support::terminal_effect_text;
+use super::*;
+use tex_state::math::{FractionThickness, LimitType, MathChoice, MathField, MathListNode};
+use tex_state::node::{GlueKind, KernKind, Node};
+
+#[test]
+fn math_mode_builds_noads_styles_choices_and_mu_nodes() {
+    let (stores, executor) = run_math_source(
+        r"$a_b^c\mathbin+\mathop{x}\limits_y\overline{z}\mskip3mu\mkern2mu\nonscript\displaystyle\mathchoice{d}{t}{s}{u}$",
+    );
+    let nodes = math_nodes(&stores, &executor);
+
+    assert_eq!(nodes.len(), 9);
+    let noad = math_noad(&nodes[0]);
+    assert!(matches!(
+        noad.kind,
+        tex_state::math::NoadKind::Normal(tex_state::math::NoadClass::Ord)
+    ));
+    assert_math_char(&noad.nucleus, 0, 'a');
+    assert_math_char(&noad.subscript, 0, 'b');
+    assert_math_char(&noad.superscript, 0, 'c');
+
+    assert!(matches!(
+        math_noad(&nodes[1]).kind,
+        tex_state::math::NoadKind::Normal(tex_state::math::NoadClass::Bin)
+    ));
+
+    let op = math_noad(&nodes[2]);
+    assert!(matches!(
+        op.kind,
+        tex_state::math::NoadKind::Operator(LimitType::Limits)
+    ));
+    assert!(matches!(op.nucleus, MathField::SubMlist(_)));
+    assert_math_char(&op.subscript, 0, 'y');
+
+    let overline = math_noad(&nodes[3]);
+    assert!(matches!(overline.kind, tex_state::math::NoadKind::Overline));
+    let MathField::SubMlist(overline_list) = overline.nucleus else {
+        panic!("expected grouped overline nucleus");
+    };
+    assert_one_char_list(&stores, overline_list, 'z');
+
+    assert!(matches!(
+        nodes[4],
+        Node::Glue {
+            kind: GlueKind::MuSkip,
+            ..
+        }
+    ));
+    assert!(matches!(
+        nodes[5],
+        Node::Kern {
+            kind: KernKind::Mu,
+            ..
+        }
+    ));
+    assert!(matches!(
+        nodes[6],
+        Node::Glue {
+            kind: GlueKind::NonScript,
+            ..
+        }
+    ));
+    assert!(matches!(
+        nodes[7],
+        Node::MathStyle(tex_state::math::MathStyle::Display)
+    ));
+
+    let Node::MathChoice(MathChoice {
+        display,
+        text,
+        script,
+        script_script,
+    }) = nodes[8]
+    else {
+        panic!("expected math choice");
+    };
+    assert_one_char_list(&stores, display, 'd');
+    assert_one_char_list(&stores, text, 't');
+    assert_one_char_list(&stores, script, 's');
+    assert_one_char_list(&stores, script_script, 'u');
+}
+
+#[test]
+fn generalized_fraction_absorbs_prior_list_and_reports_doubled_fraction() {
+    let (stores, executor) = run_math_source(r"$a\over b\over c$");
+    let nodes = math_nodes(&stores, &executor);
+
+    assert_eq!(nodes.len(), 1);
+    let Node::FractionNoad(fraction) = &nodes[0] else {
+        panic!("expected fraction noad");
+    };
+    assert_eq!(fraction.thickness, FractionThickness::Default);
+    assert_one_char_list(&stores, fraction.numerator, 'a');
+    assert_char_list(&stores, fraction.denominator, &['b', 'c']);
+    assert!(
+        terminal_effect_text(&stores).contains("! Ambiguous; you need another { and }."),
+        "doubled fraction should emit TeX's ambiguity diagnostic"
+    );
+}
+
+#[test]
+fn mathcode_8000_uses_current_active_meaning_and_fam_overrides_variable_family() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    stores.set_mathcode('?', 0x8000);
+    let active_question = stores.intern("?");
+    stores.set_meaning(active_question, Meaning::MathCharGiven(0x0231));
+
+    let mut input = InputStack::new(MemoryInput::new(
+        r#"\fam=5 \mathcode`x="7131 $?$ $x$ $x^?$"#,
+    ));
+    let mut executor = Executor::new();
+    executor
+        .run(&mut input, &mut stores)
+        .expect("mathcode source executes");
+    let math_lists = math_list_nodes(&executor);
+
+    let first = stores.nodes(math_lists[0].content);
+    assert_eq!(first.len(), 1);
+    assert_math_char(&math_noad(&first[0]).nucleus, 2, '1');
+
+    let second = stores.nodes(math_lists[1].content);
+    assert_eq!(second.len(), 1);
+    assert_math_char(&math_noad(&second[0]).nucleus, 5, '1');
+
+    let third = stores.nodes(math_lists[2].content);
+    assert_eq!(third.len(), 1);
+    assert_math_char(&math_noad(&third[0]).superscript, 2, '1');
+}
+
+#[test]
+fn showlists_reports_unfinished_math_noad_fields() {
+    let (stores, _) = run_math_source(r"$a_b^c\mathchoice{d}{t}{s}{u}\showlists$");
+    let log = terminal_effect_text(&stores);
+
+    assert!(log.contains("### math mode entered at line 0"));
+    assert!(log.contains("\\mathord"));
+    assert!(log.contains(".\\fam0 a"));
+    assert!(log.contains("^\\fam0 c"));
+    assert!(log.contains("_\\fam0 b"));
+    assert!(log.contains("\\mathchoice"));
+}
+
+#[test]
+fn par_in_math_finishes_math_with_tex_error_text() {
+    let (stores, executor) = run_math_source(r"$a\par");
+    let nodes = math_nodes(&stores, &executor);
+
+    assert_eq!(nodes.len(), 1);
+    assert_math_char(&math_noad(&nodes[0]).nucleus, 0, 'a');
+    assert!(terminal_effect_text(&stores).contains("! Missing $ inserted."));
+}
+
+#[test]
+fn delimiter_radical_accent_and_vcenter_parse_to_math_noads() {
+    let (stores, executor) = run_math_source(
+        r#"$\delimiter"1234 \radical"270370 x \mathaccent"7013 y \vcenter{\hrule width1pt}$"#,
+    );
+    let nodes = math_nodes(&stores, &executor);
+
+    assert_eq!(nodes.len(), 4);
+    assert_math_char(&math_noad(&nodes[0]).nucleus, 2, '4');
+
+    let radical = math_noad(&nodes[1]);
+    assert!(matches!(
+        radical.kind,
+        tex_state::math::NoadKind::Radical {
+            delimiter: 0x270370
+        }
+    ));
+    assert_math_char(&radical.nucleus, 0, 'x');
+
+    let accent = math_noad(&nodes[2]);
+    assert!(matches!(
+        accent.kind,
+        tex_state::math::NoadKind::Accent { .. }
+    ));
+    assert_math_char(&accent.nucleus, 0, 'y');
+
+    let vcenter = math_noad(&nodes[3]);
+    assert!(matches!(vcenter.kind, tex_state::math::NoadKind::VCenter));
+    let MathField::SubBox(list) = vcenter.nucleus else {
+        panic!("expected vcenter sub-box field");
+    };
+    assert!(matches!(stores.nodes(list)[0], Node::VList(_)));
+}
+
+#[test]
+fn every_math_and_every_display_tokens_are_inserted_on_entry() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let displaystyle = stores.symbol("displaystyle").expect("displaystyle");
+    let textstyle = stores.symbol("textstyle").expect("textstyle");
+    let every_math = stores.intern_token_list(&[Token::Cs(displaystyle)]);
+    let every_display = stores.intern_token_list(&[Token::Cs(textstyle)]);
+    stores.set_tok_param(TokParam::EVERY_MATH, every_math);
+    stores.set_tok_param(TokParam::EVERY_DISPLAY, every_display);
+    let mut input = InputStack::new(MemoryInput::new("$a$ $$b$$"));
+    let mut executor = Executor::new();
+    executor
+        .run(&mut input, &mut stores)
+        .expect("math source executes");
+    let lists = math_list_nodes(&executor);
+
+    assert_eq!(lists.len(), 2);
+    assert!(!lists[0].display);
+    assert!(lists[1].display);
+    assert!(matches!(
+        stores.nodes(lists[0].content)[0],
+        Node::MathStyle(tex_state::math::MathStyle::Display)
+    ));
+    assert!(matches!(
+        stores.nodes(lists[1].content)[0],
+        Node::MathStyle(tex_state::math::MathStyle::Text)
+    ));
+}
+
+fn run_math_source(source: &str) -> (Universe, Executor) {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    stores.set_int_param(IntParam::SHOW_BOX_BREADTH, 100);
+    stores.set_int_param(IntParam::SHOW_BOX_DEPTH, 100);
+    let mut input = InputStack::new(MemoryInput::new(source));
+    let mut executor = Executor::new();
+    executor
+        .run(&mut input, &mut stores)
+        .expect("math source executes");
+    (stores, executor)
+}
+
+fn math_nodes<'a>(stores: &'a Universe, executor: &Executor) -> &'a [Node] {
+    let lists = math_list_nodes(executor);
+    assert_eq!(lists.len(), 1);
+    stores.nodes(lists[0].content)
+}
+
+fn math_list_nodes(executor: &Executor) -> Vec<MathListNode> {
+    executor
+        .nest()
+        .current_list()
+        .nodes()
+        .iter()
+        .filter_map(|node| match node {
+            Node::MathList(list) => Some(*list),
+            _ => None,
+        })
+        .collect()
+}
+
+fn math_noad(node: &Node) -> &tex_state::math::MathNoad {
+    match node {
+        Node::MathNoad(noad) => noad,
+        other => panic!("expected noad, got {other:?}"),
+    }
+}
+
+fn assert_math_char(field: &MathField, family: u8, character: char) {
+    match field {
+        MathField::MathChar(ch) => {
+            assert_eq!(ch.family, family);
+            assert_eq!(ch.character, character);
+        }
+        other => panic!("expected math char field, got {other:?}"),
+    }
+}
+
+fn assert_one_char_list(stores: &Universe, list: tex_state::ids::NodeListId, character: char) {
+    assert_char_list(stores, list, &[character]);
+}
+
+fn assert_char_list(stores: &Universe, list: tex_state::ids::NodeListId, expected: &[char]) {
+    let actual: Vec<_> = stores
+        .nodes(list)
+        .iter()
+        .map(|node| {
+            let noad = math_noad(node);
+            match &noad.nucleus {
+                MathField::MathChar(ch) => ch.character,
+                other => panic!("expected math char nucleus, got {other:?}"),
+            }
+        })
+        .collect();
+    assert_eq!(actual, expected);
+}

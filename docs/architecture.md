@@ -366,6 +366,14 @@ assignments, box building, and dispatch into the typesetting kernels.
   keeps baseline/interline side effects in the stomach boundary; `tex-typeset`
   receives explicit glue nodes and remains a pure measurement and packing
   kernel.
+- **Math front-end**: `tex-exec` owns math-mode entry/exit and Appendix G
+  mlist construction. It turns math characters, explicit noad constructors,
+  scripts, generalized fractions, radicals, accents, `\vcenter`, style
+  switches, mu glue/kerns, and `\mathchoice` into frozen `tex-state` math
+  node payloads. The mode-list summary carries the pending incomplete
+  fraction so snapshots preserve TeX's `\over`/`\atop`/`\above` state.
+  `\mathcode"8000` redispatches through the current active-character meaning
+  at use time, and family font selectors live in the barriered Env font state.
 - **List diagnostics**: `\showbox` routes through `World` terminal/log
   effects and uses the shared node-list dump emitter in `tex-exec`. The
   emitter walks frozen node lists through `Universe`, honors
@@ -452,8 +460,10 @@ makes box-level memoization (M4) sound.
   pdfTeX corpus parity details are
   tracked as follow-up work rather than weakening this purity boundary.
 - **Math typesetter**: mlist → hlist conversion, styles, fraction/radical
-  layout, math fonts. Same contract: frozen mlist in, frozen hlist out.
-  (OpenType MATH is the target metrics model; TFM math as fallback.)
+  layout, math fonts. Same contract: frozen mlist in, frozen hlist out; the
+  front-end already freezes mlist nodes as `Node::MathList` and the remaining
+  kernel work lowers those lists to ordinary horizontal lists. (OpenType MATH
+  is the target metrics model; TFM math as fallback.)
 - **Alignment (`\halign`/`\valign`)**: the one kernel that is *not* pure —
   template expansion interleaves with the gullet by design. It is
   structured as a stomach sub-mode (it re-enters main control per cell),

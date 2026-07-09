@@ -133,7 +133,7 @@ where
     input.push_token_list(token_list, TokenListReplayKind::Inserted);
 }
 
-pub(super) fn is_space(token: Token) -> bool {
+pub(crate) fn is_space(token: Token) -> bool {
     matches!(
         token,
         Token::Char {
@@ -143,7 +143,7 @@ pub(super) fn is_space(token: Token) -> bool {
     )
 }
 
-pub(super) fn is_begin_group(token: Token) -> bool {
+pub(crate) fn is_begin_group(token: Token) -> bool {
     matches!(
         token,
         Token::Char {
@@ -153,7 +153,7 @@ pub(super) fn is_begin_group(token: Token) -> bool {
     )
 }
 
-pub(super) fn is_end_group(token: Token) -> bool {
+pub(crate) fn is_end_group(token: Token) -> bool {
     matches!(
         token,
         Token::Char {

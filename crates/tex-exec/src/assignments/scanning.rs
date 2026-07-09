@@ -41,6 +41,9 @@ pub(super) fn is_assignment_meaning(meaning: Meaning) -> bool {
                 | UnexpandablePrimitive::MathCode
                 | UnexpandablePrimitive::DelCode
                 | UnexpandablePrimitive::Font
+                | UnexpandablePrimitive::TextFont
+                | UnexpandablePrimitive::ScriptFont
+                | UnexpandablePrimitive::ScriptScriptFont
                 | UnexpandablePrimitive::FontDimen
                 | UnexpandablePrimitive::HyphenChar
                 | UnexpandablePrimitive::SkewChar
@@ -192,7 +195,7 @@ where
     Ok(value as u16)
 }
 
-pub(super) fn scan_i32<S, H>(
+pub(crate) fn scan_i32<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
@@ -230,7 +233,7 @@ where
     }
 }
 
-pub(super) fn scan_scaled<S, H>(
+pub(crate) fn scan_scaled<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
@@ -255,7 +258,7 @@ where
     Ok(scanned.value())
 }
 
-pub(super) fn scan_glue_id<S, H>(
+pub(crate) fn scan_glue_id<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
@@ -339,7 +342,7 @@ where
     })
 }
 
-pub(super) fn next_non_space_x<S, H>(
+pub(crate) fn next_non_space_x<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
