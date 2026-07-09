@@ -1,0 +1,22 @@
+# Pinned external TeX documents used by long-running corpus parity scripts.
+# The sha256 values are hashes of the fetched bytes exactly as served by the
+# recorded URL; do not normalize line endings before hashing.
+#
+# Each document starts with a doc line. Remaining lines use: key value
+# Values extend to the end of the line; comments must use their own line.
+
+doc story.tex
+url https://mirrors.ctan.org/macros/plain/base/story.tex
+sha256 592939f339e78d7faca19c75017ec338db7c9efdea085c4374e5b13909cc8ec6
+license Knuth-CTAN
+redistributable true
+expected_ref_dvi_sha256 02bace3e2be9038cda788e2a19c7516b93349758f9ea09b8d7630403cb16e32c
+notes CTAN plain/base records the package license as Knuth License and the directory README identifies these as Donald E. Knuth's official master files. Keep the fetched file unmodified; the expected DVI hash is from pdftex DVI output with only the preamble banner comment normalized.
+
+doc gentle.tex
+url https://mirrors.ctan.org/info/gentle/gentle.tex
+sha256 b3e1acf4a6feb6a13b0ace279a5be7f1546ac2198452188f6fb22b4eb590ba3f
+license LicenseRef-Gentle-redistributable
+redistributable true
+expected_ref_dvi_sha256 8f7d9e4bbbc032974d7ed0e00ed39989f14210054c2bbb16f8dd493b8b46a10a
+notes CTAN records gentle as a free license not otherwise listed, and the gentle.tex header says users should feel free to photocopy and/or distribute the manual if it remains in one piece. The expected DVI hash is from pdftex DVI output with only the preamble banner comment normalized.

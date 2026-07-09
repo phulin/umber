@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use anyhow::{Context, Result, anyhow, bail};
+use corpus_manifest::{Document, Manifest, parse_manifest_file};
 use refexec::{RefTex, RunOpts, normalized_dvi_for_comparison};
-use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use similar::TextDiff;
 use tex_out::dvi::disasm::{DviFile, command_at_or_before, disassemble_page};
@@ -51,7 +51,7 @@ struct Options {
 impl Options {
     fn parse(args: impl Iterator<Item = OsString>) -> Result<Self> {
         let mut options = Self {
-            manifest_path: PathBuf::from("tests/corpus-manifest.toml"),
+            manifest_path: PathBuf::from("tests/corpus-manifest.txt"),
             corpus_dir: PathBuf::from("third_party/corpus"),
             triage_dir: PathBuf::from("target/parity-triage"),
             umber_bin: PathBuf::from("target/debug/umber"),
@@ -99,17 +99,6 @@ fn next_path(args: &mut impl Iterator<Item = OsString>, flag: &str) -> Result<Pa
     args.next()
         .map(PathBuf::from)
         .ok_or_else(|| anyhow!("missing path after {flag}"))
-}
-
-#[derive(Debug, Deserialize)]
-struct Manifest {
-    doc: Vec<Document>,
-}
-
-#[derive(Debug, Deserialize)]
-struct Document {
-    name: String,
-    expected_ref_dvi_sha256: String,
 }
 
 #[derive(Debug)]
@@ -289,13 +278,11 @@ fn run_e2e(options: &Options) -> Result<bool> {
 }
 
 fn read_manifest(path: &Path) -> Result<Manifest> {
-    let text =
-        fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
-    let manifest: Manifest =
-        toml::from_str(&text).with_context(|| format!("failed to parse {}", path.display()))?;
+    let manifest =
+        parse_manifest_file(path).with_context(|| format!("failed to parse {}", path.display()))?;
     if manifest.doc.is_empty() {
         bail!(
-            "manifest {} does not contain any [[doc]] entries",
+            "manifest {} does not contain any doc entries",
             path.display()
         );
     }
@@ -680,7 +667,12 @@ fn run_self_test(triage_dir: &Path) -> Result<PathBuf> {
     let diff = first_diff(&reference.normalized, &umber.normalized);
     let doc = Document {
         name: "self-test.tex".to_string(),
+        url: "https://example.invalid/self-test.tex".to_string(),
+        sha256: sha256_hex(b"self-test"),
+        license: "MIT".to_string(),
+        redistributable: true,
         expected_ref_dvi_sha256: sha256_hex(&reference.normalized),
+        notes: "synthetic self-test".to_string(),
     };
     write_triage_bundle(
         &root,

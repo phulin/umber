@@ -5,13 +5,12 @@ edition.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+corpus-manifest = { path = "../../crates/corpus-manifest" }
 refexec = { path = "../refexec" }
-serde.workspace = true
 sha2.workspace = true
 similar.workspace = true
 tempfile.workspace = true
 tex-out = { path = "../../crates/tex-out" }
-toml.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

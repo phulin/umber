@@ -54,6 +54,6 @@ fn run_cli() -> Result<()> {
 
 fn print_usage() {
     eprintln!(
-        "usage: corpus-sync [--manifest tests/corpus-manifest.toml] [--dest third_party/corpus] [--offline]"
+        "usage: corpus-sync [--manifest tests/corpus-manifest.txt] [--dest third_party/corpus] [--offline]"
     );
 }

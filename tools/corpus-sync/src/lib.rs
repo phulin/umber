@@ -6,7 +6,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use serde::Deserialize;
+use corpus_manifest::{Document, Manifest, parse_manifest_file};
 use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone)]
@@ -19,7 +19,7 @@ pub struct SyncOptions {
 impl Default for SyncOptions {
     fn default() -> Self {
         Self {
-            manifest_path: PathBuf::from("tests/corpus-manifest.toml"),
+            manifest_path: PathBuf::from("tests/corpus-manifest.txt"),
             dest_dir: PathBuf::from("third_party/corpus"),
             offline: false,
         }
@@ -50,22 +50,6 @@ impl fmt::Display for DocumentStatus {
     }
 }
 
-#[derive(Debug, Deserialize)]
-struct Manifest {
-    doc: Vec<Document>,
-}
-
-#[derive(Debug, Deserialize)]
-struct Document {
-    name: String,
-    url: String,
-    sha256: String,
-    license: String,
-    redistributable: bool,
-    expected_ref_dvi_sha256: String,
-    notes: String,
-}
-
 pub fn sync_corpus(options: &SyncOptions) -> Result<SyncReport> {
     let manifest = read_manifest(&options.manifest_path)?;
     fs::create_dir_all(&options.dest_dir)
@@ -73,7 +57,6 @@ pub fn sync_corpus(options: &SyncOptions) -> Result<SyncReport> {
 
     let mut documents = Vec::with_capacity(manifest.doc.len());
     for doc in manifest.doc {
-        doc.validate()?;
         documents.push(sync_document(&doc, options)?);
     }
 
@@ -81,13 +64,11 @@ pub fn sync_corpus(options: &SyncOptions) -> Result<SyncReport> {
 }
 
 fn read_manifest(path: &Path) -> Result<Manifest> {
-    let manifest = fs::read_to_string(path)
-        .with_context(|| format!("failed to read manifest {}", path.display()))?;
-    let parsed: Manifest = toml::from_str(&manifest)
-        .with_context(|| format!("failed to parse manifest {}", path.display()))?;
+    let parsed =
+        parse_manifest_file(path).with_context(|| format!("failed to parse {}", path.display()))?;
     if parsed.doc.is_empty() {
         bail!(
-            "manifest {} does not contain any [[doc]] entries",
+            "manifest {} does not contain any doc entries",
             path.display()
         );
     }
@@ -174,52 +155,6 @@ fn sha256_hex(bytes: &[u8]) -> String {
     out
 }
 
-fn is_sha256(value: &str) -> bool {
-    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
-}
-
-fn safe_file_name(value: &str) -> bool {
-    !value.is_empty()
-        && !value.contains('/')
-        && !value.contains('\\')
-        && value != "."
-        && value != ".."
-}
-
-impl Document {
-    fn validate(&self) -> Result<()> {
-        if !safe_file_name(&self.name) {
-            bail!("invalid corpus document name: {}", self.name);
-        }
-        if !(self.url.starts_with("https://") || self.url.starts_with("http://")) {
-            bail!("{} has unsupported URL scheme: {}", self.name, self.url);
-        }
-        if !is_sha256(&self.sha256) {
-            bail!("{} has invalid sha256: {}", self.name, self.sha256);
-        }
-        if !is_sha256(&self.expected_ref_dvi_sha256) {
-            bail!(
-                "{} has invalid expected_ref_dvi_sha256: {}",
-                self.name,
-                self.expected_ref_dvi_sha256
-            );
-        }
-        if self.license.trim().is_empty() {
-            bail!("{} has an empty license field", self.name);
-        }
-        if self.notes.trim().is_empty() {
-            bail!("{} has empty licensing notes", self.name);
-        }
-        if !self.redistributable && self.license != "no-redistribution" {
-            bail!(
-                "{} is marked non-redistributable but license is {}; use no-redistribution",
-                self.name,
-                self.license
-            );
-        }
-        Ok(())
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -327,20 +262,19 @@ mod tests {
 
     fn write_manifest(dir: &Path, url: &str, content: &str) -> Result<PathBuf> {
         let sha = sha256_hex(content.as_bytes());
-        let manifest = dir.join("manifest.toml");
+        let manifest = dir.join("manifest.txt");
         fs::write(
             &manifest,
             format!(
-                r#"
-[[doc]]
-name = "sample.tex"
-url = "{url}"
-sha256 = "{sha}"
-license = "MIT"
-redistributable = true
-expected_ref_dvi_sha256 = "{sha}"
-notes = "test fixture"
-"#
+                "\
+doc sample.tex
+url {url}
+sha256 {sha}
+license MIT
+redistributable true
+expected_ref_dvi_sha256 {sha}
+notes test fixture
+"
             ),
         )?;
         Ok(manifest)
