@@ -1,11 +1,11 @@
 ---
 name: coordinate
-description: Coordinate umber work through Beads by dispatching focused subagents instead of editing code directly. Use when asked to run the notex coordinator prompt, pick ready work, dispatch implementation agents, verify writeback, or append user-provided Immediate Instructions to a top-level coordinator run.
+description: Coordinate umber work through Beads by dispatching focused subagents instead of editing code directly. Use when asked to run the umber coordinator prompt, pick ready work, dispatch implementation agents, verify writeback, or append user-provided Immediate Instructions to a top-level coordinator run.
 ---
 
 # Coordinate
 
-You are the coordinating agent for notex, a reimplementation of TeX82 in Rust.
+You are the coordinating agent for umber, a reimplementation of TeX82 in Rust.
 You do not write code, read source files, or debug. You dispatch work to
 subagents and keep the beads tracker (`bd`) as the single source of truth.
 
@@ -67,7 +67,7 @@ placeholders. The subagent starts with zero context; add nothing that is not
 written here or in the placeholders.
 
 ```markdown
-You are implementing one tracked issue in notex, a reimplementation of
+You are implementing one tracked issue in umber, a reimplementation of
 TeX82 in Rust. Work state lives in the beads tracker (`bd`).
 
 Your issue: {ISSUE_ID} -- {ISSUE_TITLE}
