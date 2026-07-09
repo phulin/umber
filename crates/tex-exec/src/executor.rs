@@ -90,7 +90,7 @@ impl Executor {
     {
         let mut exec_hooks = ExecExpansionHooks::new(hooks);
         let mut stats = ExecutionStats::default();
-        let exit = run_main_control_until(
+        let exit = match run_main_control_until(
             &mut self.nest,
             input,
             stores,
@@ -98,21 +98,30 @@ impl Executor {
             &mut exec_hooks,
             &mut stats,
             |_, _| false,
-        )?;
+        ) {
+            Ok(exit) => exit,
+            Err(err) => {
+                stores.set_input_summary(input.summary());
+                return Err(err);
+            }
+        };
         match exit {
             MainControlExit::EndOfInput => Ok(stats),
             MainControlExit::Stopped => {
                 unreachable!("top-level main control has no stop condition")
             }
             MainControlExit::End { .. } => {
-                output::finish_end(
+                if let Err(err) = output::finish_end(
                     &mut self.nest,
                     input,
                     stores,
                     recorder,
                     &mut exec_hooks,
                     &mut stats,
-                )?;
+                ) {
+                    stores.set_input_summary(input.summary());
+                    return Err(err);
+                }
                 Ok(stats)
             }
             MainControlExit::NotConsumed { token } => Err(unimplemented_typesetting(
@@ -157,14 +166,29 @@ where
         sync_engine_state::<S, _>(hooks, nest, stores);
         let token = {
             let mut expansion = ExpansionContext::new(stores);
-            get_x_token_with_recorder_and_hooks(input, &mut expansion, recorder, hooks)?
+            match get_x_token_with_recorder_and_hooks(input, &mut expansion, recorder, hooks) {
+                Ok(token) => token,
+                Err(err) => {
+                    stores.set_input_summary(input.summary());
+                    return Err(err.into());
+                }
+            }
         };
         let Some(token) = token else {
             assignments::flush_pending_hchars(nest, stores)?;
             return Ok(MainControlExit::EndOfInput);
         };
         stats.delivered_tokens += 1;
-        match dispatch_delivered_token_with_recorder(nest, token, input, stores, recorder, hooks)? {
+        let action = match dispatch_delivered_token_with_recorder(
+            nest, token, input, stores, recorder, hooks,
+        ) {
+            Ok(action) => action,
+            Err(err) => {
+                stores.set_input_summary(input.summary());
+                return Err(err);
+            }
+        };
+        match action {
             DispatchAction::Continue => {
                 output::drain_pending_output(nest, input, stores, recorder, hooks, stats)?;
             }

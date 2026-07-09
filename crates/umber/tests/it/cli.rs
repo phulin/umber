@@ -246,6 +246,51 @@ fn run_reports_deadcycles_overflow_primary_text() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn run_error_renders_primary_source_context() {
+    let temp_dir = tempfile::tempdir().expect("create diagnostic temp dir");
+    let source = temp_dir.path().join("brace.tex");
+    fs::write(&source, "}\n").expect("write diagnostic fixture");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .arg("run")
+        .arg(&source)
+        .output()
+        .expect("run umber diagnostic fixture");
+
+    assert!(!output.status.success(), "brace run should fail");
+    let stderr = String::from_utf8(output.stderr).expect("stderr is utf-8");
+    assert!(stderr.contains("Too many }'s."));
+    assert!(stderr.contains("brace.tex:1:1"));
+    assert!(stderr.contains("  1 | }"));
+    assert!(stderr.contains("    | ^"));
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn run_macro_error_renders_bounded_expansion_trace() {
+    let temp_dir = tempfile::tempdir().expect("create macro diagnostic temp dir");
+    let source = temp_dir.path().join("macro.tex");
+    fs::write(&source, "\\def\\a{\\endgroup}\\a\n").expect("write macro diagnostic fixture");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .arg("run")
+        .arg(&source)
+        .output()
+        .expect("run umber macro diagnostic fixture");
+
+    assert!(!output.status.success(), "macro run should fail");
+    let stderr = String::from_utf8(output.stderr).expect("stderr is utf-8");
+    assert!(stderr.contains("Extra \\endgroup."));
+    assert!(stderr.contains("macro.tex:1:8"));
+    assert!(stderr.contains("expansion trace:"));
+    assert!(stderr.contains("invoked at"));
+    assert!(stderr.contains("defined at"));
+}
+
+#[test]
 fn run_usage_errors_follow_existing_shape() {
     let missing = Command::new(env!("CARGO_BIN_EXE_umber"))
         .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)

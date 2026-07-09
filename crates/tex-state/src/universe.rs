@@ -1123,6 +1123,12 @@ impl Universe {
         self.stores.origin(id)
     }
 
+    /// Reads an origin record if it is still live on this timeline.
+    #[must_use]
+    pub fn origin_if_live(&self, id: OriginId) -> Option<OriginRecord> {
+        self.stores.origin_if_live(id)
+    }
+
     /// Allocates an origin-list span.
     pub fn allocate_origin_list(&mut self, origins: &[OriginId]) -> OriginListId {
         self.stores.allocate_origin_list(origins)
@@ -1143,6 +1149,12 @@ impl Universe {
     #[must_use]
     pub fn origin_list(&self, id: OriginListId) -> &[OriginId] {
         self.stores.origin_list(id)
+    }
+
+    /// Reads an origin-list span if it is still live on this timeline.
+    #[must_use]
+    pub fn origin_list_if_live(&self, id: OriginListId) -> Option<&[OriginId]> {
+        self.stores.origin_list_if_live(id)
     }
 
     pub fn intern_glue(&mut self, spec: GlueSpec) -> GlueId {

@@ -149,7 +149,14 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
         )));
     }
     let mut hooks = RunHooks::new(path);
-    let run = umber::run_input_collecting_artifacts(&mut input, &mut stores, &mut hooks)?;
+    let run = match umber::run_input_collecting_artifacts(&mut input, &mut stores, &mut hooks) {
+        Ok(run) => run,
+        Err(err) => {
+            return Err(CliError::RenderedExec(
+                err.format_with_provenance(&stores).trim_end().to_owned(),
+            ));
+        }
+    };
     if let Some(output) = &opts.dvi {
         let dvi = umber::dvi_from_artifacts(&stores, &run.artifacts)?;
         stores.world_mut().write_file(output, dvi)?;
@@ -287,6 +294,7 @@ enum CliError {
     Lex(tex_lex::LexError),
     ExpandDump(expand_dump::ExpandDumpError),
     Exec(tex_exec::ExecError),
+    RenderedExec(String),
     Dvi(umber::DviBuildError),
 }
 
@@ -298,6 +306,7 @@ impl std::fmt::Display for CliError {
             Self::Lex(err) => write!(f, "{err}"),
             Self::ExpandDump(err) => write!(f, "{err}"),
             Self::Exec(err) => write!(f, "{err}"),
+            Self::RenderedExec(text) => f.write_str(text),
             Self::Dvi(err) => write!(f, "{err}"),
         }
     }

@@ -4,6 +4,8 @@ use tex_expand::ExpandError;
 use tex_expand::scan::ScanToksError;
 use tex_lex::LexError;
 use tex_state::FontParameterError;
+use tex_state::ProvenanceResolver;
+use tex_state::Universe;
 use tex_state::WorldError;
 use tex_state::meaning::ExpandablePrimitive;
 use tex_state::token::{OriginId, Token};
@@ -351,6 +353,12 @@ impl ExecError {
             | Self::OutputRoutineBox255NotVoid
             | Self::OutputLoop { .. } => None,
         }
+    }
+
+    /// Renders this error with lazy provenance context from the live universe.
+    #[must_use]
+    pub fn format_with_provenance(&self, stores: &Universe) -> String {
+        ProvenanceResolver::new(stores).render_diagnostic(&self.to_string(), self.primary_origin())
     }
 }
 

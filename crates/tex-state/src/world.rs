@@ -885,6 +885,12 @@ impl World {
         &self.inputs
     }
 
+    /// Returns the content-addressed bytes for a previously-read input.
+    #[must_use]
+    pub fn input_content(&self, hash: ContentHash) -> Option<&[u8]> {
+        self.input_contents.get(&hash).map(Vec::as_slice)
+    }
+
     #[must_use]
     pub fn shell_escape_records(&self) -> &[ShellEscapeRecord] {
         &self.shell_escapes

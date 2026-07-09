@@ -615,6 +615,14 @@ impl Stores {
         self.provenance.get(id)
     }
 
+    /// Reads an origin record if it is still live on this timeline.
+    #[must_use]
+    pub fn origin_if_live(&self, id: OriginId) -> Option<OriginRecord> {
+        self.provenance
+            .contains_origin(id)
+            .then(|| self.provenance.get(id))
+    }
+
     /// Allocates an origin-list span.
     pub fn allocate_origin_list(&mut self, origins: &[OriginId]) -> OriginListId {
         for &origin in origins {
@@ -642,6 +650,14 @@ impl Stores {
     pub fn origin_list(&self, id: OriginListId) -> &[OriginId] {
         self.assert_live_origin_list(id);
         self.provenance.list(id)
+    }
+
+    /// Reads an origin-list span if it is still live on this timeline.
+    #[must_use]
+    pub fn origin_list_if_live(&self, id: OriginListId) -> Option<&[OriginId]> {
+        self.provenance
+            .contains_list(id)
+            .then(|| self.provenance.list(id))
     }
 
     fn assert_origin_list_len_matches(&self, token_list: TokenListId, origin_list: OriginListId) {

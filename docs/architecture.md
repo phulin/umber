@@ -184,7 +184,10 @@ Responsibility: characters → tokens, under mutable catcode law.
   Unknown/Bootstrap origin; provenance allocation overflow saturates to that
   id rather than aborting semantic compilation. Origin records and packed
   origin-list spans live in `tex-state` as rollback-coupled, hash-neutral
-  diagnostic side-channel arenas.
+  diagnostic side-channel arenas. User-facing source labels, line/caret
+  snippets, and expansion traces are rendered lazily by the provenance
+  resolver at diagnostic formatting boundaries; hot token movement never
+  formats or allocates strings for provenance.
 - The lexer holds **no state outside the input stack frame** (its N/M/S
   state is part of the frame). Nothing here needs journaling.
 
@@ -290,7 +293,10 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   World mutation APIs. Macro body replay uses
   the body `TokenListId` directly plus its definition-time `OriginListId`, a
   one-per-call macro-invocation origin, and frozen argument token/origin pairs
-  on the replay frame; it does not allocate a substituted body list. Token-list replay is
+  on the replay frame; it does not allocate a substituted body list. Diagnostic
+  expansion backtraces are reconstructed from those live replay-frame
+  invocation origins with a fixed display depth, not from per-token chain
+  records. Token-list replay is
   naturally read-only; source-frame replay may intern newly encountered
   control sequence names through the lexer/interner capability. `\csname` uses a dedicated
   expansion scan that stops on `\endcsname`, accumulates only expanded character

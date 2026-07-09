@@ -18,6 +18,7 @@ pub mod node;
 pub mod node_arena;
 pub mod page;
 pub mod provenance;
+mod provenance_resolver;
 pub mod scaled;
 pub(crate) mod state_hash;
 mod stores;
@@ -36,6 +37,7 @@ pub use page::{
     AWFUL_BAD, DEPLORABLE, EJECT_PENALTY, INF_PENALTY, PageBreak, PageContents, PageDimension,
     PageFireUp, PageInteger,
 };
+pub use provenance_resolver::ProvenanceResolver;
 pub use stores::{FontParameterError, GroupKind, GroupMismatch, PrepareMagDiagnostic};
 pub use universe::{
     BoxDimension, CheckpointId, CheckpointMetadata, CheckpointResumeKind, ExpansionContext,

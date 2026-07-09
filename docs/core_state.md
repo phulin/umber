@@ -345,6 +345,19 @@ cells[i] = new
   resolve to unknown/empty provenance when an entry is absent. Provenance
   appends are not journaled and are not part of memo redo slices; execution
   reconstructs them when replaying.
+- User-facing provenance is resolved only at diagnostic formatting
+  boundaries. `ProvenanceResolver` reads live origin records, input summaries,
+  world input records, and interned names to render source labels, source
+  line/caret context, and bounded macro expansion traces. It treats
+  `OriginId(0)`, rolled-back ids, missing origin-list spans, and absent source
+  metadata as unknown provenance rather than reporting a secondary error.
+- Raw `OriginId`s are valid only while their append-only provenance records
+  remain live. Any diagnostic that must survive speculative/replayed execution
+  rollback must be rendered to text before rolling back past its provenance
+  watermark. Expansion backtraces are reconstructed from live input-stack macro
+  replay frames and their invocation origins, not from per-token chain records.
+  Coordinate rendering stays lazy so future splice-time line-delta remapping
+  can be inserted at the resolver boundary.
 
 ### Glue store
 
