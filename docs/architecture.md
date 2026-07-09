@@ -380,6 +380,14 @@ assignments, box building, and dispatch into the typesetting kernels.
   preserve TeX's `\over`/`\atop`/`\above` state.
   `\mathcode"8000` redispatches through the current active-character meaning
   at use time, and family font selectors live in the barriered Env font state.
+  Display math is packaged stomach-side: entering `$$` from unrestricted
+  horizontal mode interrupts the paragraph through the ordinary line breaker,
+  records `\predisplaysize`, `\displaywidth`, and `\displayindent` in
+  snapshot-covered display mode state, replays `\everydisplay`, and later
+  appends the display hbox, optional `\eqno`/`\leqno` hbox, display skips, and
+  pre/post display penalties to the enclosing vertical list while resuming the
+  paragraph with TeX's `prevgraf += 3` accounting. The only pure-kernel call in
+  that path remains mlist-to-hlist conversion.
 - **List diagnostics**: `\showbox` routes through `World` terminal/log
   effects and uses the shared node-list dump emitter in `tex-exec`. The
   emitter walks frozen node lists through `Universe`, honors

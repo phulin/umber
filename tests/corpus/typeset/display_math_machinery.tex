@@ -1,0 +1,45 @@
+\tracingonline=1
+\hbadness=10000
+\vbadness=10000
+\overfullrule=0pt
+\showboxbreadth=200
+\showboxdepth=100
+\font\tenrm=../../crates/tex-fonts/tests/fixtures/cm/cmr10
+\font\teni=../../crates/tex-fonts/tests/fixtures/cm/cmmi10
+\font\tensy=../../crates/tex-fonts/tests/fixtures/cm/cmsy10
+\font\tenex=../../crates/tex-fonts/tests/fixtures/cm/cmex10
+\textfont0=\tenrm \scriptfont0=\tenrm \scriptscriptfont0=\tenrm
+\textfont1=\teni \scriptfont1=\teni \scriptscriptfont1=\teni
+\textfont2=\tensy \scriptfont2=\tensy \scriptscriptfont2=\tensy
+\textfont3=\tenex \scriptfont3=\tenex \scriptscriptfont3=\tenex
+\tenrm
+\mathcode`a="0061
+\mathcode`b="0062
+\mathcode`c="0063
+\mathcode`n="006E
+\mathcode`+="202B
+\thinmuskip=0mu
+\medmuskip=0mu
+\thickmuskip=0mu
+\nulldelimiterspace=0pt
+\parindent=0pt
+\parfillskip=0pt plus 1fil
+\baselineskip=12pt
+\lineskiplimit=0pt
+\interlinepenalty=0
+\clubpenalty=0
+\widowpenalty=0
+\displaywidowpenalty=77
+\predisplaypenalty=11
+\postdisplaypenalty=22
+\abovedisplayskip=13pt
+\belowdisplayskip=14pt
+\abovedisplayshortskip=3pt
+\belowdisplayshortskip=4pt
+\setbox0=\vbox{\hsize=100pt a a a $$b+c\eqno n$$ c c\par}
+\showbox0
+\setbox1=\vbox{\hsize=100pt a a a $$b+c\leqno n$$ c c\par}
+\showbox1
+\setbox2=\vbox{\hsize=100pt \parfillskip=0pt a a a a a a a a a a a a $$b$$ c\par}
+\showbox2
+\end

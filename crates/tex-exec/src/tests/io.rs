@@ -516,6 +516,7 @@ fn shipout_lowers_supported_whatsit_adjacent_nodes_without_reordering_effects() 
             height: Scaled::from_raw(0),
             depth: Scaled::from_raw(0),
             shift: Scaled::from_raw(0),
+            display: false,
             glue_set: tex_state::scaled::GlueSetRatio::ZERO,
             glue_sign: tex_state::node::Sign::Normal,
             glue_order: tex_state::glue::Order::Normal,

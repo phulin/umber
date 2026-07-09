@@ -44,8 +44,10 @@ use hmode::*;
 pub(crate) use hmode::{append_given_char, flush_pending_hchars, try_append_character};
 use hyphenation::*;
 use macros::*;
-pub(crate) use paragraph::ensure_horizontal_for_character;
 use paragraph::*;
+pub(crate) use paragraph::{
+    display_line_dimensions, ensure_horizontal_for_character, interrupt_paragraph_for_display,
+};
 pub use primitives::install_unexpandable_primitives;
 use scanning::*;
 pub(crate) use scanning::{next_non_space_x, scan_glue_id, scan_i32, scan_scaled};
@@ -565,6 +567,8 @@ where
             | UnexpandablePrimitive::MathChoice
             | UnexpandablePrimitive::Left
             | UnexpandablePrimitive::Right
+            | UnexpandablePrimitive::EqNo
+            | UnexpandablePrimitive::LeftEqNo
             | UnexpandablePrimitive::DisplayStyle
             | UnexpandablePrimitive::TextStyle
             | UnexpandablePrimitive::ScriptStyle

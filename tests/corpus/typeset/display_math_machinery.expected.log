@@ -1,0 +1,121 @@
+> \box0=
+\vbox(55.30554+0.0)x100.0
+.\hbox(4.30554+0.0)x100.0, glue set 78.3333fil
+..\hbox(0.0+0.0)x0.0
+..\tenrm a
+..\glue 3.33333 plus 1.66666 minus 1.11111
+..\tenrm a
+..\glue 3.33333 plus 1.66666 minus 1.11111
+..\tenrm a
+..\penalty 10000
+..\glue(\parfillskip) 0.0 plus 1.0fil
+..\glue(\rightskip) 0.0
+.\penalty 11
+.\glue(\abovedisplayskip) 13.0
+.\glue(\baselineskip) 5.05556
+.\hbox(6.94444+0.83333)x58.8889, shifted 41.1111
+..\hbox(6.94444+0.83333)x17.77782, display
+...\tenrm b
+...\glue(\medmuskip) 0.0
+...\tenrm +
+...\glue(\medmuskip) 0.0
+...\tenrm c
+..\kern35.55551
+..\hbox(4.30554+0.0)x5.55557, display
+...\tenrm n
+.\penalty 22
+.\glue(\belowdisplayskip) 14.0
+.\glue(\baselineskip) 6.86113
+.\hbox(4.30554+0.0)x100.0, glue set 87.77779fil
+..\tenrm c
+..\glue 3.33333 plus 1.66666 minus 1.11111
+..\tenrm c
+..\penalty 10000
+..\glue(\parfillskip) 0.0 plus 1.0fil
+..\glue(\rightskip) 0.0
+
+! OK.
+
+> \box1=
+\vbox(55.30554+0.0)x100.0
+.\hbox(4.30554+0.0)x100.0, glue set 78.3333fil
+..\hbox(0.0+0.0)x0.0
+..\tenrm a
+..\glue 3.33333 plus 1.66666 minus 1.11111
+..\tenrm a
+..\glue 3.33333 plus 1.66666 minus 1.11111
+..\tenrm a
+..\penalty 10000
+..\glue(\parfillskip) 0.0 plus 1.0fil
+..\glue(\rightskip) 0.0
+.\penalty 11
+.\glue(\abovedisplayskip) 13.0
+.\glue(\baselineskip) 5.05556
+.\hbox(6.94444+0.83333)x58.8889
+..\hbox(4.30554+0.0)x5.55557, display
+...\tenrm n
+..\kern35.55551
+..\hbox(6.94444+0.83333)x17.77782, display
+...\tenrm b
+...\glue(\medmuskip) 0.0
+...\tenrm +
+...\glue(\medmuskip) 0.0
+...\tenrm c
+.\penalty 22
+.\glue(\belowdisplayskip) 14.0
+.\glue(\baselineskip) 6.86113
+.\hbox(4.30554+0.0)x100.0, glue set 87.77779fil
+..\tenrm c
+..\glue 3.33333 plus 1.66666 minus 1.11111
+..\tenrm c
+..\penalty 10000
+..\glue(\parfillskip) 0.0 plus 1.0fil
+..\glue(\rightskip) 0.0
+
+! OK.
+
+> \box2=
+\vbox(55.30554+0.0)x100.0
+.\hbox(4.30554+0.0)x100.0, glue set 0.18181
+..\hbox(0.0+0.0)x0.0
+..\tenrm a
+..\glue 3.33333 plus 1.66666 minus 1.11111
+..\tenrm a
+..\glue 3.33333 plus 1.66666 minus 1.11111
+..\tenrm a
+..\glue 3.33333 plus 1.66666 minus 1.11111
+..\tenrm a
+..\glue 3.33333 plus 1.66666 minus 1.11111
+..\tenrm a
+..\glue 3.33333 plus 1.66666 minus 1.11111
+..\tenrm a
+..\glue 3.33333 plus 1.66666 minus 1.11111
+..\tenrm a
+..\glue 3.33333 plus 1.66666 minus 1.11111
+..\tenrm a
+..\glue 3.33333 plus 1.66666 minus 1.11111
+..\tenrm a
+..\glue 3.33333 plus 1.66666 minus 1.11111
+..\tenrm a
+..\glue 3.33333 plus 1.66666 minus 1.11111
+..\tenrm a
+..\glue 3.33333 plus 1.66666 minus 1.11111
+..\tenrm a
+..\penalty 10000
+..\glue(\parfillskip) 0.0
+..\glue(\rightskip) 0.0
+.\penalty 11
+.\glue(\abovedisplayskip) 13.0
+.\glue(\baselineskip) 5.05556
+.\hbox(6.94444+0.0)x5.55557, shifted 47.22221, display
+..\tenrm b
+.\penalty 22
+.\glue(\belowdisplayskip) 14.0
+.\glue(\baselineskip) 7.69446
+.\hbox(4.30554+0.0)x100.0
+..\tenrm c
+..\penalty 10000
+..\glue(\parfillskip) 0.0
+..\glue(\rightskip) 0.0
+
+! OK.

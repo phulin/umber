@@ -2,11 +2,11 @@ use tex_lex::{InputSource, InputStack, TokenListReplayKind};
 use tex_state::Universe;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::GlueSpec;
-use tex_state::node::{GlueKind, Node};
+use tex_state::node::{BoxNode, GlueKind, Node};
 use tex_state::scaled::Scaled;
 use tex_typeset::PackSpec;
 use tex_typeset::linebreak::{
-    HyphenationHook, LineBreakParams, LineShape, LineShapeEntry,
+    HyphenationHook, LineBreakParams, LineDimensions, LineShape, LineShapeEntry,
     ParagraphShape as TypesetParagraphShape, PostLineBreakParams, line_break, post_line_break,
 };
 
@@ -124,6 +124,62 @@ pub(super) fn end_paragraph(nest: &mut ModeNest, stores: &mut Universe) -> Resul
     if !matches!(nest.current_mode(), Mode::Horizontal) {
         return Ok(());
     }
+    let final_widow_penalty = stores.int_param(IntParam::WIDOW_PENALTY);
+    let _ = break_current_paragraph(nest, stores, final_widow_penalty, true)?;
+    Ok(())
+}
+
+pub(crate) struct ParagraphBreakResult {
+    pub(crate) last_line: Option<BoxNode>,
+}
+
+pub(crate) fn interrupt_paragraph_for_display(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+) -> Result<ParagraphBreakResult, ExecError> {
+    flush_pending_hchars(nest, stores)?;
+    if nest.current_list().is_empty() {
+        let _ = nest.pop()?;
+        return Ok(ParagraphBreakResult { last_line: None });
+    }
+    let final_widow_penalty = stores.int_param(IntParam::DISPLAY_WIDOW_PENALTY);
+    break_current_paragraph(nest, stores, final_widow_penalty, false)
+}
+
+pub(crate) fn display_line_dimensions(nest: &ModeNest, stores: &Universe) -> LineDimensions {
+    let params = ParagraphParams {
+        left_skip: stores.glue_param(GlueParam::LEFT_SKIP),
+        right_skip: stores.glue_param(GlueParam::RIGHT_SKIP),
+        par_fill_skip: stores.glue_param(GlueParam::PAR_FILL_SKIP),
+        par_shape: nest.current_list().par_shape().cloned(),
+        prev_graf: nest.enclosing_vertical_prev_graf(),
+        hang_indent: stores.dimen_param(DimenParam::HANG_INDENT),
+        hang_after: stores.int_param(IntParam::HANG_AFTER),
+        looseness: stores.int_param(IntParam::LOOSENESS),
+        pretolerance: stores.int_param(IntParam::PRETOLERANCE),
+        tolerance: stores.int_param(IntParam::TOLERANCE),
+        line_penalty: stores.int_param(IntParam::LINE_PENALTY),
+        hyphen_penalty: stores.int_param(IntParam::HYPHEN_PENALTY),
+        ex_hyphen_penalty: stores.int_param(IntParam::EX_HYPHEN_PENALTY),
+        adj_demerits: stores.int_param(IntParam::ADJ_DEMERITS),
+        double_hyphen_demerits: stores.int_param(IntParam::DOUBLE_HYPHEN_DEMERITS),
+        final_hyphen_demerits: stores.int_param(IntParam::FINAL_HYPHEN_DEMERITS),
+        emergency_stretch: stores.dimen_param(DimenParam::EMERGENCY_STRETCH),
+        hsize: stores.dimen_param(DimenParam::H_SIZE),
+        interline_penalty: stores.int_param(IntParam::INTERLINE_PENALTY),
+        club_penalty: stores.int_param(IntParam::CLUB_PENALTY),
+        widow_penalty: stores.int_param(IntParam::WIDOW_PENALTY),
+        broken_penalty: stores.int_param(IntParam::BROKEN_PENALTY),
+    };
+    line_shape(&params).dimensions(2)
+}
+
+fn break_current_paragraph(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    final_widow_penalty: i32,
+    reset_paragraph: bool,
+) -> Result<ParagraphBreakResult, ExecError> {
     flush_pending_hchars(nest, stores)?;
     let params = snapshot_paragraph_params(nest, stores);
     trim_trailing_glue(nest.current_list_mut());
@@ -133,13 +189,17 @@ pub(super) fn end_paragraph(nest: &mut ModeNest, stores: &mut Universe) -> Resul
         kind: GlueKind::ParFillSkip,
     });
     let level = nest.pop()?;
+    if let Some(shape) = params.par_shape.clone() {
+        nest.current_list_mut().set_par_shape(shape);
+    }
     let hlist = crate::math::finish_math_lists(stores, level.list().nodes());
     let line_params = line_break_params(&params);
     let hyphenated = super::hyphenation::hyphenated_hlist(stores, &hlist);
     let mut hook = ExecHyphenationHook { hyphenated };
     let decisions = line_break(stores, &hlist, line_params, &mut hook);
-    let post_params = post_line_break_params(&params);
+    let post_params = post_line_break_params(&params, final_widow_penalty);
     let mut line_count = 0i32;
+    let mut last_line = None;
     for mut broken in post_line_break(stores, &decisions.nodes, &decisions.breaks, post_params) {
         line_count += 1;
         let migrated = extract_migrating_material(stores, &mut broken.nodes);
@@ -148,6 +208,7 @@ pub(super) fn end_paragraph(nest: &mut ModeNest, stores: &mut Universe) -> Resul
             hpack_with_overfull_rule(stores, list, PackSpec::Exactly(broken.dimensions.width));
         let mut line = line;
         line.shift = broken.dimensions.indent;
+        last_line = Some(line.clone());
         append_node_to_current_list(nest, stores, Node::HList(line))?;
         for node in migrated {
             append_migrated_contribution(nest, stores, node);
@@ -158,9 +219,11 @@ pub(super) fn end_paragraph(nest: &mut ModeNest, stores: &mut Universe) -> Resul
     }
     nest.current_list_mut()
         .set_prev_graf(params.prev_graf.saturating_add(line_count));
-    reset_after_par(nest, stores);
+    if reset_paragraph {
+        reset_after_par(nest, stores);
+    }
     build_page_if_outer_vertical(nest, stores)?;
-    Ok(())
+    Ok(ParagraphBreakResult { last_line })
 }
 
 fn extract_migrating_material(stores: &Universe, nodes: &mut Vec<Node>) -> Vec<Node> {
@@ -230,13 +293,16 @@ fn line_break_params(params: &ParagraphParams) -> LineBreakParams {
     }
 }
 
-fn post_line_break_params(params: &ParagraphParams) -> PostLineBreakParams {
+fn post_line_break_params(
+    params: &ParagraphParams,
+    final_widow_penalty: i32,
+) -> PostLineBreakParams {
     PostLineBreakParams {
         left_skip: params.left_skip,
         right_skip: params.right_skip,
         interline_penalty: params.interline_penalty,
         club_penalty: params.club_penalty,
-        widow_penalty: params.widow_penalty,
+        widow_penalty: final_widow_penalty,
         broken_penalty: params.broken_penalty,
         shape: line_shape(params),
     }

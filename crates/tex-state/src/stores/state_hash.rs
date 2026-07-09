@@ -773,6 +773,10 @@ fn hash_glue_kind(kind: GlueKind, hasher: &mut StateHasher) {
         GlueKind::Xleaders => 10,
         GlueKind::MuSkip => 11,
         GlueKind::NonScript => 12,
+        GlueKind::AboveDisplaySkip => 13,
+        GlueKind::BelowDisplaySkip => 14,
+        GlueKind::AboveDisplayShortSkip => 15,
+        GlueKind::BelowDisplayShortSkip => 16,
     });
 }
 

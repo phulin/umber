@@ -97,6 +97,8 @@ impl Mode {
 pub struct ModeList {
     nodes: Vec<Node>,
     incomplete_fraction: Option<IncompleteFraction>,
+    display_interrupt: Option<DisplayInterrupt>,
+    display_eq_no: Option<DisplayEqNo>,
     prev_depth: Option<Scaled>,
     prev_graf: i32,
     par_shape: Option<ParagraphShape>,
@@ -217,6 +219,32 @@ impl ModeList {
     pub fn take_incomplete_fraction(&mut self) -> Option<IncompleteFraction> {
         self.incomplete_fraction.take()
     }
+
+    pub fn set_display_interrupt(&mut self, interrupt: DisplayInterrupt) {
+        self.display_interrupt = Some(interrupt);
+    }
+
+    #[must_use]
+    pub const fn display_interrupt(&self) -> Option<&DisplayInterrupt> {
+        self.display_interrupt.as_ref()
+    }
+
+    pub fn take_display_interrupt(&mut self) -> Option<DisplayInterrupt> {
+        self.display_interrupt.take()
+    }
+
+    pub fn set_display_eq_no(&mut self, eq_no: DisplayEqNo) {
+        self.display_eq_no = Some(eq_no);
+    }
+
+    #[must_use]
+    pub const fn display_eq_no(&self) -> Option<&DisplayEqNo> {
+        self.display_eq_no.as_ref()
+    }
+
+    pub fn take_display_eq_no(&mut self) -> Option<DisplayEqNo> {
+        self.display_eq_no.take()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -231,6 +259,28 @@ pub struct IncompleteFraction {
     pub thickness: FractionThickness,
     pub left_delimiter: Option<u32>,
     pub right_delimiter: Option<u32>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DisplayInterrupt {
+    pub pre_display_size: Scaled,
+    pub display_width: Scaled,
+    pub display_indent: Scaled,
+    pub saved_pre_display_size: Scaled,
+    pub saved_display_width: Scaled,
+    pub saved_display_indent: Scaled,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DisplayEqNo {
+    pub side: EqNoSide,
+    pub display: NodeListId,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EqNoSide {
+    Left,
+    Right,
 }
 
 /// Snapshot-summary state for one mode level.

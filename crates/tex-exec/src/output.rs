@@ -475,6 +475,7 @@ fn append_end_cleanup_contributions(stores: &mut Universe) {
         height: Scaled::from_raw(0),
         depth: Scaled::from_raw(0),
         shift: Scaled::from_raw(0),
+        display: false,
         glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,

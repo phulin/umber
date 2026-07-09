@@ -381,6 +381,8 @@ pub enum UnexpandablePrimitive {
     MathChoice,
     Left,
     Right,
+    EqNo,
+    LeftEqNo,
     DisplayStyle,
     TextStyle,
     ScriptStyle,
@@ -545,6 +547,8 @@ impl UnexpandablePrimitive {
             Self::ScriptScriptStyle => 151,
             Self::Left => 152,
             Self::Right => 153,
+            Self::EqNo => 154,
+            Self::LeftEqNo => 155,
             Self::End => 54,
         }
     }
@@ -705,6 +709,8 @@ impl UnexpandablePrimitive {
             151 => Some(Self::ScriptScriptStyle),
             152 => Some(Self::Left),
             153 => Some(Self::Right),
+            154 => Some(Self::EqNo),
+            155 => Some(Self::LeftEqNo),
             54 => Some(Self::End),
             _ => None,
         }

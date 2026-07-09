@@ -245,6 +245,7 @@ mod tests {
             height: sp(height),
             depth: sp(depth),
             shift: sp(0),
+            display: false,
             glue_set: GlueSetRatio::ZERO,
             glue_sign: Sign::Normal,
             glue_order: Order::Normal,

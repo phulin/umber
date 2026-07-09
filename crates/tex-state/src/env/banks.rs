@@ -81,6 +81,9 @@ impl IntParam {
     /// TeX's widow-line penalty.
     pub const WIDOW_PENALTY: Self = Self::new(6);
 
+    /// TeX's display-interrupted paragraph widow penalty.
+    pub const DISPLAY_WIDOW_PENALTY: Self = Self::new(7);
+
     /// TeX's penalty inserted after binary operators in inline math.
     pub const BIN_OP_PENALTY: Self = Self::new(9);
 
@@ -89,6 +92,12 @@ impl IntParam {
 
     /// TeX's post-hyphenated-line penalty.
     pub const BROKEN_PENALTY: Self = Self::new(8);
+
+    /// TeX's penalty before a display.
+    pub const PRE_DISPLAY_PENALTY: Self = Self::new(11);
+
+    /// TeX's penalty after a display.
+    pub const POST_DISPLAY_PENALTY: Self = Self::new(12);
 
     /// TeX's inter-line penalty.
     pub const INTERLINE_PENALTY: Self = Self::new(13);
@@ -203,6 +212,15 @@ impl DimenParam {
     /// TeX's width for a null delimiter.
     pub const NULL_DELIMITER_SPACE: Self = Self::new(11);
 
+    /// TeX's last-line width measure before a display.
+    pub const PRE_DISPLAY_SIZE: Self = Self::new(13);
+
+    /// TeX's display line width.
+    pub const DISPLAY_WIDTH: Self = Self::new(14);
+
+    /// TeX's display line indent.
+    pub const DISPLAY_INDENT: Self = Self::new(15);
+
     /// TeX's `\overfullrule` dimension parameter.
     pub const OVERFULL_RULE: Self = Self::new(16);
 
@@ -255,6 +273,18 @@ impl GlueParam {
 
     /// TeX's `\parfillskip` glue parameter.
     pub const PAR_FILL_SKIP: Self = Self::new(14);
+
+    /// TeX's glue above a display.
+    pub const ABOVE_DISPLAY_SKIP: Self = Self::new(3);
+
+    /// TeX's glue below a display.
+    pub const BELOW_DISPLAY_SKIP: Self = Self::new(4);
+
+    /// TeX's short glue above a display.
+    pub const ABOVE_DISPLAY_SHORT_SKIP: Self = Self::new(5);
+
+    /// TeX's short glue below a display.
+    pub const BELOW_DISPLAY_SHORT_SKIP: Self = Self::new(6);
 }
 
 impl TokParam {

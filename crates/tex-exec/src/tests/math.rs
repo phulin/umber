@@ -270,29 +270,30 @@ fn every_math_and_every_display_tokens_are_inserted_on_entry() {
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let displaystyle = stores.symbol("displaystyle").expect("displaystyle");
-    let textstyle = stores.symbol("textstyle").expect("textstyle");
     let every_math = stores.intern_token_list(&[Token::Cs(displaystyle)]);
-    let every_display = stores.intern_token_list(&[Token::Cs(textstyle)]);
     stores.set_tok_param(TokParam::EVERY_MATH, every_math);
-    stores.set_tok_param(TokParam::EVERY_DISPLAY, every_display);
-    let mut input = InputStack::new(MemoryInput::new("$a$ $$b$$"));
+    let mut input = InputStack::new(MemoryInput::new("$a$"));
     let mut executor = Executor::new();
     executor
         .run(&mut input, &mut stores)
         .expect("math source executes");
     let lists = math_list_nodes(&executor);
 
-    assert_eq!(lists.len(), 2);
+    assert_eq!(lists.len(), 1);
     assert!(!lists[0].display);
-    assert!(lists[1].display);
     assert!(matches!(
         stores.nodes(lists[0].content)[0],
         Node::MathStyle(tex_state::math::MathStyle::Display)
     ));
-    assert!(matches!(
-        stores.nodes(lists[1].content)[0],
-        Node::MathStyle(tex_state::math::MathStyle::Text)
-    ));
+
+    let (display_stores, _) = run_math_source(r"\everydisplay{\message{ED}}\noindent$$b$$\end");
+    let display_output = String::from_utf8_lossy(
+        display_stores
+            .world()
+            .memory_terminal_output()
+            .expect("memory terminal output"),
+    );
+    assert!(display_output.contains("ED"));
 }
 
 fn run_math_source(source: &str) -> (Universe, Executor) {

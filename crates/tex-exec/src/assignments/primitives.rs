@@ -152,6 +152,8 @@ pub fn install_unexpandable_primitives(stores: &mut Universe) {
         ("mathchoice", UnexpandablePrimitive::MathChoice),
         ("left", UnexpandablePrimitive::Left),
         ("right", UnexpandablePrimitive::Right),
+        ("eqno", UnexpandablePrimitive::EqNo),
+        ("leqno", UnexpandablePrimitive::LeftEqNo),
         ("displaystyle", UnexpandablePrimitive::DisplayStyle),
         ("textstyle", UnexpandablePrimitive::TextStyle),
         ("scriptstyle", UnexpandablePrimitive::ScriptStyle),

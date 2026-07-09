@@ -434,6 +434,9 @@ fn dump_box(
             format_scaled_without_unit(box_node.shift)
         );
     }
+    if box_node.display {
+        out.push_str(", display");
+    }
     if depth + 1 >= config.depth {
         if !stores.nodes(box_node.children).is_empty() {
             out.push_str(" []");
@@ -560,10 +563,14 @@ impl GlueKindDump for GlueKind {
             Self::LeftSkip => "\\glue(\\leftskip) ",
             Self::RightSkip => "\\glue(\\rightskip) ",
             Self::ParFillSkip => "\\glue(\\parfillskip) ",
+            Self::AboveDisplaySkip => "\\glue(\\abovedisplayskip) ",
+            Self::BelowDisplaySkip => "\\glue(\\belowdisplayskip) ",
+            Self::AboveDisplayShortSkip => "\\glue(\\abovedisplayshortskip) ",
+            Self::BelowDisplayShortSkip => "\\glue(\\belowdisplayshortskip) ",
             Self::Leaders => "\\leaders \\glue ",
             Self::Cleaders => "\\cleaders \\glue ",
             Self::Xleaders => "\\xleaders \\glue ",
-            Self::MuSkip => "\\glue(\\mskip) ",
+            Self::MuSkip => "\\glue(\\medmuskip) ",
             Self::NonScript => "\\glue(\\nonscript) ",
         }
     }
