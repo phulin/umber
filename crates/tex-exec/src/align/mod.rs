@@ -1,7 +1,11 @@
 //! Alignment stomach machinery.
 
 mod execution;
+mod noalign;
+mod packaging;
 mod preamble;
+mod support;
+mod template;
 mod widths;
 
 use tex_expand::{ExpansionHooks, ReadRecorder};

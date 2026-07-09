@@ -1,12 +1,15 @@
 use tex_expand::{ExpansionHooks, ReadRecorder, get_x_token_with_recorder_and_hooks};
 use tex_lex::{InputSource, InputStack, TokenListReplayKind};
 use tex_state::env::banks::TokParam;
-use tex_state::meaning::{Meaning, UnexpandablePrimitive};
-use tex_state::node::{GlueKind, Node, UnsetKind, UnsetNode, UnsetNodeFields};
-use tex_state::token::{Catcode, Token};
+use tex_state::node::{GlueKind, Node};
+use tex_state::token::Token;
 use tex_state::{ExpansionContext, PrintSink, Universe};
-use tex_typeset::measure_unset;
 
+use super::support::{
+    align_kind, align_state, align_state_mut, alignment_mode, cell_mode, is_alignment_tab,
+    is_begin_group, is_cr, is_end_group, is_noalign, is_omit, is_span, row_mode,
+    set_align_brace_depth,
+};
 use crate::assignments::{flush_pending_hchars, next_non_space_x};
 use crate::dispatch::dispatch_delivered_token_with_recorder;
 use crate::executor::sync_engine_state;
@@ -164,7 +167,7 @@ where
         };
         set_align_brace_depth(nest, align_level, 0);
         if is_noalign(stores, token) {
-            execute_noalign(align_level, nest, input, stores, recorder, hooks)?;
+            super::noalign::execute_noalign(align_level, nest, input, stores, recorder, hooks)?;
             continue;
         }
         if is_end_group(stores, token) {
@@ -175,78 +178,6 @@ where
             continue;
         }
         return Ok(Some(token));
-    }
-}
-
-fn execute_noalign<S, R, H>(
-    align_level: usize,
-    nest: &mut ModeNest,
-    input: &mut InputStack<S>,
-    stores: &mut Universe,
-    recorder: &mut R,
-    hooks: &mut H,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-    R: ReadRecorder,
-    H: ExpansionHooks<S>,
-{
-    stores.with_hash_only_checkpoints(|stores| {
-        let opener = next_non_space_x(input, stores, hooks)?.ok_or(ExecError::MissingToken {
-            context: "\\noalign group",
-        })?;
-        if !is_begin_group(stores, opener) {
-            report_missing_left_brace_inserted(stores);
-            push_tokens(input, stores, [opener]);
-        }
-        stores.enter_group_with_kind(tex_state::GroupKind::Simple);
-        nest.push(Mode::InternalVertical);
-        scan_noalign_group(nest, input, stores, recorder, hooks)?;
-        let level = nest.pop()?;
-        let nodes = level.list().nodes().to_vec();
-        leave_group(input, stores, tex_state::GroupKind::Simple)?;
-        let align_list = nest.list_mut(align_level).ok_or(ExecError::MissingToken {
-            context: "alignment state",
-        })?;
-        align_list.append(nodes);
-        Ok(())
-    })
-}
-
-fn scan_noalign_group<S, R, H>(
-    nest: &mut ModeNest,
-    input: &mut InputStack<S>,
-    stores: &mut Universe,
-    recorder: &mut R,
-    hooks: &mut H,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-    R: ReadRecorder,
-    H: ExpansionHooks<S>,
-{
-    let mut stats = ExecutionStats::default();
-    let mut brace_depth = 1usize;
-    loop {
-        sync_engine_state::<S, _>(hooks, nest, stores);
-        let token = {
-            let mut expansion = ExpansionContext::new(stores);
-            get_x_token_with_recorder_and_hooks(input, &mut expansion, recorder, hooks)?
-        }
-        .ok_or(ExecError::MissingToken {
-            context: "\\noalign closing brace",
-        })?;
-        if is_begin_group(stores, token) {
-            brace_depth += 1;
-        }
-        if is_end_group(stores, token) {
-            brace_depth -= 1;
-            if brace_depth == 0 {
-                flush_pending_hchars(nest, stores)?;
-                return Ok(());
-            }
-        }
-        dispatch_and_drain(nest, token, input, stores, recorder, hooks, &mut stats)?;
     }
 }
 
@@ -316,7 +247,12 @@ fn fin_row(
     let row_level = nest.pop()?;
     let nodes = row_level.list().nodes().to_vec();
     let children = stores.freeze_node_list(&nodes);
-    let row = make_unset_node(stores, children, row_unset_kind(kind), 1);
+    let row = super::packaging::make_unset_node(
+        stores,
+        children,
+        super::packaging::row_unset_kind(kind),
+        1,
+    );
     if kind == AlignmentKind::HAlign
         && let Node::Unset(unset) = &row
     {
@@ -376,7 +312,7 @@ where
                 push_tokens(input, stores, [token]);
             }
             if span_count > 1 {
-                expand_spanned_column_template_at_span_time(
+                super::template::expand_spanned_column_template_at_span_time(
                     column_templates.u_template,
                     align_level,
                     nest,
@@ -386,7 +322,7 @@ where
                     hooks,
                 )?;
             } else {
-                replay_template(
+                super::template::replay_template(
                     column_templates.u_template,
                     None,
                     nest,
@@ -403,7 +339,7 @@ where
             run_cell_body_until_terminator(align_level, nest, input, stores, recorder, hooks)?;
         if !omit {
             let end_template = align_state(nest, align_level)?.end_template();
-            replay_template(
+            super::template::replay_template(
                 column_templates.v_template,
                 Some(end_template),
                 nest,
@@ -455,7 +391,12 @@ fn package_cell(
         cell_level.list().nodes().to_vec()
     };
     let children = stores.freeze_node_list(&nodes);
-    let cell = make_unset_node(stores, children, cell_unset_kind(kind), span_count);
+    let cell = super::packaging::make_unset_node(
+        stores,
+        children,
+        super::packaging::cell_unset_kind(kind),
+        span_count,
+    );
     nest.current_list_mut().push(cell);
     let tabskip = align_state(nest, align_level)?.tabskip_for_boundary(next_boundary);
     nest.current_list_mut().push(Node::Glue {
@@ -463,78 +404,6 @@ fn package_cell(
         kind: GlueKind::TabSkip,
     });
     Ok(())
-}
-
-fn replay_template<S, R, H>(
-    template: tex_state::ids::TokenListId,
-    sentinel: Option<Token>,
-    nest: &mut ModeNest,
-    input: &mut InputStack<S>,
-    stores: &mut Universe,
-    recorder: &mut R,
-    hooks: &mut H,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-    R: ReadRecorder,
-    H: ExpansionHooks<S>,
-{
-    stores.with_hash_only_checkpoints(|stores| {
-        if stores.tokens(template).is_empty() {
-            return Ok(());
-        }
-        input.push_token_list(template, TokenListReplayKind::Inserted);
-        let mut stats = ExecutionStats::default();
-        loop {
-            if template_finished(input, stores, template, sentinel) {
-                return Ok(());
-            }
-            run_one_main_control_token(nest, input, stores, recorder, hooks, &mut stats)?;
-        }
-    })
-}
-
-fn expand_spanned_column_template_at_span_time<S, R, H>(
-    template: tex_state::ids::TokenListId,
-    align_level: usize,
-    nest: &mut ModeNest,
-    input: &mut InputStack<S>,
-    stores: &mut Universe,
-    recorder: &mut R,
-    hooks: &mut H,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-    R: ReadRecorder,
-    H: ExpansionHooks<S>,
-{
-    // Architecture §7 makes alignment the only impure kernel: span-time
-    // template expansion is the single explicit gullet interleave while the
-    // mutable alignment state on the mode nest is live.
-    let _ = align_level;
-    replay_template(template, None, nest, input, stores, recorder, hooks)
-}
-
-fn template_finished<S>(
-    input: &mut InputStack<S>,
-    stores: &Universe,
-    template: tex_state::ids::TokenListId,
-    sentinel: Option<Token>,
-) -> bool {
-    let Some((frame, replay_kind, index)) = input.current_token_list_frame() else {
-        return true;
-    };
-    if frame != template || replay_kind != TokenListReplayKind::Inserted {
-        return false;
-    }
-    let tokens = stores.tokens(template);
-    if sentinel.is_some_and(|token| tokens.get(index).is_some_and(|&next| next == token)) {
-        return input.pop_current_token_list_frame(template, TokenListReplayKind::Inserted);
-    }
-    if index >= tokens.len() {
-        return input.pop_current_token_list_frame(template, TokenListReplayKind::Inserted);
-    }
-    false
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -595,7 +464,7 @@ where
     }
 }
 
-fn run_one_main_control_token<S, R, H>(
+pub(super) fn run_one_main_control_token<S, R, H>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
@@ -620,7 +489,7 @@ where
     dispatch_and_drain(nest, token, input, stores, recorder, hooks, stats)
 }
 
-fn dispatch_and_drain<S, R, H>(
+pub(super) fn dispatch_and_drain<S, R, H>(
     nest: &mut ModeNest,
     token: Token,
     input: &mut InputStack<S>,
@@ -667,174 +536,8 @@ fn update_cell_brace_depth(
     Ok(())
 }
 
-fn make_unset_node(
-    stores: &Universe,
-    children: tex_state::ids::NodeListId,
-    kind: UnsetKind,
-    span_count: u16,
-) -> Node {
-    let metrics = measure_unset(stores, children, kind);
-    Node::Unset(UnsetNode::new(UnsetNodeFields {
-        kind,
-        width: metrics.width,
-        height: metrics.height,
-        depth: metrics.depth,
-        span_count,
-        stretch: metrics.stretch,
-        stretch_order: metrics.stretch_order,
-        shrink: metrics.shrink,
-        shrink_order: metrics.shrink_order,
-        children,
-    }))
-}
-
 fn report_missing_cr_inserted(stores: &mut Universe) {
     stores
         .world_mut()
         .write_text(PrintSink::TerminalAndLog, "\n! Missing \\cr inserted.\n");
-}
-
-fn report_missing_left_brace_inserted(stores: &mut Universe) {
-    stores
-        .world_mut()
-        .write_text(PrintSink::TerminalAndLog, "\n! Missing { inserted.\n");
-}
-
-fn align_state(nest: &ModeNest, align_level: usize) -> Result<&AlignState, ExecError> {
-    nest.list(align_level)
-        .and_then(crate::mode::ModeList::align_state)
-        .ok_or(ExecError::MissingToken {
-            context: "alignment state",
-        })
-}
-
-fn align_state_mut(nest: &mut ModeNest, align_level: usize) -> Result<&mut AlignState, ExecError> {
-    nest.list_mut(align_level)
-        .and_then(crate::mode::ModeList::align_state_mut)
-        .ok_or(ExecError::MissingToken {
-            context: "alignment state",
-        })
-}
-
-fn set_align_brace_depth(nest: &mut ModeNest, align_level: usize, value: i32) {
-    if let Some(state) = nest
-        .list_mut(align_level)
-        .and_then(crate::mode::ModeList::align_state_mut)
-    {
-        state.set_brace_depth(value);
-    }
-}
-
-fn align_kind(nest: &ModeNest, align_level: usize) -> Result<AlignmentKind, ExecError> {
-    Ok(align_state(nest, align_level)?.kind())
-}
-
-fn alignment_mode(kind: AlignmentKind) -> Mode {
-    match kind {
-        AlignmentKind::HAlign => Mode::InternalVertical,
-        AlignmentKind::VAlign => Mode::RestrictedHorizontal,
-    }
-}
-
-fn row_mode(kind: AlignmentKind) -> Mode {
-    match kind {
-        AlignmentKind::HAlign => Mode::RestrictedHorizontal,
-        AlignmentKind::VAlign => Mode::InternalVertical,
-    }
-}
-
-fn cell_mode(kind: AlignmentKind) -> Mode {
-    row_mode(kind)
-}
-
-fn cell_unset_kind(kind: AlignmentKind) -> UnsetKind {
-    match kind {
-        AlignmentKind::HAlign => UnsetKind::HBox,
-        AlignmentKind::VAlign => UnsetKind::VBox,
-    }
-}
-
-fn row_unset_kind(kind: AlignmentKind) -> UnsetKind {
-    cell_unset_kind(kind)
-}
-
-fn is_alignment_tab(stores: &Universe, token: Token) -> bool {
-    matches!(
-        token,
-        Token::Char {
-            cat: Catcode::AlignmentTab,
-            ..
-        }
-    ) || matches!(
-        token_meaning(stores, token),
-        Some(Meaning::CharToken {
-            cat: Catcode::AlignmentTab,
-            ..
-        })
-    )
-}
-
-fn is_begin_group(stores: &Universe, token: Token) -> bool {
-    matches!(
-        token,
-        Token::Char {
-            cat: Catcode::BeginGroup,
-            ..
-        }
-    ) || matches!(
-        token_meaning(stores, token),
-        Some(Meaning::CharToken {
-            cat: Catcode::BeginGroup,
-            ..
-        })
-    )
-}
-
-fn is_end_group(stores: &Universe, token: Token) -> bool {
-    matches!(
-        token,
-        Token::Char {
-            cat: Catcode::EndGroup,
-            ..
-        }
-    ) || matches!(
-        token_meaning(stores, token),
-        Some(Meaning::CharToken {
-            cat: Catcode::EndGroup,
-            ..
-        })
-    )
-}
-
-fn is_noalign(stores: &Universe, token: Token) -> bool {
-    primitive_token(stores, token) == Some(UnexpandablePrimitive::NoAlign)
-}
-
-fn is_omit(stores: &Universe, token: Token) -> bool {
-    primitive_token(stores, token) == Some(UnexpandablePrimitive::Omit)
-}
-
-fn is_cr(stores: &Universe, token: Token) -> bool {
-    matches!(
-        primitive_token(stores, token),
-        Some(UnexpandablePrimitive::Cr | UnexpandablePrimitive::CrCr)
-    )
-}
-
-fn is_span(stores: &Universe, token: Token) -> bool {
-    primitive_token(stores, token) == Some(UnexpandablePrimitive::Span)
-}
-
-fn primitive_token(stores: &Universe, token: Token) -> Option<UnexpandablePrimitive> {
-    match token_meaning(stores, token) {
-        Some(Meaning::UnexpandablePrimitive(primitive)) => Some(primitive),
-        _ => None,
-    }
-}
-
-fn token_meaning(stores: &Universe, token: Token) -> Option<Meaning> {
-    let Token::Cs(symbol) = token else {
-        return None;
-    };
-    Some(stores.meaning(symbol))
 }
