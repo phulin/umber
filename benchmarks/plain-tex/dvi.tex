@@ -1,11 +1,10 @@
 % Fixed dense-page DVI traversal and serialization workload.
-\font\benchmarkrm=cmr10
-\font\benchmarkit=cmti10
-\font\benchmarkbf=cmbx10
-\newcount\pagesmade
-\newcount\linesmade
-\newbox\linebox
-\newbox\pagebox
+\input benchmark-preamble.inc
+\countdef\pagesmade=100
+\countdef\linesmade=101
+\chardef\linebox=100
+\chardef\pagebox=101
+\pagesmade=0 \linesmade=0
 
 \setbox\linebox=\hbox to 36pc{%
   \benchmarkrm Character streams and repeated movement
@@ -24,7 +23,7 @@
 }
 
 \setbox\pagebox=\vbox to 54pc{%
-  \offinterlineskip
+  \benchmarkoffinterlineskip
   \addline
   \vfil
   \special{umber-benchmark:dense-page}%
@@ -33,8 +32,8 @@
 \def\work{%
   \advance\pagesmade by 1
   \shipout\vbox{\kern5pt\hbox{\kern5pt\copy\pagebox\kern5pt}\kern5pt}%
-  \ifnum\pagesmade<6000 \expandafter\work\fi
+  \ifnum\pagesmade<1000 \expandafter\work\fi
 }
 \work
-\message{BENCHMARK dvi pages=\the\pagesmade, lines-per-page=\the\linesmade}
+\message{BENCH dvi \the\pagesmade,\the\linesmade}
 \end

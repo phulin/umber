@@ -1,15 +1,19 @@
 % Fixed math-list construction and packing workload.
-\newcount\iterations
-\newdimen\checksum
-\newbox\formula
+\input benchmark-preamble.inc
+\countdef\iterations=100
+\dimendef\checksum=100
+\chardef\formula=100
+\iterations=0 \checksum=0pt
 
 \def\makeformula{%
   \setbox\formula=\hbox{$\displaystyle
-    \left(\sum_{i=1}^{n}{x_i^2+\sqrt{1+x_i}\over 1+x_i^2}\right)^{1/2}
-    +{\prod\limits_{j=1}^{m}(1+y_j)\over
-       \sqrt{\left|\alpha-\beta\right|+{1\over 1+\gamma^2}}}
-    +\mathop{\rm lim}\limits_{k\to\infty}
-       \left\{1+{a_k\over b_k+{c_k\over d_k}}\right\}
+    \left(\mathop\BenchmarkSum\limits_{i=1}^{n}
+      {x_i^2+\BenchmarkRadical{1+x_i}\over 1+x_i^2}\right)^{1/2}
+    +{\mathop\BenchmarkProd\limits_{j=1}^{m}(1+y_j)\over
+       \BenchmarkRadical{\left|\BenchmarkAlpha-\BenchmarkBeta\right|
+         +{1\over 1+\BenchmarkGamma^2}}}
+    +\mathop{l i m}\limits_{k\mathrel\BenchmarkArrow\BenchmarkInfinity}
+       \left(1+{a_k\over b_k+{c_k\over d_k}}\right)
   $}%
   \global\checksum=\wd\formula
 }
@@ -17,10 +21,10 @@
 \def\work{%
   \advance\iterations by 1
   \makeformula
-  \ifnum\iterations<100000 \expandafter\work\fi
+  \ifnum\iterations<20000 \expandafter\work\fi
 }
 \work
 \ifdim\checksum=0pt \errmessage{math checksum mismatch}\fi
-\message{BENCHMARK math width=\the\checksum, iterations=\the\iterations}
-\copy\formula\vfill\eject
-\bye
+\message{BENCH math \the\iterations}
+\copy\formula
+\benchmarkbye

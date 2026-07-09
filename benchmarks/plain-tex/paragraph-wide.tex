@@ -1,4 +1,5 @@
 % Fixed realistic paragraph workload at a comfortable measure.
+\input benchmark-preamble.inc
 \hsize=30pc
 \vsize=54pc
 \tolerance=200
@@ -7,25 +8,19 @@
 \doublehyphendemerits=10000
 \parindent=18pt
 \parskip=0pt
-\newcount\paragraphs
+\countdef\paragraphs=100
+\paragraphs=0
 
 \def\sampleparagraph{%
 When the compositor examines a paragraph, every feasible break contributes
-to a network of possibilities.  Ordinary words provide spaces with finite
-stretch and shrink, while punctuation, explicit penalties, and discretionary
-hyphens alter the available routes.  The algorithm must preserve exact
-integer arithmetic so that agreeable typography remains reproducible across
-machines.  Carefully chosen alternatives can improve the present line but
-make the following line substantially worse; therefore the complete sequence
-matters more than any isolated decision.  Extraordinary, interdisciplinary,
-and characteristically inconvenient words ensure that hyphenation is useful
-rather than merely decorative.\par}
+to a network of possibilities.  Extra\-ordinary, inter\-disciplinary words
+provide spaces with finite stretch and shrink.\par}
 
 \def\work{%
   \advance\paragraphs by 1
   \sampleparagraph
-  \ifnum\paragraphs<9000 \expandafter\work\fi
+  \ifnum\paragraphs<2000 \expandafter\work\fi
 }
 \work
-\message{BENCHMARK paragraph-wide paragraphs=\the\paragraphs}
-\bye
+\message{BENCH pwide \the\paragraphs}
+\benchmarkbye

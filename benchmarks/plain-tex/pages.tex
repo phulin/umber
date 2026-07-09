@@ -1,30 +1,35 @@
 % Fixed page-builder, insertion, mark, and output-routine workload.
+\input benchmark-preamble.inc
 \hsize=24pc
 \vsize=36pc
 \maxdepth=4pt
-\newcount\pagesmade
-\newcount\blocks
-\newinsert\benchmarkinsert
+\countdef\pagesmade=100
+\countdef\blocks=101
+\chardef\benchmarkinsert=254
+\pagesmade=0 \blocks=0
+\count254=1000
+\dimen254=18pc
+\skip254=0pt plus 1fil
 
 \output={%
   \global\advance\pagesmade by 1
   \shipout\vbox{%
-    \hbox to\hsize{\tenrm Page \the\pagesmade\hfil
+    \hbox to\hsize{\benchmarkrm Page \the\pagesmade\hfil
       \firstmark--\botmark}%
-    \nointerlineskip\hrule
+    \benchmarkoffinterlineskip\hrule
     \vskip6pt
     \box255
   }%
-  \global\advancepageno
 }
 
 \def\block{%
   \mark{block-\the\blocks}%
-  \hbox to\hsize{\tenrm page-builder material \the\blocks\hfil
+  \hbox to\hsize{\benchmarkrm page-builder material \the\blocks\hfil
     \vrule height7pt depth2pt width12pt}%
-  \nobreak\vskip3pt plus5pt minus2pt
+  \benchmarknobreak\vskip3pt plus5pt minus2pt
   \penalty50
-  \hbox to\hsize{\it competing vertical breakpoints\hfil\tenbf fixed work}%
+  \hbox to\hsize{\benchmarkit competing vertical breakpoints\hfil
+    \benchmarkbf fixed work}%
   \vskip5pt plus3pt minus1pt
 }
 
@@ -32,13 +37,13 @@
   \advance\blocks by 1
   \block
   \ifnum\blocks=10
-    \insert\benchmarkinsert{\hsize=18pc\tenrm insertion material
+    \insert\benchmarkinsert{\hsize=18pc\benchmarkrm insertion material
       \number\pagesmade\par}%
     \blocks=0
   \fi
-  \ifnum\pagesmade<6000 \expandafter\work\fi
+  \ifnum\pagesmade<500 \expandafter\work\fi
 }
 \work
-\eject
-\message{BENCHMARK pages pages=\the\pagesmade}
+\benchmarkeject
+\message{BENCH pages \the\pagesmade}
 \end

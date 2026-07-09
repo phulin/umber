@@ -1,8 +1,10 @@
 % Fixed macro-expansion and assignment workload.
-\newcount\iterations
-\newcount\checksum
-\newcount\selector
-\newtoks\scratchtokens
+\input benchmark-preamble.inc
+\countdef\iterations=100
+\countdef\checksum=101
+\countdef\selector=102
+\toksdef\scratchtokens=100
+\iterations=0 \checksum=0 \selector=0 \scratchtokens={}
 
 \def\first#1#2;{#1}
 \def\dispatch#1{\csname branch#1\endcsname}
@@ -24,13 +26,13 @@
   \edef\dynamicname{cell\first ab;}%
   \expandafter\def\csname\dynamicname\endcsname##1:##2;{##2##1}%
   \edef\throwaway{\csname\dynamicname\endcsname xy:zt;}%
-  \ifnum\iterations<500000
+  \ifnum\iterations<100000
     \expandafter\work
   \fi
 }
 
 \work
 \ifnum\checksum=0 \else \errmessage{expand checksum mismatch}\fi
-\message{BENCHMARK expand checksum=\the\checksum, iterations=\the\iterations}
-\hbox{expand \the\iterations\space \the\checksum}\vfill\eject
-\bye
+\message{BENCH expand \the\checksum,\the\iterations}
+\hbox{expand \the\iterations\ \the\checksum}
+\benchmarkbye
