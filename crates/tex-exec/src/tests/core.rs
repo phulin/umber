@@ -91,6 +91,26 @@ fn dispatch_relax_continues_without_state_mutation() {
 }
 
 #[test]
+fn internal_integer_assignment_leaves_following_expandafter_unexpanded() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let source = r#"
+        \catcode`@=11
+        \countdef\m@ne=22 \m@ne=-1
+        \countdef\count@=255
+        {\uccode`1=`i \uccode`2=`f \uppercase{\gdef\if@12{\message{ok}}}}
+        \escapechar\m@ne
+        \expandafter\if@\string\ifplain
+        \end
+    "#;
+    let mut input = InputStack::new(MemoryInput::new(source));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("internal integer assignment preserves following expandafter");
+}
+
+#[test]
 fn dispatch_character_hits_loud_typesetting_stub() {
     let mut stores = Universe::new();
     let token = Token::Char {

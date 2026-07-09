@@ -200,7 +200,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [x] `\afterassignment` - Saves a token in snapshot-covered state and inserts it after the next completed assignment, including box assignments.
 - [x] `\aftergroup` - Saves a token on the current state-layer group marker and replays saved tokens FIFO when that group exits.
 - [x] `\begingroup` - Starts an explicit semi-simple group through the state journal marker API.
-- [x] `\csname` - Builds a control sequence from expanded character tokens and assigns `\relax` to newly-created undefined names through the explicit expansion interning capability.
+- [x] `\csname` - Builds a control sequence from expanded character tokens and assigns `\relax` to newly-created undefined names through the explicit expansion interning capability. Re-expanding a `\csname` result that is a macro is tracked in umber2-sfc.26.
 - [x] `\def` - Defines a macro without expanding replacement text.
 - [x] `\edef` - Defines a macro after expanding replacement text.
 - [x] `\endcsname` - Terminates a `\csname` name scan.

@@ -6,7 +6,7 @@ use tex_lex::{InputSource, InputStack, LexError, TokenListReplayKind};
 use tex_state::ExpansionState;
 use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::interner::Symbol;
-use tex_state::meaning::{InternalInteger, Meaning};
+use tex_state::meaning::{ExpandablePrimitive, InternalInteger, Meaning};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::{
@@ -601,9 +601,9 @@ where
 fn consume_optional_space<S, St, R, H, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
-    recorder: &mut R,
-    hooks: &mut H,
-    expander: &mut E,
+    _recorder: &mut R,
+    _hooks: &mut H,
+    _expander: &mut E,
 ) -> Result<(), ScanIntError>
 where
     S: InputSource,
@@ -612,11 +612,32 @@ where
     H: ExpansionHooks<S>,
     E: ExpandNext<S, St, R, H>,
 {
-    let Some(token) = next_x(input, stores, recorder, hooks, expander)? else {
+    // TeX consumes at most one following *raw* space after an internal
+    // integer. Expanding here would execute the next command while an
+    // assignment is still scanning its operand (plain.tex's
+    // `\escapechar\m@ne\expandafter...` is a real instance).
+    let Some(token) = input.next_traced_token(stores)? else {
         return Ok(());
     };
-    if !is_space(token) {
-        unread_token(input, stores, token);
+    if is_space(token) {
+        return Ok(());
+    }
+
+    let is_conditional_delimiter = matches!(
+        semantic_token(token),
+        Token::Cs(symbol)
+            if matches!(
+                stores.meaning(symbol),
+                Meaning::ExpandablePrimitive(
+                    ExpandablePrimitive::Else | ExpandablePrimitive::Or | ExpandablePrimitive::Fi
+                )
+            )
+    );
+    unread_token(input, stores, token);
+    if is_conditional_delimiter
+        && let Some(inserted) = next_x(input, stores, _recorder, _hooks, _expander)?
+    {
+        unread_token(input, stores, inserted);
     }
     Ok(())
 }
