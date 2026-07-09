@@ -79,6 +79,7 @@ where
                     Node::Glue {
                         spec: parskip,
                         kind: GlueKind::Normal,
+                        leader: None,
                     },
                 );
                 build_page_if_outer_vertical(nest, stores)?;
@@ -187,6 +188,7 @@ fn break_current_paragraph(
     nest.current_list_mut().push(Node::Glue {
         spec: params.par_fill_skip,
         kind: GlueKind::ParFillSkip,
+        leader: None,
     });
     let level = nest.pop()?;
     if let Some(shape) = params.par_shape.clone() {

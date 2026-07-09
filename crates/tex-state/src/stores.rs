@@ -1175,9 +1175,13 @@ impl Stores {
                 amount.raw().hash(hasher);
                 kind.hash(hasher);
             }
-            Node::Glue { spec, kind } => {
+            Node::Glue { spec, kind, leader } => {
                 self.glue(*spec).hash(hasher);
                 kind.hash(hasher);
+                match leader {
+                    Some(leader) => format!("{leader:?}").hash(hasher),
+                    None => 0_u8.hash(hasher),
+                }
             }
             Node::Penalty(value) => value.hash(hasher),
             Node::HList(box_node) | Node::VList(box_node) => {

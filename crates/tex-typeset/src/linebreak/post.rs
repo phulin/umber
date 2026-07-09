@@ -21,6 +21,7 @@ pub fn post_line_break<S: TypesetState>(
             line.push(Node::Glue {
                 spec: params.left_skip,
                 kind: GlueKind::LeftSkip,
+                leader: None,
             });
         }
         line.append(&mut pending_post);
@@ -29,6 +30,7 @@ pub fn post_line_break<S: TypesetState>(
         line.push(Node::Glue {
             spec: params.right_skip,
             kind: GlueKind::RightSkip,
+            leader: None,
         });
 
         let penalty_after = line_penalty_after(line_no, breaks, decision.hyphenated, &params);

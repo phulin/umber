@@ -160,6 +160,8 @@ fn rollback_restores_page_builder_state_and_hash() {
     universe.append_page_contribution(Node::Glue {
         spec: glue,
         kind: GlueKind::Normal,
+
+        leader: None,
     });
     universe.push_current_page_node(Node::Penalty(42));
     universe.record_best_page_break(1, Scaled::from_raw(100), 12);

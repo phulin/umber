@@ -114,6 +114,7 @@ where
             nest.current_list_mut().push(Node::Glue {
                 spec,
                 kind: GlueKind::Normal,
+                leader: None,
             });
         }
         UnexpandablePrimitive::Penalty => {
@@ -296,6 +297,7 @@ fn append_space(nest: &mut ModeNest, stores: &mut Universe) -> Result<(), ExecEr
     nest.current_list_mut().push(Node::Glue {
         spec: id,
         kind: GlueKind::Normal,
+        leader: None,
     });
     Ok(())
 }

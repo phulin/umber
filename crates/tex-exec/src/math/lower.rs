@@ -79,6 +79,7 @@ fn lower_math_node(stores: &mut Universe, node: &MathNode) -> Node {
         MathNode::Glue { spec, kind } => Node::Glue {
             spec: stores.intern_glue(*spec),
             kind: lower_math_glue_kind(*kind),
+            leader: None,
         },
         MathNode::Penalty(penalty) => Node::Penalty(*penalty),
         MathNode::Rule {

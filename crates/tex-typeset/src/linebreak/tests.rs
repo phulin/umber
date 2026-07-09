@@ -58,6 +58,8 @@ fn breaks_at_legal_glue() {
         Node::Glue {
             spec: glue,
             kind: GlueKind::Normal,
+
+            leader: None,
         },
         Node::Kern {
             amount: sp(20),
@@ -66,6 +68,8 @@ fn breaks_at_legal_glue() {
         Node::Glue {
             spec: glue,
             kind: GlueKind::Normal,
+
+            leader: None,
         },
         Node::Kern {
             amount: sp(20),
@@ -174,6 +178,8 @@ fn break_glue_does_not_contribute_to_preceding_line_width() {
         Node::Glue {
             spec: glue,
             kind: GlueKind::Normal,
+
+            leader: None,
         },
         rule(20),
     ];
@@ -198,6 +204,8 @@ fn mathoff_breaks_only_before_following_glue_and_zeroes_break_width() {
         Node::Glue {
             spec: glue,
             kind: GlueKind::Normal,
+
+            leader: None,
         },
         rule(10),
     ];
@@ -258,21 +266,29 @@ fn final_pass_deactivates_unshrinkable_active_line() {
         Node::Glue {
             spec: glue,
             kind: GlueKind::Normal,
+
+            leader: None,
         },
         rule(30),
         Node::Glue {
             spec: glue,
             kind: GlueKind::Normal,
+
+            leader: None,
         },
         rule(30),
         Node::Glue {
             spec: glue,
             kind: GlueKind::Normal,
+
+            leader: None,
         },
         rule(30),
         Node::Glue {
             spec: glue,
             kind: GlueKind::Normal,
+
+            leader: None,
         },
         rule(30),
     ];
@@ -453,6 +469,8 @@ fn post_line_break_omits_only_zero_leftskip() {
             Node::Glue {
                 spec,
                 kind: GlueKind::RightSkip,
+
+                leader: None,
             },
         ] if *spec == zero
     ));
@@ -477,12 +495,16 @@ fn post_line_break_omits_only_zero_leftskip() {
             Node::Glue {
                 spec: left,
                 kind: GlueKind::LeftSkip,
+
+                leader: None,
             },
             Node::Rule { .. },
             Node::Penalty(10_000),
             Node::Glue {
                 spec: right,
                 kind: GlueKind::RightSkip,
+
+                leader: None,
             },
         ] if *left == nonzero && *right == zero
     ));

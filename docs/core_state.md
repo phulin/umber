@@ -154,6 +154,11 @@ Rules:
   `\showlists` labels after mlist conversion; shipout lowering treats all of
   them as normal glue so serialized page artifacts do not gain DVI-visible
   distinctions.
+- **Leader glue payloads**: `\leaders`, `\cleaders`, and `\xleaders`
+  attach their scanned box or rule payload directly to the glue node. The
+  payload is immutable node content, not a side table keyed by `GlueId` or
+  node span, so survivor promotion, rollback/replay, and semantic state
+  hashing follow the ordinary node-list ownership rules.
 - **Public boundary**: downstream crates may read `Env` through the owning
   aggregate, but they cannot construct or mutate a standalone `Env`; raw Env
   construction, group control, epoch advancement, and typed setters are

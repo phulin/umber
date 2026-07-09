@@ -491,6 +491,7 @@ fn append_end_cleanup_contributions(stores: &mut Universe) {
     stores.append_page_contribution(Node::Glue {
         spec: fill,
         kind: GlueKind::Normal,
+        leader: None,
     });
     stores.append_page_contribution(Node::Penalty(EJECT_PENALTY));
 }

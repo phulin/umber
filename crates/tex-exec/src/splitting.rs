@@ -35,6 +35,7 @@ pub(crate) fn prune_page_top(
                 out.push(Node::Glue {
                     spec,
                     kind: GlueKind::SplitTopSkip,
+                    leader: None,
                 });
                 out.push(node);
                 inserted_top_skip = true;

@@ -118,6 +118,7 @@ fn tabskip_node(spec: GlueId) -> Node {
     Node::Glue {
         spec,
         kind: GlueKind::TabSkip,
+        leader: None,
     }
 }
 

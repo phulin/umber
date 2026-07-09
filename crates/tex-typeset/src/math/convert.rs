@@ -106,7 +106,7 @@ fn first_pass<S: MathTypesetState>(
                     params,
                 );
             }
-            Node::Glue { spec, kind } => {
+            Node::Glue { spec, kind, .. } => {
                 // AppG rule 2
                 if matches!(kind, tex_state::node::GlueKind::NonScript)
                     && ctx.style.is_script_or_smaller()

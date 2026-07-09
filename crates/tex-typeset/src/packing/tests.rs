@@ -35,6 +35,8 @@ fn hpack_sets_finite_stretch_order_and_ratio() {
         Node::Glue {
             spec: glue,
             kind: GlueKind::Normal,
+
+            leader: None,
         },
     ]);
     let packed = hpack(
@@ -71,6 +73,8 @@ fn hpack_clamps_overfull_normal_shrink_ratio_to_one() {
         Node::Glue {
             spec: glue,
             kind: GlueKind::Normal,
+
+            leader: None,
         },
         Node::Kern {
             amount: sp(20),
@@ -197,6 +201,8 @@ fn vertical_spacing_consumes_previous_depth() {
         Node::Glue {
             spec: glue,
             kind: GlueKind::BaselineSkip,
+
+            leader: None,
         },
         hbox,
     ]);

@@ -5,7 +5,7 @@ use crate::ids::{ArenaRef, FontId, GlueId, MacroDefinitionId, NodeListId, TokenL
 use crate::interner::Symbol;
 use crate::math::MathField;
 use crate::meaning::Meaning;
-use crate::node::Node;
+use crate::node::{LeaderPayload, Node};
 
 impl Stores {
     pub(super) fn assert_live_symbol(&self, symbol: Symbol) {
@@ -71,7 +71,12 @@ impl Stores {
 
     fn assert_live_handles_in_node(&self, node: &Node) {
         match node {
-            Node::Glue { spec, .. } => self.assert_live_glue(*spec),
+            Node::Glue { spec, leader, .. } => {
+                self.assert_live_glue(*spec);
+                if let Some(leader) = leader {
+                    self.assert_live_handles_in_leader_payload(leader);
+                }
+            }
             Node::Char { font, .. } | Node::Lig { font, .. } => self.assert_live_font(*font),
             Node::HList(box_node) | Node::VList(box_node) => {
                 self.assert_live_child_node_list(box_node.children);
@@ -134,6 +139,15 @@ impl Stores {
                 self.assert_live_child_node_list(*list);
             }
             MathField::Empty | MathField::MathChar(_) | MathField::MathTextChar(_) => {}
+        }
+    }
+
+    fn assert_live_handles_in_leader_payload(&self, payload: &LeaderPayload) {
+        match payload {
+            LeaderPayload::HList(box_node) | LeaderPayload::VList(box_node) => {
+                self.assert_live_child_node_list(box_node.children);
+            }
+            LeaderPayload::Rule { .. } => {}
         }
     }
 

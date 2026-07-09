@@ -419,6 +419,13 @@ where
                 execute_kern_or_skip(primitive, nest, input, stores, hooks)?;
                 Ok(CommandOutcome::continue_only())
             }
+            UnexpandablePrimitive::Leaders
+            | UnexpandablePrimitive::CLeaders
+            | UnexpandablePrimitive::XLeaders => {
+                reject_all_prefixes(prefixes)?;
+                execute_leaders(primitive, nest, input, stores, hooks)?;
+                Ok(CommandOutcome::continue_only())
+            }
             UnexpandablePrimitive::HRule => {
                 reject_all_prefixes(prefixes)?;
                 execute_hrule(nest, input, stores, hooks)?;

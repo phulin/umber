@@ -27,6 +27,7 @@ pub enum Node {
     Glue {
         spec: GlueId,
         kind: GlueKind,
+        leader: Option<LeaderPayload>,
     },
     Penalty(i32),
     Rule {
@@ -111,6 +112,18 @@ pub struct BoxNodeFields {
     pub glue_sign: Sign,
     pub glue_order: Order,
     pub children: NodeListId,
+}
+
+/// Repeated material attached to a leader glue node.
+#[derive(Clone, Debug, PartialEq)]
+pub enum LeaderPayload {
+    HList(BoxNode),
+    VList(BoxNode),
+    Rule {
+        width: Option<Scaled>,
+        height: Option<Scaled>,
+        depth: Option<Scaled>,
+    },
 }
 
 /// A TeX unset box used while alignments are being measured and resolved.
@@ -238,6 +251,10 @@ impl Node {
     pub(crate) fn child_lists(&self, out: &mut Vec<NodeListId>) {
         match self {
             Self::HList(box_node) | Self::VList(box_node) => out.push(box_node.children),
+            Self::Glue {
+                leader: Some(LeaderPayload::HList(box_node) | LeaderPayload::VList(box_node)),
+                ..
+            } => out.push(box_node.children),
             Self::Unset(unset) => out.push(unset.children),
             Self::Disc {
                 pre, post, replace, ..

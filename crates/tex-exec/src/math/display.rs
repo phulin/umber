@@ -174,6 +174,7 @@ where
             Node::Glue {
                 spec,
                 kind: above_display_glue_kind(above),
+                leader: None,
             },
         );
     }
@@ -226,6 +227,7 @@ where
             Node::Glue {
                 spec,
                 kind: below_display_glue_kind(below),
+                leader: None,
             },
         );
     }
@@ -259,6 +261,7 @@ where
         Node::Glue {
             spec,
             kind: above_display_glue_kind(above),
+            leader: None,
         },
     );
 
@@ -280,6 +283,7 @@ where
         Node::Glue {
             spec,
             kind: GlueKind::BelowDisplaySkip,
+            leader: None,
         },
     );
 

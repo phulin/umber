@@ -73,6 +73,8 @@ pub enum ExecError {
     ExtraHashInAlignmentPreamble,
     MisplacedNoAlign,
     MisplacedOmit,
+    MissingLeaderPayload,
+    LeadersNotFollowedByProperGlue,
     HRuleHereExceptLeaders,
     CannotDeleteFromCurrentPage {
         command: &'static str,
@@ -172,6 +174,10 @@ impl fmt::Display for ExecError {
             }
             Self::MisplacedNoAlign => write!(f, "Misplaced \\noalign."),
             Self::MisplacedOmit => write!(f, "Misplaced \\omit."),
+            Self::MissingLeaderPayload => write!(f, "A <box> was supposed to be here."),
+            Self::LeadersNotFollowedByProperGlue => {
+                write!(f, "Leaders not followed by proper glue.")
+            }
             Self::HRuleHereExceptLeaders => {
                 write!(f, "You can't use `\\hrule' here except with leaders.")
             }
@@ -245,6 +251,8 @@ impl std::error::Error for ExecError {
             | Self::ExtraHashInAlignmentPreamble
             | Self::MisplacedNoAlign
             | Self::MisplacedOmit
+            | Self::MissingLeaderPayload
+            | Self::LeadersNotFollowedByProperGlue
             | Self::HRuleHereExceptLeaders
             | Self::CannotDeleteFromCurrentPage { .. }
             | Self::ReadNeedsTo

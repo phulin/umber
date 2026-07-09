@@ -55,7 +55,15 @@ pub(crate) fn append_node_to_vertical_list(
                     GlueKind::BaselineSkip,
                 )
             };
-        append_vertical_contribution(nest, stores, Node::Glue { spec, kind });
+        append_vertical_contribution(
+            nest,
+            stores,
+            Node::Glue {
+                spec,
+                kind,
+                leader: None,
+            },
+        );
     }
     append_vertical_contribution(nest, stores, node);
     nest.current_list_mut().set_prev_depth(depth);

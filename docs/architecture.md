@@ -368,6 +368,9 @@ assignments, box building, and dispatch into the typesetting kernels.
   discretionaries, accents, and italic corrections. Paragraph breaking is a
   hand-off to the pure `tex-typeset` line breaker; resulting outer-vertical
   material is appended to the Universe-owned page contribution list.
+  Leader primitives scan a box or rule payload followed by mode-appropriate
+  glue, then attach that payload directly to the emitted glue node; DVI
+  repetition remains output-driver work, not packing-kernel state.
   Vertical list construction tracks TeX's `prev_depth` on each mode-list
   level. A single shared append routine handles every box or rule appended to
   vertical/internal-vertical lists, including explicit box appends, unboxed
@@ -406,7 +409,8 @@ assignments, box building, and dispatch into the typesetting kernels.
   `\showboxbreadth` and `\showboxdepth`, and is intentionally reusable by
   future `\showlists` and `\tracingoutput` diagnostics rather than tied to
   `\showbox` scanning. The committed typeset corpus uses pdfTeX's box-dump
-  text as the comparison format: `umber run --show-fixtures` is an explicit
+  text as the comparison format, including leader glue lines followed by
+  their box or rule payloads one level deeper: `umber run --show-fixtures` is an explicit
   fixture-harvesting mode whose stdout is the collected terminal/log diagnostic
   text produced by the engine run. It does not commit the pending `World`
   effect log, so stream opens, closes, and writes recorded during harvesting do

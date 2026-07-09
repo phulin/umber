@@ -396,11 +396,13 @@ fn mid_alignment_snapshot_rollback_restores_summary_and_unset_rows() {
             Node::Glue {
                 spec: GlueId::ZERO,
                 kind: GlueKind::TabSkip,
+                leader: None,
             },
             cell,
             Node::Glue {
                 spec: GlueId::ZERO,
                 kind: GlueKind::TabSkip,
+                leader: None,
             },
         ],
         1,

@@ -310,6 +310,7 @@ fn converted_math_glue_preserves_explicit_and_named_provenance() {
         Node::Glue {
             spec: explicit,
             kind: GlueKind::MuSkip,
+            leader: None,
         },
     ]);
     let list = MathListNode {

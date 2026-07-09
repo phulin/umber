@@ -351,6 +351,7 @@ fn build_nodes(
         Node::Glue {
             spec: glue_id,
             kind: GlueKind::Normal,
+            leader: None,
         },
     ];
     let mut tree = vec![
@@ -514,6 +515,7 @@ fn page_node(glue_ids: &[GlueId], seed: &NodeSeed) -> Node {
         Node::Glue {
             spec: glue_ids[seed.glue_slot % glue_ids.len()],
             kind: GlueKind::Normal,
+            leader: None,
         }
     }
 }
@@ -732,7 +734,7 @@ impl TreeCache {
                     ch: *ch,
                 },
                 Node::Kern { amount, .. } => TreeNode::Kern(amount.raw()),
-                Node::Glue { spec, kind } => TreeNode::Glue(stores.glue(*spec), *kind),
+                Node::Glue { spec, kind, .. } => TreeNode::Glue(stores.glue(*spec), *kind),
                 Node::HList(box_node) => TreeNode::HList(self.tree_from_store_bounded(
                     stores,
                     box_node.children,

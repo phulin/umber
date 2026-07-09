@@ -279,6 +279,8 @@ mod tests {
             Node::Glue {
                 spec: glue,
                 kind: GlueKind::Normal,
+
+                leader: None,
             },
             hbox(&mut universe, 40, 0),
         ];
@@ -319,6 +321,8 @@ mod tests {
             Node::Glue {
                 spec: glue,
                 kind: GlueKind::Normal,
+
+                leader: None,
             },
             hbox(&mut universe, 10, 0),
         ];
@@ -343,6 +347,8 @@ mod tests {
             Node::Glue {
                 spec: glue,
                 kind: GlueKind::Normal,
+
+                leader: None,
             },
             Node::Penalty(0),
         ];

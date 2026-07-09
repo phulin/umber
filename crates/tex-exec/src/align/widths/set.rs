@@ -91,7 +91,11 @@ fn baseline_glue(
             GlueKind::BaselineSkip,
         )
     };
-    Ok(Node::Glue { spec, kind })
+    Ok(Node::Glue {
+        spec,
+        kind,
+        leader: None,
+    })
 }
 
 fn row_depth(node: &Node) -> Option<Scaled> {

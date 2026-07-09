@@ -377,6 +377,7 @@ where
             nest.current_list_mut().push(Node::Glue {
                 spec,
                 kind: GlueKind::MuSkip,
+                leader: None,
             });
             Ok(DispatchAction::Continue)
         }
@@ -393,6 +394,7 @@ where
             nest.current_list_mut().push(Node::Glue {
                 spec,
                 kind: GlueKind::NonScript,
+                leader: None,
             });
             Ok(DispatchAction::Continue)
         }

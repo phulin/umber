@@ -114,7 +114,7 @@ where
                 amount,
                 kind: lower_kern_kind(kind),
             },
-            Node::Glue { spec, kind } => PageNode::Glue {
+            Node::Glue { spec, kind, .. } => PageNode::Glue {
                 spec: lower_glue(self.stores.glue(spec)),
                 kind: lower_glue_kind(kind),
             },

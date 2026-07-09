@@ -5,7 +5,7 @@ use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, TokenListId};
 use crate::interner::Symbol;
 use crate::journal::Entry;
 use crate::meaning::{ExpandablePrimitive, Meaning, RawMeaning, UnexpandablePrimitive};
-use crate::node::{BoxNode, GlueKind, KernKind, Node, Sign, Whatsit};
+use crate::node::{BoxNode, GlueKind, KernKind, LeaderPayload, Node, Sign, Whatsit};
 use crate::node_arena::NodeArenaMark;
 use crate::state_hash::StateHasher;
 use crate::token::{Catcode, Token};
@@ -409,10 +409,11 @@ impl Stores {
                 hasher.i32(amount.raw());
                 hash_kern_kind(kind, hasher);
             }
-            Node::Glue { spec, kind } => {
+            Node::Glue { spec, kind, leader } => {
                 hasher.tag(3);
                 self.hash_glue(spec, hasher);
                 hash_glue_kind(kind, hasher);
+                self.hash_leader_payload(leader, hasher, stack);
             }
             Node::Penalty(value) => {
                 hasher.tag(4);
@@ -579,6 +580,29 @@ impl Stores {
         hash_sign(box_node.glue_sign, hasher);
         hasher.u8(box_node.glue_order as u8);
         stack.push(NodeFrame::List(box_node.children));
+    }
+
+    fn hash_leader_payload(
+        &self,
+        payload: Option<LeaderPayload>,
+        hasher: &mut StateHasher,
+        stack: &mut Vec<NodeFrame>,
+    ) {
+        match payload {
+            None => hasher.tag(0),
+            Some(LeaderPayload::HList(box_node)) => self.hash_box_node(1, box_node, hasher, stack),
+            Some(LeaderPayload::VList(box_node)) => self.hash_box_node(2, box_node, hasher, stack),
+            Some(LeaderPayload::Rule {
+                width,
+                height,
+                depth,
+            }) => {
+                hasher.tag(3);
+                hash_optional_scaled(width, hasher);
+                hash_optional_scaled(height, hasher);
+                hash_optional_scaled(depth, hasher);
+            }
+        }
     }
 
     fn hash_whatsit(&self, whatsit: Whatsit, hasher: &mut StateHasher) {

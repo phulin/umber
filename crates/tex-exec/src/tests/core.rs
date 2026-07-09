@@ -437,6 +437,143 @@ fn box_dimension_writes_are_readable_by_the() {
 }
 
 #[test]
+fn leaders_parse_box_and_rule_payloads_on_glue_nodes() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\setbox0=\\hbox{\\leaders\\hbox{\\kern1pt}\\hskip10pt}\
+         \\setbox1=\\vbox{\\cleaders\\hrule height2pt\\vskip5pt}",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("leader payloads execute");
+
+    let hbox = stores.box_reg(0).expect("hbox register");
+    let [tex_state::node::Node::HList(hbox)] = stores.nodes(hbox) else {
+        panic!("register 0 should hold an hbox");
+    };
+    let [
+        tex_state::node::Node::Glue {
+            spec,
+            kind,
+            leader: Some(tex_state::node::LeaderPayload::HList(payload)),
+        },
+    ] = stores.nodes(hbox.children)
+    else {
+        panic!("hbox should contain leader glue with hlist payload");
+    };
+    assert_eq!(*kind, tex_state::node::GlueKind::Leaders);
+    assert_eq!(
+        stores.glue(*spec).width.raw(),
+        10 * tex_state::scaled::Scaled::UNITY
+    );
+    assert!(matches!(
+        stores.nodes(payload.children),
+        [tex_state::node::Node::Kern { .. }]
+    ));
+
+    let vbox = stores.box_reg(1).expect("vbox register");
+    let [tex_state::node::Node::VList(vbox)] = stores.nodes(vbox) else {
+        panic!("register 1 should hold a vbox");
+    };
+    let [
+        tex_state::node::Node::Glue {
+            spec,
+            kind,
+            leader:
+                Some(tex_state::node::LeaderPayload::Rule {
+                    height: Some(height),
+                    ..
+                }),
+        },
+    ] = stores.nodes(vbox.children)
+    else {
+        panic!("vbox should contain leader glue with rule payload");
+    };
+    assert_eq!(*kind, tex_state::node::GlueKind::Cleaders);
+    assert_eq!(
+        stores.glue(*spec).width.raw(),
+        5 * tex_state::scaled::Scaled::UNITY
+    );
+    assert_eq!(height.raw(), 2 * tex_state::scaled::Scaled::UNITY);
+}
+
+#[test]
+fn leaders_report_missing_payload_and_glue_diagnostics() {
+    let mut missing_payload = Universe::new();
+    install_unexpandable_primitives(&mut missing_payload);
+    let err = Executor::new()
+        .run(
+            &mut InputStack::new(MemoryInput::new("\\setbox0=\\hbox{\\leaders x\\hskip10pt}")),
+            &mut missing_payload,
+        )
+        .expect_err("invalid leader payload should fail");
+    assert_eq!(err.to_string(), "A <box> was supposed to be here.");
+
+    let mut missing_glue = Universe::new();
+    install_unexpandable_primitives(&mut missing_glue);
+    let err = Executor::new()
+        .run(
+            &mut InputStack::new(MemoryInput::new("\\setbox0=\\hbox{\\leaders\\hbox{}10pt}")),
+            &mut missing_glue,
+        )
+        .expect_err("leader without proper glue should fail");
+    assert_eq!(err.to_string(), "Leaders not followed by proper glue.");
+}
+
+#[test]
+fn leader_payloads_participate_in_state_hash_and_rollback() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let snapshot = stores.snapshot();
+    let before = snapshot.state_hash();
+
+    Executor::new()
+        .run(
+            &mut InputStack::new(MemoryInput::new(
+                "\\setbox0=\\hbox{\\xleaders\\hbox{\\kern1pt}\\hskip10pt}",
+            )),
+            &mut stores,
+        )
+        .expect("leader source executes");
+    let with_one_point_payload = stores.snapshot().state_hash();
+    assert_ne!(with_one_point_payload, before);
+
+    stores.rollback(&snapshot);
+    assert_eq!(stores.snapshot().state_hash(), before);
+
+    Executor::new()
+        .run(
+            &mut InputStack::new(MemoryInput::new(
+                "\\setbox0=\\hbox{\\xleaders\\hbox{\\kern2pt}\\hskip10pt}",
+            )),
+            &mut stores,
+        )
+        .expect("different leader source executes");
+    assert_ne!(stores.snapshot().state_hash(), with_one_point_payload);
+}
+
+#[test]
+fn showbox_dumps_leader_glue_payloads_like_pdftex() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\showboxbreadth=100 \\showboxdepth=100 \
+         \\setbox0=\\hbox{\\leaders\\hbox{\\kern1pt}\\hskip10pt}\\showbox0",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("showbox executes");
+
+    let log = terminal_effect_text(&stores);
+    assert!(log.contains(".\\leaders 10.0"), "{log}");
+    assert!(log.contains("..\\hbox"), "{log}");
+    assert!(log.contains("...\\kern 1.0"), "{log}");
+}
+
+#[test]
 fn everypar_replays_through_input_stack_and_mutates_state() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

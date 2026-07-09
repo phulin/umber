@@ -192,6 +192,7 @@ fn init_row(align_level: usize, nest: &mut ModeNest) -> Result<(), ExecError> {
     nest.current_list_mut().push(Node::Glue {
         spec: first_tabskip,
         kind: GlueKind::TabSkip,
+        leader: None,
     });
     Ok(())
 }
@@ -402,6 +403,7 @@ fn package_cell(
     nest.current_list_mut().push(Node::Glue {
         spec: tabskip,
         kind: GlueKind::TabSkip,
+        leader: None,
     });
     Ok(())
 }

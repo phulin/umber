@@ -9,7 +9,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [ ] `\badness` - Reports the badness of the glue setting in the last box made.
 - [x] `\box` - Appends a box register's contents and clears that register.
 - [x] `\boxmaxdepth` - Sets the maximum depth allowed when building vertical boxes. Implemented as an assignable dimension parameter consumed by `tex-typeset` vertical packing.
-- [ ] `\cleaders` - Builds centered leaders across glue.
+- [x] `\cleaders` - Builds centered leaders across glue. Payload parsing and glue-node storage are implemented; DVI repetition is tracked in the leaders output issue.
 - [x] `\copy` - Appends a copy of a box register without clearing it.
 - [x] `\dp` - Reads or assigns the depth of a box register.
 - [x] `\everyhbox` - Token list inserted at the start of every `\hbox`. Implemented as an assignable token list parameter; insertion at box start is not yet wired and is tracked in the conformance epic.
@@ -20,7 +20,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [x] `\hrule` - Adds a horizontal rule in vertical mode with TeX's running-width/default-thickness rule dimensions and resets `\prevdepth` to the ignore sentinel.
 - [x] `\ht` - Reads or assigns the height of a box register.
 - [x] `\lastbox` - Removes and returns the last box from the current list when allowed.
-- [ ] `\leaders` - Repeats a box or rule across glue.
+- [x] `\leaders` - Repeats a box or rule across glue. Payload parsing and glue-node storage are implemented; DVI repetition is tracked in the leaders output issue.
 - [x] `\overfullrule` - Width of the diagnostic rule added to overfull boxes. Implemented as an assignable dimension parameter; overfull hboxes get the diagnostic rule appended during packing.
 - [x] `\prevdepth` - Depth of the previous box on the current vertical list. Implemented as a per-mode-list field; `\nointerlineskip` sets TeX's ignore sentinel.
 - [x] `\setbox` - Assigns a box register from an `\hbox`, `\vbox`, or `\vtop`.
@@ -34,7 +34,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [x] `\vrule` - Adds a vertical rule in horizontal mode.
 - [x] `\vtop` - Builds a vertical box aligned by its first item.
 - [x] `\wd` - Reads or assigns the width of a box register.
-- [ ] `\xleaders` - Builds expanded leaders across glue.
+- [x] `\xleaders` - Builds expanded leaders across glue. Payload parsing and glue-node storage are implemented; DVI repetition is tracked in the leaders output issue.
 
 ## Characters And Case
 

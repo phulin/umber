@@ -11,7 +11,9 @@ use tex_state::math::{
     FractionThickness, LimitType, MathChar, MathChoice, MathField, MathFraction, MathListNode,
     MathNoad, MathStyle, NoadClass, NoadKind,
 };
-use tex_state::node::{BoxNode, GlueKind, KernKind, Node, Sign, UnsetKind, UnsetNode};
+use tex_state::node::{
+    BoxNode, GlueKind, KernKind, LeaderPayload, Node, Sign, UnsetKind, UnsetNode,
+};
 use tex_state::scaled::{GLUE_SET_RATIO_SCALE, GlueSetRatio, Scaled};
 
 pub(crate) struct DumpConfig {
@@ -108,13 +110,23 @@ fn dump_node(
                 let _ = writeln!(out, "\\mkern{}mu", format_scaled_without_unit(*amount));
             }
         },
-        Node::Glue { spec, kind } => {
-            let _ = writeln!(
-                out,
-                "{}{}",
-                kind.glue_dump_prefix(),
-                format_glue(stores.glue(*spec))
-            );
+        Node::Glue { spec, kind, leader } => {
+            if let Some(leader) = leader {
+                let _ = writeln!(
+                    out,
+                    "{}{}",
+                    kind.leader_dump_prefix(),
+                    format_glue(stores.glue(*spec))
+                );
+                dump_leader_payload(stores, leader, config, depth + 1, context, out);
+            } else {
+                let _ = writeln!(
+                    out,
+                    "{}{}",
+                    kind.glue_dump_prefix(),
+                    format_glue(stores.glue(*spec))
+                );
+            }
         }
         Node::HList(box_node) => {
             dump_box("hbox", stores, box_node, config, depth, context, out);
@@ -216,6 +228,38 @@ fn dump_math_marker(name: &str, width: Scaled, out: &mut String) {
             "{name}, surrounded {}",
             format_scaled_without_unit(width)
         );
+    }
+}
+
+fn dump_leader_payload(
+    stores: &Universe,
+    payload: &LeaderPayload,
+    config: &DumpConfig,
+    depth: i32,
+    context: ListContext,
+    out: &mut String,
+) {
+    write_prefix(depth, out);
+    match payload {
+        LeaderPayload::HList(box_node) => {
+            dump_box("hbox", stores, box_node, config, depth, context, out);
+        }
+        LeaderPayload::VList(box_node) => {
+            dump_box("vbox", stores, box_node, config, depth, context, out);
+        }
+        LeaderPayload::Rule {
+            width,
+            height,
+            depth,
+        } => {
+            let _ = writeln!(
+                out,
+                "\\rule({}+{})x{}",
+                format_rule_dimension(*height),
+                format_rule_dimension(*depth),
+                format_rule_dimension(*width)
+            );
+        }
     }
 }
 
@@ -655,6 +699,7 @@ fn order_unit(order: Order) -> &'static str {
 
 trait GlueKindDump {
     fn glue_dump_prefix(self) -> &'static str;
+    fn leader_dump_prefix(self) -> &'static str;
 }
 
 impl GlueKindDump for GlueKind {
@@ -681,6 +726,15 @@ impl GlueKindDump for GlueKind {
             Self::MedMuSkip => "\\glue(\\medmuskip) ",
             Self::ThickMuSkip => "\\glue(\\thickmuskip) ",
             Self::NonScript => "\\glue(\\nonscript) ",
+        }
+    }
+
+    fn leader_dump_prefix(self) -> &'static str {
+        match self {
+            Self::Leaders => "\\leaders ",
+            Self::Cleaders => "\\cleaders ",
+            Self::Xleaders => "\\xleaders ",
+            _ => self.glue_dump_prefix(),
         }
     }
 }

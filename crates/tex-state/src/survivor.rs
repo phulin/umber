@@ -5,7 +5,7 @@
 
 use crate::ids::{ArenaRef, NodeListId, SurvivorRootId};
 use crate::math::MathField;
-use crate::node::Node;
+use crate::node::{LeaderPayload, Node};
 use crate::node_arena::NodeArena;
 
 /// Arena for promoted node-list roots.
@@ -273,6 +273,17 @@ fn remap_node_children(
             list.content = remap_list(list.content, epoch, out, pending);
             out[index] = Node::MathList(list);
         }
+        Node::Glue {
+            spec,
+            kind,
+            leader: Some(payload),
+        } => {
+            out[index] = Node::Glue {
+                spec,
+                kind,
+                leader: Some(remap_leader_payload(payload, epoch, out, pending)),
+            };
+        }
         Node::Unset(mut unset) => {
             unset.children = remap_list(unset.children, epoch, out, pending);
             out[index] = Node::Unset(unset);
@@ -325,6 +336,10 @@ fn rewrite_node_root_ids(node: &mut Node, root: SurvivorRootId) {
         Node::MathList(list) => {
             list.content = with_root(list.content, root);
         }
+        Node::Glue {
+            leader: Some(payload),
+            ..
+        } => rewrite_leader_payload_root(payload, root),
         Node::Unset(unset) => {
             unset.children = with_root(unset.children, root);
         }
@@ -362,6 +377,42 @@ fn remap_math_field(
 ) {
     if let MathField::SubBox(list) | MathField::SubMlist(list) = field {
         *list = remap_list(*list, epoch, out, pending);
+    }
+}
+
+fn remap_leader_payload(
+    payload: LeaderPayload,
+    epoch: &NodeArena,
+    out: &mut Vec<Node>,
+    pending: &mut Vec<usize>,
+) -> LeaderPayload {
+    match payload {
+        LeaderPayload::HList(mut box_node) => {
+            box_node.children = remap_list(box_node.children, epoch, out, pending);
+            LeaderPayload::HList(box_node)
+        }
+        LeaderPayload::VList(mut box_node) => {
+            box_node.children = remap_list(box_node.children, epoch, out, pending);
+            LeaderPayload::VList(box_node)
+        }
+        LeaderPayload::Rule {
+            width,
+            height,
+            depth,
+        } => LeaderPayload::Rule {
+            width,
+            height,
+            depth,
+        },
+    }
+}
+
+fn rewrite_leader_payload_root(payload: &mut LeaderPayload, root: SurvivorRootId) {
+    match payload {
+        LeaderPayload::HList(box_node) | LeaderPayload::VList(box_node) => {
+            box_node.children = with_root(box_node.children, root);
+        }
+        LeaderPayload::Rule { .. } => {}
     }
 }
 

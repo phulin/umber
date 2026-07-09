@@ -299,6 +299,7 @@ fn initialize_page_with_topskip(stores: &mut Universe, node: &Node) -> Result<()
     stores.prepend_page_contribution(Node::Glue {
         spec,
         kind: GlueKind::TopSkip,
+        leader: None,
     });
     Ok(())
 }
@@ -318,13 +319,14 @@ fn update_glue_or_kern(stores: &mut Universe, node: &Node) -> Result<Node, ExecE
     let mut replacement = None;
     let width = match node {
         Node::Kern { amount, .. } => *amount,
-        Node::Glue { spec, kind } => {
+        Node::Glue { spec, kind, leader } => {
             let spec = stores.glue(*spec);
             let spec = finite_page_shrink(stores, spec);
             let finite_id = stores.intern_glue(spec);
             replacement = Some(Node::Glue {
                 spec: finite_id,
                 kind: *kind,
+                leader: leader.clone(),
             });
             add_glue_stretch(stores, spec)?;
             let shrink = add(stores.page_dimension(PageDimension::Shrink), spec.shrink)?;
@@ -363,7 +365,7 @@ fn normalize_insert_content_shrink(
 
     let mut changed = false;
     for &index in indices {
-        let Some(Node::Glue { spec, kind }) = content_nodes.get(index) else {
+        let Some(Node::Glue { spec, kind, leader }) = content_nodes.get(index) else {
             continue;
         };
         let mut finite = stores.glue(*spec);
@@ -375,6 +377,7 @@ fn normalize_insert_content_shrink(
         content_nodes[index] = Node::Glue {
             spec: stores.intern_glue(finite),
             kind: *kind,
+            leader: leader.clone(),
         };
         changed = true;
     }

@@ -4,7 +4,7 @@ use tex_state::env::banks::{DimenParam, GlueParam};
 use tex_state::glue::Order;
 use tex_state::ids::NodeListId;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
-use tex_state::node::{GlueKind, KernKind, Node};
+use tex_state::node::{GlueKind, KernKind, LeaderPayload, Node};
 use tex_state::page::PageMark;
 use tex_state::scaled::Scaled;
 use tex_state::token::Token;
@@ -207,6 +207,7 @@ where
                 Node::Glue {
                     spec,
                     kind: GlueKind::Normal,
+                    leader: None,
                 },
             )?;
         }
@@ -219,6 +220,32 @@ where
         }
         _ => unreachable!("caller restricts kern/skip primitives"),
     }
+    Ok(())
+}
+
+pub(super) fn execute_leaders<S, H>(
+    primitive: UnexpandablePrimitive,
+    nest: &mut ModeNest,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    hooks: &mut H,
+) -> Result<(), ExecError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    let leader = scan_leader_payload(input, stores, hooks)?;
+    let spec = scan_leader_glue(input, stores, hooks, nest.current_mode())?;
+    append_node_to_current_list(
+        nest,
+        stores,
+        Node::Glue {
+            spec,
+            kind: leader_glue_kind(primitive),
+            leader: Some(leader),
+        },
+    )?;
+    build_page_if_outer_vertical(nest, stores)?;
     Ok(())
 }
 
@@ -249,6 +276,153 @@ where
     nest.current_list_mut()
         .set_prev_depth(crate::mode::IGNORE_DEPTH);
     Ok(())
+}
+
+fn scan_leader_payload<S, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    hooks: &mut H,
+) -> Result<LeaderPayload, ExecError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    let token = next_non_space_x(input, stores, hooks)?.ok_or(ExecError::MissingLeaderPayload)?;
+    let Token::Cs(symbol) = token else {
+        push_tokens(input, stores, [token]);
+        return Err(ExecError::MissingLeaderPayload);
+    };
+    match stores.meaning(symbol) {
+        Meaning::UnexpandablePrimitive(primitive @ UnexpandablePrimitive::HBox)
+        | Meaning::UnexpandablePrimitive(primitive @ UnexpandablePrimitive::VBox)
+        | Meaning::UnexpandablePrimitive(primitive @ UnexpandablePrimitive::VTop) => {
+            let node = scan_box_node(kind_for_primitive(primitive)?, input, stores, hooks)?;
+            leader_payload_from_node(node)
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Box)
+        | Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Copy) => {
+            let index = scan_register_index(input, stores, hooks)?;
+            let id = if matches!(
+                stores.meaning(symbol),
+                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Box)
+            ) {
+                stores.take_box_reg_same_level(index)
+            } else {
+                stores.box_reg(index)
+            };
+            first_box_node(stores, id)
+                .ok_or(ExecError::MissingLeaderPayload)
+                .and_then(|node| leader_payload_from_node(stores.clone_node_to_epoch(node)))
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VSplit) => {
+            scan_vsplit_node(input, stores, hooks)?
+                .ok_or(ExecError::MissingLeaderPayload)
+                .and_then(leader_payload_from_node)
+        }
+        Meaning::UnexpandablePrimitive(primitive @ UnexpandablePrimitive::HRule)
+        | Meaning::UnexpandablePrimitive(primitive @ UnexpandablePrimitive::VRule) => {
+            leader_payload_from_node(scan_rule_node(input, stores, hooks, primitive)?)
+        }
+        _ => {
+            push_tokens(input, stores, [token]);
+            Err(ExecError::MissingLeaderPayload)
+        }
+    }
+}
+
+fn scan_leader_glue<S, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    hooks: &mut H,
+    mode: Mode,
+) -> Result<tex_state::ids::GlueId, ExecError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    let token =
+        next_non_space_x(input, stores, hooks)?.ok_or(ExecError::LeadersNotFollowedByProperGlue)?;
+    let Token::Cs(symbol) = token else {
+        push_tokens(input, stores, [token]);
+        return Err(ExecError::LeadersNotFollowedByProperGlue);
+    };
+    let meaning = stores.meaning(symbol);
+    match (mode, meaning) {
+        (
+            Mode::Horizontal | Mode::RestrictedHorizontal,
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HSkip),
+        )
+        | (
+            Mode::Vertical | Mode::InternalVertical,
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VSkip),
+        ) => scan_glue_id(input, stores, hooks, false),
+        (
+            Mode::Horizontal | Mode::RestrictedHorizontal,
+            Meaning::UnexpandablePrimitive(
+                primitive @ (UnexpandablePrimitive::HFil
+                | UnexpandablePrimitive::HFill
+                | UnexpandablePrimitive::HSs
+                | UnexpandablePrimitive::HFilNeg),
+            ),
+        )
+        | (
+            Mode::Vertical | Mode::InternalVertical,
+            Meaning::UnexpandablePrimitive(
+                primitive @ (UnexpandablePrimitive::VFil
+                | UnexpandablePrimitive::VFill
+                | UnexpandablePrimitive::VSs
+                | UnexpandablePrimitive::VFilNeg),
+            ),
+        ) => Ok(stores.intern_glue(infinite_glue_for_skip_primitive(primitive))),
+        _ => {
+            push_tokens(input, stores, [token]);
+            Err(ExecError::LeadersNotFollowedByProperGlue)
+        }
+    }
+}
+
+fn leader_payload_from_node(node: Node) -> Result<LeaderPayload, ExecError> {
+    match node {
+        Node::HList(box_node) => Ok(LeaderPayload::HList(box_node)),
+        Node::VList(box_node) => Ok(LeaderPayload::VList(box_node)),
+        Node::Rule {
+            width,
+            height,
+            depth,
+        } => Ok(LeaderPayload::Rule {
+            width,
+            height,
+            depth,
+        }),
+        _ => Err(ExecError::MissingLeaderPayload),
+    }
+}
+
+fn leader_glue_kind(primitive: UnexpandablePrimitive) -> GlueKind {
+    match primitive {
+        UnexpandablePrimitive::Leaders => GlueKind::Leaders,
+        UnexpandablePrimitive::CLeaders => GlueKind::Cleaders,
+        UnexpandablePrimitive::XLeaders => GlueKind::Xleaders,
+        _ => unreachable!("caller restricts leader primitives"),
+    }
+}
+
+fn infinite_glue_for_skip_primitive(primitive: UnexpandablePrimitive) -> GlueSpec {
+    match primitive {
+        UnexpandablePrimitive::HFil | UnexpandablePrimitive::VFil => {
+            infinite_glue(Order::Fil, false, false)
+        }
+        UnexpandablePrimitive::HFill | UnexpandablePrimitive::VFill => {
+            infinite_glue(Order::Fill, false, false)
+        }
+        UnexpandablePrimitive::HSs | UnexpandablePrimitive::VSs => {
+            infinite_glue(Order::Fil, false, true)
+        }
+        UnexpandablePrimitive::HFilNeg | UnexpandablePrimitive::VFilNeg => {
+            infinite_glue(Order::Fil, true, false)
+        }
+        _ => unreachable!("caller restricts fill glue primitives"),
+    }
 }
 
 pub(super) fn execute_delete_last(
@@ -351,6 +525,7 @@ where
         Node::Glue {
             spec,
             kind: GlueKind::Normal,
+            leader: None,
         },
     );
     Ok(())
@@ -471,7 +646,7 @@ fn split_vbox_register(
 
 fn normalize_split_infinite_shrink(stores: &mut Universe, nodes: &mut [Node], indices: &[usize]) {
     for &index in indices {
-        let Some(Node::Glue { spec, kind }) = nodes.get(index) else {
+        let Some(Node::Glue { spec, kind, leader }) = nodes.get(index) else {
             continue;
         };
         let mut finite = stores.glue(*spec);
@@ -483,6 +658,7 @@ fn normalize_split_infinite_shrink(stores: &mut Universe, nodes: &mut [Node], in
         nodes[index] = Node::Glue {
             spec: stores.intern_glue(finite),
             kind: *kind,
+            leader: leader.clone(),
         };
     }
 }
