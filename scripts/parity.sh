@@ -11,6 +11,8 @@ fi
 corpus_sync_bin="${target_dir}/debug/corpus-sync"
 parity_harness_bin="${target_dir}/debug/parity-harness"
 umber_bin="${target_dir}/debug/umber"
+export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-1783604160}"
+export FORCE_SOURCE_DATE="${FORCE_SOURCE_DATE:-1}"
 
 usage() {
   cat <<'EOF'
@@ -22,6 +24,9 @@ usage:
 Fetches and verifies the pinned external TeX corpus declared in
 tests/corpus-manifest.toml. The e2e mode then runs reference TeX and Umber on
 each manifest entry and writes mismatch bundles under target/parity-triage/.
+The script pins SOURCE_DATE_EPOCH and FORCE_SOURCE_DATE by default so
+date-sensitive documents have stable reference output; set them explicitly to
+override the defaults.
 EOF
 }
 

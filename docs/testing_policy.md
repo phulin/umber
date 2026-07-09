@@ -158,8 +158,11 @@ SHA-256, license determination, redistributability flag, and reference DVI
 SHA-256 after DVI preamble banner normalization. `scripts/parity.sh` runs
 `tools/corpus-sync` first to fetch or verify those inputs under gitignored
 `third_party/corpus/`; cached hash matches are a no-op, including in
-`--offline` mode. Do not commit fetched corpus documents unless a later issue
-explicitly changes the redistribution policy.
+`--offline` mode. It also pins `SOURCE_DATE_EPOCH=1783604160` and
+`FORCE_SOURCE_DATE=1` by default before running reference TeX so
+date-sensitive documents have stable DVI body bytes. Do not commit fetched
+corpus documents unless a later issue explicitly changes the redistribution
+policy.
 
 Full external-document DVI parity is an explicit script tier, not a cargo-test
 tier:
@@ -171,8 +174,9 @@ scripts/parity.sh e2e --offline
 
 This mode verifies acquisition, runs reference TeX through `tools/refexec`,
 checks the manifest-pinned normalized reference DVI hash for environment
-drift, runs `umber run --dvi`, and byte-compares the normalized DVI files. On
-reference drift, Umber failure, or mismatch it writes a triage bundle under
+drift under the script-pinned job clock, runs `umber run --dvi`, and
+byte-compares the normalized DVI files. On reference drift, Umber failure, or
+mismatch it writes a triage bundle under
 `target/parity-triage/<doc-name>/` with byte context, page-limited
 dvitype-style disassemblies, a unified disassembly diff, tracing-output logs,
 and a summary that names the divergent page and opcode when a page can be

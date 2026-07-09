@@ -17,5 +17,5 @@ url = "https://mirrors.ctan.org/info/gentle/gentle.tex"
 sha256 = "b3e1acf4a6feb6a13b0ace279a5be7f1546ac2198452188f6fb22b4eb590ba3f"
 license = "LicenseRef-Gentle-redistributable"
 redistributable = true
-expected_ref_dvi_sha256 = "8f7d9e4bbbc032974d7ed0e00ed39989f14210054c2bbb16f8dd493b8b46a10a"
-notes = "CTAN records gentle as a free license not otherwise listed, and the gentle.tex header says users should feel free to photocopy and/or distribute the manual if it remains in one piece. The expected DVI hash is from pdftex DVI output with only the preamble banner comment normalized."
+expected_ref_dvi_sha256 = "cdaa3304bd578a450bbc5fb71424e790cc6e4bb4372f2e53d46bad43a5c51884"
+notes = "CTAN records gentle as a free license not otherwise listed, and the gentle.tex header says users should feel free to photocopy and/or distribute the manual if it remains in one piece. The expected DVI hash is from pdfTeX 3.141592653-2.6-1.40.27 (TeX Live 2025) DVI output with SOURCE_DATE_EPOCH=1783604160, FORCE_SOURCE_DATE=1, and only the preamble banner comment normalized; gentle.tex writes \\today and \\time, so the pinned job clock is part of the reference environment."
