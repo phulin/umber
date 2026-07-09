@@ -129,6 +129,13 @@ Keep `cargo test --workspace --tests` fast. Long or full-corpus parity runs
 must stay out of cargo tests; the Conformance epic will own those runs in
 `scripts/parity.sh`.
 
+The fast/default tier is `cargo test --tests`, `cargo test --workspace --tests`,
+and `scripts/check.sh`. It reads committed fixtures and must run without TeX
+tools on `PATH`; keep warmed `cargo test --tests` under the documented
+10-second target in `docs/testing_policy.md`. The slow parity tier is
+`scripts/parity.sh`, which sets `UMBER_LIVE_REF=1` and runs live reference
+diagnostic and byte-identical DVI corpus checks.
+
 Font metric parity tests use an optional local TFM corpus under
 `third_party/fonts/`, which is gitignored. Populate it from an ambient TeX
 installation with:

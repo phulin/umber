@@ -4,6 +4,8 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
+# Explicit slow tier: run live reference checks and full DVI corpora. The
+# default cargo tests and scripts/check.sh must stay fixture-only and hermetic.
 export UMBER_LIVE_REF="${UMBER_LIVE_REF:-1}"
 
 cargo test -p umber --test it run_exec_corpus_matches_pdftex_diagnostics

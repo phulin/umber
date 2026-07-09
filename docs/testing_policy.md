@@ -20,7 +20,38 @@ Test placement should optimize for three things:
    boundary tests under crate-level `tests`, and shared fixture data under the
    workspace `tests/corpus` tree.
 
-## 2. Default Rule
+## 2. Test Tiers And Budgets
+
+The default tier is fixture-only and hermetic:
+
+```bash
+cargo test --tests
+cargo test --workspace --tests
+scripts/check.sh
+```
+
+These commands must not require `pdftex`, `tex`, `tftopl`, or other TeX tools
+on `PATH`. `scripts/check.sh` forces `UMBER_LIVE_REF=0` and
+`UPDATE_FIXTURES=0` so it remains the local fast gate even when a developer's
+shell has reference-mode variables set. The warmed `cargo test --tests` target
+is under 10 seconds on the current macOS development workspace; investigate a
+sustained run above 15 seconds or any default test that invokes live TeX. The
+broader `scripts/check.sh` gate also runs format and clippy, including release
+clippy, and should stay under a warmed two-minute local budget.
+
+The explicit slow parity tier is:
+
+```bash
+scripts/parity.sh
+```
+
+That script enables `UMBER_LIVE_REF=1`, runs live reference diagnostic checks,
+optional hyphenation parity when its corpus is present, and byte-identical DVI
+comparisons for the DVI, page, math, and align corpora. Use focused
+`UPDATE_FIXTURES=1` commands only when deliberately regenerating committed
+fixtures.
+
+## 3. Default Rule
 
 Put nontrivial crate-internal tests in a separate sibling test module:
 
@@ -53,7 +84,7 @@ src/tests/support.rs
 This keeps implementation files compact while preserving unit-test access to
 private and `pub(crate)` implementation details.
 
-## 3. Inline Tests
+## 4. Inline Tests
 
 Inline `#[cfg(test)] mod tests { ... }` blocks are allowed only when the test
 block is small and genuinely local to the implementation, roughly 20 to 40
@@ -69,7 +100,7 @@ Good uses:
 Move tests into `tests.rs` once they need setup helpers, table-driven cases,
 fixtures, many assertions, or more than a few test functions.
 
-## 4. Crate-Level Integration Tests
+## 5. Crate-Level Integration Tests
 
 Internal library crates should avoid crate-level Cargo integration tests.
 Prefer `src/tests.rs` and `src/tests/<topic>.rs` even when a test exercises
@@ -92,7 +123,7 @@ or internal-library regression suites. If a test needs private access, or if it
 is validating an internal crate's implementation rather than an external
 contract, it belongs under `src`.
 
-## 5. Large Integration Suites
+## 6. Large Integration Suites
 
 Cargo compiles each top-level file under `tests/` as a separate test crate.
 Any crate that keeps integration tests should have at most one top-level Cargo
@@ -110,7 +141,7 @@ crates/foo/tests/it/
 This improves compile time, simplifies shared helpers, and keeps test output
 easier to scan.
 
-## 6. Fixtures
+## 7. Fixtures
 
 Committed corpus fixtures belong under the workspace-level `tests/corpus`
 tree. Keep small area-local support files beside the fixture input. See
@@ -143,7 +174,7 @@ Test code should live near the crate that owns the behavior. Fixture data
 should live in the shared corpus tree unless it is strictly local to one
 crate-level integration test.
 
-## 7. Documentation Tests
+## 8. Documentation Tests
 
 Use doctests only when the example is part of public API documentation and is
 valuable to users as documentation. Do not use doctests as the main test
@@ -152,7 +183,7 @@ mechanism for internal crates or implementation behavior.
 For internal crates with many examples, prefer normal Rust tests so compile
 time and test organization stay predictable.
 
-## 8. Navigation Rules For Agents
+## 9. Navigation Rules For Agents
 
 When adding or moving tests:
 
@@ -166,7 +197,7 @@ When adding or moving tests:
 - Do not expose production internals just to make a test fit in
   crate-level `tests/`.
 
-## 9. External References
+## 10. External References
 
 Rust's documented convention is that unit tests live under `src` and can test
 private interfaces, while integration tests live under top-level `tests/` and
