@@ -732,6 +732,7 @@ dependencies = [
  "anyhow",
  "refexec",
  "similar",
+ "tempfile",
 ]
 
 [[package]]

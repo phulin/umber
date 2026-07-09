@@ -11,7 +11,9 @@ Keep reusable test harness code here when multiple crates or integration tests n
 ## File Map
 
 - `AGENTS.md`: crate-specific guidance, boundaries, validation notes, and this file map.
-- `Cargo.toml`: crate manifest, host-side dependencies, `refexec` dev-dependency, and workspace lint settings.
+- `Cargo.toml`: crate manifest, host-side dependencies, reference/DVI helper dependencies, and workspace lint settings.
+- `src/corpus.rs`: shared committed-corpus discovery and support-file copy helpers.
+- `src/dvi.rs`: shared DVI fixture setup, reference update, and preamble-comment-normalized comparison helpers.
 - `src/lib.rs`: public fixture assertion/read helpers, TeX/reference log normalizers, `UPDATE_FIXTURES`/`UMBER_LIVE_REF` checks, and PL font parsing utilities.
 - `src/tests.rs`: crate self-test that reads the committed hello fixture by default and regenerates it from reference TeX only under `UPDATE_FIXTURES=1`.
 

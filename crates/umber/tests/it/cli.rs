@@ -1,9 +1,9 @@
 use std::{fs, process::Command};
 
-use refexec::{DviComparison, RefTex, RunOpts, compare_dvi_bytes};
+use refexec::{RefTex, RunOpts};
 use test_support::{
-    assert_matches_fixture, fixture_path, live_reference_enabled, normalize, read_binary_fixture,
-    read_fixture, update_fixtures_enabled, write_binary_fixture,
+    assert_matches_fixture, corpus_cases, dvi, live_reference_enabled, normalize, read_fixture,
+    update_fixtures_enabled,
 };
 use tex_lex::{Lexer, WorldInput};
 use tex_state::env::banks::IntParam;
@@ -326,39 +326,21 @@ fn assert_dvi_case_matches_pdftex(case: &str) {
 
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
 fn assert_dvi_area_matches_pdftex(area: &str) {
-    let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let corpus = repo_root.join("tests/corpus").join(area);
-    for entry in fs::read_dir(&corpus).expect("read DVI corpus") {
-        let path = entry.expect("read corpus entry").path();
-        if path.extension().and_then(std::ffi::OsStr::to_str) != Some("tex") {
-            continue;
-        }
-        let case = path.file_stem().expect("fixture stem").to_string_lossy();
-        assert_dvi_case_in_area_matches_pdftex(area, &case);
+    for case in corpus_cases(area) {
+        assert_dvi_case_in_area_matches_pdftex(area, case.name());
     }
 }
 
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
 fn assert_dvi_case_in_area_matches_pdftex(area: &str, case: &str) {
-    let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let source = repo_root
-        .join("tests/corpus")
-        .join(area)
-        .join(format!("{case}.tex"));
-    let cmr10 = repo_root.join("crates/tex-fonts/tests/fixtures/cm/cmr10.tfm");
-    let temp_dir = tempfile::tempdir().expect("create DVI smoke temp dir");
-    let case_path = temp_dir.path().join(format!("{case}.tex"));
-    let tfm_path = temp_dir.path().join("cmr10.tfm");
-    let actual_path = temp_dir.path().join("actual.dvi");
-    fs::copy(&source, &case_path).expect("copy DVI smoke source");
-    fs::copy(&cmr10, &tfm_path).expect("copy pinned cmr10.tfm");
+    let setup = dvi::DviCaseSetup::new(area, case);
 
     let output = Command::new(env!("CARGO_BIN_EXE_umber"))
-        .current_dir(temp_dir.path())
+        .current_dir(setup.run_dir())
         .arg("run")
-        .arg(format!("{case}.tex"))
+        .arg(setup.source_file_name())
         .arg("--dvi")
-        .arg("actual.dvi")
+        .arg(setup.actual_dvi_file_name())
         .output()
         .expect("run umber DVI smoke");
     assert!(
@@ -367,81 +349,9 @@ fn assert_dvi_case_in_area_matches_pdftex(area: &str, case: &str) {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let actual = fs::read(&actual_path).expect("read umber DVI");
-    let expected = expected_dvi_fixture(area, case, &case_path, &tfm_path);
-    assert_dvi_matches(&expected, &actual, &format!("{area}/{case}"));
-}
-
-fn expected_dvi_fixture(
-    area: &str,
-    case: &str,
-    case_path: &std::path::Path,
-    tfm_path: &std::path::Path,
-) -> Vec<u8> {
-    if update_fixtures_enabled() || live_reference_enabled() {
-        let expected = reference_dvi(case_path, tfm_path);
-        if update_fixtures_enabled() {
-            update_dvi_fixture_if_changed(area, case, &expected);
-        }
-        if live_reference_enabled() {
-            let committed = read_binary_fixture(area, case, "dvi");
-            assert_dvi_matches(
-                &expected,
-                &committed,
-                &format!("{area}/{case} committed fixture"),
-            );
-        }
-        expected
-    } else {
-        read_binary_fixture(area, case, "dvi")
-    }
-}
-
-fn reference_dvi(case_path: &std::path::Path, tfm_path: &std::path::Path) -> Vec<u8> {
-    let output = RefTex::locate()
-        .expect("locate pdftex")
-        .run(
-            case_path,
-            &RunOpts {
-                dvi: true,
-                extra_inputs: vec![tfm_path.to_path_buf()],
-                ..RunOpts::default()
-            },
-        )
-        .expect("run reference DVI fixture");
-    assert!(
-        output.success,
-        "reference DVI fixture failed:\n{}",
-        output.log
-    );
-    output.dvi.expect("reference TeX should produce DVI")
-}
-
-#[allow(clippy::disallowed_methods)] // host-side binary fixture update check.
-fn update_dvi_fixture_if_changed(area: &str, case: &str, expected: &[u8]) {
-    let path = fixture_path(area, case, "dvi");
-    let unchanged = fs::read(&path)
-        .ok()
-        .and_then(|current| compare_dvi_bytes(expected, &current).ok())
-        == Some(DviComparison::Equal);
-    if unchanged {
-        return;
-    }
-
-    write_binary_fixture(area, case, "dvi", expected);
-    panic!(
-        "DVI fixture updated at {} -- rerun without UPDATE_FIXTURES",
-        path.display()
-    );
-}
-
-fn assert_dvi_matches(expected: &[u8], actual: &[u8], label: &str) {
-    let comparison = compare_dvi_bytes(expected, actual).expect("compare DVI bytes");
-    assert_eq!(
-        comparison,
-        DviComparison::Equal,
-        "DVI fixture mismatch for {label}"
-    );
+    let actual = fs::read(setup.actual_dvi_path()).expect("read umber DVI");
+    let expected = dvi::expected_dvi_fixture(area, case, &setup, area == "math");
+    dvi::assert_dvi_matches(&expected, &actual, &format!("{area}/{case}"));
 }
 
 #[test]

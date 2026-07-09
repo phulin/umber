@@ -48,7 +48,7 @@ for corpus_name in dvi page math align leaders; do
       support_name="$(basename "$support")"
       cp "$support" "${case_dir}/${support_name}"
       extra_inputs+=(--extra-input "$support_name")
-    done < <(find "$corpus_dir" -maxdepth 1 -type f ! -name '*.tex' | sort)
+    done < <(find "$corpus_dir" -maxdepth 1 -type f ! -name '*.tex' ! -name '*.expected.*' | sort)
     printf 'DVI parity: %s/%s\n' "$corpus_name" "$case_name" >&2
     (
       cd "$case_dir"

@@ -32,12 +32,13 @@ output files even under `--show-fixtures`; pending immediate stream effects do
 not materialize because their final commit is skipped.
 
 `tests/corpus/dvi` contains committed TeX source fixtures for full-pipeline
-DVI parity. The `umber` cargo smoke tests also commit selected
-`<case>.expected.dvi` reference fixtures here so default tests remain
-hermetic. `scripts/parity.sh` still copies every source plus pinned CM TFMs
-into a temporary run directory, runs `umber run <case>.tex --dvi actual.dvi`,
-then asks `tools/refexec` to run the live reference engine and byte-compare
-DVI output with only preamble comment payload normalization.
+DVI parity plus committed `<case>.expected.dvi` reference fixtures. The
+`umber` cargo smoke tests read a selected subset of these expected files so
+default tests remain hermetic. `scripts/parity.sh` still copies every source
+plus pinned CM TFMs into a temporary run directory, runs `umber run
+<case>.tex --dvi actual.dvi`, then asks `tools/refexec` to run the live
+reference engine and byte-compare DVI output with only preamble comment
+payload normalization.
 
 `tests/corpus/page` contains page-builder-focused DVI parity fixtures. It is
 run by the same `scripts/parity.sh` DVI comparison loop. The `umber` cargo
@@ -54,23 +55,25 @@ magnification diagnostics, and box-register behavior.
 `tests/corpus/tex_exec_io` contains small pdfTeX-derived file-effect and DVI
 special-payload observations used by `tex-exec` I/O and shipout tests.
 
-`tests/corpus/math` contains primitive-only math DVI parity fixtures. Cases
-share `math_preamble.inc`; keep that include free of `plain.tex` dependencies
-and keep individual `.tex` cases small. The harness runs the reference engine
-in INITEX mode for this area, copies the shared include beside each case, and
+`tests/corpus/math` contains primitive-only math DVI parity fixtures plus
+committed `<case>.expected.dvi` reference fixtures. Cases share
+`math_preamble.inc`; keep that include free of `plain.tex` dependencies and
+keep individual `.tex` cases small. The harness runs the reference engine in
+INITEX mode for this area, copies the shared include beside each case, and
 pins `cmr10`, `cmmi10`, `cmsy10`, and `cmex10` TFMs so text/script/
 scriptscript family selection observes the same metrics as Umber.
 
 `tests/corpus/align` contains alignment-focused DVI parity fixtures for
 `\halign`, `\valign`, spans, omission, `\noalign`, nested alignment, and
-display alignment. It is run by `scripts/parity.sh` with the same pinned CM
-TFMs as the other DVI corpora; keep cases primitive-only and do not commit
-generated DVI files.
+display alignment, with committed `<case>.expected.dvi` reference fixtures.
+It is run by `scripts/parity.sh` with the same pinned CM TFMs as the other DVI
+corpora; keep cases primitive-only.
 
 `tests/corpus/leaders` contains leader-focused DVI byte-parity fixtures for
-`\leaders`, `\cleaders`, and `\xleaders`. It is an explicit live-reference
+`\leaders`, `\cleaders`, and `\xleaders`, with committed
+`<case>.expected.dvi` reference fixtures. It is an explicit live-reference
 parity corpus run by `scripts/parity.sh`; keep it out of default cargo tests
-and do not commit generated DVI files.
+until a focused fast-tier conversion lands.
 
 ```text
 <case>.expected.<kind>

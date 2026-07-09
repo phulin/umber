@@ -1,5 +1,8 @@
 //! Shared host-side support for parity and fixture tests.
 
+mod corpus;
+pub mod dvi;
+
 #[allow(clippy::disallowed_methods)] // host tool, not engine code
 mod imp {
     use std::env;
@@ -780,6 +783,7 @@ mod imp {
     }
 }
 
+pub use corpus::{CorpusCase, copy_area_support_files, corpus_area, corpus_cases};
 pub use imp::{
     assert_matches_fixture, corpus_root, fixture_path, live_reference_enabled, normalize, pl,
     read_binary_fixture, read_fixture, update_fixtures_enabled, write_binary_fixture,
