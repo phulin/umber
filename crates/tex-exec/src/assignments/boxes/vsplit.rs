@@ -6,6 +6,7 @@ use tex_state::glue::Order;
 use tex_state::node::Node;
 use tex_state::page::PageMark;
 use tex_state::scaled::Scaled;
+use tex_state::token::TracedTokenWord;
 use tex_typeset::{PackSpec, VerticalBreakError, vert_break};
 
 use crate::ExecError;
@@ -19,18 +20,19 @@ pub(super) fn scan_vsplit_node<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
+    context: TracedTokenWord,
 ) -> Result<Option<Node>, ExecError>
 where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    let index = scan_register_index(input, stores, hooks)?;
+    let index = scan_register_index(input, stores, hooks, context)?;
     if !scan_optional_keyword_x(input, stores, hooks, "to")? {
         return Err(ExecError::MissingToken {
             context: "\\vsplit to",
         });
     }
-    let height = scan_scaled(input, stores, hooks)?;
+    let height = scan_scaled(input, stores, hooks, context)?;
     split_vbox_register(stores, index, height)
 }
 

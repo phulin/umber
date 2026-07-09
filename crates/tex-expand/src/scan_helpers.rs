@@ -63,6 +63,7 @@ pub(crate) fn scan_register_index<S, R, H>(
     stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
+    context: tex_state::token::TracedTokenWord,
 ) -> Result<u16, ExpandError>
 where
     S: InputSource,
@@ -75,6 +76,7 @@ where
         recorder,
         hooks,
         &mut NoInputExpandNext,
+        context,
     )
 }
 
@@ -84,6 +86,7 @@ pub(crate) fn scan_register_index_with_expander_and_hooks<S, St, R, H, E>(
     recorder: &mut R,
     hooks: &mut H,
     expander: &mut E,
+    context: tex_state::token::TracedTokenWord,
 ) -> Result<u16, ExpandError>
 where
     S: InputSource,
@@ -92,11 +95,16 @@ where
     H: ExpansionHooks<S>,
     E: ExpandNext<S, St, R, H>,
 {
-    let value =
-        scan_int::scan_int_with_expander_and_hooks(input, stores, recorder, hooks, expander)?
-            .value();
+    let scanned = scan_int::scan_int_with_expander_and_hooks(
+        input, stores, recorder, hooks, expander, context,
+    )?;
+    let value = scanned.value();
     if !(0..=32_767).contains(&value) {
-        return Err(scan_int::ScanIntError::RegisterNumberOutOfRange(value).into());
+        return Err(scan_int::ScanIntError::RegisterNumberOutOfRange {
+            value,
+            context: scanned.context(),
+        }
+        .into());
     }
     Ok(value as u16)
 }

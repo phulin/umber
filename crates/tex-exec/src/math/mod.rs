@@ -313,12 +313,12 @@ where
             finish_math(nest, input, stores)
         }
         UnexpandablePrimitive::MathChar => {
-            let code = scan_math_char_code(input, stores, hooks)?;
+            let code = scan_math_char_code(input, stores, hooks, traced)?;
             append_math_char_code(nest, stores, code)?;
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::Delimiter => {
-            let delimiter = scan_delimiter_code(input, stores, hooks)?;
+            let delimiter = scan_delimiter_code(input, stores, hooks, traced)?;
             let ch = char::from_u32(delimiter & 0xff).unwrap_or('\0');
             append_noad(
                 nest,
@@ -367,17 +367,18 @@ where
         | UnexpandablePrimitive::OverWithDelims
         | UnexpandablePrimitive::AtopWithDelims
         | UnexpandablePrimitive::AboveWithDelims => {
-            start_fraction(primitive, nest, input, stores, hooks)?;
+            start_fraction(primitive, traced, nest, input, stores, hooks)?;
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::Radical => {
-            let delimiter = scan_delimiter_code(input, stores, hooks)?;
+            let delimiter = scan_delimiter_code(input, stores, hooks, traced)?;
             let field = scan_math_field(nest, input, stores, recorder, hooks)?;
             append_noad(nest, NoadKind::Radical { delimiter }, field);
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::MathAccent => {
-            let accent = math_char_from_code(scan_math_char_code(input, stores, hooks)?, stores)?;
+            let accent =
+                math_char_from_code(scan_math_char_code(input, stores, hooks, traced)?, stores)?;
             let field = scan_math_field(nest, input, stores, recorder, hooks)?;
             append_noad(nest, NoadKind::Accent { accent }, field);
             Ok(DispatchAction::Continue)
@@ -388,7 +389,7 @@ where
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::MSkip => {
-            let spec = assignments::scan_glue_id(input, stores, hooks, true)?;
+            let spec = assignments::scan_glue_id(input, stores, hooks, true, traced)?;
             nest.current_list_mut().push(Node::Glue {
                 spec,
                 kind: GlueKind::MuSkip,
@@ -397,7 +398,7 @@ where
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::MKern => {
-            let amount = scan_mu_dimen(input, stores, hooks)?;
+            let amount = scan_mu_dimen(input, stores, hooks, traced)?;
             nest.current_list_mut().push(Node::Kern {
                 amount,
                 kind: KernKind::Mu,
@@ -422,7 +423,7 @@ where
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::HAlign if nest.current_mode() == Mode::DisplayMath => {
-            finish_display_halign(nest, input, stores, recorder, hooks)?;
+            finish_display_halign(traced, nest, input, stores, recorder, hooks)?;
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::Left => {
@@ -456,6 +457,7 @@ where
 }
 
 fn finish_display_halign<S, R, H>(
+    context: TracedTokenWord,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
@@ -486,7 +488,8 @@ where
                 origin: OriginId::UNKNOWN,
                 operation: "display interrupt state",
             })?;
-    let nodes = crate::align::execute_display_halign(nest, input, stores, recorder, hooks)?;
+    let nodes =
+        crate::align::execute_display_halign(context, nest, input, stores, recorder, hooks)?;
     consume_display_alignment_closer(input, stores)?;
     finish_display_alignment(nest, input, stores, interrupt, nodes)
 }

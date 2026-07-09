@@ -47,8 +47,13 @@ pub enum ScanGlueError {
     Expand(ExpandError),
     Lex(LexError),
     Dimen(ScanDimenError),
-    MissingNumber { origin: OriginId },
-    RegisterNumberOutOfRange(i32),
+    MissingNumber {
+        context: TracedTokenWord,
+    },
+    RegisterNumberOutOfRange {
+        value: i32,
+        context: TracedTokenWord,
+    },
     UnsupportedInternalGlue(TracedTokenWord),
 }
 
@@ -59,7 +64,7 @@ impl fmt::Display for ScanGlueError {
             Self::Lex(err) => write!(f, "{err}"),
             Self::Dimen(err) => write!(f, "{err}"),
             Self::MissingNumber { .. } => f.write_str("Missing number"),
-            Self::RegisterNumberOutOfRange(value) => {
+            Self::RegisterNumberOutOfRange { value, .. } => {
                 write!(f, "register number {value} is out of range")
             }
             Self::UnsupportedInternalGlue(token) => {
@@ -80,7 +85,7 @@ impl std::error::Error for ScanGlueError {
             Self::Lex(err) => Some(err),
             Self::Dimen(err) => Some(err),
             Self::MissingNumber { .. }
-            | Self::RegisterNumberOutOfRange(_)
+            | Self::RegisterNumberOutOfRange { .. }
             | Self::UnsupportedInternalGlue(_) => None,
         }
     }
@@ -90,11 +95,13 @@ impl ScanGlueError {
     #[must_use]
     pub fn primary_origin(&self) -> Option<OriginId> {
         match self {
-            Self::MissingNumber { origin } => Some(*origin),
+            Self::MissingNumber { context } | Self::RegisterNumberOutOfRange { context, .. } => {
+                Some(context.origin())
+            }
             Self::UnsupportedInternalGlue(token) => Some(token.origin()),
             Self::Dimen(err) => err.primary_origin(),
             Self::Expand(err) => err.primary_origin(),
-            Self::Lex(_) | Self::RegisterNumberOutOfRange(_) => None,
+            Self::Lex(_) => None,
         }
     }
 }
@@ -126,6 +133,7 @@ impl From<scan_int::ScanIntError> for ScanGlueError {
 pub fn scan_glue<S>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
+    context: TracedTokenWord,
 ) -> Result<ScannedGlue, ScanGlueError>
 where
     S: InputSource,
@@ -136,12 +144,14 @@ where
         &mut NoopRecorder,
         &mut NoopExpansionHooks,
         false,
+        context,
     )
 }
 
 pub fn scan_muglue<S>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
+    context: TracedTokenWord,
 ) -> Result<ScannedGlue, ScanGlueError>
 where
     S: InputSource,
@@ -152,6 +162,7 @@ where
         &mut NoopRecorder,
         &mut NoopExpansionHooks,
         true,
+        context,
     )
 }
 
@@ -161,13 +172,22 @@ pub fn scan_glue_with_hooks<S, R, H>(
     recorder: &mut R,
     hooks: &mut H,
     mu: bool,
+    context: TracedTokenWord,
 ) -> Result<ScannedGlue, ScanGlueError>
 where
     S: InputSource,
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    scan_glue_with_expander_and_hooks(input, stores, recorder, hooks, &mut NoInputExpandNext, mu)
+    scan_glue_with_expander_and_hooks(
+        input,
+        stores,
+        recorder,
+        hooks,
+        &mut NoInputExpandNext,
+        mu,
+        context,
+    )
 }
 
 pub fn scan_glue_with_expander_and_hooks<S, St, R, H, E>(
@@ -177,6 +197,7 @@ pub fn scan_glue_with_expander_and_hooks<S, St, R, H, E>(
     hooks: &mut H,
     expander: &mut E,
     mu: bool,
+    context: TracedTokenWord,
 ) -> Result<ScannedGlue, ScanGlueError>
 where
     S: InputSource,
@@ -187,9 +208,7 @@ where
 {
     let (negative, first) = scan_signs(input, stores, recorder, hooks, expander)?;
     let Some(first) = first else {
-        return Err(ScanGlueError::MissingNumber {
-            origin: input.current_input_origin(stores),
-        });
+        return Err(ScanGlueError::MissingNumber { context });
     };
 
     if let Token::Cs(symbol) = semantic_token(first) {
@@ -217,13 +236,13 @@ where
                 return Ok(intern_spec(stores, signed_spec(spec, negative)));
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Skip) if !mu => {
-                let index = scan_register_index(input, stores, recorder, hooks, expander)?;
+                let index = scan_register_index(input, stores, recorder, hooks, expander, first)?;
                 consume_optional_space(input, stores, recorder, hooks, expander)?;
                 let spec = stores.glue(stores.skip(index));
                 return Ok(intern_spec(stores, signed_spec(spec, negative)));
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Muskip) if mu => {
-                let index = scan_register_index(input, stores, recorder, hooks, expander)?;
+                let index = scan_register_index(input, stores, recorder, hooks, expander, first)?;
                 consume_optional_space(input, stores, recorder, hooks, expander)?;
                 let spec = stores.glue(stores.muskip(index));
                 return Ok(intern_spec(stores, signed_spec(spec, negative)));
@@ -238,7 +257,8 @@ where
             _ => {
                 let name = stores.resolve(symbol);
                 if (!mu && name == "skip") || (mu && name == "muskip") {
-                    let index = scan_register_index(input, stores, recorder, hooks, expander)?;
+                    let index =
+                        scan_register_index(input, stores, recorder, hooks, expander, first)?;
                     consume_optional_space(input, stores, recorder, hooks, expander)?;
                     let id = if mu {
                         stores.muskip(index)
@@ -260,6 +280,7 @@ where
         hooks,
         expander,
         dimen_options(mu),
+        context,
     )?;
     let mut diagnostics = [None; 8];
     let mut diagnostic_origins = [None; 8];
@@ -283,6 +304,7 @@ where
             hooks,
             expander,
             dimen_options(mu).with_infinite_units(),
+            context,
         )?;
         append_dimension_diagnostics(&mut diagnostics, &mut diagnostic_origins, stretch);
         spec.stretch = stretch.value();
@@ -296,6 +318,7 @@ where
             hooks,
             expander,
             dimen_options(mu).with_infinite_units(),
+            context,
         )?;
         append_dimension_diagnostics(&mut diagnostics, &mut diagnostic_origins, shrink);
         spec.shrink = shrink.value();
@@ -413,6 +436,7 @@ fn scan_register_index<S, St, R, H, E>(
     recorder: &mut R,
     hooks: &mut H,
     expander: &mut E,
+    context: TracedTokenWord,
 ) -> Result<u16, ScanGlueError>
 where
     S: InputSource,
@@ -421,12 +445,15 @@ where
     H: ExpansionHooks<S>,
     E: ExpandNext<S, St, R, H>,
 {
-    let value = crate::scan_int::scan_int_with_expander_and_hooks(
-        input, stores, recorder, hooks, expander,
-    )?
-    .value();
+    let scanned = crate::scan_int::scan_int_with_expander_and_hooks(
+        input, stores, recorder, hooks, expander, context,
+    )?;
+    let value = scanned.value();
     if !(0..=32_767).contains(&value) {
-        return Err(ScanGlueError::RegisterNumberOutOfRange(value));
+        return Err(ScanGlueError::RegisterNumberOutOfRange {
+            value,
+            context: scanned.context(),
+        });
     }
     Ok(value as u16)
 }

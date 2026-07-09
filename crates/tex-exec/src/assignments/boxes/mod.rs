@@ -4,7 +4,7 @@ use tex_state::glue::Order;
 use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::node::{GlueKind, KernKind, Node};
 use tex_state::scaled::Scaled;
-use tex_state::token::Token;
+use tex_state::token::{Token, TracedTokenWord};
 use tex_state::{BoxDimension, Universe};
 
 use super::*;
@@ -26,6 +26,7 @@ use vsplit::scan_vsplit_node;
 
 pub(super) fn execute_make_box<S, H>(
     primitive: UnexpandablePrimitive,
+    context: TracedTokenWord,
     nest: &mut ModeNest,
     _global: bool,
     input: &mut InputStack<S>,
@@ -37,13 +38,14 @@ where
     H: ExpansionHooks<S>,
 {
     let node = if primitive == UnexpandablePrimitive::VSplit {
-        scan_vsplit_node(input, stores, hooks)?
+        scan_vsplit_node(input, stores, hooks, context)?
     } else {
         Some(scan_box_node(
             kind_for_primitive(primitive)?,
             input,
             stores,
             hooks,
+            context,
         )?)
     };
     if let Some(node) = node {
@@ -55,6 +57,7 @@ where
 
 pub(super) fn execute_setbox<S, H>(
     global: bool,
+    context: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
@@ -63,9 +66,9 @@ where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    let index = scan_register_index(input, stores, hooks)?;
+    let index = scan_register_index(input, stores, hooks, context)?;
     skip_optional_equals_x(input, stores, hooks)?;
-    match scan_box_value(input, stores, hooks)? {
+    match scan_box_value(input, stores, hooks, context)? {
         Some(node) => {
             let node = stores.clone_node_to_epoch(node);
             let list = stores.freeze_node_list(&[node]);
@@ -89,6 +92,7 @@ where
 pub(super) fn execute_box_dimension_assignment<S, H>(
     primitive: UnexpandablePrimitive,
     global: bool,
+    context: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
@@ -97,9 +101,9 @@ where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    let index = scan_register_index(input, stores, hooks)?;
+    let index = scan_register_index(input, stores, hooks, context)?;
     skip_optional_equals_x(input, stores, hooks)?;
-    let value = scan_scaled(input, stores, hooks)?;
+    let value = scan_scaled(input, stores, hooks, context)?;
     let dimension = box_dimension(primitive)?;
     if global {
         if let Some(id) = stores.box_reg(index) {
@@ -117,6 +121,7 @@ where
 
 pub(super) fn execute_box_list_command<S, H>(
     primitive: UnexpandablePrimitive,
+    context: TracedTokenWord,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
@@ -128,7 +133,7 @@ where
 {
     match primitive {
         UnexpandablePrimitive::Box | UnexpandablePrimitive::Copy => {
-            let index = scan_register_index(input, stores, hooks)?;
+            let index = scan_register_index(input, stores, hooks, context)?;
             let id = if primitive == UnexpandablePrimitive::Box {
                 stores.take_box_reg_same_level(index)
             } else {
@@ -140,7 +145,7 @@ where
         | UnexpandablePrimitive::UnHCopy
         | UnexpandablePrimitive::UnVBox
         | UnexpandablePrimitive::UnVCopy => {
-            let index = scan_register_index(input, stores, hooks)?;
+            let index = scan_register_index(input, stores, hooks, context)?;
             let id = if matches!(
                 primitive,
                 UnexpandablePrimitive::UnHBox | UnexpandablePrimitive::UnVBox
@@ -164,8 +169,8 @@ where
         | UnexpandablePrimitive::Lower
         | UnexpandablePrimitive::MoveLeft
         | UnexpandablePrimitive::MoveRight => {
-            let amount = scan_scaled(input, stores, hooks)?;
-            let mut node = scan_required_box_node(input, stores, hooks)?;
+            let amount = scan_scaled(input, stores, hooks, context)?;
+            let mut node = scan_required_box_node(input, stores, hooks, context)?;
             apply_shift(&mut node, primitive, amount)?;
             append_node_to_current_list(nest, stores, node)?;
         }
@@ -179,6 +184,7 @@ where
 
 pub(super) fn execute_kern_or_skip<S, H>(
     primitive: UnexpandablePrimitive,
+    context: TracedTokenWord,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
@@ -190,7 +196,7 @@ where
 {
     match primitive {
         UnexpandablePrimitive::Kern => {
-            let amount = scan_scaled(input, stores, hooks)?;
+            let amount = scan_scaled(input, stores, hooks, context)?;
             append_node_to_current_list(
                 nest,
                 stores,
@@ -204,7 +210,7 @@ where
             if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
                 ensure_horizontal_for_character(nest, input, stores)?;
             }
-            let spec = scan_glue_id(input, stores, hooks, false)?;
+            let spec = scan_glue_id(input, stores, hooks, false, context)?;
             append_node_to_current_list(
                 nest,
                 stores,
@@ -220,7 +226,7 @@ where
         | UnexpandablePrimitive::VFill
         | UnexpandablePrimitive::VSs
         | UnexpandablePrimitive::VFilNeg => {
-            execute_vertical_skip(primitive, nest, input, stores, hooks)?
+            execute_vertical_skip(primitive, nest, input, stores, hooks, context)?
         }
         _ => unreachable!("caller restricts kern/skip primitives"),
     }
@@ -229,6 +235,7 @@ where
 
 pub(super) fn execute_leaders<S, H>(
     primitive: UnexpandablePrimitive,
+    context: TracedTokenWord,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
@@ -238,8 +245,8 @@ where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    let leader = scan_leader_payload(input, stores, hooks)?;
-    let spec = scan_leader_glue(input, stores, hooks, nest.current_mode())?;
+    let leader = scan_leader_payload(input, stores, hooks, context)?;
+    let spec = scan_leader_glue(input, stores, hooks, nest.current_mode(), context)?;
     append_node_to_current_list(
         nest,
         stores,
@@ -254,6 +261,7 @@ where
 }
 
 pub(super) fn execute_hrule<S, H>(
+    context: TracedTokenWord,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
@@ -276,7 +284,7 @@ where
             });
         }
     }
-    let node = scan_rule_node(input, stores, hooks, UnexpandablePrimitive::HRule)?;
+    let node = scan_rule_node(input, stores, hooks, UnexpandablePrimitive::HRule, context)?;
     append_vertical_contribution(nest, stores, node);
     nest.current_list_mut()
         .set_prev_depth(crate::mode::IGNORE_DEPTH);
@@ -350,6 +358,7 @@ fn execute_vertical_skip<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
+    context: TracedTokenWord,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
@@ -367,7 +376,7 @@ where
         });
     }
     let spec = match primitive {
-        UnexpandablePrimitive::VSkip => scan_glue_id(input, stores, hooks, false)?,
+        UnexpandablePrimitive::VSkip => scan_glue_id(input, stores, hooks, false, context)?,
         UnexpandablePrimitive::VFil => stores.intern_glue(infinite_glue(Order::Fil, false, false)),
         UnexpandablePrimitive::VFill => {
             stores.intern_glue(infinite_glue(Order::Fill, false, false))

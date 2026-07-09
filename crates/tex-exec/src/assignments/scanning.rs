@@ -128,7 +128,7 @@ where
     let meaning = stores.meaning(symbol);
     match meaning {
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Count) => Ok(Variable::IntRegister(
-            scan_register_index_with_recorder(input, stores, &mut recorder, hooks)?,
+            scan_register_index_with_recorder(input, stores, &mut recorder, hooks, traced)?,
         )),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen) => {
             Ok(Variable::DimenRegister(scan_register_index_with_recorder(
@@ -136,10 +136,11 @@ where
                 stores,
                 &mut recorder,
                 hooks,
+                traced,
             )?))
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Skip) => Ok(Variable::GlueRegister(
-            scan_register_index_with_recorder(input, stores, &mut recorder, hooks)?,
+            scan_register_index_with_recorder(input, stores, &mut recorder, hooks, traced)?,
         )),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Muskip) => {
             Ok(Variable::MuGlueRegister(scan_register_index_with_recorder(
@@ -147,16 +148,35 @@ where
                 stores,
                 &mut recorder,
                 hooks,
+                traced,
             )?))
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::FontDimen) => {
-            scan_font_variable_target(UnexpandablePrimitive::FontDimen, input, stores, hooks)
+            scan_font_variable_target(
+                UnexpandablePrimitive::FontDimen,
+                traced,
+                input,
+                stores,
+                hooks,
+            )
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HyphenChar) => {
-            scan_font_variable_target(UnexpandablePrimitive::HyphenChar, input, stores, hooks)
+            scan_font_variable_target(
+                UnexpandablePrimitive::HyphenChar,
+                traced,
+                input,
+                stores,
+                hooks,
+            )
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::SkewChar) => {
-            scan_font_variable_target(UnexpandablePrimitive::SkewChar, input, stores, hooks)
+            scan_font_variable_target(
+                UnexpandablePrimitive::SkewChar,
+                traced,
+                input,
+                stores,
+                hooks,
+            )
         }
         meaning => variable_from_meaning(meaning).ok_or(ExecError::UnsupportedAssignmentTarget),
     }
@@ -166,12 +186,13 @@ pub(super) fn scan_register_index<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
+    context: TracedTokenWord,
 ) -> Result<u16, ExecError>
 where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    scan_register_index_with_recorder(input, stores, &mut NoopRecorder, hooks)
+    scan_register_index_with_recorder(input, stores, &mut NoopRecorder, hooks, context)
 }
 
 pub(super) fn scan_register_index_with_recorder<S, R, H>(
@@ -179,6 +200,7 @@ pub(super) fn scan_register_index_with_recorder<S, R, H>(
     stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
+    context: TracedTokenWord,
 ) -> Result<u16, ExecError>
 where
     S: InputSource,
@@ -191,6 +213,7 @@ where
         recorder,
         hooks,
         &mut DriverExpandNext,
+        context,
     )
     .map_err(ExpandError::from)?;
     if let Some(diagnostic) = scanned.diagnostic() {
@@ -198,7 +221,13 @@ where
     }
     let value = scanned.value();
     if !(0..=32_767).contains(&value) {
-        return Err(ExecError::RegisterNumberOutOfRange(value));
+        return Err(
+            ExpandError::from(scan_int::ScanIntError::RegisterNumberOutOfRange {
+                value,
+                context: scanned.context(),
+            })
+            .into(),
+        );
     }
     Ok(value as u16)
 }
@@ -207,6 +236,7 @@ pub(crate) fn scan_i32<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
+    context: TracedTokenWord,
 ) -> Result<i32, ExecError>
 where
     S: InputSource,
@@ -219,6 +249,7 @@ where
         &mut recorder,
         hooks,
         &mut DriverExpandNext,
+        context,
     )
     .map_err(ExpandError::from)?;
     if let Some(diagnostic) = scanned.diagnostic() {
@@ -231,12 +262,13 @@ pub(super) fn scan_nonzero_i32<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
+    context: TracedTokenWord,
 ) -> Result<i32, ExecError>
 where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    let value = scan_i32(input, stores, hooks)?;
+    let value = scan_i32(input, stores, hooks, context)?;
     if value == 0 {
         Err(ExecError::ArithmeticOverflow)
     } else {
@@ -248,6 +280,7 @@ pub(crate) fn scan_scaled<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
+    context: TracedTokenWord,
 ) -> Result<Scaled, ExecError>
 where
     S: InputSource,
@@ -261,6 +294,7 @@ where
         hooks,
         &mut DriverExpandNext,
         scan_dimen::ScanDimenOptions::STANDARD,
+        context,
     )
     .map_err(ExpandError::from)?;
     diagnostics::report_dimension_diagnostics(stores, scanned.diagnostics());
@@ -272,6 +306,7 @@ pub(crate) fn scan_glue_id<S, H>(
     stores: &mut Universe,
     hooks: &mut H,
     mu: bool,
+    context: TracedTokenWord,
 ) -> Result<GlueId, ExecError>
 where
     S: InputSource,
@@ -285,6 +320,7 @@ where
         hooks,
         &mut DriverExpandNext,
         mu,
+        context,
     )
     .map_err(ExecError::ScanGlue)?;
     diagnostics::report_dimension_diagnostics(stores, scanned.diagnostics());
@@ -295,18 +331,19 @@ pub(super) fn scan_token_list_assignment<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
+    context: TracedTokenWord,
 ) -> Result<tex_state::ids::TokenListId, ExecError>
 where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    let token = next_non_space_x(input, stores, hooks)?.ok_or(ExecError::MissingToken {
-        context: "token-list assignment",
-    })?;
+    let traced = next_non_space_traced_x(input, stores, hooks)?
+        .ok_or(ExecError::MissingTracedToken { context })?;
+    let token = tex_expand::semantic_token(traced);
     if let Token::Cs(symbol) = token {
         match stores.meaning(symbol) {
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks) => {
-                let index = scan_register_index(input, stores, hooks)?;
+                let index = scan_register_index(input, stores, hooks, traced)?;
                 return Ok(stores.toks(index));
             }
             Meaning::ToksRegister(index) => return Ok(stores.toks(index)),

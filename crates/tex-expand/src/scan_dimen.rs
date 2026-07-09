@@ -233,10 +233,19 @@ pub enum ScanDimenError {
     Expand(ExpandError),
     Lex(LexError),
     Integer(scan_int::ScanIntError),
-    MissingNumber { origin: OriginId },
-    MissingUnit { origin: OriginId },
-    RegisterNumberOutOfRange(i32),
-    IncompatibleGlueUnits,
+    MissingNumber {
+        context: TracedTokenWord,
+    },
+    MissingUnit {
+        context: TracedTokenWord,
+    },
+    RegisterNumberOutOfRange {
+        value: i32,
+        context: TracedTokenWord,
+    },
+    IncompatibleGlueUnits {
+        context: TracedTokenWord,
+    },
     UnsupportedInternalDimension(TracedTokenWord),
 }
 
@@ -248,10 +257,10 @@ impl fmt::Display for ScanDimenError {
             Self::Integer(err) => write!(f, "{err}"),
             Self::MissingNumber { .. } => f.write_str("Missing number"),
             Self::MissingUnit { .. } => f.write_str("Illegal unit of measure"),
-            Self::RegisterNumberOutOfRange(value) => {
+            Self::RegisterNumberOutOfRange { value, .. } => {
                 write!(f, "register number {value} is out of range")
             }
-            Self::IncompatibleGlueUnits => f.write_str("Incompatible glue units"),
+            Self::IncompatibleGlueUnits { .. } => f.write_str("Incompatible glue units"),
             Self::UnsupportedInternalDimension(token) => {
                 write!(
                     f,
@@ -271,8 +280,8 @@ impl std::error::Error for ScanDimenError {
             Self::Integer(err) => Some(err),
             Self::MissingNumber { .. }
             | Self::MissingUnit { .. }
-            | Self::RegisterNumberOutOfRange(_)
-            | Self::IncompatibleGlueUnits
+            | Self::RegisterNumberOutOfRange { .. }
+            | Self::IncompatibleGlueUnits { .. }
             | Self::UnsupportedInternalDimension(_) => None,
         }
     }
@@ -282,11 +291,15 @@ impl ScanDimenError {
     #[must_use]
     pub fn primary_origin(&self) -> Option<OriginId> {
         match self {
-            Self::MissingNumber { origin } | Self::MissingUnit { origin } => Some(*origin),
+            Self::MissingNumber { context } | Self::MissingUnit { context } => {
+                Some(context.origin())
+            }
+            Self::RegisterNumberOutOfRange { context, .. }
+            | Self::IncompatibleGlueUnits { context } => Some(context.origin()),
             Self::UnsupportedInternalDimension(token) => Some(token.origin()),
             Self::Integer(err) => err.primary_origin(),
             Self::Expand(err) => err.primary_origin(),
-            Self::Lex(_) | Self::RegisterNumberOutOfRange(_) | Self::IncompatibleGlueUnits => None,
+            Self::Lex(_) => None,
         }
     }
 }
@@ -313,6 +326,7 @@ impl From<scan_int::ScanIntError> for ScanDimenError {
 pub fn scan_dimen<S>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
+    context: TracedTokenWord,
 ) -> Result<ScannedDimen, ScanDimenError>
 where
     S: InputSource,
@@ -323,6 +337,7 @@ where
         &mut NoopRecorder,
         &mut NoopExpansionHooks,
         ScanDimenOptions::STANDARD,
+        context,
     )
 }
 
@@ -331,6 +346,7 @@ pub fn scan_dimen_with_options<S>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     options: ScanDimenOptions,
+    context: TracedTokenWord,
 ) -> Result<ScannedDimen, ScanDimenError>
 where
     S: InputSource,
@@ -341,6 +357,7 @@ where
         &mut NoopRecorder,
         &mut NoopExpansionHooks,
         options,
+        context,
     )
 }
 
@@ -351,6 +368,7 @@ pub fn scan_dimen_with_options_and_hooks<S, R, H>(
     recorder: &mut R,
     hooks: &mut H,
     options: ScanDimenOptions,
+    context: TracedTokenWord,
 ) -> Result<ScannedDimen, ScanDimenError>
 where
     S: InputSource,
@@ -364,6 +382,7 @@ where
         hooks,
         &mut NoInputExpandNext,
         options,
+        context,
     )
 }
 
@@ -375,6 +394,7 @@ pub fn scan_dimen_with_expander_and_hooks<S, St, R, H, E>(
     hooks: &mut H,
     expander: &mut E,
     options: ScanDimenOptions,
+    context: TracedTokenWord,
 ) -> Result<ScannedDimen, ScanDimenError>
 where
     S: InputSource,
@@ -388,7 +408,7 @@ where
         return Ok(ScannedDimen::with_diagnostic(
             Scaled::from_raw(0),
             DimensionDiagnostic::MissingNumber,
-            input.current_input_origin(stores),
+            context.origin(),
         ));
     };
 
@@ -659,7 +679,7 @@ where
             return Ok(ScannedDimen::new(stores.page_dimension(dimension)));
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen) => {
-            let index = scan_register_index(input, stores, recorder, hooks, expander)?;
+            let index = scan_register_index(input, stores, recorder, hooks, expander, token)?;
             consume_optional_space(input, stores, recorder, hooks, expander)?;
             return Ok(ScannedDimen::new(stores.dimen(index)));
         }
@@ -668,7 +688,7 @@ where
             | UnexpandablePrimitive::Ht
             | UnexpandablePrimitive::Dp),
         ) => {
-            let index = scan_register_index(input, stores, recorder, hooks, expander)?;
+            let index = scan_register_index(input, stores, recorder, hooks, expander, token)?;
             consume_optional_space(input, stores, recorder, hooks, expander)?;
             let dimension = match primitive {
                 UnexpandablePrimitive::Wd => BoxDimension::Width,
@@ -698,14 +718,15 @@ where
     }
 
     if stores.resolve(symbol) == "dimen" {
-        let index = scan_register_index(input, stores, recorder, hooks, expander)?;
+        let index = scan_register_index(input, stores, recorder, hooks, expander, token)?;
         consume_optional_space(input, stores, recorder, hooks, expander)?;
         return Ok(ScannedDimen::new(stores.dimen(index)));
     }
 
     unread_token(input, stores, token);
-    let scanned =
-        scan_int::scan_int_with_expander_and_hooks(input, stores, recorder, hooks, expander)?;
+    let scanned = scan_int::scan_int_with_expander_and_hooks(
+        input, stores, recorder, hooks, expander, token,
+    )?;
     if scanned.diagnostic() == Some(scan_int::IntegerDiagnostic::NumberTooBig) {
         return Ok(ScannedDimen::with_diagnostic(
             Scaled::MAX_DIMEN,
@@ -750,8 +771,9 @@ where
     E: ExpandNext<S, St, R, H>,
 {
     unread_token(input, stores, token);
-    let scanned =
-        scan_int::scan_int_with_expander_and_hooks(input, stores, recorder, hooks, expander)?;
+    let scanned = scan_int::scan_int_with_expander_and_hooks(
+        input, stores, recorder, hooks, expander, token,
+    )?;
     if scanned.diagnostic() == Some(scan_int::IntegerDiagnostic::NumberTooBig) {
         return Ok(ScannedDimen::with_diagnostic(
             Scaled::MAX_DIMEN,
@@ -783,6 +805,7 @@ fn scan_register_index<S, St, R, H, E>(
     recorder: &mut R,
     hooks: &mut H,
     expander: &mut E,
+    context: TracedTokenWord,
 ) -> Result<u16, ScanDimenError>
 where
     S: InputSource,
@@ -791,11 +814,15 @@ where
     St: ExpansionState,
     E: ExpandNext<S, St, R, H>,
 {
-    let value =
-        scan_int::scan_int_with_expander_and_hooks(input, stores, recorder, hooks, expander)?
-            .value();
+    let scanned = scan_int::scan_int_with_expander_and_hooks(
+        input, stores, recorder, hooks, expander, context,
+    )?;
+    let value = scanned.value();
     if !(0..=MAX_REGISTER).contains(&value) {
-        return Err(ScanDimenError::RegisterNumberOutOfRange(value));
+        return Err(ScanDimenError::RegisterNumberOutOfRange {
+            value,
+            context: scanned.context(),
+        });
     }
     Ok(value as u16)
 }

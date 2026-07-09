@@ -70,7 +70,7 @@ where
         Meaning::UnexpandablePrimitive(primitive) => match primitive {
             tex_state::meaning::UnexpandablePrimitive::Count => {
                 let index = scan_helpers::scan_register_index_with_expander_and_hooks(
-                    input, stores, recorder, hooks, expander,
+                    input, stores, recorder, hooks, expander, token,
                 )?;
                 Ok(push_rendered_text(
                     stores,
@@ -81,7 +81,7 @@ where
             }
             tex_state::meaning::UnexpandablePrimitive::Dimen => {
                 let index = scan_helpers::scan_register_index_with_expander_and_hooks(
-                    input, stores, recorder, hooks, expander,
+                    input, stores, recorder, hooks, expander, token,
                 )?;
                 Ok(push_rendered_text(
                     stores,
@@ -92,7 +92,7 @@ where
             }
             tex_state::meaning::UnexpandablePrimitive::Skip => {
                 let index = scan_helpers::scan_register_index_with_expander_and_hooks(
-                    input, stores, recorder, hooks, expander,
+                    input, stores, recorder, hooks, expander, token,
                 )?;
                 Ok(push_rendered_text(
                     stores,
@@ -103,7 +103,7 @@ where
             }
             tex_state::meaning::UnexpandablePrimitive::Muskip => {
                 let index = scan_helpers::scan_register_index_with_expander_and_hooks(
-                    input, stores, recorder, hooks, expander,
+                    input, stores, recorder, hooks, expander, token,
                 )?;
                 Ok(push_rendered_text(
                     stores,
@@ -114,7 +114,7 @@ where
             }
             tex_state::meaning::UnexpandablePrimitive::Toks => {
                 let index = scan_helpers::scan_register_index_with_expander_and_hooks(
-                    input, stores, recorder, hooks, expander,
+                    input, stores, recorder, hooks, expander, token,
                 )?;
                 Ok(Dispatch::Push {
                     replay_kind: ExpansionReplayKind::TheOutput,
@@ -143,7 +143,7 @@ where
             }
             tex_state::meaning::UnexpandablePrimitive::FontDimen => {
                 let number = scan_int::scan_int_with_expander_and_hooks(
-                    input, stores, recorder, hooks, expander,
+                    input, stores, recorder, hooks, expander, token,
                 )?
                 .value();
                 if !(1..=32_767).contains(&number) {
@@ -179,7 +179,7 @@ where
             | tex_state::meaning::UnexpandablePrimitive::Ht
             | tex_state::meaning::UnexpandablePrimitive::Dp => {
                 let index = scan_helpers::scan_register_index_with_expander_and_hooks(
-                    input, stores, recorder, hooks, expander,
+                    input, stores, recorder, hooks, expander, token,
                 )?;
                 let dimension = match primitive {
                     tex_state::meaning::UnexpandablePrimitive::Wd => BoxDimension::Width,
@@ -344,7 +344,7 @@ where
         _ => match stores.resolve(symbol) {
             "count" => {
                 let index = scan_helpers::scan_register_index_with_expander_and_hooks(
-                    input, stores, recorder, hooks, expander,
+                    input, stores, recorder, hooks, expander, token,
                 )?;
                 Ok(push_rendered_text(
                     stores,
@@ -355,7 +355,7 @@ where
             }
             "dimen" => {
                 let index = scan_helpers::scan_register_index_with_expander_and_hooks(
-                    input, stores, recorder, hooks, expander,
+                    input, stores, recorder, hooks, expander, token,
                 )?;
                 Ok(push_rendered_text(
                     stores,
@@ -366,7 +366,7 @@ where
             }
             "toks" => {
                 let index = scan_helpers::scan_register_index_with_expander_and_hooks(
-                    input, stores, recorder, hooks, expander,
+                    input, stores, recorder, hooks, expander, token,
                 )?;
                 Ok(Dispatch::Push {
                     replay_kind: ExpansionReplayKind::TheOutput,
@@ -694,9 +694,10 @@ where
     H: ExpansionHooks<S>,
     E: ExpandNext<S, St, R, H>,
 {
-    let value =
-        scan_int::scan_int_with_expander_and_hooks(input, stores, recorder, hooks, expander)?
-            .value();
+    let value = scan_int::scan_int_with_expander_and_hooks(
+        input, stores, recorder, hooks, expander, context,
+    )?
+    .value();
     u32::try_from(value)
         .ok()
         .and_then(char::from_u32)

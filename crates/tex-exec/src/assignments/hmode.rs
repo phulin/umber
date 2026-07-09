@@ -94,7 +94,7 @@ where
 {
     match primitive {
         UnexpandablePrimitive::Char => {
-            let value = scan_i32(input, stores, hooks)?;
+            let value = scan_i32(input, stores, hooks, context)?;
             let ch = char::from_u32(value as u32).ok_or(ExecError::InvalidCode {
                 context: "\\char",
                 value,
@@ -122,7 +122,7 @@ where
         }
         UnexpandablePrimitive::Penalty => {
             flush_pending_hchars(nest, stores)?;
-            let penalty = scan_i32(input, stores, hooks)?;
+            let penalty = scan_i32(input, stores, hooks, context)?;
             append_vertical_contribution(nest, stores, Node::Penalty(penalty));
             build_page_if_outer_vertical(nest, stores)?;
         }
@@ -132,7 +132,7 @@ where
                 ensure_horizontal_for_character(nest, input, stores)?;
             }
             nest.current_list_mut()
-                .push(scan_rule_node(input, stores, hooks, primitive)?);
+                .push(scan_rule_node(input, stores, hooks, primitive, context)?);
             nest.current_list_mut().set_space_factor(1000);
         }
         UnexpandablePrimitive::ControlSpace => append_control_space(nest, input, stores)?,
@@ -168,7 +168,7 @@ where
         UnexpandablePrimitive::NoBoundary => nest.current_list_mut().set_no_boundary(true),
         UnexpandablePrimitive::SpaceFactor => {
             skip_optional_equals_x(input, stores, hooks)?;
-            let value = scan_i32(input, stores, hooks)?;
+            let value = scan_i32(input, stores, hooks, context)?;
             if !(1..=32767).contains(&value) {
                 return Err(ExecError::InvalidCode {
                     context: "\\spacefactor",
@@ -177,14 +177,14 @@ where
             }
             nest.current_list_mut().set_space_factor(value);
         }
-        UnexpandablePrimitive::Accent => execute_accent(nest, input, stores, hooks)?,
+        UnexpandablePrimitive::Accent => execute_accent(nest, input, stores, hooks, context)?,
         UnexpandablePrimitive::Mark => {
             flush_pending_hchars(nest, stores)?;
             let tokens = scan_general_text_expanded_with_driver(input, stores, hooks, context)?;
             append_vertical_contribution(nest, stores, Node::Mark { class: 0, tokens });
         }
         UnexpandablePrimitive::VAdjust => execute_vadjust(nest, input, stores, hooks)?,
-        UnexpandablePrimitive::Insert => execute_insert(nest, input, stores, hooks)?,
+        UnexpandablePrimitive::Insert => execute_insert(nest, input, stores, hooks, context)?,
         _ => unreachable!("caller restricts hmode material primitives"),
     }
     Ok(())
@@ -195,13 +195,14 @@ fn execute_insert<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
+    context: TracedTokenWord,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
     flush_pending_hchars(nest, stores)?;
-    let value = scan_i32(input, stores, hooks)?;
+    let value = scan_i32(input, stores, hooks, context)?;
     if !(0..=254).contains(&value) {
         return Err(ExecError::InvalidCode {
             context: "\\insert",
@@ -555,13 +556,14 @@ fn execute_accent<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
+    context: TracedTokenWord,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
     flush_pending_hchars(nest, stores)?;
-    let accent_value = scan_i32(input, stores, hooks)?;
+    let accent_value = scan_i32(input, stores, hooks, context)?;
     let accent = u8::try_from(accent_value).map_err(|_| ExecError::InvalidCode {
         context: "\\accent",
         value: accent_value,
@@ -635,6 +637,7 @@ pub(super) fn scan_rule_node<S, H>(
     stores: &mut Universe,
     hooks: &mut H,
     primitive: UnexpandablePrimitive,
+    context: TracedTokenWord,
 ) -> Result<Node, ExecError>
 where
     S: InputSource,
@@ -648,11 +651,11 @@ where
     };
     loop {
         if scan_optional_keyword_x(input, stores, hooks, "width")? {
-            width = Some(scan_scaled(input, stores, hooks)?);
+            width = Some(scan_scaled(input, stores, hooks, context)?);
         } else if scan_optional_keyword_x(input, stores, hooks, "height")? {
-            height = Some(scan_scaled(input, stores, hooks)?);
+            height = Some(scan_scaled(input, stores, hooks, context)?);
         } else if scan_optional_keyword_x(input, stores, hooks, "depth")? {
-            depth = Some(scan_scaled(input, stores, hooks)?);
+            depth = Some(scan_scaled(input, stores, hooks, context)?);
         } else {
             break;
         }

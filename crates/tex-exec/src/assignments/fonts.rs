@@ -6,6 +6,7 @@ use tex_state::scaled::FontSizeSpec;
 
 pub(super) fn execute_font_definition<S, H>(
     prefixes: Prefixes,
+    context: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
@@ -18,7 +19,7 @@ where
     let target = scan_definition_target(input, stores, "\\font")?;
     skip_optional_equals_x(input, stores, hooks)?;
     let font_name = scan_font_file_name(input, stores, hooks)?;
-    let size_spec = scan_font_size_spec(input, stores, hooks)?;
+    let size_spec = scan_font_size_spec(input, stores, hooks, context)?;
     let path = tfm_path(&font_name);
     let content = stores.world_mut().read_file(&path)?;
     let tfm = tex_fonts::TfmFont::parse_with_size(content.bytes(), size_spec)?;
@@ -50,6 +51,7 @@ where
 
 pub(super) fn scan_font_variable_target<S, H>(
     primitive: UnexpandablePrimitive,
+    context: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
@@ -60,7 +62,7 @@ where
 {
     match primitive {
         UnexpandablePrimitive::FontDimen => {
-            let number = scan_i32(input, stores, hooks)?;
+            let number = scan_i32(input, stores, hooks, context)?;
             if !(1..=32_767).contains(&number) {
                 return Err(ExecError::RegisterNumberOutOfRange(number));
             }
@@ -82,6 +84,7 @@ where
 pub(super) fn execute_math_family_font_assignment<S, H>(
     primitive: UnexpandablePrimitive,
     prefixes: Prefixes,
+    context: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
@@ -92,7 +95,7 @@ where
 {
     reject_macro_prefixes(prefixes)?;
     let size = math_font_size_for_primitive(primitive);
-    let family = scan_math_family(input, stores, hooks)?;
+    let family = scan_math_family(input, stores, hooks, context)?;
     skip_optional_equals_x(input, stores, hooks)?;
     let font = scan_font_selector(input, stores, hooks)?;
     stores.set_math_family_font(
@@ -108,12 +111,13 @@ pub(super) fn scan_math_family<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
+    context: TracedTokenWord,
 ) -> Result<u8, ExecError>
 where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    let family = scan_i32(input, stores, hooks)?;
+    let family = scan_i32(input, stores, hooks, context)?;
     if !(0..=15).contains(&family) {
         return Err(ExecError::InvalidCode {
             context: "math family",
@@ -150,7 +154,7 @@ where
             | UnexpandablePrimitive::ScriptFont
             | UnexpandablePrimitive::ScriptScriptFont),
         ) => {
-            let family = scan_math_family(input, stores, hooks)?;
+            let family = scan_math_family(input, stores, hooks, traced)?;
             Ok(stores.math_family_font(math_font_size_for_primitive(primitive), family))
         }
         _ => Err(ExecError::ExpectedControlSequence {
@@ -174,16 +178,21 @@ fn scan_font_size_spec<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
+    context: TracedTokenWord,
 ) -> Result<FontSizeSpec, ExecError>
 where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
     if scan_optional_keyword_x(input, stores, hooks, "at")? {
-        return Ok(FontSizeSpec::At(scan_scaled(input, stores, hooks)?));
+        return Ok(FontSizeSpec::At(scan_scaled(
+            input, stores, hooks, context,
+        )?));
     }
     if scan_optional_keyword_x(input, stores, hooks, "scaled")? {
-        return Ok(FontSizeSpec::Scale(scan_i32(input, stores, hooks)?));
+        return Ok(FontSizeSpec::Scale(scan_i32(
+            input, stores, hooks, context,
+        )?));
     }
     Ok(FontSizeSpec::Design)
 }

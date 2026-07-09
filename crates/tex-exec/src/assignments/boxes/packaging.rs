@@ -3,6 +3,7 @@ use tex_lex::{InputSource, InputStack};
 use tex_state::ids::NodeListId;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::node::Node;
+use tex_state::token::TracedTokenWord;
 use tex_state::{GroupKind, Universe};
 use tex_typeset::{PackDiagnostic, PackSpec};
 
@@ -10,8 +11,8 @@ use crate::packing_params::{hpack, hpack_params, vpack, vpack_params, vtop};
 use crate::{ExecError, Mode, ModeNest, leave_group};
 
 use super::super::{
-    flush_pending_hchars, is_begin_group, is_end_group, next_non_space_x, scan_optional_keyword_x,
-    scan_register_index, scan_scaled,
+    flush_pending_hchars, is_begin_group, is_end_group, next_non_space_traced_x, next_non_space_x,
+    scan_optional_keyword_x, scan_register_index, scan_scaled,
 };
 use super::vsplit::scan_vsplit_node;
 
@@ -26,25 +27,28 @@ pub(in crate::assignments) fn scan_required_box_node<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
+    context: TracedTokenWord,
 ) -> Result<Node, ExecError>
 where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    scan_box_value(input, stores, hooks)?.ok_or(ExecError::MissingToken { context: "box" })
+    scan_box_value(input, stores, hooks, context)?.ok_or(ExecError::MissingToken { context: "box" })
 }
 
 pub(super) fn scan_box_value<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
+    context: TracedTokenWord,
 ) -> Result<Option<Node>, ExecError>
 where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    let token = next_non_space_x(input, stores, hooks)?
-        .ok_or(ExecError::MissingToken { context: "box" })?;
+    let traced = next_non_space_traced_x(input, stores, hooks)?
+        .ok_or(ExecError::MissingTracedToken { context })?;
+    let token = tex_expand::semantic_token(traced);
     let Token::Cs(symbol) = token else {
         return Err(ExecError::MissingToken { context: "box" });
     };
@@ -52,11 +56,11 @@ where
         Meaning::UnexpandablePrimitive(primitive @ UnexpandablePrimitive::HBox)
         | Meaning::UnexpandablePrimitive(primitive @ UnexpandablePrimitive::VBox)
         | Meaning::UnexpandablePrimitive(primitive @ UnexpandablePrimitive::VTop) => {
-            scan_box_node(kind_for_primitive(primitive)?, input, stores, hooks).map(Some)
+            scan_box_node(kind_for_primitive(primitive)?, input, stores, hooks, traced).map(Some)
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Box)
         | Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Copy) => {
-            let index = scan_register_index(input, stores, hooks)?;
+            let index = scan_register_index(input, stores, hooks, traced)?;
             let id = if matches!(
                 stores.meaning(symbol),
                 Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Box)
@@ -68,7 +72,7 @@ where
             Ok(first_box_node(stores, id))
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VSplit) => {
-            scan_vsplit_node(input, stores, hooks)
+            scan_vsplit_node(input, stores, hooks, traced)
         }
         _ => Err(ExecError::MissingToken { context: "box" }),
     }
@@ -79,12 +83,13 @@ pub(super) fn scan_box_node<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
+    context: TracedTokenWord,
 ) -> Result<Node, ExecError>
 where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    let spec = scan_pack_spec(input, stores, hooks)?;
+    let spec = scan_pack_spec(input, stores, hooks, context)?;
     let opener = next_non_space_x(input, stores, hooks)?.ok_or(ExecError::MissingToken {
         context: "box group",
     })?;
@@ -196,15 +201,20 @@ fn scan_pack_spec<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
+    context: TracedTokenWord,
 ) -> Result<PackSpec, ExecError>
 where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
     if scan_optional_keyword_x(input, stores, hooks, "to")? {
-        Ok(PackSpec::Exactly(scan_scaled(input, stores, hooks)?))
+        Ok(PackSpec::Exactly(scan_scaled(
+            input, stores, hooks, context,
+        )?))
     } else if scan_optional_keyword_x(input, stores, hooks, "spread")? {
-        Ok(PackSpec::Spread(scan_scaled(input, stores, hooks)?))
+        Ok(PackSpec::Spread(scan_scaled(
+            input, stores, hooks, context,
+        )?))
     } else {
         Ok(PackSpec::Natural)
     }

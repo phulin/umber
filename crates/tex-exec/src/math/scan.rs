@@ -252,6 +252,7 @@ pub(super) fn finish_current_math_list(
 
 pub(super) fn start_fraction<S, H>(
     primitive: UnexpandablePrimitive,
+    context: TracedTokenWord,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
@@ -279,7 +280,7 @@ where
             FractionThickness::Explicit(Scaled::from_raw(0))
         }
         UnexpandablePrimitive::Above | UnexpandablePrimitive::AboveWithDelims => {
-            FractionThickness::Explicit(assignments::scan_scaled(input, stores, hooks)?)
+            FractionThickness::Explicit(assignments::scan_scaled(input, stores, hooks, context)?)
         }
         _ => FractionThickness::Default,
     };
@@ -403,12 +404,13 @@ pub(super) fn scan_math_char_code<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
+    context: TracedTokenWord,
 ) -> Result<u32, ExecError>
 where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    let value = assignments::scan_i32(input, stores, hooks)?;
+    let value = assignments::scan_i32(input, stores, hooks, context)?;
     if !(0..=32_767).contains(&value) {
         return Err(ExecError::InvalidCode {
             context: "\\mathchar",
@@ -422,12 +424,13 @@ pub(super) fn scan_delimiter_code<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
+    context: TracedTokenWord,
 ) -> Result<u32, ExecError>
 where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    let value = assignments::scan_i32(input, stores, hooks)?;
+    let value = assignments::scan_i32(input, stores, hooks, context)?;
     if !(0..=0x07ff_ffff).contains(&value) {
         return Err(ExecError::InvalidCode {
             context: "\\delimiter",
@@ -472,6 +475,7 @@ pub(super) fn scan_mu_dimen<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
+    context: TracedTokenWord,
 ) -> Result<Scaled, ExecError>
 where
     S: InputSource,
@@ -485,6 +489,7 @@ where
         hooks,
         &mut DriverExpandNext,
         scan_dimen::ScanDimenOptions::STANDARD.requiring_mu_unit(),
+        context,
     )
     .map_err(ExpandError::from)?;
     Ok(scanned.value())

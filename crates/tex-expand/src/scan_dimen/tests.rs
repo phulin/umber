@@ -4,7 +4,7 @@ use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::provenance::{OriginRecord, SourceOrigin};
 use tex_state::scaled::{PhysicalUnit, Scaled, round_decimal_fraction, scaled_from_decimal_parts};
-use tex_state::token::{Catcode, Token};
+use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::scan_dimen::{
     DimensionDiagnostic, InsertedUnit, ScanDimenOptions, scan_dimen, scan_dimen_with_options,
@@ -20,7 +20,7 @@ fn scan_with_stores(
     stores: &mut Universe,
 ) -> (i32, Option<DimensionDiagnostic>, Option<Token>) {
     let mut input = InputStack::new(MemoryInput::new(input_text));
-    let scanned = scan_dimen(&mut input, stores).expect("dimension scan should succeed");
+    let scanned = scan_dimen(&mut input, stores, context()).expect("dimension scan should succeed");
     let next = input
         .next_token(stores)
         .expect("remaining token should lex");
@@ -34,6 +34,7 @@ fn scan_coerced(input_text: &str) -> (i32, Option<DimensionDiagnostic>, Option<T
         &mut input,
         &mut stores,
         ScanDimenOptions::with_integer_to_sp_coercion(),
+        context(),
     )
     .expect("dimension scan should succeed");
     let next = input
@@ -44,6 +45,16 @@ fn scan_coerced(input_text: &str) -> (i32, Option<DimensionDiagnostic>, Option<T
 
 fn char_token(ch: char, cat: Catcode) -> Token {
     Token::Char { ch, cat }
+}
+
+fn context() -> TracedTokenWord {
+    TracedTokenWord::pack(
+        Token::Char {
+            ch: '=',
+            cat: Catcode::Other,
+        },
+        OriginId::UNKNOWN,
+    )
 }
 
 #[test]
@@ -208,7 +219,8 @@ fn scans_hex_integer_constants_with_units() {
 fn restores_partially_matched_true_keyword_tokens() {
     let mut stores = Universe::new();
     let mut input = InputStack::new(MemoryInput::new("1truxpt"));
-    let scanned = scan_dimen(&mut input, &mut stores).expect("bad true keyword recovers");
+    let scanned =
+        scan_dimen(&mut input, &mut stores, context()).expect("bad true keyword recovers");
 
     assert_eq!(scanned.value().raw(), Scaled::UNITY);
     assert_eq!(
@@ -239,7 +251,8 @@ fn restores_partially_matched_true_keyword_tokens() {
 fn partially_matched_keyword_pushback_preserves_source_origins() {
     let mut stores = Universe::new();
     let mut input = InputStack::new(MemoryInput::new("1truxpt"));
-    let scanned = scan_dimen(&mut input, &mut stores).expect("bad true keyword recovers");
+    let scanned =
+        scan_dimen(&mut input, &mut stores, context()).expect("bad true keyword recovers");
 
     assert_eq!(
         scanned.diagnostic(),
@@ -262,7 +275,8 @@ fn partially_matched_keyword_pushback_preserves_source_origins() {
 fn missing_number_recovers_zero_then_inserted_pt() {
     let mut stores = Universe::new();
     let mut input = InputStack::new(MemoryInput::new("x"));
-    let scanned = scan_dimen(&mut input, &mut stores).expect("missing dimension recovers");
+    let scanned =
+        scan_dimen(&mut input, &mut stores, context()).expect("missing dimension recovers");
 
     assert_eq!(scanned.value().raw(), 0);
     assert_eq!(
@@ -281,10 +295,18 @@ fn missing_number_recovers_zero_then_inserted_pt() {
 }
 
 #[test]
-fn eof_missing_dimension_uses_current_input_origin() {
+fn eof_missing_dimension_uses_caller_context_origin() {
     let mut stores = Universe::new();
     let mut input = InputStack::new(MemoryInput::new(""));
-    let scanned = scan_dimen(&mut input, &mut stores).expect("missing dimension recovers");
+    let origin = stores.source_origin(tex_state::SourceId::new(7), 12, 3, 4);
+    let caller = TracedTokenWord::pack(
+        Token::Char {
+            ch: '=',
+            cat: Catcode::Other,
+        },
+        origin,
+    );
+    let scanned = scan_dimen(&mut input, &mut stores, caller).expect("missing dimension recovers");
     let origins = scanned.diagnostic_origins().collect::<Vec<_>>();
 
     assert_eq!(
@@ -292,19 +314,19 @@ fn eof_missing_dimension_uses_current_input_origin() {
         vec![DimensionDiagnostic::MissingNumber]
     );
     assert_eq!(origins.len(), 1);
-    assert!(matches!(stores.origin(origins[0]), OriginRecord::Source(_)));
+    assert_eq!(origins, vec![origin]);
 }
 
 #[test]
 fn font_relative_units_scan_as_nullfont_zero_by_default() {
     let mut stores = Universe::new();
     let mut input = InputStack::new(MemoryInput::new("1em x"));
-    let em = scan_dimen(&mut input, &mut stores).expect("em scans");
+    let em = scan_dimen(&mut input, &mut stores, context()).expect("em scans");
     assert_eq!(em.value().raw(), 0);
 
     let mut stores = Universe::new();
     let mut input = InputStack::new(MemoryInput::new("1ex x"));
-    let ex = scan_dimen(&mut input, &mut stores).expect("ex scans");
+    let ex = scan_dimen(&mut input, &mut stores, context()).expect("ex scans");
     assert_eq!(ex.value().raw(), 0);
 }
 

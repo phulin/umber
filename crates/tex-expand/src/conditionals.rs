@@ -611,6 +611,7 @@ pub(crate) fn scan_stream_number<S, R, H>(
     stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
+    context: TracedTokenWord,
 ) -> Result<u8, ExpandError>
 where
     S: InputSource,
@@ -623,6 +624,7 @@ where
         recorder,
         hooks,
         &mut NoInputExpandNext,
+        context,
     )
 }
 
@@ -632,6 +634,7 @@ pub(crate) fn scan_stream_number_with_expander_and_hooks<S, St, R, H, E>(
     recorder: &mut R,
     hooks: &mut H,
     expander: &mut E,
+    context: TracedTokenWord,
 ) -> Result<u8, ExpandError>
 where
     S: InputSource,
@@ -640,9 +643,10 @@ where
     H: ExpansionHooks<S>,
     E: ExpandNext<S, St, R, H>,
 {
-    let value =
-        scan_int::scan_int_with_expander_and_hooks(input, stores, recorder, hooks, expander)?
-            .value();
+    let value = scan_int::scan_int_with_expander_and_hooks(
+        input, stores, recorder, hooks, expander, context,
+    )?
+    .value();
     Ok(value.clamp(0, 15) as u8)
 }
 

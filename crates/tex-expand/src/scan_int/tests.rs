@@ -4,7 +4,7 @@ use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::provenance::{OriginRecord, SourceOrigin};
 use tex_state::scaled::Scaled;
-use tex_state::token::{Catcode, Token};
+use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{ExpansionState, Universe};
 
 use crate::scan_int::{IntegerDiagnostic, ScanIntError, scan_int};
@@ -12,7 +12,8 @@ use crate::scan_int::{IntegerDiagnostic, ScanIntError, scan_int};
 fn scan(input: &str) -> (i32, Option<IntegerDiagnostic>, Option<Token>) {
     let mut stores = Universe::new();
     let mut input = InputStack::new(MemoryInput::new(input));
-    let scanned = scan_int(&mut input, &mut stores).expect("integer scan should succeed");
+    let scanned =
+        scan_int(&mut input, &mut stores, context()).expect("integer scan should succeed");
     let next = input
         .next_token(&mut stores)
         .expect("remaining token should lex");
@@ -21,7 +22,7 @@ fn scan(input: &str) -> (i32, Option<IntegerDiagnostic>, Option<Token>) {
 
 fn scan_with_stores(input_text: &str, stores: &mut impl ExpansionState) -> (i32, Option<Token>) {
     let mut input = InputStack::new(MemoryInput::new(input_text));
-    let scanned = scan_int(&mut input, stores).expect("integer scan should succeed");
+    let scanned = scan_int(&mut input, stores, context()).expect("integer scan should succeed");
     let next = input
         .next_token(stores)
         .expect("remaining token should lex");
@@ -30,6 +31,16 @@ fn scan_with_stores(input_text: &str, stores: &mut impl ExpansionState) -> (i32,
 
 fn char_token(ch: char, cat: Catcode) -> Token {
     Token::Char { ch, cat }
+}
+
+fn context() -> TracedTokenWord {
+    TracedTokenWord::pack(
+        Token::Char {
+            ch: '=',
+            cat: Catcode::Other,
+        },
+        OriginId::UNKNOWN,
+    )
 }
 
 #[test]
@@ -142,7 +153,7 @@ fn scans_values_through_macro_expansion() {
 fn reports_number_too_big_and_caps_value() {
     let mut stores = Universe::new();
     let mut input = InputStack::new(MemoryInput::new("2147483648 x"));
-    let scanned = scan_int(&mut input, &mut stores).expect("scan should cap overflow");
+    let scanned = scan_int(&mut input, &mut stores, context()).expect("scan should cap overflow");
 
     assert_eq!(scanned.value(), i32::MAX);
     assert_eq!(scanned.diagnostic(), Some(IntegerDiagnostic::NumberTooBig));
@@ -165,7 +176,7 @@ fn missing_number_recovers_zero_and_replays_offending_token() {
 fn missing_number_diagnostic_uses_offending_token_origin() {
     let mut stores = Universe::new();
     let mut input = InputStack::new(MemoryInput::new("x"));
-    let scanned = scan_int(&mut input, &mut stores).expect("scan should recover");
+    let scanned = scan_int(&mut input, &mut stores, context()).expect("scan should recover");
     let replayed = input
         .next_traced_token(&mut stores)
         .expect("token should replay")
@@ -185,7 +196,8 @@ fn relax_in_number_slot_recovers_zero_and_replays_token() {
     let relax = stores.intern("relax");
     stores.set_meaning(relax, Meaning::Relax);
     let mut input = InputStack::new(MemoryInput::new("\\relax"));
-    let scanned = scan_int(&mut input, &mut stores).expect("relax should recover as missing");
+    let scanned =
+        scan_int(&mut input, &mut stores, context()).expect("relax should recover as missing");
 
     assert_eq!(scanned.value(), 0);
     assert_eq!(scanned.diagnostic(), Some(IntegerDiagnostic::MissingNumber));
@@ -204,7 +216,11 @@ fn rejects_out_of_range_register_numbers() {
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Count),
     );
     let mut input = InputStack::new(MemoryInput::new("\\count32768"));
-    let err = scan_int(&mut input, &mut stores).expect_err("register should be rejected");
+    let err =
+        scan_int(&mut input, &mut stores, context()).expect_err("register should be rejected");
 
-    assert!(matches!(err, ScanIntError::RegisterNumberOutOfRange(32768)));
+    assert!(matches!(
+        err,
+        ScanIntError::RegisterNumberOutOfRange { value: 32768, .. }
+    ));
 }

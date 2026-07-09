@@ -22,16 +22,18 @@ const MAX_REGISTER: i32 = 32_767;
 pub struct ScannedInt {
     value: i32,
     diagnostic: Option<IntegerDiagnostic>,
-    diagnostic_origin: Option<OriginId>,
+    context: TracedTokenWord,
+    diagnostic_context: Option<TracedTokenWord>,
 }
 
 impl ScannedInt {
     #[must_use]
-    pub const fn new(value: i32) -> Self {
+    pub const fn new(value: i32, context: TracedTokenWord) -> Self {
         Self {
             value,
             diagnostic: None,
-            diagnostic_origin: None,
+            context,
+            diagnostic_context: None,
         }
     }
 
@@ -39,12 +41,13 @@ impl ScannedInt {
     pub const fn with_diagnostic(
         value: i32,
         diagnostic: IntegerDiagnostic,
-        origin: OriginId,
+        context: TracedTokenWord,
     ) -> Self {
         Self {
             value,
             diagnostic: Some(diagnostic),
-            diagnostic_origin: Some(origin),
+            context,
+            diagnostic_context: Some(context),
         }
     }
 
@@ -60,7 +63,20 @@ impl ScannedInt {
 
     #[must_use]
     pub const fn diagnostic_origin(self) -> Option<OriginId> {
-        self.diagnostic_origin
+        match self.diagnostic_context {
+            Some(context) => Some(context.origin()),
+            None => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn context(self) -> TracedTokenWord {
+        self.context
+    }
+
+    #[must_use]
+    pub const fn diagnostic_context(self) -> Option<TracedTokenWord> {
+        self.diagnostic_context
     }
 }
 
@@ -85,8 +101,13 @@ impl fmt::Display for IntegerDiagnostic {
 pub enum ScanIntError {
     Expand(ExpandError),
     Lex(LexError),
-    MissingNumber { origin: OriginId },
-    RegisterNumberOutOfRange(i32),
+    MissingNumber {
+        context: TracedTokenWord,
+    },
+    RegisterNumberOutOfRange {
+        value: i32,
+        context: TracedTokenWord,
+    },
     UnsupportedInternalInteger(TracedTokenWord),
 }
 
@@ -96,7 +117,7 @@ impl fmt::Display for ScanIntError {
             Self::Expand(err) => write!(f, "{err}"),
             Self::Lex(err) => write!(f, "{err}"),
             Self::MissingNumber { .. } => f.write_str("Missing number"),
-            Self::RegisterNumberOutOfRange(value) => {
+            Self::RegisterNumberOutOfRange { value, .. } => {
                 write!(f, "register number {value} is out of range")
             }
             Self::UnsupportedInternalInteger(token) => {
@@ -116,7 +137,7 @@ impl std::error::Error for ScanIntError {
             Self::Expand(err) => Some(err),
             Self::Lex(err) => Some(err),
             Self::MissingNumber { .. }
-            | Self::RegisterNumberOutOfRange(_)
+            | Self::RegisterNumberOutOfRange { .. }
             | Self::UnsupportedInternalInteger(_) => None,
         }
     }
@@ -126,10 +147,12 @@ impl ScanIntError {
     #[must_use]
     pub fn primary_origin(&self) -> Option<OriginId> {
         match self {
-            Self::MissingNumber { origin } => Some(*origin),
+            Self::MissingNumber { context } | Self::RegisterNumberOutOfRange { context, .. } => {
+                Some(context.origin())
+            }
             Self::UnsupportedInternalInteger(token) => Some(token.origin()),
             Self::Expand(err) => err.primary_origin(),
-            Self::Lex(_) | Self::RegisterNumberOutOfRange(_) => None,
+            Self::Lex(_) => None,
         }
     }
 }
@@ -154,11 +177,18 @@ impl From<LexError> for ScanIntError {
 pub fn scan_int<S>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
+    context: TracedTokenWord,
 ) -> Result<ScannedInt, ScanIntError>
 where
     S: InputSource,
 {
-    scan_int_with_recorder_and_hooks(input, stores, &mut NoopRecorder, &mut NoopExpansionHooks)
+    scan_int_with_recorder_and_hooks(
+        input,
+        stores,
+        &mut NoopRecorder,
+        &mut NoopExpansionHooks,
+        context,
+    )
 }
 
 /// Scans a TeX `<number>` while preserving caller-supplied expansion hooks.
@@ -167,13 +197,21 @@ pub fn scan_int_with_recorder_and_hooks<S, R, H>(
     stores: &mut impl ExpansionState,
     recorder: &mut R,
     hooks: &mut H,
+    context: TracedTokenWord,
 ) -> Result<ScannedInt, ScanIntError>
 where
     S: InputSource,
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    scan_int_with_expander_and_hooks(input, stores, recorder, hooks, &mut NoInputExpandNext)
+    scan_int_with_expander_and_hooks(
+        input,
+        stores,
+        recorder,
+        hooks,
+        &mut NoInputExpandNext,
+        context,
+    )
 }
 
 pub fn scan_int_with_expander_and_hooks<S, St, R, H, E>(
@@ -182,6 +220,7 @@ pub fn scan_int_with_expander_and_hooks<S, St, R, H, E>(
     recorder: &mut R,
     hooks: &mut H,
     expander: &mut E,
+    context: TracedTokenWord,
 ) -> Result<ScannedInt, ScanIntError>
 where
     S: InputSource,
@@ -195,7 +234,7 @@ where
         return Ok(ScannedInt::with_diagnostic(
             0,
             IntegerDiagnostic::MissingNumber,
-            input.current_input_origin(stores),
+            context,
         ));
     };
 
@@ -278,27 +317,27 @@ where
             recorder,
             hooks,
             expander,
-            digit_value(ch).expect("matched digit"),
             10,
+            (digit_value(ch).expect("matched digit"), token),
         ),
         Token::Char {
             ch: '\'',
             cat: Catcode::Other,
-        } => scan_prefixed_digits(input, stores, recorder, hooks, expander, 8),
+        } => scan_prefixed_digits(input, stores, recorder, hooks, expander, 8, token),
         Token::Char {
             ch: '"',
             cat: Catcode::Other,
-        } => scan_prefixed_digits(input, stores, recorder, hooks, expander, 16),
+        } => scan_prefixed_digits(input, stores, recorder, hooks, expander, 16, token),
         Token::Char {
             ch: '`',
             cat: Catcode::Other,
-        } => scan_backtick_constant(input, stores, recorder, hooks, expander),
+        } => scan_backtick_constant(input, stores, recorder, hooks, expander, token),
         Token::Cs(symbol) => {
             scan_internal_integer(input, stores, recorder, hooks, expander, token, symbol)
         }
         _ => {
             unread_token(input, stores, token);
-            Ok(missing_number(token.origin()))
+            Ok(missing_number(token))
         }
     }
 }
@@ -310,6 +349,7 @@ fn scan_prefixed_digits<S, St, R, H, E>(
     hooks: &mut H,
     expander: &mut E,
     radix: i64,
+    prefix: TracedTokenWord,
 ) -> Result<ScannedInt, ScanIntError>
 where
     S: InputSource,
@@ -319,13 +359,21 @@ where
     E: ExpandNext<S, St, R, H>,
 {
     let Some(token) = next_x(input, stores, recorder, hooks, expander)? else {
-        return Ok(missing_number(input.current_input_origin(stores)));
+        return Ok(missing_number(prefix));
     };
     let Some(digit) = token_digit_for_radix(token, radix) else {
         unread_token(input, stores, token);
-        return Ok(missing_number(token.origin()));
+        return Ok(missing_number(token));
     };
-    scan_radix_digits(input, stores, recorder, hooks, expander, digit, radix)
+    scan_radix_digits(
+        input,
+        stores,
+        recorder,
+        hooks,
+        expander,
+        radix,
+        (digit, token),
+    )
 }
 
 fn scan_radix_digits<S, St, R, H, E>(
@@ -334,8 +382,8 @@ fn scan_radix_digits<S, St, R, H, E>(
     recorder: &mut R,
     hooks: &mut H,
     expander: &mut E,
-    first_digit: i64,
     radix: i64,
+    first: (i64, TracedTokenWord),
 ) -> Result<ScannedInt, ScanIntError>
 where
     S: InputSource,
@@ -344,9 +392,11 @@ where
     H: ExpansionHooks<S>,
     E: ExpandNext<S, St, R, H>,
 {
+    let (first_digit, first_token) = first;
     let mut value = first_digit;
     let mut overflow = value > INT_MAX;
-    let mut overflow_origin = None;
+    let mut overflow_context = None;
+    let mut last_digit = first_token;
     loop {
         let Some(token) = next_x(input, stores, recorder, hooks, expander)? else {
             break;
@@ -357,6 +407,7 @@ where
             }
             break;
         };
+        last_digit = token;
         match value
             .checked_mul(radix)
             .and_then(|value| value.checked_add(digit))
@@ -364,13 +415,18 @@ where
             Some(next) if next <= INT_MAX => value = next,
             _ => {
                 overflow = true;
-                overflow_origin.get_or_insert(token.origin());
+                overflow_context.get_or_insert(token);
                 value = INT_MAX;
             }
         }
     }
 
-    Ok(scanned_unsigned(value, overflow, overflow_origin))
+    Ok(scanned_unsigned(
+        value,
+        overflow,
+        overflow_context,
+        last_digit,
+    ))
 }
 
 fn scan_backtick_constant<S, St, R, H, E>(
@@ -379,6 +435,7 @@ fn scan_backtick_constant<S, St, R, H, E>(
     recorder: &mut R,
     hooks: &mut H,
     expander: &mut E,
+    prefix: TracedTokenWord,
 ) -> Result<ScannedInt, ScanIntError>
 where
     S: InputSource,
@@ -391,7 +448,7 @@ where
     // than through `get_x_token`. In particular, `\{` is a valid character
     // constant here even if that control symbol has no meaning.
     let Some(token) = input.next_traced_token(stores)? else {
-        return Ok(missing_number(input.current_input_origin(stores)));
+        return Ok(missing_number(prefix));
     };
     let value = match semantic_token(token) {
         Token::Char { ch, .. } => ch as i32,
@@ -401,10 +458,10 @@ where
             .next()
             .map(|ch| ch as i32)
             .unwrap_or(0),
-        Token::Param(_) => return Ok(missing_number(token.origin())),
+        Token::Param(_) => return Ok(missing_number(token)),
     };
     consume_optional_space(input, stores, recorder, hooks, expander)?;
-    Ok(ScannedInt::new(value))
+    Ok(ScannedInt::new(value, token))
 }
 
 fn scan_internal_integer<S, St, R, H, E>(
@@ -428,45 +485,52 @@ where
     match meaning {
         Meaning::CharGiven(ch) => {
             consume_optional_space(input, stores, recorder, hooks, expander)?;
-            Ok(ScannedInt::new(ch as i32))
+            Ok(ScannedInt::new(ch as i32, token))
         }
         Meaning::MathCharGiven(value) => {
             consume_optional_space(input, stores, recorder, hooks, expander)?;
-            Ok(ScannedInt::new(i32::from(value)))
+            Ok(ScannedInt::new(i32::from(value), token))
         }
         Meaning::CountRegister(index) => {
             consume_optional_space(input, stores, recorder, hooks, expander)?;
-            Ok(ScannedInt::new(stores.count(index)))
+            Ok(ScannedInt::new(stores.count(index), token))
         }
         Meaning::DimenRegister(index) => {
             consume_optional_space(input, stores, recorder, hooks, expander)?;
-            Ok(ScannedInt::new(stores.dimen(index).raw()))
+            Ok(ScannedInt::new(stores.dimen(index).raw(), token))
         }
         Meaning::IntParam(index) => {
             consume_optional_space(input, stores, recorder, hooks, expander)?;
-            Ok(ScannedInt::new(stores.int_param(IntParam::new(index))))
+            Ok(ScannedInt::new(
+                stores.int_param(IntParam::new(index)),
+                token,
+            ))
         }
         Meaning::InternalInteger(InternalInteger::Badness) => {
             consume_optional_space(input, stores, recorder, hooks, expander)?;
-            Ok(ScannedInt::new(stores.last_badness()))
+            Ok(ScannedInt::new(stores.last_badness(), token))
         }
         Meaning::DimenParam(index) => {
             consume_optional_space(input, stores, recorder, hooks, expander)?;
             Ok(ScannedInt::new(
                 stores.dimen_param(DimenParam::new(index)).raw(),
+                token,
             ))
         }
         Meaning::PageInteger(integer) => {
             consume_optional_space(input, stores, recorder, hooks, expander)?;
-            Ok(ScannedInt::new(stores.page_integer(integer)))
+            Ok(ScannedInt::new(stores.page_integer(integer), token))
         }
         Meaning::PageDimension(dimension) => {
             consume_optional_space(input, stores, recorder, hooks, expander)?;
-            Ok(ScannedInt::new(stores.page_dimension(dimension).raw()))
+            Ok(ScannedInt::new(
+                stores.page_dimension(dimension).raw(),
+                token,
+            ))
         }
         Meaning::Relax => {
             unread_token(input, stores, token);
-            Ok(missing_number(token.origin()))
+            Ok(missing_number(token))
         }
         Meaning::UnexpandablePrimitive(primitive) => scan_internal_integer_primitive(
             input, stores, recorder, hooks, expander, token, primitive,
@@ -475,20 +539,25 @@ where
             let name = stores.resolve(symbol);
             match name {
                 "count" => {
-                    let index = scan_register_index(input, stores, recorder, hooks, expander)?;
+                    let index =
+                        scan_register_index(input, stores, recorder, hooks, expander, token)?;
                     let value = stores.count(index);
                     consume_optional_space(input, stores, recorder, hooks, expander)?;
-                    Ok(ScannedInt::new(value))
+                    Ok(ScannedInt::new(value, token))
                 }
                 "dimen" => {
-                    let index = scan_register_index(input, stores, recorder, hooks, expander)?;
+                    let index =
+                        scan_register_index(input, stores, recorder, hooks, expander, token)?;
                     let value = stores.dimen(index).raw();
                     consume_optional_space(input, stores, recorder, hooks, expander)?;
-                    Ok(ScannedInt::new(value))
+                    Ok(ScannedInt::new(value, token))
                 }
                 "endlinechar" => {
                     consume_optional_space(input, stores, recorder, hooks, expander)?;
-                    Ok(ScannedInt::new(stores.int_param(IntParam::END_LINE_CHAR)))
+                    Ok(ScannedInt::new(
+                        stores.int_param(IntParam::END_LINE_CHAR),
+                        token,
+                    ))
                 }
                 _ => Err(ScanIntError::UnsupportedInternalInteger(token)),
             }
@@ -514,40 +583,40 @@ where
 {
     match primitive {
         tex_state::meaning::UnexpandablePrimitive::Count => {
-            let index = scan_register_index(input, stores, recorder, hooks, expander)?;
+            let index = scan_register_index(input, stores, recorder, hooks, expander, token)?;
             let value = stores.count(index);
             consume_optional_space(input, stores, recorder, hooks, expander)?;
-            Ok(ScannedInt::new(value))
+            Ok(ScannedInt::new(value, token))
         }
         tex_state::meaning::UnexpandablePrimitive::Dimen => {
-            let index = scan_register_index(input, stores, recorder, hooks, expander)?;
+            let index = scan_register_index(input, stores, recorder, hooks, expander, token)?;
             let value = stores.dimen(index).raw();
             consume_optional_space(input, stores, recorder, hooks, expander)?;
-            Ok(ScannedInt::new(value))
+            Ok(ScannedInt::new(value, token))
         }
         tex_state::meaning::UnexpandablePrimitive::SpaceFactor => {
             consume_optional_space(input, stores, recorder, hooks, expander)?;
-            Ok(ScannedInt::new(hooks.space_factor()))
+            Ok(ScannedInt::new(hooks.space_factor(), token))
         }
         tex_state::meaning::UnexpandablePrimitive::PrevDepth => {
             consume_optional_space(input, stores, recorder, hooks, expander)?;
-            Ok(ScannedInt::new(hooks.prev_depth().raw()))
+            Ok(ScannedInt::new(hooks.prev_depth().raw(), token))
         }
         tex_state::meaning::UnexpandablePrimitive::PrevGraf => {
             consume_optional_space(input, stores, recorder, hooks, expander)?;
-            Ok(ScannedInt::new(hooks.prev_graf()))
+            Ok(ScannedInt::new(hooks.prev_graf(), token))
         }
         tex_state::meaning::UnexpandablePrimitive::LastPenalty => {
             consume_optional_space(input, stores, recorder, hooks, expander)?;
-            Ok(ScannedInt::new(hooks.last_penalty()))
+            Ok(ScannedInt::new(hooks.last_penalty(), token))
         }
         tex_state::meaning::UnexpandablePrimitive::LastKern => {
             consume_optional_space(input, stores, recorder, hooks, expander)?;
-            Ok(ScannedInt::new(hooks.last_kern().raw()))
+            Ok(ScannedInt::new(hooks.last_kern().raw(), token))
         }
         tex_state::meaning::UnexpandablePrimitive::LastSkip => {
             consume_optional_space(input, stores, recorder, hooks, expander)?;
-            Ok(ScannedInt::new(hooks.last_skip().width.raw()))
+            Ok(ScannedInt::new(hooks.last_skip().width.raw(), token))
         }
         tex_state::meaning::UnexpandablePrimitive::CatCode
         | tex_state::meaning::UnexpandablePrimitive::LcCode
@@ -555,12 +624,15 @@ where
         | tex_state::meaning::UnexpandablePrimitive::SfCode
         | tex_state::meaning::UnexpandablePrimitive::MathCode
         | tex_state::meaning::UnexpandablePrimitive::DelCode => {
-            let code =
-                scan_int_with_expander_and_hooks(input, stores, recorder, hooks, expander)?.value();
-            let ch = u32::try_from(code)
-                .ok()
-                .and_then(char::from_u32)
-                .ok_or(ScanIntError::RegisterNumberOutOfRange(code))?;
+            let scanned =
+                scan_int_with_expander_and_hooks(input, stores, recorder, hooks, expander, token)?;
+            let code = scanned.value();
+            let ch = u32::try_from(code).ok().and_then(char::from_u32).ok_or(
+                ScanIntError::RegisterNumberOutOfRange {
+                    value: code,
+                    context: scanned.context(),
+                },
+            )?;
             let value = match primitive {
                 tex_state::meaning::UnexpandablePrimitive::CatCode => stores.catcode(ch) as i32,
                 tex_state::meaning::UnexpandablePrimitive::LcCode => stores.lccode(ch) as i32,
@@ -571,7 +643,7 @@ where
                 _ => unreachable!("outer match restricts primitive"),
             };
             consume_optional_space(input, stores, recorder, hooks, expander)?;
-            Ok(ScannedInt::new(value))
+            Ok(ScannedInt::new(value, token))
         }
         _ => Err(ScanIntError::UnsupportedInternalInteger(token)),
     }
@@ -583,6 +655,7 @@ fn scan_register_index<S, St, R, H, E>(
     recorder: &mut R,
     hooks: &mut H,
     expander: &mut E,
+    context: TracedTokenWord,
 ) -> Result<u16, ScanIntError>
 where
     S: InputSource,
@@ -591,9 +664,14 @@ where
     H: ExpansionHooks<S>,
     E: ExpandNext<S, St, R, H>,
 {
-    let value = scan_int_with_expander_and_hooks(input, stores, recorder, hooks, expander)?.value();
+    let scanned =
+        scan_int_with_expander_and_hooks(input, stores, recorder, hooks, expander, context)?;
+    let value = scanned.value();
     if !(0..=MAX_REGISTER).contains(&value) {
-        return Err(ScanIntError::RegisterNumberOutOfRange(value));
+        return Err(ScanIntError::RegisterNumberOutOfRange {
+            value,
+            context: scanned.context(),
+        });
     }
     Ok(value as u16)
 }
@@ -664,24 +742,30 @@ fn apply_sign(scanned: ScannedInt, negative: bool) -> ScannedInt {
     ScannedInt {
         value,
         diagnostic: scanned.diagnostic(),
-        diagnostic_origin: scanned.diagnostic_origin(),
+        context: scanned.context(),
+        diagnostic_context: scanned.diagnostic_context(),
     }
 }
 
-fn scanned_unsigned(value: i64, overflow: bool, overflow_origin: Option<OriginId>) -> ScannedInt {
+fn scanned_unsigned(
+    value: i64,
+    overflow: bool,
+    overflow_context: Option<TracedTokenWord>,
+    context: TracedTokenWord,
+) -> ScannedInt {
     if overflow {
         ScannedInt::with_diagnostic(
             i32::MAX,
             IntegerDiagnostic::NumberTooBig,
-            overflow_origin.unwrap_or(OriginId::UNKNOWN),
+            overflow_context.unwrap_or(context),
         )
     } else {
-        ScannedInt::new(value as i32)
+        ScannedInt::new(value as i32, context)
     }
 }
 
-const fn missing_number(origin: OriginId) -> ScannedInt {
-    ScannedInt::with_diagnostic(0, IntegerDiagnostic::MissingNumber, origin)
+const fn missing_number(context: TracedTokenWord) -> ScannedInt {
+    ScannedInt::with_diagnostic(0, IntegerDiagnostic::MissingNumber, context)
 }
 
 fn token_digit_for_radix(token: TracedTokenWord, radix: i64) -> Option<i64> {

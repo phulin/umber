@@ -14,6 +14,7 @@ fn scan_halign_preamble(source: &str) -> (Universe, AlignState) {
     let mut hooks = crate::executor::NoopExecHooks;
     let state = crate::align::scan_preamble(
         UnexpandablePrimitive::HAlign,
+        alignment_context(),
         &mut input,
         &mut stores,
         &mut hooks,
@@ -29,6 +30,7 @@ fn scan_valign_preamble(source: &str) -> (Universe, AlignState) {
     let mut hooks = crate::executor::NoopExecHooks;
     let state = crate::align::scan_preamble(
         UnexpandablePrimitive::VAlign,
+        alignment_context(),
         &mut input,
         &mut stores,
         &mut hooks,
@@ -39,6 +41,10 @@ fn scan_valign_preamble(source: &str) -> (Universe, AlignState) {
 
 fn char_token(ch: char, cat: Catcode) -> Token {
     Token::Char { ch, cat }
+}
+
+fn alignment_context() -> TracedTokenWord {
+    TracedTokenWord::pack(char_token('&', Catcode::AlignmentTab), OriginId::UNKNOWN)
 }
 
 fn sp(points: i32) -> Scaled {
@@ -355,6 +361,7 @@ fn alignment_preamble_errors_match_reference_wording() {
     let mut hooks = crate::executor::NoopExecHooks;
     let err = crate::align::scan_preamble(
         UnexpandablePrimitive::HAlign,
+        alignment_context(),
         &mut input,
         &mut stores,
         &mut hooks,
@@ -368,6 +375,7 @@ fn alignment_preamble_errors_match_reference_wording() {
     let mut hooks = crate::executor::NoopExecHooks;
     let err = crate::align::scan_preamble(
         UnexpandablePrimitive::HAlign,
+        alignment_context(),
         &mut input,
         &mut stores,
         &mut hooks,

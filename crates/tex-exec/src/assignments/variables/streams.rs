@@ -11,6 +11,7 @@ use crate::vertical::append_node_to_current_list;
 
 pub(in crate::assignments) fn execute_stream_command<S, H>(
     primitive: UnexpandablePrimitive,
+    context: TracedTokenWord,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
@@ -20,7 +21,7 @@ where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    let slot = scan_stream_slot(input, stores, hooks)?;
+    let slot = scan_stream_slot(input, stores, hooks, context)?;
     match primitive {
         UnexpandablePrimitive::OpenIn => {
             skip_optional_equals_x(input, stores, hooks)?;
@@ -49,6 +50,7 @@ where
 
 pub(in crate::assignments) fn execute_immediate_stream_command<S, H>(
     primitive: UnexpandablePrimitive,
+    context: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
@@ -57,7 +59,7 @@ where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    let slot = scan_stream_slot(input, stores, hooks)?;
+    let slot = scan_stream_slot(input, stores, hooks, context)?;
     match primitive {
         UnexpandablePrimitive::OpenOut => {
             skip_optional_equals_x(input, stores, hooks)?;
@@ -71,6 +73,7 @@ where
 }
 
 pub(in crate::assignments) fn execute_read<S, H>(
+    context: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
@@ -79,7 +82,7 @@ where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    let slot = scan_stream_slot(input, stores, hooks)?;
+    let slot = scan_stream_slot(input, stores, hooks, context)?;
     if !scan_optional_keyword_x(input, stores, hooks, "to")? {
         return Err(ExecError::ReadNeedsTo);
     }
@@ -105,7 +108,7 @@ where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    let sink = scan_write_sink(input, stores, hooks)?;
+    let sink = scan_write_sink(input, stores, hooks, context)?;
     let scanned = scan_toks(input, stores, MeaningFlags::EMPTY, context)?;
     append_node_to_current_list(
         nest,
@@ -129,7 +132,7 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    let sink = scan_write_sink(input, stores, hooks)?;
+    let sink = scan_write_sink(input, stores, hooks, context)?;
     let scanned = scan_toks(input, stores, MeaningFlags::EMPTY, context)?;
     let text = expand_write_tokens(stores, recorder, scanned.meaning().replacement_text())?;
     stores.world_mut().write_text(sink, &text);
@@ -137,6 +140,7 @@ where
 }
 
 pub(in crate::assignments) fn execute_special<S, H>(
+    context: TracedTokenWord,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
@@ -146,7 +150,7 @@ where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    let tokens = scan_balanced_expanded_text(input, stores, hooks, "\\special")?;
+    let tokens = scan_balanced_expanded_text(input, stores, hooks, context)?;
     let payload = tokens_text(stores, &tokens).into_bytes();
     append_node_to_current_list(
         nest,
@@ -276,12 +280,13 @@ fn scan_stream_slot<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
+    context: TracedTokenWord,
 ) -> Result<StreamSlot, ExecError>
 where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    let value = scan_i32(input, stores, hooks)?;
+    let value = scan_i32(input, stores, hooks, context)?;
     if !(0..tex_state::world::STREAM_SLOT_COUNT as i32).contains(&value) {
         return Err(ExecError::RegisterNumberOutOfRange(value));
     }
@@ -292,12 +297,13 @@ fn scan_write_sink<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
+    context: TracedTokenWord,
 ) -> Result<PrintSink, ExecError>
 where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    let value = scan_i32(input, stores, hooks)?;
+    let value = scan_i32(input, stores, hooks, context)?;
     Ok(match value {
         0..=15 => PrintSink::Stream(StreamSlot::new(value as u8)),
         value if value < 0 => PrintSink::Log,
@@ -363,16 +369,16 @@ fn scan_balanced_expanded_text<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
-    context: &'static str,
+    context: TracedTokenWord,
 ) -> Result<Vec<Token>, ExecError>
 where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
     let open =
-        next_non_space_x(input, stores, hooks)?.ok_or(ExecError::MissingToken { context })?;
+        next_non_space_x(input, stores, hooks)?.ok_or(ExecError::MissingTracedToken { context })?;
     if !is_begin_group(open) {
-        return Err(ExecError::MissingToken { context });
+        return Err(ExecError::MissingTracedToken { context });
     }
     let mut recorder = NoopRecorder;
     let mut depth = 1usize;
@@ -394,7 +400,7 @@ where
             tokens.push(token);
         }
     }
-    Err(ExecError::MissingToken { context })
+    Err(ExecError::MissingTracedToken { context })
 }
 
 fn tokens_text(stores: &Universe, tokens: &[Token]) -> String {

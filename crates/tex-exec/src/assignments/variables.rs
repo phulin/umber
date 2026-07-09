@@ -31,6 +31,7 @@ pub(super) enum Variable {
 
 pub(super) fn execute_variable_assignment<S, H>(
     primitive: UnexpandablePrimitive,
+    context: TracedTokenWord,
     prefixes: Prefixes,
     input: &mut InputStack<S>,
     stores: &mut Universe,
@@ -41,7 +42,7 @@ where
     H: ExpansionHooks<S>,
 {
     reject_macro_prefixes(prefixes)?;
-    let index = scan_register_index(input, stores, hooks)?;
+    let index = scan_register_index(input, stores, hooks, context)?;
     let target = match primitive {
         UnexpandablePrimitive::Count => Variable::IntRegister(index),
         UnexpandablePrimitive::Dimen => Variable::DimenRegister(index),
@@ -50,12 +51,13 @@ where
         UnexpandablePrimitive::Toks => Variable::ToksRegister(index),
         _ => unreachable!("caller restricts primitive"),
     };
-    execute_assignment_to_target(target, prefixes, input, stores, hooks)
+    execute_assignment_to_target(target, prefixes, context, input, stores, hooks)
 }
 
 pub(super) fn execute_assignment_to_target<S, H>(
     target: Variable,
     prefixes: Prefixes,
+    context: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
@@ -68,65 +70,65 @@ where
     let global = apply_globaldefs(prefixes.global, stores);
     match target {
         Variable::IntRegister(index) => {
-            let value = scan_i32(input, stores, hooks)?;
+            let value = scan_i32(input, stores, hooks, context)?;
             set_int_register(stores, index, value, global);
         }
         Variable::DimenRegister(index) => {
-            let value = scan_scaled(input, stores, hooks)?;
+            let value = scan_scaled(input, stores, hooks, context)?;
             set_dimen_register(stores, index, value, global);
         }
         Variable::GlueRegister(index) => {
-            let value = scan_glue_id(input, stores, hooks, false)?;
+            let value = scan_glue_id(input, stores, hooks, false, context)?;
             set_glue_register(stores, index, value, global);
         }
         Variable::MuGlueRegister(index) => {
-            let value = scan_glue_id(input, stores, hooks, true)?;
+            let value = scan_glue_id(input, stores, hooks, true, context)?;
             set_muglue_register(stores, index, value, global);
         }
         Variable::ToksRegister(index) => {
-            let value = scan_token_list_assignment(input, stores, hooks)?;
+            let value = scan_token_list_assignment(input, stores, hooks, context)?;
             set_toks_register(stores, index, value, global);
         }
         Variable::IntParam(index) => {
-            let value = scan_i32(input, stores, hooks)?;
+            let value = scan_i32(input, stores, hooks, context)?;
             set_int_param(stores, index, value, global);
         }
         Variable::PageInteger(integer) => {
             reject_macro_prefixes(prefixes)?;
-            let value = scan_i32(input, stores, hooks)?;
+            let value = scan_i32(input, stores, hooks, context)?;
             stores.set_page_integer(integer, value);
         }
         Variable::DimenParam(index) => {
-            let value = scan_scaled(input, stores, hooks)?;
+            let value = scan_scaled(input, stores, hooks, context)?;
             set_dimen_param(stores, index, value, global);
         }
         Variable::PageDimension(dimension) => {
             reject_macro_prefixes(prefixes)?;
-            let value = scan_scaled(input, stores, hooks)?;
+            let value = scan_scaled(input, stores, hooks, context)?;
             stores.set_page_dimension(dimension, value);
         }
         Variable::FontDimen(font, number) => {
-            let value = scan_scaled(input, stores, hooks)?;
+            let value = scan_scaled(input, stores, hooks, context)?;
             stores.set_font_dimen(font, number, value, global)?;
         }
         Variable::GlueParam(index) => {
-            let value = scan_glue_id(input, stores, hooks, false)?;
+            let value = scan_glue_id(input, stores, hooks, false, context)?;
             set_glue_param(stores, index, value, global);
         }
         Variable::MuGlueParam(index) => {
-            let value = scan_glue_id(input, stores, hooks, true)?;
+            let value = scan_glue_id(input, stores, hooks, true, context)?;
             set_glue_param(stores, index, value, global);
         }
         Variable::TokParam(index) => {
-            let value = scan_token_list_assignment(input, stores, hooks)?;
+            let value = scan_token_list_assignment(input, stores, hooks, context)?;
             set_tok_param(stores, index, value, global);
         }
         Variable::FontHyphenChar(font) => {
-            let value = scan_i32(input, stores, hooks)?;
+            let value = scan_i32(input, stores, hooks, context)?;
             stores.set_font_hyphen_char(font, value, global);
         }
         Variable::FontSkewChar(font) => {
-            let value = scan_i32(input, stores, hooks)?;
+            let value = scan_i32(input, stores, hooks, context)?;
             stores.set_font_skew_char(font, value, global);
         }
     }
@@ -136,6 +138,7 @@ where
 pub(super) fn execute_register_def<S, H>(
     primitive: UnexpandablePrimitive,
     prefixes: Prefixes,
+    context: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
@@ -147,7 +150,7 @@ where
     reject_macro_prefixes(prefixes)?;
     let target = scan_definition_target(input, stores, "register definition")?;
     skip_optional_equals_x(input, stores, hooks)?;
-    let index = scan_register_index(input, stores, hooks)?;
+    let index = scan_register_index(input, stores, hooks, context)?;
     let meaning = match primitive {
         UnexpandablePrimitive::CountDef => Meaning::CountRegister(index),
         UnexpandablePrimitive::DimenDef => Meaning::DimenRegister(index),
@@ -167,6 +170,7 @@ where
 pub(super) fn execute_char_def<S, H>(
     primitive: UnexpandablePrimitive,
     prefixes: Prefixes,
+    context: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
@@ -178,7 +182,7 @@ where
     reject_macro_prefixes(prefixes)?;
     let target = scan_definition_target(input, stores, "character definition")?;
     skip_optional_equals_x(input, stores, hooks)?;
-    let value = scan_i32(input, stores, hooks)?;
+    let value = scan_i32(input, stores, hooks, context)?;
     let meaning = match primitive {
         UnexpandablePrimitive::CharDef => {
             if !(0..=255).contains(&value) {
@@ -212,6 +216,7 @@ where
 pub(super) fn execute_arithmetic<S, H>(
     primitive: UnexpandablePrimitive,
     prefixes: Prefixes,
+    context: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
@@ -227,19 +232,19 @@ where
     match target {
         Variable::IntRegister(index) | Variable::IntParam(index) => {
             let old = read_int_variable(stores, target);
-            let rhs = scan_i32(input, stores, hooks)?;
+            let rhs = scan_i32(input, stores, hooks, context)?;
             let value = arithmetic_i32(primitive, old, rhs)?;
             write_int_variable(stores, target, index, value, global);
         }
         Variable::PageInteger(integer) => {
             let old = stores.page_integer(integer);
-            let rhs = scan_i32(input, stores, hooks)?;
+            let rhs = scan_i32(input, stores, hooks, context)?;
             let value = arithmetic_i32(primitive, old, rhs)?;
             stores.set_page_integer(integer, value);
         }
         Variable::FontHyphenChar(font) | Variable::FontSkewChar(font) => {
             let old = read_int_variable(stores, target);
-            let rhs = scan_i32(input, stores, hooks)?;
+            let rhs = scan_i32(input, stores, hooks, context)?;
             let value = arithmetic_i32(primitive, old, rhs)?;
             write_font_int_variable(stores, target, font, value, global);
         }
@@ -247,13 +252,13 @@ where
             let old = read_dimen_variable(stores, target);
             let value = match primitive {
                 UnexpandablePrimitive::Advance => old
-                    .checked_add(scan_scaled(input, stores, hooks)?)
+                    .checked_add(scan_scaled(input, stores, hooks, context)?)
                     .ok_or(ExecError::ArithmeticOverflow)?,
                 UnexpandablePrimitive::Multiply => {
-                    scaled_checked_mul(old, scan_i32(input, stores, hooks)?)?
+                    scaled_checked_mul(old, scan_i32(input, stores, hooks, context)?)?
                 }
                 UnexpandablePrimitive::Divide => {
-                    scaled_checked_div(old, scan_nonzero_i32(input, stores, hooks)?)?
+                    scaled_checked_div(old, scan_nonzero_i32(input, stores, hooks, context)?)?
                 }
                 _ => unreachable!("caller restricts primitive"),
             };
@@ -263,13 +268,13 @@ where
             let old = stores.page_dimension(dimension);
             let value = match primitive {
                 UnexpandablePrimitive::Advance => old
-                    .checked_add(scan_scaled(input, stores, hooks)?)
+                    .checked_add(scan_scaled(input, stores, hooks, context)?)
                     .ok_or(ExecError::ArithmeticOverflow)?,
                 UnexpandablePrimitive::Multiply => {
-                    scaled_checked_mul(old, scan_i32(input, stores, hooks)?)?
+                    scaled_checked_mul(old, scan_i32(input, stores, hooks, context)?)?
                 }
                 UnexpandablePrimitive::Divide => {
-                    scaled_checked_div(old, scan_nonzero_i32(input, stores, hooks)?)?
+                    scaled_checked_div(old, scan_nonzero_i32(input, stores, hooks, context)?)?
                 }
                 _ => unreachable!("caller restricts primitive"),
             };
@@ -279,13 +284,13 @@ where
             let old = stores.font_dimen(font, number);
             let value = match primitive {
                 UnexpandablePrimitive::Advance => old
-                    .checked_add(scan_scaled(input, stores, hooks)?)
+                    .checked_add(scan_scaled(input, stores, hooks, context)?)
                     .ok_or(ExecError::ArithmeticOverflow)?,
                 UnexpandablePrimitive::Multiply => {
-                    scaled_checked_mul(old, scan_i32(input, stores, hooks)?)?
+                    scaled_checked_mul(old, scan_i32(input, stores, hooks, context)?)?
                 }
                 UnexpandablePrimitive::Divide => {
-                    scaled_checked_div(old, scan_nonzero_i32(input, stores, hooks)?)?
+                    scaled_checked_div(old, scan_nonzero_i32(input, stores, hooks, context)?)?
                 }
                 _ => unreachable!("caller restricts primitive"),
             };
@@ -293,21 +298,21 @@ where
         }
         Variable::GlueRegister(index) | Variable::GlueParam(index) => {
             let old = stores.glue(read_glue_variable(stores, target));
-            let rhs = scan_glue_or_factor(primitive, input, stores, hooks, false)?;
+            let rhs = scan_glue_or_factor(primitive, input, stores, hooks, false, context)?;
             let value = arithmetic_glue(primitive, old, rhs)?;
             let id = stores.intern_glue(value);
             write_glue_variable(stores, target, index, id, global);
         }
         Variable::MuGlueParam(index) => {
             let old = stores.glue(stores.glue_param(GlueParam::new(index)));
-            let rhs = scan_glue_or_factor(primitive, input, stores, hooks, true)?;
+            let rhs = scan_glue_or_factor(primitive, input, stores, hooks, true, context)?;
             let value = arithmetic_glue(primitive, old, rhs)?;
             let id = stores.intern_glue(value);
             set_glue_param(stores, index, id, global);
         }
         Variable::MuGlueRegister(index) => {
             let old = stores.glue(stores.muskip(index));
-            let rhs = scan_glue_or_factor(primitive, input, stores, hooks, true)?;
+            let rhs = scan_glue_or_factor(primitive, input, stores, hooks, true, context)?;
             let value = arithmetic_glue(primitive, old, rhs)?;
             let id = stores.intern_glue(value);
             set_muglue_register(stores, index, id, global);
@@ -321,6 +326,7 @@ where
 
 pub(super) fn execute_code_table_assignment<S, H>(
     primitive: UnexpandablePrimitive,
+    context: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
@@ -329,9 +335,9 @@ where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    let code = scan_i32(input, stores, hooks)?;
+    let code = scan_i32(input, stores, hooks, context)?;
     skip_optional_equals_x(input, stores, hooks)?;
-    let value = scan_i32(input, stores, hooks)?;
+    let value = scan_i32(input, stores, hooks, context)?;
     let ch = char_from_code(code, "code-table character")?;
     match primitive {
         UnexpandablePrimitive::CatCode => stores.set_catcode(ch, catcode_from_i32(value)?),

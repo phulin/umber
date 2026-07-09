@@ -19,7 +19,7 @@ use tex_state::node::{
     KernKind as StateKernKind, LeaderPayload as StateLeaderPayload, Node, Sign, Whatsit,
 };
 use tex_state::page::PageInteger;
-use tex_state::token::{Catcode, Token};
+use tex_state::token::{Catcode, Token, TracedTokenWord};
 use tex_state::{ContentHash, EffectRecord, PrintSink, Universe};
 
 use super::scan_required_box_node;
@@ -27,6 +27,7 @@ use crate::ExecError;
 use crate::diagnostics;
 
 pub(super) fn execute_shipout<S, R, H>(
+    context: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
@@ -37,7 +38,7 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    let node = scan_required_box_node(input, stores, hooks)?;
+    let node = scan_required_box_node(input, stores, hooks, context)?;
     shipout_node(node, stores, recorder)
 }
 

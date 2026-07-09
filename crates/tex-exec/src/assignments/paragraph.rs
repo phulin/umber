@@ -21,6 +21,7 @@ use crate::{ExecError, Mode, ModeNest};
 
 pub(super) fn execute_paragraph_command<S, H>(
     primitive: UnexpandablePrimitive,
+    context: TracedTokenWord,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
@@ -34,9 +35,9 @@ where
         UnexpandablePrimitive::Par | UnexpandablePrimitive::EndGraf => end_paragraph(nest, stores),
         UnexpandablePrimitive::Indent => start_paragraph(nest, input, stores, true),
         UnexpandablePrimitive::NoIndent => start_paragraph(nest, input, stores, false),
-        UnexpandablePrimitive::ParShape => assign_parshape(nest, input, stores, hooks),
-        UnexpandablePrimitive::PrevDepth => assign_prevdepth(nest, input, stores, hooks),
-        UnexpandablePrimitive::PrevGraf => assign_prevgraf(nest, input, stores, hooks),
+        UnexpandablePrimitive::ParShape => assign_parshape(nest, input, stores, hooks, context),
+        UnexpandablePrimitive::PrevDepth => assign_prevdepth(nest, input, stores, hooks, context),
+        UnexpandablePrimitive::PrevGraf => assign_prevgraf(nest, input, stores, hooks, context),
         UnexpandablePrimitive::NoInterlineSkip => {
             nest.current_list_mut().set_prev_depth(IGNORE_DEPTH);
             Ok(())
@@ -350,18 +351,19 @@ fn assign_parshape<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
+    context: TracedTokenWord,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
     skip_optional_equals_x(input, stores, hooks)?;
-    let count = scan_i32(input, stores, hooks)?.max(0) as usize;
+    let count = scan_i32(input, stores, hooks, context)?.max(0) as usize;
     let mut lines = Vec::with_capacity(count);
     for _ in 0..count {
         lines.push(ParagraphShapeLine {
-            indent: scan_scaled(input, stores, hooks)?,
-            width: scan_scaled(input, stores, hooks)?,
+            indent: scan_scaled(input, stores, hooks, context)?,
+            width: scan_scaled(input, stores, hooks, context)?,
         });
     }
     nest.current_list_mut()
@@ -374,13 +376,14 @@ fn assign_prevdepth<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
+    context: TracedTokenWord,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
     skip_optional_equals_x(input, stores, hooks)?;
-    let depth = scan_scaled(input, stores, hooks)?;
+    let depth = scan_scaled(input, stores, hooks, context)?;
     nest.current_list_mut().set_prev_depth(depth);
     Ok(())
 }
@@ -390,13 +393,14 @@ fn assign_prevgraf<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
+    context: TracedTokenWord,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
     skip_optional_equals_x(input, stores, hooks)?;
-    let lines = scan_i32(input, stores, hooks)?;
+    let lines = scan_i32(input, stores, hooks, context)?;
     if lines < 0 {
         return Err(ExecError::BadPrevGraf(lines));
     }

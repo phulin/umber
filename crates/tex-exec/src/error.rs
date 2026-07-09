@@ -8,7 +8,7 @@ use tex_state::ProvenanceResolver;
 use tex_state::Universe;
 use tex_state::WorldError;
 use tex_state::meaning::ExpandablePrimitive;
-use tex_state::token::{OriginId, Token};
+use tex_state::token::{OriginId, Token, TracedTokenWord};
 
 use crate::Mode;
 
@@ -80,6 +80,9 @@ pub enum ExecError {
     MissingToken {
         context: &'static str,
     },
+    MissingTracedToken {
+        context: TracedTokenWord,
+    },
     InvalidLetRhs {
         token: Token,
         origin: OriginId,
@@ -96,8 +99,12 @@ pub enum ExecError {
     ExtraHashInAlignmentPreamble,
     MisplacedNoAlign,
     MisplacedOmit,
-    MissingLeaderPayload,
-    LeadersNotFollowedByProperGlue,
+    MissingLeaderPayload {
+        context: TracedTokenWord,
+    },
+    LeadersNotFollowedByProperGlue {
+        context: TracedTokenWord,
+    },
     HRuleHereExceptLeaders,
     CannotDeleteFromCurrentPage {
         command: &'static str,
@@ -182,6 +189,7 @@ impl fmt::Display for ExecError {
                 )
             }
             Self::MissingToken { context } => write!(f, "missing token while scanning {context}"),
+            Self::MissingTracedToken { .. } => f.write_str("missing token while scanning input"),
             Self::InvalidLetRhs { token, .. } => {
                 write!(f, "\\let cannot assign macro parameter token {token:?}")
             }
@@ -202,8 +210,8 @@ impl fmt::Display for ExecError {
             }
             Self::MisplacedNoAlign => write!(f, "Misplaced \\noalign."),
             Self::MisplacedOmit => write!(f, "Misplaced \\omit."),
-            Self::MissingLeaderPayload => write!(f, "A <box> was supposed to be here."),
-            Self::LeadersNotFollowedByProperGlue => {
+            Self::MissingLeaderPayload { .. } => write!(f, "A <box> was supposed to be here."),
+            Self::LeadersNotFollowedByProperGlue { .. } => {
                 write!(f, "Leaders not followed by proper glue.")
             }
             Self::HRuleHereExceptLeaders => {
@@ -270,6 +278,7 @@ impl std::error::Error for ExecError {
             | Self::MissingControlSequence { .. }
             | Self::ExpectedControlSequence { .. }
             | Self::MissingToken { .. }
+            | Self::MissingTracedToken { .. }
             | Self::InvalidLetRhs { .. }
             | Self::UnsupportedAssignmentTarget
             | Self::RegisterNumberOutOfRange(_)
@@ -280,8 +289,8 @@ impl std::error::Error for ExecError {
             | Self::ExtraHashInAlignmentPreamble
             | Self::MisplacedNoAlign
             | Self::MisplacedOmit
-            | Self::MissingLeaderPayload
-            | Self::LeadersNotFollowedByProperGlue
+            | Self::MissingLeaderPayload { .. }
+            | Self::LeadersNotFollowedByProperGlue { .. }
             | Self::HRuleHereExceptLeaders
             | Self::CannotDeleteFromCurrentPage { .. }
             | Self::ReadNeedsTo
@@ -319,6 +328,9 @@ impl ExecError {
             | Self::ExpectedControlSequence { origin, .. }
             | Self::InvalidLetRhs { origin, .. }
             | Self::UnimplementedTypesetting { origin, .. } => Some(*origin),
+            Self::MissingTracedToken { context } => Some(context.origin()),
+            Self::MissingLeaderPayload { context }
+            | Self::LeadersNotFollowedByProperGlue { context } => Some(context.origin()),
             Self::PrefixWithNonDefinition { origin } => *origin,
             Self::Lex(_)
             | Self::ScanToks(_)
@@ -339,8 +351,6 @@ impl ExecError {
             | Self::ExtraHashInAlignmentPreamble
             | Self::MisplacedNoAlign
             | Self::MisplacedOmit
-            | Self::MissingLeaderPayload
-            | Self::LeadersNotFollowedByProperGlue
             | Self::HRuleHereExceptLeaders
             | Self::CannotDeleteFromCurrentPage { .. }
             | Self::ReadNeedsTo

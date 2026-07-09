@@ -136,6 +136,7 @@ macro_rules! dispatch_match {
                     recorder,
                     hooks,
                     &mut expander,
+                    call_context,
                 )?;
                 Ok(push_rendered_text(
                     stores,
@@ -151,6 +152,7 @@ macro_rules! dispatch_match {
                     recorder,
                     hooks,
                     &mut expander,
+                    call_context,
                 )?;
                 Ok(push_rendered_text(
                     stores,
@@ -314,6 +316,7 @@ macro_rules! dispatch_match {
                     recorder,
                     hooks,
                     &mut expander,
+                    call_context,
                 )?
                 .value();
                 let relation = scan_conditional_relation_with_expander_and_hooks(
@@ -330,6 +333,7 @@ macro_rules! dispatch_match {
                     recorder,
                     hooks,
                     &mut expander,
+                    call_context,
                 )?
                 .value();
                 complete_if_evaluation(
@@ -350,6 +354,7 @@ macro_rules! dispatch_match {
                     hooks,
                     &mut expander,
                     scan_dimen::ScanDimenOptions::STANDARD,
+                    call_context,
                 )?
                 .value();
                 let relation = scan_conditional_relation_with_expander_and_hooks(
@@ -367,6 +372,7 @@ macro_rules! dispatch_match {
                     hooks,
                     &mut expander,
                     scan_dimen::ScanDimenOptions::STANDARD,
+                    call_context,
                 )?
                 .value();
                 complete_if_evaluation(
@@ -386,6 +392,7 @@ macro_rules! dispatch_match {
                     recorder,
                     hooks,
                     &mut expander,
+                    call_context,
                 )?
                 .value();
                 complete_if_evaluation(input, stores, recorder, hooks, value % 2 != 0, call_context)
@@ -398,6 +405,7 @@ macro_rules! dispatch_match {
                     recorder,
                     hooks,
                     &mut expander,
+                    call_context,
                 )?
                 .value();
                 complete_ifcase_evaluation(
@@ -449,6 +457,7 @@ macro_rules! dispatch_match {
                     recorder,
                     hooks,
                     &mut expander,
+                    call_context,
                 )?;
                 complete_if_evaluation(
                     input,
@@ -467,6 +476,7 @@ macro_rules! dispatch_match {
                     recorder,
                     hooks,
                     &mut expander,
+                    call_context,
                 )?;
                 complete_if_evaluation(
                     input,
@@ -485,6 +495,7 @@ macro_rules! dispatch_match {
                     recorder,
                     hooks,
                     &mut expander,
+                    call_context,
                 )?;
                 complete_if_evaluation(
                     input,
@@ -503,6 +514,7 @@ macro_rules! dispatch_match {
                     recorder,
                     hooks,
                     &mut expander,
+                    call_context,
                 )?;
                 complete_if_evaluation(
                     input,

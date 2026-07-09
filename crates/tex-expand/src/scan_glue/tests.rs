@@ -3,7 +3,7 @@ use tex_state::Universe;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::scaled::Scaled;
-use tex_state::token::{Catcode, Token};
+use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::scan_glue::{scan_glue, scan_muglue};
 
@@ -11,10 +11,20 @@ fn char_token(ch: char, cat: Catcode) -> Token {
     Token::Char { ch, cat }
 }
 
+fn context() -> TracedTokenWord {
+    TracedTokenWord::pack(
+        Token::Char {
+            ch: '=',
+            cat: Catcode::Other,
+        },
+        OriginId::UNKNOWN,
+    )
+}
+
 fn scan(input_text: &str) -> (GlueSpec, Option<Token>) {
     let mut stores = Universe::new();
     let mut input = InputStack::new(MemoryInput::new(input_text));
-    let scanned = scan_glue(&mut input, &mut stores).expect("glue scan should succeed");
+    let scanned = scan_glue(&mut input, &mut stores, context()).expect("glue scan should succeed");
     let spec = stores.glue(scanned.id());
     let next = input
         .next_token(&mut stores)
@@ -91,7 +101,7 @@ fn scans_internal_skip_values() {
     stores.set_skip(7, id);
     let mut input = InputStack::new(MemoryInput::new("\\skip7 x"));
 
-    let scanned = scan_glue(&mut input, &mut stores).expect("skip should scan");
+    let scanned = scan_glue(&mut input, &mut stores, context()).expect("skip should scan");
 
     assert_eq!(stores.glue(scanned.id()), stores.glue(id));
 }
@@ -101,7 +111,7 @@ fn scans_muglue_with_mu_units() {
     let mut stores = Universe::new();
     let mut input = InputStack::new(MemoryInput::new("1mu plus 2fil x"));
 
-    let scanned = scan_muglue(&mut input, &mut stores).expect("muglue should scan");
+    let scanned = scan_muglue(&mut input, &mut stores, context()).expect("muglue should scan");
     let spec = stores.glue(scanned.id());
 
     assert_eq!(spec.width.raw(), 65_536);
@@ -127,7 +137,7 @@ fn scans_internal_muskip_values() {
     stores.set_muskip(7, id);
     let mut input = InputStack::new(MemoryInput::new("\\muskip7 x"));
 
-    let scanned = scan_muglue(&mut input, &mut stores).expect("muskip should scan");
+    let scanned = scan_muglue(&mut input, &mut stores, context()).expect("muskip should scan");
 
     assert_eq!(stores.glue(scanned.id()), stores.glue(id));
 }

@@ -3,7 +3,7 @@ use tex_lex::{InputSource, InputStack};
 use tex_state::env::banks::GlueParam;
 use tex_state::ids::{GlueId, TokenListId};
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
-use tex_state::token::{Catcode, Token};
+use tex_state::token::{Catcode, Token, TracedTokenWord};
 use tex_state::{GroupKind, Universe};
 
 use crate::assignments::{is_begin_group, next_non_space_x, scan_scaled};
@@ -12,6 +12,7 @@ use crate::{ExecError, assignments};
 
 pub(crate) fn scan_preamble<S, H>(
     primitive: UnexpandablePrimitive,
+    context: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
@@ -21,7 +22,7 @@ where
     H: ExpansionHooks<S>,
 {
     let kind = alignment_kind(primitive)?;
-    let pack_spec = scan_pack_spec(input, stores, hooks)?;
+    let pack_spec = scan_pack_spec(input, stores, hooks, context)?;
     let opener = next_non_space_x(input, stores, hooks)?.ok_or(ExecError::MissingToken {
         context: "alignment group",
     })?;
@@ -83,6 +84,7 @@ fn scan_pack_spec<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
+    context: TracedTokenWord,
 ) -> Result<AlignmentPackSpec, ExecError>
 where
     S: InputSource,
@@ -90,11 +92,11 @@ where
 {
     if assignments::scan_optional_keyword_x(input, stores, hooks, "to")? {
         Ok(AlignmentPackSpec::Exactly(scan_scaled(
-            input, stores, hooks,
+            input, stores, hooks, context,
         )?))
     } else if assignments::scan_optional_keyword_x(input, stores, hooks, "spread")? {
         Ok(AlignmentPackSpec::Spread(scan_scaled(
-            input, stores, hooks,
+            input, stores, hooks, context,
         )?))
     } else {
         Ok(AlignmentPackSpec::Natural)

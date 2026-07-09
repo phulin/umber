@@ -32,6 +32,7 @@ pub(super) fn scan_glue_or_factor<S, H>(
     stores: &mut Universe,
     hooks: &mut H,
     mu: bool,
+    context: TracedTokenWord,
 ) -> Result<GlueArithmeticRhs, ExecError>
 where
     S: InputSource,
@@ -39,12 +40,12 @@ where
 {
     match primitive {
         UnexpandablePrimitive::Advance => {
-            let id = scan_glue_id(input, stores, hooks, mu)?;
+            let id = scan_glue_id(input, stores, hooks, mu, context)?;
             Ok(GlueArithmeticRhs::Glue(stores.glue(id)))
         }
-        UnexpandablePrimitive::Multiply | UnexpandablePrimitive::Divide => {
-            Ok(GlueArithmeticRhs::Factor(scan_i32(input, stores, hooks)?))
-        }
+        UnexpandablePrimitive::Multiply | UnexpandablePrimitive::Divide => Ok(
+            GlueArithmeticRhs::Factor(scan_i32(input, stores, hooks, context)?),
+        ),
         _ => unreachable!("caller restricts primitive"),
     }
 }

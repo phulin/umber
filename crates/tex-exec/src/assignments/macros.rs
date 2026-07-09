@@ -130,6 +130,7 @@ where
 
 pub(super) fn execute_globaldefs<S, H>(
     prefixes: Prefixes,
+    context: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
@@ -147,6 +148,7 @@ where
         &mut recorder,
         hooks,
         &mut DriverExpandNext,
+        context,
     )
     .map_err(ExpandError::from)?
     .value();
