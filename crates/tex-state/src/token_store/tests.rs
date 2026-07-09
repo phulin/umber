@@ -119,8 +119,25 @@ fn stale_token_list_panics_after_truncation() {
 }
 
 #[test]
-#[ignore = "No deterministic DefaultHasher collision fixture is known yet; intern compares candidate slices after hash lookup."]
-fn content_hash_collision_safety_needs_deterministic_fixture() {}
+fn same_hash_bucket_still_compares_token_list_content() {
+    let mut store = TokenStore::new();
+    let existing = [char_token('a')];
+    let distinct = [char_token('b')];
+    let existing_id = store.intern(&existing);
+    let distinct_hash = super::content_hash(&distinct);
+
+    store
+        .index
+        .entry(distinct_hash)
+        .or_default()
+        .push(existing_id);
+
+    let distinct_id = store.intern(&distinct);
+
+    assert_ne!(distinct_id, existing_id);
+    assert_eq!(store.get(existing_id), existing);
+    assert_eq!(store.get(distinct_id), distinct);
+}
 
 #[derive(Clone, Debug)]
 enum Op {
