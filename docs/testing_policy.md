@@ -47,9 +47,9 @@ scripts/parity.sh
 
 That script enables `UMBER_LIVE_REF=1`, runs live reference diagnostic checks,
 optional hyphenation parity when its corpus is present, and byte-identical DVI
-comparisons for the DVI, page, math, align, and leaders corpora. Use focused
-`UPDATE_FIXTURES=1` commands only when deliberately regenerating committed
-fixtures.
+comparisons for the DVI, page, math, align, and leaders corpora. Regenerate
+committed fixtures only through `scripts/regen-fixtures.sh`, which is the
+blessed live-reference rewrite path.
 
 ## 3. Default Rule
 
@@ -145,22 +145,26 @@ easier to scan.
 
 Committed corpus fixtures belong under the workspace-level `tests/corpus`
 tree. Keep small area-local support files beside the fixture input. See
-`tests/AGENTS.md` for fixture layout and update commands.
+`tests/AGENTS.md` for fixture layout and the `scripts/regen-fixtures.sh`
+regeneration modes.
 
 The DVI corpora under `tests/corpus/dvi`, `tests/corpus/page`,
 `tests/corpus/math`, `tests/corpus/align`, and `tests/corpus/leaders` commit
 TeX source files plus `.expected.dvi` reference fixtures. The default `umber`
 cargo tests run every `.tex` case in those areas against the committed DVI
-fixtures and do not invoke live reference tools. The explicit slow tier remains
-in `scripts/parity.sh`: it runs `umber run --dvi` and the live reference engine
-over the same temporary inputs with pinned local TFMs, then compares generated
-DVI bytes through `tools/refexec`. The math corpus uses a shared primitive-only
-`tests/corpus/math/math_preamble.inc` include and the parity script runs its
-reference side in INITEX mode so the cases do not depend on `plain.tex`.
+fixtures and do not invoke live reference tools. `scripts/regen-fixtures.sh`
+owns DVI fixture regeneration: it runs the live reference engine through
+`tools/refexec`, copies the pinned local CM TFMs plus area support files, uses
+INITEX for the math corpus, and rewrites raw reference DVI only when the
+existing preamble-comment-only DVI comparison detects a change. The explicit
+slow tier remains in `scripts/parity.sh` until it is retired by the parity
+workflow cleanup.
 
 Default cargo tests must not invoke live TeX tools. Fixture regeneration uses
-`UPDATE_FIXTURES=1` and focused tests, while live reference checks use
-`UMBER_LIVE_REF=1` or `scripts/parity.sh`.
+`scripts/regen-fixtures.sh`, while live reference checks use
+`UMBER_LIVE_REF=1`, `scripts/parity.sh`, or
+`scripts/regen-fixtures.sh --area fonts` for the live `tftopl` font
+cross-check.
 
 `tex-out` also owns the cross-crate page-output float guard. Its unit tests
 scan the page node, packing, shipout lowering, artifact, DVI, and CLI DVI

@@ -5,7 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 # Local fast gate: consume committed fixtures and keep live reference TeX work
-# in scripts/parity.sh or focused UPDATE_FIXTURES=1 regeneration commands.
+# in scripts/parity.sh or scripts/regen-fixtures.sh.
 export UMBER_LIVE_REF=0
 export UPDATE_FIXTURES=0
 
