@@ -17,6 +17,54 @@ pub(crate) struct ProvenanceStoreMark {
     origins: u32,
 }
 
+/// An owned scratch buffer for building an origin list before freezing it.
+#[derive(Clone, Debug)]
+pub struct OriginListBuilder {
+    buf: Vec<OriginId>,
+}
+
+impl OriginListBuilder {
+    /// Creates an empty reusable origin-list builder.
+    #[must_use]
+    pub(crate) fn new() -> Self {
+        Self { buf: Vec::new() }
+    }
+
+    /// Appends one origin to the unfinished list.
+    pub fn push(&mut self, origin: OriginId) {
+        self.buf.push(origin);
+    }
+
+    /// Returns the number of origins currently buffered.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.buf.len()
+    }
+
+    /// Returns whether the builder currently holds no origins.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.buf.is_empty()
+    }
+
+    /// Clears the unfinished list without allocating a span.
+    pub fn clear(&mut self) {
+        self.buf.clear();
+    }
+
+    #[must_use]
+    pub(crate) fn as_slice(&self) -> &[OriginId] {
+        &self.buf
+    }
+
+    /// Allocates the current origin list and clears the builder for reuse.
+    pub(crate) fn finish(&mut self, store: &mut ProvenanceStore) -> OriginListId {
+        let id = store.allocate_list(&self.buf);
+        self.buf.clear();
+        id
+    }
+}
+
 /// Source coordinate for a token read from an input source.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct SourceOrigin {
@@ -244,6 +292,12 @@ impl ProvenanceStore {
     #[must_use]
     pub(crate) const fn unknown_id() -> OriginId {
         OriginId::UNKNOWN
+    }
+
+    /// Creates a fresh owned scratch origin-list builder.
+    #[must_use]
+    pub(crate) fn builder() -> OriginListBuilder {
+        OriginListBuilder::new()
     }
 
     /// Allocates a new origin record, saturating capacity overflow to unknown.

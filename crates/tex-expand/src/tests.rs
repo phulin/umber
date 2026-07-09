@@ -182,7 +182,8 @@ fn get_x_token_pushes_macro_body_frame_and_continues() {
             token_list,
             replay_kind: TokenListReplayKind::MacroBody,
             index: 1,
-            macro_arguments
+            macro_arguments,
+            ..
         }) if *token_list == body && macro_arguments.is_empty()
     ));
     assert_eq!(
@@ -1145,7 +1146,7 @@ fn ifcat_compares_category_codes_after_expansion() {
 }
 
 #[test]
-fn ifx_compares_identical_macro_definitions_by_flags_and_hash_consed_ids() {
+fn ifx_compares_macro_definitions_semantically_ignoring_origin_lists() {
     let mut stores = Universe::new();
     let (_, _, else_cs, fi) = conditional_primitives(&mut stores);
     let ifx = expandable_primitive(&mut stores, "ifx", ExpandablePrimitive::IfX);
@@ -1156,13 +1157,30 @@ fn ifx_compares_identical_macro_definitions_by_flags_and_hash_consed_ids() {
     let left_body = stores.intern_token_list(&[Token::param(1), char_token('!')]);
     let right_body = stores.intern_token_list(&[Token::param(1), char_token('!')]);
     assert_eq!(left_body, right_body);
+    let left_origin = stores.source_origin(tex_state::SourceId::new(1), 10, 2, 3);
+    let right_origin = stores.source_origin(tex_state::SourceId::new(2), 20, 4, 5);
+    let param_origins = stores.allocate_origin_list(&[left_origin]);
+    let left_origins = stores.allocate_origin_list(&[left_origin, left_origin]);
+    let right_origins = stores.allocate_origin_list(&[right_origin, right_origin]);
     stores.set_macro_meaning(
         left,
-        MacroMeaning::new(MeaningFlags::EMPTY, params, left_body),
+        MacroMeaning::with_origins(
+            MeaningFlags::EMPTY,
+            params,
+            param_origins,
+            left_body,
+            left_origins,
+        ),
     );
     stores.set_macro_meaning(
         right,
-        MacroMeaning::new(MeaningFlags::EMPTY, params, right_body),
+        MacroMeaning::with_origins(
+            MeaningFlags::EMPTY,
+            params,
+            param_origins,
+            right_body,
+            right_origins,
+        ),
     );
     stores.set_macro_meaning(
         protected,

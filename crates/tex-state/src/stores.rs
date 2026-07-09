@@ -24,9 +24,9 @@ use crate::meaning::Meaning;
 use crate::node::Node;
 use crate::node_arena::{NodeArena, NodeArenaMark, NodeListBuilder};
 use crate::provenance::{
-    InsertedOrigin, InsertedOriginKind, MacroOrigin, OriginRecord, ProvenanceStore,
-    ProvenanceStoreMark, SourceOrigin, SynthesizedOrigin, SynthesizedOriginKind, SyntheticOrigin,
-    SyntheticOriginKind,
+    InsertedOrigin, InsertedOriginKind, MacroOrigin, OriginListBuilder, OriginRecord,
+    ProvenanceStore, ProvenanceStoreMark, SourceOrigin, SynthesizedOrigin, SynthesizedOriginKind,
+    SyntheticOrigin, SyntheticOriginKind,
 };
 use crate::scaled::Scaled;
 use crate::survivor::SurvivorArena;
@@ -359,6 +359,16 @@ impl Stores {
     pub fn intern_macro(&mut self, macro_meaning: MacroMeaning) -> MacroDefinitionId {
         self.assert_live_token_list(macro_meaning.parameter_text());
         self.assert_live_token_list(macro_meaning.replacement_text());
+        self.assert_live_origin_list(macro_meaning.parameter_origins());
+        self.assert_live_origin_list(macro_meaning.replacement_origins());
+        self.assert_origin_list_len_matches(
+            macro_meaning.parameter_text(),
+            macro_meaning.parameter_origins(),
+        );
+        self.assert_origin_list_len_matches(
+            macro_meaning.replacement_text(),
+            macro_meaning.replacement_origins(),
+        );
         self.macros.intern(macro_meaning)
     }
 
@@ -543,11 +553,36 @@ impl Stores {
         self.provenance.allocate_list(origins)
     }
 
+    /// Creates a fresh owned scratch origin-list builder.
+    #[must_use]
+    pub fn origin_list_builder(&self) -> OriginListBuilder {
+        ProvenanceStore::builder()
+    }
+
+    /// Allocates the current origin-list builder value and clears it for reuse.
+    pub fn finish_origin_list(&mut self, builder: &mut OriginListBuilder) -> OriginListId {
+        for &origin in builder.as_slice() {
+            self.assert_live_origin(origin);
+        }
+        builder.finish(&mut self.provenance)
+    }
+
     /// Reads a live origin-list span.
     #[must_use]
     pub fn origin_list(&self, id: OriginListId) -> &[OriginId] {
         self.assert_live_origin_list(id);
         self.provenance.list(id)
+    }
+
+    fn assert_origin_list_len_matches(&self, token_list: TokenListId, origin_list: OriginListId) {
+        if origin_list == OriginListId::EMPTY {
+            return;
+        }
+        assert_eq!(
+            self.tokens(token_list).len(),
+            self.origin_list(origin_list).len(),
+            "origin-list length does not match token-list length"
+        );
     }
 
     /// Interns a frozen glue specification in the owned glue store.

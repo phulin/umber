@@ -102,6 +102,7 @@ where
                 Ok(Dispatch::Push {
                     replay_kind: ExpansionReplayKind::TheOutput,
                     token_list: stores.toks(index),
+                    origin_list: tex_state::ids::OriginListId::EMPTY,
                     macro_arguments: MacroArguments::new(),
                 })
             }
@@ -112,6 +113,7 @@ where
                 Ok(Dispatch::Push {
                     replay_kind: ExpansionReplayKind::TheOutput,
                     token_list: stores.intern_token_list(&[Token::Cs(symbol)]),
+                    origin_list: crate::synthetic_origin_list(stores),
                     macro_arguments: MacroArguments::new(),
                 })
             }
@@ -247,6 +249,7 @@ where
         Meaning::ToksRegister(index) => Ok(Dispatch::Push {
             replay_kind: ExpansionReplayKind::TheOutput,
             token_list: stores.toks(index),
+            origin_list: tex_state::ids::OriginListId::EMPTY,
             macro_arguments: MacroArguments::new(),
         }),
         Meaning::IntParam(index) => Ok(push_rendered_text(
@@ -287,6 +290,7 @@ where
         Meaning::TokParam(index) => Ok(Dispatch::Push {
             replay_kind: ExpansionReplayKind::TheOutput,
             token_list: stores.tok_param(TokParam::new(index)),
+            origin_list: tex_state::ids::OriginListId::EMPTY,
             macro_arguments: MacroArguments::new(),
         }),
         _ => match stores.resolve(symbol) {
@@ -317,6 +321,7 @@ where
                 Ok(Dispatch::Push {
                     replay_kind: ExpansionReplayKind::TheOutput,
                     token_list: stores.toks(index),
+                    origin_list: tex_state::ids::OriginListId::EMPTY,
                     macro_arguments: MacroArguments::new(),
                 })
             }
@@ -356,12 +361,25 @@ where
     Dispatch::Push {
         replay_kind,
         token_list,
+        origin_list: synthetic_origin_list_for_tokens(stores, tokens.len()),
         macro_arguments: MacroArguments::new(),
     }
 }
 
 fn freeze_output_tokens(stores: &mut impl ExpansionState, tokens: &[Token]) -> TokenListId {
     stores.intern_token_list(tokens)
+}
+
+fn synthetic_origin_list_for_tokens(
+    stores: &mut impl ExpansionState,
+    len: usize,
+) -> tex_state::ids::OriginListId {
+    let origin = stores.synthetic_origin(tex_state::provenance::SyntheticOriginKind::Engine);
+    let mut origins = stores.origin_list_builder();
+    for _ in 0..len {
+        origins.push(origin);
+    }
+    stores.finish_origin_list(&mut origins)
 }
 
 pub(crate) fn string_tokens(stores: &impl ExpansionState, token: Token) -> Vec<Token> {

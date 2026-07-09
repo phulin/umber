@@ -452,7 +452,8 @@ fn token_list_frames_replay_before_sources_and_pop_at_end() {
                 token_list,
                 replay_kind: TokenListReplayKind::MacroBody,
                 index: 0,
-                macro_arguments
+                macro_arguments,
+                ..
             }
         ] if *token_list == list && macro_arguments.is_empty()
     ));
@@ -472,6 +473,58 @@ fn token_list_frames_replay_before_sources_and_pop_at_end() {
         input.next_token(&mut stores).expect("source replay"),
         Some(char_token('a', Catcode::Letter))
     );
+}
+
+#[test]
+fn token_list_replay_uses_frame_origin_list_without_changing_semantic_identity() {
+    let mut stores = Universe::new();
+    let tokens = [
+        char_token('x', Catcode::Letter),
+        char_token('y', Catcode::Letter),
+    ];
+    let left_list = stores.intern_token_list(&tokens);
+    let right_list = stores.intern_token_list(&tokens);
+    assert_eq!(left_list, right_list);
+
+    let left_origin = stores.source_origin(tex_state::SourceId::new(1), 10, 2, 3);
+    let right_origin = stores.source_origin(tex_state::SourceId::new(2), 20, 4, 5);
+    let left_origins = stores.allocate_origin_list(&[left_origin, left_origin]);
+    let right_origins = stores.allocate_origin_list(&[right_origin, right_origin]);
+
+    let mut left = InputStack::new(MemoryInput::new(""));
+    left.push_token_list_with_origins(left_list, left_origins, TokenListReplayKind::Inserted);
+    let mut right = InputStack::new(MemoryInput::new(""));
+    right.push_token_list_with_origins(right_list, right_origins, TokenListReplayKind::Inserted);
+
+    let left_replayed = left
+        .next_traced_token(&mut stores)
+        .expect("token-list replay")
+        .expect("token");
+    let right_replayed = right
+        .next_traced_token(&mut stores)
+        .expect("token-list replay")
+        .expect("token");
+
+    assert_eq!(left_replayed.token(), Some(tokens[0]));
+    assert_eq!(right_replayed.token(), Some(tokens[0]));
+    assert_eq!(left_replayed.origin(), left_origin);
+    assert_eq!(right_replayed.origin(), right_origin);
+}
+
+#[test]
+#[should_panic(expected = "token-list replay origin-list length does not match token-list length")]
+fn token_list_replay_checks_origin_list_length() {
+    let mut stores = Universe::new();
+    let token_list = stores.intern_token_list(&[
+        char_token('x', Catcode::Letter),
+        char_token('y', Catcode::Letter),
+    ]);
+    let origin = stores.source_origin(tex_state::SourceId::new(1), 10, 2, 3);
+    let origins = stores.allocate_origin_list(&[origin]);
+
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list_with_origins(token_list, origins, TokenListReplayKind::Inserted);
+    let _ = input.next_traced_token(&mut stores);
 }
 
 #[test]

@@ -119,9 +119,10 @@ supply.
   must summarize (`InputSummary`): a vector of frames, each either a
   *source frame* (source id + source byte offsets + line/col + current
   normalized line + in-line char/byte offsets + lexer state + pending
-  traced synthetic tokens) or a *token-list frame* (`TokenListId` + index + replay
-  kind: macro body, `\everypar`, mark, ...). Macro-body token-list frames
-  additionally carry up to nine frozen argument `TokenListId`s; replaying a
+  traced synthetic tokens) or a *token-list frame* (`TokenListId` +
+  `OriginListId` + index + replay kind: macro body, `\everypar`, mark, ...).
+  Macro-body token-list frames additionally carry up to nine frozen argument
+  token-list/origin-list pairs; replaying a
   `Param(slot)` token pushes the corresponding argument list as a nested
   macro-argument frame while the replacement body id remains unchanged.
   Open conditionals are summarized as condition frames in the same vector,
@@ -145,7 +146,10 @@ supply.
   source frame state and token-list replay progress. Mutable input-stack
   delivery carries `TracedTokenWord`; plain-`Token` methods are compatibility
   shims that decode and drop origins. Token-list frames read frozen content only
-  through `Universe::tokens`; durable source identity is
+  through `Universe::tokens` and pair it with the frame's origin-list span when
+  one exists. Stored non-macro token lists without an origin-list home
+  (`\toks`, `\everypar`, marks, output, writes) replay with synthetic
+  per-replay-kind origins in v1; durable source identity is
   the `World` input record captured in `Universe` snapshots, which pins file
   bytes by content hash so a driver can reopen the exact source and apply the
   lexer summary. `\endinput` is represented as a source-frame flag that lets
@@ -274,8 +278,9 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   so hooks can open input files without seeing meaning reads, Env/register
   writes, code-table writes, grouping, snapshot, font-assignment, or general
   World mutation APIs. Macro body replay uses
-  the body `TokenListId` directly plus frozen argument ids on the replay
-  frame; it does not allocate a substituted body list. Token-list replay is
+  the body `TokenListId` directly plus its definition-time `OriginListId` and
+  frozen argument token/origin pairs on the replay frame; it does not allocate
+  a substituted body list. Token-list replay is
   naturally read-only; source-frame replay may intern newly encountered
   control sequence names through the lexer/interner capability. `\csname` uses a dedicated
   expansion scan that stops on `\endcsname`, accumulates only expanded character

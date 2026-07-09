@@ -1,16 +1,54 @@
 //! Snapshot-ready input stack summary shared by the lexer and `Universe`.
 
-use crate::ids::TokenListId;
+use crate::ids::{OriginListId, TokenListId};
 use crate::token::{Token, TracedTokenWord};
 use std::hash::{Hash, Hasher};
 
 /// Maximum number of macro arguments TeX permits in one macro body.
 pub const MACRO_ARGUMENT_SLOTS: usize = 9;
 
+/// A frozen semantic token list paired with the per-instance origins that
+/// should be used when replaying it.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct TracedTokenList {
+    token_list: TokenListId,
+    origin_list: OriginListId,
+}
+
+impl TracedTokenList {
+    /// Creates a token-list replay pair.
+    #[must_use]
+    pub const fn new(token_list: TokenListId, origin_list: OriginListId) -> Self {
+        Self {
+            token_list,
+            origin_list,
+        }
+    }
+
+    /// Creates a replay pair with no origin-list home.
+    #[must_use]
+    pub const fn synthetic(token_list: TokenListId) -> Self {
+        Self {
+            token_list,
+            origin_list: OriginListId::EMPTY,
+        }
+    }
+
+    #[must_use]
+    pub const fn token_list(self) -> TokenListId {
+        self.token_list
+    }
+
+    #[must_use]
+    pub const fn origin_list(self) -> OriginListId {
+        self.origin_list
+    }
+}
+
 /// Frozen macro arguments carried by a macro-body replay frame.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct MacroArguments {
-    slots: [Option<TokenListId>; MACRO_ARGUMENT_SLOTS],
+    slots: [Option<TracedTokenList>; MACRO_ARGUMENT_SLOTS],
 }
 
 impl MacroArguments {
@@ -24,6 +62,11 @@ impl MacroArguments {
 
     /// Records one frozen argument token list in a one-based TeX slot.
     pub fn set(&mut self, slot: u8, token_list: TokenListId) {
+        self.set_traced(slot, TracedTokenList::synthetic(token_list));
+    }
+
+    /// Records one traced frozen argument token list in a one-based TeX slot.
+    pub fn set_traced(&mut self, slot: u8, token_list: TracedTokenList) {
         let index = argument_index(slot);
         self.slots[index] = Some(token_list);
     }
@@ -31,6 +74,12 @@ impl MacroArguments {
     /// Reads the frozen argument token list for a one-based TeX slot.
     #[must_use]
     pub fn get(self, slot: u8) -> Option<TokenListId> {
+        self.get_traced(slot).map(TracedTokenList::token_list)
+    }
+
+    /// Reads the traced frozen argument token list for a one-based TeX slot.
+    #[must_use]
+    pub fn get_traced(self, slot: u8) -> Option<TracedTokenList> {
         let index = argument_index(slot);
         self.slots[index]
     }
@@ -294,6 +343,7 @@ pub enum InputFrameSummary {
     },
     TokenList {
         token_list: TokenListId,
+        origin_list: OriginListId,
         replay_kind: TokenListReplayKind,
         index: usize,
         macro_arguments: MacroArguments,

@@ -220,6 +220,7 @@ pub enum Dispatch {
     Push {
         replay_kind: ExpansionReplayKind,
         token_list: tex_state::ids::TokenListId,
+        origin_list: tex_state::ids::OriginListId,
         macro_arguments: MacroArguments,
     },
 }
@@ -619,6 +620,7 @@ pub(crate) fn apply_dispatch_push<S>(input: &mut InputStack<S>, dispatch: Dispat
     let Dispatch::Push {
         replay_kind,
         token_list,
+        origin_list,
         macro_arguments,
     } = dispatch
     else {
@@ -626,9 +628,9 @@ pub(crate) fn apply_dispatch_push<S>(input: &mut InputStack<S>, dispatch: Dispat
     };
 
     if replay_kind == ExpansionReplayKind::MacroBody {
-        input.push_macro_body(token_list, macro_arguments);
+        input.push_macro_body_with_origins(token_list, origin_list, macro_arguments);
     } else {
-        input.push_token_list(token_list, replay_kind.as_lex_kind());
+        input.push_token_list_with_origins(token_list, origin_list, replay_kind.as_lex_kind());
     }
 }
 
@@ -638,7 +640,8 @@ pub(crate) fn push_inserted_token<S>(
     token: Token,
 ) {
     let token_list = stores.intern_token_list(&[token]);
-    input.push_token_list(token_list, TokenListReplayKind::Inserted);
+    let origin_list = synthetic_origin_list(stores);
+    input.push_token_list_with_origins(token_list, origin_list, TokenListReplayKind::Inserted);
 }
 
 pub(crate) fn push_noexpand_token<S>(
@@ -647,5 +650,15 @@ pub(crate) fn push_noexpand_token<S>(
     token: Token,
 ) {
     let token_list = stores.intern_token_list(&[token]);
-    input.push_token_list(token_list, TokenListReplayKind::NoExpand);
+    let origin_list = synthetic_origin_list(stores);
+    input.push_token_list_with_origins(token_list, origin_list, TokenListReplayKind::NoExpand);
+}
+
+pub(crate) fn synthetic_origin_list(
+    stores: &mut impl ExpansionState,
+) -> tex_state::ids::OriginListId {
+    let origin = stores.synthetic_origin(tex_state::provenance::SyntheticOriginKind::Engine);
+    let mut origins = stores.origin_list_builder();
+    origins.push(origin);
+    stores.finish_origin_list(&mut origins)
 }

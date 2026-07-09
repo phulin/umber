@@ -4,7 +4,7 @@
 //! macro definition here, and the definition names separately frozen parameter
 //! text and replacement-body token lists.
 
-use crate::ids::{MacroDefinitionId, TokenListId};
+use crate::ids::{MacroDefinitionId, OriginListId, TokenListId};
 use crate::meaning::MeaningFlags;
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
@@ -15,7 +15,9 @@ use std::hash::{Hash, Hasher};
 pub struct MacroMeaning {
     flags: MeaningFlags,
     parameter_text: TokenListId,
+    parameter_origins: OriginListId,
     replacement_text: TokenListId,
+    replacement_origins: OriginListId,
 }
 
 impl MacroMeaning {
@@ -26,10 +28,30 @@ impl MacroMeaning {
         parameter_text: TokenListId,
         replacement_text: TokenListId,
     ) -> Self {
+        Self::with_origins(
+            flags,
+            parameter_text,
+            OriginListId::EMPTY,
+            replacement_text,
+            OriginListId::EMPTY,
+        )
+    }
+
+    /// Creates a macro meaning over frozen token lists and their origin lists.
+    #[must_use]
+    pub const fn with_origins(
+        flags: MeaningFlags,
+        parameter_text: TokenListId,
+        parameter_origins: OriginListId,
+        replacement_text: TokenListId,
+        replacement_origins: OriginListId,
+    ) -> Self {
         Self {
             flags,
             parameter_text,
+            parameter_origins,
             replacement_text,
+            replacement_origins,
         }
     }
 
@@ -44,8 +66,25 @@ impl MacroMeaning {
     }
 
     #[must_use]
+    pub const fn parameter_origins(self) -> OriginListId {
+        self.parameter_origins
+    }
+
+    #[must_use]
     pub const fn replacement_text(self) -> TokenListId {
         self.replacement_text
+    }
+
+    #[must_use]
+    pub const fn replacement_origins(self) -> OriginListId {
+        self.replacement_origins
+    }
+
+    #[must_use]
+    pub const fn semantic_eq(self, other: Self) -> bool {
+        self.flags.bits() == other.flags.bits()
+            && self.parameter_text.raw() == other.parameter_text.raw()
+            && self.replacement_text.raw() == other.replacement_text.raw()
     }
 }
 

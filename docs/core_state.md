@@ -175,14 +175,16 @@ Rules:
   `macro`, the public flag byte (`\long`, `\outer`, `\protected`, plus the
   reserved frozen bit), and a 48-bit operand naming an immutable
   `MacroDefinitionId`. That definition is owned by the aggregate
-  `Universe` boundary and contains two frozen token-list ids:
-  parameter text and replacement text. Downstream code may decode macro
+  `Universe` boundary and contains two frozen token-list ids plus their
+  per-definition origin-list ids: parameter text and replacement text.
+  Downstream code may decode macro
   meanings through public aggregate facades into the `MacroMeaning` aggregate,
   but it cannot mint live macro-definition ids or inspect the raw store.
   Identical token lists are hash-consed by the token store, so separately
-  scanned identical replacement bodies receive the same `TokenListId`; macro
-  definitions themselves are also hash-consed over flags, parameter text id,
-  and replacement text id.
+  scanned identical replacement bodies receive the same `TokenListId` even
+  when their origin lists differ. Macro-definition semantic hashing and
+  `\ifx` comparison use flags plus semantic parameter/replacement token-list
+  content, not origin-list identity.
 - Addresses of `cells` are stable for the process lifetime (no reallocation:
   size the array to the interner's max, grow by chunked segments if needed —
   segments never move).
@@ -301,9 +303,10 @@ cells[i] = new
 - Token lists are **immutable after construction** (hard invariant; Knuth
   already ref-shares macro bodies — we make it structural).
 - Built via builder-then-freeze (§8.4); on `finish()`, **hash-consed**:
-  identical lists get identical `TokenListId`s. Benefits: `\ifx` on bodies is
-  an id compare; memo keys are hashes; identical expansions share storage
-  across snapshots automatically.
+  identical lists get identical `TokenListId`s. Macro provenance uses parallel
+  `OriginListId` spans and never participates in this token-list identity;
+  memo keys are hashes and identical expansions share storage across snapshots
+  automatically.
 - Backing: bump arena + hash index; rollback = watermark truncation + lazy
   index repair (same policy as interner).
 
@@ -319,13 +322,20 @@ cells[i] = new
   packed `OriginId` arena addressed by `OriginListId` spans. It is deliberately
   per-instance and not hash-consed: identical origin records or lists may have
   different ids, and rollback only truncates arenas to the snapshot mark.
+- Origin-list builders are finished through the aggregate `Universe`/`Stores`
+  API in parallel with token-list builders. Token-list replay frames carry a
+  `TokenListId` plus an `OriginListId`; when the origin span is present its
+  length must match the semantic token list length. Stored non-macro token
+  lists without an origin-list home replay with synthetic per-replay-kind
+  origins in v1 rather than using any global `TokenListId` to `OriginListId`
+  map.
 - Allocation is infallible from the engine's perspective. Origin-record
   capacity overflow saturates to `OriginId(0)` so diagnostic provenance never
   aborts a TeX compile; origin-list capacity overflow degrades to the empty
   origin-list span.
 - The public boundary is aggregate-owned. Callers allocate and read source,
-  macro, inserted, synthesized, and synthetic/bootstrap origins through
-  `Universe`/`Stores`-style APIs; raw provenance store mutation and unchecked
+  macro, inserted, synthesized, synthetic/bootstrap, and origin-list builder
+  APIs through `Universe`/`Stores`-style APIs; raw provenance store mutation and unchecked
   `OriginListId` construction remain internal or test-only. Provenance appends
   are not journaled and are not part of memo redo slices; execution
   reconstructs them when replaying.
@@ -515,8 +525,9 @@ pub struct Snapshot {
 - **Input restoration**: `InputSummary` carries the lexer-owned source-frame
   state required after a source is reopened: source-local offsets, current
   normalized line, in-line char/byte offsets, lexer N/M/S state, queued
-  traced synthetic tokens such as a blank-line `\par`, token-list replay positions,
-  macro-body replay argument slots, open condition frames, and the last
+  traced synthetic tokens such as a blank-line `\par`, token-list replay
+  positions and origin-list ids, macro-body replay argument slots, open
+  condition frames, and the last
   popped source frame. Condition frames are snapshot-owned input frames; each
   carries its conditional family (`\if...` or `\ifcase`), current limb
   (`\if`, `\or`, or `\else`), whether condition operands are still being

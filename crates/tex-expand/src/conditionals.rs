@@ -580,7 +580,12 @@ fn meaning_words_ifx_equal(stores: &impl ExpansionState, left: Symbol, right: Sy
                 flags: right_flags,
                 definition: right_definition,
             },
-        ) => left_flags == right_flags && left_definition == right_definition,
+        ) => {
+            left_flags == right_flags
+                && stores
+                    .macro_definition(left_definition)
+                    .semantic_eq(stores.macro_definition(right_definition))
+        }
         (Meaning::Macro { .. }, _) | (_, Meaning::Macro { .. }) => false,
         _ => left == right,
     }

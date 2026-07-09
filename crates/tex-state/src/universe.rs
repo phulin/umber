@@ -33,7 +33,7 @@ use crate::page::{
     PageInteger, PageMark,
 };
 use crate::provenance::{
-    InsertedOriginKind, OriginRecord, SynthesizedOriginKind, SyntheticOriginKind,
+    InsertedOriginKind, OriginListBuilder, OriginRecord, SynthesizedOriginKind, SyntheticOriginKind,
 };
 use crate::scaled::Scaled;
 use crate::state_hash::{INITIAL_STATE_HASH, StateHasher, combine};
@@ -110,6 +110,7 @@ pub trait ExpansionState {
     fn tok_param(&self, param: TokParam) -> TokenListId;
     fn input_stream_eof(&self, stream: StreamSlot) -> bool;
     fn bootstrap_origin(&self) -> OriginId;
+    fn synthetic_origin(&mut self, kind: SyntheticOriginKind) -> OriginId;
     fn source_origin(
         &mut self,
         source: SourceId,
@@ -123,6 +124,9 @@ pub trait ExpansionState {
         token: Token,
         parent: OriginId,
     ) -> OriginId;
+    fn origin_list_builder(&self) -> OriginListBuilder;
+    fn finish_origin_list(&mut self, builder: &mut OriginListBuilder) -> OriginListId;
+    fn origin_list(&self, id: OriginListId) -> &[OriginId];
 }
 
 /// Input file reads available to driver-supplied `\input` hooks.
@@ -1080,6 +1084,17 @@ impl Universe {
     /// Allocates an origin-list span.
     pub fn allocate_origin_list(&mut self, origins: &[OriginId]) -> OriginListId {
         self.stores.allocate_origin_list(origins)
+    }
+
+    /// Creates a fresh owned scratch origin-list builder.
+    #[must_use]
+    pub fn origin_list_builder(&self) -> OriginListBuilder {
+        self.stores.origin_list_builder()
+    }
+
+    /// Allocates the current origin-list builder value and clears it for reuse.
+    pub fn finish_origin_list(&mut self, builder: &mut OriginListBuilder) -> OriginListId {
+        self.stores.finish_origin_list(builder)
     }
 
     /// Reads a live origin-list span.
@@ -2047,6 +2062,10 @@ impl ExpansionState for Universe {
         Self::bootstrap_origin(self)
     }
 
+    fn synthetic_origin(&mut self, kind: SyntheticOriginKind) -> OriginId {
+        Self::synthetic_origin(self, kind)
+    }
+
     fn source_origin(
         &mut self,
         source: SourceId,
@@ -2064,6 +2083,18 @@ impl ExpansionState for Universe {
         parent: OriginId,
     ) -> OriginId {
         Self::inserted_origin(self, kind, token, parent)
+    }
+
+    fn origin_list_builder(&self) -> OriginListBuilder {
+        Self::origin_list_builder(self)
+    }
+
+    fn finish_origin_list(&mut self, builder: &mut OriginListBuilder) -> OriginListId {
+        Self::finish_origin_list(self, builder)
+    }
+
+    fn origin_list(&self, id: OriginListId) -> &[OriginId] {
+        Self::origin_list(self, id)
     }
 
     fn input_stream_eof(&self, stream: StreamSlot) -> bool {
@@ -2264,6 +2295,10 @@ impl ExpansionState for ExpansionContext<'_> {
         self.universe.bootstrap_origin()
     }
 
+    fn synthetic_origin(&mut self, kind: SyntheticOriginKind) -> OriginId {
+        self.universe.synthetic_origin(kind)
+    }
+
     fn source_origin(
         &mut self,
         source: SourceId,
@@ -2282,6 +2317,18 @@ impl ExpansionState for ExpansionContext<'_> {
         parent: OriginId,
     ) -> OriginId {
         self.universe.inserted_origin(kind, token, parent)
+    }
+
+    fn origin_list_builder(&self) -> OriginListBuilder {
+        self.universe.origin_list_builder()
+    }
+
+    fn finish_origin_list(&mut self, builder: &mut OriginListBuilder) -> OriginListId {
+        self.universe.finish_origin_list(builder)
+    }
+
+    fn origin_list(&self, id: OriginListId) -> &[OriginId] {
+        self.universe.origin_list(id)
     }
 
     fn input_stream_eof(&self, stream: StreamSlot) -> bool {
@@ -2426,6 +2473,7 @@ fn hash_input_summary_fields(stores: &Stores, summary: &InputSummary, hasher: &m
             }
             InputFrameSummary::TokenList {
                 token_list,
+                origin_list: _,
                 replay_kind,
                 index,
                 macro_arguments,

@@ -65,6 +65,7 @@ macro_rules! dispatch_match {
                 Ok(Dispatch::Push {
                     replay_kind: ExpansionReplayKind::MacroBody,
                     token_list: macro_meaning.replacement_text(),
+                    origin_list: macro_meaning.replacement_origins(),
                     macro_arguments: arguments.as_macro_arguments(),
                 })
             }
@@ -170,6 +171,7 @@ macro_rules! dispatch_match {
             ) => Ok(Dispatch::Push {
                 replay_kind: ExpansionReplayKind::Mark,
                 token_list: stores.page_mark(page_mark_for_primitive(primitive)),
+                origin_list: tex_state::ids::OriginListId::EMPTY,
                 macro_arguments: MacroArguments::new(),
             }),
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfTrue) => {

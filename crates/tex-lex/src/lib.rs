@@ -7,7 +7,7 @@
 use std::collections::VecDeque;
 use std::fmt;
 
-use tex_state::ids::TokenListId;
+use tex_state::ids::{OriginListId, TokenListId};
 use tex_state::provenance::InsertedOriginKind;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{ExpansionState, FileContent, WorldError};
@@ -15,7 +15,7 @@ use tex_state::{ExpansionState, FileContent, WorldError};
 pub use tex_state::{
     ConditionFrameSummary, ConditionKind, ConditionLimb, InputFrameSummary, InputSummary,
     LexerState, MACRO_ARGUMENT_SLOTS, MacroArguments, SourceFrameSummary, SourceId,
-    TokenListReplayKind,
+    TokenListReplayKind, TracedTokenList,
 };
 
 /// Source of physical input lines.
@@ -194,6 +194,7 @@ impl<S> SourceInputFrame<S> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct TokenListInputFrame {
     token_list: TokenListId,
+    origin_list: OriginListId,
     replay_kind: TokenListReplayKind,
     index: usize,
     macro_arguments: MacroArguments,
@@ -215,13 +216,13 @@ struct LastSourceFrame {
 enum TokenReplay {
     Deliver(Token),
     DeliverNoExpand(Token),
-    PushArgument(TokenListId),
+    PushArgument(TracedTokenList),
 }
 
 enum TracedTokenReplay {
     Deliver(TracedTokenWord),
     DeliverNoExpand(TracedTokenWord),
-    PushArgument(TokenListId),
+    PushArgument(TracedTokenList),
 }
 
 /// A token read from the input stack with expansion-control metadata.
@@ -341,11 +342,13 @@ impl<S> InputStack<S> {
                 }
                 InputFrameSummary::TokenList {
                     token_list,
+                    origin_list,
                     replay_kind,
                     index,
                     macro_arguments,
                 } => frames.push(InputFrame::TokenList(TokenListInputFrame {
                     token_list: *token_list,
+                    origin_list: *origin_list,
                     replay_kind: *replay_kind,
                     index: *index,
                     macro_arguments: *macro_arguments,
@@ -370,8 +373,18 @@ impl<S> InputStack<S> {
     }
 
     pub fn push_token_list(&mut self, token_list: TokenListId, replay_kind: TokenListReplayKind) {
+        self.push_token_list_with_origins(token_list, OriginListId::EMPTY, replay_kind);
+    }
+
+    pub fn push_token_list_with_origins(
+        &mut self,
+        token_list: TokenListId,
+        origin_list: OriginListId,
+        replay_kind: TokenListReplayKind,
+    ) {
         self.frames.push(InputFrame::TokenList(TokenListInputFrame {
             token_list,
+            origin_list,
             replay_kind,
             index: 0,
             macro_arguments: MacroArguments::new(),
@@ -379,8 +392,18 @@ impl<S> InputStack<S> {
     }
 
     pub fn push_macro_body(&mut self, token_list: TokenListId, macro_arguments: MacroArguments) {
+        self.push_macro_body_with_origins(token_list, OriginListId::EMPTY, macro_arguments);
+    }
+
+    pub fn push_macro_body_with_origins(
+        &mut self,
+        token_list: TokenListId,
+        origin_list: OriginListId,
+        macro_arguments: MacroArguments,
+    ) {
         self.frames.push(InputFrame::TokenList(TokenListInputFrame {
             token_list,
+            origin_list,
             replay_kind: TokenListReplayKind::MacroBody,
             index: 0,
             macro_arguments,
@@ -433,6 +456,7 @@ impl<S> InputStack<S> {
                     },
                     InputFrame::TokenList(token_list) => InputFrameSummary::TokenList {
                         token_list: token_list.token_list,
+                        origin_list: token_list.origin_list,
                         replay_kind: token_list.replay_kind,
                         index: token_list.index,
                         macro_arguments: token_list.macro_arguments,
@@ -621,7 +645,8 @@ where
                     match next_traced_token_from_token_list_frame(token_list, stores) {
                         Some(TracedTokenReplay::PushArgument(argument)) => {
                             self.frames.push(InputFrame::TokenList(TokenListInputFrame {
-                                token_list: argument,
+                                token_list: argument.token_list(),
+                                origin_list: argument.origin_list(),
                                 replay_kind: TokenListReplayKind::MacroArgument,
                                 index: 0,
                                 macro_arguments: MacroArguments::new(),
@@ -710,7 +735,8 @@ where
                     match next_traced_token_from_token_list_frame(token_list, stores) {
                         Some(TracedTokenReplay::PushArgument(argument)) => {
                             self.frames.push(InputFrame::TokenList(TokenListInputFrame {
-                                token_list: argument,
+                                token_list: argument.token_list(),
+                                origin_list: argument.origin_list(),
                                 replay_kind: TokenListReplayKind::MacroArgument,
                                 index: 0,
                                 macro_arguments: MacroArguments::new(),
@@ -783,7 +809,8 @@ where
                     match next_token_from_token_list_frame(token_list, stores) {
                         Some(TokenReplay::PushArgument(argument)) => {
                             self.frames.push(InputFrame::TokenList(TokenListInputFrame {
-                                token_list: argument,
+                                token_list: argument.token_list(),
+                                origin_list: argument.origin_list(),
                                 replay_kind: TokenListReplayKind::MacroArgument,
                                 index: 0,
                                 macro_arguments: MacroArguments::new(),
@@ -912,7 +939,7 @@ fn next_token_from_token_list_frame(
 
     if frame.replay_kind == TokenListReplayKind::MacroBody
         && let Token::Param(slot) = token
-        && let Some(argument) = frame.macro_arguments.get(slot)
+        && let Some(argument) = frame.macro_arguments.get_traced(slot)
     {
         return Some(TokenReplay::PushArgument(argument));
     }
@@ -934,23 +961,42 @@ fn next_traced_token_from_token_list_frame(
 
     if frame.replay_kind == TokenListReplayKind::MacroBody
         && let Token::Param(slot) = token
-        && let Some(argument) = frame.macro_arguments.get(slot)
+        && let Some(argument) = frame.macro_arguments.get_traced(slot)
     {
         return Some(TracedTokenReplay::PushArgument(argument));
     }
 
-    let parent = stores.bootstrap_origin();
-    let origin = stores.inserted_origin(
-        InsertedOriginKind::TokenListReplay(frame.replay_kind),
-        token,
-        parent,
-    );
+    let origin = replay_origin(frame, stores, token);
     let token = TracedTokenWord::pack(token, origin);
     if frame.replay_kind == TokenListReplayKind::NoExpand {
         return Some(TracedTokenReplay::DeliverNoExpand(token));
     }
 
     Some(TracedTokenReplay::Deliver(token))
+}
+
+fn replay_origin(
+    frame: &TokenListInputFrame,
+    stores: &mut impl ExpansionState,
+    token: Token,
+) -> OriginId {
+    if frame.origin_list == OriginListId::EMPTY {
+        let parent = stores.bootstrap_origin();
+        return stores.inserted_origin(
+            InsertedOriginKind::TokenListReplay(frame.replay_kind),
+            token,
+            parent,
+        );
+    }
+
+    let origins = stores.origin_list(frame.origin_list);
+    let token_len = stores.tokens(frame.token_list).len();
+    assert_eq!(
+        origins.len(),
+        token_len,
+        "token-list replay origin-list length does not match token-list length"
+    );
+    origins[frame.index - 1]
 }
 
 fn load_next_line_readonly<S>(

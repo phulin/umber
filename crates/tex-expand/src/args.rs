@@ -9,17 +9,18 @@ use std::fmt;
 
 use tex_lex::{InputSource, InputStack, LexError, MACRO_ARGUMENT_SLOTS, MacroArguments};
 use tex_state::ExpansionState;
+use tex_state::TracedTokenList;
 use tex_state::ids::TokenListId;
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{Meaning, MeaningFlags};
-use tex_state::token::{Catcode, Token};
+use tex_state::token::{Catcode, Token, TracedTokenWord};
 
 use crate::{NoopRecorder, ReadRecorder};
 
 /// Frozen arguments matched for one macro call.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct MatchedArguments {
-    arguments: Vec<TokenListId>,
+    arguments: Vec<TracedTokenList>,
 }
 
 impl MatchedArguments {
@@ -35,6 +36,11 @@ impl MatchedArguments {
 
     #[must_use]
     pub fn get(&self, slot: u8) -> Option<TokenListId> {
+        self.get_traced(slot).map(TracedTokenList::token_list)
+    }
+
+    #[must_use]
+    pub fn get_traced(&self, slot: u8) -> Option<TracedTokenList> {
         slot.checked_sub(1)
             .and_then(|index| self.arguments.get(index as usize))
             .copied()
@@ -48,12 +54,12 @@ impl MatchedArguments {
         );
         let mut arguments = MacroArguments::new();
         for (index, &id) in self.arguments.iter().enumerate() {
-            arguments.set((index + 1) as u8, id);
+            arguments.set_traced((index + 1) as u8, id);
         }
         arguments
     }
 
-    fn push(&mut self, id: TokenListId) {
+    fn push(&mut self, id: TracedTokenList) {
         self.arguments.push(id);
     }
 }
@@ -119,7 +125,7 @@ struct ParameterPattern {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct PendingArgumentToken {
-    token: Token,
+    token: TracedTokenWord,
     allow_par: bool,
 }
 
@@ -223,7 +229,7 @@ where
 {
     for &expected_token in expected {
         let token = next_checked_token(input, stores, recorder, flags, macro_name)?;
-        if token != expected_token {
+        if traced_semantic_token(token) != expected_token {
             return Err(MacroCallError::DoesNotMatchDefinition {
                 macro_name: macro_name.to_owned(),
             });
@@ -238,23 +244,23 @@ fn scan_undelimited_argument<S, R>(
     recorder: &mut R,
     flags: MeaningFlags,
     macro_name: &str,
-) -> Result<TokenListId, MacroCallError>
+) -> Result<TracedTokenList, MacroCallError>
 where
     S: InputSource,
     R: ReadRecorder,
 {
     let mut token = next_checked_token(input, stores, recorder, flags, macro_name)?;
-    while is_space_token(token) {
+    while is_space_token(traced_semantic_token(token)) {
         token = next_checked_token(input, stores, recorder, flags, macro_name)?;
     }
 
     let mut tokens = Vec::new();
-    if is_begin_group(token) {
+    if is_begin_group(traced_semantic_token(token)) {
         scan_balanced_group(input, stores, recorder, flags, macro_name, &mut tokens)?;
     } else {
         tokens.push(token);
     }
-    Ok(freeze_tokens(stores, &tokens))
+    Ok(freeze_traced_tokens(stores, &tokens))
 }
 
 fn scan_balanced_group<S, R>(
@@ -263,7 +269,7 @@ fn scan_balanced_group<S, R>(
     recorder: &mut R,
     flags: MeaningFlags,
     macro_name: &str,
-    tokens: &mut Vec<Token>,
+    tokens: &mut Vec<TracedTokenWord>,
 ) -> Result<(), MacroCallError>
 where
     S: InputSource,
@@ -272,7 +278,7 @@ where
     let mut level = 1_u32;
     loop {
         let token = next_checked_token(input, stores, recorder, flags, macro_name)?;
-        match token {
+        match traced_semantic_token(token) {
             Token::Char {
                 cat: Catcode::BeginGroup,
                 ..
@@ -302,7 +308,7 @@ fn scan_delimited_argument<S, R>(
     flags: MeaningFlags,
     macro_name: &str,
     delimiter: &[Token],
-) -> Result<TokenListId, MacroCallError>
+) -> Result<TracedTokenList, MacroCallError>
 where
     S: InputSource,
     R: ReadRecorder,
@@ -313,7 +319,7 @@ where
 
     loop {
         let scanned = next_or_pending_token(input, stores, recorder, macro_name, &mut pending)?;
-        let token = scanned.token;
+        let token = traced_semantic_token(scanned.token);
         if level == 0 && token == delimiter[0] {
             let mut candidate = vec![scanned];
             let mut matched = true;
@@ -321,14 +327,14 @@ where
                 let next =
                     next_or_pending_token(input, stores, recorder, macro_name, &mut pending)?;
                 candidate.push(next);
-                if next.token != expected {
+                if traced_semantic_token(next.token) != expected {
                     matched = false;
                     break;
                 }
             }
             if matched {
                 let stripped = strip_outer_group(&argument);
-                return Ok(freeze_tokens(stores, stripped));
+                return Ok(freeze_traced_tokens(stores, stripped));
             }
             push_argument_token(&mut argument, &mut level, candidate[0].token);
             let last_index = candidate.len() - 1;
@@ -343,7 +349,7 @@ where
         }
 
         check_argument_par(stores, flags, macro_name, scanned)?;
-        push_argument_token(&mut argument, &mut level, token);
+        push_argument_token(&mut argument, &mut level, scanned.token);
     }
 }
 
@@ -375,7 +381,7 @@ fn check_argument_par(
     scanned: PendingArgumentToken,
 ) -> Result<(), MacroCallError> {
     if !scanned.allow_par
-        && is_par_token(stores, scanned.token)
+        && is_par_token(stores, traced_semantic_token(scanned.token))
         && !flags.contains(MeaningFlags::LONG)
     {
         return Err(MacroCallError::ParagraphEndedBeforeComplete {
@@ -391,14 +397,14 @@ fn next_checked_token<S, R>(
     recorder: &mut R,
     flags: MeaningFlags,
     macro_name: &str,
-) -> Result<Token, MacroCallError>
+) -> Result<TracedTokenWord, MacroCallError>
 where
     S: InputSource,
     R: ReadRecorder,
 {
     let token = next_token_without_par_check(input, stores, recorder, macro_name)?;
 
-    if is_par_token(stores, token) && !flags.contains(MeaningFlags::LONG) {
+    if is_par_token(stores, traced_semantic_token(token)) && !flags.contains(MeaningFlags::LONG) {
         return Err(MacroCallError::ParagraphEndedBeforeComplete {
             macro_name: macro_name.to_owned(),
         });
@@ -412,18 +418,18 @@ fn next_token_without_par_check<S, R>(
     stores: &mut impl ExpansionState,
     recorder: &mut R,
     macro_name: &str,
-) -> Result<Token, MacroCallError>
+) -> Result<TracedTokenWord, MacroCallError>
 where
     S: InputSource,
     R: ReadRecorder,
 {
     let token = input
-        .next_token(stores)?
+        .next_traced_token(stores)?
         .ok_or_else(|| MacroCallError::EndOfInput {
             macro_name: macro_name.to_owned(),
         })?;
 
-    if let Token::Cs(symbol) = token {
+    if let Token::Cs(symbol) = traced_semantic_token(token) {
         let meaning = stores.meaning(symbol);
         recorder.record_meaning(symbol, meaning);
         if let Meaning::Macro { flags, .. } = meaning
@@ -438,8 +444,12 @@ where
     Ok(token)
 }
 
-fn push_argument_token(argument: &mut Vec<Token>, level: &mut u32, token: Token) {
-    match token {
+fn push_argument_token(
+    argument: &mut Vec<TracedTokenWord>,
+    level: &mut u32,
+    token: TracedTokenWord,
+) {
+    match traced_semantic_token(token) {
         Token::Char {
             cat: Catcode::BeginGroup,
             ..
@@ -458,14 +468,17 @@ fn push_argument_token(argument: &mut Vec<Token>, level: &mut u32, token: Token)
     }
 }
 
-fn strip_outer_group(tokens: &[Token]) -> &[Token] {
-    if tokens.len() < 2 || !is_begin_group(tokens[0]) || !is_end_group(tokens[tokens.len() - 1]) {
+fn strip_outer_group(tokens: &[TracedTokenWord]) -> &[TracedTokenWord] {
+    if tokens.len() < 2
+        || !is_begin_group(traced_semantic_token(tokens[0]))
+        || !is_end_group(traced_semantic_token(tokens[tokens.len() - 1]))
+    {
         return tokens;
     }
 
     let mut level = 0_u32;
     for (index, &token) in tokens.iter().enumerate() {
-        match token {
+        match traced_semantic_token(token) {
             Token::Char {
                 cat: Catcode::BeginGroup,
                 ..
@@ -486,12 +499,25 @@ fn strip_outer_group(tokens: &[Token]) -> &[Token] {
     &tokens[1..tokens.len() - 1]
 }
 
-fn freeze_tokens(stores: &mut impl ExpansionState, tokens: &[Token]) -> TokenListId {
+fn freeze_traced_tokens(
+    stores: &mut impl ExpansionState,
+    tokens: &[TracedTokenWord],
+) -> TracedTokenList {
     let mut builder = stores.token_list_builder();
+    let mut origins = stores.origin_list_builder();
     for &token in tokens {
-        builder.push(token);
+        builder.push(traced_semantic_token(token));
+        origins.push(token.origin());
     }
-    stores.finish_token_list(&mut builder)
+    let token_list = stores.finish_token_list(&mut builder);
+    let origin_list = stores.finish_origin_list(&mut origins);
+    TracedTokenList::new(token_list, origin_list)
+}
+
+fn traced_semantic_token(token: TracedTokenWord) -> Token {
+    token
+        .token()
+        .expect("macro argument scanner received invalid traced token")
 }
 
 fn is_space_token(token: Token) -> bool {

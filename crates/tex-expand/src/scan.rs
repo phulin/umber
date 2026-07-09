@@ -8,11 +8,13 @@
 use std::{fmt, marker::PhantomData};
 
 use tex_lex::{InputSource, InputStack, LexError, MemoryInput, TokenListReplayKind};
-use tex_state::ids::TokenListId;
+use tex_state::ids::{OriginListId, TokenListId};
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
-use tex_state::token::{Catcode, Token};
-use tex_state::{ExpansionState, InputReadState};
+use tex_state::provenance::OriginListBuilder;
+use tex_state::token::{Catcode, Token, TracedTokenWord};
+use tex_state::token_store::TokenListBuilder;
+use tex_state::{ExpansionState, InputReadState, TracedTokenList};
 
 use crate::{
     DriverExpandNext, ExpandError, ExpandNext, ExpandableOpcode, ExpansionHooks, NoInputExpandNext,
@@ -133,7 +135,13 @@ where
     let parameter_text = scan_parameter_text(input, stores)?;
     let replacement_text = scan_replacement_text(input, stores)?;
     Ok(ScannedMacro {
-        meaning: MacroMeaning::new(flags, parameter_text, replacement_text),
+        meaning: MacroMeaning::with_origins(
+            flags,
+            parameter_text.token_list(),
+            parameter_text.origin_list(),
+            replacement_text.token_list(),
+            replacement_text.origin_list(),
+        ),
     })
 }
 
@@ -153,11 +161,18 @@ where
     let replacement_text = expand_replacement_text(
         stores,
         meaning.replacement_text(),
+        meaning.replacement_origins(),
         hooks,
         &mut NoInputExpandNext,
     )?;
     Ok(ScannedMacro {
-        meaning: MacroMeaning::new(flags, meaning.parameter_text(), replacement_text),
+        meaning: MacroMeaning::with_origins(
+            flags,
+            meaning.parameter_text(),
+            meaning.parameter_origins(),
+            replacement_text.token_list(),
+            replacement_text.origin_list(),
+        ),
     })
 }
 
@@ -177,11 +192,18 @@ where
     let replacement_text = expand_replacement_text(
         stores,
         meaning.replacement_text(),
+        meaning.replacement_origins(),
         hooks,
         &mut DriverExpandNext,
     )?;
     Ok(ScannedMacro {
-        meaning: MacroMeaning::new(flags, meaning.parameter_text(), replacement_text),
+        meaning: MacroMeaning::with_origins(
+            flags,
+            meaning.parameter_text(),
+            meaning.parameter_origins(),
+            replacement_text.token_list(),
+            replacement_text.origin_list(),
+        ),
     })
 }
 
@@ -201,15 +223,23 @@ where
     H: ExpansionHooks<S>,
 {
     let raw_text = scan_general_text(input, stores)?;
-    expand_replacement_text(stores, raw_text, hooks, &mut DriverExpandNext)
+    Ok(expand_replacement_text(
+        stores,
+        raw_text.token_list(),
+        raw_text.origin_list(),
+        hooks,
+        &mut DriverExpandNext,
+    )?
+    .token_list())
 }
 
 fn expand_replacement_text<'a, S, St, H, E>(
     stores: &mut St,
     replacement_text: TokenListId,
+    replacement_origins: OriginListId,
     hooks: &'a mut H,
     expander: &mut E,
-) -> Result<TokenListId, ScanToksError>
+) -> Result<TracedTokenList, ScanToksError>
 where
     S: InputSource,
     St: ExpansionState,
@@ -217,33 +247,41 @@ where
     E: ExpandNext<ReplacementSource<S>, St, NoopRecorder, ReplacementHooks<'a, S, H>>,
 {
     let mut input = InputStack::new(ReplacementSource::<S>::empty());
-    input.push_token_list(replacement_text, TokenListReplayKind::Inserted);
+    input.push_token_list_with_origins(
+        replacement_text,
+        replacement_origins,
+        TokenListReplayKind::Inserted,
+    );
     let mut builder = stores.token_list_builder();
+    let mut origins = stores.origin_list_builder();
     let mut recorder = NoopRecorder;
     let mut hooks = ReplacementHooks::new(hooks);
 
     loop {
-        let Some(read) = input.next_expansion_token(stores)? else {
+        let Some(read) = input.next_traced_expansion_token(stores)? else {
             break;
         };
         let token = read.token();
         if read.suppress_expansion() {
             builder.push(token);
+            origins.push(read.origin());
             continue;
         }
 
         let Some(symbol) = crate::expandable_symbol(stores, token) else {
             builder.push(token);
+            origins.push(read.origin());
             continue;
         };
         let meaning = stores.meaning(symbol);
         if meaning == Meaning::ExpandablePrimitive(ExpandablePrimitive::NoExpand) {
-            let Some(suppressed) = input.next_token(stores)? else {
+            let Some(suppressed) = input.next_traced_token(stores)? else {
                 return Err(
                     ExpandError::MissingTokenAfterPrimitive(ExpandableOpcode::NoExpand).into(),
                 );
             };
-            builder.push(suppressed);
+            builder.push(traced_semantic_token(suppressed));
+            origins.push(suppressed.origin());
             continue;
         }
 
@@ -252,9 +290,14 @@ where
             expander.next_expanded_token(&mut input, stores, &mut recorder, &mut hooks)?
         {
             builder.push(expanded);
+            let origin =
+                stores.synthetic_origin(tex_state::provenance::SyntheticOriginKind::Engine);
+            origins.push(origin);
         }
     }
-    Ok(stores.finish_token_list(&mut builder))
+    let token_list = stores.finish_token_list(&mut builder);
+    let origin_list = stores.finish_origin_list(&mut origins);
+    Ok(TracedTokenList::new(token_list, origin_list))
 }
 
 fn unread_token<S>(input: &mut InputStack<S>, stores: &mut impl ExpansionState, token: Token)
@@ -262,7 +305,37 @@ where
     S: InputSource,
 {
     let token_list = stores.intern_token_list(&[token]);
-    input.push_token_list(token_list, TokenListReplayKind::Inserted);
+    let origin = stores.synthetic_origin(tex_state::provenance::SyntheticOriginKind::Engine);
+    let mut origins = stores.origin_list_builder();
+    origins.push(origin);
+    let origin_list = stores.finish_origin_list(&mut origins);
+    input.push_token_list_with_origins(token_list, origin_list, TokenListReplayKind::Inserted);
+}
+
+fn push_scanned_token(
+    builder: &mut TokenListBuilder,
+    origins: &mut OriginListBuilder,
+    traced: TracedTokenWord,
+    token: Token,
+) {
+    builder.push(token);
+    origins.push(traced.origin());
+}
+
+fn finish_traced_list(
+    stores: &mut impl ExpansionState,
+    builder: &mut TokenListBuilder,
+    origins: &mut OriginListBuilder,
+) -> TracedTokenList {
+    let token_list = stores.finish_token_list(builder);
+    let origin_list = stores.finish_origin_list(origins);
+    TracedTokenList::new(token_list, origin_list)
+}
+
+fn traced_semantic_token(token: TracedTokenWord) -> Token {
+    token
+        .token()
+        .expect("macro token scanner received invalid traced token")
 }
 
 enum ReplacementSource<S> {
@@ -365,18 +438,20 @@ where
 fn scan_parameter_text<S>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
-) -> Result<TokenListId, ScanToksError>
+) -> Result<TracedTokenList, ScanToksError>
 where
     S: InputSource,
 {
     let mut builder = stores.token_list_builder();
+    let mut origins = stores.origin_list_builder();
     let mut next_parameter = 1;
     let mut pending_parameter = false;
 
     loop {
-        let token = input
-            .next_token(stores)?
+        let traced = input
+            .next_traced_token(stores)?
             .ok_or(ScanToksError::EndOfInputInParameterText)?;
+        let token = traced_semantic_token(traced);
 
         if pending_parameter {
             pending_parameter = false;
@@ -392,7 +467,7 @@ where
                             found,
                         });
                     }
-                    builder.push(Token::param(found));
+                    push_scanned_token(&mut builder, &mut origins, traced, Token::param(found));
                     next_parameter = next_parameter
                         .checked_add(1)
                         .filter(|value| *value <= 10)
@@ -402,8 +477,8 @@ where
                     cat: Catcode::BeginGroup,
                     ..
                 } => {
-                    builder.push(token);
-                    return Ok(stores.finish_token_list(&mut builder));
+                    push_scanned_token(&mut builder, &mut origins, traced, token);
+                    return Ok(finish_traced_list(stores, &mut builder, &mut origins));
                 }
                 _ => return Err(ScanToksError::InvalidParameterTokenInParameterText(token)),
             }
@@ -414,12 +489,12 @@ where
             Token::Char {
                 cat: Catcode::BeginGroup,
                 ..
-            } => return Ok(stores.finish_token_list(&mut builder)),
+            } => return Ok(finish_traced_list(stores, &mut builder, &mut origins)),
             Token::Char {
                 cat: Catcode::Parameter,
                 ..
             } => pending_parameter = true,
-            _ => builder.push(token),
+            _ => push_scanned_token(&mut builder, &mut origins, traced, token),
         }
     }
 }
@@ -427,18 +502,20 @@ where
 fn scan_replacement_text<S>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
-) -> Result<TokenListId, ScanToksError>
+) -> Result<TracedTokenList, ScanToksError>
 where
     S: InputSource,
 {
     let mut builder = stores.token_list_builder();
+    let mut origins = stores.origin_list_builder();
     let mut brace_level = 1_u32;
     let mut pending_parameter = false;
 
     loop {
-        let token = input
-            .next_token(stores)?
+        let traced = input
+            .next_traced_token(stores)?
             .ok_or(ScanToksError::EndOfInputInReplacementText)?;
+        let token = traced_semantic_token(traced);
 
         if pending_parameter {
             pending_parameter = false;
@@ -446,13 +523,16 @@ where
                 Token::Char {
                     cat: Catcode::Parameter,
                     ..
-                } => builder.push(token),
+                } => push_scanned_token(&mut builder, &mut origins, traced, token),
                 Token::Char {
                     ch: '1'..='9',
                     cat: Catcode::Other,
-                } => builder.push(Token::param(
-                    token_digit(token).expect("digit token was matched"),
-                )),
+                } => push_scanned_token(
+                    &mut builder,
+                    &mut origins,
+                    traced,
+                    Token::param(token_digit(token).expect("digit token was matched")),
+                ),
                 _ => return Err(ScanToksError::InvalidParameterTokenInReplacementText(token)),
             }
             continue;
@@ -468,7 +548,7 @@ where
                 ..
             } => {
                 brace_level += 1;
-                builder.push(token);
+                push_scanned_token(&mut builder, &mut origins, traced, token);
             }
             Token::Char {
                 cat: Catcode::EndGroup,
@@ -476,11 +556,11 @@ where
             } => {
                 brace_level -= 1;
                 if brace_level == 0 {
-                    return Ok(stores.finish_token_list(&mut builder));
+                    return Ok(finish_traced_list(stores, &mut builder, &mut origins));
                 }
-                builder.push(token);
+                push_scanned_token(&mut builder, &mut origins, traced, token);
             }
-            _ => builder.push(token),
+            _ => push_scanned_token(&mut builder, &mut origins, traced, token),
         }
     }
 }
@@ -488,7 +568,7 @@ where
 fn scan_general_text<S>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
-) -> Result<TokenListId, ScanToksError>
+) -> Result<TracedTokenList, ScanToksError>
 where
     S: InputSource,
 {
@@ -505,18 +585,20 @@ where
     }
 
     let mut builder = stores.token_list_builder();
+    let mut origins = stores.origin_list_builder();
     let mut brace_level = 1_u32;
     loop {
-        let token = input
-            .next_token(stores)?
+        let traced = input
+            .next_traced_token(stores)?
             .ok_or(ScanToksError::EndOfInputInReplacementText)?;
+        let token = traced_semantic_token(traced);
         match token {
             Token::Char {
                 cat: Catcode::BeginGroup,
                 ..
             } => {
                 brace_level += 1;
-                builder.push(token);
+                push_scanned_token(&mut builder, &mut origins, traced, token);
             }
             Token::Char {
                 cat: Catcode::EndGroup,
@@ -524,11 +606,11 @@ where
             } => {
                 brace_level -= 1;
                 if brace_level == 0 {
-                    return Ok(stores.finish_token_list(&mut builder));
+                    return Ok(finish_traced_list(stores, &mut builder, &mut origins));
                 }
-                builder.push(token);
+                push_scanned_token(&mut builder, &mut origins, traced, token);
             }
-            _ => builder.push(token),
+            _ => push_scanned_token(&mut builder, &mut origins, traced, token),
         }
     }
 }
