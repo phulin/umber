@@ -310,7 +310,7 @@ fn display_operator_uses_larger_variant_and_places_limits() {
     let [MathNode::VList(limits)] = hlist.nodes.as_slice() else {
         panic!("expected displayed-limits vbox");
     };
-    assert_eq!(limits.width, sc(16));
+    assert_eq!(limits.width, sc(14));
     assert!(limits.list.nodes.iter().any(|node| match node {
         MathNode::HList(MathBox {
             list: FrozenHList { nodes },

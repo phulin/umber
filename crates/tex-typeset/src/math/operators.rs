@@ -120,8 +120,8 @@ fn operator_nucleus(
             };
             *delta = fetched.metrics.italic_correction;
             let mut boxed = char_box(fetched);
-            if !matches!(noad.subscript, MathField::Empty)
-                && !matches!(effective_limits, LimitType::Limits)
+            if matches!(effective_limits, LimitType::Limits)
+                || !matches!(noad.subscript, MathField::Empty)
             {
                 boxed.width = sub(boxed.width, *delta);
             }
@@ -348,5 +348,25 @@ fn apply_math_ligature(nodes: &mut Vec<Node>, index: usize, ligature: LigatureCo
 
 fn rebox(boxed: &mut MathBox, width: Scaled) {
     // AppG rule 13a
+    let slack = sub(width, boxed.width);
+    if slack.raw() != 0 && matches!(boxed.axis, BoxAxis::Horizontal) {
+        let left = Scaled::from_raw(tex_arith::half(slack.raw()));
+        let right = sub(slack, left);
+        if left.raw() != 0 {
+            boxed.list.nodes.insert(
+                0,
+                MathNode::Kern {
+                    amount: left,
+                    kind: KernKind::Explicit,
+                },
+            );
+        }
+        if right.raw() != 0 {
+            boxed.list.nodes.push(MathNode::Kern {
+                amount: right,
+                kind: KernKind::Explicit,
+            });
+        }
+    }
     boxed.width = width;
 }
