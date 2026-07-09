@@ -70,6 +70,13 @@ fn prepare_mag_cases_match_reference_micro_suite() {
 
 #[test]
 fn box_register_cases_match_reference_micro_suite() {
+    let brace_aliases = reference_fixture("box_brace_aliases");
+    assert!(
+        brace_aliases.contains("B:7.0pt"),
+        "reference brace-alias box output changed:\n{}",
+        brace_aliases
+    );
+
     let dimensions = reference_fixture("box_dimensions");
     assert!(
         dimensions.contains("B:12.0pt,3.0pt,2.0pt"),
@@ -128,6 +135,16 @@ fn box_register_cases_match_reference_micro_suite() {
     );
     assert_eq!(stores.count(0), 10_000);
     assert!(stores.box_reg(0).is_some());
+
+    stores =
+        run_umber_exec(r"\let\bgroup={\let\egroup=}\setbox0=\vbox\bgroup\hrule height7pt\egroup");
+    assert_eq!(
+        stores
+            .box_dimension(0, tex_state::BoxDimension::Height)
+            .expect("aliased box delimiters should produce a vbox")
+            .raw(),
+        7 * 65_536
+    );
 }
 
 fn reference_fixture(stem: &str) -> String {
