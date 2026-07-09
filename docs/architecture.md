@@ -217,7 +217,10 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   orders for glue components, and opt-in integer-to-sp coercion. The glue
   scanner parses optional `plus`/`minus` components and interns immutable glue
   specs through `Universe`. These scanners report recoverable numeric diagnostics
-  without performing assignments; execution-side assignment callers route those
+  without performing assignments; missing numbers recover as zero, missing or
+  incompatible finite units recover as inserted `pt` or `mu` according to the
+  caller, and glue scanning keeps scanning `plus`/`minus` components after those
+  recovered values. Execution-side assignment callers route all scanner
   diagnostics through TeX's terminal/log diagnostic path before applying the
   recovered value. `true` physical units call the
   `Universe::prepare_mag` boundary before scaling, so illegal magnifications

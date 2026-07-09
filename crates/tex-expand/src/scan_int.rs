@@ -55,12 +55,14 @@ impl ScannedInt {
 /// Recoverable diagnostics emitted while still producing TeX's capped value.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IntegerDiagnostic {
+    MissingNumber,
     NumberTooBig,
 }
 
 impl fmt::Display for IntegerDiagnostic {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::MissingNumber => f.write_str("Missing number, treated as zero"),
             Self::NumberTooBig => f.write_str("Number too big"),
         }
     }
@@ -162,7 +164,10 @@ where
 {
     let (negative, token) = scan_signs(input, stores, recorder, hooks, expander)?;
     let Some(token) = token else {
-        return Err(ScanIntError::MissingNumber);
+        return Ok(ScannedInt::with_diagnostic(
+            0,
+            IntegerDiagnostic::MissingNumber,
+        ));
     };
 
     let scanned = scan_unsigned_after_first_token(input, stores, recorder, hooks, expander, token)?;
@@ -262,7 +267,10 @@ where
         Token::Cs(symbol) => {
             scan_internal_integer(input, stores, recorder, hooks, expander, token, symbol)
         }
-        _ => Err(ScanIntError::MissingNumber),
+        _ => {
+            unread_token(input, stores, token);
+            Ok(missing_number())
+        }
     }
 }
 
@@ -282,11 +290,11 @@ where
     E: ExpandNext<S, St, R, H>,
 {
     let Some(token) = next_x(input, stores, recorder, hooks, expander)? else {
-        return Err(ScanIntError::MissingNumber);
+        return Ok(missing_number());
     };
     let Some(digit) = token_digit_for_radix(token, radix) else {
         unread_token(input, stores, token);
-        return Err(ScanIntError::MissingNumber);
+        return Ok(missing_number());
     };
     scan_radix_digits(input, stores, recorder, hooks, expander, digit, radix)
 }
@@ -349,7 +357,7 @@ where
     E: ExpandNext<S, St, R, H>,
 {
     let Some(token) = next_x(input, stores, recorder, hooks, expander)? else {
-        return Err(ScanIntError::MissingNumber);
+        return Ok(missing_number());
     };
     let value = match token {
         Token::Char { ch, .. } => ch as i32,
@@ -357,8 +365,9 @@ where
             .resolve(symbol)
             .chars()
             .next()
-            .ok_or(ScanIntError::MissingNumber)? as i32,
-        Token::Param(_) => return Err(ScanIntError::MissingNumber),
+            .map(|ch| ch as i32)
+            .unwrap_or(0),
+        Token::Param(_) => return Ok(missing_number()),
     };
     consume_optional_space(input, stores, recorder, hooks, expander)?;
     Ok(ScannedInt::new(value))
@@ -420,6 +429,10 @@ where
         Meaning::PageDimension(dimension) => {
             consume_optional_space(input, stores, recorder, hooks, expander)?;
             Ok(ScannedInt::new(stores.page_dimension(dimension).raw()))
+        }
+        Meaning::Relax => {
+            unread_token(input, stores, token);
+            Ok(missing_number())
         }
         Meaning::UnexpandablePrimitive(primitive) => scan_internal_integer_primitive(
             input, stores, recorder, hooks, expander, token, primitive,
@@ -597,6 +610,10 @@ fn scanned_unsigned(value: i64, overflow: bool) -> ScannedInt {
     } else {
         ScannedInt::new(value as i32)
     }
+}
+
+const fn missing_number() -> ScannedInt {
+    ScannedInt::with_diagnostic(0, IntegerDiagnostic::MissingNumber)
 }
 
 fn token_digit_for_radix(token: Token, radix: i64) -> Option<i64> {

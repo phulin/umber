@@ -10,7 +10,7 @@ use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
 
-use crate::scan_dimen::{self, ScanDimenError, ScanDimenOptions};
+use crate::scan_dimen::{self, DimensionDiagnostic, ScanDimenError, ScanDimenOptions};
 use crate::{
     ExpandError, ExpandNext, ExpansionHooks, NoInputExpandNext, NoopExpansionHooks, NoopRecorder,
     ReadRecorder, scan_helpers, scan_int,
@@ -20,12 +20,17 @@ use crate::{
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ScannedGlue {
     id: GlueId,
+    diagnostics: [Option<DimensionDiagnostic>; 8],
 }
 
 impl ScannedGlue {
     #[must_use]
     pub const fn id(self) -> GlueId {
         self.id
+    }
+
+    pub fn diagnostics(self) -> impl Iterator<Item = DimensionDiagnostic> {
+        self.diagnostics.into_iter().flatten()
     }
 }
 
@@ -229,6 +234,8 @@ where
         expander,
         dimen_options(mu),
     )?;
+    let mut diagnostics = [None; 8];
+    append_dimension_diagnostics(&mut diagnostics, width);
     let mut spec = GlueSpec {
         width: width.value(),
         stretch: Scaled::from_raw(0),
@@ -249,6 +256,7 @@ where
             expander,
             dimen_options(mu).with_infinite_units(),
         )?;
+        append_dimension_diagnostics(&mut diagnostics, stretch);
         spec.stretch = stretch.value();
         spec.stretch_order = stretch.order();
     }
@@ -261,11 +269,12 @@ where
             expander,
             dimen_options(mu).with_infinite_units(),
         )?;
+        append_dimension_diagnostics(&mut diagnostics, shrink);
         spec.shrink = shrink.value();
         spec.shrink_order = shrink.order();
     }
 
-    Ok(intern_spec(stores, spec))
+    Ok(intern_spec_with_diagnostics(stores, spec, diagnostics))
 }
 
 fn dimen_options(mu: bool) -> ScanDimenOptions {
@@ -277,8 +286,28 @@ fn dimen_options(mu: bool) -> ScanDimenOptions {
 }
 
 fn intern_spec(stores: &mut impl ExpansionState, spec: GlueSpec) -> ScannedGlue {
+    intern_spec_with_diagnostics(stores, spec, [None; 8])
+}
+
+fn intern_spec_with_diagnostics(
+    stores: &mut impl ExpansionState,
+    spec: GlueSpec,
+    diagnostics: [Option<DimensionDiagnostic>; 8],
+) -> ScannedGlue {
     ScannedGlue {
         id: stores.intern_glue(spec),
+        diagnostics,
+    }
+}
+
+fn append_dimension_diagnostics(
+    diagnostics: &mut [Option<DimensionDiagnostic>; 8],
+    dimen: scan_dimen::ScannedDimen,
+) {
+    for diagnostic in dimen.diagnostics() {
+        if let Some(slot) = diagnostics.iter_mut().find(|slot| slot.is_none()) {
+            *slot = Some(diagnostic);
+        }
     }
 }
 
