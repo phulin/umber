@@ -12,6 +12,7 @@ use crate::{
 #[cfg(test)]
 mod tests;
 
+mod leaders;
 mod movement;
 
 const ID_BYTE: u8 = 2;
@@ -249,6 +250,7 @@ impl<'a> DviWriter<'a> {
         }
         let save_loc = self.bytes.len();
         let base_line = self.cur_v;
+        let left_edge = self.cur_h;
         let mut cur_g = Scaled::from_raw(0);
         let mut cur_glue = Scaled::from_raw(0);
 
@@ -279,7 +281,7 @@ impl<'a> DviWriter<'a> {
                     self.output_rule_in_hlist(rule_ht, rule_dp, rule_wd, base_line)?;
                     self.cur_h = add_scaled(self.cur_h, rule_wd)?;
                 }
-                PageNode::Glue { spec, .. } => {
+                PageNode::Glue { spec, kind, leader } => {
                     let rule_wd = adjusted_glue_width(
                         *spec,
                         g_sign,
@@ -288,7 +290,15 @@ impl<'a> DviWriter<'a> {
                         &mut cur_glue,
                         &mut cur_g,
                     )?;
-                    self.cur_h = add_scaled(self.cur_h, rule_wd)?;
+                    self.move_right_or_output_leaders(leaders::HLeaderContext {
+                        page,
+                        this_box,
+                        kind: *kind,
+                        leader,
+                        rule_wd,
+                        left_edge,
+                        base_line,
+                    })?;
                 }
                 PageNode::Kern { amount, .. } => {
                     self.cur_h = add_scaled(self.cur_h, *amount)?;
@@ -326,6 +336,7 @@ impl<'a> DviWriter<'a> {
         let save_loc = self.bytes.len();
         let left_edge = self.cur_h;
         self.cur_v = sub_scaled(self.cur_v, this_box.height)?;
+        let top_edge = self.cur_v;
         let mut cur_g = Scaled::from_raw(0);
         let mut cur_glue = Scaled::from_raw(0);
 
@@ -345,16 +356,9 @@ impl<'a> DviWriter<'a> {
                         depth.unwrap_or(Scaled::from_raw(0)),
                     )?;
                     let rule_wd = width.unwrap_or(this_box.width);
-                    self.cur_v = add_scaled(self.cur_v, rule_ht)?;
-                    if rule_ht.raw() > 0 && rule_wd.raw() > 0 {
-                        self.synch_h()?;
-                        self.synch_v()?;
-                        self.u8(PUT_RULE);
-                        self.scaled(rule_ht);
-                        self.scaled(rule_wd);
-                    }
+                    self.output_rule_in_vlist(rule_ht, rule_wd)?;
                 }
-                PageNode::Glue { spec, .. } => {
+                PageNode::Glue { spec, kind, leader } => {
                     let rule_ht = adjusted_glue_width(
                         *spec,
                         g_sign,
@@ -363,7 +367,15 @@ impl<'a> DviWriter<'a> {
                         &mut cur_glue,
                         &mut cur_g,
                     )?;
-                    self.cur_v = add_scaled(self.cur_v, rule_ht)?;
+                    self.move_down_or_output_leaders(leaders::VLeaderContext {
+                        page,
+                        this_box,
+                        kind: *kind,
+                        leader,
+                        rule_ht,
+                        left_edge,
+                        top_edge,
+                    })?;
                 }
                 PageNode::Kern { amount, .. } => {
                     self.cur_v = add_scaled(self.cur_v, *amount)?;
@@ -463,6 +475,18 @@ impl<'a> DviWriter<'a> {
             self.scaled(rule_wd);
             self.cur_v = base_line;
             self.dvi_h = add_scaled(self.dvi_h, rule_wd)?;
+        }
+        Ok(())
+    }
+
+    fn output_rule_in_vlist(&mut self, rule_ht: Scaled, rule_wd: Scaled) -> Result<(), DviError> {
+        self.cur_v = add_scaled(self.cur_v, rule_ht)?;
+        if rule_ht.raw() > 0 && rule_wd.raw() > 0 {
+            self.synch_h()?;
+            self.synch_v()?;
+            self.u8(PUT_RULE);
+            self.scaled(rule_ht);
+            self.scaled(rule_wd);
         }
         Ok(())
     }

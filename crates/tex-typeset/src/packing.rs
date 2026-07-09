@@ -2,7 +2,7 @@ use tex_state::Universe;
 use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::NodeListId;
-use tex_state::node::{BoxNode, BoxNodeFields, Node, Sign, UnsetKind};
+use tex_state::node::{BoxNode, BoxNodeFields, LeaderPayload, Node, Sign, UnsetKind};
 use tex_state::scaled::{GlueSetRatio, Scaled};
 
 use crate::{INF_BAD, TypesetState, badness};
@@ -313,7 +313,12 @@ fn measure_hlist(state: &impl TypesetState, nodes: &[Node]) -> Measurement {
                 }
             }
             Node::Kern { amount, .. } => meas.width = add(meas.width, *amount),
-            Node::Glue { spec, .. } => add_glue(&mut meas, state.glue(*spec), Axis::Horizontal),
+            Node::Glue { spec, leader, .. } => {
+                add_glue(&mut meas, state.glue(*spec), Axis::Horizontal);
+                if let Some(leader) = leader {
+                    add_hleader_perpendicular_dimensions(&mut meas, leader);
+                }
+            }
             Node::Rule {
                 width,
                 height,
@@ -393,7 +398,12 @@ fn measure_vlist(state: &impl TypesetState, nodes: &[Node]) -> Measurement {
                 }
             }
             Node::Kern { amount, .. } => add_vertical_spacing(&mut meas, *amount),
-            Node::Glue { spec, .. } => add_glue(&mut meas, state.glue(*spec), Axis::Vertical),
+            Node::Glue { spec, leader, .. } => {
+                add_glue(&mut meas, state.glue(*spec), Axis::Vertical);
+                if let Some(leader) = leader {
+                    add_vleader_perpendicular_dimensions(&mut meas, leader);
+                }
+            }
             Node::Penalty(_) => {}
             Node::Char { .. }
             | Node::Lig { .. }
@@ -430,6 +440,36 @@ fn add_glue(meas: &mut Measurement, spec: GlueSpec, axis: Axis) {
         add(meas.stretch[spec.stretch_order as usize], spec.stretch);
     meas.shrink[spec.shrink_order as usize] =
         add(meas.shrink[spec.shrink_order as usize], spec.shrink);
+}
+
+fn add_hleader_perpendicular_dimensions(meas: &mut Measurement, leader: &LeaderPayload) {
+    match leader {
+        LeaderPayload::HList(box_node) | LeaderPayload::VList(box_node) => {
+            meas.height = meas.height.max(box_node.height);
+            meas.depth = meas.depth.max(box_node.depth);
+        }
+        LeaderPayload::Rule { height, depth, .. } => {
+            if let Some(height) = height {
+                meas.height = meas.height.max(*height);
+            }
+            if let Some(depth) = depth {
+                meas.depth = meas.depth.max(*depth);
+            }
+        }
+    }
+}
+
+fn add_vleader_perpendicular_dimensions(meas: &mut Measurement, leader: &LeaderPayload) {
+    match leader {
+        LeaderPayload::HList(box_node) | LeaderPayload::VList(box_node) => {
+            meas.width = meas.width.max(box_node.width);
+        }
+        LeaderPayload::Rule { width, .. } => {
+            if let Some(width) = width {
+                meas.width = meas.width.max(*width);
+            }
+        }
+    }
 }
 
 fn add_vertical_spacing(meas: &mut Measurement, amount: Scaled) {

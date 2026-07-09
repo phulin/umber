@@ -1,12 +1,13 @@
 use crate::{
     BoxNode, ContentHash, DiscKind, EffectSink, FontResource, GlueKind, GlueOrder, GlueSetRatio,
-    GlueSign, GlueSpec, KernKind, PageArtifact, PageEffect, PageNode, PageToken, TokenCatcode,
+    GlueSign, GlueSpec, KernKind, LeaderPayload, PageArtifact, PageEffect, PageNode, PageToken,
+    TokenCatcode,
 };
 use std::fmt;
 use tex_arith::Scaled;
 
 const MAGIC: &[u8; 4] = b"UMPG";
-const VERSION: u8 = 5;
+const VERSION: u8 = 6;
 
 /// Binary parse failure.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -212,10 +213,11 @@ impl Writer {
                 self.scaled(*amount);
                 self.u8(kern_kind_tag(*kind));
             }
-            PageNode::Glue { spec, kind } => {
+            PageNode::Glue { spec, kind, leader } => {
                 self.u8(3);
                 self.glue_spec(*spec);
                 self.u8(glue_kind_tag(*kind));
+                self.leader_payload(leader.as_ref());
             }
             PageNode::Penalty(value) => {
                 self.u8(4);
@@ -304,6 +306,30 @@ impl Writer {
                     self.u8(2);
                     self.u8(*slot);
                 }
+            }
+        }
+    }
+
+    fn leader_payload(&mut self, leader: Option<&LeaderPayload>) {
+        match leader {
+            None => self.u8(0),
+            Some(LeaderPayload::HList(box_node)) => {
+                self.u8(1);
+                self.box_node(box_node);
+            }
+            Some(LeaderPayload::VList(box_node)) => {
+                self.u8(2);
+                self.box_node(box_node);
+            }
+            Some(LeaderPayload::Rule {
+                width,
+                height,
+                depth,
+            }) => {
+                self.u8(3);
+                self.optional_scaled(*width);
+                self.optional_scaled(*height);
+                self.optional_scaled(*depth);
             }
         }
     }
@@ -501,6 +527,7 @@ impl Reader<'_> {
             3 => Ok(PageNode::Glue {
                 spec: self.glue_spec()?,
                 kind: parse_glue_kind(self.u8()?)?,
+                leader: self.leader_payload()?,
             }),
             4 => Ok(PageNode::Penalty(self.i32()?)),
             5 => Ok(PageNode::Rule {
@@ -560,6 +587,23 @@ impl Reader<'_> {
             });
         }
         Ok(tokens)
+    }
+
+    fn leader_payload(&mut self) -> Result<Option<LeaderPayload>, ParseError> {
+        match self.u8()? {
+            0 => Ok(None),
+            1 => Ok(Some(LeaderPayload::HList(self.box_node()?))),
+            2 => Ok(Some(LeaderPayload::VList(self.box_node()?))),
+            3 => Ok(Some(LeaderPayload::Rule {
+                width: self.optional_scaled()?,
+                height: self.optional_scaled()?,
+                depth: self.optional_scaled()?,
+            })),
+            tag => Err(ParseError::InvalidTag {
+                kind: "leader payload",
+                tag,
+            }),
+        }
     }
 
     fn box_node(&mut self) -> Result<BoxNode, ParseError> {

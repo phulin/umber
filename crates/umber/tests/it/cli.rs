@@ -271,6 +271,30 @@ fn run_dvi_smoke_matches_pdftex_display_halign() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn run_dvi_smoke_matches_pdftex_leaders_horizontal_modes() {
+    assert_dvi_case_matches_pdftex("leaders_horizontal_modes");
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn run_dvi_smoke_matches_pdftex_leaders_stretched_shrunk() {
+    assert_dvi_case_matches_pdftex("leaders_stretched_shrunk");
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn run_dvi_smoke_matches_pdftex_leaders_vertical_and_rules() {
+    assert_dvi_case_matches_pdftex("leaders_vertical_and_rules");
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn run_dvi_smoke_matches_pdftex_leaders_degenerate() {
+    assert_dvi_case_matches_pdftex("leaders_degenerate");
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
 fn run_page_corpus_matches_pdftex_dvi() {
     assert_dvi_area_matches_pdftex("page");
 }

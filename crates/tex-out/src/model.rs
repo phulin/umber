@@ -79,6 +79,7 @@ pub enum PageNode {
     Glue {
         spec: GlueSpec,
         kind: GlueKind,
+        leader: Option<LeaderPayload>,
     },
     Penalty(i32),
     Rule {
@@ -131,6 +132,18 @@ pub struct GlueSpec {
     pub stretch_order: GlueOrder,
     pub shrink: Scaled,
     pub shrink_order: GlueOrder,
+}
+
+/// Repeated material attached to a leader glue node.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LeaderPayload {
+    HList(BoxNode),
+    VList(BoxNode),
+    Rule {
+        width: Option<Scaled>,
+        height: Option<Scaled>,
+        depth: Option<Scaled>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

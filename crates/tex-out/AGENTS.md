@@ -14,6 +14,7 @@ Use this crate for stable, driver-facing artifact structures and serialization c
 - `Cargo.toml`: Crate manifest declaring the `tex-out` package, `tex-arith` dependency, and workspace lint settings.
 - `src/binary.rs`: Versioned compact binary writer/reader for page artifacts plus parse error types.
 - `src/dvi.rs`: DVI file writer, page body traversal, font selection, rule/special emission, and postamble accounting.
+- `src/dvi/leaders.rs`: TeX.web hlist/vlist leader repetition loops for aligned, centered, expanded, rule, and degenerate leader cases.
 - `src/dvi/movement.rs`: TeX.web-style DVI `movement()` lookback stack and w/x/y/z command optimization.
 - `src/dvi/tests.rs`: Byte-level DVI writer tests for file structure, traversal, movement optimization, rules, fonts, glue, and specials.
 - `src/hash.rs`: Stable 32-byte content hash type and deterministic byte hashing helpers.

@@ -9,13 +9,14 @@ use tex_out::{
     BoxNode as PageBoxNode, ContentHash as PageContentHash, DEFAULT_BANNER,
     DiscKind as PageDiscKind, EffectSink, FontResource, GlueKind as PageGlueKind,
     GlueOrder as PageGlueOrder, GlueSign, GlueSpec as PageGlueSpec, JobInfo,
-    KernKind as PageKernKind, PageArtifact, PageEffect, PageNode, PageToken, TokenCatcode,
+    KernKind as PageKernKind, LeaderPayload as PageLeaderPayload, PageArtifact, PageEffect,
+    PageNode, PageToken, TokenCatcode,
 };
 use tex_state::glue::Order;
 use tex_state::ids::{FontId, NodeListId, TokenListId};
 use tex_state::node::{
     BoxNode as StateBoxNode, DiscKind as StateDiscKind, GlueKind as StateGlueKind,
-    KernKind as StateKernKind, Node, Sign, Whatsit,
+    KernKind as StateKernKind, LeaderPayload as StateLeaderPayload, Node, Sign, Whatsit,
 };
 use tex_state::page::PageInteger;
 use tex_state::token::{Catcode, Token};
@@ -114,9 +115,10 @@ where
                 amount,
                 kind: lower_kern_kind(kind),
             },
-            Node::Glue { spec, kind, .. } => PageNode::Glue {
+            Node::Glue { spec, kind, leader } => PageNode::Glue {
                 spec: lower_glue(self.stores.glue(spec)),
                 kind: lower_glue_kind(kind),
+                leader: self.lower_leader_payload(leader)?,
             },
             Node::Penalty(value) => PageNode::Penalty(value),
             Node::Rule {
@@ -179,6 +181,30 @@ where
             glue_sign: lower_glue_sign(box_node.glue_sign),
             glue_order: lower_order(box_node.glue_order),
             children: self.lower_node_list(box_node.children)?,
+        })
+    }
+
+    fn lower_leader_payload(
+        &mut self,
+        leader: Option<StateLeaderPayload>,
+    ) -> Result<Option<PageLeaderPayload>, ExecError> {
+        Ok(match leader {
+            None => None,
+            Some(StateLeaderPayload::HList(box_node)) => {
+                Some(PageLeaderPayload::HList(self.lower_box(box_node)?))
+            }
+            Some(StateLeaderPayload::VList(box_node)) => {
+                Some(PageLeaderPayload::VList(self.lower_box(box_node)?))
+            }
+            Some(StateLeaderPayload::Rule {
+                width,
+                height,
+                depth,
+            }) => Some(PageLeaderPayload::Rule {
+                width,
+                height,
+                depth,
+            }),
         })
     }
 

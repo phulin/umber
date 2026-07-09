@@ -370,7 +370,11 @@ assignments, box building, and dispatch into the typesetting kernels.
   material is appended to the Universe-owned page contribution list.
   Leader primitives scan a box or rule payload followed by mode-appropriate
   glue, then attach that payload directly to the emitted glue node; DVI
-  repetition remains output-driver work, not packing-kernel state.
+  repetition remains output-driver work, not packing-kernel state. Packing
+  still treats the leader node as ordinary glue along the leader axis while
+  accounting for the payload's perpendicular dimensions: horizontal leaders
+  can contribute height/depth to their hbox, and vertical leaders can
+  contribute width to their vbox.
   Vertical list construction tracks TeX's `prev_depth` on each mode-list
   level. A single shared append routine handles every box or rule appended to
   vertical/internal-vertical lists, including explicit box appends, unboxed

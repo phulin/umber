@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{
     BoxNode, ContentHash, FontResource, GlueKind, GlueOrder, GlueSetRatio, GlueSign, GlueSpec,
-    JobInfo, PageArtifact, PageEffect, PageNode,
+    JobInfo, LeaderPayload, PageArtifact, PageEffect, PageNode,
 };
 use tex_arith::Scaled;
 
@@ -253,11 +253,13 @@ fn glue_set_is_rounded_cumulatively_without_float_math_in_writer() {
             PageNode::Glue {
                 spec: glue,
                 kind: GlueKind::Normal,
+                leader: None,
             },
             rule_node(1, 1, 0),
             PageNode::Glue {
                 spec: glue,
                 kind: GlueKind::Normal,
+                leader: None,
             },
             rule_node(1, 1, 0),
         ],
@@ -268,6 +270,134 @@ fn glue_set_is_rounded_cumulatively_without_float_math_in_writer() {
 
     assert!(body.windows(2).any(|window| window == [RIGHT1, 13]));
     assert!(body.windows(2).any(|window| window == [RIGHT1, 12]));
+}
+
+#[test]
+fn hlist_rule_leaders_use_glue_width_and_running_height_depth() {
+    let mut page = empty_page(0);
+    page.root = hlist(
+        70_000,
+        40_000,
+        20_000,
+        vec![PageNode::Glue {
+            spec: GlueSpec {
+                width: sp(70_000),
+                stretch: sp(0),
+                stretch_order: GlueOrder::Normal,
+                shrink: sp(0),
+                shrink_order: GlueOrder::Normal,
+            },
+            kind: GlueKind::Leaders,
+            leader: Some(LeaderPayload::Rule {
+                width: Some(sp(1)),
+                height: None,
+                depth: None,
+            }),
+        }],
+    );
+
+    let dvi = write_dvi(&[page]).expect("DVI writes");
+    let body = page_body(&dvi, 16);
+    let set_rule = body
+        .iter()
+        .position(|&byte| byte == SET_RULE)
+        .expect("set_rule");
+
+    assert_eq!(be_i32(body, set_rule + 1), 60_000);
+    assert_eq!(be_i32(body, set_rule + 5), 70_000);
+}
+
+#[test]
+fn hlist_box_leaders_repeat_payloads_for_all_subtypes() {
+    let mut page = empty_page(0);
+    let leader = LeaderPayload::HList(box_node(10_000, 1_000, 0, vec![rule_node(1_000, 1_000, 0)]));
+    page.root = vlist(
+        30_000,
+        0,
+        0,
+        vec![
+            hlist(
+                30_000,
+                1_000,
+                0,
+                vec![leader_glue(GlueKind::Leaders, 30_000, leader.clone())],
+            ),
+            hlist(
+                30_000,
+                1_000,
+                0,
+                vec![leader_glue(GlueKind::Cleaders, 30_000, leader.clone())],
+            ),
+            hlist(
+                30_000,
+                1_000,
+                0,
+                vec![leader_glue(GlueKind::Xleaders, 30_000, leader)],
+            ),
+        ],
+    );
+
+    let dvi = write_dvi(&[page]).expect("DVI writes");
+    let body = page_body(&dvi, 16);
+
+    assert_eq!(count_op(body, SET_RULE), 9);
+}
+
+#[test]
+fn vlist_box_leaders_repeat_payloads_downward() {
+    let mut page = empty_page(0);
+    let leader = LeaderPayload::HList(box_node(
+        1_000,
+        10_000,
+        0,
+        vec![rule_node(1_000, 10_000, 0)],
+    ));
+    page.root = vlist(
+        1_000,
+        30_000,
+        0,
+        vec![leader_glue(GlueKind::Xleaders, 30_000, leader)],
+    );
+
+    let dvi = write_dvi(&[page]).expect("DVI writes");
+    let body = page_body(&dvi, 16);
+
+    assert_eq!(count_op(body, SET_RULE), 3);
+}
+
+#[test]
+fn vlist_rule_leaders_use_glue_height_and_running_width() {
+    let mut page = empty_page(0);
+    page.root = vlist(
+        40_000,
+        70_000,
+        0,
+        vec![PageNode::Glue {
+            spec: GlueSpec {
+                width: sp(70_000),
+                stretch: sp(0),
+                stretch_order: GlueOrder::Normal,
+                shrink: sp(0),
+                shrink_order: GlueOrder::Normal,
+            },
+            kind: GlueKind::Leaders,
+            leader: Some(LeaderPayload::Rule {
+                width: None,
+                height: Some(sp(1)),
+                depth: Some(sp(2)),
+            }),
+        }],
+    );
+
+    let dvi = write_dvi(&[page]).expect("DVI writes");
+    let body = page_body(&dvi, 16);
+    let put_rule = body
+        .iter()
+        .position(|&byte| byte == PUT_RULE)
+        .expect("put_rule");
+
+    assert_eq!(be_i32(body, put_rule + 1), 70_000);
+    assert_eq!(be_i32(body, put_rule + 5), 40_000);
 }
 
 #[test]
@@ -359,12 +489,30 @@ fn kern_node(amount: i32) -> PageNode {
     }
 }
 
+fn leader_glue(kind: GlueKind, width: i32, leader: LeaderPayload) -> PageNode {
+    PageNode::Glue {
+        spec: GlueSpec {
+            width: sp(width),
+            stretch: sp(0),
+            stretch_order: GlueOrder::Normal,
+            shrink: sp(0),
+            shrink_order: GlueOrder::Normal,
+        },
+        kind,
+        leader: Some(leader),
+    }
+}
+
 fn rule_node(width: i32, height: i32, depth: i32) -> PageNode {
     PageNode::Rule {
         width: Some(sp(width)),
         height: Some(sp(height)),
         depth: Some(sp(depth)),
     }
+}
+
+fn count_op(bytes: &[u8], op: u8) -> usize {
+    bytes.iter().filter(|&&byte| byte == op).count()
 }
 
 fn font_resource(font_id: u32, name: &str) -> FontResource {

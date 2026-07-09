@@ -1,5 +1,5 @@
 use super::*;
-use tex_state::node::{GlueKind, KernKind};
+use tex_state::node::{GlueKind, KernKind, LeaderPayload};
 
 fn sp(raw: i32) -> Scaled {
     Scaled::from_raw(raw)
@@ -52,6 +52,79 @@ fn hpack_sets_finite_stretch_order_and_ratio() {
     assert_eq!(packed.node.width, sp(40));
     assert_eq!(packed.node.glue_sign, Sign::Stretching);
     assert_eq!(packed.node.glue_order, Order::Fil);
+    assert_eq!(packed.node.glue_set, GlueSetRatio::from_raw(2_000_000));
+}
+
+#[test]
+fn leader_glue_participates_in_packing_like_ordinary_glue() {
+    let mut universe = Universe::new();
+    let glue = universe.intern_glue(GlueSpec {
+        width: sp(10),
+        stretch: sp(5),
+        stretch_order: Order::Normal,
+        shrink: sp(2),
+        shrink_order: Order::Normal,
+    });
+    let empty = universe.freeze_node_list(&[]);
+    let payload = LeaderPayload::HList(BoxNode::new(BoxNodeFields {
+        width: sp(3),
+        height: sp(1),
+        depth: sp(0),
+        shift: sp(0),
+        display: false,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children: empty,
+    }));
+    let hlist = universe.freeze_node_list(&[Node::Glue {
+        spec: glue,
+        kind: GlueKind::Xleaders,
+        leader: Some(payload),
+    }]);
+
+    let packed = hpack(
+        &universe,
+        hlist,
+        PackSpec::Exactly(sp(20)),
+        HpackParams {
+            hbadness: INF_BAD,
+            hfuzz: sp(0),
+            overfull_rule: sp(0),
+        },
+    );
+
+    assert_eq!(packed.node.width, sp(20));
+    assert_eq!(packed.node.height, sp(1));
+    assert_eq!(packed.node.depth, sp(0));
+    assert_eq!(packed.node.glue_sign, Sign::Stretching);
+    assert_eq!(packed.node.glue_order, Order::Normal);
+    assert_eq!(packed.node.glue_set, GlueSetRatio::from_raw(2_000_000));
+
+    let vlist = universe.freeze_node_list(&[Node::Glue {
+        spec: glue,
+        kind: GlueKind::Cleaders,
+        leader: Some(LeaderPayload::Rule {
+            width: Some(sp(4)),
+            height: Some(sp(1)),
+            depth: Some(sp(0)),
+        }),
+    }]);
+    let packed = vpack(
+        &universe,
+        vlist,
+        PackSpec::Exactly(sp(20)),
+        VpackParams {
+            vbadness: INF_BAD,
+            vfuzz: sp(0),
+            box_max_depth: sp(0),
+        },
+    );
+
+    assert_eq!(packed.node.height, sp(20));
+    assert_eq!(packed.node.width, sp(4));
+    assert_eq!(packed.node.glue_sign, Sign::Stretching);
+    assert_eq!(packed.node.glue_order, Order::Normal);
     assert_eq!(packed.node.glue_set, GlueSetRatio::from_raw(2_000_000));
 }
 

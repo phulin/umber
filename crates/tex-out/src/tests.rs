@@ -1,7 +1,7 @@
 use crate::{
     BoxNode, ContentHash, DiscKind, EffectSink, FontResource, GlueKind, GlueOrder, GlueSetRatio,
-    GlueSign, GlueSpec, JobInfo, KernKind, PageArtifact, PageEffect, PageNode, PageToken,
-    ParseError, TokenCatcode,
+    GlueSign, GlueSpec, JobInfo, KernKind, LeaderPayload, PageArtifact, PageEffect, PageNode,
+    PageToken, ParseError, TokenCatcode,
 };
 use tex_arith::Scaled;
 
@@ -210,7 +210,12 @@ fn sample_artifact() -> PageArtifact {
                         },
                         PageNode::Glue {
                             spec: glue,
-                            kind: GlueKind::Normal,
+                            kind: GlueKind::Leaders,
+                            leader: Some(LeaderPayload::Rule {
+                                width: None,
+                                height: Some(Scaled::from_raw(3)),
+                                depth: Some(Scaled::from_raw(1)),
+                            }),
                         },
                         PageNode::Kern {
                             amount: Scaled::from_raw(-10),
@@ -256,6 +261,7 @@ fn sample_artifact() -> PageArtifact {
                 PageNode::Adjust(vec![PageNode::Glue {
                     spec: glue,
                     kind: GlueKind::Normal,
+                    leader: None,
                 }]),
             ],
         }),
