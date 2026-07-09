@@ -194,6 +194,31 @@ fn setbox_assignments_execute_in_math_mode_without_adding_math_material() {
 }
 
 #[test]
+fn box_dimension_assignments_execute_in_math_mode_without_adding_math_material() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        r"\setbox0=\hbox{}$\wd0=11pt\ht0=7pt\dp0=3pt a$",
+    ));
+    let mut executor = Executor::new();
+    executor
+        .run(&mut input, &mut stores)
+        .expect("box-dimension assignments should execute in inline math");
+
+    let box0 = stores.box_reg(0).expect("box register should remain set");
+    let [Node::HList(boxed)] = stores.nodes(box0) else {
+        panic!("box register should contain one hlist");
+    };
+    assert_eq!(boxed.width, Scaled::from_raw(11 * Scaled::UNITY));
+    assert_eq!(boxed.height, Scaled::from_raw(7 * Scaled::UNITY));
+    assert_eq!(boxed.depth, Scaled::from_raw(3 * Scaled::UNITY));
+
+    let nodes = math_nodes(&stores, &executor);
+    assert_eq!(nodes.len(), 1, "assignments must not add math material");
+    assert_math_char(&math_noad(&nodes[0]).nucleus, 0, 'a');
+}
+
+#[test]
 fn mathcode_8000_uses_current_active_meaning_and_fam_overrides_variable_family() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

@@ -69,6 +69,9 @@ pub(super) fn math_allows_assignment_primitive(primitive: UnexpandablePrimitive)
             | UnexpandablePrimitive::HyphenChar
             | UnexpandablePrimitive::SkewChar
             | UnexpandablePrimitive::SetBox
+            | UnexpandablePrimitive::Wd
+            | UnexpandablePrimitive::Ht
+            | UnexpandablePrimitive::Dp
             | UnexpandablePrimitive::AfterGroup
             | UnexpandablePrimitive::AfterAssignment
             | UnexpandablePrimitive::Show
