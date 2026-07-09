@@ -239,6 +239,118 @@ fn assert_no_unset(stores: &Universe, nodes: &[Node]) {
 }
 
 #[test]
+fn halign_in_unrestricted_horizontal_mode_finishes_paragraph_first() {
+    let stores = run_boxed_alignment_source("x\\halign{#\\cr y\\cr}");
+    let boxes = vlist_rows(&stores, box_zero_vlist(&stores));
+
+    assert_eq!(boxes.len(), 2, "paragraph line must precede alignment row");
+    assert_eq!(cell_text(&stores, row_cells(&stores, boxes[1])[0]), "y");
+}
+
+#[test]
+fn halign_head_for_vmode_replay_preserves_command_origin() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let halign = Token::Cs(stores.intern("halign"));
+    let command_origin = stores.synthetic_origin(tex_state::provenance::SyntheticOriginKind::Test);
+    let command = TracedTokenWord::pack(halign, command_origin);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    let mut nest = ModeNest::new();
+    nest.push(Mode::Horizontal);
+    let mut hooks = crate::executor::NoopExecHooks;
+
+    assert_eq!(
+        dispatch_delivered_token(&mut nest, command, &mut input, &mut stores, &mut hooks)
+            .expect("head_for_vmode dispatch"),
+        DispatchAction::Continue
+    );
+    let inserted = tex_expand::get_x_token_with_recorder_and_hooks(
+        &mut input,
+        &mut stores,
+        &mut NoopRecorder,
+        &mut hooks,
+    )
+    .expect("inserted paragraph read")
+    .expect("inserted paragraph token");
+    let replayed = tex_expand::get_x_token_with_recorder_and_hooks(
+        &mut input,
+        &mut stores,
+        &mut NoopRecorder,
+        &mut hooks,
+    )
+    .expect("halign replay read")
+    .expect("halign replay token");
+
+    assert_eq!(
+        tex_expand::semantic_token(inserted),
+        Token::Cs(stores.intern("par"))
+    );
+    let tex_state::provenance::OriginRecord::Inserted(inserted_origin) =
+        stores.origin(inserted.origin())
+    else {
+        panic!("synthetic paragraph should carry inserted provenance");
+    };
+    assert_eq!(
+        inserted_origin.kind(),
+        tex_state::provenance::InsertedOriginKind::Paragraph
+    );
+    assert_eq!(inserted_origin.parent(), command_origin);
+    assert_eq!(replayed, command);
+}
+
+#[test]
+fn halign_in_restricted_horizontal_mode_retains_off_save_recovery() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let halign = Token::Cs(stores.intern("halign"));
+    let command_origin = stores.synthetic_origin(tex_state::provenance::SyntheticOriginKind::Test);
+    let command = TracedTokenWord::pack(halign, command_origin);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    let mut nest = ModeNest::new();
+    nest.push(Mode::RestrictedHorizontal);
+    let mut hooks = crate::executor::NoopExecHooks;
+
+    dispatch_delivered_token(&mut nest, command, &mut input, &mut stores, &mut hooks)
+        .expect("off_save should insert a closing group");
+    let inserted = tex_expand::get_x_token_with_recorder_and_hooks(
+        &mut input,
+        &mut stores,
+        &mut NoopRecorder,
+        &mut hooks,
+    )
+    .expect("inserted group read")
+    .expect("inserted group token");
+    let replayed = tex_expand::get_x_token_with_recorder_and_hooks(
+        &mut input,
+        &mut stores,
+        &mut NoopRecorder,
+        &mut hooks,
+    )
+    .expect("halign replay read")
+    .expect("halign replay token");
+
+    assert_eq!(
+        tex_expand::semantic_token(inserted),
+        Token::Char {
+            ch: '}',
+            cat: Catcode::EndGroup,
+        }
+    );
+    let tex_state::provenance::OriginRecord::Inserted(inserted_origin) =
+        stores.origin(inserted.origin())
+    else {
+        panic!("off_save token should carry inserted provenance");
+    };
+    assert_eq!(
+        inserted_origin.kind(),
+        tex_state::provenance::InsertedOriginKind::ErrorRecovery
+    );
+    assert_eq!(inserted_origin.parent(), command_origin);
+    assert_eq!(replayed, command);
+    assert!(support::terminal_effect_text(&stores).contains("Missing } inserted"));
+}
+
+#[test]
 fn scans_empty_u_template_and_end_template_sentinel() {
     let (stores, state) = scan_halign_preamble("{#v\\cr}");
 
@@ -718,7 +830,7 @@ fn display_halign_appends_display_vertical_material() {
 
 #[test]
 fn nested_alignment_executes_inside_cell() {
-    let stores = run_boxed_alignment_source("\\halign{#\\cr \\halign{#\\cr x\\cr}\\cr}");
+    let stores = run_boxed_alignment_source("\\halign{#\\cr \\vbox{\\halign{#\\cr x\\cr}}\\cr}");
     let vbox = box_zero_vlist(&stores);
     let rows = vlist_rows(&stores, vbox);
     let cells = row_cells(&stores, rows[0]);
@@ -729,7 +841,7 @@ fn nested_alignment_executes_inside_cell() {
         stores
             .nodes(cells[0].children)
             .iter()
-            .any(|node| matches!(node, Node::HList(_)))
+            .any(|node| matches!(node, Node::VList(_)))
     );
     assert_no_unset(&stores, stores.nodes(vbox.children));
 }

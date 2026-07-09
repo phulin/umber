@@ -16,6 +16,7 @@ use tex_state::ids::GlueId;
 use tex_state::interner::Symbol;
 use tex_state::math::MathFontSize;
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
+use tex_state::provenance::InsertedOriginKind;
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{GroupKind, InputOpenState, InteractionMode, Universe};
@@ -23,6 +24,7 @@ use tex_state::{GroupKind, InputOpenState, InteractionMode, Universe};
 use crate::ModeNest;
 use crate::{
     DispatchAction, ExecError, diagnostics, dispatch_delivered_token, leave_group_with_origin,
+    push_traced_tokens,
 };
 
 mod arithmetic;
@@ -291,6 +293,44 @@ impl CommandOutcome {
     }
 }
 
+/// TeX82's `head_for_vmode` recovery for `\halign` in unrestricted hmode.
+///
+/// The current command must retain its source origin when it is read again;
+/// only the synthetic paragraph terminator receives an inserted origin.
+fn head_for_vmode<S>(command: TracedTokenWord, input: &mut InputStack<S>, stores: &mut Universe)
+where
+    S: InputSource,
+{
+    let par = Token::Cs(stores.intern("par"));
+    let origin = stores.inserted_origin(InsertedOriginKind::Paragraph, par, command.origin());
+    push_traced_tokens(input, stores, [TracedTokenWord::pack(par, origin), command]);
+}
+
+/// The `off_save` path used by `\halign` in restricted hmode.
+fn off_save_alignment<S>(command: TracedTokenWord, input: &mut InputStack<S>, stores: &mut Universe)
+where
+    S: InputSource,
+{
+    let closing_group = Token::Char {
+        ch: '}',
+        cat: Catcode::EndGroup,
+    };
+    let origin = stores.inserted_origin(
+        InsertedOriginKind::ErrorRecovery,
+        closing_group,
+        command.origin(),
+    );
+    push_traced_tokens(
+        input,
+        stores,
+        [TracedTokenWord::pack(closing_group, origin), command],
+    );
+    stores.world_mut().write_text(
+        tex_state::PrintSink::TerminalAndLog,
+        "\n! Missing } inserted.\n",
+    );
+}
+
 fn accumulate_prefixes<S, R, H>(
     mut command: PrefixedCommand,
     traced: TracedTokenWord,
@@ -499,6 +539,19 @@ where
             }
             UnexpandablePrimitive::HAlign | UnexpandablePrimitive::VAlign => {
                 reject_macro_prefixes(prefixes)?;
+                if primitive == UnexpandablePrimitive::HAlign {
+                    match nest.current_mode() {
+                        crate::Mode::Horizontal => {
+                            head_for_vmode(command.traced, input, stores);
+                            return Ok(CommandOutcome::continue_only());
+                        }
+                        crate::Mode::RestrictedHorizontal => {
+                            off_save_alignment(command.traced, input, stores);
+                            return Ok(CommandOutcome::continue_only());
+                        }
+                        _ => {}
+                    }
+                }
                 crate::align::execute_alignment(primitive, nest, input, stores, recorder, hooks)?;
                 Ok(CommandOutcome::continue_only())
             }
