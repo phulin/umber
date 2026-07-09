@@ -365,9 +365,10 @@ Nothing in the engine touches the OS directly. A single `World` object owns:
   that job-start clock into `\time`, `\day`, `\month`, and `\year`.
 - **Inputs** (file reads) are content-addressed and recorded, so a snapshot
   pins exactly what it read (needed for cross-run memo sharing).
-- **Page artifacts** are committed through `World::store_artifact` as
-  content-addressed bytes in the artifact store. Real worlds materialize those
-  bytes under the configured artifact directory; in-memory worlds keep the same
+- **Page artifacts** are committed through `Universe::commit_shipout`, which
+  stores bytes through crate-private `World` artifact storage as part of the
+  aggregate commit boundary. Real worlds materialize those bytes under the
+  configured artifact directory; in-memory worlds keep the same
   content-addressed map for hermetic tests.
 - **Explicit driver output files** are materialized through `World::write_file`.
   This is for user-requested downstream files such as `umber run --dvi`; engine
@@ -402,10 +403,11 @@ one aggregate-only authority:
   because dropping an effect prefix also requires `Universe` to retarget hash
   cursors and advance the aggregate checkpoint.
 
-The public API should preserve that split. Downstream crates may record and
-inspect world effects through narrow capabilities, but they must not obtain a
-general `&mut World` that can commit or roll back part of the aggregate state
-without `Universe` bookkeeping.
+The public API preserves that split: downstream crates may inspect facts
+through `&World` and perform operational I/O through `&mut World`, while raw
+effect-prefix commit, artifact storage, snapshots, rollback, and hash cursors
+remain crate-private implementation details reached only through aggregate
+`Universe` boundaries.
 
 ## 9. Snapshots, rollback, commit
 

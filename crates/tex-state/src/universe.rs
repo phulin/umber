@@ -7,6 +7,7 @@
 //! grow a partial rollback API beside the store tuple.
 
 use crate::code_tables::{CodeTableGenerations, DelCode, LcCode, MathCode, SfCode, UcCode};
+#[cfg(test)]
 use crate::env::Env;
 use crate::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use crate::epoch::Epoch;
@@ -520,9 +521,11 @@ impl Universe {
         );
     }
 
-    /// Reads the owned environment through the Universe boundary.
+    /// Reads the owned environment for crate-local replay oracles.
     #[must_use]
-    pub fn env(&self) -> &Env {
+    #[allow(dead_code)]
+    #[cfg(test)]
+    pub(crate) fn env(&self) -> &Env {
         self.stores.env()
     }
 

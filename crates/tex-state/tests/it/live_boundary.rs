@@ -296,3 +296,126 @@ fn main() {
         );
     }
 }
+
+#[test]
+#[allow(clippy::disallowed_methods)]
+fn downstream_crate_cannot_commit_world_effects_without_universe_boundary() {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let probe_workspace = tempfile::tempdir().expect("create world boundary probe workspace");
+    let probe_dir = probe_workspace.path().join("world-boundary-probe");
+    let src_dir = probe_dir.join("src");
+
+    fs::create_dir_all(&src_dir).expect("create world boundary probe src dir");
+    fs::write(
+        probe_dir.join("Cargo.toml"),
+        format!(
+            r#"[package]
+name = "world-boundary-probe"
+version = "0.0.0"
+edition = "2024"
+
+[workspace]
+
+[dependencies]
+tex-state = {{ path = "{manifest_dir}" }}
+"#
+        ),
+    )
+    .expect("write world boundary probe manifest");
+    fs::write(
+        src_dir.join("main.rs"),
+        r#"use tex_state::Universe;
+
+fn main() {
+    let mut universe = Universe::new();
+    let effect_pos = universe.world().effect_pos();
+    universe.world_mut().commit_effects(effect_pos).unwrap();
+    let _ = universe.world_mut().store_artifact(b"page").unwrap();
+}
+"#,
+    )
+    .expect("write world boundary probe main");
+
+    let output = Command::new(env!("CARGO"))
+        .arg("check")
+        .arg("--quiet")
+        .arg("--manifest-path")
+        .arg(probe_dir.join("Cargo.toml"))
+        .arg("--target-dir")
+        .arg(probe_dir.join("target"))
+        .output()
+        .expect("run world boundary probe");
+
+    assert!(
+        !output.status.success(),
+        "downstream raw World commit probe unexpectedly compiled"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    for expected in [
+        "method `commit_effects` is private",
+        "method `store_artifact` is private",
+    ] {
+        assert!(
+            stderr.contains("E0624") && stderr.contains(expected),
+            "probe failed for an unexpected reason while checking {expected}:\n{stderr}"
+        );
+    }
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)]
+fn downstream_crate_cannot_bypass_universe_facade_through_raw_env_ref() {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let probe_workspace = tempfile::tempdir().expect("create universe env probe workspace");
+    let probe_dir = probe_workspace.path().join("universe-env-probe");
+    let src_dir = probe_dir.join("src");
+
+    fs::create_dir_all(&src_dir).expect("create universe env probe src dir");
+    fs::write(
+        probe_dir.join("Cargo.toml"),
+        format!(
+            r#"[package]
+name = "universe-env-probe"
+version = "0.0.0"
+edition = "2024"
+
+[workspace]
+
+[dependencies]
+tex-state = {{ path = "{manifest_dir}" }}
+"#
+        ),
+    )
+    .expect("write universe env probe manifest");
+    fs::write(
+        src_dir.join("main.rs"),
+        r#"use tex_state::Universe;
+
+fn main() {
+    let universe = Universe::new();
+    let _ = universe.env();
+}
+"#,
+    )
+    .expect("write universe env probe main");
+
+    let output = Command::new(env!("CARGO"))
+        .arg("check")
+        .arg("--quiet")
+        .arg("--manifest-path")
+        .arg(probe_dir.join("Cargo.toml"))
+        .arg("--target-dir")
+        .arg(probe_dir.join("target"))
+        .output()
+        .expect("run universe env probe");
+
+    assert!(
+        !output.status.success(),
+        "downstream raw Universe env probe unexpectedly compiled"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("E0599") && stderr.contains("no method named `env`"),
+        "probe failed for an unexpected reason:\n{stderr}"
+    );
+}

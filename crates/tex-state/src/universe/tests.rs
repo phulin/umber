@@ -80,12 +80,12 @@ fn rollback_restores_page_builder_state_and_hash() {
 fn rollback_bumps_epoch_past_previous_live_epoch() {
     let mut universe = Universe::new();
     let snapshot = universe.snapshot();
-    let before_rollback = universe.env().epoch();
+    let before_rollback = universe.stores.env().epoch();
 
     universe.rollback(&snapshot);
 
     assert!(snapshot.epoch() < before_rollback);
-    assert!(before_rollback < universe.env().epoch());
+    assert!(before_rollback < universe.stores.env().epoch());
 }
 
 #[test]

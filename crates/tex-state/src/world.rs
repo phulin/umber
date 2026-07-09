@@ -706,7 +706,7 @@ impl World {
     /// This method is intended for the shipout commit barrier: callers prepare
     /// deterministic artifact bytes first, then ask `World` to materialize the
     /// content-addressed object in the configured artifact store.
-    pub fn store_artifact(&mut self, bytes: &[u8]) -> Result<ContentHash, WorldError> {
+    pub(crate) fn store_artifact(&mut self, bytes: &[u8]) -> Result<ContentHash, WorldError> {
         let hash = ContentHash::from_bytes(bytes);
         match &mut self.backend {
             WorldBackend::Real { artifact_dir } => {
@@ -826,7 +826,7 @@ impl World {
     }
 
     /// Flushes all effect records up to `effect_pos`, in order, exactly once.
-    pub fn commit_effects(&mut self, effect_pos: EffectPos) -> Result<(), WorldError> {
+    pub(crate) fn commit_effects(&mut self, effect_pos: EffectPos) -> Result<(), WorldError> {
         if effect_pos <= self.effect_base {
             return Ok(());
         }

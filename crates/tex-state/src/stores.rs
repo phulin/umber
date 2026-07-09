@@ -230,6 +230,7 @@ impl Stores {
 
     /// Reads the owned environment.
     #[must_use]
+    #[cfg(test)]
     pub fn env(&self) -> &Env {
         &self.env
     }
