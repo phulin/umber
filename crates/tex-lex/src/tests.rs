@@ -238,6 +238,37 @@ fn comments_ignore_rest_of_physical_line() {
 }
 
 #[test]
+fn comment_line_continuation_starts_next_line_in_new_line_state() {
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::END_LINE_CHAR, 13);
+    let mut lexer = Lexer::new(MemoryInput::new("a%\n   b"));
+
+    assert_eq!(
+        collect_tokens(&mut lexer, &mut stores),
+        vec![
+            char_token('a', Catcode::Letter),
+            char_token('b', Catcode::Letter),
+            char_token(' ', Catcode::Space),
+        ]
+    );
+}
+
+#[test]
+fn inactive_endlinechar_still_starts_next_line_in_new_line_state() {
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::END_LINE_CHAR, -1);
+    let mut lexer = Lexer::new(MemoryInput::new("a\n   b"));
+
+    assert_eq!(
+        collect_tokens(&mut lexer, &mut stores),
+        vec![
+            char_token('a', Catcode::Letter),
+            char_token('b', Catcode::Letter)
+        ]
+    );
+}
+
+#[test]
 fn ignored_and_invalid_catcodes_follow_tex_rules() {
     let mut stores = Universe::new();
     stores.set_catcode('!', Catcode::Ignored);

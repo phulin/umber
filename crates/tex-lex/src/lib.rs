@@ -860,6 +860,7 @@ where
 {
     match source.lines.next_event(stores)? {
         Some(LineEvent::Text(line)) => {
+            source.frame.state = LexerState::NewLine;
             source.frame.line = line.chars().collect();
             source.frame.offset = 0;
             source.frame.buffer_offset = source.next_source_offset;
@@ -893,6 +894,7 @@ where
 {
     match source.lines.next_event(stores)? {
         Some(LineEvent::Text(line)) => {
+            source.frame.state = LexerState::NewLine;
             source.frame.line = line.chars().collect();
             source.frame.offset = 0;
             source.frame.buffer_offset = source.next_source_offset;
