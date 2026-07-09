@@ -1,0 +1,40 @@
+% Fixed dense-page DVI traversal and serialization workload.
+\font\benchmarkrm=cmr10
+\font\benchmarkit=cmti10
+\font\benchmarkbf=cmbx10
+\newcount\pagesmade
+\newcount\linesmade
+\newbox\linebox
+\newbox\pagebox
+
+\setbox\linebox=\hbox to 36pc{%
+  \benchmarkrm Character streams and repeated movement
+  \kern12pt
+  \benchmarkit exercise italic font selection
+  \hfil
+  \benchmarkbf DVI
+  \kern-2pt
+  \vrule height7pt depth2pt width8pt
+}
+
+\def\addline{%
+  \global\advance\linesmade by 1
+  \hbox{\kern4pt\vbox{\copy\linebox\kern1pt\hrule width36pc height.2pt}}%
+  \ifnum\linesmade<48 \expandafter\addline\fi
+}
+
+\setbox\pagebox=\vbox to 54pc{%
+  \offinterlineskip
+  \addline
+  \vfil
+  \special{umber-benchmark:dense-page}%
+}
+
+\def\work{%
+  \advance\pagesmade by 1
+  \shipout\vbox{\kern5pt\hbox{\kern5pt\copy\pagebox\kern5pt}\kern5pt}%
+  \ifnum\pagesmade<6000 \expandafter\work\fi
+}
+\work
+\message{BENCHMARK dvi pages=\the\pagesmade, lines-per-page=\the\linesmade}
+\end

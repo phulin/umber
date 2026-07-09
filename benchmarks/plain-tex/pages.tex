@@ -1,0 +1,44 @@
+% Fixed page-builder, insertion, mark, and output-routine workload.
+\hsize=24pc
+\vsize=36pc
+\maxdepth=4pt
+\newcount\pagesmade
+\newcount\blocks
+\newinsert\benchmarkinsert
+
+\output={%
+  \global\advance\pagesmade by 1
+  \shipout\vbox{%
+    \hbox to\hsize{\tenrm Page \the\pagesmade\hfil
+      \firstmark--\botmark}%
+    \nointerlineskip\hrule
+    \vskip6pt
+    \box255
+  }%
+  \global\advancepageno
+}
+
+\def\block{%
+  \mark{block-\the\blocks}%
+  \hbox to\hsize{\tenrm page-builder material \the\blocks\hfil
+    \vrule height7pt depth2pt width12pt}%
+  \nobreak\vskip3pt plus5pt minus2pt
+  \penalty50
+  \hbox to\hsize{\it competing vertical breakpoints\hfil\tenbf fixed work}%
+  \vskip5pt plus3pt minus1pt
+}
+
+\def\work{%
+  \advance\blocks by 1
+  \block
+  \ifnum\blocks=10
+    \insert\benchmarkinsert{\hsize=18pc\tenrm insertion material
+      \number\pagesmade\par}%
+    \blocks=0
+  \fi
+  \ifnum\pagesmade<6000 \expandafter\work\fi
+}
+\work
+\eject
+\message{BENCHMARK pages pages=\the\pagesmade}
+\end

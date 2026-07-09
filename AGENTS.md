@@ -36,6 +36,7 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - `crates/corpus-manifest`: dependency-free parser for the external corpus manifest used by host-side parity tooling.
 - `tools/`: Rust tooling crates. `refexec` remains in the root workspace for committed DVI fixture comparison; regeneration-only tools such as `fixturegen` and external-corpus tools such as `corpus-sync` are standalone and built explicitly by scripts.
 - `benchmarks/`: opt-in standalone benchmark crates kept outside the root workspace.
+- `benchmarks/plain-tex`: fixed end-to-end Plain TeX engine workloads and runner.
 - `tests/`: committed fixtures and parity test definitions.
 - `docs/`: architecture, phase, and design documents.
 - `scripts/`: local development scripts and versioned git hook templates.

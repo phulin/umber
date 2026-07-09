@@ -1,0 +1,36 @@
+% Fixed macro-expansion and assignment workload.
+\newcount\iterations
+\newcount\checksum
+\newcount\selector
+\newtoks\scratchtokens
+
+\def\first#1#2;{#1}
+\def\dispatch#1{\csname branch#1\endcsname}
+\def\branchzero#1,#2;{\advance\checksum by #1 \advance\checksum by -#2 }
+\def\branchone#1,#2;{\advance\checksum by #2 \advance\checksum by -#1 }
+\def\replay#1{\scratchtokens={#1}\edef\expanded{\the\scratchtokens}\expanded}
+
+\def\work{%
+  \advance\iterations by 1
+  \selector=\iterations \divide\selector by 2 \multiply\selector by 2
+  \ifnum\selector=\iterations
+    \def\choice{zero}%
+  \else
+    \def\choice{one}%
+  \fi
+  \expandafter\replay\expandafter{%
+    \dispatch{\choice}17,5;%
+  }%
+  \edef\dynamicname{cell\first ab;}%
+  \expandafter\def\csname\dynamicname\endcsname##1:##2;{##2##1}%
+  \edef\throwaway{\csname\dynamicname\endcsname xy:zt;}%
+  \ifnum\iterations<500000
+    \expandafter\work
+  \fi
+}
+
+\work
+\ifnum\checksum=0 \else \errmessage{expand checksum mismatch}\fi
+\message{BENCHMARK expand checksum=\the\checksum, iterations=\the\iterations}
+\hbox{expand \the\iterations\space \the\checksum}\vfill\eject
+\bye

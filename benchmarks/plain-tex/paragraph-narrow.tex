@@ -1,0 +1,32 @@
+% Fixed line-breaking and hyphenation workload at a narrow measure.
+\hsize=12pc
+\vsize=54pc
+\tolerance=600
+\pretolerance=100
+\hyphenpenalty=50
+\doublehyphendemerits=10000
+\emergencystretch=0pt
+\parindent=12pt
+\parskip=0pt
+\newcount\paragraphs
+
+\def\sampleparagraph{%
+When the compositor examines a paragraph, every feasible break contributes
+to a network of possibilities.  Ordinary words provide spaces with finite
+stretch and shrink, while punctuation, explicit penalties, and discretionary
+hyphens alter the available routes.  The algorithm must preserve exact
+integer arithmetic so that agreeable typography remains reproducible across
+machines.  Carefully chosen alternatives can improve the present line but
+make the following line substantially worse; therefore the complete sequence
+matters more than any isolated decision.  Extraordinary, interdisciplinary,
+and characteristically inconvenient words ensure that hyphenation is useful
+rather than merely decorative.\par}
+
+\def\work{%
+  \advance\paragraphs by 1
+  \sampleparagraph
+  \ifnum\paragraphs<4500 \expandafter\work\fi
+}
+\work
+\message{BENCHMARK paragraph-narrow paragraphs=\the\paragraphs}
+\bye
