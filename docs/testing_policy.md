@@ -174,9 +174,12 @@ scripts/parity.sh e2e --offline
 
 This mode verifies acquisition, runs reference TeX through `tools/refexec`,
 checks the manifest-pinned normalized reference DVI hash for environment
-drift under the script-pinned job clock, runs `umber run --dvi`, and
-byte-compares the normalized DVI files. On reference drift, Umber failure, or
-mismatch it writes a triage bundle under
+drift under the script-pinned job clock, runs `umber run --plain-format --dvi`,
+and byte-compares the normalized DVI files. The Umber plain-format path is a
+narrow corpus bootstrap for pinned external documents that assume plain-format
+macros; it is not full `plain.tex` loading, which remains owned by the plain
+bring-up work. On reference drift, Umber failure, or mismatch it writes a
+triage bundle under
 `target/parity-triage/<doc-name>/` with byte context, page-limited
 dvitype-style disassemblies, a unified disassembly diff, tracing-output logs,
 and a summary that names the divergent page and opcode when a page can be
