@@ -177,6 +177,7 @@ pub fn install_unexpandable_primitives(stores: &mut Universe) {
             UnexpandablePrimitive::ScriptScriptStyle,
         ),
         ("end", UnexpandablePrimitive::End),
+        ("dump", UnexpandablePrimitive::Dump),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));

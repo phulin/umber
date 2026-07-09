@@ -152,7 +152,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 
 - [x] `\day` - Job-start day of the month. Assignable integer parameter initialized from `World`'s job clock; parity regeneration pins `SOURCE_DATE_EPOCH` for both Umber and reference TeX.
 - [x] `\deadcycles` - Number of output routine calls since the last `\shipout`; read/write page-builder counter.
-- [ ] `\dump` - Writes a format file in INITEX; otherwise ends the job.
+- [x] `\dump` - Ends the job through TeX's ordinary final-cleanup path, but emits one warning and does not write a format file; this deliberate divergence is recorded in `docs/divergences.md`.
 - [x] `\end` - Ends the job with TeX's final cleanup, flushing remaining page material through the output routine before exiting the batch loop.
 - [x] `\everyjob` - Token list inserted at the start of every job. Implemented as an assignable token list parameter; job-start insertion is tracked with plain.tex bring-up in the conformance epic.
 - [x] `\jobname` - Expands to the driver-provided job name as rendered character tokens.
