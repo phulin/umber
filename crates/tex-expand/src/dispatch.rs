@@ -97,10 +97,18 @@ macro_rules! dispatch_match {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::CsName) => {
                 let name = scan_csname(input, stores, recorder, hooks)?;
                 let symbol = stores.intern_relaxed_control_sequence(&name);
-                Ok(Dispatch::Deliver(TracedTokenWord::pack(
-                    Token::Cs(symbol),
-                    stores.synthesized_origin(SynthesizedOriginKind::Expansion, call_origin),
-                )))
+                Ok(Dispatch::Push {
+                    replay_kind: ExpansionReplayKind::Inserted,
+                    token_list: stores.intern_token_list(&[Token::Cs(symbol)]),
+                    origin_list: crate::synthesized_origin_list(
+                        stores,
+                        1,
+                        call_origin,
+                        SynthesizedOriginKind::Expansion,
+                    ),
+                    macro_arguments: MacroArguments::new(),
+                    macro_invocation: OriginId::UNKNOWN,
+                })
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::EndCsName) => {
                 Ok(Dispatch::Deliver(TracedTokenWord::pack(token, call_origin)))

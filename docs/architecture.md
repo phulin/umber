@@ -302,7 +302,10 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   control sequence names through the lexer/interner capability. `\csname` uses a dedicated
   expansion scan that stops on `\endcsname`, accumulates only expanded character
   tokens, and interns/relaxes the resulting control sequence through the same
-  aggregate boundary. If expansion yields a non-character token before
+  aggregate boundary. Its synthesized control-sequence token is replayed through
+  the ordinary `get_x_token` loop, so a macro result expands before execution
+  sees a token and its synthesized origin remains the macro invocation parent.
+  If expansion yields a non-character token before
   `\endcsname`, the scanner follows TeX82 recovery by treating a missing
   `\endcsname` as inserted and pushing the offending token back through an
   `Inserted(Unread)` replay frame. Value-producing expandables such as

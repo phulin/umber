@@ -570,6 +570,77 @@ fn csname_expands_name_pieces_before_interning() {
 }
 
 #[test]
+fn csname_reexpands_a_macro_result_with_synthesized_provenance() {
+    let mut stores = Universe::new();
+    let (csname, endcsname) = csname_primitives(&mut stores);
+    let false_macro = stores.intern("us@false");
+    let let_cs = stores.intern("let");
+    stores.set_meaning(
+        let_cs,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Let),
+    );
+
+    let params = stores.intern_token_list(&[]);
+    let body = stores.intern_token_list(&[Token::Cs(let_cs)]);
+    let definition_origin = stores.source_origin(tex_state::SourceId::new(25), 40, 4, 1);
+    let body_origins = stores.allocate_repeated_origin_list(definition_origin, 1);
+    stores.set_macro_meaning_with_provenance(
+        false_macro,
+        MacroMeaning::new(MeaningFlags::EMPTY, params, body),
+        MacroDefinitionProvenance::new(
+            definition_origin,
+            tex_state::ids::OriginListId::EMPTY,
+            body_origins,
+        ),
+    );
+    let Meaning::Macro { definition, .. } = stores.meaning(false_macro) else {
+        panic!("expected macro meaning");
+    };
+
+    let input_tokens = [
+        Token::Cs(csname),
+        char_token('u'),
+        char_token('s'),
+        char_token('@'),
+        char_token('f'),
+        char_token('a'),
+        char_token('l'),
+        char_token('s'),
+        char_token('e'),
+        Token::Cs(endcsname),
+    ];
+    let csname_origin = stores.source_origin(tex_state::SourceId::new(26), 80, 8, 1);
+    let origins = stores.allocate_repeated_origin_list(csname_origin, input_tokens.len());
+    let input_list = stores.intern_token_list(&input_tokens);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list_with_origins(input_list, origins, TokenListReplayKind::Inserted);
+
+    let delivered = crate::get_x_token(&mut input, &mut stores)
+        .expect("csname macro result should expand")
+        .expect("macro body should deliver its unexpandable token");
+    assert_eq!(delivered.token(), Some(Token::Cs(let_cs)));
+
+    let summary = input.summary();
+    let Some(tex_lex::InputFrameSummary::TokenList {
+        macro_invocation, ..
+    }) = summary.frames().last()
+    else {
+        panic!("macro body should remain on the input stack");
+    };
+    let OriginRecord::MacroInvocation(invocation) = stores.origin(*macro_invocation) else {
+        panic!("macro body should retain an invocation origin");
+    };
+    assert_eq!(invocation.definition(), definition);
+    assert_eq!(
+        stores.origin(invocation.invocation()),
+        OriginRecord::Synthesized(SynthesizedOrigin::new(
+            SynthesizedOriginKind::Expansion,
+            csname_origin,
+        ))
+    );
+}
+
+#[test]
 fn csname_recovers_from_non_character_material_after_expansion() {
     let mut stores = Universe::new();
     let (csname, endcsname) = csname_primitives(&mut stores);
