@@ -374,7 +374,12 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   is accepted, with active characters stored under their one-character symbol.
   `\let` then follows TeX82's raw-token scan: it skips spaces before an
   optional equals sign, skips at most one space after that sign, and copies the
-  already-tokenized command or character meaning without expansion. Code-table
+  already-tokenized command or character meaning without expansion. Prefix
+  accumulation itself follows TeX82's expanded scan: after each prefix,
+  it expands macros and skips spaces and `\relax` until the command to execute
+  is reached. Thus `\global` can qualify a macro whose expansion begins with an
+  assignment, while the delivered assignment token retains its expansion
+  provenance and read-set recording. Code-table
   assignments use the same prefix/globaldefs policy as other definitions;
   their structurally persistent roots restore local assignments at group exit.
   These commands scan through the shared gullet/token scanner where expansion

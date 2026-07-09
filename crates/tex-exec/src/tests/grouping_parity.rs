@@ -47,6 +47,21 @@ fn grouping_after_tokens_match_reference_micro_suite() {
 }
 
 #[test]
+fn prefix_expands_macros_before_selecting_the_assignment() {
+    let prefixed_macro = reference_fixture("prefixed_macro");
+    assert!(
+        prefixed_macro.contains("P:7"),
+        "reference prefixed-macro output changed:\n{}",
+        prefixed_macro
+    );
+
+    let stores =
+        run_umber_exec(r"\def\setglobal{\count0=7}{\global\relax\setglobal}\count1=\count0");
+    assert_eq!(stores.count(0), 7);
+    assert_eq!(stores.count(1), 7);
+}
+
+#[test]
 fn prepare_mag_cases_match_reference_micro_suite() {
     let illegal = reference_fixture("illegal_mag");
     assert!(illegal.contains("! Illegal magnification has been changed to 1000 (40000)."));

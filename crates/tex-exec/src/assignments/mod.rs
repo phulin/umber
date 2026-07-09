@@ -112,6 +112,8 @@ where
         &mut prefixes,
         input,
         stores,
+        recorder,
+        hooks,
     )?;
     if matches!(
         command.command,
@@ -195,15 +197,17 @@ where
     H: ExpansionHooks<S>,
 {
     let mut prefixes = Prefixes::default();
+    let mut recorder = NoopRecorder;
     let command = accumulate_prefixes(
         PrefixedCommand::Meaning(meaning),
         traced,
         &mut prefixes,
         input,
         stores,
+        &mut recorder,
+        hooks,
     )?;
     let mut nest = ModeNest::new();
-    let mut recorder = NoopRecorder;
     let outcome = execute_prefixed_command(
         command,
         prefixes,
@@ -284,15 +288,19 @@ impl CommandOutcome {
     }
 }
 
-fn accumulate_prefixes<S>(
+fn accumulate_prefixes<S, R, H>(
     mut command: PrefixedCommand,
     traced: TracedTokenWord,
     prefixes: &mut Prefixes,
     input: &mut InputStack<S>,
     stores: &mut Universe,
+    recorder: &mut R,
+    hooks: &mut H,
 ) -> Result<TracedPrefixedCommand, ExecError>
 where
     S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
 {
     let mut token = tex_expand::semantic_token(traced);
     let mut origin = traced.origin();
@@ -322,8 +330,20 @@ where
             }
         }
 
-        let traced =
-            next_non_space_traced_raw(input, stores)?.ok_or(ExecError::MissingPrefixedCommand)?;
+        let traced = loop {
+            let traced = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
+                .ok_or(ExecError::MissingPrefixedCommand)?;
+            let token = tex_expand::semantic_token(traced);
+            if is_space(token) {
+                continue;
+            }
+            if let Token::Cs(symbol) = token
+                && stores.meaning(symbol) == Meaning::Relax
+            {
+                continue;
+            }
+            break traced;
+        };
         token = tex_expand::semantic_token(traced);
         origin = traced.origin();
         let Token::Cs(symbol) = token else {
