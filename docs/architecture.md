@@ -453,7 +453,12 @@ assignments, box building, and dispatch into the typesetting kernels.
   register is the barriered promotion write. Pulling boxes back out through `\copy`,
   `\box`, unboxing, `\lastbox`, or box-dimension rewrites clones any
   survivor-backed node tree into the current epoch before it can be appended
-  to an unfinished mode list or promoted again. Horizontal list construction
+  to an unfinished mode list or promoted again. In math mode, the applicable
+  box command family (`\hbox`, `\vbox`, `\vtop`, `\box`, `\copy`, `\vsplit`,
+  and shifted `\raise`/`\lower` boxes) uses the same scanners and packers, then
+  contributes an Ord noad whose nucleus is the frozen one-box `SubBox` field;
+  register extraction still goes through the same-level `Universe` facade.
+  Horizontal list construction
   buffers adjacent font-backed characters in the stomach until a boundary
   command, then reconstitutes them through the loaded font's TFM ligature/kern
   program, updates the mode-local `\spacefactor`, and appends explicit
@@ -627,6 +632,11 @@ makes box-level memoization (M4) sound.
   compound builders for generalized fractions, radicals, big operators with
   displayed limits, variable delimiters and extensible recipes, math accents,
   over/under lines, and vcenter boxes under the same owned-output contract.
+  Appendix G `sub_box` nuclei retain their already-packed box node directly in
+  the converted hlist, including an explicit `\raise`/`\lower` shift; they are
+  not wrapped in a second hbox. `clean_box` still repacks fields where TeX
+  requires a clean subsidiary box, such as scripts and compound noad
+  construction.
 - **Alignment (`\halign`/`\valign`)**: the one kernel that is *not* pure —
   template expansion interleaves with the gullet by design. It is
   structured as a stomach sub-mode (it re-enters main control per cell),

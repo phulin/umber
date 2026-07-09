@@ -7,6 +7,8 @@ use tex_state::math::{
     FractionThickness, LimitType, MathChar, MathField, MathFontSize, MathFraction, MathNoad,
     NoadClass, NoadKind,
 };
+use tex_state::node::{BoxNode, BoxNodeFields, Sign};
+use tex_state::scaled::GlueSetRatio;
 
 fn sc(raw: i32) -> Scaled {
     Scaled::from_raw(raw)
@@ -301,6 +303,34 @@ fn left_right_delimiters_size_to_enclosed_list() {
         hlist.nodes.last(),
         Some(MathNode::VList(MathBox { list, .. })) if list.nodes.len() > 3
     ));
+}
+
+#[test]
+fn ordinary_sub_box_nucleus_is_not_repacked() {
+    let mut universe = setup_universe();
+    let children = universe.freeze_node_list(&[]);
+    let sub_box = Node::VList(BoxNode::new(BoxNodeFields {
+        width: sc(4),
+        height: sc(40),
+        depth: sc(10),
+        shift: sc(0),
+        display: false,
+        glue_set: GlueSetRatio::from_raw(0),
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children,
+    }));
+    let expected = sub_box.clone();
+    let sub_box = universe.freeze_node_list(&[sub_box]);
+    let input = universe.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+        NoadKind::Normal(NoadClass::Ord),
+        MathField::SubBox(sub_box),
+    ))]);
+    let params = MathParams::read(&universe);
+
+    let hlist = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
+
+    assert_eq!(hlist.nodes, [MathNode::Opaque(expected)]);
 }
 
 #[test]

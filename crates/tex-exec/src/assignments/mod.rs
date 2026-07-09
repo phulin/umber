@@ -40,6 +40,7 @@ mod variables;
 
 use arithmetic::*;
 pub(crate) use boxes::scan_box_group;
+pub(crate) use boxes::scan_math_box;
 use boxes::*;
 use fonts::*;
 use hmode::*;

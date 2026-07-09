@@ -257,7 +257,16 @@ fn translate_noad<S: MathTypesetState>(
             &noad.subscript,
             &mut delta,
         ),
-        _ => FrozenHList {
+        (_, MathField::Empty) => FrozenHList::default(),
+        (_, MathField::SubBox(list)) => FrozenHList {
+            nodes: ctx
+                .state
+                .nodes(*list)
+                .iter()
+                .map(|node| source_node(ctx.state, node))
+                .collect(),
+        },
+        (_, MathField::SubMlist(_)) => FrozenHList {
             nodes: vec![MathNode::HList(clean_box(
                 ctx.state,
                 &noad.nucleus,

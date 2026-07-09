@@ -416,6 +416,32 @@ where
             append_noad(nest, NoadKind::VCenter, field);
             Ok(DispatchAction::Continue)
         }
+        UnexpandablePrimitive::HBox
+        | UnexpandablePrimitive::VBox
+        | UnexpandablePrimitive::VTop
+        | UnexpandablePrimitive::VSplit
+        | UnexpandablePrimitive::Box
+        | UnexpandablePrimitive::Copy
+        | UnexpandablePrimitive::Raise
+        | UnexpandablePrimitive::Lower => {
+            if let Some(node) = assignments::scan_math_box(primitive, input, stores, hooks)? {
+                let list = stores.freeze_node_list(&[node]);
+                append_noad(
+                    nest,
+                    NoadKind::Normal(NoadClass::Ord),
+                    MathField::SubBox(list),
+                );
+            }
+            Ok(DispatchAction::Continue)
+        }
+        UnexpandablePrimitive::LastBox => {
+            stores.world_mut().write_text(
+                tex_state::PrintSink::TerminalAndLog,
+                "\n! You can't use `\\lastbox' in math mode.\n\
+                 Sorry; this \\lastbox will be void.\n",
+            );
+            Ok(DispatchAction::Continue)
+        }
         UnexpandablePrimitive::MSkip => {
             let spec = assignments::scan_glue_id(input, stores, hooks, true)?;
             nest.current_list_mut().push(Node::Glue {

@@ -53,6 +53,46 @@ where
     Ok(())
 }
 
+pub(crate) fn scan_math_box<S, H>(
+    primitive: UnexpandablePrimitive,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    hooks: &mut H,
+) -> Result<Option<Node>, ExecError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    let node = match primitive {
+        UnexpandablePrimitive::HBox | UnexpandablePrimitive::VBox | UnexpandablePrimitive::VTop => {
+            Some(scan_box_node(
+                kind_for_primitive(primitive)?,
+                input,
+                stores,
+                hooks,
+            )?)
+        }
+        UnexpandablePrimitive::VSplit => scan_vsplit_node(input, stores, hooks)?,
+        UnexpandablePrimitive::Box | UnexpandablePrimitive::Copy => {
+            let index = scan_register_index(input, stores, hooks)?;
+            let id = if primitive == UnexpandablePrimitive::Box {
+                stores.take_box_reg_same_level(index)
+            } else {
+                stores.box_reg(index)
+            };
+            first_box_node(stores, id).map(|node| stores.clone_node_to_epoch(node))
+        }
+        UnexpandablePrimitive::Raise | UnexpandablePrimitive::Lower => {
+            let amount = scan_scaled(input, stores, hooks)?;
+            let mut node = scan_required_box_node(input, stores, hooks)?;
+            apply_shift(&mut node, primitive, amount)?;
+            Some(node)
+        }
+        _ => unreachable!("caller restricts math box commands"),
+    };
+    Ok(node)
+}
+
 pub(super) fn execute_setbox<S, H>(
     global: bool,
     input: &mut InputStack<S>,

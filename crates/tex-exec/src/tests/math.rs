@@ -5,6 +5,7 @@ use tex_state::math::{
     NoadKind,
 };
 use tex_state::node::{GlueKind, KernKind, Node};
+use tex_state::scaled::Scaled;
 
 #[test]
 fn math_mode_builds_noads_styles_choices_and_mu_nodes() {
@@ -128,6 +129,46 @@ fn grouped_fraction_inside_hbox_keeps_box_brace_accounting_balanced() {
         matches!(stores.nodes(box1), [Node::HList(_)]),
         "second hbox should be stored as an hlist"
     );
+}
+
+#[test]
+fn box_commands_in_math_mode_build_ord_noads_with_sub_box_fields() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        r"\setbox0=\hbox{z}\setbox1=\hbox{w}$\hbox{x}\vbox{\hbox{x}}\copy0\box1\lower2pt\vtop{\hbox{y}}$",
+    ));
+    let mut executor = Executor::new();
+    executor
+        .run(&mut input, &mut stores)
+        .expect("box commands should execute in inline math");
+
+    let nodes = math_nodes(&stores, &executor);
+    assert_eq!(nodes.len(), 5);
+    let expected_kinds = ["hlist", "vlist", "hlist", "hlist", "vlist"];
+    for (node, expected_kind) in nodes.iter().zip(expected_kinds) {
+        let noad = math_noad(node);
+        assert!(matches!(noad.kind, NoadKind::Normal(NoadClass::Ord)));
+        let MathField::SubBox(list) = noad.nucleus else {
+            panic!("expected sub-box nucleus");
+        };
+        match (expected_kind, stores.nodes(list)) {
+            ("hlist", [Node::HList(_)]) | ("vlist", [Node::VList(_)]) => {}
+            (_, nodes) => panic!("expected {expected_kind}, got {nodes:?}"),
+        }
+    }
+    let MathField::SubBox(lowered) = math_noad(&nodes[4]).nucleus else {
+        unreachable!();
+    };
+    let [Node::VList(lowered)] = stores.nodes(lowered) else {
+        unreachable!();
+    };
+    assert_eq!(lowered.shift, Scaled::from_raw(-2 * Scaled::UNITY));
+    assert!(
+        stores.box_reg(0).is_some(),
+        "\\copy must preserve its register"
+    );
+    assert!(stores.box_reg(1).is_none(), "\\box must void its register");
 }
 
 #[test]
