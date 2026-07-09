@@ -533,6 +533,10 @@ the environment because no API accepts it. Builders are reusable owned scratch
 buffers so the gullet can read frozen lists while building new argument lists.
 Node lists likewise; promotion is expressed as the *only* signature for storing
 into a box register.
+Box-register replacement paths that preserve TeX's current visible box level
+(`\box`/`\vsplit`-style same-level writes and clears) are still aggregate
+`Universe` facades; downstream crates do not infer or mutate raw environment
+ownership directly.
 
 Raw content substores are implementation details of `Universe`: downstream
 crates cannot construct `TokenStore`, `GlueStore`, `NodeArena`, or

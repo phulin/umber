@@ -363,7 +363,8 @@ where
             }
             UnexpandablePrimitive::HBox
             | UnexpandablePrimitive::VBox
-            | UnexpandablePrimitive::VTop => {
+            | UnexpandablePrimitive::VTop
+            | UnexpandablePrimitive::VSplit => {
                 reject_macro_prefixes(prefixes)?;
                 execute_make_box(primitive, nest, prefixes.global, input, stores, hooks)?;
                 Ok(CommandOutcome::continue_only())

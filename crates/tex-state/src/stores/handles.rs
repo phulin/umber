@@ -150,6 +150,17 @@ impl Stores {
         self.account_box_write(old, rec);
     }
 
+    pub(super) fn write_box_reg_same_level(&mut self, index: u16, value: Option<NodeListId>) {
+        let old = self.env.box_reg(index);
+        let value = match value {
+            Some(value) if Some(value) == old => Some(value),
+            Some(value) => Some(self.prepare_box_value(value)),
+            None => None,
+        };
+        let rec = self.env.set_box_reg_same_level(index, value);
+        self.account_box_write(old, rec);
+    }
+
     pub(super) fn account_box_write(
         &mut self,
         old: Option<NodeListId>,

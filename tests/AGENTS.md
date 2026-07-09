@@ -33,6 +33,12 @@ runs `umber run <case>.tex --dvi actual.dvi`, then asks `tools/refexec` to
 run the live reference engine and byte-compare DVI output with only preamble
 comment payload normalization.
 
+`tests/corpus/page` contains page-builder-focused DVI parity fixtures. It is
+run by the same `scripts/parity.sh` DVI comparison loop and should use small
+primitive-only preambles that pin plain-format defaults such as `\output`,
+`\maxdepth`, and interline glue whenever pdfTeX plain defaults would otherwise
+leak into byte output.
+
 ```text
 <case>.expected.<kind>
 ```

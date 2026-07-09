@@ -1204,6 +1204,22 @@ impl Universe {
         self.stores.take_box_reg_same_level(index)
     }
 
+    pub fn set_box_reg_same_level(&mut self, index: u16, value: NodeListId) {
+        self.stores.set_box_reg_same_level(index, value);
+    }
+
+    pub fn clear_box_reg(&mut self, index: u16) {
+        self.stores.clear_box_reg(index);
+    }
+
+    pub fn clear_box_reg_global(&mut self, index: u16) {
+        self.stores.clear_box_reg_global(index);
+    }
+
+    pub fn clear_box_reg_same_level(&mut self, index: u16) {
+        self.stores.clear_box_reg_same_level(index);
+    }
+
     #[must_use]
     pub fn box_dimension(&self, index: u16, dimension: BoxDimension) -> Option<Scaled> {
         let id = self.box_reg(index)?;

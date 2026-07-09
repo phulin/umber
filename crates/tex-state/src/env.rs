@@ -372,6 +372,19 @@ impl Env {
         }
     }
 
+    /// Sets a box register at TeX's current box level.
+    pub(crate) fn set_box_reg_same_level(
+        &mut self,
+        index: u16,
+        value: Option<NodeListId>,
+    ) -> Option<UndoRec> {
+        if self.box_reg_is_local_to_current_group(index) {
+            self.set_box_reg(index, value)
+        } else {
+            self.set_box_reg_global(index, value)
+        }
+    }
+
     /// Takes a box register at TeX's current box level.
     ///
     /// This matches `\box<n>`: if the visible box value was locally assigned

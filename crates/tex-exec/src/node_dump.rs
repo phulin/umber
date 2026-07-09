@@ -342,6 +342,8 @@ impl GlueKindDump for GlueKind {
             Self::Normal => "\\glue ",
             Self::BaselineSkip => "\\glue(\\baselineskip) ",
             Self::LineSkip => "\\glue(\\lineskip) ",
+            Self::TopSkip => "\\glue(\\topskip) ",
+            Self::SplitTopSkip => "\\glue(\\splittopskip) ",
             Self::LeftSkip => "\\glue(\\leftskip) ",
             Self::RightSkip => "\\glue(\\rightskip) ",
             Self::ParFillSkip => "\\glue(\\parfillskip) ",

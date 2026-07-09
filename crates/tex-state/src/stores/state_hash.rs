@@ -690,12 +690,14 @@ fn hash_glue_kind(kind: GlueKind, hasher: &mut StateHasher) {
         GlueKind::Normal => 0,
         GlueKind::BaselineSkip => 1,
         GlueKind::LineSkip => 2,
-        GlueKind::LeftSkip => 3,
-        GlueKind::RightSkip => 4,
-        GlueKind::ParFillSkip => 5,
-        GlueKind::Leaders => 6,
-        GlueKind::Cleaders => 7,
-        GlueKind::Xleaders => 8,
+        GlueKind::TopSkip => 3,
+        GlueKind::SplitTopSkip => 4,
+        GlueKind::LeftSkip => 5,
+        GlueKind::RightSkip => 6,
+        GlueKind::ParFillSkip => 7,
+        GlueKind::Leaders => 8,
+        GlueKind::Cleaders => 9,
+        GlueKind::Xleaders => 10,
     });
 }
 

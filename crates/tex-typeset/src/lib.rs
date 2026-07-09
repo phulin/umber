@@ -6,6 +6,7 @@
 
 pub mod linebreak;
 mod packing;
+mod vertical_break;
 
 use tex_state::Universe;
 use tex_state::glue::GlueSpec;
@@ -16,6 +17,7 @@ use tex_state::scaled::Scaled;
 pub use packing::{
     HpackParams, PackDiagnostic, PackSpec, PackedBox, VpackParams, hpack, vpack, vtop,
 };
+pub use vertical_break::{VerticalBreak, VerticalBreakError, vert_break};
 
 /// TeX's infinite badness sentinel.
 pub const INF_BAD: i32 = 10_000;

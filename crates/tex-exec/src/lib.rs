@@ -15,6 +15,7 @@ mod mode;
 mod node_dump;
 mod output;
 mod page_builder;
+mod splitting;
 mod vertical;
 
 pub use assignments::{install_unexpandable_primitives, try_execute_assignment};

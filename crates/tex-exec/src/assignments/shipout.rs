@@ -366,6 +366,7 @@ fn lower_glue_kind(kind: StateGlueKind) -> PageGlueKind {
         StateGlueKind::Normal => PageGlueKind::Normal,
         StateGlueKind::BaselineSkip => PageGlueKind::BaselineSkip,
         StateGlueKind::LineSkip => PageGlueKind::LineSkip,
+        StateGlueKind::TopSkip | StateGlueKind::SplitTopSkip => PageGlueKind::Normal,
         StateGlueKind::LeftSkip => PageGlueKind::LeftSkip,
         StateGlueKind::RightSkip => PageGlueKind::RightSkip,
         StateGlueKind::ParFillSkip => PageGlueKind::ParFillSkip,

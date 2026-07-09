@@ -115,6 +115,8 @@ pub enum GlueKind {
     Normal,
     BaselineSkip,
     LineSkip,
+    TopSkip,
+    SplitTopSkip,
     LeftSkip,
     RightSkip,
     ParFillSkip,

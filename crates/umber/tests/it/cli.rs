@@ -257,11 +257,37 @@ fn run_dvi_smoke_matches_pdftex_insert_split_footnote() {
     assert_dvi_case_matches_pdftex("insert_split_footnote");
 }
 
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn run_page_corpus_matches_pdftex_dvi() {
+    assert_dvi_area_matches_pdftex("page");
+}
+
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
 fn assert_dvi_case_matches_pdftex(case: &str) {
+    assert_dvi_case_in_area_matches_pdftex("dvi", case);
+}
+
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn assert_dvi_area_matches_pdftex(area: &str) {
+    let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let corpus = repo_root.join("tests/corpus").join(area);
+    for entry in fs::read_dir(&corpus).expect("read DVI corpus") {
+        let path = entry.expect("read corpus entry").path();
+        if path.extension().and_then(std::ffi::OsStr::to_str) != Some("tex") {
+            continue;
+        }
+        let case = path.file_stem().expect("fixture stem").to_string_lossy();
+        assert_dvi_case_in_area_matches_pdftex(area, &case);
+    }
+}
+
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn assert_dvi_case_in_area_matches_pdftex(area: &str, case: &str) {
     let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let source = repo_root
-        .join("tests/corpus/dvi")
+        .join("tests/corpus")
+        .join(area)
         .join(format!("{case}.tex"));
     let cmr10 = repo_root.join("crates/tex-fonts/tests/fixtures/cm/cmr10.tfm");
     let temp_dir = tempfile::tempdir().expect("create DVI smoke temp dir");

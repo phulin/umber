@@ -59,6 +59,7 @@ pub fn install_unexpandable_primitives(stores: &mut Universe) {
         ("setbox", UnexpandablePrimitive::SetBox),
         ("box", UnexpandablePrimitive::Box),
         ("copy", UnexpandablePrimitive::Copy),
+        ("vsplit", UnexpandablePrimitive::VSplit),
         ("unhbox", UnexpandablePrimitive::UnHBox),
         ("unvbox", UnexpandablePrimitive::UnVBox),
         ("lastbox", UnexpandablePrimitive::LastBox),

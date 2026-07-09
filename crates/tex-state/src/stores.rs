@@ -801,6 +801,22 @@ impl Stores {
         self.write_box_reg(index, Some(value), true);
     }
 
+    pub fn set_box_reg_same_level(&mut self, index: u16, value: NodeListId) {
+        self.write_box_reg_same_level(index, Some(value));
+    }
+
+    pub fn clear_box_reg(&mut self, index: u16) {
+        self.write_box_reg(index, None, false);
+    }
+
+    pub fn clear_box_reg_global(&mut self, index: u16) {
+        self.write_box_reg(index, None, true);
+    }
+
+    pub fn clear_box_reg_same_level(&mut self, index: u16) {
+        self.write_box_reg_same_level(index, None);
+    }
+
     #[must_use]
     pub fn box_reg(&self, index: u16) -> Option<NodeListId> {
         self.env.box_reg(index)

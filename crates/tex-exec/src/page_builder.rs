@@ -9,7 +9,7 @@ use tex_state::page::{
     PageInsertionStatus,
 };
 use tex_state::scaled::{Scaled, nx_plus_y, x_over_n};
-use tex_typeset::{INF_BAD, badness};
+use tex_typeset::{INF_BAD, VerticalBreakError, badness, vert_break};
 
 use crate::ExecError;
 
@@ -211,7 +211,8 @@ fn split_page_insertion(
         capacity = remaining_cap;
     }
 
-    let split = vert_break(stores, stores.nodes(content), capacity, split_max_depth)?;
+    let split = vert_break(stores, stores.nodes(content), capacity, split_max_depth)
+        .map_err(vertical_break_error)?;
     insertion.set_height(add(insertion.height(), split.best_height_plus_depth)?);
     let scaled_best = scaled_insertion_size(split.best_height_plus_depth, count)?;
     let goal = sub(stores.page_dimension(PageDimension::Goal), scaled_best)?;
@@ -257,191 +258,6 @@ fn inverse_scaled_insertion_capacity(size: Scaled, count: i32) -> Result<Scaled,
     nx_plus_y(1000, quotient, Scaled::from_raw(0)).map_err(|_| ExecError::ArithmeticOverflow)
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct VerticalBreak {
-    pub(crate) break_index: Option<usize>,
-    pub(crate) best_height_plus_depth: Scaled,
-}
-
-pub(crate) fn vert_break(
-    stores: &Universe,
-    nodes: &[Node],
-    goal: Scaled,
-    max_depth: Scaled,
-) -> Result<VerticalBreak, ExecError> {
-    let mut cur_height = Scaled::from_raw(0);
-    let mut stretch = [Scaled::from_raw(0); 4];
-    let mut shrink = Scaled::from_raw(0);
-    let mut prev_depth = Scaled::from_raw(0);
-    let mut least_cost = AWFUL_BAD;
-    let mut best = VerticalBreak {
-        break_index: None,
-        best_height_plus_depth: Scaled::from_raw(0),
-    };
-    let mut prev_node = nodes.first();
-
-    for index in 0..=nodes.len() {
-        let node = nodes.get(index);
-        let mut update_spacing = false;
-        let mut penalty = None;
-
-        match node {
-            None => penalty = Some(EJECT_PENALTY),
-            Some(Node::HList(box_node)) | Some(Node::VList(box_node)) => {
-                cur_height = add(add(cur_height, prev_depth)?, box_node.height)?;
-                prev_depth = box_node.depth;
-            }
-            Some(Node::Rule { height, depth, .. }) => {
-                cur_height = add(
-                    add(cur_height, prev_depth)?,
-                    height.unwrap_or_else(|| Scaled::from_raw(0)),
-                )?;
-                prev_depth = depth.unwrap_or_else(|| Scaled::from_raw(0));
-            }
-            Some(Node::Glue { .. }) => {
-                if prev_node.is_some_and(precedes_break) {
-                    penalty = Some(0);
-                    update_spacing = true;
-                } else {
-                    update_vertical_break_spacing(
-                        stores,
-                        node,
-                        &mut cur_height,
-                        &mut prev_depth,
-                        &mut stretch,
-                        &mut shrink,
-                    )?;
-                }
-            }
-            Some(Node::Kern { .. }) => {
-                if matches!(nodes.get(index + 1), Some(Node::Glue { .. })) {
-                    penalty = Some(0);
-                    update_spacing = true;
-                } else {
-                    update_vertical_break_spacing(
-                        stores,
-                        node,
-                        &mut cur_height,
-                        &mut prev_depth,
-                        &mut stretch,
-                        &mut shrink,
-                    )?;
-                }
-            }
-            Some(Node::Penalty(value)) => penalty = Some(*value),
-            Some(
-                Node::Whatsit(_)
-                | Node::Mark { .. }
-                | Node::Ins { .. }
-                | Node::Char { .. }
-                | Node::Lig { .. }
-                | Node::Unset
-                | Node::Disc { .. }
-                | Node::MathOn
-                | Node::MathOff
-                | Node::Adjust(_),
-            ) => {}
-        }
-
-        if let Some(penalty) = penalty
-            && penalty < INF_PENALTY
-        {
-            let mut cost = vertical_break_badness(goal, cur_height, stretch, shrink)?;
-            if cost < AWFUL_BAD {
-                if penalty <= EJECT_PENALTY {
-                    cost = penalty;
-                } else if cost < INF_BAD {
-                    cost = cost
-                        .checked_add(penalty)
-                        .ok_or(ExecError::ArithmeticOverflow)?;
-                } else {
-                    cost = DEPLORABLE;
-                }
-            }
-            if cost <= least_cost {
-                least_cost = cost;
-                best = VerticalBreak {
-                    break_index: node.map(|_| index),
-                    best_height_plus_depth: add(cur_height, prev_depth)?,
-                };
-            }
-            if cost == AWFUL_BAD || penalty <= EJECT_PENALTY {
-                break;
-            }
-        }
-
-        if update_spacing {
-            update_vertical_break_spacing(
-                stores,
-                node,
-                &mut cur_height,
-                &mut prev_depth,
-                &mut stretch,
-                &mut shrink,
-            )?;
-        }
-
-        if prev_depth > max_depth {
-            cur_height = add(cur_height, sub(prev_depth, max_depth)?)?;
-            prev_depth = max_depth;
-        }
-        if let Some(node) = node {
-            prev_node = Some(node);
-        }
-    }
-
-    Ok(best)
-}
-
-fn update_vertical_break_spacing(
-    stores: &Universe,
-    node: Option<&Node>,
-    cur_height: &mut Scaled,
-    prev_depth: &mut Scaled,
-    stretch: &mut [Scaled; 4],
-    shrink: &mut Scaled,
-) -> Result<(), ExecError> {
-    let width = match node {
-        Some(Node::Kern { amount, .. }) => *amount,
-        Some(Node::Glue { spec, .. }) => {
-            let spec = stores.glue(*spec);
-            let order = spec.stretch_order as usize;
-            stretch[order] = add(stretch[order], spec.stretch)?;
-            *shrink = add(*shrink, spec.shrink)?;
-            spec.width
-        }
-        _ => return Ok(()),
-    };
-    *cur_height = add(add(*cur_height, *prev_depth)?, width)?;
-    *prev_depth = Scaled::from_raw(0);
-    Ok(())
-}
-
-fn vertical_break_badness(
-    goal: Scaled,
-    cur_height: Scaled,
-    stretch: [Scaled; 4],
-    shrink: Scaled,
-) -> Result<i32, ExecError> {
-    if cur_height < goal {
-        if stretch[Order::Fil as usize].raw() != 0
-            || stretch[Order::Fill as usize].raw() != 0
-            || stretch[Order::Filll as usize].raw() != 0
-        {
-            Ok(0)
-        } else {
-            Ok(badness(
-                sub(goal, cur_height)?,
-                stretch[Order::Normal as usize],
-            ))
-        }
-    } else if sub(cur_height, goal)? > shrink {
-        Ok(AWFUL_BAD)
-    } else {
-        Ok(badness(sub(cur_height, goal)?, shrink))
-    }
-}
-
 fn initialize_page_with_topskip(stores: &mut Universe, node: &Node) -> Result<(), ExecError> {
     if stores.page_contents() == PageContents::Empty {
         stores.freeze_page_specs(PageContents::BoxThere);
@@ -463,7 +279,7 @@ fn initialize_page_with_topskip(stores: &mut Universe, node: &Node) -> Result<()
     let spec = stores.intern_glue(adjusted);
     stores.prepend_page_contribution(Node::Glue {
         spec,
-        kind: GlueKind::Normal,
+        kind: GlueKind::TopSkip,
     });
     Ok(())
 }
@@ -631,4 +447,10 @@ fn add(lhs: Scaled, rhs: Scaled) -> Result<Scaled, ExecError> {
 
 fn sub(lhs: Scaled, rhs: Scaled) -> Result<Scaled, ExecError> {
     lhs.checked_sub(rhs).ok_or(ExecError::ArithmeticOverflow)
+}
+
+fn vertical_break_error(error: VerticalBreakError) -> ExecError {
+    match error {
+        VerticalBreakError::ArithmeticOverflow => ExecError::ArithmeticOverflow,
+    }
 }

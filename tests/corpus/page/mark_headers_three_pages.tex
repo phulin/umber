@@ -1,0 +1,23 @@
+\font\tenrm=cmr10
+\tenrm
+\count0=1
+\topskip=0pt
+\lineskip=0pt
+\vsize=18pt
+\maxdepth=4pt
+\output={%
+  \setbox255=\vbox{\hbox{\topmark/\firstmark/\botmark}\box255\relax}%
+  \advance\count0 by 1%
+  \shipout\box255\relax}
+\hbox{Alpha}
+\mark{A}
+\penalty-10000
+\hbox{Beta}
+\mark{B}
+\penalty-10000
+\hbox{Gamma}
+\mark{C}
+\penalty-10000
+\hbox{Delta}
+\penalty-10000
+\end

@@ -460,9 +460,13 @@ makes box-level memoization (M4) sound.
   memoization (page-level still covers it).
 - **Vertical packing, `\vsplit`, marks**: operate on survivor-arena lists
   (they are reachable from box registers by definition); mark extraction
-  reads are recorded like any state read.
+  reads are recorded like any state read. `\vsplit` clones the source vbox
+  children back to epoch storage, chooses its split with the shared pure
+  `tex-typeset::vert_break`, writes only the split mark slots, prunes the
+  survivor remainder with `\splittopskip`, and replaces or clears the source
+  register through the same-level `Universe` box facade.
 - **Implemented packing foundation**: `tex-typeset` currently provides pure
-  `hpack`, `vpack`, `vtop`, and TeX.web §108 badness over frozen node lists.
+  `hpack`, `vpack`, `vtop`, `vert_break`, and TeX.web §108 badness over frozen node lists.
   The crate reads `Universe` immutably, including frozen nodes, glue specs,
   and loaded font character metrics, copies packing parameters into plain
   structs at entry, and returns box payloads plus diagnostics without writing
@@ -487,8 +491,10 @@ Responsibility: accumulate the main vertical list, fire `\output`, commit.
   the first box are pruned when the builder catches up; the first box freezes
   page specs from `\vsize`/`\maxdepth` and inserts adjusted `\topskip`; box,
   rule, glue, kern, and penalty contributions update page totals and legal
-  breakpoint costs using TeX's `badness`/`awful_bad` comparison order. A forced
-  or awful break records a pending fire-up boundary.
+  breakpoint costs using TeX's `badness`/`awful_bad` comparison order. The
+  insertion splitter and `\vsplit` share the pure `vert_break` kernel for
+  least-cost vertical break selection. A forced or awful break records a
+  pending fire-up boundary.
 - Fire-up splits the current page at the recorded best break, rewrites the
   chosen break penalty to `10000`, stores the original penalty in
   `\outputpenalty`, updates `\topmark` from the old `\botmark`, scans the

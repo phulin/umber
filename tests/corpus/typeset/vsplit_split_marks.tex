@@ -1,0 +1,14 @@
+\showboxbreadth=100
+\showboxdepth=100
+\vbadness=10000
+\splittopskip=10pt
+\setbox10=\vbox{\hrule height4pt depth0pt width5pt\mark{M1}\penalty0\hrule height4pt depth0pt width6pt\mark{M2}\penalty0\hrule height4pt depth0pt width7pt}
+\setbox11=\vsplit10 to 5pt
+\message{[after-first sf=\splitfirstmark sb=\splitbotmark]}
+\showbox11
+\showbox10
+\setbox12=\vbox{\hrule height4pt depth0pt width8pt\penalty0\hrule height4pt depth0pt width9pt}
+\setbox13=\vsplit12 to 5pt
+\showbox13
+\showbox12
+\end
