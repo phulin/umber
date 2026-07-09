@@ -6,7 +6,8 @@ use tex_state::scaled::Scaled;
 use super::params::MathParams;
 use super::style::Style;
 use super::{
-    FrozenHList, MathBox, MathNode, MathTypesetState, clean_box, hpack, node_is_char, vpack,
+    FrozenHList, MathBox, MathNode, MathTypesetState, boxed_node, clean_box, hpack, node_is_char,
+    vpack,
 };
 
 pub fn make_scripts(
@@ -41,7 +42,7 @@ pub fn make_scripts(
     } else {
         let mut sup = superscript_box(state, superscript, style, params, &mut shift_up);
         if matches!(subscript, MathField::Empty) {
-            sup.shift = neg(shift_up);
+            sup.shift = shift_up;
             sup
         } else {
             let mut shifts = ScriptShifts {
@@ -51,7 +52,7 @@ pub fn make_scripts(
             script_pair(state, subscript, style, params, &mut shifts, delta, sup)
         }
     };
-    base.nodes.push(MathNode::HList(script));
+    base.nodes.push(boxed_node(script));
 
     let _ = size_params;
 }
@@ -77,7 +78,7 @@ fn subscript_only(
     if *shift_down < clr {
         *shift_down = clr;
     }
-    x.shift = *shift_down;
+    x.shift = neg(*shift_down);
     x
 }
 
@@ -157,7 +158,7 @@ fn script_pair(
         ],
     };
     let mut pair = vpack(list);
-    pair.shift = shifts.down;
+    pair.shift = neg(shifts.down);
     pair
 }
 

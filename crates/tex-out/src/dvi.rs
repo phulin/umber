@@ -580,7 +580,7 @@ impl<'a> DviWriter<'a> {
         if let Some(defined) = self.fonts.iter().find(|defined| defined.key == key) {
             return Ok(defined.number);
         }
-        let number = u32::try_from(self.fonts.len()).expect("DVI font count exceeds u32");
+        let number = font.font_id;
         self.fnt_def(number, font)?;
         self.fonts.push(DefinedFont { number, key, font });
         Ok(number)
@@ -604,7 +604,9 @@ impl<'a> DviWriter<'a> {
         self.u16(self.max_stack_depth);
         self.u16(total_pages);
 
-        for defined in self.fonts.clone() {
+        let mut defined_fonts = self.fonts.clone();
+        defined_fonts.sort_by(|left, right| right.number.cmp(&left.number));
+        for defined in defined_fonts {
             self.fnt_def(defined.number, defined.font)?;
         }
 
@@ -699,6 +701,7 @@ struct DefinedFont<'a> {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct FontKey {
+    font_id: u32,
     name: String,
     tfm_checksum: u32,
     design_size: Scaled,
@@ -708,6 +711,7 @@ struct FontKey {
 impl From<&FontResource> for FontKey {
     fn from(font: &FontResource) -> Self {
         Self {
+            font_id: font.font_id,
             name: font.name.clone(),
             tfm_checksum: font.tfm_checksum,
             design_size: font.design_size,

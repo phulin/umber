@@ -235,7 +235,7 @@ where
         if let Some(id) = self.font_map.get(&font) {
             return *id;
         }
-        let id = u32::try_from(self.fonts.len()).expect("page font count exceeds u32");
+        let id = font.raw().saturating_sub(1);
         let loaded = self.stores.font(font);
         self.fonts.push(FontResource {
             font_id: id,

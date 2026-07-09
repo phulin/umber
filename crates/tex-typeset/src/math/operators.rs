@@ -131,8 +131,8 @@ fn operator_nucleus(
     };
     let axis = ctx.params.for_size(ctx.style.size()).symbols.axis_height;
     boxed.shift = sub(
-        Scaled::from_raw(tex_arith::half(sub(boxed.height, boxed.depth).raw())),
         axis,
+        Scaled::from_raw(tex_arith::half(sub(boxed.height, boxed.depth).raw())),
     );
     boxed
 }
@@ -162,6 +162,9 @@ fn displayed_limits(
     rebox(&mut sup, width);
     rebox(&mut op, width);
     rebox(&mut sub_box, width);
+    let op = hpack(FrozenHList {
+        nodes: vec![MathNode::HList(op)],
+    });
     let skew = Scaled::from_raw(tex_arith::half(delta.raw()));
     sup.shift = skew;
     sub_box.shift = Scaled::from_raw(-skew.raw());

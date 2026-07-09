@@ -142,11 +142,11 @@ fn script_pair_uses_italic_delta_scriptspace_and_cramped_substyle() {
     let hlist = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
 
     assert!(matches!(hlist.nodes[0], MathNode::Char { ch: 'a', .. }));
-    let MathNode::HList(script_box) = &hlist.nodes[1] else {
+    let MathNode::VList(script_box) = &hlist.nodes[1] else {
         panic!("expected script box");
     };
     assert_eq!(script_box.axis, BoxAxis::Vertical);
-    assert_eq!(script_box.shift, sc(15));
+    assert_eq!(script_box.shift, sc(-15));
     let [
         MathNode::HList(sup),
         MathNode::Kern { amount, .. },
@@ -311,14 +311,20 @@ fn display_operator_uses_larger_variant_and_places_limits() {
         panic!("expected displayed-limits vbox");
     };
     assert_eq!(limits.width, sc(16));
-    assert!(limits.list.nodes.iter().any(|node| {
-        matches!(
-            node,
-            MathNode::HList(MathBox {
-                list: FrozenHList { nodes },
-                ..
-            }) if matches!(nodes.as_slice(), [MathNode::Char { ch: 'O', .. }])
-        )
+    assert!(limits.list.nodes.iter().any(|node| match node {
+        MathNode::HList(MathBox {
+            list: FrozenHList { nodes },
+            ..
+        }) => nodes.iter().any(|node| {
+            matches!(
+                node,
+                MathNode::HList(MathBox {
+                    list: FrozenHList { nodes },
+                    ..
+                }) if matches!(nodes.as_slice(), [MathNode::Char { ch: 'O', .. }])
+            )
+        }),
+        _ => false,
     }));
 }
 
@@ -336,7 +342,7 @@ fn nolimits_operator_splits_italic_correction_into_script_placement() {
 
     let hlist = mlist_to_hlist(&universe, input, Style::DISPLAY, false, &params);
 
-    let [MathNode::HList(op_box), MathNode::HList(scripts)] = hlist.nodes.as_slice() else {
+    let [MathNode::HList(op_box), MathNode::VList(scripts)] = hlist.nodes.as_slice() else {
         panic!("expected operator followed by script box");
     };
     assert_eq!(op_box.width, sc(14));
@@ -361,7 +367,7 @@ fn nolimits_operator_centers_nucleus_on_math_axis() {
     let [MathNode::HList(op_box)] = hlist.nodes.as_slice() else {
         panic!("expected operator hbox");
     };
-    assert_eq!(op_box.shift, sc(-1));
+    assert_eq!(op_box.shift, sc(1));
 }
 
 #[test]

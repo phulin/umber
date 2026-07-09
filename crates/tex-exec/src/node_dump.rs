@@ -30,19 +30,33 @@ impl DumpConfig {
 
 pub(crate) fn dump_node_list(stores: &Universe, id: NodeListId, config: DumpConfig) -> String {
     let mut out = String::new();
-    dump_list(stores, id, &config, -1, &mut out);
+    dump_list(stores, id, &config, -1, ListContext::Neutral, &mut out);
     out
 }
 
 pub(crate) fn dump_node_slice(stores: &Universe, nodes: &[Node], config: DumpConfig) -> String {
     let mut out = String::new();
-    dump_nodes(stores, nodes, &config, -1, &mut out);
+    dump_nodes(stores, nodes, &config, -1, ListContext::Neutral, &mut out);
     out
 }
 
-fn dump_list(stores: &Universe, id: NodeListId, config: &DumpConfig, depth: i32, out: &mut String) {
+#[derive(Clone, Copy)]
+enum ListContext {
+    Neutral,
+    HList,
+    VList,
+}
+
+fn dump_list(
+    stores: &Universe,
+    id: NodeListId,
+    config: &DumpConfig,
+    depth: i32,
+    context: ListContext,
+    out: &mut String,
+) {
     let nodes = stores.nodes(id);
-    dump_nodes(stores, nodes, config, depth, out);
+    dump_nodes(stores, nodes, config, depth, context, out);
 }
 
 fn dump_nodes(
@@ -50,6 +64,7 @@ fn dump_nodes(
     nodes: &[Node],
     config: &DumpConfig,
     depth: i32,
+    context: ListContext,
     out: &mut String,
 ) {
     if config.depth < 0 || depth > config.depth {
@@ -57,7 +72,7 @@ fn dump_nodes(
     }
     let limit = config.breadth.max(0) as usize;
     for node in nodes.iter().take(limit) {
-        dump_node(stores, node, config, depth, out);
+        dump_node(stores, node, config, depth, context, out);
     }
     if nodes.len() > limit {
         write_prefix(depth, out);
@@ -65,7 +80,14 @@ fn dump_nodes(
     }
 }
 
-fn dump_node(stores: &Universe, node: &Node, config: &DumpConfig, depth: i32, out: &mut String) {
+fn dump_node(
+    stores: &Universe,
+    node: &Node,
+    config: &DumpConfig,
+    depth: i32,
+    context: ListContext,
+    out: &mut String,
+) {
     write_prefix(depth, out);
     match node {
         Node::Kern { amount, kind } => match kind {
@@ -95,10 +117,10 @@ fn dump_node(stores: &Universe, node: &Node, config: &DumpConfig, depth: i32, ou
             );
         }
         Node::HList(box_node) => {
-            dump_box("hbox", stores, box_node, config, depth, out);
+            dump_box("hbox", stores, box_node, config, depth, context, out);
         }
         Node::VList(box_node) => {
-            dump_box("vbox", stores, box_node, config, depth, out);
+            dump_box("vbox", stores, box_node, config, depth, context, out);
         }
         Node::Rule {
             width,
@@ -128,7 +150,7 @@ fn dump_node(stores: &Universe, node: &Node, config: &DumpConfig, depth: i32, ou
         Node::Mark { tokens, .. } => dump_mark(stores, *tokens, out),
         Node::Adjust(list) => {
             out.push_str("\\vadjust\n");
-            dump_list(stores, *list, config, depth + 1, out);
+            dump_list(stores, *list, config, depth + 1, ListContext::VList, out);
         }
         Node::MathOn(width) => {
             dump_math_marker("\\mathon", *width, out);
@@ -231,7 +253,7 @@ fn dump_math_field(
         }
         MathField::SubBox(list) | MathField::SubMlist(list) => {
             let old_len = out.len();
-            dump_list(stores, *list, config, depth, out);
+            dump_list(stores, *list, config, depth, ListContext::Neutral, out);
             if old_len < out.len() {
                 out.replace_range(old_len..old_len + 1, &marker.to_string());
             }
@@ -281,7 +303,7 @@ fn dump_fraction_part(
     out: &mut String,
 ) {
     let old_len = out.len();
-    dump_list(stores, list, config, depth, out);
+    dump_list(stores, list, config, depth, ListContext::Neutral, out);
     if old_len < out.len() {
         out.replace_range(old_len..old_len + 1, marker);
     }
@@ -310,7 +332,7 @@ fn dump_choice_arm(
     out: &mut String,
 ) {
     let old_len = out.len();
-    dump_list(stores, list, config, depth, out);
+    dump_list(stores, list, config, depth, ListContext::Neutral, out);
     if old_len < out.len() {
         out.replace_range(old_len..old_len + 1, &marker.to_string());
     }
@@ -330,7 +352,14 @@ fn dump_math_list(
     };
     out.push_str(name);
     out.push('\n');
-    dump_list(stores, list.content, config, depth + 1, out);
+    dump_list(
+        stores,
+        list.content,
+        config,
+        depth + 1,
+        ListContext::Neutral,
+        out,
+    );
 }
 
 fn math_style_name(style: MathStyle) -> &'static str {
@@ -360,15 +389,15 @@ fn dump_disc(
             stores.nodes(replace).len()
         );
     }
-    dump_list(stores, pre, config, depth + 1, out);
+    dump_list(stores, pre, config, depth + 1, ListContext::Neutral, out);
     if !stores.nodes(post).is_empty() {
         let old_len = out.len();
-        dump_list(stores, post, config, depth + 1, out);
+        dump_list(stores, post, config, depth + 1, ListContext::Neutral, out);
         if old_len + 1 < out.len() {
             out.replace_range(old_len + 1..old_len + 2, "|");
         }
     }
-    dump_list(stores, replace, config, depth, out);
+    dump_list(stores, replace, config, depth, ListContext::Neutral, out);
 }
 
 fn dump_mark(stores: &Universe, tokens: TokenListId, out: &mut String) {
@@ -416,6 +445,7 @@ fn dump_box(
     box_node: &BoxNode,
     config: &DumpConfig,
     depth: i32,
+    context: ListContext,
     out: &mut String,
 ) {
     let _ = write!(
@@ -428,11 +458,11 @@ fn dump_box(
     );
     write_glue_set(box_node, out);
     if box_node.shift.raw() != 0 {
-        let _ = write!(
-            out,
-            ", shifted {}",
-            format_scaled_without_unit(box_node.shift)
-        );
+        let shift = match context {
+            ListContext::HList => -box_node.shift,
+            ListContext::Neutral | ListContext::VList => box_node.shift,
+        };
+        let _ = write!(out, ", shifted {}", format_scaled_without_unit(shift));
     }
     if box_node.display {
         out.push_str(", display");
@@ -445,7 +475,19 @@ fn dump_box(
         return;
     }
     out.push('\n');
-    dump_list(stores, box_node.children, config, depth + 1, out);
+    let child_context = if name == "hbox" {
+        ListContext::HList
+    } else {
+        ListContext::VList
+    };
+    dump_list(
+        stores,
+        box_node.children,
+        config,
+        depth + 1,
+        child_context,
+        out,
+    );
 }
 
 fn write_glue_set(box_node: &BoxNode, out: &mut String) {

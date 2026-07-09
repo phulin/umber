@@ -19,8 +19,8 @@ fn writes_preamble_bop_body_and_postamble() {
     let bop = 16;
     let body = page_body(&dvi, bop);
     let mut expected_body = vec![DOWN1, 100];
-    expected_body.extend(font_def_bytes(0, "cmr10"));
-    expected_body.extend([FNT_NUM_0, b'A']);
+    expected_body.extend(font_def_bytes(3, "cmr10"));
+    expected_body.extend([FNT_NUM_0 + 3, b'A']);
 
     assert_eq!(dvi[0], PRE);
     assert_eq!(dvi[1], ID_BYTE);
@@ -48,7 +48,7 @@ fn writes_preamble_bop_body_and_postamble() {
     assert_eq!(be_u16(&dvi, post + 25), 0);
     assert_eq!(be_u16(&dvi, post + 27), 1);
 
-    assert_font_def(&dvi, post + 29, 0, "cmr10");
+    assert_font_def(&dvi, post + 29, 3, "cmr10");
     let post_post = post + 50;
     assert_eq!(dvi[post_post], POST_POST);
     assert_eq!(be_i32(&dvi, post_post + 1), post as i32);
@@ -106,7 +106,7 @@ fn defines_fonts_at_first_use_and_uses_fnt_num_or_fnt1() {
     let post = page_eop(&dvi, 16) + 1;
     let post_f00 = find_font_def(&dvi, b"f00", post).expect("post f00 def");
     let post_f64 = find_font_def(&dvi, b"f64", post).expect("post f64 def");
-    assert!(post_f00 < post_f64);
+    assert!(post_f64 < post_f00);
 }
 
 #[test]
