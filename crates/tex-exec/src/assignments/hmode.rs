@@ -132,6 +132,7 @@ where
                 .push(scan_rule_node(input, stores, hooks, primitive)?);
             nest.current_list_mut().set_space_factor(1000);
         }
+        UnexpandablePrimitive::ControlSpace => append_control_space(nest, input, stores)?,
         UnexpandablePrimitive::ItalicCorrection => append_italic_correction(nest, stores)?,
         UnexpandablePrimitive::Discretionary => {
             flush_pending_hchars(nest, stores)?;
@@ -299,6 +300,29 @@ fn append_space(nest: &mut ModeNest, stores: &mut Universe) -> Result<(), ExecEr
         kind: GlueKind::Normal,
         leader: None,
     });
+    Ok(())
+}
+
+fn append_control_space<S>(
+    nest: &mut ModeNest,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+) -> Result<(), ExecError>
+where
+    S: InputSource,
+{
+    if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
+        ensure_horizontal_for_character(nest, input, stores)?;
+    }
+    flush_pending_hchars(nest, stores)?;
+    let spec = normal_font_space(stores);
+    let id = stores.intern_glue(spec);
+    nest.current_list_mut().push(Node::Glue {
+        spec: id,
+        kind: GlueKind::Normal,
+        leader: None,
+    });
+    nest.current_list_mut().set_space_factor(1000);
     Ok(())
 }
 
@@ -473,6 +497,17 @@ fn nonzero_glue_param_or_font_space(
         spec.shrink = scale_by_factor(spec.shrink, 1000, space_factor);
     }
     spec
+}
+
+fn normal_font_space(stores: &Universe) -> GlueSpec {
+    let font = stores.current_font();
+    GlueSpec {
+        width: stores.font_parameter(font, 2),
+        stretch: stores.font_parameter(font, 3),
+        stretch_order: Order::Normal,
+        shrink: stores.font_parameter(font, 4),
+        shrink_order: Order::Normal,
+    }
 }
 
 fn scale_by_factor(value: Scaled, num: i32, den: i32) -> Scaled {
