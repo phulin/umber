@@ -186,7 +186,9 @@ Responsibility: characters → tokens, under mutable catcode law.
   (pre-lexing the rest of the buffer) precisely because tokens it produces
   carry the generation vector they were lexed under; consuming a stale
   token is impossible, only wasteful.
-- Control sequence names intern immediately to `Symbol`; the semantic token
+- Control-sequence identities intern immediately to `Symbol`; named sequences
+  and active characters occupy distinct interner namespaces even when their
+  printable spelling is identical. The semantic token
   type remains `Token = Char(char, Catcode) | Cs(Symbol) | Param(u8)` — one
   word, `Copy`. Hot token movement uses `TracedTokenWord(u64)` beside it:
   bits 63..62 are token kind, bits 61..32 are a 30-bit payload, and bits
@@ -212,8 +214,9 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   semantic token's meaning word in `Env` (one load); if expandable, push its
   expansion as a token-list frame and continue; else deliver the same
   `TracedTokenWord` downstream. Control-sequence tokens address their interned
-  symbol directly; active character tokens address the same one-character
-  symbol used by definition assignments. Compatibility callers that still need
+  symbol directly; active character tokens address the typed active-character
+  symbol used by definition assignments, distinct from an escaped
+  one-character control symbol with the same spelling. Compatibility callers that still need
   plain `Token` values decode only at their boundary and do not fabricate
   replacement origins.
   Undefined control sequences follow TeX82's expansion path: `get_x_token`
@@ -315,8 +318,8 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   naturally read-only; source-frame replay may intern newly encountered
   control sequence names through the lexer/interner capability. `\csname` uses a dedicated
   expansion scan that stops on `\endcsname`, accumulates only expanded character
-  tokens, and interns/relaxes the resulting control sequence through the same
-  aggregate boundary. Its synthesized control-sequence token is replayed through
+  tokens, and interns/relaxes the resulting control sequence through the named
+  namespace of the same aggregate boundary. Its synthesized control-sequence token is replayed through
   the ordinary `get_x_token` loop, so a macro result expands before execution
   sees a token and its synthesized origin remains the macro invocation parent.
   If expansion yields a non-character token before
@@ -376,7 +379,8 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   `\futurelet`, prefix accumulation (`\global`, `\long`, `\outer`,
   `\protected`), and `\globaldefs` override behavior. Definition targets use
   TeX's `get_r_token` rule: either a control sequence or an active character
-  is accepted, with active characters stored under their one-character symbol.
+  is accepted, with active characters stored under their typed active-character
+  symbol rather than the same-spelling named control-symbol identity.
   `\let` then follows TeX82's raw-token scan: it skips spaces before an
   optional equals sign, skips at most one space after that sign, and copies the
   already-tokenized command or character meaning without expansion. Prefix

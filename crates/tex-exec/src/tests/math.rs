@@ -258,7 +258,7 @@ fn mathcode_8000_uses_current_active_meaning_and_fam_overrides_variable_family()
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
     stores.set_mathcode('?', 0x8000);
-    let active_question = stores.intern("?");
+    let active_question = stores.intern_active_character('?');
     stores.set_meaning(active_question, Meaning::MathCharGiven(0x0231));
 
     let mut input = InputStack::new(MemoryInput::new(

@@ -125,7 +125,7 @@ pub(crate) fn redispatch_active_char<S>(input: &mut InputStack<S>, stores: &mut 
 where
     S: InputSource,
 {
-    let symbol = stores.intern(&ch.to_string());
+    let symbol = stores.intern_active_character(ch);
     push_tokens(input, stores, [Token::Cs(symbol)]);
 }
 

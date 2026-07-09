@@ -2,7 +2,7 @@ use super::{SnapshotOwner, StoreSnapshot, Stores};
 use crate::cell::{BankTag, CellId};
 use crate::glue::GlueSpec;
 use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, TokenListId};
-use crate::interner::Symbol;
+use crate::interner::{ControlSequenceKind, Symbol};
 use crate::journal::Entry;
 use crate::meaning::{
     ExpandablePrimitive, InternalInteger, Meaning, RawMeaning, UnexpandablePrimitive,
@@ -196,9 +196,13 @@ impl Stores {
 
     fn semantic_cell_key(&self, cell: CellId) -> SemanticCellKey {
         match cell.bank() {
-            BankTag::Meaning => SemanticCellKey::Meaning(
-                self.interner.resolve(Symbol::new(cell.index())).to_owned(),
-            ),
+            BankTag::Meaning => {
+                let symbol = Symbol::new(cell.index());
+                SemanticCellKey::Meaning {
+                    kind: self.interner.kind(symbol),
+                    name: self.interner.resolve(symbol).to_owned(),
+                }
+            }
             BankTag::FontDimen => {
                 let (font, slot) = unpack_font_dimen_index(cell.index());
                 SemanticCellKey::FontBank {
@@ -223,8 +227,9 @@ impl Stores {
 
     fn hash_cell_key(&self, key: &SemanticCellKey, hasher: &mut StateHasher) {
         match key {
-            SemanticCellKey::Meaning(name) => {
+            SemanticCellKey::Meaning { kind, name } => {
                 hasher.tag(0x01);
+                hash_control_sequence_kind(*kind, hasher);
                 hasher.str(name);
             }
             SemanticCellKey::Bank { bank, index } => {
@@ -344,6 +349,7 @@ impl Stores {
             Token::Cs(symbol) => {
                 self.assert_live_symbol(symbol);
                 hasher.tag(1);
+                hash_control_sequence_kind(self.interner.kind(symbol), hasher);
                 hasher.str(self.interner.resolve(symbol));
             }
             Token::Param(slot) => {
@@ -674,6 +680,7 @@ impl Stores {
             let symbol = Symbol::new((symbol - 1) as u32);
             self.assert_live_symbol(symbol);
             hasher.bool(true);
+            hash_control_sequence_kind(self.interner.kind(symbol), hasher);
             hasher.str(self.interner.resolve(symbol));
         }
     }
@@ -739,7 +746,10 @@ fn hash_print_sink(sink: crate::world::PrintSink, hasher: &mut StateHasher) {
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum SemanticCellKey {
-    Meaning(String),
+    Meaning {
+        kind: ControlSequenceKind,
+        name: String,
+    },
     Bank {
         bank: u8,
         index: u32,
@@ -749,6 +759,13 @@ enum SemanticCellKey {
         font: FontSemanticKey,
         index: u32,
     },
+}
+
+fn hash_control_sequence_kind(kind: ControlSequenceKind, hasher: &mut StateHasher) {
+    hasher.u8(match kind {
+        ControlSequenceKind::Named => 0,
+        ControlSequenceKind::ActiveCharacter => 1,
+    });
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]

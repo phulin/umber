@@ -192,6 +192,7 @@ pub enum DiscKind {
 pub enum PageToken {
     Char { ch: u32, cat: TokenCatcode },
     ControlSequence(String),
+    ActiveControlSequence(u32),
     Param(u8),
 }
 

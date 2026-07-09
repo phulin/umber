@@ -562,10 +562,30 @@ fn def_accepts_active_character_target_and_expands_it() {
 
     assert!(
         stores
-            .macro_meaning(stores.symbol("~").expect("active symbol"))
+            .macro_meaning(stores.active_character_symbol('~').expect("active symbol"))
             .is_some()
     );
     assert_eq!(macro_text(&stores, "x"), "OK");
+}
+
+#[test]
+fn active_character_and_same_spelling_control_symbol_expand_independently() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    stores.set_catcode('~', Catcode::Active);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\def~{ACTIVE}\\def\\~{NAMED}\\edef\\a{~}\\edef\\b{\\~}",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("colliding printed spellings remain independent");
+
+    let named = stores.symbol("~").expect("named control symbol");
+    let active = stores.active_character_symbol('~').expect("active symbol");
+    assert_ne!(named, active);
+    assert_eq!(macro_text(&stores, "a"), "ACTIVE");
+    assert_eq!(macro_text(&stores, "b"), "NAMED");
 }
 
 #[test]
@@ -603,7 +623,7 @@ fn futurelet_accepts_active_character_target() {
     .expect("futurelet executes");
 
     assert_eq!(
-        stores.meaning(stores.symbol("~").expect("active symbol")),
+        stores.meaning(stores.active_character_symbol('~').expect("active symbol")),
         Meaning::CharToken {
             ch: 'x',
             cat: Catcode::Letter
@@ -623,7 +643,7 @@ fn countdef_accepts_active_character_target_and_assigns_through_it() {
         .expect("active character countdef executes");
 
     assert_eq!(
-        stores.meaning(stores.symbol("~").expect("active symbol")),
+        stores.meaning(stores.active_character_symbol('~').expect("active symbol")),
         Meaning::CountRegister(12)
     );
     assert_eq!(stores.count(12), 7);
@@ -641,7 +661,7 @@ fn outer_def_accepts_active_character_target() {
         .expect("outer active character definition executes");
 
     assert!(matches!(
-        stores.meaning(stores.symbol("~").expect("active symbol")),
+        stores.meaning(stores.active_character_symbol('~').expect("active symbol")),
         Meaning::Macro { flags, .. } if flags.contains(tex_state::meaning::MeaningFlags::OUTER)
     ));
 }

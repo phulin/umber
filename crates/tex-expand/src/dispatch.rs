@@ -450,7 +450,7 @@ macro_rules! dispatch_match {
                         ch,
                         cat: tex_state::token::Catcode::Active,
                     } => {
-                        let symbol = stores.intern(&ch.to_string());
+                        let symbol = stores.intern_active_character(ch);
                         stores.resolve(symbol).to_owned()
                     }
                     Token::Char { .. } | Token::Param(_) => format!("{token:?}"),

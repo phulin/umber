@@ -666,7 +666,7 @@ pub(crate) fn expandable_symbol(
         Token::Char {
             ch,
             cat: Catcode::Active,
-        } => Some(stores.intern(&ch.to_string())),
+        } => Some(stores.intern_active_character(ch)),
         Token::Char { .. } | Token::Param(_) => None,
     }
 }

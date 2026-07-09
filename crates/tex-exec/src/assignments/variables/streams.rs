@@ -238,7 +238,7 @@ fn read_terminal_read_line(
 }
 
 fn read_prompt(stores: &Universe, target: Symbol) -> String {
-    format!("\n\\{}=", stores.resolve(target))
+    format!("\n{}=", tex_expand::token_text(stores, Token::Cs(target)))
 }
 
 fn scan_read_line_tokens(

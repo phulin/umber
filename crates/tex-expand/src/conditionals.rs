@@ -398,7 +398,7 @@ where
         Meaning::ExpandablePrimitive(ExpandablePrimitive::Fi) => Ok(Some(ConditionalPrimitive::Fi)),
         Meaning::Macro { flags, .. } if flags.contains(MeaningFlags::OUTER) => {
             Err(ExpandError::ForbiddenOuterTokenInSkippedConditional {
-                name: format!("\\{}", stores.resolve(symbol)),
+                name: crate::values::token_text(stores, Token::Cs(symbol)),
             })
         }
         _ => Ok(None),

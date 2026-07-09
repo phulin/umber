@@ -1,4 +1,4 @@
-use super::{Interner, InternerError, InternerMark, SYMBOL_CAPACITY};
+use super::{ControlSequenceKind, Interner, InternerError, InternerMark, SYMBOL_CAPACITY};
 use crate::interner::Symbol;
 use proptest::prelude::*;
 
@@ -29,6 +29,38 @@ fn resolve_round_trips_ascii_and_non_ascii() {
 
     assert_eq!(interner.resolve(ascii), "par");
     assert_eq!(interner.resolve(non_ascii), "é漢字🙂");
+}
+
+#[test]
+fn active_character_and_same_spelling_named_sequence_are_distinct() {
+    let mut interner = Interner::new();
+
+    let named = intern(&mut interner, "~");
+    let active = interner.intern_active('~').expect("active symbol");
+
+    assert_ne!(named, active);
+    assert_eq!(interner.get("~"), Some(named));
+    assert_eq!(interner.get_active('~'), Some(active));
+    assert_eq!(interner.resolve(named), "~");
+    assert_eq!(interner.resolve(active), "~");
+    assert_eq!(interner.kind(named), ControlSequenceKind::Named);
+    assert_eq!(interner.kind(active), ControlSequenceKind::ActiveCharacter);
+}
+
+#[test]
+fn rollback_rebuild_preserves_control_sequence_namespace() {
+    let mut interner = Interner::new();
+    let named = intern(&mut interner, "~");
+    let mark = interner.watermark();
+    let discarded_active = interner.intern_active('~').expect("active symbol");
+
+    interner.truncate_to(mark);
+    assert_eq!(interner.get("~"), Some(named));
+    assert_eq!(interner.get_active('~'), None);
+
+    let active = interner.intern_active('~').expect("reintern active symbol");
+    assert_eq!(active.raw(), discarded_active.raw());
+    assert_ne!(active, named);
 }
 
 #[test]

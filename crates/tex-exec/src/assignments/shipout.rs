@@ -253,7 +253,20 @@ where
                 ch: ch as u32,
                 cat: lower_token_catcode(cat),
             },
-            Token::Cs(symbol) => PageToken::ControlSequence(self.stores.resolve(symbol).to_owned()),
+            Token::Cs(symbol) => match self.stores.control_sequence_kind(symbol) {
+                tex_state::interner::ControlSequenceKind::Named => {
+                    PageToken::ControlSequence(self.stores.resolve(symbol).to_owned())
+                }
+                tex_state::interner::ControlSequenceKind::ActiveCharacter => {
+                    let ch = self
+                        .stores
+                        .resolve(symbol)
+                        .chars()
+                        .next()
+                        .expect("active-character symbol must contain one character");
+                    PageToken::ActiveControlSequence(ch as u32)
+                }
+            },
             Token::Param(slot) => PageToken::Param(slot),
         }
     }

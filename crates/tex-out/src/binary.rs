@@ -7,7 +7,7 @@ use std::fmt;
 use tex_arith::Scaled;
 
 const MAGIC: &[u8; 4] = b"UMPG";
-const VERSION: u8 = 6;
+const VERSION: u8 = 7;
 
 /// Binary parse failure.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -306,6 +306,10 @@ impl Writer {
                     self.u8(2);
                     self.u8(*slot);
                 }
+                PageToken::ActiveControlSequence(ch) => {
+                    self.u8(3);
+                    self.u32(*ch);
+                }
             }
         }
     }
@@ -581,6 +585,7 @@ impl Reader<'_> {
                 },
                 1 => PageToken::ControlSequence(self.str()?),
                 2 => PageToken::Param(self.u8()?),
+                3 => PageToken::ActiveControlSequence(self.u32()?),
                 tag => {
                     return Err(ParseError::InvalidTag { kind: "token", tag });
                 }

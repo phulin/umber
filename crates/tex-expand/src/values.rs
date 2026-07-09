@@ -2,6 +2,7 @@ use tex_lex::{InputSource, InputStack, MacroArguments};
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::{FontId, TokenListId};
+use tex_state::interner::ControlSequenceKind;
 use tex_state::meaning::{InternalInteger, Meaning, MeaningFlags};
 use tex_state::provenance::SynthesizedOriginKind;
 use tex_state::scaled::Scaled;
@@ -444,7 +445,9 @@ pub(crate) fn string_tokens(stores: &impl ExpansionState, token: Token) -> Vec<T
         Token::Char { ch, .. } => vec![rendered_char(ch)],
         Token::Cs(symbol) => {
             let mut out = Vec::new();
-            if let Some(escape) = escapechar(stores) {
+            if stores.control_sequence_kind(symbol) == ControlSequenceKind::Named
+                && let Some(escape) = escapechar(stores)
+            {
                 out.push(rendered_char(escape));
             }
             out.extend(stores.resolve(symbol).chars().map(rendered_char));
@@ -484,12 +487,10 @@ pub fn meaning_text(stores: &impl ExpansionState, token: Token) -> String {
             | Meaning::MuGlueParam(_)
             | Meaning::TokParam(_)
             | Meaning::PageDimension(_)
-            | Meaning::PageInteger(_) => {
-                format!("\\{}", stores.resolve(symbol))
-            }
+            | Meaning::PageInteger(_) => token_text(stores, Token::Cs(symbol)),
             Meaning::Font(_) => format!("select font {}", token_text(stores, token)),
-            Meaning::ExpandablePrimitive(_) => format!("\\{}", stores.resolve(symbol)),
-            Meaning::UnexpandablePrimitive(_) => format!("\\{}", stores.resolve(symbol)),
+            Meaning::ExpandablePrimitive(_) => token_text(stores, Token::Cs(symbol)),
+            Meaning::UnexpandablePrimitive(_) => token_text(stores, Token::Cs(symbol)),
             Meaning::Macro { flags, definition } => {
                 let macro_meaning = stores.macro_definition(definition);
                 let mut text = String::new();
@@ -513,7 +514,9 @@ fn token_list_text(stores: &impl ExpansionState, token_list: TokenListId) -> Str
         text.push_str(&token_text(stores, token));
         if let Token::Cs(symbol) = token {
             let name = stores.resolve(symbol);
-            if name.chars().all(|ch| ch.is_ascii_alphabetic()) {
+            if stores.control_sequence_kind(symbol) == ControlSequenceKind::Named
+                && name.chars().all(|ch| ch.is_ascii_alphabetic())
+            {
                 text.push(' ');
             }
         }

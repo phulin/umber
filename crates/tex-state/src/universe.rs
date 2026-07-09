@@ -22,7 +22,7 @@ use crate::input::{
     ConditionKind, ConditionLimb, InputFrameSummary, InputSummary, LexerState, SourceId,
     TokenListReplayKind,
 };
-use crate::interner::Symbol;
+use crate::interner::{ControlSequenceKind, Symbol};
 use crate::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use crate::math::MathFontSize;
 use crate::meaning::Meaning;
@@ -74,8 +74,11 @@ pub trait ExpansionState {
     fn macro_meaning(&self, symbol: Symbol) -> Option<MacroMeaning>;
     fn intern_relaxed_control_sequence(&mut self, name: &str) -> Symbol;
     fn intern(&mut self, name: &str) -> Symbol;
+    fn intern_active_character(&mut self, ch: char) -> Symbol;
     fn symbol(&self, name: &str) -> Option<Symbol>;
+    fn active_character_symbol(&self, ch: char) -> Option<Symbol>;
     fn resolve(&self, symbol: Symbol) -> &str;
+    fn control_sequence_kind(&self, symbol: Symbol) -> ControlSequenceKind;
     fn token_list_builder(&self) -> TokenListBuilder;
     fn intern_token_list(&mut self, tokens: &[Token]) -> TokenListId;
     fn finish_token_list(&mut self, builder: &mut TokenListBuilder) -> TokenListId;
@@ -1079,14 +1082,31 @@ impl Universe {
         self.stores.intern(name)
     }
 
+    /// Interns an active-character control sequence in its TeX82 namespace.
+    pub fn intern_active_character(&mut self, ch: char) -> Symbol {
+        self.stores.intern_active_character(ch)
+    }
+
     #[must_use]
     pub fn symbol(&self, name: &str) -> Option<Symbol> {
         self.stores.symbol(name)
     }
 
+    /// Returns the live symbol for an already-interned active character.
+    #[must_use]
+    pub fn active_character_symbol(&self, ch: char) -> Option<Symbol> {
+        self.stores.active_character_symbol(ch)
+    }
+
     #[must_use]
     pub fn resolve(&self, symbol: Symbol) -> &str {
         self.stores.resolve(symbol)
+    }
+
+    /// Returns the TeX control-sequence namespace of a live symbol.
+    #[must_use]
+    pub fn control_sequence_kind(&self, symbol: Symbol) -> ControlSequenceKind {
+        self.stores.control_sequence_kind(symbol)
     }
 
     #[must_use]
@@ -2038,12 +2058,24 @@ impl ExpansionState for Universe {
         Self::intern(self, name)
     }
 
+    fn intern_active_character(&mut self, ch: char) -> Symbol {
+        Self::intern_active_character(self, ch)
+    }
+
     fn symbol(&self, name: &str) -> Option<Symbol> {
         Self::symbol(self, name)
     }
 
+    fn active_character_symbol(&self, ch: char) -> Option<Symbol> {
+        Self::active_character_symbol(self, ch)
+    }
+
     fn resolve(&self, symbol: Symbol) -> &str {
         Self::resolve(self, symbol)
+    }
+
+    fn control_sequence_kind(&self, symbol: Symbol) -> ControlSequenceKind {
+        Self::control_sequence_kind(self, symbol)
     }
 
     fn token_list_builder(&self) -> TokenListBuilder {
@@ -2303,12 +2335,24 @@ impl ExpansionState for ExpansionContext<'_> {
         self.universe.intern(name)
     }
 
+    fn intern_active_character(&mut self, ch: char) -> Symbol {
+        self.universe.intern_active_character(ch)
+    }
+
     fn symbol(&self, name: &str) -> Option<Symbol> {
         self.universe.symbol(name)
     }
 
+    fn active_character_symbol(&self, ch: char) -> Option<Symbol> {
+        self.universe.active_character_symbol(ch)
+    }
+
     fn resolve(&self, symbol: Symbol) -> &str {
         self.universe.resolve(symbol)
+    }
+
+    fn control_sequence_kind(&self, symbol: Symbol) -> ControlSequenceKind {
+        self.universe.control_sequence_kind(symbol)
     }
 
     fn token_list_builder(&self) -> TokenListBuilder {
@@ -2754,6 +2798,10 @@ fn hash_token(stores: &Stores, token: Token, hasher: &mut StateHasher) {
         }
         Token::Cs(symbol) => {
             hasher.tag(1);
+            hasher.u8(match stores.control_sequence_kind(symbol) {
+                ControlSequenceKind::Named => 0,
+                ControlSequenceKind::ActiveCharacter => 1,
+            });
             hasher.str(stores.resolve(symbol));
         }
         Token::Param(slot) => {

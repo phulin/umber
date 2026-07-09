@@ -248,6 +248,7 @@ fn sample_artifact() -> PageArtifact {
                             cat: TokenCatcode::Letter,
                         },
                         PageToken::ControlSequence("foo".to_owned()),
+                        PageToken::ActiveControlSequence('~' as u32),
                         PageToken::Param(1),
                     ],
                 },

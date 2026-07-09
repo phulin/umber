@@ -2130,7 +2130,7 @@ fn active_expandable_primitive(
     ch: char,
     primitive: ExpandablePrimitive,
 ) -> Token {
-    let symbol = stores.intern(&ch.to_string());
+    let symbol = stores.intern_active_character(ch);
     stores.set_meaning(symbol, Meaning::ExpandablePrimitive(primitive));
     active_token(ch)
 }

@@ -45,6 +45,23 @@ fn rollback_restores_store_tuple_and_placeholder_scalars() {
 }
 
 #[test]
+fn snapshot_round_trip_keeps_active_and_named_meanings_independent() {
+    let mut universe = Universe::new();
+    let named = universe.intern("~");
+    let active = universe.intern_active_character('~');
+    universe.set_meaning(named, Meaning::CharGiven('N'));
+    universe.set_meaning(active, Meaning::CharGiven('A'));
+    let snapshot = universe.snapshot();
+
+    universe.set_meaning(named, Meaning::Relax);
+    universe.set_meaning(active, Meaning::Undefined);
+    universe.rollback(&snapshot);
+
+    assert_eq!(universe.meaning(named), Meaning::CharGiven('N'));
+    assert_eq!(universe.meaning(active), Meaning::CharGiven('A'));
+}
+
+#[test]
 fn provenance_is_accessible_through_universe_boundary() {
     let mut universe = Universe::new();
     let source = universe.source_origin(crate::input::SourceId::new(11), 80, 6, 4);
@@ -512,6 +529,32 @@ fn snapshot_state_hash_ignores_content_intern_order() {
     assert_ne!(filler_macro, target_macro);
 
     assert_eq!(first_hash, second.snapshot().state_hash());
+}
+
+#[test]
+fn snapshot_state_hash_keys_same_spelling_namespaces_independently() {
+    fn build(active_first: bool, active_meaning: Meaning) -> u64 {
+        let mut universe = Universe::new();
+        let (named, active) = if active_first {
+            let active = universe.intern_active_character('~');
+            (universe.intern("~"), active)
+        } else {
+            let named = universe.intern("~");
+            (named, universe.intern_active_character('~'))
+        };
+        universe.set_meaning(named, Meaning::CharGiven('N'));
+        universe.set_meaning(active, active_meaning);
+        universe.snapshot().state_hash()
+    }
+
+    assert_eq!(
+        build(false, Meaning::CharGiven('A')),
+        build(true, Meaning::CharGiven('A'))
+    );
+    assert_ne!(
+        build(false, Meaning::CharGiven('A')),
+        build(false, Meaning::CharGiven('B'))
+    );
 }
 
 #[test]

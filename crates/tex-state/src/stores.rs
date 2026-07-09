@@ -17,7 +17,7 @@ use crate::glue::{GlueSpec, GlueStore, GlueStoreMark};
 use crate::hyphenation::{ExceptionSpec, HyphenationTable, PatternSpec};
 use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, OriginListId, TokenListId};
 use crate::input::SourceId;
-use crate::interner::{Interner, InternerError, InternerMark, Symbol};
+use crate::interner::{ControlSequenceKind, Interner, InternerError, InternerMark, Symbol};
 use crate::macro_store::{MacroDefinitionProvenance, MacroMeaning, MacroStore, MacroStoreMark};
 use crate::math::MathFontSize;
 use crate::meaning::Meaning;
@@ -478,6 +478,13 @@ impl Stores {
             .expect("control-sequence symbol capacity exceeded")
     }
 
+    /// Interns an active-character control sequence in its TeX82 namespace.
+    pub fn intern_active_character(&mut self, ch: char) -> Symbol {
+        self.interner
+            .intern_active(ch)
+            .expect("control-sequence symbol capacity exceeded")
+    }
+
     /// Interns a control-sequence name, reporting packed-token capacity exhaustion.
     pub(crate) fn try_intern(&mut self, name: &str) -> Result<Symbol, InternerError> {
         self.interner.intern(name)
@@ -489,11 +496,24 @@ impl Stores {
         self.interner.get(name)
     }
 
+    /// Returns the live symbol for an already-interned active character.
+    #[must_use]
+    pub fn active_character_symbol(&self, ch: char) -> Option<Symbol> {
+        self.interner.get_active(ch)
+    }
+
     /// Resolves a live control-sequence symbol.
     #[must_use]
     pub fn resolve(&self, symbol: Symbol) -> &str {
         self.assert_live_symbol(symbol);
         self.interner.resolve(symbol)
+    }
+
+    /// Returns the TeX control-sequence namespace of a live symbol.
+    #[must_use]
+    pub fn control_sequence_kind(&self, symbol: Symbol) -> ControlSequenceKind {
+        self.assert_live_symbol(symbol);
+        self.interner.kind(symbol)
     }
 
     /// Creates a fresh owned scratch token-list builder.
@@ -1347,9 +1367,9 @@ impl Stores {
         self.testing_hash_env_by_content(&mut hasher);
         self.interner.len().hash(&mut hasher);
         for raw in 0..self.interner.len() {
-            self.interner
-                .resolve(Symbol::new(raw as u32))
-                .hash(&mut hasher);
+            let symbol = Symbol::new(raw as u32);
+            self.interner.kind(symbol).hash(&mut hasher);
+            self.interner.resolve(symbol).hash(&mut hasher);
         }
         self.tokens.testing_state_hash().hash(&mut hasher);
         self.glue.testing_state_hash().hash(&mut hasher);

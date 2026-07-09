@@ -87,8 +87,13 @@ that fallback as rollback-ready.
 
 ## 3. Identity: the interner
 
-- All names intern to dense `Symbol(u32)`. Backing: bump-allocated UTF-8
-  arena + open-addressing hash index. The packed traced-token representation
+- Control-sequence identities intern to dense `Symbol(u32)`. The interner key
+  is `(ControlSequenceKind, spelling)`, where named control sequences and
+  active-character control sequences are disjoint namespaces. Thus active `~`
+  and the escaped control symbol `\~` resolve to the same printable spelling
+  but have distinct symbols and independent Env cells, mirroring TeX82's
+  `active_base+c` and `single_base+c` ranges. Backing: bump-allocated UTF-8
+  arena + namespace-aware open-addressing hash index. The packed traced-token representation
   reserves 30 payload bits for control-sequence symbols, so `Interner::intern`
   is the single enforcement point for the hard `2^30` live-symbol capacity and
   returns `InternerError::TooManySymbols` instead of creating an unrepresentable
@@ -99,9 +104,11 @@ that fallback as rollback-ready.
   rollback is rare, so lazy rebuild is acceptable v1.
 - Dense ids make every downstream lookup an array index; stable ids are what
   compiled code embeds.
-- `\csname`-manufactured names go through the same interner (expl3 does this
-  constantly; the interner must be fast and its growth must be watermarked
-  like everything else).
+- `\csname`-manufactured names enter the named namespace through the same
+  interner (expl3 does this constantly; the interner must be fast and its
+  growth must be watermarked like everything else). Active-character lookup
+  has a separate aggregate facade so callers cannot recreate the old spelling
+  collision accidentally.
 
 ## 4. Meaning: the environment
 

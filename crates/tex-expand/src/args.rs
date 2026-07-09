@@ -623,7 +623,7 @@ fn is_par_token(stores: &impl ExpansionState, token: Token) -> bool {
 
 fn macro_name(stores: &impl ExpansionState, token: Token) -> String {
     match token {
-        Token::Cs(symbol) => format!("\\{}", stores.resolve(symbol)),
+        Token::Cs(_) => crate::values::token_text(stores, token),
         _ => format!("{token:?}"),
     }
 }

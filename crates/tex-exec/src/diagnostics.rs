@@ -501,7 +501,10 @@ fn tokens_text(stores: &Universe, tokens: &[Token]) -> String {
         text.push_str(&token_text(stores, token));
         if let Token::Cs(symbol) = token {
             let name = stores.resolve(symbol);
-            if name.chars().all(|ch| ch.is_ascii_alphabetic()) {
+            if stores.control_sequence_kind(symbol)
+                == tex_state::interner::ControlSequenceKind::Named
+                && name.chars().all(|ch| ch.is_ascii_alphabetic())
+            {
                 text.push(' ');
             }
         }
