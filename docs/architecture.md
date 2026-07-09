@@ -342,10 +342,14 @@ assignments, box building, and dispatch into the typesetting kernels.
   check with the canonical `Dimension too large` diagnostic. Token parsing,
   signs, `true` magnification, internal units, and assignment effects remain
   scanner/stomach responsibilities.
-- **Box building**: `\hbox{...}` etc. scan a packing spec, execute a nested
+- **Box building**: `\hbox{...}` etc. scan a packing spec, enter the brace
+  group as a normal journal-backed group, execute a nested
   restricted-horizontal or internal-vertical list builder, freeze the
   finished list into the epoch arena, then call the pure `tex-typeset`
-  packing kernel. When horizontal packing reports an overfull box and
+  packing kernel while the box-local assignments are still visible. The
+  group is left before the resulting box is stored or appended, so only
+  global assignments survive outside the builder. When horizontal packing
+  reports an overfull box and
   `\overfullrule` is positive, the execution hand-off appends TeX's
   running-height rule node to the packed child list before the box can be
   stored, appended, or shipped. Storing the resulting one-node list in a box

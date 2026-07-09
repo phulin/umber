@@ -1,0 +1,16 @@
+\font\tenrm=../../crates/tex-fonts/tests/fixtures/cm/cmr10
+\tenrm
+\tracingonline=1
+\showboxbreadth=100
+\showboxdepth=100
+\tabskip=0pt
+\count0=1
+\dimen0=1pt
+\setbox0=\vbox{\tabskip=3pt \count0=2 \dimen0=2pt \global\count1=7}
+\setbox2=\hbox{\count0=3 \dimen0=3pt \global\dimen1=4pt}
+\setbox3=\vtop{\count0=4 \dimen0=4pt \global\count2=8}
+\message{regs=\the\count0,\the\dimen0,\the\count1}
+\message{more=\the\count0,\the\dimen0,\the\dimen1,\the\count2}
+\setbox1=\vbox{\halign{#&#\cr a&b\cr}}
+\showbox1
+\end

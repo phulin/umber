@@ -40,6 +40,28 @@ fn brace_and_begingroup_groups_restore_local_assignments() {
 }
 
 #[test]
+fn box_builder_groups_restore_local_assignments() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\count0=1 \\dimen0=1pt \
+         \\setbox0=\\hbox{{\\count0=9}\\count0=2\\dimen0=2pt\\global\\count1=3}\
+         \\setbox1=\\vbox{\\count0=4\\dimen0=4pt\\global\\dimen1=5pt}\
+         \\setbox2=\\vtop{\\count0=6\\dimen0=6pt\\global\\count2=7}",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("box builder groups execute");
+
+    assert_eq!(stores.count(0), 1);
+    assert_eq!(stores.dimen(0).raw(), tex_state::scaled::Scaled::UNITY);
+    assert_eq!(stores.count(1), 3);
+    assert_eq!(stores.dimen(1).raw(), 5 * tex_state::scaled::Scaled::UNITY);
+    assert_eq!(stores.count(2), 7);
+}
+
+#[test]
 fn aftergroup_replays_tokens_fifo_on_group_exit() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

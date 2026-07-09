@@ -507,10 +507,10 @@ fn last_items_read_current_horizontal_tail_by_type() {
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\setbox0=\\hbox{\
-         \\kern3pt\\edef\\lk{\\the\\lastkern}\
-         \\penalty42\\edef\\lp{\\the\\lastpenalty}\
-         \\hskip1pt plus 2fil\\edef\\ls{\\the\\lastskip}\
-         \\kern4pt\\edef\\lszero{\\the\\lastskip}}",
+         \\kern3pt\\xdef\\lk{\\the\\lastkern}\
+         \\penalty42\\xdef\\lp{\\the\\lastpenalty}\
+         \\hskip1pt plus 2fil\\xdef\\ls{\\the\\lastskip}\
+         \\kern4pt\\xdef\\lszero{\\the\\lastskip}}",
     ));
 
     Executor::new()

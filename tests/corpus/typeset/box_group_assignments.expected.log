@@ -1,0 +1,13 @@
+regs=1,1.0pt,7 more=1,1.0pt,4.0pt,8
+> \box1=
+\vbox(6.94444+0.0)x10.55559
+.\hbox(6.94444+0.0)x10.55559
+..\glue(\tabskip) 0.0
+..\hbox(6.94444+0.0)x5.00002
+...\tenrm a
+..\glue(\tabskip) 0.0
+..\hbox(6.94444+0.0)x5.55557
+...\tenrm b
+..\glue(\tabskip) 0.0
+
+! OK.

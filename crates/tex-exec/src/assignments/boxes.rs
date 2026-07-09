@@ -8,7 +8,7 @@ use tex_state::node::{GlueKind, KernKind, Node};
 use tex_state::page::PageMark;
 use tex_state::scaled::Scaled;
 use tex_state::token::Token;
-use tex_state::{BoxDimension, Universe};
+use tex_state::{BoxDimension, GroupKind, Universe};
 use tex_typeset::{
     HpackParams, PackDiagnostic, PackSpec, VerticalBreakError, VpackParams, hpack, vert_break,
     vpack, vtop,
@@ -21,7 +21,7 @@ use crate::vertical::{
     append_node_to_current_list, append_vertical_contribution, build_page_if_outer_vertical,
     is_outer_vertical,
 };
-use crate::{ExecError, Mode, ModeNest};
+use crate::{ExecError, Mode, ModeNest, leave_group};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum BoxKind {
@@ -550,6 +550,7 @@ where
             context: "box group",
         });
     }
+    stores.enter_group_with_kind(GroupKind::Simple);
     let mode = if kind == BoxKind::HBox {
         Mode::RestrictedHorizontal
     } else {
@@ -570,6 +571,7 @@ where
         BoxKind::VBox => Node::VList(vpack(stores, children, spec, VpackParams::read(stores)).node),
         BoxKind::VTop => Node::VList(vtop(stores, children, spec, VpackParams::read(stores)).node),
     };
+    leave_group(input, stores, GroupKind::Simple)?;
     Ok(node)
 }
 
@@ -607,6 +609,7 @@ where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
+    let mut brace_depth = 1usize;
     loop {
         crate::executor::sync_engine_state::<S, _>(hooks, nest, stores);
         let token = {
@@ -616,9 +619,15 @@ where
         .ok_or(ExecError::MissingToken {
             context: "box closing brace",
         })?;
+        if is_begin_group(token) {
+            brace_depth += 1;
+        }
         if is_end_group(token) {
-            flush_pending_hchars(nest, stores)?;
-            return Ok(());
+            brace_depth -= 1;
+            if brace_depth == 0 {
+                flush_pending_hchars(nest, stores)?;
+                return Ok(());
+            }
         }
         match crate::dispatch_delivered_token(nest, token, input, stores, hooks)? {
             crate::DispatchAction::Continue => {}
