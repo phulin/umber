@@ -6,7 +6,7 @@ use tex_state::scaled::{PhysicalUnit, Scaled, round_decimal_fraction, scaled_fro
 use tex_state::token::{Catcode, Token};
 
 use crate::scan_dimen::{
-    DimensionDiagnostic, ScanDimenError, ScanDimenOptions, scan_dimen, scan_dimen_with_options,
+    DimensionDiagnostic, InsertedUnit, ScanDimenOptions, scan_dimen, scan_dimen_with_options,
 };
 
 fn scan(input_text: &str) -> (i32, Option<DimensionDiagnostic>, Option<Token>) {
@@ -155,12 +155,17 @@ fn supports_integer_to_sp_coercion_when_requested() {
 }
 
 #[test]
-fn rejects_bare_integer_without_coercion() {
-    let mut stores = Universe::new();
-    let mut input = InputStack::new(MemoryInput::new("123 x"));
-    let err = scan_dimen(&mut input, &mut stores).expect_err("unit is required");
+fn bare_integer_without_unit_recovers_with_pt() {
+    let (value, diagnostic, next) = scan("123 x");
 
-    assert!(matches!(err, ScanDimenError::MissingUnit));
+    assert_eq!(value, 123 * Scaled::UNITY);
+    assert_eq!(
+        diagnostic,
+        Some(DimensionDiagnostic::IllegalUnit {
+            inserted: InsertedUnit::Pt
+        })
+    );
+    assert_eq!(next, Some(char_token('x', Catcode::Letter)));
 }
 
 #[test]
@@ -202,9 +207,15 @@ fn scans_hex_integer_constants_with_units() {
 fn restores_partially_matched_true_keyword_tokens() {
     let mut stores = Universe::new();
     let mut input = InputStack::new(MemoryInput::new("1truxpt"));
-    let err = scan_dimen(&mut input, &mut stores).expect_err("bad true keyword lacks unit");
+    let scanned = scan_dimen(&mut input, &mut stores).expect("bad true keyword recovers");
 
-    assert!(matches!(err, ScanDimenError::MissingUnit));
+    assert_eq!(scanned.value().raw(), Scaled::UNITY);
+    assert_eq!(
+        scanned.diagnostic(),
+        Some(DimensionDiagnostic::IllegalUnit {
+            inserted: InsertedUnit::Pt
+        })
+    );
     assert_eq!(
         input.next_token(&mut stores).expect("token should replay"),
         Some(char_token('t', Catcode::Letter))
@@ -216,6 +227,28 @@ fn restores_partially_matched_true_keyword_tokens() {
     assert_eq!(
         input.next_token(&mut stores).expect("token should replay"),
         Some(char_token('u', Catcode::Letter))
+    );
+    assert_eq!(
+        input.next_token(&mut stores).expect("token should replay"),
+        Some(char_token('x', Catcode::Letter))
+    );
+}
+
+#[test]
+fn missing_number_recovers_zero_then_inserted_pt() {
+    let mut stores = Universe::new();
+    let mut input = InputStack::new(MemoryInput::new("x"));
+    let scanned = scan_dimen(&mut input, &mut stores).expect("missing dimension recovers");
+
+    assert_eq!(scanned.value().raw(), 0);
+    assert_eq!(
+        scanned.diagnostics().collect::<Vec<_>>(),
+        vec![
+            DimensionDiagnostic::MissingNumber,
+            DimensionDiagnostic::IllegalUnit {
+                inserted: InsertedUnit::Pt
+            },
+        ]
     );
     assert_eq!(
         input.next_token(&mut stores).expect("token should replay"),

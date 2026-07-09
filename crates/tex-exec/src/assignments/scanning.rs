@@ -183,15 +183,18 @@ where
     R: tex_expand::ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    let value = scan_int::scan_int_with_expander_and_hooks(
+    let scanned = scan_int::scan_int_with_expander_and_hooks(
         input,
         stores,
         recorder,
         hooks,
         &mut DriverExpandNext,
     )
-    .map_err(ExpandError::from)?
-    .value();
+    .map_err(ExpandError::from)?;
+    if let Some(diagnostic) = scanned.diagnostic() {
+        diagnostics::report_integer_diagnostic(stores, diagnostic);
+    }
+    let value = scanned.value();
     if !(0..=32_767).contains(&value) {
         return Err(ExecError::RegisterNumberOutOfRange(value));
     }
@@ -208,15 +211,18 @@ where
     H: ExpansionHooks<S>,
 {
     let mut recorder = NoopRecorder;
-    Ok(scan_int::scan_int_with_expander_and_hooks(
+    let scanned = scan_int::scan_int_with_expander_and_hooks(
         input,
         stores,
         &mut recorder,
         hooks,
         &mut DriverExpandNext,
     )
-    .map_err(ExpandError::from)?
-    .value())
+    .map_err(ExpandError::from)?;
+    if let Some(diagnostic) = scanned.diagnostic() {
+        diagnostics::report_integer_diagnostic(stores, diagnostic);
+    }
+    Ok(scanned.value())
 }
 
 pub(super) fn scan_nonzero_i32<S, H>(
@@ -255,9 +261,7 @@ where
         scan_dimen::ScanDimenOptions::STANDARD,
     )
     .map_err(ExpandError::from)?;
-    if let Some(diagnostic) = scanned.diagnostic() {
-        diagnostics::report_dimension_diagnostic(stores, diagnostic);
-    }
+    diagnostics::report_dimension_diagnostics(stores, scanned.diagnostics());
     Ok(scanned.value())
 }
 
@@ -272,7 +276,7 @@ where
     H: ExpansionHooks<S>,
 {
     let mut recorder = NoopRecorder;
-    Ok(scan_glue::scan_glue_with_expander_and_hooks(
+    let scanned = scan_glue::scan_glue_with_expander_and_hooks(
         input,
         stores,
         &mut recorder,
@@ -280,8 +284,9 @@ where
         &mut DriverExpandNext,
         mu,
     )
-    .map_err(ExecError::ScanGlue)?
-    .id())
+    .map_err(ExecError::ScanGlue)?;
+    diagnostics::report_dimension_diagnostics(stores, scanned.diagnostics());
+    Ok(scanned.id())
 }
 
 pub(super) fn scan_token_list_assignment<S, H>(

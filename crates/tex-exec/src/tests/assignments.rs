@@ -136,16 +136,18 @@ fn named_math_glue_parameters_scan_muglue_without_aliasing_muskip_registers() {
 }
 
 #[test]
-fn ordinary_glue_parameters_still_reject_mu_units() {
+fn ordinary_glue_parameters_recover_mu_units_as_pt() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\baselineskip=3mu"));
 
-    let err = Executor::new()
+    Executor::new()
         .run(&mut input, &mut stores)
-        .expect_err("ordinary glue parameter should reject mu units");
+        .expect("ordinary glue parameter should recover mu units");
 
-    assert_eq!(err.to_string(), "Illegal unit of measure");
+    let baseline = stores.glue(stores.glue_param(GlueParam::BASELINE_SKIP));
+    assert_eq!(baseline.width.raw(), 3 * tex_state::scaled::Scaled::UNITY);
+    assert!(terminal_effect_text(&stores).contains("! Illegal unit of measure (pt inserted)."));
 }
 
 #[test]

@@ -148,6 +148,31 @@ fn reports_number_too_big_and_caps_value() {
 }
 
 #[test]
+fn missing_number_recovers_zero_and_replays_offending_token() {
+    let (value, diagnostic, next) = scan("x");
+
+    assert_eq!(value, 0);
+    assert_eq!(diagnostic, Some(IntegerDiagnostic::MissingNumber));
+    assert_eq!(next, Some(char_token('x', Catcode::Letter)));
+}
+
+#[test]
+fn relax_in_number_slot_recovers_zero_and_replays_token() {
+    let mut stores = Universe::new();
+    let relax = stores.intern("relax");
+    stores.set_meaning(relax, Meaning::Relax);
+    let mut input = InputStack::new(MemoryInput::new("\\relax"));
+    let scanned = scan_int(&mut input, &mut stores).expect("relax should recover as missing");
+
+    assert_eq!(scanned.value(), 0);
+    assert_eq!(scanned.diagnostic(), Some(IntegerDiagnostic::MissingNumber));
+    assert_eq!(
+        input.next_token(&mut stores).expect("token should replay"),
+        Some(Token::Cs(relax))
+    );
+}
+
+#[test]
 fn rejects_out_of_range_register_numbers() {
     let mut stores = Universe::new();
     let count = stores.intern("count");
