@@ -347,6 +347,100 @@ fn futurelet_assigns_second_token_meaning_and_preserves_order() {
 }
 
 #[test]
+fn def_accepts_active_character_target_and_expands_it() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    stores.set_catcode('~', Catcode::Active);
+    let mut input = InputStack::new(MemoryInput::new("\\def~{OK}\\edef\\x{~}"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("active character definition executes");
+
+    assert!(
+        stores
+            .macro_meaning(stores.symbol("~").expect("active symbol"))
+            .is_some()
+    );
+    assert_eq!(macro_text(&stores, "x"), "OK");
+}
+
+#[test]
+fn let_accepts_active_character_target() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    stores.set_catcode('~', Catcode::Active);
+    let mut input = InputStack::new(MemoryInput::new("\\def\\a{A}\\let~=\\a\\edef\\x{~}"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("active character let executes");
+
+    assert_eq!(macro_text(&stores, "x"), "A");
+}
+
+#[test]
+fn futurelet_accepts_active_character_target() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    stores.set_catcode('~', Catcode::Active);
+    let mut input = InputStack::new(MemoryInput::new("~\\first x"));
+    let mut hooks = NoopExecHooks;
+
+    dispatch_delivered_token(
+        &mut ModeNest::new(),
+        Token::Cs(stores.symbol("futurelet").expect("futurelet")),
+        &mut input,
+        &mut stores,
+        &mut hooks,
+    )
+    .expect("futurelet executes");
+
+    assert_eq!(
+        stores.meaning(stores.symbol("~").expect("active symbol")),
+        Meaning::CharToken {
+            ch: 'x',
+            cat: Catcode::Letter
+        }
+    );
+}
+
+#[test]
+fn countdef_accepts_active_character_target_and_assigns_through_it() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    stores.set_catcode('~', Catcode::Active);
+    let mut input = InputStack::new(MemoryInput::new("\\countdef~=12 ~=7"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("active character countdef executes");
+
+    assert_eq!(
+        stores.meaning(stores.symbol("~").expect("active symbol")),
+        Meaning::CountRegister(12)
+    );
+    assert_eq!(stores.count(12), 7);
+}
+
+#[test]
+fn outer_def_accepts_active_character_target() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    stores.set_catcode('~', Catcode::Active);
+    let mut input = InputStack::new(MemoryInput::new("\\outer\\def~{A}"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("outer active character definition executes");
+
+    assert!(matches!(
+        stores.meaning(stores.symbol("~").expect("active symbol")),
+        Meaning::Macro { flags, .. } if flags.contains(tex_state::meaning::MeaningFlags::OUTER)
+    ));
+}
+
+#[test]
 fn box_primitives_round_trip_through_registers() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

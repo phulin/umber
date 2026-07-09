@@ -57,7 +57,7 @@ where
     Ok(())
 }
 
-pub(super) fn scan_control_sequence<S>(
+pub(super) fn scan_definition_target<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     context: &'static str,
@@ -69,8 +69,16 @@ where
         next_non_space_raw(input, stores)?.ok_or(ExecError::MissingControlSequence { context })?;
     match token {
         Token::Cs(symbol) => Ok(symbol),
+        Token::Char {
+            ch,
+            cat: Catcode::Active,
+        } => Ok(active_character_symbol(stores, ch)),
         _ => Err(ExecError::ExpectedControlSequence { context, token }),
     }
+}
+
+pub(crate) fn active_character_symbol(stores: &mut Universe, ch: char) -> Symbol {
+    stores.intern(&ch.to_string())
 }
 
 pub(super) fn scan_optional_equals_one_space<S>(
@@ -101,6 +109,12 @@ where
 pub(super) fn token_meaning_for_let(token: Token, stores: &Universe) -> Result<Meaning, ExecError> {
     match token {
         Token::Cs(symbol) => Ok(stores.meaning(symbol)),
+        Token::Char {
+            ch,
+            cat: Catcode::Active,
+        } => stores
+            .symbol(&ch.to_string())
+            .map_or(Ok(Meaning::Undefined), |symbol| Ok(stores.meaning(symbol))),
         Token::Char { ch, cat } => Ok(Meaning::CharToken { ch, cat }),
         Token::Param(_) => Err(ExecError::InvalidLetRhs { token }),
     }

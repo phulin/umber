@@ -57,7 +57,7 @@ pub(crate) use scanning::{
 pub(crate) use shipout::shipout_node;
 use shipout::*;
 use tokens::*;
-pub(crate) use tokens::{is_begin_group, is_end_group, is_space};
+pub(crate) use tokens::{active_character_symbol, is_begin_group, is_end_group, is_space};
 use variables::*;
 
 /// Executes a delivered token if it is an assignment/prefix primitive.

@@ -181,7 +181,9 @@ Responsibility: the token-level rewriting system — macros, conditionals,
 
 - **Structure**: a `get_x_token` loop. Pull a token; look up its meaning
   word in `Env` (one load); if expandable, push its expansion as a
-  token-list frame and continue; else deliver it downstream.
+  token-list frame and continue; else deliver it downstream. Control-sequence
+  tokens address their interned symbol directly; active character tokens
+  address the same one-character symbol used by definition assignments.
 - **Macro call**: match delimited/undelimited parameters against the
   incoming stream (argument scanning is the gullet's inner loop and the
   #1 profile target); arguments are built with token builders and frozen.
@@ -303,9 +305,11 @@ Responsibility: the token-level rewriting system — macros, conditionals,
 - The stomach implements the macro-definition assignment surface used by the
   expansion conformance path: `\def`, `\edef`, `\gdef`, `\xdef`, `\let`,
   `\futurelet`, prefix accumulation (`\global`, `\long`, `\outer`,
-  `\protected`), and `\globaldefs` override behavior. These commands scan
-  through the shared gullet/token scanner where expansion is required and
-  write meanings only through the barriered `Universe` facade. The
+  `\protected`), and `\globaldefs` override behavior. Definition targets use
+  TeX's `get_r_token` rule: either a control sequence or an active character
+  is accepted, with active characters stored under their one-character symbol.
+  These commands scan through the shared gullet/token scanner where expansion
+  is required and write meanings only through the barriered `Universe` facade. The
   `umber expand-dump` driver delegates those primitives to `tex-exec` before
   printing delivered tokens; its remaining local assignment handling is
   limited to dump-corpus scaffolding such as `\chardef` and `\catcode` until

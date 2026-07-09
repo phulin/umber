@@ -48,7 +48,7 @@ where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    let target = scan_control_sequence(input, stores, "macro definition")?;
+    let target = scan_definition_target(input, stores, "macro definition")?;
     let expanded = matches!(
         primitive,
         UnexpandablePrimitive::Edef | UnexpandablePrimitive::Xdef
@@ -80,7 +80,7 @@ where
     S: InputSource,
 {
     reject_macro_prefixes(prefixes)?;
-    let target = scan_control_sequence(input, stores, "\\let")?;
+    let target = scan_definition_target(input, stores, "\\let")?;
     let rhs = scan_optional_equals_one_space(input, stores)?;
     let meaning = token_meaning_for_let(rhs, stores)?;
     if apply_globaldefs(prefixes.global, stores) {
@@ -100,7 +100,7 @@ where
     S: InputSource,
 {
     reject_macro_prefixes(prefixes)?;
-    let target = scan_control_sequence(input, stores, "\\futurelet")?;
+    let target = scan_definition_target(input, stores, "\\futurelet")?;
     let first = input.next_token(stores)?.ok_or(ExecError::MissingToken {
         context: "\\futurelet lookahead",
     })?;

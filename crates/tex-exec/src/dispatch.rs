@@ -68,6 +68,13 @@ where
     }
     let meaning = match token {
         Token::Cs(symbol) => stores.meaning(symbol),
+        Token::Char {
+            ch,
+            cat: Catcode::Active,
+        } => {
+            let symbol = assignments::active_character_symbol(stores, ch);
+            stores.meaning(symbol)
+        }
         Token::Char { .. } => return dispatch_character_token(nest, token, input, stores, hooks),
         Token::Param(_) => {
             return Ok(DispatchAction::NotConsumed);

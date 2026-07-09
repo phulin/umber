@@ -15,7 +15,7 @@ where
     H: ExpansionHooks<S>,
 {
     reject_macro_prefixes(prefixes)?;
-    let target = scan_control_sequence(input, stores, "\\font")?;
+    let target = scan_definition_target(input, stores, "\\font")?;
     skip_optional_equals_x(input, stores, hooks)?;
     let font_name = scan_font_file_name(input, stores, hooks)?;
     let size_spec = scan_font_size_spec(input, stores, hooks)?;

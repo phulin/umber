@@ -83,7 +83,7 @@ where
     if !scan_optional_keyword_x(input, stores, hooks, "to")? {
         return Err(ExecError::ReadNeedsTo);
     }
-    let target = scan_control_sequence(input, stores, "\\read")?;
+    let target = scan_definition_target(input, stores, "\\read")?;
     let tokens = scan_read_tokens(slot, target, stores)?;
     let replacement_text = stores.intern_token_list(&tokens);
     let parameter_text = stores.intern_token_list(&[]);

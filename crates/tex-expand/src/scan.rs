@@ -232,7 +232,7 @@ where
             continue;
         }
 
-        let Token::Cs(symbol) = token else {
+        let Some(symbol) = crate::expandable_symbol(stores, token) else {
             builder.push(token);
             continue;
         };

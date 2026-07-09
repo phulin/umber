@@ -13,7 +13,7 @@ use tex_state::glue::GlueSpec;
 use tex_state::interner::Symbol;
 use tex_state::meaning::Meaning;
 use tex_state::scaled::Scaled;
-use tex_state::token::Token;
+use tex_state::token::{Catcode, Token};
 use tex_state::{ExpansionState, InputOpenState, InputReadState, Universe};
 
 pub mod args;
@@ -515,8 +515,9 @@ where
             return Ok(Some(token));
         }
 
-        let Token::Cs(symbol) = token else {
-            return Ok(Some(token));
+        let symbol = match expandable_symbol(stores, token) {
+            Some(symbol) => symbol,
+            None => return Ok(Some(token)),
         };
 
         let meaning = stores.meaning(symbol);
@@ -551,8 +552,9 @@ where
             return Ok(Some(token));
         }
 
-        let Token::Cs(symbol) = token else {
-            return Ok(Some(token));
+        let symbol = match expandable_symbol(stores, token) {
+            Some(symbol) => symbol,
+            None => return Ok(Some(token)),
         };
 
         let meaning = stores.meaning(symbol);
@@ -579,13 +581,25 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    let Token::Cs(symbol) = token else {
-        return Ok(Dispatch::Deliver(token));
+    let symbol = match expandable_symbol(stores, token) {
+        Some(symbol) => symbol,
+        None => return Ok(Dispatch::Deliver(token)),
     };
 
     let meaning = stores.meaning(symbol);
     recorder.record_meaning(symbol, meaning);
     dispatch::dispatch_without_input_open(token, input, stores, recorder, hooks, meaning)
+}
+
+pub(crate) fn expandable_symbol(stores: &mut impl ExpansionState, token: Token) -> Option<Symbol> {
+    match token {
+        Token::Cs(symbol) => Some(symbol),
+        Token::Char {
+            ch,
+            cat: Catcode::Active,
+        } => Some(stores.intern(&ch.to_string())),
+        Token::Char { .. } | Token::Param(_) => None,
+    }
 }
 
 pub(crate) fn push_dispatch_result<S>(

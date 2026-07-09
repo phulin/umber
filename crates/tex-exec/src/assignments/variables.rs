@@ -145,7 +145,7 @@ where
     H: ExpansionHooks<S>,
 {
     reject_macro_prefixes(prefixes)?;
-    let target = scan_control_sequence(input, stores, "register definition")?;
+    let target = scan_definition_target(input, stores, "register definition")?;
     skip_optional_equals_x(input, stores, hooks)?;
     let index = scan_register_index(input, stores, hooks)?;
     let meaning = match primitive {
@@ -176,7 +176,7 @@ where
     H: ExpansionHooks<S>,
 {
     reject_macro_prefixes(prefixes)?;
-    let target = scan_control_sequence(input, stores, "character definition")?;
+    let target = scan_definition_target(input, stores, "character definition")?;
     skip_optional_equals_x(input, stores, hooks)?;
     let value = scan_i32(input, stores, hooks)?;
     let meaning = match primitive {
