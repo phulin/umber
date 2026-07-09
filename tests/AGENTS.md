@@ -144,6 +144,21 @@ The live `tftopl` corpus cross-check runs through
 are absent in that explicit mode, it prints a clear skip message for that
 corpus while still checking committed edge fixtures.
 
+Long-running document corpus parity uses `tests/corpus-manifest.toml` for
+external TeX documents that are fetched rather than committed. Populate or
+verify that corpus with:
+
+```bash
+scripts/parity.sh
+scripts/parity.sh --offline
+```
+
+The acquisition step builds `tools/corpus-sync`, writes exact fetched bytes to
+gitignored `third_party/corpus/`, verifies the manifest SHA-256 values, and
+fails clearly on cached or fetched hash drift. Manifest entries also record
+the license, redistributability decision, and the reference DVI SHA-256 after
+the same banner-only normalization used by `tools/refexec`.
+
 ## Proptest Budgets
 
 Replay-identity proptests use `PROPTEST_CASES` for their case budget. Leave

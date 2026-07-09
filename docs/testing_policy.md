@@ -152,6 +152,15 @@ Default cargo tests must not invoke live TeX tools. Fixture regeneration uses
 `scripts/regen-fixtures.sh`, which also builds `tools/fixturegen` for
 text/native fixture updates and the live `tftopl` font cross-check.
 
+External document corpus inputs for long-running parity live outside committed
+fixtures. `tests/corpus-manifest.toml` pins each document URL, fetched-byte
+SHA-256, license determination, redistributability flag, and reference DVI
+SHA-256 after DVI preamble banner normalization. `scripts/parity.sh` runs
+`tools/corpus-sync` first to fetch or verify those inputs under gitignored
+`third_party/corpus/`; cached hash matches are a no-op, including in
+`--offline` mode. Do not commit fetched corpus documents unless a later issue
+explicitly changes the redistribution policy.
+
 `tex-out` also owns the cross-crate page-output float guard. Its unit tests
 scan the page node, packing, shipout lowering, artifact, DVI, and CLI DVI
 composition sources and fail if float types or float rounding APIs enter that
