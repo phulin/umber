@@ -16,7 +16,7 @@ use crate::font::{
 use crate::glue::{GlueSpec, GlueStore, GlueStoreMark, Order};
 use crate::hyphenation::{ExceptionSpec, HyphenationTable, PatternSpec};
 use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, TokenListId};
-use crate::interner::{Interner, InternerMark, Symbol};
+use crate::interner::{Interner, InternerError, InternerMark, Symbol};
 use crate::macro_store::{MacroMeaning, MacroStore, MacroStoreMark};
 use crate::math::MathFontSize;
 use crate::meaning::Meaning;
@@ -395,6 +395,12 @@ impl Stores {
 
     /// Interns a control-sequence name in the owned interner.
     pub fn intern(&mut self, name: &str) -> Symbol {
+        self.try_intern(name)
+            .expect("control-sequence symbol capacity exceeded")
+    }
+
+    /// Interns a control-sequence name, reporting packed-token capacity exhaustion.
+    pub(crate) fn try_intern(&mut self, name: &str) -> Result<Symbol, InternerError> {
         self.interner.intern(name)
     }
 

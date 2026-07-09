@@ -13,6 +13,9 @@ use std::str;
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Symbol(u32);
 
+/// Maximum number of symbols that can be represented in a packed token word.
+pub const SYMBOL_CAPACITY: u32 = 1 << 30;
+
 impl Symbol {
     pub(crate) const fn new(raw: u32) -> Self {
         Self(raw)
@@ -32,6 +35,13 @@ impl Symbol {
     }
 }
 
+/// Failure to intern a new control-sequence name.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InternerError {
+    /// The dense symbol space used by packed traced tokens is exhausted.
+    TooManySymbols,
+}
+
 /// A rollback watermark for the interner.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct InternerMark {
@@ -44,6 +54,7 @@ pub(crate) struct InternerMark {
 pub struct Interner {
     arena: Vec<u8>,
     spans: Vec<(u32, u32)>,
+    next_symbol: u32,
     index: HashMap<u64, Vec<Symbol>>,
     index_dirty: bool,
 }
@@ -56,7 +67,7 @@ impl Interner {
     }
 
     /// Interns `name`, returning its stable dense symbol while it remains live.
-    pub(crate) fn intern(&mut self, name: &str) -> Symbol {
+    pub(crate) fn intern(&mut self, name: &str) -> Result<Symbol, InternerError> {
         if self.index_dirty {
             self.rebuild_index();
         }
@@ -65,23 +76,25 @@ impl Interner {
         if let Some(candidates) = self.index.get(&hash) {
             for &symbol in candidates {
                 if self.resolve(symbol) == name {
-                    return symbol;
+                    return Ok(symbol);
                 }
             }
         }
 
+        if self.next_symbol >= SYMBOL_CAPACITY {
+            return Err(InternerError::TooManySymbols);
+        }
+
         let start = u32_len(self.arena.len(), "interner arena exceeds u32 bytes");
         let len = u32_len(name.len(), "interned string exceeds u32 bytes");
-        let symbol = Symbol::new(u32_len(
-            self.spans.len(),
-            "interner spans exceed u32 entries",
-        ));
+        let symbol = Symbol::new(self.next_symbol);
 
         self.arena.extend_from_slice(name.as_bytes());
         self.spans.push((start, len));
+        self.next_symbol += 1;
         self.index.entry(hash).or_default().push(symbol);
 
-        symbol
+        Ok(symbol)
     }
 
     /// Returns the live symbol for `name` without mutating the interner.
@@ -133,8 +146,9 @@ impl Interner {
     /// Takes a rollback watermark for `Universe`-owned aggregate snapshots.
     #[must_use]
     pub(crate) fn watermark(&self) -> InternerMark {
+        debug_assert_eq!(self.next_symbol as usize, self.spans.len());
         InternerMark {
-            spans: u32_len(self.spans.len(), "interner spans exceed u32 entries"),
+            spans: self.next_symbol,
             bytes: u32_len(self.arena.len(), "interner arena exceeds u32 bytes"),
         }
     }
@@ -160,6 +174,7 @@ impl Interner {
 
         self.spans.truncate(spans);
         self.arena.truncate(bytes);
+        self.next_symbol = mark.spans;
         self.index_dirty = true;
     }
 

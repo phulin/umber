@@ -167,8 +167,15 @@ Responsibility: characters → tokens, under mutable catcode law.
   (pre-lexing the rest of the buffer) precisely because tokens it produces
   carry the generation vector they were lexed under; consuming a stale
   token is impossible, only wasteful.
-- Control sequence names intern immediately to `Symbol`; the lexer emits
-  `Token = Char(char, Catcode) | Cs(Symbol)` — one word, `Copy`.
+- Control sequence names intern immediately to `Symbol`; the semantic token
+  type remains `Token = Char(char, Catcode) | Cs(Symbol) | Param(u8)` — one
+  word, `Copy`. Hot token movement uses `TracedTokenWord(u64)` beside it:
+  bits 63..62 are token kind, bits 61..32 are a 30-bit payload, and bits
+  31..0 are `OriginId`. Character payloads store a 21-bit Unicode scalar value
+  plus 4-bit catcode, control-sequence payloads store `Symbol::raw()`, and
+  parameter payloads store the 4-bit slot. `OriginId(0)` is the reserved
+  Unknown/Bootstrap origin; provenance overflow later saturates to that id
+  rather than aborting semantic compilation.
 - The lexer holds **no state outside the input stack frame** (its N/M/S
   state is part of the frame). Nothing here needs journaling.
 

@@ -87,7 +87,11 @@ that fallback as rollback-ready.
 ## 3. Identity: the interner
 
 - All names intern to dense `Symbol(u32)`. Backing: bump-allocated UTF-8
-  arena + open-addressing hash index.
+  arena + open-addressing hash index. The packed traced-token representation
+  reserves 30 payload bits for control-sequence symbols, so `Interner::intern`
+  is the single enforcement point for the hard `2^30` live-symbol capacity and
+  returns `InternerError::TooManySymbols` instead of creating an unrepresentable
+  symbol.
 - Append-only: nothing is un-interned. Rollback = truncate arena to
   watermark. The hash index either records insertion order (rewindable) or
   is rebuilt lazily on first intern after a rollback — interning after

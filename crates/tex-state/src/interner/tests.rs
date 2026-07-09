@@ -1,12 +1,19 @@
-use super::{Interner, InternerMark};
+use super::{Interner, InternerError, InternerMark, SYMBOL_CAPACITY};
+use crate::interner::Symbol;
 use proptest::prelude::*;
+
+fn intern(interner: &mut Interner, name: &str) -> Symbol {
+    interner
+        .intern(name)
+        .expect("test interner should not reach symbol capacity")
+}
 
 #[test]
 fn intern_is_idempotent() {
     let mut interner = Interner::new();
 
-    let first = interner.intern("count");
-    let second = interner.intern("count");
+    let first = intern(&mut interner, "count");
+    let second = intern(&mut interner, "count");
 
     assert_eq!(first, second);
     assert_eq!(first.raw(), 0);
@@ -17,8 +24,8 @@ fn intern_is_idempotent() {
 fn resolve_round_trips_ascii_and_non_ascii() {
     let mut interner = Interner::new();
 
-    let ascii = interner.intern("par");
-    let non_ascii = interner.intern("é漢字🙂");
+    let ascii = intern(&mut interner, "par");
+    let non_ascii = intern(&mut interner, "é漢字🙂");
 
     assert_eq!(interner.resolve(ascii), "par");
     assert_eq!(interner.resolve(non_ascii), "é漢字🙂");
@@ -28,16 +35,16 @@ fn resolve_round_trips_ascii_and_non_ascii() {
 fn truncate_then_reintern_reuses_dense_symbol_id() {
     let mut interner = Interner::new();
 
-    let kept = interner.intern("kept");
+    let kept = intern(&mut interner, "kept");
     let mark = interner.watermark();
-    let truncated = interner.intern("temporary");
+    let truncated = intern(&mut interner, "temporary");
     assert_eq!(truncated.raw(), 1);
 
     interner.truncate_to(mark);
     assert_eq!(interner.len(), 1);
     assert_eq!(interner.resolve(kept), "kept");
 
-    let reinserted = interner.intern("temporary");
+    let reinserted = intern(&mut interner, "temporary");
     assert_eq!(reinserted.raw(), truncated.raw());
     assert_eq!(interner.resolve(reinserted), "temporary");
 }
@@ -47,11 +54,22 @@ fn truncate_then_reintern_reuses_dense_symbol_id() {
 fn stale_symbol_panics_after_truncation() {
     let mut interner = Interner::new();
     let mark = interner.watermark();
-    let stale = interner.intern("rolled-back");
+    let stale = intern(&mut interner, "rolled-back");
 
     interner.truncate_to(mark);
 
     let _ = interner.resolve(stale);
+}
+
+#[test]
+fn intern_rejects_new_symbol_at_packed_token_capacity() {
+    let mut interner = Interner::new();
+    interner.next_symbol = SYMBOL_CAPACITY;
+
+    assert_eq!(
+        interner.intern("overflow"),
+        Err(InternerError::TooManySymbols)
+    );
 }
 
 #[derive(Clone, Debug)]
@@ -87,7 +105,7 @@ proptest! {
         for op in ops {
             match op {
                 Op::Intern(name) => {
-                    let symbol = interner.intern(&name);
+                    let symbol = intern(&mut interner, &name);
                     let model_index = match model.iter().position(|existing| existing == &name) {
                         Some(index) => index,
                         None => {
@@ -115,7 +133,7 @@ proptest! {
             for (raw, expected) in model.iter().enumerate() {
                 let symbol = super::Symbol::new(raw as u32);
                 prop_assert_eq!(interner.resolve(symbol), expected.as_str());
-                prop_assert_eq!(interner.intern(expected).raw() as usize, raw);
+                prop_assert_eq!(intern(&mut interner, expected).raw() as usize, raw);
             }
         }
     }
