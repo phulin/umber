@@ -505,6 +505,19 @@ fn executes_rows_and_replays_u_and_v_templates_into_set_cells() {
 }
 
 #[test]
+fn restricted_horizontal_u_template_ending_in_macro_stops_before_cell_input() {
+    let stores =
+        run_boxed_alignment_source("\\def\\templateend{\\relax}\\halign{\\templateend#\\cr x\\cr}");
+    let vbox = box_zero_vlist(&stores);
+    let rows = vlist_rows(&stores, vbox);
+    let cells = row_cells(&stores, rows[0]);
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(cells.len(), 1);
+    assert_eq!(cell_text(&stores, cells[0]), "x");
+}
+
+#[test]
 fn let_aliased_alignment_tab_terminates_cell_by_meaning() {
     let stores = run_boxed_alignment_source("\\let\\t=&\\halign{#&#\\cr a\\t b\\cr}");
     let vbox = box_zero_vlist(&stores);

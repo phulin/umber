@@ -199,7 +199,15 @@ struct TokenListInputFrame {
     index: usize,
     macro_arguments: MacroArguments,
     macro_invocation: OriginId,
+    replay_marker: Option<TokenListReplayMarker>,
 }
+
+/// Identifies one live token-list replay frame independently of its content.
+///
+/// The marker is intentionally absent from resumable input summaries: callers
+/// use it only to delimit a synchronous replay operation on the current stack.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct TokenListReplayMarker(u64);
 
 #[derive(Debug)]
 enum InputFrame<S> {
@@ -298,6 +306,7 @@ pub struct InputStack<S> {
     next_source_id: u32,
     unicode_superscript_notation: bool,
     last_source_frame: Option<LastSourceFrame>,
+    next_replay_marker: u64,
 }
 
 impl<S> InputStack<S> {
@@ -308,6 +317,7 @@ impl<S> InputStack<S> {
             next_source_id: 0,
             unicode_superscript_notation: true,
             last_source_frame: None,
+            next_replay_marker: 0,
         };
         stack.push_source(source);
         stack
@@ -356,6 +366,7 @@ impl<S> InputStack<S> {
                     index: *index,
                     macro_arguments: *macro_arguments,
                     macro_invocation: *macro_invocation,
+                    replay_marker: None,
                 })),
                 InputFrameSummary::Condition(condition) => {
                     frames.push(InputFrame::Condition(*condition));
@@ -376,11 +387,16 @@ impl<S> InputStack<S> {
                 frame: SourceFrame::from_summary(source),
                 next_source_offset: source.next_source_offset(),
             }),
+            next_replay_marker: 0,
         })
     }
 
-    pub fn push_token_list(&mut self, token_list: TokenListId, replay_kind: TokenListReplayKind) {
-        self.push_token_list_with_origins(token_list, OriginListId::EMPTY, replay_kind);
+    pub fn push_token_list(
+        &mut self,
+        token_list: TokenListId,
+        replay_kind: TokenListReplayKind,
+    ) -> TokenListReplayMarker {
+        self.push_token_list_with_origins(token_list, OriginListId::EMPTY, replay_kind)
     }
 
     pub fn push_token_list_with_origins(
@@ -388,7 +404,12 @@ impl<S> InputStack<S> {
         token_list: TokenListId,
         origin_list: OriginListId,
         replay_kind: TokenListReplayKind,
-    ) {
+    ) -> TokenListReplayMarker {
+        let replay_marker = TokenListReplayMarker(self.next_replay_marker);
+        self.next_replay_marker = self
+            .next_replay_marker
+            .checked_add(1)
+            .expect("token-list replay marker overflowed");
         self.frames.push(InputFrame::TokenList(TokenListInputFrame {
             token_list,
             origin_list,
@@ -396,7 +417,9 @@ impl<S> InputStack<S> {
             index: 0,
             macro_arguments: MacroArguments::new(),
             macro_invocation: OriginId::UNKNOWN,
+            replay_marker: Some(replay_marker),
         }));
+        replay_marker
     }
 
     pub fn push_macro_body(&mut self, token_list: TokenListId, macro_arguments: MacroArguments) {
@@ -431,6 +454,7 @@ impl<S> InputStack<S> {
             index: 0,
             macro_arguments,
             macro_invocation,
+            replay_marker: None,
         }));
     }
 
@@ -693,6 +717,7 @@ where
                                 index: 0,
                                 macro_arguments: MacroArguments::new(),
                                 macro_invocation: OriginId::UNKNOWN,
+                                replay_marker: None,
                             }));
                             continue;
                         }
@@ -786,6 +811,7 @@ where
                                 index: 0,
                                 macro_arguments: MacroArguments::new(),
                                 macro_invocation: OriginId::UNKNOWN,
+                                replay_marker: None,
                             }));
                             continue;
                         }
@@ -863,6 +889,7 @@ where
                                 index: 0,
                                 macro_arguments: MacroArguments::new(),
                                 macro_invocation: OriginId::UNKNOWN,
+                                replay_marker: None,
                             }));
                             continue;
                         }
@@ -969,6 +996,17 @@ impl<S> InputStack<S> {
                 frame,
                 InputFrame::TokenList(frame)
                     if frame.token_list == token_list && frame.replay_kind == replay_kind
+            )
+        })
+    }
+
+    /// Returns whether a synchronously delimited replay frame is still live.
+    #[must_use]
+    pub fn contains_token_list_replay_marker(&self, marker: TokenListReplayMarker) -> bool {
+        self.frames.iter().any(|frame| {
+            matches!(
+                frame,
+                InputFrame::TokenList(frame) if frame.replay_marker == Some(marker)
             )
         })
     }

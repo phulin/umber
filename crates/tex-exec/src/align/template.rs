@@ -24,10 +24,14 @@ where
         if stores.tokens(template).is_empty() {
             return Ok(());
         }
-        input.push_token_list(template, TokenListReplayKind::Inserted);
+        // TeX82's end_token_list callback ends a u_template even when its
+        // final token expands and pops the template below a macro frame. A
+        // live-frame marker gives this synchronous replay the same boundary;
+        // token-list identity alone is ambiguous for hash-consed templates.
+        let replay_marker = input.push_token_list(template, TokenListReplayKind::Inserted);
         let mut stats = ExecutionStats::default();
         loop {
-            if template_finished(input, stores, template, sentinel) {
+            if template_finished(input, stores, template, replay_marker, sentinel) {
                 return Ok(());
             }
             super::execution::run_one_main_control_token(
@@ -62,10 +66,14 @@ fn template_finished<S>(
     input: &mut InputStack<S>,
     stores: &Universe,
     template: TokenListId,
+    replay_marker: tex_lex::TokenListReplayMarker,
     sentinel: Option<Token>,
 ) -> bool {
-    let Some((frame, replay_kind, index)) = input.current_token_list_frame() else {
+    if !input.contains_token_list_replay_marker(replay_marker) {
         return true;
+    }
+    let Some((frame, replay_kind, index)) = input.current_token_list_frame() else {
+        return false;
     };
     if frame != template || replay_kind != TokenListReplayKind::Inserted {
         return false;
