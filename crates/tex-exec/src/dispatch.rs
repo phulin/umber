@@ -78,7 +78,7 @@ where
             stores.meaning(symbol)
         }
         Token::Char { .. } => return dispatch_character_token(nest, traced, input, stores, hooks),
-        Token::Param(_) => {
+        Token::Param(_) | Token::Frozen(_) => {
             return Ok(DispatchAction::NotConsumed);
         }
     };
@@ -197,7 +197,9 @@ where
             assignments::append_given_char(nest, input, stores, ch)?;
             Ok(DispatchAction::Continue)
         }
-        Token::Cs(_) | Token::Param(_) => unreachable!("caller passes a character token"),
+        Token::Cs(_) | Token::Param(_) | Token::Frozen(_) => {
+            unreachable!("caller passes a character token")
+        }
     }
 }
 
@@ -331,6 +333,7 @@ impl ResolveTokenName for Universe {
             Token::Cs(symbol) => self.resolve(symbol).to_owned(),
             Token::Char { ch, cat } => format!("{ch:?}/{cat:?}"),
             Token::Param(slot) => format!("#{slot}"),
+            Token::Frozen(_) => "\\endtemplate".to_owned(),
         }
     }
 }

@@ -1704,7 +1704,7 @@ fn macro_text(stores: &Universe, name: &str) -> String {
         .iter()
         .filter_map(|token| match token {
             Token::Char { ch, .. } => Some(*ch),
-            Token::Cs(_) | Token::Param(_) => None,
+            Token::Cs(_) | Token::Param(_) | Token::Frozen(_) => None,
         })
         .collect()
 }

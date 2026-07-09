@@ -478,6 +478,7 @@ pub(crate) fn string_tokens(stores: &impl ExpansionState, token: Token) -> Vec<T
             out
         }
         Token::Param(slot) => text_tokens(&format!("#{slot}")),
+        Token::Frozen(_) => text_tokens("\\endtemplate"),
     }
 }
 
@@ -489,6 +490,7 @@ pub fn meaning_text(stores: &impl ExpansionState, token: Token) -> String {
         } => format!("the letter {ch}"),
         Token::Char { ch, .. } => format!("the character {ch}"),
         Token::Param(slot) => format!("macro parameter character #{slot}"),
+        Token::Frozen(_) => "end of alignment template".to_owned(),
         Token::Cs(symbol) => match stores.meaning(symbol) {
             Meaning::Undefined => "undefined".to_owned(),
             Meaning::Relax => "\\relax".to_owned(),
@@ -553,7 +555,7 @@ pub fn token_text(stores: &impl ExpansionState, token: Token) -> String {
         .into_iter()
         .filter_map(|token| match token {
             Token::Char { ch, .. } => Some(ch),
-            Token::Cs(_) | Token::Param(_) => None,
+            Token::Cs(_) | Token::Param(_) | Token::Frozen(_) => None,
         })
         .collect()
 }

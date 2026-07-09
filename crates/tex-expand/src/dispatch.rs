@@ -453,7 +453,9 @@ macro_rules! dispatch_match {
                         let symbol = stores.intern_active_character(ch);
                         stores.resolve(symbol).to_owned()
                     }
-                    Token::Char { .. } | Token::Param(_) => format!("{token:?}"),
+                    Token::Char { .. } | Token::Param(_) | Token::Frozen(_) => {
+                        format!("{token:?}")
+                    }
                 };
                 Err(ExpandError::UndefinedControlSequence {
                     name,

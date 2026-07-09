@@ -117,7 +117,7 @@ fn append_csname_token(name: &mut String, token: Token) -> CsNameAppend {
             name.push(ch);
             CsNameAppend::Appended
         }
-        Token::Cs(_) | Token::Param(_) => CsNameAppend::Recover,
+        Token::Cs(_) | Token::Param(_) | Token::Frozen(_) => CsNameAppend::Recover,
     }
 }
 
@@ -189,7 +189,9 @@ fn append_input_name_token(name: &mut String, token: Token) -> Result<(), Expand
             name.push(ch);
             Ok(())
         }
-        Token::Cs(_) | Token::Param(_) => Err(ExpandError::NonCharacterInInputName(token)),
+        Token::Cs(_) | Token::Param(_) | Token::Frozen(_) => {
+            Err(ExpandError::NonCharacterInInputName(token))
+        }
     }
 }
 

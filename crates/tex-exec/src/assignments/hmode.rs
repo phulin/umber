@@ -658,7 +658,7 @@ where
                 let symbol = active_character_symbol(stores, ch);
                 Some(stores.meaning(symbol))
             }
-            Token::Char { .. } | Token::Param(_) => None,
+            Token::Char { .. } | Token::Param(_) | Token::Frozen(_) => None,
         };
         if meaning == Some(Meaning::Relax) {
             continue;

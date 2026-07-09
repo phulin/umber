@@ -178,7 +178,7 @@ pub(super) fn token_meaning_for_let(
             .active_character_symbol(ch)
             .map_or(Ok(Meaning::Undefined), |symbol| Ok(stores.meaning(symbol))),
         Token::Char { ch, cat } => Ok(Meaning::CharToken { ch, cat }),
-        Token::Param(_) => Err(ExecError::InvalidLetRhs {
+        Token::Param(_) | Token::Frozen(_) => Err(ExecError::InvalidLetRhs {
             token,
             origin: traced.origin(),
         }),
@@ -268,7 +268,7 @@ pub(crate) fn has_catcode_meaning(stores: &Universe, token: Token, expected: Cat
             stores.meaning(symbol),
             Meaning::CharToken { cat, .. } if cat == expected
         ),
-        Token::Param(_) => false,
+        Token::Param(_) | Token::Frozen(_) => false,
     }
 }
 

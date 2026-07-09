@@ -34,7 +34,7 @@ where
                 show_meaning_text(stores, token)
             )
         }
-        Token::Char { .. } | Token::Param(_) => {
+        Token::Char { .. } | Token::Param(_) | Token::Frozen(_) => {
             format!("\n> {}.\n", meaning_text(stores, token))
         }
     };
@@ -241,7 +241,7 @@ where
                     words.push(std::mem::take(&mut current));
                 }
             }
-            Token::Cs(_) | Token::Param(_) => {
+            Token::Cs(_) | Token::Param(_) | Token::Frozen(_) => {
                 if !current.is_empty() {
                     words.push(std::mem::take(&mut current));
                 }

@@ -356,6 +356,8 @@ impl Stores {
                 hasher.tag(2);
                 hasher.u8(slot);
             }
+            Token::Frozen(crate::token::FrozenToken::EndTemplate) => hasher.tag(3),
+            Token::Frozen(crate::token::FrozenToken::EndV) => hasher.tag(4),
         }
     }
 

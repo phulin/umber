@@ -66,3 +66,19 @@ fn page_mark_slots_roll_back_with_snapshots() {
     assert_eq!(universe.page_mark(PageMark::SplitFirst), TokenListId::EMPTY);
     assert_eq!(universe.page_mark(PageMark::SplitBot), TokenListId::EMPTY);
 }
+
+#[test]
+fn frozen_alignment_token_kinds_have_distinct_semantic_hashes() {
+    let mut universe = Universe::new();
+    let checkpoint = universe.snapshot();
+    let end_template = universe.intern_token_list(&[Token::frozen_end_template()]);
+    universe.set_toks(0, end_template);
+    let end_template_hash = universe.snapshot().state_hash();
+
+    universe.rollback(&checkpoint);
+    let endv = universe.intern_token_list(&[Token::frozen_endv()]);
+    universe.set_toks(0, endv);
+    let endv_hash = universe.snapshot().state_hash();
+
+    assert_ne!(end_template_hash, endv_hash);
+}

@@ -346,7 +346,9 @@ fn append_file_name_token(
             name.push(ch);
             Ok(())
         }
-        Token::Cs(_) | Token::Param(_) => Err(ExecError::MissingToken { context }),
+        Token::Cs(_) | Token::Param(_) | Token::Frozen(_) => {
+            Err(ExecError::MissingToken { context })
+        }
     }
 }
 

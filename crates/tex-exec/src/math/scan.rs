@@ -95,7 +95,7 @@ where
                 Ok(MathField::SubMlist(id))
             }
         },
-        Token::Param(_) => Err(ExecError::MissingToken {
+        Token::Param(_) | Token::Frozen(_) => Err(ExecError::MissingToken {
             context: "math field",
         }),
     }
@@ -483,7 +483,7 @@ where
                     _ => {}
                 }
             }
-            Token::Char { .. } | Token::Param(_) => {}
+            Token::Char { .. } | Token::Param(_) | Token::Frozen(_) => {}
         }
 
         push_traced_tokens(input, stores, [traced]);

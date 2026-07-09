@@ -32,7 +32,7 @@ where
     }
     stores.enter_group_with_kind(GroupKind::Simple);
 
-    let end_template = Token::Cs(stores.intern("endtemplate"));
+    let end_template = Token::frozen_end_template();
     let mut scanner = PreambleScanner::new(input, stores, hooks);
     let mut columns = Vec::new();
     let mut tabskips = vec![scanner.current_tabskip()];
@@ -67,7 +67,6 @@ where
         tabskips,
         scanner.current_tabskip(),
         loop_start,
-        end_template,
     ))
 }
 

@@ -229,7 +229,9 @@ fn append_font_name_token(name: &mut String, token: Token) -> Result<(), ExecErr
             name.push(ch);
             Ok(())
         }
-        Token::Cs(_) | Token::Param(_) => Err(ExecError::MissingToken { context: "\\font" }),
+        Token::Cs(_) | Token::Param(_) | Token::Frozen(_) => {
+            Err(ExecError::MissingToken { context: "\\font" })
+        }
     }
 }
 

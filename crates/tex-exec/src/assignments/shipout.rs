@@ -268,6 +268,7 @@ where
                 }
             },
             Token::Param(slot) => PageToken::Param(slot),
+            Token::Frozen(_) => unreachable!("alignment sentinel escaped into shipout tokens"),
         }
     }
 

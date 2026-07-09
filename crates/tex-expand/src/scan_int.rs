@@ -401,7 +401,7 @@ where
             .next()
             .map(|ch| ch as i32)
             .unwrap_or(0),
-        Token::Param(_) => return Ok(missing_number(token.origin())),
+        Token::Param(_) | Token::Frozen(_) => return Ok(missing_number(token.origin())),
     };
     consume_optional_space(input, stores, recorder, hooks, expander)?;
     Ok(ScannedInt::new(value))

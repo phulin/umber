@@ -205,7 +205,7 @@ where
         Token::Cs(symbol) => {
             dispatch_math_control(nest, traced, symbol, input, stores, recorder, hooks)
         }
-        Token::Param(_) => Ok(DispatchAction::NotConsumed),
+        Token::Param(_) | Token::Frozen(_) => Ok(DispatchAction::NotConsumed),
     }
 }
 

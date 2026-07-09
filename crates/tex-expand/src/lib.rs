@@ -596,6 +596,16 @@ where
         let token = read.token();
         let traced = read.traced_token();
 
+        // TeX82 get_x_token changes the inaccessible frozen_end_template
+        // token into the distinct frozen_endv command after outer-validity
+        // checking. Keep the diagnostic origin of the stored sentinel.
+        if token.is_frozen_end_template() {
+            return Ok(Some(TracedTokenWord::pack(
+                Token::frozen_endv(),
+                read.origin(),
+            )));
+        }
+
         if read.suppress_expansion() {
             return Ok(Some(read.traced_token()));
         }
@@ -711,7 +721,7 @@ pub(crate) fn expandable_symbol(
             ch,
             cat: Catcode::Active,
         } => Some(stores.intern_active_character(ch)),
-        Token::Char { .. } | Token::Param(_) => None,
+        Token::Char { .. } | Token::Param(_) | Token::Frozen(_) => None,
     }
 }
 

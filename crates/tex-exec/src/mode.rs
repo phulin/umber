@@ -6,7 +6,6 @@ use tex_state::ids::TokenListId;
 use tex_state::math::FractionThickness;
 use tex_state::node::Node;
 use tex_state::scaled::Scaled;
-use tex_state::token::Token;
 
 use crate::ExecError;
 
@@ -303,7 +302,6 @@ pub struct AlignState {
     current_col: usize,
     current_span: u16,
     brace_depth: i32,
-    end_template: Token,
 }
 
 impl AlignState {
@@ -315,7 +313,6 @@ impl AlignState {
         tabskips: Vec<GlueId>,
         default_tabskip: GlueId,
         loop_start: Option<usize>,
-        end_template: Token,
     ) -> Self {
         Self {
             kind,
@@ -328,7 +325,6 @@ impl AlignState {
             current_col: 0,
             current_span: 1,
             brace_depth: 0,
-            end_template,
         }
     }
 
@@ -380,11 +376,6 @@ impl AlignState {
     #[must_use]
     pub const fn brace_depth(&self) -> i32 {
         self.brace_depth
-    }
-
-    #[must_use]
-    pub const fn end_template(&self) -> Token {
-        self.end_template
     }
 
     #[must_use]

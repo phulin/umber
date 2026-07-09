@@ -330,7 +330,7 @@ where
             } else {
                 super::template::replay_template(
                     column_templates.u_template,
-                    None,
+                    false,
                     nest,
                     input,
                     stores,
@@ -344,10 +344,9 @@ where
         let terminator =
             run_cell_body_until_terminator(align_level, nest, input, stores, recorder, hooks)?;
         if !omit {
-            let end_template = align_state(nest, align_level)?.end_template();
             super::template::replay_template(
                 column_templates.v_template,
-                Some(end_template),
+                true,
                 nest,
                 input,
                 stores,
@@ -479,7 +478,7 @@ pub(super) fn run_one_main_control_token<S, R, H>(
     recorder: &mut R,
     hooks: &mut H,
     stats: &mut ExecutionStats,
-) -> Result<(), ExecError>
+) -> Result<bool, ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
@@ -494,7 +493,11 @@ where
         context: "alignment template",
     })?;
     stats.delivered_tokens += 1;
-    dispatch_and_drain(nest, token, input, stores, recorder, hooks, stats)
+    if tex_expand::semantic_token(token).is_frozen_endv() {
+        return Ok(true);
+    }
+    dispatch_and_drain(nest, token, input, stores, recorder, hooks, stats)?;
+    Ok(false)
 }
 
 pub(super) fn dispatch_and_drain<S, R, H>(

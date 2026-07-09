@@ -390,7 +390,10 @@ fn scans_empty_u_template_and_end_template_sentinel() {
     assert!(stores.tokens(state.columns()[0].u_template).is_empty());
     assert_eq!(
         stores.tokens(state.columns()[0].v_template),
-        &[char_token('v', Catcode::Letter), state.end_template()]
+        &[
+            char_token('v', Catcode::Letter),
+            Token::frozen_end_template()
+        ]
     );
     assert_eq!(state.tabskips(), &[GlueId::ZERO, GlueId::ZERO]);
     assert_eq!(state.default_tabskip(), GlueId::ZERO);
@@ -434,7 +437,10 @@ fn records_repeat_point_and_resolves_extra_columns() {
     assert_eq!(state.column_for(5), Some(&state.columns()[3]));
     assert_eq!(
         stores.tokens(state.column_for(4).expect("repeat col").v_template),
-        &[char_token('c', Catcode::Letter), state.end_template()]
+        &[
+            char_token('c', Catcode::Letter),
+            Token::frozen_end_template()
+        ]
     );
 }
 
@@ -470,7 +476,10 @@ fn span_expands_next_preamble_token_without_becoming_template_material() {
     );
     assert_eq!(
         stores.tokens(state.columns()[0].v_template),
-        &[char_token('y', Catcode::Letter), state.end_template()]
+        &[
+            char_token('y', Catcode::Letter),
+            Token::frozen_end_template()
+        ]
     );
 }
 
@@ -485,7 +494,7 @@ fn valign_and_crcr_use_alignment_preamble_scanner() {
     );
     assert_eq!(
         stores.tokens(state.columns()[0].v_template),
-        &[state.end_template()]
+        &[Token::frozen_end_template()]
     );
 }
 
@@ -657,6 +666,44 @@ fn restricted_horizontal_u_template_ending_in_macro_stops_before_cell_input() {
     assert_eq!(rows.len(), 1);
     assert_eq!(cells.len(), 1);
     assert_eq!(cell_text(&stores, cells[0]), "x");
+}
+
+#[test]
+fn v_template_ending_in_macro_delivers_frozen_endv_after_frame_retirement() {
+    let stores =
+        run_boxed_alignment_source("\\def\\templateend{\\relax}\\halign{#\\templateend\\cr x\\cr}");
+    let vbox = box_zero_vlist(&stores);
+    let rows = vlist_rows(&stores, vbox);
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(cell_text(&stores, row_cells(&stores, rows[0])[0]), "x");
+}
+
+#[test]
+fn user_endtemplate_control_sequence_cannot_alias_frozen_sentinel() {
+    let stores = run_boxed_alignment_source("\\def\\endtemplate{BAD}\\halign{#\\cr x\\cr}");
+    let vbox = box_zero_vlist(&stores);
+    let rows = vlist_rows(&stores, vbox);
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(cell_text(&stores, row_cells(&stores, rows[0])[0]), "x");
+}
+
+#[test]
+fn frozen_endv_alignment_replays_identically_after_rollback() {
+    let mut stores = support::stores_with_fonts();
+    let checkpoint = stores.snapshot();
+    let source = "\\def\\templateend{\\relax}\\setbox0=\\vbox{\\halign{#\\templateend\\cr x\\cr}}";
+
+    run_alignment_source_in(&mut stores, source);
+    let first_box = stores.box_reg(0);
+    let first_hash = stores.snapshot().state_hash();
+
+    stores.rollback(&checkpoint);
+    run_alignment_source_in(&mut stores, source);
+
+    assert_eq!(stores.box_reg(0), first_box);
+    assert_eq!(stores.snapshot().state_hash(), first_hash);
 }
 
 #[test]

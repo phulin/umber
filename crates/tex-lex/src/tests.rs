@@ -766,6 +766,23 @@ fn condition_frames_round_trip_through_input_summary() {
 }
 
 #[test]
+fn frozen_alignment_token_survives_input_summary_restore() {
+    let mut stores = Universe::new();
+    let tokens = stores.intern_token_list(&[Token::frozen_end_template()]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list(tokens, TokenListReplayKind::Inserted);
+    let summary = input.summary();
+    let mut restored =
+        InputStack::from_summary(&summary, |_, _, _| Ok::<_, ()>(MemoryInput::new("")))
+            .expect("restore frozen-token input stack");
+
+    assert_eq!(
+        restored.next_token(&mut stores).expect("restored token"),
+        Some(Token::frozen_end_template())
+    );
+}
+
+#[test]
 fn open_condition_survives_checkpoint_rollback_resume_summary() {
     let mut stores = Universe::new();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
