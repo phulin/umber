@@ -139,6 +139,14 @@ impl FontMetrics {
     }
 
     #[must_use]
+    pub fn next_larger(&self, code: u8) -> Option<u8> {
+        match self.character(code)?.tag {
+            CharTag::NextLarger(next) => Some(next),
+            _ => None,
+        }
+    }
+
+    #[must_use]
     pub fn lig_kern_iter(&self, left: LigKernChar, right: LigKernChar) -> LigKernIter<'_> {
         let next_index = self.lig_kern_start(left);
         let right_char = match right {

@@ -1,26 +1,30 @@
 //! Pure Appendix G math-list to horizontal-list conversion.
 
+mod delimiters;
+mod fractions;
 mod model;
+mod operators;
 mod params;
+mod radicals;
 mod scripts;
 mod spacing;
 mod style;
 
-use tex_arith::{half, x_over_n};
-use tex_fonts::CharMetrics;
+use tex_arith::x_over_n;
+use tex_fonts::metrics::ExtensibleRecipe as MetricExtensibleRecipe;
+use tex_fonts::{CharMetrics, LigKernChar, LigKernCommand};
 use tex_state::Universe;
-use tex_state::env::banks::DimenParam;
+use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::ids::{FontId, GlueId, NodeListId};
-use tex_state::math::{
-    LimitType, MathChar, MathField, MathFontSize, MathNoad, NoadClass, NoadKind,
-};
+use tex_state::math::{MathChar, MathField, MathFontSize, MathNoad, NoadClass, NoadKind};
 use tex_state::node::{KernKind, Node};
 use tex_state::scaled::Scaled;
 
 use crate::TypesetState;
 
+pub use delimiters::{left_right_delimiter_target, var_delimiter};
 pub use model::{BoxAxis, FrozenHList, MathBox, MathGlueKind, MathNode};
-pub(crate) use model::{hpack, node_is_char, vpack};
+pub(crate) use model::{boxed_node, hpack, node_is_char, vpack};
 pub use params::{ExtensionParams, MathParams, SizeParams, SymbolParams};
 pub use spacing::{SpacingKind, inter_noad_spacing, math_glue, math_kern};
 pub use style::{Style, StyleFamily};
@@ -29,6 +33,16 @@ pub use style::{Style, StyleFamily};
 pub trait MathTypesetState: TypesetState {
     fn math_family_font(&self, size: MathFontSize, family: u8) -> FontId;
     fn font_parameter(&self, font: FontId, number: u16) -> Scaled;
+    fn font_next_larger(&self, font: FontId, code: u8) -> Option<u8>;
+    fn font_extensible_recipe(&self, font: FontId, code: u8) -> Option<MetricExtensibleRecipe>;
+    fn lig_kern_command(
+        &self,
+        font: FontId,
+        left: LigKernChar,
+        right: LigKernChar,
+    ) -> Option<LigKernCommand>;
+    fn font_skew_char(&self, font: FontId) -> i32;
+    fn int_param(&self, param: IntParam) -> i32;
     fn dimen_param(&self, param: DimenParam) -> Scaled;
     fn muskip(&self, index: u16) -> GlueId;
 }
@@ -94,13 +108,14 @@ fn first_pass<S: MathTypesetState>(
     max_height: &mut Scaled,
     max_depth: &mut Scaled,
 ) {
+    let mut input = input.to_vec();
     let mut r_type = Some(NoadClass::Op);
     let mut index = 0;
     while index < input.len() {
-        match &input[index] {
+        match input[index].clone() {
             Node::MathStyle(style) => {
                 // AppG rule 18
-                ctx.set_style(Style::from_math_style(*style));
+                ctx.set_style(Style::from_math_style(style));
                 out.push(WorkItem::Style(ctx.style));
             }
             Node::MathChoice(choice) => {
@@ -125,9 +140,9 @@ fn first_pass<S: MathTypesetState>(
                     index += 1;
                 }
                 let spec = if matches!(kind, tex_state::node::GlueKind::MuSkip) {
-                    spacing::math_glue(ctx.state.glue(*spec), ctx.mu)
+                    spacing::math_glue(ctx.state.glue(spec), ctx.mu)
                 } else {
-                    ctx.state.glue(*spec)
+                    ctx.state.glue(spec)
                 };
                 out.push(WorkItem::Node(MathNode::Glue {
                     spec,
@@ -144,20 +159,27 @@ fn first_pass<S: MathTypesetState>(
                 // AppG rule 18
                 out.push(WorkItem::Node(MathNode::Kern {
                     amount: if matches!(kind, KernKind::Mu) {
-                        spacing::math_kern(*amount, ctx.mu)
+                        spacing::math_kern(amount, ctx.mu)
                     } else {
-                        *amount
+                        amount
                     },
                     kind: if matches!(kind, KernKind::Mu) {
                         KernKind::Explicit
                     } else {
-                        *kind
+                        kind
                     },
                 }));
             }
             Node::MathNoad(noad) => {
                 // AppG rule 18
-                let mut class = noad_class(noad);
+                if matches!(noad.kind, NoadKind::Normal(NoadClass::Ord)) {
+                    operators::make_ord(ctx, &mut input, index);
+                }
+                let Node::MathNoad(noad) = input[index].clone() else {
+                    index += 1;
+                    continue;
+                };
+                let mut class = noad_class(&noad);
                 if class == NoadClass::Bin
                     && matches!(
                         r_type,
@@ -175,14 +197,27 @@ fn first_pass<S: MathTypesetState>(
                 if matches!(class, NoadClass::Rel | NoadClass::Close | NoadClass::Punct) {
                     convert_final_bin_to_ord(out);
                 }
-                let work = translate_noad(ctx, noad, class);
+                let work = translate_noad(ctx, &noad, class);
                 let packed = hpack(work.hlist.clone());
                 *max_height = (*max_height).max(packed.height);
                 *max_depth = (*max_depth).max(packed.depth);
                 r_type = Some(work.class);
                 out.push(WorkItem::Noad(work));
             }
-            other => out.push(WorkItem::Node(source_node(ctx.state, other))),
+            Node::FractionNoad(fraction) => {
+                // AppG rule 15
+                let hlist = fractions::make_fraction(ctx, &fraction);
+                let packed = hpack(hlist.clone());
+                *max_height = (*max_height).max(packed.height);
+                *max_depth = (*max_depth).max(packed.depth);
+                r_type = Some(NoadClass::Ord);
+                out.push(WorkItem::Noad(WorkNoad {
+                    class: NoadClass::Ord,
+                    hlist,
+                    penalty: INF_PENALTY,
+                }));
+            }
+            other => out.push(WorkItem::Node(source_node(ctx.state, &other))),
         }
         index += 1;
     }
@@ -194,12 +229,23 @@ fn translate_noad<S: MathTypesetState>(
     class: NoadClass,
 ) -> WorkNoad {
     let mut delta = Scaled::from_raw(0);
+    let mut scripts_handled = false;
     let mut hlist = match (&noad.kind, &noad.nucleus) {
-        (NoadKind::Operator(limit), MathField::MathChar(ch))
-            if !matches!(limit, LimitType::Limits) =>
-        {
-            make_operator(ctx, *ch, &noad.subscript, &mut delta)
+        (NoadKind::Operator(limit), _) => {
+            let result = operators::make_op(ctx, noad, *limit);
+            delta = result.delta;
+            scripts_handled = result.scripts_handled;
+            result.hlist
         }
+        (NoadKind::Radical { delimiter }, _) => radicals::make_radical(ctx, noad, *delimiter),
+        (NoadKind::Accent { accent }, _) => {
+            let result = radicals::make_math_accent(ctx, noad, *accent);
+            scripts_handled = result.scripts_handled;
+            result.hlist
+        }
+        (NoadKind::Underline, _) => radicals::make_under(ctx, &noad.nucleus),
+        (NoadKind::Overline, _) => radicals::make_over(ctx, &noad.nucleus),
+        (NoadKind::VCenter, _) => radicals::make_vcenter(ctx, &noad.nucleus),
         (_, MathField::MathChar(ch) | MathField::MathTextChar(ch)) => make_character_nucleus(
             ctx,
             *ch,
@@ -217,7 +263,9 @@ fn translate_noad<S: MathTypesetState>(
         },
     };
 
-    if !matches!(noad.subscript, MathField::Empty) || !matches!(noad.superscript, MathField::Empty)
+    if !scripts_handled
+        && (!matches!(noad.subscript, MathField::Empty)
+            || !matches!(noad.superscript, MathField::Empty))
     {
         scripts::make_scripts(
             ctx.state,
@@ -343,31 +391,6 @@ fn make_character_nucleus<S: MathTypesetState>(
         *delta = Scaled::from_raw(0);
     }
     FrozenHList { nodes }
-}
-
-fn make_operator<S: MathTypesetState>(
-    ctx: &Context<'_, S>,
-    ch: MathChar,
-    subscript: &MathField,
-    delta: &mut Scaled,
-) -> FrozenHList {
-    // AppG rule 13
-    let Some(fetched) = fetch(ctx.state, ch, ctx.style) else {
-        return FrozenHList::default();
-    };
-    *delta = fetched.metrics.italic_correction;
-    let mut boxed = char_box(fetched);
-    if !matches!(subscript, MathField::Empty) {
-        boxed.width = sub(boxed.width, *delta);
-    }
-    let size_params = ctx.params.for_size(ctx.style.size());
-    boxed.shift = sub(
-        Scaled::from_raw(half(sub(boxed.height, boxed.depth).raw())),
-        size_params.symbols.axis_height,
-    );
-    FrozenHList {
-        nodes: vec![MathNode::HList(boxed)],
-    }
 }
 
 fn char_box(fetched: FetchedChar) -> MathBox {
@@ -500,6 +523,31 @@ impl MathTypesetState for Universe {
 
     fn font_parameter(&self, font: FontId, number: u16) -> Scaled {
         Universe::font_parameter(self, font, number)
+    }
+
+    fn font_next_larger(&self, font: FontId, code: u8) -> Option<u8> {
+        Universe::font_next_larger(self, font, code)
+    }
+
+    fn font_extensible_recipe(&self, font: FontId, code: u8) -> Option<MetricExtensibleRecipe> {
+        Universe::extensible_recipe(self, font, code)
+    }
+
+    fn lig_kern_command(
+        &self,
+        font: FontId,
+        left: LigKernChar,
+        right: LigKernChar,
+    ) -> Option<LigKernCommand> {
+        Universe::lig_kern_command(self, font, left, right)
+    }
+
+    fn font_skew_char(&self, font: FontId) -> i32 {
+        Universe::font_skew_char(self, font)
+    }
+
+    fn int_param(&self, param: IntParam) -> i32 {
+        Universe::int_param(self, param)
     }
 
     fn dimen_param(&self, param: DimenParam) -> Scaled {

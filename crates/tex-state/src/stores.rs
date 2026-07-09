@@ -484,6 +484,11 @@ impl Stores {
     }
 
     #[must_use]
+    pub fn font_next_larger(&self, font: FontId, code: u8) -> Option<u8> {
+        self.font(font).metrics().next_larger(code)
+    }
+
+    #[must_use]
     pub fn missing_font_character(&self, font: FontId, code: u8) -> Option<MissingCharacter> {
         (!self.font_char_exists(font, code)).then_some(MissingCharacter { font, code })
     }

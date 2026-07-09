@@ -90,6 +90,13 @@ pub(crate) fn vpack(list: FrozenHList) -> MathBox {
     }
 }
 
+pub(crate) fn boxed_node(boxed: MathBox) -> MathNode {
+    match boxed.axis {
+        BoxAxis::Horizontal => MathNode::HList(boxed),
+        BoxAxis::Vertical => MathNode::VList(boxed),
+    }
+}
+
 pub(crate) fn node_is_char(node: &MathNode) -> bool {
     matches!(node, MathNode::Char { .. })
 }

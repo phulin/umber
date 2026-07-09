@@ -99,6 +99,9 @@ impl IntParam {
     /// TeX's `\mag` integer parameter.
     pub const MAG: Self = Self::new(17);
 
+    /// TeX's variable delimiter scaling ratio.
+    pub const DELIMITER_FACTOR: Self = Self::new(18);
+
     /// TeX's job-start minutes since midnight.
     pub const TIME: Self = Self::new(20);
 
@@ -184,6 +187,12 @@ impl DimenParam {
 
     /// TeX's `\vfuzz` dimension parameter.
     pub const VFUZZ: Self = Self::new(9);
+
+    /// TeX's variable delimiter shortfall allowance.
+    pub const DELIMITER_SHORTFALL: Self = Self::new(10);
+
+    /// TeX's width for a null delimiter.
+    pub const NULL_DELIMITER_SPACE: Self = Self::new(11);
 
     /// TeX's `\overfullrule` dimension parameter.
     pub const OVERFULL_RULE: Self = Self::new(16);

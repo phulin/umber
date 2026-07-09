@@ -792,6 +792,11 @@ impl Universe {
     }
 
     #[must_use]
+    pub fn font_next_larger(&self, font: FontId, code: u8) -> Option<u8> {
+        self.stores.font_next_larger(font, code)
+    }
+
+    #[must_use]
     pub fn missing_font_character(&self, font: FontId, code: u8) -> Option<MissingCharacter> {
         self.stores.missing_font_character(font, code)
     }

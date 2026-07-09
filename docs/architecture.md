@@ -467,11 +467,12 @@ makes box-level memoization (M4) sound.
   surface. The implementation replays TeX.web's two passes: pass one resolves
   styles, math choices, mu glue/kerns, noad classes, nuclei, and scripts while
   tracking top-level dimensions; pass two inserts the 8x8 inter-class spacing
-  table and optional penalties. Symbol and extension fontdimens are copied
-  before entry, and the style helpers carry cramped propagation for recursive
-  sublists. Fractions, radicals, big operators with displayed limits,
-  delimiters, and accents remain follow-up Appendix G kernels layered on the
-  same owned-output contract.
+  table and optional penalties. Symbol, extension, and delimiter parameters
+  are copied before entry, and the style helpers carry cramped propagation for
+  recursive sublists. The pure kernel includes Appendix G compound builders
+  for generalized fractions, radicals, big operators with displayed limits,
+  variable delimiters and extensible recipes, math accents, over/under lines,
+  and vcenter boxes under the same owned-output contract.
 - **Alignment (`\halign`/`\valign`)**: the one kernel that is *not* pure —
   template expansion interleaves with the gullet by design. It is
   structured as a stomach sub-mode (it re-enters main control per cell),

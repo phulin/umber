@@ -1,4 +1,4 @@
-use tex_state::env::banks::DimenParam;
+use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::glue::GlueSpec;
 use tex_state::math::MathFontSize;
 use tex_state::scaled::Scaled;
@@ -44,6 +44,9 @@ pub struct MathParams {
     pub text: SizeParams,
     pub script: SizeParams,
     pub script_script: SizeParams,
+    pub delimiter_factor: i32,
+    pub delimiter_shortfall: Scaled,
+    pub null_delimiter_space: Scaled,
     pub script_space: Scaled,
     pub thin_mu_skip: GlueSpec,
     pub med_mu_skip: GlueSpec,
@@ -65,6 +68,9 @@ impl MathParams {
             text: SizeParams::read(state, MathFontSize::Text),
             script: SizeParams::read(state, MathFontSize::Script),
             script_script: SizeParams::read(state, MathFontSize::ScriptScript),
+            delimiter_factor: state.int_param(IntParam::DELIMITER_FACTOR),
+            delimiter_shortfall: state.dimen_param(DimenParam::DELIMITER_SHORTFALL),
+            null_delimiter_space: state.dimen_param(DimenParam::NULL_DELIMITER_SPACE),
             script_space: state.dimen_param(DimenParam::new(12)),
             thin_mu_skip: state.glue(state.muskip(15)),
             med_mu_skip: state.glue(state.muskip(16)),
