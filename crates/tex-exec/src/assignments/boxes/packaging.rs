@@ -4,8 +4,9 @@ use tex_state::ids::NodeListId;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::node::Node;
 use tex_state::{GroupKind, Universe};
-use tex_typeset::{HpackParams, PackDiagnostic, PackSpec, VpackParams, hpack, vpack, vtop};
+use tex_typeset::{PackDiagnostic, PackSpec, hpack, vpack, vtop};
 
+use crate::packing_params::{hpack_params, vpack_params};
 use crate::{ExecError, Mode, ModeNest, leave_group};
 
 use super::super::{
@@ -110,8 +111,8 @@ where
     let children = stores.freeze_node_list(&nodes);
     let node = match kind {
         BoxKind::HBox => Node::HList(hpack_with_overfull_rule(stores, children, spec)),
-        BoxKind::VBox => Node::VList(vpack(stores, children, spec, VpackParams::read(stores)).node),
-        BoxKind::VTop => Node::VList(vtop(stores, children, spec, VpackParams::read(stores)).node),
+        BoxKind::VBox => Node::VList(vpack(stores, children, spec, vpack_params(stores)).node),
+        BoxKind::VTop => Node::VList(vtop(stores, children, spec, vpack_params(stores)).node),
     };
     leave_group(input, stores, GroupKind::Simple)?;
     Ok(node)
@@ -122,7 +123,7 @@ pub(in crate::assignments) fn hpack_with_overfull_rule(
     children: NodeListId,
     spec: PackSpec,
 ) -> tex_state::node::BoxNode {
-    let params = HpackParams::read(stores);
+    let params = hpack_params(stores);
     let mut packed = hpack(stores, children, spec, params);
     if params.overfull_rule.raw() > 0
         && packed

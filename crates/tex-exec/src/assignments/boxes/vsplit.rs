@@ -6,10 +6,11 @@ use tex_state::glue::Order;
 use tex_state::node::Node;
 use tex_state::page::PageMark;
 use tex_state::scaled::Scaled;
-use tex_typeset::{PackSpec, VerticalBreakError, VpackParams, vert_break, vpack};
+use tex_typeset::{PackSpec, VerticalBreakError, vert_break, vpack};
 
 use crate::ExecError;
 use crate::diagnostics;
+use crate::packing_params::vpack_params;
 use crate::splitting::{prune_page_top, vpack_natural};
 
 use super::super::{scan_optional_keyword_x, scan_register_index, scan_scaled};
@@ -68,7 +69,7 @@ fn split_vbox_register(
     replace_split_source(stores, index, remainder, split_top_skip);
 
     let split_list = stores.freeze_node_list(&split_nodes);
-    let mut params = VpackParams::read(stores);
+    let mut params = vpack_params(stores);
     params.box_max_depth = split_max_depth;
     Ok(Some(Node::VList(
         vpack(stores, split_list, PackSpec::Exactly(height), params).node,

@@ -7,9 +7,10 @@ use tex_state::node::{BoxNode, GlueKind, KernKind, Node, Sign};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
 use tex_typeset::math::{MathParams, Style, mlist_to_hlist};
-use tex_typeset::{HpackParams, PackSpec, hpack as hpack_nodes};
+use tex_typeset::{PackSpec, hpack as hpack_nodes};
 
 use crate::mode::{DisplayEqNo, DisplayInterrupt, EqNoSide};
+use crate::packing_params::hpack_params;
 use crate::vertical::{
     append_node_to_vertical_list, append_vertical_contribution, build_page_if_outer_vertical,
 };
@@ -70,7 +71,7 @@ where
         stores,
         display_list,
         PackSpec::Natural,
-        HpackParams::read(stores),
+        hpack_params(stores),
     )
     .node;
     display_box.display = true;
@@ -80,13 +81,7 @@ where
         let eq_hlist = mlist_to_hlist(stores, content, Style::TEXT, false, &params);
         let eq_nodes = lower_math_hlist(stores, &eq_hlist);
         let eq_list = stores.freeze_node_list(&eq_nodes);
-        let mut node = hpack_nodes(
-            stores,
-            eq_list,
-            PackSpec::Natural,
-            HpackParams::read(stores),
-        )
-        .node;
+        let mut node = hpack_nodes(stores, eq_list, PackSpec::Natural, hpack_params(stores)).node;
         node.display = true;
         node
     });
@@ -115,7 +110,7 @@ where
                 stores,
                 display_list,
                 PackSpec::Exactly(z - q),
-                HpackParams::read(stores),
+                hpack_params(stores),
             )
             .node;
             display_box.display = true;
@@ -126,7 +121,7 @@ where
                     stores,
                     display_list,
                     PackSpec::Exactly(z),
-                    HpackParams::read(stores),
+                    hpack_params(stores),
                 )
                 .node;
                 display_box.display = true;
@@ -199,7 +194,7 @@ where
             vec![Node::HList(display_line), kern, Node::HList(eq_box)]
         };
         let list = stores.freeze_node_list(&children);
-        display_line = hpack_nodes(stores, list, PackSpec::Natural, HpackParams::read(stores)).node;
+        display_line = hpack_nodes(stores, list, PackSpec::Natural, hpack_params(stores)).node;
     }
     display_line.shift = s + d;
     append_node_to_vertical_list(nest, stores, Node::HList(display_line))?;

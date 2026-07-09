@@ -78,7 +78,9 @@ umber (CLI / driver)
  │    └── tex-engine       the interpreter proper
  │         ├── tex-expand       gullet: macros, conditionals, expandable prims
  │         ├── tex-exec        stomach: mode machine, unexpandable prims
+ │         │                   snapshots execution parameters for pure kernels
  │         ├── tex-typeset    par builder, line break, math, alignment, page
+ │         │                   consumes immutable state views and plain params
  │         ├── tex-lex        eyes+mouth: decoding, catcodes, input stack
  │         └── tex-fonts      font loading, metrics, shaping
  ├── tex-out         drivers: PDF, DVI, (later) HTML — consume page artifacts

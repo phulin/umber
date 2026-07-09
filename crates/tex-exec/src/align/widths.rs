@@ -6,10 +6,11 @@ use tex_state::Universe;
 use tex_state::ids::{GlueId, NodeListId};
 use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, Node, Sign, UnsetNode};
 use tex_state::scaled::{GLUE_SET_RATIO_SCALE, GlueSetRatio, Scaled};
-use tex_typeset::{HpackParams, PackSpec, VpackParams, hpack, vpack};
+use tex_typeset::{HpackParams, PackSpec, hpack, vpack};
 
 use crate::ExecError;
 use crate::mode::{AlignState, AlignmentKind, AlignmentPackSpec};
+use crate::packing_params::{hpack_params as read_hpack_params, vpack_params};
 
 pub(super) fn finish_alignment(
     state: &AlignState,
@@ -47,7 +48,7 @@ fn pack_prototype(
     let spec = pack_spec(state.pack_spec());
     let box_node = match state.kind() {
         AlignmentKind::HAlign => hpack(stores, list, spec, hpack_params(stores)).node,
-        AlignmentKind::VAlign => vpack(stores, list, spec, VpackParams::read(stores)).node,
+        AlignmentKind::VAlign => vpack(stores, list, spec, vpack_params(stores)).node,
     };
     Prototype { box_node }
 }
@@ -63,7 +64,7 @@ fn prototype_nodes(kind: AlignmentKind, resolved: &ResolvedWidths, empty: NodeLi
 }
 
 fn hpack_params(stores: &Universe) -> HpackParams {
-    let mut params = HpackParams::read(stores);
+    let mut params = read_hpack_params(stores);
     params.overfull_rule = Scaled::from_raw(0);
     params
 }
