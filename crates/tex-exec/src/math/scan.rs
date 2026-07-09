@@ -12,7 +12,7 @@ use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::node::Node;
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
-use tex_typeset::{PackSpec, VpackParams, vpack};
+use tex_typeset::{PackSpec, vpack};
 
 use crate::assignments;
 use crate::executor::sync_engine_state;
@@ -388,7 +388,7 @@ where
             stores,
             children,
             PackSpec::Natural,
-            VpackParams::read(stores),
+            crate::packing_params::vpack_params(stores),
         )
         .node,
     );

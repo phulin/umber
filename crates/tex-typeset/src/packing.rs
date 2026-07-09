@@ -1,5 +1,3 @@
-use tex_state::Universe;
-use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::NodeListId;
 use tex_state::node::{BoxNode, BoxNodeFields, LeaderPayload, Node, Sign, UnsetKind};
@@ -26,34 +24,12 @@ pub struct HpackParams {
     pub overfull_rule: Scaled,
 }
 
-impl HpackParams {
-    #[must_use]
-    pub fn read(universe: &Universe) -> Self {
-        Self {
-            hbadness: universe.int_param(IntParam::HBADNESS),
-            hfuzz: universe.dimen_param(DimenParam::HFUZZ),
-            overfull_rule: universe.dimen_param(DimenParam::OVERFULL_RULE),
-        }
-    }
-}
-
 /// Parameters used by vertical packing.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct VpackParams {
     pub vbadness: i32,
     pub vfuzz: Scaled,
     pub box_max_depth: Scaled,
-}
-
-impl VpackParams {
-    #[must_use]
-    pub fn read(universe: &Universe) -> Self {
-        Self {
-            vbadness: universe.int_param(IntParam::VBADNESS),
-            vfuzz: universe.dimen_param(DimenParam::VFUZZ),
-            box_max_depth: universe.dimen_param(DimenParam::BOX_MAX_DEPTH),
-        }
-    }
 }
 
 /// Glue-setting diagnostics produced by packing.

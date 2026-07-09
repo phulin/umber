@@ -16,6 +16,7 @@ mod math;
 mod mode;
 mod node_dump;
 mod output;
+mod packing_params;
 mod page_builder;
 mod splitting;
 mod vertical;
