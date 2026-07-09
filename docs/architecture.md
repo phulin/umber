@@ -429,7 +429,10 @@ assignments, box building, and dispatch into the typesetting kernels.
   primitives (`{`, `}`, `\begingroup`, `\endgroup`) map to journal
   group markers — the stomach contains **no save-stack logic**; it calls
   `universe.enter_group()` / `leave_group()` and `\aftergroup` tokens are
-  the group marker's payload.
+  the group marker's payload. Mode-independent assignments follow the same
+  executor path in vertical, horizontal, and math modes; in particular,
+  `\setbox` in math mode scans and builds through the ordinary box machinery
+  and stores through the same barriered `Universe` box-register facade.
 - The arithmetic-only substrate for dimension scanning lives in
   `tex-state::scaled`: TeX's `xn_over_d` conversion routine, decimal fraction
   rounding, the physical-unit conversion table, and the `max_dimen` range

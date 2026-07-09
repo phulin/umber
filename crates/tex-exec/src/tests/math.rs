@@ -172,6 +172,28 @@ fn box_commands_in_math_mode_build_ord_noads_with_sub_box_fields() {
 }
 
 #[test]
+fn setbox_assignments_execute_in_math_mode_without_adding_math_material() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        r"$\setbox0=\hbox{x}\global\setbox1=\hbox{y}a$",
+    ));
+    let mut executor = Executor::new();
+    executor
+        .run(&mut input, &mut stores)
+        .expect("setbox assignments should execute in inline math");
+
+    assert!(stores.box_reg(0).is_some(), "local assignment should run");
+    assert!(
+        stores.box_reg(1).is_some(),
+        "prefixed assignment should run"
+    );
+    let nodes = math_nodes(&stores, &executor);
+    assert_eq!(nodes.len(), 1, "assignments must not add math material");
+    assert_math_char(&math_noad(&nodes[0]).nucleus, 0, 'a');
+}
+
+#[test]
 fn mathcode_8000_uses_current_active_meaning_and_fam_overrides_variable_family() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
