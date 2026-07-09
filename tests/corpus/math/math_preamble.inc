@@ -27,6 +27,7 @@
 \skewchar\teni="7F \skewchar\seveni="7F \skewchar\fivei="7F
 \skewchar\tensy="30 \skewchar\sevensy="30 \skewchar\fivesy="30
 \tenrm
+\fam=-1
 \count0=1
 \hsize=420pt
 \vsize=700pt

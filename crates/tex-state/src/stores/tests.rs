@@ -397,32 +397,32 @@ fn rollback_restores_glue_store_as_part_of_snapshot_tuple() {
 }
 
 #[test]
-fn paragraph_layout_defaults_match_plain_tex_format() {
+fn state_defaults_match_tex82_initex() {
     let stores = Stores::new();
 
-    assert_eq!(stores.int_param(IntParam::PRETOLERANCE), 100);
-    assert_eq!(stores.int_param(IntParam::TOLERANCE), 200);
-    assert_eq!(stores.dimen_param(DimenParam::OVERFULL_RULE), scaled_pt(5));
-    assert_eq!(stores.dimen_param(DimenParam::MAX_DEPTH), scaled_pt(4));
+    assert_eq!(stores.int_param(IntParam::PRETOLERANCE), 0);
+    assert_eq!(stores.int_param(IntParam::TOLERANCE), 10_000);
+    assert_eq!(stores.int_param(IntParam::MAG), 1000);
+    assert_eq!(stores.int_param(IntParam::MAX_DEAD_CYCLES), 25);
+    assert_eq!(stores.int_param(IntParam::HANG_AFTER), 1);
+    assert_eq!(stores.int_param(IntParam::ESCAPE_CHAR), b'\\' as i32);
+    assert_eq!(stores.int_param(IntParam::END_LINE_CHAR), 13);
+    assert_eq!(stores.int_param(IntParam::DEFAULT_HYPHEN_CHAR), 0);
+    assert_eq!(stores.int_param(IntParam::DEFAULT_SKEW_CHAR), 0);
+    assert_eq!(stores.int_param(IntParam::FAM), 0);
+    assert_eq!(stores.int_param(IntParam::UC_HYPH), 0);
+    assert_eq!(stores.int_param(IntParam::LEFT_HYPHEN_MIN), 0);
+    assert_eq!(stores.int_param(IntParam::RIGHT_HYPHEN_MIN), 0);
+    assert_eq!(stores.dimen(0), scaled(0));
+    assert_eq!(stores.dimen_param(DimenParam::OVERFULL_RULE), scaled(0));
+    assert_eq!(stores.dimen_param(DimenParam::MAX_DEPTH), scaled(0));
     assert_eq!(
-        stores.glue(stores.glue_param(GlueParam::BASELINE_SKIP)),
-        GlueSpec {
-            width: scaled_pt(12),
-            stretch: scaled(0),
-            stretch_order: Order::Normal,
-            shrink: scaled(0),
-            shrink_order: Order::Normal,
-        }
+        stores.glue_param(GlueParam::BASELINE_SKIP),
+        crate::ids::GlueId::ZERO
     );
     assert_eq!(
-        stores.glue(stores.glue_param(GlueParam::PAR_FILL_SKIP)),
-        GlueSpec {
-            width: scaled(0),
-            stretch: scaled_pt(1),
-            stretch_order: Order::Fil,
-            shrink: scaled(0),
-            shrink_order: Order::Normal,
-        }
+        stores.glue_param(GlueParam::PAR_FILL_SKIP),
+        crate::ids::GlueId::ZERO
     );
 }
 
@@ -1029,8 +1029,4 @@ fn assert_same_root(a: NodeListId, b: NodeListId) {
 
 fn scaled(raw: i32) -> Scaled {
     Scaled::from_raw(raw)
-}
-
-fn scaled_pt(points: i32) -> Scaled {
-    Scaled::from_raw(points * Scaled::UNITY)
 }

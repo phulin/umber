@@ -1,7 +1,7 @@
 use super::*;
 use tex_fonts::metrics::CharTag;
 use tex_fonts::{CharMetrics, FontMetrics, LigKernCommand, LigKernInstruction, LoadedFont};
-use tex_state::env::banks::GlueParam;
+use tex_state::env::banks::{GlueParam, IntParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::math::{
     FractionThickness, LimitType, MathChar, MathField, MathFontSize, MathFraction, MathNoad,
@@ -57,6 +57,8 @@ fn math_glue_converts_mu_dimensions_with_current_math_quad() {
 #[test]
 fn mlist_second_pass_inserts_spacing_and_penalties() {
     let mut universe = setup_universe();
+    universe.set_int_param(IntParam::BIN_OP_PENALTY, 700);
+    universe.set_int_param(IntParam::REL_PENALTY, 500);
     let input = universe.freeze_node_list(&[
         Node::MathNoad(noad(NoadClass::Ord, 'b')),
         Node::MathNoad(noad(NoadClass::Bin, '+')),

@@ -13,7 +13,7 @@ use crate::font::{
     CharMetrics, ExtensibleRecipe, FontMetrics, FontStore, FontStoreMark, LigKernChar,
     LigKernCommand, LigKernIter, LoadedFont, MissingCharacter, NULL_FONT,
 };
-use crate::glue::{GlueSpec, GlueStore, GlueStoreMark, Order};
+use crate::glue::{GlueSpec, GlueStore, GlueStoreMark};
 use crate::hyphenation::{ExceptionSpec, HyphenationTable, PatternSpec};
 use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, OriginListId, TokenListId};
 use crate::input::SourceId;
@@ -194,47 +194,13 @@ impl Stores {
             last_loaded_font: NULL_FONT,
         };
         stores.set_int_param(IntParam::MAG, 1000);
-        stores.set_int_param(IntParam::ESCAPE_CHAR, b'\\'.into());
-        stores.set_int_param(IntParam::DEFAULT_HYPHEN_CHAR, b'-'.into());
-        stores.set_int_param(IntParam::DEFAULT_SKEW_CHAR, -1);
-        stores.set_int_param(IntParam::FAM, -1);
-        stores.set_int_param(IntParam::UC_HYPH, 1);
-        stores.set_int_param(IntParam::LEFT_HYPHEN_MIN, 2);
-        stores.set_int_param(IntParam::RIGHT_HYPHEN_MIN, 3);
+        stores.set_int_param(IntParam::TOLERANCE, 10_000);
+        stores.set_int_param(IntParam::HANG_AFTER, 1);
         stores.set_int_param(IntParam::MAX_DEAD_CYCLES, 25);
-        stores.initialize_plain_layout_defaults();
+        stores.set_int_param(IntParam::ESCAPE_CHAR, b'\\'.into());
+        stores.set_int_param(IntParam::END_LINE_CHAR, 13);
         stores.initialize_font_banks(NULL_FONT, 7, &[]);
         stores
-    }
-
-    fn initialize_plain_layout_defaults(&mut self) {
-        self.set_int_param(IntParam::PRETOLERANCE, 100);
-        self.set_int_param(IntParam::TOLERANCE, 200);
-        self.set_int_param(IntParam::BIN_OP_PENALTY, 700);
-        self.set_int_param(IntParam::REL_PENALTY, 500);
-        self.set_dimen_param(
-            DimenParam::OVERFULL_RULE,
-            Scaled::from_raw(5 * Scaled::UNITY),
-        );
-        self.set_dimen_param(DimenParam::MAX_DEPTH, Scaled::from_raw(4 * Scaled::UNITY));
-
-        let baseline_skip = self.intern_glue(GlueSpec {
-            width: Scaled::from_raw(12 * Scaled::UNITY),
-            stretch: Scaled::from_raw(0),
-            stretch_order: Order::Normal,
-            shrink: Scaled::from_raw(0),
-            shrink_order: Order::Normal,
-        });
-        self.set_glue_param(GlueParam::BASELINE_SKIP, baseline_skip);
-
-        let par_fill_skip = self.intern_glue(GlueSpec {
-            width: Scaled::from_raw(0),
-            stretch: Scaled::from_raw(Scaled::UNITY),
-            stretch_order: Order::Fil,
-            shrink: Scaled::from_raw(0),
-            shrink_order: Order::Normal,
-        });
-        self.set_glue_param(GlueParam::PAR_FILL_SKIP, par_fill_skip);
     }
 
     /// Reads the owned environment.
