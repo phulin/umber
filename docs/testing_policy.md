@@ -150,15 +150,13 @@ tree. Keep small area-local support files beside the fixture input. See
 The DVI corpora under `tests/corpus/dvi`, `tests/corpus/page`,
 `tests/corpus/math`, `tests/corpus/align`, and `tests/corpus/leaders` commit
 TeX source files plus `.expected.dvi` reference fixtures. The default `umber`
-cargo smoke/page tests currently read the converted dvi/page subset and
-compare DVI bytes through `tools/refexec` with only preamble comment payload
-normalization. The broader DVI corpora remain in the live reference tier until
-their fast-tier conversions land: `scripts/parity.sh` runs `umber run --dvi`
-and the live reference engine over the same temporary inputs with pinned local
-TFMs, then compares generated DVI bytes through `tools/refexec`. The math
-corpus uses a shared primitive-only `tests/corpus/math/math_preamble.inc`
-include and the parity script runs its reference side in INITEX mode so the
-cases do not depend on `plain.tex`.
+cargo tests run every `.tex` case in those areas against the committed DVI
+fixtures and do not invoke live reference tools. The explicit slow tier remains
+in `scripts/parity.sh`: it runs `umber run --dvi` and the live reference engine
+over the same temporary inputs with pinned local TFMs, then compares generated
+DVI bytes through `tools/refexec`. The math corpus uses a shared primitive-only
+`tests/corpus/math/math_preamble.inc` include and the parity script runs its
+reference side in INITEX mode so the cases do not depend on `plain.tex`.
 
 Default cargo tests must not invoke live TeX tools. Fixture regeneration uses
 `UPDATE_FIXTURES=1` and focused tests, while live reference checks use

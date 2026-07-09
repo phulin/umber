@@ -33,20 +33,20 @@ not materialize because their final commit is skipped.
 
 `tests/corpus/dvi` contains committed TeX source fixtures for full-pipeline
 DVI parity plus committed `<case>.expected.dvi` reference fixtures. The
-`umber` cargo smoke tests read a selected subset of these expected files so
-default tests remain hermetic. `scripts/parity.sh` still copies every source
-plus pinned CM TFMs into a temporary run directory, runs `umber run
-<case>.tex --dvi actual.dvi`, then asks `tools/refexec` to run the live
-reference engine and byte-compare DVI output with only preamble comment
-payload normalization.
+`umber` cargo DVI corpus test runs every `.tex` case in this area against its
+committed expected DVI so default tests remain hermetic. `scripts/parity.sh`
+still copies every source plus pinned CM TFMs into a temporary run directory,
+runs `umber run <case>.tex --dvi actual.dvi`, then asks `tools/refexec` to run
+the live reference engine and byte-compare DVI output with only preamble
+comment payload normalization.
 
 `tests/corpus/page` contains page-builder-focused DVI parity fixtures. It is
 run by the same `scripts/parity.sh` DVI comparison loop. The `umber` cargo
-page-corpus smoke test also reads committed `<case>.expected.dvi` reference
-fixtures from this directory. Page cases should use small primitive-only
-preambles that pin plain-format defaults such as `\output`, `\maxdepth`, and
-interline glue whenever pdfTeX plain defaults would otherwise leak into byte
-output.
+page-corpus test also runs every `.tex` case in this area against committed
+`<case>.expected.dvi` reference fixtures. Page cases should use small
+primitive-only preambles that pin plain-format defaults such as `\output`,
+`\maxdepth`, and interline glue whenever pdfTeX plain defaults would
+otherwise leak into byte output.
 
 `tests/corpus/tex_exec` contains small normalized pdfTeX reference observations
 used by `tex-exec` crate-internal tests for grouping, after-token ordering,
@@ -58,7 +58,8 @@ special-payload observations used by `tex-exec` I/O and shipout tests.
 `tests/corpus/math` contains primitive-only math DVI parity fixtures plus
 committed `<case>.expected.dvi` reference fixtures. Cases share
 `math_preamble.inc`; keep that include free of `plain.tex` dependencies and
-keep individual `.tex` cases small. The harness runs the reference engine in
+keep individual `.tex` cases small. The cargo test runs each case against its
+committed DVI fixture; the live parity harness runs the reference engine in
 INITEX mode for this area, copies the shared include beside each case, and
 pins `cmr10`, `cmmi10`, `cmsy10`, and `cmex10` TFMs so text/script/
 scriptscript family selection observes the same metrics as Umber.
@@ -66,14 +67,15 @@ scriptscript family selection observes the same metrics as Umber.
 `tests/corpus/align` contains alignment-focused DVI parity fixtures for
 `\halign`, `\valign`, spans, omission, `\noalign`, nested alignment, and
 display alignment, with committed `<case>.expected.dvi` reference fixtures.
-It is run by `scripts/parity.sh` with the same pinned CM TFMs as the other DVI
-corpora; keep cases primitive-only.
+The cargo test runs each case against its committed DVI fixture, and
+`scripts/parity.sh` runs the same area with the same pinned CM TFMs as the
+other DVI corpora; keep cases primitive-only.
 
 `tests/corpus/leaders` contains leader-focused DVI byte-parity fixtures for
 `\leaders`, `\cleaders`, and `\xleaders`, with committed
-`<case>.expected.dvi` reference fixtures. It is an explicit live-reference
-parity corpus run by `scripts/parity.sh`; keep it out of default cargo tests
-until a focused fast-tier conversion lands.
+`<case>.expected.dvi` reference fixtures. The cargo test runs each case
+against its committed DVI fixture, and `scripts/parity.sh` keeps the explicit
+live-reference parity tier.
 
 ```text
 <case>.expected.<kind>
@@ -102,12 +104,17 @@ UPDATE_FIXTURES=1 cargo test -p umber --test it run_exec_corpus_matches_pdftex_d
 UPDATE_FIXTURES=1 cargo test -p umber --test it run_typeset_corpus_matches_pdftex_box_dumps
 ```
 
-For `umber` DVI smoke/page fixtures, run the focused test for the changed case
-or page corpus:
+The `umber` DVI/page/math/align/leaders cargo tests are committed-fixture
+checks only and do not regenerate DVI fixtures. Until the unified regeneration
+script lands, regenerate DVI fixtures with an explicit live reference workflow
+outside default cargo tests, then rerun the relevant cargo test:
 
 ```bash
-UPDATE_FIXTURES=1 cargo test -p umber --test it run_dvi_smoke_matches_pdftex_single_glyph
-UPDATE_FIXTURES=1 cargo test -p umber --test it run_page_corpus_matches_pdftex_dvi
+cargo test -p umber --test it run_dvi_corpus_matches_committed_dvi
+cargo test -p umber --test it run_page_corpus_matches_committed_dvi
+cargo test -p umber --test it run_math_corpus_matches_committed_dvi
+cargo test -p umber --test it run_align_corpus_matches_committed_dvi
+cargo test -p umber --test it run_leaders_corpus_matches_committed_dvi
 ```
 
 For `tex-exec` pdfTeX-derived micro fixtures, run:

@@ -2,8 +2,8 @@ use std::{fs, process::Command};
 
 use refexec::{RefTex, RunOpts};
 use test_support::{
-    assert_matches_fixture, corpus_cases, dvi, live_reference_enabled, normalize, read_fixture,
-    update_fixtures_enabled,
+    assert_matches_fixture, corpus_cases, dvi, live_reference_enabled, normalize,
+    read_binary_fixture, update_fixtures_enabled,
 };
 use tex_lex::{Lexer, WorldInput};
 use tex_state::env::banks::IntParam;
@@ -22,62 +22,42 @@ fn exits_successfully() {
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side fixture discovery and expected-output reads.
 fn lex_dump_prints_stable_token_format_for_corpus() {
-    let corpus = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join("tests/corpus/lexer");
-    for entry in std::fs::read_dir(&corpus).expect("read lexer corpus") {
-        let path = entry.expect("read corpus entry").path();
-        if path.extension().and_then(std::ffi::OsStr::to_str) != Some("tex") {
-            continue;
-        }
-        let stem = path.file_stem().expect("fixture stem");
-        let expected = path.with_file_name(format!("{}.expected.tokens", stem.to_string_lossy()));
-
+    for case in corpus_cases("lexer") {
         let output = Command::new(env!("CARGO_BIN_EXE_umber"))
             .arg("lex-dump")
-            .arg(&path)
+            .arg(case.source_path())
             .output()
             .expect("run umber lex-dump");
 
         assert!(
             output.status.success(),
             "lex-dump failed for {}:\n{}",
-            path.display(),
+            case.source_path().display(),
             String::from_utf8_lossy(&output.stderr)
         );
         let actual = String::from_utf8(output.stdout).expect("lex-dump output is utf-8");
-        let expected = std::fs::read_to_string(&expected).expect("read expected tokens");
-        assert_eq!(actual, expected, "fixture mismatch for {}", path.display());
+        assert_matches_fixture("lexer", case.name(), "tokens", &actual);
     }
 }
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side fixture discovery and expected-output reads.
 fn expand_dump_prints_stable_token_format_for_corpus() {
-    let corpus = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join("tests/corpus/expand");
-    for entry in std::fs::read_dir(&corpus).expect("read expansion corpus") {
-        let path = entry.expect("read corpus entry").path();
-        if path.extension().and_then(std::ffi::OsStr::to_str) != Some("tex") {
-            continue;
-        }
-        let stem = path.file_stem().expect("fixture stem").to_string_lossy();
-
+    for case in corpus_cases("expand") {
         let output = Command::new(env!("CARGO_BIN_EXE_umber"))
             .arg("expand-dump")
-            .arg(&path)
+            .arg(case.source_path())
             .output()
             .expect("run umber expand-dump");
 
         assert!(
             output.status.success(),
             "expand-dump failed for {}:\n{}",
-            path.display(),
+            case.source_path().display(),
             String::from_utf8_lossy(&output.stderr)
         );
         let actual = String::from_utf8(output.stdout).expect("expand-dump output is utf-8");
-        assert_matches_fixture("expand", &stem, "tokens", &actual);
+        assert_matches_fixture("expand", case.name(), "tokens", &actual);
     }
 }
 
@@ -120,45 +100,36 @@ fn run_typeset_corpus_matches_pdftex_box_dumps() {
 
 #[allow(clippy::disallowed_methods)] // host-side corpus discovery and command execution.
 fn run_corpus_matches_pdftex_diagnostics(area: &str, show_fixtures: bool) {
-    let corpus = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join("tests/corpus")
-        .join(area);
     let ref_tex = (live_reference_enabled() || update_fixtures_enabled())
         .then(|| RefTex::locate().expect("reference TeX should be available"));
 
-    for entry in std::fs::read_dir(&corpus).expect("read exec corpus") {
-        let path = entry.expect("read corpus entry").path();
-        if path.extension().and_then(std::ffi::OsStr::to_str) != Some("tex") {
-            continue;
-        }
-        let stem = path.file_stem().expect("fixture stem").to_string_lossy();
-
-        let expected = if let Some(ref_tex) = &ref_tex {
+    for case in corpus_cases(area) {
+        let expected = ref_tex.as_ref().map(|ref_tex| {
             let ref_output = ref_tex
-                .run(&path, &RunOpts::default())
+                .run(case.source_path(), &RunOpts::default())
                 .expect("reference TeX should run exec fixture");
             let expected = if show_fixtures {
                 normalize::box_dump(&ref_output.log)
             } else {
                 normalize::exec_log(&ref_output.log)
             };
-            assert_matches_fixture(area, &stem, "log", &expected);
+            assert_matches_fixture(area, case.name(), "log", &expected);
             expected
-        } else {
-            read_fixture(area, &stem, "log")
-        };
+        });
 
         let mut command = Command::new(env!("CARGO_BIN_EXE_umber"));
         command.arg("run");
         if show_fixtures {
             command.arg("--show-fixtures");
         }
-        let output = command.arg(&path).output().expect("run umber run");
+        let output = command
+            .arg(case.source_path())
+            .output()
+            .expect("run umber run");
         assert!(
             output.status.success(),
             "umber run failed for {}:\n{}",
-            path.display(),
+            case.source_path().display(),
             String::from_utf8_lossy(&output.stderr)
         );
         let actual_stdout = String::from_utf8(output.stdout).expect("umber run output is utf-8");
@@ -167,12 +138,16 @@ fn run_corpus_matches_pdftex_diagnostics(area: &str, show_fixtures: bool) {
         } else {
             normalize::exec_log(&actual_stdout)
         };
-        assert_eq!(
-            actual,
-            expected,
-            "{area} fixture mismatch for {}",
-            path.display()
-        );
+        if let Some(expected) = expected {
+            assert_eq!(
+                actual,
+                expected,
+                "{area} fixture mismatch for {}",
+                case.source_path().display()
+            );
+        } else {
+            assert_matches_fixture(area, case.name(), "log", &actual);
+        }
     }
 }
 
@@ -237,102 +212,43 @@ fn run_hyphen_showhyphens_corpus_matches_pdftex() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
-fn run_dvi_smoke_matches_pdftex_single_glyph() {
-    assert_dvi_case_matches_pdftex("single_glyph");
+fn run_dvi_corpus_matches_committed_dvi() {
+    assert_dvi_area_matches_committed_fixture("dvi");
 }
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
-fn run_dvi_smoke_matches_pdftex_overfull_rule() {
-    assert_dvi_case_matches_pdftex("overfull_rule");
+fn run_page_corpus_matches_committed_dvi() {
+    assert_dvi_area_matches_committed_fixture("page");
 }
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
-fn run_dvi_smoke_matches_pdftex_default_output_end() {
-    assert_dvi_case_matches_pdftex("default_output_end");
+fn run_math_corpus_matches_committed_dvi() {
+    assert_dvi_area_matches_committed_fixture("math");
 }
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
-fn run_dvi_smoke_matches_pdftex_custom_output_headline() {
-    assert_dvi_case_matches_pdftex("custom_output_headline");
+fn run_align_corpus_matches_committed_dvi() {
+    assert_dvi_area_matches_committed_fixture("align");
 }
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
-fn run_dvi_smoke_matches_pdftex_mark_output_headers() {
-    assert_dvi_case_matches_pdftex("mark_output_headers");
-}
-
-#[test]
-#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
-fn run_dvi_smoke_matches_pdftex_insert_split_footnote() {
-    assert_dvi_case_matches_pdftex("insert_split_footnote");
-}
-
-#[test]
-#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
-fn run_dvi_smoke_matches_pdftex_alignment_noalign_everycr() {
-    assert_dvi_case_matches_pdftex("alignment_noalign_everycr");
-}
-
-#[test]
-#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
-fn run_dvi_smoke_matches_pdftex_display_halign() {
-    assert_dvi_case_matches_pdftex("display_halign");
-}
-
-#[test]
-#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
-fn run_dvi_smoke_matches_pdftex_leaders_horizontal_modes() {
-    assert_dvi_case_matches_pdftex("leaders_horizontal_modes");
-}
-
-#[test]
-#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
-fn run_dvi_smoke_matches_pdftex_leaders_stretched_shrunk() {
-    assert_dvi_case_matches_pdftex("leaders_stretched_shrunk");
-}
-
-#[test]
-#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
-fn run_dvi_smoke_matches_pdftex_leaders_vertical_and_rules() {
-    assert_dvi_case_matches_pdftex("leaders_vertical_and_rules");
-}
-
-#[test]
-#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
-fn run_dvi_smoke_matches_pdftex_leaders_degenerate() {
-    assert_dvi_case_matches_pdftex("leaders_degenerate");
-}
-
-#[test]
-#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
-fn run_dvi_smoke_matches_pdftex_leaders_special_write_payload() {
-    assert_dvi_case_matches_pdftex("leaders_special_write_payload");
-}
-
-#[test]
-#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
-fn run_page_corpus_matches_pdftex_dvi() {
-    assert_dvi_area_matches_pdftex("page");
+fn run_leaders_corpus_matches_committed_dvi() {
+    assert_dvi_area_matches_committed_fixture("leaders");
 }
 
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
-fn assert_dvi_case_matches_pdftex(case: &str) {
-    assert_dvi_case_in_area_matches_pdftex("dvi", case);
-}
-
-#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
-fn assert_dvi_area_matches_pdftex(area: &str) {
+fn assert_dvi_area_matches_committed_fixture(area: &str) {
     for case in corpus_cases(area) {
-        assert_dvi_case_in_area_matches_pdftex(area, case.name());
+        assert_dvi_case_matches_committed_fixture(area, case.name());
     }
 }
 
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
-fn assert_dvi_case_in_area_matches_pdftex(area: &str, case: &str) {
+fn assert_dvi_case_matches_committed_fixture(area: &str, case: &str) {
     let setup = dvi::DviCaseSetup::new(area, case);
 
     let output = Command::new(env!("CARGO_BIN_EXE_umber"))
@@ -350,7 +266,7 @@ fn assert_dvi_case_in_area_matches_pdftex(area: &str, case: &str) {
     );
 
     let actual = fs::read(setup.actual_dvi_path()).expect("read umber DVI");
-    let expected = dvi::expected_dvi_fixture(area, case, &setup, area == "math");
+    let expected = read_binary_fixture(area, case, "dvi");
     dvi::assert_dvi_matches(&expected, &actual, &format!("{area}/{case}"));
 }
 
