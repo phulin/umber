@@ -16,6 +16,10 @@ use tex_out::dvi::disasm::{DviFile, command_at_or_before, disassemble_page};
 
 const TRACE_PREFIX: &str =
     "\\tracingoutput=1 \\tracingonline=0 \\showboxbreadth=-1 \\showboxdepth=-1\n";
+const CORPUS_TFMS: &[&str] = &[
+    "cmbx10", "cmcsc10", "cmmi10", "cmr10", "cmr7", "cmsl10", "cmss10", "cmsy10", "cmti10",
+    "cmtt10",
+];
 
 fn main() -> ExitCode {
     match run_cli() {
@@ -307,11 +311,18 @@ fn run_reference_dvi(ref_tex: &RefTex, source_path: &Path) -> Result<EngineDvi> 
 
 fn run_umber_dvi(umber_bin: &Path, source_path: &Path) -> Result<UmberRun> {
     let temp = tempfile::tempdir().context("failed to create umber DVI temp dir")?;
+    copy_umber_inputs(source_path, temp.path())?;
+    let tex_name = source_path
+        .file_name()
+        .ok_or_else(|| anyhow!("path has no file name: {}", source_path.display()))?;
     let dvi_path = temp.path().join("umber.dvi");
-    let output = Command::new(umber_bin)
+    let umber_bin = runnable_umber_bin(umber_bin)?;
+    let output = Command::new(&umber_bin)
         .env("SOURCE_DATE_EPOCH", "1783604160")
+        .current_dir(temp.path())
         .arg("run")
-        .arg(source_path)
+        .arg(tex_name)
+        .arg("--plain-format")
         .arg("--dvi")
         .arg(&dvi_path)
         .output()
@@ -381,15 +392,18 @@ fn run_reference_trace(ref_tex: &RefTex, source_path: &Path) -> Result<TraceRun>
 
 fn run_umber_trace(umber_bin: &Path, source_path: &Path) -> Result<TraceRun> {
     let temp = traced_source_dir(source_path)?;
+    copy_corpus_tfms(temp.path())?;
     let tex_name = source_path
         .file_name()
         .ok_or_else(|| anyhow!("path has no file name: {}", source_path.display()))?;
     let dvi_path = temp.path().join("umber-trace.dvi");
-    let output = Command::new(umber_bin)
+    let umber_bin = runnable_umber_bin(umber_bin)?;
+    let output = Command::new(&umber_bin)
         .env("SOURCE_DATE_EPOCH", "1783604160")
         .current_dir(temp.path())
         .arg("run")
         .arg(tex_name)
+        .arg("--plain-format")
         .arg("--show-fixtures")
         .arg("--dvi")
         .arg(&dvi_path)
@@ -413,6 +427,60 @@ fn run_umber_trace(umber_bin: &Path, source_path: &Path) -> Result<TraceRun> {
         dvi,
         success: output.status.success(),
     })
+}
+
+fn runnable_umber_bin(umber_bin: &Path) -> Result<PathBuf> {
+    fs::canonicalize(umber_bin)
+        .with_context(|| format!("failed to resolve umber binary {}", umber_bin.display()))
+}
+
+fn copy_umber_inputs(source_path: &Path, dest: &Path) -> Result<()> {
+    let file_name = source_path
+        .file_name()
+        .ok_or_else(|| anyhow!("path has no file name: {}", source_path.display()))?;
+    fs::copy(source_path, dest.join(file_name))
+        .with_context(|| format!("failed to copy {}", source_path.display()))?;
+    copy_corpus_tfms(dest)?;
+    Ok(())
+}
+
+fn copy_corpus_tfms(dest: &Path) -> Result<()> {
+    for name in CORPUS_TFMS {
+        let target = dest.join(format!("{name}.tfm"));
+        if let Some(source) = locate_tfm(name)? {
+            fs::copy(&source, &target).with_context(|| {
+                format!(
+                    "failed to copy {} to {}",
+                    source.display(),
+                    target.display()
+                )
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn locate_tfm(name: &str) -> Result<Option<PathBuf>> {
+    let local = PathBuf::from(format!("crates/tex-fonts/tests/fixtures/cm/{name}.tfm"));
+    if local.exists() {
+        return Ok(Some(local));
+    }
+
+    let output = Command::new("kpsewhich")
+        .arg(format!("{name}.tfm"))
+        .output();
+    let Ok(output) = output else {
+        return Ok(None);
+    };
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if path.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(PathBuf::from(path)))
+    }
 }
 
 fn traced_source_dir(source_path: &Path) -> Result<tempfile::TempDir> {

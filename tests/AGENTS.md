@@ -175,8 +175,9 @@ The e2e mode first performs the same acquisition verification, then builds
 `tools/parity-harness` and `umber`. For each manifest entry it runs reference
 TeX in DVI mode through `refexec`, verifies `expected_ref_dvi_sha256` against
 the normalized reference DVI produced with the script-pinned job clock, runs
-`umber run --dvi`, and byte-compares the normalized DVI files. Reference drift,
-Umber failures, and byte mismatches
+`umber run --plain-format --dvi` with the harness's narrow corpus bootstrap
+for plain-format assumptions, and byte-compares the normalized DVI files.
+Reference drift, Umber failures, and byte mismatches
 write automatic triage bundles under `target/parity-triage/<doc-name>/`
 containing byte context, page-limited dvitype-style disassemblies and diff,
 tracing-output logs, and a summary naming the divergent page and opcode when
