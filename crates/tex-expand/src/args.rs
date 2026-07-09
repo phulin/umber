@@ -117,6 +117,12 @@ struct ParameterPattern {
     specs: Vec<ParameterSpec>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PendingArgumentToken {
+    token: Token,
+    allow_par: bool,
+}
+
 /// Matches one macro call and freezes each argument token list.
 pub fn match_macro_call<S>(
     input: &mut InputStack<S>,
@@ -306,22 +312,16 @@ where
     let mut level = 0_u32;
 
     loop {
-        let token =
-            next_or_pending_token(input, stores, recorder, flags, macro_name, &mut pending)?;
+        let scanned = next_or_pending_token(input, stores, recorder, macro_name, &mut pending)?;
+        let token = scanned.token;
         if level == 0 && token == delimiter[0] {
-            let mut candidate = vec![token];
+            let mut candidate = vec![scanned];
             let mut matched = true;
             for &expected in &delimiter[1..] {
-                let next = next_or_pending_token(
-                    input,
-                    stores,
-                    recorder,
-                    flags,
-                    macro_name,
-                    &mut pending,
-                )?;
+                let next =
+                    next_or_pending_token(input, stores, recorder, macro_name, &mut pending)?;
                 candidate.push(next);
-                if next != expected {
+                if next.token != expected {
                     matched = false;
                     break;
                 }
@@ -330,13 +330,19 @@ where
                 let stripped = strip_outer_group(&argument);
                 return Ok(freeze_tokens(stores, stripped));
             }
-            push_argument_token(&mut argument, &mut level, candidate[0]);
-            for &candidate_token in candidate[1..].iter().rev() {
-                pending.push_front(candidate_token);
+            push_argument_token(&mut argument, &mut level, candidate[0].token);
+            let last_index = candidate.len() - 1;
+            for (index, candidate_token) in candidate[1..].iter().enumerate().rev() {
+                let was_matched_prefix = index + 1 < last_index;
+                pending.push_front(PendingArgumentToken {
+                    token: candidate_token.token,
+                    allow_par: candidate_token.allow_par || was_matched_prefix,
+                });
             }
             continue;
         }
 
+        check_argument_par(stores, flags, macro_name, scanned)?;
         push_argument_token(&mut argument, &mut level, token);
     }
 }
@@ -345,10 +351,9 @@ fn next_or_pending_token<S, R>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     recorder: &mut R,
-    flags: MeaningFlags,
     macro_name: &str,
-    pending: &mut VecDeque<Token>,
-) -> Result<Token, MacroCallError>
+    pending: &mut VecDeque<PendingArgumentToken>,
+) -> Result<PendingArgumentToken, MacroCallError>
 where
     S: InputSource,
     R: ReadRecorder,
@@ -356,8 +361,28 @@ where
     if let Some(token) = pending.pop_front() {
         Ok(token)
     } else {
-        next_checked_token(input, stores, recorder, flags, macro_name)
+        Ok(PendingArgumentToken {
+            token: next_token_without_par_check(input, stores, recorder, macro_name)?,
+            allow_par: false,
+        })
     }
+}
+
+fn check_argument_par(
+    stores: &impl ExpansionState,
+    flags: MeaningFlags,
+    macro_name: &str,
+    scanned: PendingArgumentToken,
+) -> Result<(), MacroCallError> {
+    if !scanned.allow_par
+        && is_par_token(stores, scanned.token)
+        && !flags.contains(MeaningFlags::LONG)
+    {
+        return Err(MacroCallError::ParagraphEndedBeforeComplete {
+            macro_name: macro_name.to_owned(),
+        });
+    }
+    Ok(())
 }
 
 fn next_checked_token<S, R>(
@@ -371,17 +396,32 @@ where
     S: InputSource,
     R: ReadRecorder,
 {
-    let token = input
-        .next_token(stores)?
-        .ok_or_else(|| MacroCallError::EndOfInput {
-            macro_name: macro_name.to_owned(),
-        })?;
+    let token = next_token_without_par_check(input, stores, recorder, macro_name)?;
 
     if is_par_token(stores, token) && !flags.contains(MeaningFlags::LONG) {
         return Err(MacroCallError::ParagraphEndedBeforeComplete {
             macro_name: macro_name.to_owned(),
         });
     }
+
+    Ok(token)
+}
+
+fn next_token_without_par_check<S, R>(
+    input: &mut InputStack<S>,
+    stores: &mut impl ExpansionState,
+    recorder: &mut R,
+    macro_name: &str,
+) -> Result<Token, MacroCallError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+{
+    let token = input
+        .next_token(stores)?
+        .ok_or_else(|| MacroCallError::EndOfInput {
+            macro_name: macro_name.to_owned(),
+        })?;
 
     if let Token::Cs(symbol) = token {
         let meaning = stores.meaning(symbol);

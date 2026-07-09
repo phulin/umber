@@ -185,6 +185,11 @@ Responsibility: the token-level rewriting system — macros, conditionals,
 - **Macro call**: match delimited/undelimited parameters against the
   incoming stream (argument scanning is the gullet's inner loop and the
   #1 profile target); arguments are built with token builders and frozen.
+  Delimited argument scanning follows TeX82's partial delimiter recovery:
+  for non-`long` macros, a `\par` token that was tentatively matched as part
+  of a delimiter prefix is allowed if that prefix later fails and is recovered
+  into the argument, while ordinary argument `\par` tokens still abort the
+  call.
   Macro meanings decode through the state aggregate into flags plus frozen
   parameter-text and replacement-text token-list ids. The body replays as a
   frame with argument slots resolved by index — no token-list copying for
