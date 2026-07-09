@@ -295,6 +295,12 @@ fn run_dvi_smoke_matches_pdftex_leaders_degenerate() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn run_dvi_smoke_matches_pdftex_leaders_special_write_payload() {
+    assert_dvi_case_matches_pdftex("leaders_special_write_payload");
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
 fn run_page_corpus_matches_pdftex_dvi() {
     assert_dvi_area_matches_pdftex("page");
 }

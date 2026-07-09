@@ -640,11 +640,15 @@ Responsibility: accumulate the main vertical list, fire `\output`, commit.
   through the ordinary gullet, serializes the `tex-out` artifact, and commits
   it through `Universe::commit_shipout`, which stores the artifact bytes,
   flushes the committed effect prefix, releases shipout-local epoch nodes, and
-  takes the next checkpoint as one boundary. The executor records shipped
-  artifact ids for the CLI/driver layer. Shipout also prepares the job
-  magnification before artifact construction and reports any recoverable
-  `prepare_mag` diagnostic through the execution diagnostic/log path; `tex-out`
-  only sees the resulting effective magnification in detached job metadata. Source-level
+  takes the next checkpoint as one boundary. The same lowering traversal
+  carries TeX.web's leader context: deferred stream writes inside leader
+  payload boxes are ignored, while specials still become anchored page effects
+  that the DVI leader loop emits for each repeated payload. The executor
+  records shipped artifact ids for the CLI/driver layer. Shipout also prepares
+  the job magnification before artifact construction and reports any
+  recoverable `prepare_mag` diagnostic through the execution diagnostic/log
+  path; `tex-out` only sees the resulting effective magnification in detached
+  job metadata. Source-level
   `\special{...}` is implemented as a stomach whatsit whose balanced text is
   expanded at scan time, matching TeX82's `scan_toks(false,true)` behavior;
   shipout lowers each special whatsit into a `PageEffect::Special` and a

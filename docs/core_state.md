@@ -373,10 +373,13 @@ Nothing in the engine touches the OS directly. A single `World` object owns:
   whatsits carry the resolved `PrintSink` plus the unexpanded `TokenListId`;
   shipout replays that token list through the ordinary gullet and appends the
   resulting routed stream-write effect record immediately before committing
-  the page prefix. In contrast, source `\special` expands its balanced text
-  when the primitive is scanned and stores detached DVI-class payload bytes in
-  a whatsit; shipout only anchors that already-expanded payload into the
-  committed page effect slice.
+  the page prefix. When that whatsit is contained in a leader payload, shipout
+  lowering follows TeX.web's `doing_leaders` rule and suppresses the deferred
+  stream effect instead of expanding or anchoring it. In contrast, source
+  `\special` expands its balanced text when the primitive is scanned and
+  stores detached DVI-class payload bytes in a whatsit; shipout anchors that
+  already-expanded payload into the committed page effect slice even inside
+  leaders, so the DVI writer can emit `xxx` output for each repeated payload.
 - **Shell escape, PDF object stream, log file**: same discipline — buffered,
   committed at shipout, discarded on rollback. Shell escapes are record-only
   and the execution policy defaults to disabled.

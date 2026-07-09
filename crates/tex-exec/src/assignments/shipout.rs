@@ -63,8 +63,9 @@ where
             fonts: Vec::new(),
             font_map: BTreeMap::new(),
             effects: pending_effects,
+            suppress_deferred_writes: false,
         };
-        let root = lowerer.lower_node(node)?;
+        let root = lowerer.lower_root_node(node)?;
         (root, lowerer.fonts, lowerer.effects)
     };
 
@@ -91,14 +92,22 @@ struct ShipoutLowerer<'a, R> {
     fonts: Vec<FontResource>,
     font_map: BTreeMap<FontId, u32>,
     effects: Vec<PageEffect>,
+    suppress_deferred_writes: bool,
 }
 
 impl<R> ShipoutLowerer<'_, R>
 where
     R: ReadRecorder,
 {
-    fn lower_node(&mut self, node: Node) -> Result<PageNode, ExecError> {
-        Ok(match node {
+    fn lower_root_node(&mut self, node: Node) -> Result<PageNode, ExecError> {
+        self.lower_node(node)?
+            .ok_or(ExecError::UnsupportedShipoutNode {
+                node: "suppressed shipout root",
+            })
+    }
+
+    fn lower_node(&mut self, node: Node) -> Result<Option<PageNode>, ExecError> {
+        Ok(Some(match node {
             Node::Char { font, ch } => PageNode::Char {
                 font_id: self.font_resource_id(font),
                 ch: ch as u32,
@@ -137,7 +146,7 @@ where
                     node: "unset alignment",
                 });
             }
-            Node::Whatsit(whatsit) => self.lower_whatsit(whatsit)?,
+            Node::Whatsit(whatsit) => return self.lower_whatsit(whatsit),
             Node::MathOn(width) => PageNode::MathOn(width),
             Node::MathOff(width) => PageNode::MathOff(width),
             Node::Disc {
@@ -168,7 +177,7 @@ where
             | Node::Nonscript => {
                 return Err(ExecError::UnsupportedShipoutNode { node: "math" });
             }
-        })
+        }))
     }
 
     fn lower_box(&mut self, box_node: StateBoxNode) -> Result<PageBoxNode, ExecError> {
@@ -190,12 +199,12 @@ where
     ) -> Result<Option<PageLeaderPayload>, ExecError> {
         Ok(match leader {
             None => None,
-            Some(StateLeaderPayload::HList(box_node)) => {
-                Some(PageLeaderPayload::HList(self.lower_box(box_node)?))
-            }
-            Some(StateLeaderPayload::VList(box_node)) => {
-                Some(PageLeaderPayload::VList(self.lower_box(box_node)?))
-            }
+            Some(StateLeaderPayload::HList(box_node)) => Some(PageLeaderPayload::HList(
+                self.lower_leader_payload_box(box_node)?,
+            )),
+            Some(StateLeaderPayload::VList(box_node)) => Some(PageLeaderPayload::VList(
+                self.lower_leader_payload_box(box_node)?,
+            )),
             Some(StateLeaderPayload::Rule {
                 width,
                 height,
@@ -208,12 +217,26 @@ where
         })
     }
 
+    fn lower_leader_payload_box(
+        &mut self,
+        box_node: StateBoxNode,
+    ) -> Result<PageBoxNode, ExecError> {
+        let outer = self.suppress_deferred_writes;
+        self.suppress_deferred_writes = true;
+        let lowered = self.lower_box(box_node);
+        self.suppress_deferred_writes = outer;
+        lowered
+    }
+
     fn lower_node_list(&mut self, list: NodeListId) -> Result<Vec<PageNode>, ExecError> {
         let nodes = self.stores.nodes(list).to_vec();
-        nodes
-            .into_iter()
-            .map(|node| self.lower_node(node))
-            .collect()
+        let mut lowered = Vec::with_capacity(nodes.len());
+        for node in nodes {
+            if let Some(node) = self.lower_node(node)? {
+                lowered.push(node);
+            }
+        }
+        Ok(lowered)
     }
 
     fn lower_tokens(&self, list: TokenListId) -> Vec<PageToken> {
@@ -235,9 +258,12 @@ where
         }
     }
 
-    fn lower_whatsit(&mut self, whatsit: Whatsit) -> Result<PageNode, ExecError> {
+    fn lower_whatsit(&mut self, whatsit: Whatsit) -> Result<Option<PageNode>, ExecError> {
         match whatsit {
             Whatsit::DeferredWrite { sink, tokens } => {
+                if self.suppress_deferred_writes {
+                    return Ok(None);
+                }
                 let text = expand_write_tokens(self.stores, self.recorder, tokens)?;
                 let effect_index = self.effects.len();
                 self.stores.world_mut().write_text(sink, &text);
@@ -245,18 +271,18 @@ where
                     sink: lower_sink(sink),
                     text,
                 });
-                Ok(PageNode::WhatsitAnchor {
+                Ok(Some(PageNode::WhatsitAnchor {
                     effect_index: u32::try_from(effect_index)
                         .map_err(|_| ExecError::ArithmeticOverflow)?,
-                })
+                }))
             }
             Whatsit::Special { class, payload } => {
                 let effect_index = self.effects.len();
                 self.effects.push(PageEffect::Special { class, payload });
-                Ok(PageNode::WhatsitAnchor {
+                Ok(Some(PageNode::WhatsitAnchor {
                     effect_index: u32::try_from(effect_index)
                         .map_err(|_| ExecError::ArithmeticOverflow)?,
-                })
+                }))
             }
         }
     }

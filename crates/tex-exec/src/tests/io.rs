@@ -427,6 +427,85 @@ fn source_special_lowers_to_anchored_dvi_xxx_payload() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // host-side pdfTeX parity file.
+fn leader_payload_suppresses_deferred_write_but_keeps_specials() {
+    let source = "\\shipout\\hbox to 4pt{\
+        \\leaders\\hbox{\\vrule width1pt height1pt depth0pt\
+            \\write16{leader-write}\\special{leader-special}}\\hfil}\\end";
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(source));
+
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("shipout succeeds");
+    let effect_pos = stores.world().effect_pos();
+    stores
+        .commit_effects(effect_pos)
+        .expect("final commit is idempotent");
+
+    assert_eq!(stats.shipped_artifacts.len(), 1);
+    assert!(!memory_terminal_text(&stores).contains("leader-write"));
+    assert!(!memory_log_text(&stores).contains("leader-write"));
+    assert!(
+        stores.world().effect_records().is_empty(),
+        "shipout should flush only the committed, non-suppressed effect prefix"
+    );
+
+    let bytes = stores
+        .world()
+        .read_artifact(stats.shipped_artifacts[0])
+        .expect("read artifact")
+        .expect("artifact stored");
+    let artifact = PageArtifact::from_bytes(&bytes).expect("artifact parses");
+    assert!(
+        artifact
+            .effects
+            .iter()
+            .all(|effect| matches!(effect, PageEffect::Special { .. })),
+        "leader-contained deferred writes should not become page effects"
+    );
+    assert!(
+        artifact
+            .effects
+            .iter()
+            .any(|effect| matches!(effect, PageEffect::Special { payload, .. } if payload == b"leader-special"))
+    );
+
+    let dvi = write_dvi(std::slice::from_ref(&artifact)).expect("DVI writes");
+    let actual_specials = dvi_special_payloads(&dvi);
+    assert!(
+        !actual_specials.is_empty(),
+        "leader-contained specials should still emit DVI xxx output"
+    );
+
+    let temp_dir = tempfile::TempDir::new().expect("temporary TeX run directory");
+    let tex_path = temp_dir.path().join("leader_payload_effects.tex");
+    std::fs::write(&tex_path, source).expect("write reference TeX source");
+    let reference = refexec::RefTex::locate()
+        .expect("locate pdftex")
+        .run(
+            &tex_path,
+            &refexec::RunOpts {
+                dvi: true,
+                ..refexec::RunOpts::default()
+            },
+        )
+        .expect("run pdftex");
+    assert!(
+        reference.success,
+        "pdftex leader payload effect case failed:\n{}",
+        reference.log
+    );
+    assert!(!reference.log.contains("leader-write"));
+    assert_eq!(
+        actual_specials,
+        dvi_special_payloads(reference.dvi.as_deref().expect("reference DVI"))
+    );
+}
+
+#[test]
 fn copied_special_reuses_scan_time_expansion() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);
