@@ -41,13 +41,12 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 
 ## Development
 
-- Run `scripts/install-hooks.sh` once after clone to enable the versioned pre-commit hook.
 - Use `scripts/check.sh` as the local gate before committing.
 - For `UPDATE_FIXTURES=1` fixture regeneration, follow `tests/AGENTS.md`.
 
 ## Beads Issue Tracker
 
-Use Beads (`bd`) for durable task tracking in repositories that include it. Use the `beads` skill at `.agents/skills/beads/SKILL.md` (project install) or `~/.agents/skills/beads/SKILL.md` (global install) for Beads workflow guidance, then use the `bd` CLI for issue operations.
+Use Beads (`bd`) for durable task tracking in repositories that include it. Use the `beads` skill for more detailed Beads workflow guidance, then use the `bd` CLI for issue operations.
 
 ### Quick Reference
 
@@ -62,7 +61,6 @@ bd prime                # Refresh Beads context
 ### Rules
 
 - Use `bd` for all task tracking; do not create markdown TODO lists.
-- Run `bd prime` when Beads context is missing or stale. Codex 0.129.0+ can load Beads context automatically through native hooks; use `/hooks` to inspect or toggle them.
 - Keep persistent project memory in Beads via `bd remember`; do not create ad hoc memory files.
 
 **Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/SYNC_CONCEPTS.md for details and anti-patterns.
