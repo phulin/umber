@@ -137,17 +137,6 @@ impl NodeArena {
         self.nodes.truncate(nodes);
     }
 
-    /// Returns frozen epoch nodes appended since `mark`.
-    #[must_use]
-    pub(crate) fn nodes_since(&self, mark: NodeArenaMark) -> &[Node] {
-        let start = mark.nodes as usize;
-        assert!(
-            start <= self.nodes.len(),
-            "node-arena mark is past current node arena"
-        );
-        &self.nodes[start..]
-    }
-
     #[cfg(any(test, feature = "testing", feature = "shadow"))]
     #[must_use]
     pub(crate) fn testing_node_count(&self) -> usize {

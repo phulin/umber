@@ -8,7 +8,6 @@ use crate::meaning::{
     ExpandablePrimitive, InternalInteger, Meaning, RawMeaning, UnexpandablePrimitive,
 };
 use crate::node::{BoxNode, GlueKind, KernKind, LeaderPayload, Node, Sign, Whatsit};
-use crate::node_arena::NodeArenaMark;
 use crate::state_hash::StateHasher;
 use crate::token::{Catcode, Token};
 use std::collections::BTreeMap;
@@ -25,7 +24,6 @@ const FONT_DIMEN_MASK: u32 = (1 << FONT_DIMEN_BITS) - 1;
 pub(crate) struct StoreStateHashCursor {
     owner: SnapshotOwner,
     journal_pos: crate::journal::JournalPos,
-    node_mark: NodeArenaMark,
 }
 
 impl Stores {
@@ -34,7 +32,6 @@ impl Stores {
         StoreStateHashCursor {
             owner: self.owner.snapshot_owner(),
             journal_pos: self.env.current_journal_pos(),
-            node_mark: self.nodes.watermark(),
         }
     }
 
@@ -45,7 +42,6 @@ impl Stores {
         StoreStateHashCursor {
             owner: snapshot.owner,
             journal_pos: snapshot.env_snapshot.journal_pos(),
-            node_mark: snapshot.node_mark,
         }
     }
 
@@ -61,7 +57,6 @@ impl Stores {
         StoreStateHashCursor {
             owner: self.owner.snapshot_owner(),
             journal_pos: cursor.journal_pos,
-            node_mark: cursor.node_mark,
         }
     }
 
@@ -71,11 +66,9 @@ impl Stores {
         cursor: &StoreStateHashCursor,
     ) -> StoreStateHashCursor {
         self.assert_valid_hash_cursor(cursor);
-        let current_mark = self.nodes.watermark();
         StoreStateHashCursor {
             owner: self.owner.snapshot_owner(),
             journal_pos: cursor.journal_pos,
-            node_mark: cursor.node_mark.min(current_mark),
         }
     }
 
@@ -93,7 +86,6 @@ impl Stores {
         StoreStateHashCursor {
             owner: self.owner.snapshot_owner(),
             journal_pos: cursor.journal_pos.min(current_journal_pos),
-            node_mark: cursor.node_mark,
         }
     }
 
@@ -113,7 +105,6 @@ impl Stores {
         let mut hasher = StateHasher::new(STORE_SLICE_DOMAIN);
         self.hash_journal_changed_cells(start, end, &mut hasher);
         self.hash_code_generations(&mut hasher);
-        self.hash_epoch_node_slice(start.node_mark, &mut hasher);
         self.hyphenation.hash_semantic(&mut hasher);
         hash_prepared_mag(self.prepared_mag, &mut hasher);
         hasher.finish()
@@ -677,15 +668,6 @@ impl Stores {
         hasher.u32(generations.sfcode);
         hasher.u32(generations.mathcode);
         hasher.u32(generations.delcode);
-    }
-
-    fn hash_epoch_node_slice(&self, start: NodeArenaMark, hasher: &mut StateHasher) {
-        hasher.tag(0x30);
-        let nodes = self.nodes.nodes_since(start);
-        hasher.usize(nodes.len());
-        for node in nodes {
-            self.hash_node_tree_from_node(node.clone(), hasher);
-        }
     }
 
     fn hash_node_tree_from_node(&self, node: Node, hasher: &mut StateHasher) {

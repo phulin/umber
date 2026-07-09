@@ -68,24 +68,20 @@ where
 {
     let index = scan_register_index(input, stores, hooks, context)?;
     skip_optional_equals_x(input, stores, hooks)?;
-    match scan_box_value(input, stores, hooks, context)? {
-        Some(node) => {
+    let boundary = stores.begin_box_build();
+    let value = match scan_box_value(input, stores, hooks, context) {
+        Ok(Some(node)) => {
             let node = stores.clone_node_to_epoch(node);
             let list = stores.freeze_node_list(&[node]);
-            if global {
-                stores.set_box_reg_global(index, list);
-            } else {
-                stores.set_box_reg(index, list);
-            }
+            Some(list)
         }
-        None => {
-            if global {
-                stores.clear_box_reg_global(index);
-            } else {
-                stores.clear_box_reg(index);
-            }
+        Ok(None) => None,
+        Err(err) => {
+            stores.cancel_box_build(boundary);
+            return Err(err);
         }
-    }
+    };
+    stores.finish_box_assignment(boundary, index, value, global);
     Ok(())
 }
 

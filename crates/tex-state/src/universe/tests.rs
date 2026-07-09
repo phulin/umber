@@ -612,6 +612,132 @@ fn snapshot_state_hash_walks_deep_node_lists_iteratively() {
     assert_ne!(universe.snapshot().state_hash(), 0);
 }
 
+#[test]
+fn snapshot_state_hash_ignores_unreachable_epoch_node_allocations() {
+    let mut without_discarded_nodes = Universe::new();
+    let mut with_discarded_nodes = Universe::new();
+    let _ = without_discarded_nodes.snapshot();
+    let _ = with_discarded_nodes.snapshot();
+
+    for amount in 0..1_000 {
+        let child = with_discarded_nodes.freeze_node_list(&[Node::Kern {
+            amount: Scaled::from_raw(amount),
+            kind: KernKind::Explicit,
+        }]);
+        let _discarded =
+            with_discarded_nodes.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
+                width: Scaled::from_raw(amount),
+                height: Scaled::from_raw(0),
+                depth: Scaled::from_raw(0),
+                shift: Scaled::from_raw(0),
+                display: false,
+                glue_set: GlueSetRatio::ZERO,
+                glue_sign: Sign::Normal,
+                glue_order: Order::Normal,
+                children: child,
+            }))]);
+    }
+
+    assert_eq!(
+        without_discarded_nodes.snapshot().state_hash(),
+        with_discarded_nodes.snapshot().state_hash()
+    );
+}
+
+#[test]
+fn snapshot_state_hash_depends_on_live_box_content_not_overwritten_construction_history() {
+    let mut direct = Universe::new();
+    let mut overwritten = Universe::new();
+    let _ = direct.snapshot();
+    let _ = overwritten.snapshot();
+
+    for amount in 0..1_000 {
+        let transient = overwritten.freeze_node_list(&[Node::Kern {
+            amount: Scaled::from_raw(amount),
+            kind: KernKind::Explicit,
+        }]);
+        overwritten.set_box_reg(0, transient);
+    }
+
+    let direct_final = direct.freeze_node_list(&[Node::Char {
+        font: NULL_FONT,
+        ch: 'x',
+    }]);
+    direct.set_box_reg(0, direct_final);
+    let overwritten_final = overwritten.freeze_node_list(&[Node::Char {
+        font: NULL_FONT,
+        ch: 'x',
+    }]);
+    overwritten.set_box_reg(0, overwritten_final);
+
+    assert_eq!(
+        direct.snapshot().state_hash(),
+        overwritten.snapshot().state_hash()
+    );
+}
+
+#[test]
+fn finished_box_assignment_reclaims_only_its_epoch_construction_suffix() {
+    let mut universe = Universe::new();
+    let older = universe.freeze_node_list(&[Node::Char {
+        font: NULL_FONT,
+        ch: 'a',
+    }]);
+    let boundary = universe.begin_box_build();
+    let children = universe.freeze_node_list(&[Node::Kern {
+        amount: Scaled::from_raw(17),
+        kind: KernKind::Explicit,
+    }]);
+    let root = universe.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
+        width: Scaled::from_raw(17),
+        height: Scaled::from_raw(0),
+        depth: Scaled::from_raw(0),
+        shift: Scaled::from_raw(0),
+        display: false,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children,
+    }))]);
+    assert_eq!(universe.testing_epoch_node_count(), 3);
+
+    universe.finish_box_assignment(boundary, 0, Some(root), false);
+
+    assert_eq!(universe.testing_epoch_node_count(), 1);
+    assert_eq!(
+        universe.nodes(older)[0],
+        Node::Char {
+            font: NULL_FONT,
+            ch: 'a'
+        }
+    );
+    let stored = universe.box_reg(0).expect("box assignment should be live");
+    let [Node::HList(box_node)] = universe.nodes(stored) else {
+        panic!("stored value should be an hbox");
+    };
+    assert_eq!(
+        universe.nodes(box_node.children),
+        &[Node::Kern {
+            amount: Scaled::from_raw(17),
+            kind: KernKind::Explicit,
+        }]
+    );
+}
+
+#[test]
+fn cancelled_box_build_reclaims_its_epoch_construction_suffix() {
+    let mut universe = Universe::new();
+    let boundary = universe.begin_box_build();
+    let _discarded = universe.freeze_node_list(&[Node::Char {
+        font: NULL_FONT,
+        ch: 'x',
+    }]);
+
+    universe.cancel_box_build(boundary);
+
+    assert_eq!(universe.testing_epoch_node_count(), 0);
+}
+
 fn checkpoint_hashes_for_program() -> Vec<u64> {
     let mut universe = Universe::new();
     let mut hashes = Vec::new();

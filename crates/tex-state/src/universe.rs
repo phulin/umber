@@ -327,6 +327,16 @@ pub struct ShipoutBoundary {
     node_mark: ShipoutNodeMark,
 }
 
+/// Opaque allocation mark for one in-progress box-register construction.
+///
+/// Finishing the assignment promotes its live result into rollback-safe
+/// storage, then releases every epoch node allocated during construction.
+#[derive(Debug)]
+pub struct BoxBuildBoundary {
+    owner: SnapshotOwner,
+    node_mark: ShipoutNodeMark,
+}
+
 impl Snapshot {
     /// Returns the epoch captured by this snapshot.
     ///
@@ -1455,6 +1465,47 @@ impl Universe {
 
     pub fn set_box_reg_global(&mut self, index: u16, value: NodeListId) {
         self.stores.set_box_reg_global(index, value);
+    }
+
+    /// Marks the epoch-node suffix owned by one box-register value scan.
+    #[must_use]
+    pub fn begin_box_build(&self) -> BoxBuildBoundary {
+        BoxBuildBoundary {
+            owner: self.owner.snapshot_owner(),
+            node_mark: self.stores.shipout_node_mark(),
+        }
+    }
+
+    /// Completes a box-register assignment and releases its construction nodes.
+    pub fn finish_box_assignment(
+        &mut self,
+        boundary: BoxBuildBoundary,
+        index: u16,
+        value: Option<NodeListId>,
+        global: bool,
+    ) {
+        self.assert_box_build_owner(&boundary);
+        match (global, value) {
+            (false, Some(value)) => self.stores.set_box_reg(index, value),
+            (true, Some(value)) => self.stores.set_box_reg_global(index, value),
+            (false, None) => self.stores.clear_box_reg(index),
+            (true, None) => self.stores.clear_box_reg_global(index),
+        }
+        self.stores.release_shipout_nodes(boundary.node_mark);
+    }
+
+    /// Abandons a failed box-register value scan and releases its node suffix.
+    pub fn cancel_box_build(&mut self, boundary: BoxBuildBoundary) {
+        self.assert_box_build_owner(&boundary);
+        self.stores.release_shipout_nodes(boundary.node_mark);
+    }
+
+    fn assert_box_build_owner(&self, boundary: &BoxBuildBoundary) {
+        assert_eq!(
+            boundary.owner,
+            self.owner.snapshot_owner(),
+            "box-build boundary belongs to a different Universe instance"
+        );
     }
 
     #[must_use]

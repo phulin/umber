@@ -3,14 +3,17 @@ use criterion::{
 };
 use tex_expand::{get_x_token, install_expandable_primitives};
 use tex_lex::{InputStack, MemoryInput, TokenListReplayKind};
+use tex_state::SourceId;
 use tex_state::Universe;
+use tex_state::glue::Order;
 use tex_state::ids::OriginListId;
 use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::meaning::Meaning;
 use tex_state::meaning::MeaningFlags;
+use tex_state::node::{BoxNode, BoxNodeFields, KernKind, Node, Sign};
 use tex_state::provenance::ProvenanceStats;
+use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::token::{Catcode, Token};
-use tex_state::SourceId;
 
 const GROUP_SIZES: [usize; 3] = [4, 64, 512];
 const ROLLBACK_TOTAL_CELLS: [usize; 2] = [1024, 4096];
@@ -22,6 +25,7 @@ const SOURCE_HEAVY_LINE: &str = "alpha beta gamma delta epsilon zeta eta theta";
 const MACRO_CALLS: usize = 2_048;
 const MACRO_BODY_LEN: usize = 16;
 const SCANNER_REPETITIONS: usize = 1_024;
+const TRANSIENT_BOX_OVERWRITES: usize = 20_000;
 
 fn meaning_lookup(c: &mut Criterion) {
     let mut stores = Universe::new();
@@ -106,6 +110,39 @@ fn checkpoint_state_hash(c: &mut Criterion) {
     });
 
     group.finish();
+}
+
+fn transient_box_overwrite_checkpoint(c: &mut Criterion) {
+    c.bench_function("checkpoint_state_hash/transient_box_overwrites", |b| {
+        b.iter_batched(
+            || {
+                let mut stores = Universe::new();
+                let _ = stores.snapshot();
+                for amount in 0..TRANSIENT_BOX_OVERWRITES {
+                    let children = stores.freeze_node_list(&[Node::Kern {
+                        amount: Scaled::from_raw(amount as i32),
+                        kind: KernKind::Explicit,
+                    }]);
+                    let list =
+                        stores.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
+                            width: Scaled::from_raw(amount as i32),
+                            height: Scaled::from_raw(0),
+                            depth: Scaled::from_raw(0),
+                            shift: Scaled::from_raw(0),
+                            display: false,
+                            glue_set: GlueSetRatio::ZERO,
+                            glue_sign: Sign::Normal,
+                            glue_order: Order::Normal,
+                            children,
+                        }))]);
+                    stores.set_box_reg(0, list);
+                }
+                stores
+            },
+            |mut stores| black_box(stores.snapshot().state_hash()),
+            BatchSize::LargeInput,
+        );
+    });
 }
 
 fn group_cycle(c: &mut Criterion) {
@@ -211,7 +248,12 @@ fn provenance_source_lexing(c: &mut Criterion) {
 
     group.bench_function("semantic_only_readonly", |b| {
         b.iter_batched(
-            || (Universe::new(), InputStack::new(MemoryInput::new(input.clone()))),
+            || {
+                (
+                    Universe::new(),
+                    InputStack::new(MemoryInput::new(input.clone())),
+                )
+            },
             |(stores, mut input)| {
                 let mut count = 0_usize;
                 while let Some(token) = input
@@ -229,7 +271,12 @@ fn provenance_source_lexing(c: &mut Criterion) {
 
     group.bench_function("traced_source_origins", |b| {
         b.iter_batched(
-            || (Universe::new(), InputStack::new(MemoryInput::new(input.clone()))),
+            || {
+                (
+                    Universe::new(),
+                    InputStack::new(MemoryInput::new(input.clone())),
+                )
+            },
             |(mut stores, mut input)| {
                 let before = stores.provenance_stats();
                 let mut count = 0_usize;
@@ -418,7 +465,9 @@ fn scanner_heavy_case() -> (Universe, InputStack<MemoryInput>, ProvenanceStats) 
 fn generated_run_case() -> (Universe, InputStack<MemoryInput>, ProvenanceStats) {
     let mut stores = Universe::new();
     install_expandable_primitives(&mut stores);
-    let roman = stores.symbol("romannumeral").expect("romannumeral primitive");
+    let roman = stores
+        .symbol("romannumeral")
+        .expect("romannumeral primitive");
     let mut tokens = Vec::with_capacity(SCANNER_REPETITIONS * 6);
     for _ in 0..SCANNER_REPETITIONS {
         tokens.push(Token::Cs(roman));
@@ -472,10 +521,7 @@ fn char_token(ch: char) -> Token {
         '0'..='9' | '[' | ']' | '!' | '<' | '=' | '>' | '-' => Catcode::Other,
         _ => Catcode::Letter,
     };
-    Token::Char {
-        ch,
-        cat,
-    }
+    Token::Char { ch, cat }
 }
 
 fn space_token() -> Token {
@@ -491,6 +537,7 @@ criterion_group!(
     barrier_write,
     snapshot_take,
     checkpoint_state_hash,
+    transient_box_overwrite_checkpoint,
     group_cycle,
     rollback_scaling,
     group_global_compaction,
