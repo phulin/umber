@@ -619,10 +619,11 @@ where
         .ok_or(ExecError::MissingToken {
             context: "box closing brace",
         })?;
-        if is_begin_group(token) {
+        let math_mode = matches!(nest.current_mode(), Mode::Math | Mode::DisplayMath);
+        if !math_mode && is_begin_group(token) {
             brace_depth += 1;
         }
-        if is_end_group(token) {
+        if !math_mode && is_end_group(token) {
             brace_depth -= 1;
             if brace_depth == 0 {
                 flush_pending_hchars(nest, stores)?;

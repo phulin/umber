@@ -103,6 +103,34 @@ fn generalized_fraction_absorbs_prior_list_and_reports_doubled_fraction() {
 }
 
 #[test]
+fn grouped_fraction_inside_hbox_keeps_box_brace_accounting_balanced() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        r"\setbox0=\hbox{${a+b\over c+d}$}\setbox1=\hbox{$x$}",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("grouped fraction in hbox should not leak braces");
+
+    let Some(box0) = stores.box_reg(0) else {
+        panic!("first hbox should be assigned");
+    };
+    assert!(
+        matches!(stores.nodes(box0), [Node::HList(_)]),
+        "first hbox should be stored as an hlist"
+    );
+    let Some(box1) = stores.box_reg(1) else {
+        panic!("following hbox should still parse after grouped math");
+    };
+    assert!(
+        matches!(stores.nodes(box1), [Node::HList(_)]),
+        "second hbox should be stored as an hlist"
+    );
+}
+
+#[test]
 fn mathcode_8000_uses_current_active_meaning_and_fam_overrides_variable_family() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
