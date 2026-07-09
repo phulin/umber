@@ -365,7 +365,9 @@ where
     {
         text.push_str(&token_text(stores, token));
     }
-    Ok(text)
+    Ok(crate::diagnostics::print_text_with_newlinechar(
+        stores, &text,
+    ))
 }
 
 fn pending_page_effects(records: &[EffectRecord]) -> Vec<PageEffect> {

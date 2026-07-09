@@ -489,6 +489,7 @@ where
             | UnexpandablePrimitive::HFilNeg
             | UnexpandablePrimitive::Penalty
             | UnexpandablePrimitive::VRule
+            | UnexpandablePrimitive::ControlSpace
             | UnexpandablePrimitive::ItalicCorrection
             | UnexpandablePrimitive::Discretionary
             | UnexpandablePrimitive::DiscretionaryHyphen

@@ -1,5 +1,6 @@
 use super::support::*;
 use super::*;
+use tex_state::scaled::Scaled;
 
 #[test]
 fn nest_push_pop_and_summary_cover_all_modes() {
@@ -372,6 +373,41 @@ fn box_primitives_round_trip_through_registers() {
         panic!("current page should contain copied-out hbox");
     };
     assert_eq!(appended.width.raw(), 10 * tex_state::scaled::Scaled::UNITY);
+}
+
+#[test]
+fn control_space_appends_normal_font_space_glue() {
+    let mut stores = stores_with_fonts();
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\font\\f=cmr10 \\f\
+         \\fontdimen2\\f=10pt \\fontdimen3\\f=2pt \\fontdimen4\\f=3pt \
+         \\spaceskip=20pt \\xspaceskip=30pt \
+         \\setbox0=\\hbox{A\\spacefactor=3000\\ B}",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("control space executes");
+
+    let box0 = stores.box_reg(0).expect("box should be assigned");
+    let [tex_state::node::Node::HList(box_node)] = stores.nodes(box0) else {
+        panic!("register 0 should hold an hbox");
+    };
+    let children = stores.nodes(box_node.children);
+    assert!(matches!(
+        children,
+        [
+            tex_state::node::Node::Char { ch: 'A', .. },
+            tex_state::node::Node::Glue { spec, kind: tex_state::node::GlueKind::Normal, leader: None },
+            tex_state::node::Node::Char { ch: 'B', .. },
+        ] if stores.glue(*spec) == GlueSpec {
+            width: Scaled::from_raw(10 * Scaled::UNITY),
+            stretch: Scaled::from_raw(2 * Scaled::UNITY),
+            stretch_order: tex_state::glue::Order::Normal,
+            shrink: Scaled::from_raw(3 * Scaled::UNITY),
+            shrink_order: tex_state::glue::Order::Normal,
+        }
+    ));
 }
 
 #[test]

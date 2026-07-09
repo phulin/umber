@@ -147,6 +147,9 @@ impl IntParam {
     /// Plain TeX's `\endlinechar` integer parameter.
     pub const END_LINE_CHAR: Self = Self::new(48);
 
+    /// TeX's `\newlinechar` output-rendering integer parameter.
+    pub const NEWLINE_CHAR: Self = Self::new(49);
+
     /// TeX's `\lefthyphenmin` paragraph-breaking parameter.
     pub const LEFT_HYPHEN_MIN: Self = Self::new(51);
 

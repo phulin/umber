@@ -38,7 +38,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 
 ## Characters And Case
 
-- [ ] `\ ` - Inserts an explicit control space.
+- [x] `\ ` - Inserts an explicit control space as normal current-font interword glue with space factor 1000.
 - [x] `\accent` - Places a text accent over the following character.
 - [x] `\catcode` - Reads or assigns a character's category code; assignments use the code-table facade and bump generations.
 - [x] `\char` - Produces a character token by numeric character code.
@@ -47,7 +47,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [x] `\escapechar` - Character used when printing control sequence names. Implemented as an assignable integer parameter for value-rendering expandables.
 - [x] `\lccode` - Reads or assigns a character's lowercase mapping; assignments use the code-table facade and bump generations.
 - [x] `\lowercase` - Converts character tokens using `\lccode`.
-- [x] `\newlinechar` - Character that starts a new line in terminal or log output. Implemented as an assignable integer parameter; honoring it when rendering `\message`/`\write` text is tracked in the conformance epic.
+- [x] `\newlinechar` - Character that starts a new line in terminal, log, and stream output. Implemented as an assignable integer parameter honored when rendering `\message`, `\errmessage`, and `\write` text.
 - [x] `\number` - Expands an integer as decimal character tokens using the shared expanded integer scanner.
 - [x] `\romannumeral` - Expands an integer as lowercase roman numeral tokens; non-positive values expand to an empty frozen token list.
 - [x] `\sfcode` - Reads or assigns a character's space-factor code; assignments use the code-table facade and bump generations.

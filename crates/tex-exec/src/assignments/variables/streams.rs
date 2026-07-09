@@ -6,6 +6,7 @@ use tex_state::macro_store::MacroMeaning;
 use tex_state::node::{Node, Whatsit};
 use tex_state::{PrintSink, StreamSlot};
 
+use crate::diagnostics::print_text_with_newlinechar;
 use crate::vertical::append_node_to_current_list;
 
 pub(in crate::assignments) fn execute_stream_command<S, H>(
@@ -172,7 +173,7 @@ where
     {
         text.push_str(&token_text(stores, token));
     }
-    Ok(text)
+    Ok(print_text_with_newlinechar(stores, &text))
 }
 
 fn scan_read_tokens(

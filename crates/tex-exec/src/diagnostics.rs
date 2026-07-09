@@ -90,7 +90,7 @@ where
     H: ExpansionHooks<S>,
 {
     let tokens = scan_balanced_expanded_text(input, stores, hooks, "\\message")?;
-    let text = tokens_text(stores, &tokens);
+    let text = print_text_with_newlinechar(stores, &tokens_text(stores, &tokens));
     if error {
         write_diagnostic(stores, &format!("\n! {text}.\n"));
     } else {
@@ -516,6 +516,20 @@ fn write_wrapped_message(text: &str) -> String {
         column += 1;
     }
     output
+}
+
+pub(crate) fn print_text_with_newlinechar(stores: &Universe, text: &str) -> String {
+    let newlinechar = stores.int_param(IntParam::NEWLINE_CHAR);
+    let Some(newline) = u32::try_from(newlinechar)
+        .ok()
+        .filter(|&code| code <= u8::MAX.into())
+        .and_then(char::from_u32)
+    else {
+        return text.to_owned();
+    };
+    text.chars()
+        .map(|ch| if ch == newline { '\n' } else { ch })
+        .collect()
 }
 
 fn write_diagnostic(stores: &mut Universe, text: &str) {

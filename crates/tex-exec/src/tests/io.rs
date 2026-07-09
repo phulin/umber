@@ -228,6 +228,41 @@ fn immediate_openout_write_closeout_append_world_effect_records() {
 }
 
 #[test]
+fn newlinechar_is_honored_by_message_and_immediate_write() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\newlinechar=`\\| \
+         \\message{m|n}\
+         \\errmessage{e|f}\
+         \\immediate\\openout2=nl.out \
+         \\immediate\\write2{w|x}\
+         \\immediate\\closeout2",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("newlinechar output executes");
+
+    assert!(terminal_effect_text(&stores).contains("m\nn"));
+    assert!(terminal_effect_text(&stores).contains("e\nf"));
+    assert!(matches!(
+        stores.world().effect_records(),
+        [
+            EffectRecord::StreamWrite { .. },
+            EffectRecord::StreamWrite { .. },
+            EffectRecord::StreamOpen { .. },
+            EffectRecord::StreamWrite {
+                sink: tex_state::PrintSink::Stream(write_slot),
+                text
+            },
+            EffectRecord::StreamClose { .. },
+        ] if *write_slot == tex_state::StreamSlot::new(2) && text == "w\nx"
+    ));
+}
+
+#[test]
 fn shipout_commits_deferred_openout_closeout_whatsits() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);
@@ -275,6 +310,41 @@ fn shipout_commits_deferred_openout_closeout_whatsits() {
                     PageNode::WhatsitAnchor { effect_index: 2 },
                 ]
             )
+    ));
+}
+
+#[test]
+fn newlinechar_is_honored_by_deferred_shipout_write() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\newlinechar=`\\| \
+         \\shipout\\hbox{\\openout2=ship.out \\write2{s|t}\\closeout2}\\end",
+    ));
+
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("shipout write executes");
+
+    assert_eq!(stats.shipped_artifacts.len(), 1);
+    assert_eq!(stores.world().memory_output("ship.out"), Some(&b"s\nt"[..]));
+    let bytes = stores
+        .world()
+        .read_artifact(stats.shipped_artifacts[0])
+        .expect("read artifact")
+        .expect("artifact stored");
+    let artifact = PageArtifact::from_bytes(&bytes).expect("artifact parses");
+    assert!(matches!(
+        artifact.effects.as_slice(),
+        [
+            PageEffect::OpenOut { .. },
+            PageEffect::Write {
+                sink: EffectSink::Stream(2),
+                text
+            },
+            PageEffect::CloseOut { .. },
+        ] if text == "s\nt"
     ));
 }
 
