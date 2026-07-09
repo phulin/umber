@@ -219,6 +219,41 @@ fn box_dimension_assignments_execute_in_math_mode_without_adding_math_material()
 }
 
 #[test]
+fn penalty_builds_ordinary_list_material_in_inline_math() {
+    let (stores, executor) = run_math_source(r"$a\penalty123 b$");
+    let nodes = math_nodes(&stores, &executor);
+
+    assert!(matches!(
+        nodes,
+        [Node::MathNoad(_), Node::Penalty(123), Node::MathNoad(_)]
+    ));
+}
+
+#[test]
+fn penalty_builds_ordinary_list_material_in_display_math() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(r"\noindent$$a\penalty456 b"));
+    let mut executor = Executor::new();
+
+    executor
+        .run(&mut input, &mut stores)
+        .expect("penalty should execute in display math");
+
+    assert_eq!(executor.nest().current_mode(), Mode::DisplayMath);
+    assert!(
+        executor
+            .nest()
+            .current_list()
+            .nodes()
+            .iter()
+            .any(|node| matches!(node, Node::Penalty(456))),
+        "display mlist should contain the explicit penalty"
+    );
+}
+
+#[test]
 fn mathcode_8000_uses_current_active_meaning_and_fam_overrides_variable_family() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

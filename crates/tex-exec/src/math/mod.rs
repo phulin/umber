@@ -468,6 +468,11 @@ where
             });
             Ok(DispatchAction::Continue)
         }
+        UnexpandablePrimitive::Penalty => {
+            let penalty = assignments::scan_i32(input, stores, hooks)?;
+            nest.current_list_mut().push(Node::Penalty(penalty));
+            Ok(DispatchAction::Continue)
+        }
         UnexpandablePrimitive::MathChoice => {
             append_math_choice(nest, input, stores, recorder, hooks)?;
             Ok(DispatchAction::Continue)
