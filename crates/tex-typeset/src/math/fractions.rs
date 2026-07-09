@@ -203,5 +203,25 @@ fn fraction_vlist(
 
 fn rebox(boxed: &mut MathBox, width: Scaled) {
     // AppG rule 15b
+    let slack = sub(width, boxed.width);
+    if slack.raw() != 0 && matches!(boxed.axis, super::BoxAxis::Horizontal) {
+        let left = Scaled::from_raw(tex_arith::half(slack.raw()));
+        let right = sub(slack, left);
+        if left.raw() != 0 {
+            boxed.list.nodes.insert(
+                0,
+                MathNode::Kern {
+                    amount: left,
+                    kind: KernKind::Explicit,
+                },
+            );
+        }
+        if right.raw() != 0 {
+            boxed.list.nodes.push(MathNode::Kern {
+                amount: right,
+                kind: KernKind::Explicit,
+            });
+        }
+    }
     boxed.width = width;
 }

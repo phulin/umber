@@ -104,8 +104,8 @@ pub fn var_delimiter(
 
     let axis = params.for_size(size).symbols.axis_height;
     boxed.shift = sub(
-        Scaled::from_raw(tex_arith::half(sub(boxed.height, boxed.depth).raw())),
         axis,
+        Scaled::from_raw(tex_arith::half(sub(boxed.height, boxed.depth).raw())),
     );
     boxed
 }

@@ -112,7 +112,7 @@ pub(super) fn make_radical(
     if delta.raw() > 0 {
         clearance = add(clearance, Scaled::from_raw(tex_arith::half(delta.raw())));
     }
-    delimiter.shift = Scaled::from_raw(-add(x.height, clearance).raw());
+    delimiter.shift = add(x.height, clearance);
     let bar = overbar(x, clearance, delimiter.height);
     FrozenHList {
         nodes: vec![MathNode::HList(hpack(FrozenHList {
