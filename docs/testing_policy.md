@@ -153,9 +153,9 @@ Default cargo tests must not invoke live TeX tools. Fixture regeneration uses
 text/native fixture updates and the live `tftopl` font cross-check.
 
 External document corpus inputs for long-running parity live outside committed
-fixtures. `tests/corpus-manifest.toml` pins each document URL, fetched-byte
-SHA-256, license determination, redistributability flag, and reference DVI
-SHA-256 after DVI preamble banner normalization. `scripts/parity.sh` runs
+fixtures. The line-oriented `tests/corpus-manifest.txt` file pins each document
+URL, fetched-byte SHA-256, license determination, redistributability flag, and
+reference DVI SHA-256 after DVI preamble banner normalization. `scripts/parity.sh` runs
 `tools/corpus-sync` first to fetch or verify those inputs under gitignored
 `third_party/corpus/`; cached hash matches are a no-op, including in
 `--offline` mode. It also pins `SOURCE_DATE_EPOCH=1783604160` and

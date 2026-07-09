@@ -22,7 +22,7 @@ usage:
   scripts/parity.sh self-test
 
 Fetches and verifies the pinned external TeX corpus declared in
-tests/corpus-manifest.toml. The e2e mode then runs reference TeX and Umber on
+tests/corpus-manifest.txt. The e2e mode then runs reference TeX and Umber on
 each manifest entry and writes mismatch bundles under target/parity-triage/.
 The script pins SOURCE_DATE_EPOCH and FORCE_SOURCE_DATE by default so
 date-sensitive documents have stable reference output; set them explicitly to
