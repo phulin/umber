@@ -91,7 +91,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [x] `\endinput` - Stops reading the current input source after the current line through the lexer input stack; source identity is pinned by World input records and lexer summaries can restore mid-source positions.
 - [x] `\immediate` - Executes the following output stream operation immediately for `\openout`, `\write`, and `\closeout`.
 - [x] `\input` - Pushes a driver-provided source at the current input position. `tex-expand` scans the file name and calls a source hook; it does not read the filesystem directly.
-- [ ] `\inputlineno` - Current line number in the active input file.
+- [x] `\inputlineno` - Current physical line number in the active input source, available as an internal integer and through `\the`.
 - [x] `\openin` - Opens a World-backed content-addressed input stream; missing files leave the slot at EOF.
 - [x] `\openout` - Opens a World output stream through a deferred whatsit fired at shipout.
 - [x] `\output` - Token list invoked by the page builder for output routine processing; output routines run through the shared main-control driver with `\box255` handling.

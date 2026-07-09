@@ -301,6 +301,17 @@ where
             &stores.last_badness().to_string(),
             cause_origin,
         )),
+        Meaning::InternalInteger(InternalInteger::InputLineNumber) => {
+            let line = input
+                .current_source_frame()
+                .map_or(0, |frame| frame.line_number().min(i32::MAX as usize) as i32);
+            Ok(push_rendered_text(
+                stores,
+                ExpansionReplayKind::TheOutput,
+                &line.to_string(),
+                cause_origin,
+            ))
+        }
         Meaning::DimenParam(index) => Ok(push_rendered_text(
             stores,
             ExpansionReplayKind::TheOutput,

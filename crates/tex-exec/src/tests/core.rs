@@ -106,6 +106,22 @@ fn dump_warns_once_and_stops_before_following_input() {
 }
 
 #[test]
+fn inputlineno_reports_current_physical_source_line() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\relax\n\\message{L=\\the\\inputlineno}\\end",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("inputlineno should expand as an internal integer");
+
+    assert!(terminal_effect_text(&stores).contains("L=2"));
+}
+
+#[test]
 fn internal_integer_assignment_leaves_following_expandafter_unexpanded() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);

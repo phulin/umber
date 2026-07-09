@@ -191,6 +191,11 @@ pub fn install_unexpandable_primitives(stores: &mut Universe) {
     install_page_meanings(stores);
     let badness = stores.intern("badness");
     stores.set_meaning(badness, Meaning::InternalInteger(InternalInteger::Badness));
+    let inputlineno = stores.intern("inputlineno");
+    stores.set_meaning(
+        inputlineno,
+        Meaning::InternalInteger(InternalInteger::InputLineNumber),
+    );
 }
 
 fn install_parameter_meanings(stores: &mut Universe) {

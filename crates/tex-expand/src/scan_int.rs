@@ -450,6 +450,13 @@ where
             consume_optional_space(input, stores, recorder, hooks, expander)?;
             Ok(ScannedInt::new(stores.last_badness()))
         }
+        Meaning::InternalInteger(InternalInteger::InputLineNumber) => {
+            let line = input
+                .current_source_frame()
+                .map_or(0, |frame| frame.line_number().min(i32::MAX as usize) as i32);
+            consume_optional_space(input, stores, recorder, hooks, expander)?;
+            Ok(ScannedInt::new(line))
+        }
         Meaning::DimenParam(index) => {
             consume_optional_space(input, stores, recorder, hooks, expander)?;
             Ok(ScannedInt::new(

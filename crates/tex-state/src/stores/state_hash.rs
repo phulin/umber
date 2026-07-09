@@ -916,6 +916,7 @@ fn hash_optional_delimiter(delimiter: Option<u32>, hasher: &mut StateHasher) {
 fn hash_internal_integer(integer: InternalInteger, hasher: &mut StateHasher) {
     match integer {
         InternalInteger::Badness => hasher.tag(0),
+        InternalInteger::InputLineNumber => hasher.tag(1),
     }
 }
 
