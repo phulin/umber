@@ -86,6 +86,7 @@ pub trait ExpansionState {
     fn intern_glue(&mut self, spec: GlueSpec) -> GlueId;
     fn glue(&self, id: GlueId) -> GlueSpec;
     fn font_name(&self, id: FontId) -> String;
+    fn font_identifier_symbol(&self, id: FontId) -> Option<Symbol>;
     fn font_parameter(&self, font: FontId, number: u16) -> Scaled;
     fn font_dimen(&self, font: FontId, number: u16) -> Scaled;
     fn font_parameter_count(&self, font: FontId) -> u16;
@@ -1257,6 +1258,10 @@ impl Universe {
         self.stores.intern_font(font)
     }
 
+    pub fn intern_font_with_identifier(&mut self, font: LoadedFont, symbol: Symbol) -> FontId {
+        self.stores.intern_font_with_identifier(font, symbol)
+    }
+
     #[must_use]
     pub fn font(&self, id: FontId) -> &LoadedFont {
         self.stores.font(id)
@@ -1265,6 +1270,15 @@ impl Universe {
     #[must_use]
     pub fn font_name(&self, id: FontId) -> String {
         self.stores.font_name(id)
+    }
+
+    #[must_use]
+    pub fn font_identifier_symbol(&self, id: FontId) -> Option<Symbol> {
+        self.stores.font_identifier_symbol(id)
+    }
+
+    pub fn set_font_identifier_symbol(&mut self, id: FontId, symbol: Symbol) {
+        self.stores.set_font_identifier_symbol(id, symbol);
     }
 
     #[must_use]
@@ -2112,6 +2126,10 @@ impl ExpansionState for Universe {
         Self::font_name(self, id)
     }
 
+    fn font_identifier_symbol(&self, id: FontId) -> Option<Symbol> {
+        Self::font_identifier_symbol(self, id)
+    }
+
     fn font_parameter(&self, font: FontId, number: u16) -> Scaled {
         Self::font_parameter(self, font, number)
     }
@@ -2391,6 +2409,10 @@ impl ExpansionState for ExpansionContext<'_> {
 
     fn font_name(&self, id: FontId) -> String {
         self.universe.font_name(id)
+    }
+
+    fn font_identifier_symbol(&self, id: FontId) -> Option<Symbol> {
+        self.universe.font_identifier_symbol(id)
     }
 
     fn font_parameter(&self, font: FontId, number: u16) -> Scaled {

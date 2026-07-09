@@ -3,6 +3,7 @@ use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::{FontId, TokenListId};
 use tex_state::interner::ControlSequenceKind;
+use tex_state::math::MathFontSize;
 use tex_state::meaning::{InternalInteger, Meaning, MeaningFlags};
 use tex_state::provenance::SynthesizedOriginKind;
 use tex_state::scaled::Scaled;
@@ -124,20 +125,29 @@ where
             }
             tex_state::meaning::UnexpandablePrimitive::Font => {
                 let symbol = stores
-                    .current_font_symbol()
+                    .font_identifier_symbol(stores.current_font())
                     .ok_or(ExpandError::UnsupportedTheTarget(semantic))?;
-                Ok(Dispatch::Push {
-                    replay_kind: ExpansionReplayKind::TheOutput,
-                    token_list: stores.intern_token_list(&[Token::Cs(symbol)]),
-                    origin_list: crate::synthesized_origin_list(
-                        stores,
-                        1,
-                        cause_origin,
-                        SynthesizedOriginKind::ValueRendering,
-                    ),
-                    macro_arguments: MacroArguments::new(),
-                    macro_invocation: OriginId::UNKNOWN,
-                })
+                Ok(push_rendered_tokens(
+                    stores,
+                    ExpansionReplayKind::TheOutput,
+                    [Token::Cs(symbol)],
+                    cause_origin,
+                ))
+            }
+            primitive @ (tex_state::meaning::UnexpandablePrimitive::TextFont
+            | tex_state::meaning::UnexpandablePrimitive::ScriptFont
+            | tex_state::meaning::UnexpandablePrimitive::ScriptScriptFont) => {
+                let family = scan_math_family(input, stores, recorder, hooks, expander)?;
+                let font = stores.math_family_font(math_font_size(primitive), family);
+                let symbol = stores
+                    .font_identifier_symbol(font)
+                    .ok_or(ExpandError::UnsupportedTheTarget(semantic))?;
+                Ok(push_rendered_tokens(
+                    stores,
+                    ExpansionReplayKind::TheOutput,
+                    [Token::Cs(symbol)],
+                    cause_origin,
+                ))
             }
             tex_state::meaning::UnexpandablePrimitive::FontDimen => {
                 let scanned = scan_int::scan_int_with_expander_and_hooks(
@@ -760,7 +770,50 @@ where
         Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::Font) => {
             Ok(stores.current_font())
         }
+        Meaning::UnexpandablePrimitive(
+            primitive @ (tex_state::meaning::UnexpandablePrimitive::TextFont
+            | tex_state::meaning::UnexpandablePrimitive::ScriptFont
+            | tex_state::meaning::UnexpandablePrimitive::ScriptScriptFont),
+        ) => {
+            let family = scan_math_family(input, stores, recorder, hooks, expander)?;
+            Ok(stores.math_family_font(math_font_size(primitive), family))
+        }
         _ => Err(ExpandError::MissingFontIdentifier(token)),
+    }
+}
+
+fn scan_math_family<S, St, R, H, E>(
+    input: &mut InputStack<S>,
+    stores: &mut St,
+    recorder: &mut R,
+    hooks: &mut H,
+    expander: &mut E,
+) -> Result<u8, ExpandError>
+where
+    S: InputSource,
+    St: ExpansionState,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
+{
+    let family_origin = input.current_input_origin(stores);
+    let scanned =
+        scan_int::scan_int_with_expander_and_hooks(input, stores, recorder, hooks, expander)?;
+    u8::try_from(scanned.value())
+        .ok()
+        .filter(|family| *family < 16)
+        .ok_or(ExpandError::MathFamilyOutOfRange {
+            value: scanned.value(),
+            origin: scanned.diagnostic_origin().unwrap_or(family_origin),
+        })
+}
+
+fn math_font_size(primitive: tex_state::meaning::UnexpandablePrimitive) -> MathFontSize {
+    match primitive {
+        tex_state::meaning::UnexpandablePrimitive::TextFont => MathFontSize::Text,
+        tex_state::meaning::UnexpandablePrimitive::ScriptFont => MathFontSize::Script,
+        tex_state::meaning::UnexpandablePrimitive::ScriptScriptFont => MathFontSize::ScriptScript,
+        _ => unreachable!("caller restricts math font primitive"),
     }
 }
 

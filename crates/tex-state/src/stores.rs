@@ -733,6 +733,15 @@ impl Stores {
         id
     }
 
+    /// Interns a font and records the control sequence TeX uses for its
+    /// identifier token (the `font_id_text` associated with the font).
+    pub fn intern_font_with_identifier(&mut self, font: LoadedFont, symbol: Symbol) -> FontId {
+        self.assert_live_symbol(symbol);
+        let id = self.intern_font(font);
+        self.fonts.set_identifier(id, symbol);
+        id
+    }
+
     /// Reads a live immutable font record.
     #[must_use]
     pub fn font(&self, id: FontId) -> &LoadedFont {
@@ -743,6 +752,20 @@ impl Stores {
     #[must_use]
     pub fn font_name(&self, id: FontId) -> String {
         self.font(id).fontname_text()
+    }
+
+    #[must_use]
+    pub fn font_identifier_symbol(&self, id: FontId) -> Option<Symbol> {
+        self.assert_live_font(id);
+        let symbol = self.fonts.identifier(id)?;
+        self.assert_live_symbol(symbol);
+        Some(symbol)
+    }
+
+    pub fn set_font_identifier_symbol(&mut self, id: FontId, symbol: Symbol) {
+        self.assert_live_font(id);
+        self.assert_live_symbol(symbol);
+        self.fonts.set_identifier(id, symbol);
     }
 
     #[must_use]

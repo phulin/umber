@@ -616,6 +616,38 @@ fn snapshot_state_hash_distinguishes_font_content_identity() {
 }
 
 #[test]
+fn snapshot_state_hash_distinguishes_font_identifier_identity() {
+    let mut first = Universe::new();
+    let mut second = Universe::new();
+    let first_a = first.intern("a");
+    let first_b = first.intern("b");
+    let second_a = second.intern("a");
+    let second_b = second.intern("b");
+
+    let first_font = first.intern_font_with_identifier(test_font("cmr10", b"same"), first_a);
+    let second_font = second.intern_font_with_identifier(test_font("cmr10", b"same"), second_b);
+    first.set_meaning(first_b, Meaning::Font(first_font));
+    second.set_meaning(second_a, Meaning::Font(second_font));
+
+    assert_ne!(
+        first.snapshot().state_hash(),
+        second.snapshot().state_hash()
+    );
+}
+
+#[test]
+fn rollback_restores_font_identifier_registration() {
+    let mut universe = Universe::new();
+    let snapshot = universe.snapshot();
+    let nullfont = universe.intern("nullfont");
+    universe.set_font_identifier_symbol(NULL_FONT, nullfont);
+    assert_eq!(universe.font_identifier_symbol(NULL_FONT), Some(nullfont));
+
+    universe.rollback(&snapshot);
+    assert_eq!(universe.font_identifier_symbol(NULL_FONT), None);
+}
+
+#[test]
 fn rollback_restores_state_hash_cursor() {
     let mut universe = Universe::new();
     let base = universe.snapshot();

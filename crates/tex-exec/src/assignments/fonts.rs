@@ -43,7 +43,7 @@ where
         parameters,
         tfm.font_metrics(),
     );
-    let id = stores.intern_font(loaded);
+    let id = stores.intern_font_with_identifier(loaded, target);
     let meaning = Meaning::Font(id);
     if apply_globaldefs(prefixes.global, stores) {
         stores.set_meaning_global(target, meaning);

@@ -187,6 +187,7 @@ pub fn install_unexpandable_primitives(stores: &mut Universe) {
     stores.set_meaning(relax, Meaning::Relax);
     let nullfont = stores.intern("nullfont");
     stores.set_meaning(nullfont, Meaning::Font(tex_state::font::NULL_FONT));
+    stores.set_font_identifier_symbol(tex_state::font::NULL_FONT, nullfont);
     stores.set_current_font_selector_global(nullfont, tex_state::font::NULL_FONT);
     install_parameter_meanings(stores);
     install_page_meanings(stores);

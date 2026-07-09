@@ -1548,6 +1548,114 @@ fn the_fontdimen_checks_parameter_count_after_scanning_font() {
 }
 
 #[test]
+fn the_math_family_fonts_expand_to_identifier_tokens_with_trace_and_reads() {
+    #[derive(Default)]
+    struct SymbolRecorder(Vec<Symbol>);
+
+    impl ReadRecorder for SymbolRecorder {
+        fn record_meaning(&mut self, symbol: Symbol, _meaning: Meaning) {
+            self.0.push(symbol);
+        }
+    }
+
+    let mut stores = Universe::new();
+    let the = expandable_primitive(&mut stores, "the", ExpandablePrimitive::The);
+    let nullfont = stores.intern("nullfont");
+    stores.set_meaning(nullfont, Meaning::Font(tex_state::font::NULL_FONT));
+    stores.set_font_identifier_symbol(tex_state::font::NULL_FONT, nullfont);
+    let family_primitives = [
+        (
+            "textfont",
+            UnexpandablePrimitive::TextFont,
+            tex_state::math::MathFontSize::Text,
+        ),
+        (
+            "scriptfont",
+            UnexpandablePrimitive::ScriptFont,
+            tex_state::math::MathFontSize::Script,
+        ),
+        (
+            "scriptscriptfont",
+            UnexpandablePrimitive::ScriptScriptFont,
+            tex_state::math::MathFontSize::ScriptScript,
+        ),
+    ];
+    let mut input_tokens = Vec::new();
+    let mut primitive_symbols = Vec::new();
+    for (name, primitive, size) in family_primitives {
+        let symbol = stores.intern(name);
+        stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
+        stores.set_math_family_font(size, 1, tex_state::font::NULL_FONT, true);
+        primitive_symbols.push(symbol);
+        input_tokens.extend([Token::Cs(the), Token::Cs(symbol), char_token('1')]);
+    }
+    let invocation = stores.source_origin(tex_state::SourceId::new(11), 110, 11, 1);
+    let tokens = stores.intern_token_list(&input_tokens);
+    let origins = stores.allocate_repeated_origin_list(invocation, input_tokens.len());
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list_with_origins(tokens, origins, TokenListReplayKind::Inserted);
+    let mut recorder = SymbolRecorder::default();
+    let mut output = Vec::new();
+    while let Some(token) = crate::get_x_token_with_recorder(&mut input, &mut stores, &mut recorder)
+        .expect("math-family font identifiers should expand")
+    {
+        output.push(token);
+    }
+
+    assert_eq!(output.len(), 3);
+    assert!(
+        output
+            .iter()
+            .all(|token| token.token() == Some(Token::Cs(nullfont)))
+    );
+    assert!(recorder.0.contains(&the));
+    for symbol in primitive_symbols {
+        assert!(recorder.0.contains(&symbol));
+    }
+    for token in output {
+        assert_eq!(
+            stores.origin(token.origin()),
+            OriginRecord::Synthesized(SynthesizedOrigin::new(
+                SynthesizedOriginKind::ValueRendering,
+                invocation,
+            ))
+        );
+    }
+}
+
+#[test]
+fn the_math_family_font_rejects_out_of_range_family_at_number_origin() {
+    let mut stores = Universe::new();
+    let the = expandable_primitive(&mut stores, "the", ExpandablePrimitive::The);
+    let textfont = stores.intern("textfont");
+    stores.set_meaning(
+        textfont,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::TextFont),
+    );
+    let invocation = stores.source_origin(tex_state::SourceId::new(12), 120, 12, 1);
+    let number_origin = stores.source_origin(tex_state::SourceId::new(12), 129, 12, 10);
+    let tokens = stores.intern_token_list(&[
+        Token::Cs(the),
+        Token::Cs(textfont),
+        char_token('1'),
+        char_token('6'),
+    ]);
+    let origins =
+        stores.allocate_origin_list(&[invocation, invocation, number_origin, number_origin]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list_with_origins(tokens, origins, TokenListReplayKind::Inserted);
+
+    let error = crate::get_x_token(&mut input, &mut stores)
+        .expect_err("family 16 must be rejected by the four-bit scanner");
+    assert!(matches!(
+        error,
+        crate::ExpandError::MathFamilyOutOfRange { value: 16, .. }
+    ));
+    assert_eq!(error.to_string(), "Bad number");
+    assert!(error.primary_origin().is_some());
+}
+
+#[test]
 fn mark_family_primitives_expand_stored_page_marks() {
     let mut stores = Universe::new();
     for (name, primitive) in [

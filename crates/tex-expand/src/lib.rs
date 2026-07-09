@@ -250,6 +250,10 @@ pub enum ExpandError {
     ScanDimen(Box<scan_dimen::ScanDimenError>),
     UnsupportedTheTarget(Token),
     MissingFontIdentifier(TracedTokenWord),
+    MathFamilyOutOfRange {
+        value: i32,
+        origin: OriginId,
+    },
     FontDimenOutOfRange {
         font_name: String,
         number: i32,
@@ -301,6 +305,7 @@ impl fmt::Display for ExpandError {
                     semantic_token(*token)
                 )
             }
+            Self::MathFamilyOutOfRange { .. } => f.write_str("Bad number"),
             Self::FontDimenOutOfRange {
                 font_name,
                 number: _,
@@ -347,6 +352,7 @@ impl std::error::Error for ExpandError {
             | Self::UndefinedControlSequence { .. }
             | Self::UnsupportedTheTarget(_)
             | Self::MissingFontIdentifier(_)
+            | Self::MathFamilyOutOfRange { .. }
             | Self::FontDimenOutOfRange { .. }
             | Self::InvalidConditionalRelation(_)
             | Self::IncompleteIf
@@ -362,6 +368,7 @@ impl ExpandError {
         match self {
             Self::InvalidConditionalRelation(token) => Some(token.origin()),
             Self::MissingFontIdentifier(token) => Some(token.origin()),
+            Self::MathFamilyOutOfRange { origin, .. } => Some(*origin),
             Self::FontDimenOutOfRange { origin, .. } => Some(*origin),
             Self::UndefinedControlSequence { origin, .. } => Some(*origin),
             Self::ScanInt(err) => err.primary_origin(),

@@ -367,9 +367,12 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   indices. Font dimensions, box dimensions, page state, and
   Font dimensions use TeX82's `scan_font_ident` forms, including `\font` for
   the current font, and validate reads against the snapshot-covered Env-side
-  parameter count before rendering the exact scaled value. Time/job parameters
-  not yet backed by `Env` remain documented TODOs until those classes are
-  semantically available.
+  parameter count before rendering the exact scaled value. The same scanner
+  resolves `\textfont`, `\scriptfont`, and `\scriptscriptfont` through the
+  barriered three-by-sixteen family bank; `\the` replays the selected font's
+  immutable identifier control sequence, whose identity participates in font
+  semantic hashes. Time/job parameters not yet backed by `Env` remain
+  documented TODOs until those classes are semantically available.
 - Input/job expandables use explicit driver hooks: `tex-expand` scans the
   `\input` file name and asks the caller for a new `InputSource`, while
   `\jobname` renders the caller-provided job name. This preserves the rule

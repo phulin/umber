@@ -658,6 +658,13 @@ impl Stores {
 
     fn font_semantic_key(&self, font: FontId) -> FontSemanticKey {
         self.assert_live_font(font);
+        let identifier = self.fonts.identifier(font).map(|symbol| {
+            self.assert_live_symbol(symbol);
+            (
+                self.interner.kind(symbol),
+                self.interner.resolve(symbol).to_owned(),
+            )
+        });
         let font = self.fonts.get(font);
         FontSemanticKey {
             name: font.name().to_owned(),
@@ -666,6 +673,7 @@ impl Stores {
             checksum: font.checksum(),
             design_size: font.design_size().raw(),
             size: font.size().raw(),
+            identifier,
         }
     }
 
@@ -776,6 +784,7 @@ struct FontSemanticKey {
     checksum: u32,
     design_size: i32,
     size: i32,
+    identifier: Option<(ControlSequenceKind, String)>,
 }
 
 #[derive(Clone, Debug)]
@@ -833,6 +842,14 @@ fn hash_font_semantic_key(font: &FontSemanticKey, hasher: &mut StateHasher) {
     hasher.u32(font.checksum);
     hasher.i32(font.design_size);
     hasher.i32(font.size);
+    match &font.identifier {
+        Some((kind, name)) => {
+            hasher.bool(true);
+            hash_control_sequence_kind(*kind, hasher);
+            hasher.str(name);
+        }
+        None => hasher.bool(false),
+    }
 }
 
 fn hash_kern_kind(kind: KernKind, hasher: &mut StateHasher) {
