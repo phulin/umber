@@ -9,7 +9,7 @@ use tex_state::env::banks::GlueParam;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::{FontId, GlueId, NodeListId};
 use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, Node, Sign};
-use tex_state::page::{PageDimension, PageInteger};
+use tex_state::page::{PageDimension, PageInsertion, PageInsertionStatus, PageInteger, PageMark};
 use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::token::{Catcode, Token};
 use tex_state::{Snapshot, Universe};
@@ -40,6 +40,21 @@ enum Op {
     SetPageInt {
         integer: PageInteger,
         value: i32,
+    },
+    SetPageMark {
+        mark: PageMark,
+        token_slot: usize,
+    },
+    UpsertPageInsertion {
+        insertion: PageInsertion,
+    },
+    RecordBestPageBreak {
+        break_index: usize,
+        best_size: i32,
+        cost: i32,
+    },
+    RecordPageFireUp {
+        trigger_index: usize,
     },
     PushPageContribution(NodeSeed),
     PushCurrentPage(NodeSeed),
@@ -170,6 +185,7 @@ fn run_replay_identity(ops: &[Op]) {
         stores.glue_param(GlueParam::BASELINE_SKIP),
         stores.glue_param(GlueParam::PAR_FILL_SKIP),
     ];
+    let mut token_ids = vec![tex_state::ids::TokenListId::EMPTY];
     let mut built_lists = Vec::new();
     let cells = cell_universe();
     TestCell::prepare_stores(&mut stores, &cells);
@@ -195,7 +211,7 @@ fn run_replay_identity(ops: &[Op]) {
                 }
             }
             Op::InternTokens(tokens) => {
-                stores.intern_token_list(tokens);
+                token_ids.push(stores.intern_token_list(tokens));
             }
             Op::InternGlue(spec) => {
                 glue_ids.push(stores.intern_glue(*spec));
@@ -232,6 +248,23 @@ fn run_replay_identity(ops: &[Op]) {
             }
             Op::SetPageInt { integer, value } => {
                 stores.set_page_integer(*integer, *value);
+            }
+            Op::SetPageMark { mark, token_slot } => {
+                let tokens = token_ids[*token_slot % token_ids.len()];
+                stores.set_page_mark(*mark, tokens);
+            }
+            Op::UpsertPageInsertion { insertion } => {
+                stores.upsert_page_insertion(*insertion);
+            }
+            Op::RecordBestPageBreak {
+                break_index,
+                best_size,
+                cost,
+            } => {
+                stores.record_best_page_break(*break_index, Scaled::from_raw(*best_size), *cost);
+            }
+            Op::RecordPageFireUp { trigger_index } => {
+                stores.record_page_fire_up(*trigger_index);
             }
             Op::PushPageContribution(seed) => {
                 stores.append_page_contribution(page_node(&glue_ids, seed));
@@ -410,6 +443,22 @@ fn op_seed() -> impl Strategy<Value = OpSeed> {
         1 => (page_integer_strategy(), -100_i32..100).prop_map(|(integer, value)| {
             OpSeed::Op(Op::SetPageInt { integer, value })
         }),
+        1 => (page_mark_strategy(), 0_usize..32).prop_map(|(mark, token_slot)| {
+            OpSeed::Op(Op::SetPageMark { mark, token_slot })
+        }),
+        1 => page_insertion_strategy()
+            .prop_map(|insertion| OpSeed::Op(Op::UpsertPageInsertion { insertion })),
+        1 => (0_usize..64, -100_i32..100, -100_i32..100)
+            .prop_map(|(break_index, best_size, cost)| {
+                OpSeed::Op(Op::RecordBestPageBreak {
+                    break_index,
+                    best_size,
+                    cost,
+                })
+            }),
+        1 => (0_usize..64).prop_map(|trigger_index| {
+            OpSeed::Op(Op::RecordPageFireUp { trigger_index })
+        }),
         2 => node_seed_strategy().prop_map(|seed| OpSeed::Op(Op::PushPageContribution(seed))),
         2 => node_seed_strategy().prop_map(|seed| OpSeed::Op(Op::PushCurrentPage(seed))),
         1 => Just(OpSeed::Op(Op::PopPageContributionTail)),
@@ -485,6 +534,43 @@ fn page_integer_strategy() -> impl Strategy<Value = PageInteger> {
     prop_oneof![
         Just(PageInteger::DeadCycles),
         Just(PageInteger::InsertPenalties),
+    ]
+}
+
+fn page_mark_strategy() -> impl Strategy<Value = PageMark> {
+    prop_oneof![
+        Just(PageMark::Top),
+        Just(PageMark::First),
+        Just(PageMark::Bot),
+        Just(PageMark::SplitFirst),
+        Just(PageMark::SplitBot),
+    ]
+}
+
+fn page_insertion_strategy() -> impl Strategy<Value = PageInsertion> {
+    (
+        0_u16..32,
+        -100_i32..100,
+        page_insertion_status_strategy(),
+        prop::option::of(0_usize..64),
+    )
+        .prop_map(|(class, height, status, last_ins_index)| {
+            let mut insertion = PageInsertion::new(class, Scaled::from_raw(height));
+            insertion.set_status(status);
+            insertion.set_last_ins_index(last_ins_index);
+            insertion
+        })
+}
+
+fn page_insertion_status_strategy() -> impl Strategy<Value = PageInsertionStatus> {
+    prop_oneof![
+        Just(PageInsertionStatus::Inserting),
+        (0_usize..64, prop::option::of(0_usize..64)).prop_map(|(broken_ins_index, broken_at)| {
+            PageInsertionStatus::SplitUp {
+                broken_ins_index,
+                broken_at,
+            }
+        },),
     ]
 }
 
