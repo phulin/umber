@@ -60,6 +60,10 @@ fn scans_backtick_character_and_control_sequence_constants() {
     let (value, next) = scan_with_stores("`\\alpha x", &mut stores);
     assert_eq!(value, i32::from(b'a'));
     assert_eq!(next, Some(char_token('x', Catcode::Letter)));
+
+    let (value, _diagnostic, next) = scan("`\\{ x");
+    assert_eq!(value, i32::from(b'{'));
+    assert_eq!(next, Some(char_token('x', Catcode::Letter)));
 }
 
 #[test]

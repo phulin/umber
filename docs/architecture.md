@@ -231,8 +231,9 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   `tex-expand::scan_dimen`, and `tex-expand::scan_glue` own the reusable
   expanded integer, dimension, glue, and muglue scanners for conditionals and
   the later stomach assignment layer. They pull
-  through `get_x_token`; the integer scanner understands TeX integer
-  constants and currently readable integer-like state (`\count`, chardef
+  through `get_x_token`, except that the integer scanner raw-reads the single
+  operand following a backtick character constant. The integer scanner
+  understands TeX integer constants and currently readable integer-like state (`\count`, chardef
   values, `\endlinechar`, and raw-sp `\dimen` coercion), while the dimension
   scanner parses decimal constants, physical units, `true` units, supported
   internal dimensions, `mu` dimensions for muglue callers, infinite `fil`

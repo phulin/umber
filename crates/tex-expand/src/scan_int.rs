@@ -387,7 +387,10 @@ where
     H: ExpansionHooks<S>,
     E: ExpandNext<S, St, R, H>,
 {
-    let Some(token) = next_x(input, stores, recorder, hooks, expander)? else {
+    // TeX's `scan_int` reads the token following a backtick directly, rather
+    // than through `get_x_token`. In particular, `\{` is a valid character
+    // constant here even if that control symbol has no meaning.
+    let Some(token) = input.next_traced_token(stores)? else {
         return Ok(missing_number(input.current_input_origin(stores)));
     };
     let value = match semantic_token(token) {

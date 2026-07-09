@@ -180,3 +180,16 @@ fn code_table_assignment_validates_and_bumps_generation_on_same_value() {
     assert_eq!(stores.catcode('@'), Catcode::Other);
     assert_eq!(after.catcode, before.catcode + 2);
 }
+
+#[test]
+fn catcode_accepts_a_backtick_control_symbol_constant() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\catcode`\\{=1"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("backtick control symbol constant should not expand");
+
+    assert_eq!(stores.catcode('{'), Catcode::BeginGroup);
+}
