@@ -17,6 +17,7 @@ umber_bin="${target_dir}/debug/umber"
 refexec_built=0
 fixturegen_built=0
 umber_built=0
+export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-1783604160}"
 
 usage() {
   cat <<'EOF'
@@ -41,6 +42,10 @@ Reference tools:
 
   The fonts live check requires tftopl on PATH, or
   UMBER_REF_TFTOPL=/absolute/path/to/tftopl.
+
+  Regeneration pins SOURCE_DATE_EPOCH by default so Umber and the reference
+  TeX observe the same job-start clock. Set SOURCE_DATE_EPOCH explicitly to
+  override the default fixed timestamp.
 EOF
 }
 
