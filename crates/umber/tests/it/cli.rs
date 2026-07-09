@@ -162,6 +162,39 @@ fn expand_dump_execution_error_renders_primary_source_context() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary fixture setup and command execution.
+fn run_diagnostic_after_tfm_load_keeps_tex_source_path() {
+    let temp_dir = tempfile::tempdir().expect("create font provenance temp dir");
+    let source = temp_dir.path().join("after-font.tex");
+    let child = temp_dir.path().join("child.tex");
+    let tfm = temp_dir.path().join("cmr10.tfm");
+    fs::write(&source, "\\font\\f=cmr10 \\relax\n\\input child\n").expect("write main fixture");
+    fs::write(&child, "\\global X\n").expect("write diagnostic fixture");
+    fs::copy(
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../tex-fonts/tests/fixtures/cm/cmr10.tfm"
+        ),
+        &tfm,
+    )
+    .expect("copy TFM fixture");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .arg("run")
+        .arg(&source)
+        .output()
+        .expect("run font provenance fixture");
+
+    assert!(!output.status.success(), "invalid prefix use should fail");
+    let stderr = String::from_utf8(output.stderr).expect("stderr is utf-8");
+    assert!(stderr.contains("You can't use a prefix"), "{stderr}");
+    assert!(stderr.contains("child.tex:1:9"), "{stderr}");
+    assert!(stderr.contains("  1 | \\global X"), "{stderr}");
+    assert!(!stderr.contains("cmr10.tfm:1:9"), "{stderr}");
+}
+
+#[test]
 #[allow(clippy::disallowed_methods)] // host-side corpus discovery and command execution.
 fn run_exec_corpus_matches_committed_diagnostics() {
     run_corpus_matches_committed_log_fixtures("exec", false);

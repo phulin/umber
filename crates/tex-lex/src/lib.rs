@@ -10,7 +10,7 @@ use std::fmt;
 use tex_state::ids::{OriginListId, TokenListId};
 use tex_state::provenance::{InsertedOriginKind, SyntheticOriginKind};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
-use tex_state::{ExpansionState, FileContent, WorldError};
+use tex_state::{ExpansionState, FileContent, InputRecordId, WorldError};
 
 pub use tex_state::{
     ConditionFrameSummary, ConditionKind, ConditionLimb, InputFrameSummary, InputSummary,
@@ -25,6 +25,11 @@ pub use tex_state::{
 pub trait InputSource {
     /// Reads the next physical line without its line terminator.
     fn read_line(&mut self) -> Result<Option<String>, WorldError>;
+
+    /// Returns the durable `World` record for a file-backed source.
+    fn input_record(&self) -> Option<InputRecordId> {
+        None
+    }
 }
 
 /// In-memory input source for tests, `\scantokens`, and editor buffers.
@@ -51,22 +56,27 @@ impl InputSource for MemoryInput {
 /// Content-addressed input source created from `World` file content.
 #[derive(Debug)]
 pub struct WorldInput {
+    input_record: InputRecordId,
     lines: std::vec::IntoIter<String>,
 }
 
 impl WorldInput {
     #[must_use]
     pub fn from_content(content: FileContent) -> Self {
+        let input_record = content.record();
         let input = String::from_utf8_lossy(content.bytes()).into_owned();
         Self {
+            input_record,
             lines: split_physical_lines(&input).into_iter(),
         }
     }
 
     #[must_use]
     pub fn from_content_after_lines(content: FileContent, lines_read: usize) -> Self {
+        let input_record = content.record();
         let input = String::from_utf8_lossy(content.bytes()).into_owned();
         Self {
+            input_record,
             lines: split_physical_lines(&input)
                 .into_iter()
                 .skip(lines_read)
@@ -79,6 +89,10 @@ impl WorldInput {
 impl InputSource for WorldInput {
     fn read_line(&mut self) -> Result<Option<String>, WorldError> {
         Ok(self.lines.next())
+    }
+
+    fn input_record(&self) -> Option<InputRecordId> {
+        Some(self.input_record)
     }
 }
 
@@ -175,15 +189,21 @@ impl SourceFrame {
 #[derive(Debug)]
 struct SourceInputFrame<S> {
     source_id: SourceId,
+    input_record: Option<InputRecordId>,
     lines: LineReader<S>,
     frame: SourceFrame,
     next_source_offset: usize,
 }
 
 impl<S> SourceInputFrame<S> {
-    fn new(source_id: SourceId, source: S) -> Self {
+    fn new(source_id: SourceId, source: S) -> Self
+    where
+        S: InputSource,
+    {
+        let input_record = source.input_record();
         Self {
             source_id,
+            input_record,
             lines: LineReader::new(source),
             frame: SourceFrame::new(),
             next_source_offset: 0,
@@ -219,6 +239,7 @@ enum InputFrame<S> {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct LastSourceFrame {
     source_id: SourceId,
+    input_record: Option<InputRecordId>,
     frame: SourceFrame,
     next_source_offset: usize,
 }
@@ -311,7 +332,10 @@ pub struct InputStack<S> {
 
 impl<S> InputStack<S> {
     #[must_use]
-    pub fn new(source: S) -> Self {
+    pub fn new(source: S) -> Self
+    where
+        S: InputSource,
+    {
         let mut stack = Self {
             frames: Vec::new(),
             next_source_id: 0,
@@ -323,7 +347,10 @@ impl<S> InputStack<S> {
         stack
     }
 
-    pub fn push_source(&mut self, source: S) -> SourceId {
+    pub fn push_source(&mut self, source: S) -> SourceId
+    where
+        S: InputSource,
+    {
         let source_id = SourceId::new(self.next_source_id);
         self.next_source_id = self
             .next_source_id
@@ -336,18 +363,23 @@ impl<S> InputStack<S> {
 
     pub fn from_summary<E, F>(summary: &InputSummary, mut reopen_source: F) -> Result<Self, E>
     where
-        F: FnMut(SourceId, &SourceFrameSummary) -> Result<S, E>,
+        F: FnMut(SourceId, Option<InputRecordId>, &SourceFrameSummary) -> Result<S, E>,
     {
         let mut max_source_id = None::<u32>;
         let mut frames = Vec::with_capacity(summary.frames().len());
         for frame in summary.frames() {
             match frame {
-                InputFrameSummary::Source { source_id, source } => {
+                InputFrameSummary::Source {
+                    source_id,
+                    input_record,
+                    source,
+                } => {
                     max_source_id =
                         Some(max_source_id.map_or(source_id.raw(), |max| max.max(source_id.raw())));
                     frames.push(InputFrame::Source(SourceInputFrame {
                         source_id: *source_id,
-                        lines: LineReader::new(reopen_source(*source_id, source)?),
+                        input_record: *input_record,
+                        lines: LineReader::new(reopen_source(*source_id, *input_record, source)?),
                         frame: SourceFrame::from_summary(source),
                         next_source_offset: source.next_source_offset(),
                     }));
@@ -384,6 +416,7 @@ impl<S> InputStack<S> {
                 source_id: summary
                     .last_source_id()
                     .expect("last source frame must retain its source id"),
+                input_record: summary.last_source_record(),
                 frame: SourceFrame::from_summary(source),
                 next_source_offset: source.next_source_offset(),
             }),
@@ -494,12 +527,13 @@ impl<S> InputStack<S> {
 
     #[must_use]
     pub fn summary(&self) -> InputSummary {
-        InputSummary::new(
+        InputSummary::new_with_source_records(
             self.frames
                 .iter()
                 .map(|frame| match frame {
                     InputFrame::Source(source) => InputFrameSummary::Source {
                         source_id: source.source_id,
+                        input_record: source.input_record,
                         source: source.frame.summary(source.next_source_offset),
                     },
                     InputFrame::TokenList(token_list) => InputFrameSummary::TokenList {
@@ -514,6 +548,9 @@ impl<S> InputStack<S> {
                 })
                 .collect(),
             self.last_source_frame.as_ref().map(|last| last.source_id),
+            self.last_source_frame
+                .as_ref()
+                .and_then(|last| last.input_record),
             self.last_source_frame
                 .as_ref()
                 .map(|last| last.frame.summary(last.next_source_offset)),
@@ -539,7 +576,7 @@ impl<S> InputStack<S> {
         if let Some(last) = &self.last_source_frame {
             return allocate_source_origin(
                 stores,
-                source_coordinate_from_frame(last.source_id, &last.frame),
+                source_coordinate_from_frame(last.source_id, last.input_record, &last.frame),
             );
         }
         stores.synthetic_origin(SyntheticOriginKind::Engine)
@@ -626,7 +663,10 @@ pub struct Lexer<S> {
 
 impl<S> Lexer<S> {
     #[must_use]
-    pub fn new(source: S) -> Self {
+    pub fn new(source: S) -> Self
+    where
+        S: InputSource,
+    {
         Self {
             input: InputStack::new(source),
         }
@@ -741,6 +781,7 @@ where
                             if let InputFrame::Source(source) = popped {
                                 self.last_source_frame = Some(LastSourceFrame {
                                     source_id: source.source_id,
+                                    input_record: source.input_record,
                                     frame: source.frame,
                                     next_source_offset: source.next_source_offset,
                                 });
@@ -752,6 +793,7 @@ where
                             if let InputFrame::Source(source) = popped {
                                 self.last_source_frame = Some(LastSourceFrame {
                                     source_id: source.source_id,
+                                    input_record: source.input_record,
                                     frame: source.frame,
                                     next_source_offset: source.next_source_offset,
                                 });
@@ -837,6 +879,7 @@ where
                             if let InputFrame::Source(source) = popped {
                                 self.last_source_frame = Some(LastSourceFrame {
                                     source_id: source.source_id,
+                                    input_record: source.input_record,
                                     frame: source.frame,
                                     next_source_offset: source.next_source_offset,
                                 });
@@ -848,6 +891,7 @@ where
                             if let InputFrame::Source(source) = popped {
                                 self.last_source_frame = Some(LastSourceFrame {
                                     source_id: source.source_id,
+                                    input_record: source.input_record,
                                     frame: source.frame,
                                     next_source_offset: source.next_source_offset,
                                 });
@@ -915,6 +959,7 @@ where
                             if let InputFrame::Source(source) = popped {
                                 self.last_source_frame = Some(LastSourceFrame {
                                     source_id: source.source_id,
+                                    input_record: source.input_record,
                                     frame: source.frame,
                                     next_source_offset: source.next_source_offset,
                                 });
@@ -926,6 +971,7 @@ where
                             if let InputFrame::Source(source) = popped {
                                 self.last_source_frame = Some(LastSourceFrame {
                                     source_id: source.source_id,
+                                    input_record: source.input_record,
                                     frame: source.frame,
                                     next_source_offset: source.next_source_offset,
                                 });
@@ -1138,19 +1184,25 @@ where
 #[derive(Clone, Copy, Debug)]
 struct SourceCoordinate {
     source_id: SourceId,
+    input_record: Option<InputRecordId>,
     byte_offset: u64,
     line: u32,
     column: u32,
 }
 
 fn source_coordinate<S>(source: &SourceInputFrame<S>) -> SourceCoordinate {
-    source_coordinate_from_frame(source.source_id, &source.frame)
+    source_coordinate_from_frame(source.source_id, source.input_record, &source.frame)
 }
 
-fn source_coordinate_from_frame(source_id: SourceId, frame: &SourceFrame) -> SourceCoordinate {
+fn source_coordinate_from_frame(
+    source_id: SourceId,
+    input_record: Option<InputRecordId>,
+    frame: &SourceFrame,
+) -> SourceCoordinate {
     let byte_offset = frame.buffer_offset + byte_offset_for_char_offset(frame);
     SourceCoordinate {
         source_id,
+        input_record,
         byte_offset: u64::try_from(byte_offset).unwrap_or(u64::MAX),
         line: u32::try_from(frame.line_number).unwrap_or(u32::MAX),
         column: u32::try_from(frame.column).unwrap_or(u32::MAX),
@@ -1179,8 +1231,9 @@ fn allocate_source_origin(
     stores: &mut impl ExpansionState,
     coordinate: SourceCoordinate,
 ) -> OriginId {
-    stores.source_origin(
+    stores.source_origin_with_input_record(
         coordinate.source_id,
+        coordinate.input_record,
         coordinate.byte_offset,
         coordinate.line,
         coordinate.column,

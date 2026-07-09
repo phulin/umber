@@ -13,6 +13,7 @@ use std::ffi::OsString;
 use std::fmt;
 use std::fs::OpenOptions;
 use std::io::{self, Write};
+use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -84,6 +85,7 @@ impl ContentHash {
 /// Bytes returned from a content-addressed `World` read.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FileContent {
+    record: InputRecordId,
     path: PathBuf,
     bytes: Vec<u8>,
     hash: ContentHash,
@@ -91,9 +93,20 @@ pub struct FileContent {
 
 impl FileContent {
     #[must_use]
-    pub(crate) fn new(path: PathBuf, bytes: Vec<u8>) -> Self {
+    pub(crate) fn new(record: InputRecordId, path: PathBuf, bytes: Vec<u8>) -> Self {
         let hash = ContentHash::from_bytes(&bytes);
-        Self { path, bytes, hash }
+        Self {
+            record,
+            path,
+            bytes,
+            hash,
+        }
+    }
+
+    /// Returns the stable record for this successful `World` read.
+    #[must_use]
+    pub const fn record(&self) -> InputRecordId {
+        self.record
     }
 
     #[must_use]
@@ -114,6 +127,28 @@ impl FileContent {
     #[must_use]
     pub fn into_bytes(self) -> Vec<u8> {
         self.bytes
+    }
+}
+
+/// Stable index of one successful read in the `World` input log.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct InputRecordId(NonZeroU32);
+
+impl InputRecordId {
+    #[must_use]
+    pub(crate) fn new(raw: u32) -> Self {
+        Self(
+            NonZeroU32::new(
+                raw.checked_add(1)
+                    .expect("World input record capacity exceeded"),
+            )
+            .expect("offset input record id is nonzero"),
+        )
+    }
+
+    #[must_use]
+    pub(crate) const fn raw(self) -> u32 {
+        self.0.get() - 1
     }
 }
 
@@ -569,7 +604,10 @@ impl World {
                 )
             })?,
         };
-        let content = FileContent::new(path.to_owned(), bytes);
+        let record = InputRecordId::new(
+            u32::try_from(self.inputs.len()).expect("World input record capacity exceeded"),
+        );
+        let content = FileContent::new(record, path.to_owned(), bytes);
         self.input_contents
             .entry(content.hash)
             .or_insert_with(|| content.bytes.clone());
@@ -680,7 +718,10 @@ impl World {
         };
         self.stream_bufs.terminal_input_next += 1;
         let bytes = line.as_bytes().to_vec();
-        let content = FileContent::new(PathBuf::from("<terminal>"), bytes);
+        let record = InputRecordId::new(
+            u32::try_from(self.inputs.len()).expect("World input record capacity exceeded"),
+        );
+        let content = FileContent::new(record, PathBuf::from("<terminal>"), bytes);
         self.input_contents
             .entry(content.hash)
             .or_insert_with(|| content.bytes.clone());
@@ -692,10 +733,12 @@ impl World {
         Ok(Some(line))
     }
 
-    pub fn recorded_input_content(&self, index: usize) -> Option<FileContent> {
+    pub fn recorded_input_content(&self, id: InputRecordId) -> Option<FileContent> {
+        let index = id.raw() as usize;
         let record = self.inputs.get(index)?;
         let bytes = self.input_contents.get(&record.hash)?.clone();
         Some(FileContent {
+            record: id,
             path: record.path.clone(),
             bytes,
             hash: record.hash,

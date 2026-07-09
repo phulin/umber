@@ -2,6 +2,7 @@
 
 use crate::ids::{OriginListId, TokenListId};
 use crate::token::{Token, TracedTokenWord};
+use crate::world::InputRecordId;
 use std::hash::{Hash, Hasher};
 
 /// Maximum number of macro arguments TeX permits in one macro body.
@@ -297,6 +298,7 @@ impl ConditionFrameSummary {
 pub struct InputSummary {
     frames: Vec<InputFrameSummary>,
     last_source_id: Option<SourceId>,
+    last_source_record: Option<InputRecordId>,
     last_source_frame: Option<SourceFrameSummary>,
 }
 
@@ -307,9 +309,20 @@ impl InputSummary {
         last_source_id: Option<SourceId>,
         last_source_frame: Option<SourceFrameSummary>,
     ) -> Self {
+        Self::new_with_source_records(frames, last_source_id, None, last_source_frame)
+    }
+
+    #[must_use]
+    pub fn new_with_source_records(
+        frames: Vec<InputFrameSummary>,
+        last_source_id: Option<SourceId>,
+        last_source_record: Option<InputRecordId>,
+        last_source_frame: Option<SourceFrameSummary>,
+    ) -> Self {
         Self {
             frames,
             last_source_id,
+            last_source_record,
             last_source_frame,
         }
     }
@@ -341,6 +354,12 @@ impl InputSummary {
     pub const fn last_source_id(&self) -> Option<SourceId> {
         self.last_source_id
     }
+
+    /// The `World` input record for [`Self::last_source_frame`].
+    #[must_use]
+    pub const fn last_source_record(&self) -> Option<InputRecordId> {
+        self.last_source_record
+    }
 }
 
 /// Snapshot summary for one input frame.
@@ -348,6 +367,7 @@ impl InputSummary {
 pub enum InputFrameSummary {
     Source {
         source_id: SourceId,
+        input_record: Option<InputRecordId>,
         source: SourceFrameSummary,
     },
     TokenList {
@@ -367,13 +387,15 @@ impl PartialEq for InputFrameSummary {
             (
                 Self::Source {
                     source_id: left_id,
+                    input_record: left_record,
                     source: left,
                 },
                 Self::Source {
                     source_id: right_id,
+                    input_record: right_record,
                     source: right,
                 },
-            ) => left_id == right_id && left == right,
+            ) => left_id == right_id && left_record == right_record && left == right,
             (
                 Self::TokenList {
                     token_list: left_token_list,
@@ -406,9 +428,14 @@ impl Eq for InputFrameSummary {}
 impl Hash for InputFrameSummary {
     fn hash<H: Hasher>(&self, state: &mut H) {
         match self {
-            Self::Source { source_id, source } => {
+            Self::Source {
+                source_id,
+                input_record,
+                source,
+            } => {
                 0_u8.hash(state);
                 source_id.hash(state);
+                input_record.hash(state);
                 source.hash(state);
             }
             Self::TokenList {
@@ -444,10 +471,8 @@ fn hash_macro_arguments_semantic<H: Hasher>(arguments: MacroArguments, state: &m
 
 /// Snapshot summary for one source frame.
 ///
-/// `source_id` belongs to the surrounding `InputFrameSummary`; the durable
-/// reopen key is intentionally not stored here because `World` input records
-/// own file/content identity and reopen sources by content hash before this
-/// summary's offsets and normalized-line state are applied.
+/// `source_id` and the durable `World` input-record reopen key belong to the
+/// surrounding `InputFrameSummary`; this value stores lexer-local state only.
 #[derive(Clone, Debug)]
 pub struct SourceFrameSummary {
     buffer_offset: usize,

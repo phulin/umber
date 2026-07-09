@@ -140,8 +140,11 @@ supply.
   the current and any previous limb has been taken, the `\ifcase` `\or`
   count, and the nested conditional depth observed during skip/resume scanning.
   Source reopen identity is owned by the `World` input record in the outer
-  snapshot: it pins file/editor content by content hash, reopens that exact
-  source, then applies the lexer-owned source-frame summary.
+  snapshot: each file-backed source frame carries its explicit `InputRecordId`,
+  which pins file/editor content by content hash, reopens that exact source,
+  then applies the lexer-owned source-frame summary. The record id is not
+  inferred from the source-frame ordinal: auxiliary reads such as TFM loads
+  share the `World` input log but never become text input frames.
   `last_source_frame` is also summarized with its source id so snapshots taken
   just after a source pops still have final source coordinates for EOF/current
   input diagnostics.
@@ -159,9 +162,10 @@ supply.
   one exists. Stored non-macro token lists without an origin-list home
   (`\toks`, `\everypar`, marks, output, writes) replay with synthetic
   per-replay-kind origins in v1; durable source identity is
-  the `World` input record captured in `Universe` snapshots, which pins file
-  bytes by content hash so a driver can reopen the exact source and apply the
-  lexer summary. `\endinput` is represented as a source-frame flag that lets
+  the explicit `World` input record captured on source origins and in
+  `Universe` snapshots, which pins file bytes by content hash so a driver can
+  reopen the exact source and apply the lexer summary. `\endinput` is
+  represented as a source-frame flag that lets
   the lexer finish the current normalized line and then pop that source
   without asking expansion to manage source internals.
 
@@ -809,7 +813,9 @@ immutable tables, with mutable font state kept behind the state timeline.
   ordered nonempty directories in `TEXFONTS` for area-less names; an explicit
   font area is used as written, matching `read_font_info`'s `aire` branch.
   The successful read is the ordinary content-addressed `World` input record,
-  so font search adds no engine-owned or non-checkpointable state.
+  so font search adds no engine-owned or non-checkpointable state. As in
+  TeX82's separate `tfm_file` handle, that auxiliary record does not replace
+  or renumber the active text source carried by the input stack.
 - A loaded font is an immutable object; `FontId` is the state-layer handle
   (`core_state.md` §10.3) minted at load time; `\font` assignment is an
   ordinary barriered `Env` write. Per-font mutable parameters

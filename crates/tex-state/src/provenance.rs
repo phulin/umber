@@ -8,6 +8,7 @@
 use crate::ids::{MacroDefinitionId, OriginListId};
 use crate::input::{SourceId, TokenListReplayKind};
 use crate::token::{OriginId, Token};
+use crate::world::InputRecordId;
 use std::mem;
 
 /// A rollback watermark for the provenance store.
@@ -127,8 +128,9 @@ impl OriginListBuilder {
 /// Source coordinate for a token read from an input source.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct SourceOrigin {
-    source: SourceId,
     byte_offset: u64,
+    source: SourceId,
+    input_record: Option<InputRecordId>,
     line: u32,
     column: u32,
 }
@@ -138,16 +140,29 @@ impl SourceOrigin {
     #[must_use]
     pub const fn new(source: SourceId, byte_offset: u64, line: u32, column: u32) -> Self {
         Self {
-            source,
             byte_offset,
+            source,
+            input_record: None,
             line,
             column,
         }
     }
 
+    /// Attaches the `World` record that owns the source's path and bytes.
+    #[must_use]
+    pub const fn with_input_record(mut self, input_record: InputRecordId) -> Self {
+        self.input_record = Some(input_record);
+        self
+    }
+
     #[must_use]
     pub const fn source(self) -> SourceId {
         self.source
+    }
+
+    #[must_use]
+    pub const fn input_record(self) -> Option<InputRecordId> {
+        self.input_record
     }
 
     #[must_use]

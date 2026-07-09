@@ -542,6 +542,21 @@ impl Stores {
             )))
     }
 
+    pub fn source_origin_with_input_record(
+        &mut self,
+        source: SourceId,
+        input_record: Option<crate::InputRecordId>,
+        byte_offset: u64,
+        line: u32,
+        column: u32,
+    ) -> OriginId {
+        let mut origin = SourceOrigin::new(source, byte_offset, line, column);
+        if let Some(input_record) = input_record {
+            origin = origin.with_input_record(input_record);
+        }
+        self.provenance.allocate(OriginRecord::Source(origin))
+    }
+
     /// Allocates a macro-invocation origin.
     pub fn macro_invocation_origin(
         &mut self,

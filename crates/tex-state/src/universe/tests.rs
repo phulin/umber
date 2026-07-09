@@ -661,6 +661,7 @@ fn pending_source_summary(token: Token, origin: OriginId) -> InputSummary {
     InputSummary::new(
         vec![InputFrameSummary::Source {
             source_id: crate::input::SourceId::new(1),
+            input_record: None,
             source: SourceFrameSummary::new(
                 0,
                 1,

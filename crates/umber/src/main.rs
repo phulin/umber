@@ -253,6 +253,13 @@ impl InputSource for RunInputSource {
             Self::World(input) => input.read_line(),
         }
     }
+
+    fn input_record(&self) -> Option<tex_state::InputRecordId> {
+        match self {
+            Self::Memory(input) => input.input_record(),
+            Self::World(input) => input.input_record(),
+        }
+    }
 }
 
 struct RunHooks {

@@ -621,6 +621,7 @@ fn source_summaries_track_position_and_eof_pop() {
         [InputFrameSummary::Source {
             source_id,
             source,
+            ..
         }] if source_id.raw() == 0
             && source.buffer_offset() == 0
             && source.line_number() == 1
@@ -648,7 +649,12 @@ fn source_summary_is_resume_complete_inside_current_line() {
         Some(char_token('é', Catcode::Other))
     );
     let summary = input.summary();
-    let [InputFrameSummary::Source { source_id, source }] = summary.frames() else {
+    let [
+        InputFrameSummary::Source {
+            source_id, source, ..
+        },
+    ] = summary.frames()
+    else {
         panic!("expected one source frame");
     };
 
@@ -793,7 +799,15 @@ fn source_summary_restores_mid_world_input_from_recorded_content() {
         .world_mut()
         .set_memory_file("inc.tex", b"ab\nc".to_vec())
         .expect("seed include");
+    stores
+        .world_mut()
+        .set_memory_file("font.tfm", b"auxiliary metrics".to_vec())
+        .expect("seed auxiliary input");
     let main = stores.world_mut().read_file("main.tex").expect("read main");
+    stores
+        .world_mut()
+        .read_file("font.tfm")
+        .expect("read auxiliary input");
     let inc = stores
         .world_mut()
         .read_file("inc.tex")
@@ -819,10 +833,12 @@ fn source_summary_restores_mid_world_input_from_recorded_content() {
     stores.rollback(&snapshot);
 
     let summary = stores.input_summary().clone();
-    let mut restored = InputStack::from_summary(&summary, |source_id, source| {
+    let mut restored = InputStack::from_summary(&summary, |_source_id, input_record, source| {
         let content = stores
             .world()
-            .recorded_input_content(source_id.raw() as usize)
+            .recorded_input_content(
+                input_record.expect("world input frame retains its input record"),
+            )
             .expect("recorded source content");
         Ok::<_, ()>(super::WorldInput::from_content_after_lines(
             content,

@@ -121,6 +121,14 @@ pub trait ExpansionState {
         line: u32,
         column: u32,
     ) -> OriginId;
+    fn source_origin_with_input_record(
+        &mut self,
+        source: SourceId,
+        input_record: Option<crate::InputRecordId>,
+        byte_offset: u64,
+        line: u32,
+        column: u32,
+    ) -> OriginId;
     fn macro_invocation_origin(
         &mut self,
         definition: MacroDefinitionId,
@@ -1114,6 +1122,19 @@ impl Universe {
         column: u32,
     ) -> OriginId {
         self.stores.source_origin(source, byte_offset, line, column)
+    }
+
+    /// Allocates a source-coordinate origin bound to its durable input record.
+    pub fn source_origin_with_input_record(
+        &mut self,
+        source: SourceId,
+        input_record: Option<crate::InputRecordId>,
+        byte_offset: u64,
+        line: u32,
+        column: u32,
+    ) -> OriginId {
+        self.stores
+            .source_origin_with_input_record(source, input_record, byte_offset, line, column)
     }
 
     /// Allocates a macro-invocation origin.
@@ -2183,6 +2204,17 @@ impl ExpansionState for Universe {
         Self::source_origin(self, source, byte_offset, line, column)
     }
 
+    fn source_origin_with_input_record(
+        &mut self,
+        source: SourceId,
+        input_record: Option<crate::InputRecordId>,
+        byte_offset: u64,
+        line: u32,
+        column: u32,
+    ) -> OriginId {
+        Self::source_origin_with_input_record(self, source, input_record, byte_offset, line, column)
+    }
+
     fn macro_invocation_origin(
         &mut self,
         definition: MacroDefinitionId,
@@ -2438,6 +2470,23 @@ impl ExpansionState for ExpansionContext<'_> {
             .source_origin(source, byte_offset, line, column)
     }
 
+    fn source_origin_with_input_record(
+        &mut self,
+        source: SourceId,
+        input_record: Option<crate::InputRecordId>,
+        byte_offset: u64,
+        line: u32,
+        column: u32,
+    ) -> OriginId {
+        self.universe.source_origin_with_input_record(
+            source,
+            input_record,
+            byte_offset,
+            line,
+            column,
+        )
+    }
+
     fn macro_invocation_origin(
         &mut self,
         definition: MacroDefinitionId,
@@ -2596,9 +2645,14 @@ fn hash_input_summary_fields(stores: &Stores, summary: &InputSummary, hasher: &m
     hasher.usize(summary.frames().len());
     for frame in summary.frames() {
         match frame {
-            InputFrameSummary::Source { source_id, source } => {
+            InputFrameSummary::Source {
+                source_id,
+                input_record,
+                source,
+            } => {
                 hasher.tag(0);
                 hasher.u32(source_id.raw());
+                hash_input_record_id(*input_record, hasher);
                 hasher.usize(source.buffer_offset());
                 hasher.usize(source.next_source_offset());
                 hasher.usize(source.line_number());
@@ -2655,6 +2709,7 @@ fn hash_input_summary_fields(stores: &Stores, summary: &InputSummary, hasher: &m
                     .expect("last source frame must retain its source id")
                     .raw(),
             );
+            hash_input_record_id(summary.last_source_record(), hasher);
             hasher.usize(source.buffer_offset());
             hasher.usize(source.next_source_offset());
             hasher.usize(source.line_number());
@@ -2668,6 +2723,16 @@ fn hash_input_summary_fields(stores: &Stores, summary: &InputSummary, hasher: &m
                 hash_traced_token_semantic(stores, *token, hasher);
             }
             hasher.bool(source.end_after_current_line());
+        }
+        None => hasher.bool(false),
+    }
+}
+
+fn hash_input_record_id(record: Option<crate::InputRecordId>, hasher: &mut StateHasher) {
+    match record {
+        Some(record) => {
+            hasher.bool(true);
+            hasher.u32(record.raw());
         }
         None => hasher.bool(false),
     }

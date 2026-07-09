@@ -45,9 +45,9 @@ pub use universe::{
     ResumeBoundary, ResumeFallback, Snapshot, Universe,
 };
 pub use world::{
-    ContentHash, EffectPos, EffectRecord, FileContent, InputRecord, JobClock, PrintSink,
-    ReadTarget, RngState, ShellEscapePolicy, ShellEscapeRecord, StreamBufState, StreamSlot, World,
-    WorldError, WorldSnapshot,
+    ContentHash, EffectPos, EffectRecord, FileContent, InputRecord, InputRecordId, JobClock,
+    PrintSink, ReadTarget, RngState, ShellEscapePolicy, ShellEscapeRecord, StreamBufState,
+    StreamSlot, World, WorldError, WorldSnapshot,
 };
 
 #[cfg(test)]
