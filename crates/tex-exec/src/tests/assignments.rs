@@ -182,6 +182,25 @@ fn code_table_assignment_validates_and_bumps_generation_on_same_value() {
 }
 
 #[test]
+fn code_table_assignments_obey_groups_global_prefix_and_globaldefs() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "{\\catcode`@=11}{\\global\\catcode`!=11}\\globaldefs=1 \
+         {\\catcode`?=11}\\globaldefs=-1 {\\global\\catcode`*=11}",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("code-table assignment scope should match other definitions");
+
+    assert_eq!(stores.catcode('@'), Catcode::Other);
+    assert_eq!(stores.catcode('!'), Catcode::Letter);
+    assert_eq!(stores.catcode('?'), Catcode::Letter);
+    assert_eq!(stores.catcode('*'), Catcode::Other);
+}
+
+#[test]
 fn catcode_accepts_a_backtick_control_symbol_constant() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

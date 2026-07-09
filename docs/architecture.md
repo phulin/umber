@@ -363,6 +363,11 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   `\protected`), and `\globaldefs` override behavior. Definition targets use
   TeX's `get_r_token` rule: either a control sequence or an active character
   is accepted, with active characters stored under their one-character symbol.
+  `\let` then follows TeX82's raw-token scan: it skips spaces before an
+  optional equals sign, skips at most one space after that sign, and copies the
+  already-tokenized command or character meaning without expansion. Code-table
+  assignments use the same prefix/globaldefs policy as other definitions;
+  their structurally persistent roots restore local assignments at group exit.
   These commands scan through the shared gullet/token scanner where expansion
   is required and write meanings only through the barriered `Universe` facade. The
   `umber expand-dump` driver delegates those primitives to `tex-exec` before

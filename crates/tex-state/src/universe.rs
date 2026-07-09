@@ -907,6 +907,10 @@ impl Universe {
         self.stores.set_catcode(ch, value);
     }
 
+    pub fn set_catcode_global(&mut self, ch: char, value: Catcode) {
+        self.stores.set_catcode_global(ch, value);
+    }
+
     #[must_use]
     pub fn lccode(&self, ch: char) -> LcCode {
         self.stores.lccode(ch)
@@ -914,6 +918,10 @@ impl Universe {
 
     pub fn set_lccode(&mut self, ch: char, value: LcCode) {
         self.stores.set_lccode(ch, value);
+    }
+
+    pub fn set_lccode_global(&mut self, ch: char, value: LcCode) {
+        self.stores.set_lccode_global(ch, value);
     }
 
     #[must_use]
@@ -925,6 +933,10 @@ impl Universe {
         self.stores.set_uccode(ch, value);
     }
 
+    pub fn set_uccode_global(&mut self, ch: char, value: UcCode) {
+        self.stores.set_uccode_global(ch, value);
+    }
+
     #[must_use]
     pub fn sfcode(&self, ch: char) -> SfCode {
         self.stores.sfcode(ch)
@@ -932,6 +944,10 @@ impl Universe {
 
     pub fn set_sfcode(&mut self, ch: char, value: SfCode) {
         self.stores.set_sfcode(ch, value);
+    }
+
+    pub fn set_sfcode_global(&mut self, ch: char, value: SfCode) {
+        self.stores.set_sfcode_global(ch, value);
     }
 
     #[must_use]
@@ -943,6 +959,10 @@ impl Universe {
         self.stores.set_mathcode(ch, value);
     }
 
+    pub fn set_mathcode_global(&mut self, ch: char, value: MathCode) {
+        self.stores.set_mathcode_global(ch, value);
+    }
+
     #[must_use]
     pub fn delcode(&self, ch: char) -> DelCode {
         self.stores.delcode(ch)
@@ -950,6 +970,10 @@ impl Universe {
 
     pub fn set_delcode(&mut self, ch: char, value: DelCode) {
         self.stores.set_delcode(ch, value);
+    }
+
+    pub fn set_delcode_global(&mut self, ch: char, value: DelCode) {
+        self.stores.set_delcode_global(ch, value);
     }
 
     pub fn add_hyphenation_pattern(&mut self, pattern: PatternSpec) {

@@ -259,6 +259,10 @@ impl Stores {
         self.code_tables.set_catcode(ch, value);
     }
 
+    pub fn set_catcode_global(&mut self, ch: char, value: Catcode) {
+        self.code_tables.set_catcode_global(ch, value);
+    }
+
     #[must_use]
     pub fn lccode(&self, ch: char) -> LcCode {
         self.code_tables.lccode(ch)
@@ -266,6 +270,10 @@ impl Stores {
 
     pub fn set_lccode(&mut self, ch: char, value: LcCode) {
         self.code_tables.set_lccode(ch, value);
+    }
+
+    pub fn set_lccode_global(&mut self, ch: char, value: LcCode) {
+        self.code_tables.set_lccode_global(ch, value);
     }
 
     #[must_use]
@@ -277,6 +285,10 @@ impl Stores {
         self.code_tables.set_uccode(ch, value);
     }
 
+    pub fn set_uccode_global(&mut self, ch: char, value: UcCode) {
+        self.code_tables.set_uccode_global(ch, value);
+    }
+
     #[must_use]
     pub fn sfcode(&self, ch: char) -> SfCode {
         self.code_tables.sfcode(ch)
@@ -284,6 +296,10 @@ impl Stores {
 
     pub fn set_sfcode(&mut self, ch: char, value: SfCode) {
         self.code_tables.set_sfcode(ch, value);
+    }
+
+    pub fn set_sfcode_global(&mut self, ch: char, value: SfCode) {
+        self.code_tables.set_sfcode_global(ch, value);
     }
 
     #[must_use]
@@ -295,6 +311,10 @@ impl Stores {
         self.code_tables.set_mathcode(ch, value);
     }
 
+    pub fn set_mathcode_global(&mut self, ch: char, value: MathCode) {
+        self.code_tables.set_mathcode_global(ch, value);
+    }
+
     #[must_use]
     pub fn delcode(&self, ch: char) -> DelCode {
         self.code_tables.delcode(ch)
@@ -302,6 +322,10 @@ impl Stores {
 
     pub fn set_delcode(&mut self, ch: char, value: DelCode) {
         self.code_tables.set_delcode(ch, value);
+    }
+
+    pub fn set_delcode_global(&mut self, ch: char, value: DelCode) {
+        self.code_tables.set_delcode_global(ch, value);
     }
 
     pub fn add_hyphenation_pattern(&mut self, pattern: PatternSpec) {
@@ -953,11 +977,13 @@ impl Stores {
 
     /// Enters a TeX group.
     pub fn enter_group(&mut self) {
+        self.code_tables.enter_group();
         self.env.enter_group();
     }
 
     /// Enters a TeX group with a boundary kind used for mismatch diagnostics.
     pub fn enter_group_with_kind(&mut self, kind: GroupKind) {
+        self.code_tables.enter_group();
         self.env.enter_group_with_kind(kind);
     }
 
@@ -970,7 +996,9 @@ impl Stores {
     #[must_use]
     pub fn leave_group(&mut self) -> Vec<Token> {
         self.account_current_group_box_refs();
-        self.env.leave_group()
+        let payloads = self.env.leave_group();
+        self.code_tables.leave_group();
+        payloads
     }
 
     /// Leaves the innermost TeX group after checking its boundary kind.
@@ -985,7 +1013,9 @@ impl Stores {
             return Err(GroupMismatch::new(expected, actual));
         }
         self.account_current_group_box_refs();
-        self.env.leave_group_with_kind(expected)
+        let payloads = self.env.leave_group_with_kind(expected)?;
+        self.code_tables.leave_group();
+        Ok(payloads)
     }
 
     /// Stores the token to insert after the next assignment.

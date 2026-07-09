@@ -222,6 +222,14 @@ rare and bursty (verbatim, `\makeatletter`, babel shorthands).
   `Universe::code_table_generations`. `Universe::snapshot` captures the
   structurally shared root pointers and generation counters, and
   `Universe::rollback` restores them atomically with the Env/content tuple.
+  TeX groups save the same six roots in a structurally shared group-root
+  vector: local code-table assignments restore those roots at group exit,
+  while global assignments update the saved roots as well as the live table.
+  The group-root vector is part of the code-table snapshot, so checkpoints
+  taken inside groups retain complete rollback state without a second save
+  stack outside `Stores`. Restoring a changed root at group exit also advances
+  that table's generation so lexer classification cannot outlive the restored
+  catcodes.
   Each implemented table root starts at a canonical shared default root whose
   pages are also canonical shared pages; the first effective write detaches
   the root and then copy-on-writes only the touched page.

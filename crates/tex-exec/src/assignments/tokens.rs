@@ -135,11 +135,16 @@ pub(super) fn scan_optional_equals_one_space<S>(
 where
     S: InputSource,
 {
-    let first = input
-        .next_traced_token(stores)?
-        .ok_or(ExecError::MissingToken {
-            context: "\\let right-hand side",
-        })?;
+    let first = loop {
+        let token = input
+            .next_traced_token(stores)?
+            .ok_or(ExecError::MissingToken {
+                context: "\\let right-hand side",
+            })?;
+        if !is_space(tex_expand::semantic_token(token)) {
+            break token;
+        }
+    };
     if !is_other_equals(tex_expand::semantic_token(first)) {
         return Ok(first);
     }

@@ -418,6 +418,41 @@ fn let_assigns_control_sequence_and_implicit_character_meanings() {
 }
 
 #[test]
+fn let_skips_spaces_before_optional_equals_and_aliases_control_symbol() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\def\\\\#1{#1}\\let\\alias   = \\\\ "));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("let should scan the raw control-symbol meaning");
+
+    let control_symbol = stores.symbol("\\").expect("control symbol");
+    let alias = stores.symbol("alias").expect("alias");
+    assert_eq!(stores.meaning(alias), stores.meaning(control_symbol));
+}
+
+#[test]
+fn plain_getf_ctor_setup_restores_catcodes_before_control_symbol_alias() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    stores.set_catcode('@', Catcode::Letter);
+    let mut input = InputStack::new(MemoryInput::new(
+        "{\\catcode`p=12 \\catcode`t=12 \\gdef\\\\#1pt{#1}} \\let\\getf@ctor=\\\\",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("plain.tex getf@ctor setup should execute");
+
+    assert_eq!(stores.catcode('p'), Catcode::Letter);
+    assert_eq!(stores.catcode('t'), Catcode::Letter);
+    let control_symbol = stores.symbol("\\").expect("control symbol");
+    let alias = stores.symbol("getf@ctor").expect("getf@ctor alias");
+    assert_eq!(stores.meaning(alias), stores.meaning(control_symbol));
+}
+
+#[test]
 fn futurelet_assigns_second_token_meaning_and_preserves_order() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

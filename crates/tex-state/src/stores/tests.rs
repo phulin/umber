@@ -37,6 +37,72 @@ fn rollback_restores_env_and_interner_as_one_tuple() {
 }
 
 #[test]
+fn group_exit_restores_all_code_tables() {
+    let mut stores = Stores::new();
+    let ch = '@';
+    let before = (
+        stores.catcode(ch),
+        stores.lccode(ch),
+        stores.uccode(ch),
+        stores.sfcode(ch),
+        stores.mathcode(ch),
+        stores.delcode(ch),
+    );
+
+    stores.enter_group();
+    stores.set_catcode(ch, Catcode::Letter);
+    stores.set_lccode(ch, 'a' as u32);
+    stores.set_uccode(ch, 'A' as u32);
+    stores.set_sfcode(ch, 777);
+    stores.set_mathcode(ch, 1234);
+    stores.set_delcode(ch, 5678);
+    assert_eq!(stores.leave_group(), Vec::<Token>::new());
+
+    assert_eq!(
+        (
+            stores.catcode(ch),
+            stores.lccode(ch),
+            stores.uccode(ch),
+            stores.sfcode(ch),
+            stores.mathcode(ch),
+            stores.delcode(ch),
+        ),
+        before
+    );
+}
+
+#[test]
+fn global_code_table_assignments_survive_groups_but_not_snapshot_rollback() {
+    let mut stores = Stores::new();
+    let ch = '@';
+    let snapshot = stores.checkpoint();
+
+    stores.enter_group();
+    stores.set_catcode_global(ch, Catcode::Letter);
+    stores.set_lccode_global(ch, 'a' as u32);
+    stores.set_uccode_global(ch, 'A' as u32);
+    stores.set_sfcode_global(ch, 777);
+    stores.set_mathcode_global(ch, 1234);
+    stores.set_delcode_global(ch, 5678);
+    assert_eq!(stores.leave_group(), Vec::<Token>::new());
+
+    assert_eq!(stores.catcode(ch), Catcode::Letter);
+    assert_eq!(stores.lccode(ch), 'a' as u32);
+    assert_eq!(stores.uccode(ch), 'A' as u32);
+    assert_eq!(stores.sfcode(ch), 777);
+    assert_eq!(stores.mathcode(ch), 1234);
+    assert_eq!(stores.delcode(ch), 5678);
+
+    stores.rollback(&snapshot);
+    assert_eq!(stores.catcode(ch), Catcode::Other);
+    assert_eq!(stores.lccode(ch), 0);
+    assert_eq!(stores.uccode(ch), 0);
+    assert_eq!(stores.sfcode(ch), 1000);
+    assert_eq!(stores.mathcode(ch), ch as u32);
+    assert_eq!(stores.delcode(ch), -1);
+}
+
+#[test]
 fn rollback_restores_token_store_as_part_of_snapshot_tuple() {
     let mut stores = Stores::new();
     let snapshot = stores.checkpoint();

@@ -321,6 +321,7 @@ where
 
 pub(super) fn execute_code_table_assignment<S, H>(
     primitive: UnexpandablePrimitive,
+    prefixes: Prefixes,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
@@ -329,17 +330,36 @@ where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
+    reject_macro_prefixes(prefixes)?;
     let code = scan_i32(input, stores, hooks)?;
     skip_optional_equals_x(input, stores, hooks)?;
     let value = scan_i32(input, stores, hooks)?;
     let ch = char_from_code(code, "code-table character")?;
+    let global = apply_globaldefs(prefixes.global, stores);
     match primitive {
-        UnexpandablePrimitive::CatCode => stores.set_catcode(ch, catcode_from_i32(value)?),
+        UnexpandablePrimitive::CatCode => {
+            let value = catcode_from_i32(value)?;
+            if global {
+                stores.set_catcode_global(ch, value);
+            } else {
+                stores.set_catcode(ch, value);
+            }
+        }
         UnexpandablePrimitive::LcCode => {
-            stores.set_lccode(ch, checked_char_code(value, "\\lccode")? as LcCode)
+            let value = checked_char_code(value, "\\lccode")? as LcCode;
+            if global {
+                stores.set_lccode_global(ch, value);
+            } else {
+                stores.set_lccode(ch, value);
+            }
         }
         UnexpandablePrimitive::UcCode => {
-            stores.set_uccode(ch, checked_char_code(value, "\\uccode")? as UcCode)
+            let value = checked_char_code(value, "\\uccode")? as UcCode;
+            if global {
+                stores.set_uccode_global(ch, value);
+            } else {
+                stores.set_uccode(ch, value);
+            }
         }
         UnexpandablePrimitive::SfCode => {
             if !(0..=32_767).contains(&value) {
@@ -348,7 +368,11 @@ where
                     value,
                 });
             }
-            stores.set_sfcode(ch, value as SfCode);
+            if global {
+                stores.set_sfcode_global(ch, value as SfCode);
+            } else {
+                stores.set_sfcode(ch, value as SfCode);
+            }
         }
         UnexpandablePrimitive::MathCode => {
             if !(0..=32_768).contains(&value) {
@@ -357,7 +381,11 @@ where
                     value,
                 });
             }
-            stores.set_mathcode(ch, value as MathCode);
+            if global {
+                stores.set_mathcode_global(ch, value as MathCode);
+            } else {
+                stores.set_mathcode(ch, value as MathCode);
+            }
         }
         UnexpandablePrimitive::DelCode => {
             if !(-1..=0xFF_FFFF).contains(&value) {
@@ -366,7 +394,11 @@ where
                     value,
                 });
             }
-            stores.set_delcode(ch, value as DelCode);
+            if global {
+                stores.set_delcode_global(ch, value as DelCode);
+            } else {
+                stores.set_delcode(ch, value as DelCode);
+            }
         }
         _ => unreachable!("caller restricts primitive"),
     }

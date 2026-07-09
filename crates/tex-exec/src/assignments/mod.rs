@@ -419,7 +419,7 @@ where
             | UnexpandablePrimitive::SfCode
             | UnexpandablePrimitive::MathCode
             | UnexpandablePrimitive::DelCode => {
-                execute_code_table_assignment(primitive, input, stores, hooks)?;
+                execute_code_table_assignment(primitive, prefixes, input, stores, hooks)?;
                 Ok(CommandOutcome::assigned())
             }
             UnexpandablePrimitive::Font => {
