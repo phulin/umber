@@ -6,10 +6,11 @@ use tex_state::scaled::Scaled;
 use crate::{INF_BAD, TypesetState, badness};
 
 /// Result of TeX's vertical break search.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VerticalBreak {
     pub break_index: Option<usize>,
     pub best_height_plus_depth: Scaled,
+    pub infinite_shrink_glue: Vec<usize>,
 }
 
 /// Error produced by exact TeX scaled arithmetic in `vert_break`.
@@ -25,14 +26,12 @@ pub fn vert_break(
     goal: Scaled,
     max_depth: Scaled,
 ) -> Result<VerticalBreak, VerticalBreakError> {
-    let mut cur_height = Scaled::from_raw(0);
-    let mut stretch = [Scaled::from_raw(0); 4];
-    let mut shrink = Scaled::from_raw(0);
-    let mut prev_depth = Scaled::from_raw(0);
+    let mut acc = VerticalBreakAccum::new();
     let mut least_cost = AWFUL_BAD;
     let mut best = VerticalBreak {
         break_index: None,
         best_height_plus_depth: Scaled::from_raw(0),
+        infinite_shrink_glue: Vec::new(),
     };
     let mut prev_node = nodes.first();
 
@@ -44,29 +43,22 @@ pub fn vert_break(
         match node {
             None => penalty = Some(EJECT_PENALTY),
             Some(Node::HList(box_node)) | Some(Node::VList(box_node)) => {
-                cur_height = add(add(cur_height, prev_depth)?, box_node.height)?;
-                prev_depth = box_node.depth;
+                acc.cur_height = add(add(acc.cur_height, acc.prev_depth)?, box_node.height)?;
+                acc.prev_depth = box_node.depth;
             }
             Some(Node::Rule { height, depth, .. }) => {
-                cur_height = add(
-                    add(cur_height, prev_depth)?,
+                acc.cur_height = add(
+                    add(acc.cur_height, acc.prev_depth)?,
                     height.unwrap_or_else(|| Scaled::from_raw(0)),
                 )?;
-                prev_depth = depth.unwrap_or_else(|| Scaled::from_raw(0));
+                acc.prev_depth = depth.unwrap_or_else(|| Scaled::from_raw(0));
             }
             Some(Node::Glue { .. }) => {
                 if prev_node.is_some_and(precedes_break) {
                     penalty = Some(0);
                     update_spacing = true;
                 } else {
-                    update_spacing_node(
-                        state,
-                        node,
-                        &mut cur_height,
-                        &mut prev_depth,
-                        &mut stretch,
-                        &mut shrink,
-                    )?;
+                    update_spacing_node(state, node, &mut acc, index)?;
                 }
             }
             Some(Node::Kern { .. }) => {
@@ -74,14 +66,7 @@ pub fn vert_break(
                     penalty = Some(0);
                     update_spacing = true;
                 } else {
-                    update_spacing_node(
-                        state,
-                        node,
-                        &mut cur_height,
-                        &mut prev_depth,
-                        &mut stretch,
-                        &mut shrink,
-                    )?;
+                    update_spacing_node(state, node, &mut acc, index)?;
                 }
             }
             Some(Node::Penalty(value)) => penalty = Some(*value),
@@ -102,7 +87,7 @@ pub fn vert_break(
         if let Some(penalty) = penalty
             && penalty < INF_PENALTY
         {
-            let mut cost = vertical_break_badness(goal, cur_height, stretch, shrink)?;
+            let mut cost = vertical_break_badness(goal, acc.cur_height, acc.stretch, acc.shrink)?;
             if cost < AWFUL_BAD {
                 if penalty <= EJECT_PENALTY {
                     cost = penalty;
@@ -118,7 +103,8 @@ pub fn vert_break(
                 least_cost = cost;
                 best = VerticalBreak {
                     break_index: node.map(|_| index),
-                    best_height_plus_depth: add(cur_height, prev_depth)?,
+                    best_height_plus_depth: add(acc.cur_height, acc.prev_depth)?,
+                    infinite_shrink_glue: Vec::new(),
                 };
             }
             if cost == AWFUL_BAD || penalty <= EJECT_PENALTY {
@@ -127,49 +113,64 @@ pub fn vert_break(
         }
 
         if update_spacing {
-            update_spacing_node(
-                state,
-                node,
-                &mut cur_height,
-                &mut prev_depth,
-                &mut stretch,
-                &mut shrink,
-            )?;
+            update_spacing_node(state, node, &mut acc, index)?;
         }
 
-        if prev_depth > max_depth {
-            cur_height = add(cur_height, sub(prev_depth, max_depth)?)?;
-            prev_depth = max_depth;
+        if acc.prev_depth > max_depth {
+            acc.cur_height = add(acc.cur_height, sub(acc.prev_depth, max_depth)?)?;
+            acc.prev_depth = max_depth;
         }
         if let Some(node) = node {
             prev_node = Some(node);
         }
     }
 
+    best.infinite_shrink_glue = acc.infinite_shrink_glue;
     Ok(best)
+}
+
+struct VerticalBreakAccum {
+    cur_height: Scaled,
+    stretch: [Scaled; 4],
+    shrink: Scaled,
+    prev_depth: Scaled,
+    infinite_shrink_glue: Vec<usize>,
+}
+
+impl VerticalBreakAccum {
+    fn new() -> Self {
+        Self {
+            cur_height: Scaled::from_raw(0),
+            stretch: [Scaled::from_raw(0); 4],
+            shrink: Scaled::from_raw(0),
+            prev_depth: Scaled::from_raw(0),
+            infinite_shrink_glue: Vec::new(),
+        }
+    }
 }
 
 fn update_spacing_node(
     state: &impl TypesetState,
     node: Option<&Node>,
-    cur_height: &mut Scaled,
-    prev_depth: &mut Scaled,
-    stretch: &mut [Scaled; 4],
-    shrink: &mut Scaled,
+    acc: &mut VerticalBreakAccum,
+    index: usize,
 ) -> Result<(), VerticalBreakError> {
     let width = match node {
         Some(Node::Kern { amount, .. }) => *amount,
         Some(Node::Glue { spec, .. }) => {
             let spec = state.glue(*spec);
             let order = spec.stretch_order as usize;
-            stretch[order] = add(stretch[order], spec.stretch)?;
-            *shrink = add(*shrink, spec.shrink)?;
+            acc.stretch[order] = add(acc.stretch[order], spec.stretch)?;
+            acc.shrink = add(acc.shrink, spec.shrink)?;
+            if spec.shrink_order != Order::Normal && spec.shrink.raw() != 0 {
+                acc.infinite_shrink_glue.push(index);
+            }
             spec.width
         }
         _ => return Ok(()),
     };
-    *cur_height = add(add(*cur_height, *prev_depth)?, width)?;
-    *prev_depth = Scaled::from_raw(0);
+    acc.cur_height = add(add(acc.cur_height, acc.prev_depth)?, width)?;
+    acc.prev_depth = Scaled::from_raw(0);
     Ok(())
 }
 
@@ -314,5 +315,29 @@ mod tests {
         let split = vert_break(&universe, &nodes, sp(10), sp(10)).expect("vertical break");
 
         assert_eq!(split.break_index, Some(1));
+    }
+
+    #[test]
+    fn reports_infinite_shrink_glue_that_enters_accounting() {
+        let mut universe = Universe::new();
+        let glue = universe.intern_glue(GlueSpec {
+            width: sp(0),
+            stretch: sp(0),
+            stretch_order: Order::Normal,
+            shrink: sp(5),
+            shrink_order: Order::Fil,
+        });
+        let nodes = vec![
+            hbox(&mut universe, 10, 0),
+            Node::Glue {
+                spec: glue,
+                kind: GlueKind::Normal,
+            },
+            Node::Penalty(0),
+        ];
+
+        let split = vert_break(&universe, &nodes, sp(12), sp(10)).expect("vertical break");
+
+        assert_eq!(split.infinite_shrink_glue, vec![1]);
     }
 }

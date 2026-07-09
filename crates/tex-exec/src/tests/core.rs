@@ -685,8 +685,38 @@ fn page_builder_discards_glue_before_first_box() {
     assert!(stores.page_contributions().is_empty());
     assert!(stores.current_page_nodes().iter().all(|node| {
         !matches!(node, tex_state::node::Node::Glue { spec, .. }
-            if stores.glue(*spec).width.raw() == 5 * tex_state::scaled::Scaled::UNITY)
+        if stores.glue(*spec).width.raw() == 5 * tex_state::scaled::Scaled::UNITY)
     }));
+}
+
+#[test]
+fn page_builder_reports_and_normalizes_infinite_shrink_glue() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\topskip=0pt \\vsize=100pt \\setbox0=\\hbox{}\\copy0\
+         \\vskip0pt minus 1fil\\copy0",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("page glue executes");
+
+    let log = terminal_effect_text(&stores);
+    assert!(log.contains("! Infinite glue shrinkage found on current page."));
+    let page_glue = stores
+        .current_page_nodes()
+        .iter()
+        .find_map(|node| match node {
+            tex_state::node::Node::Glue { spec, .. } => {
+                let spec = stores.glue(*spec);
+                (spec.shrink.raw() != 0).then_some(spec)
+            }
+            _ => None,
+        })
+        .expect("page glue");
+    assert_eq!(page_glue.shrink.raw(), tex_state::scaled::Scaled::UNITY);
+    assert_eq!(page_glue.shrink_order, tex_state::glue::Order::Normal);
 }
 
 #[test]
@@ -750,6 +780,95 @@ fn insert_node_captures_split_parameters_and_natural_size() {
     assert_eq!(insert.3.raw(), 3 * tex_state::scaled::Scaled::UNITY);
     assert_eq!(insert.4, 77);
     assert_eq!(stores.nodes(insert.5).len(), 2);
+}
+
+#[test]
+fn insertion_skip_reports_infinite_shrink_correction() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\topskip=0pt \\vsize=100pt \\count7=1000 \\dimen7=100pt \
+         \\skip7=0pt minus 1fil \\insert7{\\hrule height1pt}",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("insert skip executes");
+
+    let log = terminal_effect_text(&stores);
+    assert!(log.contains("! Infinite glue shrinkage inserted from \\skip7."));
+    assert_eq!(
+        stores
+            .page_dimension(tex_state::page::PageDimension::Shrink)
+            .raw(),
+        tex_state::scaled::Scaled::UNITY
+    );
+}
+
+#[test]
+fn split_insertion_reports_and_normalizes_infinite_shrink_content() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\topskip=0pt \\vsize=20pt \\count7=1000 \\dimen7=12pt \
+         \\insert7{\\hrule height8pt\\vskip0pt minus 1fil\\penalty123\\hrule height8pt}",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("split insert executes");
+
+    let log = terminal_effect_text(&stores);
+    assert!(log.contains("! Infinite glue shrinkage found in box being split."));
+    let content = stores
+        .current_page_nodes()
+        .iter()
+        .find_map(|node| match node {
+            tex_state::node::Node::Ins { content, .. } => Some(*content),
+            _ => None,
+        })
+        .expect("insert content");
+    let split_glue = stores
+        .nodes(content)
+        .iter()
+        .find_map(|node| match node {
+            tex_state::node::Node::Glue { spec, .. } => Some(stores.glue(*spec)),
+            _ => None,
+        })
+        .expect("split glue");
+    assert_eq!(split_glue.shrink.raw(), tex_state::scaled::Scaled::UNITY);
+    assert_eq!(split_glue.shrink_order, tex_state::glue::Order::Normal);
+}
+
+#[test]
+fn vsplit_reports_and_normalizes_infinite_shrink_glue() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\setbox0=\\vbox{\\hrule height10pt\\vskip0pt minus 1fil\\hrule height10pt}\
+         \\setbox1=\\vsplit0 to 30pt",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("\\vsplit executes");
+
+    let log = terminal_effect_text(&stores);
+    assert!(log.contains("! Infinite glue shrinkage found in box being split."));
+    let box1 = stores.box_reg(1).expect("split box");
+    let [tex_state::node::Node::VList(box_node)] = stores.nodes(box1) else {
+        panic!("box1 should be a vbox");
+    };
+    let split_glue = stores
+        .nodes(box_node.children)
+        .iter()
+        .find_map(|node| match node {
+            tex_state::node::Node::Glue { spec, .. } => Some(stores.glue(*spec)),
+            _ => None,
+        })
+        .expect("split glue");
+    assert_eq!(split_glue.shrink.raw(), tex_state::scaled::Scaled::UNITY);
+    assert_eq!(split_glue.shrink_order, tex_state::glue::Order::Normal);
 }
 
 #[test]

@@ -276,6 +276,40 @@ pub(crate) fn report_dimension_diagnostic(stores: &mut Universe, diagnostic: Dim
     }
 }
 
+pub(crate) fn report_page_infinite_shrinkage(stores: &mut Universe) {
+    write_diagnostic(
+        stores,
+        "\n! Infinite glue shrinkage found on current page.\n\
+The page about to be output contains some infinitely\n\
+shrinkable glue, e.g., `\\vss' or `\\vskip 0pt minus 1fil'.\n\
+Such glue doesn't belong there; but you can safely proceed,\n\
+since the offensive shrinkability has been made finite.\n",
+    );
+}
+
+pub(crate) fn report_split_infinite_shrinkage(stores: &mut Universe) {
+    write_diagnostic(
+        stores,
+        "\n! Infinite glue shrinkage found in box being split.\n\
+The box you are \\vsplitting contains some infinitely\n\
+shrinkable glue, e.g., `\\vss' or `\\vskip 0pt minus 1fil'.\n\
+Such glue doesn't belong there; but you can safely proceed,\n\
+since the offensive shrinkability has been made finite.\n",
+    );
+}
+
+pub(crate) fn report_insertion_skip_infinite_shrinkage(stores: &mut Universe, class: u16) {
+    write_diagnostic(
+        stores,
+        &format!(
+            "\n! Infinite glue shrinkage inserted from \\skip{class}.\n\
+The correction glue for page breaking with insertions\n\
+must have finite shrinkability. But you may proceed,\n\
+since the offensive shrinkability has been made finite.\n"
+        ),
+    );
+}
+
 pub(crate) fn execute_change_case<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,

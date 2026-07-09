@@ -15,6 +15,7 @@ use tex_typeset::{
 };
 
 use super::*;
+use crate::diagnostics;
 use crate::splitting::{prune_page_top, vpack_natural};
 use crate::vertical::{
     append_node_to_current_list, append_vertical_contribution, build_page_if_outer_vertical,
@@ -451,6 +452,7 @@ fn split_vbox_register(
     let mut split_nodes = stores.nodes(children).to_vec();
     let split =
         vert_break(stores, &split_nodes, height, split_max_depth).map_err(vertical_break_error)?;
+    normalize_split_infinite_shrink(stores, &mut split_nodes, &split.infinite_shrink_glue);
     let remainder = match split.break_index {
         Some(index) => split_nodes.split_off(index),
         None => Vec::new(),
@@ -465,6 +467,24 @@ fn split_vbox_register(
     Ok(Some(Node::VList(
         vpack(stores, split_list, PackSpec::Exactly(height), params).node,
     )))
+}
+
+fn normalize_split_infinite_shrink(stores: &mut Universe, nodes: &mut [Node], indices: &[usize]) {
+    for &index in indices {
+        let Some(Node::Glue { spec, kind }) = nodes.get(index) else {
+            continue;
+        };
+        let mut finite = stores.glue(*spec);
+        if finite.shrink_order == Order::Normal || finite.shrink.raw() == 0 {
+            continue;
+        }
+        diagnostics::report_split_infinite_shrinkage(stores);
+        finite.shrink_order = Order::Normal;
+        nodes[index] = Node::Glue {
+            spec: stores.intern_glue(finite),
+            kind: *kind,
+        };
+    }
 }
 
 fn replace_split_source(

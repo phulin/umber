@@ -11,7 +11,7 @@ use tex_state::page::{
 use tex_state::scaled::{Scaled, nx_plus_y, x_over_n};
 use tex_typeset::{INF_BAD, VerticalBreakError, badness, vert_break};
 
-use crate::ExecError;
+use crate::{ExecError, diagnostics};
 
 pub(crate) fn build_page(stores: &mut Universe) -> Result<(), ExecError> {
     if stores.page_fire_up().is_some() {
@@ -37,12 +37,12 @@ pub(crate) fn build_page(stores: &mut Universe) -> Result<(), ExecError> {
                     if stores.page_fire_up().is_some() {
                         return Ok(());
                     }
-                    update_glue_or_kern(stores, &node)?;
-                    contribute_front(stores)?;
+                    let node = update_glue_or_kern(stores, &node)?;
+                    contribute_front_as(stores, node)?;
                 } else {
                     let _ = spec;
-                    update_glue_or_kern(stores, &node)?;
-                    contribute_front(stores)?;
+                    let node = update_glue_or_kern(stores, &node)?;
+                    contribute_front_as(stores, node)?;
                 }
             }
             Node::Kern { .. } => {
@@ -55,11 +55,11 @@ pub(crate) fn build_page(stores: &mut Universe) -> Result<(), ExecError> {
                     if stores.page_fire_up().is_some() {
                         return Ok(());
                     }
-                    update_glue_or_kern(stores, &node)?;
-                    contribute_front(stores)?;
+                    let node = update_glue_or_kern(stores, &node)?;
+                    contribute_front_as(stores, node)?;
                 } else {
-                    update_glue_or_kern(stores, &node)?;
-                    contribute_front(stores)?;
+                    let node = update_glue_or_kern(stores, &node)?;
+                    contribute_front_as(stores, node)?;
                 }
             }
             Node::Penalty(penalty) => {
@@ -77,8 +77,8 @@ pub(crate) fn build_page(stores: &mut Universe) -> Result<(), ExecError> {
                 if stores.page_contents() == PageContents::Empty {
                     stores.freeze_page_specs(PageContents::InsertsOnly);
                 }
-                prepare_insertion(stores, &node)?;
-                contribute_front(stores)?;
+                let node = prepare_insertion(stores, &node)?.unwrap_or(node);
+                contribute_front_as(stores, node)?;
             }
             Node::Whatsit(_) | Node::Mark { .. } => {
                 contribute_front(stores)?;
@@ -97,7 +97,7 @@ pub(crate) fn build_page(stores: &mut Universe) -> Result<(), ExecError> {
     Ok(())
 }
 
-fn prepare_insertion(stores: &mut Universe, node: &Node) -> Result<(), ExecError> {
+fn prepare_insertion(stores: &mut Universe, node: &Node) -> Result<Option<Node>, ExecError> {
     let Node::Ins {
         class,
         size,
@@ -107,13 +107,14 @@ fn prepare_insertion(stores: &mut Universe, node: &Node) -> Result<(), ExecError
         ..
     } = node
     else {
-        return Ok(());
+        return Ok(None);
     };
 
     let mut insertion = match stores.page_insertion(*class) {
         Some(insertion) => insertion,
         None => create_page_insertion(stores, *class)?,
     };
+    let mut replacement = None;
 
     match insertion.status() {
         PageInsertionStatus::SplitUp { .. } => {
@@ -131,10 +132,11 @@ fn prepare_insertion(stores: &mut Universe, node: &Node) -> Result<(), ExecError
                 stores.set_page_dimension(PageDimension::Goal, goal);
                 insertion.set_height(add(insertion.height(), *size)?);
             } else {
-                split_page_insertion(
+                replacement = split_page_insertion(
                     stores,
                     &mut insertion,
                     current_index,
+                    node,
                     *content,
                     *split_max_depth,
                 )?;
@@ -143,7 +145,7 @@ fn prepare_insertion(stores: &mut Universe, node: &Node) -> Result<(), ExecError
     }
 
     stores.upsert_page_insertion(insertion);
-    Ok(())
+    Ok(replacement)
 }
 
 fn create_page_insertion(stores: &mut Universe, class: u16) -> Result<PageInsertion, ExecError> {
@@ -157,6 +159,9 @@ fn create_page_insertion(stores: &mut Universe, class: u16) -> Result<PageInsert
     add_glue_stretch(stores, skip)?;
     let shrink = add(stores.page_dimension(PageDimension::Shrink), skip.shrink)?;
     stores.set_page_dimension(PageDimension::Shrink, shrink);
+    if skip.shrink_order != Order::Normal && skip.shrink.raw() != 0 {
+        diagnostics::report_insertion_skip_infinite_shrinkage(stores, class);
+    }
     Ok(insertion)
 }
 
@@ -189,9 +194,10 @@ fn split_page_insertion(
     stores: &mut Universe,
     insertion: &mut PageInsertion,
     current_index: usize,
+    node: &Node,
     content: tex_state::ids::NodeListId,
     split_max_depth: Scaled,
-) -> Result<(), ExecError> {
+) -> Result<Option<Node>, ExecError> {
     let class = insertion.class();
     let count = stores.count(class);
     let mut capacity = if count <= 0 {
@@ -211,8 +217,15 @@ fn split_page_insertion(
         capacity = remaining_cap;
     }
 
-    let split = vert_break(stores, stores.nodes(content), capacity, split_max_depth)
+    let mut content_nodes = stores.nodes(content).to_vec();
+    let split = vert_break(stores, &content_nodes, capacity, split_max_depth)
         .map_err(vertical_break_error)?;
+    let replacement = normalize_insert_content_shrink(
+        stores,
+        node,
+        &mut content_nodes,
+        &split.infinite_shrink_glue,
+    );
     insertion.set_height(add(insertion.height(), split.best_height_plus_depth)?);
     let scaled_best = scaled_insertion_size(split.best_height_plus_depth, count)?;
     let goal = sub(stores.page_dimension(PageDimension::Goal), scaled_best)?;
@@ -225,12 +238,12 @@ fn split_page_insertion(
     match split.break_index {
         None => add_insert_penalty(stores, EJECT_PENALTY),
         Some(index) => {
-            if let Some(Node::Penalty(penalty)) = stores.nodes(content).get(index) {
+            if let Some(Node::Penalty(penalty)) = content_nodes.get(index) {
                 add_insert_penalty(stores, *penalty);
             }
         }
     }
-    Ok(())
+    Ok(replacement)
 }
 
 fn add_insert_penalty(stores: &mut Universe, penalty: i32) {
@@ -295,17 +308,24 @@ fn prepare_box_or_rule(stores: &mut Universe, node: &Node) -> Result<(), ExecErr
     Ok(())
 }
 
-fn update_glue_or_kern(stores: &mut Universe, node: &Node) -> Result<(), ExecError> {
+fn update_glue_or_kern(stores: &mut Universe, node: &Node) -> Result<Node, ExecError> {
+    let mut replacement = None;
     let width = match node {
         Node::Kern { amount, .. } => *amount,
-        Node::Glue { spec, .. } => {
+        Node::Glue { spec, kind } => {
             let spec = stores.glue(*spec);
+            let spec = finite_page_shrink(stores, spec);
+            let finite_id = stores.intern_glue(spec);
+            replacement = Some(Node::Glue {
+                spec: finite_id,
+                kind: *kind,
+            });
             add_glue_stretch(stores, spec)?;
             let shrink = add(stores.page_dimension(PageDimension::Shrink), spec.shrink)?;
             stores.set_page_dimension(PageDimension::Shrink, shrink);
             spec.width
         }
-        _ => return Ok(()),
+        _ => return Ok(node.clone()),
     };
     let total = add(
         stores.page_dimension(PageDimension::Total),
@@ -314,7 +334,67 @@ fn update_glue_or_kern(stores: &mut Universe, node: &Node) -> Result<(), ExecErr
     let total = add(total, width)?;
     stores.set_page_dimension(PageDimension::Total, total);
     stores.set_page_dimension(PageDimension::Depth, Scaled::from_raw(0));
-    Ok(())
+    Ok(replacement.unwrap_or_else(|| node.clone()))
+}
+
+fn finite_page_shrink(stores: &mut Universe, mut spec: GlueSpec) -> GlueSpec {
+    if spec.shrink_order != Order::Normal && spec.shrink.raw() != 0 {
+        diagnostics::report_page_infinite_shrinkage(stores);
+        spec.shrink_order = Order::Normal;
+    }
+    spec
+}
+
+fn normalize_insert_content_shrink(
+    stores: &mut Universe,
+    insert_node: &Node,
+    content_nodes: &mut [Node],
+    indices: &[usize],
+) -> Option<Node> {
+    if indices.is_empty() {
+        return None;
+    }
+
+    let mut changed = false;
+    for &index in indices {
+        let Some(Node::Glue { spec, kind }) = content_nodes.get(index) else {
+            continue;
+        };
+        let mut finite = stores.glue(*spec);
+        if finite.shrink_order == Order::Normal || finite.shrink.raw() == 0 {
+            continue;
+        }
+        diagnostics::report_split_infinite_shrinkage(stores);
+        finite.shrink_order = Order::Normal;
+        content_nodes[index] = Node::Glue {
+            spec: stores.intern_glue(finite),
+            kind: *kind,
+        };
+        changed = true;
+    }
+
+    if !changed {
+        return None;
+    }
+    let Node::Ins {
+        class,
+        size,
+        split_top_skip,
+        split_max_depth,
+        floating_penalty,
+        ..
+    } = insert_node
+    else {
+        return None;
+    };
+    Some(Node::Ins {
+        class: *class,
+        size: *size,
+        split_top_skip: *split_top_skip,
+        split_max_depth: *split_max_depth,
+        floating_penalty: *floating_penalty,
+        content: stores.freeze_node_list(content_nodes),
+    })
 }
 
 fn add_glue_stretch(stores: &mut Universe, spec: GlueSpec) -> Result<(), ExecError> {
@@ -397,6 +477,15 @@ fn page_badness(stores: &Universe) -> Result<i32, ExecError> {
 fn contribute_front(stores: &mut Universe) -> Result<(), ExecError> {
     ensure_max_depth(stores)?;
     if let Some(node) = stores.pop_page_contribution_front() {
+        stores.push_current_page_node(node);
+    }
+    Ok(())
+}
+
+fn contribute_front_as(stores: &mut Universe, node: Node) -> Result<(), ExecError> {
+    ensure_max_depth(stores)?;
+    if stores.pop_page_contribution_front().is_some() {
+        stores.update_page_last_from_node(&node);
         stores.push_current_page_node(node);
     }
     Ok(())
