@@ -85,6 +85,34 @@ fn breaks_at_legal_glue() {
 }
 
 #[test]
+fn equal_demerits_prefer_later_route_in_same_line_and_fitness_class() {
+    let candidate = |position, fitness| Candidate {
+        position,
+        width_position: position,
+        penalty: 0,
+        line: 2,
+        fitness,
+        demerits: 221,
+        path_demerits: 221,
+        previous: Some(0),
+        hyphenated: false,
+    };
+    let candidates = vec![
+        candidate(0, Fitness::Decent),
+        candidate(4, Fitness::Decent),
+        candidate(6, Fitness::Decent),
+        candidate(6, Fitness::Loose),
+    ];
+    let mut best = Vec::new();
+
+    record_best_candidate(&mut best, &candidates, 1);
+    record_best_candidate(&mut best, &candidates, 2);
+    record_best_candidate(&mut best, &candidates, 3);
+
+    assert_eq!(best, vec![2, 3]);
+}
+
+#[test]
 fn parshape_repeats_last_line_and_overrides_hanging() {
     let shape = LineShape {
         hsize: sp(100),

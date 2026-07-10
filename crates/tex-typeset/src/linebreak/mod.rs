@@ -274,6 +274,8 @@ fn run_pass<S: TypesetState>(
 
     for bp in breakpoints {
         let mut next = Vec::new();
+        let mut best_new = Vec::new();
+        let forced = bp.penalty <= EJECT_PENALTY;
         for &active_id in &active {
             let active_candidate = &candidates[active_id];
             let mut widths = prefix.between(active_candidate.width_position, bp.width_position);
@@ -285,7 +287,6 @@ fn run_pass<S: TypesetState>(
                 Scaled::from_raw(0)
             };
             let b = line_badness(widths, target, extra);
-            let forced = bp.penalty <= EJECT_PENALTY;
             let artificial =
                 final_pass && next.is_empty() && active.len() == 1 && (b > INF_BAD || forced);
             let deactivates = b > INF_BAD || forced;
@@ -310,21 +311,40 @@ fn run_pass<S: TypesetState>(
                     previous: Some(active_id),
                     hyphenated: bp.hyphenated,
                 });
-                next.push(id);
-                if forced && bp.position >= nodes.len() {
-                    finals.push(id);
-                }
+                record_best_candidate(&mut best_new, &candidates, id);
             }
             if !deactivates {
                 next.push(active_id);
             }
         }
+        if forced && bp.position >= nodes.len() {
+            finals.extend(best_new.iter().copied());
+        }
+        next.extend(best_new);
         active = next;
     }
 
     apply_final_hyphen_demerits(&mut candidates, &finals, params.final_hyphen_demerits);
     let chosen = choose_final(&candidates, &finals, params.looseness)?;
     Some(reconstruct(nodes, &candidates, chosen))
+}
+
+fn record_best_candidate(best: &mut Vec<usize>, candidates: &[Candidate], candidate_id: usize) {
+    let candidate = &candidates[candidate_id];
+    let same_class = best.iter().position(|&id| {
+        let current = &candidates[id];
+        current.line == candidate.line && current.fitness == candidate.fitness
+    });
+    match same_class {
+        Some(index) if candidate.path_demerits <= candidates[best[index]].path_demerits => {
+            // TeX82's line_break uses `d <= minimal_demerits[fit_class]`,
+            // so an equal route through a later active node replaces the
+            // earlier route in the same line-number and fitness class.
+            best[index] = candidate_id;
+        }
+        None => best.push(candidate_id),
+        Some(_) => {}
+    }
 }
 
 fn compute_demerits(
