@@ -20,7 +20,9 @@ mod vsplit;
 
 use leaders::{leader_glue_kind, scan_leader_glue, scan_leader_payload};
 pub(crate) use packaging::scan_box_group;
-use packaging::{first_box_node, kind_for_primitive, scan_box_node, scan_box_value};
+use packaging::{
+    ScannedBoxValue, first_box_node, kind_for_primitive, scan_box_node, scan_box_value,
+};
 pub(super) use packaging::{hpack_with_overfull_rule, scan_required_box_node};
 use vsplit::scan_vsplit_node;
 
@@ -70,7 +72,11 @@ where
     skip_optional_equals_x(input, stores, hooks)?;
     let boundary = stores.begin_box_build();
     let value = match scan_box_value(input, stores, hooks, context) {
-        Ok(Some(node)) => {
+        Ok(Some(ScannedBoxValue::Fresh(node))) => {
+            let list = stores.freeze_node_list(&[node]);
+            Some(list)
+        }
+        Ok(Some(ScannedBoxValue::Shared(node))) => {
             let node = stores.clone_node_to_epoch(node);
             let list = stores.freeze_node_list(&[node]);
             Some(list)

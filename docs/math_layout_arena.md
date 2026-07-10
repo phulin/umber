@@ -68,6 +68,14 @@ Lowering is iterative, so pathologically deep math input cannot overflow the
 Rust stack. No raw node store or handle constructor crosses the aggregate
 `Universe` boundary.
 
+Fresh box assignments preserve this bottom-up epoch graph through the
+`\setbox` commit boundary. The assignment promotes the graph once and then
+releases the construction suffix; it does not first clone every just-lowered
+child list into that same epoch. Values sourced from an existing box register
+remain explicitly classified as shared and take the cloning path required to
+detach their survivor-owned children. This ownership distinction stays in the
+execution layer and does not expose arena identity outside `Universe`.
+
 ## Compatibility and validation
 
 Public inspection helpers expose list slices/iterators without exposing span

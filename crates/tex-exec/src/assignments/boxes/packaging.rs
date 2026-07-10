@@ -23,6 +23,21 @@ pub(super) enum BoxKind {
     VTop,
 }
 
+/// A scanned box value together with whether its child lists already belong to
+/// the current construction epoch.
+pub(super) enum ScannedBoxValue {
+    Fresh(Node),
+    Shared(Node),
+}
+
+impl ScannedBoxValue {
+    pub(super) fn into_node(self) -> Node {
+        match self {
+            Self::Fresh(node) | Self::Shared(node) => node,
+        }
+    }
+}
+
 pub(in crate::assignments) fn scan_required_box_node<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
@@ -33,7 +48,9 @@ where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    scan_box_value(input, stores, hooks, context)?.ok_or(ExecError::MissingToken { context: "box" })
+    scan_box_value(input, stores, hooks, context)?
+        .map(ScannedBoxValue::into_node)
+        .ok_or(ExecError::MissingToken { context: "box" })
 }
 
 pub(super) fn scan_box_value<S, H>(
@@ -41,7 +58,7 @@ pub(super) fn scan_box_value<S, H>(
     stores: &mut Universe,
     hooks: &mut H,
     context: TracedTokenWord,
-) -> Result<Option<Node>, ExecError>
+) -> Result<Option<ScannedBoxValue>, ExecError>
 where
     S: InputSource,
     H: ExpansionHooks<S>,
@@ -56,7 +73,9 @@ where
         Meaning::UnexpandablePrimitive(primitive @ UnexpandablePrimitive::HBox)
         | Meaning::UnexpandablePrimitive(primitive @ UnexpandablePrimitive::VBox)
         | Meaning::UnexpandablePrimitive(primitive @ UnexpandablePrimitive::VTop) => {
-            scan_box_node(kind_for_primitive(primitive)?, input, stores, hooks, traced).map(Some)
+            scan_box_node(kind_for_primitive(primitive)?, input, stores, hooks, traced)
+                .map(ScannedBoxValue::Fresh)
+                .map(Some)
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Box)
         | Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Copy) => {
@@ -69,10 +88,11 @@ where
             } else {
                 stores.box_reg(index)
             };
-            Ok(first_box_node(stores, id))
+            Ok(first_box_node(stores, id).map(ScannedBoxValue::Shared))
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VSplit) => {
             scan_vsplit_node(input, stores, hooks, traced)
+                .map(|value| value.map(ScannedBoxValue::Fresh))
         }
         _ => Err(ExecError::MissingToken { context: "box" }),
     }
