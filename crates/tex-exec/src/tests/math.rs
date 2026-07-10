@@ -946,17 +946,17 @@ fn assert_replayed_math_error_is_source_backed(source: &str) {
     );
 
     let origin = err.primary_origin().expect("error should retain an origin");
-    let OriginRecord::Source(source_origin) = stores.origin(origin) else {
-        panic!("expected source origin, got {:?}", stores.origin(origin));
+    let OriginRecord::SourceSpan(source_span) = stores.origin(origin) else {
+        panic!("expected source span, got {:?}", stores.origin(origin));
     };
-    assert_eq!(
-        source_origin.byte_offset(),
+    let expected_offset =
         u64::try_from(source.find(r"\missing").expect("missing token in fixture"))
-            .expect("fixture offset should fit in u64")
-    );
-    assert!(
-        source_origin.input_record().is_some(),
-        "source origin should retain its World input record"
+            .expect("fixture offset should fit in u64");
+    assert_eq!(
+        source_span.lo(),
+        stores
+            .source_position(tex_state::SourceId::new(0), expected_offset)
+            .expect("source position")
     );
 
     let rendered = err.format_with_provenance(&stores);

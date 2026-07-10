@@ -8,12 +8,17 @@ use tex_state::ProvenanceResolver;
 use tex_state::Universe;
 use tex_state::WorldError;
 use tex_state::meaning::ExpandablePrimitive;
+use tex_state::provenance::DiagnosticSite;
 use tex_state::token::{OriginId, Token, TracedTokenWord};
 
 use crate::Mode;
 
 #[derive(Debug)]
 pub enum ExecError {
+    Captured {
+        error: Box<ExecError>,
+        site: DiagnosticSite,
+    },
     Expand(ExpandError),
     Lex(LexError),
     ScanToks(ScanToksError),
@@ -144,6 +149,7 @@ pub enum ExecError {
 impl fmt::Display for ExecError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Captured { error, .. } => write!(f, "{error}"),
             Self::Expand(err) => write!(f, "{err}"),
             Self::Lex(err) => write!(f, "{err}"),
             Self::ScanToks(err) => write!(f, "{err}"),
@@ -274,6 +280,7 @@ impl fmt::Display for ExecError {
 impl std::error::Error for ExecError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::Captured { error, .. } => Some(error),
             Self::Expand(err) => Some(err),
             Self::Lex(err) => Some(err),
             Self::ScanToks(err) => Some(err),
@@ -335,6 +342,7 @@ impl ExecError {
     #[must_use]
     pub fn primary_origin(&self) -> Option<OriginId> {
         match self {
+            Self::Captured { site, .. } => site.primary_origin(),
             Self::Expand(err) => err.primary_origin(),
             Self::ScanGlue(err) => err.primary_origin(),
             Self::UndefinedControlSequence { origin, .. }
@@ -357,8 +365,8 @@ impl ExecError {
             Self::MissingLeaderPayload { context }
             | Self::LeadersNotFollowedByProperGlue { context } => Some(context.origin()),
             Self::PrefixWithNonDefinition { origin } => *origin,
-            Self::Lex(_)
-            | Self::ScanToks(_)
+            Self::Lex(err) => err.diagnostic_site().primary_origin(),
+            Self::ScanToks(_)
             | Self::World(_)
             | Self::FontParse(_)
             | Self::FontOpen { .. }
@@ -391,10 +399,44 @@ impl ExecError {
         }
     }
 
+    #[must_use]
+    pub fn diagnostic_site(&self) -> DiagnosticSite {
+        match self {
+            Self::Captured { site, .. } => site.clone(),
+            Self::Lex(err) => err.diagnostic_site().clone(),
+            Self::Expand(err) => err.diagnostic_site(),
+            _ => DiagnosticSite::new(self.primary_origin(), [], []),
+        }
+    }
+
+    pub(crate) fn capture<S: tex_lex::InputSource>(self, input: &tex_lex::InputStack<S>) -> Self {
+        if matches!(self, Self::Captured { .. }) {
+            return self;
+        }
+        let inherited = self.diagnostic_site();
+        if !inherited.expansion_trace().is_empty() {
+            return Self::Captured {
+                error: Box::new(self),
+                site: inherited,
+            };
+        }
+        let site =
+            input.diagnostic_site(self.primary_origin(), inherited.related().iter().copied());
+        if site.expansion_trace().is_empty() {
+            self
+        } else {
+            Self::Captured {
+                error: Box::new(self),
+                site,
+            }
+        }
+    }
+
     /// Renders this error with lazy provenance context from the live universe.
     #[must_use]
     pub fn format_with_provenance(&self, stores: &Universe) -> String {
-        ProvenanceResolver::new(stores).render_diagnostic(&self.to_string(), self.primary_origin())
+        ProvenanceResolver::new(stores)
+            .render_diagnostic_site(&self.to_string(), &self.diagnostic_site())
     }
 }
 

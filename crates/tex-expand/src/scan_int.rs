@@ -170,7 +170,7 @@ impl ScanIntError {
             }
             Self::UnsupportedInternalInteger { context } => Some(context.origin()),
             Self::Expand(err) => err.primary_origin(),
-            Self::Lex(_) => None,
+            Self::Lex(err) => err.diagnostic_site().primary_origin(),
         }
     }
 }

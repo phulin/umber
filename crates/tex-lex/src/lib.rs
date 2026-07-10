@@ -483,6 +483,8 @@ pub struct InputStack<S> {
     next_condition_token: u64,
     alignment_cells: Vec<AlignmentCellInput>,
     last_direct_delivery: Option<DirectSourceDelivery>,
+    last_delivery_trace: [OriginId; DiagnosticSite::MAX_EXPANSION_TRACE],
+    last_delivery_trace_len: usize,
 }
 
 /// Proof that one token was delivered directly from a physical source frame.
@@ -539,6 +541,8 @@ impl<S> InputStack<S> {
             next_condition_token: 0,
             alignment_cells: Vec::new(),
             last_direct_delivery: None,
+            last_delivery_trace: [OriginId::UNKNOWN; DiagnosticSite::MAX_EXPANSION_TRACE],
+            last_delivery_trace_len: 0,
         };
         stack.push_source(source);
         stack
@@ -636,6 +640,8 @@ impl<S> InputStack<S> {
                 }),
             alignment_cells: Vec::new(),
             last_direct_delivery: None,
+            last_delivery_trace: [OriginId::UNKNOWN; DiagnosticSite::MAX_EXPANSION_TRACE],
+            last_delivery_trace_len: 0,
         })
     }
 
@@ -926,13 +932,16 @@ impl<S> InputStack<S> {
         primary: Option<OriginId>,
         related: impl IntoIterator<Item = RelatedLocation>,
     ) -> DiagnosticSite {
-        let trace = self.frames.iter().rev().filter_map(|frame| match frame {
+        let live_trace = self.frames.iter().rev().filter_map(|frame| match frame {
             InputFrame::TokenList(frame) if frame.macro_invocation != OriginId::UNKNOWN => {
                 Some(frame.macro_invocation)
             }
             InputFrame::Source(_) | InputFrame::TokenList(_) | InputFrame::Condition { .. } => None,
         });
-        DiagnosticSite::new(primary, related, trace)
+        let retained_trace = self.last_delivery_trace[..self.last_delivery_trace_len]
+            .iter()
+            .copied();
+        DiagnosticSite::new(primary, related, live_trace.chain(retained_trace))
     }
 
     /// Takes proof for the immediately preceding delivery when it was the
@@ -1043,17 +1052,21 @@ pub enum LexError {
     Input {
         error: WorldError,
         context: LexSourceContext,
+        site: Box<DiagnosticSite>,
     },
     InvalidCharacter {
         ch: char,
         context: LexSourceContext,
+        site: Box<DiagnosticSite>,
     },
     InvalidUtf8 {
         context: LexSourceContext,
+        site: Box<DiagnosticSite>,
     },
     MissingControlSequence {
         name: String,
         context: LexSourceContext,
+        site: Box<DiagnosticSite>,
     },
 }
 
@@ -1068,7 +1081,7 @@ impl fmt::Display for LexError {
                     *ch as u32
                 )
             }
-            Self::InvalidUtf8 { context } => write!(
+            Self::InvalidUtf8 { context, .. } => write!(
                 f,
                 "input contains invalid UTF-8 in physical byte range {}..{}",
                 context.byte_offset, context.byte_end
@@ -1097,9 +1110,48 @@ impl LexError {
         match self {
             Self::Input { context, .. }
             | Self::InvalidCharacter { context, .. }
-            | Self::InvalidUtf8 { context }
+            | Self::InvalidUtf8 { context, .. }
             | Self::MissingControlSequence { context, .. } => *context,
         }
+    }
+
+    #[must_use]
+    pub const fn diagnostic_site(&self) -> &DiagnosticSite {
+        match self {
+            Self::Input { site, .. }
+            | Self::InvalidCharacter { site, .. }
+            | Self::InvalidUtf8 { site, .. }
+            | Self::MissingControlSequence { site, .. } => site,
+        }
+    }
+
+    fn with_physical_site(mut self, stores: &mut impl ExpansionState) -> Self {
+        let context = self.source_context();
+        let origin =
+            stores.source_range_origin(context.source_id, context.byte_offset, context.byte_end);
+        let site = DiagnosticSite::primary(origin);
+        match &mut self {
+            Self::Input { site: value, .. }
+            | Self::InvalidCharacter { site: value, .. }
+            | Self::InvalidUtf8 { site: value, .. }
+            | Self::MissingControlSequence { site: value, .. } => **value = site,
+        }
+        self
+    }
+
+    fn with_expansion_trace(mut self, trace: impl IntoIterator<Item = OriginId>) -> Self {
+        let captured = DiagnosticSite::new(
+            self.diagnostic_site().primary_origin(),
+            self.diagnostic_site().related().iter().copied(),
+            trace,
+        );
+        match &mut self {
+            Self::Input { site, .. }
+            | Self::InvalidCharacter { site, .. }
+            | Self::InvalidUtf8 { site, .. }
+            | Self::MissingControlSequence { site, .. } => **site = captured,
+        }
+        self
     }
 }
 
@@ -1190,6 +1242,14 @@ where
         &mut self,
         stores: &mut impl ExpansionState,
     ) -> Result<Option<TracedTokenWord>, LexError> {
+        let result = self.next_traced_token_inner(stores);
+        result.map_err(|error| self.capture_lex_error(error))
+    }
+
+    fn next_traced_token_inner(
+        &mut self,
+        stores: &mut impl ExpansionState,
+    ) -> Result<Option<TracedTokenWord>, LexError> {
         self.last_direct_delivery = None;
         loop {
             let Some(frame_index) = self.current_token_frame_index() else {
@@ -1213,7 +1273,10 @@ where
                         Some(
                             TracedTokenReplay::Deliver(token)
                             | TracedTokenReplay::DeliverNoExpand(token),
-                        ) => return Ok(Some(token)),
+                        ) => {
+                            self.record_delivery_trace();
+                            return Ok(Some(token));
+                        }
                         None => {
                             self.frames.remove(frame_index);
                         }
@@ -1222,6 +1285,7 @@ where
                 InputFrame::Source(source) => {
                     ensure_source_registered(source, stores);
                     if let Some(token) = source.frame.pending.pop_front() {
+                        self.record_delivery_trace();
                         return Ok(Some(token));
                     }
 
@@ -1265,6 +1329,7 @@ where
                         start: start.byte_offset,
                         end: end.byte_offset,
                     });
+                    self.record_delivery_trace();
                     return Ok(Some(token));
                 }
                 InputFrame::Condition { .. } => {
@@ -1296,6 +1361,14 @@ where
         &mut self,
         stores: &mut impl ExpansionState,
     ) -> Result<Option<TracedExpansionToken>, LexError> {
+        let result = self.next_traced_expansion_token_inner(stores);
+        result.map_err(|error| self.capture_lex_error(error))
+    }
+
+    fn next_traced_expansion_token_inner(
+        &mut self,
+        stores: &mut impl ExpansionState,
+    ) -> Result<Option<TracedExpansionToken>, LexError> {
         self.last_direct_delivery = None;
         loop {
             let Some(frame_index) = self.current_token_frame_index() else {
@@ -1317,9 +1390,11 @@ where
                             continue;
                         }
                         Some(TracedTokenReplay::Deliver(token)) => {
+                            self.record_delivery_trace();
                             return Ok(Some(TracedExpansionToken::new(token, false)));
                         }
                         Some(TracedTokenReplay::DeliverNoExpand(token)) => {
+                            self.record_delivery_trace();
                             return Ok(Some(TracedExpansionToken::new(token, true)));
                         }
                         None => {
@@ -1330,6 +1405,7 @@ where
                 InputFrame::Source(source) => {
                     ensure_source_registered(source, stores);
                     if let Some(token) = source.frame.pending.pop_front() {
+                        self.record_delivery_trace();
                         return Ok(Some(TracedExpansionToken::new(token, false)));
                     }
 
@@ -1373,6 +1449,7 @@ where
                         start: start.byte_offset,
                         end: end.byte_offset,
                     });
+                    self.record_delivery_trace();
                     return Ok(Some(TracedExpansionToken::new(token, false)));
                 }
                 InputFrame::Condition { .. } => {
@@ -1462,6 +1539,32 @@ where
                     unreachable!("current_token_frame_index skips conditions")
                 }
             }
+        }
+    }
+
+    fn capture_lex_error(&self, error: LexError) -> LexError {
+        let trace = self.frames.iter().rev().filter_map(|frame| match frame {
+            InputFrame::TokenList(frame) if frame.macro_invocation != OriginId::UNKNOWN => {
+                Some(frame.macro_invocation)
+            }
+            InputFrame::Source(_) | InputFrame::TokenList(_) | InputFrame::Condition { .. } => None,
+        });
+        error.with_expansion_trace(trace)
+    }
+
+    fn record_delivery_trace(&mut self) {
+        self.last_delivery_trace_len = 0;
+        for origin in self.frames.iter().rev().filter_map(|frame| match frame {
+            InputFrame::TokenList(frame) if frame.macro_invocation != OriginId::UNKNOWN => {
+                Some(frame.macro_invocation)
+            }
+            InputFrame::Source(_) | InputFrame::TokenList(_) | InputFrame::Condition { .. } => None,
+        }) {
+            if self.last_delivery_trace_len == self.last_delivery_trace.len() {
+                break;
+            }
+            self.last_delivery_trace[self.last_delivery_trace_len] = origin;
+            self.last_delivery_trace_len += 1;
         }
     }
 }
@@ -1685,11 +1788,9 @@ where
     S: InputSource,
 {
     let context = next_line_source_context(source);
-    match source
-        .lines
-        .next_normalized_line(stores)
-        .map_err(|error| map_input_source_error(source, error, context))?
-    {
+    match source.lines.next_normalized_line(stores).map_err(|error| {
+        map_input_source_error(source, error, context).with_physical_site(stores)
+    })? {
         Some(line) => {
             source.frame.state = LexerState::NewLine;
             source.frame.line = line.text;
@@ -1729,6 +1830,7 @@ fn map_input_source_error<S>(
         InputSourceError::World(error) => LexError::Input {
             error,
             context: fallback,
+            site: Box::new(DiagnosticSite::unknown()),
         },
         InputSourceError::InvalidUtf8 {
             byte_start,
@@ -1744,6 +1846,7 @@ fn map_input_source_error<S>(
                 line: u32::try_from(line).unwrap_or(u32::MAX),
                 column: u32::try_from(column).unwrap_or(u32::MAX),
             },
+            site: Box::new(DiagnosticSite::unknown()),
         },
     }
 }
@@ -1848,7 +1951,19 @@ fn next_token_from_line<S>(
     let cat = stores.catcode(ch);
     match cat {
         Catcode::Ignored => Ok(None),
-        Catcode::Invalid => Err(LexError::InvalidCharacter { ch, context: start }),
+        Catcode::Invalid => {
+            let end = source_coordinate(source);
+            let origin =
+                stores.source_range_origin(start.source_id, start.byte_offset, end.byte_offset);
+            Err(LexError::InvalidCharacter {
+                ch,
+                context: LexSourceContext {
+                    byte_end: end.byte_offset,
+                    ..start
+                },
+                site: Box::new(DiagnosticSite::primary(origin)),
+            })
+        }
         Catcode::Comment => {
             source.frame.column += source.frame.line[source.frame.byte_offset..]
                 .chars()
@@ -1937,7 +2052,11 @@ fn next_token_from_line_readonly<S>(
     let cat = stores.catcode(ch);
     match cat {
         Catcode::Ignored => Ok(None),
-        Catcode::Invalid => Err(LexError::InvalidCharacter { ch, context: start }),
+        Catcode::Invalid => Err(LexError::InvalidCharacter {
+            ch,
+            context: start,
+            site: Box::new(DiagnosticSite::unknown()),
+        }),
         Catcode::Comment => {
             source.frame.column += source.frame.line[source.frame.byte_offset..]
                 .chars()
@@ -1952,6 +2071,7 @@ fn next_token_from_line_readonly<S>(
                         return Err(LexError::MissingControlSequence {
                             name: "par".to_owned(),
                             context: start,
+                            site: Box::new(DiagnosticSite::unknown()),
                         });
                     };
                     Token::Cs(par)
@@ -2091,6 +2211,7 @@ fn readonly_cs_token(
         .ok_or_else(|| LexError::MissingControlSequence {
             name: name.to_owned(),
             context,
+            site: Box::new(DiagnosticSite::unknown()),
         })
 }
 

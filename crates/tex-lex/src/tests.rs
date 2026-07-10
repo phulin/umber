@@ -381,12 +381,18 @@ fn ignored_and_invalid_catcodes_follow_tex_rules() {
         lexer.next_token(&mut stores).expect("valid token"),
         Some(char_token('a', Catcode::Letter))
     );
-    match lexer.next_token(&mut stores) {
-        Err(LexError::InvalidCharacter { ch: '?', context }) => {
+    match lexer.next_traced_token(&mut stores) {
+        Err(error @ LexError::InvalidCharacter { ch: '?', .. }) => {
+            let context = error.source_context();
             assert_eq!(context.source_id(), tex_state::SourceId::new(0));
             assert_eq!(context.byte_offset(), 2);
+            assert_eq!(context.byte_end(), 3);
             assert_eq!(context.line(), 1);
             assert_eq!(context.column(), 2);
+            let rendered = ProvenanceResolver::new(&stores)
+                .render_diagnostic_site("invalid", error.diagnostic_site());
+            assert!(rendered.contains("  1 | a!?"), "{rendered}");
+            assert!(rendered.contains("  ^"), "{rendered}");
         }
         other => panic!("expected invalid-character error, got {other:?}"),
     }
@@ -402,7 +408,7 @@ fn readonly_missing_control_sequence_retains_source_context() {
         .next_token_readonly(&stores)
         .expect_err("readonly lexing cannot intern the inserted par token");
     match error {
-        LexError::MissingControlSequence { name, context } => {
+        LexError::MissingControlSequence { name, context, .. } => {
             assert_eq!(name, "par");
             assert_eq!(context.source_id(), tex_state::SourceId::new(0));
             assert_eq!(context.byte_offset(), 0);
@@ -764,7 +770,10 @@ fn invalid_world_utf8_reports_exact_physical_byte_range() {
     let error = input
         .next_traced_token(&mut stores)
         .expect_err("invalid UTF-8 must be rejected");
-    let LexError::InvalidUtf8 { context } = error else {
+    let rendered = ProvenanceResolver::new(&stores)
+        .render_diagnostic_site("invalid UTF-8", error.diagnostic_site());
+    assert!(rendered.contains("invalid.tex:1:2"), "{rendered}");
+    let LexError::InvalidUtf8 { context, .. } = error else {
         panic!("expected invalid UTF-8 error, got {error:?}");
     };
     assert_eq!(context.byte_range(), 1..2);

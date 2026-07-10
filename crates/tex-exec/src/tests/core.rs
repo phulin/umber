@@ -224,6 +224,51 @@ fn dispatch_errors_expose_primary_origins() {
 }
 
 #[test]
+fn execution_error_capture_retains_macro_trace_after_frame_pop() {
+    let mut stores = Universe::new();
+    let body = stores.intern_token_list(&[]);
+    let params = stores.intern_token_list(&[]);
+    let macro_symbol = stores.intern("m");
+    stores.set_macro_meaning(
+        macro_symbol,
+        tex_state::macro_store::MacroMeaning::new(
+            tex_state::meaning::MeaningFlags::EMPTY,
+            params,
+            body,
+        ),
+    );
+    let tex_state::meaning::Meaning::Macro { definition, .. } = stores.meaning(macro_symbol) else {
+        panic!("macro meaning");
+    };
+    let invocation_origin = stores.source_origin(tex_state::SourceId::new(1), 1, 1, 1);
+    let definition_origin = stores.source_origin(tex_state::SourceId::new(1), 2, 1, 2);
+    let invocation =
+        stores.macro_invocation_origin(definition, invocation_origin, definition_origin);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_macro_body_with_origins_and_invocation(
+        body,
+        tex_state::ids::OriginListId::EMPTY,
+        tex_lex::MacroArguments::new(),
+        invocation,
+    );
+    let origin = stores.source_origin(tex_state::SourceId::new(1), 3, 1, 3);
+    let error = ExecError::UndefinedControlSequence {
+        name: "bad".to_owned(),
+        origin,
+    }
+    .capture(&input);
+    assert_eq!(error.diagnostic_site().expansion_trace(), &[invocation]);
+
+    assert!(
+        input
+            .next_traced_token(&mut stores)
+            .expect("pop frame")
+            .is_none()
+    );
+    assert_eq!(error.diagnostic_site().expansion_trace(), &[invocation]);
+}
+
+#[test]
 fn extra_expandable_delivery_exposes_responsible_token_origin() {
     let mut stores = Universe::new();
     install_expandable(&mut stores, "endcsname", ExpandablePrimitive::EndCsName);

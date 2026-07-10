@@ -341,6 +341,49 @@ fn get_x_token_pushes_macro_body_frame_and_continues() {
 }
 
 #[test]
+fn expansion_error_captures_invocation_chain_before_macro_frame_pops() {
+    let mut stores = Universe::new();
+    let macro_cs = stores.intern("m");
+    let missing = stores.intern("missing");
+    let body = stores.intern_token_list(&[Token::Cs(missing)]);
+    let params = stores.intern_token_list(&[]);
+    let definition_origin = stores.source_origin(tex_state::SourceId::new(7), 10, 1, 10);
+    let body_origin = stores.source_origin(tex_state::SourceId::new(7), 12, 1, 12);
+    let body_origins = stores.allocate_origin_list(&[body_origin]);
+    stores.set_macro_meaning_with_provenance(
+        macro_cs,
+        MacroMeaning::new(MeaningFlags::EMPTY, params, body),
+        MacroDefinitionProvenance::new(
+            definition_origin,
+            tex_state::ids::OriginListId::EMPTY,
+            body_origins,
+        ),
+    );
+    let call = stores.intern_token_list(&[Token::Cs(macro_cs)]);
+    let call_origin = stores.source_origin(tex_state::SourceId::new(8), 1, 1, 1);
+    let call_origins = stores.allocate_origin_list(&[call_origin]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list_with_origins(call, call_origins, TokenListReplayKind::Inserted);
+
+    let error = crate::get_x_token(&mut input, &mut stores)
+        .expect_err("undefined body token must diagnose");
+    let site = error.diagnostic_site();
+    assert_eq!(site.primary_origin(), Some(body_origin));
+    assert_eq!(site.expansion_trace().len(), 1);
+
+    assert!(
+        input
+            .next_traced_token(&mut stores)
+            .expect("frame pop")
+            .is_none()
+    );
+    assert_eq!(
+        error.diagnostic_site().expansion_trace(),
+        site.expansion_trace()
+    );
+}
+
+#[test]
 fn macro_replay_without_definition_provenance_degrades_to_unknown_origins() {
     let mut stores = Universe::new();
     let macro_cs = stores.intern("memoized");

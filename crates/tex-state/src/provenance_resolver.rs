@@ -273,17 +273,11 @@ impl<'a> ProvenanceResolver<'a> {
         } else {
             range.end.clamp(mark_lo, line.content_end)
         };
-        let Ok(text) = std::str::from_utf8(&bytes[line.start..line.content_end]) else {
-            return;
-        };
-        let Ok(prefix) = std::str::from_utf8(&bytes[line.start..mark_lo]) else {
-            return;
-        };
-        let Ok(marked) = std::str::from_utf8(&bytes[mark_lo..mark_hi]) else {
-            return;
-        };
-        let column = display_width(prefix, 0);
-        let width = display_width(marked, column).saturating_sub(column).max(1);
+        let text = String::from_utf8_lossy(&bytes[line.start..line.content_end]);
+        let prefix = String::from_utf8_lossy(&bytes[line.start..mark_lo]);
+        let marked = String::from_utf8_lossy(&bytes[mark_lo..mark_hi]);
+        let column = display_width(&prefix, 0);
+        let width = display_width(&marked, column).saturating_sub(column).max(1);
         let number = index.saturating_add(1);
         let gutter = number.to_string();
         let _ = writeln!(out, "  {gutter} | {text}");
@@ -451,13 +445,13 @@ fn physical_line_at(bytes: &[u8], offset: usize) -> Option<(u32, u32, String)> {
         .checked_sub(1)
         .filter(|&end| bytes.get(end) == Some(&b'\r'))
         .unwrap_or(raw_end);
-    let text = std::str::from_utf8(&bytes[line_start..content_end]).ok()?;
+    let text = String::from_utf8_lossy(&bytes[line_start..content_end]);
     let column_end = offset.min(content_end);
-    let prefix = std::str::from_utf8(&bytes[line_start..column_end]).ok()?;
+    let prefix = String::from_utf8_lossy(&bytes[line_start..column_end]);
     Some((
         u32::try_from(line_index + 1).unwrap_or(u32::MAX),
-        u32::try_from(prefix.chars().count().saturating_add(1)).unwrap_or(u32::MAX),
-        text.to_owned(),
+        u32::try_from(display_width(&prefix, 0).saturating_add(1)).unwrap_or(u32::MAX),
+        text.into_owned(),
     ))
 }
 

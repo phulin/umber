@@ -13,7 +13,7 @@ use tex_lex::{InputSource, InputStack, LexError, MacroArguments, TokenListReplay
 use tex_state::glue::GlueSpec;
 use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
-use tex_state::provenance::{InsertedOriginKind, SynthesizedOriginKind};
+use tex_state::provenance::{DiagnosticSite, InsertedOriginKind, SynthesizedOriginKind};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{ExpansionState, FileContent, InputOpenState, InputReadState, Universe};
@@ -231,6 +231,10 @@ pub enum Dispatch {
 /// Errors raised by `get_x_token`.
 #[derive(Debug)]
 pub enum ExpandError {
+    Captured {
+        error: Box<ExpandError>,
+        site: DiagnosticSite,
+    },
     Lex(LexError),
     MacroCall(args::MacroCallError),
     UnimplementedExpandable {
@@ -296,6 +300,7 @@ pub enum ExpandError {
 impl fmt::Display for ExpandError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Captured { error, .. } => write!(f, "{error}"),
             Self::Lex(err) => write!(f, "{err}"),
             Self::MacroCall(err) => write!(f, "{err}"),
             Self::UnimplementedExpandable { opcode, .. } => {
@@ -366,6 +371,7 @@ impl fmt::Display for ExpandError {
 impl std::error::Error for ExpandError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::Captured { error, .. } => Some(error),
             Self::Lex(err) => Some(err),
             Self::MacroCall(err) => Some(err),
             Self::ScanInt(err) => Some(err),
@@ -393,6 +399,7 @@ impl ExpandError {
     #[must_use]
     pub fn primary_origin(&self) -> Option<OriginId> {
         match self {
+            Self::Captured { site, .. } => site.primary_origin(),
             Self::UnimplementedExpandable { context, .. }
             | Self::MissingTokenAfterPrimitive { context, .. }
             | Self::MissingEndCsName { context }
@@ -413,7 +420,31 @@ impl ExpandError {
             Self::ScanInt(err) => err.primary_origin(),
             Self::ScanDimen(err) => err.primary_origin(),
             Self::MacroCall(err) => err.primary_origin(),
-            Self::Lex(_) => None,
+            Self::Lex(err) => err.diagnostic_site().primary_origin(),
+        }
+    }
+
+    #[must_use]
+    pub fn diagnostic_site(&self) -> DiagnosticSite {
+        match self {
+            Self::Captured { site, .. } => site.clone(),
+            Self::Lex(err) => err.diagnostic_site().clone(),
+            _ => DiagnosticSite::new(self.primary_origin(), [], []),
+        }
+    }
+
+    fn capture<S: InputSource>(self, input: &InputStack<S>) -> Self {
+        if matches!(self, Self::Captured { .. }) {
+            return self;
+        }
+        let site = input.diagnostic_site(self.primary_origin(), []);
+        if site.expansion_trace().is_empty() {
+            self
+        } else {
+            Self::Captured {
+                error: Box::new(self),
+                site,
+            }
         }
     }
 }
@@ -608,6 +639,21 @@ where
 
 /// Pulls the next fully expanded token while recording reads and using hooks.
 pub fn get_x_token_with_recorder_and_hooks<S, R, H>(
+    input: &mut InputStack<S>,
+    stores: &mut (impl ExpansionState + InputOpenState),
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<Option<TracedTokenWord>, ExpandError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    let result = get_x_token_with_recorder_and_hooks_inner(input, stores, recorder, hooks);
+    result.map_err(|error| error.capture(input))
+}
+
+fn get_x_token_with_recorder_and_hooks_inner<S, R, H>(
     input: &mut InputStack<S>,
     stores: &mut (impl ExpansionState + InputOpenState),
     recorder: &mut R,

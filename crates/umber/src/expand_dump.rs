@@ -194,7 +194,7 @@ impl ExpandDumpError {
             }
             Self::Expand(err) => Self::Rendered(
                 tex_state::ProvenanceResolver::new(stores)
-                    .render_diagnostic(&err.to_string(), err.primary_origin())
+                    .render_diagnostic_site(&err.to_string(), &err.diagnostic_site())
                     .trim_end()
                     .to_owned(),
             ),

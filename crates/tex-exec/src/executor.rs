@@ -120,7 +120,7 @@ impl Executor {
                     &mut stats,
                 ) {
                     stores.set_input_summary(input.summary());
-                    return Err(err);
+                    return Err(err.capture(input));
                 }
                 Ok(stats)
             }
@@ -130,7 +130,8 @@ impl Executor {
                 token.origin(),
                 "non-assignment command",
             )
-            .expect_err("unimplemented_typesetting always returns Err")),
+            .expect_err("unimplemented_typesetting always returns Err")
+            .capture(input)),
         }
     }
 }
@@ -144,6 +145,26 @@ pub(crate) enum MainControlExit {
 }
 
 pub(crate) fn run_main_control_until<S, R, H, F>(
+    nest: &mut ModeNest,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    recorder: &mut R,
+    hooks: &mut H,
+    stats: &mut ExecutionStats,
+    should_stop: F,
+) -> Result<MainControlExit, ExecError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+    F: FnMut(&mut InputStack<S>, &Universe) -> bool,
+{
+    let result =
+        run_main_control_until_inner(nest, input, stores, recorder, hooks, stats, should_stop);
+    result.map_err(|error| error.capture(input))
+}
+
+fn run_main_control_until_inner<S, R, H, F>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,

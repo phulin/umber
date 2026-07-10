@@ -518,14 +518,19 @@ impl DiagnosticSite {
         related: impl IntoIterator<Item = RelatedLocation>,
         expansion_trace: impl IntoIterator<Item = OriginId>,
     ) -> Self {
+        let mut trace = Vec::with_capacity(Self::MAX_EXPANSION_TRACE);
+        for origin in expansion_trace {
+            if origin != OriginId::UNKNOWN && !trace.contains(&origin) {
+                trace.push(origin);
+                if trace.len() == Self::MAX_EXPANSION_TRACE {
+                    break;
+                }
+            }
+        }
         Self {
             primary,
             related: related.into_iter().take(Self::MAX_RELATED).collect(),
-            expansion_trace: expansion_trace
-                .into_iter()
-                .filter(|origin| *origin != OriginId::UNKNOWN)
-                .take(Self::MAX_EXPANSION_TRACE)
-                .collect(),
+            expansion_trace: trace.into_boxed_slice(),
         }
     }
 
