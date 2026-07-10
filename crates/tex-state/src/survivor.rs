@@ -238,7 +238,13 @@ impl<'a> PromotionCopy<'a> {
 
         let nodes = match id.arena() {
             ArenaRef::Epoch => self.epoch.get_epoch(id),
-            ArenaRef::Survivor(_) => self.survivor.get(id),
+            ArenaRef::Survivor(_) => {
+                assert!(
+                    self.survivor.contains(id),
+                    "promotion source survivor node-list id is not live: {id:?}"
+                );
+                self.survivor.get(id)
+            }
         }
         .to_vec();
         let start = u32_len(self.out.len(), "promoted node root exceeds u32 entries");

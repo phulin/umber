@@ -31,9 +31,10 @@ pub(super) enum ScannedBoxValue {
 }
 
 impl ScannedBoxValue {
-    pub(super) fn into_node(self) -> Node {
+    pub(super) fn into_epoch_node(self, stores: &mut Universe) -> Node {
         match self {
-            Self::Fresh(node) | Self::Shared(node) => node,
+            Self::Fresh(node) => node,
+            Self::Shared(node) => stores.clone_node_to_epoch(node),
         }
     }
 }
@@ -49,7 +50,7 @@ where
     H: ExpansionHooks<S>,
 {
     scan_box_value(None, input, stores, hooks, context)?
-        .map(ScannedBoxValue::into_node)
+        .map(|value| value.into_epoch_node(stores))
         .ok_or(ExecError::MissingToken { context: "box" })
 }
 

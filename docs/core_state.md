@@ -745,7 +745,17 @@ that page into epoch-owned `\box255` material before the register write.
 Box-register replacement paths that preserve TeX's current visible box level
 (`\box`/`\vsplit`-style same-level writes and clears) are still aggregate
 `Universe` facades; downstream crates do not infer or mutate raw environment
-ownership directly.
+ownership directly. A destructive `\box` read recursively copies the visible
+survivor DAG into the current epoch before clearing the register. This
+Rust-only transfer step is required because a coalesced group-journal write can
+release the register's last survivor reference immediately; page and mode lists
+therefore never receive an opaque child handle whose former owner has already
+been released. Leader box children participate in the same recursive transfer.
+Commands that scan an existing box for immediate placement (`\raise`,
+`\lower`, `\moveleft`, `\moveright`, and `\shipout`) use the same rule:
+shared register material is recursively copied into epoch ownership before the
+node leaves the scanner, so later source-register replacement cannot invalidate
+page-owned children.
 
 Raw content substores are implementation details of `Universe`: downstream
 crates cannot construct `TokenStore`, `GlueStore`, `NodeArena`, or

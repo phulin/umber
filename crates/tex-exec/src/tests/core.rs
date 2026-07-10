@@ -1621,6 +1621,40 @@ fn page_output_promotes_nested_survivor_children_into_one_root() {
 }
 
 #[test]
+fn page_output_keeps_locally_moved_box_children_live() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\topskip=0pt {\\setbox0=\\hbox{X}\\box0} \\penalty-10000",
+    ));
+
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("locally moved page box should remain live through output");
+
+    assert_eq!(stats.shipped_artifacts.len(), 1);
+    assert!(stores.box_reg(0).is_none());
+    assert!(stores.box_reg(255).is_none());
+}
+
+#[test]
+fn page_output_keeps_shifted_copy_children_live_after_source_replacement() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\topskip=0pt \\setbox0=\\hbox{X} \\raise1pt\\copy0 \
+         \\setbox0=\\hbox{Y} \\penalty-10000",
+    ));
+
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("shifted shared box should own epoch children on the page");
+
+    assert_eq!(stats.shipped_artifacts.len(), 1);
+    assert!(stores.box_reg(255).is_none());
+}
+
+#[test]
 fn mark_scans_raw_general_text_then_expands_payload() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);

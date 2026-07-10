@@ -8,7 +8,7 @@ use crate::input::{
 };
 use crate::macro_store::MacroMeaning;
 use crate::meaning::{Meaning, MeaningFlags};
-use crate::node::{BoxNode, BoxNodeFields, GlueKind, KernKind, Node, Sign};
+use crate::node::{BoxNode, BoxNodeFields, GlueKind, KernKind, LeaderPayload, Node, Sign};
 use crate::page::{PageDimension, PageInteger};
 use crate::provenance::{OriginRecord, SourceOrigin, SyntheticOriginKind};
 use crate::scaled::{GlueSetRatio, Scaled};
@@ -795,6 +795,58 @@ fn promote_survivor_wrapped_box(universe: &mut Universe) -> NodeListId {
     }))]);
     universe.set_box_reg_global(255, wrapper);
     universe.box_reg(255).expect("wrapper should be promoted")
+}
+
+#[test]
+fn grouped_box_take_copies_nested_survivor_children_before_coalesced_release() {
+    let mut universe = Universe::new();
+    let leader_children = universe.freeze_node_list(&[Node::Char {
+        font: NULL_FONT,
+        ch: 'x',
+    }]);
+    let leader = BoxNode::new(BoxNodeFields {
+        width: Scaled::from_raw(10),
+        height: Scaled::from_raw(7),
+        depth: Scaled::from_raw(3),
+        shift: Scaled::from_raw(0),
+        display: false,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children: leader_children,
+    });
+    let glue = universe.intern_glue(GlueSpec::ZERO);
+    let value = universe.freeze_node_list(&[Node::Glue {
+        spec: glue,
+        kind: GlueKind::Leaders,
+        leader: Some(LeaderPayload::HList(leader)),
+    }]);
+
+    universe.enter_group();
+    universe.set_box_reg(0, value);
+    let taken = universe
+        .take_box_reg_same_level(0)
+        .expect("local box should move out of the register");
+
+    assert!(matches!(taken.arena(), ArenaRef::Epoch));
+    let [
+        Node::Glue {
+            leader: Some(LeaderPayload::HList(leader)),
+            ..
+        },
+    ] = universe.nodes(taken)
+    else {
+        panic!("taken value should preserve its leader box");
+    };
+    assert!(matches!(leader.children.arena(), ArenaRef::Epoch));
+    assert_eq!(
+        universe.nodes(leader.children),
+        &[Node::Char {
+            font: NULL_FONT,
+            ch: 'x'
+        }]
+    );
+    let _ = universe.leave_group();
 }
 
 fn assert_promoted_wrapper_is_resolvable(universe: &Universe, wrapper: NodeListId) {

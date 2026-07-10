@@ -1807,11 +1807,21 @@ impl Universe {
     }
 
     pub fn take_box_reg(&mut self, index: u16) -> Option<NodeListId> {
-        self.stores.take_box_reg(index)
+        let value = self
+            .stores
+            .box_reg(index)
+            .map(|value| self.clone_node_list_to_epoch(value));
+        let _ = self.stores.take_box_reg(index);
+        value
     }
 
     pub fn take_box_reg_same_level(&mut self, index: u16) -> Option<NodeListId> {
-        self.stores.take_box_reg_same_level(index)
+        let value = self
+            .stores
+            .box_reg(index)
+            .map(|value| self.clone_node_list_to_epoch(value));
+        let _ = self.stores.take_box_reg_same_level(index);
+        value
     }
 
     pub fn set_box_reg_same_level(&mut self, index: u16, value: NodeListId) {
@@ -1919,6 +1929,25 @@ impl Universe {
                 list.content = self.clone_node_list_to_epoch(list.content);
                 Node::MathList(list)
             }
+            Node::Glue {
+                spec,
+                kind,
+                leader: Some(payload),
+            } => Node::Glue {
+                spec,
+                kind,
+                leader: Some(match payload {
+                    crate::node::LeaderPayload::HList(mut box_node) => {
+                        box_node.children = self.clone_node_list_to_epoch(box_node.children);
+                        crate::node::LeaderPayload::HList(box_node)
+                    }
+                    crate::node::LeaderPayload::VList(mut box_node) => {
+                        box_node.children = self.clone_node_list_to_epoch(box_node.children);
+                        crate::node::LeaderPayload::VList(box_node)
+                    }
+                    payload => payload,
+                }),
+            },
             node => node,
         }
     }
