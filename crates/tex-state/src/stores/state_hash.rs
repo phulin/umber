@@ -627,7 +627,8 @@ impl Stores {
         hasher.i32(box_node.height.raw());
         hasher.i32(box_node.depth.raw());
         hasher.i32(box_node.shift.raw());
-        hasher.i32(box_node.glue_set.raw());
+        hasher.i32(box_node.glue_set.numerator());
+        hasher.i32(box_node.glue_set.denominator());
         hash_sign(box_node.glue_sign, hasher);
         hasher.u8(box_node.glue_order as u8);
         stack.push(NodeFrame::List(box_node.children));

@@ -27,6 +27,13 @@ fn non_character_accent_lookahead_replays_the_original_traced_token() {
         &mut stores,
         &mut NoopRecorder,
         &mut NoopExecHooks,
+        TracedTokenWord::pack(
+            Token::Char {
+                ch: '^',
+                cat: Catcode::Other,
+            },
+            OriginId::UNKNOWN,
+        ),
     )
     .expect("accent lookahead should recover");
 
@@ -66,10 +73,49 @@ fn accent_lookahead_runs_assignments_and_accepts_char_num() {
         &mut stores,
         &mut recorder,
         &mut NoopExecHooks,
+        TracedTokenWord::pack(
+            Token::Char {
+                ch: '^',
+                cat: Catcode::Other,
+            },
+            OriginId::UNKNOWN,
+        ),
     )
     .expect("accent base should scan");
 
     assert_eq!(base, Some(b'A'));
     assert_eq!(stores.count(0), 7);
     assert!(recorder.0 >= 2, "lookahead meanings should be recorded");
+}
+
+#[test]
+fn sentence_space_factor_does_not_jump_after_an_uppercase_letter() {
+    let mut stores = Universe::new();
+    stores.set_sfcode('.', 3000);
+    let mut nest = ModeNest::new();
+
+    update_space_factor(&mut nest, &stores, 'A');
+    assert_eq!(nest.current_list().space_factor(), 999);
+
+    update_space_factor(&mut nest, &stores, '.');
+    assert_eq!(nest.current_list().space_factor(), 1000);
+
+    update_space_factor(&mut nest, &stores, 'a');
+    update_space_factor(&mut nest, &stores, '.');
+    assert_eq!(nest.current_list().space_factor(), 3000);
+}
+
+#[test]
+fn accent_delta_rounds_half_scaled_points_like_tex82() {
+    assert_eq!(
+        accent_delta(
+            Scaled::from_raw(10),
+            Scaled::from_raw(1),
+            Scaled::from_raw(0),
+            Scaled::from_raw(0),
+            Scaled::from_raw(0),
+            Scaled::from_raw(0),
+        ),
+        Scaled::from_raw(5)
+    );
 }

@@ -715,7 +715,10 @@ makes box-level memoization (M4) sound.
   primitives live in `tex-exec`; execution records the latest packing badness
   through `Universe` for the read-only `\badness` internal integer. When hpack
   diagnostics require TeX's overfull marker, `tex-exec` materializes the
-  synthetic rule while freezing the final child list. The packing crate
+  synthetic rule while freezing the final child list. Packed boxes retain the
+  glue-set ratio as a reduced exact fraction, so cumulative TeX.web glue
+  rounding is byte-stable without floating-point state or a lossy decimal
+  approximation. The packing crate
   remains pure and has no `World` or `&mut Universe` surface.
 
 ## 8. Page builder and output routine
@@ -866,7 +869,9 @@ Responsibility: page artifacts → bytes on disk. Strictly downstream.
 - Drivers consume committed page artifacts only — they can run
   out-of-process, in parallel with typesetting of later pages, or not at
   all (editor preview may rasterize page artifacts directly).
-- `tex-out` owns the page artifact model and binary reader/writer. It has no
+- `tex-out` owns the page artifact model and version-8 binary reader/writer.
+  Exact glue-set numerator and denominator fields cross this commit boundary
+  and participate in deterministic semantic hashing. The crate has no
   dependency on `tex-state` or `Universe`; shipout code lowers live state into
   artifact bytes before asking `World` to store them.
 - The artifact record captures the effective job magnification and banner at

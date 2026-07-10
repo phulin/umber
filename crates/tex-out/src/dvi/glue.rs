@@ -1,4 +1,4 @@
-use tex_arith::{GLUE_SET_RATIO_SCALE, Scaled};
+use tex_arith::Scaled;
 
 use crate::{GlueOrder, GlueSetRatio, GlueSign, GlueSpec};
 
@@ -34,8 +34,8 @@ pub(super) fn adjusted_glue_width(
 }
 
 fn rounded_glue_set(glue_set: GlueSetRatio, cur_glue: Scaled) -> Scaled {
-    let product = i128::from(glue_set.raw()) * i128::from(cur_glue.raw());
-    let rounded = rounded_div(product, i128::from(GLUE_SET_RATIO_SCALE));
+    let product = i128::from(glue_set.numerator()) * i128::from(cur_glue.raw());
+    let rounded = rounded_div(product, i128::from(glue_set.denominator()));
     let vetted = rounded.clamp(-i128::from(BILLION), i128::from(BILLION));
     Scaled::from_raw(i32::try_from(vetted).expect("vetted glue is in i32 range"))
 }

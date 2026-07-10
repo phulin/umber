@@ -98,57 +98,112 @@ impl fmt::Display for DimensionError {
 
 impl std::error::Error for DimensionError {}
 
-/// Scale used for fixed-point glue-set ratios.
+/// Compatibility scale used when constructing or displaying glue-set ratios.
 pub const GLUE_SET_RATIO_SCALE: i32 = 1_000_000;
 
-/// Fixed-point glue-set ratio used by packed boxes and output drivers.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+/// Exact reduced glue-set ratio used by packed boxes and output drivers.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct GlueSetRatio {
-    raw: i32,
+    numerator: i32,
+    denominator: i32,
+}
+
+impl Default for GlueSetRatio {
+    fn default() -> Self {
+        Self::ZERO
+    }
 }
 
 impl GlueSetRatio {
     /// Zero glue-set ratio.
-    pub const ZERO: Self = Self { raw: 0 };
+    pub const ZERO: Self = Self {
+        numerator: 0,
+        denominator: 1,
+    };
 
     /// Unit glue-set ratio.
     pub const UNITY: Self = Self {
-        raw: GLUE_SET_RATIO_SCALE,
+        numerator: 1,
+        denominator: 1,
     };
 
     /// Creates a glue-set ratio from the raw fixed-point representation.
     #[must_use]
     pub const fn from_raw(raw: i32) -> Self {
-        Self { raw }
+        Self::from_ratio_parts(raw, GLUE_SET_RATIO_SCALE)
     }
 
-    /// Returns the raw fixed-point representation.
+    /// Creates a ratio from exact numerator and denominator parts.
     #[must_use]
-    pub const fn raw(self) -> i32 {
-        self.raw
+    pub const fn from_ratio_parts(numerator: i32, denominator: i32) -> Self {
+        if numerator == 0 || denominator == 0 {
+            return Self::ZERO;
+        }
+        let numerator = numerator.saturating_abs();
+        let denominator = denominator.saturating_abs();
+        let divisor = gcd_i32(numerator, denominator);
+        Self {
+            numerator: numerator / divisor,
+            denominator: denominator / divisor,
+        }
+    }
+
+    /// Returns the numerator of the reduced exact ratio.
+    #[must_use]
+    pub const fn numerator(self) -> i32 {
+        self.numerator
+    }
+
+    /// Returns the positive denominator of the reduced exact ratio.
+    #[must_use]
+    pub const fn denominator(self) -> i32 {
+        self.denominator
+    }
+
+    /// Returns a compatibility fixed-point approximation of this ratio.
+    #[must_use]
+    pub fn raw(self) -> i32 {
+        let scaled = i128::from(self.numerator) * i128::from(GLUE_SET_RATIO_SCALE);
+        let denominator = i128::from(self.denominator);
+        let rounded = if scaled >= 0 {
+            (scaled + denominator / 2) / denominator
+        } else {
+            -((-scaled + denominator / 2) / denominator)
+        };
+        i32::try_from(rounded.clamp(i128::from(i32::MIN), i128::from(i32::MAX)))
+            .expect("clamped glue ratio fits i32")
     }
 
     /// Returns whether this ratio is zero.
     #[must_use]
     pub const fn is_zero(self) -> bool {
-        self.raw == 0
+        self.numerator == 0
     }
 
     /// Computes `numerator / denominator` with the fixed-point scale.
     #[must_use]
     pub fn from_scaled_ratio(numerator: Scaled, denominator: Scaled) -> Self {
-        let denominator = i128::from(denominator.raw()).abs();
+        let denominator = i64::from(denominator.raw()).abs();
         if denominator == 0 {
             return Self::ZERO;
         }
-        let numerator = i128::from(numerator.raw()).abs();
-        let scaled = numerator * i128::from(GLUE_SET_RATIO_SCALE);
-        let rounded = (scaled + denominator / 2) / denominator;
-        let clamped = rounded.clamp(i128::from(i32::MIN), i128::from(i32::MAX));
-        Self {
-            raw: i32::try_from(clamped).expect("clamped glue-set ratio fits i32"),
-        }
+        let numerator = i64::from(numerator.raw()).abs();
+        Self::from_ratio_parts(
+            i32::try_from(numerator).expect("TeX dimensions fit i32"),
+            i32::try_from(denominator).expect("TeX dimensions fit i32"),
+        )
     }
+}
+
+const fn gcd_i32(left: i32, right: i32) -> i32 {
+    let mut left = left.unsigned_abs();
+    let mut right = right.unsigned_abs();
+    while right != 0 {
+        let remainder = left % right;
+        left = right;
+        right = remainder;
+    }
+    if left == 0 { 1 } else { left as i32 }
 }
 
 /// Errors produced by TeX's arithmetic helper routines.

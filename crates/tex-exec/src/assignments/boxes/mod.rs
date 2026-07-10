@@ -482,8 +482,13 @@ fn append_unboxed(
         | (UnexpandablePrimitive::UnVBox | UnexpandablePrimitive::UnVCopy, Node::VList(box_node)) =>
         {
             let children = stores.clone_node_list_to_epoch(box_node.children);
+            flush_pending_hchars(nest, stores)?;
             for node in stores.nodes(children).to_vec() {
-                append_node_to_current_list(nest, stores, node)?;
+                if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
+                    append_vertical_contribution(nest, stores, node);
+                } else {
+                    nest.current_list_mut().push(node);
+                }
             }
             Ok(())
         }

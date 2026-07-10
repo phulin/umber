@@ -7,7 +7,7 @@ use std::fmt;
 use tex_arith::Scaled;
 
 const MAGIC: &[u8; 4] = b"UMPG";
-const VERSION: u8 = 7;
+const VERSION: u8 = 8;
 
 /// Binary parse failure.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -343,7 +343,8 @@ impl Writer {
         self.scaled(box_node.height);
         self.scaled(box_node.depth);
         self.scaled(box_node.shift);
-        self.i32(box_node.glue_set.raw());
+        self.i32(box_node.glue_set.numerator());
+        self.i32(box_node.glue_set.denominator());
         self.u8(glue_sign_tag(box_node.glue_sign));
         self.u8(glue_order_tag(box_node.glue_order));
         self.node_list(&box_node.children);
@@ -616,7 +617,7 @@ impl Reader<'_> {
         let height = self.scaled()?;
         let depth = self.scaled()?;
         let shift = self.scaled()?;
-        let glue_set = GlueSetRatio::from_raw(self.i32()?);
+        let glue_set = GlueSetRatio::from_ratio_parts(self.i32()?, self.i32()?);
         let glue_sign = parse_glue_sign(self.u8()?)?;
         let glue_order = parse_glue_order(self.u8()?)?;
         let children = self.node_list()?;

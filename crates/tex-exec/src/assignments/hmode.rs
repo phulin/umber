@@ -481,7 +481,7 @@ fn update_space_factor(nest: &mut ModeNest, stores: &Universe, ch: char) {
         return;
     }
     let current = nest.current_list().space_factor();
-    let next = if sf < 1000 && current > 1000 {
+    let next = if sf > 1000 && current < 1000 {
         1000
     } else {
         sf
@@ -617,22 +617,48 @@ where
         return Ok(());
     };
     let base_font = stores.current_font();
-    let base_metrics = stores.font_char_metrics(base_font, base);
-    let shift = match base_metrics {
-        Some(base_metrics) => {
-            Scaled::from_raw((base_metrics.width.raw() - accent_metrics.width.raw()) / 2)
-        }
-        None => Scaled::from_raw(0),
+    let Some(base_metrics) = stores.font_char_metrics(base_font, base) else {
+        report_missing_character(stores, base_font, char::from(base));
+        nest.current_list_mut().push(Node::Char {
+            font: accent_font,
+            ch: char::from(accent),
+        });
+        nest.current_list_mut().set_space_factor(1000);
+        return Ok(());
     };
+    let accent_x_height = stores.font_parameter(accent_font, 5);
+    let accent_slant = stores.font_parameter(accent_font, 1);
+    let base_slant = stores.font_parameter(base_font, 1);
+    let delta = accent_delta(
+        base_metrics.width,
+        accent_metrics.width,
+        base_metrics.height,
+        base_slant,
+        accent_x_height,
+        accent_slant,
+    );
     nest.current_list_mut().push(Node::Kern {
-        amount: shift,
+        amount: delta,
         kind: KernKind::Accent,
     });
-    nest.current_list_mut().push(Node::Char {
+    let accent_node = Node::Char {
         font: accent_font,
         ch: char::from(accent),
-    });
-    let back = Scaled::from_raw(-accent_metrics.width.raw() - shift.raw());
+    };
+    if base_metrics.height == accent_x_height {
+        nest.current_list_mut().push(accent_node);
+    } else {
+        let children = stores.freeze_node_list(&[accent_node]);
+        let mut boxed = super::boxes::hpack_with_overfull_rule(stores, children, PackSpec::Natural);
+        // BoxNode stores a positive shift upward, the inverse sign of
+        // TeX82's horizontal-list shift_amount representation.
+        boxed.shift = base_metrics
+            .height
+            .checked_sub(accent_x_height)
+            .ok_or(ExecError::ArithmeticOverflow)?;
+        nest.current_list_mut().push(Node::HList(boxed));
+    }
+    let back = Scaled::from_raw(-accent_metrics.width.raw() - delta.raw());
     nest.current_list_mut().push(Node::Kern {
         amount: back,
         kind: KernKind::Accent,
@@ -641,7 +667,24 @@ where
         font: base_font,
         ch: char::from(base),
     });
+    nest.current_list_mut().set_space_factor(1000);
     Ok(())
+}
+
+fn accent_delta(
+    base_width: Scaled,
+    accent_width: Scaled,
+    base_height: Scaled,
+    base_slant: Scaled,
+    accent_x_height: Scaled,
+    accent_slant: Scaled,
+) -> Scaled {
+    let base_slant = f64::from(base_slant.raw()) / f64::from(Scaled::UNITY);
+    let accent_slant = f64::from(accent_slant.raw()) / f64::from(Scaled::UNITY);
+    let delta = f64::from(base_width.raw() - accent_width.raw()) / 2.0
+        + f64::from(base_height.raw()) * base_slant
+        - f64::from(accent_x_height.raw()) * accent_slant;
+    Scaled::from_raw(delta.round() as i32)
 }
 
 fn scan_accent_base<S, R, H>(
@@ -839,3 +882,6 @@ fn last_font_char(nodes: &[Node]) -> Option<(tex_state::ids::FontId, char)> {
 fn font_code(ch: char) -> Result<u8, ()> {
     u8::try_from(ch as u32).map_err(|_| ())
 }
+
+#[cfg(test)]
+mod tests;

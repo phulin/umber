@@ -190,7 +190,7 @@ fn sample_artifact() -> PageArtifact {
             height: Scaled::from_raw(200),
             depth: Scaled::from_raw(30),
             shift: Scaled::from_raw(0),
-            glue_set: GlueSetRatio::from_raw(12_345),
+            glue_set: GlueSetRatio::from_ratio_parts(1, 3),
             glue_sign: GlueSign::Stretching,
             glue_order: GlueOrder::Fil,
             children: vec![

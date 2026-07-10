@@ -22,18 +22,18 @@ fn scaled_add_sub_neg_and_checked_variants() {
 }
 
 #[test]
-fn glue_set_ratio_uses_deterministic_fixed_point_rounding() {
+fn glue_set_ratio_preserves_exact_reduced_fraction() {
     assert_eq!(
         GlueSetRatio::from_scaled_ratio(Scaled::from_raw(1), Scaled::from_raw(2)),
         GlueSetRatio::from_raw(GLUE_SET_RATIO_SCALE / 2)
     );
     assert_eq!(
         GlueSetRatio::from_scaled_ratio(Scaled::from_raw(1), Scaled::from_raw(3)),
-        GlueSetRatio::from_raw(333_333)
+        GlueSetRatio::from_ratio_parts(1, 3)
     );
     assert_eq!(
         GlueSetRatio::from_scaled_ratio(Scaled::from_raw(i32::MAX), Scaled::from_raw(1)),
-        GlueSetRatio::from_raw(i32::MAX)
+        GlueSetRatio::from_ratio_parts(i32::MAX, 1)
     );
 }
 

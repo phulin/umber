@@ -858,6 +858,28 @@ fn uncopy_primitives_unbox_without_clearing_registers() {
 }
 
 #[test]
+fn unvbox_splices_vertical_nodes_without_inserting_baseline_glue() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\vsize=1000pt \
+         \\setbox0=\\vbox{\\hrule\\hbox{}}\\unvbox0",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("unvbox executes");
+
+    assert!(!stores.current_page_nodes().iter().any(|node| matches!(
+        node,
+        tex_state::node::Node::Glue {
+            kind: tex_state::node::GlueKind::BaselineSkip,
+            ..
+        }
+    )));
+}
+
+#[test]
 fn badness_reads_most_recent_pack_and_is_not_assignable() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

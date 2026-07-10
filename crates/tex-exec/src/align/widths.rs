@@ -5,7 +5,7 @@ mod set;
 use tex_state::Universe;
 use tex_state::ids::{GlueId, NodeListId};
 use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, Node, Sign, UnsetNode};
-use tex_state::scaled::{GLUE_SET_RATIO_SCALE, GlueSetRatio, Scaled};
+use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_typeset::{HpackParams, PackSpec};
 
 use crate::ExecError;
@@ -124,8 +124,8 @@ fn tabskip_node(spec: GlueId) -> Node {
 }
 
 fn rounded_glue(ratio: GlueSetRatio, amount: Scaled) -> Result<Scaled, ExecError> {
-    let product = i128::from(ratio.raw()) * i128::from(amount.raw());
-    let rounded = rounded_div(product, i128::from(GLUE_SET_RATIO_SCALE));
+    let product = i128::from(ratio.numerator()) * i128::from(amount.raw());
+    let rounded = rounded_div(product, i128::from(ratio.denominator()));
     let raw = i32::try_from(rounded).map_err(|_| ExecError::ArithmeticOverflow)?;
     Ok(Scaled::from_raw(raw))
 }
