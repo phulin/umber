@@ -24,7 +24,7 @@ use tex_state::scaled::Scaled;
 use crate::TypesetState;
 
 pub(crate) use convert::{
-    Context, FetchedChar, add, char_box, clean_box, fetch, make_character_nucleus, source_node, sub,
+    Context, FetchedChar, add, char_box, clean_box, fetch, make_character_nucleus, source_list, sub,
 };
 pub use convert::{mlist_to_hlist, mlist_to_hlist_with_sink};
 pub use delimiters::left_right_delimiter_target;

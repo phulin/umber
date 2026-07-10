@@ -239,7 +239,7 @@ fn first_pass<S: MathTypesetState>(
             }
             other => {
                 // AppG rule 1
-                out.push(WorkItem::Node(source_node(ctx.state, other)));
+                out.push(WorkItem::Node(source_node(ctx, other)));
             }
         }
         index += 1;
@@ -280,15 +280,7 @@ fn translate_noad<S: MathTypesetState>(
             &mut delta,
         ),
         (_, MathField::Empty) => ctx.layout.empty(),
-        (_, MathField::SubBox(list)) => {
-            let nodes = ctx
-                .state
-                .nodes(*list)
-                .iter()
-                .map(|node| source_node(ctx.state, node))
-                .collect::<Vec<_>>();
-            ctx.layout.hlist(nodes)
-        }
+        (_, MathField::SubBox(list)) => source_list(ctx, *list),
         (_, MathField::SubMlist(_)) => {
             let boxed = clean_box(ctx, &noad.nucleus, ctx.style);
             ctx.layout.hlist([MathNode::HList(boxed)])
@@ -415,19 +407,22 @@ pub(crate) fn clean_box(
             }
         }
         MathField::SubBox(list) => {
-            let nodes: Vec<_> = ctx
-                .state
-                .nodes(*list)
-                .iter()
-                .map(|node| source_node(ctx.state, node))
-                .collect();
-            let list = ctx.layout.hlist(nodes);
-            ctx.layout.hpack(list)
+            let list = source_list(ctx, *list);
+            clean_hlist(ctx, list)
         }
         MathField::SubMlist(list) => {
             let list = convert_mlist(ctx, *list, style, false);
-            ctx.layout.hpack(list)
+            clean_hlist(ctx, list)
         }
+    }
+}
+
+fn clean_hlist(ctx: &Context<'_, impl MathTypesetState>, list: FrozenHList) -> MathBox {
+    match ctx.layout.single_node(list) {
+        Some(MathNode::HList(boxed) | MathNode::VList(boxed)) if boxed.shift.raw() == 0 => {
+            boxed.clone()
+        }
+        _ => ctx.layout.hpack(list),
     }
 }
 
@@ -480,6 +475,10 @@ pub(crate) fn char_box(
         shift: Scaled::from_raw(0),
         list,
         axis: BoxAxis::Horizontal,
+        display: false,
+        glue_set: tex_state::scaled::GlueSetRatio::from_raw(0),
+        glue_sign: tex_state::node::Sign::Normal,
+        glue_order: tex_state::glue::Order::Normal,
     }
 }
 
@@ -499,11 +498,23 @@ pub(crate) fn fetch(
     })
 }
 
-pub(crate) fn source_node(state: &impl MathTypesetState, node: &Node) -> MathNode {
+pub(crate) fn source_list(
+    ctx: &mut Context<'_, impl MathTypesetState>,
+    list: NodeListId,
+) -> FrozenHList {
+    let source = ctx.state.nodes(list).to_vec();
+    let nodes = source
+        .iter()
+        .map(|node| source_node(ctx, node))
+        .collect::<Vec<_>>();
+    ctx.layout.hlist(nodes)
+}
+
+pub(crate) fn source_node(ctx: &mut Context<'_, impl MathTypesetState>, node: &Node) -> MathNode {
     match node {
         Node::Char { font, ch } => {
             let code = u8::try_from(u32::from(*ch)).ok();
-            if let Some(metrics) = code.and_then(|code| state.font_char_metrics(*font, code)) {
+            if let Some(metrics) = code.and_then(|code| ctx.state.font_char_metrics(*font, code)) {
                 MathNode::Char {
                     font: *font,
                     ch: *ch,
@@ -518,7 +529,7 @@ pub(crate) fn source_node(state: &impl MathTypesetState, node: &Node) -> MathNod
             kind: *kind,
         },
         Node::Glue { spec, kind, leader } => MathNode::Glue {
-            spec: state.glue(*spec),
+            spec: ctx.state.glue(*spec),
             kind: *kind,
             leader: leader.clone(),
         },
@@ -532,8 +543,30 @@ pub(crate) fn source_node(state: &impl MathTypesetState, node: &Node) -> MathNod
             height: *height,
             depth: *depth,
         },
-        Node::HList(box_node) => MathNode::Opaque(Box::new(Node::HList(box_node.clone()))),
-        Node::VList(box_node) => MathNode::Opaque(Box::new(Node::VList(box_node.clone()))),
+        Node::HList(box_node) | Node::VList(box_node) => {
+            let list = source_list(ctx, box_node.children);
+            let boxed = MathBox {
+                width: box_node.width,
+                height: box_node.height,
+                depth: box_node.depth,
+                shift: box_node.shift,
+                list,
+                axis: if matches!(node, Node::HList(_)) {
+                    BoxAxis::Horizontal
+                } else {
+                    BoxAxis::Vertical
+                },
+                display: box_node.display,
+                glue_set: box_node.glue_set,
+                glue_sign: box_node.glue_sign,
+                glue_order: box_node.glue_order,
+            };
+            if matches!(node, Node::HList(_)) {
+                MathNode::HList(boxed)
+            } else {
+                MathNode::VList(boxed)
+            }
+        }
         _ => MathNode::Opaque(Box::new(node.clone())),
     }
 }

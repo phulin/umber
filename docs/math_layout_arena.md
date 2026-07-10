@@ -20,8 +20,11 @@ instead be a compact graph in one owned arena.
 `tex-typeset` will own a pure `MathLayout` result containing one contiguous
 node vector and one root list handle. A list handle identifies an immutable
 span allocated earlier in that vector and carries its already-computed
-horizontal extents. A `MathBox` stores dimensions, shift, axis, and a list
-handle rather than owning another vector.
+horizontal extents. A `MathBox` stores dimensions, shift, axis, glue-setting
+metadata, and a list handle rather than owning another vector. Existing h/v
+boxes that enter a math field are imported with those complete box properties,
+so `clean_box` can reuse a sole unshifted box exactly as TeX82 does without
+hiding it behind an opaque or newly packed wrapper.
 
 Parent lists are built after their children. When a parent needs to concatenate
 an existing list without copying its nodes, it emits an internal sequence

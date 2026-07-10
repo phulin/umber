@@ -6,7 +6,7 @@ use tex_state::scaled::Scaled;
 use super::delimiters::make_delimiter;
 use super::{
     BoxAxis, Context, FetchedChar, FrozenHList, MathBox, MathNode, MathTypesetState, add,
-    boxed_node, char_box, clean_box, fetch, make_character_nucleus, scripts, source_node, sub,
+    boxed_node, char_box, clean_box, fetch, make_character_nucleus, scripts, source_list, sub,
 };
 
 pub(super) struct AccentResult {
@@ -81,13 +81,7 @@ fn clean_vcenter_box(ctx: &mut Context<'_, impl MathTypesetState>, nucleus: &Mat
     if let MathField::SubBox(list) = nucleus
         && let [Node::VList(boxed)] = ctx.state.nodes(*list)
     {
-        let nodes: Vec<_> = ctx
-            .state
-            .nodes(boxed.children)
-            .iter()
-            .map(|node| source_node(ctx.state, node))
-            .collect();
-        let list = ctx.layout.hlist(nodes);
+        let list = source_list(ctx, boxed.children);
         return MathBox {
             width: boxed.width,
             height: boxed.height,
@@ -95,6 +89,10 @@ fn clean_vcenter_box(ctx: &mut Context<'_, impl MathTypesetState>, nucleus: &Mat
             shift: boxed.shift,
             list,
             axis: BoxAxis::Vertical,
+            display: boxed.display,
+            glue_set: boxed.glue_set,
+            glue_sign: boxed.glue_sign,
+            glue_order: boxed.glue_order,
         };
     }
     clean_box(ctx, nucleus, ctx.style)

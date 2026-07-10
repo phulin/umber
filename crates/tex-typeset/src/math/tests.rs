@@ -277,6 +277,58 @@ fn make_fraction_uses_default_rule_and_delimiter_target() {
 }
 
 #[test]
+fn fraction_reuses_single_explicit_numerator_box() {
+    let mut universe = setup_universe();
+    let children = universe.freeze_node_list(&[]);
+    let explicit = Node::HList(BoxNode::new(BoxNodeFields {
+        width: sc(40),
+        height: sc(12),
+        depth: sc(3),
+        shift: sc(0),
+        display: true,
+        glue_set: GlueSetRatio::from_raw(123),
+        glue_sign: Sign::Stretching,
+        glue_order: Order::Fil,
+        children,
+    }));
+    let explicit_list = universe.freeze_node_list(&[explicit]);
+    let field = MathField::SubBox(explicit_list);
+    let numerator = universe.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+        NoadKind::Normal(NoadClass::Ord),
+        field.clone(),
+    ))]);
+    let denominator = universe.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+        NoadKind::Normal(NoadClass::Ord),
+        field,
+    ))]);
+    let input = universe.freeze_node_list(&[Node::FractionNoad(MathFraction {
+        numerator,
+        denominator,
+        thickness: FractionThickness::Default,
+        left_delimiter: None,
+        right_delimiter: None,
+    })]);
+    let params = MathParams::read(&universe);
+
+    let layout = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
+
+    let [MathNode::HList(fraction)] = root_nodes(&layout).as_slice() else {
+        panic!("expected fraction hbox");
+    };
+    let [_, MathNode::VList(stack), _] = list_nodes(&layout, fraction.list).as_slice() else {
+        panic!("expected delimited fraction stack");
+    };
+    let [MathNode::HList(numerator), ..] = list_nodes(&layout, stack.list).as_slice() else {
+        panic!("expected numerator box");
+    };
+    assert!(list_nodes(&layout, numerator.list).is_empty());
+    assert!(numerator.display);
+    assert_eq!(numerator.glue_set, GlueSetRatio::from_raw(123));
+    assert_eq!(numerator.glue_sign, Sign::Stretching);
+    assert_eq!(numerator.glue_order, Order::Fil);
+}
+
+#[test]
 fn left_right_delimiters_size_to_enclosed_list() {
     let mut universe = setup_universe();
     let tall_box = universe.freeze_node_list(&[Node::Rule {
@@ -329,7 +381,6 @@ fn ordinary_sub_box_nucleus_is_not_repacked() {
         glue_order: Order::Normal,
         children,
     }));
-    let expected = sub_box.clone();
     let sub_box = universe.freeze_node_list(&[sub_box]);
     let input = universe.freeze_node_list(&[Node::MathNoad(MathNoad::new(
         NoadKind::Normal(NoadClass::Ord),
@@ -341,7 +392,13 @@ fn ordinary_sub_box_nucleus_is_not_repacked() {
 
     let logical = hlist.logical_nodes(hlist.root());
     assert_eq!(logical.len(), 1);
-    assert_eq!(logical[0], &MathNode::Opaque(Box::new(expected)));
+    let MathNode::VList(boxed) = logical[0] else {
+        panic!("expected source vbox");
+    };
+    assert_eq!(boxed.width, sc(4));
+    assert_eq!(boxed.height, sc(40));
+    assert_eq!(boxed.depth, sc(10));
+    assert!(list_nodes(&hlist, boxed.list).is_empty());
 }
 
 #[test]

@@ -191,6 +191,10 @@ fn fraction_vlist(
         shift: Scaled::from_raw(0),
         list,
         axis: super::BoxAxis::Vertical,
+        display: false,
+        glue_set: tex_state::scaled::GlueSetRatio::from_raw(0),
+        glue_sign: tex_state::node::Sign::Normal,
+        glue_order: tex_state::glue::Order::Normal,
     }
 }
 

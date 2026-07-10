@@ -1,8 +1,8 @@
 use tex_fonts::CharMetrics;
-use tex_state::glue::GlueSpec;
+use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::FontId;
-use tex_state::node::{GlueKind, KernKind, LeaderPayload, Node};
-use tex_state::scaled::Scaled;
+use tex_state::node::{GlueKind, KernKind, LeaderPayload, Node, Sign};
+use tex_state::scaled::{GlueSetRatio, Scaled};
 
 /// One converted math layout backed by a contiguous node arena.
 #[derive(Clone, Debug, PartialEq)]
@@ -148,6 +148,10 @@ pub struct MathBox {
     pub shift: Scaled,
     pub list: FrozenHList,
     pub axis: BoxAxis,
+    pub display: bool,
+    pub glue_set: GlueSetRatio,
+    pub glue_sign: Sign,
+    pub glue_order: Order,
 }
 
 /// Box orientation.
@@ -209,6 +213,10 @@ impl MathLayoutBuilder {
             shift: Scaled::from_raw(0),
             list,
             axis: BoxAxis::Horizontal,
+            display: false,
+            glue_set: GlueSetRatio::from_raw(0),
+            glue_sign: Sign::Normal,
+            glue_order: Order::Normal,
         }
     }
 
@@ -222,6 +230,10 @@ impl MathLayoutBuilder {
             shift: Scaled::from_raw(0),
             list,
             axis: BoxAxis::Vertical,
+            display: false,
+            glue_set: GlueSetRatio::from_raw(0),
+            glue_sign: Sign::Normal,
+            glue_order: Order::Normal,
         }
     }
 

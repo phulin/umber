@@ -89,6 +89,10 @@ pub(crate) fn var_delimiter(
             shift: Scaled::from_raw(0),
             list: ctx.layout.empty(),
             axis: BoxAxis::Horizontal,
+            display: false,
+            glue_set: tex_state::scaled::GlueSetRatio::from_raw(0),
+            glue_sign: tex_state::node::Sign::Normal,
+            glue_order: tex_state::glue::Order::Normal,
         }
     } else if ctx
         .state
@@ -253,6 +257,10 @@ fn extensible_box(
         shift: Scaled::from_raw(0),
         list: ctx.layout.empty(),
         axis: BoxAxis::Vertical,
+        display: false,
+        glue_set: tex_state::scaled::GlueSetRatio::from_raw(0),
+        glue_sign: tex_state::node::Sign::Normal,
+        glue_order: tex_state::glue::Order::Normal,
     };
 
     if let Some(code) = recipe.bottom {

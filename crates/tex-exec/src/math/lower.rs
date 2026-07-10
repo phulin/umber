@@ -1,11 +1,10 @@
 use tex_state::Universe;
 use tex_state::env::banks::DimenParam;
-use tex_state::glue::{GlueSpec, Order};
+use tex_state::glue::GlueSpec;
 use tex_state::ids::GlueId;
 use tex_state::ids::{FontId, NodeListId};
 use tex_state::math::MathListNode;
-use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, Node, Sign};
-use tex_state::scaled::GlueSetRatio;
+use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, Node};
 use tex_state::scaled::Scaled;
 use tex_typeset::TypesetState;
 use tex_typeset::math::MathLayoutReader;
@@ -221,10 +220,10 @@ fn lower_math_box(boxed: &MathBox, children: tex_state::ids::NodeListId) -> BoxN
         height: boxed.height,
         depth: boxed.depth,
         shift: boxed.shift,
-        display: false,
-        glue_set: GlueSetRatio::from_raw(0),
-        glue_sign: Sign::Normal,
-        glue_order: Order::Normal,
+        display: boxed.display,
+        glue_set: boxed.glue_set,
+        glue_sign: boxed.glue_sign,
+        glue_order: boxed.glue_order,
         children,
     })
 }
