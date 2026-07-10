@@ -792,6 +792,61 @@ fn copied_special_reuses_scan_time_expansion() {
 }
 
 #[test]
+fn shipout_converts_deferred_math_lists_before_artifact_lowering() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    stores.set_dimen_param(DimenParam::MATH_SURROUND, Scaled::from_raw(123));
+
+    let content = stores.freeze_node_list(&[tex_state::node::Node::MathNoad(
+        tex_state::math::MathNoad::new(
+            tex_state::math::NoadKind::Normal(tex_state::math::NoadClass::Ord),
+            tex_state::math::MathField::Empty,
+        ),
+    )]);
+    let children = stores.freeze_node_list(&[tex_state::node::Node::MathList(
+        tex_state::math::MathListNode {
+            display: false,
+            content,
+        },
+    )]);
+    let root = tex_state::node::Node::HList(tex_state::node::BoxNode::new(
+        tex_state::node::BoxNodeFields {
+            width: Scaled::from_raw(246),
+            height: Scaled::from_raw(0),
+            depth: Scaled::from_raw(0),
+            shift: Scaled::from_raw(0),
+            display: false,
+            glue_set: tex_state::scaled::GlueSetRatio::ZERO,
+            glue_sign: tex_state::node::Sign::Normal,
+            glue_order: tex_state::glue::Order::Normal,
+            children,
+        },
+    ));
+    let root_list = stores.freeze_node_list(&[root]);
+    stores.set_box_reg(0, root_list);
+    let mut input = InputStack::new(MemoryInput::new("\\shipout\\box0\\end"));
+
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("deferred math list shipout succeeds");
+    let bytes = stores
+        .world()
+        .read_artifact(stats.shipped_artifacts[0])
+        .expect("read artifact")
+        .expect("artifact stored");
+    let artifact = PageArtifact::from_bytes(&bytes).expect("artifact parses");
+    let PageNode::HList(box_node) = artifact.root else {
+        panic!("shipout root should lower to hlist");
+    };
+    assert!(matches!(
+        box_node.children.as_slice(),
+        [PageNode::MathOn(width), PageNode::MathOff(end_width)]
+            if width.raw() == 123 && end_width.raw() == 123
+    ));
+}
+
+#[test]
 fn shipout_lowers_supported_whatsit_adjacent_nodes_without_reordering_effects() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);

@@ -52,7 +52,6 @@ pub(crate) fn insert_dollar_sign<S>(
          you left one out. Proceed, with fingers crossed.\n",
     );
 }
-#[cfg(test)]
 pub(crate) use lower::finish_math_list_node;
 pub(crate) use lower::finish_math_lists;
 use scan::*;

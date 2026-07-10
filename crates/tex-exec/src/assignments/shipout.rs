@@ -231,8 +231,21 @@ where
 
     fn lower_node_list(&mut self, list: NodeListId) -> Result<Vec<PageNode>, ExecError> {
         let nodes = self.stores.nodes(list).to_vec();
+        self.lower_nodes(nodes)
+    }
+
+    fn lower_nodes(&mut self, nodes: Vec<Node>) -> Result<Vec<PageNode>, ExecError> {
         let mut lowered = Vec::with_capacity(nodes.len());
         for node in nodes {
+            if let Node::MathList(list) = node {
+                // TeX82 converts an mlist before hlist_out; only the resulting
+                // before/after math nodes reach the DVI traversal. A deferred
+                // list nested in a frozen shipout tree has restricted-hlist
+                // semantics, so conversion must not insert line-break penalties.
+                let math_nodes = crate::math::finish_math_list_node(self.stores, list, false);
+                lowered.extend(self.lower_nodes(math_nodes)?);
+                continue;
+            }
             if let Some(node) = self.lower_node(node)? {
                 lowered.push(node);
             }
