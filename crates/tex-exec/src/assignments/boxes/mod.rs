@@ -220,10 +220,12 @@ where
         }
         _ => unreachable!("caller restricts box list commands"),
     }
+    // TeX82 routes `\lastbox` back through `box_end`, which immediately
+    // invokes the page builder when the box is re-appended in outer vmode.
+    // Unboxing alone only splices contributions and does not catch them up.
     if !matches!(
         primitive,
-        UnexpandablePrimitive::LastBox
-            | UnexpandablePrimitive::UnHBox
+        UnexpandablePrimitive::UnHBox
             | UnexpandablePrimitive::UnHCopy
             | UnexpandablePrimitive::UnVBox
             | UnexpandablePrimitive::UnVCopy

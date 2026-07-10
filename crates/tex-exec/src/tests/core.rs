@@ -2023,6 +2023,30 @@ fn output_routine_replays_in_implicit_group_and_consumes_box255() {
 }
 
 #[test]
+fn lastbox_reappend_runs_page_builder_before_enclosing_group_ends() {
+    let mut stores = support::stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\font\\tenrm=cmr10 \\font\\tt=cmtt10 \\tenrm \
+         \\topskip=0pt \\vsize=1pt \
+         \\output={\\global\\advance\\count1 by 1 \
+           \\ifnum\\count1=1 \\global\\dimen1=1em\\fi \
+           \\shipout\\box255} \
+         \\setbox0=\\vbox{\\hbox{}\\penalty-10000\\hbox{}} \
+         {\\tt \\unvbox0\\lastbox} \
+         \\end",
+    ));
+
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("lastbox reappend should fire output within the font group");
+
+    assert!(!stats.shipped_artifacts.is_empty());
+    let typewriter = support::font_meaning(&stores, "tt");
+    assert_eq!(stores.dimen(1), stores.font_parameter(typewriter, 6));
+}
+
+#[test]
 fn output_routine_reports_nonvoid_box255_after_output() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
