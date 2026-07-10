@@ -11,7 +11,7 @@ pub(super) fn debug_assert_no_unset_nodes(stores: &Universe, nodes: &[Node]) {
     }
     while let Some(list) = stack.pop() {
         for node in stores.nodes(list) {
-            debug_assert_no_unset_node(node, &mut stack);
+            debug_assert_no_unset_node(&node.to_owned(), &mut stack);
         }
     }
 }

@@ -88,12 +88,12 @@ fn collect_width_requirements(
         };
         let mut column = 0usize;
         for child in stores.nodes(row.children) {
-            let Node::Unset(cell) = child else {
+            let tex_state::node_arena::NodeRef::Unset(cell) = child else {
                 continue;
             };
             let span = usize::from(cell.span_count.max(1));
             ensure_layout_len(records, tabskips, state, column + span);
-            merge_width(&mut records[column], span, unset_axis_size(kind, cell));
+            merge_width(&mut records[column], span, unset_axis_size(kind, &cell));
             column += span;
         }
     }

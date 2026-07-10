@@ -136,11 +136,11 @@ fn setlanguage_appends_normalized_language_whatsit_in_hmode() {
         .expect("setlanguage should append a language whatsit");
 
     let box0 = stores.box_reg(0).expect("box should be assigned");
-    let [tex_state::node::Node::HList(box_node)] = stores.nodes(box0) else {
+    let [tex_state::node::Node::HList(box_node)] = stores.nodes(box0).testing_decoded() else {
         panic!("register 0 should hold an hbox");
     };
     assert!(matches!(
-        stores.nodes(box_node.children),
+        stores.nodes(box_node.children).testing_decoded(),
         [tex_state::node::Node::Whatsit(
             tex_state::node::Whatsit::Language {
                 language: 7,
@@ -728,7 +728,7 @@ fn box_primitives_round_trip_through_registers() {
 
     assert!(stores.box_reg(0).is_none(), "\\box should void register 0");
     let box1 = stores.box_reg(1).expect("copy should preserve register 1");
-    let [tex_state::node::Node::HList(box_node)] = stores.nodes(box1) else {
+    let [tex_state::node::Node::HList(box_node)] = stores.nodes(box1).testing_decoded() else {
         panic!("register 1 should hold an hbox");
     };
     assert_eq!(box_node.width.raw(), 10 * tex_state::scaled::Scaled::UNITY);
@@ -754,7 +754,7 @@ fn last_box_assignment_replays_with_identical_state_hash() {
         .run(&mut input, &mut stores)
         .expect("first lastbox execution");
     let first_box = stores.box_reg(1).expect("global lastbox destination");
-    let [Node::HList(first_node)] = stores.nodes(first_box) else {
+    let [Node::HList(first_node)] = stores.nodes(first_box).testing_decoded() else {
         panic!("lastbox destination should contain an hbox");
     };
     assert_eq!(first_node.shift.raw(), 0, "lastbox clears box shift");
@@ -783,10 +783,10 @@ fn control_space_uses_space_skip_without_space_factor_scaling() {
         .expect("control space executes");
 
     let box0 = stores.box_reg(0).expect("box should be assigned");
-    let [tex_state::node::Node::HList(box_node)] = stores.nodes(box0) else {
+    let [tex_state::node::Node::HList(box_node)] = stores.nodes(box0).testing_decoded() else {
         panic!("register 0 should hold an hbox");
     };
-    let children = stores.nodes(box_node.children);
+    let children = stores.nodes(box_node.children).testing_decoded();
     assert!(matches!(
         children,
         [
@@ -815,18 +815,19 @@ fn adjacent_cmr10_characters_emit_tfm_kern() {
         .expect("font kern program executes");
 
     let box0 = stores.box_reg(0).expect("box should be assigned");
-    let [Node::VList(box_node)] = stores.nodes(box0) else {
+    let [Node::VList(box_node)] = stores.nodes(box0).testing_decoded() else {
         panic!("register 0 should hold a vbox");
     };
     let line = stores
         .nodes(box_node.children)
+        .testing_decoded()
         .iter()
         .find_map(|node| match node {
             Node::HList(line) => Some(line),
             _ => None,
         })
         .expect("paragraph should produce a line");
-    let children = stores.nodes(line.children);
+    let children = stores.nodes(line.children).testing_decoded();
     assert!(
         children.windows(3).any(|nodes| matches!(
             nodes,
@@ -856,15 +857,15 @@ fn literal_groups_break_ligature_runs_and_preserve_natural_width() {
 
     let ligated = stores.box_reg(0).expect("ligated box should be assigned");
     let grouped = stores.box_reg(1).expect("grouped box should be assigned");
-    let [Node::HList(ligated_box)] = stores.nodes(ligated) else {
+    let [Node::HList(ligated_box)] = stores.nodes(ligated).testing_decoded() else {
         panic!("register 0 should hold an hbox");
     };
-    let [Node::HList(grouped_box)] = stores.nodes(grouped) else {
+    let [Node::HList(grouped_box)] = stores.nodes(grouped).testing_decoded() else {
         panic!("register 1 should hold an hbox");
     };
 
     assert!(matches!(
-        stores.nodes(ligated_box.children).first(),
+        stores.nodes(ligated_box.children).testing_decoded().first(),
         Some(Node::Lig {
             ch: '\u{c}',
             orig: ('f', 'i'),
@@ -872,7 +873,7 @@ fn literal_groups_break_ligature_runs_and_preserve_natural_width() {
         })
     ));
     assert!(matches!(
-        stores.nodes(grouped_box.children),
+        stores.nodes(grouped_box.children).testing_decoded(),
         [Node::Char { ch: 'f', .. }, Node::Char { ch: 'i', .. }, ..]
     ));
     assert_eq!(
@@ -913,10 +914,10 @@ fn overfull_hbox_appends_running_rule_when_enabled() {
         .expect("overfull hbox executes");
 
     let box0 = stores.box_reg(0).expect("box should be assigned");
-    let [tex_state::node::Node::HList(box_node)] = stores.nodes(box0) else {
+    let [tex_state::node::Node::HList(box_node)] = stores.nodes(box0).testing_decoded() else {
         panic!("register 0 should hold an hbox");
     };
-    let children = stores.nodes(box_node.children);
+    let children = stores.nodes(box_node.children).testing_decoded();
     assert!(matches!(
         children.last(),
         Some(tex_state::node::Node::Rule {
@@ -979,20 +980,20 @@ fn uncopy_primitives_unbox_without_clearing_registers() {
     assert!(stores.box_reg(2).is_some(), "\\unvcopy should not clear");
 
     let hcopy = stores.box_reg(1).expect("hcopy destination");
-    let [tex_state::node::Node::HList(hbox)] = stores.nodes(hcopy) else {
+    let [tex_state::node::Node::HList(hbox)] = stores.nodes(hcopy).testing_decoded() else {
         panic!("register 1 should hold an hbox");
     };
     assert!(matches!(
-        stores.nodes(hbox.children),
+        stores.nodes(hbox.children).testing_decoded(),
         [tex_state::node::Node::Kern { .. }]
     ));
 
     let vcopy = stores.box_reg(3).expect("vcopy destination");
-    let [tex_state::node::Node::VList(vbox)] = stores.nodes(vcopy) else {
+    let [tex_state::node::Node::VList(vbox)] = stores.nodes(vcopy).testing_decoded() else {
         panic!("register 3 should hold a vbox");
     };
     assert!(matches!(
-        stores.nodes(vbox.children),
+        stores.nodes(vbox.children).testing_decoded(),
         [tex_state::node::Node::Kern { .. }]
     ));
 }
@@ -1068,7 +1069,7 @@ fn leaders_parse_box_and_rule_payloads_on_glue_nodes() {
         .expect("leader payloads execute");
 
     let hbox = stores.box_reg(0).expect("hbox register");
-    let [tex_state::node::Node::HList(hbox)] = stores.nodes(hbox) else {
+    let [tex_state::node::Node::HList(hbox)] = stores.nodes(hbox).testing_decoded() else {
         panic!("register 0 should hold an hbox");
     };
     let [
@@ -1077,7 +1078,7 @@ fn leaders_parse_box_and_rule_payloads_on_glue_nodes() {
             kind,
             leader: Some(tex_state::node::LeaderPayload::HList(payload)),
         },
-    ] = stores.nodes(hbox.children)
+    ] = stores.nodes(hbox.children).testing_decoded()
     else {
         panic!("hbox should contain leader glue with hlist payload");
     };
@@ -1087,12 +1088,12 @@ fn leaders_parse_box_and_rule_payloads_on_glue_nodes() {
         10 * tex_state::scaled::Scaled::UNITY
     );
     assert!(matches!(
-        stores.nodes(payload.children),
+        stores.nodes(payload.children).testing_decoded(),
         [tex_state::node::Node::Kern { .. }]
     ));
 
     let vbox = stores.box_reg(1).expect("vbox register");
-    let [tex_state::node::Node::VList(vbox)] = stores.nodes(vbox) else {
+    let [tex_state::node::Node::VList(vbox)] = stores.nodes(vbox).testing_decoded() else {
         panic!("register 1 should hold a vbox");
     };
     let [
@@ -1105,7 +1106,7 @@ fn leaders_parse_box_and_rule_payloads_on_glue_nodes() {
                     ..
                 }),
         },
-    ] = stores.nodes(vbox.children)
+    ] = stores.nodes(vbox.children).testing_decoded()
     else {
         panic!("vbox should contain leader glue with rule payload");
     };
@@ -1268,10 +1269,13 @@ fn paragraph_end_ignores_empty_unindented_paragraph() {
         .expect("empty and indented paragraphs execute");
 
     let box0 = stores.box_reg(0).expect("vbox register");
-    let [Node::VList(vbox)] = stores.nodes(box0) else {
+    let [Node::VList(vbox)] = stores.nodes(box0).testing_decoded() else {
         panic!("register 0 should hold a vbox");
     };
-    assert!(matches!(stores.nodes(vbox.children), [Node::HList(_)]));
+    assert!(matches!(
+        stores.nodes(vbox.children).testing_decoded(),
+        [Node::HList(_)]
+    ));
 }
 
 #[test]
@@ -1286,10 +1290,10 @@ fn vbox_closing_brace_ends_paragraph_resumed_after_display() {
         .expect("vbox containing terminal display executes");
 
     let box0 = stores.box_reg(0).expect("vbox register");
-    let [Node::VList(vbox)] = stores.nodes(box0) else {
+    let [Node::VList(vbox)] = stores.nodes(box0).testing_decoded() else {
         panic!("register 0 should hold a vbox");
     };
-    let children = stores.nodes(vbox.children);
+    let children = stores.nodes(vbox.children).testing_decoded();
     assert!(matches!(children.first(), Some(Node::Rule { .. })));
     assert!(children.iter().any(|node| matches!(node, Node::HList(_))));
 }
@@ -1307,11 +1311,12 @@ fn paragraph_end_removes_only_the_final_trailing_glue() {
         .expect("paragraph executes");
 
     let box0 = stores.box_reg(0).expect("vbox register");
-    let [Node::VList(vbox)] = stores.nodes(box0) else {
+    let [Node::VList(vbox)] = stores.nodes(box0).testing_decoded() else {
         panic!("register 0 should hold a vbox");
     };
     let line = stores
         .nodes(vbox.children)
+        .testing_decoded()
         .iter()
         .find_map(|node| match node {
             Node::HList(line) => Some(line),
@@ -1320,6 +1325,7 @@ fn paragraph_end_removes_only_the_final_trailing_glue() {
         .expect("paragraph should produce a line");
     let explicit_glue: Vec<_> = stores
         .nodes(line.children)
+        .testing_decoded()
         .iter()
         .filter_map(|node| match node {
             Node::Glue {
@@ -1463,11 +1469,12 @@ fn fresh_hanging_paragraph_keeps_its_first_item_line_at_full_width() {
         .expect("item-shaped paragraphs execute");
 
     let box0 = stores.box_reg(0).expect("vbox register");
-    let [Node::VList(vbox)] = stores.nodes(box0) else {
+    let [Node::VList(vbox)] = stores.nodes(box0).testing_decoded() else {
         panic!("register 0 should hold a vbox");
     };
     let lines = stores
         .nodes(vbox.children)
+        .testing_decoded()
         .iter()
         .filter_map(|node| match node {
             Node::HList(line) => Some(line),
@@ -1578,7 +1585,7 @@ fn vertical_unhbox_of_void_box_still_builds_indented_empty_line() {
             Node::HList(line)
                 if line.height.raw() == 0
                     && line.depth.raw() == 0
-                    && matches!(stores.nodes(line.children), [Node::HList(indent), ..] if indent.width == stores.dimen_param(DimenParam::PAR_INDENT))
+                    && matches!(stores.nodes(line.children).testing_decoded(), [Node::HList(indent), ..] if indent.width == stores.dimen_param(DimenParam::PAR_INDENT))
         )
     }));
 }
@@ -1710,7 +1717,7 @@ fn insert_node_captures_split_parameters_and_natural_size() {
     assert_eq!(insert.2.width.raw(), 9 * tex_state::scaled::Scaled::UNITY);
     assert_eq!(insert.3.raw(), 3 * tex_state::scaled::Scaled::UNITY);
     assert_eq!(insert.4, 77);
-    assert_eq!(stores.nodes(insert.5).len(), 2);
+    assert_eq!(stores.nodes(insert.5).testing_decoded().len(), 2);
 }
 
 #[test]
@@ -1737,7 +1744,7 @@ fn insertion_starts_with_normal_paragraph_parameters() {
         })
         .expect("insert node");
     assert!(matches!(
-        stores.nodes(content),
+        stores.nodes(content).testing_decoded(),
         [tex_state::node::Node::HList(_)]
     ));
     assert!(size.raw() < 20 * tex_state::scaled::Scaled::UNITY);
@@ -1769,7 +1776,7 @@ fn insertion_omits_parskip_before_first_internal_vlist_paragraph() {
         })
         .expect("insert node");
     assert!(matches!(
-        stores.nodes(content),
+        stores.nodes(content).testing_decoded(),
         [tex_state::node::Node::HList(_)]
     ));
 }
@@ -1822,6 +1829,7 @@ fn split_insertion_reports_and_normalizes_infinite_shrink_content() {
         .expect("insert content");
     let split_glue = stores
         .nodes(content)
+        .testing_decoded()
         .iter()
         .find_map(|node| match node {
             tex_state::node::Node::Glue { spec, .. } => Some(stores.glue(*spec)),
@@ -1848,11 +1856,12 @@ fn vsplit_reports_and_normalizes_infinite_shrink_glue() {
     let log = terminal_effect_text(&stores);
     assert!(log.contains("! Infinite glue shrinkage found in box being split."));
     let box1 = stores.box_reg(1).expect("split box");
-    let [tex_state::node::Node::VList(box_node)] = stores.nodes(box1) else {
+    let [tex_state::node::Node::VList(box_node)] = stores.nodes(box1).testing_decoded() else {
         panic!("box1 should be a vbox");
     };
     let split_glue = stores
         .nodes(box_node.children)
+        .testing_decoded()
         .iter()
         .find_map(|node| match node {
             tex_state::node::Node::Glue { spec, .. } => Some(stores.glue(*spec)),
@@ -1913,12 +1922,13 @@ fn split_insertion_penalty_is_mainline_then_heldover_count_in_output() {
     assert_eq!(macro_text(&stores, "held"), "1");
 
     let box7 = stores.box_reg(7).expect("insertion box");
-    let [tex_state::node::Node::VList(box_node)] = stores.nodes(box7) else {
+    let [tex_state::node::Node::VList(box_node)] = stores.nodes(box7).testing_decoded() else {
         panic!("box7 should be a vbox");
     };
     assert!(
         stores
             .nodes(box_node.children)
+            .testing_decoded()
             .iter()
             .any(|node| matches!(node, tex_state::node::Node::Rule { .. })),
         "split-off insertion material should be appended to box7"
@@ -1971,7 +1981,7 @@ fn page_output_promotes_nested_survivor_children_into_one_root() {
     let mut pending = vec![root];
     let mut nested_boxes = 0;
     while let Some(list) = pending.pop() {
-        for node in stores.nodes(list) {
+        for node in stores.nodes(list).testing_decoded() {
             if let Node::HList(box_node) | Node::VList(box_node) = node {
                 let ArenaRef::Survivor(child_root) = box_node.children.arena() else {
                     panic!("promoted page contains an epoch child");

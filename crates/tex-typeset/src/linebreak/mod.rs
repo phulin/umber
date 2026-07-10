@@ -193,7 +193,7 @@ mod widths;
 
 pub use post::post_line_break;
 
-use widths::{PrefixWidths, Widths, line_badness, line_widths};
+use widths::{PrefixWidths, Widths, line_badness, line_widths_view};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Fitness {
@@ -441,7 +441,7 @@ fn legal_breakpoints<S: TypesetState>(
                 width_position: i,
                 penalty: discretionary_penalty(*kind, params),
                 hyphenated: true,
-                add_width: line_widths(state, state.nodes(*pre), 0, state.nodes(*pre).len()),
+                add_width: line_widths_view(state, state.nodes(*pre), 0, state.nodes(*pre).len()),
             }),
             Node::MathOff(_) if matches!(nodes.get(i + 1), Some(Node::Glue { .. })) => {
                 out.push(Breakpoint {

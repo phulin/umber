@@ -1,6 +1,6 @@
 use tex_fonts::{LigKernChar, LigKernCommand};
 use tex_state::math::{MathChar, MathField, MathNoad};
-use tex_state::node::{KernKind, Node};
+use tex_state::node::KernKind;
 use tex_state::scaled::Scaled;
 
 use super::delimiters::make_delimiter;
@@ -79,7 +79,9 @@ pub(super) fn make_vcenter(
 
 fn clean_vcenter_box(ctx: &mut Context<'_, impl MathTypesetState>, nucleus: &MathField) -> MathBox {
     if let MathField::SubBox(list) = nucleus
-        && let [Node::VList(boxed)] = ctx.state.nodes(*list)
+        && let nodes = ctx.state.nodes(*list)
+        && nodes.len() == 1
+        && let Some(tex_state::node_arena::NodeRef::VList(boxed)) = nodes.first()
     {
         let list = source_list(ctx, boxed.children);
         return MathBox {

@@ -290,7 +290,9 @@ where
 pub(super) fn first_box_node(stores: &Universe, id: Option<NodeListId>) -> Option<Node> {
     let id = id?;
     stores.nodes(id).first().and_then(|node| match node {
-        Node::HList(_) | Node::VList(_) => Some(node.clone()),
+        tex_state::node_arena::NodeRef::HList(_) | tex_state::node_arena::NodeRef::VList(_) => {
+            Some(node.to_owned())
+        }
         _ => None,
     })
 }

@@ -395,5 +395,8 @@ fn packed_box_can_round_trip_through_survivor_box_register() {
     let boxed = universe.freeze_node_list(&[Node::HList(packed.node)]);
     universe.set_box_reg(0, boxed);
     let survivor = universe.box_reg(0).expect("box should be stored");
-    assert!(matches!(universe.nodes(survivor), [Node::HList(_)]));
+    assert!(matches!(
+        universe.nodes(survivor).first(),
+        Some(NodeRef::HList(_))
+    ));
 }

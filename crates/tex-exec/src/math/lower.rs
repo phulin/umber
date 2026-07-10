@@ -115,7 +115,7 @@ impl<'a> LoweredMathSink<'a> {
                     scratch.push(Node::Glue {
                         spec: id,
                         kind: lower_math_glue_kind(*kind),
-                        leader: leader.clone(),
+                        leader: *leader,
                     });
                 }
                 MathNode::Penalty(penalty) => scratch.push(Node::Penalty(*penalty)),
@@ -139,7 +139,7 @@ impl<'a> LoweredMathSink<'a> {
 }
 
 impl TypesetState for LoweredMathSink<'_> {
-    fn nodes(&self, id: NodeListId) -> &[Node] {
+    fn nodes(&self, id: NodeListId) -> tex_state::node_arena::NodeList<'_> {
         self.stores.nodes(id)
     }
 

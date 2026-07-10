@@ -27,7 +27,7 @@ use crate::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use crate::math::MathFontSize;
 use crate::meaning::Meaning;
 use crate::node::Node;
-use crate::node_arena::NodeListBuilder;
+use crate::node_arena::{NodeList, NodeListBuilder};
 use crate::page::{
     PageBreak, PageBuilderState, PageContents, PageDimension, PageFireUp, PageInsertion,
     PageInteger, PageMark,
@@ -103,7 +103,7 @@ pub trait ExpansionState {
     fn current_font(&self) -> FontId;
     fn current_font_symbol(&self) -> Option<Symbol>;
     fn math_family_font(&self, size: MathFontSize, family: u8) -> FontId;
-    fn nodes(&self, id: NodeListId) -> &[Node];
+    fn nodes(&self, id: NodeListId) -> NodeList<'_>;
     fn box_dimension(&self, index: u16, dimension: BoxDimension) -> Option<Scaled>;
     fn count(&self, index: u16) -> i32;
     fn dimen(&self, index: u16) -> Scaled;
@@ -1603,7 +1603,7 @@ impl Universe {
     }
 
     #[must_use]
-    pub fn nodes(&self, id: NodeListId) -> &[Node] {
+    pub fn nodes(&self, id: NodeListId) -> NodeList<'_> {
         self.stores.nodes(id)
     }
 
@@ -2284,9 +2284,15 @@ pub enum BoxDimension {
     Depth,
 }
 
-fn box_dimension_from_nodes(nodes: &[Node], dimension: BoxDimension) -> Option<Scaled> {
-    let box_node = match nodes {
-        [Node::HList(box_node)] | [Node::VList(box_node)] => box_node,
+fn box_dimension_from_nodes(nodes: NodeList<'_>, dimension: BoxDimension) -> Option<Scaled> {
+    let box_node = match (nodes.len(), nodes.first()) {
+        (
+            1,
+            Some(
+                crate::node_arena::NodeRef::HList(box_node)
+                | crate::node_arena::NodeRef::VList(box_node),
+            ),
+        ) => box_node,
         _ => return None,
     };
     Some(match dimension {
@@ -2444,7 +2450,7 @@ impl ExpansionState for Universe {
         Self::math_family_font(self, size, family)
     }
 
-    fn nodes(&self, id: NodeListId) -> &[Node] {
+    fn nodes(&self, id: NodeListId) -> NodeList<'_> {
         Self::nodes(self, id)
     }
 
@@ -2770,7 +2776,7 @@ impl ExpansionState for ExpansionContext<'_> {
         self.universe.math_family_font(size, family)
     }
 
-    fn nodes(&self, id: NodeListId) -> &[Node] {
+    fn nodes(&self, id: NodeListId) -> NodeList<'_> {
         self.universe.nodes(id)
     }
 

@@ -22,7 +22,7 @@ use crate::macro_store::{MacroDefinitionProvenance, MacroMeaning, MacroStore, Ma
 use crate::math::MathFontSize;
 use crate::meaning::Meaning;
 use crate::node::Node;
-use crate::node_arena::{NodeArena, NodeArenaMark, NodeListBuilder};
+use crate::node_arena::{NodeArena, NodeArenaMark, NodeList, NodeListBuilder};
 use crate::provenance::{
     InsertedOrigin, InsertedOriginKind, MacroInvocationOrigin, OriginListBuilder, OriginRecord,
     ProvenanceStats, ProvenanceStore, ProvenanceStoreMark, SourceOrigin, SynthesizedOrigin,
@@ -1135,7 +1135,7 @@ impl Stores {
 
     /// Reads a live frozen node list.
     #[must_use]
-    pub fn nodes(&self, id: NodeListId) -> &[Node] {
+    pub fn nodes(&self, id: NodeListId) -> NodeList<'_> {
         self.assert_live_node_list(id);
         self.nodes.get(id, &self.survivors)
     }
@@ -1594,7 +1594,7 @@ impl Stores {
         let len = u32::try_from(self.nodes.testing_node_count())
             .expect("node arena test hash cannot cover more than u32 entries");
         for node in self.nodes.get_epoch(NodeListId::new_epoch(0, len)) {
-            self.testing_hash_node_content_bounded(node, hasher, 0);
+            self.testing_hash_node_content_bounded(&node.to_owned(), hasher, 0);
         }
     }
 
@@ -1616,7 +1616,7 @@ impl Stores {
         );
         1_u8.hash(hasher);
         for node in self.nodes(id) {
-            self.testing_hash_node_content_bounded(node, hasher, depth);
+            self.testing_hash_node_content_bounded(&node.to_owned(), hasher, depth);
         }
     }
 

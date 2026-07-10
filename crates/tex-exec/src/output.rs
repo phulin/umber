@@ -239,7 +239,12 @@ fn distribute_insertions(
                 if let Some(queue) = queues.get_mut(&class) {
                     wait = None;
                     let start = queue.nodes.len();
-                    queue.nodes.extend_from_slice(stores.nodes(content));
+                    queue.nodes.extend(
+                        stores
+                            .nodes(content)
+                            .into_iter()
+                            .map(|node| node.to_owned()),
+                    );
                     if queue.best_ins_index == index {
                         if let Some(remainder) = split_insertion_remainder(
                             stores,
@@ -280,7 +285,7 @@ fn insertion_box_nodes(stores: &mut Universe, class: u16) -> Result<Vec<Node>, E
     let Some(list) = stores.box_reg(class) else {
         return Ok(Vec::new());
     };
-    let Some(node) = stores.nodes(list).first().cloned() else {
+    let Some(node) = stores.nodes(list).first().map(|node| node.to_owned()) else {
         return Ok(Vec::new());
     };
     match node {
@@ -473,7 +478,7 @@ fn take_box255_node(stores: &mut Universe) -> Result<Node, ExecError> {
     stores
         .nodes(id)
         .first()
-        .cloned()
+        .map(|node| node.to_owned())
         .ok_or(ExecError::MissingToken { context: "box" })
 }
 

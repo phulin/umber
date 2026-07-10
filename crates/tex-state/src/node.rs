@@ -155,7 +155,7 @@ pub(crate) fn record_node_append(node: &Node) {
 }
 
 /// A TeX box node payload shared by hlist and vlist nodes.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BoxNode {
     pub width: Scaled,
     pub height: Scaled,
@@ -201,7 +201,7 @@ pub struct BoxNodeFields {
 }
 
 /// Repeated material attached to a leader glue node.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum LeaderPayload {
     HList(BoxNode),
     VList(BoxNode),
@@ -213,7 +213,7 @@ pub enum LeaderPayload {
 }
 
 /// A TeX unset box used while alignments are being measured and resolved.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct UnsetNode {
     pub kind: UnsetKind,
     pub width: Scaled,

@@ -432,7 +432,7 @@ impl Stores {
                     hasher.usize(nodes.len());
                     stack.push(NodeFrame::ListEnd);
                     for node in nodes.iter().rev() {
-                        stack.push(NodeFrame::Node(node.clone()));
+                        stack.push(NodeFrame::Node(node.to_owned()));
                     }
                 }
                 NodeFrame::ListEnd => hasher.tag(0x71),
@@ -761,7 +761,7 @@ impl Stores {
                     hasher.usize(nodes.len());
                     stack.push(NodeFrame::ListEnd);
                     for node in nodes.iter().rev() {
-                        stack.push(NodeFrame::Node(node.clone()));
+                        stack.push(NodeFrame::Node(node.to_owned()));
                     }
                 }
                 NodeFrame::ListEnd => hasher.tag(0x71),

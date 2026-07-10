@@ -98,7 +98,7 @@ fn limit_switch_applies_to_mathchardef_operator() {
 fn generalized_fraction_absorbs_prior_list_and_reports_doubled_fraction() {
     let (mut stores, mut executor) = run_math_source(r"$a\over b\over c");
     let content = crate::math::testing_finish_current_math_list(executor.nest_mut(), &mut stores);
-    let nodes = stores.nodes(content);
+    let nodes = stores.nodes(content).testing_decoded();
 
     assert_eq!(nodes.len(), 1);
     let Node::FractionNoad(fraction) = &nodes[0] else {
@@ -129,14 +129,14 @@ fn grouped_fraction_inside_hbox_keeps_box_brace_accounting_balanced() {
         panic!("first hbox should be assigned");
     };
     assert!(
-        matches!(stores.nodes(box0), [Node::HList(_)]),
+        matches!(stores.nodes(box0).testing_decoded(), [Node::HList(_)]),
         "first hbox should be stored as an hlist"
     );
     let Some(box1) = stores.box_reg(1) else {
         panic!("following hbox should still parse after grouped math");
     };
     assert!(
-        matches!(stores.nodes(box1), [Node::HList(_)]),
+        matches!(stores.nodes(box1).testing_decoded(), [Node::HList(_)]),
         "second hbox should be stored as an hlist"
     );
 }
@@ -335,7 +335,10 @@ fn math_field_groups_remove_braces_around_single_unscripted_ord_box() {
     let MathField::SubBox(list) = noad.nucleus else {
         panic!("TeX's math-group simplification should expose the hbox nucleus")
     };
-    assert!(matches!(stores.nodes(list), [Node::HList(_)]));
+    assert!(matches!(
+        stores.nodes(list).testing_decoded(),
+        [Node::HList(_)]
+    ));
 }
 
 #[test]
@@ -454,7 +457,7 @@ fn math_brace_groups_restore_local_box_assignments_and_keep_globals() {
 
     let restored = stores.box_reg(0).expect("local box should be restored");
     assert!(matches!(
-        stores.nodes(restored),
+        stores.nodes(restored).testing_decoded(),
         [Node::Kern { amount, kind: KernKind::Explicit }] if amount.raw() == 17
     ));
     assert!(stores.box_reg(1).is_some(), "global box should survive");
@@ -481,7 +484,7 @@ fn explicit_groups_in_math_restore_local_box_assignments_and_keep_globals() {
 
     let restored = stores.box_reg(0).expect("local box should be restored");
     assert!(matches!(
-        stores.nodes(restored),
+        stores.nodes(restored).testing_decoded(),
         [Node::Kern { amount, kind: KernKind::Explicit }] if amount.raw() == 23
     ));
     assert!(stores.box_reg(1).is_some(), "global box should survive");
@@ -546,7 +549,7 @@ fn lowered_math_box_rolls_back_without_leaking_arena_handles() {
     assert_eq!(stores.snapshot().state_hash(), before);
     let restored = stores.box_reg(0).expect("baseline box should be restored");
     assert!(matches!(
-        stores.nodes(restored),
+        stores.nodes(restored).testing_decoded(),
         [Node::Kern { amount, kind: KernKind::Explicit }] if amount.raw() == 17
     ));
 }
@@ -646,7 +649,7 @@ fn left_right_scans_nested_list_as_inner_noad() {
     let MathField::SubMlist(list) = inner.nucleus else {
         panic!("expected left/right inner noad to hold a sub-mlist");
     };
-    let enclosed = stores.nodes(list);
+    let enclosed = stores.nodes(list).testing_decoded();
     assert!(matches!(
         math_noad(&enclosed[0]).kind,
         tex_state::math::NoadKind::LeftDelimiter { delimiter: 0 }
@@ -854,7 +857,10 @@ fn delimiter_radical_accent_and_vcenter_parse_to_math_noads() {
     let MathField::SubBox(list) = vcenter.nucleus else {
         panic!("expected vcenter sub-box field");
     };
-    assert!(matches!(stores.nodes(list)[0], Node::VList(_)));
+    assert!(matches!(
+        stores.nodes(list).testing_decoded()[0],
+        Node::VList(_)
+    ));
 }
 
 #[test]
@@ -975,7 +981,7 @@ fn math_nodes<'a>(stores: &'a Universe, executor: &'a Executor) -> &'a [Node] {
     }
     let lists = math_list_nodes(executor);
     assert_eq!(lists.len(), 1);
-    stores.nodes(lists[0].content)
+    stores.nodes(lists[0].content).testing_decoded()
 }
 
 fn unfinished_math_list(stores: &mut Universe, executor: &Executor) -> MathListNode {
@@ -1024,6 +1030,7 @@ fn assert_one_char_list(stores: &Universe, list: tex_state::ids::NodeListId, cha
 fn assert_char_list(stores: &Universe, list: tex_state::ids::NodeListId, expected: &[char]) {
     let actual: Vec<_> = stores
         .nodes(list)
+        .testing_decoded()
         .iter()
         .map(|node| {
             let noad = math_noad(node);

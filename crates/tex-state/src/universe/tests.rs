@@ -926,12 +926,10 @@ fn grouped_box_take_copies_nested_survivor_children_before_coalesced_release() {
         .expect("local box should move out of the register");
 
     assert!(matches!(taken.arena(), ArenaRef::Epoch));
-    let [
-        Node::Glue {
-            leader: Some(LeaderPayload::HList(leader)),
-            ..
-        },
-    ] = universe.nodes(taken)
+    let Some(crate::node_arena::NodeRef::Glue {
+        leader: Some(LeaderPayload::HList(leader)),
+        ..
+    }) = universe.nodes(taken).first()
     else {
         panic!("taken value should preserve its leader box");
     };
@@ -947,7 +945,7 @@ fn grouped_box_take_copies_nested_survivor_children_before_coalesced_release() {
 }
 
 fn assert_promoted_wrapper_is_resolvable(universe: &Universe, wrapper: NodeListId) {
-    let [Node::VList(box_node)] = universe.nodes(wrapper) else {
+    let Some(crate::node_arena::NodeRef::VList(box_node)) = universe.nodes(wrapper).first() else {
         panic!("promoted wrapper should contain a vlist");
     };
     let (ArenaRef::Survivor(wrapper_root), ArenaRef::Survivor(child_root)) =
@@ -1084,14 +1082,14 @@ fn finished_box_assignment_reclaims_only_its_epoch_construction_suffix() {
 
     assert_eq!(universe.testing_epoch_node_count(), 1);
     assert_eq!(
-        universe.nodes(older)[0],
-        Node::Char {
+        universe.nodes(older).first(),
+        Some(crate::node_arena::NodeRef::Char {
             font: NULL_FONT,
             ch: 'a'
-        }
+        })
     );
     let stored = universe.box_reg(0).expect("box assignment should be live");
-    let [Node::HList(box_node)] = universe.nodes(stored) else {
+    let Some(crate::node_arena::NodeRef::HList(box_node)) = universe.nodes(stored).first() else {
         panic!("stored value should be an hbox");
     };
     assert_eq!(

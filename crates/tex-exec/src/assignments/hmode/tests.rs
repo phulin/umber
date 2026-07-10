@@ -165,7 +165,7 @@ fn paragraph_leading_accent_is_replayed_after_entering_horizontal_mode() {
         unreachable!("matched shifted accent box")
     };
     assert!(matches!(
-        stores.nodes(accent_box.children),
+        stores.nodes(accent_box.children).testing_decoded(),
         [Node::Char { ch, .. }] if *ch == char::from(19)
     ));
 }
@@ -252,7 +252,7 @@ fn hyphenation_inside_ff_ligature_preserves_the_unbroken_ligature() {
         .expect("the exception should create a discretionary");
 
     assert!(matches!(
-        stores.nodes(disc.2),
+        stores.nodes(disc.2).testing_decoded(),
         [Node::Lig {
             ch: '\u{b}',
             orig: ('f', 'f'),
@@ -261,13 +261,16 @@ fn hyphenation_inside_ff_ligature_preserves_the_unbroken_ligature() {
     ));
     assert!(
         matches!(
-            stores.nodes(disc.0),
+            stores.nodes(disc.0).testing_decoded(),
             [Node::Char { ch: 'f', .. }, Node::Char { ch: '-', .. }]
         ),
         "unexpected pre-break nodes: {:?}",
-        stores.nodes(disc.0)
+        stores.nodes(disc.0).testing_decoded()
     );
-    assert!(matches!(stores.nodes(disc.1), [Node::Char { ch: 'f', .. }]));
+    assert!(matches!(
+        stores.nodes(disc.1).testing_decoded(),
+        [Node::Char { ch: 'f', .. }]
+    ));
 }
 
 #[test]

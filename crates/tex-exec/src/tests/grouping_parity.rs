@@ -264,10 +264,10 @@ fn hskip_replays_unexpandable_penalty_after_numeric_recovery() {
         .expect("hskip recovery should leave penalty for execution");
     let first_hash = stores.snapshot().state_hash();
     let box0 = stores.box_reg(0).expect("recovery hbox should be assigned");
-    let [tex_state::node::Node::HList(hbox)] = stores.nodes(box0) else {
+    let [tex_state::node::Node::HList(hbox)] = stores.nodes(box0).testing_decoded() else {
         panic!("register 0 should contain the recovery hbox");
     };
-    let nodes = stores.nodes(hbox.children);
+    let nodes = stores.nodes(hbox.children).testing_decoded();
     assert!(matches!(
         nodes,
         [tex_state::node::Node::Glue { spec, .. }, tex_state::node::Node::Penalty(10_000)]

@@ -179,8 +179,8 @@ fn insertion_box_size(stores: &Universe, class: u16) -> Result<Scaled, ExecError
         return Ok(Scaled::from_raw(0));
     };
     match node {
-        Node::VList(box_node) => add(box_node.height, box_node.depth),
-        Node::HList(_) => Err(ExecError::UnsupportedShipoutNode {
+        tex_state::node_arena::NodeRef::VList(box_node) => add(box_node.height, box_node.depth),
+        tex_state::node_arena::NodeRef::HList(_) => Err(ExecError::UnsupportedShipoutNode {
             node: "hbox insertion box",
         }),
         _ => Ok(Scaled::from_raw(0)),
@@ -326,7 +326,7 @@ fn update_glue_or_kern(stores: &mut Universe, node: &Node) -> Result<Node, ExecE
             replacement = Some(Node::Glue {
                 spec: finite_id,
                 kind: *kind,
-                leader: leader.clone(),
+                leader: *leader,
             });
             add_glue_stretch(stores, spec)?;
             let shrink = add(stores.page_dimension(PageDimension::Shrink), spec.shrink)?;
@@ -377,7 +377,7 @@ fn normalize_insert_content_shrink(
         content_nodes[index] = Node::Glue {
             spec: stores.intern_glue(finite),
             kind: *kind,
-            leader: leader.clone(),
+            leader: *leader,
         };
         changed = true;
     }

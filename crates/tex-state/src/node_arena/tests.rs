@@ -1,4 +1,4 @@
-use super::{NodeArena, NodeListBuilder, preflight_capacity};
+use super::{NodeArena, NodeListBuilder, NodeRef, preflight_capacity};
 use crate::glue::Order;
 use crate::ids::{FontId, GlueId, NodeListId, TokenListId};
 use crate::math::{
@@ -67,12 +67,12 @@ fn nested_lists_build_bottom_up_and_read_back() {
             ch: 'x'
         }]
     );
-    let [Node::HList(middle_box)] = arena.get(middle_id, &survivors) else {
+    let Some(NodeRef::HList(middle_box)) = arena.get(middle_id, &survivors).first() else {
         panic!("middle list should contain one hlist")
     };
     assert_eq!(middle_box.children, inner_id);
     assert_eq!(middle_box.glue_set, GlueSetRatio::ZERO);
-    let [Node::VList(outer_box)] = arena.get(outer_id, &survivors) else {
+    let Some(NodeRef::VList(outer_box)) = arena.get(outer_id, &survivors).first() else {
         panic!("outer list should contain one vlist")
     };
     assert_eq!(outer_box.children, middle_id);
@@ -107,11 +107,11 @@ fn watermark_truncation_drops_exactly_the_suffix() {
     let replacement = one_char(&mut arena, 'c');
     assert_eq!(replacement.start(), dropped.start());
     assert_eq!(
-        arena.get(replacement, &survivors)[0],
-        Node::Char {
+        arena.get(replacement, &survivors).first(),
+        Some(NodeRef::Char {
             font: FontId::testing_new(1),
             ch: 'c',
-        }
+        })
     );
 }
 
@@ -201,8 +201,8 @@ fn every_rare_kind_round_trips_through_its_sidecar() {
         children: empty,
     });
     let nodes = vec![
-        Node::HList(box_node.clone()),
-        Node::VList(box_node.clone()),
+        Node::HList(box_node),
+        Node::VList(box_node),
         Node::Unset(unset),
         Node::Rule {
             width: Some(scaled(12)),
@@ -295,7 +295,7 @@ fn rollback_truncates_words_decoded_view_and_every_sidecar_together() {
     arena.truncate_to(mark);
     assert!(!arena.contains(dropped));
     assert_eq!(arena.storage.testing_sidecar_lengths(), [0; 13]);
-    assert!(arena.storage.all_decoded().is_empty());
+    assert!(arena.storage.all_nodes().is_empty());
 }
 
 #[test]

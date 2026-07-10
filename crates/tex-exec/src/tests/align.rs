@@ -161,68 +161,72 @@ fn assert_effectful_nested_shipout_fallback_unavailable(source: &str) {
     );
 }
 
-fn box_zero_vlist(stores: &Universe) -> &BoxNode {
+fn box_zero_vlist(stores: &Universe) -> BoxNode {
     let root = stores.box_reg(0).expect("box0 should be assigned");
-    let [Node::VList(vbox)] = stores.nodes(root) else {
+    let Some(tex_state::node_arena::NodeRef::VList(vbox)) = stores.nodes(root).first() else {
         panic!(
             "expected box0 to contain one vbox, got {:?}",
-            stores.nodes(root)
+            stores.nodes(root).testing_decoded()
         );
     };
     vbox
 }
 
-fn box_zero_hlist(stores: &Universe) -> &BoxNode {
+fn box_zero_hlist(stores: &Universe) -> BoxNode {
     let root = stores.box_reg(0).expect("box0 should be assigned");
-    let [Node::HList(hbox)] = stores.nodes(root) else {
+    let Some(tex_state::node_arena::NodeRef::HList(hbox)) = stores.nodes(root).first() else {
         panic!(
             "expected box0 to contain one hbox, got {:?}",
-            stores.nodes(root)
+            stores.nodes(root).testing_decoded()
         );
     };
     hbox
 }
 
-fn vlist_rows<'a>(stores: &'a Universe, vbox: &'a BoxNode) -> Vec<&'a BoxNode> {
+fn vlist_rows(stores: &Universe, vbox: impl std::borrow::Borrow<BoxNode>) -> Vec<BoxNode> {
+    let vbox = vbox.borrow();
     stores
         .nodes(vbox.children)
-        .iter()
+        .into_iter()
         .filter_map(|node| match node {
-            Node::HList(row) => Some(row),
+            tex_state::node_arena::NodeRef::HList(row) => Some(row),
             _ => None,
         })
         .collect()
 }
 
-fn hlist_vboxes<'a>(stores: &'a Universe, hbox: &'a BoxNode) -> Vec<&'a BoxNode> {
+fn hlist_vboxes(stores: &Universe, hbox: impl std::borrow::Borrow<BoxNode>) -> Vec<BoxNode> {
+    let hbox = hbox.borrow();
     stores
         .nodes(hbox.children)
-        .iter()
+        .into_iter()
         .filter_map(|node| match node {
-            Node::VList(vbox) => Some(vbox),
+            tex_state::node_arena::NodeRef::VList(vbox) => Some(vbox),
             _ => None,
         })
         .collect()
 }
 
-fn row_cells<'a>(stores: &'a Universe, row: &'a BoxNode) -> Vec<&'a BoxNode> {
+fn row_cells(stores: &Universe, row: impl std::borrow::Borrow<BoxNode>) -> Vec<BoxNode> {
+    let row = row.borrow();
     stores
         .nodes(row.children)
-        .iter()
+        .into_iter()
         .filter_map(|node| match node {
-            Node::HList(cell) => Some(cell),
+            tex_state::node_arena::NodeRef::HList(cell) => Some(cell),
             _ => None,
         })
         .collect()
 }
 
-fn cell_text(stores: &Universe, cell: &BoxNode) -> String {
+fn cell_text(stores: &Universe, cell: impl std::borrow::Borrow<BoxNode>) -> String {
+    let cell = cell.borrow();
     stores
         .nodes(cell.children)
-        .iter()
+        .into_iter()
         .filter_map(|node| match node {
-            Node::Char { ch, .. } => Some(*ch),
-            Node::Lig { ch, .. } => Some(*ch),
+            tex_state::node_arena::NodeRef::Char { ch, .. } => Some(ch),
+            tex_state::node_arena::NodeRef::Lig { ch, .. } => Some(ch),
             _ => None,
         })
         .collect()
@@ -238,7 +242,7 @@ fn assert_no_unset(stores: &Universe, nodes: &[Node]) {
         }
     }
     while let Some(list) = stack.pop() {
-        for node in stores.nodes(list) {
+        for node in stores.nodes(list).testing_decoded() {
             match node {
                 Node::Unset(_) => panic!("unset node escaped alignment"),
                 Node::HList(box_node) | Node::VList(box_node) => stack.push(box_node.children),
@@ -255,9 +259,12 @@ fn contains_rule_leader(stores: &Universe, nodes: &[Node], kind: GlueKind, heigh
             leader: Some(tex_state::node::LeaderPayload::Rule { height: actual, .. }),
             ..
         } => *actual_kind == kind && *actual == Some(height),
-        Node::HList(box_node) | Node::VList(box_node) => {
-            contains_rule_leader(stores, stores.nodes(box_node.children), kind, height)
-        }
+        Node::HList(box_node) | Node::VList(box_node) => contains_rule_leader(
+            stores,
+            stores.nodes(box_node.children).testing_decoded(),
+            kind,
+            height,
+        ),
         _ => false,
     })
 }
@@ -280,7 +287,11 @@ fn collect_infinite_glue(
                 }
             }
             Node::HList(box_node) | Node::VList(box_node) => {
-                collect_infinite_glue(stores, stores.nodes(box_node.children), out);
+                collect_infinite_glue(
+                    stores,
+                    stores.nodes(box_node.children).testing_decoded(),
+                    out,
+                );
             }
             _ => {}
         }
@@ -444,6 +455,7 @@ fn control_space_cell_ignores_following_source_blanks() {
     let cell = row_cells(&stores, rows[1])[0];
     let font = stores
         .nodes(cell.children)
+        .testing_decoded()
         .iter()
         .find_map(|node| match node {
             Node::Char { font, .. } => Some(*font),
@@ -452,6 +464,7 @@ fn control_space_cell_ignores_following_source_blanks() {
         .expect("cell should contain typewriter characters");
     let finite_spaces: Vec<_> = stores
         .nodes(cell.children)
+        .testing_decoded()
         .iter()
         .filter_map(|node| match node {
             Node::Glue { spec, .. } if stores.glue(*spec).stretch_order == Order::Normal => {
@@ -476,6 +489,7 @@ fn control_space_preserves_sentence_factor_for_v_template_space() {
     let cell = row_cells(&stores, rows[1])[0];
     let font = stores
         .nodes(cell.children)
+        .testing_decoded()
         .iter()
         .find_map(|node| match node {
             Node::Char { font, .. } => Some(*font),
@@ -484,6 +498,7 @@ fn control_space_preserves_sentence_factor_for_v_template_space() {
         .expect("cell should contain typewriter characters");
     let finite_spaces: Vec<_> = stores
         .nodes(cell.children)
+        .testing_decoded()
         .iter()
         .filter_map(|node| match node {
             Node::Glue { spec, .. } if stores.glue(*spec).stretch_order == Order::Normal => {
@@ -555,7 +570,7 @@ fn u_template_macro_argument_interleaves_cell_body_and_v_template() {
         run_boxed_alignment_source("\\def\\wrap#1{\\hbox{#1}}\\halign{\\wrap{#}\\cr x\\cr}");
     let rows = vlist_rows(&stores, box_zero_vlist(&stores));
     let cells = row_cells(&stores, rows[0]);
-    let [Node::HList(wrapped)] = stores.nodes(cells[0].children) else {
+    let [Node::HList(wrapped)] = stores.nodes(cells[0].children).testing_decoded() else {
         panic!("cell should contain the box built by the split template macro");
     };
 
@@ -810,7 +825,7 @@ fn mid_alignment_snapshot_rollback_restores_summary_and_unset_rows() {
             restored.current_list().nodes()
         );
     };
-    assert_eq!(stores.nodes(row.children).len(), 3);
+    assert_eq!(stores.nodes(row.children).testing_decoded().len(), 3);
 }
 
 #[test]
@@ -857,7 +872,7 @@ fn executes_rows_and_replays_u_and_v_templates_into_set_cells() {
     assert_eq!(rows.len(), 1);
     assert_eq!(cells.len(), 1);
     assert_eq!(cell_text(&stores, cells[0]), "uxv");
-    assert_no_unset(&stores, stores.nodes(vbox.children));
+    assert_no_unset(&stores, stores.nodes(vbox.children).testing_decoded());
 }
 
 #[test]
@@ -958,7 +973,7 @@ fn span_replays_next_column_template_and_inserts_blank_set_column() {
     assert_eq!(rows.len(), 1);
     assert_eq!(cells.len(), 2);
     assert_eq!(cell_text(&stores, cells[0]), "<a>[b]");
-    assert!(stores.nodes(cells[1].children).is_empty());
+    assert!(stores.nodes(cells[1].children).testing_decoded().is_empty());
 }
 
 #[test]
@@ -1059,8 +1074,8 @@ fn omit_span_chain_merges_template_free_cells() {
     assert_eq!(rows.len(), 1);
     assert_eq!(cells.len(), 3);
     assert_eq!(cell_text(&stores, cells[0]), "abc");
-    assert!(stores.nodes(cells[1].children).is_empty());
-    assert!(stores.nodes(cells[2].children).is_empty());
+    assert!(stores.nodes(cells[1].children).testing_decoded().is_empty());
+    assert!(stores.nodes(cells[2].children).testing_decoded().is_empty());
 }
 
 #[test]
@@ -1084,7 +1099,7 @@ fn noalign_material_is_spliced_between_finished_rows() {
     let stores =
         run_boxed_alignment_source("\\halign{#\\cr a\\cr\\noalign{\\hrule height2pt}b\\cr}");
     let vbox = box_zero_vlist(&stores);
-    let nodes = stores.nodes(vbox.children);
+    let nodes = stores.nodes(vbox.children).testing_decoded();
     let first_row = nodes
         .iter()
         .position(|node| matches!(node, Node::HList(_)))
@@ -1111,7 +1126,7 @@ fn noalign_nointerlineskip_suppresses_next_row_baseline_glue() {
         "\\baselineskip=20pt \\halign{#\\cr a\\cr\\noalign{\\nointerlineskip}b\\cr}",
     );
     let vbox = box_zero_vlist(&stores);
-    let nodes = stores.nodes(vbox.children);
+    let nodes = stores.nodes(vbox.children).testing_decoded();
     let row_indices: Vec<_> = nodes
         .iter()
         .enumerate()
@@ -1130,7 +1145,7 @@ fn ordinary_halign_inherits_enclosing_prevdepth_for_first_row() {
          \\setbox0=\\vbox{\\copy1 \\halign{#\\cr \\copy1\\cr}}",
     );
     let vbox = box_zero_vlist(&stores);
-    let nodes = stores.nodes(vbox.children);
+    let nodes = stores.nodes(vbox.children).testing_decoded();
 
     let [
         Node::HList(_),
@@ -1152,6 +1167,7 @@ fn everycr_can_insert_noalign_material() {
     let vbox = box_zero_vlist(&stores);
     let rule_count = stores
         .nodes(vbox.children)
+        .testing_decoded()
         .iter()
         .filter(|node| matches!(node, Node::Rule { .. }))
         .count();
@@ -1179,7 +1195,7 @@ fn display_halign_appends_display_vertical_material() {
          \\noindent$$\\halign{#\\cr a\\cr}$$\\par}",
     );
     let vbox = box_zero_vlist(&stores);
-    let nodes = stores.nodes(vbox.children);
+    let nodes = stores.nodes(vbox.children).testing_decoded();
 
     assert!(nodes.iter().any(|node| matches!(node, Node::Penalty(11))));
     assert!(nodes.iter().any(|node| matches!(node, Node::Penalty(22))));
@@ -1210,10 +1226,11 @@ fn nested_alignment_executes_inside_cell() {
     assert!(
         stores
             .nodes(cells[0].children)
+            .testing_decoded()
             .iter()
             .any(|node| matches!(node, Node::VList(_)))
     );
-    assert_no_unset(&stores, stores.nodes(vbox.children));
+    assert_no_unset(&stores, stores.nodes(vbox.children).testing_decoded());
 }
 
 #[test]
@@ -1222,7 +1239,11 @@ fn alignment_cells_accept_all_fixed_infinite_glues_in_math_mode() {
         run_alignment_source(r"\setbox0=\vbox{\halign{$#$\cr \hfil\hfill\hss\hfilneg\cr}}");
     let vbox = box_zero_vlist(&stores);
     let mut glue = Vec::new();
-    collect_infinite_glue(&stores, stores.nodes(vbox.children), &mut glue);
+    collect_infinite_glue(
+        &stores,
+        stores.nodes(vbox.children).testing_decoded(),
+        &mut glue,
+    );
 
     assert_eq!(glue.len(), 4);
     assert_eq!(glue[0].stretch_order, Order::Fil);
@@ -1235,7 +1256,7 @@ fn alignment_cells_accept_all_fixed_infinite_glues_in_math_mode() {
     assert_eq!(glue[2].shrink.raw(), Scaled::UNITY);
     assert_eq!(glue[3].stretch_order, Order::Fil);
     assert_eq!(glue[3].stretch.raw(), -Scaled::UNITY);
-    assert_no_unset(&stores, stores.nodes(vbox.children));
+    assert_no_unset(&stores, stores.nodes(vbox.children).testing_decoded());
 }
 
 #[test]
@@ -1248,7 +1269,7 @@ fn plain_angle_style_alignment_restores_outer_cell_after_nested_leader_row() {
 
     assert_eq!(rows.len(), 1);
     assert_eq!(row_cells(&stores, rows[0]).len(), 1);
-    assert_no_unset(&stores, stores.nodes(vbox.children));
+    assert_no_unset(&stores, stores.nodes(vbox.children).testing_decoded());
 }
 
 #[test]
@@ -1260,11 +1281,11 @@ fn plain_angle_style_nested_alignment_executes_math_wrapped_leader_row() {
 
     assert!(contains_rule_leader(
         &stores,
-        stores.nodes(vbox.children),
+        stores.nodes(vbox.children).testing_decoded(),
         GlueKind::Leaders,
         Scaled::from_raw(22_282),
     ));
-    assert_no_unset(&stores, stores.nodes(vbox.children));
+    assert_no_unset(&stores, stores.nodes(vbox.children).testing_decoded());
 }
 
 #[test]
@@ -1293,10 +1314,11 @@ fn valign_finishes_paragraph_cells_before_packaging() {
     assert!(
         stores
             .nodes(columns[0].children)
+            .testing_decoded()
             .iter()
             .any(|node| matches!(node, Node::VList(_)))
     );
-    assert_no_unset(&stores, stores.nodes(hbox.children));
+    assert_no_unset(&stores, stores.nodes(hbox.children).testing_decoded());
 }
 
 #[test]

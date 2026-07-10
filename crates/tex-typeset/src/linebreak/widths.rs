@@ -1,5 +1,6 @@
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::Node;
+use tex_state::node_arena::{NodeList, NodeRef};
 use tex_state::scaled::Scaled;
 
 use crate::{TypesetState, badness};
@@ -68,15 +69,19 @@ impl PrefixWidths {
     }
 }
 
-pub(super) fn line_widths<S: TypesetState>(
+pub(super) fn line_widths_view<S: TypesetState>(
     state: &S,
-    nodes: &[Node],
+    nodes: NodeList<'_>,
     start: usize,
     end: usize,
 ) -> Widths {
     let mut widths = Widths::zero();
-    for node in &nodes[start..end.min(nodes.len())] {
-        widths.add_assign(node_width(state, node));
+    for node in nodes
+        .iter()
+        .skip(start)
+        .take(end.min(nodes.len()).saturating_sub(start))
+    {
+        widths.add_assign(node_width_ref(state, node));
     }
     widths
 }
@@ -106,7 +111,7 @@ fn node_width<S: TypesetState>(state: &S, node: &Node) -> Widths {
             widths.natural = add(widths.natural, unset.width);
         }
         Node::Disc { replace, .. } => {
-            widths.add_assign(line_widths(
+            widths.add_assign(line_widths_view(
                 state,
                 state.nodes(*replace),
                 0,
@@ -124,6 +129,36 @@ fn node_width<S: TypesetState>(state: &S, node: &Node) -> Widths {
         | Node::MathList(_)
         | Node::Nonscript
         | Node::Adjust(_) => {}
+    }
+    widths
+}
+
+fn node_width_ref<S: TypesetState>(state: &S, node: NodeRef<'_>) -> Widths {
+    let mut widths = Widths::zero();
+    match node {
+        NodeRef::Char { font, ch } | NodeRef::Lig { font, ch, .. } => {
+            if let Ok(code) = u8::try_from(ch as u32)
+                && let Some(metrics) = state.font_char_metrics(font, code)
+            {
+                widths.natural = add(widths.natural, metrics.width);
+            }
+        }
+        NodeRef::Kern { amount, .. } | NodeRef::MathOn(amount) | NodeRef::MathOff(amount) => {
+            widths.natural = add(widths.natural, amount)
+        }
+        NodeRef::Glue { spec, .. } => add_glue(&mut widths, state.glue(spec)),
+        NodeRef::Rule {
+            width: Some(width), ..
+        } => widths.natural = add(widths.natural, width),
+        NodeRef::HList(box_node) | NodeRef::VList(box_node) => {
+            widths.natural = add(widths.natural, box_node.width)
+        }
+        NodeRef::Unset(unset) => widths.natural = add(widths.natural, unset.width),
+        NodeRef::Disc { replace, .. } => {
+            let list = state.nodes(replace);
+            widths.add_assign(line_widths_view(state, list, 0, list.len()));
+        }
+        _ => {}
     }
     widths
 }

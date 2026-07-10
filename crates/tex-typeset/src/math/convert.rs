@@ -70,11 +70,11 @@ fn convert_mlist<S: MathTypesetState>(
 ) -> FrozenHList {
     let saved_style = ctx.style;
     ctx.set_style(style);
-    let input = ctx.state.nodes(input);
+    let input = ctx.state.nodes(input).to_vec();
     let mut work = Vec::with_capacity(input.len());
     let mut max_height = Scaled::from_raw(0);
     let mut max_depth = Scaled::from_raw(0);
-    first_pass(ctx, input, &mut work, &mut max_height, &mut max_depth);
+    first_pass(ctx, &input, &mut work, &mut max_height, &mut max_depth);
     convert_final_bin_to_ord(&mut work);
     let result = second_pass(ctx, style, work, penalties, max_height, max_depth);
     ctx.set_style(saved_style);
@@ -139,7 +139,8 @@ fn first_pass<S: MathTypesetState>(
                     StyleFamily::Script => choice.script,
                     StyleFamily::ScriptScript => choice.script_script,
                 };
-                first_pass(ctx, ctx.state.nodes(selected), out, max_height, max_depth);
+                let selected = ctx.state.nodes(selected).to_vec();
+                first_pass(ctx, &selected, out, max_height, max_depth);
             }
             Node::Glue { spec, kind, leader } => {
                 // AppG rule 2
@@ -159,7 +160,7 @@ fn first_pass<S: MathTypesetState>(
                 out.push(WorkItem::Node(MathNode::Glue {
                     spec,
                     kind: *kind,
-                    leader: leader.clone(),
+                    leader: *leader,
                 }));
             }
             Node::Kern { amount, kind } => {
@@ -543,7 +544,7 @@ pub(crate) fn source_node(ctx: &mut Context<'_, impl MathTypesetState>, node: &N
         Node::Glue { spec, kind, leader } => MathNode::Glue {
             spec: ctx.state.glue(*spec),
             kind: *kind,
-            leader: leader.clone(),
+            leader: *leader,
         },
         Node::Penalty(penalty) => MathNode::Penalty(*penalty),
         Node::Rule {

@@ -129,9 +129,9 @@ fn set_row_children(
     let mut column = 0usize;
     for child in stores.nodes(row.children) {
         match child {
-            Node::Unset(cell) => {
+            tex_state::node_arena::NodeRef::Unset(cell) => {
                 let span = usize::from(cell.span_count.max(1));
-                out.push(set_cell(config, row, cell, column, span, stores)?);
+                out.push(set_cell(config, row, &cell, column, span, stores)?);
                 for offset in 1..span {
                     let spanned_column = column + offset;
                     out.push(tabskip_node(config.resolved.tabskips[spanned_column]));
@@ -143,7 +143,7 @@ fn set_row_children(
                 }
                 column += span;
             }
-            _ => out.push(child.clone()),
+            _ => out.push(child.to_owned()),
         }
     }
     Ok(out)

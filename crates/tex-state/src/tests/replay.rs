@@ -729,18 +729,18 @@ impl TreeCache {
             .nodes(id)
             .iter()
             .map(|node| match node {
-                Node::Char { font, ch } => TreeNode::Char {
+                crate::node_arena::NodeRef::Char { font, ch } => TreeNode::Char {
                     font: font.raw(),
-                    ch: *ch,
+                    ch,
                 },
-                Node::Kern { amount, .. } => TreeNode::Kern(amount.raw()),
-                Node::Glue { spec, kind, .. } => TreeNode::Glue(stores.glue(*spec), *kind),
-                Node::HList(box_node) => TreeNode::HList(self.tree_from_store_bounded(
-                    stores,
-                    box_node.children,
-                    depth + 1,
-                )),
-                Node::MathOn(width) => TreeNode::MathOn(width.raw()),
+                crate::node_arena::NodeRef::Kern { amount, .. } => TreeNode::Kern(amount.raw()),
+                crate::node_arena::NodeRef::Glue { spec, kind, .. } => {
+                    TreeNode::Glue(stores.glue(spec), kind)
+                }
+                crate::node_arena::NodeRef::HList(box_node) => TreeNode::HList(
+                    self.tree_from_store_bounded(stores, box_node.children, depth + 1),
+                ),
+                crate::node_arena::NodeRef::MathOn(width) => TreeNode::MathOn(width.raw()),
                 other => panic!("unexpected replay node: {other:?}"),
             })
             .collect();

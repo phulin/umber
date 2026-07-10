@@ -6,7 +6,7 @@
 use crate::ids::{ArenaRef, NodeListId, SurvivorRootId};
 use crate::math::MathField;
 use crate::node::{LeaderPayload, Node};
-use crate::node_arena::{NodeArena, NodeStorage};
+use crate::node_arena::{NodeArena, NodeList, NodeStorage};
 use std::collections::HashMap;
 
 /// Arena for promoted node-list roots.
@@ -61,7 +61,7 @@ impl SurvivorArena {
 
     /// Reads a live survivor span.
     #[must_use]
-    pub(crate) fn get(&self, id: NodeListId) -> &[Node] {
+    pub(crate) fn get(&self, id: NodeListId) -> NodeList<'_> {
         let ArenaRef::Survivor(root) = id.arena() else {
             panic!("survivor arena can only read survivor node-list ids");
         };
@@ -72,7 +72,7 @@ impl SurvivorArena {
             end <= root.storage.len(),
             "survivor node-list id is not live"
         );
-        root.storage.decoded(id.start(), id.len())
+        root.storage.view(id.start(), id.len())
     }
 
     /// Increments the root refcount for a survivor list.
@@ -189,16 +189,22 @@ impl SurvivorArena {
     fn rewrite_root_ids(&mut self, root: SurvivorRootId) {
         let len = self.root(root).storage.len();
         for index in 0..len {
-            let mut node = self.root(root).storage.all_decoded()[index].clone();
+            let mut node = self
+                .root(root)
+                .storage
+                .all_nodes()
+                .get(index)
+                .expect("survivor rewrite index is live")
+                .to_owned();
             rewrite_node_root_ids(&mut node, root);
-            self.root_mut(root).storage.replace_decoded(index, node);
+            self.root_mut(root).storage.replace_node(index, node);
         }
     }
 
     #[cfg(debug_assertions)]
     fn debug_assert_no_epoch_ids(&self, id: NodeListId) {
         for node in self.get(id) {
-            debug_assert_no_epoch_ids_in_node(node);
+            debug_assert_no_epoch_ids_in_node(&node.to_owned());
         }
     }
 

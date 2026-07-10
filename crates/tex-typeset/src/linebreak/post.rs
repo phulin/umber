@@ -62,10 +62,20 @@ fn push_line_segment<S: TypesetState>(
                 post: post_list,
                 ..
             } if decision.hyphenated && absolute + 1 == end => {
-                out.extend_from_slice(state.nodes(*pre));
-                post.extend_from_slice(state.nodes(*post_list));
+                out.extend(state.nodes(*pre).into_iter().map(|node| node.to_owned()));
+                post.extend(
+                    state
+                        .nodes(*post_list)
+                        .into_iter()
+                        .map(|node| node.to_owned()),
+                );
             }
-            Node::Disc { replace, .. } => out.extend_from_slice(state.nodes(*replace)),
+            Node::Disc { replace, .. } => out.extend(
+                state
+                    .nodes(*replace)
+                    .into_iter()
+                    .map(|node| node.to_owned()),
+            ),
             Node::Glue { .. } if absolute + 1 == end && end < nodes.len() => {}
             Node::MathOff(_) if absolute + 1 == end && end < nodes.len() => {
                 out.push(Node::MathOff(tex_state::scaled::Scaled::from_raw(0)));

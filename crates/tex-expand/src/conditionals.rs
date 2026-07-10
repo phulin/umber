@@ -5,7 +5,6 @@ use tex_lex::{
 use tex_state::ExpansionState;
 use tex_state::interner::Symbol;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
-use tex_state::node::Node;
 use tex_state::provenance::InsertedOriginKind;
 use tex_state::token::{OriginId, Token, TracedTokenWord};
 
@@ -677,7 +676,13 @@ pub(crate) fn box_register_has_kind(
     };
     matches!(
         (stores.nodes(list).first(), kind),
-        (Some(Node::HList(_)), BoxKind::HBox) | (Some(Node::VList(_)), BoxKind::VBox)
+        (
+            Some(tex_state::node_arena::NodeRef::HList(_)),
+            BoxKind::HBox
+        ) | (
+            Some(tex_state::node_arena::NodeRef::VList(_)),
+            BoxKind::VBox
+        )
     )
 }
 

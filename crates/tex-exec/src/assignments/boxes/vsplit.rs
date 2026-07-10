@@ -47,7 +47,7 @@ fn split_vbox_register(
         clear_split_marks(stores);
         return Ok(None);
     };
-    let Some(source_node) = stores.nodes(source).first().cloned() else {
+    let Some(source_node) = stores.nodes(source).first().map(|node| node.to_owned()) else {
         clear_split_marks(stores);
         stores.clear_box_reg_same_level(index);
         return Ok(None);
@@ -92,7 +92,7 @@ fn normalize_split_infinite_shrink(stores: &mut Universe, nodes: &mut [Node], in
         nodes[index] = Node::Glue {
             spec: stores.intern_glue(finite),
             kind: *kind,
-            leader: leader.clone(),
+            leader: *leader,
         };
     }
 }

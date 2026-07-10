@@ -58,8 +58,8 @@ fn dump_list(
     context: ListContext,
     out: &mut String,
 ) {
-    let nodes = stores.nodes(id);
-    dump_nodes(stores, nodes, config, depth, context, out);
+    let nodes = stores.nodes(id).to_vec();
+    dump_nodes(stores, &nodes, config, depth, context, out);
 }
 
 fn dump_nodes(

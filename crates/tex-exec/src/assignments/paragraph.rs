@@ -222,7 +222,7 @@ fn break_current_paragraph(
             hpack_with_overfull_rule(stores, list, PackSpec::Exactly(broken.dimensions.width));
         let mut line = line;
         line.shift = broken.dimensions.indent;
-        last_line = Some(line.clone());
+        last_line = Some(line);
         append_node_to_current_list(nest, stores, Node::HList(line))?;
         for node in migrated {
             append_migrated_contribution(nest, stores, node);
@@ -246,7 +246,9 @@ fn extract_migrating_material(stores: &Universe, nodes: &mut Vec<Node>) -> Vec<N
     for node in nodes.drain(..) {
         match node {
             Node::Mark { .. } | Node::Ins { .. } => migrated.push(node),
-            Node::Adjust(list) => migrated.extend_from_slice(stores.nodes(list)),
+            Node::Adjust(list) => {
+                migrated.extend(stores.nodes(list).into_iter().map(|node| node.to_owned()))
+            }
             node => retained.push(node),
         }
     }

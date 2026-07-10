@@ -463,22 +463,30 @@ pub(super) fn pre_display_size(stores: &Universe, line: &BoxNode) -> Scaled {
     w
 }
 
-fn pre_display_node_width(stores: &Universe, line: &BoxNode, node: &Node) -> (Scaled, bool, bool) {
+fn pre_display_node_width(
+    stores: &Universe,
+    line: &BoxNode,
+    node: tex_state::node_arena::NodeRef<'_>,
+) -> (Scaled, bool, bool) {
     match node {
-        Node::Char { font, ch } | Node::Lig { font, ch, .. } => {
-            let width = u8::try_from(*ch as u32)
+        tex_state::node_arena::NodeRef::Char { font, ch }
+        | tex_state::node_arena::NodeRef::Lig { font, ch, .. } => {
+            let width = u8::try_from(ch as u32)
                 .ok()
-                .and_then(|code| stores.font_char_metrics(*font, code))
+                .and_then(|code| stores.font_char_metrics(font, code))
                 .map_or(Scaled::from_raw(0), |metrics| metrics.width);
             (width, true, false)
         }
-        Node::HList(boxed) | Node::VList(boxed) => (boxed.width, true, false),
-        Node::Rule { width, .. } => (width.unwrap_or(Scaled::from_raw(0)), true, false),
-        Node::Kern { amount, .. } | Node::MathOn(amount) | Node::MathOff(amount) => {
-            (*amount, false, false)
+        tex_state::node_arena::NodeRef::HList(boxed)
+        | tex_state::node_arena::NodeRef::VList(boxed) => (boxed.width, true, false),
+        tex_state::node_arena::NodeRef::Rule { width, .. } => {
+            (width.unwrap_or(Scaled::from_raw(0)), true, false)
         }
-        Node::Glue { spec, .. } => {
-            let glue = stores.glue(*spec);
+        tex_state::node_arena::NodeRef::Kern { amount, .. }
+        | tex_state::node_arena::NodeRef::MathOn(amount)
+        | tex_state::node_arena::NodeRef::MathOff(amount) => (amount, false, false),
+        tex_state::node_arena::NodeRef::Glue { spec, .. } => {
+            let glue = stores.glue(spec);
             let depends = match line.glue_sign {
                 Sign::Stretching => {
                     line.glue_order == glue.stretch_order && glue.stretch.raw() != 0

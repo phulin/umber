@@ -12,7 +12,7 @@ mod vertical_break;
 use tex_state::Universe;
 use tex_state::glue::GlueSpec;
 use tex_state::ids::{FontId, NodeListId};
-use tex_state::node::Node;
+use tex_state::node_arena::NodeList;
 use tex_state::scaled::Scaled;
 
 pub use packing::{
@@ -26,13 +26,13 @@ pub const INF_BAD: i32 = 10_000;
 
 /// Immutable state access needed by the packing kernels.
 pub trait TypesetState {
-    fn nodes(&self, id: NodeListId) -> &[Node];
+    fn nodes(&self, id: NodeListId) -> NodeList<'_>;
     fn glue(&self, id: tex_state::ids::GlueId) -> GlueSpec;
     fn font_char_metrics(&self, font: FontId, code: u8) -> Option<tex_fonts::CharMetrics>;
 }
 
 impl TypesetState for Universe {
-    fn nodes(&self, id: NodeListId) -> &[Node] {
+    fn nodes(&self, id: NodeListId) -> NodeList<'_> {
         Universe::nodes(self, id)
     }
 

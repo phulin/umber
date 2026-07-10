@@ -893,7 +893,7 @@ fn survivor_recycling_carries_word_and_box_rule_sidecars_together() {
     }
 
     let live = live.expect("one survivor remains");
-    let [Node::HList(box_node)] = stores.nodes(live) else {
+    let Some(crate::node_arena::NodeRef::HList(box_node)) = stores.nodes(live).first() else {
         panic!("survivor root should retain its box sidecar")
     };
     assert_eq!(box_node.width, Scaled::from_raw(31));
@@ -1110,11 +1110,14 @@ fn promoted_nested_box_remaps_children_to_same_survivor_root() {
 
     stores.set_box_reg(0, outer);
     let promoted_outer = stores.box_reg(0).expect("box should be promoted");
-    let [Node::VList(outer_box)] = stores.nodes(promoted_outer) else {
+    let Some(crate::node_arena::NodeRef::VList(outer_box)) = stores.nodes(promoted_outer).first()
+    else {
         panic!("outer survivor list should contain one vlist");
     };
     assert_same_root(promoted_outer, outer_box.children);
-    let [Node::HList(middle_box)] = stores.nodes(outer_box.children) else {
+    let Some(crate::node_arena::NodeRef::HList(middle_box)) =
+        stores.nodes(outer_box.children).first()
+    else {
         panic!("middle survivor list should contain one hlist");
     };
     assert_same_root(promoted_outer, middle_box.children);
@@ -1151,7 +1154,12 @@ fn promotion_canonicalizes_shared_survivor_children_into_new_root() {
 
     stores.set_box_reg(255, outer);
     let promoted = stores.box_reg(255).expect("outer box should be promoted");
-    let [Node::HList(first), Node::VList(second)] = stores.nodes(promoted) else {
+    let nodes = stores.nodes(promoted);
+    let (
+        Some(crate::node_arena::NodeRef::HList(first)),
+        Some(crate::node_arena::NodeRef::VList(second)),
+    ) = (nodes.get(0), nodes.get(1))
+    else {
         panic!("promoted root should preserve both wrapper boxes");
     };
 
@@ -1246,7 +1254,8 @@ fn promotion_handles_pathologically_deep_box_nesting() {
     stores.set_box_reg(0, current);
     let mut promoted = stores.box_reg(0).expect("box should be promoted");
     for _ in 0..4096 {
-        let [Node::HList(box_node)] = stores.nodes(promoted) else {
+        let Some(crate::node_arena::NodeRef::HList(box_node)) = stores.nodes(promoted).first()
+        else {
             panic!("deep promoted chain should remain hlist nodes");
         };
         assert_same_root(promoted, box_node.children);

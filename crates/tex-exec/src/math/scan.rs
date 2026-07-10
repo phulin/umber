@@ -168,12 +168,14 @@ where
 fn simplify_math_group_field(stores: &Universe, list: tex_state::ids::NodeListId) -> MathField {
     // TeX.web removes braces around a single unscripted Ord atom by copying
     // its nucleus into the field that the group was scanned to fill.
-    if let [Node::MathNoad(noad)] = stores.nodes(list)
+    let nodes = stores.nodes(list);
+    if nodes.len() == 1
+        && let Some(tex_state::node_arena::NodeRef::MathNoad(noad)) = nodes.first()
         && matches!(noad.kind, NoadKind::Normal(NoadClass::Ord))
         && matches!(noad.subscript, MathField::Empty)
         && matches!(noad.superscript, MathField::Empty)
     {
-        noad.nucleus.clone()
+        noad.nucleus
     } else {
         MathField::SubMlist(list)
     }
