@@ -232,7 +232,10 @@ where
             return Ok(Some(token));
         }
         loop {
-            let Some(token) = self.next_expanded()? else {
+            // TeX82's get_preamble_token copies ordinary tokens without
+            // expansion. Template macros must observe the state of each cell
+            // when they are replayed; only \span requests an expansion here.
+            let Some(token) = self.next_raw()? else {
                 return Ok(None);
             };
             if self.try_scan_tabskip_assignment(token)? {
@@ -251,6 +254,10 @@ where
             }
             return Ok(Some(token));
         }
+    }
+
+    fn next_raw(&mut self) -> Result<Option<Token>, ExecError> {
+        self.input.next_token(self.stores).map_err(ExecError::from)
     }
 
     fn next_expanded(&mut self) -> Result<Option<Token>, ExecError> {

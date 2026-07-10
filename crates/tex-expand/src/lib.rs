@@ -673,7 +673,7 @@ where
     }
 }
 
-fn intercept_alignment_token<S>(
+pub(crate) fn intercept_alignment_token<S>(
     input: &mut InputStack<S>,
     stores: &impl ExpansionState,
     traced: TracedTokenWord,
