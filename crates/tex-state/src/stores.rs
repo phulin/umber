@@ -129,6 +129,7 @@ pub struct Stores {
     hyphenation: HyphenationTable,
     prepared_mag: Option<i32>,
     last_loaded_font: FontId,
+    semantic_hash_cache: state_hash::SemanticHashCache,
 }
 
 /// Recoverable diagnostics from TeX's `prepare_mag` operation.
@@ -169,6 +170,7 @@ impl Clone for Stores {
             hyphenation: self.hyphenation.clone(),
             prepared_mag: self.prepared_mag,
             last_loaded_font: self.last_loaded_font,
+            semantic_hash_cache: self.semantic_hash_cache.clone(),
         }
     }
 }
@@ -192,6 +194,7 @@ impl Stores {
             hyphenation: HyphenationTable::new(),
             prepared_mag: None,
             last_loaded_font: NULL_FONT,
+            semantic_hash_cache: state_hash::SemanticHashCache::default(),
         };
         stores.set_int_param(IntParam::MAG, 1000);
         stores.set_int_param(IntParam::ESCAPE_CHAR, b'\\'.into());
@@ -1309,6 +1312,10 @@ impl Stores {
         self.hyphenation = snapshot.hyphenation.clone();
         self.prepared_mag = snapshot.prepared_mag;
         self.last_loaded_font = snapshot.last_loaded_font;
+        // The cache is derived from the checkpoint timeline rather than part
+        // of semantic state. Rebuild baselines lazily from the restored
+        // journal slice instead of adding it to the O(1) snapshot tuple.
+        self.semantic_hash_cache.clear();
     }
 
     /// Returns the number of journal bytes appended since `snapshot`.

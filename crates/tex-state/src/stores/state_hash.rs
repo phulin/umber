@@ -19,6 +19,28 @@ const NODE_LIST_MAX_ITEMS: usize = 1_000_000;
 const FONT_DIMEN_BITS: u32 = 15;
 const FONT_DIMEN_MASK: u32 = (1 << FONT_DIMEN_BITS) - 1;
 
+/// Derived semantic fingerprints at the latest checkpoint boundary.
+///
+/// This is an accelerator, not rollback state. [`Stores::rollback`] clears it
+/// so the next slice reconstructs any needed baseline from journal `old`
+/// words. Keeping it out of [`StoreSnapshot`] preserves O(1) snapshots.
+#[derive(Clone, Debug, Default)]
+pub(super) struct SemanticHashCache {
+    cells: BTreeMap<CellId, CachedCellHash>,
+}
+
+impl SemanticHashCache {
+    pub(super) fn clear(&mut self) {
+        self.cells.clear();
+    }
+}
+
+#[derive(Clone, Debug)]
+struct CachedCellHash {
+    key: SemanticCellKey,
+    value_hash: u64,
+}
+
 /// Cursor into store-owned state for semantic convergence hashing.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct StoreStateHashCursor {
@@ -91,7 +113,7 @@ impl Stores {
 
     #[must_use]
     pub(crate) fn state_hash_slice(
-        &self,
+        &mut self,
         start: &StoreStateHashCursor,
         end: &StoreSnapshot,
     ) -> u64 {
@@ -103,7 +125,9 @@ impl Stores {
         );
 
         let mut hasher = StateHasher::new(STORE_SLICE_DOMAIN);
-        self.hash_journal_changed_cells(start, end, &mut hasher);
+        let mut cache = std::mem::take(&mut self.semantic_hash_cache);
+        self.hash_journal_changed_cells(start, end, &mut cache, &mut hasher);
+        self.semantic_hash_cache = cache;
         self.hash_code_generations(&mut hasher);
         self.hyphenation.hash_semantic(&mut hasher);
         hash_prepared_mag(self.prepared_mag, &mut hasher);
@@ -152,11 +176,12 @@ impl Stores {
         &self,
         start: &StoreStateHashCursor,
         end: &StoreSnapshot,
+        cache: &mut SemanticHashCache,
         hasher: &mut StateHasher,
     ) {
         let start_index = start.journal_pos.raw() as usize;
         let end_index = end.env_snapshot.journal_pos().raw() as usize;
-        let mut first_old = BTreeMap::<SemanticCellKey, (CellId, u64)>::new();
+        let mut first_old = BTreeMap::<CellId, u64>::new();
         for entry in &self.env.journal_entries_since(start.journal_pos)
             [..end_index.saturating_sub(start_index)]
         {
@@ -164,24 +189,45 @@ impl Stores {
                 continue;
             };
             let cell = canonical_cell(rec.cell());
-            first_old
-                .entry(self.semantic_cell_key(cell))
-                .or_insert((cell, rec.old()));
+            first_old.entry(cell).or_insert(rec.old());
         }
 
-        let mut changed = Vec::new();
-        for (key, (cell, old_word)) in first_old {
+        let mut changed_cells = Vec::new();
+        for (cell, old_word) in first_old {
             let new_word = self.env.semantic_word(cell);
-            if self.cell_value_hash(cell, old_word) != self.cell_value_hash(cell, new_word) {
-                changed.push((key, cell, new_word));
+            let current_hash = self.cell_value_hash(cell, new_word);
+            let baseline_hash = cache.cells.get(&cell).map_or_else(
+                || self.cell_value_hash(cell, old_word),
+                |cached| cached.value_hash,
+            );
+
+            match cache.cells.get_mut(&cell) {
+                Some(cached) => cached.value_hash = current_hash,
+                None => {
+                    cache.cells.insert(
+                        cell,
+                        CachedCellHash {
+                            key: self.semantic_cell_key(cell),
+                            value_hash: current_hash,
+                        },
+                    );
+                }
+            }
+            if baseline_hash != current_hash {
+                changed_cells.push(cell);
             }
         }
 
+        changed_cells
+            .sort_unstable_by(|left, right| cache.cells[left].key.cmp(&cache.cells[right].key));
+        changed_cells.dedup_by(|right, left| cache.cells[left].key == cache.cells[right].key);
+
         hasher.tag(0x10);
-        hasher.usize(changed.len());
-        for (key, cell, word) in changed {
-            self.hash_cell_key(&key, hasher);
-            self.hash_cell_value(cell, word, hasher);
+        hasher.usize(changed_cells.len());
+        for cell in changed_cells {
+            let cached = &cache.cells[&cell];
+            self.hash_cell_key(&cached.key, hasher);
+            hasher.u64(cached.value_hash);
         }
     }
 

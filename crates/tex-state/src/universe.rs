@@ -696,7 +696,7 @@ impl Universe {
         self.last_checkpoint = Some(snapshot.checkpoint_metadata());
     }
 
-    fn state_hash_slice(&self, hash_base: &StateHashBase, store: &StoreSnapshot) -> u64 {
+    fn state_hash_slice(&mut self, hash_base: &StateHashBase, store: &StoreSnapshot) -> u64 {
         let mut hasher = StateHasher::new(0x756e_6976_6572_7365);
         hasher.u64(self.stores.state_hash_slice(&hash_base.store, store));
         self.hash_world_state_slice(&hash_base.world, &mut hasher);

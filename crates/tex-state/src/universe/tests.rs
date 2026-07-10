@@ -437,10 +437,10 @@ fn snapshot_state_hash_is_deterministic_for_same_program() {
 #[test]
 fn snapshot_state_hash_ignores_content_intern_order() {
     let mut first = Universe::new();
-    let zed = first.intern("z");
+    let first_zed = first.intern("z");
     let alpha = first.intern("alpha");
     let macro_target = first.intern("macro_target");
-    first.set_meaning(zed, Meaning::Relax);
+    first.set_meaning(first_zed, Meaning::Relax);
     let filler_tokens = first.intern_token_list(&[Token::param(1)]);
     let target_tokens = first.intern_token_list(&[
         Token::Cs(alpha),
@@ -497,8 +497,8 @@ fn snapshot_state_hash_ignores_content_intern_order() {
         filler_tokens,
         filler_tokens,
     ));
-    let zed = second.intern("z");
-    second.set_meaning(zed, Meaning::Relax);
+    let second_zed = second.intern("z");
+    second.set_meaning(second_zed, Meaning::Relax);
     second.set_toks(0, target_tokens);
     second.set_skip(0, target_glue);
     second.set_meaning(
@@ -512,6 +512,16 @@ fn snapshot_state_hash_ignores_content_intern_order() {
     assert_ne!(filler_macro, target_macro);
 
     assert_eq!(first_hash, second.snapshot().state_hash());
+
+    // The next slice reads these keys from the incremental baseline cache.
+    // Dense symbol ids differ between the two stores, but semantic ordering
+    // and the resulting checkpoint hash must remain name based.
+    first.set_meaning(first_zed, Meaning::Undefined);
+    second.set_meaning(second_zed, Meaning::Undefined);
+    assert_eq!(
+        first.snapshot().state_hash(),
+        second.snapshot().state_hash()
+    );
 }
 
 #[test]
@@ -529,6 +539,7 @@ fn snapshot_state_hash_changes_for_one_register_bit() {
 #[test]
 fn clone_preserves_pending_state_hash_slice() {
     let mut original = Universe::new();
+    original.set_count(0, 41);
     let _base = original.snapshot();
     original.set_count(0, 42);
     let mut fork = original.clone();
@@ -584,6 +595,42 @@ fn rollback_restores_state_hash_cursor() {
     let second = universe.snapshot();
 
     assert_eq!(first.state_hash(), second.state_hash());
+}
+
+#[test]
+fn rollback_rebuilds_incremental_hash_baselines_after_node_handle_reuse() {
+    let mut reused = Universe::new();
+    let base = reused.snapshot();
+    let first_list = reused.freeze_node_list(&[Node::Char {
+        font: NULL_FONT,
+        ch: 'x',
+    }]);
+    reused.set_box_reg(0, first_list);
+    let first_hash = reused.snapshot().state_hash();
+
+    reused.rollback(&base);
+    let second_list = reused.freeze_node_list(&[Node::Char {
+        font: NULL_FONT,
+        ch: 'y',
+    }]);
+    assert_eq!(
+        first_list, second_list,
+        "rollback should reuse this epoch node span"
+    );
+    reused.set_box_reg(0, second_list);
+    let reused_hash = reused.snapshot().state_hash();
+
+    let mut fresh = Universe::new();
+    let _ = fresh.snapshot();
+    let fresh_list = fresh.freeze_node_list(&[Node::Char {
+        font: NULL_FONT,
+        ch: 'y',
+    }]);
+    fresh.set_box_reg(0, fresh_list);
+    let fresh_hash = fresh.snapshot().state_hash();
+
+    assert_ne!(first_hash, reused_hash);
+    assert_eq!(reused_hash, fresh_hash);
 }
 
 #[test]

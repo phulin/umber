@@ -618,8 +618,14 @@ pub struct Snapshot {
   schedule-independent semantic fingerprint, that is a new API, not a
   reinterpretation of this one. The slice query
   collects journal cells between checkpoint cursors, canonicalizes global and
-  local records to the same semantic cell, compares first-old vs final-live
-  semantic content, and hashes only cells whose content changed. Meaning
+  local records to the same semantic cell, and hashes only cells whose content
+  changed. Each touched cell's final-live semantic content is reduced to one
+  deterministic fingerprint and cached as the next checkpoint's baseline;
+  the first checkpoint after construction or rollback derives a missing
+  baseline from the journal's first-old word. This avoids repeatedly walking
+  old and final content trees while keeping snapshots O(1): the cache is
+  derived, excluded from `Snapshot`, copied with a fork, and cleared on
+  rollback before being rebuilt lazily. Meaning
   cells are keyed by resolved control-sequence name rather than `Symbol`
   number; token, glue, macro-definition, node-list, and deferred-write
   handles are followed to the content they name rather than hashing handle

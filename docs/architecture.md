@@ -821,7 +821,12 @@ degenerate case (run once, commit every page, never look back).
   The hash is a semantic checkpoint hash, not a store-layout checksum:
   content handles are followed to token/glue/node/macro contents, control
   sequences are keyed by name, and checkpoint hashes are combined from the
-  previous checkpoint plus the current semantic slice.
+  previous checkpoint plus the current semantic slice. Store cells retain a
+  derived semantic fingerprint at the latest boundary, so the next slice
+  fingerprints final-live content once and compares it with that baseline
+  instead of re-walking both old and final content. Rollback clears this cache
+  and reconstructs missing baselines from journal old words; it is not part of
+  the snapshot or semantic state tuple.
   A matching checkpoint is directly restartable only when its metadata says
   it is resume-valid. A hash-only checkpoint can still prove convergence, but
   any execution resume must fall back to the checkpoint's recorded
