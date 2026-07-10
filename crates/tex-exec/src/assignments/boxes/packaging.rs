@@ -24,6 +24,7 @@ pub(super) enum BoxKind {
 }
 
 pub(in crate::assignments) fn scan_required_box_node<S, H>(
+    nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
@@ -32,10 +33,11 @@ where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    scan_box_value(input, stores, hooks)?.ok_or(ExecError::MissingToken { context: "box" })
+    scan_box_value(nest, input, stores, hooks)?.ok_or(ExecError::MissingToken { context: "box" })
 }
 
 pub(super) fn scan_box_value<S, H>(
+    nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
@@ -71,7 +73,42 @@ where
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VSplit) => {
             scan_vsplit_node(input, stores, hooks)
         }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastBox) => {
+            take_last_box(nest, stores)
+        }
         _ => Err(ExecError::MissingToken { context: "box" }),
+    }
+}
+
+pub(super) fn take_last_box(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+) -> Result<Option<Node>, ExecError> {
+    flush_pending_hchars(nest, stores)?;
+    match nest.current_mode() {
+        Mode::Math | Mode::DisplayMath => {
+            stores.world_mut().write_text(
+                tex_state::PrintSink::TerminalAndLog,
+                "\n! You can't use `\\lastbox' in math mode.\n\
+                 Sorry; this \\lastbox will be void.\n",
+            );
+            Ok(None)
+        }
+        Mode::Vertical
+            if nest.current_list().is_empty() && stores.page_contributions().is_empty() =>
+        {
+            stores.world_mut().write_text(
+                tex_state::PrintSink::TerminalAndLog,
+                "\n! You can't use `\\lastbox' in vertical mode.\n\
+                 Sorry...I usually can't take things from the current page.\n\
+                 This \\lastbox will therefore be void.\n",
+            );
+            Ok(None)
+        }
+        Mode::Vertical => Ok(stores.take_page_contribution_last_box()),
+        Mode::InternalVertical | Mode::Horizontal | Mode::RestrictedHorizontal => {
+            Ok(nest.current_list_mut().take_last_box())
+        }
     }
 }
 

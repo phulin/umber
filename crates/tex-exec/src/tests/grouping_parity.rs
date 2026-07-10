@@ -163,6 +163,59 @@ fn box_register_cases_match_reference_micro_suite() {
 }
 
 #[test]
+fn last_box_cases_match_reference_micro_suite() {
+    let last_box = reference_fixture("last_box");
+    assert!(
+        last_box.contains("L:0.0pt,7.0pt;0.0pt,8.0pt;void;3.0pt,0.0pt;11.0pt;12.0pt;void,void"),
+        "reference last-box behavior changed:\n{last_box}"
+    );
+    assert!(last_box.contains("usually can't take things from the current page"));
+    assert!(last_box.contains("You can't use `\\lastbox' in math mode"));
+
+    let stores = run_umber_exec_with_box_expandables(include_str!(
+        "../../../../tests/corpus/tex_exec/last_box.tex"
+    ));
+    assert_eq!(
+        stores
+            .box_dimension(1, tex_state::BoxDimension::Width)
+            .expect("horizontal lastbox")
+            .raw(),
+        7 * tex_state::scaled::Scaled::UNITY
+    );
+    assert_eq!(
+        stores
+            .box_dimension(3, tex_state::BoxDimension::Width)
+            .expect("internal vertical lastbox")
+            .raw(),
+        8 * tex_state::scaled::Scaled::UNITY
+    );
+    assert!(stores.box_reg(5).is_none(), "a non-box tail blocks lastbox");
+    assert_eq!(
+        stores
+            .box_dimension(6, tex_state::BoxDimension::Width)
+            .expect("local lastbox assignment restores")
+            .raw(),
+        3 * tex_state::scaled::Scaled::UNITY
+    );
+    assert_eq!(
+        stores
+            .box_dimension(8, tex_state::BoxDimension::Width)
+            .expect("global lastbox assignment persists")
+            .raw(),
+        11 * tex_state::scaled::Scaled::UNITY
+    );
+    assert_eq!(
+        stores
+            .box_dimension(11, tex_state::BoxDimension::Width)
+            .expect("outer vertical unboxed tail remains available")
+            .raw(),
+        12 * tex_state::scaled::Scaled::UNITY
+    );
+    assert!(stores.box_reg(9).is_none());
+    assert!(stores.box_reg(10).is_none());
+}
+
+#[test]
 fn named_parameters_match_reference_as_internal_dimensions() {
     let parameters = reference_fixture("internal_dimension_params");
     assert!(

@@ -20,7 +20,7 @@ mod vsplit;
 
 use leaders::{leader_glue_kind, scan_leader_glue, scan_leader_payload};
 pub(crate) use packaging::scan_box_group;
-use packaging::{first_box_node, kind_for_primitive, scan_box_node, scan_box_value};
+use packaging::{first_box_node, kind_for_primitive, scan_box_node, scan_box_value, take_last_box};
 pub(super) use packaging::{hpack_with_overfull_rule, scan_required_box_node};
 use vsplit::scan_vsplit_node;
 
@@ -55,6 +55,7 @@ where
 
 pub(crate) fn scan_math_box<S, H>(
     primitive: UnexpandablePrimitive,
+    nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
@@ -84,7 +85,7 @@ where
         }
         UnexpandablePrimitive::Raise | UnexpandablePrimitive::Lower => {
             let amount = scan_scaled(input, stores, hooks)?;
-            let mut node = scan_required_box_node(input, stores, hooks)?;
+            let mut node = scan_required_box_node(nest, input, stores, hooks)?;
             apply_shift(&mut node, primitive, amount)?;
             Some(node)
         }
@@ -95,6 +96,7 @@ where
 
 pub(super) fn execute_setbox<S, H>(
     global: bool,
+    nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
@@ -105,7 +107,7 @@ where
 {
     let index = scan_register_index(input, stores, hooks)?;
     skip_optional_equals_x(input, stores, hooks)?;
-    match scan_box_value(input, stores, hooks)? {
+    match scan_box_value(nest, input, stores, hooks)? {
         Some(node) => {
             let node = stores.clone_node_to_epoch(node);
             let list = stores.freeze_node_list(&[node]);
@@ -192,12 +194,14 @@ where
             append_unboxed(nest, stores, id, primitive)?;
         }
         UnexpandablePrimitive::LastBox => {
-            if let Some(node) = nest.current_list_mut().pop_box() {
-                let list = stores.freeze_node_list(&[node]);
-                stores.set_box_reg(255, list);
-            } else {
-                let empty = stores.freeze_node_list(&[]);
-                stores.set_box_reg(255, empty);
+            if let Some(node) = take_last_box(nest, stores)? {
+                append_node_to_current_list(nest, stores, node)?;
+                if matches!(
+                    nest.current_mode(),
+                    Mode::Horizontal | Mode::RestrictedHorizontal
+                ) {
+                    nest.current_list_mut().set_space_factor(1000);
+                }
             }
         }
         UnexpandablePrimitive::Raise
@@ -205,13 +209,23 @@ where
         | UnexpandablePrimitive::MoveLeft
         | UnexpandablePrimitive::MoveRight => {
             let amount = scan_scaled(input, stores, hooks)?;
-            let mut node = scan_required_box_node(input, stores, hooks)?;
+            let mut node = scan_required_box_node(nest, input, stores, hooks)?;
             apply_shift(&mut node, primitive, amount)?;
             append_node_to_current_list(nest, stores, node)?;
         }
         _ => unreachable!("caller restricts box list commands"),
     }
-    if primitive != UnexpandablePrimitive::LastBox {
+    // TeX's `unpackage` leaves its transferred nodes on the live current
+    // list. In particular, a following `\lastbox` must be able to remove the
+    // transferred tail before the outer page builder consumes it.
+    if !matches!(
+        primitive,
+        UnexpandablePrimitive::LastBox
+            | UnexpandablePrimitive::UnHBox
+            | UnexpandablePrimitive::UnHCopy
+            | UnexpandablePrimitive::UnVBox
+            | UnexpandablePrimitive::UnVCopy
+    ) {
         build_page_if_outer_vertical(nest, stores)?;
     }
     Ok(())
@@ -278,7 +292,7 @@ where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    let leader = scan_leader_payload(input, stores, hooks)?;
+    let leader = scan_leader_payload(nest, input, stores, hooks)?;
     let spec = scan_leader_glue(input, stores, hooks, nest.current_mode())?;
     append_node_to_current_list(
         nest,

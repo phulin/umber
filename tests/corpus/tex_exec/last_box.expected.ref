@@ -1,0 +1,14 @@
+success: false
+stdout:
+! You can't use `\lastbox' in vertical mode.
+! You can't use `\lastbox' in math mode.
+L:0.0pt,7.0pt;0.0pt,8.0pt;void;3.0pt,0.0pt;11.0pt;12.0pt;void,void
+log:
+! You can't use `\lastbox' in vertical mode.
+Sorry...I usually can't take things from the current page.
+This \lastbox will therefore be void.
+
+! You can't use `\lastbox' in math mode.
+Sorry; this \lastbox will be void.
+
+L:0.0pt,7.0pt;0.0pt,8.0pt;void;3.0pt,0.0pt;11.0pt;12.0pt;void,void

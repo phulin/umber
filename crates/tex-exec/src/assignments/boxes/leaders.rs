@@ -7,16 +7,17 @@ use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::node::{GlueKind, LeaderPayload, Node};
 use tex_state::token::Token;
 
-use crate::{ExecError, Mode};
+use crate::{ExecError, Mode, ModeNest};
 
 use super::super::{
     fixed_infinite_glue, next_non_space_x, push_tokens, scan_glue_id, scan_register_index,
     scan_rule_node,
 };
-use super::packaging::{first_box_node, kind_for_primitive, scan_box_node};
+use super::packaging::{first_box_node, kind_for_primitive, scan_box_node, take_last_box};
 use super::vsplit::scan_vsplit_node;
 
 pub(super) fn scan_leader_payload<S, H>(
+    nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
@@ -54,6 +55,11 @@ where
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VSplit) => {
             scan_vsplit_node(input, stores, hooks)?
+                .ok_or(ExecError::MissingLeaderPayload)
+                .and_then(leader_payload_from_node)
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastBox) => {
+            take_last_box(nest, stores)?
                 .ok_or(ExecError::MissingLeaderPayload)
                 .and_then(leader_payload_from_node)
         }

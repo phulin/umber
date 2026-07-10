@@ -698,6 +698,33 @@ fn box_primitives_round_trip_through_registers() {
 }
 
 #[test]
+fn last_box_assignment_replays_with_identical_hash_and_handles() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let checkpoint = stores.snapshot();
+    let source = "\\setbox0=\\hbox{\\raise2pt\\hbox to7pt{}\\global\\setbox1=\\lastbox}";
+
+    let mut input = InputStack::new(MemoryInput::new(source));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("first lastbox execution");
+    let first_box = stores.box_reg(1).expect("global lastbox destination");
+    let [Node::HList(first_node)] = stores.nodes(first_box) else {
+        panic!("lastbox destination should contain an hbox");
+    };
+    assert_eq!(first_node.shift.raw(), 0, "lastbox clears box shift");
+    let first_hash = stores.snapshot().state_hash();
+    stores.rollback(&checkpoint);
+    let mut input = InputStack::new(MemoryInput::new(source));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("replayed lastbox execution");
+
+    assert_eq!(stores.box_reg(1), Some(first_box));
+    assert_eq!(stores.snapshot().state_hash(), first_hash);
+}
+
+#[test]
 fn control_space_appends_normal_font_space_glue() {
     let mut stores = stores_with_fonts();
     let mut input = InputStack::new(MemoryInput::new(

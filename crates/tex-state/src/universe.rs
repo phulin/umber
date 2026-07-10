@@ -1672,6 +1672,29 @@ impl Universe {
         self.page.pop_contribution_tail()
     }
 
+    /// Transfers the outer vertical contribution tail when it is a box.
+    ///
+    /// This is the page-owned counterpart of TeX's `\lastbox` tail operation:
+    /// intervening material is never searched or removed, and a transferred
+    /// box loses its previous raise/lower shift before entering a new context.
+    pub fn take_page_contribution_last_box(&mut self) -> Option<Node> {
+        match self.page.contribution_tail() {
+            Some(Node::HList(_)) | Some(Node::VList(_)) => {}
+            _ => return None,
+        }
+        let mut node = self
+            .page
+            .pop_contribution_tail()
+            .expect("contribution tail was just inspected");
+        match &mut node {
+            Node::HList(box_node) | Node::VList(box_node) => {
+                box_node.shift = Scaled::from_raw(0);
+            }
+            _ => unreachable!("contribution tail was checked to be a box"),
+        }
+        Some(node)
+    }
+
     pub fn prepend_page_contributions(&mut self, nodes: Vec<Node>) {
         self.page.prepend_contributions(nodes);
     }

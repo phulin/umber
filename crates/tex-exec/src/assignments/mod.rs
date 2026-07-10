@@ -567,7 +567,7 @@ where
             }
             UnexpandablePrimitive::SetBox => {
                 reject_macro_prefixes(prefixes)?;
-                execute_setbox(prefixes.global, input, stores, hooks)?;
+                execute_setbox(prefixes.global, nest, input, stores, hooks)?;
                 Ok(CommandOutcome::assigned())
             }
             UnexpandablePrimitive::Box
@@ -701,7 +701,7 @@ where
             }
             UnexpandablePrimitive::Shipout => {
                 reject_all_prefixes(prefixes)?;
-                let hash = execute_shipout(input, stores, recorder, hooks)?;
+                let hash = execute_shipout(nest, input, stores, recorder, hooks)?;
                 Ok(CommandOutcome::shipout(hash))
             }
             UnexpandablePrimitive::OpenIn

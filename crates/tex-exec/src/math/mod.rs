@@ -438,7 +438,7 @@ where
         | UnexpandablePrimitive::Copy
         | UnexpandablePrimitive::Raise
         | UnexpandablePrimitive::Lower => {
-            if let Some(node) = assignments::scan_math_box(primitive, input, stores, hooks)? {
+            if let Some(node) = assignments::scan_math_box(primitive, nest, input, stores, hooks)? {
                 let list = stores.freeze_node_list(&[node]);
                 append_noad(
                     nest,

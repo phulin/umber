@@ -23,10 +23,11 @@ use tex_state::token::{Catcode, Token};
 use tex_state::{ContentHash, EffectRecord, PrintSink, Universe};
 
 use super::scan_required_box_node;
-use crate::ExecError;
 use crate::diagnostics;
+use crate::{ExecError, ModeNest};
 
 pub(super) fn execute_shipout<S, R, H>(
+    nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
@@ -37,7 +38,7 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    let node = scan_required_box_node(input, stores, hooks)?;
+    let node = scan_required_box_node(nest, input, stores, hooks)?;
     shipout_node(node, stores, recorder)
 }
 

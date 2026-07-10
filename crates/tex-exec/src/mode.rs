@@ -198,12 +198,24 @@ impl ModeList {
         self.par_shape = None;
     }
 
-    pub fn pop_box(&mut self) -> Option<Node> {
-        let pos = self
-            .nodes
-            .iter()
-            .rposition(|node| matches!(node, Node::HList(_) | Node::VList(_)))?;
-        Some(self.nodes.remove(pos))
+    /// Removes TeX's `tail` only when it is an hbox or vbox.
+    ///
+    /// `\lastbox` must not search backwards past intervening material. The
+    /// removed box also loses any raise/lower shift before it is used in its
+    /// new box context, matching TeX82's `shift_amount(cur_box) := 0`.
+    pub fn take_last_box(&mut self) -> Option<Node> {
+        match self.nodes.last() {
+            Some(Node::HList(_)) | Some(Node::VList(_)) => {}
+            _ => return None,
+        }
+        let mut node = self.nodes.pop().expect("tail was just inspected");
+        match &mut node {
+            Node::HList(box_node) | Node::VList(box_node) => {
+                box_node.shift = Scaled::from_raw(0);
+            }
+            _ => unreachable!("tail was checked to be a box"),
+        }
+        Some(node)
     }
 
     pub fn pop_last_node(&mut self) -> Option<Node> {
