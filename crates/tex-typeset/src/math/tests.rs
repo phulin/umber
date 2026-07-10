@@ -578,6 +578,33 @@ fn nolimits_operator_centers_nucleus_on_math_axis() {
 }
 
 #[test]
+fn nolimits_operator_does_not_center_compound_nucleus() {
+    let mut universe = setup_universe();
+    let nucleus = universe.freeze_node_list(&[
+        Node::MathNoad(noad(NoadClass::Ord, 'l')),
+        Node::MathNoad(noad(NoadClass::Ord, 'i')),
+        Node::MathNoad(noad(NoadClass::Ord, 'm')),
+    ]);
+    let op = MathNoad::new(
+        NoadKind::Operator(LimitType::NoLimits),
+        MathField::SubMlist(nucleus),
+    );
+    let input = universe.freeze_node_list(&[Node::MathNoad(op)]);
+    let params = MathParams::read(&universe);
+
+    let hlist = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
+
+    let nodes = root_nodes(&hlist);
+    let [op_node] = nodes.as_slice() else {
+        panic!("expected compound operator hbox");
+    };
+    let MathNode::HList(op_box) = op_node else {
+        panic!("expected compound operator hbox")
+    };
+    assert_eq!(op_box.shift, sc(0));
+}
+
+#[test]
 fn mathchar_operator_centers_inline_nucleus_and_places_side_scripts() {
     let mut universe = setup_universe();
     let mut op = MathNoad::new(

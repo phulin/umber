@@ -115,7 +115,7 @@ fn operator_nucleus(
         field = MathField::MathChar(ch);
     }
 
-    let mut boxed = match field {
+    match field {
         MathField::MathChar(ch) | MathField::MathTextChar(ch) => {
             let Some(fetched) = fetch(ctx.state, ch, ctx.style) else {
                 return ctx.layout.hpack(ctx.layout.empty());
@@ -127,16 +127,15 @@ fn operator_nucleus(
             {
                 boxed.width = sub(boxed.width, *delta);
             }
+            let axis = ctx.params.for_size(ctx.style.size()).symbols.axis_height;
+            boxed.shift = sub(
+                axis,
+                Scaled::from_raw(tex_arith::half(sub(boxed.height, boxed.depth).raw())),
+            );
             boxed
         }
         _ => clean_box(ctx, &field, ctx.style),
-    };
-    let axis = ctx.params.for_size(ctx.style.size()).symbols.axis_height;
-    boxed.shift = sub(
-        axis,
-        Scaled::from_raw(tex_arith::half(sub(boxed.height, boxed.depth).raw())),
-    );
-    boxed
+    }
 }
 
 fn displayed_limits(

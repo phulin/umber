@@ -734,6 +734,9 @@ makes box-level memoization (M4) sound.
   compound builders for generalized fractions, radicals, big operators with
   displayed limits, variable delimiters and extensible recipes, math accents,
   over/under lines, and vcenter boxes under the same owned-output contract.
+  Operator-axis centering follows TeX82's `make_op` character branch: a
+  single math-character nucleus is centered on the math axis, while a compound
+  nucleus such as `\mathop{\rm lim}` retains the baseline of its clean box.
   Appendix G `sub_box` nuclei retain their already-packed box node directly in
   the converted hlist, including an explicit `\raise`/`\lower` shift; they are
   not wrapped in a second hbox. `clean_box` still repacks fields where TeX
