@@ -550,6 +550,12 @@ assignments, box building, and dispatch into the typesetting kernels.
   small-character, large-family, large-character word. Invalid tokens are
   replayed with their original traced origin before null-delimiter recovery,
   so later diagnostics and restored input checkpoints retain the same source.
+  When `\delimiter` itself appears as math material, TeX's high 15-bit
+  math-character half supplies the noad class, family, and character; the low
+  12-bit large variant is reserved for variable-delimiter construction.
+  Closing a math-field group also applies TeX82's single unscripted-Ord brace
+  simplification, exposing that atom's nucleus directly and avoiding spurious
+  box nesting in grouped constructs such as Plain TeX's `\big` family.
   The mode-list summary carries the pending incomplete fraction so snapshots
   preserve TeX's `\over`/`\atop`/`\above` state.
   When a `math_comp` constructor such as `\mathopen` is delivered outside

@@ -51,9 +51,7 @@ where
         Token::Char {
             cat: Catcode::BeginGroup,
             ..
-        } => Ok(MathField::SubMlist(scan_math_group_after_open(
-            nest, input, stores, recorder, hooks,
-        )?)),
+        } => scan_math_field_group_after_open(nest, input, stores, recorder, hooks),
         Token::Char {
             ch,
             cat: Catcode::Active,
@@ -72,9 +70,7 @@ where
             }
         }
         Token::Cs(_) if assignments::has_catcode_meaning(stores, token, Catcode::BeginGroup) => {
-            Ok(MathField::SubMlist(scan_math_group_after_open(
-                nest, input, stores, recorder, hooks,
-            )?))
+            scan_math_field_group_after_open(nest, input, stores, recorder, hooks)
         }
         Token::Cs(symbol) => match stores.meaning(symbol) {
             Meaning::CharGiven(ch) => {
@@ -150,6 +146,36 @@ where
                 });
             }
         }
+    }
+}
+
+pub(super) fn scan_math_field_group_after_open<S, R, H>(
+    nest: &mut ModeNest,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<MathField, ExecError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    let list = scan_math_group_after_open(nest, input, stores, recorder, hooks)?;
+    Ok(simplify_math_group_field(stores, list))
+}
+
+fn simplify_math_group_field(stores: &Universe, list: tex_state::ids::NodeListId) -> MathField {
+    // TeX.web removes braces around a single unscripted Ord atom by copying
+    // its nucleus into the field that the group was scanned to fill.
+    if let [Node::MathNoad(noad)] = stores.nodes(list)
+        && matches!(noad.kind, NoadKind::Normal(NoadClass::Ord))
+        && matches!(noad.subscript, MathField::Empty)
+        && matches!(noad.superscript, MathField::Empty)
+    {
+        noad.nucleus.clone()
+    } else {
+        MathField::SubMlist(list)
     }
 }
 

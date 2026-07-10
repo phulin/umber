@@ -34,15 +34,12 @@ fn math_mode_builds_noads_styles_choices_and_mu_nodes() {
         op.kind,
         tex_state::math::NoadKind::Operator(LimitType::Limits)
     ));
-    assert!(matches!(op.nucleus, MathField::SubMlist(_)));
+    assert_math_char(&op.nucleus, 0, 'x');
     assert_math_char(&op.subscript, 0, 'y');
 
     let overline = math_noad(&nodes[3]);
     assert!(matches!(overline.kind, tex_state::math::NoadKind::Overline));
-    let MathField::SubMlist(overline_list) = overline.nucleus else {
-        panic!("expected grouped overline nucleus");
-    };
-    assert_one_char_list(&stores, overline_list, 'z');
+    assert_math_char(&overline.nucleus, 0, 'z');
 
     assert!(matches!(
         nodes[4],
@@ -183,10 +180,23 @@ fn plain_active_prime_shape_closes_brace_alias_math_field() {
     assert_eq!(nodes.len(), 1);
     let noad = math_noad(&nodes[0]);
     assert_math_char(&noad.nucleus, 0, 'x');
-    let MathField::SubMlist(superscript) = noad.superscript else {
-        panic!("active-prime shape should build a grouped superscript");
+    assert_math_char(&noad.superscript, 0, 'p');
+}
+
+#[test]
+fn math_field_groups_remove_braces_around_single_unscripted_ord_box() {
+    let (stores, executor) = run_math_source(r"$\mathopen{{\hbox{}}}$");
+    let nodes = math_nodes(&stores, &executor);
+
+    let [node] = nodes else {
+        panic!("expected one math-open noad")
     };
-    assert_one_char_list(&stores, superscript, 'p');
+    let noad = math_noad(node);
+    assert!(matches!(noad.kind, NoadKind::Normal(NoadClass::Open)));
+    let MathField::SubBox(list) = noad.nucleus else {
+        panic!("TeX's math-group simplification should expose the hbox nucleus")
+    };
+    assert!(matches!(stores.nodes(list), [Node::HList(_)]));
 }
 
 #[test]
@@ -573,12 +583,16 @@ fn converted_math_glue_preserves_explicit_and_named_provenance() {
 #[test]
 fn delimiter_radical_accent_and_vcenter_parse_to_math_noads() {
     let (stores, executor) = run_math_source(
-        r#"$\delimiter"1234 \radical"270370 x \mathaccent"7013 y \vcenter{\hrule width1pt}$"#,
+        r#"$\delimiter"4266308 \radical"270370 x \mathaccent"7013 y \vcenter{\hrule width1pt}$"#,
     );
     let nodes = math_nodes(&stores, &executor);
 
     assert_eq!(nodes.len(), 4);
-    assert_math_char(&math_noad(&nodes[0]).nucleus, 2, '4');
+    assert!(matches!(
+        math_noad(&nodes[0]).kind,
+        tex_state::math::NoadKind::Normal(tex_state::math::NoadClass::Open)
+    ));
+    assert_math_char(&math_noad(&nodes[0]).nucleus, 2, 'f');
 
     let radical = math_noad(&nodes[1]);
     assert!(matches!(

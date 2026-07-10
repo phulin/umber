@@ -5,7 +5,7 @@ use tex_lex::{InputSource, InputStack};
 use tex_state::Universe;
 use tex_state::env::banks::{DimenParam, TokParam};
 use tex_state::glue::GlueSpec;
-use tex_state::math::{MathChar, MathField, MathListNode, NoadClass, NoadKind};
+use tex_state::math::{MathField, MathListNode, NoadClass, NoadKind};
 use tex_state::meaning::{ExpandablePrimitive, Meaning, UnexpandablePrimitive};
 use tex_state::node::{GlueKind, KernKind, Node};
 use tex_state::provenance::InsertedOriginKind;
@@ -165,12 +165,8 @@ where
             cat: Catcode::BeginGroup,
             ..
         } => {
-            let list = scan_math_group_after_open(nest, input, stores, recorder, hooks)?;
-            append_noad(
-                nest,
-                NoadKind::Normal(NoadClass::Ord),
-                MathField::SubMlist(list),
-            );
+            let field = scan_math_field_group_after_open(nest, input, stores, recorder, hooks)?;
+            append_noad(nest, NoadKind::Normal(NoadClass::Ord), field);
             Ok(DispatchAction::Continue)
         }
         Token::Char {
@@ -359,15 +355,9 @@ where
         }
         UnexpandablePrimitive::Delimiter => {
             let delimiter = scan_delimiter_code(input, stores, hooks, traced)?;
-            let ch = char::from_u32(delimiter & 0xff).unwrap_or('\0');
-            append_noad(
-                nest,
-                NoadKind::Normal(NoadClass::Ord),
-                MathField::MathChar(MathChar {
-                    family: ((delimiter >> 8) & 0xf) as u8,
-                    character: ch,
-                }),
-            );
+            // TeX82 treats a standalone \delimiter as the math character in
+            // the high 15 bits; the low 12 bits only name its large variant.
+            append_math_char_code(nest, stores, delimiter >> 12)?;
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::MathOrd
