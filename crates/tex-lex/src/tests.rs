@@ -740,7 +740,7 @@ fn condition_frames_round_trip_through_input_summary() {
         round_tripped.frames(),
         [
             InputFrameSummary::Source { .. },
-            InputFrameSummary::Condition(frame),
+            InputFrameSummary::Condition { condition: frame, .. },
         ] if frame.kind() == ConditionKind::IfCase
             && frame.limb() == ConditionLimb::Or
             && !frame.evaluating()
@@ -760,7 +760,7 @@ fn condition_frames_round_trip_through_input_summary() {
         input.summary().frames(),
         [
             InputFrameSummary::Source { source, .. },
-            InputFrameSummary::Condition(frame),
+            InputFrameSummary::Condition { condition: frame, .. },
         ] if source.column() == 1 && *frame == condition
     ));
 }
@@ -787,7 +787,7 @@ fn open_condition_survives_checkpoint_rollback_resume_summary() {
     let mut stores = Universe::new();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
     let mut input = InputStack::new(MemoryInput::new("xy"));
-    input.push_condition(ConditionFrameSummary::new_if(true));
+    let frame_token = input.push_condition(ConditionFrameSummary::new_if(true));
 
     assert_eq!(
         input.next_token(&mut stores).expect("source token"),
@@ -802,7 +802,7 @@ fn open_condition_survives_checkpoint_rollback_resume_summary() {
         Some(ConditionFrameSummary::new_if(true))
     );
     assert_eq!(
-        input.update_current_condition(updated),
+        input.update_condition(frame_token, updated),
         Some(ConditionFrameSummary::new_if(true))
     );
     stores.set_int_param(IntParam::END_LINE_CHAR, b'!' as i32);
@@ -818,7 +818,7 @@ fn open_condition_survives_checkpoint_rollback_resume_summary() {
         resume_summary.frames(),
         [
             InputFrameSummary::Source { source, .. },
-            InputFrameSummary::Condition(frame),
+            InputFrameSummary::Condition { condition: frame, .. },
         ] if source.column() == 1
             && frame.kind() == ConditionKind::If
             && frame.limb() == ConditionLimb::If
@@ -828,6 +828,34 @@ fn open_condition_survives_checkpoint_rollback_resume_summary() {
             && frame.ifcase_or_count() == 0
             && frame.skip_nesting() == 0
     ));
+}
+
+#[test]
+fn condition_identity_targets_frame_below_nested_condition_and_survives_summary() {
+    let mut input = InputStack::new(MemoryInput::new(""));
+    let outer = input.push_condition(ConditionFrameSummary::evaluating_if());
+    let nested = input.push_condition(ConditionFrameSummary::new_if(true));
+
+    assert_eq!(input.current_condition_token(), Some(nested));
+    assert_eq!(
+        input.update_condition(outer, ConditionFrameSummary::new_if(false)),
+        Some(ConditionFrameSummary::evaluating_if())
+    );
+    assert_eq!(
+        input.current_condition(),
+        Some(ConditionFrameSummary::new_if(true))
+    );
+
+    let summary = input.summary();
+    let mut restored =
+        InputStack::from_summary(&summary, |_, _, _| Ok::<_, ()>(MemoryInput::new("")))
+            .expect("condition summary restores");
+    assert_eq!(restored.summary(), summary);
+    assert_eq!(restored.current_condition_token(), Some(nested));
+    assert_eq!(
+        restored.update_condition(outer, ConditionFrameSummary::new_if(true)),
+        Some(ConditionFrameSummary::new_if(false))
+    );
 }
 
 #[test]

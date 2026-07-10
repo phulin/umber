@@ -1,4 +1,7 @@
-use tex_lex::{ConditionFrameSummary, ConditionKind, ConditionLimb, InputSource, InputStack};
+use tex_lex::{
+    ConditionFrameSummary, ConditionFrameToken, ConditionKind, ConditionLimb, InputSource,
+    InputStack,
+};
 use tex_state::ExpansionState;
 use tex_state::interner::Symbol;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
@@ -11,12 +14,12 @@ use crate::{
     ReadRecorder, expandable_symbol, push_inserted_token, scan_helpers, scan_int, semantic_token,
 };
 
-pub(crate) fn begin_if_evaluation<S>(input: &mut InputStack<S>) {
-    input.push_condition(ConditionFrameSummary::evaluating_if());
+pub(crate) fn begin_if_evaluation<S>(input: &mut InputStack<S>) -> ConditionFrameToken {
+    input.push_condition(ConditionFrameSummary::evaluating_if())
 }
 
-pub(crate) fn begin_ifcase_evaluation<S>(input: &mut InputStack<S>) {
-    input.push_condition(ConditionFrameSummary::evaluating_ifcase());
+pub(crate) fn begin_ifcase_evaluation<S>(input: &mut InputStack<S>) -> ConditionFrameToken {
+    input.push_condition(ConditionFrameSummary::evaluating_ifcase())
 }
 
 pub(crate) fn begin_if<S, R, H>(
@@ -31,14 +34,15 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    input.push_condition(ConditionFrameSummary::new_if(condition));
+    let frame = input.push_condition(ConditionFrameSummary::new_if(condition));
     if !condition {
-        skip_false_limb(input, stores, recorder, hooks)?;
+        skip_false_limb(frame, input, stores, recorder, hooks)?;
     }
     Ok(Dispatch::Continue)
 }
 
 pub(crate) fn complete_if_evaluation<S, R, H>(
+    frame: ConditionFrameToken,
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     recorder: &mut R,
@@ -51,16 +55,17 @@ where
     H: ExpansionHooks<S>,
 {
     let previous = input
-        .update_current_condition(ConditionFrameSummary::new_if(condition))
+        .update_condition(frame, ConditionFrameSummary::new_if(condition))
         .ok_or(ExpandError::IncompleteIf)?;
     debug_assert!(previous.evaluating());
     if !condition {
-        skip_false_limb(input, stores, recorder, hooks)?;
+        skip_false_limb(frame, input, stores, recorder, hooks)?;
     }
     Ok(Dispatch::Continue)
 }
 
 pub(crate) fn complete_ifcase_evaluation<S, R, H>(
+    frame: ConditionFrameToken,
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     recorder: &mut R,
@@ -74,11 +79,11 @@ where
 {
     let take_initial_limb = selected_case == 0;
     let previous = input
-        .update_current_condition(ConditionFrameSummary::new_ifcase(take_initial_limb))
+        .update_condition(frame, ConditionFrameSummary::new_ifcase(take_initial_limb))
         .ok_or(ExpandError::IncompleteIf)?;
     debug_assert!(previous.evaluating());
     if !take_initial_limb {
-        skip_ifcase_to_selected_limb(input, stores, recorder, hooks, selected_case)?;
+        skip_ifcase_to_selected_limb(frame, input, stores, recorder, hooks, selected_case)?;
     }
     Ok(Dispatch::Continue)
 }
@@ -101,17 +106,22 @@ where
         return Ok(Dispatch::Continue);
     }
 
-    let frame = input
-        .pop_condition()
+    let token = input
+        .current_condition_token()
         .ok_or(ExpandError::ExtraConditionalControl("else"))?;
+    let frame = input
+        .current_condition()
+        .expect("condition token has a frame");
     if matches!(frame.limb(), ConditionLimb::Else) {
         return Err(ExpandError::ExtraConditionalControl("else"));
     }
 
     let else_frame = frame.with_else_limb(!frame.any_limb_taken());
-    input.push_condition(else_frame);
+    input
+        .update_condition(token, else_frame)
+        .expect("current condition token remains live");
     if frame.any_limb_taken() {
-        skip_to_fi(input, stores, recorder, hooks)?;
+        skip_to_fi(token, input, stores, recorder, hooks)?;
     }
     Ok(Dispatch::Continue)
 }
@@ -134,17 +144,22 @@ where
         return Ok(Dispatch::Continue);
     }
 
-    let frame = input
-        .pop_condition()
+    let token = input
+        .current_condition_token()
         .ok_or(ExpandError::ExtraConditionalControl("or"))?;
+    let frame = input
+        .current_condition()
+        .expect("condition token has a frame");
     if frame.kind() != ConditionKind::IfCase || frame.limb() == ConditionLimb::Else {
         return Err(ExpandError::ExtraConditionalControl("or"));
     }
 
     let next_or_count = frame.ifcase_or_count().saturating_add(1);
-    input.push_condition(frame.with_or_limb(next_or_count, false));
+    input
+        .update_condition(token, frame.with_or_limb(next_or_count, false))
+        .expect("current condition token remains live");
     if frame.any_limb_taken() {
-        skip_to_fi(input, stores, recorder, hooks)?;
+        skip_to_fi(token, input, stores, recorder, hooks)?;
     }
     Ok(Dispatch::Continue)
 }
@@ -197,6 +212,7 @@ fn insert_relax_before_token<S>(
 }
 
 fn skip_false_limb<S, R, H>(
+    frame: ConditionFrameToken,
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     recorder: &mut R,
@@ -207,10 +223,11 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    skip_until(input, stores, recorder, hooks, SkipTarget::ElseOrFi)
+    skip_until(frame, input, stores, recorder, hooks, SkipTarget::ElseOrFi)
 }
 
 fn skip_to_fi<S, R, H>(
+    frame: ConditionFrameToken,
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     recorder: &mut R,
@@ -221,10 +238,11 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    skip_until(input, stores, recorder, hooks, SkipTarget::Fi)
+    skip_until(frame, input, stores, recorder, hooks, SkipTarget::Fi)
 }
 
 fn skip_ifcase_to_selected_limb<S, R, H>(
+    frame: ConditionFrameToken,
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     recorder: &mut R,
@@ -237,6 +255,7 @@ where
     H: ExpansionHooks<S>,
 {
     skip_until(
+        frame,
         input,
         stores,
         recorder,
@@ -253,6 +272,7 @@ enum SkipTarget {
 }
 
 fn skip_until<S, R, H>(
+    target_frame: ConditionFrameToken,
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     recorder: &mut R,
@@ -277,55 +297,74 @@ where
             ConditionalPrimitive::If => {
                 nesting = nesting.saturating_add(1);
             }
-            ConditionalPrimitive::Else if nesting == 0 && target == SkipTarget::ElseOrFi => {
-                move_current_if_to_else(input)?;
-                return Ok(());
-            }
-            ConditionalPrimitive::Else
-                if nesting == 0 && matches!(target, SkipTarget::IfCaseSelection(_)) =>
-            {
-                move_current_ifcase_to_else(input)?;
-                return Ok(());
-            }
-            ConditionalPrimitive::Or
-                if nesting == 0
-                    && matches!(target, SkipTarget::IfCaseSelection(selected_case) if selected_case >= 0) =>
-            {
-                if move_current_ifcase_to_next_or(input, target)? {
-                    return Ok(());
+            ConditionalPrimitive::Fi => {
+                if nesting != 0 {
+                    nesting = nesting.saturating_sub(1);
+                    continue;
                 }
-            }
-            ConditionalPrimitive::Fi if nesting == 0 => {
+                let current = input
+                    .current_condition_token()
+                    .ok_or(ExpandError::ExtraConditionalControl("fi"))?;
                 input
                     .pop_condition()
                     .ok_or(ExpandError::ExtraConditionalControl("fi"))?;
-                return Ok(());
+                if current == target_frame {
+                    return Ok(());
+                }
             }
-            ConditionalPrimitive::Fi => {
-                nesting = nesting.saturating_sub(1);
+            ConditionalPrimitive::Else if nesting == 0 => {
+                if input.current_condition_token() != Some(target_frame) {
+                    continue;
+                }
+                match target {
+                    SkipTarget::ElseOrFi => {
+                        move_current_if_to_else(target_frame, input)?;
+                        return Ok(());
+                    }
+                    SkipTarget::IfCaseSelection(_) => {
+                        move_current_ifcase_to_else(target_frame, input)?;
+                        return Ok(());
+                    }
+                    SkipTarget::Fi => {}
+                }
+            }
+            ConditionalPrimitive::Or
+                if nesting == 0
+                    && input.current_condition_token() == Some(target_frame)
+                    && matches!(target, SkipTarget::IfCaseSelection(selected_case) if selected_case >= 0) =>
+            {
+                if move_current_ifcase_to_next_or(target_frame, input, target)? {
+                    return Ok(());
+                }
             }
             ConditionalPrimitive::Else | ConditionalPrimitive::Or => {}
         }
     }
 }
 
-fn move_current_if_to_else<S>(input: &mut InputStack<S>) -> Result<(), ExpandError> {
+fn move_current_if_to_else<S>(
+    token: ConditionFrameToken,
+    input: &mut InputStack<S>,
+) -> Result<(), ExpandError> {
     let frame = input
-        .pop_condition()
+        .current_condition()
         .ok_or(ExpandError::ExtraConditionalControl("else"))?;
     if frame.kind() != ConditionKind::If || frame.limb() == ConditionLimb::Else {
         return Err(ExpandError::ExtraConditionalControl("else"));
     }
-    input.push_condition(frame.with_else_limb(!frame.any_limb_taken()));
+    input
+        .update_condition(token, frame.with_else_limb(!frame.any_limb_taken()))
+        .ok_or(ExpandError::ExtraConditionalControl("else"))?;
     Ok(())
 }
 
 fn move_current_ifcase_to_next_or<S>(
+    token: ConditionFrameToken,
     input: &mut InputStack<S>,
     target: SkipTarget,
 ) -> Result<bool, ExpandError> {
     let frame = input
-        .pop_condition()
+        .current_condition()
         .ok_or(ExpandError::ExtraConditionalControl("or"))?;
     if frame.kind() != ConditionKind::IfCase || frame.limb() == ConditionLimb::Else {
         return Err(ExpandError::ExtraConditionalControl("or"));
@@ -335,18 +374,25 @@ fn move_current_ifcase_to_next_or<S>(
         target,
         SkipTarget::IfCaseSelection(selected_case) if selected_case == next_or_count as i32
     );
-    input.push_condition(frame.with_or_limb(next_or_count, current_limb_taken));
+    input
+        .update_condition(token, frame.with_or_limb(next_or_count, current_limb_taken))
+        .ok_or(ExpandError::ExtraConditionalControl("or"))?;
     Ok(current_limb_taken)
 }
 
-fn move_current_ifcase_to_else<S>(input: &mut InputStack<S>) -> Result<(), ExpandError> {
+fn move_current_ifcase_to_else<S>(
+    token: ConditionFrameToken,
+    input: &mut InputStack<S>,
+) -> Result<(), ExpandError> {
     let frame = input
-        .pop_condition()
+        .current_condition()
         .ok_or(ExpandError::ExtraConditionalControl("else"))?;
     if frame.kind() != ConditionKind::IfCase || frame.limb() == ConditionLimb::Else {
         return Err(ExpandError::ExtraConditionalControl("else"));
     }
-    input.push_condition(frame.with_else_limb(!frame.any_limb_taken()));
+    input
+        .update_condition(token, frame.with_else_limb(!frame.any_limb_taken()))
+        .ok_or(ExpandError::ExtraConditionalControl("else"))?;
     Ok(())
 }
 

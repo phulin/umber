@@ -2779,10 +2779,14 @@ fn hash_input_summary_fields(stores: &Stores, summary: &InputSummary, hasher: &m
                     }
                 }
             }
-            InputFrameSummary::Condition(condition) => {
+            InputFrameSummary::Condition {
+                token: _,
+                condition,
+            } => {
                 hasher.tag(2);
                 hash_condition_kind(condition.kind(), hasher);
                 hash_condition_limb(condition.limb(), hasher);
+                hasher.bool(condition.evaluating());
                 hasher.bool(condition.current_limb_taken());
                 hasher.bool(condition.any_limb_taken());
                 hasher.u32(condition.ifcase_or_count());

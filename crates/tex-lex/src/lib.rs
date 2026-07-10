@@ -13,8 +13,8 @@ use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{ExpansionState, FileContent, InputRecordId, WorldError};
 
 pub use tex_state::{
-    ConditionFrameSummary, ConditionKind, ConditionLimb, InputFrameSummary, InputSummary,
-    LexerState, MACRO_ARGUMENT_SLOTS, MacroArguments, SourceFrameSummary, SourceId,
+    ConditionFrameSummary, ConditionFrameToken, ConditionKind, ConditionLimb, InputFrameSummary,
+    InputSummary, LexerState, MACRO_ARGUMENT_SLOTS, MacroArguments, SourceFrameSummary, SourceId,
     TokenListReplayKind, TracedTokenList,
 };
 
@@ -233,7 +233,10 @@ pub struct TokenListReplayMarker(u64);
 enum InputFrame<S> {
     Source(SourceInputFrame<S>),
     TokenList(TokenListInputFrame),
-    Condition(ConditionFrameSummary),
+    Condition {
+        token: ConditionFrameToken,
+        condition: ConditionFrameSummary,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -328,6 +331,7 @@ pub struct InputStack<S> {
     unicode_superscript_notation: bool,
     last_source_frame: Option<LastSourceFrame>,
     next_replay_marker: u64,
+    next_condition_token: u64,
     alignment_cells: Vec<AlignmentCellInput>,
 }
 
@@ -372,6 +376,7 @@ impl<S> InputStack<S> {
             unicode_superscript_notation: true,
             last_source_frame: None,
             next_replay_marker: 0,
+            next_condition_token: 0,
             alignment_cells: Vec::new(),
         };
         stack.push_source(source);
@@ -431,8 +436,11 @@ impl<S> InputStack<S> {
                     macro_invocation: *macro_invocation,
                     replay_marker: None,
                 })),
-                InputFrameSummary::Condition(condition) => {
-                    frames.push(InputFrame::Condition(*condition));
+                InputFrameSummary::Condition { token, condition } => {
+                    frames.push(InputFrame::Condition {
+                        token: *token,
+                        condition: *condition,
+                    });
                 }
             }
         }
@@ -452,6 +460,19 @@ impl<S> InputStack<S> {
                 next_source_offset: source.next_source_offset(),
             }),
             next_replay_marker: 0,
+            next_condition_token: summary
+                .frames()
+                .iter()
+                .filter_map(|frame| match frame {
+                    InputFrameSummary::Condition { token, .. } => Some(token.raw()),
+                    InputFrameSummary::Source { .. } | InputFrameSummary::TokenList { .. } => None,
+                })
+                .max()
+                .map_or(0, |token| {
+                    token
+                        .checked_add(1)
+                        .expect("condition frame token overflowed")
+                }),
             alignment_cells: Vec::new(),
         })
     }
@@ -611,17 +632,28 @@ impl<S> InputStack<S> {
         }));
     }
 
-    pub fn push_condition(&mut self, condition: ConditionFrameSummary) {
-        self.frames.push(InputFrame::Condition(condition));
+    pub fn push_condition(&mut self, condition: ConditionFrameSummary) -> ConditionFrameToken {
+        let token = ConditionFrameToken::new(self.next_condition_token);
+        self.next_condition_token = self
+            .next_condition_token
+            .checked_add(1)
+            .expect("condition frame token overflowed");
+        self.frames.push(InputFrame::Condition { token, condition });
+        token
     }
 
-    pub fn update_current_condition(
+    pub fn update_condition(
         &mut self,
+        token: ConditionFrameToken,
         condition: ConditionFrameSummary,
     ) -> Option<ConditionFrameSummary> {
         let frame = self.frames.iter_mut().rev().find_map(|frame| match frame {
-            InputFrame::Condition(condition) => Some(condition),
+            InputFrame::Condition {
+                token: frame_token,
+                condition,
+            } if *frame_token == token => Some(condition),
             InputFrame::Source(_) | InputFrame::TokenList(_) => None,
+            InputFrame::Condition { .. } => None,
         })?;
         Some(std::mem::replace(frame, condition))
     }
@@ -629,7 +661,15 @@ impl<S> InputStack<S> {
     #[must_use]
     pub fn current_condition(&self) -> Option<ConditionFrameSummary> {
         self.frames.iter().rev().find_map(|frame| match frame {
-            InputFrame::Condition(condition) => Some(*condition),
+            InputFrame::Condition { condition, .. } => Some(*condition),
+            InputFrame::Source(_) | InputFrame::TokenList(_) => None,
+        })
+    }
+
+    #[must_use]
+    pub fn current_condition_token(&self) -> Option<ConditionFrameToken> {
+        self.frames.iter().rev().find_map(|frame| match frame {
+            InputFrame::Condition { token, .. } => Some(*token),
             InputFrame::Source(_) | InputFrame::TokenList(_) => None,
         })
     }
@@ -638,9 +678,9 @@ impl<S> InputStack<S> {
         let index = self
             .frames
             .iter()
-            .rposition(|frame| matches!(frame, InputFrame::Condition(_)))?;
+            .rposition(|frame| matches!(frame, InputFrame::Condition { .. }))?;
         match self.frames.remove(index) {
-            InputFrame::Condition(condition) => Some(condition),
+            InputFrame::Condition { condition, .. } => Some(condition),
             InputFrame::Source(_) | InputFrame::TokenList(_) => unreachable!("rposition matched"),
         }
     }
@@ -664,7 +704,10 @@ impl<S> InputStack<S> {
                         macro_arguments: token_list.macro_arguments,
                         macro_invocation: token_list.macro_invocation,
                     },
-                    InputFrame::Condition(condition) => InputFrameSummary::Condition(*condition),
+                    InputFrame::Condition { token, condition } => InputFrameSummary::Condition {
+                        token: *token,
+                        condition: *condition,
+                    },
                 })
                 .collect(),
             self.last_source_frame.as_ref().map(|last| last.source_id),
@@ -681,7 +724,7 @@ impl<S> InputStack<S> {
     pub fn current_source_frame(&self) -> Option<&SourceFrame> {
         let current = self.frames.iter().rev().find_map(|frame| match frame {
             InputFrame::Source(source) => Some(&source.frame),
-            InputFrame::TokenList(_) | InputFrame::Condition(_) => None,
+            InputFrame::TokenList(_) | InputFrame::Condition { .. } => None,
         });
         current.or_else(|| self.last_source_frame.as_ref().map(|last| &last.frame))
     }
@@ -689,7 +732,7 @@ impl<S> InputStack<S> {
     pub fn current_input_origin(&mut self, stores: &mut impl ExpansionState) -> OriginId {
         if let Some(source) = self.frames.iter().rev().find_map(|frame| match frame {
             InputFrame::Source(source) => Some(source),
-            InputFrame::TokenList(_) | InputFrame::Condition(_) => None,
+            InputFrame::TokenList(_) | InputFrame::Condition { .. } => None,
         }) {
             return allocate_source_origin(stores, source_coordinate(source));
         }
@@ -724,7 +767,7 @@ impl<S> InputStack<S> {
     pub fn end_current_source_after_current_line(&mut self) -> bool {
         let Some(source) = self.frames.iter_mut().rev().find_map(|frame| match frame {
             InputFrame::Source(source) => Some(source),
-            InputFrame::TokenList(_) | InputFrame::Condition(_) => None,
+            InputFrame::TokenList(_) | InputFrame::Condition { .. } => None,
         }) else {
             return false;
         };
@@ -817,7 +860,7 @@ impl<S> Lexer<S> {
     pub fn into_inner(self) -> S {
         match self.input.frames.into_iter().next() {
             Some(InputFrame::Source(source)) => source.lines.into_inner(),
-            Some(InputFrame::TokenList(_) | InputFrame::Condition(_)) | None => {
+            Some(InputFrame::TokenList(_) | InputFrame::Condition { .. }) | None => {
                 panic!("Lexer source was not at the bottom of the input stack")
             }
         }
@@ -929,7 +972,7 @@ where
                     };
                     return Ok(Some(token));
                 }
-                InputFrame::Condition(_) => {
+                InputFrame::Condition { .. } => {
                     unreachable!("current_token_frame_index skips conditions")
                 }
             }
@@ -1027,7 +1070,7 @@ where
                     };
                     return Ok(Some(TracedExpansionToken::new(token, false)));
                 }
-                InputFrame::Condition(_) => {
+                InputFrame::Condition { .. } => {
                     unreachable!("current_token_frame_index skips conditions")
                 }
             }
@@ -1110,7 +1153,7 @@ where
                     };
                     return Ok(Some(ExpansionToken::new(token, false)));
                 }
-                InputFrame::Condition(_) => {
+                InputFrame::Condition { .. } => {
                     unreachable!("current_token_frame_index skips conditions")
                 }
             }
@@ -1128,7 +1171,7 @@ impl<S> InputStack<S> {
                 token_list.replay_kind,
                 token_list.index,
             )),
-            InputFrame::Source(_) | InputFrame::Condition(_) => None,
+            InputFrame::Source(_) | InputFrame::Condition { .. } => None,
         }
     }
 
@@ -1201,7 +1244,7 @@ impl<S> InputStack<S> {
 
         let can_finish = self.frames[marked_index..].iter().all(|frame| match frame {
             InputFrame::TokenList(frame) => frame.index >= stores.tokens(frame.token_list).len(),
-            InputFrame::Condition(_) => true,
+            InputFrame::Condition { .. } => true,
             InputFrame::Source(_) => false,
         });
         if !can_finish {

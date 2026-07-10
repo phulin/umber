@@ -115,6 +115,51 @@ fn semantic_hash_ignores_pending_source_token_origins() {
 }
 
 #[test]
+fn semantic_hash_distinguishes_evaluating_conditional_state() {
+    let mut universe = Universe::new();
+    let token = crate::input::ConditionFrameToken::new(0);
+    universe.set_input_summary(InputSummary::new(
+        vec![InputFrameSummary::Condition {
+            token,
+            condition: crate::input::ConditionFrameSummary::evaluating_if(),
+        }],
+        None,
+        None,
+    ));
+    let evaluating = universe.snapshot().state_hash();
+    universe.set_input_summary(InputSummary::new(
+        vec![InputFrameSummary::Condition {
+            token,
+            condition: crate::input::ConditionFrameSummary::new_if(false),
+        }],
+        None,
+        None,
+    ));
+
+    assert_ne!(universe.snapshot().state_hash(), evaluating);
+}
+
+#[test]
+fn semantic_hash_ignores_conditional_frame_identity() {
+    let mut universe = Universe::new();
+    let summary = |raw| {
+        InputSummary::new(
+            vec![InputFrameSummary::Condition {
+                token: crate::input::ConditionFrameToken::new(raw),
+                condition: crate::input::ConditionFrameSummary::new_if(true),
+            }],
+            None,
+            None,
+        )
+    };
+    universe.set_input_summary(summary(3));
+    let first = universe.snapshot().state_hash();
+    universe.set_input_summary(summary(91));
+
+    assert_eq!(universe.snapshot().state_hash(), first);
+}
+
+#[test]
 fn snapshot_reuses_hash_base_for_origin_only_input_summary_changes() {
     let mut universe = Universe::new();
     let body_token = Token::Char {

@@ -134,8 +134,9 @@ supply.
   `Param(slot)` token pushes the corresponding argument list as a nested
   macro-argument frame while the replacement body id remains unchanged.
   Open conditionals are summarized as condition frames in the same vector,
-  not as expansion-owned side state. A condition frame records whether it is
-  a regular `\if...` or `\ifcase`, the current limb (`\if`, `\or`, or
+  not as expansion-owned side state. A condition frame records a stable
+  live-frame identity corresponding to TeX82's `cond_ptr`, whether it is a
+  regular `\if...` or `\ifcase`, the current limb (`\if`, `\or`, or
   `\else`), whether the condition is still evaluating its operands, whether
   the current and any previous limb has been taken, the `\ifcase` `\or`
   count, and the nested conditional depth observed during skip/resume scanning.

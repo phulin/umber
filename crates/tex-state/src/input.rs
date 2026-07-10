@@ -158,6 +158,26 @@ pub enum ConditionLimb {
     Else,
 }
 
+/// Stable identity for one live conditional frame.
+///
+/// Expansion keeps this token across recursive operand scans so the result is
+/// committed to the same frame that was pushed when the conditional began,
+/// even when a nested conditional remains above it.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct ConditionFrameToken(u64);
+
+impl ConditionFrameToken {
+    #[must_use]
+    pub const fn new(raw: u64) -> Self {
+        Self(raw)
+    }
+
+    #[must_use]
+    pub const fn raw(self) -> u64 {
+        self.0
+    }
+}
+
 /// Snapshot-summary state for one open conditional.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct ConditionFrameSummary {
@@ -378,7 +398,10 @@ pub enum InputFrameSummary {
         macro_arguments: MacroArguments,
         macro_invocation: crate::token::OriginId,
     },
-    Condition(ConditionFrameSummary),
+    Condition {
+        token: ConditionFrameToken,
+        condition: ConditionFrameSummary,
+    },
 }
 
 impl PartialEq for InputFrameSummary {
@@ -417,7 +440,16 @@ impl PartialEq for InputFrameSummary {
                     && left_index == right_index
                     && macro_arguments_semantic_eq(*left_arguments, *right_arguments)
             }
-            (Self::Condition(left), Self::Condition(right)) => left == right,
+            (
+                Self::Condition {
+                    token: _,
+                    condition: left,
+                },
+                Self::Condition {
+                    token: _,
+                    condition: right,
+                },
+            ) => left == right,
             _ => false,
         }
     }
@@ -451,7 +483,10 @@ impl Hash for InputFrameSummary {
                 index.hash(state);
                 hash_macro_arguments_semantic(*macro_arguments, state);
             }
-            Self::Condition(condition) => {
+            Self::Condition {
+                token: _,
+                condition,
+            } => {
                 2_u8.hash(state);
                 condition.hash(state);
             }
