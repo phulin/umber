@@ -27,15 +27,17 @@ The correctness tier is fixture-only and hermetic:
 ```bash
 cargo test --tests
 cargo test --workspace --tests
-scripts/check.sh
+scripts/check-and-test.sh
 ```
 
 These commands must not require `pdftex`, `tex`, `tftopl`, or other TeX tools
 on `PATH`. The warmed `cargo test --tests` target is under 10 seconds on the
 current macOS development workspace; investigate a sustained run above 15
 seconds or any default test that invokes live TeX. The broader
-`scripts/check.sh` gate also runs format and clippy, including release clippy,
-and should stay under a warmed two-minute local budget.
+`scripts/check.sh` quality gate runs format and clippy without rerunning tests
+and should stay under a warmed two-minute local budget. Use
+`scripts/check-and-test.sh` for the full workspace test suite followed by that
+quality gate.
 
 Regenerate committed fixtures only through `scripts/regen-fixtures.sh`, which
 is the blessed live-reference rewrite path. Its `--area fonts` mode owns the

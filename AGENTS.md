@@ -44,7 +44,10 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 
 ## Development
 
-- Use `scripts/check.sh` (tests, clippy, format) as the local gate before committing.
+- Implementation agents should run the relevant tests explicitly, then use
+  `scripts/check.sh` for the format and clippy gate without rerunning tests.
+- Use `scripts/check-and-test.sh` when a single command should run the full
+  workspace test suite followed by the format and clippy gate.
 - For fixture regeneration, follow `tests/AGENTS.md` and use
   `scripts/regen-fixtures.sh`.
 

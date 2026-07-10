@@ -421,6 +421,6 @@ gate. The final phase additionally covers:
 | Rollback | discarded direct regions, arena records, origin lists, diagnostic rendered before rollback |
 | Output | existing fixture and DVI parity corpuses remain byte-identical |
 
-Use `cargo test --workspace --tests` through `scripts/check.sh` for the local
-gate. Keep long-running parity corpuses in their existing scripts rather than
-moving them into ordinary unit tests.
+Use `scripts/check-and-test.sh` for the workspace tests plus the format and
+clippy gate. Keep long-running parity corpuses in their existing scripts
+rather than moving them into ordinary unit tests.
