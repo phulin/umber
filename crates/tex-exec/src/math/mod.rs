@@ -456,6 +456,11 @@ where
             );
             Ok(DispatchAction::Continue)
         }
+        UnexpandablePrimitive::Leaders
+        | UnexpandablePrimitive::CLeaders
+        | UnexpandablePrimitive::XLeaders => assignments::execute_unexpandable_with_recorder(
+            primitive, traced, nest, input, stores, recorder, hooks,
+        ),
         UnexpandablePrimitive::MSkip => {
             let spec = assignments::scan_glue_id(input, stores, hooks, true)?;
             nest.current_list_mut().push(Node::Glue {

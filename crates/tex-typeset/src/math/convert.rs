@@ -2,7 +2,7 @@ use tex_arith::x_over_n;
 use tex_fonts::CharMetrics;
 use tex_state::ids::{FontId, NodeListId};
 use tex_state::math::{MathChar, MathField, MathNoad, NoadClass, NoadKind};
-use tex_state::node::{KernKind, Node};
+use tex_state::node::{GlueKind, KernKind, Node};
 use tex_state::scaled::Scaled;
 
 use super::{
@@ -106,9 +106,9 @@ fn first_pass<S: MathTypesetState>(
                     params,
                 );
             }
-            Node::Glue { spec, kind, .. } => {
+            Node::Glue { spec, kind, leader } => {
                 // AppG rule 2
-                if matches!(kind, tex_state::node::GlueKind::NonScript)
+                if matches!(kind, GlueKind::NonScript)
                     && ctx.style.is_script_or_smaller()
                     && input
                         .get(index + 1)
@@ -116,20 +116,15 @@ fn first_pass<S: MathTypesetState>(
                 {
                     index += 1;
                 }
-                let spec = if matches!(kind, tex_state::node::GlueKind::MuSkip) {
+                let spec = if matches!(kind, GlueKind::MuSkip) {
                     spacing::math_glue(ctx.state.glue(spec), ctx.mu)
                 } else {
                     ctx.state.glue(spec)
                 };
                 out.push(WorkItem::Node(MathNode::Glue {
                     spec,
-                    kind: if matches!(kind, tex_state::node::GlueKind::MuSkip) {
-                        MathGlueKind::MuSkip
-                    } else if matches!(kind, tex_state::node::GlueKind::NonScript) {
-                        MathGlueKind::NonScript
-                    } else {
-                        MathGlueKind::Source
-                    },
+                    kind,
+                    leader: leader.clone(),
                 }));
             }
             Node::Kern { amount, kind } => {
@@ -324,6 +319,7 @@ fn second_pass<S: MathTypesetState>(
                     output.nodes.push(MathNode::Glue {
                         spec,
                         kind: math_glue_kind_for_spacing(spacing),
+                        leader: None,
                     });
                 }
                 output.nodes.extend(noad.hlist.nodes.iter().cloned());
@@ -354,6 +350,7 @@ fn second_pass<S: MathTypesetState>(
                     output.nodes.push(MathNode::Glue {
                         spec,
                         kind: math_glue_kind_for_spacing(spacing),
+                        leader: None,
                     });
                 }
                 let target =
@@ -491,9 +488,10 @@ pub(crate) fn source_node(state: &impl MathTypesetState, node: &Node) -> MathNod
             amount: *amount,
             kind: *kind,
         },
-        Node::Glue { spec, .. } => MathNode::Glue {
+        Node::Glue { spec, kind, leader } => MathNode::Glue {
             spec: state.glue(*spec),
-            kind: MathGlueKind::Source,
+            kind: *kind,
+            leader: leader.clone(),
         },
         Node::Penalty(penalty) => MathNode::Penalty(*penalty),
         Node::Rule {

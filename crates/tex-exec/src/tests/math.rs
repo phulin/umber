@@ -781,6 +781,44 @@ fn run_math_source(source: &str) -> (Universe, Executor) {
     (stores, executor)
 }
 
+#[test]
+fn all_leader_kinds_execute_and_preserve_payloads_in_math_mode() {
+    let (stores, _) = run_math_source(
+        "\\setbox0=\\hbox{$\\leaders\\hrule height1pt\\hskip2pt\\cleaders\\hrule height2pt\\hskip3pt\\xleaders\\hrule height3pt\\hskip4pt$}",
+    );
+    let list = stores.box_reg(0).expect("math hbox register");
+    let [Node::HList(hbox)] = stores.nodes(list) else {
+        panic!("register zero should contain an hbox");
+    };
+    let leaders = stores
+        .nodes(hbox.children)
+        .iter()
+        .filter_map(|node| match node {
+            Node::Glue {
+                kind,
+                leader: Some(tex_state::node::LeaderPayload::Rule { height, .. }),
+                ..
+            } => Some((*kind, *height)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        leaders,
+        [
+            (GlueKind::Leaders, Some(Scaled::from_raw(Scaled::UNITY))),
+            (
+                GlueKind::Cleaders,
+                Some(Scaled::from_raw(2 * Scaled::UNITY))
+            ),
+            (
+                GlueKind::Xleaders,
+                Some(Scaled::from_raw(3 * Scaled::UNITY))
+            ),
+        ]
+    );
+}
+
 fn math_nodes<'a>(stores: &'a Universe, executor: &Executor) -> &'a [Node] {
     let lists = math_list_nodes(executor);
     assert_eq!(lists.len(), 1);

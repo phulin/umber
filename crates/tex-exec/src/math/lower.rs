@@ -2,11 +2,9 @@ use tex_state::Universe;
 use tex_state::env::banks::DimenParam;
 use tex_state::glue::Order;
 use tex_state::math::MathListNode;
-use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, Node, Sign};
+use tex_state::node::{BoxNode, BoxNodeFields, Node, Sign};
 use tex_state::scaled::GlueSetRatio;
-use tex_typeset::math::{
-    FrozenHList, MathBox, MathGlueKind, MathNode, MathParams, Style, mlist_to_hlist,
-};
+use tex_typeset::math::{FrozenHList, MathBox, MathNode, MathParams, Style, mlist_to_hlist};
 
 pub(crate) fn finish_math_list_node(
     stores: &mut Universe,
@@ -76,10 +74,10 @@ fn lower_math_node(stores: &mut Universe, node: &MathNode) -> Node {
             amount: *amount,
             kind: *kind,
         },
-        MathNode::Glue { spec, kind } => Node::Glue {
+        MathNode::Glue { spec, kind, leader } => Node::Glue {
             spec: stores.intern_glue(*spec),
-            kind: lower_math_glue_kind(*kind),
-            leader: None,
+            kind: *kind,
+            leader: leader.clone(),
         },
         MathNode::Penalty(penalty) => Node::Penalty(*penalty),
         MathNode::Rule {
@@ -111,15 +109,4 @@ fn lower_math_box(stores: &mut Universe, boxed: &MathBox) -> BoxNode {
         glue_order: Order::Normal,
         children,
     })
-}
-
-fn lower_math_glue_kind(kind: MathGlueKind) -> GlueKind {
-    match kind {
-        MathGlueKind::NonScript => GlueKind::NonScript,
-        MathGlueKind::MuSkip => GlueKind::MuSkip,
-        MathGlueKind::ThinMuSkip => GlueKind::ThinMuSkip,
-        MathGlueKind::MedMuSkip => GlueKind::MedMuSkip,
-        MathGlueKind::ThickMuSkip => GlueKind::ThickMuSkip,
-        MathGlueKind::Normal | MathGlueKind::Source => GlueKind::Normal,
-    }
 }

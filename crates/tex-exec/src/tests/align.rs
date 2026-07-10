@@ -242,6 +242,20 @@ fn assert_no_unset(stores: &Universe, nodes: &[Node]) {
     }
 }
 
+fn contains_rule_leader(stores: &Universe, nodes: &[Node], kind: GlueKind, height: Scaled) -> bool {
+    nodes.iter().any(|node| match node {
+        Node::Glue {
+            kind: actual_kind,
+            leader: Some(tex_state::node::LeaderPayload::Rule { height: actual, .. }),
+            ..
+        } => *actual_kind == kind && *actual == Some(height),
+        Node::HList(box_node) | Node::VList(box_node) => {
+            contains_rule_leader(stores, stores.nodes(box_node.children), kind, height)
+        }
+        _ => false,
+    })
+}
+
 #[test]
 fn halign_in_unrestricted_horizontal_mode_finishes_paragraph_first() {
     let stores = run_boxed_alignment_source("x\\halign{#\\cr y\\cr}");
@@ -978,19 +992,19 @@ fn plain_angle_style_alignment_restores_outer_cell_after_nested_leader_row() {
 }
 
 #[test]
-fn plain_angle_style_nested_alignment_preserves_the_real_execution_error() {
-    let error = run_alignment_source_err(
+fn plain_angle_style_nested_alignment_executes_math_wrapped_leader_row() {
+    let stores = run_alignment_source(
         "\\def\\angle{{\\vbox{\\halign{$\\scriptstyle##$\\crcr x\\crcr\\noalign{\\nointerlineskip}\\mkern2.5mu\\leaders\\hrule height.34pt\\hfill\\mkern2.5mu\\crcr}}}}\\setbox0=\\vbox{\\halign{#\\cr $\\angle$\\cr}}",
     );
+    let vbox = box_zero_vlist(&stores);
 
-    assert!(matches!(
-        error,
-        ExecError::UnimplementedTypesetting {
-            mode: Mode::Math,
-            operation: "math primitive",
-            ..
-        }
+    assert!(contains_rule_leader(
+        &stores,
+        stores.nodes(vbox.children),
+        GlueKind::Leaders,
+        Scaled::from_raw(22_282),
     ));
+    assert_no_unset(&stores, stores.nodes(vbox.children));
 }
 
 #[test]

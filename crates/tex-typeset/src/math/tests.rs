@@ -498,7 +498,7 @@ fn assert_inserted_math_glue_kind(classes: &[NoadClass], expected_kind: MathGlue
         hlist.nodes.iter().any(|node| {
             matches!(
                 node,
-                MathNode::Glue { spec, kind } if *kind == expected_kind && spec.width == sc(width)
+                MathNode::Glue { spec, kind, .. } if *kind == expected_kind && spec.width == sc(width)
             )
         }),
         "expected {expected_kind:?} glue in {hlist:?}"
