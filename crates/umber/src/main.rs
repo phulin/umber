@@ -3,79 +3,13 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use tex_expand::ExpansionHooks;
-use tex_lex::{InputSource, InputStack, Lexer, MemoryInput, WorldInput};
+use tex_lex::{InputStack, Lexer, WorldInput};
 use tex_state::env::banks::IntParam;
 use tex_state::token::Token;
 use tex_state::{Universe, World, WorldError};
 use umber::{TexFontSearchPath, TexInputSearchPath};
 
 mod expand_dump;
-
-const PLAIN_CORPUS_BOOTSTRAP: &str = r##"
-% Minimal plain-format prelude for external corpus parity.
-% This is not plain.tex; umber2-sfc.1 owns full plain.tex bring-up.
-\catcode`@=11
-\font\tenrm=cmr10
-\font\tenbf=cmbx10
-\font\tensl=cmsl10
-\font\tentt=cmtt10
-\font\tenit=cmti10
-\let\rm=\tenrm \let\bf=\tenbf \let\sl=\tensl \let\tt=\tentt \let\it=\tenit
-\tenrm
-\countdef\pageno=0 \pageno=1
-\toksdef\headline=10 \toksdef\footline=11 \headline={} \footline={}
-\countdef\footnotenum=20 \countdef\exno=21 \countdef\secnum=22
-\countdef\subsecnum=23 \countdef\hour=24 \countdef\minute=25
-\dimendef\theight=20 \dimendef\squaredimen=21
-\chardef\contents=0 \chardef\index=1
-\def\newcount#1{} \def\newdimen#1{} \def\newwrite#1{}
-\def\fmtname{plain}
-\def\fmtversion{3.141592653}
-\hsize=6.5in \vsize=8.9in \maxdepth=4pt
-\topskip=10pt \baselineskip=12pt \lineskip=1pt \lineskiplimit=0pt
-\parindent=20pt \parskip=0pt plus 1pt \parfillskip=0pt plus 1fil
-\def\line#1{\hbox to\hsize{#1}}
-\def\leftline#1{\line{#1\hss}}
-\def\rightline#1{\line{\hss#1}}
-\def\centerline#1{\line{\hss#1\hss}}
-\def\"#1{{\accent127 #1}}
-\def\c#1{{\accent24 #1}}
-\def\ae{\char26 }
-\def\break{\penalty-10000 }
-\def\eject{\par\break}
-\def\bye{\par\vfill\eject\end}
-\def\folio{\ifnum\pageno<0 \romannumeral-\pageno \else\number\pageno \fi}
-\def\nopagenumbers{\headline={}\footline={}}
-\def\raggedbottom{}
-\def\smallskip{\vskip 3pt plus 1pt minus 1pt}
-\def\medskip{\vskip 6pt plus 2pt minus 2pt}
-\def\bigskip{\vskip 12pt plus 4pt minus 4pt}
-\def\loop#1\repeat{\def\body{#1}\iterate}
-\def\iterate{\body \let\next=\iterate \else\let\next=\relax\fi \next}
-\let\repeat=\fi
-\def\magstep#1{\ifcase#1 1000\or 1200\or 1440\or 1728\or 2074\or 2488\fi}
-\def\magstephalf{1095}
-\def\newif#1{}
-\let\ifamrfonts=\iffalse
-\def\amrfontstrue{\let\ifamrfonts=\iftrue}
-\def\amrfontsfalse{\let\ifamrfonts=\iffalse}
-\let\ifcanspell=\iffalse
-\def\canspelltrue{\let\ifcanspell=\iftrue}
-\def\canspellfalse{\let\ifcanspell=\iffalse}
-\let\iftitlepage=\iffalse
-\def\titlepagetrue{\let\iftitlepage=\iftrue}
-\def\titlepagefalse{\let\iftitlepage=\iffalse}
-\let\ifwritingcontents=\iffalse
-\def\writingcontentstrue{\let\ifwritingcontents=\iftrue}
-\def\writingcontentsfalse{\let\ifwritingcontents=\iffalse}
-\let\ifwritingindex=\iffalse
-\def\writingindextrue{\let\ifwritingindex=\iftrue}
-\def\writingindexfalse{\let\ifwritingindex=\iffalse}
-\let\ifwritinganswers=\iffalse
-\def\writinganswerstrue{\let\ifwritinganswers=\iftrue}
-\def\writinganswersfalse{\let\ifwritinganswers=\iffalse}
-\catcode`@=12
-"##;
 
 fn main() -> ExitCode {
     match run() {
@@ -143,12 +77,7 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
     let content = stores.world_mut().read_file(path)?;
     umber::prepare_run_stores(&mut stores);
 
-    let mut input = InputStack::new(RunInputSource::World(WorldInput::from_content(content)));
-    if opts.plain_format {
-        input.push_source(RunInputSource::Memory(MemoryInput::new(
-            PLAIN_CORPUS_BOOTSTRAP,
-        )));
-    }
+    let mut input = InputStack::new(WorldInput::from_content(content));
     let tex_input_areas = env::var_os("TEXINPUTS")
         .map(|value| {
             env::split_paths(&value)
@@ -189,7 +118,6 @@ struct RunCliOptions {
     input: PathBuf,
     show_fixtures: bool,
     dvi: Option<PathBuf>,
-    plain_format: bool,
 }
 
 impl RunCliOptions {
@@ -197,15 +125,11 @@ impl RunCliOptions {
         let mut input = None;
         let mut show_fixtures = false;
         let mut dvi = None;
-        let mut plain_format = false;
         let mut args = args.peekable();
         while let Some(arg) = args.next() {
             match arg.as_str() {
                 "--show-fixtures" => {
                     show_fixtures = true;
-                }
-                "--plain-format" => {
-                    plain_format = true;
                 }
                 "--dvi" => {
                     if dvi.is_some() {
@@ -218,13 +142,13 @@ impl RunCliOptions {
                 }
                 flag if flag.starts_with('-') => {
                     return Err(CliError::Usage(
-                        "run accepts one input path with optional --show-fixtures, --plain-format, and --dvi <path>",
+                        "run accepts one input path with optional --show-fixtures and --dvi <path>",
                     ));
                 }
                 path => {
                     if input.is_some() {
                         return Err(CliError::Usage(
-                            "run accepts one input path with optional --show-fixtures, --plain-format, and --dvi <path>",
+                            "run accepts one input path with optional --show-fixtures and --dvi <path>",
                         ));
                     }
                     input = Some(PathBuf::from(path));
@@ -236,29 +160,7 @@ impl RunCliOptions {
             input,
             show_fixtures,
             dvi,
-            plain_format,
         })
-    }
-}
-
-enum RunInputSource {
-    Memory(MemoryInput),
-    World(WorldInput),
-}
-
-impl InputSource for RunInputSource {
-    fn read_line(&mut self) -> Result<Option<String>, WorldError> {
-        match self {
-            Self::Memory(input) => input.read_line(),
-            Self::World(input) => input.read_line(),
-        }
-    }
-
-    fn input_record(&self) -> Option<tex_state::InputRecordId> {
-        match self {
-            Self::Memory(input) => input.input_record(),
-            Self::World(input) => input.input_record(),
-        }
     }
 }
 
@@ -284,16 +186,15 @@ impl RunHooks {
     }
 }
 
-impl ExpansionHooks<RunInputSource> for RunHooks {
+impl ExpansionHooks<WorldInput> for RunHooks {
     fn open_input<C: tex_state::InputReadState>(
         &mut self,
         input: &mut C,
         name: &str,
-    ) -> Result<RunInputSource, String> {
+    ) -> Result<WorldInput, String> {
         self.input_search
             .read(input, name)
             .map(WorldInput::from_content)
-            .map(RunInputSource::World)
     }
 
     fn open_font<C: tex_state::InputReadState>(

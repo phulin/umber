@@ -441,7 +441,20 @@ fn run_usage_errors_follow_existing_shape() {
     assert!(!extra.status.success());
     assert_eq!(
         String::from_utf8(extra.stderr).expect("stderr is utf-8"),
-        "umber: run accepts one input path with optional --show-fixtures, --plain-format, and --dvi <path>\n"
+        "umber: run accepts one input path with optional --show-fixtures and --dvi <path>\n"
+    );
+
+    let removed_plain_format = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .arg("run")
+        .arg("one.tex")
+        .arg("--plain-format")
+        .output()
+        .expect("run umber run with removed --plain-format flag");
+    assert!(!removed_plain_format.status.success());
+    assert_eq!(
+        String::from_utf8(removed_plain_format.stderr).expect("stderr is utf-8"),
+        "umber: run accepts one input path with optional --show-fixtures and --dvi <path>\n"
     );
 
     let missing_show_fixtures = Command::new(env!("CARGO_BIN_EXE_umber"))
@@ -468,42 +481,6 @@ fn run_usage_errors_follow_existing_shape() {
         String::from_utf8(missing_dvi_path.stderr).expect("stderr is utf-8"),
         "umber: missing output path for --dvi\n"
     );
-}
-
-#[test]
-#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
-fn run_plain_format_bootstrap_defines_corpus_plain_macros() {
-    let temp_dir = tempfile::tempdir().expect("create plain bootstrap temp dir");
-    copy_plain_bootstrap_test_tfms(temp_dir.path());
-    let source = temp_dir.path().join("plain_bootstrap.tex");
-    fs::write(
-        &source,
-        "\\centerline{A}\n\
-         \\newif\\ifamrfonts\n\
-         \\amrfontsfalse\n\
-         \\ifamrfonts\\message{bad}\\else\\message{ok}\\fi\n\
-         \\end\n",
-    )
-    .expect("write plain bootstrap fixture");
-
-    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
-        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
-        .current_dir(temp_dir.path())
-        .arg("run")
-        .arg("plain_bootstrap.tex")
-        .arg("--plain-format")
-        .arg("--show-fixtures")
-        .output()
-        .expect("run umber plain bootstrap smoke");
-
-    assert!(
-        output.status.success(),
-        "plain bootstrap run failed:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
-    assert!(stdout.contains("ok"));
-    assert!(!stdout.contains("bad"));
 }
 
 #[test]
@@ -626,14 +603,6 @@ fn run_show_fixtures_harvests_without_committing_immediate_stream_effects() {
         !fixture_dir.join("side-effect.txt").exists(),
         "--show-fixtures must not run the final commit for pending immediate effects"
     );
-}
-
-fn copy_plain_bootstrap_test_tfms(dir: &std::path::Path) {
-    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../tex-fonts/tests/fixtures/cm/cmr10.tfm");
-    for name in ["cmr10", "cmbx10", "cmsl10", "cmtt10", "cmti10"] {
-        fs::copy(&source, dir.join(format!("{name}.tfm"))).expect("copy test TFM");
-    }
 }
 
 #[test]

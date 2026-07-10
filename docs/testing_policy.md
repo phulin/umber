@@ -182,7 +182,7 @@ files. Each document names a manifest-pinned `format_source`; the harness
 stages that exact source, the document, hyphenation input, and required TFMs,
 then feeds both engines the same wrapper that inputs the format source before
 the document. Reference TeX uses INITEX mode and Umber executes the wrapper
-without its legacy `--plain-format` bootstrap. This follows TeX82's ordinary
+through its ordinary input path. This follows TeX82's ordinary
 `start_input` stack behavior (sections 23 and 29); format dumping remains a
 terminal INITEX cleanup operation (sections 46, 50, and 51), not a way to
 continue into the document. The pinned modern `plain.tex` source contains no

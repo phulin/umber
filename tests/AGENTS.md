@@ -177,7 +177,7 @@ The e2e mode first performs the same acquisition verification, then builds
 real `format_source`, document, `third_party/hyphen/hyphen.tex`, and all TFM
 files loaded by Plain. Both engines receive the same wrapper that inputs the
 format source before the document; reference TeX runs in INITEX mode, while
-Umber runs the wrapper directly with no `--plain-format` shim. The harness
+Umber runs the wrapper directly through its ordinary input path. The harness
 verifies `expected_ref_dvi_sha256` against the normalized reference DVI
 produced with the script-pinned job clock and byte-compares normalized output.
 Reference drift, Umber failures, and byte mismatches
