@@ -283,6 +283,21 @@ fn hskip_replays_unexpandable_penalty_after_numeric_recovery() {
 }
 
 #[test]
+fn vertical_mode_hskip_runs_everypar_before_scanning_glue() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let source = r"\everypar{\def\skipamount{2.5in}}\hskip\skipamount\dimen0=\lastskip\par\end";
+    let mut input = InputStack::new(MemoryInput::new(source));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("vertical-mode hskip should replay after everypar");
+
+    assert_eq!(stores.dimen(0).raw(), 11_840_716);
+}
+
+#[test]
 fn insert_group_delimiters_match_reference_micro_suite() {
     let insertion = reference_fixture("insert_brace_aliases");
     assert!(

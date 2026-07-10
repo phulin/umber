@@ -634,6 +634,19 @@ where
             | UnexpandablePrimitive::VSs
             | UnexpandablePrimitive::VFilNeg => {
                 reject_all_prefixes(prefixes)?;
+                if primitive == UnexpandablePrimitive::HSkip
+                    && matches!(
+                        nest.current_mode(),
+                        crate::Mode::Vertical | crate::Mode::InternalVertical
+                    )
+                {
+                    // TeX82's vertical-mode main-control case backs up the
+                    // triggering command before `new_graf`. In particular,
+                    // `every_par` must run before an `\hskip` scans its glue.
+                    push_traced_tokens(input, stores, [command.traced]);
+                    ensure_horizontal_for_character(nest, input, stores)?;
+                    return Ok(CommandOutcome::continue_only());
+                }
                 execute_kern_or_skip(primitive, command.traced, nest, input, stores, hooks)?;
                 Ok(CommandOutcome::continue_only())
             }
