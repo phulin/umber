@@ -329,6 +329,68 @@ fn fraction_reuses_single_explicit_numerator_box() {
 }
 
 #[test]
+fn fraction_retains_box_around_nested_sub_mlist_nucleus() {
+    let mut universe = setup_universe();
+    let children = universe.freeze_node_list(&[]);
+    let explicit = Node::HList(BoxNode::new(BoxNodeFields {
+        width: sc(40),
+        height: sc(12),
+        depth: sc(3),
+        shift: sc(0),
+        display: true,
+        glue_set: GlueSetRatio::from_raw(123),
+        glue_sign: Sign::Stretching,
+        glue_order: Order::Fil,
+        children,
+    }));
+    let explicit_list = universe.freeze_node_list(&[explicit]);
+    let nested = universe.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+        NoadKind::Normal(NoadClass::Ord),
+        MathField::SubBox(explicit_list),
+    ))]);
+    let field = MathField::SubMlist(nested);
+    let numerator = universe.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+        NoadKind::Normal(NoadClass::Ord),
+        field.clone(),
+    ))]);
+    let denominator = universe.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+        NoadKind::Normal(NoadClass::Ord),
+        field,
+    ))]);
+    let input = universe.freeze_node_list(&[Node::FractionNoad(MathFraction {
+        numerator,
+        denominator,
+        thickness: FractionThickness::Default,
+        left_delimiter: None,
+        right_delimiter: None,
+    })]);
+    let params = MathParams::read(&universe);
+
+    let layout = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
+
+    let [MathNode::HList(fraction)] = root_nodes(&layout).as_slice() else {
+        panic!("expected fraction hbox");
+    };
+    let [_, MathNode::VList(stack), _] = list_nodes(&layout, fraction.list).as_slice() else {
+        panic!("expected delimited fraction stack");
+    };
+    let [MathNode::HList(outer), ..] = list_nodes(&layout, stack.list).as_slice() else {
+        panic!("expected numerator box");
+    };
+    let [MathNode::HList(inner)] = list_nodes(&layout, outer.list).as_slice() else {
+        panic!("expected retained box around explicit author box");
+    };
+    assert!(!outer.display);
+    assert_eq!(outer.glue_set, GlueSetRatio::from_raw(0));
+    assert_eq!(outer.glue_sign, Sign::Normal);
+    assert_eq!(outer.glue_order, Order::Normal);
+    assert!(inner.display);
+    assert_eq!(inner.glue_set, GlueSetRatio::from_raw(123));
+    assert_eq!(inner.glue_sign, Sign::Stretching);
+    assert_eq!(inner.glue_order, Order::Fil);
+}
+
+#[test]
 fn left_right_delimiters_size_to_enclosed_list() {
     let mut universe = setup_universe();
     let tall_box = universe.freeze_node_list(&[Node::Rule {

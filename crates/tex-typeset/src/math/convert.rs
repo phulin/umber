@@ -281,8 +281,12 @@ fn translate_noad<S: MathTypesetState>(
         ),
         (_, MathField::Empty) => ctx.layout.empty(),
         (_, MathField::SubBox(list)) => source_list(ctx, *list),
-        (_, MathField::SubMlist(_)) => {
-            let boxed = clean_box(ctx, &noad.nucleus, ctx.style);
+        (_, MathField::SubMlist(list)) => {
+            // TeX82's mlist2 branch always hpacks a sub-mlist nucleus. This
+            // structural box is distinct from clean_box's later reuse of a
+            // sole unshifted box around the completed field.
+            let list = convert_mlist(ctx, *list, ctx.style, false);
+            let boxed = ctx.layout.hpack(list);
             ctx.layout.hlist([MathNode::HList(boxed)])
         }
     };

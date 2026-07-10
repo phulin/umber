@@ -24,7 +24,10 @@ horizontal extents. A `MathBox` stores dimensions, shift, axis, glue-setting
 metadata, and a list handle rather than owning another vector. Existing h/v
 boxes that enter a math field are imported with those complete box properties,
 so `clean_box` can reuse a sole unshifted box exactly as TeX82 does without
-hiding it behind an opaque or newly packed wrapper.
+hiding it behind an opaque or newly packed wrapper. A `SubMlist` used as an
+ordinary noad nucleus still receives the unconditional natural hpack from
+TeX82's `mlist2` branch before an enclosing `clean_box` considers reuse; this
+keeps the structural box distinct from a reusable inner author box.
 
 Parent lists are built after their children. When a parent needs to concatenate
 an existing list without copying its nodes, it emits an internal sequence
