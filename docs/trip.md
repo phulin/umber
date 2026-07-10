@@ -9,6 +9,7 @@ corpus and from any later e-TRIP work. Run it with:
 scripts/trip.sh
 scripts/trip.sh --offline
 scripts/trip.sh self-test
+scripts/build-trip-initex.sh
 ```
 
 `scripts/trip.sh` fetches official CTAN bytes into gitignored
@@ -41,6 +42,15 @@ The byte identity is pinned by SHA-256:
 
 The exact URLs live in `tests/trip-manifest.txt` beside the matching hashes.
 
+The special reference engine comes from the TeX Live 2025 source snapshot
+`texlive-20250308-source.tar.xz`, fetched from the University of Utah historic
+archive and pinned by SHA-512
+`0837c935488b96cfc8dd79f1298f283b467ab68b4163cee9cb04b79e80195982fdc5ae8a80058dc7d3e99206bfda8b3bdd11340425b08f60cbef70d5a0e22702`.
+`tests/trip-reference-manifest.txt` additionally pins the extracted `tex.web`,
+Web2C change inputs, TRIP configuration, and upstream TRIP harness by SHA-256.
+The build records the exact configure/make commands and platform-specific tool
+hashes in `target/trip-initex/build-record.txt`.
+
 ## Required Tools
 
 The font phase requires `pltotf` and `tftopl`, overridable with
@@ -60,24 +70,57 @@ UMBER_TRIP_INITEX=/absolute/path/to/special-initex scripts/trip.sh
 Stock `pdftex -ini` or `tex -ini` is intentionally not accepted as a passing
 oracle; it produces different line wrapping, banners, and capacity statistics.
 
+Build and run the pinned tools with:
+
+```bash
+scripts/build-trip-initex.sh
+scripts/build-trip-initex.sh --offline # verifies/reuses the cached archive
+scripts/trip.sh reference --offline
+```
+
+The harness automatically finds `target/trip-initex/bin`; an alternate build
+can be selected with `UMBER_TRIP_TOOLS`. The wrappers set `LC_ALL=C`,
+`LANGUAGE=C`, and `TEXMFCNF` to the hash-pinned upstream
+`triptrap/texmf.cnf`. That file establishes Appendix A's memory and line
+settings and the normal TeX82 capacities that Web2C permits at runtime.
+
 ## Normalization
 
 The harness applies only these normalizations:
 
-- `trip.log` and `tripin.log`: first-line date/time suffix and local
-  `./trip.tex` path spelling.
-- `trip.fot`: local `./trip.tex` path spelling.
+- `trip.log` and `tripin.log`: first-line date/time suffix, local
+  `./trip.tex`/`./tripos.tex` path spelling, Web2C packaging banner, format
+  date, string-pool totals/capacities, dynamic hash/trie capacities, and the
+  dynamic hyphen-table exception count. The last categories are confined to
+  the exact statistics lines that Appendix A items 5(d), 5(f), and 5(g)
+  permit. TeX Live's upstream `triptest.test` makes the same distinctions;
+  its public-domain `triptrap/README` records Knuth's approval of the one-
+  versus two-entry dynamic-hyphen-table statistic.
+- `trip.log`: only `glue set` values at the end of `hbox`/`vbox` lines may be
+  reconciled, only when the entire remainder of the line is identical and the
+  decimal delta is at most 0.001. Appendix A item 5(b) explicitly identifies
+  these floating-point values as system-dependent; no box dimension or other
+  number is touched.
+- `trip.fot`: local `./trip.tex` path spelling and Web2C packaging banner.
 - `trip.typ`: DVItype packaging text on line 1 and the rendered DVI preamble
-  timestamp line.
+  timestamp line. Movement operands may be reconciled only when opcode, byte
+  offset, and all surrounding text match and the delta is at most 64 scaled
+  points, as allowed by Appendix A item 6.
 - `trip.dvi`: DVI preamble comment bytes only, preserving the original comment
-  length.
+  length. A structured DVI walk additionally permits at most 64 scaled points
+  of variation in movement operands while requiring identical opcode/operand
+  structure and exact identity for characters, rules, specials, fonts, page
+  structure, dimensions, and every non-movement operand.
 
 No other TRIP log, terminal photo, DVItype, `tripos.tex`, or DVI bytes may
 change. Any mismatch writes a diff or byte context under `target/trip/diffs/`.
+`scripts/trip.sh self-test` deliberately changes both a text line and a DVI
+character opcode and requires actionable failures, proving that the structured
+rounding allowance cannot conceal character output changes.
 
 ## Current Divergence Policy
 
 The harness is allowed to expose current Umber failures; it must not normalize
 or bless them. Missing INITEX/format support or semantic TRIP failures should
-be filed as linked Beads work under `umber2-sfc` rather than hidden in this
+be filed as linked Beads work under `umber2-i8w` rather than hidden in this
 script.

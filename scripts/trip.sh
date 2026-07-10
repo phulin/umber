@@ -30,6 +30,7 @@ INITEX and format-run transcripts, runs DVItype, and runs Umber against the
 same official input.
 
 Reference tools are discovered on PATH unless overridden:
+  UMBER_TRIP_TOOLS=/path/to/pinned/trip-tool-directory
   UMBER_TRIP_INITEX=/path/to/special-initex
   UMBER_REF_TEX=/path/to/pdftex-or-tex
   UMBER_REF_PLTOTF=/path/to/pltotf
@@ -39,6 +40,7 @@ Reference tools are discovered on PATH unless overridden:
 TRIP requires Knuth's special INITEX build with mem_top/mem_max=3000,
 mem_min/mem_bot=1, error_line=64, half_error_line=32, max_print_line=72,
 and the other settings documented in tripman.tex Appendix A.
+Build all pinned reference tools with scripts/build-trip-initex.sh.
 EOF
 }
 
@@ -97,6 +99,11 @@ tool_path() {
     printf '%s\n' "$value"
     return
   fi
+  local tools="${UMBER_TRIP_TOOLS:-${target_dir}/trip-initex/bin}"
+  if [[ -x "${tools}/umber-trip-${default_name}" ]]; then
+    printf '%s\n' "${tools}/umber-trip-${default_name}"
+    return
+  fi
   command -v "$default_name" || fail "could not locate $default_name; set $env_name=/absolute/path/to/$default_name"
 }
 
@@ -107,13 +114,12 @@ trip_initex() {
     printf '%s\n' "$value"
     return
   fi
-  if command -v pdftex >/dev/null 2>&1; then
-    command -v pdftex
-  elif command -v tex >/dev/null 2>&1; then
-    command -v tex
-  else
-    fail "could not locate reference TeX; set UMBER_TRIP_INITEX to a special TRIP INITEX build"
+  local tools="${UMBER_TRIP_TOOLS:-${target_dir}/trip-initex/bin}"
+  if [[ -x "${tools}/umber-trip-tex" ]]; then
+    printf '%s\n' "${tools}/umber-trip-tex"
+    return
   fi
+  fail "missing pinned special TRIP INITEX; run scripts/build-trip-initex.sh, or set UMBER_TRIP_INITEX"
 }
 
 tex_dvi_args() {
@@ -219,13 +225,29 @@ compare_binary() {
 normalize_trip_log() {
   sed -E \
     -e '1s/[[:space:]]+[0-9]{1,2} [A-Z]{3} [0-9]{4} [0-9]{2}:[0-9]{2}$/  <TRIP-DATE>/' \
+    -e '1s/ \(TeX Live [^)]*\)//' \
+    -e '1s/ \(Web2C [^)]*\)//' \
     -e 's@\(\./trip\.tex@\(trip.tex@g' \
     -e 's@\([^()[:space:]]*/trip\.tex@\(trip.tex@g' \
+    -e 's@\(\./tripos\.tex@\(tripos.tex@g' \
+    -e 's@\([^()[:space:]]*/tripos\.tex@\(tripos.tex@g' \
+    -e 's/\(preloaded format=trip [0-9]{4}\.[0-9]{1,2}\.[0-9]{1,2}\)/\(preloaded format=trip <TRIP-FORMAT-DATE>\)/' \
+    -e 's/^[0-9]+ strings of total length [0-9]+$/<TRIP-STRING-TOTALS>/' \
+    -e 's/^ [0-9]+ strings out of [0-9]+$/ <TRIP-STRINGS>/' \
+    -e 's/^ [0-9]+ string characters out of [0-9]+$/ <TRIP-STRING-CHARACTERS>/' \
+    -e 's/^( [0-9]+ multiletter control sequences out of )[0-9]+(\+[0-9]+)?$/\1<TRIP-HASH-CAPACITY>/' \
+    -e 's/^ [0-9]+ hyphenation exceptions? out of [0-9]+$/ <TRIP-HYPHEN-EXCEPTIONS>/' \
+    -e 's/(Hyphenation trie of length [0-9]+ has [0-9]+ ops out of )[0-9]+/\1<TRIP-TRIE-OP-CAPACITY>/' \
     "$1" > "$2"
 }
 
 normalize_trip_fot() {
   sed -E \
+    -e 's@^\*\*\(\./trip\.tex ##@** \&trip  trip \
+(trip.tex ##@' \
+    -e '1s/ \(TeX Live [^)]*\)//' \
+    -e '1s/ \(Web2C [^)]*\)//' \
+    -e '1s/ \(preloaded format=tex\)/ \(INITEX\)/' \
     -e 's@\(\./trip\.tex@\(trip.tex@g' \
     -e 's@\([^()[:space:]]*/trip\.tex@\(trip.tex@g' \
     "$1" > "$2"
@@ -236,6 +258,68 @@ normalize_trip_typ() {
     -e '1s/ \(.*\)$//' \
     -e "s/^' TeX output .*'$/' TeX output <TRIP-DATE>'/" \
     "$1" > "$2"
+}
+
+reconcile_trip_rounding() {
+  local expected="$1" actual="$2" output="$3"
+  python3 - "$expected" "$actual" "$output" <<'PY'
+import decimal
+import pathlib
+import re
+import sys
+
+expected_path, actual_path, output_path = map(pathlib.Path, sys.argv[1:])
+expected = expected_path.read_text().splitlines(keepends=True)
+actual = actual_path.read_text().splitlines(keepends=True)
+if len(expected) != len(actual):
+    output_path.write_text("".join(actual))
+    raise SystemExit(0)
+pattern = re.compile(r"^(\\[hv]box\([^\n]*, glue set (?:- )?)(-?[0-9]+(?:\.[0-9]+)?)(fil(?:l|ll)?[^\n]*\n?)$")
+out = []
+for wanted, got in zip(expected, actual):
+    if wanted == got:
+        out.append(got)
+        continue
+    wm = pattern.match(wanted)
+    gm = pattern.match(got)
+    if wm and gm and wm.group(1) == gm.group(1) and wm.group(3) == gm.group(3):
+        delta = abs(decimal.Decimal(wm.group(2)) - decimal.Decimal(gm.group(2)))
+        if delta <= decimal.Decimal("0.001"):
+            out.append(wanted)
+            continue
+    out.append(got)
+output_path.write_text("".join(out))
+PY
+}
+
+reconcile_trip_typ_rounding() {
+  local expected="$1" actual="$2" output="$3"
+  python3 - "$expected" "$actual" "$output" <<'PY'
+import pathlib
+import re
+import sys
+
+expected_path, actual_path, output_path = map(pathlib.Path, sys.argv[1:])
+expected = expected_path.read_text().splitlines(keepends=True)
+actual = actual_path.read_text().splitlines(keepends=True)
+if len(expected) != len(actual):
+    output_path.write_text("".join(actual))
+    raise SystemExit(0)
+movement = re.compile(r"^(\d+: (?:right|w|x|down|y|z)[0-4] )(-?\d+)( .*)$")
+out = []
+for wanted, got in zip(expected, actual):
+    if wanted == got:
+        out.append(got)
+        continue
+    wm = movement.match(wanted)
+    gm = movement.match(got)
+    if wm and gm and wm.group(1) == gm.group(1) and wm.group(3) == gm.group(3):
+        if abs(int(wm.group(2)) - int(gm.group(2))) <= 64:
+            out.append(wanted)
+            continue
+    out.append(got)
+output_path.write_text("".join(out))
+PY
 }
 
 normalize_dvi() {
@@ -257,6 +341,75 @@ replacement = b"umber trip normalized dvi banner"
 for index in range(start, end):
     data[index] = replacement[index - start] if index - start < len(replacement) else 32
 dst.write_bytes(data)
+PY
+}
+
+reconcile_dvi_rounding() {
+  local expected="$1" actual="$2" output="$3"
+  python3 - "$expected" "$actual" "$output" <<'PY'
+import pathlib
+import sys
+
+expected_path, actual_path, output_path = map(pathlib.Path, sys.argv[1:])
+expected = expected_path.read_bytes()
+actual = bytearray(actual_path.read_bytes())
+if len(expected) != len(actual):
+    output_path.write_bytes(actual)
+    raise SystemExit(0)
+
+def signed(data):
+    return int.from_bytes(data, "big", signed=True)
+
+i = 0
+while i < len(expected):
+    if expected[i] != actual[i]:
+        output_path.write_bytes(actual)
+        raise SystemExit(0)
+    op = expected[i]
+    i += 1
+    fixed = {
+        128:1,129:2,130:3,131:4,132:8,133:1,134:2,135:3,136:4,137:8,
+        143:1,144:2,145:3,146:4,148:1,149:2,150:3,151:4,
+        153:1,154:2,155:3,156:4,157:1,158:2,159:3,160:4,
+        162:1,163:2,164:3,165:4,167:1,168:2,169:3,170:4,
+        235:1,236:2,237:3,238:4,248:28,249:5,
+    }
+    if op in (239,240,241,242):
+        width = op - 238
+        size = int.from_bytes(expected[i:i+width], "big")
+        count = width + size
+    elif op in (243,244,245,246):
+        width = op - 242
+        if expected[i:i+width] != actual[i:i+width]:
+            output_path.write_bytes(actual); raise SystemExit(0)
+        a = i + width + 12
+        if expected[i+width:i+width+12] != actual[i+width:i+width+12]:
+            output_path.write_bytes(actual); raise SystemExit(0)
+        count = width + 12 + expected[a] + expected[a+1]
+    elif op == 247:
+        count = 14 + expected[i+13]
+    elif op == 139:
+        count = 44
+    else:
+        count = fixed.get(op, 0)
+    end = i + count
+    if end > len(expected):
+        output_path.write_bytes(actual); raise SystemExit(0)
+    if expected[i:end] != actual[i:end]:
+        # Knuth permits slight floating-point deviations only in horizontal
+        # and vertical movement operands. Opcode and operand width stay exact.
+        if op in range(143,171) and op not in (147,152,161,166):
+            if abs(signed(expected[i:end]) - signed(actual[i:end])) <= 64:
+                actual[i:end] = expected[i:end]
+            else:
+                output_path.write_bytes(actual); raise SystemExit(0)
+        elif op == 247:
+            # Preamble comment is already normalized before this reconciliation.
+            output_path.write_bytes(actual); raise SystemExit(0)
+        else:
+            output_path.write_bytes(actual); raise SystemExit(0)
+    i = end
+output_path.write_bytes(actual)
 PY
 }
 
@@ -290,18 +443,14 @@ run_reference_phase() {
 
   (
     cd "$init_dir"
-    printf '\n\\input trip\n' | env TEXFONTS=".:${TEXFONTS:-}" "$initex" -ini -interaction=nonstopmode > tripin.fot 2>&1 || true
+    printf '\n\\input trip\n' | env TEXFONTS=".:${TEXFONTS:-}" "$initex" --progname=initex --ini -interaction=nonstopmode > tripin.fot 2>&1 || true
   )
   if [[ -f "${init_dir}/trip.fmt" ]]; then
     cp "${init_dir}/trip.fmt" "$trip_dir/"
   fi
   (
     cd "$trip_dir"
-    dvi_args=()
-    while IFS= read -r arg; do
-      dvi_args+=("$arg")
-    done < <(tex_dvi_args "$initex")
-    printf ' &trip  trip \n' | env TEXFORMATS=".:${TEXFORMATS:-}" TEXFONTS=".:${TEXFONTS:-}" "$initex" -ini -interaction=nonstopmode "${dvi_args[@]}" > trip.fot 2>&1 || true
+    printf ' &trip  trip \n' | env TEXFORMATS=".:${TEXFORMATS:-}" TEXFONTS=".:${TEXFONTS:-}" "$initex" --progname=tex -interaction=nonstopmode > trip.fot 2>&1 || true
     if [[ -f trip.dvi ]]; then
       "$dvitype" -output-level=2 -page-start='*.*.*.*.*.*.*.*.*.*' -max-pages=1000000 -dpi=72.27 trip.dvi > trip.typ
     fi
@@ -312,13 +461,18 @@ run_reference_phase() {
   normalize_trip_log "${download_dir}/tripin.log" "${norm}/expected-tripin.log"
   normalize_trip_log "${init_dir}/trip.log" "${norm}/actual-tripin.log" || true
   normalize_trip_log "${download_dir}/trip.log" "${norm}/expected-trip.log"
-  normalize_trip_log "${trip_dir}/trip.log" "${norm}/actual-trip.log" || true
+  normalize_trip_log "${trip_dir}/trip.log" "${norm}/actual-trip.log.raw" || true
+  reconcile_trip_rounding "${norm}/expected-trip.log" "${norm}/actual-trip.log.raw" "${norm}/actual-trip.log" || true
   normalize_trip_fot "${download_dir}/trip.fot" "${norm}/expected-trip.fot"
   normalize_trip_fot "${trip_dir}/trip.fot" "${norm}/actual-trip.fot" || true
   normalize_trip_typ "${download_dir}/trip.typ" "${norm}/expected-trip.typ"
-  normalize_trip_typ "${trip_dir}/trip.typ" "${norm}/actual-trip.typ" || true
+  normalize_trip_typ "${trip_dir}/trip.typ" "${norm}/actual-trip.typ.raw" || true
+  reconcile_trip_typ_rounding "${norm}/expected-trip.typ" "${norm}/actual-trip.typ.raw" "${norm}/actual-trip.typ" || true
   normalize_dvi "${download_dir}/trip.dvi" "${norm}/expected-trip.dvi"
-  [[ -f "${trip_dir}/trip.dvi" ]] && normalize_dvi "${trip_dir}/trip.dvi" "${norm}/actual-trip.dvi"
+  if [[ -f "${trip_dir}/trip.dvi" ]]; then
+    normalize_dvi "${trip_dir}/trip.dvi" "${norm}/actual-trip.dvi.raw"
+    reconcile_dvi_rounding "${norm}/expected-trip.dvi" "${norm}/actual-trip.dvi.raw" "${norm}/actual-trip.dvi"
+  fi
 
   local ok=0
   compare_text "reference-tripin-log" "${norm}/expected-tripin.log" "${norm}/actual-tripin.log" || ok=1
@@ -328,7 +482,7 @@ run_reference_phase() {
   compare_binary "reference-trip-dvi" "${norm}/expected-trip.dvi" "${norm}/actual-trip.dvi" || ok=1
   compare_text "reference-tripos" "${download_dir}/tripos.tex" "${trip_dir}/tripos.tex" || ok=1
   if [[ "$ok" -ne 0 ]]; then
-    printf '%s\n' "Reference TRIP failed. Stock pdftex/tex is not sufficient; set UMBER_TRIP_INITEX to Knuth's special TRIP INITEX build." >&2
+    printf '%s\n' "Reference TRIP failed; inspect the artifact-specific diffs above. Rebuild pinned tools with scripts/build-trip-initex.sh if tool provenance is uncertain." >&2
   fi
   return "$ok"
 }
@@ -379,6 +533,26 @@ run_self_test() {
     fail "self-test perturbation unexpectedly passed"
   fi
   [[ -s "${diff_dir}/self-test-perturbation.diff" ]] || fail "self-test did not write an actionable diff"
+
+  # Prove that the constrained DVI rounding reconciler cannot conceal a
+  # character change. This synthetic stream is sufficient for the structural
+  # walker and keeps self-test independent of fetched TRIP materials.
+  python3 - "${dir}/expected.dvi" "${dir}/actual.dvi" <<'PY'
+import pathlib
+import sys
+
+pre = bytes([247, 2]) + (25400000).to_bytes(4, "big") + (473628672).to_bytes(4, "big") + (1000).to_bytes(4, "big") + bytes([0])
+bop = bytes([139]) + bytes(44)
+tail = bytes([140, 248]) + bytes(28) + bytes([249]) + bytes(5) + bytes([223, 223, 223, 223])
+expected = pre + bop + bytes([65]) + tail
+pathlib.Path(sys.argv[1]).write_bytes(expected)
+pathlib.Path(sys.argv[2]).write_bytes(pre + bop + bytes([66]) + tail)
+PY
+  reconcile_dvi_rounding "${dir}/expected.dvi" "${dir}/actual.dvi" "${dir}/reconciled.dvi"
+  if compare_binary "self-test-dvi-character-perturbation" "${dir}/expected.dvi" "${dir}/reconciled.dvi"; then
+    fail "DVI character perturbation unexpectedly passed constrained reconciliation"
+  fi
+  [[ -s "${diff_dir}/self-test-dvi-character-perturbation.diff" ]] || fail "DVI perturbation did not write byte context"
   printf 'self-test passed; perturbation diff is %s\n' "${diff_dir}/self-test-perturbation.diff" >&2
 }
 

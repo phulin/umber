@@ -204,6 +204,7 @@ not part of the default Rust test tier and not part of the later e-TRIP work:
 scripts/trip.sh
 scripts/trip.sh --offline
 scripts/trip.sh self-test
+scripts/build-trip-initex.sh
 ```
 
 `scripts/trip.sh` reads `tests/trip-manifest.txt`, fetches exact official
@@ -215,14 +216,19 @@ Knuth's special TRIP INITEX build described in `tripman.tex` Appendix A; stock
 `pdftex -ini` or `tex -ini` is useful only as a failing sanity check because
 the official log line widths, memory limits, and capacity statistics depend on
 that special build. Set `UMBER_TRIP_INITEX=/absolute/path/to/initex` to select
-it. The harness also uses `UMBER_REF_PLTOTF`, `UMBER_REF_TFTOPL`, and
+it. `scripts/build-trip-initex.sh` builds the hash-pinned TeX Live Web2C
+classic TeX plus DVItype, PLtoTF, and TFtoPL tools; once its source archive is
+cached, both the build and reference phase run offline. The harness
+automatically uses `target/trip-initex/bin`, or `UMBER_TRIP_TOOLS` can select
+another pinned build. It also uses `UMBER_REF_PLTOTF`, `UMBER_REF_TFTOPL`, and
 `UMBER_REF_DVITYPE` overrides when the TeXware tools are not on `PATH`.
 
-Allowed TRIP normalizations are intentionally narrower than Knuth's prose
-allows for manual inspection: transcript date/time suffixes, local `./trip.tex`
-path spelling, DVItype banner packaging text, the DVItype rendering of the DVI
-preamble timestamp, and the DVI preamble comment bytes. All other transcript,
-terminal photo, DVItype, `tripos.tex`, and DVI bytes must match. Failures write
+Allowed TRIP normalization is executable and narrowly bounded: environment
+banner/date/path and Appendix-A capacity statistics, box `glue set` deltas no
+larger than 0.001, and DVI movement deltas no larger than 64 scaled points with
+identical structure. Characters, rules, specials, box dimensions, page/font
+structure, non-movement DVI operands, `tripos.tex`, and all other text must
+match exactly. Failures write
 unified diffs or byte contexts under `target/trip/diffs/`; `scripts/trip.sh
 self-test` deliberately perturbs a copied text artifact and verifies that this
 diff path is actionable without fetching or running TeX.
