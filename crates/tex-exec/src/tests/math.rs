@@ -1,5 +1,6 @@
 use super::support::terminal_effect_text;
 use super::*;
+use tex_state::glue::{GlueSpec, Order};
 use tex_state::math::{
     FractionThickness, LimitType, MathChoice, MathField, MathListNode, MathNoad, NoadClass,
     NoadKind,
@@ -122,10 +123,62 @@ fn plain_quad_hskip_remains_ordinary_glue_through_math_lowering() {
 }
 
 #[test]
+fn fixed_infinite_hskips_retain_exact_specs_as_ordinary_math_glue() {
+    let expected = fixed_infinite_glue_specs();
+    let (stores, executor) = run_math_source(r"$\hfil\hfill\hss\hfilneg$");
+    let mlist_glue = math_nodes(&stores, &executor)
+        .iter()
+        .map(|node| match node {
+            Node::Glue { spec, kind, .. } => (stores.glue(*spec), *kind),
+            other => panic!("expected ordinary mlist glue, got {other:?}"),
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        mlist_glue,
+        expected
+            .iter()
+            .copied()
+            .map(|spec| (spec, GlueKind::Normal))
+            .collect::<Vec<_>>()
+    );
+
+    let mut stores = support::stores_with_fonts();
+    let mut input = InputStack::new(MemoryInput::new(
+        r"\setbox0=\hbox{$\hfil\hfill\hss\hfilneg$}",
+    ));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("fixed infinite glue lowers through Appendix G");
+    let list = stores.box_reg(0).expect("math hbox register");
+    let [Node::HList(hbox)] = stores.nodes(list) else {
+        panic!("register zero should contain an hbox");
+    };
+    let lowered = stores
+        .nodes(hbox.children)
+        .iter()
+        .filter_map(|node| match node {
+            Node::Glue { spec, kind, .. } => Some((stores.glue(*spec), *kind)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        lowered,
+        expected
+            .iter()
+            .copied()
+            .map(|spec| (spec, GlueKind::Normal))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn math_hskip_participates_in_state_hash_and_rollback() {
     let mut stores = support::stores_with_fonts();
     let checkpoint = stores.snapshot();
-    let source = "\\font\\f=cmr10 \\relax \\f \\setbox0=\\hbox{$a\\hskip1em b$}";
+    let source =
+        "\\font\\f=cmr10 \\relax \\f \\setbox0=\\hbox{$a\\hskip1em\\hfil\\hfill\\hss\\hfilneg b$}";
 
     let mut input = InputStack::new(MemoryInput::new(source));
     Executor::new()
@@ -142,6 +195,41 @@ fn math_hskip_participates_in_state_hash_and_rollback() {
 
     assert_eq!(stores.box_reg(0), first_box);
     assert_eq!(stores.snapshot().state_hash(), first_hash);
+}
+
+fn fixed_infinite_glue_specs() -> [GlueSpec; 4] {
+    let zero = Scaled::from_raw(0);
+    let unity = Scaled::from_raw(Scaled::UNITY);
+    [
+        GlueSpec {
+            width: zero,
+            stretch: unity,
+            stretch_order: Order::Fil,
+            shrink: zero,
+            shrink_order: Order::Normal,
+        },
+        GlueSpec {
+            width: zero,
+            stretch: unity,
+            stretch_order: Order::Fill,
+            shrink: zero,
+            shrink_order: Order::Normal,
+        },
+        GlueSpec {
+            width: zero,
+            stretch: unity,
+            stretch_order: Order::Fil,
+            shrink: unity,
+            shrink_order: Order::Fil,
+        },
+        GlueSpec {
+            width: zero,
+            stretch: Scaled::from_raw(-Scaled::UNITY),
+            stretch_order: Order::Fil,
+            shrink: zero,
+            shrink_order: Order::Normal,
+        },
+    ]
 }
 
 #[test]

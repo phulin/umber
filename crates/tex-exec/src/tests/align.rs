@@ -256,6 +256,31 @@ fn contains_rule_leader(stores: &Universe, nodes: &[Node], kind: GlueKind, heigh
     })
 }
 
+fn collect_infinite_glue(
+    stores: &Universe,
+    nodes: &[Node],
+    out: &mut Vec<tex_state::glue::GlueSpec>,
+) {
+    for node in nodes {
+        match node {
+            Node::Glue {
+                spec,
+                kind: GlueKind::Normal,
+                ..
+            } => {
+                let spec = stores.glue(*spec);
+                if spec.stretch_order != Order::Normal || spec.shrink_order != Order::Normal {
+                    out.push(spec);
+                }
+            }
+            Node::HList(box_node) | Node::VList(box_node) => {
+                collect_infinite_glue(stores, stores.nodes(box_node.children), out);
+            }
+            _ => {}
+        }
+    }
+}
+
 #[test]
 fn halign_in_unrestricted_horizontal_mode_finishes_paragraph_first() {
     let stores = run_boxed_alignment_source("x\\halign{#\\cr y\\cr}");
@@ -975,6 +1000,28 @@ fn nested_alignment_executes_inside_cell() {
             .iter()
             .any(|node| matches!(node, Node::VList(_)))
     );
+    assert_no_unset(&stores, stores.nodes(vbox.children));
+}
+
+#[test]
+fn alignment_cells_accept_all_fixed_infinite_glues_in_math_mode() {
+    let stores =
+        run_alignment_source(r"\setbox0=\vbox{\halign{$#$\cr \hfil\hfill\hss\hfilneg\cr}}");
+    let vbox = box_zero_vlist(&stores);
+    let mut glue = Vec::new();
+    collect_infinite_glue(&stores, stores.nodes(vbox.children), &mut glue);
+
+    assert_eq!(glue.len(), 4);
+    assert_eq!(glue[0].stretch_order, Order::Fil);
+    assert_eq!(glue[0].stretch.raw(), Scaled::UNITY);
+    assert_eq!(glue[1].stretch_order, Order::Fill);
+    assert_eq!(glue[1].stretch.raw(), Scaled::UNITY);
+    assert_eq!(glue[2].stretch_order, Order::Fil);
+    assert_eq!(glue[2].stretch.raw(), Scaled::UNITY);
+    assert_eq!(glue[2].shrink_order, Order::Fil);
+    assert_eq!(glue[2].shrink.raw(), Scaled::UNITY);
+    assert_eq!(glue[3].stretch_order, Order::Fil);
+    assert_eq!(glue[3].stretch.raw(), -Scaled::UNITY);
     assert_no_unset(&stores, stores.nodes(vbox.children));
 }
 

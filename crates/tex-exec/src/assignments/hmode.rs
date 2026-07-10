@@ -112,13 +112,7 @@ where
         | UnexpandablePrimitive::HSs
         | UnexpandablePrimitive::HFilNeg => {
             flush_pending_hchars(nest, stores)?;
-            let spec = match primitive {
-                UnexpandablePrimitive::HFil => infinite_glue(Order::Fil, false, false),
-                UnexpandablePrimitive::HFill => infinite_glue(Order::Fill, false, false),
-                UnexpandablePrimitive::HSs => infinite_glue(Order::Fil, false, true),
-                UnexpandablePrimitive::HFilNeg => infinite_glue(Order::Fil, true, false),
-                _ => unreachable!(),
-            };
+            let spec = fixed_infinite_glue(primitive);
             let spec = stores.intern_glue(spec);
             nest.current_list_mut().push(Node::Glue {
                 spec,
@@ -551,6 +545,24 @@ pub(super) fn infinite_glue(order: Order, negative: bool, shrink: bool) -> GlueS
             Scaled::from_raw(0)
         },
         shrink_order: if shrink { order } else { Order::Normal },
+    }
+}
+
+pub(crate) fn fixed_infinite_glue(primitive: UnexpandablePrimitive) -> GlueSpec {
+    match primitive {
+        UnexpandablePrimitive::HFil | UnexpandablePrimitive::VFil => {
+            infinite_glue(Order::Fil, false, false)
+        }
+        UnexpandablePrimitive::HFill | UnexpandablePrimitive::VFill => {
+            infinite_glue(Order::Fill, false, false)
+        }
+        UnexpandablePrimitive::HSs | UnexpandablePrimitive::VSs => {
+            infinite_glue(Order::Fil, false, true)
+        }
+        UnexpandablePrimitive::HFilNeg | UnexpandablePrimitive::VFilNeg => {
+            infinite_glue(Order::Fil, true, false)
+        }
+        _ => unreachable!("caller restricts fixed infinite glue primitives"),
     }
 }
 

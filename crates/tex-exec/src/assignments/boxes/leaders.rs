@@ -1,7 +1,7 @@
 use tex_expand::ExpansionHooks;
 use tex_lex::{InputSource, InputStack};
 use tex_state::Universe;
-use tex_state::glue::{GlueSpec, Order};
+use tex_state::glue::GlueSpec;
 use tex_state::ids::GlueId;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::node::{GlueKind, LeaderPayload, Node};
@@ -10,7 +10,8 @@ use tex_state::token::Token;
 use crate::{ExecError, Mode};
 
 use super::super::{
-    infinite_glue, next_non_space_x, push_tokens, scan_glue_id, scan_register_index, scan_rule_node,
+    fixed_infinite_glue, next_non_space_x, push_tokens, scan_glue_id, scan_register_index,
+    scan_rule_node,
 };
 use super::packaging::{first_box_node, kind_for_primitive, scan_box_node};
 use super::vsplit::scan_vsplit_node;
@@ -145,19 +146,5 @@ pub(super) fn leader_glue_kind(primitive: UnexpandablePrimitive) -> GlueKind {
 }
 
 fn infinite_glue_for_skip_primitive(primitive: UnexpandablePrimitive) -> GlueSpec {
-    match primitive {
-        UnexpandablePrimitive::HFil | UnexpandablePrimitive::VFil => {
-            infinite_glue(Order::Fil, false, false)
-        }
-        UnexpandablePrimitive::HFill | UnexpandablePrimitive::VFill => {
-            infinite_glue(Order::Fill, false, false)
-        }
-        UnexpandablePrimitive::HSs | UnexpandablePrimitive::VSs => {
-            infinite_glue(Order::Fil, false, true)
-        }
-        UnexpandablePrimitive::HFilNeg | UnexpandablePrimitive::VFilNeg => {
-            infinite_glue(Order::Fil, true, false)
-        }
-        _ => unreachable!("caller restricts fill glue primitives"),
-    }
+    fixed_infinite_glue(primitive)
 }

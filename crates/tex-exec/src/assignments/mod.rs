@@ -46,7 +46,9 @@ pub(crate) use boxes::scan_math_box;
 use boxes::*;
 use fonts::*;
 use hmode::*;
-pub(crate) use hmode::{append_given_char, flush_pending_hchars, try_append_character};
+pub(crate) use hmode::{
+    append_given_char, fixed_infinite_glue, flush_pending_hchars, try_append_character,
+};
 use hyphenation::*;
 use macros::*;
 use paragraph::*;

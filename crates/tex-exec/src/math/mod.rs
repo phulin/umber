@@ -461,8 +461,17 @@ where
         | UnexpandablePrimitive::XLeaders => assignments::execute_unexpandable_with_recorder(
             primitive, traced, nest, input, stores, recorder, hooks,
         ),
-        UnexpandablePrimitive::HSkip => {
-            let spec = assignments::scan_glue_id(input, stores, hooks, false)?;
+        UnexpandablePrimitive::HSkip
+        | UnexpandablePrimitive::HFil
+        | UnexpandablePrimitive::HFill
+        | UnexpandablePrimitive::HSs
+        | UnexpandablePrimitive::HFilNeg => {
+            let spec = if primitive == UnexpandablePrimitive::HSkip {
+                assignments::scan_glue_id(input, stores, hooks, false)?
+            } else {
+                let spec = assignments::fixed_infinite_glue(primitive);
+                stores.intern_glue(spec)
+            };
             nest.current_list_mut().push(Node::Glue {
                 spec,
                 kind: GlueKind::Normal,
