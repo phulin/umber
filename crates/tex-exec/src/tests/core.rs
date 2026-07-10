@@ -1243,7 +1243,7 @@ fn delete_last_outer_vertical_empty_matches_tex_error_asymmetry() {
 }
 
 #[test]
-fn prevgraf_reads_writes_and_tracks_finished_paragraph_lines() {
+fn new_paragraph_resets_prevgraf_before_tracking_finished_lines() {
     let mut stores = stores_with_fonts();
     tex_expand::install_expandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
@@ -1259,7 +1259,42 @@ fn prevgraf_reads_writes_and_tracks_finished_paragraph_lines() {
         .expect("prevgraf program executes");
 
     assert_eq!(macro_text(&stores, "pg"), "5");
-    assert_eq!(executor.nest().enclosing_vertical_prev_graf(), 8);
+    assert_eq!(executor.nest().enclosing_vertical_prev_graf(), 3);
+}
+
+#[test]
+fn fresh_hanging_paragraph_keeps_its_first_item_line_at_full_width() {
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\font\\tenrm=cmr10 \\relax \\tenrm\
+         \\setbox0=\\vbox{\\hsize=100pt \\parindent=20pt \\parfillskip=0pt plus 1fil\
+         \\noindent previous\\par\
+         \\hangindent=20pt \\indent\
+         \\hbox to 0pt{\\hss X\\hskip10pt}first\\penalty-10000 second\\par}",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("item-shaped paragraphs execute");
+
+    let box0 = stores.box_reg(0).expect("vbox register");
+    let [Node::VList(vbox)] = stores.nodes(box0) else {
+        panic!("register 0 should hold a vbox");
+    };
+    let lines = stores
+        .nodes(vbox.children)
+        .iter()
+        .filter_map(|node| match node {
+            Node::HList(line) => Some(line),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(lines.len(), 3);
+    assert_eq!(lines[1].shift.raw(), 0);
+    assert_eq!(lines[1].width.raw(), 100 * Scaled::UNITY);
+    assert_eq!(lines[2].shift.raw(), 20 * Scaled::UNITY);
+    assert_eq!(lines[2].width.raw(), 80 * Scaled::UNITY);
 }
 
 #[test]

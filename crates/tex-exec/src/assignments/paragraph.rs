@@ -71,6 +71,10 @@ where
 {
     match nest.current_mode() {
         Mode::Vertical | Mode::InternalVertical => {
+            // TeX82 new_graf starts every fresh paragraph at line zero. The
+            // enclosing prev_graf is only a continuation offset while a
+            // paragraph is interrupted by display math.
+            nest.set_enclosing_vertical_prev_graf(0);
             let par_shape = nest.current_list().par_shape().cloned();
             let parskip = stores.glue_param(GlueParam::PAR_SKIP);
             if (nest.current_mode() == Mode::Vertical || !nest.current_list().is_empty())

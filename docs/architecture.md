@@ -606,7 +606,10 @@ assignments, box building, and dispatch into the typesetting kernels.
 - **Paragraph and page hand-off**: paragraph start/end is stomach-owned.
   `\indent`, `\noindent`, implicit start from vertical-mode character
   material, `\parskip`, and `\everypar` replay are handled before entering
-  unrestricted horizontal mode. When horizontal material ends (`\par` or
+  unrestricted horizontal mode. Fresh paragraphs reset the enclosing
+  `\prevgraf` before line-shape selection, while display-math interruption
+  retains it as the continuation offset for the resumed paragraph. When
+  horizontal material ends (`\par` or
   `\endgraf`), a null unindented paragraph is popped without producing a line,
   matching TeX82's `end_graf`; otherwise the stomach performs TeX's final
   paragraph-list preparation
