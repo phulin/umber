@@ -924,6 +924,7 @@ impl<'a> NodeList<'a> {
         self.iter().map(|node| node.to_owned()).collect()
     }
     /// Test/debug-only decoded view for legacy structural assertions.
+    #[cfg(any(test, feature = "testing"))]
     #[must_use]
     #[doc(hidden)]
     pub fn testing_decoded(self) -> &'static [Node] {

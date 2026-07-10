@@ -387,13 +387,11 @@ self-contained root; release/recycling cannot revive stale handles; hashing is
 allocation-independent; no old `Vec<Node>` store remains.
 
 Implementation status: the compact `NodeStorage` word stream and per-kind
-sidecars are canonical for both epoch and survivor roots. One temporary
-decoded `Node` mirror remains solely to preserve the pre-Phase-5 borrowed-slice
-API: it is private, advances and truncates under the same aggregate watermark,
-is copied and recycled only with its owning `NodeStorage`, and is excluded from
-handles, semantic hashes, and replay identity. Phase 5 must replace borrowed
-slice consumers with decoded views/iterators and remove this mirror; it is not
-a permitted second mutation path or a final representation.
+sidecars are canonical for both epoch and survivor roots. The temporary
+decoded `Node` mirror has been removed. Epoch and survivor reads now return
+opaque `NodeList`/`NodeIter`/`NodeRef` logical views, while owned `Node` values
+remain construction and test/debug values only and are never retained as a
+second arena representation.
 
 ### Phase 5 — consumer migration
 
@@ -401,6 +399,13 @@ Exit: typeset, exec, page builder, diagnostics, survivor transfer, and shipout
 use logical accessors; downstream raw/exhaustive storage matches are gone;
 temporary compatibility APIs are removed; fixture and DVI corpuses are
 byte-identical.
+
+Implementation status: compact logical views are the state and typesetting
+read boundary, the compatibility mirror is gone, and packing, line-width,
+page, alignment, and execution scans consume those views. Algorithms that
+genuinely produce rewritten lists may materialize owned builder scratch; this
+scratch is never checkpoint state and is frozen back through the aggregate
+arena API.
 
 ### Phase 6 — widths, measurement, adoption
 

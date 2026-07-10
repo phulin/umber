@@ -465,10 +465,13 @@ cells[i] = new
 - Nodes are born into a **per-epoch bump arena**. The overwhelming common
   case — node dies within its page — is freed by arena truncation (rollback)
   or wholesale release (after shipout). No free lists, no tracing GC.
-- In M2, the epoch arena is one growing `Vec<Node>` plus immutable
-  `NodeListId { arena, start, len }` spans minted only by
+- The epoch arena is one compact eight-byte `NodeWord` stream plus aggregate
+  per-kind sidecars. Immutable packed `NodeListId` spans are minted only by
   `NodeListBuilder::finish(&mut NodeArena)`. Builders are owned scratch
-  buffers; finishing appends and clears them. Child lists inside newly-frozen
+  buffers; finishing encodes and clears them. Consumers traverse `NodeList`,
+  `NodeIter`, and `NodeRef` logical views; neither epoch nor survivor storage
+  retains a decoded `Node` mirror, and raw words/sidecars never cross the state
+  boundary. Child lists inside newly-frozen
   epoch nodes must already be frozen lower in the same epoch arena; debug
   builds assert this bottom-up discipline. Survivor ids name a root slot plus a
   root-relative span and are read through the aggregate-owned survivor arena.

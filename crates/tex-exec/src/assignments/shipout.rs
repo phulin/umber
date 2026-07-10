@@ -19,6 +19,7 @@ use tex_state::node::{
     BoxNode as StateBoxNode, DiscKind as StateDiscKind, GlueKind as StateGlueKind,
     KernKind as StateKernKind, LeaderPayload as StateLeaderPayload, Node, Sign, Whatsit,
 };
+use tex_state::node_arena::NodeRef;
 use tex_state::page::PageInteger;
 use tex_state::token::{Catcode, Token, TracedTokenWord};
 use tex_state::{ContentHash, EffectRecord, PrintSink, Universe};
@@ -97,6 +98,107 @@ struct ShipoutLowerer<'a, R> {
     font_map: BTreeMap<FontId, u32>,
     effects: Vec<PageEffect>,
     suppress_deferred_streams: bool,
+}
+
+enum FrozenShipoutNode {
+    Char {
+        font: FontId,
+        ch: char,
+    },
+    Lig {
+        font: FontId,
+        ch: char,
+        orig: (char, char),
+    },
+    Kern {
+        amount: tex_state::scaled::Scaled,
+        kind: StateKernKind,
+    },
+    Glue {
+        spec: tex_state::ids::GlueId,
+        kind: StateGlueKind,
+        leader: Option<StateLeaderPayload>,
+    },
+    Penalty(i32),
+    Rule {
+        width: Option<tex_state::scaled::Scaled>,
+        height: Option<tex_state::scaled::Scaled>,
+        depth: Option<tex_state::scaled::Scaled>,
+    },
+    HList(StateBoxNode),
+    VList(StateBoxNode),
+    Unset,
+    Disc {
+        kind: StateDiscKind,
+        pre: NodeListId,
+        post: NodeListId,
+        replace: NodeListId,
+    },
+    Mark {
+        class: u16,
+        tokens: TokenListId,
+    },
+    Ins {
+        class: u16,
+        content: NodeListId,
+    },
+    Whatsit(Whatsit),
+    MathOn(tex_state::scaled::Scaled),
+    MathOff(tex_state::scaled::Scaled),
+    MathList(tex_state::math::MathListNode),
+    UnsupportedMath,
+    Adjust(NodeListId),
+}
+
+impl FrozenShipoutNode {
+    fn from_ref(node: NodeRef<'_>) -> Self {
+        match node {
+            NodeRef::Char { font, ch } => Self::Char { font, ch },
+            NodeRef::Lig { font, ch, orig } => Self::Lig { font, ch, orig },
+            NodeRef::Kern { amount, kind } => Self::Kern { amount, kind },
+            NodeRef::Glue { spec, kind, leader } => Self::Glue {
+                spec,
+                kind,
+                leader: leader.copied(),
+            },
+            NodeRef::Penalty(v) => Self::Penalty(v),
+            NodeRef::Rule {
+                width,
+                height,
+                depth,
+            } => Self::Rule {
+                width,
+                height,
+                depth,
+            },
+            NodeRef::HList(v) => Self::HList(v),
+            NodeRef::VList(v) => Self::VList(v),
+            NodeRef::Unset(_) => Self::Unset,
+            NodeRef::Disc {
+                kind,
+                pre,
+                post,
+                replace,
+            } => Self::Disc {
+                kind,
+                pre,
+                post,
+                replace,
+            },
+            NodeRef::Mark { class, tokens } => Self::Mark { class, tokens },
+            NodeRef::Ins { class, content, .. } => Self::Ins { class, content },
+            NodeRef::Whatsit(v) => Self::Whatsit(v.clone()),
+            NodeRef::MathOn(v) => Self::MathOn(v),
+            NodeRef::MathOff(v) => Self::MathOff(v),
+            NodeRef::MathList(v) => Self::MathList(v),
+            NodeRef::Adjust(v) => Self::Adjust(v),
+            NodeRef::MathNoad(_)
+            | NodeRef::FractionNoad(_)
+            | NodeRef::MathStyle(_)
+            | NodeRef::MathChoice(_)
+            | NodeRef::Nonscript => Self::UnsupportedMath,
+        }
+    }
 }
 
 impl<R> ShipoutLowerer<'_, R>
@@ -233,8 +335,95 @@ where
     }
 
     fn lower_node_list(&mut self, list: NodeListId) -> Result<Vec<PageNode>, ExecError> {
-        let nodes = self.stores.nodes(list).to_vec();
-        self.lower_nodes(nodes)
+        let len = self.stores.nodes(list).len();
+        let mut lowered = Vec::with_capacity(len);
+        for index in 0..len {
+            let node = FrozenShipoutNode::from_ref(
+                self.stores
+                    .nodes(list)
+                    .get(index)
+                    .expect("frozen node index is live"),
+            );
+            if let FrozenShipoutNode::MathList(list) = node {
+                let math_nodes = crate::math::finish_math_list_node(self.stores, list, false);
+                lowered.extend(self.lower_nodes(math_nodes)?);
+            } else if let Some(node) = self.lower_frozen_node(node)? {
+                lowered.push(node);
+            }
+        }
+        Ok(lowered)
+    }
+
+    fn lower_frozen_node(
+        &mut self,
+        node: FrozenShipoutNode,
+    ) -> Result<Option<PageNode>, ExecError> {
+        Ok(Some(match node {
+            FrozenShipoutNode::Char { font, ch } => PageNode::Char {
+                font_id: self.font_resource_id(font),
+                ch: ch as u32,
+                width: self.glyph_width(font, ch)?,
+            },
+            FrozenShipoutNode::Lig { font, ch, orig } => PageNode::Lig {
+                font_id: self.font_resource_id(font),
+                ch: ch as u32,
+                left: orig.0 as u32,
+                right: orig.1 as u32,
+                width: self.glyph_width(font, ch)?,
+            },
+            FrozenShipoutNode::Kern { amount, kind } => PageNode::Kern {
+                amount,
+                kind: lower_kern_kind(kind),
+            },
+            FrozenShipoutNode::Glue { spec, kind, leader } => PageNode::Glue {
+                spec: lower_glue(self.stores.glue(spec)),
+                kind: lower_glue_kind(kind),
+                leader: self.lower_leader_payload(leader)?,
+            },
+            FrozenShipoutNode::Penalty(v) => PageNode::Penalty(v),
+            FrozenShipoutNode::Rule {
+                width,
+                height,
+                depth,
+            } => PageNode::Rule {
+                width,
+                height,
+                depth,
+            },
+            FrozenShipoutNode::HList(v) => PageNode::HList(self.lower_box(v)?),
+            FrozenShipoutNode::VList(v) => PageNode::VList(self.lower_box(v)?),
+            FrozenShipoutNode::Unset => {
+                return Err(ExecError::UnsupportedShipoutNode {
+                    node: "unset alignment",
+                });
+            }
+            FrozenShipoutNode::Disc {
+                kind,
+                pre,
+                post,
+                replace,
+            } => PageNode::Disc {
+                kind: lower_disc_kind(kind),
+                pre: self.lower_node_list(pre)?,
+                post: self.lower_node_list(post)?,
+                replace: self.lower_node_list(replace)?,
+            },
+            FrozenShipoutNode::Mark { class, tokens } => PageNode::Mark {
+                class,
+                tokens: self.lower_tokens(tokens),
+            },
+            FrozenShipoutNode::Ins { class, content } => PageNode::Insert {
+                class,
+                content: self.lower_node_list(content)?,
+            },
+            FrozenShipoutNode::Whatsit(v) => return self.lower_whatsit(v),
+            FrozenShipoutNode::MathOn(v) => PageNode::MathOn(v),
+            FrozenShipoutNode::MathOff(v) => PageNode::MathOff(v),
+            FrozenShipoutNode::Adjust(v) => PageNode::Adjust(self.lower_node_list(v)?),
+            FrozenShipoutNode::UnsupportedMath | FrozenShipoutNode::MathList(_) => {
+                return Err(ExecError::UnsupportedShipoutNode { node: "math" });
+            }
+        }))
     }
 
     fn lower_nodes(&mut self, nodes: Vec<Node>) -> Result<Vec<PageNode>, ExecError> {
