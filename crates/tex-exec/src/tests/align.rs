@@ -1141,6 +1141,17 @@ fn display_halign_appends_display_vertical_material() {
 }
 
 #[test]
+fn display_halign_exposes_enclosing_prevdepth_to_initial_everycr() {
+    let stores = run_alignment_source(
+        "\\dimen0=1pt \\setbox0=\\vbox{\\hsize=50pt \\noindent before\\par \
+         $$\\everycr{\\noalign{\\global\\dimen0=\\prevdepth \
+         \\global\\everycr={}}}\\halign{#\\cr x\\cr}$$\\par}",
+    );
+
+    assert_eq!(stores.dimen(0).raw(), 0);
+}
+
+#[test]
 fn nested_alignment_executes_inside_cell() {
     let stores = run_boxed_alignment_source("\\halign{#\\cr \\vbox{\\halign{#\\cr x\\cr}}\\cr}");
     let vbox = box_zero_vlist(&stores);
