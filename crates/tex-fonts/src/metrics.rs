@@ -151,6 +151,12 @@ impl FontMetrics {
         &self.widths
     }
 
+    /// Immutable character records parallel to the dense width projection.
+    #[must_use]
+    pub fn characters(&self) -> &[Option<CharMetrics>] {
+        &self.characters
+    }
+
     #[must_use]
     pub fn char_exists(&self, code: u8) -> bool {
         self.character(code).is_some()

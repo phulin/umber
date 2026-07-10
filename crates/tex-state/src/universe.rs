@@ -1477,6 +1477,11 @@ impl Universe {
     }
 
     #[must_use]
+    pub fn font_characters(&self, font: FontId) -> &[Option<CharMetrics>] {
+        self.stores.font_characters(font)
+    }
+
+    #[must_use]
     pub fn font_next_larger(&self, font: FontId, code: u8) -> Option<u8> {
         self.stores.font_next_larger(font, code)
     }

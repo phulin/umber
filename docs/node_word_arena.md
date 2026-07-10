@@ -1,7 +1,7 @@
 # Compact node-word arena
 
-Status: authoritative design; implementation is gated by the measurements and
-phase exits below.
+Status: authoritative design; all six phases are implemented and the compact
+representation is adopted by the Phase 6 measurements below.
 
 This document combines the Phase 1 layout/frequency baseline with the layout
 contract for replacing the epoch arena's `Vec<Node>` by a compact word stream.
@@ -423,6 +423,57 @@ agent must judge whether further optimization is realistic. A large slowdown
 is never accepted merely for memory reduction. If evidence is weak or
 negative, revise inline tags/accessors/sidecars or revert cleanly and record
 the decision.
+
+### Phase 6 adoption results
+
+Phase 6 is **adopted**. `FontMetrics` derives one immutable 256-entry `Scaled`
+width table at load time. An opaque lazy iterator walks contiguous same-font
+byte-character words without exposing words or sidecars; hpack validates the
+font once per run and reads both width and character tables directly. Unicode
+outside the TFM byte domain, ligatures, font changes, and non-character nodes
+end a run. Saturating additions remain in source order. The tables are derived
+immutable font content, with no rollback mark, mutable cache, semantic hash
+input, or hidden incremental state.
+
+The controlled comparison used pre-epic commit `217878e1` and final Phase 6
+code on the same aarch64 Apple host with Rust 1.93.0, clean release builds,
+identical synthetic metrics, and Criterion warmup plus 100 samples. Listed
+intervals are Criterion 95% confidence intervals and are disjoint.
+
+| hpack kernel | Before | After | Change |
+| --- | ---: | ---: | ---: |
+| same font, 64 chars | 125.41 ns [123.73, 128.26] | 79.547 ns [79.449, 79.674] | -36.57% |
+| same font, 4,096 chars | 7.8342 us [7.5418, 8.4064] | 4.5300 us [4.5130, 4.5517] | -42.18% |
+| mixed/interrupted, 4,096 nodes | 8.5760 us [8.2778, 9.0159] | 6.8197 us [6.8017, 6.8390] | -20.47% |
+
+End-to-end runs rebuilt each revision outside timing and used one warmup plus
+ten runs with identical committed input, Computer Modern TFM files, and DVI
+validation. These ranges are observed minima/maxima.
+
+| Plain TeX workload | Before | After | Change |
+| --- | ---: | ---: | ---: |
+| paragraph-wide | 0.212 s [0.210, 0.218] | 0.199 s [0.197, 0.201] | -6.13% |
+| paragraph-narrow | 0.112 s [0.109, 0.125] | 0.102 s [0.101, 0.104] | -8.93% |
+| pages | 0.414 s [0.406, 0.448] | 0.425 s [0.403, 0.444] | +2.66% (ranges overlap) |
+| dvi | 0.545 s [0.531, 0.565] | 0.530 s [0.526, 0.535] | -2.75% (ranges overlap) |
+
+No end-to-end workload regressed by 5%. The expansion-only workload was
+excluded after a trial took roughly three minutes per run: its separately
+measured 56-node suffix cannot exercise this kernel meaningfully.
+
+For peak process memory, `/usr/bin/time -l` around `paragraph-wide` reported
+maximum RSS falling from 175,194,112 to 96,141,312 bytes (-45.12%) and peak
+footprint from 163,202,368 to 88,212,800 bytes (-45.95%). This includes the
+whole process and allocator-retained memory. The conservative corpus-wide
+logical model in section 2.1 remains a 55.4% reduction even when every rare
+node is charged a full old `Node`; actual SoA sidecars are smaller. Width
+tables cost a fixed 1,024 bytes per loaded font and are included in RSS.
+
+`benchmarks/tex-exec/benches/widths.rs` is the kernel suite.
+`scripts/check-node-width-budget.sh`, available through
+`CHECK_BENCH=1 scripts/check.sh`, enforces committed means with the 10%
+cross-run tolerance specified by `umber2-93q`; adoption used the stricter 5%
+end-to-end regression ceiling.
 
 ## 11. Validation matrix
 

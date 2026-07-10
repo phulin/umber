@@ -9,3 +9,7 @@ cd "$repo_root"
 
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
+
+if [[ "${CHECK_BENCH:-0}" == 1 ]]; then
+  scripts/check-node-width-budget.sh
+fi

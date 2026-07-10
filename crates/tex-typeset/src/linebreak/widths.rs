@@ -79,12 +79,14 @@ pub(super) fn line_widths_view<S: TypesetState>(
     let limit = end.min(nodes.len());
     let mut index = start.min(limit);
     while index < limit {
-        if let Some(run) = nodes.char_run(index) {
-            let run_len = run.len().min(limit - index);
-            let table = state.font_widths(run.font());
-            for code in run.codes().take(run_len) {
+        if let Some(run) = nodes.char_codes(index) {
+            let font = run.font();
+            let table = state.font_widths(font);
+            let mut run_len = 0;
+            for code in run.take(limit - index) {
                 // Preserve the scalar saturating-add order exactly.
                 widths.natural = add(widths.natural, table[usize::from(code)]);
+                run_len += 1;
             }
             index += run_len;
         } else {

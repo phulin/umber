@@ -924,6 +924,11 @@ impl Stores {
     }
 
     #[must_use]
+    pub fn font_characters(&self, font: FontId) -> &[Option<CharMetrics>] {
+        self.font(font).metrics().characters()
+    }
+
+    #[must_use]
     pub fn font_next_larger(&self, font: FontId, code: u8) -> Option<u8> {
         self.font(font).metrics().next_larger(code)
     }

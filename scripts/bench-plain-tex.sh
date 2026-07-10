@@ -9,7 +9,7 @@ if [[ "$target_dir" != /* ]]; then
   target_dir="$repo_root/$target_dir"
 fi
 umber_bin="$target_dir/release/umber"
-runs=5
+runs="${BENCH_RUNS:-5}"
 inputs=(
   expand.tex
   paragraph-wide.tex
@@ -19,13 +19,18 @@ inputs=(
   pages.tex
   dvi.tex
 )
+if [[ -n "${BENCH_INPUTS:-}" ]]; then
+  read -r -a inputs <<<"$BENCH_INPUTS"
+fi
 engines=(umber)
 
-for candidate in tex pdftex luatex xetex; do
-  if command -v "$candidate" >/dev/null 2>&1; then
-    engines+=("$candidate")
-  fi
-done
+if [[ "${UMBER_ONLY:-0}" != 1 ]]; then
+  for candidate in tex pdftex luatex xetex; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+      engines+=("$candidate")
+    fi
+  done
+fi
 
 printf '%s\n' 'Building release Umber outside the timed region' >&2
 cargo build --release -p umber >/dev/null

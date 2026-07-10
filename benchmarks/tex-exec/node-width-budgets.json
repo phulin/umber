@@ -1,0 +1,9 @@
+{
+  "profile": "Criterion release; aarch64-apple-darwin; Rust 1.93.0",
+  "regression_tolerance_percent": 10.0,
+  "benchmarks": {
+    "same_font_64": 79.547,
+    "same_font_4096": 4530.0,
+    "mixed_4096": 6819.7
+  }
+}

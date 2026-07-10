@@ -952,6 +952,25 @@ impl<'a> NodeList<'a> {
             font,
         })
     }
+
+    /// Creates a lazy, single-pass iterator over the same-font byte-character
+    /// run beginning at `index`.
+    #[must_use]
+    pub fn char_codes(self, index: usize) -> Option<CharCodes<'a>> {
+        if index >= self.len() {
+            return None;
+        }
+        let first = self.storage.words[self.start + index];
+        let payload = first.payload();
+        if first.tag() != 0 || payload & 0x1f_ffff > u8::MAX as u64 {
+            return None;
+        }
+        Some(CharCodes {
+            words: &self.storage.words[self.start + index..self.end],
+            next: 0,
+            font: crate::ids::FontId::new((payload >> 21) as u32),
+        })
+    }
     #[must_use]
     pub fn to_vec(self) -> Vec<Node> {
         self.iter().map(|node| node.to_owned()).collect()
@@ -962,6 +981,37 @@ impl<'a> NodeList<'a> {
     #[doc(hidden)]
     pub fn testing_decoded(self) -> &'static [Node] {
         Box::leak(self.to_vec().into_boxed_slice())
+    }
+}
+
+/// Lazy byte codes from one contiguous same-font inline character run.
+pub struct CharCodes<'a> {
+    words: &'a [NodeWord],
+    next: usize,
+    font: crate::ids::FontId,
+}
+
+impl CharCodes<'_> {
+    #[must_use]
+    pub const fn font(&self) -> crate::ids::FontId {
+        self.font
+    }
+}
+
+impl Iterator for CharCodes<'_> {
+    type Item = u8;
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        let word = *self.words.get(self.next)?;
+        let payload = word.payload();
+        if word.tag() != 0
+            || (payload >> 21) as u32 != self.font.raw()
+            || payload & 0x1f_ffff > u8::MAX as u64
+        {
+            return None;
+        }
+        self.next += 1;
+        Some(payload as u8)
     }
 }
 

@@ -497,6 +497,13 @@ cells[i] = new
   while keeping box-register storage survivor-owned and journal-accounted.
 - Shipped pages serialize into content-addressed artifacts (the memo/extern
   store) and their nodes are released.
+- Loaded immutable fonts carry a derived 256-entry width projection. Compact
+  list scans expose an opaque same-font byte-character iterator, validate the
+  font once per run, and accumulate widths in exact source order; no raw word,
+  mutable cache, rollback field, or hash-excluded semantic state crosses the
+  aggregate boundary. Phase 6 measurements show 20–42% faster hpack kernels,
+  6–9% faster paragraph workloads, and about 45% lower peak process memory,
+  with no end-to-end regression above 5%.
 
 ## 8. External effects: the virtualized world
 

@@ -996,6 +996,12 @@ immutable tables, with mutable font state kept behind the state timeline.
   boundary programs and ligature retention/pass-over bits, and extensible
   recipes. Kernels consume these through read-only `Universe` methods keyed by
   `FontId`; they do not inspect TFM parser tables or store internals.
+- Classic byte-character metrics also derive a dense 256-entry width array at
+  load time. `tex-typeset` consumes it through the read-only state facade while
+  scanning opaque contiguous same-font compact-node runs. The parallel full
+  character table supplies height/depth without repeated font validation.
+  Both are immutable projections of the same font input, not timeline caches;
+  Unicode/non-TFM glyphs and interrupted runs stay on the scalar accessor path.
 - Font parameters are intentionally separate from those immutable metrics.
   `Universe::font_parameter(font, n)` reads the Env-side `\fontdimen` bank, so
   runtime writes are visible to scanners and kernels; the original TFM
