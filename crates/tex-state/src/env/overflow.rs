@@ -43,13 +43,13 @@ where
         let (page, offset) = sparse_location(index);
         let word = self.pages[page]
             .as_ref()
-            .map_or(0, |page| page.values[offset]);
+            .map_or(C::DEFAULT_WORD, |page| page.values[offset]);
         C::decode(word)
     }
 
     pub(crate) fn set(&mut self, index: u16, value: C::Value, ctx: BankSetContext<'_>) {
         let (page, offset) = sparse_location(index);
-        let page = self.pages[page].get_or_insert_with(|| Box::new(Page::default()));
+        let page = self.pages[page].get_or_insert_with(|| Box::new(Page::new(C::DEFAULT_WORD)));
         let cell_id = if ctx.global {
             CellId::new_global(ctx.bank, u32::from(index))
         } else {
@@ -74,7 +74,7 @@ where
         ctx: BankJournalContext<'_>,
     ) -> BoxWriteOutcome {
         let (page, offset) = sparse_location(index);
-        let page = self.pages[page].get_or_insert_with(|| Box::new(Page::default()));
+        let page = self.pages[page].get_or_insert_with(|| Box::new(Page::new(C::DEFAULT_WORD)));
         let cell_id = if ctx.global {
             CellId::new_global(ctx.bank, u32::from(index))
         } else {
@@ -106,8 +106,8 @@ where
     pub(crate) fn restore_word(&mut self, index: u16, word: u64) {
         let (page, offset) = sparse_location(index);
         let Some(sparse_page) = self.pages[page].as_mut() else {
-            if word != 0 {
-                let mut sparse_page = Box::new(Page::default());
+            if word != C::DEFAULT_WORD {
+                let mut sparse_page = Box::new(Page::new(C::DEFAULT_WORD));
                 sparse_page.values[offset] = word;
                 self.pages[page] = Some(sparse_page);
             }
@@ -115,7 +115,7 @@ where
         };
 
         sparse_page.values[offset] = word;
-        if sparse_page.is_all_default() {
+        if sparse_page.is_all_default(C::DEFAULT_WORD) {
             self.pages[page] = None;
         }
     }
@@ -131,7 +131,7 @@ where
                 continue;
             };
             for (offset, &word) in page.values.iter().enumerate() {
-                if word != 0 {
+                if word != C::DEFAULT_WORD {
                     let index = DENSE_REGISTER_COUNT as u32
                         + (page_index as u32 * PAGE_LEN as u32)
                         + offset as u32;
@@ -157,18 +157,16 @@ where
     }
 }
 
-impl Default for Page {
-    fn default() -> Self {
+impl Page {
+    fn new(default_word: u64) -> Self {
         Self {
-            values: [0; PAGE_LEN],
+            values: [default_word; PAGE_LEN],
             stamps: [Epoch::ZERO; PAGE_LEN],
         }
     }
-}
 
-impl Page {
-    fn is_all_default(&self) -> bool {
-        self.values.iter().all(|&word| word == 0)
+    fn is_all_default(&self, default_word: u64) -> bool {
+        self.values.iter().all(|&word| word == default_word)
     }
 }
 

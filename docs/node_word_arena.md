@@ -357,18 +357,27 @@ Record compile-time layout assertions and the fixed-corpus histogram above.
 Exit: instrumentation is nonsemantic/process-local and the full distribution,
 including math intermediates, is durable.
 
-### Phase 2 — design (this document)
+### Phase 2 — design (complete)
 
 Exit: exact encodings/capacities, conservative sidecar cost, aggregate
 ownership, mutation boundary, semantic hashing, migration, width plan, and
 validation matrix are reviewed against `core_state.md`. The design must remain
 conditional on measured performance.
 
-### Phase 3 — packed list handles
+### Phase 3 — packed list handles (complete)
 
 Exit: `NodeListId` is compile-time eight bytes; all boundary/capacity and
 optional-box encodings round-trip; stale epoch/survivor handles remain
 unforgeable; normal/shadow replay and semantic hashes pass.
+
+The implementation stores the packed word directly, reserves `u64::MAX` as
+the canonical box-register `None`, and keeps construction crate-private. The
+packing also reduces the measured layouts of `Node` from 72 to 64 bytes and
+`BoxNode`/`UnsetNode` from 44 to 40 bytes before the Phase 4 word-stream work.
+Dense and sparse Env banks use the codec's semantic default word, so void box
+registers remain allocation-free while a live all-zero epoch handle is a
+distinct `Some` value. Arena lookup, rollback, promotion, and survivor
+recycling continue to validate logical ownership rather than raw bits.
 
 ### Phase 4 — words and sidecars
 

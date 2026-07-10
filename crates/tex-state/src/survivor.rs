@@ -42,6 +42,10 @@ impl SurvivorArena {
             matches!(id.arena(), ArenaRef::Epoch),
             "only epoch node lists are promoted"
         );
+        assert!(
+            self.slots.len() < (1 << 20) - 1,
+            "survivor arena exceeds encodable roots"
+        );
 
         let out = self.take_recycled_buffer();
         let (nodes, start, len) = copy_list_iterative(id, epoch, self, out);
@@ -153,7 +157,7 @@ impl SurvivorArena {
     fn allocate_root(&mut self, nodes: Vec<Node>) -> SurvivorRootId {
         let slot = SurvivorRoot { nodes, refcount: 1 };
         let raw = u32_len(self.slots.len(), "survivor arena exceeds u32 roots");
-        assert!(raw < (1 << 20), "survivor root id exceeds encoding");
+        assert!(raw < (1 << 20) - 1, "survivor root id exceeds encoding");
         self.slots.push(Some(slot));
         SurvivorRootId::new(raw)
     }

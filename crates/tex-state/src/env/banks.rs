@@ -322,6 +322,8 @@ impl TokParam {
 pub(crate) trait BankCodec {
     type Value: Copy;
 
+    const DEFAULT_WORD: u64 = 0;
+
     fn encode(value: Self::Value) -> u64;
     fn decode(word: u64) -> Self::Value;
 }
@@ -376,7 +378,7 @@ where
 {
     pub(crate) const fn new() -> Self {
         Self {
-            values: [0; N],
+            values: [C::DEFAULT_WORD; N],
             stamps: [Epoch::ZERO; N],
             _codec: PhantomData,
         }
@@ -439,7 +441,7 @@ where
     #[cfg(any(test, feature = "testing", feature = "shadow"))]
     pub(crate) fn for_each_non_default_word(&self, bank: BankTag, mut f: impl FnMut(CellId, u64)) {
         for (index, &word) in self.values.iter().enumerate() {
-            if word != 0 {
+            if word != C::DEFAULT_WORD {
                 f(CellId::new(bank, index as u32), word);
             }
         }
@@ -535,6 +537,8 @@ pub(crate) struct NodeListIdCodec;
 
 impl BankCodec for NodeListIdCodec {
     type Value = Option<NodeListId>;
+
+    const DEFAULT_WORD: u64 = NodeListId::encode_box_word(None);
 
     fn encode(value: Self::Value) -> u64 {
         NodeListId::encode_box_word(value)

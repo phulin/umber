@@ -141,7 +141,7 @@ fn dense_register_journal_records_use_bank_tags_and_encoded_words() {
             undo(BankTag::Skip, 3, 0, 33),
             undo(BankTag::Muskip, 4, 0, 34),
             undo(BankTag::Toks, 5, 0, 44),
-            undo(BankTag::Box, 6, 0, 56),
+            undo(BankTag::Box, 6, u64::MAX, 55),
         ]
     );
 }
@@ -222,6 +222,8 @@ fn sparse_read_before_write_returns_default_without_allocating_page() {
 
     assert_eq!(env.count(300), 0);
     assert!(!env.overflow_counts.has_page_for(300));
+    assert_eq!(env.box_reg(300), None);
+    assert!(!env.overflow_boxes.has_page_for(300));
 }
 
 #[test]

@@ -1,4 +1,5 @@
-use super::{FontId, GlueId, NodeListId, OriginListId, SnapshotId, TokenListId};
+use super::{ArenaRef, FontId, GlueId, NodeListId, OriginListId, SnapshotId, TokenListId};
+use core::mem::size_of;
 
 #[test]
 fn placeholder_ids_preserve_raw_values_inside_the_crate() {
@@ -15,4 +16,91 @@ fn placeholder_ids_preserve_raw_values_inside_the_crate() {
 #[test]
 fn canonical_origin_list_id_is_empty() {
     assert_eq!(OriginListId::EMPTY.raw(), 0);
+}
+
+#[test]
+fn packed_node_list_id_is_exactly_one_word() {
+    assert_eq!(size_of::<NodeListId>(), 8);
+}
+
+#[test]
+fn epoch_node_list_boundaries_round_trip() {
+    for (start, len) in [
+        (0, 0),
+        (u32::MAX, 0),
+        (0, (1 << 31) - 1),
+        (u32::MAX - ((1 << 31) - 1), (1 << 31) - 1),
+    ] {
+        let id = NodeListId::new_epoch(start, len);
+        assert_eq!(id.arena(), ArenaRef::Epoch);
+        assert_eq!(id.start(), start);
+        assert_eq!(id.len(), len);
+        assert_eq!(
+            NodeListId::decode_box_word(NodeListId::encode_box_word(Some(id))),
+            Some(id)
+        );
+    }
+}
+
+#[test]
+fn survivor_node_list_boundaries_round_trip() {
+    for (root, start, len) in [(0, 0, 0), ((1 << 20) - 2, (1 << 21) - 1, (1 << 22) - 1)] {
+        let id = NodeListId::testing_survivor(root, start, len);
+        assert_eq!(
+            id.arena(),
+            ArenaRef::Survivor(super::SurvivorRootId::new(root))
+        );
+        assert_eq!(id.start(), start);
+        assert_eq!(id.len(), len);
+        assert_eq!(
+            NodeListId::decode_box_word(NodeListId::encode_box_word(Some(id))),
+            Some(id)
+        );
+    }
+}
+
+#[test]
+fn box_word_uses_canonical_none_without_translating_live_ids() {
+    let zero = NodeListId::new_epoch(0, 0);
+    assert_eq!(NodeListId::encode_box_word(Some(zero)), 0);
+    assert_eq!(NodeListId::decode_box_word(0), Some(zero));
+    assert_eq!(NodeListId::encode_box_word(None), u64::MAX);
+    assert_eq!(NodeListId::decode_box_word(u64::MAX), None);
+}
+
+#[test]
+#[should_panic(expected = "epoch node-list length exceeds encoding")]
+fn epoch_length_above_capacity_is_rejected() {
+    let _ = NodeListId::new_epoch(0, 1 << 31);
+}
+
+#[test]
+#[should_panic(expected = "epoch node-list span overflows storage index")]
+fn epoch_span_overflow_is_rejected() {
+    let _ = NodeListId::new_epoch(u32::MAX, 1);
+}
+
+#[test]
+#[should_panic(expected = "survivor root id exceeds encoding")]
+fn reserved_survivor_root_is_rejected() {
+    let _ = NodeListId::testing_survivor((1 << 20) - 1, 0, 0);
+}
+
+#[test]
+#[should_panic(expected = "survivor span start exceeds encoding")]
+fn survivor_start_above_capacity_is_rejected() {
+    let _ = NodeListId::testing_survivor(0, 1 << 21, 0);
+}
+
+#[test]
+#[should_panic(expected = "survivor span length exceeds encoding")]
+fn survivor_length_above_capacity_is_rejected() {
+    let _ = NodeListId::testing_survivor(0, 0, 1 << 22);
+}
+
+#[test]
+#[should_panic(expected = "box word contains reserved survivor root id")]
+fn box_word_rejects_non_null_encoding_with_reserved_root() {
+    let reserved_root_word = (1_u64 << 63) | (((1_u64 << 20) - 1) << 43);
+    let _ = NodeListId::decode_box_word(reserved_root_word);
 }

@@ -146,13 +146,14 @@ impl NodeArena {
     pub(crate) fn append(&mut self, nodes: &[Node]) -> NodeListId {
         let start = u32_len(self.nodes.len(), "node arena exceeds u32 entries");
         let len = u32_len(nodes.len(), "node list exceeds u32 entries");
+        let id = NodeListId::new_epoch(start, len);
         self.debug_assert_bottom_up(nodes, start);
         #[cfg(feature = "node-stats")]
         for node in nodes {
             crate::node::record_node_append(node);
         }
         self.nodes.extend_from_slice(nodes);
-        NodeListId::new_epoch(start, len)
+        id
     }
 
     #[cfg(debug_assertions)]

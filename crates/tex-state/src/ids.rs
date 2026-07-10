@@ -84,30 +84,54 @@ pub enum ArenaRef {
 
 /// A frozen node-list span.
 ///
-/// PERF: keep this unpacked for M2 clarity; the fastpaths epic can pack it if
-/// profiling shows register pressure from the larger handle.
+/// The packed representation is private: consumers inspect only the logical
+/// arena, start, and length. Arena constructors are the sole production minting
+/// boundary.
+#[repr(transparent)]
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct NodeListId {
-    arena: ArenaRef,
-    start: u32,
-    len: u32,
-}
+pub struct NodeListId(u64);
+
+const NODE_LIST_SURVIVOR_BIT: u64 = 1 << 63;
+const NODE_LIST_EPOCH_LEN_MAX: u32 = (1 << 31) - 1;
+const NODE_LIST_SURVIVOR_ROOT_MAX: u32 = (1 << 20) - 2;
+const NODE_LIST_SURVIVOR_START_MAX: u32 = (1 << 21) - 1;
+const NODE_LIST_SURVIVOR_LEN_MAX: u32 = (1 << 22) - 1;
+const NODE_LIST_NONE_WORD: u64 = u64::MAX;
+
+const _: [(); 8] = [(); core::mem::size_of::<NodeListId>()];
 
 impl NodeListId {
     pub(crate) const fn new_epoch(start: u32, len: u32) -> Self {
-        Self {
-            arena: ArenaRef::Epoch,
-            start,
-            len,
-        }
+        assert!(
+            len <= NODE_LIST_EPOCH_LEN_MAX,
+            "epoch node-list length exceeds encoding"
+        );
+        assert!(
+            start.checked_add(len).is_some(),
+            "epoch node-list span overflows storage index"
+        );
+        Self((start as u64) | ((len as u64) << 32))
     }
 
     pub(crate) const fn new_survivor(root: SurvivorRootId, start: u32, len: u32) -> Self {
-        Self {
-            arena: ArenaRef::Survivor(root),
-            start,
-            len,
-        }
+        assert!(
+            root.raw() <= NODE_LIST_SURVIVOR_ROOT_MAX,
+            "survivor root id exceeds encoding"
+        );
+        assert!(
+            start <= NODE_LIST_SURVIVOR_START_MAX,
+            "survivor span start exceeds encoding"
+        );
+        assert!(
+            len <= NODE_LIST_SURVIVOR_LEN_MAX,
+            "survivor span length exceeds encoding"
+        );
+        Self(
+            NODE_LIST_SURVIVOR_BIT
+                | ((root.raw() as u64) << 43)
+                | ((start as u64) << 22)
+                | (len as u64),
+        )
     }
 
     /// Creates a test-only epoch id without going through a node arena.
@@ -126,65 +150,56 @@ impl NodeListId {
 
     #[must_use]
     pub const fn arena(self) -> ArenaRef {
-        self.arena
+        if self.0 & NODE_LIST_SURVIVOR_BIT == 0 {
+            ArenaRef::Epoch
+        } else {
+            ArenaRef::Survivor(SurvivorRootId::new(
+                ((self.0 >> 43) & ((1 << 20) - 1)) as u32,
+            ))
+        }
     }
 
     #[must_use]
     pub const fn start(self) -> u32 {
-        self.start
+        if self.0 & NODE_LIST_SURVIVOR_BIT == 0 {
+            self.0 as u32
+        } else {
+            ((self.0 >> 22) & (NODE_LIST_SURVIVOR_START_MAX as u64)) as u32
+        }
     }
 
     #[must_use]
     pub const fn len(self) -> u32 {
-        self.len
+        if self.0 & NODE_LIST_SURVIVOR_BIT == 0 {
+            ((self.0 >> 32) & (NODE_LIST_EPOCH_LEN_MAX as u64)) as u32
+        } else {
+            (self.0 & (NODE_LIST_SURVIVOR_LEN_MAX as u64)) as u32
+        }
     }
 
     #[must_use]
     pub const fn is_empty(self) -> bool {
-        self.len == 0
+        self.len() == 0
     }
 
-    pub(crate) fn encode_word(self) -> u64 {
-        match self.arena {
-            ArenaRef::Epoch => u64::from(self.start) | (u64::from(self.len) << 32),
-            ArenaRef::Survivor(root) => {
-                assert!(root.raw() < (1 << 20), "survivor root id exceeds encoding");
-                assert!(
-                    self.start < (1 << 21),
-                    "survivor span start exceeds encoding"
-                );
-                assert!(self.len < (1 << 22), "survivor span len exceeds encoding");
-                (1_u64 << 63)
-                    | (u64::from(root.raw()) << 43)
-                    | (u64::from(self.start) << 22)
-                    | u64::from(self.len)
-            }
+    pub(crate) const fn encode_box_word(value: Option<Self>) -> u64 {
+        match value {
+            Some(id) => id.0,
+            None => NODE_LIST_NONE_WORD,
         }
     }
 
-    pub(crate) fn decode_word(word: u64) -> Self {
-        if (word >> 63) == 0 {
-            let start = word as u32;
-            let len = (word >> 32) as u32;
-            Self::new_epoch(start, len)
+    pub(crate) const fn decode_box_word(word: u64) -> Option<Self> {
+        if word == NODE_LIST_NONE_WORD {
+            None
         } else {
-            let root = ((word >> 43) & ((1 << 20) - 1)) as u32;
-            let start = ((word >> 22) & ((1 << 21) - 1)) as u32;
-            let len = (word & ((1 << 22) - 1)) as u32;
-            Self::new_survivor(SurvivorRootId::new(root), start, len)
+            assert!(
+                word & NODE_LIST_SURVIVOR_BIT == 0
+                    || ((word >> 43) & ((1 << 20) - 1)) <= NODE_LIST_SURVIVOR_ROOT_MAX as u64,
+                "box word contains reserved survivor root id"
+            );
+            Some(Self(word))
         }
-    }
-
-    pub(crate) fn encode_box_word(value: Option<Self>) -> u64 {
-        value.map_or(0, |id| {
-            id.encode_word()
-                .checked_add(1)
-                .expect("node-list box-register word cannot encode u64::MAX")
-        })
-    }
-
-    pub(crate) fn decode_box_word(word: u64) -> Option<Self> {
-        (word != 0).then(|| Self::decode_word(word - 1))
     }
 }
 

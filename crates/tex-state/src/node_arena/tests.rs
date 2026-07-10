@@ -6,11 +6,11 @@ use crate::scaled::{GlueSetRatio, Scaled};
 
 #[test]
 fn node_layout_baseline() {
-    assert_eq!(std::mem::size_of::<Node>(), 72);
-    assert_eq!(std::mem::size_of::<BoxNode>(), 44);
-    assert_eq!(std::mem::size_of::<crate::node::UnsetNode>(), 44);
+    assert_eq!(std::mem::size_of::<Node>(), 64);
+    assert_eq!(std::mem::size_of::<BoxNode>(), 40);
+    assert_eq!(std::mem::size_of::<crate::node::UnsetNode>(), 40);
     assert_eq!(std::mem::size_of::<crate::node::Whatsit>(), 48);
-    assert_eq!(std::mem::size_of::<NodeListId>(), 16);
+    assert_eq!(std::mem::size_of::<NodeListId>(), 8);
 }
 
 #[test]
