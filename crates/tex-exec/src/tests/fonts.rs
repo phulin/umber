@@ -56,6 +56,24 @@ fn font_file_name_backs_up_the_first_non_character_token() {
 }
 
 #[test]
+fn illegal_font_magnification_reports_and_uses_design_size() {
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\font\\a=cmr10 scaled 32769 \\end"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("illegal font scale is recoverable");
+
+    let font = font_meaning(&stores, "a");
+    assert_eq!(stores.font(font).size(), stores.font(font).design_size());
+    assert!(
+        terminal_effect_text(&stores)
+            .contains("Illegal magnification has been changed to 1000 (32769)")
+    );
+}
+
+#[test]
 fn font_definition_uses_driver_font_resolution_and_records_resolved_path() {
     const CMR10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
     let mut stores = Universe::with_world(tex_state::World::memory());

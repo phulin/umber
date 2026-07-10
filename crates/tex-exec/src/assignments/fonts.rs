@@ -196,9 +196,21 @@ where
         )?));
     }
     if scan_optional_keyword_x(input, stores, hooks, "scaled")? {
-        return Ok(FontSizeSpec::Scale(scan_i32(
-            input, stores, hooks, context,
-        )?));
+        let requested = scan_i32(input, stores, hooks, context)?;
+        let scale = if (1..=32_768).contains(&requested) {
+            requested
+        } else {
+            // TeX.web `new_font` section 1257 reports the bad requested
+            // magnification and continues with the design-size scale 1000.
+            stores.world_mut().write_text(
+                tex_state::PrintSink::TerminalAndLog,
+                &format!(
+                    "\n! Illegal magnification has been changed to 1000 ({requested}).\nThe magnification ratio must be between 1 and 32768.\n"
+                ),
+            );
+            1000
+        };
+        return Ok(FontSizeSpec::Scale(scale));
     }
     Ok(FontSizeSpec::Design)
 }

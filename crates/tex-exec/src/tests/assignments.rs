@@ -73,6 +73,38 @@ fn chardef_and_mathchardef_are_internal_integers() {
 }
 
 #[test]
+fn restricted_character_definitions_report_and_substitute_zero() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\chardef\\A=256 \\mathchardef\\M=32768 \\count0=\\A \\count1=\\M",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("bad restricted codes are recoverable TeX errors");
+
+    assert_eq!(stores.count(0), 0);
+    assert_eq!(stores.count(1), 0);
+    let output = terminal_effect_text(&stores);
+    assert!(output.contains("Bad character code (256)"));
+    assert!(output.contains("Bad mathchar (32768)"));
+}
+
+#[test]
+fn register_definition_target_terminates_its_own_number_scan() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\skipdef\\s100\\s=7pt "));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("register alias should terminate its definition scan");
+
+    assert_eq!(stores.glue(stores.skip(100)).width.raw(), 7 * 65_536);
+}
+
+#[test]
 fn mathchardef_constants_scan_for_penalty_count_ifnum_and_signed_macro_replay() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);

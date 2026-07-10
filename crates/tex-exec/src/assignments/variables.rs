@@ -149,6 +149,14 @@ where
 {
     reject_macro_prefixes(prefixes)?;
     let target = scan_definition_target(input, stores, "register definition")?;
+    // As for `\chardef`, TeX.web section 1220 installs `\relax` before
+    // scanning the register number. This makes `\skipdef\s100\s` terminate
+    // the number scan without expanding an undefined/old target meaning.
+    if apply_globaldefs(prefixes.global, stores) {
+        stores.set_meaning_global(target, Meaning::Relax);
+    } else {
+        stores.set_meaning(target, Meaning::Relax);
+    }
     skip_optional_equals_x(input, stores, hooks)?;
     let index = scan_register_index(input, stores, hooks, context)?;
     let meaning = match primitive {
@@ -181,26 +189,36 @@ where
 {
     reject_macro_prefixes(prefixes)?;
     let target = scan_definition_target(input, stores, "character definition")?;
+    // TeX.web temporarily makes the target `\relax` before scanning the
+    // numeric value, so a self-terminating definition cannot expand the old
+    // meaning (section 1220).
+    if apply_globaldefs(prefixes.global, stores) {
+        stores.set_meaning_global(target, Meaning::Relax);
+    } else {
+        stores.set_meaning(target, Meaning::Relax);
+    }
     skip_optional_equals_x(input, stores, hooks)?;
     let value = scan_i32(input, stores, hooks, context)?;
     let meaning = match primitive {
         UnexpandablePrimitive::CharDef => {
-            if !(0..=255).contains(&value) {
-                return Err(ExecError::InvalidCode {
-                    context: "\\chardef",
-                    value,
-                });
-            }
+            let value = recover_restricted_code(
+                stores,
+                value,
+                255,
+                "Bad character code",
+                "A character number must be between 0 and 255.",
+            );
             let ch = char::from_u32(value as u32).expect("0..=255 is Unicode scalar");
             Meaning::CharGiven(ch)
         }
         UnexpandablePrimitive::MathCharDef => {
-            if !(0..=32_767).contains(&value) {
-                return Err(ExecError::InvalidCode {
-                    context: "\\mathchardef",
-                    value,
-                });
-            }
+            let value = recover_restricted_code(
+                stores,
+                value,
+                32_767,
+                "Bad mathchar",
+                "A mathchar number must be between 0 and 32767.",
+            );
             Meaning::MathCharGiven(value as u16)
         }
         _ => unreachable!("caller restricts primitive"),
@@ -211,6 +229,23 @@ where
         stores.set_meaning(target, meaning);
     }
     Ok(())
+}
+
+fn recover_restricted_code(
+    stores: &mut Universe,
+    value: i32,
+    maximum: i32,
+    message: &str,
+    help: &str,
+) -> i32 {
+    if (0..=maximum).contains(&value) {
+        return value;
+    }
+    stores.world_mut().write_text(
+        tex_state::PrintSink::TerminalAndLog,
+        &format!("\n! {message} ({value}).\n{help}\nI changed this one to zero.\n"),
+    );
+    0
 }
 
 pub(super) fn execute_arithmetic<S, H>(
