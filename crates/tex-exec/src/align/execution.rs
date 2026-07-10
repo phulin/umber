@@ -13,7 +13,9 @@ use crate::assignments::{flush_pending_hchars, next_non_space_traced_x};
 use crate::dispatch::dispatch_delivered_token_with_recorder;
 use crate::executor::sync_engine_state;
 use crate::mode::{AlignState, AlignmentKind};
-use crate::vertical::{append_vertical_contribution, build_page_if_outer_vertical};
+use crate::vertical::{
+    append_node_to_vertical_list, append_vertical_contribution, build_page_if_outer_vertical,
+};
 use crate::{
     DispatchAction, ExecError, ExecutionStats, Mode, ModeNest, leave_group, push_traced_tokens,
 };
@@ -264,12 +266,11 @@ fn fin_row(
         super::packaging::row_unset_kind(kind),
         1,
     );
-    if kind == AlignmentKind::HAlign
-        && let Node::Unset(unset) = &row
-    {
-        nest.current_list_mut().set_prev_depth(unset.depth);
+    if kind == AlignmentKind::HAlign {
+        append_node_to_vertical_list(nest, stores, row)?;
+    } else {
+        nest.current_list_mut().push(row);
     }
-    nest.current_list_mut().push(row);
     align_state_mut(nest, align_level)?.finish_row();
     Ok(())
 }

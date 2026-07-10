@@ -1081,6 +1081,23 @@ fn noalign_material_is_spliced_between_finished_rows() {
 }
 
 #[test]
+fn noalign_nointerlineskip_suppresses_next_row_baseline_glue() {
+    let stores = run_boxed_alignment_source(
+        "\\baselineskip=20pt \\halign{#\\cr a\\cr\\noalign{\\nointerlineskip}b\\cr}",
+    );
+    let vbox = box_zero_vlist(&stores);
+    let nodes = stores.nodes(vbox.children);
+    let row_indices: Vec<_> = nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(index, node)| matches!(node, Node::HList(_)).then_some(index))
+        .collect();
+
+    assert_eq!(row_indices.len(), 2);
+    assert_eq!(row_indices[1], row_indices[0] + 1);
+}
+
+#[test]
 fn everycr_can_insert_noalign_material() {
     let stores = run_boxed_alignment_source(
         "\\everycr{\\noalign{\\hrule height1pt}}\\halign{#\\cr a\\cr b\\cr}",

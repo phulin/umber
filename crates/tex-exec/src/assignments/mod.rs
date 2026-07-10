@@ -55,7 +55,7 @@ use macros::*;
 use paragraph::*;
 pub(crate) use paragraph::{
     display_line_dimensions, end_paragraph, ensure_horizontal_for_character,
-    interrupt_paragraph_for_display,
+    interrupt_paragraph_for_display, normal_paragraph,
 };
 pub use primitives::install_unexpandable_primitives;
 use scanning::*;

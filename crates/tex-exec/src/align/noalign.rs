@@ -4,10 +4,10 @@ use tex_state::{ExpansionContext, PrintSink, Universe};
 
 use crate::assignments::{flush_pending_hchars, next_non_space_x};
 use crate::executor::sync_engine_state;
-use crate::{ExecError, ExecutionStats, Mode, ModeNest, leave_group, push_tokens};
+use crate::{ExecError, ExecutionStats, ModeNest, leave_group, push_tokens};
 
 pub(super) fn execute_noalign<S, R, H>(
-    align_level: usize,
+    _align_level: usize,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
@@ -28,15 +28,12 @@ where
             push_tokens(input, stores, [opener]);
         }
         stores.enter_group_with_kind(tex_state::GroupKind::Simple);
-        nest.push(Mode::InternalVertical);
+        // TeX scans \noalign in the alignment's own outer list. In
+        // particular, \nointerlineskip must update the prev_depth that the
+        // next row's append_to_vlist observes.
+        crate::assignments::normal_paragraph(nest, stores);
         scan_noalign_group(nest, input, stores, recorder, hooks)?;
-        let level = nest.pop()?;
-        let nodes = level.list().nodes().to_vec();
         leave_group(input, stores, tex_state::GroupKind::Simple)?;
-        let align_list = nest.list_mut(align_level).ok_or(ExecError::MissingToken {
-            context: "alignment state",
-        })?;
-        align_list.append(nodes);
         Ok(())
     })
 }
