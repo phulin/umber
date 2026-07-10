@@ -218,16 +218,22 @@ where
     };
     append_font_name_token(&mut name, first)?;
     let mut recorder = NoopRecorder;
-    while let Some(token) =
+    while let Some(traced) =
         get_x_token_with_recorder_and_hooks(input, stores, &mut recorder, hooks)?
-            .map(tex_expand::semantic_token)
     {
-        match token {
+        match tex_expand::semantic_token(traced) {
             Token::Char {
                 cat: Catcode::Space,
                 ..
             } => break,
-            token => append_font_name_token(&mut name, token)?,
+            token @ Token::Char { .. } => append_font_name_token(&mut name, token)?,
+            Token::Cs(_) | Token::Param(_) | Token::Frozen(_) => {
+                // TeX.web `scan_file_name` backs up the first expanded token
+                // that is not a character. It belongs to the following font
+                // size scan or main-control command (section 530).
+                push_traced_tokens(input, stores, [traced]);
+                break;
+            }
         }
     }
     Ok(name)

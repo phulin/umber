@@ -63,6 +63,10 @@ pub(super) fn is_assignment_meaning(meaning: Meaning) -> bool {
                 | UnexpandablePrimitive::Immediate
                 | UnexpandablePrimitive::Write
                 | UnexpandablePrimitive::Read
+                | UnexpandablePrimitive::BatchMode
+                | UnexpandablePrimitive::NonstopMode
+                | UnexpandablePrimitive::ScrollMode
+                | UnexpandablePrimitive::ErrorStopMode
         ),
         meaning => is_assignment_target_meaning(meaning),
     }

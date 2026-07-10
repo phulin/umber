@@ -124,6 +124,23 @@ fn immediate_puts_back_non_io_extension_tokens() {
 }
 
 #[test]
+fn interaction_mode_primitives_update_checkpointed_engine_state() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let snapshot = stores.snapshot();
+    let mut input = InputStack::new(MemoryInput::new(r"\nonstopmode\end"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("interaction mode assignment");
+    assert_eq!(stores.interaction_mode(), InteractionMode::Nonstop);
+
+    stores.rollback(&snapshot);
+    assert_eq!(stores.interaction_mode(), InteractionMode::ErrorStop);
+}
+
+#[test]
 fn inputlineno_reports_current_physical_source_line() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);

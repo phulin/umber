@@ -40,6 +40,22 @@ fn font_definition_loads_tfm_via_world_and_reuses_identity() {
 }
 
 #[test]
+fn font_file_name_backs_up_the_first_non_character_token() {
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\font\\a=cmr10\\relax\\message{loaded}\\end",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("font name terminator should be redispatched");
+
+    assert_eq!(stores.font_name(font_meaning(&stores, "a")), "cmr10");
+    assert!(terminal_effect_text(&stores).contains("loaded"));
+}
+
+#[test]
 fn font_definition_uses_driver_font_resolution_and_records_resolved_path() {
     const CMR10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
     let mut stores = Universe::with_world(tex_state::World::memory());

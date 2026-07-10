@@ -437,6 +437,10 @@ pub enum UnexpandablePrimitive {
     TextStyle,
     ScriptStyle,
     ScriptScriptStyle,
+    BatchMode,
+    NonstopMode,
+    ScrollMode,
+    ErrorStopMode,
     End,
     Dump,
     SetLanguage,
@@ -618,6 +622,10 @@ impl UnexpandablePrimitive {
             Self::End => 54,
             Self::Dump => 170,
             Self::SetLanguage => 171,
+            Self::BatchMode => 172,
+            Self::NonstopMode => 173,
+            Self::ScrollMode => 174,
+            Self::ErrorStopMode => 175,
         }
     }
 
@@ -796,6 +804,10 @@ impl UnexpandablePrimitive {
             54 => Some(Self::End),
             170 => Some(Self::Dump),
             171 => Some(Self::SetLanguage),
+            172 => Some(Self::BatchMode),
+            173 => Some(Self::NonstopMode),
+            174 => Some(Self::ScrollMode),
+            175 => Some(Self::ErrorStopMode),
             _ => None,
         }
     }

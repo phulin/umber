@@ -177,6 +177,10 @@ pub fn install_unexpandable_primitives(stores: &mut Universe) {
             "scriptscriptstyle",
             UnexpandablePrimitive::ScriptScriptStyle,
         ),
+        ("batchmode", UnexpandablePrimitive::BatchMode),
+        ("nonstopmode", UnexpandablePrimitive::NonstopMode),
+        ("scrollmode", UnexpandablePrimitive::ScrollMode),
+        ("errorstopmode", UnexpandablePrimitive::ErrorStopMode),
         ("end", UnexpandablePrimitive::End),
         ("dump", UnexpandablePrimitive::Dump),
     ] {

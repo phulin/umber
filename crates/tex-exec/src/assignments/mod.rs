@@ -864,6 +864,21 @@ where
                 diagnostics::execute_ignorespaces(input, stores)?;
                 Ok(CommandOutcome::continue_only())
             }
+            UnexpandablePrimitive::BatchMode
+            | UnexpandablePrimitive::NonstopMode
+            | UnexpandablePrimitive::ScrollMode
+            | UnexpandablePrimitive::ErrorStopMode => {
+                reject_macro_prefixes(prefixes)?;
+                let mode = match primitive {
+                    UnexpandablePrimitive::BatchMode => InteractionMode::Batch,
+                    UnexpandablePrimitive::NonstopMode => InteractionMode::Nonstop,
+                    UnexpandablePrimitive::ScrollMode => InteractionMode::Scroll,
+                    UnexpandablePrimitive::ErrorStopMode => InteractionMode::ErrorStop,
+                    _ => unreachable!("interaction primitive matched above"),
+                };
+                stores.set_interaction_mode(mode);
+                Ok(CommandOutcome::assigned())
+            }
             UnexpandablePrimitive::MathChar
             | UnexpandablePrimitive::Delimiter
             | UnexpandablePrimitive::Limits
