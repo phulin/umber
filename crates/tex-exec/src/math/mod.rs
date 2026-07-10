@@ -269,6 +269,9 @@ where
         let nodes =
             finish_math_list_node(stores, MathListNode { display, content }, insert_penalties);
         nest.current_list_mut().append(nodes);
+        // tex.web `Finish math in text`: an inline formula resets sentence
+        // spacing before the math-shift group is unsaved.
+        nest.current_list_mut().set_space_factor(1000);
         leave_group_with_origin(input, stores, tex_state::GroupKind::MathShift, origin)?;
     }
     Ok(DispatchAction::Continue)

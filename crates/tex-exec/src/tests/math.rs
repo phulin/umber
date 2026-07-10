@@ -683,6 +683,13 @@ fn inline_math_finishing_emits_mathsurround_markers_and_penalties() {
 }
 
 #[test]
+fn inline_math_resets_space_factor_before_following_space() {
+    let (_stores, executor) = run_math_source(r"\noindent\spacefactor=2000 $a$\message{done}");
+
+    assert_eq!(executor.nest().current_list().space_factor(), 1000);
+}
+
+#[test]
 fn restricted_inline_math_finishing_suppresses_line_break_penalties() {
     let (mut stores, executor) = run_math_source(r"$a\mathbin+b\mathrel=c");
     let list = unfinished_math_list(&mut stores, &executor);

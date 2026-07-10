@@ -870,6 +870,35 @@ fn shipout_converts_deferred_math_lists_before_artifact_lowering() {
 }
 
 #[test]
+fn inline_math_restores_normal_space_for_dvi_movement_reuse() {
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        r"\font\f=cmr10 \relax \f \textfont0=\f \scriptfont0=\f \scriptscriptfont0=\f
+          \shipout\hbox{A B\spacefactor=2000 $0$ if}\end",
+    ));
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("inline-math shipout succeeds");
+    let bytes = stores
+        .world()
+        .read_artifact(stats.shipped_artifacts[0])
+        .expect("read artifact")
+        .expect("artifact stored");
+    let artifact = PageArtifact::from_bytes(&bytes).expect("artifact parses");
+    let dvi = write_dvi(std::slice::from_ref(&artifact)).expect("DVI writes");
+
+    assert!(
+        dvi.windows(4).any(|window| window == [150, 3, 85, 85]),
+        "the first 218453sp font space should establish DVI w"
+    );
+    assert!(
+        dvi.windows(2).any(|window| window == [147, b'i']),
+        "the post-math font space should reuse the normal-space w value"
+    );
+}
+
+#[test]
 fn shipout_lowers_supported_whatsit_adjacent_nodes_without_reordering_effects() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);
