@@ -175,6 +175,8 @@ fn sample_artifact() -> PageArtifact {
         job: JobInfo {
             mag: 1200,
             banner: "This is Umber test".to_owned(),
+            h_offset: Scaled::from_raw(12_345),
+            v_offset: Scaled::from_raw(-54_321),
         },
         fonts: vec![FontResource {
             font_id: 1,

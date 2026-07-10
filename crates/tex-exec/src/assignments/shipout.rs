@@ -12,6 +12,7 @@ use tex_out::{
     KernKind as PageKernKind, LeaderPayload as PageLeaderPayload, PageArtifact, PageEffect,
     PageNode, PageToken, TokenCatcode,
 };
+use tex_state::env::banks::DimenParam;
 use tex_state::glue::Order;
 use tex_state::ids::{FontId, NodeListId, TokenListId};
 use tex_state::node::{
@@ -74,6 +75,8 @@ where
         job: JobInfo {
             mag,
             banner: DEFAULT_BANNER.to_owned(),
+            h_offset: stores.dimen_param(DimenParam::H_OFFSET),
+            v_offset: stores.dimen_param(DimenParam::V_OFFSET),
         },
         fonts,
         counts,

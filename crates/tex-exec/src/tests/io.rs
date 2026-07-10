@@ -522,6 +522,29 @@ fn shipout_reports_illegal_magnification_diagnostic() {
 }
 
 #[test]
+fn shipout_artifact_captures_page_offsets() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\hoffset=12sp \\voffset=-34sp \\shipout\\hbox{}\\end",
+    ));
+
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("shipout succeeds");
+    let bytes = stores
+        .world()
+        .read_artifact(stats.shipped_artifacts[0])
+        .expect("read artifact")
+        .expect("artifact stored");
+    let artifact = PageArtifact::from_bytes(&bytes).expect("artifact parses");
+
+    assert_eq!(artifact.job.h_offset, Scaled::from_raw(12));
+    assert_eq!(artifact.job.v_offset, Scaled::from_raw(-34));
+}
+
+#[test]
 fn shipout_reports_incompatible_magnification_diagnostic() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);

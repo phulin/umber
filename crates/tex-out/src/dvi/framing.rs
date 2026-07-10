@@ -32,8 +32,16 @@ impl<'a> DviWriter<'a> {
         self.previous_bop = bop_location;
 
         let extent = page_extent(&page.root);
-        self.max_height_depth = self.max_height_depth.max(extent.height_depth);
-        self.max_width = self.max_width.max(extent.width);
+        let height_depth = extent
+            .height_depth
+            .checked_add(page.job.v_offset.raw())
+            .ok_or(DviError::PositionOverflow)?;
+        let width = extent
+            .width
+            .checked_add(page.job.h_offset.raw())
+            .ok_or(DviError::PositionOverflow)?;
+        self.max_height_depth = self.max_height_depth.max(height_depth);
+        self.max_width = self.max_width.max(width);
         self.ship_box(page, &page.root)?;
         self.u8(EOP);
         Ok(())
@@ -51,15 +59,25 @@ impl<'a> DviWriter<'a> {
     }
 
     fn ship_box(&mut self, page: &'a PageArtifact, node: &'a PageNode) -> Result<(), DviError> {
+        // tex.web `Initialize variables as ship_out begins` and `Ship box p out`:
+        // the page reference point includes both dimension parameters before
+        // hlist_out/vlist_out performs its normal traversal.
+        self.cur_h = page.job.h_offset;
         match node {
             PageNode::HList(box_node) => {
                 // tex.web ship_out: cur_v := height(p) + v_offset.
-                self.cur_v = box_node.height;
+                self.cur_v = box_node
+                    .height
+                    .checked_add(page.job.v_offset)
+                    .ok_or(DviError::PositionOverflow)?;
                 self.hlist_out(page, box_node)?;
             }
             PageNode::VList(box_node) => {
                 // tex.web ship_out: cur_v := height(p) + v_offset.
-                self.cur_v = box_node.height;
+                self.cur_v = box_node
+                    .height
+                    .checked_add(page.job.v_offset)
+                    .ok_or(DviError::PositionOverflow)?;
                 self.vlist_out(page, box_node)?;
             }
             PageNode::Char { .. }

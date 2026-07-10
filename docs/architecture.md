@@ -904,13 +904,15 @@ Responsibility: page artifacts → bytes on disk. Strictly downstream.
 - Drivers consume committed page artifacts only — they can run
   out-of-process, in parallel with typesetting of later pages, or not at
   all (editor preview may rasterize page artifacts directly).
-- `tex-out` owns the page artifact model and version-8 binary reader/writer.
+- `tex-out` owns the page artifact model and version-9 binary reader/writer.
   Exact glue-set numerator and denominator fields cross this commit boundary
   and participate in deterministic semantic hashing. The crate has no
   dependency on `tex-state` or `Universe`; shipout code lowers live state into
   artifact bytes before asking `World` to store them.
-- The artifact record captures the effective job magnification and banner at
-  shipout, so DVI preamble generation does not reach back into live state.
+- The artifact record captures the effective job magnification, banner,
+  `\hoffset`, and `\voffset` at shipout, so DVI generation does not reach back
+  into live state. The offsets are read through `Universe` at the commit
+  boundary and remain part of the detached, checkpoint-safe page artifact.
 - PDF driver owns the PDF object model; `\pdfliteral`-class primitives
   produce *effect-log entries* engine-side that the driver interprets —
   the engine never constructs PDF syntax.

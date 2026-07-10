@@ -1,6 +1,6 @@
 use super::opcodes::{
-    BOP, DEN, DOWN1, EOP, FNT_DEF1, FNT_NUM_0, FNT1, ID_BYTE, NUM, POST, POST_POST, PRE, PUT_RULE,
-    RIGHT1, SET_RULE, SET1, XXX1, XXX4,
+    BOP, DEN, DOWN1, EOP, FNT_DEF1, FNT_NUM_0, FNT1, ID_BYTE, NUM, POST, POST_POST, PRE, PUSH,
+    PUT_RULE, RIGHT1, SET_RULE, SET1, XXX1, XXX4,
 };
 use super::write_dvi;
 use crate::{
@@ -57,6 +57,28 @@ fn writes_preamble_bop_body_and_postamble() {
     assert!(dvi[post_post + 6..].iter().all(|&byte| byte == 223));
     assert!(dvi[post_post + 6..].len() >= 4);
     assert_eq!(dvi.len() % 4, 0);
+}
+
+#[test]
+fn page_offsets_initialize_tex82_shipout_coordinates() {
+    let mut page = empty_page(0);
+    page.job.h_offset = sp(7);
+    page.job.v_offset = sp(9);
+    page.fonts.push(font_resource(0, "cmr10"));
+    page.root = vlist(
+        1,
+        10,
+        0,
+        vec![hlist(1, 10, 0, vec![char_node(0, b'A' as u32, 1)])],
+    );
+
+    let dvi = write_dvi(&[page]).expect("DVI writes");
+    let body = page_body(&dvi, 16);
+
+    assert_eq!(&body[..5], &[DOWN1, 19, PUSH, RIGHT1, 7]);
+    let post = page_eop(&dvi, 16) + 1;
+    assert_eq!(be_i32(&dvi, post + 17), 19);
+    assert_eq!(be_i32(&dvi, post + 21), 8);
 }
 
 #[test]
@@ -439,6 +461,8 @@ fn glyph_page(count0: i32) -> PageArtifact {
         job: JobInfo {
             mag: 1200,
             banner: "B".to_owned(),
+            h_offset: sp(0),
+            v_offset: sp(0),
         },
         fonts: vec![font_resource(3, "cmr10")],
         counts: [count0, 0, 0, 0, 0, 0, 0, 0, 0, 0],

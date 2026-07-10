@@ -245,6 +245,12 @@ impl DimenParam {
     /// TeX's maximum split depth parameter.
     pub const SPLIT_MAX_DEPTH: Self = Self::new(6);
 
+    /// TeX's horizontal page offset used by `ship_out`.
+    pub const H_OFFSET: Self = Self::new(18);
+
+    /// TeX's vertical page offset used by `ship_out`.
+    pub const V_OFFSET: Self = Self::new(19);
+
     /// TeX's final-pass paragraph emergency stretch.
     pub const EMERGENCY_STRETCH: Self = Self::new(20);
 }

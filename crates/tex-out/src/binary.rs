@@ -7,7 +7,7 @@ use std::fmt;
 use tex_arith::Scaled;
 
 const MAGIC: &[u8; 4] = b"UMPG";
-const VERSION: u8 = 8;
+const VERSION: u8 = 9;
 
 /// Binary parse failure.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -48,6 +48,8 @@ pub(crate) fn to_bytes(artifact: &PageArtifact) -> Vec<u8> {
     writer.u8(VERSION);
     writer.i32(artifact.job.mag);
     writer.str(&artifact.job.banner);
+    writer.scaled(artifact.job.h_offset);
+    writer.scaled(artifact.job.v_offset);
     writer.fonts(&artifact.fonts);
     for value in artifact.counts {
         writer.i32(value);
@@ -66,6 +68,8 @@ pub(crate) fn from_bytes(bytes: &[u8]) -> Result<PageArtifact, ParseError> {
     }
     let mag = reader.i32()?;
     let banner = reader.str()?;
+    let h_offset = reader.scaled()?;
+    let v_offset = reader.scaled()?;
     let fonts = reader.fonts()?;
     let mut counts = [0; 10];
     for value in &mut counts {
@@ -75,7 +79,12 @@ pub(crate) fn from_bytes(bytes: &[u8]) -> Result<PageArtifact, ParseError> {
     let effects = reader.effects()?;
     reader.finish()?;
     Ok(PageArtifact {
-        job: crate::JobInfo { mag, banner },
+        job: crate::JobInfo {
+            mag,
+            banner,
+            h_offset,
+            v_offset,
+        },
         fonts,
         counts,
         root,

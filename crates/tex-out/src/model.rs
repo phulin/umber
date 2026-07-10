@@ -33,6 +33,8 @@ impl PageArtifact {
 pub struct JobInfo {
     pub mag: i32,
     pub banner: String,
+    pub h_offset: Scaled,
+    pub v_offset: Scaled,
 }
 
 impl Default for JobInfo {
@@ -40,6 +42,8 @@ impl Default for JobInfo {
         Self {
             mag: 1000,
             banner: DEFAULT_BANNER.to_owned(),
+            h_offset: Scaled::from_raw(0),
+            v_offset: Scaled::from_raw(0),
         }
     }
 }
