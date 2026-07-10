@@ -277,7 +277,7 @@ fn every_rare_kind_round_trips_through_its_sidecar() {
 }
 
 #[test]
-fn rollback_truncates_words_decoded_view_and_every_sidecar_together() {
+fn rollback_truncates_words_and_every_sidecar_without_a_decoded_mirror() {
     let mut arena = NodeArena::new();
     let empty = arena.append(&[]);
     let mark = arena.watermark();
