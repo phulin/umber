@@ -353,7 +353,6 @@ where
         kind: GlueKind::Normal,
         leader: None,
     });
-    nest.current_list_mut().set_space_factor(1000);
     Ok(())
 }
 
