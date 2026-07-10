@@ -1,7 +1,7 @@
 use tex_arith::x_over_n;
 use tex_fonts::CharMetrics;
 use tex_state::ids::{FontId, NodeListId};
-use tex_state::math::{MathChar, MathField, MathNoad, NoadClass, NoadKind};
+use tex_state::math::{LimitType, MathChar, MathField, MathNoad, NoadClass, NoadKind};
 use tex_state::node::{GlueKind, KernKind, Node};
 use tex_state::scaled::Scaled;
 
@@ -256,6 +256,14 @@ fn translate_noad<S: MathTypesetState>(
     let mut hlist = match (&noad.kind, &noad.nucleus) {
         (NoadKind::Operator(limit), _) => {
             let result = operators::make_op(ctx, noad, *limit);
+            delta = result.delta;
+            scripts_handled = result.scripts_handled;
+            result.hlist
+        }
+        (NoadKind::Normal(NoadClass::Op), _) => {
+            // A class-1 \mathchar is an op_noad with TeX's normal subtype,
+            // which means limits in display style and side scripts otherwise.
+            let result = operators::make_op(ctx, noad, LimitType::DisplayLimits);
             delta = result.delta;
             scripts_handled = result.scripts_handled;
             result.hlist

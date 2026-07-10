@@ -578,6 +578,31 @@ fn nolimits_operator_centers_nucleus_on_math_axis() {
 }
 
 #[test]
+fn mathchar_operator_centers_inline_nucleus_and_places_side_scripts() {
+    let mut universe = setup_universe();
+    let mut op = MathNoad::new(
+        NoadKind::Normal(NoadClass::Op),
+        MathField::MathChar(math_char('c')),
+    );
+    op.subscript = MathField::MathChar(math_char('b'));
+    op.superscript = MathField::MathChar(math_char('c'));
+    let input = universe.freeze_node_list(&[Node::MathNoad(op)]);
+    let params = MathParams::read(&universe);
+
+    let hlist = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
+
+    let nodes = root_nodes(&hlist);
+    let [op_node, scripts_node] = nodes.as_slice() else {
+        panic!("expected centered operator followed by side scripts");
+    };
+    let MathNode::HList(op_box) = op_node else {
+        panic!("expected operator hbox");
+    };
+    assert_eq!(op_box.shift, sc(1));
+    assert!(matches!(scripts_node, MathNode::VList(_)));
+}
+
+#[test]
 fn radical_clearance_uses_display_and_nondisplay_formulas() {
     let mut universe = setup_universe();
     let noad = MathNoad::new(
