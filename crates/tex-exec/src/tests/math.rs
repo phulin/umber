@@ -87,6 +87,64 @@ fn math_mode_builds_noads_styles_choices_and_mu_nodes() {
 }
 
 #[test]
+fn plain_quad_hskip_remains_ordinary_glue_through_math_lowering() {
+    let mut stores = support::stores_with_fonts();
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\font\\f=cmr10 \\relax \\f \\def\\quad{\\hskip1em\\relax}\\setbox0=\\hbox{$a\\quad b\\mskip3mu c$}",
+    ));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("Plain-style quad executes in math mode");
+
+    let list = stores.box_reg(0).expect("math hbox register");
+    let [Node::HList(hbox)] = stores.nodes(list) else {
+        panic!("register zero should contain an hbox");
+    };
+    let glue = stores
+        .nodes(hbox.children)
+        .iter()
+        .filter_map(|node| match node {
+            Node::Glue { spec, kind, .. } => Some((stores.glue(*spec), *kind)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let quad = stores.font_dimen(stores.current_font(), 6);
+
+    assert!(
+        glue.iter()
+            .any(|(spec, kind)| { *kind == GlueKind::Normal && spec.width == quad }),
+        "lowered glue: {glue:?}"
+    );
+    assert!(
+        glue.iter().any(|(_, kind)| *kind == GlueKind::MuSkip),
+        "explicit \\mskip must retain mu-glue provenance"
+    );
+}
+
+#[test]
+fn math_hskip_participates_in_state_hash_and_rollback() {
+    let mut stores = support::stores_with_fonts();
+    let checkpoint = stores.snapshot();
+    let source = "\\font\\f=cmr10 \\relax \\f \\setbox0=\\hbox{$a\\hskip1em b$}";
+
+    let mut input = InputStack::new(MemoryInput::new(source));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("math hskip executes");
+    let first_box = stores.box_reg(0);
+    let first_hash = stores.snapshot().state_hash();
+
+    stores.rollback(&checkpoint);
+    let mut input = InputStack::new(MemoryInput::new(source));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("math hskip replays after rollback");
+
+    assert_eq!(stores.box_reg(0), first_box);
+    assert_eq!(stores.snapshot().state_hash(), first_hash);
+}
+
+#[test]
 fn generalized_fraction_absorbs_prior_list_and_reports_doubled_fraction() {
     let (stores, executor) = run_math_source(r"$a\over b\over c$");
     let nodes = math_nodes(&stores, &executor);

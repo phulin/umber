@@ -461,6 +461,15 @@ where
         | UnexpandablePrimitive::XLeaders => assignments::execute_unexpandable_with_recorder(
             primitive, traced, nest, input, stores, recorder, hooks,
         ),
+        UnexpandablePrimitive::HSkip => {
+            let spec = assignments::scan_glue_id(input, stores, hooks, false)?;
+            nest.current_list_mut().push(Node::Glue {
+                spec,
+                kind: GlueKind::Normal,
+                leader: None,
+            });
+            Ok(DispatchAction::Continue)
+        }
         UnexpandablePrimitive::MSkip => {
             let spec = assignments::scan_glue_id(input, stores, hooks, true)?;
             nest.current_list_mut().push(Node::Glue {
