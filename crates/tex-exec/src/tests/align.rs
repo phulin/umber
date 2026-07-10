@@ -965,6 +965,52 @@ fn nested_alignment_executes_inside_cell() {
 }
 
 #[test]
+fn plain_angle_style_alignment_restores_outer_cell_after_nested_leader_row() {
+    let stores = run_boxed_alignment_source(
+        "\\def\\angle{{\\vbox{\\halign{##\\cr x\\cr\\noalign{\\nointerlineskip}\\leaders\\hrule height.34pt\\hfill\\cr}}}}\\halign{#\\cr $\\angle$\\cr}",
+    );
+    let vbox = box_zero_vlist(&stores);
+    let rows = vlist_rows(&stores, vbox);
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(row_cells(&stores, rows[0]).len(), 1);
+    assert_no_unset(&stores, stores.nodes(vbox.children));
+}
+
+#[test]
+fn plain_angle_style_nested_alignment_preserves_the_real_execution_error() {
+    let error = run_alignment_source_err(
+        "\\def\\angle{{\\vbox{\\halign{$\\scriptstyle##$\\crcr x\\crcr\\noalign{\\nointerlineskip}\\mkern2.5mu\\leaders\\hrule height.34pt\\hfill\\mkern2.5mu\\crcr}}}}\\setbox0=\\vbox{\\halign{#\\cr $\\angle$\\cr}}",
+    );
+
+    assert!(matches!(
+        error,
+        ExecError::UnimplementedTypesetting {
+            mode: Mode::Math,
+            operation: "math primitive",
+            ..
+        }
+    ));
+}
+
+#[test]
+fn plain_angle_style_nested_alignment_replays_identically_after_rollback() {
+    let mut stores = support::stores_with_fonts();
+    let checkpoint = stores.snapshot();
+    let source = "\\def\\angle{{\\vbox{\\halign{##\\cr x\\cr\\noalign{\\nointerlineskip}\\leaders\\hrule height.34pt\\hfill\\cr}}}}\\setbox0=\\vbox{\\halign{#\\cr $\\angle$\\cr}}";
+
+    run_alignment_source_in(&mut stores, source);
+    let first_box = stores.box_reg(0);
+    let first_hash = stores.snapshot().state_hash();
+
+    stores.rollback(&checkpoint);
+    run_alignment_source_in(&mut stores, source);
+
+    assert_eq!(stores.box_reg(0), first_box);
+    assert_eq!(stores.snapshot().state_hash(), first_hash);
+}
+
+#[test]
 fn valign_finishes_paragraph_cells_before_packaging() {
     let stores = run_alignment_source("\\setbox0=\\hbox{\\valign{#\\cr a\\cr b\\cr}}");
     let hbox = box_zero_hlist(&stores);

@@ -35,8 +35,13 @@ where
         let state = scan_preamble(primitive, input, stores, hooks)?;
         execution::execute_alignment(state, nest, input, stores, recorder, hooks)
     })();
-    input.resume_alignment_cell(suspended);
-    result
+    match result {
+        Ok(()) => {
+            input.resume_alignment_cell(suspended);
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }
 }
 
 pub(crate) fn execute_display_halign<S, R, H>(
@@ -56,6 +61,11 @@ where
         let state = scan_preamble(UnexpandablePrimitive::HAlign, input, stores, hooks)?;
         execution::execute_alignment_to_nodes(state, nest, input, stores, recorder, hooks)
     })();
-    input.resume_alignment_cell(suspended);
-    result
+    match result {
+        Ok(nodes) => {
+            input.resume_alignment_cell(suspended);
+            Ok(nodes)
+        }
+        Err(error) => Err(error),
+    }
 }

@@ -469,8 +469,15 @@ where
             && input.alignment_cell_at_group_depth(stores.execution_group_depth())
         {
             report_missing_cr_inserted(stores);
-            push_traced_tokens(input, stores, [token]);
-            return Ok(CellTerminator::Cr);
+            let cr = stores.symbol("cr").ok_or(ExecError::MissingToken {
+                context: "alignment recovery cr",
+            })?;
+            push_traced_tokens(
+                input,
+                stores,
+                [TracedTokenWord::pack(Token::Cs(cr), token.origin()), token],
+            );
+            continue;
         }
         dispatch_and_drain(nest, token, input, stores, recorder, hooks, &mut stats)?;
     }

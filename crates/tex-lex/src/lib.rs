@@ -336,7 +336,6 @@ enum AlignmentCellPhase {
     UTemplate(TokenListReplayMarker),
     Body,
     VTemplate,
-    Suspended,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -353,6 +352,13 @@ struct AlignmentCellInput {
     group_depth: u32,
     terminator: Option<TracedTokenWord>,
 }
+
+/// Saved alignment-cell interception state while a nested preamble and body run.
+///
+/// Like TeX82's alignment-stack node, this value owns the exact outer state;
+/// nested input cannot observe or replace it before the matching restore.
+#[must_use]
+pub struct AlignmentCellSuspension(Option<AlignmentCellInput>);
 
 impl<S> InputStack<S> {
     #[must_use]
@@ -485,25 +491,23 @@ impl<S> InputStack<S> {
     }
 
     /// Suspends an outer cell while a nested alignment scans its preamble.
-    pub fn suspend_alignment_cell(&mut self) -> bool {
-        let Some(cell) = self.alignment_cells.last_mut() else {
-            return false;
-        };
-        assert_eq!(cell.phase, AlignmentCellPhase::Body);
-        cell.phase = AlignmentCellPhase::Suspended;
-        true
+    pub fn suspend_alignment_cell(&mut self) -> AlignmentCellSuspension {
+        let cell = self.alignment_cells.pop();
+        if let Some(cell) = cell.as_ref() {
+            assert_eq!(cell.phase, AlignmentCellPhase::Body);
+        }
+        AlignmentCellSuspension(cell)
     }
 
-    pub fn resume_alignment_cell(&mut self, suspended: bool) {
-        if !suspended {
-            return;
+    pub fn resume_alignment_cell(&mut self, suspended: AlignmentCellSuspension) {
+        assert!(
+            self.alignment_cells.is_empty(),
+            "nested alignment cell remained active at pop_alignment"
+        );
+        if let Some(cell) = suspended.0 {
+            assert_eq!(cell.phase, AlignmentCellPhase::Body);
+            self.alignment_cells.push(cell);
         }
-        let cell = self
-            .alignment_cells
-            .last_mut()
-            .expect("suspended outer alignment cell");
-        assert_eq!(cell.phase, AlignmentCellPhase::Suspended);
-        cell.phase = AlignmentCellPhase::Body;
     }
 
     /// Applies the alignment-sensitive part of TeX82 `get_next`.
