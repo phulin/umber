@@ -503,6 +503,69 @@ fn traced_source_origins_use_token_start_coordinates() {
 }
 
 #[test]
+fn control_sequences_and_transformed_input_retain_exact_physical_spellings() {
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::END_LINE_CHAR, -1);
+    let mut lexer = Lexer::new(MemoryInput::new("\\foo ^^41"));
+    let control = lexer
+        .next_traced_token(&mut stores)
+        .expect("control sequence")
+        .expect("control sequence");
+    let transformed = lexer
+        .next_traced_token(&mut stores)
+        .expect("transformed token")
+        .expect("transformed token");
+
+    let control =
+        ProvenanceResolver::new(&stores).render_diagnostic("control", Some(control.origin()));
+    let transformed = ProvenanceResolver::new(&stores)
+        .render_diagnostic("transformed", Some(transformed.origin()));
+    assert!(control.contains("^^^^"), "{control}");
+    assert!(transformed.contains("    ^^^^"), "{transformed}");
+}
+
+#[test]
+fn source_range_join_requires_same_live_direct_frame_proofs() {
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::END_LINE_CHAR, -1);
+    let mut input = InputStack::new(MemoryInput::new("12"));
+    let first = input
+        .next_traced_token(&mut stores)
+        .expect("first delivery")
+        .expect("first token");
+    let first_proof = input
+        .take_direct_source_delivery(first)
+        .expect("source delivery proof");
+    let last = input
+        .next_traced_token(&mut stores)
+        .expect("last delivery")
+        .expect("last token");
+    let last_proof = input
+        .take_direct_source_delivery(last)
+        .expect("source delivery proof");
+    let joined = input
+        .join_direct_source_deliveries(&mut stores, first_proof, last_proof)
+        .expect("same live frame joins");
+    let OriginRecord::SourceSpan(span) = stores.origin(joined) else {
+        panic!("joined delivery should allocate a source span");
+    };
+    assert_eq!(
+        span.hi(),
+        stores
+            .source_position(super::SourceId::new(0), 2)
+            .expect("exclusive end")
+    );
+
+    let list = stores.intern_token_list(&[char_token('x', Catcode::Letter)]);
+    input.push_token_list(list, TokenListReplayKind::Inserted);
+    let replayed = input
+        .next_traced_token(&mut stores)
+        .expect("replay")
+        .expect("replayed token");
+    assert!(input.take_direct_source_delivery(replayed).is_none());
+}
+
+#[test]
 fn ordinary_source_scalars_append_no_provenance_records() {
     let mut stores = Universe::new();
     let mut lexer = Lexer::new(MemoryInput::new("aé"));

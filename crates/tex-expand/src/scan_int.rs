@@ -24,6 +24,7 @@ pub struct ScannedInt {
     diagnostic: Option<IntegerDiagnostic>,
     context: TracedTokenWord,
     diagnostic_context: Option<TracedTokenWord>,
+    diagnostic_origin: Option<OriginId>,
 }
 
 impl ScannedInt {
@@ -34,6 +35,7 @@ impl ScannedInt {
             diagnostic: None,
             context,
             diagnostic_context: None,
+            diagnostic_origin: None,
         }
     }
 
@@ -48,6 +50,23 @@ impl ScannedInt {
             diagnostic: Some(diagnostic),
             context,
             diagnostic_context: Some(context),
+            diagnostic_origin: Some(context.origin()),
+        }
+    }
+
+    #[must_use]
+    pub const fn with_diagnostic_origin(
+        value: i32,
+        diagnostic: IntegerDiagnostic,
+        context: TracedTokenWord,
+        origin: OriginId,
+    ) -> Self {
+        Self {
+            value,
+            diagnostic: Some(diagnostic),
+            context,
+            diagnostic_context: Some(context),
+            diagnostic_origin: Some(origin),
         }
     }
 
@@ -63,10 +82,7 @@ impl ScannedInt {
 
     #[must_use]
     pub const fn diagnostic_origin(self) -> Option<OriginId> {
-        match self.diagnostic_context {
-            Some(context) => Some(context.origin()),
-            None => None,
-        }
+        self.diagnostic_origin
     }
 
     #[must_use]
@@ -395,6 +411,8 @@ where
     E: ExpandNext<S, St, R, H>,
 {
     let (first_digit, first_token) = first;
+    let first_delivery = input.take_direct_source_delivery(first_token);
+    let mut last_delivery = first_delivery;
     let mut value = first_digit;
     let mut overflow = value > INT_MAX;
     let mut overflow_context = None;
@@ -403,6 +421,7 @@ where
         let Some(token) = next_x(input, stores, recorder, hooks, expander)? else {
             break;
         };
+        let delivery = input.take_direct_source_delivery(token);
         let Some(digit) = token_digit_for_radix(token, radix) else {
             if !is_space(token) {
                 unread_token(input, stores, token);
@@ -410,6 +429,7 @@ where
             break;
         };
         last_digit = token;
+        last_delivery = delivery;
         match value
             .checked_mul(radix)
             .and_then(|value| value.checked_add(digit))
@@ -423,11 +443,15 @@ where
         }
     }
 
+    let joined_origin = first_delivery
+        .zip(last_delivery)
+        .and_then(|(first, last)| input.join_direct_source_deliveries(stores, first, last));
     Ok(scanned_unsigned(
         value,
         overflow,
         overflow_context,
         last_digit,
+        joined_origin,
     ))
 }
 
@@ -768,6 +792,7 @@ fn apply_sign(scanned: ScannedInt, negative: bool) -> ScannedInt {
         diagnostic: scanned.diagnostic(),
         context: scanned.context(),
         diagnostic_context: scanned.diagnostic_context(),
+        diagnostic_origin: scanned.diagnostic_origin(),
     }
 }
 
@@ -776,12 +801,26 @@ fn scanned_unsigned(
     overflow: bool,
     overflow_context: Option<TracedTokenWord>,
     context: TracedTokenWord,
+    joined_origin: Option<OriginId>,
 ) -> ScannedInt {
     if overflow {
-        ScannedInt::with_diagnostic(
-            i32::MAX,
-            IntegerDiagnostic::NumberTooBig,
-            overflow_context.unwrap_or(context),
+        let diagnostic_context = overflow_context.unwrap_or(context);
+        joined_origin.map_or_else(
+            || {
+                ScannedInt::with_diagnostic(
+                    i32::MAX,
+                    IntegerDiagnostic::NumberTooBig,
+                    diagnostic_context,
+                )
+            },
+            |origin| {
+                ScannedInt::with_diagnostic_origin(
+                    i32::MAX,
+                    IntegerDiagnostic::NumberTooBig,
+                    diagnostic_context,
+                    origin,
+                )
+            },
         )
     } else {
         ScannedInt::new(value as i32, context)

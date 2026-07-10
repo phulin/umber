@@ -21,6 +21,7 @@ tempfile = "3"
 similar = "2"
 proptest = "1"
 sha2 = "0.10"
+unicode-width = "0.2"
 
 [profile.test]
 opt-level = 3

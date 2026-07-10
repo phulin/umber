@@ -616,6 +616,26 @@ impl Stores {
             .unwrap_or_else(|| self.provenance.allocate(OriginRecord::SourceSpan(span)))
     }
 
+    /// Allocates an exact validated half-open range for a nontrivial physical
+    /// spelling. Unlike `source_token_origin`, this always records both ends.
+    pub fn source_range_origin(
+        &mut self,
+        source: SourceId,
+        byte_offset: u64,
+        byte_end: u64,
+    ) -> OriginId {
+        let Ok(lo) = self.source_map.position(source, byte_offset) else {
+            return OriginId::UNKNOWN;
+        };
+        let Ok(hi) = self.source_map.position(source, byte_end) else {
+            return OriginId::UNKNOWN;
+        };
+        let Ok(span) = self.source_map.span(lo, hi) else {
+            return OriginId::UNKNOWN;
+        };
+        self.provenance.allocate(OriginRecord::SourceSpan(span))
+    }
+
     /// Allocates a macro-invocation origin.
     pub fn macro_invocation_origin(
         &mut self,
@@ -782,6 +802,10 @@ impl Stores {
 
     pub(crate) fn source_region(&self, source: SourceId) -> Option<SourceRegion> {
         self.source_map.region_for_source(source)
+    }
+
+    pub(crate) fn source_region_at_position(&self, position: SourcePos) -> Option<SourceRegion> {
+        self.source_map.region_for_position(position)
     }
 
     pub(crate) fn direct_source_origin(&self, id: OriginId) -> Option<SourceOrigin> {

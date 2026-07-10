@@ -240,7 +240,7 @@ fn undefined_control_sequence_from_source_reports_source_origin() {
         crate::ExpandError::UndefinedControlSequence { ref name, .. } if name == "missing"
     ));
     let origin = err.primary_origin().expect("undefined control origin");
-    assert!(matches!(stores.origin(origin), OriginRecord::Source(_)));
+    assert!(matches!(stores.origin(origin), OriginRecord::SourceSpan(_)));
 }
 
 #[test]

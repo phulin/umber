@@ -224,6 +224,24 @@ fn reports_number_too_big_and_caps_value() {
         .diagnostic()
         .expect("overflow should emit diagnostic");
     assert_eq!(format!("{diagnostic}"), "Number too big");
+    let origin = scanned
+        .diagnostic_origin()
+        .expect("joined diagnostic range");
+    let OriginRecord::SourceSpan(span) = stores.origin(origin) else {
+        panic!("overflow spelling should be a source span");
+    };
+    assert_eq!(
+        span.lo(),
+        stores
+            .source_position(tex_state::SourceId::new(0), 0)
+            .expect("start position")
+    );
+    assert_eq!(
+        span.hi(),
+        stores
+            .source_position(tex_state::SourceId::new(0), 10)
+            .expect("exclusive end position")
+    );
 }
 
 #[test]

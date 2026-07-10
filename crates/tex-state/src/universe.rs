@@ -148,6 +148,12 @@ pub trait ExpansionState {
         byte_offset: u64,
         byte_end: u64,
     ) -> OriginId;
+    fn source_range_origin(
+        &mut self,
+        source: SourceId,
+        byte_offset: u64,
+        byte_end: u64,
+    ) -> OriginId;
     fn register_source(
         &mut self,
         source: SourceId,
@@ -1199,6 +1205,17 @@ impl Universe {
             .source_token_origin(source, byte_offset, byte_end)
     }
 
+    /// Allocates an exact validated half-open source spelling range.
+    pub fn source_range_origin(
+        &mut self,
+        source: SourceId,
+        byte_offset: u64,
+        byte_end: u64,
+    ) -> OriginId {
+        self.stores
+            .source_range_origin(source, byte_offset, byte_end)
+    }
+
     /// Allocates a macro-invocation origin.
     pub fn macro_invocation_origin(
         &mut self,
@@ -1351,6 +1368,10 @@ impl Universe {
 
     pub(crate) fn source_region(&self, source: SourceId) -> Option<SourceRegion> {
         self.stores.source_region(source)
+    }
+
+    pub(crate) fn source_region_at_position(&self, position: SourcePos) -> Option<SourceRegion> {
+        self.stores.source_region_at_position(position)
     }
 
     pub(crate) fn source_backing_bytes(&self, region: SourceRegion) -> Option<&[u8]> {
@@ -2527,6 +2548,15 @@ impl ExpansionState for Universe {
         Self::source_token_origin(self, source, byte_offset, byte_end)
     }
 
+    fn source_range_origin(
+        &mut self,
+        source: SourceId,
+        byte_offset: u64,
+        byte_end: u64,
+    ) -> OriginId {
+        Self::source_range_origin(self, source, byte_offset, byte_end)
+    }
+
     fn register_source(
         &mut self,
         source: SourceId,
@@ -2838,6 +2868,16 @@ impl ExpansionState for ExpansionContext<'_> {
     ) -> OriginId {
         self.universe
             .source_token_origin(source, byte_offset, byte_end)
+    }
+
+    fn source_range_origin(
+        &mut self,
+        source: SourceId,
+        byte_offset: u64,
+        byte_end: u64,
+    ) -> OriginId {
+        self.universe
+            .source_range_origin(source, byte_offset, byte_end)
     }
 
     fn register_source(

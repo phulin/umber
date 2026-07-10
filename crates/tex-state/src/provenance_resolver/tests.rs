@@ -2,7 +2,7 @@ use crate::ids::OriginListId;
 use crate::input::{InputFrameSummary, InputSummary, MacroArguments, TokenListReplayKind};
 use crate::macro_store::MacroMeaning;
 use crate::meaning::MeaningFlags;
-use crate::provenance::SourceOrigin;
+use crate::provenance::{DiagnosticSite, RelatedLocation, RelatedLocationRole, SourceOrigin};
 use crate::source_map::SourceDescriptor;
 use crate::token::{OriginId, Token};
 use crate::{ProvenanceResolver, Universe, World};
@@ -156,4 +156,60 @@ fn missing_source_byte_degrades_without_a_secondary_failure() {
     let rendered = ProvenanceResolver::new(&stores).render_diagnostic("boom", Some(origin));
 
     assert!(rendered.contains("<source 0>:7:4"));
+}
+
+#[test]
+fn exact_ranges_use_unicode_cells_tab_stops_zero_width_and_multiline_edges() {
+    let bytes = "\tα中x\nlast".as_bytes();
+    let mut stores = Universe::new();
+    stores
+        .register_source(
+            crate::SourceId::new(0),
+            SourceDescriptor::generated(Arc::from(bytes)),
+        )
+        .expect("source registration");
+
+    let wide = stores.source_range_origin(crate::SourceId::new(0), 1, 6);
+    let zero = stores.source_range_origin(crate::SourceId::new(0), 6, 6);
+    let multiline = stores.source_range_origin(crate::SourceId::new(0), 3, bytes.len() as u64);
+
+    let wide = ProvenanceResolver::new(&stores).render_diagnostic("wide", Some(wide));
+    assert!(wide.contains("<source 0>:1:2"));
+    assert!(wide.contains("^^^"), "{wide}");
+
+    let zero = ProvenanceResolver::new(&stores).render_diagnostic("zero", Some(zero));
+    assert!(zero.lines().any(|line| line.ends_with('^')), "{zero}");
+
+    let multiline = ProvenanceResolver::new(&stores).render_diagnostic("multi", Some(multiline));
+    assert!(multiline.contains("  1 | \tα中x"), "{multiline}");
+    assert!(multiline.contains("  2 | last"), "{multiline}");
+}
+
+#[test]
+fn captured_site_renders_related_locations_and_trace_after_frames_are_gone() {
+    let mut stores = stores_with_input("main.tex", b"call definition\n");
+    let invocation = stores.source_origin(crate::SourceId::new(0), 0, 1, 0);
+    let definition_origin = stores.source_origin(crate::SourceId::new(0), 5, 1, 5);
+    let parameter_text = stores.intern_token_list(&[]);
+    let replacement_text = stores.intern_token_list(&[]);
+    let definition = stores.intern_macro(MacroMeaning::new(
+        MeaningFlags::from_bits(0),
+        parameter_text,
+        replacement_text,
+    ));
+    let macro_origin = stores.macro_invocation_origin(definition, invocation, definition_origin);
+    let site = DiagnosticSite::new(
+        Some(invocation),
+        [RelatedLocation::new(
+            RelatedLocationRole::Definition,
+            definition_origin,
+        )],
+        [macro_origin],
+    );
+    stores.set_input_summary(InputSummary::new(vec![], None, None));
+
+    let rendered = ProvenanceResolver::new(&stores).render_diagnostic_site("boom", &site);
+    assert!(rendered.contains("defined here"), "{rendered}");
+    assert!(rendered.contains("expansion trace:"), "{rendered}");
+    assert!(rendered.contains("invoked at main.tex:1:1"), "{rendered}");
 }

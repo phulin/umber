@@ -9,7 +9,9 @@ use std::fmt;
 use std::sync::Arc;
 
 use tex_state::ids::{OriginListId, TokenListId};
-use tex_state::provenance::{InsertedOriginKind, SyntheticOriginKind};
+use tex_state::provenance::{
+    DiagnosticSite, InsertedOriginKind, RelatedLocation, SyntheticOriginKind,
+};
 use tex_state::source_map::SourceDescriptor;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{ExpansionState, FileContent, InputRecordId, WorldError};
@@ -480,6 +482,17 @@ pub struct InputStack<S> {
     next_replay_marker: u64,
     next_condition_token: u64,
     alignment_cells: Vec<AlignmentCellInput>,
+    last_direct_delivery: Option<DirectSourceDelivery>,
+}
+
+/// Proof that one token was delivered directly from a physical source frame.
+/// Fields are private so replayed or expanded tokens cannot manufacture it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DirectSourceDelivery {
+    token: TracedTokenWord,
+    source: SourceId,
+    start: u64,
+    end: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -525,6 +538,7 @@ impl<S> InputStack<S> {
             next_replay_marker: 0,
             next_condition_token: 0,
             alignment_cells: Vec::new(),
+            last_direct_delivery: None,
         };
         stack.push_source(source);
         stack
@@ -621,6 +635,7 @@ impl<S> InputStack<S> {
                         .expect("condition frame token overflowed")
                 }),
             alignment_cells: Vec::new(),
+            last_direct_delivery: None,
         })
     }
 
@@ -904,6 +919,50 @@ impl<S> InputStack<S> {
         stores.synthetic_origin(SyntheticOriginKind::Engine)
     }
 
+    /// Captures the bounded expansion context while its replay frames are live.
+    #[must_use]
+    pub fn diagnostic_site(
+        &self,
+        primary: Option<OriginId>,
+        related: impl IntoIterator<Item = RelatedLocation>,
+    ) -> DiagnosticSite {
+        let trace = self.frames.iter().rev().filter_map(|frame| match frame {
+            InputFrame::TokenList(frame) if frame.macro_invocation != OriginId::UNKNOWN => {
+                Some(frame.macro_invocation)
+            }
+            InputFrame::Source(_) | InputFrame::TokenList(_) | InputFrame::Condition { .. } => None,
+        });
+        DiagnosticSite::new(primary, related, trace)
+    }
+
+    /// Takes proof for the immediately preceding delivery when it was the
+    /// supplied token and came straight from a physical source frame.
+    pub fn take_direct_source_delivery(
+        &mut self,
+        token: TracedTokenWord,
+    ) -> Option<DirectSourceDelivery> {
+        self.last_direct_delivery
+            .take()
+            .filter(|delivery| delivery.token == token)
+    }
+
+    /// Joins two proven deliveries only while their one shared source frame is
+    /// still live. Failure leaves callers free to retain separate sites.
+    pub fn join_direct_source_deliveries(
+        &self,
+        stores: &mut impl ExpansionState,
+        first: DirectSourceDelivery,
+        last: DirectSourceDelivery,
+    ) -> Option<OriginId> {
+        if first.source != last.source || first.start > last.start || first.end > last.end {
+            return None;
+        }
+        let frame_is_live = self.frames.iter().any(
+            |frame| matches!(frame, InputFrame::Source(source) if source.source_id == first.source),
+        );
+        frame_is_live.then(|| stores.source_range_origin(first.source, first.start, last.end))
+    }
+
     #[must_use]
     pub fn depth(&self) -> usize {
         self.frames.len()
@@ -1131,6 +1190,7 @@ where
         &mut self,
         stores: &mut impl ExpansionState,
     ) -> Result<Option<TracedTokenWord>, LexError> {
+        self.last_direct_delivery = None;
         loop {
             let Some(frame_index) = self.current_token_frame_index() else {
                 return Ok(None);
@@ -1192,11 +1252,19 @@ where
                         continue;
                     }
 
+                    let start = source_coordinate(source);
                     let Some(token) =
                         next_token_from_line(source, stores, self.unicode_superscript_notation)?
                     else {
                         continue;
                     };
+                    let end = source_coordinate(source);
+                    self.last_direct_delivery = Some(DirectSourceDelivery {
+                        token,
+                        source: source.source_id,
+                        start: start.byte_offset,
+                        end: end.byte_offset,
+                    });
                     return Ok(Some(token));
                 }
                 InputFrame::Condition { .. } => {
@@ -1228,6 +1296,7 @@ where
         &mut self,
         stores: &mut impl ExpansionState,
     ) -> Result<Option<TracedExpansionToken>, LexError> {
+        self.last_direct_delivery = None;
         loop {
             let Some(frame_index) = self.current_token_frame_index() else {
                 return Ok(None);
@@ -1291,11 +1360,19 @@ where
                         continue;
                     }
 
+                    let start = source_coordinate(source);
                     let Some(token) =
                         next_token_from_line(source, stores, self.unicode_superscript_notation)?
                     else {
                         continue;
                     };
+                    let end = source_coordinate(source);
+                    self.last_direct_delivery = Some(DirectSourceDelivery {
+                        token,
+                        source: source.source_id,
+                        start: start.byte_offset,
+                        end: end.byte_offset,
+                    });
                     return Ok(Some(TracedExpansionToken::new(token, false)));
                 }
                 InputFrame::Condition { .. } => {
@@ -1710,9 +1787,10 @@ fn source_coordinate_from_frame(
 fn traced_source_token(
     stores: &mut impl ExpansionState,
     token: Token,
-    coordinate: LexSourceContext,
+    start: LexSourceContext,
+    end: LexSourceContext,
 ) -> TracedTokenWord {
-    let origin = allocate_source_origin(stores, coordinate);
+    let origin = stores.source_range_origin(start.source_id, start.byte_offset, end.byte_offset);
     TracedTokenWord::pack(token, origin)
 }
 
@@ -1728,7 +1806,7 @@ fn traced_ordinary_source_token(
     let origin = if backed_one_scalar {
         stores.source_token_origin(start.source_id, start.byte_offset, end.byte_offset)
     } else {
-        allocate_source_origin(stores, start)
+        stores.source_range_origin(start.source_id, start.byte_offset, end.byte_offset)
     };
     TracedTokenWord::pack(token, origin)
 }
@@ -1737,12 +1815,10 @@ fn allocate_source_origin(
     stores: &mut impl ExpansionState,
     coordinate: LexSourceContext,
 ) -> OriginId {
-    stores.source_origin_with_input_record(
+    stores.source_range_origin(
         coordinate.source_id,
-        coordinate.input_record,
         coordinate.byte_offset,
-        coordinate.line,
-        coordinate.column,
+        coordinate.byte_end,
     )
 }
 
@@ -1932,7 +2008,7 @@ fn scan_control_sequence<S>(
     if source.frame.byte_offset >= source.frame.line.len() {
         source.frame.state = LexerState::SkippingBlanks;
         let token = Token::Cs(stores.intern(""));
-        return traced_source_token(stores, token, start);
+        return traced_source_token(stores, token, start, source_coordinate(source));
     }
 
     let ch = read_expanded_char(source, stores, unicode_superscript_notation);
@@ -1944,7 +2020,7 @@ fn scan_control_sequence<S>(
             LexerState::MidLine
         };
         let token = Token::Cs(stores.intern(&ch.to_string()));
-        return traced_source_token(stores, token, start);
+        return traced_source_token(stores, token, start, source_coordinate(source));
     }
 
     let mut name = String::from(ch);
@@ -1962,7 +2038,7 @@ fn scan_control_sequence<S>(
     }
     source.frame.state = LexerState::SkippingBlanks;
     let token = Token::Cs(stores.intern(&name));
-    traced_source_token(stores, token, start)
+    traced_source_token(stores, token, start, source_coordinate(source))
 }
 
 fn scan_control_sequence_readonly<S>(

@@ -6,11 +6,13 @@
 
 use std::fmt::{self, Write as _};
 use std::path::Path;
+use unicode_width::UnicodeWidthChar;
 
 use crate::Universe;
 use crate::input::{InputFrameSummary, SourceId};
 use crate::provenance::{
-    InsertedOriginKind, OriginRecord, SourceOrigin, SynthesizedOriginKind, SyntheticOriginKind,
+    DiagnosticSite, InsertedOriginKind, OriginRecord, SourceOrigin, SynthesizedOriginKind,
+    SyntheticOriginKind,
 };
 use crate::source_map::SourceBacking;
 use crate::token::OriginId;
@@ -45,16 +47,31 @@ impl<'a> ProvenanceResolver<'a> {
     /// Renders a complete diagnostic message with optional primary origin.
     #[must_use]
     pub fn render_diagnostic(&self, message: &str, primary: Option<OriginId>) -> String {
+        let site = DiagnosticSite::new(primary, [], self.live_macro_invocations());
+        self.render_diagnostic_site(message, &site)
+    }
+
+    /// Renders a diagnostic from origins captured when the error was created.
+    #[must_use]
+    pub fn render_diagnostic_site(&self, message: &str, site: &DiagnosticSite) -> String {
         let mut out = String::new();
         out.push_str(message);
         out.push('\n');
 
-        match primary {
+        match site.primary_origin() {
             Some(origin) => self.render_primary_origin(&mut out, origin),
             None => out.push_str(" --> unknown origin\n"),
         }
 
-        self.render_macro_trace(&mut out, primary);
+        for related in site.related() {
+            let prefix = format!("     {}", related.role().label());
+            if let Some(source) = self.resolve_to_source(related.origin()) {
+                self.render_source_context(&mut out, &prefix, source);
+            } else {
+                let _ = writeln!(out, "{prefix}: {}", self.origin_summary(related.origin()));
+            }
+        }
+        self.render_captured_macro_trace(&mut out, site);
         out
     }
 
@@ -82,10 +99,10 @@ impl<'a> ProvenanceResolver<'a> {
         }
     }
 
-    fn render_macro_trace(&self, out: &mut String, primary: Option<OriginId>) {
+    fn render_captured_macro_trace(&self, out: &mut String, site: &DiagnosticSite) {
         let mut rendered = 0;
-        for origin in self.live_macro_invocations() {
-            if primary == Some(origin) {
+        for &origin in site.expansion_trace() {
+            if site.primary_origin() == Some(origin) {
                 continue;
             }
             if rendered == 0 {
@@ -135,16 +152,36 @@ impl<'a> ProvenanceResolver<'a> {
         }
     }
 
-    fn resolve_to_source(&self, origin: OriginId) -> Option<SourceOrigin> {
+    fn resolve_to_source(&self, origin: OriginId) -> Option<ResolvedSource> {
         if let Some(source) = self.universe.direct_source_origin(origin) {
-            return Some(source);
+            let hi = source
+                .byte_offset()
+                .checked_add(self.source_scalar_len(source).unwrap_or(1))?;
+            return Some(ResolvedSource { source, hi });
         }
         let mut origin = origin;
         for _ in 0..self.trace_depth.saturating_add(4) {
             match self.record(origin)? {
-                OriginRecord::Source(source) => return Some(source),
+                OriginRecord::Source(source) => {
+                    let hi = source
+                        .byte_offset()
+                        .checked_add(self.source_scalar_len(source).unwrap_or(1))?;
+                    return Some(ResolvedSource { source, hi });
+                }
                 OriginRecord::SourceSpan(span) => {
-                    return self.universe.source_origin_at_position(span.lo());
+                    let source =
+                        self.universe
+                            .source_origin_at_position(span.lo())
+                            .or_else(|| {
+                                self.universe
+                                    .source_region_at_position(span.lo())
+                                    .map(|region| {
+                                        SourceOrigin::new(region.source, region.byte_len, 0, 0)
+                                    })
+                            })?;
+                    let region = self.universe.source_region(source.source())?;
+                    let hi = span.hi().raw().checked_sub(region.start.raw())?;
+                    return Some(ResolvedSource { source, hi });
                 }
                 OriginRecord::MacroInvocation(invocation) => {
                     origin = invocation.invocation();
@@ -161,20 +198,102 @@ impl<'a> ProvenanceResolver<'a> {
         None
     }
 
-    fn render_source_context(&self, out: &mut String, prefix: &str, source: SourceOrigin) {
-        let display = self.source_display(source);
+    fn render_source_context(&self, out: &mut String, prefix: &str, source: ResolvedSource) {
+        let display = self.source_display(source.source);
         let label = display.label;
         let line_number = display.line_number;
         let column = display.column;
         let _ = writeln!(out, "{prefix} {label}:{line_number}:{column}");
 
-        let Some(line) = display.line else {
+        let Some(region) = self.universe.source_region(source.source.source()) else {
+            if let Some(line) = display.line {
+                let gutter = line_number.to_string();
+                let _ = writeln!(out, "  {gutter} | {line}");
+                let padding = caret_padding(&line, column as usize);
+                let _ = writeln!(out, "  {} | {padding}^", " ".repeat(gutter.len()));
+            }
             return;
         };
-        let gutter = line_number.to_string();
-        let _ = writeln!(out, "  {gutter} | {line}");
-        let caret_padding = caret_padding(&line, column as usize);
-        let _ = writeln!(out, "  {} | {caret_padding}^", " ".repeat(gutter.len()));
+        let Some(bytes) = self.universe.source_backing_bytes(region) else {
+            return;
+        };
+        self.render_range_lines(out, bytes, source.source.byte_offset(), source.hi);
+    }
+
+    fn source_scalar_len(&self, source: SourceOrigin) -> Option<u64> {
+        let region = self.universe.source_region(source.source())?;
+        let bytes = self.universe.source_backing_bytes(region)?;
+        let offset = usize::try_from(source.byte_offset()).ok()?;
+        let ch = std::str::from_utf8(bytes.get(offset..)?)
+            .ok()?
+            .chars()
+            .next()?;
+        u64::try_from(ch.len_utf8()).ok()
+    }
+
+    fn render_range_lines(&self, out: &mut String, bytes: &[u8], lo: u64, hi: u64) {
+        let (Ok(lo), Ok(hi)) = (usize::try_from(lo), usize::try_from(hi)) else {
+            return;
+        };
+        if lo > bytes.len() || hi < lo || hi > bytes.len() {
+            return;
+        }
+        let starts = physical_line_starts(bytes);
+        let first = line_index_at(&starts, lo);
+        let last_probe = if hi > lo { hi - 1 } else { lo };
+        let last = line_index_at(&starts, last_probe.min(bytes.len()));
+        self.render_one_range_line(out, bytes, &starts, first, lo..hi, true);
+        if last > first {
+            if last > first + 1 {
+                out.push_str("    | ...\n");
+            }
+            self.render_one_range_line(out, bytes, &starts, last, lo..hi, false);
+        }
+    }
+
+    fn render_one_range_line(
+        &self,
+        out: &mut String,
+        bytes: &[u8],
+        starts: &[usize],
+        index: usize,
+        range: std::ops::Range<usize>,
+        first: bool,
+    ) {
+        let Some(line) = physical_line(bytes, starts, index) else {
+            return;
+        };
+        let mark_lo = if first {
+            range.start.clamp(line.start, line.content_end)
+        } else {
+            line.start
+        };
+        let mark_hi = if range.is_empty() {
+            mark_lo
+        } else {
+            range.end.clamp(mark_lo, line.content_end)
+        };
+        let Ok(text) = std::str::from_utf8(&bytes[line.start..line.content_end]) else {
+            return;
+        };
+        let Ok(prefix) = std::str::from_utf8(&bytes[line.start..mark_lo]) else {
+            return;
+        };
+        let Ok(marked) = std::str::from_utf8(&bytes[mark_lo..mark_hi]) else {
+            return;
+        };
+        let column = display_width(prefix, 0);
+        let width = display_width(marked, column).saturating_sub(column).max(1);
+        let number = index.saturating_add(1);
+        let gutter = number.to_string();
+        let _ = writeln!(out, "  {gutter} | {text}");
+        let _ = writeln!(
+            out,
+            "  {} | {}{}",
+            " ".repeat(gutter.len()),
+            " ".repeat(column),
+            "^".repeat(width)
+        );
     }
 
     fn source_label_for_record(
@@ -287,6 +406,18 @@ struct DisplaySource {
     line: Option<String>,
 }
 
+#[derive(Clone, Copy)]
+struct ResolvedSource {
+    source: SourceOrigin,
+    hi: u64,
+}
+
+#[derive(Clone, Copy)]
+struct PhysicalLine {
+    start: usize,
+    content_end: usize,
+}
+
 fn display_path(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
@@ -328,6 +459,44 @@ fn physical_line_at(bytes: &[u8], offset: usize) -> Option<(u32, u32, String)> {
         u32::try_from(prefix.chars().count().saturating_add(1)).unwrap_or(u32::MAX),
         text.to_owned(),
     ))
+}
+
+fn physical_line_starts(bytes: &[u8]) -> Vec<usize> {
+    let mut starts = vec![0];
+    for (index, &byte) in bytes.iter().enumerate() {
+        if byte == b'\n' {
+            starts.push(index + 1);
+        }
+    }
+    starts
+}
+
+fn line_index_at(starts: &[usize], offset: usize) -> usize {
+    starts
+        .partition_point(|&start| start <= offset)
+        .saturating_sub(1)
+}
+
+fn physical_line(bytes: &[u8], starts: &[usize], index: usize) -> Option<PhysicalLine> {
+    let start = *starts.get(index)?;
+    let raw_end = starts
+        .get(index + 1)
+        .map_or(bytes.len(), |next| next.saturating_sub(1));
+    let content_end = raw_end
+        .checked_sub(1)
+        .filter(|&end| bytes.get(end) == Some(&b'\r'))
+        .unwrap_or(raw_end);
+    Some(PhysicalLine { start, content_end })
+}
+
+fn display_width(text: &str, initial: usize) -> usize {
+    text.chars().fold(initial, |column, ch| {
+        if ch == '\t' {
+            column + (8 - column % 8)
+        } else {
+            column + UnicodeWidthChar::width(ch).unwrap_or(0)
+        }
+    })
 }
 
 fn caret_padding(line: &str, one_based_column: usize) -> String {

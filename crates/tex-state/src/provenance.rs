@@ -452,6 +452,109 @@ pub enum SyntheticOriginKind {
     Test,
 }
 
+/// The semantic role of a secondary diagnostic location.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum RelatedLocationRole {
+    Invocation,
+    Definition,
+    RecoveryFrontier,
+    SecondarySpelling,
+}
+
+impl RelatedLocationRole {
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Invocation => "invoked here",
+            Self::Definition => "defined here",
+            Self::RecoveryFrontier => "recovery begins here",
+            Self::SecondarySpelling => "also consumed here",
+        }
+    }
+}
+
+/// One labeled secondary location captured when a diagnostic is created.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct RelatedLocation {
+    role: RelatedLocationRole,
+    origin: OriginId,
+}
+
+impl RelatedLocation {
+    #[must_use]
+    pub const fn new(role: RelatedLocationRole, origin: OriginId) -> Self {
+        Self { role, origin }
+    }
+
+    #[must_use]
+    pub const fn role(self) -> RelatedLocationRole {
+        self.role
+    }
+
+    #[must_use]
+    pub const fn origin(self) -> OriginId {
+        self.origin
+    }
+}
+
+/// Origins retained by an error independently of mutable input-stack state.
+///
+/// These error-path collections are deliberately bounded. They contain no
+/// rendered strings, source bytes, line indexes, or display coordinates.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DiagnosticSite {
+    primary: Option<OriginId>,
+    related: Box<[RelatedLocation]>,
+    expansion_trace: Box<[OriginId]>,
+}
+
+impl DiagnosticSite {
+    pub const MAX_RELATED: usize = 8;
+    pub const MAX_EXPANSION_TRACE: usize = 8;
+
+    #[must_use]
+    pub fn new(
+        primary: Option<OriginId>,
+        related: impl IntoIterator<Item = RelatedLocation>,
+        expansion_trace: impl IntoIterator<Item = OriginId>,
+    ) -> Self {
+        Self {
+            primary,
+            related: related.into_iter().take(Self::MAX_RELATED).collect(),
+            expansion_trace: expansion_trace
+                .into_iter()
+                .filter(|origin| *origin != OriginId::UNKNOWN)
+                .take(Self::MAX_EXPANSION_TRACE)
+                .collect(),
+        }
+    }
+
+    #[must_use]
+    pub fn primary(primary: OriginId) -> Self {
+        Self::new(Some(primary), [], [])
+    }
+
+    #[must_use]
+    pub fn unknown() -> Self {
+        Self::new(None, [], [])
+    }
+
+    #[must_use]
+    pub const fn primary_origin(&self) -> Option<OriginId> {
+        self.primary
+    }
+
+    #[must_use]
+    pub fn related(&self) -> &[RelatedLocation] {
+        &self.related
+    }
+
+    #[must_use]
+    pub fn expansion_trace(&self) -> &[OriginId] {
+        &self.expansion_trace
+    }
+}
+
 /// One lazily-resolved token-origin record.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum OriginRecord {
