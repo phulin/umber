@@ -1459,6 +1459,31 @@ fn insertion_starts_with_normal_paragraph_parameters() {
 }
 
 #[test]
+fn insertion_omits_parskip_before_first_internal_vlist_paragraph() {
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\parskip=12pt \\insert7{x}"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("insertion paragraph executes");
+
+    let content = stores
+        .current_page_nodes()
+        .iter()
+        .find_map(|node| match node {
+            tex_state::node::Node::Ins { content, .. } => Some(*content),
+            _ => None,
+        })
+        .expect("insert node");
+    assert!(matches!(
+        stores.nodes(content),
+        [tex_state::node::Node::HList(_)]
+    ));
+}
+
+#[test]
 fn insertion_skip_reports_infinite_shrink_correction() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

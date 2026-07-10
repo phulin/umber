@@ -219,7 +219,11 @@ fn set_glue(target: Scaled, natural: Scaled, meas: &Measurement) -> GlueSetting 
         ratio,
         sign,
         order,
-        badness: badness(excess, Scaled::from_raw(total)),
+        badness: if order == Order::Normal {
+            badness(excess, Scaled::from_raw(total))
+        } else {
+            0
+        },
         excess,
     }
 }

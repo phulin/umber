@@ -592,7 +592,9 @@ assignments, box building, and dispatch into the typesetting kernels.
   the internal vertical builder inside a journal-backed `Universe` group.
   Entering an `\insert` or `\vadjust` group applies TeX82's local
   `normal_paragraph` defaults, and a paragraph still open at the closing brace
-  is line-broken before the internal vertical list is frozen.
+  is line-broken before the internal vertical list is frozen. Starting the
+  first paragraph of an empty internal vertical list omits `\parskip`, while
+  later paragraphs retain it, matching TeX82's signed-mode `new_graf` test.
   Insertion parameters and content are captured before group exit, while only
   global assignments made inside the insertion survive in the enclosing state.
 - **Paragraph and page hand-off**: paragraph start/end is stomach-owned.
@@ -752,7 +754,9 @@ makes box-level memoization (M4) sound.
   primitives live in `tex-exec`; execution records the latest packing badness
   through `Universe` for the read-only `\badness` internal integer. When hpack
   diagnostics require TeX's overfull marker, `tex-exec` materializes the
-  synthetic rule while freezing the final child list. Packed boxes retain the
+  synthetic rule while freezing the final child list. Infinite-order stretch
+  or shrink sets glue with zero badness and never emits finite-order packing
+  diagnostics, as in TeX82. Packed boxes retain the
   glue-set ratio as a reduced exact fraction, so cumulative TeX.web glue
   rounding is byte-stable without floating-point state or a lossy decimal
   approximation. The packing crate

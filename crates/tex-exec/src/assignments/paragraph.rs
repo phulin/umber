@@ -73,7 +73,9 @@ where
         Mode::Vertical | Mode::InternalVertical => {
             let par_shape = nest.current_list().par_shape().cloned();
             let parskip = stores.glue_param(GlueParam::PAR_SKIP);
-            if stores.glue(parskip) != GlueSpec::ZERO {
+            if (nest.current_mode() == Mode::Vertical || !nest.current_list().is_empty())
+                && stores.glue(parskip) != GlueSpec::ZERO
+            {
                 append_vertical_contribution(
                     nest,
                     stores,

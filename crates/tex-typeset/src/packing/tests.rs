@@ -99,6 +99,45 @@ fn hpack_sets_finite_stretch_order_and_ratio() {
 }
 
 #[test]
+fn hpack_infinite_shrink_has_zero_badness_and_no_diagnostic() {
+    let mut universe = Universe::new();
+    let hss = universe.intern_glue(GlueSpec {
+        width: sp(0),
+        stretch: sp(1),
+        stretch_order: Order::Fil,
+        shrink: sp(1),
+        shrink_order: Order::Fil,
+    });
+    let list = universe.freeze_node_list(&[
+        Node::Glue {
+            spec: hss,
+            kind: GlueKind::Normal,
+            leader: None,
+        },
+        Node::Kern {
+            amount: sp(20),
+            kind: KernKind::Explicit,
+        },
+    ]);
+
+    let packed = hpack(
+        &universe,
+        list,
+        PackSpec::Exactly(sp(0)),
+        HpackParams {
+            hbadness: 0,
+            hfuzz: sp(0),
+            overfull_rule: sp(5),
+        },
+    );
+
+    assert_eq!(packed.badness, 0);
+    assert_eq!(packed.node.glue_sign, Sign::Shrinking);
+    assert_eq!(packed.node.glue_order, Order::Fil);
+    assert!(packed.diagnostics.is_empty());
+}
+
+#[test]
 fn leader_glue_participates_in_packing_like_ordinary_glue() {
     let mut universe = Universe::new();
     let glue = universe.intern_glue(GlueSpec {
