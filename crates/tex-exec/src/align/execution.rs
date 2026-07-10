@@ -36,6 +36,9 @@ where
         nest.push(alignment_mode(alignment_kind));
         let align_level = nest.depth() - 1;
         nest.current_list_mut().set_align_state(state);
+        // TeX82 keeps an entry align_group above the whole-alignment group.
+        // fin_col replaces this level after every completed entry.
+        stores.enter_group_with_kind(tex_state::GroupKind::Simple);
         replay_everycr(input, stores);
 
         while let Some(first_token) = align_peek(align_level, nest, input, stores, recorder, hooks)?
@@ -102,6 +105,8 @@ where
         nest.push(alignment_mode(alignment_kind));
         let align_level = nest.depth() - 1;
         nest.current_list_mut().set_align_state(state);
+        // Match init_align's entry align_group for the display path too.
+        stores.enter_group_with_kind(tex_state::GroupKind::Simple);
         replay_everycr(input, stores);
 
         while let Some(first_token) = align_peek(align_level, nest, input, stores, recorder, hooks)?
@@ -173,6 +178,9 @@ where
             continue;
         }
         if is_end_group(stores, semantic) {
+            // fin_align unsaves the fresh entry level, then the level created
+            // by scan_spec for the whole alignment.
+            leave_group(input, stores, tex_state::GroupKind::Simple)?;
             leave_group(input, stores, tex_state::GroupKind::Simple)?;
             return Ok(None);
         }
@@ -291,7 +299,6 @@ where
     H: ExpansionHooks<S>,
 {
     let kind = align_kind(nest, align_level)?;
-    stores.enter_group_with_kind(tex_state::GroupKind::Simple);
     nest.push(cell_mode(kind));
     if kind == AlignmentKind::VAlign {
         nest.current_list_mut()
@@ -362,6 +369,9 @@ where
                 let next_column = column + 1;
                 package_cell(align_level, kind, span_count, next_column, nest, stores)?;
                 leave_group(input, stores, tex_state::GroupKind::Simple)?;
+                // WEB fin_col immediately installs the next entry align_group,
+                // including after a row-ending \cr for fin_align to remove.
+                stores.enter_group_with_kind(tex_state::GroupKind::Simple);
                 align_state_mut(nest, align_level)?.finish_cell(next_column);
                 return Ok(CellResult {
                     next_column,

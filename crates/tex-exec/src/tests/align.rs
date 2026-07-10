@@ -512,6 +512,46 @@ fn records_repeat_point_and_resolves_extra_columns() {
 }
 
 #[test]
+fn plain_ialign_accepts_bgroup_and_leading_periodic_preamble() {
+    let stores = run_boxed_alignment_source("\\let\\bgroup={\\halign\\bgroup&#x\\cr a&b\\cr}");
+    let rows = vlist_rows(&stores, box_zero_vlist(&stores));
+    let cells = row_cells(&stores, rows[0]);
+
+    assert_eq!(cells.len(), 2);
+    assert_eq!(cell_text(&stores, cells[0]), "ax");
+    assert_eq!(cell_text(&stores, cells[1]), "bx");
+}
+
+#[test]
+fn plain_tab_row_closes_alignment_and_box_before_surrounding_begingroup() {
+    let source = "\\let\\bgroup={\\let\\egroup=}\
+         \\def\\tbbox{\\setbox0=\\hbox\\bgroup}\
+         \\def\\tbbx{\\egroup}\
+         \\count0=7\
+         \\def\\tabalign{\\begingroup\\count0=9\
+           \\setbox0=\\vbox\\bgroup\
+           \\def\\cr{\\crcr\\egroup\\egroup\\unvbox0\\lastbox\
+             \\endgroup\\count1=\\count0}\
+           \\halign\\bgroup&\\tbbox##\\tbbx\\crcr}\
+         \\tabalign a&b\\cr";
+    let mut stores = support::stores_with_fonts();
+    let checkpoint = stores.snapshot();
+
+    run_alignment_source_in(&mut stores, source);
+
+    assert_eq!(stores.count(0), 7);
+    assert_eq!(stores.count(1), 7);
+    let first_hash = stores.snapshot().state_hash();
+
+    stores.rollback(&checkpoint);
+    run_alignment_source_in(&mut stores, source);
+
+    assert_eq!(stores.count(0), 7);
+    assert_eq!(stores.count(1), 7);
+    assert_eq!(stores.snapshot().state_hash(), first_hash);
+}
+
+#[test]
 fn alignment_pack_spec_matches_box_keywords() {
     let (_stores, state) = scan_halign_preamble("{#\\cr}");
     assert_eq!(state.pack_spec(), AlignmentPackSpec::Natural);
