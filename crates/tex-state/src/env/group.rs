@@ -10,6 +10,8 @@ pub enum GroupKind {
     Simple,
     /// A `\begingroup` ... `\endgroup` group.
     SemiSimple,
+    /// A `$` ... `$` or `$$` ... `$$` math-shift group.
+    MathShift,
 }
 
 impl GroupKind {
@@ -18,6 +20,7 @@ impl GroupKind {
         match self {
             Self::Simple => "{",
             Self::SemiSimple => "\\begingroup",
+            Self::MathShift => "$",
         }
     }
 
@@ -26,6 +29,7 @@ impl GroupKind {
         match self {
             Self::Simple => "}",
             Self::SemiSimple => "\\endgroup",
+            Self::MathShift => "$",
         }
     }
 }

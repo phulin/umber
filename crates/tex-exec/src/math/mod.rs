@@ -57,6 +57,14 @@ pub(crate) use lower::finish_math_lists;
 use scan::*;
 use support::*;
 
+#[cfg(test)]
+pub(crate) fn testing_finish_current_math_list(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+) -> tex_state::ids::NodeListId {
+    finish_current_math_list(nest, stores)
+}
+
 pub(crate) fn enter_math<S, H>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
@@ -103,21 +111,16 @@ where
             .map_or(Scaled::from_raw(-Scaled::MAX_DIMEN.raw()), |line| {
                 pre_display_size(stores, line)
             });
-        let interrupt = DisplayInterrupt {
-            pre_display_size,
-            display_width: dimensions.width,
-            display_indent: dimensions.indent,
-            saved_pre_display_size: stores.dimen_param(DimenParam::PRE_DISPLAY_SIZE),
-            saved_display_width: stores.dimen_param(DimenParam::DISPLAY_WIDTH),
-            saved_display_indent: stores.dimen_param(DimenParam::DISPLAY_INDENT),
-        };
-        stores.set_dimen_param(DimenParam::PRE_DISPLAY_SIZE, interrupt.pre_display_size);
-        stores.set_dimen_param(DimenParam::DISPLAY_WIDTH, interrupt.display_width);
-        stores.set_dimen_param(DimenParam::DISPLAY_INDENT, interrupt.display_indent);
-        Some(interrupt)
+        Some((pre_display_size, dimensions.width, dimensions.indent))
     } else {
         None
     };
+    stores.enter_group_with_kind(tex_state::GroupKind::MathShift);
+    if let Some((pre_display_size, display_width, display_indent)) = interrupt {
+        stores.set_dimen_param(DimenParam::PRE_DISPLAY_SIZE, pre_display_size);
+        stores.set_dimen_param(DimenParam::DISPLAY_WIDTH, display_width);
+        stores.set_dimen_param(DimenParam::DISPLAY_INDENT, display_indent);
+    }
     // tex.web `push_math(math_shift_group)` locally defines `\fam=-1` before
     // `\everymath`/`\everydisplay`, so variable-family mathcodes retain their
     // encoded family unless the formula explicitly selects another one.
@@ -127,8 +130,9 @@ where
     } else {
         Mode::Math
     });
-    if let Some(interrupt) = interrupt {
-        nest.current_list_mut().set_display_interrupt(interrupt);
+    if interrupt.is_some() {
+        nest.current_list_mut()
+            .set_display_interrupt(DisplayInterrupt);
     }
     let every = stores.tok_param(if display {
         TokParam::EVERY_DISPLAY
@@ -160,7 +164,7 @@ where
         Token::Char {
             cat: Catcode::MathShift,
             ..
-        } => finish_math(nest, input, stores),
+        } => finish_math(nest, input, stores, origin),
         Token::Char {
             cat: Catcode::Space,
             ..
@@ -216,12 +220,13 @@ fn finish_math<S>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
+    origin: OriginId,
 ) -> Result<DispatchAction, ExecError>
 where
     S: InputSource,
 {
     if close_missing_left_group(nest, stores)? {
-        return finish_math(nest, input, stores);
+        return finish_math(nest, input, stores, origin);
     }
     let display = nest.current_mode() == Mode::DisplayMath;
     if display {
@@ -241,7 +246,7 @@ where
     let mut level = nest.pop()?;
     if display {
         let eq_no = level.list_mut().take_display_eq_no();
-        let interrupt = level.list_mut().take_display_interrupt().ok_or(
+        let _interrupt = level.list_mut().take_display_interrupt().ok_or(
             ExecError::UnimplementedTypesetting {
                 mode: Mode::DisplayMath,
                 token: Token::Cs(stores.intern("display")),
@@ -249,10 +254,22 @@ where
                 operation: "display interrupt state",
             },
         )?;
-        finish_display_math(nest, input, stores, interrupt, content, eq_no)?;
+        let (display_content, finished_eq_no) = if let Some(eq_no) = eq_no {
+            let finished = finish_eq_no(stores, eq_no.side, content);
+            leave_group_with_origin(input, stores, tex_state::GroupKind::MathShift, origin)?;
+            (eq_no.display, Some(finished))
+        } else {
+            (content, None)
+        };
+        finish_display_math(nest, stores, display_content, finished_eq_no)?;
+        leave_group_with_origin(input, stores, tex_state::GroupKind::MathShift, origin)?;
+        resume_after_display(nest, input, stores)?;
     } else {
-        nest.current_list_mut()
-            .push(Node::MathList(MathListNode { display, content }));
+        let insert_penalties = nest.current_mode() == Mode::Horizontal;
+        let nodes =
+            finish_math_list_node(stores, MathListNode { display, content }, insert_penalties);
+        nest.current_list_mut().append(nodes);
+        leave_group_with_origin(input, stores, tex_state::GroupKind::MathShift, origin)?;
     }
     Ok(DispatchAction::Continue)
 }
@@ -350,7 +367,7 @@ where
     match primitive {
         UnexpandablePrimitive::Par | UnexpandablePrimitive::EndGraf => {
             report_math_error(stores, "Missing $ inserted");
-            finish_math(nest, input, stores)
+            finish_math(nest, input, stores, origin)
         }
         UnexpandablePrimitive::MathChar => {
             let code = scan_math_char_code(input, stores, hooks, traced)?;
@@ -560,7 +577,7 @@ where
         });
     }
     let mut level = nest.pop()?;
-    let interrupt =
+    let _interrupt =
         level
             .list_mut()
             .take_display_interrupt()
@@ -572,46 +589,68 @@ where
             })?;
     let nodes =
         crate::align::execute_display_halign(context, nest, input, stores, recorder, hooks)?;
-    consume_display_alignment_closer(input, stores)?;
-    finish_display_alignment(nest, input, stores, interrupt, nodes)
+    let closing_origin = consume_display_alignment_closer(input, stores, context.origin())?;
+    finish_display_alignment(nest, stores, nodes)?;
+    leave_group_with_origin(
+        input,
+        stores,
+        tex_state::GroupKind::MathShift,
+        closing_origin,
+    )?;
+    resume_after_display_alignment(nest, input, stores)
 }
 
 fn consume_display_alignment_closer<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-) -> Result<(), ExecError>
+    fallback_origin: OriginId,
+) -> Result<OriginId, ExecError>
 where
     S: InputSource,
 {
-    match input.next_token(stores)? {
-        Some(Token::Char {
-            cat: Catcode::MathShift,
-            ..
-        }) => {}
-        Some(token) => {
-            push_tokens(input, stores, [token]);
+    let closing_origin = match input.next_traced_token(stores)? {
+        Some(traced)
+            if matches!(
+                tex_expand::semantic_token(traced),
+                Token::Char {
+                    cat: Catcode::MathShift,
+                    ..
+                }
+            ) =>
+        {
+            traced.origin()
+        }
+        Some(traced) => {
+            push_traced_tokens(input, stores, [traced]);
             report_math_error(stores, "Missing $$ inserted");
-            return Ok(());
+            return Ok(fallback_origin);
         }
         None => {
             report_math_error(stores, "Missing $$ inserted");
-            return Ok(());
+            return Ok(fallback_origin);
         }
-    }
+    };
 
-    match input.next_token(stores)? {
-        Some(Token::Char {
-            cat: Catcode::MathShift,
-            ..
-        }) => Ok(()),
-        Some(token) => {
-            push_tokens(input, stores, [token]);
+    match input.next_traced_token(stores)? {
+        Some(traced)
+            if matches!(
+                tex_expand::semantic_token(traced),
+                Token::Char {
+                    cat: Catcode::MathShift,
+                    ..
+                }
+            ) =>
+        {
+            Ok(closing_origin)
+        }
+        Some(traced) => {
+            push_traced_tokens(input, stores, [traced]);
             report_math_error(stores, "Missing $$ inserted");
-            Ok(())
+            Ok(closing_origin)
         }
         None => {
             report_math_error(stores, "Missing $$ inserted");
-            Ok(())
+            Ok(closing_origin)
         }
     }
 }

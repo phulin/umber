@@ -53,10 +53,17 @@ pub enum ExecError {
     ExtraRightBraceOrForgottenEndgroup {
         origin: OriginId,
     },
+    ExtraRightBraceOrForgottenDollar {
+        origin: OriginId,
+    },
     ExtraEndGroup {
         origin: OriginId,
     },
     EndGroupMismatch {
+        started_by: &'static str,
+        origin: OriginId,
+    },
+    MathShiftGroupMismatch {
         started_by: &'static str,
         origin: OriginId,
     },
@@ -169,9 +176,15 @@ impl fmt::Display for ExecError {
             Self::ExtraRightBraceOrForgottenEndgroup { .. } => {
                 write!(f, "Extra }}, or forgotten \\endgroup.")
             }
+            Self::ExtraRightBraceOrForgottenDollar { .. } => {
+                write!(f, "Extra }}, or forgotten $.")
+            }
             Self::ExtraEndGroup { .. } => write!(f, "Extra \\endgroup."),
             Self::EndGroupMismatch { started_by, .. } => {
                 write!(f, "\\endgroup ended a group started by {started_by}")
+            }
+            Self::MathShiftGroupMismatch { started_by, .. } => {
+                write!(f, "$ ended a group started by {started_by}")
             }
             Self::UnsupportedCommand { token, opcode, .. } => {
                 write!(
@@ -277,8 +290,10 @@ impl std::error::Error for ExecError {
             | Self::ExtraEndCsName { .. }
             | Self::TooManyRightBraces { .. }
             | Self::ExtraRightBraceOrForgottenEndgroup { .. }
+            | Self::ExtraRightBraceOrForgottenDollar { .. }
             | Self::ExtraEndGroup { .. }
             | Self::EndGroupMismatch { .. }
+            | Self::MathShiftGroupMismatch { .. }
             | Self::UnsupportedCommand { .. }
             | Self::MissingPrefixedCommand
             | Self::PrefixWithNonAssignment { .. }
@@ -329,8 +344,10 @@ impl ExecError {
             | Self::ExtraEndCsName { origin }
             | Self::TooManyRightBraces { origin }
             | Self::ExtraRightBraceOrForgottenEndgroup { origin }
+            | Self::ExtraRightBraceOrForgottenDollar { origin }
             | Self::ExtraEndGroup { origin }
             | Self::EndGroupMismatch { origin, .. }
+            | Self::MathShiftGroupMismatch { origin, .. }
             | Self::UnsupportedCommand { origin, .. }
             | Self::PrefixWithNonAssignment { origin, .. }
             | Self::ExpectedControlSequence { origin, .. }

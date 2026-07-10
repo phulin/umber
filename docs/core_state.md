@@ -309,9 +309,13 @@ cells[i] = new
   intentional for M1: rollback consumes `old`, and future redo-replay /
   memo consumers must re-derive final values from the live cells when they
   need them.
-- **Groups are journal markers.** This *replaces* Knuth's save stack: group
-  entry pushes `Marker::Group` and bumps the epoch; group exit walks back to
-  the marker restoring records. Same records, same log, one mechanism.
+- **Groups are typed journal markers.** This *replaces* Knuth's save stack:
+  brace, `\begingroup`, and math-shift boundaries all push `Marker::Group`
+  with a boundary kind and bump the epoch; group exit first checks that the
+  requested closer matches, then walks back to the marker restoring records.
+  The same aggregate entry/exit also saves and restores code-table roots and
+  releases `\aftergroup` payloads for input-stack replay. Same records, same
+  log, one mechanism; math entry does not maintain a parallel save stack.
 - **`\global` is logged too**, tagged so group-exit restoration skips it and
   compacts it below the marker (the analogue of e-TeX's sparse-register
   compaction). "Survives the group" and "survives rollback to page 12" are

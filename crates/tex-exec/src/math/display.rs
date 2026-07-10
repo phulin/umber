@@ -9,7 +9,7 @@ use tex_state::token::{Catcode, OriginId, Token};
 use tex_typeset::PackSpec;
 use tex_typeset::math::{MathParams, Style};
 
-use crate::mode::{DisplayEqNo, DisplayInterrupt, EqNoSide};
+use crate::mode::{DisplayEqNo, EqNoSide};
 use crate::packing_params::{hpack as hpack_nodes, hpack_params};
 use crate::vertical::{
     append_node_to_vertical_list, append_vertical_contribution, build_page_if_outer_vertical,
@@ -44,22 +44,37 @@ pub(super) fn start_eq_no(
     };
     nest.current_list_mut()
         .set_display_eq_no(DisplayEqNo { side, display });
+    stores.enter_group_with_kind(tex_state::GroupKind::MathShift);
+    stores.set_int_param(IntParam::FAM, -1);
     Ok(())
 }
 
-pub(super) fn finish_display_math<S>(
-    nest: &mut ModeNest,
-    input: &mut InputStack<S>,
+pub(super) struct FinishedEqNo {
+    pub side: EqNoSide,
+    pub boxed: BoxNode,
+}
+
+pub(super) fn finish_eq_no(
     stores: &mut Universe,
-    interrupt: DisplayInterrupt,
+    side: EqNoSide,
     content: tex_state::ids::NodeListId,
-    eq_no: Option<DisplayEqNo>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
-    let (display_content, eq_no_content, left_eq_no) = match eq_no {
-        Some(eq_no) => (eq_no.display, Some(content), eq_no.side == EqNoSide::Left),
+) -> FinishedEqNo {
+    let params = MathParams::read(stores);
+    let nodes = convert_math_hlist(stores, content, Style::TEXT, false, &params);
+    let list = stores.freeze_node_list(&nodes);
+    let mut boxed = hpack_nodes(stores, list, PackSpec::Natural, hpack_params(stores)).node;
+    boxed.display = true;
+    FinishedEqNo { side, boxed }
+}
+
+pub(super) fn finish_display_math(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    content: tex_state::ids::NodeListId,
+    eq_no: Option<FinishedEqNo>,
+) -> Result<(), ExecError> {
+    let (display_content, mut eq_box, left_eq_no) = match eq_no {
+        Some(eq_no) => (content, Some(eq_no.boxed), eq_no.side == EqNoSide::Left),
         None => (content, None, false),
     };
     // AppG rule 22
@@ -76,14 +91,6 @@ where
     .node;
     display_box.display = true;
     let natural_display_width = display_box.width;
-
-    let mut eq_box = eq_no_content.map(|content| {
-        let eq_nodes = convert_math_hlist(stores, content, Style::TEXT, false, &params);
-        let eq_list = stores.freeze_node_list(&eq_nodes);
-        let mut node = hpack_nodes(stores, eq_list, PackSpec::Natural, hpack_params(stores)).node;
-        node.display = true;
-        node
-    });
 
     // TeX.web after_math variables: w=display width, z=line width, s=line indent,
     // e=eqno width, q=eqno width plus math quad, d=center displacement.
@@ -226,21 +233,14 @@ where
         );
     }
 
-    restore_display_dimensions(stores, interrupt);
-    resume_after_display(nest, input, stores)?;
     Ok(())
 }
 
-pub(super) fn finish_display_alignment<S>(
+pub(super) fn finish_display_alignment(
     nest: &mut ModeNest,
-    input: &mut InputStack<S>,
     stores: &mut Universe,
-    interrupt: DisplayInterrupt,
     nodes: Vec<Node>,
-) -> Result<(), ExecError>
-where
-    S: InputSource,
-{
+) -> Result<(), ExecError> {
     append_vertical_contribution(
         nest,
         stores,
@@ -281,8 +281,6 @@ where
         },
     );
 
-    restore_display_dimensions(stores, interrupt);
-    resume_after_display_alignment(nest, input, stores)?;
     Ok(())
 }
 
@@ -294,7 +292,7 @@ fn display_alignment_node(mut node: Node, display_indent: Scaled) -> Node {
     node
 }
 
-fn resume_after_display_alignment<S>(
+pub(super) fn resume_after_display_alignment<S>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
@@ -370,7 +368,7 @@ const fn tex_half(x: i32) -> i32 {
     }
 }
 
-fn resume_after_display<S>(
+pub(super) fn resume_after_display<S>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
@@ -396,15 +394,6 @@ where
     }
     build_page_if_outer_vertical(nest, stores)?;
     Ok(())
-}
-
-fn restore_display_dimensions(stores: &mut Universe, interrupt: DisplayInterrupt) {
-    stores.set_dimen_param(
-        DimenParam::PRE_DISPLAY_SIZE,
-        interrupt.saved_pre_display_size,
-    );
-    stores.set_dimen_param(DimenParam::DISPLAY_WIDTH, interrupt.saved_display_width);
-    stores.set_dimen_param(DimenParam::DISPLAY_INDENT, interrupt.saved_display_indent);
 }
 
 fn display_can_shrink_with_eqno(w: Scaled, q: Scaled, z: Scaled, shrink: ShrinkTotals) -> bool {

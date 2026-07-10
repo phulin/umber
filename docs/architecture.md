@@ -569,9 +569,15 @@ assignments, box building, and dispatch into the typesetting kernels.
   triggering token's origin and remain part of the checkpointed input stack.
   `\mathcode"8000` redispatches through the current active-character meaning
   at use time, INITEX ASCII letters/digits carry TeX82's variable-family
-  mathcodes, and math entry resets the barriered `\fam` parameter to -1 before
-  replaying `\everymath`/`\everydisplay`. Family font selectors live in the
-  barriered Env font state.
+  mathcodes, and every inline/display formula opens a distinct journal-backed
+  math-shift group before locally resetting the barriered `\fam` parameter to
+  -1 and replaying `\everymath`/`\everydisplay`. Equation-number subformulae
+  open a nested math-shift group with the same reset. Math conversion and
+  equation-number packing occur before their respective group exits, matching
+  TeX82's `after_math`/`unsave` ordering; local Env and code-table assignments
+  therefore affect the formula but restore at the closing dollar, globals
+  survive, and `\aftergroup` tokens replay through the checkpointed input
+  stack. Family font selectors live in the barriered Env font state.
   Display math is packaged stomach-side: entering `$$` from unrestricted
   horizontal mode interrupts the paragraph through the ordinary line breaker,
   records `\predisplaysize`, `\displaywidth`, and `\displayindent` in

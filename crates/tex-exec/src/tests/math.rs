@@ -6,11 +6,12 @@ use tex_state::math::{
 };
 use tex_state::node::{GlueKind, KernKind, Node};
 use tex_state::provenance::{InsertedOriginKind, OriginRecord};
+use tex_state::scaled::Scaled;
 
 #[test]
 fn math_mode_builds_noads_styles_choices_and_mu_nodes() {
     let (stores, executor) = run_math_source(
-        r"$a_b^c\mathbin+\mathop{x}\limits_y\overline{z}\mskip3mu\mkern2mu\nonscript\displaystyle\mathchoice{d}{t}{s}{u}$",
+        r"$a_b^c\mathbin+\mathop{x}\limits_y\overline{z}\mskip3mu\mkern2mu\nonscript\displaystyle\mathchoice{d}{t}{s}{u}",
     );
     let nodes = math_nodes(&stores, &executor);
 
@@ -84,8 +85,9 @@ fn math_mode_builds_noads_styles_choices_and_mu_nodes() {
 
 #[test]
 fn generalized_fraction_absorbs_prior_list_and_reports_doubled_fraction() {
-    let (stores, executor) = run_math_source(r"$a\over b\over c$");
-    let nodes = math_nodes(&stores, &executor);
+    let (mut stores, mut executor) = run_math_source(r"$a\over b\over c");
+    let content = crate::math::testing_finish_current_math_list(executor.nest_mut(), &mut stores);
+    let nodes = stores.nodes(content);
 
     assert_eq!(nodes.len(), 1);
     let Node::FractionNoad(fraction) = &nodes[0] else {
@@ -171,9 +173,135 @@ fn semi_simple_math_aftergroup_replay_has_aftergroup_provenance() {
 }
 
 #[test]
+fn math_shift_groups_restore_locals_keep_globals_and_reset_fam_per_formula() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        r"\fam=7 \count0=1 \count1=1
+          $\fam=4 \count0=2 \global\count1=3$
+          \count2=\fam
+          $\global\count3=\fam$",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("math-shift assignments should execute");
+
+    assert_eq!(stores.int_param(IntParam::FAM), 7);
+    assert_eq!(stores.count(0), 1, "local formula assignment restores");
+    assert_eq!(stores.count(1), 3, "global formula assignment survives");
+    assert_eq!(stores.count(2), 7, "outer fam is restored after math");
+    assert_eq!(stores.count(3), -1, "the next formula resets fam to -1");
+}
+
+#[test]
+fn math_shift_groups_restore_code_tables_and_replay_aftergroup_after_restore() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        r#"\fam=8 \mathcode`x="7131
+            \def\after{\global\count4=\fam}
+            $\mathcode`x="7231 \global\mathcode`y="7332 \aftergroup\after$"#,
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("math-shift code-table assignments should execute");
+
+    assert_eq!(stores.mathcode('x'), 0x7131);
+    assert_eq!(stores.mathcode('y'), 0x7332);
+    assert_eq!(stores.count(4), 8, "aftergroup runs after fam restoration");
+}
+
+#[test]
+fn math_shift_aftergroup_replay_has_inserted_provenance() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(r"$\aftergroup\missing$"));
+
+    let err = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect_err("math-shift aftergroup token should replay");
+    let origin = err.primary_origin().expect("replayed token origin");
+    let OriginRecord::Inserted(inserted) = stores.origin(origin) else {
+        panic!("math-shift aftergroup replay should have inserted provenance");
+    };
+    assert_eq!(inserted.kind(), InsertedOriginKind::AfterGroup);
+    assert_ne!(inserted.parent(), OriginId::UNKNOWN);
+}
+
+#[test]
+fn math_shift_group_replay_converges_after_snapshot_rollback() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    stores.set_int_param(IntParam::FAM, 6);
+    Executor::new()
+        .run(
+            &mut InputStack::new(MemoryInput::new(r"\def\after{\global\count1=\fam}")),
+            &mut stores,
+        )
+        .expect("replay helper definition should execute");
+    let checkpoint = stores.snapshot();
+    let source = r#"\count0=4 $\count0=9 \mathcode`x="7231
+                     \aftergroup\after$"#;
+
+    Executor::new()
+        .run(&mut InputStack::new(MemoryInput::new(source)), &mut stores)
+        .expect("first math-shift replay should execute");
+    let first_hash = stores.snapshot().state_hash();
+    assert_eq!(stores.count(0), 4);
+    assert_eq!(stores.count(1), 6);
+
+    stores.rollback(&checkpoint);
+    Executor::new()
+        .run(&mut InputStack::new(MemoryInput::new(source)), &mut stores)
+        .expect("second math-shift replay should execute");
+    assert_eq!(stores.snapshot().state_hash(), first_hash);
+}
+
+#[test]
+fn inline_math_uses_local_layout_parameters_before_restoring_them() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut executor = Executor::new();
+    executor
+        .run(
+            &mut InputStack::new(MemoryInput::new(r"\mathsurround=2pt $\mathsurround=7pt a$")),
+            &mut stores,
+        )
+        .expect("local math layout parameter should execute");
+
+    assert_eq!(
+        stores.dimen_param(DimenParam::MATH_SURROUND).raw(),
+        2 * Scaled::UNITY
+    );
+    assert!(
+        executor
+            .nest()
+            .current_list()
+            .nodes()
+            .iter()
+            .any(|node| matches!(node, Node::MathOn(width) if width.raw() == 7 * Scaled::UNITY))
+    );
+    assert!(
+        executor
+            .nest()
+            .current_list()
+            .nodes()
+            .iter()
+            .any(|node| matches!(node, Node::MathOff(width) if width.raw() == 7 * Scaled::UNITY))
+    );
+}
+
+#[test]
 fn plain_active_prime_shape_closes_brace_alias_math_field() {
     let (stores, executor) = run_math_source(
-        r"\let\bgroup={\let\egroup=}\def\prime{p}\def\prim@s{\prime\futurelet\next\pr@m@s}\def\pr@m@s{\let\nxt\egroup\nxt}$x^\bgroup\prim@s$",
+        r"\let\bgroup={\let\egroup=}\def\prime{p}\def\prim@s{\prime\futurelet\next\pr@m@s}\def\pr@m@s{\let\nxt\egroup\nxt}$x^\bgroup\prim@s",
     );
     let nodes = math_nodes(&stores, &executor);
 
@@ -185,7 +313,7 @@ fn plain_active_prime_shape_closes_brace_alias_math_field() {
 
 #[test]
 fn math_field_groups_remove_braces_around_single_unscripted_ord_box() {
-    let (stores, executor) = run_math_source(r"$\mathopen{{\hbox{}}}$");
+    let (stores, executor) = run_math_source(r"$\mathopen{{\hbox{}}}");
     let nodes = math_nodes(&stores, &executor);
 
     let [node] = nodes else {
@@ -224,8 +352,54 @@ fn math_group_mismatch_reports_the_closing_token_origin() {
         .run(&mut input, &mut stores)
         .expect_err("endgroup cannot close the outer math level");
 
-    assert!(matches!(&err, ExecError::ExtraEndGroup { .. }));
+    assert!(matches!(&err, ExecError::EndGroupMismatch { .. }));
     assert_ne!(err.primary_origin(), Some(OriginId::UNKNOWN));
+
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let err = Executor::new()
+        .run(&mut InputStack::new(MemoryInput::new(r"$}")), &mut stores)
+        .expect_err("a right brace cannot close a math-shift group");
+    assert!(matches!(
+        &err,
+        ExecError::ExtraRightBraceOrForgottenDollar { .. }
+    ));
+    assert_ne!(err.primary_origin(), Some(OriginId::UNKNOWN));
+
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let err = Executor::new()
+        .run(
+            &mut InputStack::new(MemoryInput::new(r"$\begingroup$")),
+            &mut stores,
+        )
+        .expect_err("a dollar cannot close a semi-simple group");
+    assert!(matches!(&err, ExecError::MathShiftGroupMismatch { .. }));
+    assert_ne!(err.primary_origin(), Some(OriginId::UNKNOWN));
+}
+
+#[test]
+fn equation_number_math_shift_group_restores_before_outer_display_group() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    stores.set_int_param(IntParam::FAM, 9);
+    stores.set_count(0, 1);
+    let mut executor = Executor::new();
+    executor
+        .run(
+            &mut InputStack::new(MemoryInput::new(
+                r"\noindent $$\count0=2 a\eqno\count0=3 b$$",
+            )),
+            &mut stores,
+        )
+        .expect("display equation-number subformula should execute");
+
+    assert_eq!(stores.count(0), 1);
+    assert_eq!(stores.int_param(IntParam::FAM), 9);
+    assert_eq!(executor.nest().current_mode(), Mode::Horizontal);
 }
 
 #[test]
@@ -284,7 +458,7 @@ fn explicit_groups_in_math_restore_local_box_assignments_and_keep_globals() {
 
 #[test]
 fn penalty_builds_ordinary_list_material_in_inline_math() {
-    let (stores, executor) = run_math_source(r"$a\penalty123 b$");
+    let (stores, executor) = run_math_source(r"$a\penalty123 b");
     let nodes = math_nodes(&stores, &executor);
 
     assert!(matches!(
@@ -348,30 +522,31 @@ fn lowered_math_box_rolls_back_without_leaking_arena_handles() {
 
 #[test]
 fn mathcode_8000_uses_current_active_meaning_and_fam_overrides_variable_family() {
-    let mut stores = Universe::new();
-    install_unexpandable_primitives(&mut stores);
-    stores.set_mathcode('?', 0x8000);
-    let active_question = stores.intern_active_character('?');
-    stores.set_meaning(active_question, Meaning::MathCharGiven(0x0231));
+    let run = |source: &str| {
+        let mut stores = Universe::new();
+        install_unexpandable_primitives(&mut stores);
+        stores.set_mathcode('?', 0x8000);
+        let active_question = stores.intern_active_character('?');
+        stores.set_meaning(active_question, Meaning::MathCharGiven(0x0231));
+        let mut executor = Executor::new();
+        executor
+            .run(&mut InputStack::new(MemoryInput::new(source)), &mut stores)
+            .expect("mathcode source executes");
+        (stores, executor)
+    };
 
-    let mut input = InputStack::new(MemoryInput::new(
-        r#"\mathcode`x="7131 $?$ $\fam=5 x$ $x^?$"#,
-    ));
-    let mut executor = Executor::new();
-    executor
-        .run(&mut input, &mut stores)
-        .expect("mathcode source executes");
-    let math_lists = math_list_nodes(&executor);
-
-    let first = stores.nodes(math_lists[0].content);
+    let (first_stores, first_executor) = run(r#"\mathcode`x="7131 $?"#);
+    let first = math_nodes(&first_stores, &first_executor);
     assert_eq!(first.len(), 1);
     assert_math_char(&math_noad(&first[0]).nucleus, 2, '1');
 
-    let second = stores.nodes(math_lists[1].content);
+    let (second_stores, second_executor) = run(r#"\mathcode`x="7131 $\fam=5 x"#);
+    let second = math_nodes(&second_stores, &second_executor);
     assert_eq!(second.len(), 1);
     assert_math_char(&math_noad(&second[0]).nucleus, 5, '1');
 
-    let third = stores.nodes(math_lists[2].content);
+    let (third_stores, third_executor) = run(r#"\mathcode`x="7131 $x^?"#);
+    let third = math_nodes(&third_stores, &third_executor);
     assert_eq!(third.len(), 1);
     assert_math_char(&math_noad(&third[0]).nucleus, 1, '1');
     assert_math_char(&math_noad(&third[0]).superscript, 2, '1');
@@ -379,15 +554,14 @@ fn mathcode_8000_uses_current_active_meaning_and_fam_overrides_variable_family()
 
 #[test]
 fn initex_letter_mathcodes_use_variable_family_one_and_honor_fam() {
-    let (stores, executor) = run_math_source(r"$a$ $\fam=2 S$");
-    assert_eq!(stores.mathcode('a'), 0x7161);
-    assert_eq!(stores.mathcode('S'), 0x7153);
-    let math_lists = math_list_nodes(&executor);
-
-    let default = stores.nodes(math_lists[0].content);
+    let (default_stores, default_executor) = run_math_source(r"$a");
+    assert_eq!(default_stores.mathcode('a'), 0x7161);
+    assert_eq!(default_stores.mathcode('S'), 0x7153);
+    let default = math_nodes(&default_stores, &default_executor);
     assert_math_char(&math_noad(&default[0]).nucleus, 1, 'a');
 
-    let overridden = stores.nodes(math_lists[1].content);
+    let (overridden_stores, overridden_executor) = run_math_source(r"$\fam=2 S");
+    let overridden = math_nodes(&overridden_stores, &overridden_executor);
     assert_math_char(&math_noad(&overridden[0]).nucleus, 2, 'S');
 }
 
@@ -407,16 +581,29 @@ fn showlists_reports_unfinished_math_noad_fields() {
 #[test]
 fn par_in_math_finishes_math_with_tex_error_text() {
     let (stores, executor) = run_math_source(r"$a\par");
-    let nodes = math_nodes(&stores, &executor);
-
-    assert_eq!(nodes.len(), 1);
-    assert_math_char(&math_noad(&nodes[0]).nucleus, 1, 'a');
+    assert_eq!(executor.nest().current_mode(), Mode::Horizontal);
+    assert!(
+        executor
+            .nest()
+            .current_list()
+            .nodes()
+            .iter()
+            .any(|node| matches!(node, Node::MathOn(_)))
+    );
+    assert!(
+        executor
+            .nest()
+            .current_list()
+            .nodes()
+            .iter()
+            .any(|node| matches!(node, Node::MathOff(_)))
+    );
     assert!(terminal_effect_text(&stores).contains("! Missing $ inserted."));
 }
 
 #[test]
 fn left_right_scans_nested_list_as_inner_noad() {
-    let (stores, executor) = run_math_source(r"$\left. a \right.$");
+    let (stores, executor) = run_math_source(r"$\left. a \right.");
     let nodes = math_nodes(&stores, &executor);
 
     assert_eq!(nodes.len(), 1);
@@ -442,19 +629,22 @@ fn left_right_scans_nested_list_as_inner_noad() {
 
 #[test]
 fn mismatched_right_and_missing_right_use_tex_error_text() {
-    let (extra_stores, extra_executor) = run_math_source(r"$a\right.$");
+    let (extra_stores, extra_executor) = run_math_source(r"$a\right.");
     let extra_nodes = math_nodes(&extra_stores, &extra_executor);
     assert_eq!(extra_nodes.len(), 1);
     assert_math_char(&math_noad(&extra_nodes[0]).nucleus, 1, 'a');
     assert!(terminal_effect_text(&extra_stores).contains("! Extra \\right."));
 
     let (missing_stores, missing_executor) = run_math_source(r"$\left. a$");
-    let missing_nodes = math_nodes(&missing_stores, &missing_executor);
-    assert_eq!(missing_nodes.len(), 1);
-    assert!(matches!(
-        math_noad(&missing_nodes[0]).kind,
-        tex_state::math::NoadKind::Normal(tex_state::math::NoadClass::Inner)
-    ));
+    assert_eq!(missing_executor.nest().current_mode(), Mode::Horizontal);
+    assert!(
+        missing_executor
+            .nest()
+            .current_list()
+            .nodes()
+            .iter()
+            .any(|node| matches!(node, Node::MathOn(_)))
+    );
     assert!(
         terminal_effect_text(&missing_stores).contains("! Missing \\right. inserted."),
         "missing right delimiter should use reference primary wording"
@@ -464,11 +654,9 @@ fn mismatched_right_and_missing_right_use_tex_error_text() {
 #[test]
 fn inline_math_finishing_emits_mathsurround_markers_and_penalties() {
     let (mut stores, executor) = run_math_source(
-        r"\mathsurround=3pt \binoppenalty=700 \relpenalty=500 $a\mathbin+b\mathrel=c$",
+        r"\mathsurround=3pt \binoppenalty=700 \relpenalty=500 $a\mathbin+b\mathrel=c",
     );
-    let list = math_list_nodes(&executor)
-        .pop()
-        .expect("inline math list should be present");
+    let list = unfinished_math_list(&mut stores, &executor);
 
     let nodes = crate::math::finish_math_list_node(&mut stores, list, true);
 
@@ -496,10 +684,8 @@ fn inline_math_finishing_emits_mathsurround_markers_and_penalties() {
 
 #[test]
 fn restricted_inline_math_finishing_suppresses_line_break_penalties() {
-    let (mut stores, executor) = run_math_source(r"$a\mathbin+b\mathrel=c$");
-    let list = math_list_nodes(&executor)
-        .pop()
-        .expect("inline math list should be present");
+    let (mut stores, executor) = run_math_source(r"$a\mathbin+b\mathrel=c");
+    let list = unfinished_math_list(&mut stores, &executor);
 
     let nodes = crate::math::finish_math_list_node(&mut stores, list, false);
 
@@ -598,7 +784,7 @@ fn converted_math_glue_preserves_explicit_and_named_provenance() {
 #[test]
 fn delimiter_radical_accent_and_vcenter_parse_to_math_noads() {
     let (stores, executor) = run_math_source(
-        r#"$\delimiter"4266308 \radical"270370 x \mathaccent"7013 y \vcenter{\hrule width1pt}$"#,
+        r#"$\delimiter"4266308 \radical"270370 x \mathaccent"7013 y \vcenter{\hrule width1pt}"#,
     );
     let nodes = math_nodes(&stores, &executor);
 
@@ -641,17 +827,14 @@ fn every_math_and_every_display_tokens_are_inserted_on_entry() {
     let displaystyle = stores.symbol("displaystyle").expect("displaystyle");
     let every_math = stores.intern_token_list(&[Token::Cs(displaystyle)]);
     stores.set_tok_param(TokParam::EVERY_MATH, every_math);
-    let mut input = InputStack::new(MemoryInput::new("$a$"));
+    let mut input = InputStack::new(MemoryInput::new("$a"));
     let mut executor = Executor::new();
     executor
         .run(&mut input, &mut stores)
         .expect("math source executes");
-    let lists = math_list_nodes(&executor);
-
-    assert_eq!(lists.len(), 1);
-    assert!(!lists[0].display);
+    let nodes = math_nodes(&stores, &executor);
     assert!(matches!(
-        stores.nodes(lists[0].content)[0],
+        nodes[0],
         Node::MathStyle(tex_state::math::MathStyle::Display)
     ));
 
@@ -679,10 +862,25 @@ fn run_math_source(source: &str) -> (Universe, Executor) {
     (stores, executor)
 }
 
-fn math_nodes<'a>(stores: &'a Universe, executor: &Executor) -> &'a [Node] {
+fn math_nodes<'a>(stores: &'a Universe, executor: &'a Executor) -> &'a [Node] {
+    if matches!(
+        executor.nest().current_mode(),
+        Mode::Math | Mode::DisplayMath
+    ) {
+        return executor.nest().current_list().nodes();
+    }
     let lists = math_list_nodes(executor);
     assert_eq!(lists.len(), 1);
     stores.nodes(lists[0].content)
+}
+
+fn unfinished_math_list(stores: &mut Universe, executor: &Executor) -> MathListNode {
+    assert_eq!(executor.nest().current_mode(), Mode::Math);
+    let content = stores.freeze_node_list(executor.nest().current_list().nodes());
+    MathListNode {
+        display: false,
+        content,
+    }
 }
 
 fn math_list_nodes(executor: &Executor) -> Vec<MathListNode> {

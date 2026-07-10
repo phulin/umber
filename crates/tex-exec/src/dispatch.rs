@@ -305,13 +305,29 @@ fn group_mismatch_error(
         (GroupKind::Simple, GroupKind::SemiSimple, false) => {
             ExecError::ExtraRightBraceOrForgottenEndgroup { origin }
         }
+        (GroupKind::Simple, GroupKind::MathShift, false) => {
+            ExecError::ExtraRightBraceOrForgottenDollar { origin }
+        }
         (GroupKind::SemiSimple, _, true) => ExecError::ExtraEndGroup { origin },
-        (GroupKind::SemiSimple, GroupKind::Simple, false) => ExecError::EndGroupMismatch {
-            started_by: mismatch.actual().start_text(),
+        (GroupKind::SemiSimple, GroupKind::Simple | GroupKind::MathShift, false) => {
+            ExecError::EndGroupMismatch {
+                started_by: mismatch.actual().start_text(),
+                origin,
+            }
+        }
+        (GroupKind::MathShift, _, true) => ExecError::MathShiftGroupMismatch {
+            started_by: "the outer level",
             origin,
         },
+        (GroupKind::MathShift, GroupKind::Simple | GroupKind::SemiSimple, false) => {
+            ExecError::MathShiftGroupMismatch {
+                started_by: mismatch.actual().start_text(),
+                origin,
+            }
+        }
         (GroupKind::Simple, GroupKind::Simple, false)
-        | (GroupKind::SemiSimple, GroupKind::SemiSimple, false) => {
+        | (GroupKind::SemiSimple, GroupKind::SemiSimple, false)
+        | (GroupKind::MathShift, GroupKind::MathShift, false) => {
             unreachable!("matching group kinds are returned as successful leaves, not mismatches")
         }
     }

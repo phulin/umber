@@ -465,14 +465,7 @@ pub struct IncompleteFraction {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct DisplayInterrupt {
-    pub pre_display_size: Scaled,
-    pub display_width: Scaled,
-    pub display_indent: Scaled,
-    pub saved_pre_display_size: Scaled,
-    pub saved_display_width: Scaled,
-    pub saved_display_indent: Scaled,
-}
+pub struct DisplayInterrupt;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DisplayEqNo {
