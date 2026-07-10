@@ -341,12 +341,14 @@ impl NodeStorage {
         start
             .checked_add(len)
             .expect("node arena span overflows u32");
-        // Preflight every selected table before publishing either rows or words.
+        // Validate every encoding and selected table before reserving or
+        // publishing either rows or words. Publication below is infallible
+        // apart from process-aborting allocation failure.
         let mut needs = [0_u32; 14];
         for node in nodes {
-            needs[sidecar_class(node)] = needs[sidecar_class(node)]
-                .checked_add(1)
-                .expect("sidecar count overflow");
+            preflight_encoding(node);
+            let class = sidecar_class(node);
+            needs[class] = needs[class].checked_add(1).expect("sidecar count overflow");
         }
         let current = self.sidecar_lengths();
         for (have, add) in current.into_iter().zip(needs) {
@@ -384,11 +386,11 @@ impl NodeStorage {
         match node {
             Node::Char { font, ch } => NodeWord::new(0, (*ch as u64) | ((font.raw() as u64) << 21)),
             Node::Lig { font, ch, orig } => {
-                let ch = u8::try_from(*ch as u32).expect("ligature glyph exceeds TFM byte domain");
-                let left =
-                    u8::try_from(orig.0 as u32).expect("ligature original exceeds TFM byte domain");
-                let right =
-                    u8::try_from(orig.1 as u32).expect("ligature original exceeds TFM byte domain");
+                // The complete input slice was domain-checked before any
+                // storage mutation, so these narrowing conversions are exact.
+                let ch = *ch as u8;
+                let left = orig.0 as u8;
+                let right = orig.1 as u8;
                 NodeWord::new(
                     1,
                     ch as u64
@@ -614,6 +616,22 @@ fn push_sidecar<T>(tag: u8, table: &mut Vec<T>, value: T) -> NodeWord {
     let i = checked_len(table.len(), "node sidecar exceeds u32 entries");
     table.push(value);
     NodeWord::sidecar(tag, i)
+}
+fn preflight_encoding(node: &Node) {
+    if let Node::Lig { ch, orig, .. } = node {
+        assert!(
+            (*ch as u32) <= u8::MAX as u32,
+            "ligature glyph exceeds TFM byte domain"
+        );
+        assert!(
+            (orig.0 as u32) <= u8::MAX as u32,
+            "ligature original exceeds TFM byte domain"
+        );
+        assert!(
+            (orig.1 as u32) <= u8::MAX as u32,
+            "ligature original exceeds TFM byte domain"
+        );
+    }
 }
 fn sidecar_class(node: &Node) -> usize {
     match node {

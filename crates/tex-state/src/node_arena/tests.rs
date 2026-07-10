@@ -360,14 +360,77 @@ fn capacity_preflight_rejects_overflow_before_publication() {
 }
 
 #[test]
-#[should_panic(expected = "ligature glyph exceeds TFM byte domain")]
-fn ligature_inline_encoding_rejects_non_tfm_character() {
+fn late_invalid_ligature_leaves_complete_arena_state_unchanged() {
     let mut arena = NodeArena::new();
-    arena.append(&[Node::Lig {
-        font: FontId::testing_new(0),
-        ch: '\u{100}',
-        orig: ('a', 'b'),
-    }]);
+    let baseline = arena.append(&[
+        Node::Char {
+            font: FontId::testing_new(1),
+            ch: 'a',
+        },
+        Node::Rule {
+            width: Some(scaled(1)),
+            height: None,
+            depth: None,
+        },
+    ]);
+    let mark = arena.watermark();
+    let words_capacity = arena.storage.words.capacity();
+    let rule_capacity = arena.storage.rules.capacity();
+    let adjust_capacity = arena.storage.adjusts.capacity();
+    let before = arena.get_epoch(baseline).to_vec();
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        arena.append(&[
+            Node::Char {
+                font: FontId::testing_new(2),
+                ch: 'b',
+            },
+            Node::Adjust(baseline),
+            Node::Lig {
+                font: FontId::testing_new(2),
+                ch: 'c',
+                orig: ('b', '\u{100}'),
+            },
+        ]);
+    }));
+
+    assert!(result.is_err());
+    assert_eq!(arena.watermark(), mark);
+    assert_eq!(arena.storage.words.capacity(), words_capacity);
+    assert_eq!(arena.storage.rules.capacity(), rule_capacity);
+    assert_eq!(arena.storage.adjusts.capacity(), adjust_capacity);
+    assert_eq!(arena.get_epoch(baseline).to_vec(), before);
+}
+
+#[test]
+fn builder_late_invalid_ligature_does_not_publish_valid_prefix_or_sidecar() {
+    let invalid_ligatures = [
+        ('\u{100}', ('a', 'b')),
+        ('c', ('\u{100}', 'b')),
+        ('c', ('a', '\u{100}')),
+    ];
+    for (ch, orig) in invalid_ligatures {
+        let mut arena = NodeArena::new();
+        let empty = arena.append(&[]);
+        let mark = arena.watermark();
+        let mut builder = NodeListBuilder::new();
+        builder.push(Node::Penalty(10));
+        builder.push(Node::Adjust(empty));
+        builder.push(Node::Lig {
+            font: FontId::testing_new(0),
+            ch,
+            orig,
+        });
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            builder.finish(&mut arena);
+        }));
+
+        assert!(result.is_err());
+        assert_eq!(arena.watermark(), mark);
+        assert_eq!(builder.len(), 3, "failed finish retains builder input");
+        assert!(arena.storage.all_nodes().is_empty());
+    }
 }
 
 fn one_char(arena: &mut NodeArena, ch: char) -> NodeListId {
