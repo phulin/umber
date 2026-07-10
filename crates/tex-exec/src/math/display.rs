@@ -14,7 +14,7 @@ use crate::packing_params::{hpack as hpack_nodes, hpack_params};
 use crate::vertical::{
     append_node_to_vertical_list, append_vertical_contribution, build_page_if_outer_vertical,
 };
-use crate::{ExecError, Mode, ModeNest, push_tokens};
+use crate::{ExecError, Mode, ModeNest};
 
 use super::lower::convert_math_hlist;
 use super::scan::finish_current_math_list;
@@ -303,19 +303,25 @@ where
     let prev_graf = nest.enclosing_vertical_prev_graf().saturating_add(3);
     nest.set_enclosing_vertical_prev_graf(prev_graf);
     let par_shape = nest.current_list().par_shape().cloned();
-    match input.next_token(stores)? {
-        Some(Token::Char {
-            cat: Catcode::Space,
-            ..
-        }) => {}
-        Some(token) if is_par_or_end_group(stores, token) => push_tokens(input, stores, [token]),
-        Some(token) => {
+    match input.next_traced_token(stores)? {
+        Some(traced)
+            if matches!(
+                tex_expand::semantic_token(traced),
+                Token::Char {
+                    cat: Catcode::Space,
+                    ..
+                }
+            ) => {}
+        Some(traced) if is_par_or_end_group(stores, tex_expand::semantic_token(traced)) => {
+            crate::push_traced_tokens(input, stores, [traced]);
+        }
+        Some(traced) => {
             nest.push(Mode::Horizontal);
             if let Some(shape) = par_shape {
                 nest.current_list_mut().set_par_shape(shape);
             }
             nest.current_list_mut().set_space_factor(1000);
-            push_tokens(input, stores, [token]);
+            crate::push_traced_tokens(input, stores, [traced]);
         }
         None => {}
     }
@@ -384,12 +390,16 @@ where
         nest.current_list_mut().set_par_shape(shape);
     }
     nest.current_list_mut().set_space_factor(1000);
-    match input.next_token(stores)? {
-        Some(Token::Char {
-            cat: Catcode::Space,
-            ..
-        }) => {}
-        Some(token) => push_tokens(input, stores, [token]),
+    match input.next_traced_token(stores)? {
+        Some(traced)
+            if matches!(
+                tex_expand::semantic_token(traced),
+                Token::Char {
+                    cat: Catcode::Space,
+                    ..
+                }
+            ) => {}
+        Some(traced) => crate::push_traced_tokens(input, stores, [traced]),
         None => {}
     }
     build_page_if_outer_vertical(nest, stores)?;

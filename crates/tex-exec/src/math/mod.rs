@@ -77,18 +77,20 @@ where
 {
     let opening_mode = nest.current_mode();
     let can_display = !matches!(opening_mode, Mode::RestrictedHorizontal);
-    let display = match input.next_token(stores)? {
-        Some(
-            token @ Token::Char {
-                cat: Catcode::MathShift,
-                ..
-            },
-        ) if can_display => {
-            let _ = token;
+    let display = match input.next_traced_token(stores)? {
+        Some(traced)
+            if matches!(
+                tex_expand::semantic_token(traced),
+                Token::Char {
+                    cat: Catcode::MathShift,
+                    ..
+                }
+            ) && can_display =>
+        {
             true
         }
-        Some(token) => {
-            push_tokens(input, stores, [token]);
+        Some(traced) => {
+            push_traced_tokens(input, stores, [traced]);
             false
         }
         None => false,
@@ -230,13 +232,17 @@ where
     }
     let display = nest.current_mode() == Mode::DisplayMath;
     if display {
-        match input.next_token(stores)? {
-            Some(Token::Char {
-                cat: Catcode::MathShift,
-                ..
-            }) => {}
-            Some(token) => {
-                push_tokens(input, stores, [token]);
+        match input.next_traced_token(stores)? {
+            Some(traced)
+                if matches!(
+                    tex_expand::semantic_token(traced),
+                    Token::Char {
+                        cat: Catcode::MathShift,
+                        ..
+                    }
+                ) => {}
+            Some(traced) => {
+                push_traced_tokens(input, stores, [traced]);
                 report_math_error(stores, "Display math should end with $$");
             }
             None => report_math_error(stores, "Display math should end with $$"),

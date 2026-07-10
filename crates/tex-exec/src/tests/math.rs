@@ -392,6 +392,26 @@ fn math_group_mismatch_reports_the_closing_token_origin() {
 }
 
 #[test]
+fn inline_math_entry_lookahead_preserves_source_origin() {
+    assert_replayed_math_error_is_source_backed(r"$\missing");
+}
+
+#[test]
+fn mismatched_display_closer_preserves_following_source_origin() {
+    assert_replayed_math_error_is_source_backed(r"\noindent$$a$\missing");
+}
+
+#[test]
+fn post_display_replay_preserves_following_source_origin() {
+    assert_replayed_math_error_is_source_backed(r"\noindent$$a$$\missing");
+}
+
+#[test]
+fn post_display_alignment_replay_preserves_following_source_origin() {
+    assert_replayed_math_error_is_source_backed(r"\noindent$$\halign{#\cr a\cr}$$\missing");
+}
+
+#[test]
 fn equation_number_math_shift_group_restores_before_outer_display_group() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);
@@ -896,6 +916,54 @@ fn run_math_source(source: &str) -> (Universe, Executor) {
         .run(&mut input, &mut stores)
         .expect("math source executes");
     (stores, executor)
+}
+
+fn assert_replayed_math_error_is_source_backed(source: &str) {
+    const PATH: &str = "math-origin.tex";
+
+    let mut stores = Universe::with_world(tex_state::World::memory());
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    stores
+        .world_mut()
+        .set_memory_file(PATH, source.as_bytes().to_vec())
+        .expect("memory source should be installed");
+    let content = stores
+        .world_mut()
+        .read_file(PATH)
+        .expect("memory source should be readable");
+    let mut input = InputStack::new(WorldInput::from_content(content));
+
+    let err = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect_err("replayed undefined control sequence should fail");
+    assert!(
+        matches!(
+            &err,
+            ExecError::Expand(tex_expand::ExpandError::UndefinedControlSequence { .. })
+        ),
+        "unexpected replay error: {err:?}"
+    );
+
+    let origin = err.primary_origin().expect("error should retain an origin");
+    let OriginRecord::Source(source_origin) = stores.origin(origin) else {
+        panic!("expected source origin, got {:?}", stores.origin(origin));
+    };
+    assert_eq!(
+        source_origin.byte_offset(),
+        u64::try_from(source.find(r"\missing").expect("missing token in fixture"))
+            .expect("fixture offset should fit in u64")
+    );
+    assert!(
+        source_origin.input_record().is_some(),
+        "source origin should retain its World input record"
+    );
+
+    let rendered = err.format_with_provenance(&stores);
+    assert!(rendered.contains("Undefined control sequence"));
+    assert!(rendered.contains(&format!("{PATH}:1:")));
+    assert!(rendered.contains(&format!("  1 | {source}")));
+    assert!(rendered.contains("^"));
 }
 
 fn math_nodes<'a>(stores: &'a Universe, executor: &'a Executor) -> &'a [Node] {

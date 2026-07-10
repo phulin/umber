@@ -2,7 +2,7 @@ use super::*;
 use crate::executor::NoopExecHooks;
 use std::collections::HashMap;
 use tex_expand::{EngineMode, ExpansionHooks, NoopRecorder};
-use tex_lex::{InputStack, MemoryInput};
+use tex_lex::{InputStack, MemoryInput, WorldInput};
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::GlueSpec;
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
