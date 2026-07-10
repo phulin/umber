@@ -87,6 +87,29 @@ fn breaks_at_legal_glue() {
 }
 
 #[test]
+fn final_pass_keeps_last_active_route_when_every_route_is_overfull() {
+    let mut universe = Universe::new();
+    let glue = universe.intern_glue(GlueSpec::ZERO);
+    let nodes = vec![
+        rule(100),
+        Node::Glue {
+            spec: glue,
+            kind: GlueKind::Normal,
+            leader: None,
+        },
+        rule(1_000),
+    ];
+    let mut hook = NoHyphenation;
+
+    let result = line_break(&universe, &nodes, params(100), &mut hook);
+
+    assert_eq!(
+        result.breaks.last().map(|br| br.position),
+        Some(nodes.len())
+    );
+}
+
+#[test]
 fn line_break_includes_left_and_right_skip_in_background_widths() {
     let mut universe = Universe::new();
     let break_glue = universe.intern_glue(GlueSpec::ZERO);

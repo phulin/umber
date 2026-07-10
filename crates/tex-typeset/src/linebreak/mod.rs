@@ -263,7 +263,7 @@ fn run_pass<S: TypesetState>(
         let mut next = Vec::new();
         let mut best_new = Vec::new();
         let forced = bp.penalty <= EJECT_PENALTY;
-        for &active_id in &active {
+        for (active_index, &active_id) in active.iter().enumerate() {
             let active_candidate = &candidates[active_id];
             let mut widths = prefix.between(active_candidate.width_position, bp.width_position);
             widths.add_assign(background);
@@ -275,8 +275,11 @@ fn run_pass<S: TypesetState>(
                 Scaled::from_raw(0)
             };
             let b = line_badness(widths, target, extra);
-            let artificial =
-                final_pass && next.is_empty() && active.len() == 1 && (b > INF_BAD || forced);
+            let artificial = final_pass
+                && next.is_empty()
+                && best_new.is_empty()
+                && active_index + 1 == active.len()
+                && (b > INF_BAD || forced);
             let deactivates = b > INF_BAD || forced;
             let feasible = bp.penalty < INF_PENALTY && (artificial || b <= tolerance);
             if feasible {

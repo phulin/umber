@@ -13,6 +13,26 @@ use tex_state::{PrintSink, Universe};
 
 use crate::mode::IGNORE_DEPTH;
 use crate::node_dump::{DumpConfig, dump_node_list, dump_node_slice};
+pub(crate) fn report_illegal_case(stores: &mut Universe, token: Token, mode: Mode) {
+    let command = match token {
+        Token::Cs(symbol) => format!("\\{}", stores.resolve(symbol)),
+        _ => format!("{token:?}"),
+    };
+    let mode = match mode {
+        Mode::Vertical => "vertical mode",
+        Mode::InternalVertical => "internal vertical mode",
+        Mode::Horizontal => "horizontal mode",
+        Mode::RestrictedHorizontal => "restricted horizontal mode",
+        Mode::Math => "math mode",
+        Mode::DisplayMath => "display math mode",
+    };
+    stores.world_mut().write_text(
+        tex_state::PrintSink::TerminalAndLog,
+        &format!(
+            "\n! You can't use `{command}' in {mode}.\nSorry, but I'm not programmed to handle this case;\nI'll just pretend that you didn't ask for it.\nIf you're in the wrong mode, you might be able to\nreturn to the right one by typing `I}}' or `I$' or `I\\par'.\n"
+        ),
+    );
+}
 use crate::{ExecError, push_tokens};
 use crate::{Mode, ModeNest};
 

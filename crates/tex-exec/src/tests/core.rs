@@ -141,6 +141,22 @@ fn interaction_mode_primitives_update_checkpointed_engine_state() {
 }
 
 #[test]
+fn bare_internal_quantity_reports_illegal_mode_and_continues() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(r"\badness\message{continued}\end"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("illegal-case diagnostics are recoverable");
+
+    let output = terminal_effect_text(&stores);
+    assert!(output.contains("You can't use `\\badness' in vertical mode"));
+    assert!(output.contains("continued"));
+}
+
+#[test]
 fn inputlineno_reports_current_physical_source_line() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);

@@ -13,13 +13,13 @@ use crate::mode::PendingHChar;
 pub(super) fn execute_patterns<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    _hooks: &mut H,
+    hooks: &mut H,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    for word in scan_hyphenation_words(input, stores, "\\patterns")? {
+    for word in scan_hyphenation_words(input, stores, hooks, "\\patterns")? {
         if let Some(pattern) = parse_pattern_word(stores, &word) {
             stores.add_hyphenation_pattern(pattern);
         }
@@ -30,13 +30,13 @@ where
 pub(super) fn execute_hyphenation<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
-    _hooks: &mut H,
+    hooks: &mut H,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    for word in scan_hyphenation_words(input, stores, "\\hyphenation")? {
+    for word in scan_hyphenation_words(input, stores, hooks, "\\hyphenation")? {
         if let Some(exception) = parse_exception_word(stores, &word) {
             stores.add_hyphenation_exception(exception);
         }
@@ -58,22 +58,41 @@ pub(crate) fn hyphenated_hlist(stores: &mut Universe, nodes: &[Node]) -> Vec<Nod
     out
 }
 
-fn scan_hyphenation_words<S>(
+fn scan_hyphenation_words<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
+    hooks: &mut H,
     context: &'static str,
 ) -> Result<Vec<Vec<char>>, ExecError>
 where
     S: InputSource,
+    H: ExpansionHooks<S>,
 {
-    let open = next_non_space_raw(input, stores)?.ok_or(ExecError::MissingToken { context })?;
+    let mut recorder = NoopRecorder;
+    let open = loop {
+        let traced = get_x_token_with_recorder_and_hooks(input, stores, &mut recorder, hooks)?
+            .ok_or(ExecError::MissingToken { context })?;
+        let token = tex_expand::semantic_token(traced);
+        if is_space(token) {
+            continue;
+        }
+        if let Token::Cs(symbol) = token
+            && stores.meaning(symbol) == Meaning::Relax
+        {
+            continue;
+        }
+        break token;
+    };
     if !is_begin_group(open) {
         return Err(ExecError::MissingToken { context });
     }
     let mut words = Vec::new();
     let mut current = Vec::new();
     let mut depth = 1usize;
-    while let Some(token) = input.next_token(stores)? {
+    while let Some(traced) =
+        get_x_token_with_recorder_and_hooks(input, stores, &mut recorder, hooks)?
+    {
+        let token = tex_expand::semantic_token(traced);
         if is_begin_group(token) {
             depth += 1;
             continue;

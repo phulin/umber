@@ -185,23 +185,6 @@ pub(super) fn token_meaning_for_let(
     }
 }
 
-pub(super) fn next_non_space_raw<S>(
-    input: &mut InputStack<S>,
-    stores: &mut Universe,
-) -> Result<Option<Token>, LexError>
-where
-    S: InputSource,
-{
-    loop {
-        let Some(token) = input.next_token(stores)? else {
-            return Ok(None);
-        };
-        if !is_space(token) {
-            return Ok(Some(token));
-        }
-    }
-}
-
 pub(super) fn next_non_space_traced_raw<S>(
     input: &mut InputStack<S>,
     stores: &mut Universe,

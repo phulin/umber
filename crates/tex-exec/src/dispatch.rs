@@ -140,7 +140,13 @@ where
             }
             Ok(DispatchAction::Continue)
         }
-        Meaning::InternalInteger(_) => Err(ExecError::UnsupportedAssignmentTarget),
+        Meaning::InternalInteger(_) => {
+            // TeX.web's mode-dependent main-control table routes a bare
+            // internal quantity (TRIP uses `\badness`) to `report_illegal_case`
+            // and then continues; it is not a fatal assignment error.
+            crate::diagnostics::report_illegal_case(stores, token, mode);
+            Ok(DispatchAction::Continue)
+        }
         meaning @ (Meaning::CountRegister(_)
         | Meaning::DimenRegister(_)
         | Meaning::SkipRegister(_)
