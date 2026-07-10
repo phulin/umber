@@ -185,6 +185,36 @@ fn explicit_groups_in_math_restore_local_box_assignments_and_keep_globals() {
 }
 
 #[test]
+fn penalty_builds_ordinary_list_material_in_inline_math() {
+    let (stores, executor) = run_math_source(r"$a\penalty123 b$");
+    let nodes = math_nodes(&stores, &executor);
+
+    assert!(matches!(
+        nodes,
+        [Node::MathNoad(_), Node::Penalty(123), Node::MathNoad(_)]
+    ));
+}
+
+#[test]
+fn penalty_builds_ordinary_list_material_in_display_math() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(r"\noindent$$a\penalty456 b"));
+    let mut executor = Executor::new();
+
+    executor
+        .run(&mut input, &mut stores)
+        .expect("penalty should execute in display math");
+
+    assert_eq!(executor.nest().current_mode(), Mode::DisplayMath);
+    assert!(matches!(
+        executor.nest().current_list().nodes(),
+        [Node::MathNoad(_), Node::Penalty(456), Node::MathNoad(_)]
+    ));
+}
+
+#[test]
 fn lowered_math_box_rolls_back_without_leaking_arena_handles() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
