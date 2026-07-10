@@ -5,6 +5,7 @@ use tex_state::math::{
     NoadKind,
 };
 use tex_state::node::{GlueKind, KernKind, Node};
+use tex_state::provenance::{InsertedOriginKind, OriginRecord};
 
 #[test]
 fn math_mode_builds_noads_styles_choices_and_mu_nodes() {
@@ -128,6 +129,93 @@ fn grouped_fraction_inside_hbox_keeps_box_brace_accounting_balanced() {
         matches!(stores.nodes(box1), [Node::HList(_)]),
         "second hbox should be stored as an hlist"
     );
+}
+
+#[test]
+fn semi_simple_groups_execute_assignments_and_aftergroup_in_math_mode() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        r"\def\after{\global\count2=7}\count0=1\count1=1$\begingroup\count0=2\global\count1=3\aftergroup\after\endgroup$",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("semi-simple math group should execute");
+
+    assert_eq!(stores.count(0), 1, "local assignment should be restored");
+    assert_eq!(stores.count(1), 3, "global assignment should survive");
+    assert_eq!(
+        stores.count(2),
+        7,
+        "aftergroup token should replay in math mode"
+    );
+}
+
+#[test]
+fn semi_simple_math_aftergroup_replay_has_aftergroup_provenance() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        r"$\begingroup\aftergroup\missing\endgroup",
+    ));
+
+    let err = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect_err("replayed undefined control sequence should fail");
+    let origin = err.primary_origin().expect("replayed token origin");
+    let OriginRecord::Inserted(inserted) = stores.origin(origin) else {
+        panic!("aftergroup replay should have inserted provenance");
+    };
+    assert_eq!(inserted.kind(), InsertedOriginKind::AfterGroup);
+    assert_ne!(inserted.parent(), OriginId::UNKNOWN);
+}
+
+#[test]
+fn plain_active_prime_shape_closes_brace_alias_math_field() {
+    let (stores, executor) = run_math_source(
+        r"\let\bgroup={\let\egroup=}\def\prime{p}\def\prim@s{\prime\futurelet\next\pr@m@s}\def\pr@m@s{\let\nxt\egroup\nxt}$x^\bgroup\prim@s$",
+    );
+    let nodes = math_nodes(&stores, &executor);
+
+    assert_eq!(nodes.len(), 1);
+    let noad = math_noad(&nodes[0]);
+    assert_math_char(&noad.nucleus, 0, 'x');
+    let MathField::SubMlist(superscript) = noad.superscript else {
+        panic!("active-prime shape should build a grouped superscript");
+    };
+    assert_one_char_list(&stores, superscript, 'p');
+}
+
+#[test]
+fn math_group_mismatch_reports_the_closing_token_origin() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(r"$\begingroup}"));
+
+    let err = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect_err("right brace cannot close a semi-simple math group");
+
+    assert!(matches!(
+        &err,
+        ExecError::ExtraRightBraceOrForgottenEndgroup { .. }
+    ));
+    assert_ne!(err.primary_origin(), Some(OriginId::UNKNOWN));
+
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(r"$\endgroup"));
+    let err = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect_err("endgroup cannot close the outer math level");
+
+    assert!(matches!(&err, ExecError::ExtraEndGroup { .. }));
+    assert_ne!(err.primary_origin(), Some(OriginId::UNKNOWN));
 }
 
 #[test]
