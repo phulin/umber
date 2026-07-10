@@ -1230,6 +1230,46 @@ fn paragraph_end_ignores_empty_unindented_paragraph() {
 }
 
 #[test]
+fn paragraph_end_removes_only_the_final_trailing_glue() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\setbox0=\\vbox{\\noindent x\\hskip1pt\\hskip2pt\\par}",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("paragraph executes");
+
+    let box0 = stores.box_reg(0).expect("vbox register");
+    let [Node::VList(vbox)] = stores.nodes(box0) else {
+        panic!("register 0 should hold a vbox");
+    };
+    let line = stores
+        .nodes(vbox.children)
+        .iter()
+        .find_map(|node| match node {
+            Node::HList(line) => Some(line),
+            _ => None,
+        })
+        .expect("paragraph should produce a line");
+    let explicit_glue: Vec<_> = stores
+        .nodes(line.children)
+        .iter()
+        .filter_map(|node| match node {
+            Node::Glue {
+                spec,
+                kind: tex_state::node::GlueKind::Normal,
+                ..
+            } => Some(stores.glue(*spec).width.raw()),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(explicit_glue, [65_536]);
+}
+
+#[test]
 fn last_items_read_current_horizontal_tail_by_type() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);

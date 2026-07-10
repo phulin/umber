@@ -198,7 +198,7 @@ fn break_current_paragraph(
 ) -> Result<ParagraphBreakResult, ExecError> {
     flush_pending_hchars(nest, stores)?;
     let params = snapshot_paragraph_params(nest, stores);
-    trim_trailing_glue(nest.current_list_mut());
+    remove_final_glue(nest.current_list_mut());
     nest.current_list_mut().push(Node::Penalty(10_000));
     nest.current_list_mut().push(Node::Glue {
         spec: params.par_fill_skip,
@@ -364,8 +364,8 @@ fn reset_after_par(nest: &mut ModeNest, stores: &mut Universe) {
     normal_paragraph(nest, stores);
 }
 
-fn trim_trailing_glue(list: &mut crate::ModeList) {
-    while matches!(list.nodes().last(), Some(Node::Glue { .. })) {
+fn remove_final_glue(list: &mut crate::ModeList) {
+    if matches!(list.nodes().last(), Some(Node::Glue { .. })) {
         let _ = list.pop_last_node();
     }
 }
