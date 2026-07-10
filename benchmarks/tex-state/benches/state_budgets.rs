@@ -315,14 +315,20 @@ fn provenance_source_lexing(c: &mut Criterion) {
             |(mut stores, mut input)| {
                 let before = stores.provenance_stats();
                 let mut count = 0_usize;
+                let mut direct = 0_usize;
                 while let Some(token) = input
                     .next_traced_token(&mut stores)
                     .expect("source lexing should succeed")
                 {
+                    direct += usize::from(token.origin().is_direct_source());
                     black_box(token);
                     count += 1;
                 }
-                black_box((count, stores.provenance_stats().saturating_sub(before)));
+                black_box((
+                    count,
+                    direct,
+                    stores.provenance_stats().saturating_sub(before),
+                ));
             },
             BatchSize::SmallInput,
         );

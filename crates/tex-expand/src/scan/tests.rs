@@ -2,7 +2,7 @@ use super::{ScanToksError, scan_toks};
 use tex_lex::{InputStack, MemoryInput};
 use tex_state::Universe;
 use tex_state::meaning::MeaningFlags;
-use tex_state::provenance::{OriginRecord, SourceOrigin};
+use tex_state::provenance::OriginRecord;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 fn scan(input: &str) -> (Universe, Vec<Token>, Vec<Token>) {
@@ -62,18 +62,21 @@ fn freezes_parameter_and_replacement_origin_lists_from_source_tokens() {
     );
     assert_eq!(parameter_origins.len(), 1);
     assert_eq!(replacement_origins.len(), 2);
-    assert_eq!(
-        stores.origin(parameter_origins[0]),
-        OriginRecord::Source(SourceOrigin::new(tex_state::SourceId::new(0), 1, 1, 1))
-    );
-    assert_eq!(
-        stores.origin(replacement_origins[0]),
-        OriginRecord::Source(SourceOrigin::new(tex_state::SourceId::new(0), 4, 1, 4))
-    );
-    assert_eq!(
-        stores.origin(replacement_origins[1]),
-        OriginRecord::Source(SourceOrigin::new(tex_state::SourceId::new(0), 5, 1, 5))
-    );
+    for (&origin, offset) in parameter_origins
+        .iter()
+        .chain(replacement_origins)
+        .zip([1, 4, 5])
+    {
+        let OriginRecord::SourceSpan(span) = stores.origin(origin) else {
+            panic!("ordinary source token must retain a logical source span");
+        };
+        assert_eq!(
+            span.lo(),
+            stores
+                .source_position(tex_state::SourceId::new(0), offset)
+                .expect("source position stays live")
+        );
+    }
 }
 
 #[test]

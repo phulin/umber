@@ -16,6 +16,7 @@ fn unknown_origin_and_empty_list_are_preallocated() {
     assert_eq!(store.get(OriginId::UNKNOWN), OriginRecord::UnknownBootstrap);
     assert_eq!(store.list(OriginListId::EMPTY), &[]);
     assert!(store.contains_origin(OriginId::UNKNOWN));
+    assert_eq!(store.stats().origin_records(), 0);
     assert!(store.contains_list(OriginListId::EMPTY));
 }
 
@@ -38,8 +39,8 @@ fn records_and_origin_lists_allocate_and_read_back() {
     )));
     let list = store.allocate_list(&[source, inserted]);
 
-    assert_eq!(source.raw(), 1);
-    assert_eq!(inserted.raw(), 2);
+    assert_eq!(source.raw(), 0x8000_0000);
+    assert_eq!(inserted.raw(), 0x8000_0001);
     assert_eq!(
         store.get(source),
         OriginRecord::Source(SourceOrigin::new(SourceId::new(7), 123, 4, 9))
@@ -123,6 +124,9 @@ fn provenance_capacity_index_guards_reserve_overflow_values() {
     assert_eq!(super::u32_len(u32::MAX as usize), Some(u32::MAX));
     assert_eq!(super::u32_index(u32::MAX as usize - 1), Some(u32::MAX - 1));
     assert_eq!(super::u32_index(u32::MAX as usize), None);
+    assert_eq!(super::arena_index(0), Some(0));
+    assert_eq!(super::arena_index(0x7fff_ffff), Some(0x7fff_ffff));
+    assert_eq!(super::arena_index(0x8000_0000), None);
 }
 
 #[test]

@@ -503,6 +503,36 @@ fn traced_source_origins_use_token_start_coordinates() {
 }
 
 #[test]
+fn ordinary_source_scalars_append_no_provenance_records() {
+    let mut stores = Universe::new();
+    let mut lexer = Lexer::new(MemoryInput::new("aé"));
+    let before = stores.provenance_stats();
+
+    let ascii = lexer
+        .next_traced_token(&mut stores)
+        .expect("valid token")
+        .expect("ASCII token");
+    let after_ascii = stores.provenance_stats();
+    let utf8 = lexer
+        .next_traced_token(&mut stores)
+        .expect("valid token")
+        .expect("UTF-8 token");
+    let after_utf8 = stores.provenance_stats();
+
+    assert!(matches!(
+        stores.origin(ascii.origin()),
+        OriginRecord::SourceSpan(_)
+    ));
+    assert!(matches!(
+        stores.origin(utf8.origin()),
+        OriginRecord::SourceSpan(_)
+    ));
+    assert_eq!(after_ascii.origin_records(), before.origin_records());
+    assert_eq!(after_utf8.origin_records(), before.origin_records());
+    assert_eq!(after_utf8.source_regions(), 1);
+}
+
+#[test]
 fn physical_byte_coordinates_preserve_crlf_trailing_spaces_and_utf8() {
     let mut stores = Universe::new();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
@@ -1269,13 +1299,23 @@ fn assert_source_origin_for(
     line: u32,
     column: u32,
 ) {
-    let OriginRecord::Source(source) = stores.origin(origin) else {
-        panic!("expected source origin, got {:?}", stores.origin(origin));
-    };
-    assert_eq!(source.source(), source_id);
-    assert_eq!(source.byte_offset(), byte_offset);
-    assert_eq!(source.line(), line);
-    assert_eq!(source.column(), column);
+    match stores.origin(origin) {
+        OriginRecord::Source(source) => {
+            assert_eq!(source.source(), source_id);
+            assert_eq!(source.byte_offset(), byte_offset);
+            assert_eq!(source.line(), line);
+            assert_eq!(source.column(), column);
+        }
+        OriginRecord::SourceSpan(span) => {
+            assert_eq!(
+                span.lo(),
+                stores
+                    .source_position(source_id, byte_offset)
+                    .expect("direct source position must stay live")
+            );
+        }
+        other => panic!("expected source origin, got {other:?}"),
+    }
 }
 
 fn assert_inserted_origin(

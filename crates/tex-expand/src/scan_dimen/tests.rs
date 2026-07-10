@@ -4,7 +4,7 @@ use tex_state::env::banks::{DimenParam, GlueParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
-use tex_state::provenance::{OriginRecord, SourceOrigin};
+use tex_state::provenance::OriginRecord;
 use tex_state::scaled::{PhysicalUnit, Scaled, round_decimal_fraction, scaled_from_decimal_parts};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
@@ -397,9 +397,14 @@ fn partially_matched_keyword_pushback_preserves_source_origins() {
         .expect("token should replay")
         .expect("partial keyword should be unread");
     assert_eq!(replayed.token(), Some(char_token('t', Catcode::Letter)));
+    let OriginRecord::SourceSpan(span) = stores.origin(replayed.origin()) else {
+        panic!("ordinary source token must retain a logical source span");
+    };
     assert_eq!(
-        stores.origin(replayed.origin()),
-        OriginRecord::Source(SourceOrigin::new(tex_state::SourceId::new(0), 1, 1, 1))
+        span.lo(),
+        stores
+            .source_position(tex_state::SourceId::new(0), 1)
+            .expect("source position stays live")
     );
 }
 

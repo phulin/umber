@@ -94,16 +94,19 @@ const _: () = assert!(core::mem::size_of::<Token>() == 8);
 /// provenance allocation saturates overflow to this id instead of failing
 /// compilation, because provenance is diagnostic data rather than TeX
 /// semantics.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct OriginId(u32);
 
 impl OriginId {
+    const ARENA_TAG: u32 = 1 << 31;
+    const PAYLOAD_MASK: u32 = Self::ARENA_TAG - 1;
+
     /// Unknown or bootstrap provenance.
     pub const UNKNOWN: Self = Self(0);
 
     /// Returns the packed origin id value.
     #[must_use]
-    pub const fn raw(self) -> u32 {
+    pub(crate) const fn raw(self) -> u32 {
         self.0
     }
 
@@ -112,6 +115,61 @@ impl OriginId {
     pub(crate) const fn from_raw(raw: u32) -> Self {
         Self(raw)
     }
+
+    #[must_use]
+    pub(crate) const fn direct_source(position: crate::source_map::SourcePos) -> Option<Self> {
+        let Some(raw) = position.raw().checked_add(1) else {
+            return None;
+        };
+        if raw <= Self::PAYLOAD_MASK as u64 {
+            Some(Self(raw as u32))
+        } else {
+            None
+        }
+    }
+
+    #[must_use]
+    pub(crate) const fn arena(index: u32) -> Option<Self> {
+        if index <= Self::PAYLOAD_MASK {
+            Some(Self(Self::ARENA_TAG | index))
+        } else {
+            None
+        }
+    }
+
+    #[must_use]
+    pub(crate) const fn decode(self) -> OriginEncoding {
+        if self.0 == 0 {
+            OriginEncoding::Unknown
+        } else if self.0 & Self::ARENA_TAG == 0 {
+            OriginEncoding::DirectSource(crate::source_map::SourcePos::from_origin_payload(
+                self.0 - 1,
+            ))
+        } else {
+            OriginEncoding::Arena(self.0 & Self::PAYLOAD_MASK)
+        }
+    }
+
+    /// Benchmark-only inspection used to count direct deliveries without a
+    /// production hot-path counter write.
+    #[cfg(feature = "testing")]
+    #[must_use]
+    pub const fn is_direct_source(self) -> bool {
+        self.0 != 0 && self.0 & Self::ARENA_TAG == 0
+    }
+}
+
+impl core::fmt::Debug for OriginId {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("OriginId(..)")
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum OriginEncoding {
+    Unknown,
+    DirectSource(crate::source_map::SourcePos),
+    Arena(u32),
 }
 
 const _: () = assert!(core::mem::size_of::<OriginId>() == 4);
@@ -160,12 +218,6 @@ impl TracedTokenWord {
                 | (u64::from(payload) << Self::PAYLOAD_SHIFT)
                 | u64::from(origin.raw()),
         )
-    }
-
-    /// Returns the raw packed word.
-    #[must_use]
-    pub const fn raw(self) -> u64 {
-        self.0
     }
 
     /// Reconstructs a traced word from raw bits.

@@ -382,8 +382,10 @@ tex-state = {{ path = "{manifest_dir}" }}
         r#"use tex_state::token::{OriginId, TracedTokenWord};
 
 fn main() {
-    let _origin = OriginId::from_raw(123);
-    let _word = TracedTokenWord::from_raw(456);
+    let origin = OriginId::from_raw(123);
+    let word = TracedTokenWord::from_raw(456);
+    let _origin_raw = origin.raw();
+    let _word_raw = word.raw();
 }
 "#,
     )
@@ -412,6 +414,10 @@ fn main() {
         (stderr.contains("E0624") && stderr.contains("TracedTokenWord::from_raw"))
             || (stderr.contains("E0599") && stderr.contains("from_raw")),
         "probe failed for an unexpected reason while checking TracedTokenWord::from_raw:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("raw") && (stderr.contains("E0624") || stderr.contains("E0599")),
+        "probe failed for an unexpected reason while checking raw accessors:\n{stderr}"
     );
 }
 

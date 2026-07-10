@@ -7,6 +7,7 @@
 
 use crate::ids::{MacroDefinitionId, OriginListId};
 use crate::input::{SourceId, TokenListReplayKind};
+use crate::source_map::{SourceMapStats, SourceSpan};
 use crate::token::{OriginId, Token};
 use crate::world::InputRecordId;
 use std::mem;
@@ -28,6 +29,10 @@ pub struct ProvenanceStats {
     origin_record_capacity: usize,
     origin_list_span_capacity: usize,
     origin_list_entry_capacity: usize,
+    source_regions: usize,
+    generated_source_backings: usize,
+    source_map_bytes: usize,
+    source_map_retained_bytes: usize,
 }
 
 impl PartialEq for ProvenanceStats {
@@ -54,6 +59,10 @@ impl ProvenanceStats {
             origin_record_capacity: 0,
             origin_list_span_capacity: 0,
             origin_list_entry_capacity: 0,
+            source_regions: 0,
+            generated_source_backings: 0,
+            source_map_bytes: 0,
+            source_map_retained_bytes: 0,
         }
     }
 
@@ -72,7 +81,19 @@ impl ProvenanceStats {
             origin_record_capacity,
             origin_list_span_capacity,
             origin_list_entry_capacity,
+            source_regions: 0,
+            generated_source_backings: 0,
+            source_map_bytes: 0,
+            source_map_retained_bytes: 0,
         }
+    }
+
+    pub(crate) const fn with_source_map(mut self, stats: SourceMapStats) -> Self {
+        self.source_regions = stats.regions;
+        self.generated_source_backings = stats.generated_backings;
+        self.source_map_bytes = stats.live_bytes;
+        self.source_map_retained_bytes = stats.retained_bytes;
+        self
     }
 
     #[must_use]
@@ -91,10 +112,26 @@ impl ProvenanceStats {
     }
 
     #[must_use]
+    pub const fn source_regions(self) -> usize {
+        self.source_regions
+    }
+
+    #[must_use]
+    pub const fn generated_source_backings(self) -> usize {
+        self.generated_source_backings
+    }
+
+    #[must_use]
+    pub const fn source_map_bytes(self) -> usize {
+        self.source_map_bytes
+    }
+
+    #[must_use]
     pub const fn estimated_bytes(self) -> usize {
         self.origin_records * mem::size_of::<OriginRecord>()
             + self.origin_list_spans * mem::size_of::<(u32, u32)>()
             + self.origin_list_entries * mem::size_of::<OriginId>()
+            + self.source_map_bytes
     }
 
     #[must_use]
@@ -102,6 +139,7 @@ impl ProvenanceStats {
         self.origin_record_capacity * mem::size_of::<OriginRecord>()
             + self.origin_list_span_capacity * mem::size_of::<(u32, u32)>()
             + self.origin_list_entry_capacity * mem::size_of::<OriginId>()
+            + self.source_map_retained_bytes
     }
 
     #[must_use]
@@ -117,6 +155,11 @@ impl ProvenanceStats {
     #[must_use]
     pub const fn origin_list_entry_capacity(self) -> usize {
         self.origin_list_entry_capacity
+    }
+
+    #[must_use]
+    pub const fn source_map_retained_bytes(self) -> usize {
+        self.source_map_retained_bytes
     }
 
     #[must_use]
@@ -138,6 +181,16 @@ impl ProvenanceStats {
             origin_list_entry_capacity: self
                 .origin_list_entry_capacity
                 .saturating_sub(baseline.origin_list_entry_capacity),
+            source_regions: self.source_regions.saturating_sub(baseline.source_regions),
+            generated_source_backings: self
+                .generated_source_backings
+                .saturating_sub(baseline.generated_source_backings),
+            source_map_bytes: self
+                .source_map_bytes
+                .saturating_sub(baseline.source_map_bytes),
+            source_map_retained_bytes: self
+                .source_map_retained_bytes
+                .saturating_sub(baseline.source_map_retained_bytes),
         }
     }
 }
@@ -405,6 +458,8 @@ pub enum OriginRecord {
     /// Reserved record for unknown, bootstrap, or lost provenance.
     UnknownBootstrap,
     Source(SourceOrigin),
+    /// A validated source-map range, used by tagged direct/fallback origins.
+    SourceSpan(SourceSpan),
     MacroInvocation(MacroInvocationOrigin),
     Inserted(InsertedOrigin),
     Synthesized(SynthesizedOrigin),
@@ -424,7 +479,7 @@ impl ProvenanceStore {
     #[must_use]
     pub(crate) fn new() -> Self {
         Self {
-            records: vec![OriginRecord::UnknownBootstrap],
+            records: Vec::new(),
             spans: vec![(0, 0)],
             origins: Vec::new(),
         }
@@ -444,11 +499,11 @@ impl ProvenanceStore {
 
     /// Allocates a new origin record, saturating capacity overflow to unknown.
     pub(crate) fn allocate(&mut self, record: OriginRecord) -> OriginId {
-        let Some(raw) = u32_index(self.records.len()) else {
+        let Some(index) = arena_index(self.records.len()) else {
             return OriginId::UNKNOWN;
         };
         self.records.push(record);
-        OriginId::from_raw(raw)
+        OriginId::arena(index).expect("checked provenance arena index")
     }
 
     /// Allocates an origin-list span, saturating capacity overflow to empty.
@@ -495,7 +550,13 @@ impl ProvenanceStore {
     /// Reads a live origin record.
     #[must_use]
     pub(crate) fn get(&self, id: OriginId) -> OriginRecord {
-        let index = id.raw() as usize;
+        if id == OriginId::UNKNOWN {
+            return OriginRecord::UnknownBootstrap;
+        }
+        let crate::token::OriginEncoding::Arena(index) = id.decode() else {
+            panic!("direct source origin has no provenance arena record");
+        };
+        let index = index as usize;
         assert!(index < self.records.len(), "origin id is not live");
         self.records[index]
     }
@@ -515,7 +576,11 @@ impl ProvenanceStore {
     /// Returns whether `id` names a currently-live origin record.
     #[must_use]
     pub(crate) fn contains_origin(&self, id: OriginId) -> bool {
-        (id.raw() as usize) < self.records.len()
+        match id.decode() {
+            crate::token::OriginEncoding::Unknown => true,
+            crate::token::OriginEncoding::Arena(index) => (index as usize) < self.records.len(),
+            crate::token::OriginEncoding::DirectSource(_) => false,
+        }
     }
 
     /// Returns whether `id` names a currently-live origin-list span.
@@ -555,7 +620,6 @@ impl ProvenanceStore {
         let records = mark.records as usize;
         let spans = mark.spans as usize;
         let origins = mark.origins as usize;
-        assert!(records >= 1, "provenance mark removes unknown origin");
         assert!(spans >= 1, "provenance mark removes empty origin list");
         assert!(
             records <= self.records.len(),
@@ -589,6 +653,11 @@ fn u32_len(value: usize) -> Option<u32> {
 fn u32_index(value: usize) -> Option<u32> {
     let value = u32_len(value)?;
     (value < u32::MAX).then_some(value)
+}
+
+fn arena_index(value: usize) -> Option<u32> {
+    let value = u32::try_from(value).ok()?;
+    (value <= 0x7fff_ffff).then_some(value)
 }
 
 #[cfg(test)]

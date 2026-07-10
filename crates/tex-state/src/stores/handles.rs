@@ -47,10 +47,16 @@ impl Stores {
     }
 
     pub(super) fn assert_live_origin(&self, id: OriginId) {
-        assert!(
-            self.provenance.contains_origin(id),
-            "origin id is not live in this Universe timeline"
-        );
+        let live = match id.decode() {
+            crate::token::OriginEncoding::DirectSource(position) => self
+                .source_map
+                .region_for_backed_position(position)
+                .is_some(),
+            crate::token::OriginEncoding::Unknown | crate::token::OriginEncoding::Arena(_) => {
+                self.provenance.contains_origin(id)
+            }
+        };
+        assert!(live, "origin id is not live in this Universe timeline");
     }
 
     pub(super) fn assert_live_origin_list(&self, id: OriginListId) {

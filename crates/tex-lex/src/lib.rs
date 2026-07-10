@@ -1716,6 +1716,23 @@ fn traced_source_token(
     TracedTokenWord::pack(token, origin)
 }
 
+fn traced_ordinary_source_token(
+    stores: &mut impl ExpansionState,
+    token: Token,
+    start: LexSourceContext,
+    end: LexSourceContext,
+    scalar: char,
+) -> TracedTokenWord {
+    let backed_one_scalar =
+        end.byte_offset.checked_sub(start.byte_offset) == u64::try_from(scalar.len_utf8()).ok();
+    let origin = if backed_one_scalar {
+        stores.source_token_origin(start.source_id, start.byte_offset, end.byte_offset)
+    } else {
+        allocate_source_origin(stores, start)
+    };
+    TracedTokenWord::pack(token, origin)
+}
+
 fn allocate_source_origin(
     stores: &mut impl ExpansionState,
     coordinate: LexSourceContext,
@@ -1785,13 +1802,15 @@ fn next_token_from_line<S>(
         Catcode::Space => match source.frame.state {
             LexerState::MidLine => {
                 source.frame.state = LexerState::SkippingBlanks;
-                Ok(Some(traced_source_token(
+                Ok(Some(traced_ordinary_source_token(
                     stores,
                     Token::Char {
                         ch: ' ',
                         cat: Catcode::Space,
                     },
                     start,
+                    source_coordinate(source),
+                    ch,
                 )))
             }
             LexerState::NewLine | LexerState::SkippingBlanks => Ok(None),
@@ -1804,10 +1823,12 @@ fn next_token_from_line<S>(
         ))),
         Catcode::Letter | Catcode::Superscript => {
             source.frame.state = LexerState::MidLine;
-            Ok(Some(traced_source_token(
+            Ok(Some(traced_ordinary_source_token(
                 stores,
                 Token::Char { ch, cat },
                 start,
+                source_coordinate(source),
+                ch,
             )))
         }
         Catcode::BeginGroup
@@ -1819,10 +1840,12 @@ fn next_token_from_line<S>(
         | Catcode::Other
         | Catcode::Active => {
             source.frame.state = LexerState::MidLine;
-            Ok(Some(traced_source_token(
+            Ok(Some(traced_ordinary_source_token(
                 stores,
                 Token::Char { ch, cat },
                 start,
+                source_coordinate(source),
+                ch,
             )))
         }
     }

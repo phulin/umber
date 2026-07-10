@@ -591,6 +591,31 @@ impl Stores {
         self.provenance.allocate(OriginRecord::Source(origin))
     }
 
+    /// Encodes an ordinary one-scalar source delivery directly when possible,
+    /// falling back to a validated arena span outside the direct payload.
+    pub fn source_token_origin(
+        &mut self,
+        source: SourceId,
+        byte_offset: u64,
+        byte_end: u64,
+    ) -> OriginId {
+        let Ok(lo) = self.source_map.position(source, byte_offset) else {
+            return OriginId::UNKNOWN;
+        };
+        let Some(region) = self.source_map.region_for_backed_position(lo) else {
+            return OriginId::UNKNOWN;
+        };
+        let Ok(hi) = self.source_map.position(source, byte_end) else {
+            return OriginId::UNKNOWN;
+        };
+        let Ok(span) = self.source_map.span(lo, hi) else {
+            return OriginId::UNKNOWN;
+        };
+        debug_assert_eq!(region.source, source);
+        OriginId::direct_source(lo)
+            .unwrap_or_else(|| self.provenance.allocate(OriginRecord::SourceSpan(span)))
+    }
+
     /// Allocates a macro-invocation origin.
     pub fn macro_invocation_origin(
         &mut self,
@@ -648,18 +673,33 @@ impl Stores {
     }
 
     /// Reads a live origin record.
+    #[cfg(test)]
     #[must_use]
     pub fn origin(&self, id: OriginId) -> OriginRecord {
         self.assert_live_origin(id);
-        self.provenance.get(id)
+        match id.decode() {
+            crate::token::OriginEncoding::DirectSource(position) => {
+                OriginRecord::SourceSpan(self.direct_source_span(position))
+            }
+            crate::token::OriginEncoding::Unknown | crate::token::OriginEncoding::Arena(_) => {
+                self.provenance.get(id)
+            }
+        }
     }
 
     /// Reads an origin record if it is still live on this timeline.
     #[must_use]
     pub fn origin_if_live(&self, id: OriginId) -> Option<OriginRecord> {
-        self.provenance
-            .contains_origin(id)
-            .then(|| self.provenance.get(id))
+        match id.decode() {
+            crate::token::OriginEncoding::DirectSource(position) => self
+                .source_map
+                .region_for_backed_position(position)
+                .map(|_| OriginRecord::SourceSpan(self.direct_source_span(position))),
+            crate::token::OriginEncoding::Unknown | crate::token::OriginEncoding::Arena(_) => self
+                .provenance
+                .contains_origin(id)
+                .then(|| self.provenance.get(id)),
+        }
     }
 
     /// Allocates an origin-list span.
@@ -708,7 +748,9 @@ impl Stores {
     /// Returns live provenance arena length counters.
     #[must_use]
     pub fn provenance_stats(&self) -> ProvenanceStats {
-        self.provenance.stats()
+        self.provenance
+            .stats()
+            .with_source_map(self.source_map.stats())
     }
 
     /// Registers immutable source backing on this aggregate timeline.
@@ -740,6 +782,30 @@ impl Stores {
 
     pub(crate) fn source_region(&self, source: SourceId) -> Option<SourceRegion> {
         self.source_map.region_for_source(source)
+    }
+
+    pub(crate) fn direct_source_origin(&self, id: OriginId) -> Option<SourceOrigin> {
+        let crate::token::OriginEncoding::DirectSource(position) = id.decode() else {
+            return None;
+        };
+        self.source_origin_at_position(position)
+    }
+
+    pub(crate) fn source_origin_at_position(&self, position: SourcePos) -> Option<SourceOrigin> {
+        let region = self.source_map.region_for_backed_position(position)?;
+        let byte_offset = position.raw().checked_sub(region.start.raw())?;
+        let mut source = SourceOrigin::new(region.source, byte_offset, 0, 0);
+        if let SourceBacking::World(record) = region.backing {
+            source = source.with_input_record(record);
+        }
+        Some(source)
+    }
+
+    fn direct_source_span(&self, position: SourcePos) -> SourceSpan {
+        let hi = SourcePos::from_raw_for_store(position.raw() + 1);
+        self.source_map
+            .span(position, hi)
+            .expect("live direct source position must admit one backed byte")
     }
 
     pub(crate) fn generated_source(&self, backing: SourceBacking) -> Option<&GeneratedSource> {

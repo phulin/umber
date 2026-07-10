@@ -29,6 +29,39 @@ fn origin_zero_is_unknown() {
 }
 
 #[test]
+fn origin_encoding_has_exact_direct_and_arena_boundaries() {
+    use crate::source_map::SourcePos;
+
+    let first_direct = OriginId::direct_source(SourcePos::from_raw_for_store(0))
+        .expect("first direct position must pack");
+    let last_direct = OriginId::direct_source(SourcePos::from_raw_for_store(0x7fff_fffe))
+        .expect("last direct position must pack");
+    assert_eq!(first_direct.raw(), 1);
+    assert_eq!(last_direct.raw(), 0x7fff_ffff);
+    assert!(OriginId::direct_source(SourcePos::from_raw_for_store(0x7fff_ffff)).is_none());
+    assert_eq!(
+        first_direct.decode(),
+        super::OriginEncoding::DirectSource(SourcePos::from_raw_for_store(0))
+    );
+    assert_eq!(
+        last_direct.decode(),
+        super::OriginEncoding::DirectSource(SourcePos::from_raw_for_store(0x7fff_fffe))
+    );
+
+    let first_arena = OriginId::arena(0).expect("first arena index must pack");
+    let last_arena = OriginId::arena(0x7fff_ffff).expect("last arena index must pack");
+    assert_eq!(first_arena.raw(), 0x8000_0000);
+    assert_eq!(last_arena.raw(), u32::MAX);
+    assert!(OriginId::arena(0x8000_0000).is_none());
+    assert_eq!(first_arena.decode(), super::OriginEncoding::Arena(0));
+    assert_eq!(
+        last_arena.decode(),
+        super::OriginEncoding::Arena(0x7fff_ffff)
+    );
+    assert_eq!(OriginId::UNKNOWN.decode(), super::OriginEncoding::Unknown);
+}
+
+#[test]
 fn char_token_round_trips_with_origin() {
     let origin = OriginId::from_raw(42);
     let token = Token::Char {

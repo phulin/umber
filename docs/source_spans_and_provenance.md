@@ -536,6 +536,18 @@ O(1), and no downstream crate can mutate raw map/backing state.
 
 ### Phase 3: Tagged direct-source origins
 
+**Status (2026-07-10): implemented.** `OriginId` now uses the private
+raw-zero/direct/high-bit-arena layout while remaining four bytes inside the
+eight-byte `TracedTokenWord`. Registered ordinary one-scalar source delivery
+packs its logical `SourcePos` without appending a provenance record; positions
+beyond the direct payload fall back to the same validated arena `SourceSpan`.
+Legacy flat `Source` records remain available for non-ordinary and migration
+paths. Direct and arena liveness dispatch through the aggregate source-map /
+provenance tuple, including rollback, saturation, and unknown degradation.
+Production statistics derive arena and source-map live/retained storage from
+lengths and capacities; benchmark-only id inspection counts direct deliveries
+without a per-token production counter write.
+
 - Make `OriginId` encoding opaque and add private direct/arena constructors and
   decoders.
 - Implement the exact raw-zero/direct/high-bit-arena layout from section 5.

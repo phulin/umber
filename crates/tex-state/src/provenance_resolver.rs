@@ -136,10 +136,16 @@ impl<'a> ProvenanceResolver<'a> {
     }
 
     fn resolve_to_source(&self, origin: OriginId) -> Option<SourceOrigin> {
+        if let Some(source) = self.universe.direct_source_origin(origin) {
+            return Some(source);
+        }
         let mut origin = origin;
         for _ in 0..self.trace_depth.saturating_add(4) {
             match self.record(origin)? {
                 OriginRecord::Source(source) => return Some(source),
+                OriginRecord::SourceSpan(span) => {
+                    return self.universe.source_origin_at_position(span.lo());
+                }
                 OriginRecord::MacroInvocation(invocation) => {
                     origin = invocation.invocation();
                 }
@@ -248,6 +254,7 @@ impl<'a> ProvenanceResolver<'a> {
                     source.column().saturating_add(1).max(1)
                 )
             }
+            Some(OriginRecord::SourceSpan(_)) => "source location".to_owned(),
             Some(OriginRecord::MacroInvocation(_)) => "macro expansion".to_owned(),
             Some(OriginRecord::Inserted(inserted)) => {
                 format!(

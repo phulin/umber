@@ -163,7 +163,7 @@ fn invalid_conditional_relation_reports_offending_origin() {
     assert_eq!(primary, Some(token.origin()));
     assert!(matches!(
         stores.origin(token.origin()),
-        OriginRecord::Source(_)
+        OriginRecord::Source(_) | OriginRecord::SourceSpan(_)
     ));
 }
 

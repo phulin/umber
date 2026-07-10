@@ -2,7 +2,7 @@ use tex_lex::{InputStack, MemoryInput};
 use tex_state::env::banks::IntParam;
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
-use tex_state::provenance::{OriginRecord, SourceOrigin};
+use tex_state::provenance::OriginRecord;
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{ExpansionState, Universe};
@@ -247,9 +247,14 @@ fn missing_number_diagnostic_uses_offending_token_origin() {
 
     assert_eq!(scanned.diagnostic(), Some(IntegerDiagnostic::MissingNumber));
     assert_eq!(scanned.diagnostic_origin(), Some(replayed.origin()));
+    let OriginRecord::SourceSpan(span) = stores.origin(replayed.origin()) else {
+        panic!("ordinary source token must retain a logical source span");
+    };
     assert_eq!(
-        stores.origin(replayed.origin()),
-        OriginRecord::Source(SourceOrigin::new(tex_state::SourceId::new(0), 0, 1, 0))
+        span.lo(),
+        stores
+            .source_position(tex_state::SourceId::new(0), 0)
+            .expect("source position stays live")
     );
 }
 

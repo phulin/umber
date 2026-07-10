@@ -142,6 +142,12 @@ pub trait ExpansionState {
         line: u32,
         column: u32,
     ) -> OriginId;
+    fn source_token_origin(
+        &mut self,
+        source: SourceId,
+        byte_offset: u64,
+        byte_end: u64,
+    ) -> OriginId;
     fn register_source(
         &mut self,
         source: SourceId,
@@ -1182,6 +1188,17 @@ impl Universe {
             .source_origin_with_input_record(source, input_record, byte_offset, line, column)
     }
 
+    /// Returns best-effort provenance for an ordinary backed source scalar.
+    pub fn source_token_origin(
+        &mut self,
+        source: SourceId,
+        byte_offset: u64,
+        byte_end: u64,
+    ) -> OriginId {
+        self.stores
+            .source_token_origin(source, byte_offset, byte_end)
+    }
+
     /// Allocates a macro-invocation origin.
     pub fn macro_invocation_origin(
         &mut self,
@@ -1220,12 +1237,36 @@ impl Universe {
     /// Reads a live origin record.
     #[must_use]
     pub fn origin(&self, id: OriginId) -> OriginRecord {
-        self.stores.origin(id)
+        self.origin_if_live(id)
+            .expect("origin id is not live in this Universe timeline")
     }
 
     /// Reads an origin record if it is still live on this timeline.
     #[must_use]
     pub fn origin_if_live(&self, id: OriginId) -> Option<OriginRecord> {
+        if let crate::token::OriginEncoding::DirectSource(position) = id.decode() {
+            let source = self.stores.source_origin_at_position(position)?;
+            let region = self.stores.source_region(source.source())?;
+            let bytes = self.source_backing_bytes(region)?;
+            let offset = usize::try_from(source.byte_offset()).ok()?;
+            let scalar_len = std::str::from_utf8(bytes.get(offset..)?)
+                .ok()?
+                .chars()
+                .next()?
+                .len_utf8();
+            let hi = self
+                .stores
+                .source_position(
+                    source.source(),
+                    source.byte_offset().checked_add(scalar_len as u64)?,
+                )
+                .ok()?;
+            return self
+                .stores
+                .source_span(position, hi)
+                .ok()
+                .map(OriginRecord::SourceSpan);
+        }
         self.stores.origin_if_live(id)
     }
 
@@ -1323,6 +1364,20 @@ impl Universe {
                 .generated_source(region.backing)
                 .map(GeneratedSource::bytes),
         }
+    }
+
+    pub(crate) fn direct_source_origin(
+        &self,
+        origin: OriginId,
+    ) -> Option<crate::provenance::SourceOrigin> {
+        self.stores.direct_source_origin(origin)
+    }
+
+    pub(crate) fn source_origin_at_position(
+        &self,
+        position: SourcePos,
+    ) -> Option<crate::provenance::SourceOrigin> {
+        self.stores.source_origin_at_position(position)
     }
 
     pub fn intern_glue(&mut self, spec: GlueSpec) -> GlueId {
@@ -2463,6 +2518,15 @@ impl ExpansionState for Universe {
         Self::source_origin_with_input_record(self, source, input_record, byte_offset, line, column)
     }
 
+    fn source_token_origin(
+        &mut self,
+        source: SourceId,
+        byte_offset: u64,
+        byte_end: u64,
+    ) -> OriginId {
+        Self::source_token_origin(self, source, byte_offset, byte_end)
+    }
+
     fn register_source(
         &mut self,
         source: SourceId,
@@ -2764,6 +2828,16 @@ impl ExpansionState for ExpansionContext<'_> {
             line,
             column,
         )
+    }
+
+    fn source_token_origin(
+        &mut self,
+        source: SourceId,
+        byte_offset: u64,
+        byte_end: u64,
+    ) -> OriginId {
+        self.universe
+            .source_token_origin(source, byte_offset, byte_end)
     }
 
     fn register_source(

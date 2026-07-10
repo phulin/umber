@@ -8,7 +8,9 @@ use crate::meaning::Meaning;
 use crate::meaning::MeaningFlags;
 use crate::node::{BoxNode, BoxNodeFields, Node, Sign};
 use crate::scaled::{GlueSetRatio, Scaled};
+use crate::source_map::SourceDescriptor;
 use crate::token::{Catcode, OriginId, Token};
+use crate::world::InputRecordId;
 use crate::{
     input::SourceId,
     provenance::{
@@ -34,6 +36,110 @@ fn rollback_restores_env_and_interner_as_one_tuple() {
     let reused = stores.intern("temporary");
     assert_eq!(reused.raw(), temporary.raw());
     assert_eq!(stores.meaning(reused), Meaning::Undefined);
+}
+
+#[test]
+fn source_origin_direct_boundary_crossing_falls_back_to_one_span_arena() {
+    let mut stores = Stores::new();
+    stores.source_map.set_next_position_for_test(0x7fff_fffd);
+    stores
+        .register_source(
+            SourceId::new(0),
+            SourceDescriptor::world(InputRecordId::new(0), 4),
+        )
+        .expect("cross-boundary source registers");
+    let before = stores.provenance_stats();
+
+    let first = stores.source_token_origin(SourceId::new(0), 0, 1);
+    let last_direct = stores.source_token_origin(SourceId::new(0), 1, 2);
+    let first_wide = stores.source_token_origin(SourceId::new(0), 2, 3);
+    let after = stores.provenance_stats();
+
+    assert!(matches!(
+        first.decode(),
+        crate::token::OriginEncoding::DirectSource(_)
+    ));
+    assert!(matches!(
+        last_direct.decode(),
+        crate::token::OriginEncoding::DirectSource(_)
+    ));
+    assert!(matches!(
+        first_wide.decode(),
+        crate::token::OriginEncoding::Arena(0)
+    ));
+    assert!(matches!(
+        stores.origin(first_wide),
+        OriginRecord::SourceSpan(_)
+    ));
+    assert_eq!(after.origin_records(), before.origin_records() + 1);
+
+    let list = stores.allocate_origin_list(&[first, last_direct, first_wide]);
+    assert_eq!(stores.origin_list(list), &[first, last_direct, first_wide]);
+}
+
+#[test]
+fn oversized_and_cumulative_sources_use_wide_fallback_without_narrowing_positions() {
+    let mut oversized = Stores::new();
+    oversized
+        .register_source(
+            SourceId::new(0),
+            SourceDescriptor::world(InputRecordId::new(0), 0x8000_0001),
+        )
+        .expect("single oversized source registers in logical u64 space");
+    let wide = oversized.source_token_origin(SourceId::new(0), 0x7fff_ffff, 0x8000_0000);
+    let OriginRecord::SourceSpan(span) = oversized.origin(wide) else {
+        panic!("wide position must use source-span fallback");
+    };
+    assert_eq!(
+        span.lo(),
+        oversized
+            .source_position(SourceId::new(0), 0x7fff_ffff)
+            .expect("wide logical position remains addressable")
+    );
+
+    let mut cumulative = Stores::new();
+    cumulative
+        .source_map
+        .set_next_position_for_test(0x7fff_ff00);
+    cumulative
+        .register_source(
+            SourceId::new(0),
+            SourceDescriptor::world(InputRecordId::new(0), 0xff),
+        )
+        .expect("first source registers");
+    cumulative
+        .register_source(
+            SourceId::new(1),
+            SourceDescriptor::world(InputRecordId::new(1), 2),
+        )
+        .expect("second source registers beyond direct space");
+    let fallback = cumulative.source_token_origin(SourceId::new(1), 0, 1);
+    assert!(matches!(
+        fallback.decode(),
+        crate::token::OriginEncoding::Arena(0)
+    ));
+}
+
+#[test]
+fn direct_and_fallback_liveness_tracks_aggregate_rollback() {
+    let mut stores = Stores::new();
+    stores.source_map.set_next_position_for_test(0x7fff_fffe);
+    let checkpoint = stores.checkpoint();
+    stores
+        .register_source(
+            SourceId::new(4),
+            SourceDescriptor::world(InputRecordId::new(0), 2),
+        )
+        .expect("source registers");
+    let direct = stores.source_token_origin(SourceId::new(4), 0, 1);
+    let fallback = stores.source_token_origin(SourceId::new(4), 1, 2);
+    assert!(stores.origin_if_live(direct).is_some());
+    assert!(stores.origin_if_live(fallback).is_some());
+
+    stores.rollback(&checkpoint);
+    assert!(stores.origin_if_live(direct).is_none());
+    assert!(stores.origin_if_live(fallback).is_none());
+    assert_eq!(stores.provenance_stats().origin_records(), 0);
 }
 
 #[test]

@@ -215,9 +215,14 @@ supply.
   empty sources). `Universe` validates World record liveness/length before
   the private source map accepts a region; file bytes remain solely in
   `World`, while generated sources share immutable backing with their input
-  adapter. Diagnostic resolution maps legacy flat source origins through the
-  live region and computes physical line/column data lazily, so frame pop does
-  not lose source text and aggregate rollback cannot alias reused ids.
+  adapter. Ordinary backed one-scalar tokens encode their logical source
+  position directly in the opaque origin word, eliminating provenance-arena
+  appends on the common source path. Positions above the direct payload use
+  validated arena `SourceSpan` records, while legacy flat source records
+  remain during migration. Diagnostic resolution dispatches both forms
+  through the live source map and computes physical line/column data lazily,
+  so frame pop does not lose source text and aggregate rollback cannot alias
+  reused ids.
 
 ## 4. Lexer (the eyes)
 
@@ -244,9 +249,12 @@ Responsibility: characters → tokens, under mutable catcode law.
   bits 63..62 are token kind, bits 61..32 are a 30-bit payload, and bits
   31..0 are `OriginId`. Character payloads store a 21-bit Unicode scalar value
   plus 4-bit catcode, control-sequence payloads store `Symbol::raw()`, and
-  parameter payloads store the 4-bit slot. `OriginId(0)` is the reserved
-  Unknown/Bootstrap origin; provenance allocation overflow saturates to that
-  id rather than aborting semantic compilation. Origin records and packed
+  parameter payloads store the 4-bit slot. The opaque origin field privately
+  reserves zero for Unknown/Bootstrap, uses clear-high-bit payloads for direct
+  logical source positions, and uses high-bit payloads for provenance-arena
+  indexes. Encoding capacity never narrows the logical `u64` source space;
+  allocation overflow saturates to unknown rather than aborting semantic
+  compilation. Origin records and packed
   origin-list spans live in `tex-state` as rollback-coupled, hash-neutral
   diagnostic side-channel arenas. User-facing source labels, line/caret
   snippets, and expansion traces are rendered lazily by the provenance

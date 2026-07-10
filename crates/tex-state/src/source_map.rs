@@ -9,6 +9,21 @@ use crate::world::{ContentHash, InputRecordId};
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct SourcePos(u64);
 
+impl SourcePos {
+    pub(crate) const fn from_origin_payload(raw: u32) -> Self {
+        Self(raw as u64)
+    }
+
+    #[must_use]
+    pub(crate) const fn raw(self) -> u64 {
+        self.0
+    }
+
+    pub(crate) const fn from_raw_for_store(raw: u64) -> Self {
+        Self(raw)
+    }
+}
+
 /// A validated half-open range within one live source region.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct SourceSpan {
@@ -183,7 +198,21 @@ pub(crate) struct SourceMap {
     next_pos: u64,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct SourceMapStats {
+    pub(crate) regions: usize,
+    pub(crate) generated_backings: usize,
+    pub(crate) live_bytes: usize,
+    pub(crate) retained_bytes: usize,
+}
+
 impl SourceMap {
+    #[cfg(test)]
+    pub(crate) fn set_next_position_for_test(&mut self, next_pos: u64) {
+        assert!(self.regions.is_empty());
+        self.next_pos = next_pos;
+    }
+
     pub(crate) fn register(
         &mut self,
         source: SourceId,
@@ -278,8 +307,24 @@ impl SourceMap {
         (position.0 <= region.anchor().0).then_some(region)
     }
 
+    pub(crate) fn region_for_backed_position(&self, position: SourcePos) -> Option<SourceRegion> {
+        self.region_for_position(position)
+            .filter(|region| position.0 < region.anchor().0)
+    }
+
     pub(crate) fn generated(&self, id: GeneratedSourceId) -> Option<&GeneratedSource> {
         self.generated.get(id.0 as usize)
+    }
+
+    pub(crate) fn stats(&self) -> SourceMapStats {
+        SourceMapStats {
+            regions: self.regions.len(),
+            generated_backings: self.generated.len(),
+            live_bytes: self.regions.len() * std::mem::size_of::<SourceRegion>()
+                + self.generated.len() * std::mem::size_of::<GeneratedSource>(),
+            retained_bytes: self.regions.capacity() * std::mem::size_of::<SourceRegion>()
+                + self.generated.capacity() * std::mem::size_of::<GeneratedSource>(),
+        }
     }
 
     pub(crate) const fn watermark(&self) -> SourceMapMark {

@@ -349,7 +349,10 @@ cells[i] = new
   token identity. Source-frame pending queues store packed traced token words,
   but input-summary equality and semantic hashing decode them back to `Token`
   so origin differences do not affect snapshot convergence. `OriginId(0)` is
-  the reserved Unknown/Bootstrap record. `OriginListId::EMPTY` is the reserved
+  the reserved Unknown/Bootstrap value and consumes no arena record. Low
+  payloads encode live logical `SourcePos` values directly, while high-bit
+  values address the origin-record arena; the layout, constructors, accessors,
+  and decoder are private. `OriginListId::EMPTY` is the reserved
   empty origin-list span.
 - The store owns one append-only `OriginRecord` arena and one append-only
   packed `OriginId` arena addressed by `OriginListId` spans. It is deliberately
@@ -376,8 +379,10 @@ cells[i] = new
   resolve to unknown/empty provenance when an entry is absent. Provenance
   appends are not journaled and are not part of memo redo slices; execution
   reconstructs them when replaying. `Universe` also exposes read-only
-  provenance arena statistics for benchmarks and diagnostics; the counters do
-  not expose raw store mutation or participate in semantic hashing.
+  provenance/source-map lengths, logical bytes, and retained-capacity
+  statistics for benchmarks and diagnostics. Direct-delivery measurement uses
+  benchmark-only id inspection rather than a production per-token counter
+  write; none of these values participate in semantic hashing.
 - User-facing provenance is resolved only at diagnostic formatting
   boundaries. `ProvenanceResolver` reads live origin records, input summaries,
   world input records, and interned names to render source labels, source
@@ -410,6 +415,11 @@ cells[i] = new
   Resolver line starts are derived lazily from stable immutable backing; no
   mutable cache keyed by reusable ids is retained. Source-map identity and
   diagnostic bytes are excluded from semantic hashing.
+- Ordinary one-scalar backed source tokens encode their starting `SourcePos`
+  directly in `OriginId`, so the dominant lexer path performs no provenance
+  append. The direct payload is only an encoding capacity: regions continue in
+  logical `u64` space and validated `SourceSpan` arena records provide the
+  fallback above it, degrading to unknown only if that arena is also full.
 
 ### Glue store
 
