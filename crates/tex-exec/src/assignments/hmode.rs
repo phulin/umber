@@ -10,7 +10,7 @@ use tex_state::token::{Catcode, Token};
 use tex_state::{PrintSink, Universe};
 use tex_typeset::{INF_BAD, PackSpec, VpackParams};
 
-use super::paragraph::ensure_horizontal_for_character;
+use super::paragraph::{end_paragraph, ensure_horizontal_for_character, normal_paragraph};
 use super::*;
 use crate::dispatch::dispatch_delivered_token_with_recorder;
 use crate::packing_params::vpack;
@@ -230,7 +230,11 @@ where
     stores.enter_group_with_kind(tex_state::GroupKind::Simple);
     let mut inner = ModeNest::new();
     inner.push(Mode::InternalVertical);
+    normal_paragraph(&mut inner, stores);
     scan_box_group(&mut inner, input, stores, hooks)?;
+    if inner.current_mode() == Mode::Horizontal {
+        end_paragraph(&mut inner, stores)?;
+    }
     let level = inner.pop()?;
     let content = stores.freeze_node_list(level.list().nodes());
     let packed = vpack(
@@ -297,11 +301,17 @@ where
             context: "\\vadjust group",
         });
     }
+    stores.enter_group_with_kind(tex_state::GroupKind::Simple);
     let mut inner = ModeNest::new();
     inner.push(Mode::InternalVertical);
+    normal_paragraph(&mut inner, stores);
     scan_box_group(&mut inner, input, stores, hooks)?;
+    if inner.current_mode() == Mode::Horizontal {
+        end_paragraph(&mut inner, stores)?;
+    }
     let level = inner.pop()?;
     let content = stores.freeze_node_list(level.list().nodes());
+    crate::leave_group(input, stores, tex_state::GroupKind::Simple)?;
     nest.current_list_mut().push(Node::Adjust(content));
     Ok(())
 }

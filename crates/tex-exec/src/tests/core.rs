@@ -1423,6 +1423,42 @@ fn insert_node_captures_split_parameters_and_natural_size() {
 }
 
 #[test]
+fn insertion_starts_with_normal_paragraph_parameters() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(concat!(
+        "\\hsize=100pt ",
+        "\\hangindent=99pt \\hangafter=0 \\looseness=2 ",
+        "\\insert7{a b c d e f g h i j}"
+    )));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("insertion paragraph executes");
+
+    let (size, content) = stores
+        .current_page_nodes()
+        .iter()
+        .find_map(|node| match node {
+            tex_state::node::Node::Ins { size, content, .. } => Some((*size, *content)),
+            _ => None,
+        })
+        .expect("insert node");
+    assert!(matches!(
+        stores.nodes(content),
+        [tex_state::node::Node::HList(_)]
+    ));
+    assert!(size.raw() < 20 * tex_state::scaled::Scaled::UNITY);
+    assert_eq!(
+        stores.dimen_param(DimenParam::HANG_INDENT).raw(),
+        99 * tex_state::scaled::Scaled::UNITY
+    );
+    assert_eq!(stores.int_param(IntParam::HANG_AFTER), 0);
+    assert_eq!(stores.int_param(IntParam::LOOSENESS), 2);
+}
+
+#[test]
 fn insertion_skip_reports_infinite_shrink_correction() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
@@ -1823,7 +1859,7 @@ fn parshape_and_hanging_parameters_reset_after_paragraph() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
-        "\\parshape=1 3pt 40pt\\hangindent=5pt\\hangafter=2 x\\par",
+        "\\parshape=1 3pt 40pt\\hangindent=5pt\\hangafter=2\\looseness=2 x\\par",
     ));
     let mut executor = Executor::new();
 
@@ -1833,6 +1869,7 @@ fn parshape_and_hanging_parameters_reset_after_paragraph() {
 
     assert_eq!(stores.dimen_param(DimenParam::HANG_INDENT).raw(), 0);
     assert_eq!(stores.int_param(IntParam::HANG_AFTER), 1);
+    assert_eq!(stores.int_param(IntParam::LOOSENESS), 0);
     assert!(executor.nest().current_list().par_shape().is_none());
 }
 

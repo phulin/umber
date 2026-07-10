@@ -590,6 +590,9 @@ assignments, box building, and dispatch into the typesetting kernels.
   building: `\insert` accepts `\let` aliases of begin/end-group characters,
   preserves the traced opener while classifying its current meaning, and runs
   the internal vertical builder inside a journal-backed `Universe` group.
+  Entering an `\insert` or `\vadjust` group applies TeX82's local
+  `normal_paragraph` defaults, and a paragraph still open at the closing brace
+  is line-broken before the internal vertical list is frozen.
   Insertion parameters and content are captured before group exit, while only
   global assignments made inside the insertion survive in the enclosing state.
 - **Paragraph and page hand-off**: paragraph start/end is stomach-owned.

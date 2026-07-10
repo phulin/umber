@@ -334,10 +334,21 @@ fn line_shape(params: &ParagraphParams) -> LineShape {
     }
 }
 
-fn reset_after_par(nest: &mut ModeNest, stores: &mut Universe) {
+pub(crate) fn normal_paragraph(nest: &mut ModeNest, stores: &mut Universe) {
     nest.current_list_mut().reset_par_shape();
-    stores.set_dimen_param(DimenParam::HANG_INDENT, Scaled::from_raw(0));
-    stores.set_int_param(IntParam::HANG_AFTER, 1);
+    if stores.int_param(IntParam::LOOSENESS) != 0 {
+        stores.set_int_param(IntParam::LOOSENESS, 0);
+    }
+    if stores.dimen_param(DimenParam::HANG_INDENT).raw() != 0 {
+        stores.set_dimen_param(DimenParam::HANG_INDENT, Scaled::from_raw(0));
+    }
+    if stores.int_param(IntParam::HANG_AFTER) != 1 {
+        stores.set_int_param(IntParam::HANG_AFTER, 1);
+    }
+}
+
+fn reset_after_par(nest: &mut ModeNest, stores: &mut Universe) {
+    normal_paragraph(nest, stores);
 }
 
 fn trim_trailing_glue(list: &mut crate::ModeList) {
