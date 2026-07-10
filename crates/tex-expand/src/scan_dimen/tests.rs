@@ -2,7 +2,7 @@ use tex_lex::{InputStack, MemoryInput};
 use tex_state::Universe;
 use tex_state::env::banks::{DimenParam, GlueParam};
 use tex_state::glue::{GlueSpec, Order};
-use tex_state::macro_store::MacroMeaning;
+use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::provenance::{OriginRecord, SourceOrigin};
 use tex_state::scaled::{PhysicalUnit, Scaled, round_decimal_fraction, scaled_from_decimal_parts};
@@ -427,6 +427,68 @@ fn missing_number_recovers_zero_then_inserted_pt() {
 }
 
 #[test]
+fn expanded_command_recovery_keeps_replay_frontier_origin() {
+    let mut stores = Universe::new();
+    let penalty = stores.intern("penalty");
+    stores.set_meaning(
+        penalty,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Penalty),
+    );
+    let nobreak = stores.intern("nobreak");
+    let params = stores.intern_token_list(&[]);
+    let body = stores.intern_token_list(&[Token::Cs(penalty)]);
+    let definition_origin = stores.source_origin(tex_state::SourceId::new(7), 10, 2, 1);
+    let body_origin = stores.source_origin(tex_state::SourceId::new(7), 21, 2, 12);
+    let body_origins = stores.allocate_origin_list(&[body_origin]);
+    stores.set_macro_meaning_with_provenance(
+        nobreak,
+        MacroMeaning::new(MeaningFlags::EMPTY, params, body),
+        MacroDefinitionProvenance::new(
+            definition_origin,
+            tex_state::ids::OriginListId::EMPTY,
+            body_origins,
+        ),
+    );
+
+    let baseline = stores.snapshot();
+    let baseline_stats = stores.provenance_stats();
+    let mut input = InputStack::new(MemoryInput::new("\\nobreak"));
+    let scanned =
+        scan_dimen(&mut input, &mut stores, context()).expect("missing dimension recovers");
+
+    assert_eq!(
+        scanned.diagnostics().collect::<Vec<_>>(),
+        vec![
+            DimensionDiagnostic::MissingNumber,
+            DimensionDiagnostic::IllegalUnit {
+                inserted: InsertedUnit::Pt,
+            },
+        ]
+    );
+    assert_eq!(
+        scanned.diagnostic_origins().collect::<Vec<_>>(),
+        vec![body_origin, body_origin]
+    );
+    let replayed = input
+        .next_traced_token(&mut stores)
+        .expect("replay should succeed")
+        .expect("rejected command should remain at the replay frontier");
+    assert_eq!(replayed.token(), Some(Token::Cs(penalty)));
+    assert_eq!(replayed.origin(), body_origin);
+
+    verify_shadow(&stores);
+    let after = stores.snapshot();
+    assert_eq!(
+        after.state_hash(),
+        baseline.state_hash(),
+        "diagnostic provenance and scanner pushback must be hash-neutral"
+    );
+    stores.rollback(&baseline);
+    assert_eq!(stores.provenance_stats(), baseline_stats);
+    verify_shadow(&stores);
+}
+
+#[test]
 fn eof_missing_dimension_uses_caller_context_origin() {
     let mut stores = Universe::new();
     let mut input = InputStack::new(MemoryInput::new(""));
@@ -448,6 +510,14 @@ fn eof_missing_dimension_uses_caller_context_origin() {
     assert_eq!(origins.len(), 1);
     assert_eq!(origins, vec![origin]);
 }
+
+#[cfg(feature = "shadow")]
+fn verify_shadow(stores: &Universe) {
+    stores.verify_shadow();
+}
+
+#[cfg(not(feature = "shadow"))]
+fn verify_shadow(_: &Universe) {}
 
 #[test]
 fn font_relative_units_scan_as_nullfont_zero_by_default() {

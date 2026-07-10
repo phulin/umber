@@ -3,7 +3,6 @@ use tex_state::Universe;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
-use tex_state::provenance::OriginRecord;
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
@@ -179,9 +178,6 @@ fn macro_expanding_to_penalty_recovers_zero_glue_and_replays_command() {
     );
     let diagnostic_records = scanned.diagnostic_records().collect::<Vec<_>>();
     assert_eq!(diagnostic_records[0].1, replayed.origin());
-    assert!(matches!(
-        stores.origin(diagnostic_records[1].1),
-        OriginRecord::Source(_)
-    ));
+    assert_eq!(diagnostic_records[1].1, replayed.origin());
     assert_eq!(replayed.token(), Some(Token::Cs(penalty)));
 }

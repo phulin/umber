@@ -3,6 +3,9 @@ name = "tex-expand"
 version.workspace = true
 edition.workspace = true
 
+[features]
+shadow = ["tex-state/shadow"]
+
 [dependencies]
 tex-lex = { path = "../tex-lex" }
 tex-state = { path = "../tex-state" }

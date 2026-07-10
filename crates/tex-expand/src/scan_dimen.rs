@@ -583,14 +583,11 @@ where
 
     unread_token(input, stores, token);
     match scan_unit(input, stores, recorder, hooks, expander, options)? {
-        Some(unit) => convert_scanned_unit(stores, integer, 0, unit),
-        None if options.coerce_integer_to_sp => {
+        UnitScan::Scanned(unit) => convert_scanned_unit(stores, integer, 0, unit),
+        UnitScan::Rejected(_) if options.coerce_integer_to_sp => {
             convert_decimal(integer, 0, PhysicalUnit::Sp, false, stores.mag())
         }
-        None => {
-            let origin = input.current_input_origin(stores);
-            recover_missing_unit(integer, 0, options, stores, origin)
-        }
+        UnitScan::Rejected(origin) => recover_missing_unit(integer, 0, options, stores, origin),
     }
 }
 
@@ -611,11 +608,12 @@ where
     E: ExpandNext<S, St, R, H>,
 {
     let fraction = scan_fraction(input, stores, recorder, hooks, expander)?;
-    let Some(unit) = scan_unit(input, stores, recorder, hooks, expander, options)? else {
-        let origin = input.current_input_origin(stores);
-        return recover_missing_unit(integer, fraction, options, stores, origin);
-    };
-    convert_scanned_unit(stores, integer, fraction, unit)
+    match scan_unit(input, stores, recorder, hooks, expander, options)? {
+        UnitScan::Scanned(unit) => convert_scanned_unit(stores, integer, fraction, unit),
+        UnitScan::Rejected(origin) => {
+            recover_missing_unit(integer, fraction, options, stores, origin)
+        }
+    }
 }
 
 fn scan_fraction<S, St, R, H, E>(
@@ -760,18 +758,20 @@ where
     }
 
     let integer = scanned.value();
-    let Some(unit) = scan_unit(input, stores, recorder, hooks, expander, options)? else {
-        if options.coerce_integer_to_sp {
+    let unit = match scan_unit(input, stores, recorder, hooks, expander, options)? {
+        UnitScan::Scanned(unit) => unit,
+        UnitScan::Rejected(_) if options.coerce_integer_to_sp => {
             return convert_decimal(integer, 0, PhysicalUnit::Sp, false, stores.mag()).map(
                 |dimen| {
                     dimen.with_integer_diagnostic(scanned.diagnostic(), scanned.diagnostic_origin())
                 },
             );
         }
-        let origin = input.current_input_origin(stores);
-        return recover_missing_unit(integer, 0, options, stores, origin).map(|dimen| {
-            dimen.with_integer_diagnostic(scanned.diagnostic(), scanned.diagnostic_origin())
-        });
+        UnitScan::Rejected(origin) => {
+            return recover_missing_unit(integer, 0, options, stores, origin).map(|dimen| {
+                dimen.with_integer_diagnostic(scanned.diagnostic(), scanned.diagnostic_origin())
+            });
+        }
     };
     convert_scanned_unit(stores, integer, 0, unit).map(|dimen| {
         dimen.with_integer_diagnostic(scanned.diagnostic(), scanned.diagnostic_origin())
@@ -805,18 +805,22 @@ where
             scanned.diagnostic_origin().unwrap_or(token.origin()),
         ));
     }
-    let Some(unit) = scan_unit(input, stores, recorder, hooks, expander, options)? else {
-        if options.coerce_integer_to_sp {
+    let unit = match scan_unit(input, stores, recorder, hooks, expander, options)? {
+        UnitScan::Scanned(unit) => unit,
+        UnitScan::Rejected(_) if options.coerce_integer_to_sp => {
             return convert_decimal(scanned.value(), 0, PhysicalUnit::Sp, false, stores.mag()).map(
                 |dimen| {
                     dimen.with_integer_diagnostic(scanned.diagnostic(), scanned.diagnostic_origin())
                 },
             );
         }
-        let origin = input.current_input_origin(stores);
-        return recover_missing_unit(scanned.value(), 0, options, stores, origin).map(|dimen| {
-            dimen.with_integer_diagnostic(scanned.diagnostic(), scanned.diagnostic_origin())
-        });
+        UnitScan::Rejected(origin) => {
+            return recover_missing_unit(scanned.value(), 0, options, stores, origin).map(
+                |dimen| {
+                    dimen.with_integer_diagnostic(scanned.diagnostic(), scanned.diagnostic_origin())
+                },
+            );
+        }
     };
     convert_scanned_unit(stores, scanned.value(), 0, unit).map(|dimen| {
         dimen.with_integer_diagnostic(scanned.diagnostic(), scanned.diagnostic_origin())
@@ -858,7 +862,7 @@ fn scan_unit<S, St, R, H, E>(
     hooks: &mut H,
     expander: &mut E,
     options: ScanDimenOptions,
-) -> Result<Option<ScannedUnit>, ScanDimenError>
+) -> Result<UnitScan, ScanDimenError>
 where
     S: InputSource,
     R: ReadRecorder,
@@ -869,7 +873,7 @@ where
     skip_spaces(input, stores, recorder, hooks, expander)?;
     let first = match next_x(input, stores, recorder, hooks, expander)? {
         Some(token) => token,
-        None => return Ok(None),
+        None => return Ok(UnitScan::Rejected(input.current_input_origin(stores))),
     };
 
     if let Token::Cs(symbol) = semantic_token(first) {
@@ -901,7 +905,7 @@ where
             _ => None,
         };
         if let Some(unit) = internal {
-            return Ok(Some(ScannedUnit::Internal(unit)));
+            return Ok(UnitScan::Scanned(ScannedUnit::Internal(unit)));
         }
     }
 
@@ -919,32 +923,40 @@ where
                         };
                     }
                 }
-                return Ok(Some(ScannedUnit::Infinite(order)));
+                return Ok(UnitScan::Scanned(ScannedUnit::Infinite(order)));
             }
-            ExpandedKeywordMatch::PartialMismatch => return Ok(None),
+            ExpandedKeywordMatch::PartialMismatch => {
+                return Ok(UnitScan::Rejected(first.origin()));
+            }
             ExpandedKeywordMatch::FirstTokenMismatch => {}
         }
     }
 
     if options.require_mu_unit {
         match keyword_matches(input, stores, recorder, hooks, expander, first, "mu")? {
-            ExpandedKeywordMatch::Matched => return Ok(Some(physical_unit(PhysicalUnit::Pt))),
-            ExpandedKeywordMatch::PartialMismatch => return Ok(None),
+            ExpandedKeywordMatch::Matched => {
+                return Ok(UnitScan::Scanned(physical_unit(PhysicalUnit::Pt)));
+            }
+            ExpandedKeywordMatch::PartialMismatch => {
+                return Ok(UnitScan::Rejected(first.origin()));
+            }
             ExpandedKeywordMatch::FirstTokenMismatch => {}
         }
         unread_token(input, stores, first);
-        return Ok(None);
+        return Ok(UnitScan::Rejected(first.origin()));
     }
 
     match keyword_matches(input, stores, recorder, hooks, expander, first, "true")? {
         ExpandedKeywordMatch::Matched => {
             skip_spaces(input, stores, recorder, hooks, expander)?;
             let Some(token) = next_x(input, stores, recorder, hooks, expander)? else {
-                return Ok(None);
+                return Ok(UnitScan::Rejected(input.current_input_origin(stores)));
             };
             return scan_unit_keyword(input, stores, recorder, hooks, expander, token, true);
         }
-        ExpandedKeywordMatch::PartialMismatch => return Ok(None),
+        ExpandedKeywordMatch::PartialMismatch => {
+            return Ok(UnitScan::Rejected(first.origin()));
+        }
         ExpandedKeywordMatch::FirstTokenMismatch => {}
     }
 
@@ -959,7 +971,7 @@ fn scan_unit_keyword<S, St, R, H, E>(
     expander: &mut E,
     first: TracedTokenWord,
     true_unit: bool,
-) -> Result<Option<ScannedUnit>, ScanDimenError>
+) -> Result<UnitScan, ScanDimenError>
 where
     S: InputSource,
     R: ReadRecorder,
@@ -969,17 +981,17 @@ where
 {
     let Some(second) = next_x(input, stores, recorder, hooks, expander)? else {
         unread_token(input, stores, first);
-        return Ok(None);
+        return Ok(UnitScan::Rejected(first.origin()));
     };
 
     match unit_from_tokens(semantic_token(first), semantic_token(second)) {
         Some(ScannedUnit::Physical { unit, .. }) => {
-            Ok(Some(ScannedUnit::Physical { unit, true_unit }))
+            Ok(UnitScan::Scanned(ScannedUnit::Physical { unit, true_unit }))
         }
-        Some(ScannedUnit::Em) => Ok(Some(ScannedUnit::FontRelative {
+        Some(ScannedUnit::Em) => Ok(UnitScan::Scanned(ScannedUnit::FontRelative {
             unit: stores.font_parameter(stores.current_font(), 6),
         })),
-        Some(ScannedUnit::Ex) => Ok(Some(ScannedUnit::FontRelative {
+        Some(ScannedUnit::Ex) => Ok(UnitScan::Scanned(ScannedUnit::FontRelative {
             unit: stores.font_parameter(stores.current_font(), 5),
         })),
         Some(ScannedUnit::Infinite(_) | ScannedUnit::Internal(_)) => {
@@ -990,7 +1002,7 @@ where
         }
         None => {
             unread_tokens(input, stores, [first, second]);
-            Ok(None)
+            Ok(UnitScan::Rejected(first.origin()))
         }
     }
 }
@@ -1057,6 +1069,12 @@ enum ScannedUnit {
     FontRelative { unit: Scaled },
     Em,
     Ex,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum UnitScan {
+    Scanned(ScannedUnit),
+    Rejected(OriginId),
 }
 
 fn unit_from_tokens(first: Token, second: Token) -> Option<ScannedUnit> {

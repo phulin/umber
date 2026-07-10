@@ -221,6 +221,9 @@ Consumers should retain the narrowest provenance needed by an actual
 diagnostic:
 
 - An error about one offending token uses that token's origin.
+- When scanner recovery backs up expanded tokens, later diagnostics use the
+  first token at that replay frontier; they do not replace it with the mutable
+  source cursor's current position.
 - A scanner that needs to label the complete consumed spelling may ask the
   aggregate facade to join compatible first and last source origins into a
   `SourceRange` record.
