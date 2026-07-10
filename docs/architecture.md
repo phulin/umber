@@ -685,7 +685,11 @@ makes box-level memoization (M4) sound.
   mid-algorithm. The decision pass keeps prefix width totals and
   breakpoint-local width adjustments so glue break widths and discretionary
   pre/replace widths are accounted for at the breakpoint rather than by
-  ad hoc line slicing. Within each line-number and fitness class it retains
+  ad hoc line slicing. The immutable line-breaking snapshot also carries the
+  `\leftskip` and `\rightskip` specs so their complete natural, stretch, and
+  shrink widths participate in TeX82's background width for every candidate
+  line before post-line-break surgery materializes the named glue nodes.
+  Within each line-number and fitness class it retains
   TeX82's minimum-demerits route, including TeX's later-route replacement
   when two routes have equal demerits. Discretionary nodes carry their source
   kind, letting the pure breaker apply `\hyphenpenalty`, `\exhyphenpenalty`,

@@ -210,7 +210,7 @@ fn break_current_paragraph(
         nest.current_list_mut().set_par_shape(shape);
     }
     let hlist = crate::math::finish_math_lists(stores, level.list().nodes(), true);
-    let line_params = line_break_params(&params);
+    let line_params = line_break_params(stores, &params);
     let hyphenated = super::hyphenation::hyphenated_hlist(stores, &hlist);
     let mut hook = ExecHyphenationHook { hyphenated };
     let decisions = line_break(stores, &hlist, line_params, &mut hook);
@@ -294,7 +294,7 @@ fn snapshot_paragraph_params(nest: &ModeNest, stores: &Universe) -> ParagraphPar
     }
 }
 
-fn line_break_params(params: &ParagraphParams) -> LineBreakParams {
+fn line_break_params(stores: &Universe, params: &ParagraphParams) -> LineBreakParams {
     LineBreakParams {
         pretolerance: params.pretolerance,
         tolerance: params.tolerance,
@@ -306,6 +306,8 @@ fn line_break_params(params: &ParagraphParams) -> LineBreakParams {
         final_hyphen_demerits: params.final_hyphen_demerits,
         emergency_stretch: params.emergency_stretch,
         looseness: params.looseness,
+        left_skip: stores.glue(params.left_skip),
+        right_skip: stores.glue(params.right_skip),
         shape: line_shape(params),
     }
 }

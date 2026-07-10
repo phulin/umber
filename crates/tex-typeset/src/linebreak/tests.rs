@@ -21,6 +21,8 @@ fn params(width: i32) -> LineBreakParams {
         final_hyphen_demerits: 5_000,
         emergency_stretch: sp(0),
         looseness: 0,
+        left_skip: GlueSpec::ZERO,
+        right_skip: GlueSpec::ZERO,
         shape: LineShape::natural(sp(width)),
     }
 }
@@ -82,6 +84,33 @@ fn breaks_at_legal_glue() {
         result.breaks.last().map(|br| br.position),
         Some(nodes.len())
     );
+}
+
+#[test]
+fn line_break_includes_left_and_right_skip_in_background_widths() {
+    let mut universe = Universe::new();
+    let break_glue = universe.intern_glue(GlueSpec::ZERO);
+    let nodes = vec![
+        rule(80),
+        Node::Glue {
+            spec: break_glue,
+            kind: GlueKind::Normal,
+            leader: None,
+        },
+        rule(80),
+    ];
+    let mut params = params(100);
+    params.left_skip = GlueSpec {
+        width: sp(10),
+        ..GlueSpec::ZERO
+    };
+    params.right_skip = params.left_skip;
+
+    let mut hook = NoHyphenation;
+    let result = line_break(&universe, &nodes, params, &mut hook);
+
+    assert_eq!(result.breaks[0].position, 2);
+    assert_eq!(result.breaks.len(), 2);
 }
 
 #[test]

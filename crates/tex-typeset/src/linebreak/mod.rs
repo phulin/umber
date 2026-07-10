@@ -1,3 +1,4 @@
+use tex_state::glue::GlueSpec;
 use tex_state::ids::GlueId;
 use tex_state::node::{DiscKind, KernKind, Node};
 use tex_state::scaled::Scaled;
@@ -20,6 +21,8 @@ pub struct LineBreakParams {
     pub final_hyphen_demerits: i32,
     pub emergency_stretch: Scaled,
     pub looseness: i32,
+    pub left_skip: GlueSpec,
+    pub right_skip: GlueSpec,
     pub shape: LineShape,
 }
 
@@ -249,6 +252,8 @@ fn run_pass<S: TypesetState>(
     final_pass: bool,
 ) -> Option<LineBreakResult> {
     let prefix = PrefixWidths::new(state, nodes);
+    let mut background = Widths::from_glue(params.left_skip);
+    background.add_assign(Widths::from_glue(params.right_skip));
     let breakpoints = legal_breakpoints(state, nodes, params, allow_hyphenation);
     if breakpoints.is_empty() {
         return Some(LineBreakResult {
@@ -279,6 +284,7 @@ fn run_pass<S: TypesetState>(
         for &active_id in &active {
             let active_candidate = &candidates[active_id];
             let mut widths = prefix.between(active_candidate.width_position, bp.width_position);
+            widths.add_assign(background);
             widths.add_assign(bp.add_width);
             let target = params.shape.dimensions(active_candidate.line + 1).width;
             let extra = if emergency {

@@ -30,6 +30,12 @@ impl Widths {
         }
     }
 
+    pub(super) fn from_glue(spec: GlueSpec) -> Self {
+        let mut widths = Self::zero();
+        add_glue(&mut widths, spec);
+        widths
+    }
+
     fn sub(self, other: Self) -> Self {
         let mut out = Self::zero();
         out.natural = sub_scaled(self.natural, other.natural);
