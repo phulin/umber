@@ -43,6 +43,13 @@ The design has four goals:
 
 - Every token delivered to expansion or execution carries an opaque
   `OriginId`; `OriginId::UNKNOWN` remains the graceful fallback.
+- Source byte coordinates always address immutable physical backing bytes.
+  Line normalization never makes removed terminators, stripped trailing
+  spaces, or a synthetic `\endlinechar` look like bytes that existed in that
+  backing.
+- Every traced source is registered before its first token is delivered.
+  World inputs refer to their live `InputRecordId`; generated and in-memory
+  inputs retain shared immutable backing through a state-owned registration.
 - Ordinary source locations and arena-backed origins are indistinguishable to
   downstream callers. Only the aggregate state facade and resolver decode the
   representation.
@@ -55,24 +62,36 @@ The design has four goals:
 - Source position allocation and origin-record allocation are infallible from
   the engine's perspective. Representation exhaustion degrades through the
   fallback path described below and ultimately to unknown.
+- Required measurement must not add production hot-path counter writes.
+  Direct-delivery counts come from benchmark-only instrumentation or
+  crate-private inspection of returned ids, while production statistics remain
+  derived from arena/region lengths and capacities.
+- `SourcePos` is a logical `u64` coordinate. The smaller direct payload in
+  `OriginId` is an encoding optimization, not the definition of the source
+  coordinate domain.
+- A diagnostic captures its primary origin, labeled related origins, and a
+  bounded list of macro-invocation origin ids while the relevant replay frames
+  are live. Paths, lines, excerpts, display widths, and strings remain lazy.
 - All mutation and liveness validation remain behind `Universe`, `Stores`, or
   capability-appropriate aggregate facades. Downstream crates do not receive
   raw source-map or provenance-store mutation access.
 
 ## 4. Source map
 
-### 4.1 Global byte-position space
+### 4.1 Logical position space
 
-Each live input buffer receives a disjoint region in a logical global byte
-space:
+Each live input backing receives a disjoint region in a logical global
+`u64` position space:
 
 ```text
-global byte space
+logical source position space
 
-0          1200                 4096
-| prelude  | chapter.tex        | macro package ...
+0          1201                 4098
+| prelude· | chapter.tex·       | macro package ...
            ^
-           global position 1342 = chapter.tex byte 142
+           global position 1343 = chapter.tex byte 142
+
+· = one reserved end-of-backing anchor position
 ```
 
 A source-map entry records at least:
@@ -80,31 +99,86 @@ A source-map entry records at least:
 ```rust
 struct SourceRegion {
     start: SourcePos,
-    len: u64,
+    byte_len: u64,
     source: SourceId,
+    backing: SourceBacking,
+}
+
+enum SourceBacking {
+    World(InputRecordId),
+    Generated(GeneratedSourceId),
 }
 ```
 
-The source map does not own file I/O or duplicate input bytes. `World` remains
-the authority for input records and content-addressed bytes. The map only
-connects compact positions to those records.
+For a region starting at `start`, physical byte offset `n` maps to
+`start + n`. The position `start + byte_len` is a reserved anchor for EOF and
+empty-input diagnostics; the next region starts one position later. Direct
+origins are created only for backed byte positions, never for the anchor.
+Half-open spans may end at the anchor, and an empty or EOF diagnostic may use
+the zero-width span `[anchor, anchor)`.
+
+`World` remains the authority for World input records and content-addressed
+bytes. A World-backed region stores only its `InputRecordId`; it does not copy
+the bytes. Generated and memory inputs instead share immutable bytes between
+their input adapter and a rollback-coupled generated-source registry. This is
+necessary because their input frame may disappear before a diagnostic is
+rendered. Production traced-input paths may not rely on a transient
+`InputSource` as the only owner of diagnostic source text.
+
+An input adapter exposes a source descriptor containing its physical byte
+length and either a World record or shared generated backing. `InputStack`
+continues to mint `SourceId`, but before the first delivery from a source frame
+it idempotently registers `(SourceId, descriptor)` through the aggregate
+expansion-state facade. This preserves the current input-opening boundary
+without giving `tex-lex` raw source-map access. The frame summary stores the
+source id, while `InputSummary` separately stores the next-source-id
+high-water mark so resumed input cannot reuse a still-live id.
 
 Regions are append-only within a timeline. A source-map watermark joins the
 aggregate store snapshot, and rollback truncates regions and restores the next
 global position. Reusing discarded positions after rollback is safe for the
 same reason that reusing discarded arena ids is safe: values from the discarded
-timeline are no longer live.
+timeline are no longer live. Registration uses checked `u64` arithmetic. If a
+region and its anchor cannot be represented, that source remains executable
+but its new source origins degrade to `OriginId::UNKNOWN`.
 
-### 4.2 Incremental lexer cursor
+### 4.2 Physical lines and a byte-canonical lexer cursor
 
-`SourceFrame` tracks both its character cursor and its UTF-8 byte cursor.
-Reading a character increments the byte cursor by `ch.len_utf8()`. Any lexer
-lookahead or rewind saves and restores the complete cursor, including control
-sequence scanning and TeX `^^` notation.
+Text inputs are valid UTF-8. A malformed byte sequence produces a lexer input
+error over its exact physical byte range before lossy conversion can destroy
+the mapping. Supporting a future 8-bit input mode requires an explicit
+lossless decoder and offset map; it must not reinterpret this UTF-8 contract.
 
-The source-frame summary contains all cursor state required for exact replay.
-Obtaining the current source position becomes O(1); it never rescans
-`line[..offset]`.
+The physical-line reader retains:
+
+- the raw start and content-end byte offsets;
+- the raw line-terminator range, including the distinction between LF and
+  CRLF;
+- the byte offset after the retained prefix once TeX trailing-space stripping
+  has run; and
+- whether the normalized suffix contains a synthetic `\endlinechar`.
+
+`SourceFrame` stores the normalized line as UTF-8 `String`/bytes and uses one
+byte cursor at a character boundary as its canonical indexing state. Reading
+a scalar decodes at most four bytes and advances the cursor by
+`ch.len_utf8()`. A separately maintained scalar/display column is retained
+only where operational TeX state requires it; there is no parallel mutable
+`Vec<char>` index. Any lexer lookahead or rewind saves and restores the byte
+cursor and column together, including control-sequence scanning and every
+success or failure path in TeX `^^` notation.
+
+For a cursor inside the retained physical prefix, the source offset is the
+physical line start plus the normalized byte cursor. The synthetic end-line
+character maps to a zero-width anchor after the retained prefix. A spelling
+that mixes backed characters and the synthetic suffix spans the backed prefix
+and ends at that anchor; it never claims that the synthetic character existed
+in the original bytes.
+
+The source-frame summary contains the normalized byte cursor, physical-line
+metadata, column, lexer N/M/S state, pending traced tokens, and all other state
+required for exact replay. `InputSummary` also preserves the source-id
+allocator high-water mark and Unicode `^^` configuration. Obtaining the
+current physical source position becomes O(1); it never rescans a line prefix.
 
 ### 4.3 Lazy lines and columns
 
@@ -114,29 +188,35 @@ byte offset. A per-input line-start index maps the byte offset to a line by
 binary search. Column and caret padding are computed from the selected line at
 render time.
 
-The line-start index may be built when content is registered or lazily on the
-first diagnostic. It is display-only cache data and does not participate in
-semantic state or snapshot hashes.
+The line-start index records physical byte starts and understands LF, CRLF,
+and a missing final terminator. It may be built when content is registered or
+lazily on the first diagnostic. A cache that survives rollback is keyed by
+stable content identity such as `ContentHash`, never solely by a reusable
+`InputRecordId`; otherwise it is truncated with the source registry. Cache
+data is display-only, does not participate in semantic state or snapshot
+hashes, and is measured separately as retained diagnostic memory.
 
 ## 5. Packed origin representation
 
 `OriginId` remains an opaque 32-bit value carried in the low half of
-`TracedTokenWord`. Internally, it has two nonzero forms:
+`TracedTokenWord`. Internally, its exact private layout is:
 
 ```text
-0x00000000                         unknown/bootstrap
-0ppppppp pppppppp pppppppp pppppppp  direct SourcePos payload
-1iiiiiii iiiiiiii iiiiiiii iiiiiiii  provenance-arena index
+0x00000000                              unknown/bootstrap
+0x00000001..=0x7fffffff                 direct SourcePos = raw - 1
+0x80000000..=0xffffffff                 provenance arena index = raw & 0x7fffffff
 ```
 
-The exact bit constants must be private and covered by capacity tests. The
-conceptual split reserves one tag bit, leaving approximately two billion
-direct source positions and two billion arena entries. No downstream crate may
-branch on the tag.
+This provides exactly 2,147,483,647 directly encodable logical positions
+(`0..=0x7fff_fffe`) and 2,147,483,648 arena indexes
+(`0..=0x7fff_ffff`). The raw constants, raw accessors, constructors, and
+decoders are crate-private. No downstream crate may inspect or branch on the
+tag. Unknown is a logical value and does not need to occupy arena index zero.
 
-The direct payload stores `SourcePos + 1` so raw zero remains unknown. Checked
-construction rejects positions that cannot be shifted into the payload and
-uses the wide arena fallback instead.
+Checked construction rejects positions whose `SourcePos + 1` does not fit the
+clear-tag payload and uses an arena-backed `SourceSpan` instead. The logical
+source map continues above that boundary until `u64` registration arithmetic
+itself is exhausted.
 
 ### 5.1 Direct source form
 
@@ -144,7 +224,8 @@ The common case encodes the token's starting `SourcePos` directly. Emitting an
 ordinary source character therefore performs no provenance-store mutation.
 
 The resolver obtains a minimal display range by decoding the Unicode scalar at
-that byte position. This is sufficient for ordinary characters and spaces.
+that physical byte position. Direct origins are valid only for backed UTF-8
+scalar starts, so this is sufficient for ordinary characters and spaces.
 
 ### 5.2 Arena form
 
@@ -152,9 +233,7 @@ The arena form addresses structured records:
 
 ```rust
 enum OriginRecord {
-    UnknownBootstrap,
-    SourceRange(SourceSpan),
-    WideSourceRange(WideSourceSpan),
+    SourceSpan(SourceSpan),
     MacroInvocation(MacroInvocationOrigin),
     Inserted(InsertedOrigin),
     Synthesized(SynthesizedOrigin),
@@ -167,13 +246,18 @@ struct SourceSpan {
 }
 ```
 
-`hi` is exclusive. `SourceRange` is used when a token covers multiple source
-characters or when exact spelling extent matters, including control sequences
-and transformed `^^` input. `WideSourceRange` stores `SourceId` plus wide local
-offsets when a buffer cannot fit in the direct global position space.
+`hi` is exclusive. Construction resolves `lo` to one live source region and
+requires `lo <= hi <= region.anchor`; it never resolves `hi` independently,
+because an exclusive high endpoint may equal the region anchor. A zero-width
+span is valid, including `[anchor, anchor)` for empty input or EOF.
+
+`SourceSpan` is used when a token covers multiple source characters, contains
+a synthetic normalization anchor, or lies outside the direct payload. There
+is deliberately no separate `WideSourceSpan`: a logical `u64` position has the
+same meaning whether its origin is direct or arena-backed.
 
 If the direct source space is exhausted, new source tokens use arena-backed
-wide ranges. If the arena is also exhausted, allocation returns
+`SourceSpan` records. If the arena is also exhausted, allocation returns
 `OriginId::UNKNOWN`. Diagnostic resource exhaustion never aborts TeX
 execution.
 
@@ -193,13 +277,17 @@ nontrivial or a consumer explicitly needs a composed range.
 The lexer records the start position before consuming a token and the end
 position after consuming it:
 
-- A one-scalar source token receives the direct start position.
+- A one-scalar token backed by one physical UTF-8 scalar receives the direct
+  start position when it fits the payload; otherwise it receives an
+  arena-backed `SourceSpan`.
 - A multi-character control sequence receives an arena-backed source range.
 - A token produced through `^^` notation receives the complete spelling range.
 - End-line and paragraph tokens remain inserted origins whose parent is the
-  relevant direct source position or range.
+  zero-width normalized-line-end anchor or the relevant backed range.
 - Ignored characters and comments allocate no origins unless an error refers
   to them.
+- Invalid UTF-8 and other failures that occur before a valid TeX token exists
+  carry a structured diagnostic site over the offending physical bytes.
 
 The semantic `Token` remains unchanged.
 
@@ -212,8 +300,15 @@ without a format change.
 Macro replacement tokens reuse their definition-time origin list. Macro
 arguments reuse their call-site origin lists. A replay frame carries one shared
 `MacroInvocation` origin linking the invocation location and definition
-location. Expansion traces continue to walk live replay frames rather than
-allocating a wrapper for every delivered body token.
+location. Delivering body or argument tokens never allocates per-token wrapper
+records.
+
+Live replay frames are authoritative while expansion is running, but a
+diagnostic may be rendered after a scanner has consumed and popped one of
+those frames. When an error or recoverable diagnostic is created, the input
+layer therefore copies the bounded list of live `MacroInvocation` origin ids
+into the diagnostic site. Only ids are copied; resolving them to source text
+and formatting the trace remain lazy.
 
 ### 6.3 Scanners and execution
 
@@ -226,59 +321,108 @@ diagnostic:
   source cursor's current position.
 - A scanner that needs to label the complete consumed spelling may ask the
   aggregate facade to join compatible first and last source origins into a
-  `SourceRange` record.
-- Joining succeeds only when both endpoints resolve to the same live source
-  and compatible expansion context. Otherwise the diagnostic keeps a primary
-  origin and optional related origins rather than inventing one contiguous
-  range.
+  `SourceSpan` record.
+- Two `OriginId`s do not encode expansion context and therefore cannot prove
+  join compatibility. The initial join API accepts an unforgeable proof that
+  both endpoints were delivered directly from the same live source frame.
+  Expanded or replayed endpoints are not joined in the first implementation;
+  they remain primary and related locations. A later context-aware scanner API
+  may return an explicit `DeliveryContextKey` beside tokens that opt into
+  composition, without enlarging `TracedTokenWord` or every delivery path.
+- Joining also requires ordered endpoints in the same source region. If any
+  proof or liveness check fails, the diagnostic keeps separate locations
+  rather than inventing a contiguous range.
 - Execution nodes retain origins only where later diagnostics consume them.
 
-Errors must carry explicit primary and related origins. They must not depend on
-a mutable global "current location." Diagnostic rendering converts those
-origins into primary ranges, secondary labels, source excerpts, and expansion
-notes.
+Errors use a structured payload conceptually equivalent to:
+
+```rust
+struct DiagnosticSite {
+    primary: Option<OriginId>,
+    related: InlineRelatedLocations,
+    expansion_trace: InlineInvocationOrigins,
+}
+
+struct RelatedLocation {
+    role: RelatedLocationRole,
+    origin: OriginId,
+}
+```
+
+The bounded collections may be fixed inline arrays or allocate only on the
+error path; they are not stored beside ordinary tokens. Roles distinguish at
+least invocation, definition, recovery frontier, and secondary consumed
+spelling. Errors must not depend on a mutable global "current location" or on
+replay frames remaining live. Diagnostic rendering converts the captured ids
+into primary ranges, labeled secondary locations, source excerpts, and
+expansion notes.
 
 ## 7. Resolver behavior
 
-The resolver handles both forms of `OriginId`:
+The resolver handles all logical forms of `OriginId`:
 
 1. A direct source value is checked against the live source map and converted
    to a minimal `SourceSpan`.
 2. An arena value is checked against the live provenance watermark and its
    record is read.
 3. Inserted and synthesized records follow their parent.
-4. Macro invocation records expose invocation and definition locations.
+4. Macro invocation records expose invocation and definition locations, and
+   the diagnostic site's captured invocation list supplies the bounded trace.
 5. Missing, rolled-back, or exhausted data resolves to unknown.
 
 Line text, line number, display column, caret width, source label, and bounded
 macro traces are produced only at this boundary.
 
+Internal byte offsets and spans are zero-based. User-facing line and column
+numbers are one-based. Display columns use Unicode display-cell width; tabs
+advance to eight-column stops, combining marks have zero width, and an
+otherwise zero-width underline still renders one caret cell. A single-line
+span underlines at least one cell. A multi-line span renders the first and last
+affected lines with an omission marker between them. These are presentation
+rules only and never feed back into TeX state or source identity.
+
 ## 8. Rollback and replay
 
 An aggregate snapshot records:
 
-- the source-region watermark and next direct position;
+- the source-region and generated-backing watermarks plus the next logical
+  position;
 - the provenance-record watermark;
 - existing origin-list span and entry watermarks.
 
-Rollback truncates all three stores as one tuple. Direct positions in retained
-regions stay live. Direct positions in discarded regions fail liveness checks.
-Arena records and origin-list entries follow the existing truncation policy.
+Rollback restores these together with the World input-record watermark as one
+aggregate tuple. Direct positions in retained regions stay live. Direct
+positions in discarded regions fail liveness checks. Arena records,
+generated backings, and origin-list entries follow the existing truncation
+policy. A derived cache that survives rollback must be keyed by stable content
+identity, so reuse of `SourceId`, `InputRecordId`, or logical positions cannot
+make stale data appear live.
 
 Input summaries compare and hash decoded semantic tokens, not origin bits.
-Source cursor fields needed for replay are operational input state, but direct
-positions and range identities remain excluded from semantic convergence.
+Source cursor fields, the source-id allocator high-water mark, and lexer
+configuration needed for replay are operational input state, but direct
+positions, range identities, diagnostic sites, and source-map cache identities
+remain excluded from semantic convergence. Restoring the high-water mark is
+nevertheless mandatory so future source ids are deterministic and do not
+alias retained regions.
+
+Capturing invocation ids in a diagnostic site preserves the trace across
+replay-frame pop, not across provenance rollback. Any diagnostic that must
+outlive rollback past its origin/source-map watermark is rendered to owned text
+before rollback.
 
 ## 9. Capacity and format constraints
 
 Before adopting the tagged representation, implementation must establish and
 test:
 
-- the exact number of direct source bytes and arena records available;
-- reserved encodings for unknown and overflow;
+- the exact direct range `0..=0x7fff_fffe` and arena-index range
+  `0..=0x7fff_ffff`;
+- raw zero as the only reserved unknown/overflow encoding;
 - checked arithmetic when assigning source regions;
-- fallback behavior for a single oversized source and cumulative source-map
-  exhaustion;
+- fallback behavior for a source region crossing the direct boundary, a
+  single source larger than the direct range, cumulative direct-space
+  exhaustion, and logical `u64` registration exhaustion;
 - origin-list compatibility with both packed forms;
 - whether snapshot serialization or debug tooling exposes raw origin values.
 
@@ -308,8 +452,14 @@ optimization must not change token-at-a-time lexer semantics.
 Affine source runs compress ordinary input, but every lookup requires segment
 resolution and irregular spelling breaks runs. Direct source positions remove
 the common-case arena write and lookup entirely. Run compression remains a
-possible internal fallback for wide ranges only if measurements later justify
-it.
+possible arena-storage optimization only if measurements later justify it.
+
+### A separate wide local-span representation
+
+Encoding fallback spans as `(SourceId, local_lo, local_hi)` creates a second
+coordinate domain and duplicates resolver, validation, rollback, and testing
+paths. One logical `u64 SourcePos` space keeps direct and arena-backed origins
+semantically identical; only their `OriginId` encoding differs.
 
 ### Full span beside every token
 
@@ -326,84 +476,121 @@ measurements and invariants are documented.
 
 ### Phase 1: Incremental coordinates and trustworthy baselines
 
-- Add the UTF-8 byte cursor to source frames and resumable summaries.
-- Make lookahead and rewind restore the complete cursor.
+- Store normalized lines as UTF-8 bytes/`String` and make the byte cursor the
+  canonical source-frame index.
+- Retain raw physical line starts, content ends, terminator ranges, and the
+  normalized end anchor.
+- Make lookahead, rewind, and every `^^` success/failure path restore byte and
+  column state together.
+- Persist the source-id allocator high-water mark and Unicode `^^`
+  configuration in `InputSummary`.
 - Remove line-prefix rescanning from coordinate production.
-- Extend lexer tests for ASCII, mixed-width UTF-8, control sequences, comments,
-  normalized end lines, `^^` notation, and snapshot resume.
+- Reject invalid UTF-8 with an exact physical-byte diagnostic.
+- Extend lexer tests for ASCII, mixed-width UTF-8, LF, CRLF, stripped trailing
+  spaces, missing final newline, control sequences, comments, synthetic end
+  lines, nested inputs, `^^` notation, source exhaustion, and snapshot resume.
 - Re-run the source provenance benchmarks and update
   `docs/provenance_performance.md`.
 
-Exit gate: coordinates are exact, long-line tokenization is linear, and the
-readonly/traced comparison isolates provenance work.
+Exit gate: flat source origins contain exact physical backing offsets,
+synthetic input uses documented zero-width anchors, resume cannot reuse a live
+source id or reset lexer configuration, long single-line tokenization is
+linear, and the readonly/traced comparison isolates provenance work.
 
 ### Phase 2: Source-map substrate
 
-- Add opaque `SourcePos`, `SourceSpan`, source regions, and rollback marks in
-  `tex-state` behind the aggregate facade.
-- Register input content without moving file I/O or bytes out of `World`.
+- Add logical `u64 SourcePos`, validated `SourceSpan`, source regions,
+  generated-source backings, and rollback marks in `tex-state` behind the
+  aggregate facade.
+- Add idempotent source registration through the expansion-state facade before
+  first delivery. World sources retain `InputRecordId`; memory/generated
+  sources share immutable content with the state registry.
 - Implement live position lookup and lazy line-start resolution.
 - Convert `ProvenanceResolver` to render source records through the source map
   while retaining the existing flat source-origin representation.
 
 Exit gate: all existing diagnostics render identically or improve, source-map
-rollback/reuse is tested, and no downstream crate can mutate raw map state.
+and World rollback/reuse cannot alias source regions or derived caches, empty
+and generated sources remain renderable after frame pop, snapshot capture is
+O(1), and no downstream crate can mutate raw map/backing state.
 
 ### Phase 3: Tagged direct-source origins
 
 - Make `OriginId` encoding opaque and add private direct/arena constructors and
   decoders.
-- Add capacity, saturation, liveness, packing, rollback, and state-hash tests.
+- Implement the exact raw-zero/direct/high-bit-arena layout from section 5.
+- Add direct-boundary crossing, oversized-source, capacity, saturation,
+  liveness, packing, rollback, and state-hash tests.
 - Emit direct positions for ordinary one-scalar source tokens.
 - Keep existing arena source records as the fallback during migration.
-- Extend provenance statistics to distinguish direct source deliveries from
-  arena records without exposing mutation internals.
+- Use the same `SourceSpan` logical representation for positions outside the
+  direct payload; do not add a separate wide coordinate type.
+- Extend provenance statistics to distinguish direct source deliveries,
+  source regions, arena records, logical bytes, and retained capacity without
+  exposing mutation internals.
 
 Exit gate: the common source-character path performs zero provenance-record
 appends, token packing remains 64 bits, and all semantic hashes and parity
 artifacts are unchanged.
 
-### Phase 4: Precise source ranges
+### Phase 4: Precise source ranges and diagnostic sites
 
-- Add `SourceRange` and wide-range records.
+- Use validated half-open `SourceSpan` origin records for exact, zero-width,
+  and multi-line locations.
 - Emit exact spelling ranges for control sequences, transformed input, and
   other multi-character source tokens.
-- Add range-joining support for scanners with a demonstrated diagnostic use.
-- Upgrade structured errors and rendering to support a primary range and
-  related origins.
+- Add physical-source-frame range joining for a demonstrated scanner
+  diagnostic. Do not infer compatible expansion context from two origins.
+- Add structured `DiagnosticSite` values with a primary origin, labeled
+  related locations, and bounded invocation-origin ids captured at error
+  creation.
+- Upgrade lexer, expansion, execution, and rendering errors to use those sites
+  and the defined Unicode/tab/multi-line display policy.
 
 Exit gate: focused diagnostics underline exact token spellings across ASCII,
-UTF-8, control sequences, and `^^` transformations, with graceful degradation
-for incompatible or unavailable ranges.
+UTF-8, LF/CRLF normalization, control sequences, and `^^` transformations;
+traces remain available after replay frames pop; incompatible, synthetic, or
+unavailable ranges degrade to labeled separate locations.
 
 ### Phase 5: Derived provenance and replay audit
 
 - Audit inserted, synthesized, macro-definition, macro-argument, and
-  macro-invocation paths against the mixed direct/arena representation.
+  macro-invocation paths plus World and generated source backings against the
+  mixed direct/arena representation.
 - Verify origin lists, replay frames, snapshot rollback, memo reconstruction,
-  and stale-side-table degradation.
+  captured trace lifetime, id reuse, and stale side-table/cache degradation.
 - Preserve the rule that macro-body delivery performs no per-token provenance
   writes.
 
 Exit gate: every token-delivery path carries valid best-effort provenance,
-discarded timelines retain no live arena or source-map growth, and expansion
-traces remain bounded and lazy.
+discarded timelines retain no live arena/source-map growth, retained capacity
+is reported separately, source/input id reuse cannot alias stale data, and
+expansion traces remain bounded and presentation-lazy after frame pop.
 
 ### Phase 6: Measurement, cleanup, and adoption decision
 
-- Benchmark source-heavy ASCII, mixed UTF-8, control-sequence-heavy,
-  scanner-heavy, macro-heavy, and rollback workloads.
-- Report time, arena growth, source-map growth, and total estimated bytes.
+- Benchmark source-heavy ASCII, mixed UTF-8, a single very long line,
+  control-sequence-heavy, scanner-heavy, macro-heavy, rollback/reuse, and
+  cold/warm diagnostic-rendering workloads.
+- Report token throughput, direct deliveries, arena/source-map/cache growth,
+  logical live bytes, retained vector/allocator capacity, peak bytes, and
+  post-rollback retained bytes.
+- Count only incremental storage attributable to provenance/source mapping.
+  Existing World bytes and generated bytes shared with the input adapter are
+  not charged again; any accidental duplicate is charged in full.
 - Remove the legacy flat source-origin path only after the fallback and
   capacity tests pass.
 - Update `docs/architecture.md`, `docs/core_state.md`, and
   `docs/provenance_performance.md` to describe the adopted representation and
   measurements rather than the proposal.
 
-Exit gate: the design is adopted only if measurements show a material memory
-improvement without an unacceptable token-throughput regression; otherwise
-the source-map and incremental-coordinate improvements remain and the tagged
-encoding is revised or reverted cleanly.
+Exit gate: relative to the Phase 1 traced baseline, source-heavy ASCII and
+mixed-UTF-8 logical provenance/source-map bytes fall by at least 80%, and no
+required primary workload has a statistically significant token-throughput
+regression greater than 5%. If either gate fails, adoption requires an
+explicit recorded revision decision; otherwise the tagged encoding is revised
+or reverted while the physical-coordinate, source-backing, and byte-cursor
+improvements remain.
 
 ## 12. Validation matrix
 
@@ -412,13 +599,16 @@ gate. The final phase additionally covers:
 
 | Area | Required cases |
 | --- | --- |
-| Lexer coordinates | ASCII, UTF-8, normalized lines, comments, spaces, control sequences, `^^` notation |
-| Source map | multiple inputs, empty input, oversized input fallback, rollback and position reuse |
-| Packing | direct source, arena record, unknown, both capacity boundaries |
-| Ranges | one scalar, multi-character token, incompatible endpoints, missing source bytes |
-| Expansion | macro body, macro argument, nested invocation, inserted and synthesized tokens |
+| Lexer coordinates | ASCII, valid UTF-8, invalid UTF-8 error, LF, CRLF, trailing-space stripping, missing final newline, comments, spaces, control sequences, successful/failed `^^` notation |
+| Input resume | byte cursor, column, physical-line metadata, next source id, Unicode `^^` mode, nested-source exhaustion |
+| Source backing | World input, generated/memory input, multiple/empty inputs, missing content, frame pop |
+| Source map | anchor positions, direct-boundary crossing, oversized input, logical overflow, rollback and SourceId/InputRecordId/position reuse, cache alias prevention |
+| Packing | first/last direct source, first/last arena index, unknown, fallback and saturation |
+| Ranges | one scalar, multi-character token, zero-width, multi-line, synthetic suffix, incompatible context, missing source bytes |
+| Diagnostics | primary and labeled related locations, Unicode/tabs, captured trace after frame pop, cold/warm resolution |
+| Expansion | macro body, macro argument, nested invocation, inserted and synthesized tokens, zero body-token writes |
 | Semantics | token equality, `\ifx`, token-list interning, input-summary equality, state hashes |
-| Rollback | discarded direct regions, arena records, origin lists, diagnostic rendered before rollback |
+| Rollback | discarded direct regions, generated backings, arena records, origin lists, stale caches, diagnostic rendered before provenance rollback |
 | Output | existing fixture and DVI parity corpuses remain byte-identical |
 
 Use `scripts/check-and-test.sh` for the workspace tests plus the format and
