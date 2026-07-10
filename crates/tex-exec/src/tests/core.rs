@@ -1230,6 +1230,26 @@ fn paragraph_end_ignores_empty_unindented_paragraph() {
 }
 
 #[test]
+fn vbox_closing_brace_ends_paragraph_resumed_after_display() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\setbox0=\\vbox{\\hrule $$\\hbox{}$$}"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("vbox containing terminal display executes");
+
+    let box0 = stores.box_reg(0).expect("vbox register");
+    let [Node::VList(vbox)] = stores.nodes(box0) else {
+        panic!("register 0 should hold a vbox");
+    };
+    let children = stores.nodes(vbox.children);
+    assert!(matches!(children.first(), Some(Node::Rule { .. })));
+    assert!(children.iter().any(|node| matches!(node, Node::HList(_))));
+}
+
+#[test]
 fn paragraph_end_removes_only_the_final_trailing_glue() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

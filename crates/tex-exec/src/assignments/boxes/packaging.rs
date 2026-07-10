@@ -166,6 +166,14 @@ where
     let mut inner = ModeNest::new();
     inner.push(mode);
     scan_box_group(&mut inner, input, stores, hooks)?;
+    if kind != BoxKind::HBox && inner.current_mode() == Mode::Horizontal {
+        // TeX82's vbox_group/vtop_group right-brace handler runs end_graf
+        // before package. This matters when display math has resumed an empty
+        // paragraph immediately before the box's closing brace: packaging the
+        // horizontal level would otherwise discard the completed vertical
+        // list beneath it.
+        crate::assignments::end_paragraph(&mut inner, stores)?;
+    }
     let level = inner.pop()?;
     let nodes = if kind == BoxKind::HBox {
         crate::math::finish_math_lists(stores, level.list().nodes(), false)
