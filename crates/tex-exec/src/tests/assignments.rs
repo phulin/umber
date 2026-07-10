@@ -136,6 +136,29 @@ fn named_math_glue_parameters_scan_muglue_without_aliasing_muskip_registers() {
 }
 
 #[test]
+fn plain_medbreak_condition_compares_lastskip_with_named_skip_width() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\skipdef\\medskipamount=42 \
+         \\medskipamount=12pt plus 4fil minus 2pt \
+         \\vskip 1pt \
+         \\ifdim\\lastskip<\\medskipamount \
+           \\count0=1 \
+         \\else \
+           \\count0=2 \
+         \\fi",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("Plain-style medbreak condition executes");
+
+    assert_eq!(stores.count(0), 1);
+}
+
+#[test]
 fn ordinary_glue_parameters_recover_mu_units_as_pt() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

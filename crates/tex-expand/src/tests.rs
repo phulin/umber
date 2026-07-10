@@ -1957,6 +1957,39 @@ fn ifnum_and_ifdim_compare_scanned_values() {
 }
 
 #[test]
+fn ifdim_compares_named_skip_registers_by_width_only() {
+    let mut stores = Universe::new();
+    let (_, _, else_cs, fi) = conditional_primitives(&mut stores);
+    let ifdim = expandable_primitive(&mut stores, "ifdim", ExpandablePrimitive::IfDim);
+    let named_skip = stores.intern("namedskip");
+    stores.set_meaning(named_skip, Meaning::SkipRegister(42));
+    let glue = stores.intern_glue(tex_state::glue::GlueSpec {
+        width: Scaled::from_raw(2 * Scaled::UNITY),
+        stretch: Scaled::from_raw(20 * Scaled::UNITY),
+        stretch_order: tex_state::glue::Order::Fill,
+        shrink: Scaled::from_raw(10 * Scaled::UNITY),
+        shrink_order: tex_state::glue::Order::Fil,
+    });
+    stores.set_skip(42, glue);
+    let list = stores.intern_token_list(&[
+        Token::Cs(ifdim),
+        Token::Cs(named_skip),
+        char_token('<'),
+        char_token('3'),
+        char_token('p'),
+        char_token('t'),
+        char_token('y'),
+        Token::Cs(else_cs),
+        char_token('n'),
+        Token::Cs(fi),
+    ]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list(list, TokenListReplayKind::Inserted);
+
+    assert_eq!(next_expanded_chars(&mut input, &mut stores), "y");
+}
+
+#[test]
 fn ifnum_internal_operand_inserts_relax_before_else_during_evaluation() {
     let mut stores = Universe::new();
     let (_, _, else_cs, fi) = conditional_primitives(&mut stores);

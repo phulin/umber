@@ -704,6 +704,12 @@ where
         Meaning::DimenParam(index) => {
             return Ok(Some(stores.dimen_param(DimenParam::new(index))));
         }
+        Meaning::SkipRegister(index) => {
+            return Ok(Some(stores.glue(stores.skip(index)).width));
+        }
+        Meaning::MuskipRegister(_) | Meaning::MuGlueParam(_) => {
+            return Err(ScanDimenError::IncompatibleGlueUnits);
+        }
         Meaning::GlueParam(index) => {
             let glue = stores.glue_param(GlueParam::new(index));
             return Ok(Some(stores.glue(glue).width));
@@ -714,6 +720,14 @@ where
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen) => {
             let index = scan_register_index(input, stores, recorder, hooks, expander)?;
             return Ok(Some(stores.dimen(index)));
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Skip) => {
+            let index = scan_register_index(input, stores, recorder, hooks, expander)?;
+            return Ok(Some(stores.glue(stores.skip(index)).width));
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Muskip) => {
+            let _ = scan_register_index(input, stores, recorder, hooks, expander)?;
+            return Err(ScanDimenError::IncompatibleGlueUnits);
         }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::Wd

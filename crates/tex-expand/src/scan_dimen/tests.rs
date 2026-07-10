@@ -227,6 +227,66 @@ fn coerces_named_glue_parameter_width_to_internal_dimension() {
 }
 
 #[test]
+fn coerces_named_skip_register_width_to_internal_dimension() {
+    let mut stores = Universe::new();
+    let named_skip = stores.intern("namedskip");
+    stores.set_meaning(named_skip, Meaning::SkipRegister(42));
+    let glue = stores.intern_glue(GlueSpec {
+        width: Scaled::from_raw(42_000),
+        stretch: Scaled::from_raw(7_000),
+        stretch_order: Order::Fil,
+        shrink: Scaled::from_raw(3_000),
+        shrink_order: Order::Fill,
+    });
+    stores.set_skip(42, glue);
+
+    let (value, diagnostic, next) = scan_with_stores("-\\namedskip x", &mut stores);
+
+    assert_eq!(value, -42_000);
+    assert_eq!(diagnostic, None);
+    assert_eq!(next, Some(char_token('x', Catcode::Letter)));
+}
+
+#[test]
+fn coerces_primitive_skip_register_width_to_internal_dimension() {
+    let mut stores = Universe::new();
+    let skip = stores.intern("skip");
+    stores.set_meaning(
+        skip,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Skip),
+    );
+    let glue = stores.intern_glue(GlueSpec {
+        width: Scaled::from_raw(42_000),
+        stretch: Scaled::from_raw(7_000),
+        stretch_order: Order::Fil,
+        shrink: Scaled::from_raw(3_000),
+        shrink_order: Order::Normal,
+    });
+    stores.set_skip(42, glue);
+
+    let (value, diagnostic, next) = scan_with_stores("\\skip42 x", &mut stores);
+
+    assert_eq!(value, 42_000);
+    assert_eq!(diagnostic, None);
+    assert_eq!(next, Some(char_token('x', Catcode::Letter)));
+}
+
+#[test]
+fn rejects_muglue_register_as_an_incompatible_dimension() {
+    let mut stores = Universe::new();
+    let named_muskip = stores.intern("namedmuskip");
+    stores.set_meaning(named_muskip, Meaning::MuskipRegister(42));
+    let mut input = InputStack::new(MemoryInput::new("\\namedmuskip"));
+
+    let error = scan_dimen(&mut input, &mut stores).expect_err("muglue is not a dimension");
+
+    assert!(matches!(
+        error,
+        super::ScanDimenError::IncompatibleGlueUnits
+    ));
+}
+
+#[test]
 fn decimal_factor_multiplies_dimension_register_unit_with_tex_rounding() {
     let mut stores = Universe::new();
     let p_unit = stores.intern("punit");
