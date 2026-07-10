@@ -150,13 +150,15 @@ fn displayed_limits(
     let sub_style = ctx.style.sub_style();
     let mut sup = clean_box(ctx, &noad.superscript, sup_style);
     let mut op = nucleus;
+    if op.shift.raw() != 0 {
+        let list = ctx.layout.hlist([boxed_node(op)]);
+        op = ctx.layout.hpack(list);
+    }
     let mut sub_box = clean_box(ctx, &noad.subscript, sub_style);
     let width = sup.width.max(op.width).max(sub_box.width);
     rebox(ctx, &mut sup, width);
     rebox(ctx, &mut op, width);
     rebox(ctx, &mut sub_box, width);
-    let op_list = ctx.layout.hlist([MathNode::HList(op)]);
-    let op = ctx.layout.hpack(op_list);
     let skew = Scaled::from_raw(tex_arith::half(delta.raw()));
     sup.shift = skew;
     sub_box.shift = Scaled::from_raw(-skew.raw());

@@ -486,19 +486,50 @@ fn display_operator_uses_larger_variant_and_places_limits() {
     };
     assert_eq!(limits.width, sc(16));
     assert!(list_nodes(&hlist, limits.list).iter().any(|node| {
-        let MathNode::HList(outer) = node else {
+        let MathNode::HList(operator) = node else {
             return false;
         };
-        list_nodes(&hlist, outer.list).iter().any(|node| {
-            let MathNode::HList(inner) = node else {
-                return false;
-            };
-            matches!(
-                list_nodes(&hlist, inner.list).as_slice(),
-                [MathNode::Char { ch: 'O', .. }]
-            )
-        })
+        matches!(
+            list_nodes(&hlist, operator.list).as_slice(),
+            [MathNode::Char { ch: 'O', .. }]
+        )
     }));
+}
+
+#[test]
+fn display_limits_does_not_rewrap_clean_compound_operator() {
+    let mut universe = setup_universe();
+    let nucleus = universe.freeze_node_list(&[
+        Node::MathNoad(noad(NoadClass::Ord, 'b')),
+        Node::MathNoad(noad(NoadClass::Ord, 'c')),
+        Node::MathNoad(noad(NoadClass::Ord, 'b')),
+    ]);
+    let op = MathNoad::new(
+        NoadKind::Operator(LimitType::Limits),
+        MathField::SubMlist(nucleus),
+    );
+    let input = universe.freeze_node_list(&[Node::MathNoad(op)]);
+    let params = MathParams::read(&universe);
+
+    let layout = mlist_to_hlist(&universe, input, Style::DISPLAY, false, &params);
+
+    let [MathNode::VList(limits)] = root_nodes(&layout).as_slice() else {
+        panic!("expected displayed-limits vbox");
+    };
+    let [MathNode::HList(operator)] = list_nodes(&layout, limits.list).as_slice() else {
+        panic!("expected one clean compound operator box");
+    };
+    let operator_nodes = list_nodes(&layout, operator.list);
+    assert!(
+        operator_nodes
+            .iter()
+            .any(|node| matches!(node, MathNode::Char { .. }))
+    );
+    assert!(
+        operator_nodes
+            .iter()
+            .all(|node| !matches!(node, MathNode::HList(_) | MathNode::VList(_)))
+    );
 }
 
 #[test]

@@ -737,6 +737,10 @@ makes box-level memoization (M4) sound.
   Operator-axis centering follows TeX82's `make_op` character branch: a
   single math-character nucleus is centered on the math axis, while a compound
   nucleus such as `\mathop{\rm lim}` retains the baseline of its clean box.
+  Limit switches apply equally to explicit `\mathop` noads and class-1
+  `\mathchardef` operators. Displayed limits re-clean a shifted character
+  operator before placing it in the limits vlist, but retain an already-clean
+  compound operator box directly instead of introducing another wrapper.
   Appendix G `sub_box` nuclei retain their already-packed box node directly in
   the converted hlist, including an explicit `\raise`/`\lower` shift; they are
   not wrapped in a second hbox. `clean_box` still repacks fields where TeX

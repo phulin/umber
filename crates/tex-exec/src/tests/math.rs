@@ -84,6 +84,17 @@ fn math_mode_builds_noads_styles_choices_and_mu_nodes() {
 }
 
 #[test]
+fn limit_switch_applies_to_mathchardef_operator() {
+    let (stores, executor) = run_math_source(r#"\mathchardef\op="1352 $\op\nolimits"#);
+    let nodes = math_nodes(&stores, &executor);
+
+    let op = math_noad(&nodes[0]);
+    assert!(matches!(op.kind, NoadKind::Operator(LimitType::NoLimits)));
+    assert_math_char(&op.nucleus, 3, 'R');
+    assert!(!terminal_effect_text(&stores).contains("Limit controls must follow"));
+}
+
+#[test]
 fn generalized_fraction_absorbs_prior_list_and_reports_doubled_fraction() {
     let (mut stores, mut executor) = run_math_source(r"$a\over b\over c");
     let content = crate::math::testing_finish_current_math_list(executor.nest_mut(), &mut stores);

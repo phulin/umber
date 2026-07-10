@@ -353,7 +353,9 @@ pub(super) fn apply_limit_switch(
         return;
     };
     match noad.kind {
-        NoadKind::Operator(_) => noad.kind = NoadKind::Operator(limit_type),
+        NoadKind::Operator(_) | NoadKind::Normal(NoadClass::Op) => {
+            noad.kind = NoadKind::Operator(limit_type);
+        }
         _ => report_math_error(stores, "Limit controls must follow a math operator"),
     }
 }
