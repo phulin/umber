@@ -624,7 +624,10 @@ assignments, box building, and dispatch into the typesetting kernels.
 - **Paragraph and page hand-off**: paragraph start/end is stomach-owned.
   `\indent`, `\noindent`, implicit start from vertical-mode character
   material, `\parskip`, and `\everypar` replay are handled before entering
-  unrestricted horizontal mode. Fresh paragraphs reset the enclosing
+  unrestricted horizontal mode. Vertical-mode `\accent` follows TeX82's
+  command replay path: the command is backed up before paragraph entry so
+  `\everypar` runs before the accent number and base character are scanned.
+  Fresh paragraphs reset the enclosing
   `\prevgraf` before line-shape selection, while display-math interruption
   retains it as the continuation offset for the resumed paragraph. When
   horizontal material ends (`\par` or

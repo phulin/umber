@@ -708,6 +708,19 @@ where
             | UnexpandablePrimitive::VAdjust
             | UnexpandablePrimitive::Insert => {
                 reject_all_prefixes(prefixes)?;
+                if primitive == UnexpandablePrimitive::Accent
+                    && matches!(
+                        nest.current_mode(),
+                        crate::Mode::Vertical | crate::Mode::InternalVertical
+                    )
+                {
+                    // TeX82 backs up a vertical-mode accent before `new_graf`,
+                    // so `every_par` runs before the accent scans its number
+                    // and base character in horizontal mode.
+                    push_traced_tokens(input, stores, [command.traced]);
+                    ensure_horizontal_for_character(nest, input, stores)?;
+                    return Ok(CommandOutcome::continue_only());
+                }
                 execute_hmode_material(
                     command.traced,
                     primitive,

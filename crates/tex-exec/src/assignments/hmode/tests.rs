@@ -124,6 +124,53 @@ fn accent_delta_rounds_half_scaled_points_like_tex82() {
 }
 
 #[test]
+fn paragraph_leading_accent_is_replayed_after_entering_horizontal_mode() {
+    const CMR10: &[u8] = include_bytes!("../../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
+    let mut stores = Universe::with_world(tex_state::World::memory());
+    crate::install_unexpandable_primitives(&mut stores);
+    stores
+        .world_mut()
+        .set_memory_file("cmr10.tfm", CMR10.to_vec())
+        .expect("seed cmr10");
+    let mut input = InputStack::new(MemoryInput::new("\\font\\f=cmr10 \\relax \\f \\accent19 E"));
+    let mut executor = crate::Executor::new();
+
+    executor
+        .run(&mut input, &mut stores)
+        .expect("paragraph-leading accent should execute");
+
+    assert_eq!(executor.nest().current_mode(), crate::Mode::Horizontal);
+    let nodes = executor.nest().current_list().nodes();
+    assert!(
+        matches!(
+            nodes,
+            [
+                Node::HList(_),
+                Node::Kern {
+                    kind: KernKind::Accent,
+                    ..
+                },
+                Node::HList(_),
+                Node::Kern {
+                    kind: KernKind::Accent,
+                    ..
+                },
+                Node::Char { ch: 'E', .. },
+                ..
+            ]
+        ),
+        "unexpected paragraph-leading accent nodes: {nodes:?}"
+    );
+    let Node::HList(accent_box) = &nodes[2] else {
+        unreachable!("matched shifted accent box")
+    };
+    assert!(matches!(
+        stores.nodes(accent_box.children),
+        [Node::Char { ch, .. }] if *ch == char::from(19)
+    ));
+}
+
+#[test]
 fn unrestricted_reconstitution_inserts_null_disc_after_font_hyphen() {
     const CMR10: &[u8] = include_bytes!("../../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
     let mut stores = Universe::with_world(tex_state::World::memory());
