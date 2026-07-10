@@ -398,6 +398,54 @@ fn final_hyphen_demerits_apply_to_penultimate_hyphenated_line() {
 }
 
 #[test]
+fn final_hyphen_demerits_rank_terminal_routes_before_candidate_pruning() {
+    let mut params = params(100);
+    params.final_hyphen_demerits = 5_000;
+    let active = |path_demerits, hyphenated| Candidate {
+        position: 0,
+        width_position: 0,
+        penalty: 0,
+        line: 9,
+        fitness: Fitness::Decent,
+        demerits: path_demerits,
+        path_demerits,
+        previous: None,
+        hyphenated,
+    };
+    let terminal = Breakpoint {
+        position: 1,
+        width_position: 1,
+        penalty: EJECT_PENALTY,
+        hyphenated: false,
+        add_width: Widths::zero(),
+    };
+    let unhyphenated = active(12_886, false);
+    let hyphenated = active(10_566, true);
+
+    let plain_demerits = compute_demerits(
+        &params,
+        &unhyphenated,
+        0,
+        EJECT_PENALTY,
+        Fitness::Decent,
+        terminal,
+        true,
+    );
+    let hyphenated_demerits = compute_demerits(
+        &params,
+        &hyphenated,
+        0,
+        EJECT_PENALTY,
+        Fitness::Decent,
+        terminal,
+        true,
+    );
+
+    assert_eq!(plain_demerits, 12_986);
+    assert_eq!(hyphenated_demerits, 15_666);
+}
+
+#[test]
 fn post_line_break_keeps_migrating_nodes_for_execution_layer() {
     let mut universe = Universe::new();
     let empty_glue = universe.intern_glue(GlueSpec::ZERO);

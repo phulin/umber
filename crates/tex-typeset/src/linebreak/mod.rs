@@ -294,10 +294,19 @@ fn run_pass<S: TypesetState>(
             if feasible {
                 let badness = b.min(INF_BAD);
                 let fitness = fitness_class(badness, widths.natural.raw(), target.raw());
+                let terminal = forced && bp.position >= nodes.len();
                 let dem = if artificial {
                     active_candidate.path_demerits
                 } else {
-                    compute_demerits(params, active_candidate, badness, bp.penalty, fitness, bp)
+                    compute_demerits(
+                        params,
+                        active_candidate,
+                        badness,
+                        bp.penalty,
+                        fitness,
+                        bp,
+                        terminal,
+                    )
                 };
                 let id = candidates.len();
                 candidates.push(Candidate {
@@ -324,7 +333,6 @@ fn run_pass<S: TypesetState>(
         active = next;
     }
 
-    apply_final_hyphen_demerits(&mut candidates, &finals, params.final_hyphen_demerits);
     let chosen = choose_final(&candidates, &finals, params.looseness)?;
     Some(reconstruct(nodes, &candidates, chosen))
 }
@@ -354,6 +362,7 @@ fn compute_demerits(
     penalty: i32,
     fitness: Fitness,
     bp: Breakpoint,
+    terminal: bool,
 ) -> i32 {
     let line_bad = params.line_penalty.saturating_add(bad);
     let mut dem = if line_bad.abs() >= INF_BAD {
@@ -366,24 +375,17 @@ fn compute_demerits(
     } else if penalty > EJECT_PENALTY {
         dem = dem.saturating_sub(penalty.saturating_mul(penalty));
     }
+    if active.hyphenated {
+        if terminal {
+            dem = dem.saturating_add(params.final_hyphen_demerits);
+        } else if bp.hyphenated {
+            dem = dem.saturating_add(params.double_hyphen_demerits);
+        }
+    }
     if incompatible(active.fitness, fitness) {
         dem = dem.saturating_add(params.adj_demerits);
     }
-    if active.hyphenated && bp.hyphenated {
-        dem = dem.saturating_add(params.double_hyphen_demerits);
-    }
     dem.saturating_add(active.path_demerits)
-}
-
-fn apply_final_hyphen_demerits(candidates: &mut [Candidate], finals: &[usize], demerits: i32) {
-    for &id in finals {
-        let Some(prev) = candidates[id].previous else {
-            continue;
-        };
-        if candidates[prev].hyphenated {
-            candidates[id].demerits = candidates[id].path_demerits.saturating_add(demerits);
-        }
-    }
 }
 
 fn discretionary_penalty(kind: DiscKind, params: &LineBreakParams) -> i32 {

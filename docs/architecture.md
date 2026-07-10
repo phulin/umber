@@ -690,7 +690,9 @@ makes box-level memoization (M4) sound.
   when two routes have equal demerits. Discretionary nodes carry their source
   kind, letting the pure breaker apply `\hyphenpenalty`, `\exhyphenpenalty`,
   consecutive hyphen demerits, and final-hyphen demerits without consulting
-  state.
+  state. Terminal-break final-hyphen costs are included before the breaker
+  retains the minimum route for a line/fitness class, matching TeX82's
+  candidate ordering rather than adjusting an already-pruned winner.
   The current `tex-exec` integration precomputes the hyphenated hlist because
   automatic hyphen insertion still freezes discretionary child lists through
   `Universe`; the breaker only sees the hook result as ordinary nodes.
