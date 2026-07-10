@@ -73,6 +73,59 @@ fn chardef_and_mathchardef_are_internal_integers() {
 }
 
 #[test]
+fn mathchardef_constants_scan_for_penalty_count_ifnum_and_signed_macro_replay() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\mathchardef\\M=10000 \
+         \\def\\wrapped{\\M} \
+         \\penalty\\M \\penalty-\\wrapped \
+         \\count0=\\M \\count1=-\\wrapped \
+         \\ifnum\\M=10000 \\count2=1 \\fi \
+         \\ifnum-\\wrapped=-10000 \\count3=1 \\fi",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("mathchardef constants scan through all integer consumers");
+
+    assert_eq!(stores.count(0), 10_000);
+    assert_eq!(stores.count(1), -10_000);
+    assert_eq!(stores.count(2), 1);
+    assert_eq!(stores.count(3), 1);
+}
+
+#[test]
+fn mathchardef_meaning_restores_and_replays_with_identical_state_hash() {
+    let source = "\\mathchardef\\M=10000 \
+                  {\\mathchardef\\M=20000 \\global\\count0=\\M} \
+                  \\count1=\\M";
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let checkpoint = stores.snapshot();
+
+    let mut first_input = InputStack::new(MemoryInput::new(source));
+    Executor::new()
+        .run(&mut first_input, &mut stores)
+        .expect("first mathchardef replay succeeds");
+    assert_eq!(stores.count(0), 20_000);
+    assert_eq!(stores.count(1), 10_000);
+    let first_hash = stores.snapshot().state_hash();
+
+    stores.rollback(&checkpoint);
+    let mut second_input = InputStack::new(MemoryInput::new(source));
+    Executor::new()
+        .run(&mut second_input, &mut stores)
+        .expect("second mathchardef replay succeeds");
+
+    assert_eq!(stores.count(0), 20_000);
+    assert_eq!(stores.count(1), 10_000);
+    assert_eq!(stores.snapshot().state_hash(), first_hash);
+}
+
+#[test]
 fn token_register_assignments_scan_balanced_text_and_copy_variables() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

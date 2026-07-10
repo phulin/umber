@@ -148,9 +148,9 @@ impl From<LexError> for ScanIntError {
 
 /// Scans a TeX `<number>` using expanded tokens.
 ///
-/// Supported internal integers are the state surfaces implemented so far:
-/// `\count<number>`, `\dimen<number>` coerced to scaled points, `\endlinechar`,
-/// and chardef-like meanings represented by [`Meaning::CharGiven`].
+/// Supported internal integers include register and parameter values plus
+/// chardef-like meanings represented by [`Meaning::CharGiven`] and
+/// [`Meaning::MathCharGiven`].
 pub fn scan_int<S>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
@@ -426,49 +426,29 @@ where
     let meaning = stores.meaning(symbol);
     recorder.record_meaning(symbol, meaning);
     match meaning {
-        Meaning::CharGiven(ch) => {
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
-            Ok(ScannedInt::new(ch as i32))
-        }
-        Meaning::MathCharGiven(value) => {
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
-            Ok(ScannedInt::new(i32::from(value)))
-        }
-        Meaning::CountRegister(index) => {
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
-            Ok(ScannedInt::new(stores.count(index)))
-        }
-        Meaning::DimenRegister(index) => {
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
-            Ok(ScannedInt::new(stores.dimen(index).raw()))
-        }
-        Meaning::IntParam(index) => {
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
-            Ok(ScannedInt::new(stores.int_param(IntParam::new(index))))
-        }
+        // WEB §§413--415, 441--445: char_given and math_given are ordinary
+        // int_val internals. Unlike explicit numeric constants, internal
+        // values do not consume an optional trailing space. Reading ahead
+        // here would replace the following live token with inserted replay.
+        Meaning::CharGiven(ch) => Ok(ScannedInt::new(ch as i32)),
+        Meaning::MathCharGiven(value) => Ok(ScannedInt::new(i32::from(value))),
+        Meaning::CountRegister(index) => Ok(ScannedInt::new(stores.count(index))),
+        Meaning::DimenRegister(index) => Ok(ScannedInt::new(stores.dimen(index).raw())),
+        Meaning::IntParam(index) => Ok(ScannedInt::new(stores.int_param(IntParam::new(index)))),
         Meaning::InternalInteger(InternalInteger::Badness) => {
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
             Ok(ScannedInt::new(stores.last_badness()))
         }
         Meaning::InternalInteger(InternalInteger::InputLineNumber) => {
             let line = input
                 .current_source_frame()
                 .map_or(0, |frame| frame.line_number().min(i32::MAX as usize) as i32);
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
             Ok(ScannedInt::new(line))
         }
-        Meaning::DimenParam(index) => {
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
-            Ok(ScannedInt::new(
-                stores.dimen_param(DimenParam::new(index)).raw(),
-            ))
-        }
-        Meaning::PageInteger(integer) => {
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
-            Ok(ScannedInt::new(stores.page_integer(integer)))
-        }
+        Meaning::DimenParam(index) => Ok(ScannedInt::new(
+            stores.dimen_param(DimenParam::new(index)).raw(),
+        )),
+        Meaning::PageInteger(integer) => Ok(ScannedInt::new(stores.page_integer(integer))),
         Meaning::PageDimension(dimension) => {
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
             Ok(ScannedInt::new(stores.page_dimension(dimension).raw()))
         }
         Meaning::Relax => {
@@ -523,37 +503,29 @@ where
         tex_state::meaning::UnexpandablePrimitive::Count => {
             let index = scan_register_index(input, stores, recorder, hooks, expander)?;
             let value = stores.count(index);
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
             Ok(ScannedInt::new(value))
         }
         tex_state::meaning::UnexpandablePrimitive::Dimen => {
             let index = scan_register_index(input, stores, recorder, hooks, expander)?;
             let value = stores.dimen(index).raw();
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
             Ok(ScannedInt::new(value))
         }
         tex_state::meaning::UnexpandablePrimitive::SpaceFactor => {
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
             Ok(ScannedInt::new(hooks.space_factor()))
         }
         tex_state::meaning::UnexpandablePrimitive::PrevDepth => {
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
             Ok(ScannedInt::new(hooks.prev_depth().raw()))
         }
         tex_state::meaning::UnexpandablePrimitive::PrevGraf => {
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
             Ok(ScannedInt::new(hooks.prev_graf()))
         }
         tex_state::meaning::UnexpandablePrimitive::LastPenalty => {
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
             Ok(ScannedInt::new(hooks.last_penalty()))
         }
         tex_state::meaning::UnexpandablePrimitive::LastKern => {
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
             Ok(ScannedInt::new(hooks.last_kern().raw()))
         }
         tex_state::meaning::UnexpandablePrimitive::LastSkip => {
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
             Ok(ScannedInt::new(hooks.last_skip().width.raw()))
         }
         tex_state::meaning::UnexpandablePrimitive::CatCode
@@ -577,7 +549,6 @@ where
                 tex_state::meaning::UnexpandablePrimitive::DelCode => stores.delcode(ch),
                 _ => unreachable!("outer match restricts primitive"),
             };
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
             Ok(ScannedInt::new(value))
         }
         _ => Err(ScanIntError::UnsupportedInternalInteger(token)),

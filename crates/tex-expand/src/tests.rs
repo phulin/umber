@@ -2038,7 +2038,7 @@ fn ifdim_operand_nested_conditional_completes_exact_outer_frame() {
 }
 
 #[test]
-fn ifnum_internal_operand_inserts_relax_before_else_during_evaluation() {
+fn ifnum_internal_operand_does_not_eagerly_expand_following_else() {
     let mut stores = Universe::new();
     let (_, _, else_cs, fi) = conditional_primitives(&mut stores);
     let ifnum = expandable_primitive(&mut stores, "ifnum", ExpandablePrimitive::IfNum);
@@ -2065,11 +2065,9 @@ fn ifnum_internal_operand_inserts_relax_before_else_during_evaluation() {
     ]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
-    let relax = stores.intern_relaxed_control_sequence("relax");
-
     assert_eq!(
         collect_expanded(&mut input, &mut stores),
-        vec![Token::Cs(relax), char_token('y')]
+        vec![char_token('y')]
     );
 }
 
