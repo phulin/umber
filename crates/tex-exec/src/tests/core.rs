@@ -1486,6 +1486,59 @@ fn showlists_reports_vertical_rule_and_ignored_prevdepth() {
 }
 
 #[test]
+fn outer_paragraph_retains_zero_parskip_after_existing_material() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\vsize=100pt \\parskip=0pt \\hrule \\noindent\\vrule\\par",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("paragraph executes");
+
+    let page = stores.current_page_nodes();
+    assert!(page.windows(2).any(|nodes| {
+        matches!(
+            nodes,
+            [
+                Node::Rule { .. },
+                Node::Glue {
+                    spec,
+                    kind: tex_state::node::GlueKind::Normal,
+                    leader: None,
+                },
+            ] if stores.glue(*spec) == GlueSpec::ZERO
+        )
+    }));
+}
+
+#[test]
+fn vertical_unhbox_of_void_box_still_builds_indented_empty_line() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\vsize=100pt \\parskip=0pt \\hrule \\vskip12pt \\unhbox0 \\par",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("void unhbox paragraph executes");
+
+    assert!(stores.current_page_nodes().iter().any(|node| {
+        matches!(
+            node,
+            Node::HList(line)
+                if line.height.raw() == 0
+                    && line.depth.raw() == 0
+                    && matches!(stores.nodes(line.children), [Node::HList(indent), ..] if indent.width == stores.dimen_param(DimenParam::PAR_INDENT))
+        )
+    }));
+}
+
+#[test]
 fn page_builder_moves_box_and_updates_page_scalars() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);

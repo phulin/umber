@@ -623,6 +623,21 @@ where
             | UnexpandablePrimitive::MoveLeft
             | UnexpandablePrimitive::MoveRight => {
                 reject_all_prefixes(prefixes)?;
+                if matches!(
+                    primitive,
+                    UnexpandablePrimitive::UnHBox | UnexpandablePrimitive::UnHCopy
+                ) && matches!(
+                    nest.current_mode(),
+                    crate::Mode::Vertical | crate::Mode::InternalVertical
+                ) {
+                    // TeX82 enters an indented paragraph before it scans the
+                    // box register. This remains observable for a void box:
+                    // Plain's `\leavevmode` relies on the indent box to keep
+                    // the otherwise-empty paragraph alive through `end_graf`.
+                    push_traced_tokens(input, stores, [command.traced]);
+                    ensure_horizontal_for_character(nest, input, stores)?;
+                    return Ok(CommandOutcome::continue_only());
+                }
                 execute_box_list_command(primitive, command.traced, nest, input, stores, hooks)?;
                 Ok(CommandOutcome::continue_only())
             }

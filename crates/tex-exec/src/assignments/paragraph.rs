@@ -1,7 +1,6 @@
 use tex_lex::{InputSource, InputStack, TokenListReplayKind};
 use tex_state::Universe;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
-use tex_state::glue::GlueSpec;
 use tex_state::node::{BoxNode, GlueKind, Node};
 use tex_state::scaled::Scaled;
 use tex_typeset::PackSpec;
@@ -77,9 +76,7 @@ where
             nest.set_enclosing_vertical_prev_graf(0);
             let par_shape = nest.current_list().par_shape().cloned();
             let parskip = stores.glue_param(GlueParam::PAR_SKIP);
-            if (nest.current_mode() == Mode::Vertical || !nest.current_list().is_empty())
-                && stores.glue(parskip) != GlueSpec::ZERO
-            {
+            if nest.current_mode() == Mode::Vertical || !nest.current_list().is_empty() {
                 append_vertical_contribution(
                     nest,
                     stores,
