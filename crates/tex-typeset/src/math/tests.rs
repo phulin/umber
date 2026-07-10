@@ -681,6 +681,51 @@ fn math_accent_uses_skewchar_kern_and_larger_accent() {
     ));
 }
 
+#[test]
+fn nested_under_overline_retains_inner_vertical_box() {
+    let mut universe = setup_universe();
+    let sum = universe.freeze_node_list(&[
+        Node::MathNoad(noad(NoadClass::Ord, 'x')),
+        Node::MathNoad(noad(NoadClass::Bin, '+')),
+        Node::MathNoad(noad(NoadClass::Ord, 'y')),
+    ]);
+    let overline = universe.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+        NoadKind::Overline,
+        MathField::SubMlist(sum),
+    ))]);
+    let input = universe.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+        NoadKind::Underline,
+        MathField::SubMlist(overline),
+    ))]);
+    let params = MathParams::read(&universe);
+
+    let layout = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
+
+    let [MathNode::VList(underline)] = root_nodes(&layout).as_slice() else {
+        panic!("expected underline vbox");
+    };
+    let underline_nodes = list_nodes(&layout, underline.list);
+    let [
+        MathNode::VList(overline),
+        MathNode::Kern { .. },
+        MathNode::Rule { .. },
+    ] = underline_nodes.as_slice()
+    else {
+        panic!(
+            "expected nested overline vbox followed by underline material: {underline_nodes:#?}"
+        );
+    };
+    assert!(matches!(
+        list_nodes(&layout, overline.list).as_slice(),
+        [
+            MathNode::Kern { .. },
+            MathNode::Rule { .. },
+            MathNode::Kern { .. },
+            MathNode::HList(_)
+        ]
+    ));
+}
+
 fn assert_glue_width(node: &MathNode, expected: i32) {
     let MathNode::Glue { spec, .. } = node else {
         panic!("expected glue, got {node:?}");

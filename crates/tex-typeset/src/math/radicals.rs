@@ -44,7 +44,7 @@ pub(super) fn make_under(
     let base_height = base.height;
     let base_width = base.width;
     let list = ctx.layout.hlist([
-        MathNode::HList(base),
+        boxed_node(base),
         MathNode::Kern {
             amount: Scaled::from_raw(3 * thickness.raw()),
             kind: KernKind::Explicit,
