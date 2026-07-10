@@ -189,7 +189,15 @@ where
             execute_immediate_write(traced, input, stores, recorder, hooks)?;
             Ok(CommandOutcome::continue_only())
         }
-        _ => Err(ExecError::PrefixWithNonAssignment { token, origin }),
+        _ => {
+            // TeX.web's `do_extension` treats `\immediate` as a one-token
+            // lookahead: only openout, write, and closeout are executed here.
+            // Every other expanded token is put back for ordinary main-control
+            // dispatch (section 1377), so `\immediate\catcode` is a deliberate
+            // no-op prefix in the official TRIP input.
+            push_traced_tokens(input, stores, [traced]);
+            Ok(CommandOutcome::continue_only())
+        }
     }
 }
 
