@@ -425,6 +425,7 @@ where
             context: "\\vcenter",
         });
     }
+    stores.enter_group_with_kind(GroupKind::Simple);
     let mut inner = ModeNest::new();
     inner.push(Mode::InternalVertical);
     assignments::scan_box_group(&mut inner, input, stores, hooks)?;
@@ -440,6 +441,7 @@ where
         .node,
     );
     let boxed = stores.freeze_node_list(&[vbox]);
+    crate::leave_group(input, stores, GroupKind::Simple)?;
     Ok(MathField::SubBox(boxed))
 }
 

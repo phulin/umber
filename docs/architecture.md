@@ -580,7 +580,10 @@ assignments, box building, and dispatch into the typesetting kernels.
   TeX82's `after_math`/`unsave` ordering; local Env and code-table assignments
   therefore affect the formula but restore at the closing dollar, globals
   survive, and `\aftergroup` tokens replay through the checkpointed input
-  stack. Family font selectors live in the barriered Env font state.
+  stack. `\vcenter` box scanning likewise uses a journal-backed group, so
+  box-local parameter changes restore when the vertical box closes while
+  global assignments survive. Family font selectors live in the barriered
+  Env font state.
   Display math is packaged stomach-side: entering `$$` from unrestricted
   horizontal mode interrupts the paragraph through the ordinary line breaker,
   records `\predisplaysize`, `\displaywidth`, and `\displayindent` in

@@ -838,6 +838,24 @@ fn delimiter_radical_accent_and_vcenter_parse_to_math_noads() {
 }
 
 #[test]
+fn vcenter_restores_local_assignments_and_preserves_globals() {
+    let (stores, _) = run_math_source(
+        r"\lineskip=1pt \baselineskip=12pt $\vcenter{\lineskip=4pt \global\baselineskip=17pt \hrule}$",
+    );
+
+    assert_eq!(
+        stores.glue(stores.glue_param(GlueParam::LINE_SKIP)).width,
+        Scaled::from_raw(Scaled::UNITY)
+    );
+    assert_eq!(
+        stores
+            .glue(stores.glue_param(GlueParam::BASELINE_SKIP))
+            .width,
+        Scaled::from_raw(17 * Scaled::UNITY)
+    );
+}
+
+#[test]
 fn every_math_and_every_display_tokens_are_inserted_on_entry() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);
