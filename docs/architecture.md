@@ -218,8 +218,11 @@ supply.
   adapter. Ordinary backed one-scalar tokens encode their logical source
   position directly in the opaque origin word, eliminating provenance-arena
   appends on the common source path. Positions above the direct payload use
-  validated arena `SourceSpan` records, while legacy flat source records
-  remain during migration. Diagnostic resolution dispatches both forms
+  validated arena `SourceSpan` records. Control sequences, transformed `^^`
+  input, and other multi-character spellings use exact validated half-open
+  spans; inserted normalized endlines use zero-width physical anchors. Legacy
+  flat source records remain only for compatibility APIs during migration.
+  Diagnostic resolution dispatches all forms
   through the live source map and computes physical line/column data lazily,
   so frame pop does not lose source text and aggregate rollback cannot alias
   reused ids.
@@ -258,8 +261,13 @@ Responsibility: characters → tokens, under mutable catcode law.
   origin-list spans live in `tex-state` as rollback-coupled, hash-neutral
   diagnostic side-channel arenas. User-facing source labels, line/caret
   snippets, and expansion traces are rendered lazily by the provenance
-  resolver at diagnostic formatting boundaries; hot token movement never
-  formats or allocates strings for provenance.
+  resolver at diagnostic formatting boundaries. Errors capture a bounded
+  primary/related/invocation-id `DiagnosticSite` before replay frames pop;
+  paths, excerpts, line indexes, and Unicode/tab display widths remain lazy.
+  Scanner range composition requires lexer-issued proof of two ordered direct
+  deliveries from the same still-live physical frame, so replayed or expanded
+  endpoints cannot be made contiguous from origin ids alone. Hot token
+  movement never formats strings for provenance.
 - The lexer holds **no state outside the input stack frame** (its N/M/S
   state is part of the frame). Nothing here needs journaling.
 
@@ -493,9 +501,11 @@ assignments, box building, and dispatch into the typesetting kernels.
   gullet delivers `TracedTokenWord` values to the stomach; execution decodes
   the semantic `Token` only for meaning dispatch and mode behavior while the
   raw `OriginId` rides alongside for diagnostics. Execution errors that are
-  caused by a consumed command token store that primary origin directly; a
-  later diagnostic renderer must resolve it before rollback can invalidate
-  the provenance arena entry. The mode stack (nest) tracks the list under
+  caused by consumed input cross main-control boundaries with an owned bounded
+  `DiagnosticSite`, preserving the primary, labeled related locations, and
+  invocation ids even after replay frames pop. A later diagnostic renderer
+  resolves the site before rollback can invalidate its provenance records.
+  The mode stack (nest) tracks the list under
   construction per level; the current list is an *unfrozen node builder* (§7
   of `core_state.md` — builder-then-freeze applies to node lists exactly as
   to token lists).

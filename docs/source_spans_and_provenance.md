@@ -567,6 +567,12 @@ artifacts are unchanged.
 
 ### Phase 4: Precise source ranges and diagnostic sites
 
+**Status: implemented.** Lexer-issued direct-delivery proofs constrain the
+initial scanner join to ordered endpoints from one still-live physical frame;
+integer-overflow diagnostics are the first consumer. Lexer, expansion, and
+execution errors cross their public boundaries with owned bounded
+`DiagnosticSite` values, including invocation ids retained across frame pop.
+
 - Use validated half-open `SourceSpan` origin records for exact, zero-width,
   and multi-line locations.
 - Emit exact spelling ranges for control sequences, transformed input, and

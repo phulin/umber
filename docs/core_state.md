@@ -384,16 +384,23 @@ cells[i] = new
   benchmark-only id inspection rather than a production per-token counter
   write; none of these values participate in semantic hashing.
 - User-facing provenance is resolved only at diagnostic formatting
-  boundaries. `ProvenanceResolver` reads live origin records, input summaries,
-  world input records, and interned names to render source labels, source
-  line/caret context, and bounded macro expansion traces. It treats
+  boundaries. Errors own a bounded `DiagnosticSite`: a primary origin,
+  labeled related origins, and invocation-origin ids captured while relevant
+  replay frames are live. No site stores rendered paths, excerpts, line
+  indexes, or display widths. `ProvenanceResolver` reads live origin records,
+  world input records, and interned names to render source labels, exact
+  half-open source ranges, source line/caret context, and the captured macro
+  expansion trace. It uses one-based reports, eight-column tab stops, Unicode
+  display-cell widths, a one-cell caret for empty ranges, and first/last lines
+  for multiline ranges. It treats
   `OriginId(0)`, rolled-back ids, missing origin-list spans, and absent source
   metadata as unknown provenance rather than reporting a secondary error.
 - Raw `OriginId`s are valid only while their append-only provenance records
   remain live. Any diagnostic that must survive speculative/replayed execution
   rollback must be rendered to text before rolling back past its provenance
-  watermark. Expansion backtraces are reconstructed from live input-stack macro
-  replay frames and their invocation origins, not from per-token chain records.
+  watermark. Expansion backtraces are copied as bounded invocation ids when an
+  error crosses the lexer, expansion, or execution boundary, not reconstructed
+  from mutable current-location state or per-token chain records.
   Coordinate rendering stays lazy so future splice-time line-delta remapping
   can be inserted at the resolver boundary.
 

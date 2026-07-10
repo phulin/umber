@@ -483,8 +483,8 @@ pub struct InputStack<S> {
     next_condition_token: u64,
     alignment_cells: Vec<AlignmentCellInput>,
     last_direct_delivery: Option<DirectSourceDelivery>,
-    last_delivery_trace: [OriginId; DiagnosticSite::MAX_EXPANSION_TRACE],
-    last_delivery_trace_len: usize,
+    recently_popped_trace: [OriginId; DiagnosticSite::MAX_EXPANSION_TRACE],
+    recently_popped_trace_len: usize,
 }
 
 /// Proof that one token was delivered directly from a physical source frame.
@@ -541,8 +541,8 @@ impl<S> InputStack<S> {
             next_condition_token: 0,
             alignment_cells: Vec::new(),
             last_direct_delivery: None,
-            last_delivery_trace: [OriginId::UNKNOWN; DiagnosticSite::MAX_EXPANSION_TRACE],
-            last_delivery_trace_len: 0,
+            recently_popped_trace: [OriginId::UNKNOWN; DiagnosticSite::MAX_EXPANSION_TRACE],
+            recently_popped_trace_len: 0,
         };
         stack.push_source(source);
         stack
@@ -640,8 +640,8 @@ impl<S> InputStack<S> {
                 }),
             alignment_cells: Vec::new(),
             last_direct_delivery: None,
-            last_delivery_trace: [OriginId::UNKNOWN; DiagnosticSite::MAX_EXPANSION_TRACE],
-            last_delivery_trace_len: 0,
+            recently_popped_trace: [OriginId::UNKNOWN; DiagnosticSite::MAX_EXPANSION_TRACE],
+            recently_popped_trace_len: 0,
         })
     }
 
@@ -938,7 +938,7 @@ impl<S> InputStack<S> {
             }
             InputFrame::Source(_) | InputFrame::TokenList(_) | InputFrame::Condition { .. } => None,
         });
-        let retained_trace = self.last_delivery_trace[..self.last_delivery_trace_len]
+        let retained_trace = self.recently_popped_trace[..self.recently_popped_trace_len]
             .iter()
             .copied();
         DiagnosticSite::new(primary, related, live_trace.chain(retained_trace))
@@ -1274,18 +1274,19 @@ where
                             TracedTokenReplay::Deliver(token)
                             | TracedTokenReplay::DeliverNoExpand(token),
                         ) => {
-                            self.record_delivery_trace();
                             return Ok(Some(token));
                         }
                         None => {
+                            let invocation = token_list.macro_invocation;
                             self.frames.remove(frame_index);
+                            self.record_popped_invocation(invocation);
                         }
                     };
                 }
                 InputFrame::Source(source) => {
                     ensure_source_registered(source, stores);
                     if let Some(token) = source.frame.pending.pop_front() {
-                        self.record_delivery_trace();
+                        self.recently_popped_trace_len = 0;
                         return Ok(Some(token));
                     }
 
@@ -1329,7 +1330,7 @@ where
                         start: start.byte_offset,
                         end: end.byte_offset,
                     });
-                    self.record_delivery_trace();
+                    self.recently_popped_trace_len = 0;
                     return Ok(Some(token));
                 }
                 InputFrame::Condition { .. } => {
@@ -1390,22 +1391,22 @@ where
                             continue;
                         }
                         Some(TracedTokenReplay::Deliver(token)) => {
-                            self.record_delivery_trace();
                             return Ok(Some(TracedExpansionToken::new(token, false)));
                         }
                         Some(TracedTokenReplay::DeliverNoExpand(token)) => {
-                            self.record_delivery_trace();
                             return Ok(Some(TracedExpansionToken::new(token, true)));
                         }
                         None => {
+                            let invocation = token_list.macro_invocation;
                             self.frames.remove(frame_index);
+                            self.record_popped_invocation(invocation);
                         }
                     };
                 }
                 InputFrame::Source(source) => {
                     ensure_source_registered(source, stores);
                     if let Some(token) = source.frame.pending.pop_front() {
-                        self.record_delivery_trace();
+                        self.recently_popped_trace_len = 0;
                         return Ok(Some(TracedExpansionToken::new(token, false)));
                     }
 
@@ -1449,7 +1450,7 @@ where
                         start: start.byte_offset,
                         end: end.byte_offset,
                     });
-                    self.record_delivery_trace();
+                    self.recently_popped_trace_len = 0;
                     return Ok(Some(TracedExpansionToken::new(token, false)));
                 }
                 InputFrame::Condition { .. } => {
@@ -1552,19 +1553,24 @@ where
         error.with_expansion_trace(trace)
     }
 
-    fn record_delivery_trace(&mut self) {
-        self.last_delivery_trace_len = 0;
+    fn record_popped_invocation(&mut self, popped: OriginId) {
+        if popped == OriginId::UNKNOWN {
+            return;
+        }
+        self.recently_popped_trace_len = 0;
+        self.recently_popped_trace[self.recently_popped_trace_len] = popped;
+        self.recently_popped_trace_len += 1;
         for origin in self.frames.iter().rev().filter_map(|frame| match frame {
             InputFrame::TokenList(frame) if frame.macro_invocation != OriginId::UNKNOWN => {
                 Some(frame.macro_invocation)
             }
             InputFrame::Source(_) | InputFrame::TokenList(_) | InputFrame::Condition { .. } => None,
         }) {
-            if self.last_delivery_trace_len == self.last_delivery_trace.len() {
+            if self.recently_popped_trace_len == self.recently_popped_trace.len() {
                 break;
             }
-            self.last_delivery_trace[self.last_delivery_trace_len] = origin;
-            self.last_delivery_trace_len += 1;
+            self.recently_popped_trace[self.recently_popped_trace_len] = origin;
+            self.recently_popped_trace_len += 1;
         }
     }
 }
