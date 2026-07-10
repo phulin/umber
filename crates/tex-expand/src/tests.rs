@@ -914,7 +914,19 @@ fn macro_body_delivery_does_not_write_provenance_per_token() {
         collect_expanded(&mut input, &mut stores),
         body_tokens.to_vec()
     );
-    assert_eq!(stores.provenance_stats(), after_dispatch);
+    let after_delivery = stores.provenance_stats();
+    assert_eq!(
+        after_delivery.origin_records(),
+        after_dispatch.origin_records()
+    );
+    assert_eq!(
+        after_delivery.origin_list_spans(),
+        after_dispatch.origin_list_spans()
+    );
+    assert_eq!(
+        after_delivery.origin_list_entries(),
+        after_dispatch.origin_list_entries()
+    );
 }
 
 #[test]

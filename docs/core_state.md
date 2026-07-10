@@ -403,6 +403,18 @@ cells[i] = new
   from mutable current-location state or per-token chain records.
   Coordinate rendering stays lazy so future splice-time line-delta remapping
   can be inserted at the resolver boundary.
+- Token-list delivery treats a missing or rolled-back origin-list span as
+  unknown diagnostic provenance while continuing to deliver the still-live
+  semantic token list. A popped macro replay frame contributes its one shared
+  invocation id to a fixed bounded buffer for the current delivery attempt;
+  nested pops accumulate inner-to-outer ids, and the buffer is cleared before
+  the next attempt so traces neither disappear at an EOF/pre-token error nor
+  leak onto unrelated later tokens. No body-token wrapper record is allocated.
+- Provenance statistics distinguish live records, origin-list spans/entries,
+  source regions, generated backings, and logical bytes from retained arena
+  capacity. Aggregate rollback restores every live counter to its snapshot
+  value; backing vectors may retain capacity for reuse, which is diagnostic
+  memory rather than live timeline state.
 
 ### Source map
 

@@ -7,7 +7,9 @@ use crate::ids::OriginListId;
 use crate::input::{SourceId, TokenListReplayKind};
 use crate::macro_store::MacroMeaning;
 use crate::meaning::MeaningFlags;
+use crate::source_map::SourceDescriptor;
 use crate::token::{Catcode, OriginId, Token};
+use std::sync::Arc;
 
 #[test]
 fn unknown_origin_and_empty_list_are_preallocated() {
@@ -161,13 +163,24 @@ fn universe_provenance_stats_measure_rollback_truncation() {
     let mut stores = Universe::new();
     let baseline = stores.provenance_stats();
     let snapshot = stores.snapshot();
-    let source = stores.source_origin(SourceId::new(3), 30, 3, 1);
+    stores
+        .register_source(
+            SourceId::new(3),
+            SourceDescriptor::generated(Arc::from(&b"discarded timeline"[..])),
+        )
+        .expect("generated source registration");
+    let source = stores.source_token_origin(SourceId::new(3), 0, 1);
     stores.allocate_repeated_origin_list(source, 128);
 
     let grown = stores.provenance_stats();
-    assert_eq!(grown.saturating_sub(baseline).origin_records(), 1);
+    assert_eq!(grown.saturating_sub(baseline).origin_records(), 0);
     assert_eq!(grown.saturating_sub(baseline).origin_list_spans(), 1);
     assert_eq!(grown.saturating_sub(baseline).origin_list_entries(), 128);
+    assert_eq!(grown.saturating_sub(baseline).source_regions(), 1);
+    assert_eq!(
+        grown.saturating_sub(baseline).generated_source_backings(),
+        1
+    );
 
     stores.rollback(&snapshot);
     let rolled_back = stores.provenance_stats();
@@ -180,5 +193,12 @@ fn universe_provenance_stats_measure_rollback_truncation() {
         rolled_back.origin_list_entries(),
         baseline.origin_list_entries()
     );
+    assert_eq!(rolled_back.source_regions(), baseline.source_regions());
+    assert_eq!(
+        rolled_back.generated_source_backings(),
+        baseline.generated_source_backings()
+    );
+    assert_eq!(rolled_back.estimated_bytes(), baseline.estimated_bytes());
     assert!(rolled_back.retained_bytes() >= baseline.retained_bytes());
+    assert!(rolled_back.retained_bytes() > rolled_back.estimated_bytes());
 }

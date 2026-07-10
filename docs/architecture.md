@@ -225,7 +225,9 @@ supply.
   Diagnostic resolution dispatches all forms
   through the live source map and computes physical line/column data lazily,
   so frame pop does not lose source text and aggregate rollback cannot alias
-  reused ids.
+  reused ids. Replay reads origin lists through a best-effort liveness query:
+  a stale diagnostic side table degrades to unknown while its independently
+  live semantic token list continues to execute.
 
 ## 4. Lexer (the eyes)
 
@@ -264,6 +266,11 @@ Responsibility: characters → tokens, under mutable catcode law.
   resolver at diagnostic formatting boundaries. Errors capture a bounded
   primary/related/invocation-id `DiagnosticSite` before replay frames pop;
   paths, excerpts, line indexes, and Unicode/tab display widths remain lazy.
+  One invocation origin is shared by each macro replay frame. Nested popped
+  frames retain their inner-to-outer ids in a fixed bounded buffer for the
+  current delivery attempt only, so EOF and pre-token errors keep their trace
+  without leaking it to a later unrelated token. Macro-body delivery reuses
+  frozen origin lists and performs no provenance write per delivered token.
   Scanner range composition requires lexer-issued proof of two ordered direct
   deliveries from the same still-live physical frame, so replayed or expanded
   endpoints cannot be made contiguous from origin ids alone. Hot token

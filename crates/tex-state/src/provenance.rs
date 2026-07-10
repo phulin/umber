@@ -40,6 +40,9 @@ impl PartialEq for ProvenanceStats {
         self.origin_records == other.origin_records
             && self.origin_list_spans == other.origin_list_spans
             && self.origin_list_entries == other.origin_list_entries
+            && self.source_regions == other.source_regions
+            && self.generated_source_backings == other.generated_source_backings
+            && self.source_map_bytes == other.source_map_bytes
     }
 }
 

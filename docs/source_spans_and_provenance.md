@@ -592,6 +592,21 @@ unavailable ranges degrade to labeled separate locations.
 
 ### Phase 5: Derived provenance and replay audit
 
+**Status (2026-07-10): implemented.** The derived-provenance audit now covers
+source, inserted, synthesized, macro-definition, macro-argument,
+macro-invocation, token-list replay, scanner recovery, execution, World, and
+generated-memory paths. Frozen origin lists remain the only per-token storage
+for macro bodies and arguments, while one invocation origin is shared by each
+macro replay frame. Popped invocation ids are retained in a fixed bounded
+buffer for exactly one delivery attempt, including nested frame exhaustion and
+pre-token errors, then cleared before the next attempt. Stale replay origin
+lists degrade to unknown instead of dereferencing a discarded diagnostic side
+table. Aggregate rollback tests prove that discarded source regions,
+generated backings, origin records, and origin lists return to zero live
+growth while retained vector capacity remains separately observable. Semantic
+hash, replay, shadow, fixture, and external Story/Gentle parity gates remain
+the adoption guardrails.
+
 - Audit inserted, synthesized, macro-definition, macro-argument, and
   macro-invocation paths plus World and generated source backings against the
   mixed direct/arena representation.

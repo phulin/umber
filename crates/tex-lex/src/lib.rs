@@ -972,6 +972,34 @@ impl<S> InputStack<S> {
         frame_is_live.then(|| stores.source_range_origin(first.source, first.start, last.end))
     }
 
+    fn record_popped_invocation(&mut self, popped: OriginId) {
+        if popped == OriginId::UNKNOWN {
+            return;
+        }
+        self.retain_invocation(popped);
+        for index in (0..self.frames.len()).rev() {
+            let origin = match &self.frames[index] {
+                InputFrame::TokenList(frame) if frame.macro_invocation != OriginId::UNKNOWN => {
+                    frame.macro_invocation
+                }
+                InputFrame::Source(_) | InputFrame::TokenList(_) | InputFrame::Condition { .. } => {
+                    continue;
+                }
+            };
+            self.retain_invocation(origin);
+        }
+    }
+
+    fn retain_invocation(&mut self, origin: OriginId) {
+        if self.recently_popped_trace[..self.recently_popped_trace_len].contains(&origin)
+            || self.recently_popped_trace_len == self.recently_popped_trace.len()
+        {
+            return;
+        }
+        self.recently_popped_trace[self.recently_popped_trace_len] = origin;
+        self.recently_popped_trace_len += 1;
+    }
+
     #[must_use]
     pub fn depth(&self) -> usize {
         self.frames.len()
@@ -1251,6 +1279,7 @@ where
         stores: &mut impl ExpansionState,
     ) -> Result<Option<TracedTokenWord>, LexError> {
         self.last_direct_delivery = None;
+        self.recently_popped_trace_len = 0;
         loop {
             let Some(frame_index) = self.current_token_frame_index() else {
                 return Ok(None);
@@ -1286,7 +1315,6 @@ where
                 InputFrame::Source(source) => {
                     ensure_source_registered(source, stores);
                     if let Some(token) = source.frame.pending.pop_front() {
-                        self.recently_popped_trace_len = 0;
                         return Ok(Some(token));
                     }
 
@@ -1330,7 +1358,6 @@ where
                         start: start.byte_offset,
                         end: end.byte_offset,
                     });
-                    self.recently_popped_trace_len = 0;
                     return Ok(Some(token));
                 }
                 InputFrame::Condition { .. } => {
@@ -1371,6 +1398,7 @@ where
         stores: &mut impl ExpansionState,
     ) -> Result<Option<TracedExpansionToken>, LexError> {
         self.last_direct_delivery = None;
+        self.recently_popped_trace_len = 0;
         loop {
             let Some(frame_index) = self.current_token_frame_index() else {
                 return Ok(None);
@@ -1406,7 +1434,6 @@ where
                 InputFrame::Source(source) => {
                     ensure_source_registered(source, stores);
                     if let Some(token) = source.frame.pending.pop_front() {
-                        self.recently_popped_trace_len = 0;
                         return Ok(Some(TracedExpansionToken::new(token, false)));
                     }
 
@@ -1450,7 +1477,6 @@ where
                         start: start.byte_offset,
                         end: end.byte_offset,
                     });
-                    self.recently_popped_trace_len = 0;
                     return Ok(Some(TracedExpansionToken::new(token, false)));
                 }
                 InputFrame::Condition { .. } => {
@@ -1544,34 +1570,16 @@ where
     }
 
     fn capture_lex_error(&self, error: LexError) -> LexError {
-        let trace = self.frames.iter().rev().filter_map(|frame| match frame {
+        let live_trace = self.frames.iter().rev().filter_map(|frame| match frame {
             InputFrame::TokenList(frame) if frame.macro_invocation != OriginId::UNKNOWN => {
                 Some(frame.macro_invocation)
             }
             InputFrame::Source(_) | InputFrame::TokenList(_) | InputFrame::Condition { .. } => None,
         });
-        error.with_expansion_trace(trace)
-    }
-
-    fn record_popped_invocation(&mut self, popped: OriginId) {
-        if popped == OriginId::UNKNOWN {
-            return;
-        }
-        self.recently_popped_trace_len = 0;
-        self.recently_popped_trace[self.recently_popped_trace_len] = popped;
-        self.recently_popped_trace_len += 1;
-        for origin in self.frames.iter().rev().filter_map(|frame| match frame {
-            InputFrame::TokenList(frame) if frame.macro_invocation != OriginId::UNKNOWN => {
-                Some(frame.macro_invocation)
-            }
-            InputFrame::Source(_) | InputFrame::TokenList(_) | InputFrame::Condition { .. } => None,
-        }) {
-            if self.recently_popped_trace_len == self.recently_popped_trace.len() {
-                break;
-            }
-            self.recently_popped_trace[self.recently_popped_trace_len] = origin;
-            self.recently_popped_trace_len += 1;
-        }
+        let retained_trace = self.recently_popped_trace[..self.recently_popped_trace_len]
+            .iter()
+            .copied();
+        error.with_expansion_trace(retained_trace.chain(live_trace))
     }
 }
 
@@ -1603,7 +1611,10 @@ impl<S> InputStack<S> {
                 if frame.token_list == token_list && frame.replay_kind == replay_kind
         );
         if matches {
-            self.frames.remove(frame_index);
+            let removed = self.frames.remove(frame_index);
+            if let InputFrame::TokenList(frame) = removed {
+                self.record_popped_invocation(frame.macro_invocation);
+            }
         }
         matches
     }
@@ -1665,12 +1676,14 @@ impl<S> InputStack<S> {
             return false;
         }
 
-        let mut index = 0usize;
-        self.frames.retain(|frame| {
-            let keep = index < marked_index || !matches!(frame, InputFrame::TokenList(_));
-            index += 1;
-            keep
-        });
+        for index in (marked_index..self.frames.len()).rev() {
+            if matches!(self.frames[index], InputFrame::TokenList(_)) {
+                let removed = self.frames.remove(index);
+                if let InputFrame::TokenList(frame) = removed {
+                    self.record_popped_invocation(frame.macro_invocation);
+                }
+            }
+        }
         true
     }
 
@@ -1744,7 +1757,9 @@ fn replay_origin(
         );
     }
 
-    let origins = stores.origin_list(frame.origin_list);
+    let Some(origins) = stores.origin_list_if_live(frame.origin_list) else {
+        return OriginId::UNKNOWN;
+    };
     let token_len = stores.tokens(frame.token_list).len();
     assert_eq!(
         origins.len(),

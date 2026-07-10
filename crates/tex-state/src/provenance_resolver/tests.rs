@@ -174,7 +174,7 @@ fn exact_ranges_use_unicode_cells_tab_stops_zero_width_and_multiline_edges() {
     let multiline = stores.source_range_origin(crate::SourceId::new(0), 3, bytes.len() as u64);
 
     let wide = ProvenanceResolver::new(&stores).render_diagnostic("wide", Some(wide));
-    assert!(wide.contains("<source 0>:1:2"));
+    assert!(wide.contains("<source 0>:1:9"), "{wide}");
     assert!(wide.contains("^^^"), "{wide}");
 
     let zero = ProvenanceResolver::new(&stores).render_diagnostic("zero", Some(zero));

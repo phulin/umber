@@ -175,6 +175,7 @@ pub trait ExpansionState {
     fn origin_list_builder(&self) -> OriginListBuilder;
     fn finish_origin_list(&mut self, builder: &mut OriginListBuilder) -> OriginListId;
     fn origin_list(&self, id: OriginListId) -> &[OriginId];
+    fn origin_list_if_live(&self, id: OriginListId) -> Option<&[OriginId]>;
 }
 
 /// Input file reads available to driver-supplied `\input` hooks.
@@ -2599,6 +2600,10 @@ impl ExpansionState for Universe {
         Self::origin_list(self, id)
     }
 
+    fn origin_list_if_live(&self, id: OriginListId) -> Option<&[OriginId]> {
+        Self::origin_list_if_live(self, id)
+    }
+
     fn input_stream_eof(&self, stream: StreamSlot) -> bool {
         self.world.input_stream_eof(stream)
     }
@@ -2921,6 +2926,10 @@ impl ExpansionState for ExpansionContext<'_> {
 
     fn origin_list(&self, id: OriginListId) -> &[OriginId] {
         self.universe.origin_list(id)
+    }
+
+    fn origin_list_if_live(&self, id: OriginListId) -> Option<&[OriginId]> {
+        self.universe.origin_list_if_live(id)
     }
 
     fn input_stream_eof(&self, stream: StreamSlot) -> bool {

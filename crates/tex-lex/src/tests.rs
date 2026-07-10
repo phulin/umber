@@ -1019,6 +1019,81 @@ fn macro_body_replay_without_origin_list_delivers_unknown_origin() {
 }
 
 #[test]
+fn stale_replay_origin_list_degrades_to_unknown_after_rollback() {
+    let mut stores = Universe::new();
+    let token = char_token('x', Catcode::Letter);
+    let token_list = stores.intern_token_list(&[token]);
+    let snapshot = stores.snapshot();
+    let origin = stores.source_origin(tex_state::SourceId::new(1), 10, 2, 3);
+    let origins = stores.allocate_origin_list(&[origin]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list_with_origins(token_list, origins, TokenListReplayKind::Inserted);
+
+    stores.rollback(&snapshot);
+    let replayed = input
+        .next_traced_token(&mut stores)
+        .expect("stale diagnostic side table must not abort replay")
+        .expect("semantic token list remains live");
+
+    assert_eq!(replayed.token(), Some(token));
+    assert_eq!(replayed.origin(), OriginId::UNKNOWN);
+}
+
+#[test]
+fn nested_popped_invocations_remain_bounded_for_one_delivery_attempt() {
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::END_LINE_CHAR, -1);
+    let empty = stores.intern_token_list(&[]);
+    let definition = stores.intern_macro(tex_state::macro_store::MacroMeaning::new(
+        tex_state::meaning::MeaningFlags::EMPTY,
+        empty,
+        empty,
+    ));
+    let definition_origin = stores.source_origin(tex_state::SourceId::new(1), 0, 1, 1);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    let mut invocations = Vec::new();
+    for offset in 0..(tex_state::provenance::DiagnosticSite::MAX_EXPANSION_TRACE + 3) {
+        let call = stores.source_origin(
+            tex_state::SourceId::new(2),
+            u64::try_from(offset).expect("small test offset"),
+            1,
+            u32::try_from(offset + 1).expect("small test column"),
+        );
+        let invocation = stores.macro_invocation_origin(definition, call, definition_origin);
+        invocations.push(invocation);
+        input.push_macro_body_with_origins_and_invocation(
+            empty,
+            OriginListId::EMPTY,
+            MacroArguments::new(),
+            invocation,
+        );
+    }
+
+    assert!(
+        input
+            .next_traced_token(&mut stores)
+            .expect("empty nested replay should reach EOF")
+            .is_none()
+    );
+    let site = input.diagnostic_site(None, []);
+    let expected = invocations
+        .iter()
+        .rev()
+        .take(tex_state::provenance::DiagnosticSite::MAX_EXPANSION_TRACE)
+        .copied()
+        .collect::<Vec<_>>();
+    assert_eq!(site.expansion_trace(), expected);
+
+    assert!(
+        input
+            .next_traced_token(&mut stores)
+            .expect("repeated EOF should remain harmless")
+            .is_none()
+    );
+    assert!(input.diagnostic_site(None, []).expansion_trace().is_empty());
+}
+
+#[test]
 #[should_panic(expected = "token-list replay origin-list length does not match token-list length")]
 fn token_list_replay_checks_origin_list_length() {
     let mut stores = Universe::new();
