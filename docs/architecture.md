@@ -515,8 +515,11 @@ assignments, box building, and dispatch into the typesetting kernels.
   register extraction still goes through the same-level `Universe` facade.
   Horizontal list construction
   buffers adjacent font-backed characters in the stomach until a boundary
-  command, then reconstitutes them through the loaded font's TFM ligature/kern
-  program, updates the mode-local `\spacefactor`, and appends explicit
+  command or literal group token, then reconstitutes them through the loaded
+  font's TFM ligature/kern program. Literal groups therefore end the current
+  character run exactly like TeX82's non-character `main_loop_lookahead`, so
+  constructs such as `{f}i` suppress cross-boundary ligatures. The stomach
+  updates the mode-local `\spacefactor` and appends explicit
   h-mode nodes for spaces, kerns, skips, finite-fill glue, penalties, rules,
   discretionaries, accents, and italic corrections. Paragraph breaking is a
   hand-off to the pure `tex-typeset` line breaker; resulting outer-vertical

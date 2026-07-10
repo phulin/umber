@@ -799,6 +799,45 @@ fn adjacent_cmr10_characters_emit_tfm_kern() {
 }
 
 #[test]
+fn literal_groups_break_ligature_runs_and_preserve_natural_width() {
+    let mut stores = stores_with_fonts();
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\font\\f=cmr10 \\relax \\f \\setbox0=\\hbox{first}\\setbox1=\\hbox{{f}irst}",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("grouped ligature boundary executes");
+
+    let ligated = stores.box_reg(0).expect("ligated box should be assigned");
+    let grouped = stores.box_reg(1).expect("grouped box should be assigned");
+    let [Node::HList(ligated_box)] = stores.nodes(ligated) else {
+        panic!("register 0 should hold an hbox");
+    };
+    let [Node::HList(grouped_box)] = stores.nodes(grouped) else {
+        panic!("register 1 should hold an hbox");
+    };
+
+    assert!(matches!(
+        stores.nodes(ligated_box.children).first(),
+        Some(Node::Lig {
+            ch: '\u{c}',
+            orig: ('f', 'i'),
+            ..
+        })
+    ));
+    assert!(matches!(
+        stores.nodes(grouped_box.children),
+        [Node::Char { ch: 'f', .. }, Node::Char { ch: 'i', .. }, ..]
+    ));
+    assert_eq!(
+        grouped_box.width.raw() - ligated_box.width.raw(),
+        18_205,
+        "cmr10's unligated f+i pair has TeX82's larger natural width"
+    );
+}
+
+#[test]
 fn appended_box_resets_space_factor_before_sentence_punctuation() {
     let mut stores = stores_with_fonts();
     tex_expand::install_expandable_primitives(&mut stores);

@@ -184,6 +184,7 @@ where
             cat: Catcode::BeginGroup,
             ..
         } => {
+            assignments::flush_pending_hchars(nest, stores)?;
             stores.enter_group_with_kind(GroupKind::Simple);
             Ok(DispatchAction::Continue)
         }
@@ -191,6 +192,7 @@ where
             cat: Catcode::EndGroup,
             ..
         } => {
+            assignments::flush_pending_hchars(nest, stores)?;
             leave_group_with_origin(input, stores, GroupKind::Simple, origin)?;
             Ok(DispatchAction::Continue)
         }
