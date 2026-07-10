@@ -3,7 +3,6 @@ use tex_expand::{
     get_x_token_with_recorder_and_hooks, scan_dimen,
 };
 use tex_lex::{InputSource, InputStack};
-use tex_state::Universe;
 use tex_state::math::{
     FractionThickness, LimitType, MathChoice, MathField, MathFraction, MathNoad, NoadClass,
     NoadKind,
@@ -12,6 +11,7 @@ use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::node::Node;
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
+use tex_state::{GroupKind, Universe};
 use tex_typeset::PackSpec;
 
 use crate::assignments;
@@ -113,6 +113,7 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
+    stores.enter_group_with_kind(GroupKind::Simple);
     nest.push(Mode::Math);
     loop {
         sync_engine_state::<S, _>(hooks, nest, stores);
@@ -123,6 +124,7 @@ where
         )?;
         let semantic = tex_expand::semantic_token(token);
         if assignments::is_end_group(semantic) {
+            crate::leave_group_with_origin(input, stores, GroupKind::Simple, token.origin())?;
             let list = finish_current_math_list(nest, stores);
             let _ = nest.pop()?;
             return Ok(list);

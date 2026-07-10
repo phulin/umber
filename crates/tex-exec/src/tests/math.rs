@@ -131,6 +131,60 @@ fn grouped_fraction_inside_hbox_keeps_box_brace_accounting_balanced() {
 }
 
 #[test]
+fn math_brace_groups_restore_local_box_assignments_and_keep_globals() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let baseline = stores.freeze_node_list(&[Node::Kern {
+        amount: tex_state::scaled::Scaled::from_raw(17),
+        kind: KernKind::Explicit,
+    }]);
+    stores.set_box_reg(0, baseline);
+
+    Executor::new()
+        .run(
+            &mut InputStack::new(MemoryInput::new(
+                r"${\setbox0=\hbox{x}\global\setbox1=\hbox{y}}$",
+            )),
+            &mut stores,
+        )
+        .expect("assignments in a math brace group should execute");
+
+    let restored = stores.box_reg(0).expect("local box should be restored");
+    assert!(matches!(
+        stores.nodes(restored),
+        [Node::Kern { amount, kind: KernKind::Explicit }] if amount.raw() == 17
+    ));
+    assert!(stores.box_reg(1).is_some(), "global box should survive");
+}
+
+#[test]
+fn explicit_groups_in_math_restore_local_box_assignments_and_keep_globals() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let baseline = stores.freeze_node_list(&[Node::Kern {
+        amount: tex_state::scaled::Scaled::from_raw(23),
+        kind: KernKind::Explicit,
+    }]);
+    stores.set_box_reg(0, baseline);
+
+    Executor::new()
+        .run(
+            &mut InputStack::new(MemoryInput::new(
+                r"$\begingroup\setbox0=\hbox{x}\global\setbox1=\hbox{y}\endgroup$",
+            )),
+            &mut stores,
+        )
+        .expect("explicit groups in math mode should execute");
+
+    let restored = stores.box_reg(0).expect("local box should be restored");
+    assert!(matches!(
+        stores.nodes(restored),
+        [Node::Kern { amount, kind: KernKind::Explicit }] if amount.raw() == 23
+    ));
+    assert!(stores.box_reg(1).is_some(), "global box should survive");
+}
+
+#[test]
 fn lowered_math_box_rolls_back_without_leaking_arena_handles() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
