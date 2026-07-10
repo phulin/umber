@@ -71,12 +71,13 @@ pub(crate) fn flush_pending_hchars(
     stores: &mut Universe,
 ) -> Result<(), ExecError> {
     let no_boundary = nest.current_list().no_boundary();
+    let insert_hyphen_discs = nest.current_mode() == Mode::Horizontal;
     let pending = nest.current_list_mut().take_pending_hchars();
     if pending.is_empty() {
         return Ok(());
     }
     nest.current_list_mut().set_no_boundary(false);
-    let mut nodes = reconstitute(stores, &pending, no_boundary);
+    let mut nodes = reconstitute(stores, &pending, no_boundary, insert_hyphen_discs);
     nest.current_list_mut().append(nodes.drain(..));
     Ok(())
 }
@@ -369,9 +370,10 @@ fn append_hchar(nest: &mut ModeNest, stores: &mut Universe, ch: char) {
 }
 
 pub(crate) fn reconstitute(
-    stores: &Universe,
+    stores: &mut Universe,
     pending: &[crate::mode::PendingHChar],
     no_left_boundary: bool,
+    insert_hyphen_discs: bool,
 ) -> Vec<Node> {
     let mut out = Vec::new();
     let mut chars: Vec<_> = pending
@@ -407,6 +409,7 @@ pub(crate) fn reconstitute(
                         font: current.font,
                         ch: current.ch,
                     });
+                    append_literal_hyphen_disc(stores, current, insert_hyphen_discs, &mut out);
                     out.push(Node::Kern {
                         amount,
                         kind: KernKind::Font,
@@ -439,9 +442,28 @@ pub(crate) fn reconstitute(
                 orig: (current.orig_first, current.orig_last),
             });
         }
+        append_literal_hyphen_disc(stores, current, insert_hyphen_discs, &mut out);
         i += 1;
     }
     out
+}
+
+fn append_literal_hyphen_disc(
+    stores: &mut Universe,
+    current: ReChar,
+    enabled: bool,
+    out: &mut Vec<Node>,
+) {
+    if !enabled || stores.font_hyphen_char(current.font) != current.orig_last as i32 {
+        return;
+    }
+    let empty = stores.freeze_node_list(&[]);
+    out.push(Node::Disc {
+        kind: DiscKind::ExplicitHyphen,
+        pre: empty,
+        post: empty,
+        replace: empty,
+    });
 }
 
 #[derive(Clone, Copy)]

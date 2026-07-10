@@ -165,15 +165,7 @@ where
     H: HyphenationHook<S>,
 {
     if params.pretolerance >= 0 {
-        let first = run_pass(
-            state,
-            nodes,
-            &params,
-            params.pretolerance,
-            false,
-            false,
-            false,
-        );
+        let first = run_pass(state, nodes, &params, params.pretolerance, false, false);
         if let Some(result) = first {
             return result;
         }
@@ -185,7 +177,6 @@ where
         &hyphenated,
         &params,
         params.tolerance,
-        true,
         false,
         params.emergency_stretch.raw() <= 0,
     );
@@ -193,16 +184,8 @@ where
         return result;
     }
 
-    run_pass(
-        state,
-        &hyphenated,
-        &params,
-        params.tolerance,
-        true,
-        true,
-        true,
-    )
-    .expect("final line-breaking pass always permits an artificial demerits path")
+    run_pass(state, &hyphenated, &params, params.tolerance, true, true)
+        .expect("final line-breaking pass always permits an artificial demerits path")
 }
 
 mod post;
@@ -247,14 +230,13 @@ fn run_pass<S: TypesetState>(
     nodes: &[Node],
     params: &LineBreakParams,
     tolerance: i32,
-    allow_hyphenation: bool,
     emergency: bool,
     final_pass: bool,
 ) -> Option<LineBreakResult> {
     let prefix = PrefixWidths::new(state, nodes);
     let mut background = Widths::from_glue(params.left_skip);
     background.add_assign(Widths::from_glue(params.right_skip));
-    let breakpoints = legal_breakpoints(state, nodes, params, allow_hyphenation);
+    let breakpoints = legal_breakpoints(state, nodes, params);
     if breakpoints.is_empty() {
         return Some(LineBreakResult {
             breaks: Vec::new(),
@@ -406,7 +388,6 @@ fn legal_breakpoints<S: TypesetState>(
     state: &S,
     nodes: &[Node],
     params: &LineBreakParams,
-    allow_hyphenation: bool,
 ) -> Vec<Breakpoint> {
     let mut out = Vec::new();
     for i in 0..nodes.len() {
@@ -437,24 +418,12 @@ fn legal_breakpoints<S: TypesetState>(
                 hyphenated: false,
                 add_width: Widths::zero(),
             }),
-            Node::Disc { kind, pre, .. } if allow_hyphenation => out.push(Breakpoint {
+            Node::Disc { kind, pre, .. } => out.push(Breakpoint {
                 position: i + 1,
                 width_position: i,
                 penalty: discretionary_penalty(*kind, params),
                 hyphenated: true,
                 add_width: line_widths(state, state.nodes(*pre), 0, state.nodes(*pre).len()),
-            }),
-            Node::Disc { replace, .. } => out.push(Breakpoint {
-                position: i + 1,
-                width_position: i,
-                penalty: INF_PENALTY,
-                hyphenated: false,
-                add_width: line_widths(
-                    state,
-                    state.nodes(*replace),
-                    0,
-                    state.nodes(*replace).len(),
-                ),
             }),
             Node::MathOff(_) if matches!(nodes.get(i + 1), Some(Node::Glue { .. })) => {
                 out.push(Breakpoint {

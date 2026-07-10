@@ -516,7 +516,10 @@ assignments, box building, and dispatch into the typesetting kernels.
   Horizontal list construction
   buffers adjacent font-backed characters in the stomach until a boundary
   command or literal group token, then reconstitutes them through the loaded
-  font's TFM ligature/kern program. Literal groups therefore end the current
+  font's TFM ligature/kern program. In unrestricted horizontal mode, that
+  reconstitution also inserts TeX82's null discretionary after a literal
+  character matching the current font's `\hyphenchar`; restricted horizontal
+  lists suppress the insertion. Literal groups therefore end the current
   character run exactly like TeX82's non-character `main_loop_lookahead`, so
   constructs such as `{f}i` suppress cross-boundary ligatures. The stomach
   updates the mode-local `\spacefactor` and appends explicit

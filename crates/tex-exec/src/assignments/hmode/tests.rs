@@ -124,6 +124,52 @@ fn accent_delta_rounds_half_scaled_points_like_tex82() {
 }
 
 #[test]
+fn unrestricted_reconstitution_inserts_null_disc_after_font_hyphen() {
+    const CMR10: &[u8] = include_bytes!("../../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
+    let mut stores = Universe::with_world(tex_state::World::memory());
+    crate::install_unexpandable_primitives(&mut stores);
+    stores
+        .world_mut()
+        .set_memory_file("cmr10.tfm", CMR10.to_vec())
+        .expect("seed cmr10");
+    let mut input = InputStack::new(MemoryInput::new("\\font\\f=cmr10 \\relax \\f"));
+    crate::Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("font selection should execute");
+    let font = stores.current_font();
+    stores.set_font_hyphen_char(font, i32::from(b'-'), false);
+    let pending: Vec<_> = "in-line"
+        .chars()
+        .map(|ch| PendingHChar { font, ch })
+        .collect();
+
+    let unrestricted = reconstitute(&mut stores, &pending, false, true);
+    let restricted = reconstitute(&mut stores, &pending, false, false);
+
+    assert!(matches!(
+        unrestricted.as_slice(),
+        [
+            Node::Char { ch: 'i', .. },
+            Node::Char { ch: 'n', .. },
+            Node::Char { ch: '-', .. },
+            Node::Disc {
+                kind: DiscKind::ExplicitHyphen,
+                ..
+            },
+            Node::Char { ch: 'l', .. },
+            Node::Char { ch: 'i', .. },
+            Node::Char { ch: 'n', .. },
+            Node::Char { ch: 'e', .. },
+        ]
+    ));
+    assert!(
+        !restricted
+            .iter()
+            .any(|node| matches!(node, Node::Disc { .. }))
+    );
+}
+
+#[test]
 fn hyphenation_inside_ff_ligature_preserves_the_unbroken_ligature() {
     const CMR10: &[u8] = include_bytes!("../../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
     let mut stores = Universe::with_world(tex_state::World::memory());
@@ -200,7 +246,7 @@ fn hyphenation_keeps_scanning_across_font_kerns() {
         .chars()
         .map(|ch| PendingHChar { font, ch })
         .collect();
-    let nodes = reconstitute(&stores, &pending, false);
+    let nodes = reconstitute(&mut stores, &pending, false, false);
     assert!(
         nodes.iter().any(|node| matches!(
             node,

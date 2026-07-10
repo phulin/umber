@@ -266,7 +266,7 @@ fn mathoff_breaks_only_before_following_glue_and_zeroes_break_width() {
         },
         rule(10),
     ];
-    let breakpoints = legal_breakpoints(&universe, &nodes, &params(15), false);
+    let breakpoints = legal_breakpoints(&universe, &nodes, &params(15));
 
     assert_eq!(breakpoints.first().map(|br| br.position), Some(2));
     let zero = universe.intern_glue(GlueSpec::ZERO);
@@ -304,7 +304,7 @@ fn mathoff_breaks_only_before_following_glue_and_zeroes_break_width() {
     );
 
     let nodes_without_glue = vec![rule(10), Node::MathOff(sp(5)), rule(10)];
-    let breakpoints = legal_breakpoints(&universe, &nodes_without_glue, &params(15), false);
+    let breakpoints = legal_breakpoints(&universe, &nodes_without_glue, &params(15));
     assert!(!breakpoints.iter().any(|br| br.position == 2));
 }
 
@@ -399,6 +399,50 @@ fn discretionary_penalty_comes_from_source_kind() {
     ];
     let result = line_break(&universe, &nodes, params, &mut hook);
     assert_eq!(result.breaks.first().map(|br| br.penalty), Some(654));
+}
+
+#[test]
+fn existing_discretionary_is_available_on_the_pretolerance_pass() {
+    struct UnexpectedHyphenation;
+
+    impl HyphenationHook<Universe> for UnexpectedHyphenation {
+        fn hyphenate(&mut self, _nodes: &[Node]) -> Vec<Node> {
+            panic!("a feasible first pass must not invoke automatic hyphenation")
+        }
+    }
+
+    let mut universe = Universe::new();
+    let pre = universe.freeze_node_list(&[kern(1)]);
+    let empty = universe.freeze_node_list(&[]);
+    let par_fill = universe.intern_glue(GlueSpec {
+        width: sp(0),
+        stretch: sp(1),
+        stretch_order: Order::Fil,
+        shrink: sp(0),
+        shrink_order: Order::Normal,
+    });
+    let nodes = vec![
+        kern(20),
+        Node::Disc {
+            kind: DiscKind::ExplicitHyphen,
+            pre,
+            post: empty,
+            replace: empty,
+        },
+        kern(20),
+        Node::Penalty(10_000),
+        Node::Glue {
+            spec: par_fill,
+            kind: GlueKind::ParFillSkip,
+            leader: None,
+        },
+    ];
+    let mut hook = UnexpectedHyphenation;
+
+    let result = line_break(&universe, &nodes, params(21), &mut hook);
+
+    assert!(result.breaks[0].hyphenated);
+    assert_eq!(result.breaks[0].position, 2);
 }
 
 #[test]

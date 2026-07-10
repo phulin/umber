@@ -214,7 +214,7 @@ fn flush_word(stores: &mut Universe, word: &mut Vec<WordChar>, out: &mut Vec<Nod
     };
     if positions.is_empty() {
         let pending: Vec<_> = word.iter().map(|ch| ch.pending()).collect();
-        out.extend(super::hmode::reconstitute(stores, &pending, false));
+        out.extend(super::hmode::reconstitute(stores, &pending, false, false));
         word.clear();
         return;
     }
@@ -230,7 +230,7 @@ fn append_hyphenated_word(
     out: &mut Vec<Node>,
 ) {
     let pending: Vec<_> = word.iter().map(WordChar::pending).collect();
-    let nodes = super::hmode::reconstitute(stores, &pending, false);
+    let nodes = super::hmode::reconstitute(stores, &pending, false, false);
     let mut position_index = 0;
     let mut char_start = 0;
 
@@ -289,9 +289,9 @@ fn discretionary_through_node(
         .map(WordChar::pending)
         .collect();
     pre_pending.push(PendingHChar { font, ch: hyphen });
-    let pre = super::hmode::reconstitute(stores, &pre_pending, true);
+    let pre = super::hmode::reconstitute(stores, &pre_pending, true, false);
     let post_pending: Vec<_> = word[position..end].iter().map(WordChar::pending).collect();
-    let post = super::hmode::reconstitute(stores, &post_pending, false);
+    let post = super::hmode::reconstitute(stores, &post_pending, false, false);
 
     let pre = stores.freeze_node_list(&pre);
     let post = stores.freeze_node_list(&post);
