@@ -542,7 +542,16 @@ where
                         token,
                     ))
                 }
-                _ => Err(ScanIntError::UnsupportedInternalInteger { context: token }),
+                _ => {
+                    // TeX only enters `scan_something_internal` when the
+                    // command code lies in `min_internal..=max_internal`.
+                    // A control sequence whose unexpandable meaning is an
+                    // ordinary command follows numeric-constant recovery:
+                    // report a missing number and leave the command for the
+                    // stomach. Aliased character tokens take the same path.
+                    unread_token(input, stores, token);
+                    Ok(missing_number(token))
+                }
             }
         }
     }
@@ -620,8 +629,48 @@ where
             consume_optional_space(input, stores, recorder, hooks, expander)?;
             Ok(ScannedInt::new(value, token))
         }
-        _ => Err(ScanIntError::UnsupportedInternalInteger { context: token }),
+        primitive if is_internal_numeric_primitive(primitive) => {
+            Err(ScanIntError::UnsupportedInternalInteger { context: token })
+        }
+        _ => {
+            unread_token(input, stores, token);
+            Ok(missing_number(token))
+        }
     }
+}
+
+const fn is_internal_numeric_primitive(
+    primitive: tex_state::meaning::UnexpandablePrimitive,
+) -> bool {
+    use tex_state::meaning::UnexpandablePrimitive as Primitive;
+
+    matches!(
+        primitive,
+        Primitive::Count
+            | Primitive::Dimen
+            | Primitive::Skip
+            | Primitive::Muskip
+            | Primitive::Toks
+            | Primitive::CatCode
+            | Primitive::LcCode
+            | Primitive::UcCode
+            | Primitive::SfCode
+            | Primitive::MathCode
+            | Primitive::DelCode
+            | Primitive::FontDimen
+            | Primitive::HyphenChar
+            | Primitive::SkewChar
+            | Primitive::ParShape
+            | Primitive::PrevDepth
+            | Primitive::PrevGraf
+            | Primitive::Wd
+            | Primitive::Ht
+            | Primitive::Dp
+            | Primitive::SpaceFactor
+            | Primitive::LastPenalty
+            | Primitive::LastKern
+            | Primitive::LastSkip
+    )
 }
 
 fn scan_register_index<S, St, R, H, E>(

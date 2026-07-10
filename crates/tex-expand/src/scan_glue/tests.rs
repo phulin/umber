@@ -1,7 +1,9 @@
 use tex_lex::{InputStack, MemoryInput};
 use tex_state::Universe;
 use tex_state::glue::{GlueSpec, Order};
-use tex_state::meaning::{Meaning, UnexpandablePrimitive};
+use tex_state::macro_store::MacroMeaning;
+use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
+use tex_state::provenance::OriginRecord;
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
@@ -140,4 +142,46 @@ fn scans_internal_muskip_values() {
     let scanned = scan_muglue(&mut input, &mut stores, context()).expect("muskip should scan");
 
     assert_eq!(stores.glue(scanned.id()), stores.glue(id));
+}
+
+#[test]
+fn macro_expanding_to_penalty_recovers_zero_glue_and_replays_command() {
+    let mut stores = Universe::new();
+    let penalty = stores.intern("penalty");
+    stores.set_meaning(
+        penalty,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Penalty),
+    );
+    let nobreak = stores.intern("nobreak");
+    let params = stores.intern_token_list(&[]);
+    let replacement = stores.intern_token_list(&[Token::Cs(penalty)]);
+    stores.set_macro_meaning(
+        nobreak,
+        MacroMeaning::new(MeaningFlags::EMPTY, params, replacement),
+    );
+    let mut input = InputStack::new(MemoryInput::new("\\nobreak 10000"));
+
+    let scanned = scan_glue(&mut input, &mut stores, context()).expect("glue scan should recover");
+    let replayed = input
+        .next_traced_token(&mut stores)
+        .expect("token should replay")
+        .expect("penalty should remain for execution");
+
+    assert_eq!(stores.glue(scanned.id()).width, Scaled::from_raw(0));
+    assert_eq!(
+        scanned.diagnostics().collect::<Vec<_>>(),
+        vec![
+            crate::scan_dimen::DimensionDiagnostic::MissingNumber,
+            crate::scan_dimen::DimensionDiagnostic::IllegalUnit {
+                inserted: crate::scan_dimen::InsertedUnit::Pt,
+            },
+        ]
+    );
+    let diagnostic_records = scanned.diagnostic_records().collect::<Vec<_>>();
+    assert_eq!(diagnostic_records[0].1, replayed.origin());
+    assert!(matches!(
+        stores.origin(diagnostic_records[1].1),
+        OriginRecord::Source(_)
+    ));
+    assert_eq!(replayed.token(), Some(Token::Cs(penalty)));
 }

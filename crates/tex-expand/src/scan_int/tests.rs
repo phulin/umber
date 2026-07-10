@@ -271,6 +271,29 @@ fn relax_in_number_slot_recovers_zero_and_replays_token() {
 }
 
 #[test]
+fn ordinary_unexpandable_command_recovers_zero_and_preserves_origin() {
+    let mut stores = Universe::new();
+    let penalty = stores.intern("penalty");
+    stores.set_meaning(
+        penalty,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Penalty),
+    );
+    let mut input = InputStack::new(MemoryInput::new("\\penalty"));
+
+    let scanned =
+        scan_int(&mut input, &mut stores, context()).expect("penalty should recover as missing");
+    let replayed = input
+        .next_traced_token(&mut stores)
+        .expect("token should replay")
+        .expect("penalty should remain for the stomach");
+
+    assert_eq!(scanned.value(), 0);
+    assert_eq!(scanned.diagnostic(), Some(IntegerDiagnostic::MissingNumber));
+    assert_eq!(scanned.diagnostic_origin(), Some(replayed.origin()));
+    assert_eq!(replayed.token(), Some(Token::Cs(penalty)));
+}
+
+#[test]
 fn rejects_out_of_range_register_numbers() {
     let mut stores = Universe::new();
     let count = stores.intern("count");

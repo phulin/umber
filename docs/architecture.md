@@ -266,7 +266,11 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   recovered value. Scanner pushback of already-read tokens preserves the
   original traced token origins instead of wrapping them in fresh unread
   provenance, so diagnostics can continue to point at the source token that
-  caused the scan decision. Scanner errors and recoverable scanner diagnostics
+  caused the scan decision. Like TeX82's command-code gate before
+  `scan_something_internal`, ordinary unexpandable commands in a numeric slot
+  recover as a missing zero and remain available for stomach execution; only
+  meanings classified as internal numeric quantities enter internal-value
+  decoding. Scanner errors and recoverable scanner diagnostics
   attach primary origins from the offending token; when a scanner fails at end
   of input, the origin is allocated from the current source frame or the
   retained `last_source_frame` coordinates. `true` physical units call the

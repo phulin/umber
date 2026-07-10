@@ -244,6 +244,45 @@ fn named_parameters_match_reference_as_internal_dimensions() {
 }
 
 #[test]
+fn hskip_replays_unexpandable_penalty_after_numeric_recovery() {
+    let reference = reference_fixture("hskip_penalty_recovery");
+    assert!(
+        reference.contains("! Missing number, treated as zero.")
+            && reference.contains("! Illegal unit of measure (pt inserted).")
+            && reference.contains("R:recovered"),
+        "reference hskip recovery changed:\n{reference}"
+    );
+
+    let source = include_str!("../../../../tests/corpus/tex_exec/hskip_penalty_recovery.tex");
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(source));
+    let checkpoint = stores.snapshot();
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("hskip recovery should leave penalty for execution");
+    let first_hash = stores.snapshot().state_hash();
+    let box0 = stores.box_reg(0).expect("recovery hbox should be assigned");
+    let [tex_state::node::Node::HList(hbox)] = stores.nodes(box0) else {
+        panic!("register 0 should contain the recovery hbox");
+    };
+    let nodes = stores.nodes(hbox.children);
+    assert!(matches!(
+        nodes,
+        [tex_state::node::Node::Glue { spec, .. }, tex_state::node::Node::Penalty(10_000)]
+            if stores.glue(*spec).width.raw() == 0
+    ));
+
+    stores.rollback(&checkpoint);
+    let mut replay = InputStack::new(MemoryInput::new(source));
+    Executor::new()
+        .run(&mut replay, &mut stores)
+        .expect("replayed hskip recovery should succeed");
+    assert_eq!(stores.snapshot().state_hash(), first_hash);
+}
+
+#[test]
 fn insert_group_delimiters_match_reference_micro_suite() {
     let insertion = reference_fixture("insert_brace_aliases");
     assert!(
