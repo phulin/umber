@@ -9,6 +9,68 @@ use crate::node::{LeaderPayload, Node};
 use crate::node_arena::{NodeArena, NodeList, NodeStorage};
 use std::collections::HashMap;
 
+#[cfg(feature = "node-stats")]
+use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(feature = "node-stats")]
+use std::time::Instant;
+
+/// Process-local survivor-operation measurements. Times include the complete
+/// promotion/release operation; scratch bytes are allocator payload bytes and
+/// exclude allocator metadata and `HashMap` control bytes.
+#[cfg(feature = "node-stats")]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct SurvivorMeasurement {
+    pub fresh_promotions: u64,
+    pub fresh_promotion_nanos: u64,
+    pub recycled_promotions: u64,
+    pub recycled_promotion_nanos: u64,
+    pub releases_to_recycling: u64,
+    pub release_nanos: u64,
+    pub peak_promotion_scratch_logical_bytes: u64,
+    pub peak_promotion_scratch_retained_bytes: u64,
+}
+
+#[cfg(feature = "node-stats")]
+mod measurement {
+    use super::{AtomicU64, Instant, Ordering, SurvivorMeasurement};
+
+    pub static FRESH_CALLS: AtomicU64 = AtomicU64::new(0);
+    pub static FRESH_NANOS: AtomicU64 = AtomicU64::new(0);
+    pub static RECYCLED_CALLS: AtomicU64 = AtomicU64::new(0);
+    pub static RECYCLED_NANOS: AtomicU64 = AtomicU64::new(0);
+    pub static RELEASE_CALLS: AtomicU64 = AtomicU64::new(0);
+    pub static RELEASE_NANOS: AtomicU64 = AtomicU64::new(0);
+    pub static PEAK_SCRATCH_LOGICAL: AtomicU64 = AtomicU64::new(0);
+    pub static PEAK_SCRATCH_RETAINED: AtomicU64 = AtomicU64::new(0);
+
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "feature-gated process-local benchmark timing is not semantic engine time"
+    )]
+    pub fn start_timer() -> Instant {
+        Instant::now()
+    }
+
+    pub fn snapshot() -> SurvivorMeasurement {
+        SurvivorMeasurement {
+            fresh_promotions: FRESH_CALLS.load(Ordering::Relaxed),
+            fresh_promotion_nanos: FRESH_NANOS.load(Ordering::Relaxed),
+            recycled_promotions: RECYCLED_CALLS.load(Ordering::Relaxed),
+            recycled_promotion_nanos: RECYCLED_NANOS.load(Ordering::Relaxed),
+            releases_to_recycling: RELEASE_CALLS.load(Ordering::Relaxed),
+            release_nanos: RELEASE_NANOS.load(Ordering::Relaxed),
+            peak_promotion_scratch_logical_bytes: PEAK_SCRATCH_LOGICAL.load(Ordering::Relaxed),
+            peak_promotion_scratch_retained_bytes: PEAK_SCRATCH_RETAINED.load(Ordering::Relaxed),
+        }
+    }
+}
+
+#[cfg(feature = "node-stats")]
+#[must_use]
+pub fn survivor_measurement() -> SurvivorMeasurement {
+    measurement::snapshot()
+}
+
 /// Arena for promoted node-list roots.
 #[derive(Clone, Debug)]
 pub struct SurvivorArena {
@@ -38,6 +100,8 @@ impl SurvivorArena {
 
     /// Promotes an epoch list into one survivor root with refcount 1.
     pub(crate) fn promote(&mut self, id: NodeListId, epoch: &NodeArena) -> NodeListId {
+        #[cfg(feature = "node-stats")]
+        let started = measurement::start_timer();
         assert!(
             matches!(id.arena(), ArenaRef::Epoch),
             "only epoch node lists are promoted"
@@ -47,8 +111,18 @@ impl SurvivorArena {
             "survivor arena exceeds encodable roots"
         );
 
-        let storage = self.take_recycled_buffer();
-        let (nodes, start, len) = copy_list_iterative(id, epoch, self, Vec::new());
+        let (storage, recycled) = self.take_recycled_buffer();
+        #[cfg(not(feature = "node-stats"))]
+        let _ = recycled;
+        let copied = copy_list_iterative(id, epoch, self, Vec::new());
+        #[cfg(feature = "node-stats")]
+        {
+            measurement::PEAK_SCRATCH_LOGICAL
+                .fetch_max(copied.peak_scratch_logical as u64, Ordering::Relaxed);
+            measurement::PEAK_SCRATCH_RETAINED
+                .fetch_max(copied.peak_scratch_retained as u64, Ordering::Relaxed);
+        }
+        let (nodes, start, len) = (copied.nodes, copied.start, copied.len);
         let mut storage = storage;
         debug_assert!(storage.is_empty());
         storage.append(&nodes);
@@ -56,6 +130,17 @@ impl SurvivorArena {
         self.rewrite_root_ids(root);
         let promoted = NodeListId::new_survivor(root, start, len);
         self.debug_assert_no_epoch_ids(promoted);
+        #[cfg(feature = "node-stats")]
+        {
+            let nanos = started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;
+            if recycled {
+                measurement::RECYCLED_CALLS.fetch_add(1, Ordering::Relaxed);
+                measurement::RECYCLED_NANOS.fetch_add(nanos, Ordering::Relaxed);
+            } else {
+                measurement::FRESH_CALLS.fetch_add(1, Ordering::Relaxed);
+                measurement::FRESH_NANOS.fetch_add(nanos, Ordering::Relaxed);
+            }
+        }
         promoted
     }
 
@@ -98,11 +183,19 @@ impl SurvivorArena {
             .checked_sub(1)
             .expect("survivor root refcount underflow");
         if slot.refcount == 0 {
+            #[cfg(feature = "node-stats")]
+            let started = measurement::start_timer();
             let mut root = self.slots[root.raw() as usize]
                 .take()
                 .expect("survivor root is not live");
             root.storage.clear();
             self.recycled.push(root.storage);
+            #[cfg(feature = "node-stats")]
+            {
+                measurement::RELEASE_CALLS.fetch_add(1, Ordering::Relaxed);
+                let nanos = started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;
+                measurement::RELEASE_NANOS.fetch_add(nanos, Ordering::Relaxed);
+            }
         }
     }
 
@@ -147,17 +240,55 @@ impl SurvivorArena {
         self.slots.len()
     }
 
-    fn take_recycled_buffer(&mut self) -> NodeStorage {
+    fn take_recycled_buffer(&mut self) -> (NodeStorage, bool) {
         let Some((index, _)) = self
             .recycled
             .iter()
             .enumerate()
             .max_by_key(|(_, storage)| storage.len())
         else {
-            return NodeStorage::default();
+            return (NodeStorage::default(), false);
         };
         self.recycled_buffer_uses += 1;
-        self.recycled.swap_remove(index)
+        (self.recycled.swap_remove(index), true)
+    }
+
+    #[cfg(feature = "node-stats")]
+    pub(crate) fn memory_columns(&self) -> Vec<crate::node_arena::NodeMemoryColumn> {
+        use std::collections::BTreeMap;
+
+        fn add_storage(
+            totals: &mut BTreeMap<String, crate::node_arena::NodeMemoryColumn>,
+            category: &str,
+            storage: &NodeStorage,
+        ) {
+            for mut column in storage.memory_columns("storage") {
+                let suffix = column
+                    .name
+                    .strip_prefix("storage.")
+                    .expect("storage report prefix");
+                let name = format!("{category}.{suffix}");
+                if let Some(total) = totals.get_mut(&name) {
+                    debug_assert_eq!(total.element_bytes, column.element_bytes);
+                    total.len += column.len;
+                    total.capacity += column.capacity;
+                    total.logical_bytes += column.logical_bytes;
+                    total.retained_payload_bytes += column.retained_payload_bytes;
+                } else {
+                    column.name = name.clone();
+                    totals.insert(name, column);
+                }
+            }
+        }
+
+        let mut totals = BTreeMap::new();
+        for root in self.slots.iter().flatten() {
+            add_storage(&mut totals, "survivor.live", &root.storage);
+        }
+        for storage in &self.recycled {
+            add_storage(&mut totals, "survivor.recycled", storage);
+        }
+        totals.into_values().collect()
     }
 
     fn allocate_root(&mut self, storage: NodeStorage) -> SurvivorRootId {
@@ -212,20 +343,42 @@ impl SurvivorArena {
     fn debug_assert_no_epoch_ids(&self, _id: NodeListId) {}
 }
 
+struct PromotionResult {
+    nodes: Vec<Node>,
+    start: u32,
+    len: u32,
+    #[cfg(feature = "node-stats")]
+    peak_scratch_logical: usize,
+    #[cfg(feature = "node-stats")]
+    peak_scratch_retained: usize,
+}
+
 fn copy_list_iterative(
     id: NodeListId,
     epoch: &NodeArena,
     survivor: &SurvivorArena,
     out: Vec<Node>,
-) -> (Vec<Node>, u32, u32) {
+) -> PromotionResult {
     let mut copy = PromotionCopy::new(epoch, survivor, out);
     let root = copy.copy_list(id);
+    #[cfg(feature = "node-stats")]
+    copy.measure_scratch();
 
     while let Some(index) = copy.pending.pop() {
         remap_node_children(index, &mut copy);
+        #[cfg(feature = "node-stats")]
+        copy.measure_scratch();
     }
 
-    (copy.out, root.start(), root.len())
+    PromotionResult {
+        nodes: copy.out,
+        start: root.start(),
+        len: root.len(),
+        #[cfg(feature = "node-stats")]
+        peak_scratch_logical: copy.peak_scratch_logical,
+        #[cfg(feature = "node-stats")]
+        peak_scratch_retained: copy.peak_scratch_retained,
+    }
 }
 
 /// Copies a mixed epoch/survivor DAG into one canonical survivor allocation.
@@ -239,6 +392,10 @@ struct PromotionCopy<'a> {
     out: Vec<Node>,
     remapped: HashMap<NodeListId, NodeListId>,
     pending: Vec<usize>,
+    #[cfg(feature = "node-stats")]
+    peak_scratch_logical: usize,
+    #[cfg(feature = "node-stats")]
+    peak_scratch_retained: usize,
 }
 
 impl<'a> PromotionCopy<'a> {
@@ -250,7 +407,24 @@ impl<'a> PromotionCopy<'a> {
             out,
             remapped: HashMap::new(),
             pending: Vec::new(),
+            #[cfg(feature = "node-stats")]
+            peak_scratch_logical: 0,
+            #[cfg(feature = "node-stats")]
+            peak_scratch_retained: 0,
         }
+    }
+
+    #[cfg(feature = "node-stats")]
+    fn measure_scratch(&mut self) {
+        let map_entry = core::mem::size_of::<(NodeListId, NodeListId)>();
+        let logical = self.out.len() * core::mem::size_of::<Node>()
+            + self.pending.len() * core::mem::size_of::<usize>()
+            + self.remapped.len() * map_entry;
+        let retained = self.out.capacity() * core::mem::size_of::<Node>()
+            + self.pending.capacity() * core::mem::size_of::<usize>()
+            + self.remapped.capacity() * map_entry;
+        self.peak_scratch_logical = self.peak_scratch_logical.max(logical);
+        self.peak_scratch_retained = self.peak_scratch_retained.max(retained);
     }
 
     fn copy_list(&mut self, id: NodeListId) -> NodeListId {

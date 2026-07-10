@@ -22,6 +22,8 @@ use crate::macro_store::{MacroDefinitionProvenance, MacroMeaning, MacroStore, Ma
 use crate::math::MathFontSize;
 use crate::meaning::Meaning;
 use crate::node::Node;
+#[cfg(feature = "node-stats")]
+use crate::node_arena::NodeMemoryColumn;
 use crate::node_arena::{NodeArena, NodeArenaMark, NodeList, NodeListBuilder};
 use crate::provenance::{
     InsertedOrigin, InsertedOriginKind, MacroInvocationOrigin, OriginListBuilder, OriginRecord,
@@ -1720,6 +1722,13 @@ impl Stores {
     #[must_use]
     pub fn testing_survivor_root_slot_count(&self) -> usize {
         self.survivors.testing_root_slot_count()
+    }
+
+    #[cfg(feature = "node-stats")]
+    pub(crate) fn node_memory_columns(&self) -> Vec<NodeMemoryColumn> {
+        let mut columns = self.nodes.memory_columns();
+        columns.extend(self.survivors.memory_columns());
+        columns
     }
 }
 

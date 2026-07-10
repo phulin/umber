@@ -25,6 +25,55 @@ fn universe_is_send() {
     assert_send::<Universe>();
 }
 
+#[cfg(feature = "node-stats")]
+#[test]
+fn node_memory_measurement_is_nonsemantic_and_covers_recycled_storage() {
+    let mut universe = Universe::new();
+    let before = universe.snapshot().state_hash();
+    let empty = universe.node_memory_columns();
+    assert!(empty.iter().any(|column| column.name == "epoch.words"));
+    assert_eq!(before, universe.snapshot().state_hash());
+
+    for amount in 0..32 {
+        let children = universe.freeze_node_list(&[Node::Kern {
+            amount: Scaled::from_raw(amount),
+            kind: KernKind::Explicit,
+        }]);
+        let root = universe.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
+            width: Scaled::from_raw(amount),
+            height: Scaled::from_raw(0),
+            depth: Scaled::from_raw(0),
+            shift: Scaled::from_raw(0),
+            display: false,
+            glue_set: GlueSetRatio::ZERO,
+            glue_sign: Sign::Normal,
+            glue_order: Order::Normal,
+            children,
+        }))]);
+        universe.set_box_reg(0, root);
+    }
+
+    let semantic_hash = universe.snapshot().state_hash();
+    let columns = universe.node_memory_columns();
+    assert!(
+        columns.iter().any(|column| {
+            column.name == "survivor.live.boxes.width" && column.logical_bytes > 0
+        })
+    );
+    assert!(columns.iter().any(|column| {
+        column.name == "survivor.recycled.words"
+            && column.logical_bytes == 0
+            && column.retained_payload_bytes > 0
+    }));
+    assert_eq!(semantic_hash, universe.snapshot().state_hash());
+
+    let timing = crate::survivor::survivor_measurement();
+    assert!(timing.fresh_promotions > 0);
+    assert!(timing.recycled_promotions > 0);
+    assert!(timing.releases_to_recycling > 0);
+    assert!(timing.peak_promotion_scratch_retained_bytes > 0);
+}
+
 #[test]
 #[should_panic(expected = "Universe snapshot belongs to a different Universe instance")]
 fn rollback_rejects_snapshot_from_different_universe() {

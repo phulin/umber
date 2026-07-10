@@ -2285,6 +2285,14 @@ impl Universe {
     pub fn testing_survivor_root_slot_count(&self) -> usize {
         self.stores.testing_survivor_root_slot_count()
     }
+
+    /// Computes allocator-payload accounting for all compact node storage.
+    /// The returned diagnostic value is not semantic engine state.
+    #[cfg(feature = "node-stats")]
+    #[must_use]
+    pub fn node_memory_columns(&self) -> Vec<crate::node_arena::NodeMemoryColumn> {
+        self.stores.node_memory_columns()
+    }
 }
 
 /// A mutable dimension field of a box register's top-level box.

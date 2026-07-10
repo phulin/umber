@@ -105,6 +105,55 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
     for (kind, count) in tex_state::node::node_append_histogram() {
         eprintln!("NODE_HISTOGRAM {kind} {count}");
     }
+    #[cfg(feature = "node-stats")]
+    {
+        let columns = stores.node_memory_columns();
+        for column in &columns {
+            eprintln!(
+                "NODE_MEMORY {} len={} capacity={} element_bytes={} logical_bytes={} retained_payload_bytes={}",
+                column.name,
+                column.len,
+                column.capacity,
+                column.element_bytes,
+                column.logical_bytes,
+                column.retained_payload_bytes
+            );
+        }
+        let logical: usize = columns.iter().map(|column| column.logical_bytes).sum();
+        let retained: usize = columns
+            .iter()
+            .map(|column| column.retained_payload_bytes)
+            .sum();
+        eprintln!("NODE_MEMORY_TOTAL logical_bytes={logical} retained_payload_bytes={retained}");
+        let (peak_logical, peak_retained, peak_columns) =
+            tex_state::node_arena::peak_node_storage_measurement();
+        eprintln!(
+            "NODE_STORAGE_PEAK logical_bytes={peak_logical} retained_payload_bytes={peak_retained}"
+        );
+        for column in peak_columns {
+            eprintln!(
+                "NODE_STORAGE_PEAK_COLUMN {} len={} capacity={} element_bytes={} logical_bytes={} retained_payload_bytes={}",
+                column.name,
+                column.len,
+                column.capacity,
+                column.element_bytes,
+                column.logical_bytes,
+                column.retained_payload_bytes
+            );
+        }
+        let survivor = tex_state::survivor::survivor_measurement();
+        eprintln!(
+            "NODE_SURVIVOR fresh_calls={} fresh_nanos={} recycled_calls={} recycled_nanos={} release_calls={} release_nanos={} peak_scratch_logical_bytes={} peak_scratch_retained_bytes={}",
+            survivor.fresh_promotions,
+            survivor.fresh_promotion_nanos,
+            survivor.recycled_promotions,
+            survivor.recycled_promotion_nanos,
+            survivor.releases_to_recycling,
+            survivor.release_nanos,
+            survivor.peak_promotion_scratch_logical_bytes,
+            survivor.peak_promotion_scratch_retained_bytes
+        );
+    }
     if let Some(output) = &opts.dvi {
         let dvi = umber::dvi_from_artifacts(&stores, &run.artifacts)?;
         stores.world_mut().write_file(output, dvi)?;

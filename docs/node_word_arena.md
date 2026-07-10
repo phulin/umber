@@ -469,6 +469,121 @@ logical model in section 2.1 remains a 55.4% reduction even when every rare
 node is charged a full old `Node`; actual SoA sidecars are smaller. Width
 tables cost a fixed 1,024 bytes per loaded font and are included in RSS.
 
+### 10.1 Actual arena and survivor accounting
+
+The follow-up Phase 6 audit measures the canonical storage rather than
+inferring it from process RSS. `node-stats` now computes an on-demand report
+over the actual epoch storage, every live survivor root, and every cleared
+recycled buffer. Each vector reports logical length and allocator capacity in
+elements and bytes. Owned whatsit strings and byte payloads are separate
+rows; shared glue, token, font, and child-list storage is not charged again.
+The report excludes vector headers, allocator metadata, process code/stacks,
+and shared stores, so it is intentionally distinct from RSS. Cleared recycled
+vectors have zero logical bytes but retain capacity.
+
+Process-local relaxed counters separately record fresh and recycled promotion
+time, release-to-recycling time, largest canonical `NodeStorage`, and peak
+promotion scratch. Scratch charges the owned `Vec<Node>`, pending-index vector,
+and hash-map key/value payload capacity; hash-map control bytes and allocator
+metadata are excluded. None of these counters or reports is a `Universe`
+field, rollback mark, snapshot, hash input, or replay input. Normal builds do
+not compile them. A feature test proves that reading the report leaves the
+semantic state hash unchanged while stale-root, refcount, and recycled-buffer
+tests exercise the same production paths.
+
+The reproducible command was `MEASURE_CLEAN=1 MEASURE_RUNS=5
+scripts/measure-node-arena.sh` at this commit on the same aarch64 Apple host
+and Rust 1.93.0. It performs a clean release measurement build, stages the
+committed inputs and Computer Modern metrics into a fresh directory for every
+sample, verifies byte-identical DVI hashes across samples, and runs each input
+in a fresh process. The byte totals were deterministic across all five runs.
+RSS is the observed five-run range.
+
+| Workload | End logical | End retained payload | Largest storage logical/retained | Promotion scratch logical/retained | RSS range |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| paragraph-wide | 14,730,896 | 16,374,456 | 11,054,968 / 12,484,608 | 245,680 / 261,840 | 93,667,328–95,780,864 |
+| pages | 29,651,391 | 35,589,920 | 17,583,783 / 22,347,776 | 466,856 / 569,536 | 100,319,232–103,350,272 |
+| math | 24,058 | 40,272 | 14,453 / 25,408 | 16,232 / 20,464 | 110,673,920–113,229,824 |
+| math-nested | 42,033 | 66,960 | 25,238 / 40,064 | 24,520 / 44,800 | 74,137,600–81,379,328 |
+
+The math inputs overwrite one survivor root 20,000 and 10,000 times, so their
+small end state is expected rather than missing accounting: only the final
+live root and one cleared recycled buffer remain. Their peak construction
+shape is reported separately above. Against the Phase 1 append-stream model,
+paragraph-wide falls from 91,864,152 modeled bytes to 14,730,896 measured
+logical bytes (-83.96%), and pages from 115,996,536 to 29,651,391 (-74.44%).
+This comparison is conservative because the measured totals also include
+survivor copies omitted by the Phase 1 stream model. It corroborates, and is
+better than, the prior conservative -55.4% estimate. The cumulative math
+append model is not a live-memory comparator because rollback and survivor
+replacement deliberately discard each iteration.
+
+Five independent process samples contain many operations per sample. Fresh
+promotion averaged 82.67–84.53 us/call for paragraph-wide (112 calls/sample)
+and 37.58–38.23 us/call for pages (768 calls/sample). Recycled promotion was
+12.61–12.68 us/call for math (19,999/sample) and 21.40–22.16 us/call for
+math-nested (9,999/sample). Release to the recycle pool was 65.7–68.3 ns/call
+and 68.5–73.0 ns/call respectively. These are instrumented wall-clock costs,
+not semantic state. Together with the unchanged Phase 6 kernel/end-to-end
+results and the new budget rerun, they leave the adoption decision unchanged.
+
+The peak canonical-storage column distribution follows. Each cell is
+`logical length / retained capacity`; zero-length math rows with capacity show
+real buffers retained after epoch truncation.
+
+| Column | Elem B | paragraph-wide | pages | math | math-nested |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `words` | 8 | 1,275,891/1,417,216 | 1,611,063/2,162,688 | 698/1,024 | 1,034/2,048 |
+| `boxes.width` | 4 | 24,224/32,768 | 126,453/131,072 | 239/256 | 458/512 |
+| `boxes.height` | 4 | 24,224/32,768 | 126,453/131,072 | 239/256 | 458/512 |
+| `boxes.depth` | 4 | 24,224/32,768 | 126,453/131,072 | 239/256 | 458/512 |
+| `boxes.shift` | 4 | 24,224/32,768 | 126,453/131,072 | 239/256 | 458/512 |
+| `boxes.display` | 1 | 24,224/32,768 | 126,453/131,072 | 239/256 | 458/512 |
+| `boxes.glue_set` | 8 | 24,224/32,768 | 126,453/131,072 | 239/256 | 458/512 |
+| `boxes.glue_sign` | 1 | 24,224/32,768 | 126,453/131,072 | 239/256 | 458/512 |
+| `boxes.glue_order` | 1 | 24,224/32,768 | 126,453/131,072 | 239/256 | 458/512 |
+| `boxes.children` | 8 | 24,224/32,768 | 126,453/131,072 | 239/256 | 458/512 |
+| `unsets.kind` | 1 | 0/0 | 0/0 | 0/0 | 0/0 |
+| `unsets.width` | 4 | 0/0 | 0/0 | 0/0 | 0/0 |
+| `unsets.height` | 4 | 0/0 | 0/0 | 0/0 | 0/0 |
+| `unsets.depth` | 4 | 0/0 | 0/0 | 0/0 | 0/0 |
+| `unsets.span_count` | 2 | 0/0 | 0/0 | 0/0 | 0/0 |
+| `unsets.stretch` | 4 | 0/0 | 0/0 | 0/0 | 0/0 |
+| `unsets.stretch_order` | 1 | 0/0 | 0/0 | 0/0 | 0/0 |
+| `unsets.shrink` | 4 | 0/0 | 0/0 | 0/0 | 0/0 |
+| `unsets.shrink_order` | 1 | 0/0 | 0/0 | 0/0 | 0/0 |
+| `unsets.children` | 8 | 0/0 | 0/0 | 0/0 | 0/0 |
+| `rules` | 24 | 0/0 | 8,545/16,384 | 21/32 | 39/64 |
+| `leaders` | 56 | 0/0 | 0/0 | 0/0 | 0/0 |
+| `discs` | 32 | 0/0 | 0/0 | 0/0 | 0/0 |
+| `marks` | 8 | 0/0 | 8,043/8,192 | 0/0 | 0/0 |
+| `insertions.class` | 2 | 0/0 | 0/0 | 0/0 | 0/0 |
+| `insertions.size` | 4 | 0/0 | 0/0 | 0/0 | 0/0 |
+| `insertions.split_top_skip` | 4 | 0/0 | 0/0 | 0/0 | 0/0 |
+| `insertions.split_max_depth` | 4 | 0/0 | 0/0 | 0/0 | 0/0 |
+| `insertions.floating_penalty` | 4 | 0/0 | 0/0 | 0/0 | 0/0 |
+| `insertions.content` | 8 | 0/0 | 0/0 | 0/0 | 0/0 |
+| `whatsits` | 48 | 0/0 | 0/0 | 0/0 | 0/0 |
+| `noads.kind` | 8 | 0/0 | 0/0 | 0/128 | 0/64 |
+| `noads.nucleus` | 16 | 0/0 | 0/0 | 0/128 | 0/64 |
+| `noads.subscript` | 16 | 0/0 | 0/0 | 0/128 | 0/64 |
+| `noads.superscript` | 16 | 0/0 | 0/0 | 0/128 | 0/64 |
+| `fractions` | 40 | 0/0 | 0/0 | 0/8 | 0/16 |
+| `choices` | 32 | 0/0 | 0/0 | 0/0 | 0/0 |
+| `math_lists` | 16 | 0/0 | 0/0 | 0/0 | 0/0 |
+| `adjusts` | 8 | 0/0 | 0/0 | 0/0 | 0/0 |
+| `whatsits.owned_strings` | 1 | 0/0 | 0/0 | 0/0 | 0/0 |
+| `whatsits.owned_payloads` | 1 | 0/0 | 0/0 | 0/0 | 0/0 |
+
+Append histograms provide the representative kind distribution absent from
+the peak-after-truncation math rows: paragraph-wide has 24,000 hlists and 224
+vlists; pages has 124,681 hlists, 1,772 vlists, 8,545 rules, and 8,043 marks;
+math has 1,340,201 hlists, 240,038 vlists, 1,320,000 noads, 100,000 fractions,
+and 20,000 styles; math-nested has 1,250,375 hlists, 270,083 vlists, 640,000
+noads, 90,000 fractions, and 10,000 styles. These counts are cumulative work,
+while the table is retained storage; keeping the two concepts separate avoids
+double-counting discarded iterations.
+
 `benchmarks/tex-exec/benches/widths.rs` is the kernel suite.
 `scripts/check-node-width-budget.sh`, available through
 `CHECK_BENCH=1 scripts/check.sh`, enforces committed means with the 10%

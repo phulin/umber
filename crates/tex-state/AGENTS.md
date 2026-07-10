@@ -42,7 +42,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/meaning.rs`: TeX meaning representation, primitive enums, flags, and packed raw meaning encode/decode logic.
 - `src/meaning/tests.rs`: Unit tests for meaning round trips, flag packing, and primitive encoding.
 - `src/node.rs`: Immutable TeX node, box, glue, kern, penalty, rule, whatsit, math-list, discretionary, and list-field model.
-- `src/node_arena.rs`: Epoch arena for immutable node-list slices with watermarks and rollback.
+- `src/node_arena.rs`: Compact epoch node-word/sidecar storage, immutable list views, aggregate watermarks, rollback, and feature-gated allocator accounting.
 - `src/node_arena/tests.rs`: Unit tests for node-list allocation, lookup, rollback, and arena liveness.
 - `src/page.rs`: Snapshot-owned page-builder state, page dimensions/integers, contribution/current-page queues, and fire-up records.
 - `src/provenance.rs`: Diagnostic origin-record and origin-list arenas with rollback watermarks.
@@ -55,7 +55,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/stores/handles.rs`: Store-boundary liveness checks for symbols, token lists, origins, glue, fonts, macros, and node handles.
 - `src/stores/state_hash.rs`: Store snapshot cursor and semantic hashing implementation for changed cells and store-owned slices.
 - `src/stores/tests.rs`: Unit tests for aggregate store rollback, builders, handle validation, parameters, boxes, and state hashes.
-- `src/survivor.rs`: Survivor arena for node lists that escape epoch rollback boundaries.
+- `src/survivor.rs`: Survivor arena for node lists that escape epoch rollback boundaries, including root-safe buffer recycling and feature-gated promotion measurements.
 - `src/tests.rs`: Crate-level integration-style unit tests for `Universe`, snapshots, world effects, and module test wiring.
 - `src/tests/live_boundary.rs`: Unit tests proving live-state capability boundaries and restricted context APIs.
 - `src/tests/replay.rs`: Unit tests for snapshot/replay behavior and semantic state convergence.
