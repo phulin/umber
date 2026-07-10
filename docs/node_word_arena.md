@@ -1,16 +1,44 @@
 # Compact node-word arena
 
-Status: measurement baseline; representation design is the next phase.
+Status: authoritative design; implementation is gated by the measurements and
+phase exits below.
 
-This document records the empirical baseline for replacing the epoch arena's
-`Vec<Node>` with a compact word stream. The state and ownership contract is
-unchanged: frozen lists are immutable, snapshots capture aggregate arena
-watermarks, rollback truncates through `Universe`, and survivor promotion
-preserves the bottom-up graph.
+This document combines the Phase 1 layout/frequency baseline with the layout
+contract for replacing the epoch arena's `Vec<Node>` by a compact word stream.
+There is deliberately no separate `node_word_layout.md`: arena ownership,
+encoding, rollback, migration, and adoption are one design and must not drift.
 
-## Baseline layout
+## 1. Decision and scope
 
-On `aarch64-apple-darwin` with Rust 1.93.0, the current Rust layouts are:
+The measured premise is useful but weaker than the original proposal. Char,
+glue, kern, and penalty nodes are 66.52% of all appends, not an overwhelming
+majority. The DVI-heavy workload is 94.30% common-four, while math workloads
+contain many boxes and intermediate noads. We will therefore implement a
+general compact stream with sidecars, but treat vectorized widths and final
+adoption as measured decisions rather than assumptions.
+
+The representation preserves these hard invariants:
+
+- frozen lists are immutable and are minted only by the aggregate state API;
+- every mutable semantic or ownership field is in the `Universe`/`Stores`
+  aggregate boundary, including all sidecar lengths and survivor refcounts;
+- epoch rollback truncates one aggregate watermark tuple, never a subset;
+- survivor promotion copies a bottom-up graph into one self-contained root,
+  and recycling never reuses a root identity;
+- downstream crates receive decoded read-only views and builders, not raw
+  words, sidecar indexes, stores, constructors, or mutable columns;
+- semantic hashes traverse decoded logical nodes and content, never tags,
+  indexes, vector capacities, addresses, or allocation order.
+
+This is primarily a memory-bandwidth design. It is adopted only if final
+typesetting-kernel benchmarks show a material improvement without a material
+end-to-end regression. Otherwise Phase 6 revises the inline/sidecar split or
+reverts the representation cleanly while retaining independently useful
+`NodeListId` packing.
+
+## 2. Measurement baseline
+
+On `aarch64-apple-darwin` with Rust 1.93.0, the current layouts are:
 
 | Type | Size |
 | --- | ---: |
@@ -20,27 +48,14 @@ On `aarch64-apple-darwin` with Rust 1.93.0, the current Rust layouts are:
 | `Whatsit` | 48 bytes |
 | `NodeListId` | 16 bytes |
 
-The `tex-state` node-arena test asserts these values so representation changes
-must update the baseline deliberately.
-
-## Node-kind measurement
-
 The measurement build used `cargo build --release -p umber --features
-node-stats` at commit baseline `217878e1`. The feature adds relaxed,
-process-local counters at `NodeArena::append`; it does not add fields to
-`NodeArena` or `Universe`, and the counters are absent from normal builds,
-snapshots, rollback, replay, and semantic hashes. Each node-producing input in
-`benchmarks/plain-tex` was run in a fresh process with the committed Computer
-Modern metrics and its emitted DVI artifact enabled. Counts therefore include
-every epoch-arena append, including intermediate math lists that are later
-lowered or released. A fixed `expand.tex` run was bounded at five minutes
-after its 100,000 recursive expansion iterations had still not completed.
-Inspection shows that the loop does not construct nodes; its only
-node-producing suffix is `\hbox{expand 100000\ 0}\benchmarkbye`. That exact
-suffix was measured in a fresh process after the same committed preamble,
-contributing 56 nodes. This separates the node-frequency question from an
-unrelated expansion-throughput wait while still accounting for every
-node-producing command in the corpus.
+node-stats` at commit `217878e1`. Relaxed process-local counters at
+`NodeArena::append` add no `NodeArena` or `Universe` fields and are absent from
+normal snapshots, rollback, replay, and hashes. Each node-producing
+`benchmarks/plain-tex` input ran in a fresh process with committed Computer
+Modern metrics and DVI output. `expand.tex` did not finish its 100,000
+expansion-only iterations in five minutes, so its exact 56-node producing
+suffix was measured separately after the same preamble.
 
 | Workload | Appended nodes |
 | --- | ---: |
@@ -53,34 +68,356 @@ node-producing command in the corpus.
 | `pages.tex` | 1,611,063 |
 | **Total** | **18,076,039** |
 
-| Node kind | Count | Share |
-| --- | ---: | ---: |
-| char | 8,224,274 | 45.50% |
-| ligature | 9,502 | 0.05% |
-| kern | 2,130,236 | 11.78% |
-| glue | 1,608,403 | 8.90% |
-| penalty | 61,117 | 0.34% |
-| rule | 374,702 | 2.07% |
-| hlist | 2,857,357 | 15.81% |
-| vlist | 561,392 | 3.11% |
-| whatsit | 1,001 | 0.01% |
-| mark | 8,043 | 0.04% |
-| math on/off | 60,012 | 0.33% |
-| math noad | 1,960,000 | 10.84% |
-| fraction noad | 190,000 | 1.05% |
-| math style | 30,000 | 0.17% |
+| Node kind | Count | Share | Proposed storage |
+| --- | ---: | ---: | --- |
+| char | 8,224,274 | 45.50% | inline |
+| ligature | 9,502 | 0.05% | inline |
+| kern | 2,130,236 | 11.78% | inline |
+| glue | 1,608,403 | 8.90% | inline unless leader-bearing |
+| penalty | 61,117 | 0.34% | inline |
+| rule | 374,702 | 2.07% | sidecar |
+| hlist | 2,857,357 | 15.81% | box sidecar |
+| vlist | 561,392 | 3.11% | box sidecar |
+| whatsit | 1,001 | 0.01% | sidecar |
+| mark | 8,043 | 0.04% | sidecar |
+| math on/off | 60,012 | 0.33% | inline |
+| math noad | 1,960,000 | 10.84% | sidecar |
+| fraction noad | 190,000 | 1.05% | sidecar |
+| math style | 30,000 | 0.17% | inline |
 
 No unset, discretionary, insertion, math-choice, math-list, nonscript, or
-adjust nodes were appended by these fixed workloads.
+adjust nodes occurred in these fixed workloads; they remain fully supported.
 
-## Scope finding
+### 2.1 Conservative storage model
 
-Char, glue, kern, and penalty nodes account for 66.52% of all appends. They are
-the majority, and 94.30% of the DVI-heavy workload, but they are not an
-overwhelming majority of the complete suite because the two math workloads
-append large numbers of intermediate math noads and hlist/vlist boxes. The
-representation design must therefore not justify itself solely from the four
-original hot kinds. It should keep the proposed inline forms for those kinds
-while explicitly measuring the cost of sidecar-backed boxes and math nodes;
-if those sidecars erase the expected kernel benefit, the scope must be revised
-before implementation rather than relying on the DVI-only distribution.
+The current stream occupies about 1,301.5 MB (`18,076,039 * 72`). An 8-byte
+word for every append occupies 144.6 MB. Even the deliberately pessimistic
+model in which every non-common-four node (33.48%) retains a full 72-byte
+sidecar payload adds only about 435.8 MB, for about 580.4 MB total: a 55.4%
+live-byte reduction before tighter SoA payloads or additional inline kinds.
+At an extreme two-times retained-capacity factor for every rare sidecar, the
+model is about 1,016 MB, still 21.9% below the current tightly-sized stream.
+
+This is an upper-bound model, not a benchmark result. Real accounting in
+Phase 6 must include word capacity, every sidecar column's capacity, survivor
+roots, recycled buffers, allocator overhead, and peak promotion scratch. It
+must report hlist/vlist and math costs separately: boxes are 18.92% and math
+noad/fraction payloads are 11.89% of measured appends. Shared immutable
+`GlueId`, `TokenListId`, font data, and child lists are not charged twice.
+
+The model makes implementation credible, but does not prove speed. If sidecar
+indirection erases the expected scan benefit, the design must change even when
+memory falls.
+
+## 3. `NodeWord`: exact eight-byte encoding
+
+`NodeWord` is a private transparent wrapper around `u64`. A compile-time
+assertion requires `size_of::<NodeWord>() == 8`. Bits 63..59 are a five-bit
+tag and bits 58..0 are a 59-bit payload. Unused payload bits must be zero on
+construction and are rejected by debug validation; raw words are not a stable
+serialization format.
+
+```text
+63             59 58                                      0
++----------------+------------------------------------------+
+| tag (5 bits)   | payload (59 bits)                        |
++----------------+------------------------------------------+
+```
+
+| Tag | Kind | Payload, low bits first |
+| ---: | --- | --- |
+| 0 | char | USV 21, `FontId` 32 |
+| 1 | ligature | ch 8, left original 8, right original 8, `FontId` 32 |
+| 2 | kern | signed `Scaled` bits 32, `KernKind` 2 |
+| 3 | glue | `GlueId` 32, `GlueKind` 6; leaderless only |
+| 4 | penalty | signed `i32` bits 32 |
+| 5 | math-on | signed `Scaled` bits 32 |
+| 6 | math-off | signed `Scaled` bits 32 |
+| 7 | math-style | `MathStyle` 2 |
+| 8 | nonscript | zero |
+| 9 | hlist | box sidecar index 32 |
+| 10 | vlist | box sidecar index 32 |
+| 11 | unset | unset sidecar index 32 |
+| 12 | rule | rule sidecar index 32 |
+| 13 | leader glue | leader-glue sidecar index 32 |
+| 14 | discretionary | disc sidecar index 32 |
+| 15 | mark | mark sidecar index 32 |
+| 16 | insertion | insertion sidecar index 32 |
+| 17 | whatsit | whatsit sidecar index 32 |
+| 18 | math noad | noad sidecar index 32 |
+| 19 | fraction noad | fraction sidecar index 32 |
+| 20 | math choice | choice sidecar index 32 |
+| 21 | math list | math-list sidecar index 32 |
+| 22 | adjust | adjust sidecar index 32 |
+| 23..31 | reserved | invalid until a versioned in-memory migration assigns one |
+
+The 32-bit sidecar index is intentionally stricter than the available 59-bit
+payload. It matches Rust vector indexing limits already enforced by the arena,
+keeps marks compact, and permits at most `u32::MAX` entries per kind. Appends
+check word and selected-sidecar capacity before changing any length; capacity
+exhaustion follows the existing explicit arena-overflow failure rather than
+silently changing TeX semantics.
+
+Capacity details:
+
+- char stores every Unicode scalar (`0..=0x10ffff`, excluding surrogate
+  values by constructor validation) and every 32-bit `FontId`; six payload
+  bits remain unused;
+- ligatures are restricted to the TFM byte-character domain for `ch` and both
+  originals. A future shaped glyph form gets a sidecar tag; it does not
+  truncate glyph ids into this layout. Three payload bits remain unused;
+- signed dimensions and penalties preserve their exact two's-complement
+  32-bit representation;
+- all current kern, glue, and style values fit their listed discriminant bits;
+  constructors use exhaustive mapping rather than enum-layout casts;
+- a glue with a leader cannot use tag 3. Its sidecar owns the glue spec/kind
+  and the complete leader payload, so there is no hidden parallel leader map.
+
+## 4. Packed `NodeListId`
+
+`NodeListId` becomes one private `u64`, with a compile-time eight-byte size
+assertion. Its logical accessors remain `arena()`, `start()`, `len()`, and
+`is_empty()`; no downstream code sees the packed word or can mint a handle.
+
+```text
+epoch:    0 | len:31 | start:32
+survivor: 1 | root:20 | start:21 | len:22
+```
+
+Epoch spans support starts `0..=u32::MAX` and lengths `0..=2^31-1`.
+Survivor spans support roots `0..=2^20-2`, starts `0..=2^21-1`, and lengths
+`0..=2^22-1`. The all-ones word is reserved and is the exact `None` encoding
+in the Env box-register bank; every other live packed word encodes `Some(id)`
+without arithmetic translation. Constructors check `start + len` in the owning storage and
+reject overflow before minting a handle. A survivor root is folded into every
+child handle during promotion, making each span self-describing without a
+second root pointer. Root slot identities remain monotonic and are never
+reused; only their storage buffers recycle.
+
+The reserved final root id is never allocated, even for a list that will not
+enter a box register. This makes null encoding canonical throughout the state
+layer and avoids the current `id + 1` overflow edge. Reaching that root limit
+is an explicit survivor-arena capacity failure; it never aliases `None` or
+falls back to an epoch handle.
+
+`NodeListId` packing is an in-memory implementation detail. Artifacts and
+semantic hashes encode the referenced logical node content, not raw handle
+bits.
+
+## 5. Sidecar storage and ownership
+
+Each node storage instance owns one word vector and per-kind sidecars. Tables
+are structure-of-arrays where fields are independently useful in hot scans;
+columns advance in lockstep and share one logical row count.
+
+- boxes: width, height, depth, shift, display, glue-set numerator/denominator,
+  glue sign/order, children;
+- unsets: kind, dimensions, span count, stretch/order, shrink/order, children;
+- rules: three optional dimensions;
+- leader glues: spec, glue kind, leader kind, leader box/rule fields;
+- discretionaries: kind, pre, post, replace;
+- marks: class, token list;
+- insertions: class, size, split-top-skip, split-max-depth, floating penalty,
+  content;
+- whatsits: kind-specific detached payload columns (including owned bytes or
+  strings where the current logical value owns them);
+- noads: noad kind plus nucleus/subscript/superscript field columns;
+- fractions: numerator, denominator, thickness, delimiters;
+- choices: four lists; math lists: display and content; adjusts: content.
+
+Small nested sum types such as math fields may remain packed value columns if
+splitting them would increase bytes or branch count. “SoA” is not permission
+to create a global side table: every field is owned by the same `NodeStorage`
+and its row is addressed only through a validated word.
+
+### 5.1 Epoch storage and rollback
+
+`NodeArenaMark` is one opaque aggregate value containing the word length and
+every sidecar column length. Taking it is O(1), with a constant number of
+integers independent of arena contents. `Stores::checkpoint` captures that
+mark with Env, content, World, page, and input state. Rollback validates all
+lengths first, then truncates every column and the word stream as one private
+operation. No public or downstream method can mark, truncate, append raw
+words, append a sidecar row, or restore a subset.
+
+Builder finish is transactional with respect to logical state: it validates
+all child handles and capacities, reserves required columns, encodes sidecar
+rows, then publishes words. An allocation failure may abort the process as it
+does today, but no recoverable error can leave a word naming an unpublished
+row. Bottom-up validation resolves child handles through the aggregate arena
+and requires epoch children to end before the new parent span.
+
+Vector capacity retained after truncation is allocator state only. It cannot
+affect decoded nodes, identities, hashes, or replay and is reported separately
+in memory benchmarks. Process-local measurement counters remain feature-gated
+and outside `Universe` exactly as in Phase 1.
+
+### 5.2 Survivor roots and recycling
+
+Every survivor root owns a complete `NodeStorage`: words and all sidecars.
+Promotion iteratively decodes the mixed epoch/survivor DAG, memoizes exact
+source spans, appends logical nodes into the destination storage, and rewrites
+all child handles in destination sidecar rows to the new monotonic root id.
+There are no cross-root sidecar indexes. This keeps a promoted root
+self-contained and makes recursive ownership inspection independent of the
+source arenas.
+
+Root slots and refcounts remain in `SurvivorArena` under aggregate Env-journal
+ownership. Live box registers and retained undo records own references;
+replacement, group exit, rollback, and shipout release them through the same
+barriered paths as today. At refcount zero, all destination vectors are
+cleared and move together into a recycled `NodeStorage` pool. Recycling may
+reuse capacity but never the root slot or a packed handle. The pool and its
+reuse counters are derived allocator state: cloning may copy them and rollback
+need not restore their exact capacity/order, because they cannot affect
+meaning, liveness, ids, hashes, or output. Tests must prove that claim by
+replay/hash equality with different recycling histories.
+
+## 6. Read and mutation boundaries
+
+`Universe` remains the only public live-state owner. The node API exposes:
+
+- a builder accepting logical `Node` values during migration and eventually
+  typed `push_char`, `push_kern`, `push_box`, and equivalent methods;
+- `NodeList<'a>`/`NodeIter<'a>` read-only views over a live opaque handle;
+- a `NodeRef<'a>` decoded view with `kind()` and typed accessors such as
+  `as_char`, `as_box`, `kern`, `glue`, and `child_lists`;
+- narrow immutable traits used by pure `tex-typeset` kernels.
+
+No API returns `&[NodeWord]`, a sidecar slice/index, `&mut` storage, an
+unchecked decoder, or a raw handle constructor. A compatibility iterator may
+yield owned/borrowed logical `Node` views while consumers migrate, but it is
+not a second mutable representation. Debugging and `\showlists` use the same
+accessors as production.
+
+All node mutation is builder-then-freeze. Algorithms that currently rewrite a
+cloned `Node` list build a new list; they never mutate a frozen word or sidecar
+row. Pure typesetting receives immutable views and plain copied parameters.
+Execution performs stateful list publication, survivor transfer, and box
+register writes only through `Universe`. Shipout lowers through views into
+detached `tex-out` artifacts and cannot retain a live sidecar reference.
+
+## 7. Semantic hashing and replay
+
+Hashing dispatches through `NodeRef` and hashes the same logical discriminant
+and fields as the current `Node` implementation. Every content handle is
+followed to semantic content: child node lists, glue specs, token lists,
+fonts, and whatsit payloads. Sidecar indexes, `NodeListId` raw bits, root ids,
+capacities, recycled-buffer order, and column addresses are excluded.
+
+The aggregate node hash cursor uses the word-stream watermark only to locate
+the newly appended logical slice; it does not hash raw words. Rollback clears
+or rebuilds any derived fingerprint cache exactly as today. Tests compare
+checkpoint hashes across append/rollback/reappend, different sidecar allocation
+orders, promotion, release, and recycled-capacity reuse. Shadow mode must use
+the public/aggregate logical view and may not enable raw production mutation.
+
+## 8. Consumer migration
+
+Migration is coherent by boundary, not a long-lived dual representation:
+
+1. Pack `NodeListId`, update Env codecs, and prove liveness/capacity without
+   changing node storage.
+2. Introduce private `NodeWord`/sidecars, aggregate watermarking, builders,
+   logical views, hashing, survivor promotion, and recycling in `tex-state`.
+   The old `Vec<Node>` storage is removed in this phase.
+3. Migrate pure `tex-typeset` scans first (packing, vertical breaking,
+   line-width accumulation, line breaking), then execution construction and
+   list surgery, diagnostics, page building, survivor flows, and shipout. A
+   temporary logical compatibility iterator is removed after the last
+   exhaustive `Node` match outside the state layer disappears.
+4. Add same-font run width accumulation only after scalar accessor scans are
+   correct and benchmarked.
+
+Every phase preserves exact fixture and DVI output. No consumer may cache a
+`NodeRef` or sidecar reference across a mutable `Universe` call.
+
+## 9. Width-array and vectorization plan
+
+Loaded immutable font metrics gain a dense width array indexed by TFM byte
+character. A typeset scan identifies a contiguous run of inline char words
+with the same `FontId`, validates the font once, and gathers widths while
+accumulating in TeX's exact `Scaled` integer order. Scalar unrolled and
+portable-vector/SIMD implementations must produce the identical sum and
+overflow behavior; runtime selection is a pure cache keyed by target features,
+not timeline state.
+
+The first benchmark compares ordinary accessor iteration, scalar same-font
+runs, and vectorized runs. SIMD is retained only where it beats the scalar run
+on representative short and long hlists. Ligatures, missing-character
+diagnostics, non-byte modern glyphs, font switches, and non-char nodes end a
+run and use the ordinary accessor path. Glue, box dimensions, italic
+corrections, and TeX glue-set rounding keep their existing exact order.
+
+## 10. Phases and exit gates
+
+### Phase 1 — measurement (complete)
+
+Record compile-time layout assertions and the fixed-corpus histogram above.
+Exit: instrumentation is nonsemantic/process-local and the full distribution,
+including math intermediates, is durable.
+
+### Phase 2 — design (this document)
+
+Exit: exact encodings/capacities, conservative sidecar cost, aggregate
+ownership, mutation boundary, semantic hashing, migration, width plan, and
+validation matrix are reviewed against `core_state.md`. The design must remain
+conditional on measured performance.
+
+### Phase 3 — packed list handles
+
+Exit: `NodeListId` is compile-time eight bytes; all boundary/capacity and
+optional-box encodings round-trip; stale epoch/survivor handles remain
+unforgeable; normal/shadow replay and semantic hashes pass.
+
+### Phase 4 — words and sidecars
+
+Exit: `NodeWord` is compile-time eight bytes; every logical variant
+round-trips; aggregate rollback truncates every column; promotion produces a
+self-contained root; release/recycling cannot revive stale handles; hashing is
+allocation-independent; no old `Vec<Node>` store remains.
+
+### Phase 5 — consumer migration
+
+Exit: typeset, exec, page builder, diagnostics, survivor transfer, and shipout
+use logical accessors; downstream raw/exhaustive storage matches are gone;
+temporary compatibility APIs are removed; fixture and DVI corpuses are
+byte-identical.
+
+### Phase 6 — widths, measurement, adoption
+
+Measure scalar accessors before adding SIMD, then same-font scalar and SIMD
+variants. Report per-workload medians and intervals, instructions, cache
+misses where available, logical/retained/peak bytes, sidecar distribution,
+promotion/recycling cost, and full end-to-end time. Compare to the pinned
+Phase 1 commit with identical toolchain, inputs, fonts, output, and warmup.
+
+Exit: a material typesetting-kernel improvement on typesetting-heavy Plain TeX
+workloads, no material end-to-end regression, exact output parity, and a
+credible memory reduction after all sidecars/capacities are charged. There is
+no fixed percentage gate: noise and workload shape are documented, and the
+agent must judge whether further optimization is realistic. A large slowdown
+is never accepted merely for memory reduction. If evidence is weak or
+negative, revise inline tags/accessors/sidecars or revert cleanly and record
+the decision.
+
+## 11. Validation matrix
+
+| Area | Required cases |
+| --- | --- |
+| Layout | compile-time 8-byte assertions; every tag; reserved tags rejected; signed extrema; Unicode scalar validation; TFM ligature bounds |
+| Handle packing | epoch/survivor zero and maxima; start+len overflow; empty lists; max root; optional box-register null; raw constructors inaccessible downstream |
+| Sidecars | every kind; zero/max indexes; leader glue; owned whatsit payloads; no word published without a row; column lengths agree |
+| Bottom-up graph | epoch children, mixed survivor children, shared spans, deep graphs, cycles/forward references rejected |
+| Rollback | mark/truncate all columns; rollback/reappend id behavior; retained capacities distinguished from live bytes; shipout release |
+| Survivors | promotion, root folding, refcounts, journal-held owners, group exit, root non-reuse, buffer recycling, nested boxes/math/leader payloads |
+| Access boundary | compile-fail probes for raw words, sidecars, constructors, partial marks, mutable views; shadow remains production-like |
+| Hash/replay | equal logical graphs with different sidecar/root/recycling histories hash equally; changed fields differ; rollback convergence; deep iterative traversal |
+| Kernels | hpack/vpack/vtop, vertical breaking, line breaking, diagnostics, page builder, insertion/mark handling, math lowering |
+| Width runs | empty/short/long runs, font switch, missing char, ligature, overflow behavior, scalar/SIMD exact equality |
+| Output | workspace fixtures plus Story/Gentle and fixed Plain TeX DVI corpuses remain byte-identical |
+| Performance | each fixed workload; typesetting kernel and end-to-end time; logical/retained/peak bytes; box/math sidecars; promotion/recycling |
+
+Use affected crate tests during each phase and `scripts/check-and-test.sh` for
+the full workspace test, format, and clippy gate. Long-running parity corpuses
+remain in their existing scripts rather than ordinary unit tests.

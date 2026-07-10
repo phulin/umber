@@ -11,5 +11,7 @@ When documenting tests or parity workflow, point fixture changes to `scripts/reg
 `math_layout_arena.md` specifies the contiguous, span-backed Appendix G math
 conversion result and its pure lowering boundary.
 
-`node_word_arena.md` records the compact node-word arena measurements and will
-carry its representation, sidecar, migration, and adoption design.
+`node_word_arena.md` is the authoritative compact node-word arena document: it
+combines measurements with the representation, sidecar ownership, migration,
+validation, and conditional adoption design. Do not create a separate
+`node_word_layout.md` whose encoding or rollback rules could drift.
