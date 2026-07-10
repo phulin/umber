@@ -205,8 +205,10 @@ fn flush_word(stores: &mut Universe, word: &mut Vec<WordChar>, out: &mut Vec<Nod
     let lowercase: String = word.iter().map(|ch| ch.lower).collect();
     let left = stores.int_param(IntParam::LEFT_HYPHEN_MIN).max(0) as usize;
     let right = stores.int_param(IntParam::RIGHT_HYPHEN_MIN).max(0) as usize;
-    let positions = if word.first().is_some_and(|ch| ch.uppercase)
-        && stores.int_param(IntParam::UC_HYPH) <= 0
+    let positions = if word
+        .first()
+        .is_none_or(|ch| u8::try_from(stores.font_hyphen_char(ch.font)).is_err())
+        || word.first().is_some_and(|ch| ch.uppercase) && stores.int_param(IntParam::UC_HYPH) <= 0
     {
         Vec::new()
     } else {

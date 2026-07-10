@@ -685,7 +685,9 @@ makes box-level memoization (M4) sound.
   decision pass (`line_break`) separately from post-line-break surgery
   (`post_line_break`). The breaker owns the three TeX passes: pretolerance
   without hyphenation, tolerance with a caller-supplied hyphenation hook, and
-  emergency stretch. Legal breakpoints, demerits, fitness classes,
+  emergency stretch. The execution-side hook follows TeX82's font gate and
+  does not hyphenate a word when that font's `\hyphenchar` is outside the
+  byte range. Legal breakpoints, demerits, fitness classes,
   `\looseness`, and line-penalty parameters are copied into plain structs at
   entry; the kernel never touches `Env`, `World`, or `&mut Universe`
   mid-algorithm. The decision pass keeps prefix width totals and

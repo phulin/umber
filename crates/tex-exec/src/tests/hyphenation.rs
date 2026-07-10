@@ -72,3 +72,38 @@ fn paragraph_hyphenation_honors_uchyph_for_uppercase_start() {
             .any(|node| matches!(node, tex_state::node::Node::Disc { .. }))
     );
 }
+
+#[test]
+fn paragraph_hyphenation_requires_a_valid_font_hyphen_character() {
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\font\\tenrm=cmr10 \\relax \\tenrm \\patterns{a1ba}\\lefthyphenmin=1 \\righthyphenmin=1 \\end",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("hyphenation setup executes");
+    let font = stores.current_font();
+    let word: Vec<_> = "aba"
+        .chars()
+        .map(|ch| tex_state::node::Node::Char { font, ch })
+        .collect();
+
+    stores.set_font_hyphen_char(font, -1, false);
+    let disabled = crate::assignments::test_hyphenated_hlist(&mut stores, &word);
+    stores.set_font_hyphen_char(font, i32::from(b'-'), false);
+    let enabled = crate::assignments::test_hyphenated_hlist(&mut stores, &word);
+
+    assert!(
+        !disabled
+            .iter()
+            .any(|node| matches!(node, tex_state::node::Node::Disc { .. }))
+    );
+    assert!(
+        enabled
+            .iter()
+            .any(|node| matches!(node, tex_state::node::Node::Disc { .. }))
+    );
+}
