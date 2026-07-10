@@ -863,6 +863,57 @@ fn repeated_survivor_replacement_recycles_buffers_without_reviving_stale_ids() {
 }
 
 #[test]
+fn survivor_recycling_carries_word_and_box_rule_sidecars_together() {
+    let mut stores = Stores::new();
+    let mut stale = None;
+    let mut live = None;
+
+    for raw in 0..32 {
+        let child = stores.freeze_node_list(&[Node::Rule {
+            width: Some(Scaled::from_raw(raw)),
+            height: None,
+            depth: Some(Scaled::from_raw(-raw)),
+        }]);
+        let root = stores.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
+            width: Scaled::from_raw(raw),
+            height: Scaled::from_raw(0),
+            depth: Scaled::from_raw(0),
+            shift: Scaled::from_raw(0),
+            display: false,
+            glue_set: GlueSetRatio::ZERO,
+            glue_sign: Sign::Normal,
+            glue_order: Order::Normal,
+            children: child,
+        }))]);
+        let promoted = stores.prepare_box_value(root);
+        if let Some(previous) = live.replace(promoted) {
+            stale.get_or_insert(previous);
+            stores.dec_survivor_ref(previous);
+        }
+    }
+
+    let live = live.expect("one survivor remains");
+    let [Node::HList(box_node)] = stores.nodes(live) else {
+        panic!("survivor root should retain its box sidecar")
+    };
+    assert_eq!(box_node.width, Scaled::from_raw(31));
+    assert_eq!(
+        stores.nodes(box_node.children),
+        &[Node::Rule {
+            width: Some(Scaled::from_raw(31)),
+            height: None,
+            depth: Some(Scaled::from_raw(-31)),
+        }]
+    );
+    assert!(
+        !stores
+            .survivors
+            .contains(stale.expect("a stale root exists"))
+    );
+    assert!(stores.testing_survivor_recycled_buffer_uses() > 0);
+}
+
+#[test]
 fn coalesced_box_replacements_roll_back_to_the_checkpoint_owner() {
     const REPLACEMENTS: usize = 20_000;
 

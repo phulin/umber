@@ -1,7 +1,14 @@
-use super::{NodeArena, NodeListBuilder};
+use super::{NodeArena, NodeListBuilder, preflight_capacity};
 use crate::glue::Order;
-use crate::ids::{FontId, NodeListId};
-use crate::node::{BoxNode, BoxNodeFields, Node, Sign};
+use crate::ids::{FontId, GlueId, NodeListId, TokenListId};
+use crate::math::{
+    FractionThickness, MathChoice, MathField, MathFraction, MathListNode, MathNoad, MathStyle,
+    NoadClass, NoadKind,
+};
+use crate::node::{
+    BoxNode, BoxNodeFields, DiscKind, GlueKind, KernKind, LeaderPayload, Node, Sign, UnsetKind,
+    UnsetNode, UnsetNodeFields, Whatsit,
+};
 use crate::scaled::{GlueSetRatio, Scaled};
 
 #[test]
@@ -130,6 +137,187 @@ fn builder_reuse_after_finish_leaves_buffer_empty() {
         &[Node::MathOff(Scaled::from_raw(0))]
     );
     assert!(builder.is_empty());
+}
+
+#[test]
+fn every_inline_kind_uses_only_one_word_and_no_sidecar() {
+    let mut arena = NodeArena::new();
+    let nodes = vec![
+        Node::Char {
+            font: FontId::testing_new(u32::MAX),
+            ch: '\u{10ffff}',
+        },
+        Node::Lig {
+            font: FontId::testing_new(7),
+            ch: '\u{ff}',
+            orig: ('\0', '\u{fe}'),
+        },
+        Node::Kern {
+            amount: Scaled::from_raw(i32::MIN),
+            kind: KernKind::Mu,
+        },
+        Node::Glue {
+            spec: GlueId::testing_new(u32::MAX),
+            kind: GlueKind::NonScript,
+            leader: None,
+        },
+        Node::Penalty(i32::MAX),
+        Node::MathOn(Scaled::from_raw(i32::MIN)),
+        Node::MathOff(Scaled::from_raw(i32::MAX)),
+        Node::MathStyle(MathStyle::ScriptScript),
+        Node::Nonscript,
+    ];
+    let id = arena.append(&nodes);
+    assert_eq!(arena.get_epoch(id), nodes);
+    assert_eq!(arena.storage.testing_sidecar_lengths(), [0; 13]);
+    assert_eq!(arena.storage.testing_tags(), (0_u8..=8).collect::<Vec<_>>());
+}
+
+#[test]
+fn every_rare_kind_round_trips_through_its_sidecar() {
+    let mut arena = NodeArena::new();
+    let empty = arena.append(&[]);
+    let box_node = BoxNode::new(BoxNodeFields {
+        width: scaled(1),
+        height: scaled(2),
+        depth: scaled(3),
+        shift: scaled(4),
+        display: true,
+        glue_set: GlueSetRatio::from_raw(5),
+        glue_sign: Sign::Shrinking,
+        glue_order: Order::Fill,
+        children: empty,
+    });
+    let unset = UnsetNode::new(UnsetNodeFields {
+        kind: UnsetKind::VBox,
+        width: scaled(6),
+        height: scaled(7),
+        depth: scaled(8),
+        span_count: 9,
+        stretch: scaled(10),
+        stretch_order: Order::Filll,
+        shrink: scaled(11),
+        shrink_order: Order::Fil,
+        children: empty,
+    });
+    let nodes = vec![
+        Node::HList(box_node.clone()),
+        Node::VList(box_node.clone()),
+        Node::Unset(unset),
+        Node::Rule {
+            width: Some(scaled(12)),
+            height: None,
+            depth: Some(scaled(13)),
+        },
+        Node::Glue {
+            spec: GlueId::testing_new(2),
+            kind: GlueKind::Leaders,
+            leader: Some(LeaderPayload::Rule {
+                width: None,
+                height: Some(scaled(14)),
+                depth: None,
+            }),
+        },
+        Node::Disc {
+            kind: DiscKind::AutomaticHyphen,
+            pre: empty,
+            post: empty,
+            replace: empty,
+        },
+        Node::Mark {
+            class: u16::MAX,
+            tokens: TokenListId::testing_new(3),
+        },
+        Node::Ins {
+            class: 4,
+            size: scaled(15),
+            split_top_skip: GlueId::testing_new(5),
+            split_max_depth: scaled(16),
+            floating_penalty: -17,
+            content: empty,
+        },
+        Node::Whatsit(Whatsit::Language {
+            language: 18,
+            left_hyphen_min: 2,
+            right_hyphen_min: 3,
+        }),
+        Node::MathNoad(MathNoad::new(
+            NoadKind::Normal(NoadClass::Ord),
+            MathField::Empty,
+        )),
+        Node::FractionNoad(MathFraction {
+            numerator: empty,
+            denominator: empty,
+            thickness: FractionThickness::Explicit(scaled(19)),
+            left_delimiter: Some(20),
+            right_delimiter: None,
+        }),
+        Node::MathChoice(MathChoice {
+            display: empty,
+            text: empty,
+            script: empty,
+            script_script: empty,
+        }),
+        Node::MathList(MathListNode {
+            display: true,
+            content: empty,
+        }),
+        Node::Adjust(empty),
+    ];
+    let id = arena.append(&nodes);
+    assert_eq!(arena.get_epoch(id), nodes);
+    assert_eq!(
+        arena.storage.testing_sidecar_lengths(),
+        [2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+    );
+    assert_eq!(
+        arena.storage.testing_tags(),
+        (9_u8..=22).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn rollback_truncates_words_decoded_view_and_every_sidecar_together() {
+    let mut arena = NodeArena::new();
+    let empty = arena.append(&[]);
+    let mark = arena.watermark();
+    let rare = [
+        Node::Adjust(empty),
+        Node::Rule {
+            width: None,
+            height: None,
+            depth: None,
+        },
+    ];
+    let dropped = arena.append(&rare);
+    assert_eq!(arena.storage.testing_sidecar_lengths()[2], 1);
+    assert_eq!(arena.storage.testing_sidecar_lengths()[12], 1);
+    arena.truncate_to(mark);
+    assert!(!arena.contains(dropped));
+    assert_eq!(arena.storage.testing_sidecar_lengths(), [0; 13]);
+    assert!(arena.storage.all_decoded().is_empty());
+}
+
+#[test]
+fn capacity_preflight_accepts_boundary_without_mutation() {
+    assert_eq!(preflight_capacity(u32::MAX - 1, 1, "overflow"), u32::MAX);
+}
+
+#[test]
+#[should_panic(expected = "sidecar overflow")]
+fn capacity_preflight_rejects_overflow_before_publication() {
+    let _ = preflight_capacity(u32::MAX, 1, "sidecar overflow");
+}
+
+#[test]
+#[should_panic(expected = "ligature glyph exceeds TFM byte domain")]
+fn ligature_inline_encoding_rejects_non_tfm_character() {
+    let mut arena = NodeArena::new();
+    arena.append(&[Node::Lig {
+        font: FontId::testing_new(0),
+        ch: '\u{100}',
+        orig: ('a', 'b'),
+    }]);
 }
 
 fn one_char(arena: &mut NodeArena, ch: char) -> NodeListId {

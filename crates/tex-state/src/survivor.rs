@@ -6,7 +6,7 @@
 use crate::ids::{ArenaRef, NodeListId, SurvivorRootId};
 use crate::math::MathField;
 use crate::node::{LeaderPayload, Node};
-use crate::node_arena::NodeArena;
+use crate::node_arena::{NodeArena, NodeStorage};
 use std::collections::HashMap;
 
 /// Arena for promoted node-list roots.
@@ -15,13 +15,13 @@ pub struct SurvivorArena {
     // Root ids are never reused: stale handles must never become live again.
     slots: Vec<Option<SurvivorRoot>>,
     // Node storage is independent of identity and can safely be recycled.
-    recycled: Vec<Vec<Node>>,
+    recycled: Vec<NodeStorage>,
     recycled_buffer_uses: usize,
 }
 
 #[derive(Clone, Debug)]
 struct SurvivorRoot {
-    nodes: Vec<Node>,
+    storage: NodeStorage,
     refcount: u32,
 }
 
@@ -47,9 +47,12 @@ impl SurvivorArena {
             "survivor arena exceeds encodable roots"
         );
 
-        let out = self.take_recycled_buffer();
-        let (nodes, start, len) = copy_list_iterative(id, epoch, self, out);
-        let root = self.allocate_root(nodes);
+        let storage = self.take_recycled_buffer();
+        let (nodes, start, len) = copy_list_iterative(id, epoch, self, Vec::new());
+        let mut storage = storage;
+        debug_assert!(storage.is_empty());
+        storage.append(&nodes);
+        let root = self.allocate_root(storage);
         self.rewrite_root_ids(root);
         let promoted = NodeListId::new_survivor(root, start, len);
         self.debug_assert_no_epoch_ids(promoted);
@@ -65,8 +68,11 @@ impl SurvivorArena {
         let root = self.root(root);
         let start = id.start() as usize;
         let end = start + id.len() as usize;
-        assert!(end <= root.nodes.len(), "survivor node-list id is not live");
-        &root.nodes[start..end]
+        assert!(
+            end <= root.storage.len(),
+            "survivor node-list id is not live"
+        );
+        root.storage.decoded(id.start(), id.len())
     }
 
     /// Increments the root refcount for a survivor list.
@@ -95,8 +101,8 @@ impl SurvivorArena {
             let mut root = self.slots[root.raw() as usize]
                 .take()
                 .expect("survivor root is not live");
-            root.nodes.clear();
-            self.recycled.push(root.nodes);
+            root.storage.clear();
+            self.recycled.push(root.storage);
         }
     }
 
@@ -111,7 +117,7 @@ impl SurvivorArena {
         };
         (id.start() as usize)
             .checked_add(id.len() as usize)
-            .is_some_and(|end| end <= slot.nodes.len())
+            .is_some_and(|end| end <= slot.storage.len())
     }
 
     #[cfg(any(test, feature = "testing"))]
@@ -141,21 +147,24 @@ impl SurvivorArena {
         self.slots.len()
     }
 
-    fn take_recycled_buffer(&mut self) -> Vec<Node> {
+    fn take_recycled_buffer(&mut self) -> NodeStorage {
         let Some((index, _)) = self
             .recycled
             .iter()
             .enumerate()
-            .max_by_key(|(_, nodes)| nodes.capacity())
+            .max_by_key(|(_, storage)| storage.len())
         else {
-            return Vec::new();
+            return NodeStorage::default();
         };
         self.recycled_buffer_uses += 1;
         self.recycled.swap_remove(index)
     }
 
-    fn allocate_root(&mut self, nodes: Vec<Node>) -> SurvivorRootId {
-        let slot = SurvivorRoot { nodes, refcount: 1 };
+    fn allocate_root(&mut self, storage: NodeStorage) -> SurvivorRootId {
+        let slot = SurvivorRoot {
+            storage,
+            refcount: 1,
+        };
         let raw = u32_len(self.slots.len(), "survivor arena exceeds u32 roots");
         assert!(raw < (1 << 20) - 1, "survivor root id exceeds encoding");
         self.slots.push(Some(slot));
@@ -178,8 +187,11 @@ impl SurvivorArena {
     }
 
     fn rewrite_root_ids(&mut self, root: SurvivorRootId) {
-        for node in &mut self.root_mut(root).nodes {
-            rewrite_node_root_ids(node, root);
+        let len = self.root(root).storage.len();
+        for index in 0..len {
+            let mut node = self.root(root).storage.all_decoded()[index].clone();
+            rewrite_node_root_ids(&mut node, root);
+            self.root_mut(root).storage.replace_decoded(index, node);
         }
     }
 

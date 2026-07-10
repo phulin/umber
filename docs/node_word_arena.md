@@ -386,6 +386,15 @@ round-trips; aggregate rollback truncates every column; promotion produces a
 self-contained root; release/recycling cannot revive stale handles; hashing is
 allocation-independent; no old `Vec<Node>` store remains.
 
+Implementation status: the compact `NodeStorage` word stream and per-kind
+sidecars are canonical for both epoch and survivor roots. One temporary
+decoded `Node` mirror remains solely to preserve the pre-Phase-5 borrowed-slice
+API: it is private, advances and truncates under the same aggregate watermark,
+is copied and recycled only with its owning `NodeStorage`, and is excluded from
+handles, semantic hashes, and replay identity. Phase 5 must replace borrowed
+slice consumers with decoded views/iterators and remove this mirror; it is not
+a permitted second mutation path or a final representation.
+
 ### Phase 5 — consumer migration
 
 Exit: typeset, exec, page builder, diagnostics, survivor transfer, and shipout
