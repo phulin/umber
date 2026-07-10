@@ -2847,6 +2847,8 @@ fn hash_path(path: &std::path::Path, hasher: &mut StateHasher) {
 }
 
 fn hash_input_summary_fields(stores: &Stores, summary: &InputSummary, hasher: &mut StateHasher) {
+    hasher.u32(summary.next_source_id());
+    hasher.bool(summary.unicode_superscript_notation());
     hasher.usize(summary.frames().len());
     for frame in summary.frames() {
         match frame {
@@ -2866,6 +2868,17 @@ fn hash_input_summary_fields(stores: &Stores, summary: &InputSummary, hasher: &m
                 hasher.str(source.normalized_line());
                 hasher.usize(source.line_char_offset());
                 hasher.usize(source.line_byte_offset());
+                hasher.usize(source.physical_content_end());
+                hasher.usize(source.terminator_start());
+                hasher.usize(source.terminator_end());
+                hasher.usize(source.normalized_end_anchor());
+                match source.synthetic_endline_start() {
+                    Some(offset) => {
+                        hasher.bool(true);
+                        hasher.usize(offset);
+                    }
+                    None => hasher.bool(false),
+                }
                 hasher.usize(source.pending().len());
                 for token in source.pending() {
                     hash_traced_token_semantic(stores, *token, hasher);
@@ -2927,6 +2940,17 @@ fn hash_input_summary_fields(stores: &Stores, summary: &InputSummary, hasher: &m
             hasher.str(source.normalized_line());
             hasher.usize(source.line_char_offset());
             hasher.usize(source.line_byte_offset());
+            hasher.usize(source.physical_content_end());
+            hasher.usize(source.terminator_start());
+            hasher.usize(source.terminator_end());
+            hasher.usize(source.normalized_end_anchor());
+            match source.synthetic_endline_start() {
+                Some(offset) => {
+                    hasher.bool(true);
+                    hasher.usize(offset);
+                }
+                None => hasher.bool(false),
+            }
             hasher.usize(source.pending().len());
             for token in source.pending() {
                 hash_traced_token_semantic(stores, *token, hasher);

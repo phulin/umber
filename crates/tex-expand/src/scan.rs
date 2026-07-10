@@ -435,7 +435,7 @@ impl<S> InputSource for ReplacementSource<S>
 where
     S: InputSource,
 {
-    fn read_line(&mut self) -> Result<Option<String>, tex_state::WorldError> {
+    fn read_line(&mut self) -> Result<Option<tex_lex::PhysicalLine>, tex_lex::InputSourceError> {
         match self {
             Self::Empty(source) => source.read_line(),
             Self::Driver(source) => source.read_line(),

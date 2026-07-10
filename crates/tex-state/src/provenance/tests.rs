@@ -62,10 +62,11 @@ fn repeated_origin_lists_allocate_without_extra_records() {
 
     assert_eq!(store.list(list), &[source, source, source, source]);
     assert_eq!(after.origin_records(), before.origin_records());
-    assert_eq!(
-        after.saturating_sub(before),
-        super::ProvenanceStats::new(0, 1, 4)
-    );
+    let growth = after.saturating_sub(before);
+    assert_eq!(growth.origin_records(), 0);
+    assert_eq!(growth.origin_list_spans(), 1);
+    assert_eq!(growth.origin_list_entries(), 4);
+    assert!(growth.retained_bytes() >= growth.estimated_bytes());
 }
 
 #[test]
@@ -165,5 +166,15 @@ fn universe_provenance_stats_measure_rollback_truncation() {
     assert_eq!(grown.saturating_sub(baseline).origin_list_entries(), 128);
 
     stores.rollback(&snapshot);
-    assert_eq!(stores.provenance_stats(), baseline);
+    let rolled_back = stores.provenance_stats();
+    assert_eq!(rolled_back.origin_records(), baseline.origin_records());
+    assert_eq!(
+        rolled_back.origin_list_spans(),
+        baseline.origin_list_spans()
+    );
+    assert_eq!(
+        rolled_back.origin_list_entries(),
+        baseline.origin_list_entries()
+    );
+    assert!(rolled_back.retained_bytes() >= baseline.retained_bytes());
 }

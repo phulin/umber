@@ -20,12 +20,25 @@ pub(crate) struct ProvenanceStoreMark {
 }
 
 /// Live provenance arena size counters.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct ProvenanceStats {
     origin_records: usize,
     origin_list_spans: usize,
     origin_list_entries: usize,
+    origin_record_capacity: usize,
+    origin_list_span_capacity: usize,
+    origin_list_entry_capacity: usize,
 }
+
+impl PartialEq for ProvenanceStats {
+    fn eq(&self, other: &Self) -> bool {
+        self.origin_records == other.origin_records
+            && self.origin_list_spans == other.origin_list_spans
+            && self.origin_list_entries == other.origin_list_entries
+    }
+}
+
+impl Eq for ProvenanceStats {}
 
 impl ProvenanceStats {
     #[must_use]
@@ -38,6 +51,27 @@ impl ProvenanceStats {
             origin_records,
             origin_list_spans,
             origin_list_entries,
+            origin_record_capacity: 0,
+            origin_list_span_capacity: 0,
+            origin_list_entry_capacity: 0,
+        }
+    }
+
+    const fn with_capacities(
+        origin_records: usize,
+        origin_list_spans: usize,
+        origin_list_entries: usize,
+        origin_record_capacity: usize,
+        origin_list_span_capacity: usize,
+        origin_list_entry_capacity: usize,
+    ) -> Self {
+        Self {
+            origin_records,
+            origin_list_spans,
+            origin_list_entries,
+            origin_record_capacity,
+            origin_list_span_capacity,
+            origin_list_entry_capacity,
         }
     }
 
@@ -64,6 +98,28 @@ impl ProvenanceStats {
     }
 
     #[must_use]
+    pub const fn retained_bytes(self) -> usize {
+        self.origin_record_capacity * mem::size_of::<OriginRecord>()
+            + self.origin_list_span_capacity * mem::size_of::<(u32, u32)>()
+            + self.origin_list_entry_capacity * mem::size_of::<OriginId>()
+    }
+
+    #[must_use]
+    pub const fn origin_record_capacity(self) -> usize {
+        self.origin_record_capacity
+    }
+
+    #[must_use]
+    pub const fn origin_list_span_capacity(self) -> usize {
+        self.origin_list_span_capacity
+    }
+
+    #[must_use]
+    pub const fn origin_list_entry_capacity(self) -> usize {
+        self.origin_list_entry_capacity
+    }
+
+    #[must_use]
     pub const fn saturating_sub(self, baseline: Self) -> Self {
         Self {
             origin_records: self.origin_records.saturating_sub(baseline.origin_records),
@@ -73,6 +129,15 @@ impl ProvenanceStats {
             origin_list_entries: self
                 .origin_list_entries
                 .saturating_sub(baseline.origin_list_entries),
+            origin_record_capacity: self
+                .origin_record_capacity
+                .saturating_sub(baseline.origin_record_capacity),
+            origin_list_span_capacity: self
+                .origin_list_span_capacity
+                .saturating_sub(baseline.origin_list_span_capacity),
+            origin_list_entry_capacity: self
+                .origin_list_entry_capacity
+                .saturating_sub(baseline.origin_list_entry_capacity),
         }
     }
 }
@@ -462,7 +527,14 @@ impl ProvenanceStore {
     /// Returns live arena length counters.
     #[must_use]
     pub(crate) fn stats(&self) -> ProvenanceStats {
-        ProvenanceStats::new(self.records.len(), self.spans.len(), self.origins.len())
+        ProvenanceStats::with_capacities(
+            self.records.len(),
+            self.spans.len(),
+            self.origins.len(),
+            self.records.capacity(),
+            self.spans.capacity(),
+            self.origins.capacity(),
+        )
     }
 
     /// Takes a rollback watermark for aggregate snapshots.

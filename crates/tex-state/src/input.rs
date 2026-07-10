@@ -330,6 +330,8 @@ pub struct InputSummary {
     last_source_id: Option<SourceId>,
     last_source_record: Option<InputRecordId>,
     last_source_frame: Option<SourceFrameSummary>,
+    next_source_id: u32,
+    unicode_superscript_notation: bool,
 }
 
 impl InputSummary {
@@ -349,11 +351,43 @@ impl InputSummary {
         last_source_record: Option<InputRecordId>,
         last_source_frame: Option<SourceFrameSummary>,
     ) -> Self {
+        let next_source_id = frames
+            .iter()
+            .filter_map(|frame| match frame {
+                InputFrameSummary::Source { source_id, .. } => Some(source_id.raw()),
+                InputFrameSummary::TokenList { .. } | InputFrameSummary::Condition { .. } => None,
+            })
+            .chain(last_source_id.map(SourceId::raw))
+            .max()
+            .map_or(0, |id| {
+                id.checked_add(1).expect("source id counter overflowed")
+            });
+        Self::new_with_resume_state(
+            frames,
+            last_source_id,
+            last_source_record,
+            last_source_frame,
+            next_source_id,
+            true,
+        )
+    }
+
+    #[must_use]
+    pub fn new_with_resume_state(
+        frames: Vec<InputFrameSummary>,
+        last_source_id: Option<SourceId>,
+        last_source_record: Option<InputRecordId>,
+        last_source_frame: Option<SourceFrameSummary>,
+        next_source_id: u32,
+        unicode_superscript_notation: bool,
+    ) -> Self {
         Self {
             frames,
             last_source_id,
             last_source_record,
             last_source_frame,
+            next_source_id,
+            unicode_superscript_notation,
         }
     }
 
@@ -389,6 +423,16 @@ impl InputSummary {
     #[must_use]
     pub const fn last_source_record(&self) -> Option<InputRecordId> {
         self.last_source_record
+    }
+
+    #[must_use]
+    pub const fn next_source_id(&self) -> u32 {
+        self.next_source_id
+    }
+
+    #[must_use]
+    pub const fn unicode_superscript_notation(&self) -> bool {
+        self.unicode_superscript_notation
     }
 }
 
@@ -526,8 +570,12 @@ pub struct SourceFrameSummary {
     column: usize,
     lexer_state: LexerState,
     normalized_line: String,
-    line_char_offset: usize,
     line_byte_offset: usize,
+    physical_content_end: usize,
+    terminator_start: usize,
+    terminator_end: usize,
+    normalized_end_anchor: usize,
+    synthetic_endline_start: Option<usize>,
     pending: Vec<TracedTokenWord>,
     end_after_current_line: bool,
 }
@@ -546,7 +594,47 @@ impl SourceFrameSummary {
         pending: Vec<TracedTokenWord>,
         end_after_current_line: bool,
     ) -> Self {
-        let line: Vec<_> = normalized_line.chars().collect();
+        let line_byte_offset = normalized_line
+            .char_indices()
+            .nth(line_char_offset)
+            .map_or(normalized_line.len(), |(offset, _)| offset);
+        let normalized_end_anchor = buffer_offset + normalized_line.len();
+        Self::new_with_physical_metadata(
+            buffer_offset,
+            next_source_offset,
+            line_number,
+            column,
+            lexer_state,
+            normalized_line,
+            line_byte_offset,
+            normalized_end_anchor,
+            normalized_end_anchor,
+            normalized_end_anchor,
+            normalized_end_anchor,
+            None,
+            pending,
+            end_after_current_line,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[must_use]
+    pub fn new_with_physical_metadata(
+        buffer_offset: usize,
+        next_source_offset: usize,
+        line_number: usize,
+        column: usize,
+        lexer_state: LexerState,
+        normalized_line: String,
+        line_byte_offset: usize,
+        physical_content_end: usize,
+        terminator_start: usize,
+        terminator_end: usize,
+        normalized_end_anchor: usize,
+        synthetic_endline_start: Option<usize>,
+        pending: Vec<TracedTokenWord>,
+        end_after_current_line: bool,
+    ) -> Self {
         Self {
             buffer_offset,
             next_source_offset,
@@ -554,8 +642,12 @@ impl SourceFrameSummary {
             column,
             lexer_state,
             normalized_line,
-            line_char_offset,
-            line_byte_offset: byte_offset_for_char_offset(&line, line_char_offset),
+            line_byte_offset,
+            physical_content_end,
+            terminator_start,
+            terminator_end,
+            normalized_end_anchor,
+            synthetic_endline_start,
             pending,
             end_after_current_line,
         }
@@ -593,12 +685,39 @@ impl SourceFrameSummary {
 
     #[must_use]
     pub fn line_char_offset(&self) -> usize {
-        self.line_char_offset
+        self.normalized_line[..self.line_byte_offset]
+            .chars()
+            .count()
     }
 
     #[must_use]
     pub fn line_byte_offset(&self) -> usize {
         self.line_byte_offset
+    }
+
+    #[must_use]
+    pub fn physical_content_end(&self) -> usize {
+        self.physical_content_end
+    }
+
+    #[must_use]
+    pub fn terminator_start(&self) -> usize {
+        self.terminator_start
+    }
+
+    #[must_use]
+    pub fn terminator_end(&self) -> usize {
+        self.terminator_end
+    }
+
+    #[must_use]
+    pub fn normalized_end_anchor(&self) -> usize {
+        self.normalized_end_anchor
+    }
+
+    #[must_use]
+    pub const fn synthetic_endline_start(&self) -> Option<usize> {
+        self.synthetic_endline_start
     }
 
     #[must_use]
@@ -615,9 +734,17 @@ impl SourceFrameSummary {
     /// needed after a source has been reopened by the snapshot owner.
     #[must_use]
     pub fn is_resume_complete(&self) -> bool {
-        self.line_char_offset <= self.normalized_line.chars().count()
-            && self.line_byte_offset <= self.normalized_line.len()
+        self.line_byte_offset <= self.normalized_line.len()
             && self.normalized_line.is_char_boundary(self.line_byte_offset)
+            && self.buffer_offset <= self.normalized_end_anchor
+            && self.normalized_end_anchor <= self.physical_content_end
+            && self.physical_content_end <= self.terminator_start
+            && self.terminator_start <= self.terminator_end
+            && self.terminator_end <= self.next_source_offset
+            && self.synthetic_endline_start.is_none_or(|offset| {
+                offset <= self.normalized_line.len()
+                    && self.normalized_line.is_char_boundary(offset)
+            })
     }
 }
 
@@ -629,8 +756,12 @@ impl PartialEq for SourceFrameSummary {
             && self.column == other.column
             && self.lexer_state == other.lexer_state
             && self.normalized_line == other.normalized_line
-            && self.line_char_offset == other.line_char_offset
             && self.line_byte_offset == other.line_byte_offset
+            && self.physical_content_end == other.physical_content_end
+            && self.terminator_start == other.terminator_start
+            && self.terminator_end == other.terminator_end
+            && self.normalized_end_anchor == other.normalized_end_anchor
+            && self.synthetic_endline_start == other.synthetic_endline_start
             && self.end_after_current_line == other.end_after_current_line
             && traced_pending_tokens_eq(&self.pending, &other.pending)
     }
@@ -646,8 +777,12 @@ impl Hash for SourceFrameSummary {
         self.column.hash(state);
         self.lexer_state.hash(state);
         self.normalized_line.hash(state);
-        self.line_char_offset.hash(state);
         self.line_byte_offset.hash(state);
+        self.physical_content_end.hash(state);
+        self.terminator_start.hash(state);
+        self.terminator_end.hash(state);
+        self.normalized_end_anchor.hash(state);
+        self.synthetic_endline_start.hash(state);
         self.pending.len().hash(state);
         for token in &self.pending {
             semantic_token(*token).hash(state);
@@ -668,8 +803,4 @@ fn semantic_token(token: TracedTokenWord) -> Token {
     token
         .token()
         .expect("source-frame pending tokens must be valid traced tokens")
-}
-
-fn byte_offset_for_char_offset(line: &[char], char_offset: usize) -> usize {
-    line.iter().take(char_offset).map(|ch| ch.len_utf8()).sum()
 }

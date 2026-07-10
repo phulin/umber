@@ -377,8 +377,12 @@ fn input_failure_retains_next_line_source_context() {
     struct FailingInput(Option<tex_state::WorldError>);
 
     impl InputSource for FailingInput {
-        fn read_line(&mut self) -> Result<Option<String>, tex_state::WorldError> {
-            Err(self.0.take().expect("failing input is read only once"))
+        fn read_line(&mut self) -> Result<Option<super::PhysicalLine>, super::InputSourceError> {
+            Err(self
+                .0
+                .take()
+                .expect("failing input is read only once")
+                .into())
         }
     }
 
@@ -454,6 +458,183 @@ fn traced_source_origins_use_token_start_coordinates() {
         .expect("superscript token");
     assert_eq!(superscript.token(), Some(char_token('A', Catcode::Letter)));
     assert_source_origin(&stores, superscript.origin(), 8, 1, 7);
+}
+
+#[test]
+fn physical_byte_coordinates_preserve_crlf_trailing_spaces_and_utf8() {
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::END_LINE_CHAR, 13);
+    let mut lexer = Lexer::new(MemoryInput::new("é  \r\nx"));
+
+    let utf8 = lexer
+        .next_traced_token(&mut stores)
+        .expect("UTF-8 token")
+        .expect("UTF-8 token");
+    assert_source_origin(&stores, utf8.origin(), 0, 1, 0);
+
+    let summary = lexer.input_summary();
+    let [InputFrameSummary::Source { source, .. }] = summary.frames() else {
+        panic!("expected source frame");
+    };
+    assert_eq!(source.normalized_line(), "é\r");
+    assert_eq!(source.line_byte_offset(), 2);
+    assert_eq!(source.physical_content_end(), 4);
+    assert_eq!(source.terminator_start(), 4);
+    assert_eq!(source.terminator_end(), 6);
+    assert_eq!(source.normalized_end_anchor(), 2);
+    assert_eq!(source.synthetic_endline_start(), Some(2));
+    assert_eq!(source.next_source_offset(), 6);
+
+    let endline = lexer
+        .next_traced_token(&mut stores)
+        .expect("endline token")
+        .expect("endline token");
+    let parent = assert_inserted_origin(&stores, endline.origin(), InsertedOriginKind::EndLine);
+    assert_source_origin(&stores, parent, 2, 1, 1);
+
+    let next = lexer
+        .next_traced_token(&mut stores)
+        .expect("next-line token")
+        .expect("next-line token");
+    assert_source_origin(&stores, next.origin(), 6, 2, 0);
+}
+
+#[test]
+fn missing_final_newline_and_comments_keep_physical_coordinates() {
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::END_LINE_CHAR, -1);
+    let mut lexer = Lexer::new(MemoryInput::new("a%ignored\r\nb"));
+
+    let first = lexer
+        .next_traced_token(&mut stores)
+        .expect("first token")
+        .expect("first token");
+    assert_source_origin(&stores, first.origin(), 0, 1, 0);
+    let second = lexer
+        .next_traced_token(&mut stores)
+        .expect("second token")
+        .expect("second token");
+    assert_source_origin(&stores, second.origin(), 11, 2, 0);
+}
+
+#[test]
+fn failed_superscript_transform_restores_byte_cursor_and_column() {
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::END_LINE_CHAR, -1);
+    let mut lexer = Lexer::new(MemoryInput::new("é^^"));
+
+    assert_eq!(
+        lexer.next_token(&mut stores).expect("UTF-8 token"),
+        Some(char_token('é', Catcode::Other))
+    );
+    assert_eq!(
+        lexer.next_token(&mut stores).expect("first superscript"),
+        Some(char_token('^', Catcode::Superscript))
+    );
+    let summary = lexer.input_summary();
+    let [InputFrameSummary::Source { source, .. }] = summary.frames() else {
+        panic!("expected source frame");
+    };
+    assert_eq!(source.line_byte_offset(), 3);
+    assert_eq!(source.column(), 2);
+    assert_eq!(
+        lexer.next_token(&mut stores).expect("second superscript"),
+        Some(char_token('^', Catcode::Superscript))
+    );
+}
+
+#[test]
+fn input_summary_restores_source_allocator_and_unicode_superscript_mode() {
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::END_LINE_CHAR, -1);
+    let mut input = InputStack::new(MemoryInput::new("a"));
+    assert_eq!(
+        input.push_source(MemoryInput::new("")),
+        tex_state::SourceId::new(1)
+    );
+    input.set_unicode_superscript_notation(false);
+    assert_eq!(
+        input.next_token(&mut stores).expect("outer token"),
+        Some(char_token('a', Catcode::Letter))
+    );
+
+    let summary = input.summary();
+    assert_eq!(summary.next_source_id(), 2);
+    assert!(!summary.unicode_superscript_notation());
+    let mut restored =
+        InputStack::from_summary(&summary, |_, _, _| Ok::<_, ()>(MemoryInput::new("")))
+            .expect("summary restores");
+    assert_eq!(
+        restored.push_source(MemoryInput::new("")),
+        tex_state::SourceId::new(2)
+    );
+    assert!(!restored.summary().unicode_superscript_notation());
+}
+
+#[test]
+fn nested_sources_keep_independent_physical_offsets() {
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::END_LINE_CHAR, -1);
+    let mut input = InputStack::new(MemoryInput::new("outer"));
+    let nested = input.push_source(MemoryInput::new("é"));
+
+    let inner = input
+        .next_traced_token(&mut stores)
+        .expect("nested token")
+        .expect("nested token");
+    assert_source_origin_for(&stores, inner.origin(), nested, 0, 1, 0);
+    let outer = input
+        .next_traced_token(&mut stores)
+        .expect("outer token")
+        .expect("outer token");
+    assert_source_origin_for(
+        &stores,
+        outer.origin(),
+        tex_state::SourceId::new(0),
+        0,
+        1,
+        0,
+    );
+}
+
+#[test]
+fn long_single_line_coordinates_advance_without_prefix_rescanning_state() {
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::END_LINE_CHAR, -1);
+    let source = "a".repeat(64 * 1024);
+    let mut input = InputStack::new(MemoryInput::new(source));
+    for _ in 0..(64 * 1024 - 1) {
+        input.next_token(&mut stores).expect("long-line token");
+    }
+    let final_token = input
+        .next_traced_token(&mut stores)
+        .expect("final long-line token")
+        .expect("final long-line token");
+    assert_source_origin(&stores, final_token.origin(), 65_535, 1, 65_535);
+}
+
+#[test]
+fn invalid_world_utf8_reports_exact_physical_byte_range() {
+    let mut stores = Universe::new();
+    stores
+        .world_mut()
+        .set_memory_file("invalid.tex", vec![b'a', 0xF0, 0x28, 0x8C, 0x28])
+        .expect("seed invalid input");
+    let content = stores
+        .world_mut()
+        .read_file("invalid.tex")
+        .expect("read invalid input bytes");
+    let mut input = InputStack::new(super::WorldInput::from_content(content));
+
+    let error = input
+        .next_traced_token(&mut stores)
+        .expect_err("invalid UTF-8 must be rejected");
+    let LexError::InvalidUtf8 { context } = error else {
+        panic!("expected invalid UTF-8 error, got {error:?}");
+    };
+    assert_eq!(context.byte_range(), 1..2);
+    assert_eq!(context.line(), 1);
+    assert_eq!(context.column(), 1);
 }
 
 #[test]
@@ -1028,10 +1209,28 @@ fn assert_source_origin(
     line: u32,
     column: u32,
 ) {
+    assert_source_origin_for(
+        stores,
+        origin,
+        tex_state::SourceId::new(0),
+        byte_offset,
+        line,
+        column,
+    );
+}
+
+fn assert_source_origin_for(
+    stores: &Universe,
+    origin: tex_state::token::OriginId,
+    source_id: tex_state::SourceId,
+    byte_offset: u64,
+    line: u32,
+    column: u32,
+) {
     let OriginRecord::Source(source) = stores.origin(origin) else {
         panic!("expected source origin, got {:?}", stores.origin(origin));
     };
-    assert_eq!(source.source().raw(), 0);
+    assert_eq!(source.source(), source_id);
     assert_eq!(source.byte_offset(), byte_offset);
     assert_eq!(source.line(), line);
     assert_eq!(source.column(), column);

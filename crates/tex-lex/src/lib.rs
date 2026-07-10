@@ -23,8 +23,8 @@ pub use tex_state::{
 /// The trait is local so M3's `World` can implement it without forcing the
 /// lexer to know where bytes came from.
 pub trait InputSource {
-    /// Reads the next physical line without its line terminator.
-    fn read_line(&mut self) -> Result<Option<String>, WorldError>;
+    /// Reads the next physical line with its original backing-byte metadata.
+    fn read_line(&mut self) -> Result<Option<PhysicalLine>, InputSourceError>;
 
     /// Returns the durable `World` record for a file-backed source.
     fn input_record(&self) -> Option<InputRecordId> {
@@ -32,10 +32,81 @@ pub trait InputSource {
     }
 }
 
+#[derive(Debug)]
+pub enum InputSourceError {
+    World(WorldError),
+    InvalidUtf8 {
+        byte_start: usize,
+        byte_end: usize,
+        line: usize,
+        column: usize,
+    },
+}
+
+impl fmt::Display for InputSourceError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::World(error) => error.fmt(f),
+            Self::InvalidUtf8 {
+                byte_start,
+                byte_end,
+                ..
+            } => write!(
+                f,
+                "invalid UTF-8 at physical bytes {byte_start}..{byte_end}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for InputSourceError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::World(error) => Some(error),
+            Self::InvalidUtf8 { .. } => None,
+        }
+    }
+}
+
+impl From<WorldError> for InputSourceError {
+    fn from(error: WorldError) -> Self {
+        Self::World(error)
+    }
+}
+
+/// One valid UTF-8 physical line and its exact range in the source backing.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PhysicalLine {
+    text: String,
+    start: usize,
+    content_end: usize,
+    terminator_start: usize,
+    terminator_end: usize,
+}
+
+impl PhysicalLine {
+    /// Constructs a physical line whose terminator, if any, immediately
+    /// follows `text` in the source backing.
+    #[must_use]
+    pub fn new(text: String, start: usize, terminator_end: usize) -> Self {
+        let content_end = start
+            .checked_add(text.len())
+            .expect("physical line byte range overflowed");
+        assert!(terminator_end >= content_end);
+        Self {
+            text,
+            start,
+            content_end,
+            terminator_start: content_end,
+            terminator_end,
+        }
+    }
+}
+
 /// In-memory input source for tests, `\scantokens`, and editor buffers.
 #[derive(Debug)]
 pub struct MemoryInput {
-    lines: std::vec::IntoIter<String>,
+    lines: std::vec::IntoIter<PhysicalLine>,
 }
 
 impl MemoryInput {
@@ -48,7 +119,7 @@ impl MemoryInput {
 }
 
 impl InputSource for MemoryInput {
-    fn read_line(&mut self) -> Result<Option<String>, WorldError> {
+    fn read_line(&mut self) -> Result<Option<PhysicalLine>, InputSourceError> {
         Ok(self.lines.next())
     }
 }
@@ -57,37 +128,68 @@ impl InputSource for MemoryInput {
 #[derive(Debug)]
 pub struct WorldInput {
     input_record: InputRecordId,
-    lines: std::vec::IntoIter<String>,
+    lines: std::vec::IntoIter<PhysicalLine>,
+    invalid_utf8: Option<(usize, usize, usize, usize)>,
 }
 
 impl WorldInput {
     #[must_use]
     pub fn from_content(content: FileContent) -> Self {
         let input_record = content.record();
-        let input = String::from_utf8_lossy(content.bytes()).into_owned();
-        Self {
-            input_record,
-            lines: split_physical_lines(&input).into_iter(),
-        }
+        Self::from_bytes(input_record, content.bytes(), 0)
     }
 
     #[must_use]
     pub fn from_content_after_lines(content: FileContent, lines_read: usize) -> Self {
         let input_record = content.record();
-        let input = String::from_utf8_lossy(content.bytes()).into_owned();
-        Self {
-            input_record,
-            lines: split_physical_lines(&input)
-                .into_iter()
-                .skip(lines_read)
-                .collect::<Vec<_>>()
-                .into_iter(),
+        Self::from_bytes(input_record, content.bytes(), lines_read)
+    }
+
+    fn from_bytes(input_record: InputRecordId, bytes: &[u8], lines_read: usize) -> Self {
+        match std::str::from_utf8(bytes) {
+            Ok(input) => Self {
+                input_record,
+                lines: split_physical_lines(input)
+                    .into_iter()
+                    .skip(lines_read)
+                    .collect::<Vec<_>>()
+                    .into_iter(),
+                invalid_utf8: None,
+            },
+            Err(error) => {
+                let byte_start = error.valid_up_to();
+                let byte_end = error
+                    .error_len()
+                    .map_or(bytes.len(), |len| byte_start.saturating_add(len));
+                let valid = std::str::from_utf8(&bytes[..byte_start])
+                    .expect("valid_up_to prefix must be valid UTF-8");
+                let line = valid.bytes().filter(|byte| *byte == b'\n').count() + 1;
+                let column = valid
+                    .rsplit_once('\n')
+                    .map_or(valid, |(_, suffix)| suffix)
+                    .trim_end_matches('\r')
+                    .chars()
+                    .count();
+                Self {
+                    input_record,
+                    lines: Vec::new().into_iter(),
+                    invalid_utf8: Some((byte_start, byte_end, line, column)),
+                }
+            }
         }
     }
 }
 
 impl InputSource for WorldInput {
-    fn read_line(&mut self) -> Result<Option<String>, WorldError> {
+    fn read_line(&mut self) -> Result<Option<PhysicalLine>, InputSourceError> {
+        if let Some((byte_start, byte_end, line, column)) = self.invalid_utf8.take() {
+            return Err(InputSourceError::InvalidUtf8 {
+                byte_start,
+                byte_end,
+                line,
+                column,
+            });
+        }
         Ok(self.lines.next())
     }
 
@@ -114,10 +216,15 @@ pub struct LineReader<S> {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SourceFrame {
     state: LexerState,
-    line: Vec<char>,
-    offset: usize,
+    line: String,
+    byte_offset: usize,
     pending: VecDeque<TracedTokenWord>,
-    buffer_offset: usize,
+    physical_line_start: usize,
+    physical_content_end: usize,
+    terminator_start: usize,
+    terminator_end: usize,
+    normalized_end_anchor: usize,
+    synthetic_endline_start: Option<usize>,
     line_number: usize,
     column: usize,
     end_after_current_line: bool,
@@ -136,12 +243,12 @@ impl SourceFrame {
 
     #[must_use]
     pub fn offset(&self) -> usize {
-        self.offset
+        self.byte_offset
     }
 
     #[must_use]
     pub fn buffer_offset(&self) -> usize {
-        self.buffer_offset
+        self.physical_line_start
     }
 
     #[must_use]
@@ -155,14 +262,19 @@ impl SourceFrame {
     }
 
     fn summary(&self, next_source_offset: usize) -> SourceFrameSummary {
-        SourceFrameSummary::new(
-            self.buffer_offset,
+        SourceFrameSummary::new_with_physical_metadata(
+            self.physical_line_start,
             next_source_offset,
             self.line_number,
             self.column,
             self.state,
-            self.line.iter().collect(),
-            self.offset,
+            self.line.clone(),
+            self.byte_offset,
+            self.physical_content_end,
+            self.terminator_start,
+            self.terminator_end,
+            self.normalized_end_anchor,
+            self.synthetic_endline_start,
             self.pending.iter().copied().collect(),
             self.end_after_current_line,
         )
@@ -175,10 +287,15 @@ impl SourceFrame {
         );
         Self {
             state: summary.lexer_state(),
-            line: summary.normalized_line().chars().collect(),
-            offset: summary.line_char_offset(),
+            line: summary.normalized_line().to_owned(),
+            byte_offset: summary.line_byte_offset(),
             pending: summary.pending().iter().copied().collect(),
-            buffer_offset: summary.buffer_offset(),
+            physical_line_start: summary.buffer_offset(),
+            physical_content_end: summary.physical_content_end(),
+            terminator_start: summary.terminator_start(),
+            terminator_end: summary.terminator_end(),
+            normalized_end_anchor: summary.normalized_end_anchor(),
+            synthetic_endline_start: summary.synthetic_endline_start(),
             line_number: summary.line_number(),
             column: summary.column(),
             end_after_current_line: summary.end_after_current_line(),
@@ -401,7 +518,6 @@ impl<S> InputStack<S> {
     where
         F: FnMut(SourceId, Option<InputRecordId>, &SourceFrameSummary) -> Result<S, E>,
     {
-        let mut max_source_id = None::<u32>;
         let mut frames = Vec::with_capacity(summary.frames().len());
         for frame in summary.frames() {
             match frame {
@@ -410,8 +526,6 @@ impl<S> InputStack<S> {
                     input_record,
                     source,
                 } => {
-                    max_source_id =
-                        Some(max_source_id.map_or(source_id.raw(), |max| max.max(source_id.raw())));
                     frames.push(InputFrame::Source(SourceInputFrame {
                         source_id: *source_id,
                         input_record: *input_record,
@@ -447,10 +561,8 @@ impl<S> InputStack<S> {
 
         Ok(Self {
             frames,
-            next_source_id: max_source_id.map_or(0, |id| {
-                id.checked_add(1).expect("source id counter overflowed")
-            }),
-            unicode_superscript_notation: true,
+            next_source_id: summary.next_source_id(),
+            unicode_superscript_notation: summary.unicode_superscript_notation(),
             last_source_frame: summary.last_source_frame().map(|source| LastSourceFrame {
                 source_id: summary
                     .last_source_id()
@@ -696,7 +808,7 @@ impl<S> InputStack<S> {
 
     #[must_use]
     pub fn summary(&self) -> InputSummary {
-        InputSummary::new_with_source_records(
+        InputSummary::new_with_resume_state(
             self.frames
                 .iter()
                 .map(|frame| match frame {
@@ -726,6 +838,8 @@ impl<S> InputStack<S> {
             self.last_source_frame
                 .as_ref()
                 .map(|last| last.frame.summary(last.next_source_offset)),
+            self.next_source_id,
+            self.unicode_superscript_notation,
         )
     }
 
@@ -791,6 +905,7 @@ pub struct LexSourceContext {
     source_id: SourceId,
     input_record: Option<InputRecordId>,
     byte_offset: u64,
+    byte_end: u64,
     line: u32,
     column: u32,
 }
@@ -804,6 +919,16 @@ impl LexSourceContext {
     #[must_use]
     pub const fn byte_offset(self) -> u64 {
         self.byte_offset
+    }
+
+    #[must_use]
+    pub const fn byte_end(self) -> u64 {
+        self.byte_end
+    }
+
+    #[must_use]
+    pub const fn byte_range(self) -> std::ops::Range<u64> {
+        self.byte_offset..self.byte_end
     }
 
     #[must_use]
@@ -828,6 +953,9 @@ pub enum LexError {
         ch: char,
         context: LexSourceContext,
     },
+    InvalidUtf8 {
+        context: LexSourceContext,
+    },
     MissingControlSequence {
         name: String,
         context: LexSourceContext,
@@ -845,6 +973,11 @@ impl fmt::Display for LexError {
                     *ch as u32
                 )
             }
+            Self::InvalidUtf8 { context } => write!(
+                f,
+                "input contains invalid UTF-8 in physical byte range {}..{}",
+                context.byte_offset, context.byte_end
+            ),
             Self::MissingControlSequence { name, .. } => {
                 write!(f, "control sequence {name:?} is not interned")
             }
@@ -856,7 +989,9 @@ impl std::error::Error for LexError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Input { error, .. } => Some(error),
-            Self::InvalidCharacter { .. } | Self::MissingControlSequence { .. } => None,
+            Self::InvalidCharacter { .. }
+            | Self::InvalidUtf8 { .. }
+            | Self::MissingControlSequence { .. } => None,
         }
     }
 }
@@ -867,6 +1002,7 @@ impl LexError {
         match self {
             Self::Input { context, .. }
             | Self::InvalidCharacter { context, .. }
+            | Self::InvalidUtf8 { context }
             | Self::MissingControlSequence { context, .. } => *context,
         }
     }
@@ -992,7 +1128,7 @@ where
                         return Ok(Some(token));
                     }
 
-                    if source.frame.offset >= source.frame.line.len() {
+                    if source.frame.byte_offset >= source.frame.line.len() {
                         if source.frame.end_after_current_line {
                             let popped = self.frames.remove(frame_index);
                             if let InputFrame::Source(source) = popped {
@@ -1090,7 +1226,7 @@ where
                         return Ok(Some(TracedExpansionToken::new(token, false)));
                     }
 
-                    if source.frame.offset >= source.frame.line.len() {
+                    if source.frame.byte_offset >= source.frame.line.len() {
                         if source.frame.end_after_current_line {
                             let popped = self.frames.remove(frame_index);
                             if let InputFrame::Source(source) = popped {
@@ -1170,7 +1306,7 @@ where
                         return Ok(Some(ExpansionToken::new(decode_traced_token(token), false)));
                     }
 
-                    if source.frame.offset >= source.frame.line.len() {
+                    if source.frame.byte_offset >= source.frame.line.len() {
                         if source.frame.end_after_current_line {
                             let popped = self.frames.remove(frame_index);
                             if let InputFrame::Source(source) = popped {
@@ -1404,17 +1540,22 @@ where
     let context = next_line_source_context(source);
     match source
         .lines
-        .next_event(stores)
-        .map_err(|error| LexError::Input { error, context })?
+        .next_normalized_line(stores)
+        .map_err(|error| map_input_source_error(source, error, context))?
     {
-        Some(LineEvent::Text(line)) => {
+        Some(line) => {
             source.frame.state = LexerState::NewLine;
-            source.frame.line = line.chars().collect();
-            source.frame.offset = 0;
-            source.frame.buffer_offset = source.next_source_offset;
+            source.frame.line = line.text;
+            source.frame.byte_offset = 0;
+            source.frame.physical_line_start = line.physical_start;
+            source.frame.physical_content_end = line.physical_content_end;
+            source.frame.terminator_start = line.terminator_start;
+            source.frame.terminator_end = line.terminator_end;
+            source.frame.normalized_end_anchor = line.normalized_end_anchor;
+            source.frame.synthetic_endline_start = line.synthetic_endline_start;
             source.frame.line_number += 1;
             source.frame.column = 0;
-            source.next_source_offset += line.len();
+            source.next_source_offset = line.terminator_end;
             Ok(true)
         }
         None => Ok(false),
@@ -1431,20 +1572,53 @@ where
     let context = next_line_source_context(source);
     match source
         .lines
-        .next_event(stores)
-        .map_err(|error| LexError::Input { error, context })?
+        .next_normalized_line(stores)
+        .map_err(|error| map_input_source_error(source, error, context))?
     {
-        Some(LineEvent::Text(line)) => {
+        Some(line) => {
             source.frame.state = LexerState::NewLine;
-            source.frame.line = line.chars().collect();
-            source.frame.offset = 0;
-            source.frame.buffer_offset = source.next_source_offset;
+            source.frame.line = line.text;
+            source.frame.byte_offset = 0;
+            source.frame.physical_line_start = line.physical_start;
+            source.frame.physical_content_end = line.physical_content_end;
+            source.frame.terminator_start = line.terminator_start;
+            source.frame.terminator_end = line.terminator_end;
+            source.frame.normalized_end_anchor = line.normalized_end_anchor;
+            source.frame.synthetic_endline_start = line.synthetic_endline_start;
             source.frame.line_number += 1;
             source.frame.column = 0;
-            source.next_source_offset += line.len();
+            source.next_source_offset = line.terminator_end;
             Ok(true)
         }
         None => Ok(false),
+    }
+}
+
+fn map_input_source_error<S>(
+    source: &SourceInputFrame<S>,
+    error: InputSourceError,
+    fallback: LexSourceContext,
+) -> LexError {
+    match error {
+        InputSourceError::World(error) => LexError::Input {
+            error,
+            context: fallback,
+        },
+        InputSourceError::InvalidUtf8 {
+            byte_start,
+            byte_end,
+            line,
+            column,
+        } => LexError::InvalidUtf8 {
+            context: LexSourceContext {
+                source_id: source.source_id,
+                input_record: source.input_record,
+                byte_offset: u64::try_from(byte_start).unwrap_or(u64::MAX),
+                byte_end: u64::try_from(byte_end).unwrap_or(u64::MAX),
+                line: u32::try_from(line).unwrap_or(u32::MAX),
+                column: u32::try_from(column).unwrap_or(u32::MAX),
+            },
+        },
     }
 }
 
@@ -1453,6 +1627,7 @@ fn next_line_source_context<S>(source: &SourceInputFrame<S>) -> LexSourceContext
         source_id: source.source_id,
         input_record: source.input_record,
         byte_offset: u64::try_from(source.next_source_offset).unwrap_or(u64::MAX),
+        byte_end: u64::try_from(source.next_source_offset).unwrap_or(u64::MAX),
         line: u32::try_from(source.frame.line_number.saturating_add(1)).unwrap_or(u32::MAX),
         column: 0,
     }
@@ -1467,23 +1642,20 @@ fn source_coordinate_from_frame(
     input_record: Option<InputRecordId>,
     frame: &SourceFrame,
 ) -> LexSourceContext {
-    let byte_offset = frame.buffer_offset + byte_offset_for_char_offset(frame);
+    let byte_offset = frame
+        .synthetic_endline_start
+        .filter(|start| frame.byte_offset >= *start)
+        .map_or(frame.physical_line_start + frame.byte_offset, |_| {
+            frame.normalized_end_anchor
+        });
     LexSourceContext {
         source_id,
         input_record,
         byte_offset: u64::try_from(byte_offset).unwrap_or(u64::MAX),
+        byte_end: u64::try_from(byte_offset).unwrap_or(u64::MAX),
         line: u32::try_from(frame.line_number).unwrap_or(u32::MAX),
         column: u32::try_from(frame.column).unwrap_or(u32::MAX),
     }
-}
-
-fn byte_offset_for_char_offset(frame: &SourceFrame) -> usize {
-    frame
-        .line
-        .iter()
-        .take(frame.offset)
-        .map(|ch| ch.len_utf8())
-        .sum()
 }
 
 fn traced_source_token(
@@ -1536,7 +1708,10 @@ fn next_token_from_line<S>(
         Catcode::Ignored => Ok(None),
         Catcode::Invalid => Err(LexError::InvalidCharacter { ch, context: start }),
         Catcode::Comment => {
-            source.frame.offset = source.frame.line.len();
+            source.frame.column += source.frame.line[source.frame.byte_offset..]
+                .chars()
+                .count();
+            source.frame.byte_offset = source.frame.line.len();
             Ok(None)
         }
         Catcode::EndLine => {
@@ -1616,7 +1791,10 @@ fn next_token_from_line_readonly<S>(
         Catcode::Ignored => Ok(None),
         Catcode::Invalid => Err(LexError::InvalidCharacter { ch, context: start }),
         Catcode::Comment => {
-            source.frame.offset = source.frame.line.len();
+            source.frame.column += source.frame.line[source.frame.byte_offset..]
+                .chars()
+                .count();
+            source.frame.byte_offset = source.frame.line.len();
             Ok(None)
         }
         Catcode::EndLine => {
@@ -1679,7 +1857,7 @@ fn scan_control_sequence<S>(
     unicode_superscript_notation: bool,
     start: LexSourceContext,
 ) -> TracedTokenWord {
-    if source.frame.offset >= source.frame.line.len() {
+    if source.frame.byte_offset >= source.frame.line.len() {
         source.frame.state = LexerState::SkippingBlanks;
         let token = Token::Cs(stores.intern(""));
         return traced_source_token(stores, token, start);
@@ -1698,14 +1876,14 @@ fn scan_control_sequence<S>(
     }
 
     let mut name = String::from(ch);
-    while source.frame.offset < source.frame.line.len() {
-        let mark = source.frame.offset;
+    while source.frame.byte_offset < source.frame.line.len() {
+        let mark = source.frame.byte_offset;
         let mark_col = source.frame.column;
         let next = read_expanded_char(source, stores, unicode_superscript_notation);
         if stores.catcode(next) == Catcode::Letter {
             name.push(next);
         } else {
-            source.frame.offset = mark;
+            source.frame.byte_offset = mark;
             source.frame.column = mark_col;
             break;
         }
@@ -1721,7 +1899,7 @@ fn scan_control_sequence_readonly<S>(
     unicode_superscript_notation: bool,
     context: LexSourceContext,
 ) -> Result<Token, LexError> {
-    if source.frame.offset >= source.frame.line.len() {
+    if source.frame.byte_offset >= source.frame.line.len() {
         source.frame.state = LexerState::SkippingBlanks;
         return readonly_cs_token(stores, "", context);
     }
@@ -1738,14 +1916,14 @@ fn scan_control_sequence_readonly<S>(
     }
 
     let mut name = String::from(ch);
-    while source.frame.offset < source.frame.line.len() {
-        let mark = source.frame.offset;
+    while source.frame.byte_offset < source.frame.line.len() {
+        let mark = source.frame.byte_offset;
         let mark_col = source.frame.column;
         let next = read_expanded_char(source, stores, unicode_superscript_notation);
         if stores.catcode(next) == Catcode::Letter {
             name.push(next);
         } else {
-            source.frame.offset = mark;
+            source.frame.byte_offset = mark;
             source.frame.column = mark_col;
             break;
         }
@@ -1773,10 +1951,55 @@ fn read_expanded_char<S>(
     stores: &impl ExpansionState,
     unicode_superscript_notation: bool,
 ) -> char {
-    let ch = source.frame.line[source.frame.offset];
-    source.frame.offset += 1;
+    let ch = source.frame.line[source.frame.byte_offset..]
+        .chars()
+        .next()
+        .expect("caller checks that the byte cursor is not at line end");
+    source.frame.byte_offset += ch.len_utf8();
     source.frame.column += 1;
     expand_superscript_notation(source, ch, stores, unicode_superscript_notation).unwrap_or(ch)
+}
+
+#[derive(Clone, Copy)]
+struct CursorMark {
+    byte_offset: usize,
+    column: usize,
+}
+
+fn cursor_mark(frame: &SourceFrame) -> CursorMark {
+    CursorMark {
+        byte_offset: frame.byte_offset,
+        column: frame.column,
+    }
+}
+
+fn restore_cursor(frame: &mut SourceFrame, mark: CursorMark) {
+    frame.byte_offset = mark.byte_offset;
+    frame.column = mark.column;
+}
+
+fn take_char(frame: &mut SourceFrame) -> Option<char> {
+    let ch = frame.line[frame.byte_offset..].chars().next()?;
+    frame.byte_offset += ch.len_utf8();
+    frame.column += 1;
+    Some(ch)
+}
+
+fn take_ascii_hex(frame: &mut SourceFrame, count: usize) -> Option<u32> {
+    let mark = cursor_mark(frame);
+    let mut value = 0_u32;
+    for _ in 0..count {
+        let Some(ch) = take_char(frame) else {
+            restore_cursor(frame, mark);
+            return None;
+        };
+        let Some(digit) = ch.to_digit(16).filter(|_| ch.is_ascii()) else {
+            restore_cursor(frame, mark);
+            return None;
+        };
+        value = value * 16 + digit;
+    }
+    Some(value)
 }
 
 fn expand_superscript_notation<S>(
@@ -1788,64 +2011,45 @@ fn expand_superscript_notation<S>(
     if stores.catcode(ch) != Catcode::Superscript {
         return None;
     }
-    let saved = source.frame.offset;
-    let saved_col = source.frame.column;
-    let second = *source.frame.line.get(source.frame.offset)?;
+    let saved = cursor_mark(&source.frame);
+    let second = source.frame.line[source.frame.byte_offset..]
+        .chars()
+        .next()?;
     if stores.catcode(second) != Catcode::Superscript {
         return None;
     }
-    source.frame.offset += 1;
-    source.frame.column += 1;
+    take_char(&mut source.frame);
 
-    if unicode_superscript_notation
-        && source
-            .frame
-            .line
-            .get(source.frame.offset..source.frame.offset + 6)
-            .is_some()
-        && stores.catcode(source.frame.line[source.frame.offset]) == Catcode::Superscript
-        && stores.catcode(source.frame.line[source.frame.offset + 1]) == Catcode::Superscript
-    {
-        let digits = &source.frame.line[source.frame.offset + 2..source.frame.offset + 6];
-        if digits.iter().all(|ch| ch.is_ascii_hexdigit()) {
-            let mut value = 0_u32;
-            for digit in digits {
-                value = value * 16 + digit.to_digit(16).expect("checked hex digit");
-            }
-            if let Some(decoded) = char::from_u32(value) {
-                source.frame.offset += 6;
-                source.frame.column += 6;
-                return Some(decoded);
-            }
+    if unicode_superscript_notation {
+        let unicode_mark = cursor_mark(&source.frame);
+        let third = take_char(&mut source.frame);
+        let fourth = take_char(&mut source.frame);
+        if third.is_some_and(|ch| stores.catcode(ch) == Catcode::Superscript)
+            && fourth.is_some_and(|ch| stores.catcode(ch) == Catcode::Superscript)
+            && let Some(value) = take_ascii_hex(&mut source.frame, 4)
+            && let Some(decoded) = char::from_u32(value)
+        {
+            return Some(decoded);
         }
+        restore_cursor(&mut source.frame, unicode_mark);
     }
 
-    if source
-        .frame
-        .line
-        .get(source.frame.offset..source.frame.offset + 2)
-        .is_some()
+    let hex_mark = cursor_mark(&source.frame);
+    if let Some(value) = take_ascii_hex(&mut source.frame, 2)
+        && let Some(decoded) = char::from_u32(value)
     {
-        let digits = &source.frame.line[source.frame.offset..source.frame.offset + 2];
-        if digits.iter().all(|ch| ch.is_ascii_hexdigit()) {
-            let value = digits[0].to_digit(16).expect("checked hex digit") * 16
-                + digits[1].to_digit(16).expect("checked hex digit");
-            if let Some(decoded) = char::from_u32(value) {
-                source.frame.offset += 2;
-                source.frame.column += 2;
-                return Some(decoded);
-            }
-        }
+        return Some(decoded);
     }
+    restore_cursor(&mut source.frame, hex_mark);
 
-    let target = *source.frame.line.get(source.frame.offset)?;
-    source.frame.offset += 1;
-    source.frame.column += 1;
+    let Some(target) = take_char(&mut source.frame) else {
+        restore_cursor(&mut source.frame, saved);
+        return None;
+    };
     let code = target as u32;
     let decoded = if code < 64 { code + 64 } else { code - 64 };
     char::from_u32(decoded).or_else(|| {
-        source.frame.offset = saved;
-        source.frame.column = saved_col;
+        restore_cursor(&mut source.frame, saved);
         None
     })
 }
@@ -1869,7 +2073,16 @@ where
     pub fn next_event(
         &mut self,
         stores: &impl ExpansionState,
-    ) -> Result<Option<LineEvent>, WorldError> {
+    ) -> Result<Option<LineEvent>, InputSourceError> {
+        Ok(self
+            .next_normalized_line(stores)?
+            .map(|line| LineEvent::Text(line.text)))
+    }
+
+    fn next_normalized_line(
+        &mut self,
+        stores: &impl ExpansionState,
+    ) -> Result<Option<NormalizedLine>, InputSourceError> {
         let Some(line) = self.source.read_line()? else {
             return Ok(None);
         };
@@ -1877,34 +2090,67 @@ where
     }
 }
 
-fn normalize_line(line: &str, endlinechar: i32) -> LineEvent {
-    let stripped = line.trim_end_matches(' ');
+#[derive(Debug)]
+struct NormalizedLine {
+    text: String,
+    physical_start: usize,
+    physical_content_end: usize,
+    terminator_start: usize,
+    terminator_end: usize,
+    normalized_end_anchor: usize,
+    synthetic_endline_start: Option<usize>,
+}
+
+fn normalize_line(line: &PhysicalLine, endlinechar: i32) -> NormalizedLine {
+    let stripped = line.text.trim_end_matches(' ');
+    let normalized_end_anchor = line.start + stripped.len();
+    let mut normalized = stripped.to_owned();
+    let mut synthetic_endline_start = None;
     if let Ok(value) = u32::try_from(endlinechar)
         && let Some(ch) = char::from_u32(value)
     {
-        let mut normalized = stripped.to_owned();
+        synthetic_endline_start = Some(normalized.len());
         normalized.push(ch);
-        return LineEvent::Text(normalized);
     }
-    LineEvent::Text(stripped.to_owned())
+    NormalizedLine {
+        text: normalized,
+        physical_start: line.start,
+        physical_content_end: line.content_end,
+        terminator_start: line.terminator_start,
+        terminator_end: line.terminator_end,
+        normalized_end_anchor,
+        synthetic_endline_start,
+    }
 }
 
-fn split_physical_lines(input: &str) -> Vec<String> {
+fn split_physical_lines(input: &str) -> Vec<PhysicalLine> {
     let mut lines = Vec::new();
     let mut start = 0;
-    for (index, ch) in input.char_indices() {
-        if ch == '\n' {
-            let end = if index > start && input[..index].ends_with('\r') {
+    for (index, byte) in input.bytes().enumerate() {
+        if byte == b'\n' {
+            let terminator_start = if index > start && input.as_bytes()[index - 1] == b'\r' {
                 index - 1
             } else {
                 index
             };
-            lines.push(input[start..end].to_owned());
+            lines.push(PhysicalLine {
+                text: input[start..terminator_start].to_owned(),
+                start,
+                content_end: terminator_start,
+                terminator_start,
+                terminator_end: index + 1,
+            });
             start = index + 1;
         }
     }
     if start < input.len() {
-        lines.push(input[start..].to_owned());
+        lines.push(PhysicalLine {
+            text: input[start..].to_owned(),
+            start,
+            content_end: input.len(),
+            terminator_start: input.len(),
+            terminator_end: input.len(),
+        });
     }
     lines
 }
