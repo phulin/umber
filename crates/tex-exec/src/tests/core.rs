@@ -759,6 +759,22 @@ fn control_space_appends_normal_font_space_glue() {
 }
 
 #[test]
+fn appended_box_resets_space_factor_before_sentence_punctuation() {
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\font\\f=cmr10 \\relax \\f \\sfcode46=3000 A\\hbox{}.\\message{S=\\the\\spacefactor}\\end",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("box and following punctuation execute");
+
+    let output = terminal_effect_text(&stores);
+    assert!(output.contains("S=3000"), "unexpected output: {output:?}");
+}
+
+#[test]
 fn overfull_hbox_appends_running_rule_when_enabled() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

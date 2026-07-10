@@ -52,7 +52,7 @@ where
         )?)
     };
     if let Some(node) = node {
-        append_node_to_current_list(nest, stores, node)?;
+        append_box_node_to_current_list(nest, stores, node)?;
     }
     build_page_if_outer_vertical(nest, stores)?;
     Ok(())
@@ -206,13 +206,7 @@ where
         }
         UnexpandablePrimitive::LastBox => {
             if let Some(node) = take_last_box(nest, stores)? {
-                append_node_to_current_list(nest, stores, node)?;
-                if matches!(
-                    nest.current_mode(),
-                    Mode::Horizontal | Mode::RestrictedHorizontal
-                ) {
-                    nest.current_list_mut().set_space_factor(1000);
-                }
+                append_box_node_to_current_list(nest, stores, node)?;
             }
         }
         UnexpandablePrimitive::Raise
@@ -222,7 +216,7 @@ where
             let amount = scan_scaled(input, stores, hooks, context)?;
             let mut node = scan_required_box_node(input, stores, hooks, context)?;
             apply_shift(&mut node, primitive, amount)?;
-            append_node_to_current_list(nest, stores, node)?;
+            append_box_node_to_current_list(nest, stores, node)?;
         }
         _ => unreachable!("caller restricts box list commands"),
     }
@@ -463,7 +457,22 @@ fn append_box_register(
 ) -> Result<(), ExecError> {
     if let Some(node) = first_box_node(stores, id) {
         let node = stores.clone_node_to_epoch(node);
-        append_node_to_current_list(nest, stores, node)?;
+        append_box_node_to_current_list(nest, stores, node)?;
+    }
+    Ok(())
+}
+
+fn append_box_node_to_current_list(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    node: Node,
+) -> Result<(), ExecError> {
+    append_node_to_current_list(nest, stores, node)?;
+    if matches!(
+        nest.current_mode(),
+        Mode::Horizontal | Mode::RestrictedHorizontal
+    ) {
+        nest.current_list_mut().set_space_factor(1000);
     }
     Ok(())
 }
