@@ -43,6 +43,17 @@ impl MathLayout {
     }
 }
 
+/// Read-only access to formula-local structural spans during sink lowering.
+pub trait MathLayoutReader {
+    fn math_nodes(&self, list: FrozenHList) -> &[MathNode];
+}
+
+impl MathLayoutReader for MathLayout {
+    fn math_nodes(&self, list: FrozenHList) -> &[MathNode] {
+        self.nodes(list)
+    }
+}
+
 /// An immutable, measured horizontal-list span in a [`MathLayout`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FrozenHList {

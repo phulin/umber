@@ -23,14 +23,16 @@ use tex_state::scaled::Scaled;
 
 use crate::TypesetState;
 
-pub use convert::mlist_to_hlist;
 pub(crate) use convert::{
     Context, FetchedChar, add, char_box, clean_box, fetch, make_character_nucleus, source_node, sub,
 };
+pub use convert::{mlist_to_hlist, mlist_to_hlist_with_sink};
 pub use delimiters::left_right_delimiter_target;
 #[cfg(test)]
 pub(crate) use delimiters::test_var_delimiter;
-pub use model::{BoxAxis, FrozenHList, MathBox, MathGlueKind, MathLayout, MathNode};
+pub use model::{
+    BoxAxis, FrozenHList, MathBox, MathGlueKind, MathLayout, MathLayoutReader, MathNode,
+};
 pub(crate) use model::{MathLayoutBuilder, boxed_node, hlist_extents, node_is_char};
 pub use params::{ExtensionParams, MathParamState, MathParams, SizeParams, SymbolParams};
 pub use spacing::{SpacingKind, inter_noad_spacing, math_glue, math_kern};
@@ -49,6 +51,15 @@ pub trait MathTypesetState: TypesetState {
         right: LigKernChar,
     ) -> Option<LigKernCommand>;
     fn font_skew_char(&self, font: FontId) -> i32;
+}
+
+/// Destination invoked with a completed formula before conversion returns.
+///
+/// The reader keeps the pure arena representation private while allowing an
+/// execution-side destination to emit its native nodes at the conversion
+/// boundary instead of handing the layout to a separate lowering phase.
+pub trait MathLayoutSink: MathTypesetState {
+    fn finish_math_hlist(&mut self, list: FrozenHList, layout: &dyn MathLayoutReader);
 }
 
 impl MathTypesetState for Universe {

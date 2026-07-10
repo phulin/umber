@@ -7,7 +7,7 @@ use tex_state::node::{BoxNode, GlueKind, KernKind, Node, Sign};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token};
 use tex_typeset::PackSpec;
-use tex_typeset::math::{MathParams, Style, mlist_to_hlist};
+use tex_typeset::math::{MathParams, Style};
 
 use crate::mode::{DisplayEqNo, DisplayInterrupt, EqNoSide};
 use crate::packing_params::{hpack as hpack_nodes, hpack_params};
@@ -16,7 +16,7 @@ use crate::vertical::{
 };
 use crate::{ExecError, Mode, ModeNest, push_tokens};
 
-use super::lower::lower_math_hlist;
+use super::lower::convert_math_hlist;
 use super::scan::finish_current_math_list;
 
 pub(super) fn start_eq_no(
@@ -64,8 +64,7 @@ where
     };
     // AppG rule 22
     let params = MathParams::read(stores);
-    let display_hlist = mlist_to_hlist(stores, display_content, Style::DISPLAY, false, &params);
-    let display_nodes = lower_math_hlist(stores, display_hlist);
+    let display_nodes = convert_math_hlist(stores, display_content, Style::DISPLAY, false, &params);
     let shrink = hlist_shrink(stores, &display_nodes);
     let display_list = stores.freeze_node_list(&display_nodes);
     let mut display_box = hpack_nodes(
@@ -79,8 +78,7 @@ where
     let natural_display_width = display_box.width;
 
     let mut eq_box = eq_no_content.map(|content| {
-        let eq_hlist = mlist_to_hlist(stores, content, Style::TEXT, false, &params);
-        let eq_nodes = lower_math_hlist(stores, eq_hlist);
+        let eq_nodes = convert_math_hlist(stores, content, Style::TEXT, false, &params);
         let eq_list = stores.freeze_node_list(&eq_nodes);
         let mut node = hpack_nodes(stores, eq_list, PackSpec::Natural, hpack_params(stores)).node;
         node.display = true;

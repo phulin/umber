@@ -55,18 +55,18 @@ character pair actually requires TeX's mutating ligature/kern rule.
 
 ## Lowering boundary
 
-`tex-typeset` remains pure: it reads through `MathTypesetState` and returns an
-owned `MathLayout`. `tex-exec` lowers the arena bottom-up through `Universe`.
-Each box child span is frozen into an epoch `NodeListId`; sequence references
-are flattened into their containing list and do not create boxes or observable
-nodes. Lowering uses one node scratch vector plus box-frame start indices, so a
-completed child slice can be frozen and replaced by its box node without a
-per-box output vector. A formula-local cache also avoids repeatedly interning
-the same small set of spacing glues.
+The ordinary `tex-typeset` API remains pure and returns an owned `MathLayout`.
+Execution uses the optional `MathLayoutSink` entry point instead: conversion
+invokes an exec-owned destination with the completed root before returning.
+The destination expands transparent sequence spans directly into one reusable
+node buffer, freezes each completed box child through `Universe`, and leaves no
+standalone `lower_math_hlist` task-stack phase. A formula-local cache also
+avoids repeatedly interning the same small set of spacing glues.
 
-Lowering is iterative, so pathologically deep math input cannot overflow the
-Rust stack. No raw node store or handle constructor crosses the aggregate
-`Universe` boundary.
+The sink sees only read-only structural spans and cannot construct or mutate
+their handles. State nodes still cross the live boundary only through
+`Universe`; no raw node store or opaque handle constructor is exposed to
+`tex-typeset`.
 
 Fresh box assignments preserve this bottom-up epoch graph through the
 `\setbox` commit boundary. The assignment promotes the graph once and then
