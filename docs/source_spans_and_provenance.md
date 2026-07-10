@@ -476,6 +476,13 @@ measurements and invariants are documented.
 
 ### Phase 1: Incremental coordinates and trustworthy baselines
 
+**Status (2026-07-10): implemented.** The lexer now uses one normalized UTF-8
+byte cursor, retains physical line/content/terminator and synthetic-anchor
+metadata, rejects malformed World input with an exact physical byte range,
+and resumes allocator/configuration state exactly. The full coordinate and
+resume matrix, normal/shadow replay tests, strict Story/Gentle parity, and the
+updated baselines in `docs/provenance_performance.md` pass.
+
 - Store normalized lines as UTF-8 bytes/`String` and make the byte cursor the
   canonical source-frame index.
 - Retain raw physical line starts, content ends, terminator ranges, and the

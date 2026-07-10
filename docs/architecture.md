@@ -152,12 +152,15 @@ supply.
   probe uses the narrow `InputReadState` capability, so the successful path
   and bytes become the ordinary content-addressed `World` input record and
   require no additional checkpointed engine state.
-- **Decoding**: UTF-8 native. Legacy 8-bit input is a per-source decoder
-  selected up front, not a per-character branch in the lexer.
+- **Decoding**: UTF-8 native. Invalid UTF-8 is rejected before tokenization
+  with its exact half-open physical byte range; no lossy conversion is used.
+  Legacy 8-bit input is a future per-source lossless decoder selected up
+  front, not a per-character branch in the lexer.
 - **The input stack** is the one piece of pipeline-owned state the snapshot
   must summarize (`InputSummary`): a vector of frames, each either a
-  *source frame* (source id + source byte offsets + line/col + current
-  normalized line + in-line char/byte offsets + lexer state + pending
+  *source frame* (source id + physical line/content/terminator byte ranges +
+  line/column + current normalized UTF-8 line + canonical in-line byte cursor
+  + synthetic-end anchor + lexer state + pending
   traced synthetic tokens) or a *token-list frame* (`TokenListId` +
   `OriginListId` + index + replay kind: macro body, `\everypar`, mark, ...).
   Macro-body token-list frames additionally carry up to nine frozen argument
@@ -179,13 +182,19 @@ supply.
   share the `World` input log but never become text input frames.
   `last_source_frame` is also summarized with its source id so snapshots taken
   just after a source pops still have final source coordinates for EOF/current
-  input diagnostics.
+  input diagnostics. The summary separately retains the next-source-id
+  allocator high-water mark and Unicode `^^` mode, preventing resumed input
+  from reusing a live id or silently changing lexer configuration.
 - Line-oriented details TeX cares about (`\endlinechar`, trailing-space
   trimming, `%` line ends) live here, driven by parameters read through the
   aggregate state API. **Status:** the implemented `tex-lex` input layer
-  exposes a local `InputSource` trait for memory buffers and files, normalizes each physical
-  line by trimming trailing spaces and appending the current `\endlinechar`
-  when valid, including for blank/all-space physical lines, and owns an
+  exposes a local `InputSource` trait for memory buffers and files. Each input
+  line retains its original backing-byte start, content end, and LF/CRLF
+  terminator range; normalization trims trailing spaces and appends the current
+  `\endlinechar` when valid, including for blank/all-space physical lines. A
+  `SourceFrame` stores the normalized line as UTF-8 and advances one canonical
+  byte cursor plus the separately required scalar column, so source-coordinate
+  production is O(1) and lookahead/rewind restores both values. It owns an
   `InputStack` whose `InputSummary` records resume-complete lexer-owned
   source frame state and token-list replay progress. Mutable input-stack
   delivery carries `TracedTokenWord`; plain-`Token` methods are compatibility

@@ -574,12 +574,15 @@ pub struct Snapshot {
   groups, template replay, and box-group scanning use this conservative
   fallback until those continuations are serialized explicitly.
 - **Input restoration**: `InputSummary` carries the lexer-owned source-frame
-  state required after a source is reopened: source-local offsets, current
-  normalized line, in-line char/byte offsets, lexer N/M/S state, queued
+  state required after a source is reopened: original physical line start,
+  content-end and terminator ranges, the current normalized UTF-8 line and its
+  canonical in-line byte cursor, scalar column, lexer N/M/S state, queued
   traced synthetic tokens such as a blank-line `\par`, token-list replay
   positions and origin-list ids, macro-body replay argument slots, open
-  condition frames, and the last
-  popped source frame. Condition frames are snapshot-owned input frames; each
+  condition frames, the last popped source frame, the next-source-id allocator
+  high-water mark, and the Unicode `^^` configuration. Synthetic
+  `\endlinechar` positions retain a zero-width anchor after the physically
+  backed retained prefix. Condition frames are snapshot-owned input frames; each
   carries its conditional family (`\if...` or `\ifcase`), current limb
   (`\if`, `\or`, or `\else`), whether condition operands are still being
   evaluated, current/previous taken bits, `\ifcase` `\or` count, and skip
