@@ -71,6 +71,11 @@ where
                 Ok(MathField::MathChar(math_char))
             }
         }
+        Token::Cs(_) if assignments::has_catcode_meaning(stores, token, Catcode::BeginGroup) => {
+            Ok(MathField::SubMlist(scan_math_group_after_open(
+                nest, input, stores, recorder, hooks,
+            )?))
+        }
         Token::Cs(symbol) => match stores.meaning(symbol) {
             Meaning::CharGiven(ch) => {
                 let (_, math_char) = math_char_from_mathcode(ch, stores.mathcode(ch), stores)?;
@@ -122,7 +127,7 @@ where
             },
         )?;
         let semantic = tex_expand::semantic_token(token);
-        if assignments::is_end_group(semantic) {
+        if assignments::has_catcode_meaning(stores, semantic, Catcode::EndGroup) {
             let list = finish_current_math_list(nest, stores);
             let _ = nest.pop()?;
             return Ok(list);
@@ -365,7 +370,7 @@ where
 {
     let opener = next_non_space_x(input, stores, recorder, hooks)?
         .ok_or(ExecError::MissingToken { context })?;
-    if !assignments::is_begin_group(opener) {
+    if !assignments::has_catcode_meaning(stores, opener, Catcode::BeginGroup) {
         return Err(ExecError::MissingToken { context });
     }
     scan_math_group_after_open(nest, input, stores, recorder, hooks)

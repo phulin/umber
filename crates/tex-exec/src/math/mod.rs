@@ -15,7 +15,10 @@ use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use crate::assignments;
 use crate::executor::sync_engine_state;
 use crate::mode::DisplayInterrupt;
-use crate::{DispatchAction, ExecError, Mode, ModeNest, push_tokens, push_traced_tokens};
+use crate::{
+    DispatchAction, ExecError, Mode, ModeNest, leave_group_with_origin, push_tokens,
+    push_traced_tokens,
+};
 
 mod display;
 mod lower;
@@ -176,7 +179,10 @@ where
         Token::Char {
             cat: Catcode::EndGroup,
             ..
-        } => Err(ExecError::TooManyRightBraces { origin }),
+        } => {
+            leave_group_with_origin(input, stores, tex_state::GroupKind::Simple, origin)?;
+            Ok(DispatchAction::Continue)
+        }
         Token::Char {
             cat: Catcode::Superscript,
             ..
@@ -286,6 +292,14 @@ where
             append_math_char_code(nest, stores, u32::from(value))?;
             Ok(DispatchAction::Continue)
         }
+        Meaning::CharToken { ch, cat } => dispatch_math_token_with_recorder(
+            nest,
+            TracedTokenWord::pack(Token::Char { ch, cat }, origin),
+            input,
+            stores,
+            recorder,
+            hooks,
+        ),
         Meaning::UnexpandablePrimitive(primitive) => {
             dispatch_math_primitive(primitive, traced, nest, input, stores, recorder, hooks)
         }

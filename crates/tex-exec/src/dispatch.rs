@@ -1,6 +1,7 @@
 use tex_expand::{ExpansionHooks, NoopRecorder, ReadRecorder};
 use tex_lex::{InputSource, InputStack};
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
+use tex_state::provenance::InsertedOriginKind;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{ContentHash, GroupKind, GroupMismatch, Universe};
 
@@ -243,7 +244,15 @@ where
 {
     match stores.leave_group_with_kind(expected) {
         Ok(tokens) => {
-            push_tokens(input, stores, tokens);
+            let tokens: Vec<_> = tokens
+                .into_iter()
+                .map(|token| {
+                    let inserted =
+                        stores.inserted_origin(InsertedOriginKind::AfterGroup, token, origin);
+                    TracedTokenWord::pack(token, inserted)
+                })
+                .collect();
+            push_traced_tokens(input, stores, tokens);
             Ok(())
         }
         Err(mismatch) => Err(group_mismatch_error(expected, mismatch, origin)),

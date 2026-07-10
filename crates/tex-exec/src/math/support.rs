@@ -72,6 +72,8 @@ pub(super) fn math_allows_assignment_primitive(primitive: UnexpandablePrimitive)
             | UnexpandablePrimitive::Wd
             | UnexpandablePrimitive::Ht
             | UnexpandablePrimitive::Dp
+            | UnexpandablePrimitive::BeginGroup
+            | UnexpandablePrimitive::EndGroup
             | UnexpandablePrimitive::AfterGroup
             | UnexpandablePrimitive::AfterAssignment
             | UnexpandablePrimitive::Show
