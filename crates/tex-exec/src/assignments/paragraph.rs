@@ -129,6 +129,13 @@ pub(crate) fn end_paragraph(nest: &mut ModeNest, stores: &mut Universe) -> Resul
     if !matches!(nest.current_mode(), Mode::Horizontal) {
         return Ok(());
     }
+    flush_pending_hchars(nest, stores)?;
+    if nest.current_list().is_empty() {
+        let _ = nest.pop()?;
+        normal_paragraph(nest, stores);
+        build_page_if_outer_vertical(nest, stores)?;
+        return Ok(());
+    }
     let final_widow_penalty = stores.int_param(IntParam::WIDOW_PENALTY);
     let _ = break_current_paragraph(nest, stores, final_widow_penalty, true)?;
     Ok(())

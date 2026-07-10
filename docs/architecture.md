@@ -607,7 +607,9 @@ assignments, box building, and dispatch into the typesetting kernels.
   `\indent`, `\noindent`, implicit start from vertical-mode character
   material, `\parskip`, and `\everypar` replay are handled before entering
   unrestricted horizontal mode. When horizontal material ends (`\par` or
-  `\endgraf`), the stomach performs TeX's final paragraph-list preparation
+  `\endgraf`), a null unindented paragraph is popped without producing a line,
+  matching TeX82's `end_graf`; otherwise the stomach performs TeX's final
+  paragraph-list preparation
   (trailing-glue removal and `\penalty10000` plus `\parfillskip`), expands
   finished inline math lists into hlist nodes bracketed by `\mathsurround`
   `MathOn`/`MathOff` markers, snapshots paragraph-shape and line-breaking

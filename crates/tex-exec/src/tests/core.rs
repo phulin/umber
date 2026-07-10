@@ -1132,6 +1132,25 @@ fn paragraph_end_appends_single_line_through_vertical_spacing() {
 }
 
 #[test]
+fn paragraph_end_ignores_empty_unindented_paragraph() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\setbox0=\\vbox{\\noindent\\par\\indent\\par}",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("empty and indented paragraphs execute");
+
+    let box0 = stores.box_reg(0).expect("vbox register");
+    let [Node::VList(vbox)] = stores.nodes(box0) else {
+        panic!("register 0 should hold a vbox");
+    };
+    assert!(matches!(stores.nodes(vbox.children), [Node::HList(_)]));
+}
+
+#[test]
 fn last_items_read_current_horizontal_tail_by_type() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);
