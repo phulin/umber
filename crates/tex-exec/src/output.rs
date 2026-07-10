@@ -109,7 +109,7 @@ fn prepare_box255(stores: &mut Universe, fire_up: PageFireUp) -> Result<(), Exec
     let split_index = fire_up.best_break().index();
     let page_max_depth = stores.page_max_depth();
     let (page_nodes, mut after_break) = stores.take_current_page_prefix(split_index);
-    let output_penalty = output_penalty_and_rewrite_break(stores, &mut after_break);
+    let output_penalty = output_penalty_and_rewrite_break(stores, &mut after_break, fire_up);
     stores.set_int_param_global(IntParam::OUTPUT_PENALTY, output_penalty);
     stores.prepend_page_contributions(after_break);
     let distributed = distribute_insertions(stores, page_nodes)?;
@@ -348,14 +348,20 @@ fn prepend_output_heldover(stores: &mut Universe, output_nodes: Vec<Node>) {
     stores.prepend_page_contributions(heldover);
 }
 
-fn output_penalty_and_rewrite_break(stores: &mut Universe, after_break: &mut Vec<Node>) -> i32 {
+fn output_penalty_and_rewrite_break(
+    stores: &mut Universe,
+    after_break: &mut Vec<Node>,
+    fire_up: PageFireUp,
+) -> i32 {
     if let Some(Node::Penalty(value)) = after_break.first_mut() {
         let penalty = *value;
         *value = INF_PENALTY;
         return penalty;
     }
 
-    if let Some(Node::Penalty(penalty)) = stores.page_contribution_front().cloned() {
+    if fire_up.trigger() == fire_up.best_break()
+        && let Some(Node::Penalty(penalty)) = stores.page_contribution_front().cloned()
+    {
         let _ = stores.pop_page_contribution_front();
         after_break.push(Node::Penalty(INF_PENALTY));
         return penalty;
@@ -505,4 +511,58 @@ fn job_is_quiescent(stores: &Universe) -> bool {
         && stores.page_fire_up().is_none()
         && stores.page_dimension(PageDimension::Total).raw() == 0
         && stores.page_integer(PageInteger::DeadCycles) == 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tex_state::page::PageBreak;
+
+    fn fire_up(best_break: usize, trigger: usize) -> PageFireUp {
+        PageFireUp::new(
+            PageBreak::new(best_break),
+            Scaled::from_raw(0),
+            PageBreak::new(trigger),
+        )
+    }
+
+    #[test]
+    fn earlier_break_preserves_unrelated_pending_penalty() {
+        let mut stores = Universe::new();
+        stores.append_page_contribution(Node::Penalty(EJECT_PENALTY));
+        let glue = stores.intern_glue(GlueSpec {
+            width: Scaled::from_raw(0),
+            stretch: Scaled::from_raw(0),
+            stretch_order: Order::Normal,
+            shrink: Scaled::from_raw(0),
+            shrink_order: Order::Normal,
+        });
+        let chosen_break = Node::Glue {
+            spec: glue,
+            kind: GlueKind::Normal,
+            leader: None,
+        };
+        let mut after_break = vec![chosen_break.clone()];
+
+        let penalty =
+            output_penalty_and_rewrite_break(&mut stores, &mut after_break, fire_up(1, 2));
+
+        assert_eq!(penalty, INF_PENALTY);
+        assert_eq!(after_break, [chosen_break]);
+        assert_eq!(stores.page_contributions(), [Node::Penalty(EJECT_PENALTY)]);
+    }
+
+    #[test]
+    fn chosen_pending_penalty_is_rewritten() {
+        let mut stores = Universe::new();
+        stores.append_page_contribution(Node::Penalty(EJECT_PENALTY));
+        let mut after_break = Vec::new();
+
+        let penalty =
+            output_penalty_and_rewrite_break(&mut stores, &mut after_break, fire_up(1, 1));
+
+        assert_eq!(penalty, EJECT_PENALTY);
+        assert_eq!(after_break, [Node::Penalty(INF_PENALTY)]);
+        assert!(stores.page_contributions().is_empty());
+    }
 }

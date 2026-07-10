@@ -1948,7 +1948,9 @@ fn fire_up_updates_top_first_bot_marks_across_no_mark_page() {
         "\\output={\\global\\advance\\count0 by 1 \
          \\ifnum\\count0=1 \\xdef\\pagea{\\topmark/\\firstmark/\\botmark}\
          \\else\\ifnum\\count0=2 \\xdef\\pageb{\\topmark/\\firstmark/\\botmark}\
-         \\else \\xdef\\pagec{\\topmark/\\firstmark/\\botmark}\\fi\\fi \
+         \\else\\ifnum\\count0=3 \\xdef\\pagec{\\topmark/\\firstmark/\\botmark}\
+         \\else\\ifnum\\count0=4 \\xdef\\paged{\\topmark/\\firstmark/\\botmark}\
+         \\else \\xdef\\pagee{\\topmark/\\firstmark/\\botmark}\\fi\\fi\\fi\\fi \
          \\shipout\\box255}\
          \\topskip=0pt \\vsize=1pt \\setbox0=\\hbox{}\\ht0=2pt \
          \\mark{A}\\copy0\\penalty-10000 \
@@ -1960,10 +1962,12 @@ fn fire_up_updates_top_first_bot_marks_across_no_mark_page() {
         .run(&mut input, &mut stores)
         .expect("marked pages ship");
 
-    assert_eq!(stats.shipped_artifacts.len(), 3);
+    assert_eq!(stats.shipped_artifacts.len(), 5);
     assert_eq!(macro_text(&stores, "pagea"), "/A/A");
     assert_eq!(macro_text(&stores, "pageb"), "A/A/A");
-    assert_eq!(macro_text(&stores, "pagec"), "A/B/B");
+    assert_eq!(macro_text(&stores, "pagec"), "A/A/A");
+    assert_eq!(macro_text(&stores, "paged"), "A/B/B");
+    assert_eq!(macro_text(&stores, "pagee"), "B/B/B");
 }
 
 #[test]
