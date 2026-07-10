@@ -390,19 +390,25 @@ fn legal_breakpoints<S: TypesetState>(
     params: &LineBreakParams,
 ) -> Vec<Breakpoint> {
     let mut out = Vec::new();
+    let mut auto_breaking = true;
     for i in 0..nodes.len() {
         match &nodes[i] {
-            Node::Glue { .. } if i > 0 && !is_discardable(&nodes[i - 1]) => out.push(Breakpoint {
-                position: i + 1,
-                width_position: i,
-                penalty: 0,
-                hyphenated: false,
-                add_width: Widths::zero(),
-            }),
+            Node::Glue { .. } if auto_breaking && i > 0 && !is_discardable(&nodes[i - 1]) => {
+                out.push(Breakpoint {
+                    position: i + 1,
+                    width_position: i,
+                    penalty: 0,
+                    hyphenated: false,
+                    add_width: Widths::zero(),
+                });
+            }
             Node::Kern {
                 kind: KernKind::Explicit,
                 ..
-            } if i + 1 < nodes.len() && matches!(nodes[i + 1], Node::Glue { .. }) => {
+            } if auto_breaking
+                && i + 1 < nodes.len()
+                && matches!(nodes[i + 1], Node::Glue { .. }) =>
+            {
                 out.push(Breakpoint {
                     position: i + 1,
                     width_position: i + 1,
@@ -433,7 +439,10 @@ fn legal_breakpoints<S: TypesetState>(
                     hyphenated: false,
                     add_width: Widths::zero(),
                 });
+                auto_breaking = true;
             }
+            Node::MathOn(_) => auto_breaking = false,
+            Node::MathOff(_) => auto_breaking = true,
             _ => {}
         }
     }

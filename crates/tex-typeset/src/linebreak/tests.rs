@@ -309,6 +309,50 @@ fn mathoff_breaks_only_before_following_glue_and_zeroes_break_width() {
 }
 
 #[test]
+fn math_boundaries_suppress_internal_glue_and_kern_breaks() {
+    let mut universe = Universe::new();
+    let glue = universe.intern_glue(GlueSpec {
+        width: sp(10),
+        stretch: sp(10),
+        stretch_order: Order::Normal,
+        shrink: sp(5),
+        shrink_order: Order::Normal,
+    });
+    let nodes = vec![
+        rule(10),
+        Node::MathOn(sp(0)),
+        rule(10),
+        Node::Glue {
+            spec: glue,
+            kind: GlueKind::ThinMuSkip,
+            leader: None,
+        },
+        rule(10),
+        kern(5),
+        Node::Glue {
+            spec: glue,
+            kind: GlueKind::Normal,
+            leader: None,
+        },
+        rule(10),
+        Node::MathOff(sp(0)),
+        Node::Glue {
+            spec: glue,
+            kind: GlueKind::Normal,
+            leader: None,
+        },
+        rule(10),
+    ];
+
+    let positions: Vec<_> = legal_breakpoints(&universe, &nodes, &params(50))
+        .into_iter()
+        .map(|breakpoint| breakpoint.position)
+        .collect();
+
+    assert_eq!(positions, vec![9, nodes.len()]);
+}
+
+#[test]
 fn final_pass_deactivates_unshrinkable_active_line() {
     let mut universe = Universe::new();
     let glue = universe.intern_glue(GlueSpec {
