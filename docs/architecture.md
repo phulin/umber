@@ -940,6 +940,9 @@ Responsibility: page artifacts → bytes on disk. Strictly downstream.
   `post_post`, and 223 padding) from committed artifacts, and traverses the
   committed box tree with TeX.web-style `hlist_out`/`vlist_out`, `movement()`
   w/x/y/z optimization, font switches, rules, glyphs, and DVI specials.
+  Cumulative glue setting preserves TeX82's operation order: the exact packed
+  ratio is converted to binary `real`, multiplied by the running glue total,
+  clamped, and rounded before each movement delta is emitted.
   DVI font numbers are the driver-visible TeX font numbers derived from
   `FontId` load order, not artifact-local dense renumbering, so INITEX parity
   cases that load several sizes/families preserve reference font selection

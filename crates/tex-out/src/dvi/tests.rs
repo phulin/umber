@@ -11,6 +11,9 @@ use tex_arith::Scaled;
 
 const W0: u8 = 147;
 const W1: u8 = 148;
+const W3: u8 = 150;
+const X0: u8 = 152;
+const X3: u8 = 155;
 const Y0: u8 = 161;
 const Y1: u8 = 162;
 
@@ -254,7 +257,7 @@ fn vlist_rules_use_put_rule_and_running_width() {
 }
 
 #[test]
-fn glue_set_is_rounded_cumulatively_without_float_math_in_writer() {
+fn glue_set_is_rounded_cumulatively() {
     let mut page = empty_page(0);
     let glue = GlueSpec {
         width: sp(10),
@@ -293,6 +296,51 @@ fn glue_set_is_rounded_cumulatively_without_float_math_in_writer() {
 
     assert!(body.windows(2).any(|window| window == [RIGHT1, 13]));
     assert!(body.windows(2).any(|window| window == [RIGHT1, 12]));
+}
+
+#[test]
+fn cumulative_glue_rounding_matches_tex82_w0_x0_sequence() {
+    let mut page = empty_page(0);
+    let glue = GlueSpec {
+        width: sp(218_453),
+        stretch: sp(109_226),
+        stretch_order: GlueOrder::Normal,
+        shrink: sp(72_818),
+        shrink_order: GlueOrder::Normal,
+    };
+    let mut children = vec![rule_node(1, 1, 0)];
+    for _ in 0..7 {
+        children.push(PageNode::Glue {
+            spec: glue,
+            kind: GlueKind::Normal,
+            leader: None,
+        });
+        children.push(rule_node(1, 1, 0));
+    }
+    page.root = PageNode::HList(BoxNode {
+        width: sp(1_592_438),
+        height: sp(1),
+        depth: sp(0),
+        shift: sp(0),
+        glue_set: GlueSetRatio::from_ratio_parts(2_781, 33_608),
+        glue_sign: GlueSign::Stretching,
+        glue_order: GlueOrder::Normal,
+        children,
+    });
+
+    let dvi = write_dvi(&[page]).expect("DVI writes");
+    let body = page_body(&dvi, 16);
+    let rules: Vec<_> = body
+        .iter()
+        .enumerate()
+        .filter_map(|(index, &opcode)| (opcode == SET_RULE).then_some(index))
+        .collect();
+
+    assert_eq!(rules.len(), 8);
+    assert_eq!(body[rules[1] - 4], W3);
+    assert_eq!(body[rules[2] - 4], X3);
+    assert!(rules[3..=6].iter().all(|&rule| body[rule - 1] == W0));
+    assert_eq!(body[rules[7] - 1], X0);
 }
 
 #[test]
