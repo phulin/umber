@@ -426,7 +426,11 @@ cells[i] = new
   regions retain only a validated live `InputRecordId` and byte length, so
   `World` remains authoritative for content bytes. Generated and memory
   regions retain a shared immutable `Arc<[u8]>` under an explicit backing id.
-  Raw map/backing mutation is not exposed downstream.
+  Raw map/backing mutation is not exposed downstream. Successful input
+  registration also returns an opaque `RegisteredSource` capability. A live
+  source frame uses it to encode in-range direct positions without repeating
+  a source-map lookup; the capability exposes neither raw positions nor raw
+  origin encodings, and wide fallback still goes through aggregate validation.
 - Store snapshots add only region/backing lengths and the next logical
   position. Aggregate rollback truncates these with provenance while `World`
   restores its input-record watermark, so reused `SourceId`, `InputRecordId`,
@@ -439,6 +443,12 @@ cells[i] = new
   append. The direct payload is only an encoding capacity: regions continue in
   logical `u64` space and validated `SourceSpan` arena records provide the
   fallback above it, degrading to unknown only if that arena is also full.
+  Phase 6 adopts this layout after controlled measurements: ASCII and mixed
+  UTF-8 logical source/provenance bytes fall by 95.73% and 93.93%, with median
+  throughput improving 5.43% and 2.56%; no primary workload regresses more
+  than 5%. Flat `Source` records remain a degraded compatibility form only for
+  explicitly unregistered legacy/test origins and are not emitted by traced
+  production inputs.
 
 ### Glue store
 

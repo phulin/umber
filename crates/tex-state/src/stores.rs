@@ -599,20 +599,16 @@ impl Stores {
         byte_offset: u64,
         byte_end: u64,
     ) -> OriginId {
-        let Ok(lo) = self.source_map.position(source, byte_offset) else {
+        let Ok(span) = self
+            .source_map
+            .span_for_source_offsets(source, byte_offset, byte_end)
+        else {
             return OriginId::UNKNOWN;
         };
-        let Some(region) = self.source_map.region_for_backed_position(lo) else {
+        if span.is_empty() {
             return OriginId::UNKNOWN;
-        };
-        let Ok(hi) = self.source_map.position(source, byte_end) else {
-            return OriginId::UNKNOWN;
-        };
-        let Ok(span) = self.source_map.span(lo, hi) else {
-            return OriginId::UNKNOWN;
-        };
-        debug_assert_eq!(region.source, source);
-        OriginId::direct_source(lo)
+        }
+        OriginId::direct_source(span.lo())
             .unwrap_or_else(|| self.provenance.allocate(OriginRecord::SourceSpan(span)))
     }
 
@@ -624,13 +620,10 @@ impl Stores {
         byte_offset: u64,
         byte_end: u64,
     ) -> OriginId {
-        let Ok(lo) = self.source_map.position(source, byte_offset) else {
-            return OriginId::UNKNOWN;
-        };
-        let Ok(hi) = self.source_map.position(source, byte_end) else {
-            return OriginId::UNKNOWN;
-        };
-        let Ok(span) = self.source_map.span(lo, hi) else {
+        let Ok(span) = self
+            .source_map
+            .span_for_source_offsets(source, byte_offset, byte_end)
+        else {
             return OriginId::UNKNOWN;
         };
         self.provenance.allocate(OriginRecord::SourceSpan(span))

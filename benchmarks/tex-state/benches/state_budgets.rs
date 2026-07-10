@@ -3,6 +3,7 @@ use criterion::{
 };
 use tex_expand::{get_x_token, install_expandable_primitives};
 use tex_lex::{InputStack, MemoryInput, TokenListReplayKind};
+use tex_state::ProvenanceResolver;
 use tex_state::SourceId;
 use tex_state::Universe;
 use tex_state::glue::Order;
@@ -22,6 +23,9 @@ const PAGE_DISTINCT_CELLS: usize = 500;
 const PAGE_TOTAL_WRITES: usize = 5_000;
 const SOURCE_HEAVY_LINES: usize = 512;
 const SOURCE_HEAVY_LINE: &str = "alpha beta gamma delta epsilon zeta eta theta";
+const MIXED_UTF8_LINE: &str = "alpha βήτα 世界 café naïve 🦀 zeta";
+const CONTROL_SEQUENCE_LINE: &str = "\\alpha\\beta\\gamma\\delta\\epsilon\\zeta\\eta\\theta";
+const LONG_LINE_SCALARS: usize = 65_536;
 const MACRO_CALLS: usize = 2_048;
 const MACRO_BODY_LEN: usize = 16;
 const SCANNER_REPETITIONS: usize = 1_024;
@@ -170,8 +174,7 @@ fn survivor_root_recycling(c: &mut Criterion) {
                     stores.set_box_reg(0, list);
                 }
                 assert!(
-                    stores.testing_survivor_recycled_buffer_uses()
-                        >= TRANSIENT_BOX_OVERWRITES - 2
+                    stores.testing_survivor_recycled_buffer_uses() >= TRANSIENT_BOX_OVERWRITES - 2
                 );
                 black_box(stores);
             },
@@ -276,64 +279,53 @@ fn synthetic_page_journal_volume(c: &mut Criterion) {
 }
 
 fn provenance_source_lexing(c: &mut Criterion) {
-    let input = source_heavy_text();
-    let token_count = source_heavy_token_count(&input);
     let mut group = c.benchmark_group("provenance_source_lexing");
-    group.throughput(Throughput::Elements(token_count as u64));
+    for (name, input, needs_control_sequences) in source_workloads() {
+        let token_count = source_heavy_token_count(&input);
+        group.throughput(Throughput::Elements(token_count as u64));
+        group.bench_with_input(BenchmarkId::new("traced", name), &input, |b, input| {
+            b.iter_batched(
+                || {
+                    (
+                        source_universe(needs_control_sequences),
+                        InputStack::new(MemoryInput::new(input.clone())),
+                    )
+                },
+                |(mut stores, mut input)| {
+                    black_box(drain_traced_source_timed(&mut stores, &mut input));
+                },
+                BatchSize::SmallInput,
+            );
+        });
+    }
 
-    group.bench_function("semantic_only_readonly", |b| {
+    group.finish();
+}
+
+fn provenance_diagnostic_rendering(c: &mut Criterion) {
+    let input = mixed_utf8_text();
+    let mut group = c.benchmark_group("provenance_diagnostic_rendering");
+
+    group.bench_function("cold", |b| {
         b.iter_batched(
-            || {
-                (
-                    Universe::new(),
-                    InputStack::new(MemoryInput::new(input.clone())),
-                )
-            },
-            |(stores, mut input)| {
-                let mut count = 0_usize;
-                while let Some(token) = input
-                    .next_token_readonly(&stores)
-                    .expect("source lexing should succeed")
-                {
-                    black_box(token);
-                    count += 1;
-                }
-                black_box(count);
+            || diagnostic_case(input.clone()),
+            |(stores, origin)| {
+                black_box(
+                    ProvenanceResolver::new(&stores)
+                        .render_diagnostic("measured diagnostic", Some(origin)),
+                );
             },
             BatchSize::SmallInput,
         );
     });
 
-    group.bench_function("traced_source_origins", |b| {
-        b.iter_batched(
-            || {
-                (
-                    Universe::new(),
-                    InputStack::new(MemoryInput::new(input.clone())),
-                )
-            },
-            |(mut stores, mut input)| {
-                let before = stores.provenance_stats();
-                let mut count = 0_usize;
-                let mut direct = 0_usize;
-                while let Some(token) = input
-                    .next_traced_token(&mut stores)
-                    .expect("source lexing should succeed")
-                {
-                    direct += usize::from(token.origin().is_direct_source());
-                    black_box(token);
-                    count += 1;
-                }
-                black_box((
-                    count,
-                    direct,
-                    stores.provenance_stats().saturating_sub(before),
-                ));
-            },
-            BatchSize::SmallInput,
-        );
+    let (stores, origin) = diagnostic_case(input);
+    group.bench_function("repeated_warm", |b| {
+        let resolver = ProvenanceResolver::new(&stores);
+        b.iter(|| {
+            black_box(resolver.render_diagnostic("measured diagnostic", Some(origin)));
+        });
     });
-
     group.finish();
 }
 
@@ -378,6 +370,9 @@ fn provenance_expansion(c: &mut Criterion) {
 }
 
 fn provenance_memory_invariants(c: &mut Criterion) {
+    if std::env::var_os("UMBER_PROVENANCE_REPORT").is_some() {
+        print_provenance_report();
+    }
     let mut group = c.benchmark_group("provenance_memory");
 
     group.bench_function("macro_long_run_arena_growth", |b| {
@@ -448,8 +443,118 @@ fn source_heavy_text() -> String {
     input
 }
 
+fn mixed_utf8_text() -> String {
+    repeated_lines(MIXED_UTF8_LINE)
+}
+
+fn control_sequence_text() -> String {
+    repeated_lines(CONTROL_SEQUENCE_LINE)
+}
+
+fn repeated_lines(line: &str) -> String {
+    let mut input = String::new();
+    for _ in 0..SOURCE_HEAVY_LINES {
+        input.push_str(line);
+        input.push('\n');
+    }
+    input
+}
+
+fn source_workloads() -> Vec<(&'static str, String, bool)> {
+    vec![
+        ("ascii", source_heavy_text(), false),
+        ("mixed_utf8", mixed_utf8_text(), false),
+        (
+            "single_long_line",
+            format!("{}\n", "a".repeat(LONG_LINE_SCALARS)),
+            false,
+        ),
+        ("control_sequences", control_sequence_text(), true),
+    ]
+}
+
+fn drain_traced_source(
+    stores: &mut Universe,
+    input: &mut InputStack<MemoryInput>,
+) -> (usize, usize, ProvenanceStats, ProvenanceStats) {
+    let baseline = stores.provenance_stats();
+    let mut count = 0;
+    let mut direct = 0;
+    while let Some(token) = input
+        .next_traced_token(stores)
+        .expect("source lexing should succeed")
+    {
+        count += 1;
+        direct += usize::from(token.origin().is_direct_source());
+        black_box(token);
+    }
+    let final_stats = stores.provenance_stats();
+    (
+        count,
+        direct,
+        final_stats.saturating_sub(baseline),
+        final_stats.saturating_sub(baseline),
+    )
+}
+
+fn drain_traced_source_timed(stores: &mut Universe, input: &mut InputStack<MemoryInput>) -> usize {
+    let mut count = 0;
+    while let Some(token) = input
+        .next_traced_token(stores)
+        .expect("source lexing should succeed")
+    {
+        black_box(token);
+        count += 1;
+    }
+    count
+}
+
+fn diagnostic_case(input: String) -> (Universe, tex_state::token::OriginId) {
+    let mut stores = source_universe(false);
+    let mut stack = InputStack::new(MemoryInput::new(input));
+    let token = stack
+        .next_traced_token(&mut stores)
+        .expect("diagnostic source should lex")
+        .expect("diagnostic source should contain a token");
+    (stores, token.origin())
+}
+
+fn print_provenance_report() {
+    for (name, text, needs_control_sequences) in source_workloads() {
+        let mut stores = source_universe(needs_control_sequences);
+        let mut input = InputStack::new(MemoryInput::new(text));
+        let (tokens, direct, live, peak) = drain_traced_source(&mut stores, &mut input);
+        eprintln!(
+            "provenance-report {name}: tokens={tokens} direct={direct} records={} spans={} entries={} regions={} backings={} live_bytes={} retained_bytes={} peak_live_bytes={} peak_retained_bytes={} cache_bytes=0",
+            live.origin_records(),
+            live.origin_list_spans(),
+            live.origin_list_entries(),
+            live.source_regions(),
+            live.generated_source_backings(),
+            live.estimated_bytes(),
+            live.retained_bytes(),
+            live.estimated_bytes(),
+            peak.retained_bytes(),
+        );
+    }
+
+    let (mut stores, mut input, baseline) = generated_run_case();
+    let snapshot = stores.snapshot();
+    let _ = drain_expansion(&mut stores, &mut input);
+    let peak = stores.provenance_stats().saturating_sub(baseline);
+    stores.rollback(&snapshot);
+    let post = stores.provenance_stats().saturating_sub(baseline);
+    eprintln!(
+        "provenance-report rollback_reuse: peak_live_bytes={} peak_retained_bytes={} post_live_bytes={} post_retained_bytes={}",
+        peak.estimated_bytes(),
+        peak.retained_bytes(),
+        post.estimated_bytes(),
+        post.retained_bytes(),
+    );
+}
+
 fn source_heavy_token_count(input: &str) -> usize {
-    let stores = Universe::new();
+    let stores = source_universe(input.contains('\\'));
     let mut stack = InputStack::new(MemoryInput::new(input.to_owned()));
     let mut count = 0;
     while stack
@@ -460,6 +565,18 @@ fn source_heavy_token_count(input: &str) -> usize {
         count += 1;
     }
     count
+}
+
+fn source_universe(needs_control_sequences: bool) -> Universe {
+    let mut stores = Universe::new();
+    if needs_control_sequences {
+        for name in [
+            "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta",
+        ] {
+            stores.intern(name);
+        }
+    }
+    stores
 }
 
 fn macro_heavy_case() -> (Universe, InputStack<MemoryInput>, ProvenanceStats) {
@@ -586,6 +703,7 @@ criterion_group!(
     synthetic_page_journal_volume,
     provenance_source_lexing,
     provenance_expansion,
-    provenance_memory_invariants
+    provenance_memory_invariants,
+    provenance_diagnostic_rendering
 );
 criterion_main!(benches);

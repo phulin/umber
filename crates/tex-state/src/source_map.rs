@@ -3,11 +3,36 @@
 use std::sync::Arc;
 
 use crate::input::SourceId;
+use crate::token::OriginId;
 use crate::world::{ContentHash, InputRecordId};
 
 /// An opaque position in the current timeline's logical source space.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct SourcePos(u64);
+
+/// Opaque capability for allocation-free origins within one registered input.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RegisteredSource {
+    start: SourcePos,
+    byte_len: u64,
+}
+
+impl RegisteredSource {
+    pub(crate) const fn new(start: SourcePos, byte_len: u64) -> Self {
+        Self { start, byte_len }
+    }
+
+    /// Encodes a nonempty backed scalar directly when it fits the packed form.
+    #[must_use]
+    #[inline(always)]
+    pub fn direct_origin(self, byte_offset: u64, byte_end: u64) -> Option<OriginId> {
+        if byte_offset >= byte_end || byte_end > self.byte_len {
+            return None;
+        }
+        let raw = self.start.0.checked_add(byte_offset)?;
+        OriginId::direct_source(SourcePos(raw))
+    }
+}
 
 impl SourcePos {
     pub(crate) const fn from_origin_payload(raw: u32) -> Self {
@@ -290,7 +315,30 @@ impl SourceMap {
         Ok(SourceSpan::new(lo, hi))
     }
 
+    pub(crate) fn span_for_source_offsets(
+        &self,
+        source: SourceId,
+        lo: u64,
+        hi: u64,
+    ) -> Result<SourceSpan, SourceMapError> {
+        let region = self
+            .region_for_source(source)
+            .ok_or(SourceMapError::UnknownSource)?;
+        if lo > hi || hi > region.byte_len {
+            return Err(SourceMapError::OffsetOutsideSource);
+        }
+        Ok(SourceSpan::new(
+            SourcePos(region.start.0 + lo),
+            SourcePos(region.start.0 + hi),
+        ))
+    }
+
     pub(crate) fn region_for_source(&self, source: SourceId) -> Option<SourceRegion> {
+        if let Some(region) = self.regions.get(source.raw() as usize).copied()
+            && region.source == source
+        {
+            return Some(region);
+        }
         self.regions
             .iter()
             .rev()

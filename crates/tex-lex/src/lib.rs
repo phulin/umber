@@ -12,7 +12,7 @@ use tex_state::ids::{OriginListId, TokenListId};
 use tex_state::provenance::{
     DiagnosticSite, InsertedOriginKind, RelatedLocation, SyntheticOriginKind,
 };
-use tex_state::source_map::SourceDescriptor;
+use tex_state::source_map::{RegisteredSource, SourceDescriptor};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{ExpansionState, FileContent, InputRecordId, WorldError};
 
@@ -339,6 +339,7 @@ struct SourceInputFrame<S> {
     next_source_offset: usize,
     descriptor: Option<SourceDescriptor>,
     registration_attempted: bool,
+    registration: Option<RegisteredSource>,
 }
 
 impl<S> SourceInputFrame<S> {
@@ -356,6 +357,7 @@ impl<S> SourceInputFrame<S> {
             next_source_offset: 0,
             descriptor,
             registration_attempted: false,
+            registration: None,
         }
     }
 }
@@ -482,7 +484,6 @@ pub struct InputStack<S> {
     next_replay_marker: u64,
     next_condition_token: u64,
     alignment_cells: Vec<AlignmentCellInput>,
-    last_direct_delivery: Option<DirectSourceDelivery>,
     recently_popped_trace: [OriginId; DiagnosticSite::MAX_EXPANSION_TRACE],
     recently_popped_trace_len: usize,
 }
@@ -540,7 +541,6 @@ impl<S> InputStack<S> {
             next_replay_marker: 0,
             next_condition_token: 0,
             alignment_cells: Vec::new(),
-            last_direct_delivery: None,
             recently_popped_trace: [OriginId::UNKNOWN; DiagnosticSite::MAX_EXPANSION_TRACE],
             recently_popped_trace_len: 0,
         };
@@ -585,6 +585,7 @@ impl<S> InputStack<S> {
                         next_source_offset: source.next_source_offset(),
                         descriptor,
                         registration_attempted: false,
+                        registration: None,
                     }));
                 }
                 InputFrameSummary::TokenList {
@@ -639,7 +640,6 @@ impl<S> InputStack<S> {
                         .expect("condition frame token overflowed")
                 }),
             alignment_cells: Vec::new(),
-            last_direct_delivery: None,
             recently_popped_trace: [OriginId::UNKNOWN; DiagnosticSite::MAX_EXPANSION_TRACE],
             recently_popped_trace_len: 0,
         })
@@ -950,9 +950,24 @@ impl<S> InputStack<S> {
         &mut self,
         token: TracedTokenWord,
     ) -> Option<DirectSourceDelivery> {
-        self.last_direct_delivery
-            .take()
-            .filter(|delivery| delivery.token == token)
+        let Token::Char { ch, .. } = token.token()? else {
+            return None;
+        };
+        let frame_index = self.current_token_frame_index()?;
+        let InputFrame::Source(source) = &self.frames[frame_index] else {
+            return None;
+        };
+        let end = source_coordinate(source).byte_offset;
+        let start = end.checked_sub(u64::try_from(ch.len_utf8()).ok()?)?;
+        if source.registration?.direct_origin(start, end)? != token.origin() {
+            return None;
+        }
+        Some(DirectSourceDelivery {
+            token,
+            source: source.source_id,
+            start,
+            end,
+        })
     }
 
     /// Joins two proven deliveries only while their one shared source frame is
@@ -1247,6 +1262,7 @@ where
         self.input.next_token(stores)
     }
 
+    #[inline(always)]
     pub fn next_traced_token(
         &mut self,
         stores: &mut impl ExpansionState,
@@ -1270,16 +1286,20 @@ where
         &mut self,
         stores: &mut impl ExpansionState,
     ) -> Result<Option<TracedTokenWord>, LexError> {
-        let result = self.next_traced_token_inner(stores);
-        result.map_err(|error| self.capture_lex_error(error))
+        match self.next_traced_token_inner(stores) {
+            Ok(token) => Ok(token),
+            Err(error) => Err(self.capture_lex_error(error)),
+        }
     }
 
+    #[inline(always)]
     fn next_traced_token_inner(
         &mut self,
         stores: &mut impl ExpansionState,
     ) -> Result<Option<TracedTokenWord>, LexError> {
-        self.last_direct_delivery = None;
-        self.recently_popped_trace_len = 0;
+        if self.recently_popped_trace_len != 0 {
+            self.recently_popped_trace_len = 0;
+        }
         loop {
             let Some(frame_index) = self.current_token_frame_index() else {
                 return Ok(None);
@@ -1345,19 +1365,11 @@ where
                         continue;
                     }
 
-                    let start = source_coordinate(source);
                     let Some(token) =
                         next_token_from_line(source, stores, self.unicode_superscript_notation)?
                     else {
                         continue;
                     };
-                    let end = source_coordinate(source);
-                    self.last_direct_delivery = Some(DirectSourceDelivery {
-                        token,
-                        source: source.source_id,
-                        start: start.byte_offset,
-                        end: end.byte_offset,
-                    });
                     return Ok(Some(token));
                 }
                 InputFrame::Condition { .. } => {
@@ -1385,20 +1397,25 @@ where
             .map(|token| ExpansionToken::new(token.token(), token.suppress_expansion())))
     }
 
+    #[inline(always)]
     pub fn next_traced_expansion_token(
         &mut self,
         stores: &mut impl ExpansionState,
     ) -> Result<Option<TracedExpansionToken>, LexError> {
-        let result = self.next_traced_expansion_token_inner(stores);
-        result.map_err(|error| self.capture_lex_error(error))
+        match self.next_traced_expansion_token_inner(stores) {
+            Ok(token) => Ok(token),
+            Err(error) => Err(self.capture_lex_error(error)),
+        }
     }
 
+    #[inline(always)]
     fn next_traced_expansion_token_inner(
         &mut self,
         stores: &mut impl ExpansionState,
     ) -> Result<Option<TracedExpansionToken>, LexError> {
-        self.last_direct_delivery = None;
-        self.recently_popped_trace_len = 0;
+        if self.recently_popped_trace_len != 0 {
+            self.recently_popped_trace_len = 0;
+        }
         loop {
             let Some(frame_index) = self.current_token_frame_index() else {
                 return Ok(None);
@@ -1464,19 +1481,11 @@ where
                         continue;
                     }
 
-                    let start = source_coordinate(source);
                     let Some(token) =
                         next_token_from_line(source, stores, self.unicode_superscript_notation)?
                     else {
                         continue;
                     };
-                    let end = source_coordinate(source);
-                    self.last_direct_delivery = Some(DirectSourceDelivery {
-                        token,
-                        source: source.source_id,
-                        start: start.byte_offset,
-                        end: end.byte_offset,
-                    });
                     return Ok(Some(TracedExpansionToken::new(token, false)));
                 }
                 InputFrame::Condition { .. } => {
@@ -1569,6 +1578,8 @@ where
         }
     }
 
+    #[cold]
+    #[inline(never)]
     fn capture_lex_error(&self, error: LexError) -> LexError {
         let live_trace = self.frames.iter().rev().filter_map(|frame| match frame {
             InputFrame::TokenList(frame) if frame.macro_invocation != OriginId::UNKNOWN => {
@@ -1838,7 +1849,9 @@ fn ensure_source_registered<S>(source: &mut SourceInputFrame<S>, stores: &mut im
     source.registration_attempted = true;
     if let Some(descriptor) = source.descriptor.clone() {
         // Diagnostic metadata exhaustion must not stop semantic tokenization.
-        let _ = stores.register_source(source.source_id, descriptor);
+        source.registration = stores
+            .register_input_source(source.source_id, descriptor)
+            .ok();
     }
 }
 
@@ -1918,8 +1931,10 @@ fn traced_source_token(
     TracedTokenWord::pack(token, origin)
 }
 
+#[inline(always)]
 fn traced_ordinary_source_token(
     stores: &mut impl ExpansionState,
+    registration: Option<RegisteredSource>,
     token: Token,
     start: LexSourceContext,
     end: LexSourceContext,
@@ -1928,7 +1943,13 @@ fn traced_ordinary_source_token(
     let backed_one_scalar =
         end.byte_offset.checked_sub(start.byte_offset) == u64::try_from(scalar.len_utf8()).ok();
     let origin = if backed_one_scalar {
-        stores.source_token_origin(start.source_id, start.byte_offset, end.byte_offset)
+        if let Some(origin) =
+            registration.and_then(|source| source.direct_origin(start.byte_offset, end.byte_offset))
+        {
+            origin
+        } else {
+            stores.source_token_origin(start.source_id, start.byte_offset, end.byte_offset)
+        }
     } else {
         stores.source_range_origin(start.source_id, start.byte_offset, end.byte_offset)
     };
@@ -2016,6 +2037,7 @@ fn next_token_from_line<S>(
                 source.frame.state = LexerState::SkippingBlanks;
                 Ok(Some(traced_ordinary_source_token(
                     stores,
+                    source.registration,
                     Token::Char {
                         ch: ' ',
                         cat: Catcode::Space,
@@ -2037,6 +2059,7 @@ fn next_token_from_line<S>(
             source.frame.state = LexerState::MidLine;
             Ok(Some(traced_ordinary_source_token(
                 stores,
+                source.registration,
                 Token::Char { ch, cat },
                 start,
                 source_coordinate(source),
@@ -2054,6 +2077,7 @@ fn next_token_from_line<S>(
             source.frame.state = LexerState::MidLine;
             Ok(Some(traced_ordinary_source_token(
                 stores,
+                source.registration,
                 Token::Char { ch, cat },
                 start,
                 source_coordinate(source),

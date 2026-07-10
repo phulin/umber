@@ -215,13 +215,18 @@ supply.
   empty sources). `Universe` validates World record liveness/length before
   the private source map accepts a region; file bytes remain solely in
   `World`, while generated sources share immutable backing with their input
-  adapter. Ordinary backed one-scalar tokens encode their logical source
-  position directly in the opaque origin word, eliminating provenance-arena
-  appends on the common source path. Positions above the direct payload use
+  adapter. Registration yields an opaque `RegisteredSource` capability held
+  only by the live source frame, so ordinary backed one-scalar tokens encode
+  their logical position directly without a repeated map lookup or a
+  provenance-arena append. Positions above the direct payload use
   validated arena `SourceSpan` records. Control sequences, transformed `^^`
   input, and other multi-character spellings use exact validated half-open
-  spans; inserted normalized endlines use zero-width physical anchors. Legacy
-  flat source records remain only for compatibility APIs during migration.
+  spans; inserted normalized endlines use zero-width physical anchors. Phase 6
+  measurements adopt the tagged form: ASCII/UTF-8 logical bytes fall by more
+  than 93%, source-heavy throughput improves, and no primary workload regresses
+  more than 5%. Flat source records remain only as degraded compatibility for
+  explicitly unregistered legacy/test origins; production traced inputs do not
+  emit them.
   Diagnostic resolution dispatches all forms
   through the live source map and computes physical line/column data lazily,
   so frame pop does not lose source text and aggregate rollback cannot alias

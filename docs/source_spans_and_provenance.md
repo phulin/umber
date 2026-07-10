@@ -1,7 +1,7 @@
 # Compact Source Spans and Token Provenance
 
-Status: proposed design for the source-location and provenance refactor that
-follows mandatory packed token provenance.
+Status: adopted design. All six phases are implemented; the Phase 6 evidence
+and compatibility decision are recorded in `provenance_performance.md`.
 
 ## 1. Purpose
 
@@ -621,6 +621,24 @@ is reported separately, source/input id reuse cannot alias stale data, and
 expansion traces remain bounded and presentation-lazy after frame pop.
 
 ### Phase 6: Measurement, cleanup, and adoption decision
+
+**Status (2026-07-10): adopted.** Controlled 100-sample comparisons rebuild
+the Phase 1 commit with the current toolchain. ASCII and mixed UTF-8 logical
+storage fall by 95.73% and 93.93%; their median tokenization times improve by
+5.43% and 2.56%. The long-line path improves 15.63%, macro replay improves
+1.03%, and the only slower primary median is control-sequence-heavy input at
+3.03% with overlapping confidence intervals. No primary workload exceeds the
+5% regression ceiling. Cold/repeated resolver cost, zero cache growth,
+retained/peak/rollback bytes, and exact capacity boundaries are documented in
+`provenance_performance.md`.
+
+The tagged form is adopted. Production traced inputs have no flat-source
+migration path: registration yields an opaque `RegisteredSource` capability,
+ordinary scalars encode directly, and nontrivial or wide spellings use
+validated spans. `OriginRecord::Source` remains only as degraded compatibility
+for explicitly unregistered origins created by older APIs and focused tests;
+removing it would force artificial backing into tests without reducing
+production storage or writes.
 
 - Benchmark source-heavy ASCII, mixed UTF-8, a single very long line,
   control-sequence-heavy, scanner-heavy, macro-heavy, rollback/reuse, and

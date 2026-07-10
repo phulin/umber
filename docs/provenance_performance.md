@@ -1,79 +1,102 @@
 # Provenance Performance Notes
 
-Status: Phase 3 tagged-direct-source measurement, compared with the Phase 1
-byte-canonical coordinate baseline after mandatory packed-token provenance.
+Status: Phase 6 adoption measurements for compact tagged source provenance,
+2026-07-10.
 
-The benchmark entry point is:
+## Reproduction and comparison method
+
+Run the current matrix with Criterion's 100-sample default:
 
 ```bash
 cargo bench --manifest-path benchmarks/tex-state/Cargo.toml --bench state_budgets -- provenance
 ```
 
-The source-coordinate rows below were rerun on 2026-07-10 with Criterion's
-100-sample default on the local development machine. The expansion rows are
-the 2026-07-09 mandatory-provenance baseline; Phase 3 does not change those
-paths.
+Set `UMBER_PROVENANCE_REPORT=1` and select `provenance_memory` to print the
+deterministic counters summarized below. Timed source rows do not sample
+statistics per token; memory is measured in a separate untimed pass. The Phase
+1 comparator is commit `6022b9fa`, rebuilt with the same Rust toolchain and
+dependency resolution as the current tree. Retained historical executables are
+not valid comparators: rebuilding Phase 1 changed the macro row from about
+0.74 ms to about 1.17 ms on this machine.
 
-## Speed
+Each time interval is Criterion's 95% confidence interval from 100 samples.
+The reported delta compares medians. The adoption ceiling is a statistically
+significant regression greater than 5% in any primary row.
 
-| Workload | Benchmark | Observed time |
-| --- | --- | --- |
-| Source-heavy lexing, semantic-only readonly | `provenance_source_lexing/semantic_only_readonly` | 260.53-261.73 us |
-| Source-heavy lexing with tagged source origins | `provenance_source_lexing/traced_source_origins` | 383.35-388.82 us |
-| Macro-heavy expansion with invocation origins | `provenance_expansion/macro_body_replay_invocation_origins` | 749.01-813.96 us |
-| Scanner-heavy `\number` runs | `provenance_expansion/scanner_number_runs` | 553.10-592.60 us |
-| Generated `\romannumeral` token runs | `provenance_expansion/generated_value_origin_sharing` | 840.10-867.10 us |
+## Throughput adoption matrix
 
-Criterion reports the tagged source-origin path 1.38% faster than its stored
-Phase 1 baseline, within the configured noise threshold, so the representation
-change does not regress throughput. The byte-canonical cursor remains shared
-by both paths. Macro-body replay does not allocate
-origin records per delivered body token; it pays one macro-invocation origin
-record per call.
+| Workload | Phase 1 time | Adopted time | Median delta | Adopted throughput |
+| --- | ---: | ---: | ---: | ---: |
+| ASCII source, 23,552 tokens | 350.39-354.88 us | 332.89-333.55 us | -5.43% | 70.68 Mtok/s |
+| Mixed UTF-8, 16,384 tokens | 251.03-253.65 us | 245.12-246.49 us | -2.56% | 66.65 Mtok/s |
+| One 65,536-scalar line, 65,537 tokens | 710.73-719.20 us | 599.38-607.30 us | -15.63% | 108.66 Mtok/s |
+| Control-sequence-heavy, 4,096 tokens | 535.13-537.56 us | 547.23-563.62 us | +3.03% | 7.41 Mtok/s |
+| Macro body replay, 32,768 delivered tokens / 2,048 calls | 1.1618-1.1750 ms | 1.1462-1.1691 ms | -1.03% | 28.34 Mtok/s delivered |
+| Scanner-heavy `\number`, 5,120 outputs / 1,024 runs | 553.10-592.60 us | 504.21-510.97 us | improvement | 10.09 Mtok/s output |
+| Generated `\romannumeral`, 15,360 outputs / 1,024 runs | 840.10-867.10 us | 774.01-811.14 us | improvement | 19.47 Mtok/s output |
 
-## Memory
+Control-sequence-heavy input is the only slower median. Its confidence interval
+overlaps the Phase 1 neighborhood and its 3.03% median cost is below the 5%
+ceiling. No primary row blocks adoption. Ordinary-source throughput was recovered
+by carrying an opaque `RegisteredSource` capability in the live input frame:
+direct origins are encoded without repeated source-map lookup, while wide and
+exhausted cases still use the aggregate validated fallback. Scanner range proofs
+are reconstructed only when a scanner asks for one instead of being written on
+every source delivery.
 
-`Universe::provenance_stats()` reports live arena lengths for origin records,
-origin-list spans, and packed origin-list entries. On this target
-`OriginRecord` is 32 bytes, an origin-list span is 8 bytes, and `OriginId` is
-4 bytes.
+## Incremental memory
 
-| Workload | Expanded/source tokens | Record growth | Span growth | Entry growth | Logical live bytes | Retained capacity bytes |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Source-heavy traced lexing | 23,552 delivered tokens (23,040 direct) | 1,024 | 0 | 0 | 32,768 arena bytes plus one source region/backing | retained arena and source-map capacity reported separately |
-| Macro-heavy long run | 32,768 expanded body tokens from 2,048 calls | 2,048 | 0 | 0 | 65,536 | — |
-| Scanner-heavy `\number` runs | 5,120 generated digit tokens | 1,024 | 1,024 | 5,120 | 61,440 | — |
-| Generated `\romannumeral` runs | 15,360 generated roman tokens | 1,024 | 1,024 | 15,360 | 102,400 | — |
-| Discarded generated-token fork after rollback | discarded run | 0 | 0 | 0 | 0 | retained capacity reported separately |
+Logical bytes include live origin records, origin-list spans and entries, source
+regions, and generated-backing metadata. Retained bytes use vector capacities.
+World bytes and the `Arc<[u8]>` already shared with a memory input adapter are
+not charged twice; a duplicate allocation would be charged in full. There is no
+persistent line-index cache, so cache growth is zero and repeated rendering
+recomputes physical line starts.
 
-The source-heavy input contains 45 ordinary backed scalars and one synthetic
-end-line delivery per line. All 23,040 ordinary deliveries are direct and add
-no origin records. Each of the 512 synthetic end lines retains one flat source
-parent and one inserted-origin record during migration, producing the 1,024
-arena records. Logical bytes use live lengths plus source-map structural bytes;
-retained bytes use vector capacities. `Universe::provenance_stats()` exposes
-arena/source-map lengths and capacities without production hot-path counter
-writes; the direct count comes from benchmark-only id inspection. Rollback
-truncates logical lengths but intentionally may retain capacity for reuse.
+| Workload | Tokens / direct | Records / list spans / entries | Regions / backing metadata | Logical bytes | Retained / peak bytes | Phase 1 logical bytes | Reduction |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| ASCII | 23,552 / 23,040 | 1,024 / 0 / 0 | 1 / 1 | 32,848 | 33,088 | 770,048 | 95.73% |
+| Mixed UTF-8 | 16,384 / 15,872 | 1,024 / 0 / 0 | 1 / 1 | 32,848 | 33,088 | 540,672 | 93.93% |
+| One long line | 65,537 / 65,536 | 2 / 0 / 0 | 1 / 1 | 144 | 448 | 2,097,184 | 99.99% |
+| Control sequences | 4,096 / 0 | 4,608 / 0 / 0 | 1 / 1 | 147,536 | 262,464 | 147,456 | -0.05% |
 
-The macro-heavy result is O(source tokens + definitions + calls), not
-O(tokens expanded). `OriginId` is a u32; these workloads top out at tens of
-thousands of live ids, leaving roughly 4.29 billion raw id slots of headroom.
+The source-heavy ASCII and UTF-8 rows exceed the 80% target. Control words need
+exact arena ranges and therefore do not benefit from point encoding; the 80-byte
+increase is the one source region plus shared-backing metadata, not duplicated
+input bytes.
 
-## Hot-Path Conclusions
+Macro-heavy growth remains 2,048 records (65,536 logical bytes), one invocation
+record per call and no per-body-token write. Scanner-heavy growth is 1,024
+records, 1,024 list spans, and 5,120 entries (61,440 bytes). Generated-value
+growth is 1,024 records, 1,024 spans, and 15,360 entries (102,400 bytes).
 
-- Macro-body delivery performs zero provenance-store writes once the replay
-  frame has been pushed. The body uses definition-time origin lists, arguments
-  use frozen call-site origin lists, and expansion traces use the frame-carried
-  macro invocation origin.
-- Generated token runs now allocate one synthesized origin record and a packed
-  repeated-origin span directly. This removes the temporary origin-list builder
-  allocation for shared generated origins.
-- Rollback truncates provenance arenas to the snapshot mark; discarded forks
-  do not retain provenance growth after rollback.
-- Ordinary source-heavy lexing performs zero provenance-record appends per
-  backed scalar. Only synthetic end-line parent/inserted records and nontrivial
-  migration paths allocate arena records.
-- Physical byte offsets are now produced in O(1) from the canonical UTF-8 byte
-  cursor and retained line start. CRLF bytes, stripped spaces, and synthetic
-  `\endlinechar` bytes are never charged as normalized backing bytes.
+Rollback/reuse reaches 102,480 logical and 155,808 retained bytes before
+rollback. After rollback, logical growth is zero and retained capacity remains
+155,808 bytes for reuse; a second run reuses that capacity. Source bytes remain
+shared and are never included in those figures.
+
+## Resolver and capacity decision
+
+Cold diagnostic rendering is 45.508-45.670 us. Repeated rendering over the same
+live source is 42.962-43.789 us. Both paths retain zero cache bytes. This is an
+intentional initial adoption choice: resolution is error-path work, content-keyed
+cache ownership would add complexity, and measured repeated cost does not justify
+checkpoint-coupled cache state.
+
+The packed format remains exactly:
+
+- raw zero: unknown;
+- `0x00000001..=0x7fffffff`: direct `SourcePos 0..=0x7ffffffe`;
+- `0x80000000..=0xffffffff`: arena indexes `0..=0x7fffffff`.
+
+Boundary crossing, cumulative exhaustion, oversized sources, logical `u64`
+overflow, origin-list packing, rollback liveness, resolver fallback, and
+normal/shadow/replay tests pass. The tagged representation is adopted.
+
+`OriginRecord::Source` remains only as degraded compatibility for explicitly
+unregistered origins constructed by older APIs and tests. Production traced
+World and memory inputs register before delivery and emit only direct positions,
+validated `SourceSpan`s, or structured derived records. Removing the compatibility
+form now would replace useful test construction with synthetic backing unrelated
+to the behavior under test; it is not a production migration path and may be
+deleted when those callers acquire real registered backing.

@@ -433,6 +433,8 @@ impl ExpandError {
         }
     }
 
+    #[cold]
+    #[inline(never)]
     fn capture<S: InputSource>(self, input: &InputStack<S>) -> Self {
         if matches!(self, Self::Captured { .. }) {
             return self;
@@ -649,8 +651,10 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    let result = get_x_token_with_recorder_and_hooks_inner(input, stores, recorder, hooks);
-    result.map_err(|error| error.capture(input))
+    match get_x_token_with_recorder_and_hooks_inner(input, stores, recorder, hooks) {
+        Ok(token) => Ok(token),
+        Err(error) => Err(error.capture(input)),
+    }
 }
 
 fn get_x_token_with_recorder_and_hooks_inner<S, R, H>(

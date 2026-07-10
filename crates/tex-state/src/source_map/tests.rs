@@ -68,6 +68,21 @@ fn registration_is_idempotent_but_rejects_conflicting_backing() {
 }
 
 #[test]
+fn registered_source_capability_encodes_only_backed_nonempty_direct_ranges() {
+    let source = RegisteredSource::new(SourcePos(40), 4);
+    let origin = source.direct_origin(1, 3).expect("range is direct");
+    assert_eq!(
+        origin.decode(),
+        crate::token::OriginEncoding::DirectSource(SourcePos(41))
+    );
+    assert!(source.direct_origin(4, 4).is_none());
+    assert!(source.direct_origin(3, 5).is_none());
+
+    let wide = RegisteredSource::new(SourcePos(u64::from(u32::MAX)), 1);
+    assert!(wide.direct_origin(0, 1).is_none());
+}
+
+#[test]
 fn rollback_reuses_source_ids_generated_ids_and_logical_positions_without_aliasing() {
     let mut map = SourceMap::default();
     map.register(SourceId::new(0), generated(b"root"))

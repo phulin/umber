@@ -38,8 +38,8 @@ use crate::provenance::{
 };
 use crate::scaled::Scaled;
 use crate::source_map::{
-    GeneratedSource, SourceBacking, SourceDescriptor, SourceMapError, SourcePos, SourceRegion,
-    SourceSpan,
+    GeneratedSource, RegisteredSource, SourceBacking, SourceDescriptor, SourceMapError, SourcePos,
+    SourceRegion, SourceSpan,
 };
 use crate::state_hash::{INITIAL_STATE_HASH, StateHasher, combine};
 use crate::stores::StoreStateHashCursor;
@@ -159,6 +159,11 @@ pub trait ExpansionState {
         source: SourceId,
         descriptor: SourceDescriptor,
     ) -> Result<SourcePos, SourceMapError>;
+    fn register_input_source(
+        &mut self,
+        source: SourceId,
+        descriptor: SourceDescriptor,
+    ) -> Result<RegisteredSource, SourceMapError>;
     fn macro_invocation_origin(
         &mut self,
         definition: MacroDefinitionId,
@@ -1351,6 +1356,18 @@ impl Universe {
                 .register_source(source, SourceDescriptor::world(input_record, byte_len));
         }
         self.stores.register_source(source, descriptor)
+    }
+
+    /// Registers a source and returns an opaque capability used by its input
+    /// frame to encode ordinary direct origins without repeated map lookup.
+    pub fn register_input_source(
+        &mut self,
+        source: SourceId,
+        descriptor: SourceDescriptor,
+    ) -> Result<RegisteredSource, SourceMapError> {
+        let byte_len = descriptor.byte_len();
+        let start = self.register_source(source, descriptor)?;
+        Ok(RegisteredSource::new(start, byte_len))
     }
 
     /// Resolves a source-local physical byte offset into logical space.
@@ -2566,6 +2583,14 @@ impl ExpansionState for Universe {
         Self::register_source(self, source, descriptor)
     }
 
+    fn register_input_source(
+        &mut self,
+        source: SourceId,
+        descriptor: SourceDescriptor,
+    ) -> Result<RegisteredSource, SourceMapError> {
+        Self::register_input_source(self, source, descriptor)
+    }
+
     fn macro_invocation_origin(
         &mut self,
         definition: MacroDefinitionId,
@@ -2891,6 +2916,14 @@ impl ExpansionState for ExpansionContext<'_> {
         descriptor: SourceDescriptor,
     ) -> Result<SourcePos, SourceMapError> {
         self.universe.register_source(source, descriptor)
+    }
+
+    fn register_input_source(
+        &mut self,
+        source: SourceId,
+        descriptor: SourceDescriptor,
+    ) -> Result<RegisteredSource, SourceMapError> {
+        self.universe.register_input_source(source, descriptor)
     }
 
     fn macro_invocation_origin(
