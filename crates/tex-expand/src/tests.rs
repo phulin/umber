@@ -2041,6 +2041,31 @@ fn ifdim_operand_nested_conditional_completes_exact_outer_frame() {
 }
 
 #[test]
+fn conditional_operand_recovery_preserves_nested_and_outer_frame_identity() {
+    let mut stores = Universe::new();
+    let (iftrue, _, else_cs, fi) = conditional_primitives(&mut stores);
+    let if_cs = expandable_primitive(&mut stores, "if", ExpandablePrimitive::If);
+    let list = stores.intern_token_list(&[
+        Token::Cs(if_cs),
+        Token::Cs(iftrue),
+        char_token('a'),
+        char_token('b'),
+        Token::Cs(else_cs),
+        char_token('c'),
+        Token::Cs(fi),
+        char_token('x'),
+        Token::Cs(else_cs),
+        char_token('y'),
+        Token::Cs(fi),
+    ]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list(list, TokenListReplayKind::Inserted);
+
+    assert_eq!(next_expanded_chars(&mut input, &mut stores), "y");
+    assert!(input.current_condition().is_none());
+}
+
+#[test]
 fn ifnum_internal_operand_does_not_eagerly_expand_following_else() {
     let mut stores = Universe::new();
     let (_, _, else_cs, fi) = conditional_primitives(&mut stores);
