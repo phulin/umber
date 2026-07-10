@@ -3,8 +3,10 @@ use crate::input::{InputFrameSummary, InputSummary, MacroArguments, TokenListRep
 use crate::macro_store::MacroMeaning;
 use crate::meaning::MeaningFlags;
 use crate::provenance::SourceOrigin;
+use crate::source_map::SourceDescriptor;
 use crate::token::{OriginId, Token};
 use crate::{ProvenanceResolver, Universe, World};
+use std::sync::Arc;
 
 #[test]
 fn resolver_renders_source_line_and_caret() {
@@ -87,4 +89,71 @@ fn source_origin_accessors_are_covered_for_resolver_inputs() {
     assert_eq!(source.byte_offset(), 3);
     assert_eq!(source.line(), 2);
     assert_eq!(source.column(), 1);
+}
+
+#[test]
+fn resolver_derives_utf8_crlf_and_missing_final_newline_coordinates_from_world_backing() {
+    let mut stores = stores_with_input("utf8.tex", "α\r\nbéta".as_bytes());
+    let record = stores
+        .world()
+        .input_records()
+        .first()
+        .expect("source-map operation succeeds");
+    let record_id = crate::InputRecordId::new(0);
+    stores
+        .register_source(
+            crate::SourceId::new(9),
+            SourceDescriptor::world(record_id, record.len() as u64),
+        )
+        .expect("source-map operation succeeds");
+    // Deliberately-wrong legacy line/column proves rendering uses the source map.
+    let origin = stores.source_origin(crate::SourceId::new(9), 5, 99, 99);
+
+    let rendered = ProvenanceResolver::new(&stores).render_diagnostic("boom", Some(origin));
+
+    assert!(rendered.contains("utf8.tex:2:2"));
+    assert!(rendered.contains("  2 | béta"));
+    assert!(rendered.contains("    |  ^"));
+}
+
+#[test]
+fn generated_and_empty_sources_remain_renderable_without_an_input_frame() {
+    let mut stores = Universe::new();
+    stores
+        .register_source(
+            crate::SourceId::new(0),
+            SourceDescriptor::generated(Arc::from(&b"memory line"[..])),
+        )
+        .expect("source-map operation succeeds");
+    stores
+        .register_source(
+            crate::SourceId::new(1),
+            SourceDescriptor::generated(Arc::from(&b""[..])),
+        )
+        .expect("source-map operation succeeds");
+    let text = stores.source_origin(crate::SourceId::new(0), 7, 40, 40);
+    let empty_anchor = stores.source_origin(crate::SourceId::new(1), 0, 1, 0);
+
+    let text_rendered = ProvenanceResolver::new(&stores).render_diagnostic("text", Some(text));
+    let empty_rendered =
+        ProvenanceResolver::new(&stores).render_diagnostic("empty", Some(empty_anchor));
+    assert!(text_rendered.contains("<source 0>:1:8"));
+    assert!(text_rendered.contains("memory line"));
+    assert!(empty_rendered.contains("<source 1>:1:1"));
+}
+
+#[test]
+fn missing_source_byte_degrades_without_a_secondary_failure() {
+    let mut stores = Universe::new();
+    stores
+        .register_source(
+            crate::SourceId::new(0),
+            SourceDescriptor::generated(Arc::from(&b"x"[..])),
+        )
+        .expect("source-map operation succeeds");
+    let origin = stores.source_origin(crate::SourceId::new(0), 99, 7, 3);
+
+    let rendered = ProvenanceResolver::new(&stores).render_diagnostic("boom", Some(origin));
+
+    assert!(rendered.contains("<source 0>:7:4"));
 }

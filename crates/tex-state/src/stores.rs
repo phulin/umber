@@ -29,6 +29,10 @@ use crate::provenance::{
     SynthesizedOriginKind, SyntheticOrigin, SyntheticOriginKind,
 };
 use crate::scaled::Scaled;
+use crate::source_map::{
+    GeneratedSource, SourceBacking, SourceDescriptor, SourceMap, SourceMapError, SourceMapMark,
+    SourcePos, SourceRegion, SourceSpan,
+};
 use crate::survivor::SurvivorArena;
 use crate::token::{Catcode, OriginId, Token};
 use crate::token_store::{TokenListBuilder, TokenStore, TokenStoreMark};
@@ -54,6 +58,7 @@ pub(crate) struct StoreSnapshot {
     interner_mark: InternerMark,
     token_mark: TokenStoreMark,
     provenance_mark: ProvenanceStoreMark,
+    source_map_mark: SourceMapMark,
     macro_mark: MacroStoreMark,
     glue_mark: GlueStoreMark,
     font_mark: FontStoreMark,
@@ -120,6 +125,7 @@ pub struct Stores {
     interner: Interner,
     tokens: TokenStore,
     provenance: ProvenanceStore,
+    source_map: SourceMap,
     macros: MacroStore,
     glue: GlueStore,
     fonts: FontStore,
@@ -161,6 +167,7 @@ impl Clone for Stores {
             interner: self.interner.clone(),
             tokens: self.tokens.clone(),
             provenance: self.provenance.clone(),
+            source_map: self.source_map.clone(),
             macros: self.macros.clone(),
             glue: self.glue.clone(),
             fonts: self.fonts.clone(),
@@ -188,6 +195,7 @@ impl Stores {
             interner: Interner::new(),
             tokens: TokenStore::new(),
             provenance: ProvenanceStore::new(),
+            source_map: SourceMap::default(),
             macros: MacroStore::new(),
             glue: GlueStore::new(),
             fonts: FontStore::new(),
@@ -701,6 +709,44 @@ impl Stores {
     #[must_use]
     pub fn provenance_stats(&self) -> ProvenanceStats {
         self.provenance.stats()
+    }
+
+    /// Registers immutable source backing on this aggregate timeline.
+    pub(crate) fn register_source(
+        &mut self,
+        source: SourceId,
+        descriptor: SourceDescriptor,
+    ) -> Result<SourcePos, SourceMapError> {
+        self.source_map.register(source, descriptor)
+    }
+
+    /// Assigns one local byte offset in a live source to logical source space.
+    pub(crate) fn source_position(
+        &self,
+        source: SourceId,
+        byte_offset: u64,
+    ) -> Result<SourcePos, SourceMapError> {
+        self.source_map.position(source, byte_offset)
+    }
+
+    /// Validates a half-open span against the region containing its low endpoint.
+    pub(crate) fn source_span(
+        &self,
+        lo: SourcePos,
+        hi: SourcePos,
+    ) -> Result<SourceSpan, SourceMapError> {
+        self.source_map.span(lo, hi)
+    }
+
+    pub(crate) fn source_region(&self, source: SourceId) -> Option<SourceRegion> {
+        self.source_map.region_for_source(source)
+    }
+
+    pub(crate) fn generated_source(&self, backing: SourceBacking) -> Option<&GeneratedSource> {
+        match backing {
+            SourceBacking::Generated(id) => self.source_map.generated(id),
+            SourceBacking::World(_) => None,
+        }
     }
 
     fn assert_origin_list_len_matches(&self, token_list: TokenListId, origin_list: OriginListId) {
@@ -1328,6 +1374,7 @@ impl Stores {
             interner_mark: self.interner.watermark(),
             token_mark: self.tokens.watermark(),
             provenance_mark: self.provenance.watermark(),
+            source_map_mark: self.source_map.watermark(),
             macro_mark: self.macros.watermark(),
             glue_mark: self.glue.watermark(),
             font_mark: self.fonts.watermark(),
@@ -1366,6 +1413,7 @@ impl Stores {
         self.interner.truncate_to(snapshot.interner_mark);
         self.tokens.truncate_to(snapshot.token_mark);
         self.provenance.truncate_to(snapshot.provenance_mark);
+        self.source_map.truncate_to(snapshot.source_map_mark);
         self.macros.truncate_to(snapshot.macro_mark);
         self.glue.truncate_to(snapshot.glue_mark);
         self.fonts.truncate_to(snapshot.font_mark);

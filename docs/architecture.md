@@ -209,6 +209,15 @@ supply.
   represented as a source-frame flag that lets
   the lexer finish the current normalized line and then pop that source
   without asking expansion to manage source internals.
+  **Source-map status:** built-in World and memory sources expose immutable
+  descriptors and are idempotently registered through the narrow
+  `ExpansionState` capability before their first traced delivery (including
+  empty sources). `Universe` validates World record liveness/length before
+  the private source map accepts a region; file bytes remain solely in
+  `World`, while generated sources share immutable backing with their input
+  adapter. Diagnostic resolution maps legacy flat source origins through the
+  live region and computes physical line/column data lazily, so frame pop does
+  not lose source text and aggregate rollback cannot alias reused ids.
 
 ## 4. Lexer (the eyes)
 

@@ -37,6 +37,10 @@ use crate::provenance::{
     InsertedOriginKind, OriginListBuilder, OriginRecord, SynthesizedOriginKind, SyntheticOriginKind,
 };
 use crate::scaled::Scaled;
+use crate::source_map::{
+    GeneratedSource, SourceBacking, SourceDescriptor, SourceMapError, SourcePos, SourceRegion,
+    SourceSpan,
+};
 use crate::state_hash::{INITIAL_STATE_HASH, StateHasher, combine};
 use crate::stores::StoreStateHashCursor;
 use crate::stores::{
@@ -138,6 +142,11 @@ pub trait ExpansionState {
         line: u32,
         column: u32,
     ) -> OriginId;
+    fn register_source(
+        &mut self,
+        source: SourceId,
+        descriptor: SourceDescriptor,
+    ) -> Result<SourcePos, SourceMapError>;
     fn macro_invocation_origin(
         &mut self,
         definition: MacroDefinitionId,
@@ -1257,6 +1266,63 @@ impl Universe {
     #[must_use]
     pub fn provenance_stats(&self) -> ProvenanceStats {
         self.stores.provenance_stats()
+    }
+
+    /// Registers a source backing after validating any World identity.
+    pub fn register_source(
+        &mut self,
+        source: SourceId,
+        descriptor: SourceDescriptor,
+    ) -> Result<SourcePos, SourceMapError> {
+        if let SourceDescriptor::World {
+            input_record,
+            byte_len,
+        } = descriptor
+        {
+            let record = self
+                .world
+                .input_records()
+                .get(input_record.raw() as usize)
+                .ok_or(SourceMapError::MissingWorldInput)?;
+            if u64::try_from(record.len()).ok() != Some(byte_len) {
+                return Err(SourceMapError::WorldInputLengthMismatch);
+            }
+            return self
+                .stores
+                .register_source(source, SourceDescriptor::world(input_record, byte_len));
+        }
+        self.stores.register_source(source, descriptor)
+    }
+
+    /// Resolves a source-local physical byte offset into logical space.
+    pub fn source_position(
+        &self,
+        source: SourceId,
+        byte_offset: u64,
+    ) -> Result<SourcePos, SourceMapError> {
+        self.stores.source_position(source, byte_offset)
+    }
+
+    /// Validates a half-open logical source span.
+    pub fn source_span(&self, lo: SourcePos, hi: SourcePos) -> Result<SourceSpan, SourceMapError> {
+        self.stores.source_span(lo, hi)
+    }
+
+    pub(crate) fn source_region(&self, source: SourceId) -> Option<SourceRegion> {
+        self.stores.source_region(source)
+    }
+
+    pub(crate) fn source_backing_bytes(&self, region: SourceRegion) -> Option<&[u8]> {
+        match region.backing {
+            SourceBacking::World(record_id) => {
+                let record = self.world.input_records().get(record_id.raw() as usize)?;
+                self.world.input_content(record.hash())
+            }
+            SourceBacking::Generated(_) => self
+                .stores
+                .generated_source(region.backing)
+                .map(GeneratedSource::bytes),
+        }
     }
 
     pub fn intern_glue(&mut self, spec: GlueSpec) -> GlueId {
@@ -2397,6 +2463,14 @@ impl ExpansionState for Universe {
         Self::source_origin_with_input_record(self, source, input_record, byte_offset, line, column)
     }
 
+    fn register_source(
+        &mut self,
+        source: SourceId,
+        descriptor: SourceDescriptor,
+    ) -> Result<SourcePos, SourceMapError> {
+        Self::register_source(self, source, descriptor)
+    }
+
     fn macro_invocation_origin(
         &mut self,
         definition: MacroDefinitionId,
@@ -2690,6 +2764,14 @@ impl ExpansionState for ExpansionContext<'_> {
             line,
             column,
         )
+    }
+
+    fn register_source(
+        &mut self,
+        source: SourceId,
+        descriptor: SourceDescriptor,
+    ) -> Result<SourcePos, SourceMapError> {
+        self.universe.register_source(source, descriptor)
     }
 
     fn macro_invocation_origin(

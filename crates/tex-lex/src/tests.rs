@@ -7,12 +7,54 @@ use tex_state::env::banks::IntParam;
 use tex_state::ids::OriginListId;
 use tex_state::provenance::{InsertedOriginKind, OriginRecord};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
-use tex_state::{ExpansionState, Universe};
+use tex_state::{ExpansionState, ProvenanceResolver, Universe};
 
 mod input_lines;
 
 fn condition_context() -> TracedTokenWord {
     TracedTokenWord::pack(char_token('i', Catcode::Escape), OriginId::UNKNOWN)
+}
+
+#[test]
+fn traced_memory_source_registers_before_delivery_and_survives_frame_pop() {
+    let mut stores = Universe::new();
+    let mut lexer = Lexer::new(MemoryInput::new("hello"));
+    let first = lexer
+        .next_traced_token(&mut stores)
+        .expect("traced source operation succeeds")
+        .expect("source token");
+    while lexer
+        .next_traced_token(&mut stores)
+        .expect("traced source operation succeeds")
+        .is_some()
+    {}
+
+    assert!(stores.source_position(super::SourceId::new(0), 0).is_ok());
+    let rendered = ProvenanceResolver::new(&stores).render_diagnostic("boom", Some(first.origin()));
+    assert!(rendered.contains("<source 0>:1:1"));
+    assert!(rendered.contains("hello"));
+}
+
+#[test]
+fn empty_memory_source_is_registered_even_without_delivered_tokens() {
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::END_LINE_CHAR, -1);
+    let mut lexer = Lexer::new(MemoryInput::new(""));
+    assert!(
+        lexer
+            .next_traced_token(&mut stores)
+            .expect("traced source operation succeeds")
+            .is_none()
+    );
+    let anchor = stores
+        .source_position(super::SourceId::new(0), 0)
+        .expect("empty source anchor is live");
+    assert!(
+        stores
+            .source_span(anchor, anchor)
+            .expect("traced source operation succeeds")
+            .is_empty()
+    );
 }
 
 #[test]

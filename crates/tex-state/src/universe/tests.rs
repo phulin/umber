@@ -12,9 +12,11 @@ use crate::node::{BoxNode, BoxNodeFields, GlueKind, KernKind, LeaderPayload, Nod
 use crate::page::{PageDimension, PageInteger};
 use crate::provenance::{OriginRecord, SourceOrigin, SyntheticOriginKind};
 use crate::scaled::{GlueSetRatio, Scaled};
+use crate::source_map::{SourceDescriptor, SourceMapError};
 use crate::token::{Catcode, OriginId, Token, TracedTokenWord};
 use crate::world::{ContentHash, JobClock, PrintSink, StreamSlot, World};
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::Arc;
 
 #[test]
 fn universe_is_send() {
@@ -91,6 +93,101 @@ fn semantic_hash_ignores_provenance_allocations() {
 
     assert_eq!(after_snapshot.state_hash(), base_checkpoint_hash);
     assert_eq!(universe.testing_state_hash(), base_testing_hash);
+}
+
+#[test]
+fn semantic_hash_ignores_source_map_identities_and_generated_backing() {
+    let mut universe = Universe::new();
+    let baseline = universe.snapshot().state_hash();
+    universe
+        .register_source(
+            crate::SourceId::new(4),
+            SourceDescriptor::generated(Arc::from(&b"diagnostic only"[..])),
+        )
+        .expect("source-map integration operation succeeds");
+
+    assert_eq!(universe.snapshot().state_hash(), baseline);
+}
+
+#[test]
+fn world_and_source_map_rollback_reuse_ids_and_positions_atomically() {
+    let mut world = World::memory();
+    world
+        .set_memory_file("input.tex", b"old".to_vec())
+        .expect("source-map integration operation succeeds");
+    let mut universe = Universe::with_world(world);
+    let snapshot = universe.snapshot();
+
+    let old = universe
+        .world_mut()
+        .read_file("input.tex")
+        .expect("source-map integration operation succeeds");
+    let old_record = old.record();
+    let old_start = universe
+        .register_source(
+            crate::SourceId::new(0),
+            SourceDescriptor::world(old.record(), old.bytes().len() as u64),
+        )
+        .expect("source-map integration operation succeeds");
+    universe.rollback(&snapshot);
+    assert_eq!(
+        universe.source_position(crate::SourceId::new(0), 0),
+        Err(SourceMapError::UnknownSource)
+    );
+
+    universe
+        .world_mut()
+        .set_memory_file("input.tex", b"new".to_vec())
+        .expect("source-map integration operation succeeds");
+    let new = universe
+        .world_mut()
+        .read_file("input.tex")
+        .expect("source-map integration operation succeeds");
+    assert_eq!(new.record(), old_record);
+    let new_start = universe
+        .register_source(
+            crate::SourceId::new(0),
+            SourceDescriptor::world(new.record(), new.bytes().len() as u64),
+        )
+        .expect("source-map integration operation succeeds");
+    assert_eq!(new_start, old_start);
+    assert_eq!(
+        universe.source_backing_bytes(
+            universe
+                .source_region(crate::SourceId::new(0))
+                .expect("source-map integration operation succeeds")
+        ),
+        Some(&b"new"[..])
+    );
+}
+
+#[test]
+fn world_registration_checks_record_liveness_and_length() {
+    let mut missing = Universe::new();
+    assert_eq!(
+        missing.register_source(
+            crate::SourceId::new(0),
+            SourceDescriptor::world(crate::InputRecordId::new(0), 0),
+        ),
+        Err(SourceMapError::MissingWorldInput)
+    );
+
+    let mut world = World::memory();
+    world
+        .set_memory_file("input.tex", b"abc".to_vec())
+        .expect("source-map integration operation succeeds");
+    let mut universe = Universe::with_world(world);
+    let content = universe
+        .world_mut()
+        .read_file("input.tex")
+        .expect("source-map integration operation succeeds");
+    assert_eq!(
+        universe.register_source(
+            crate::SourceId::new(0),
+            SourceDescriptor::world(content.record(), 99),
+        ),
+        Err(SourceMapError::WorldInputLengthMismatch)
+    );
 }
 
 #[test]

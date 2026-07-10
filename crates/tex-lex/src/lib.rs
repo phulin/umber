@@ -6,9 +6,11 @@
 
 use std::collections::VecDeque;
 use std::fmt;
+use std::sync::Arc;
 
 use tex_state::ids::{OriginListId, TokenListId};
 use tex_state::provenance::{InsertedOriginKind, SyntheticOriginKind};
+use tex_state::source_map::SourceDescriptor;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{ExpansionState, FileContent, InputRecordId, WorldError};
 
@@ -28,6 +30,11 @@ pub trait InputSource {
 
     /// Returns the durable `World` record for a file-backed source.
     fn input_record(&self) -> Option<InputRecordId> {
+        None
+    }
+
+    /// Returns immutable backing metadata used by diagnostic source mapping.
+    fn source_descriptor(&self) -> Option<SourceDescriptor> {
         None
     }
 }
@@ -107,13 +114,17 @@ impl PhysicalLine {
 #[derive(Debug)]
 pub struct MemoryInput {
     lines: std::vec::IntoIter<PhysicalLine>,
+    backing: Arc<[u8]>,
 }
 
 impl MemoryInput {
     #[must_use]
     pub fn new(input: impl Into<String>) -> Self {
+        let input = input.into();
+        let backing: Arc<[u8]> = Arc::from(input.as_bytes());
         Self {
-            lines: split_physical_lines(&input.into()).into_iter(),
+            lines: split_physical_lines(&input).into_iter(),
+            backing,
         }
     }
 }
@@ -122,12 +133,17 @@ impl InputSource for MemoryInput {
     fn read_line(&mut self) -> Result<Option<PhysicalLine>, InputSourceError> {
         Ok(self.lines.next())
     }
+
+    fn source_descriptor(&self) -> Option<SourceDescriptor> {
+        Some(SourceDescriptor::generated(Arc::clone(&self.backing)))
+    }
 }
 
 /// Content-addressed input source created from `World` file content.
 #[derive(Debug)]
 pub struct WorldInput {
     input_record: InputRecordId,
+    byte_len: usize,
     lines: std::vec::IntoIter<PhysicalLine>,
     invalid_utf8: Option<(usize, usize, usize, usize)>,
 }
@@ -149,6 +165,7 @@ impl WorldInput {
         match std::str::from_utf8(bytes) {
             Ok(input) => Self {
                 input_record,
+                byte_len: bytes.len(),
                 lines: split_physical_lines(input)
                     .into_iter()
                     .skip(lines_read)
@@ -172,6 +189,7 @@ impl WorldInput {
                     .count();
                 Self {
                     input_record,
+                    byte_len: bytes.len(),
                     lines: Vec::new().into_iter(),
                     invalid_utf8: Some((byte_start, byte_end, line, column)),
                 }
@@ -195,6 +213,13 @@ impl InputSource for WorldInput {
 
     fn input_record(&self) -> Option<InputRecordId> {
         Some(self.input_record)
+    }
+
+    fn source_descriptor(&self) -> Option<SourceDescriptor> {
+        Some(SourceDescriptor::world(
+            self.input_record,
+            u64::try_from(self.byte_len).unwrap_or(u64::MAX),
+        ))
     }
 }
 
@@ -310,6 +335,8 @@ struct SourceInputFrame<S> {
     lines: LineReader<S>,
     frame: SourceFrame,
     next_source_offset: usize,
+    descriptor: Option<SourceDescriptor>,
+    registration_attempted: bool,
 }
 
 impl<S> SourceInputFrame<S> {
@@ -318,12 +345,15 @@ impl<S> SourceInputFrame<S> {
         S: InputSource,
     {
         let input_record = source.input_record();
+        let descriptor = source.source_descriptor();
         Self {
             source_id,
             input_record,
             lines: LineReader::new(source),
             frame: SourceFrame::new(),
             next_source_offset: 0,
+            descriptor,
+            registration_attempted: false,
         }
     }
 }
@@ -516,6 +546,7 @@ impl<S> InputStack<S> {
 
     pub fn from_summary<E, F>(summary: &InputSummary, mut reopen_source: F) -> Result<Self, E>
     where
+        S: InputSource,
         F: FnMut(SourceId, Option<InputRecordId>, &SourceFrameSummary) -> Result<S, E>,
     {
         let mut frames = Vec::with_capacity(summary.frames().len());
@@ -526,12 +557,16 @@ impl<S> InputStack<S> {
                     input_record,
                     source,
                 } => {
+                    let reopened = reopen_source(*source_id, *input_record, source)?;
+                    let descriptor = reopened.source_descriptor();
                     frames.push(InputFrame::Source(SourceInputFrame {
                         source_id: *source_id,
                         input_record: *input_record,
-                        lines: LineReader::new(reopen_source(*source_id, *input_record, source)?),
+                        lines: LineReader::new(reopened),
                         frame: SourceFrame::from_summary(source),
                         next_source_offset: source.next_source_offset(),
+                        descriptor,
+                        registration_attempted: false,
                     }));
                 }
                 InputFrameSummary::TokenList {
@@ -853,10 +888,11 @@ impl<S> InputStack<S> {
     }
 
     pub fn current_input_origin(&mut self, stores: &mut impl ExpansionState) -> OriginId {
-        if let Some(source) = self.frames.iter().rev().find_map(|frame| match frame {
+        if let Some(source) = self.frames.iter_mut().rev().find_map(|frame| match frame {
             InputFrame::Source(source) => Some(source),
             InputFrame::TokenList(_) | InputFrame::Condition { .. } => None,
         }) {
+            ensure_source_registered(source, stores);
             return allocate_source_origin(stores, source_coordinate(source));
         }
         if let Some(last) = &self.last_source_frame {
@@ -1124,6 +1160,7 @@ where
                     };
                 }
                 InputFrame::Source(source) => {
+                    ensure_source_registered(source, stores);
                     if let Some(token) = source.frame.pending.pop_front() {
                         return Ok(Some(token));
                     }
@@ -1222,6 +1259,7 @@ where
                     };
                 }
                 InputFrame::Source(source) => {
+                    ensure_source_registered(source, stores);
                     if let Some(token) = source.frame.pending.pop_front() {
                         return Ok(Some(TracedExpansionToken::new(token, false)));
                     }
@@ -1591,6 +1629,17 @@ where
             Ok(true)
         }
         None => Ok(false),
+    }
+}
+
+fn ensure_source_registered<S>(source: &mut SourceInputFrame<S>, stores: &mut impl ExpansionState) {
+    if source.registration_attempted {
+        return;
+    }
+    source.registration_attempted = true;
+    if let Some(descriptor) = source.descriptor.clone() {
+        // Diagnostic metadata exhaustion must not stop semantic tokenization.
+        let _ = stores.register_source(source.source_id, descriptor);
     }
 }
 

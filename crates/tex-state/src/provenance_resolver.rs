@@ -12,6 +12,7 @@ use crate::input::{InputFrameSummary, SourceId};
 use crate::provenance::{
     InsertedOriginKind, OriginRecord, SourceOrigin, SynthesizedOriginKind, SyntheticOriginKind,
 };
+use crate::source_map::SourceBacking;
 use crate::token::OriginId;
 
 const DEFAULT_TRACE_DEPTH: usize = 8;
@@ -155,12 +156,13 @@ impl<'a> ProvenanceResolver<'a> {
     }
 
     fn render_source_context(&self, out: &mut String, prefix: &str, source: SourceOrigin) {
-        let label = self.source_label_for_record(source.source(), source.input_record());
-        let line_number = source.line().max(1);
-        let column = source.column().saturating_add(1).max(1);
+        let display = self.source_display(source);
+        let label = display.label;
+        let line_number = display.line_number;
+        let column = display.column;
         let _ = writeln!(out, "{prefix} {label}:{line_number}:{column}");
 
-        let Some(line) = self.source_line(source) else {
+        let Some(line) = display.line else {
             return;
         };
         let gutter = line_number.to_string();
@@ -174,6 +176,20 @@ impl<'a> ProvenanceResolver<'a> {
         source: SourceId,
         input_record: Option<crate::InputRecordId>,
     ) -> String {
+        if let Some(region) = self.universe.source_region(source) {
+            return match region.backing {
+                SourceBacking::World(record) => self
+                    .universe
+                    .world()
+                    .input_records()
+                    .get(record.raw() as usize)
+                    .map_or_else(
+                        || format!("<source {}>", source.raw()),
+                        |record| display_path(record.path()),
+                    ),
+                SourceBacking::Generated(_) => format!("<source {}>", source.raw()),
+            };
+        }
         let index = input_record.map_or(source.raw() as usize, |record| record.raw() as usize);
         if let Some(record) = self.universe.world().input_records().get(index) {
             return display_path(record.path());
@@ -182,6 +198,11 @@ impl<'a> ProvenanceResolver<'a> {
     }
 
     fn source_line(&self, source: SourceOrigin) -> Option<String> {
+        if let Some(region) = self.universe.source_region(source.source()) {
+            let bytes = self.universe.source_backing_bytes(region)?;
+            let offset = usize::try_from(source.byte_offset()).ok()?;
+            return physical_line_at(bytes, offset).map(|(_, _, line)| line);
+        }
         let index = source
             .input_record()
             .map_or(source.source().raw() as usize, |record| {
@@ -191,6 +212,29 @@ impl<'a> ProvenanceResolver<'a> {
         let bytes = self.universe.world().input_content(record.hash())?;
         let text = String::from_utf8_lossy(bytes);
         line_at(&text, source.line())
+    }
+
+    fn source_display(&self, source: SourceOrigin) -> DisplaySource {
+        let label = self.source_label_for_record(source.source(), source.input_record());
+        if let Some(region) = self.universe.source_region(source.source())
+            && source.byte_offset() <= region.byte_len
+            && let Some(bytes) = self.universe.source_backing_bytes(region)
+            && let Ok(offset) = usize::try_from(source.byte_offset())
+            && let Some((line_number, column, line)) = physical_line_at(bytes, offset)
+        {
+            return DisplaySource {
+                label,
+                line_number,
+                column,
+                line: Some(line),
+            };
+        }
+        DisplaySource {
+            label,
+            line_number: source.line().max(1),
+            column: source.column().saturating_add(1).max(1),
+            line: self.source_line(source),
+        }
     }
 
     fn origin_summary(&self, origin: OriginId) -> String {
@@ -229,6 +273,13 @@ impl<'a> ProvenanceResolver<'a> {
     }
 }
 
+struct DisplaySource {
+    label: String,
+    line_number: u32,
+    column: u32,
+    line: Option<String>,
+}
+
 fn display_path(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
@@ -238,6 +289,38 @@ fn line_at(text: &str, line: u32) -> Option<String> {
     text.lines()
         .nth(index)
         .map(|line| line.trim_end_matches('\r').to_owned())
+}
+
+fn physical_line_at(bytes: &[u8], offset: usize) -> Option<(u32, u32, String)> {
+    if offset > bytes.len() {
+        return None;
+    }
+    let mut starts = vec![0usize];
+    for (index, &byte) in bytes.iter().enumerate() {
+        if byte == b'\n' && index + 1 < bytes.len() {
+            starts.push(index + 1);
+        }
+    }
+    let line_index = starts
+        .partition_point(|&start| start <= offset)
+        .saturating_sub(1);
+    let line_start = starts[line_index];
+    let raw_end = bytes[line_start..]
+        .iter()
+        .position(|&byte| byte == b'\n')
+        .map_or(bytes.len(), |relative| line_start + relative);
+    let content_end = raw_end
+        .checked_sub(1)
+        .filter(|&end| bytes.get(end) == Some(&b'\r'))
+        .unwrap_or(raw_end);
+    let text = std::str::from_utf8(&bytes[line_start..content_end]).ok()?;
+    let column_end = offset.min(content_end);
+    let prefix = std::str::from_utf8(&bytes[line_start..column_end]).ok()?;
+    Some((
+        u32::try_from(line_index + 1).unwrap_or(u32::MAX),
+        u32::try_from(prefix.chars().count().saturating_add(1)).unwrap_or(u32::MAX),
+        text.to_owned(),
+    ))
 }
 
 fn caret_padding(line: &str, one_based_column: usize) -> String {

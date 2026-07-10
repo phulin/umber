@@ -20,6 +20,7 @@ pub mod page;
 pub mod provenance;
 mod provenance_resolver;
 pub mod scaled;
+pub mod source_map;
 pub(crate) mod state_hash;
 mod stores;
 pub mod survivor;

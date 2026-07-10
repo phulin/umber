@@ -506,6 +506,19 @@ linear, and the readonly/traced comparison isolates provenance work.
 
 ### Phase 2: Source-map substrate
 
+**Status (2026-07-10): implemented.** `tex-state` now owns opaque logical
+`SourcePos` values, validated `SourceSpan`s, append-only source regions, and
+explicit World/generated backing identities under the aggregate `Stores` /
+`Universe` rollback tuple. `tex-lex` registers built-in World and memory
+sources idempotently through `ExpansionState` before traced delivery; World
+registration validates record liveness and byte length without copying input
+bytes, while memory input shares one immutable `Arc<[u8]>` with the generated
+registry. Resolver line/column lookup is lazy over immutable physical bytes,
+with no reusable-id-keyed mutable cache, and legacy flat source records remain
+the emitted representation for Phase 3 migration. Source regions, generated
+backings, and the next logical position roll back by constant-size watermarks;
+their identities and bytes remain excluded from semantic hashes.
+
 - Add logical `u64 SourcePos`, validated `SourceSpan`, source regions,
   generated-source backings, and rollback marks in `tex-state` behind the
   aggregate facade.

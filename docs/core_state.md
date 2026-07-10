@@ -67,6 +67,7 @@ supporting untracked mutation "for performance" anywhere, ever.
 | Code tables | catcode/lccode/uccode/sfcode/mathcode/delcode over Unicode | copy-on-write pages | root pointer + generation |
 | Token store | immutable, hash-consed token lists | frozen at birth | watermark |
 | Provenance store | diagnostic origin records and packed `OriginId` list spans | append-only, not hash-consed | watermark |
+| Source map | logical source regions and shared generated backing identities; World regions retain only `InputRecordId` | append-only through aggregate registration | region/backing watermarks + next-position scalar |
 | Glue store | immutable, hash-consed glue specs (`GlueId`) | frozen at birth | watermark |
 | Node arenas | per-epoch bump arenas + survivor arena | frozen at birth; promotion on escape | watermark; refcounts (survivors) |
 | Hyphenation | language-0 Liang trie + exception map | pattern/exception loads through `Universe` | cloned in store snapshot (v1) |
@@ -390,6 +391,25 @@ cells[i] = new
   replay frames and their invocation origins, not from per-token chain records.
   Coordinate rendering stays lazy so future splice-time line-delta remapping
   can be inserted at the resolver boundary.
+
+### Source map
+
+- `tex-state` owns one append-only logical `u64` source-position space. Each
+  registered source receives a disjoint byte range plus one EOF/empty anchor;
+  `SourcePos` construction stays private and `SourceSpan` construction checks
+  both half-open endpoints against the region selected by the low endpoint.
+- Registration is an aggregate `Universe`/`ExpansionState` operation. World
+  regions retain only a validated live `InputRecordId` and byte length, so
+  `World` remains authoritative for content bytes. Generated and memory
+  regions retain a shared immutable `Arc<[u8]>` under an explicit backing id.
+  Raw map/backing mutation is not exposed downstream.
+- Store snapshots add only region/backing lengths and the next logical
+  position. Aggregate rollback truncates these with provenance while `World`
+  restores its input-record watermark, so reused `SourceId`, `InputRecordId`,
+  backing id, and logical position values cannot observe discarded content.
+  Resolver line starts are derived lazily from stable immutable backing; no
+  mutable cache keyed by reusable ids is retained. Source-map identity and
+  diagnostic bytes are excluded from semantic hashing.
 
 ### Glue store
 

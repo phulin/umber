@@ -260,6 +260,7 @@ fn main() {
     let id = node_builder.finish(&mut nodes);
     let _ = nodes.get(id, &survivors);
 }
+
 "#,
     )
     .expect("write content boundary probe main");
@@ -295,6 +296,60 @@ fn main() {
             "probe failed for an unexpected reason while checking {expected}:\n{stderr}"
         );
     }
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)]
+fn downstream_crate_cannot_construct_or_mutate_raw_source_map() {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let probe_workspace = tempfile::tempdir().expect("create source-map boundary probe workspace");
+    let probe_dir = probe_workspace.path().join("source-map-boundary-probe");
+    let src_dir = probe_dir.join("src");
+
+    fs::create_dir_all(&src_dir).expect("create source-map boundary probe src dir");
+    fs::write(
+        probe_dir.join("Cargo.toml"),
+        format!(
+            r#"[package]
+name = "source-map-boundary-probe"
+version = "0.0.0"
+edition = "2024"
+
+[workspace]
+
+[dependencies]
+tex-state = {{ path = "{manifest_dir}" }}
+"#
+        ),
+    )
+    .expect("write source-map boundary probe manifest");
+    fs::write(
+        src_dir.join("main.rs"),
+        r#"use tex_state::source_map::SourceMap;
+
+fn main() {
+    let _map = SourceMap::default();
+}
+"#,
+    )
+    .expect("write source-map boundary probe main");
+
+    let output = Command::new(env!("CARGO"))
+        .arg("check")
+        .arg("--quiet")
+        .arg("--manifest-path")
+        .arg(probe_dir.join("Cargo.toml"))
+        .arg("--target-dir")
+        .arg(probe_dir.join("target"))
+        .output()
+        .expect("run source-map boundary probe");
+
+    assert!(!output.status.success(), "raw source-map probe compiled");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("struct `SourceMap` is private"),
+        "probe failed for an unexpected reason:\n{stderr}"
+    );
 }
 
 #[test]
