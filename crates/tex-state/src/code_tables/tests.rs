@@ -39,7 +39,10 @@ fn initex_case_space_math_and_delimiter_defaults() {
     assert_eq!(tables.sfcode('A'), 999);
     assert_eq!(tables.sfcode('a'), 1000);
     assert_eq!(tables.sfcode('é'), 1000);
-    assert_eq!(tables.mathcode('A'), u32::from('A'));
+    assert_eq!(tables.mathcode('0'), 0x7030);
+    assert_eq!(tables.mathcode('A'), 0x7141);
+    assert_eq!(tables.mathcode('a'), 0x7161);
+    assert_eq!(tables.mathcode('@'), u32::from('@'));
     assert_eq!(tables.mathcode('é'), u32::from('é'));
     assert_eq!(tables.delcode('A'), -1);
 }

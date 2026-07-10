@@ -249,9 +249,11 @@ rare and bursty (verbatim, `\makeatletter`, babel shorthands).
   the root and then copy-on-writes only the touched page.
 - INITEX defaults are TeX82-compatible for the classic 0..255 range and
   extended over Unicode by the same default rules: ASCII letters have letter
-  catcode and case mappings, uppercase ASCII has `sfcode` 999, other scalar
-  values keep the normal TeX defaults (`other` catcode, zero case codes,
-  `sfcode` 1000, mathcode equal to the scalar value, delcode -1) until set.
+  catcode and case mappings, uppercase ASCII has `sfcode` 999, ASCII digits
+  start with variable-class family-0 mathcodes, and ASCII letters start with
+  variable-class family-1 mathcodes. Other scalar values keep the normal TeX
+  defaults (`other` catcode, zero case codes, `sfcode` 1000, mathcode equal to
+  the scalar value, delcode -1) until set.
 - Rationale for structural persistence *here only*: the read path that
   matters bypasses the tree; the domain is huge and default-dominated; and
   per-snapshot roots make history free. Everywhere else, flat arrays win.

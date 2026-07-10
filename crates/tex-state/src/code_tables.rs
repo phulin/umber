@@ -22,6 +22,10 @@ const ASCII_A: u32 = b'A' as u32;
 const ASCII_Z: u32 = b'Z' as u32;
 const ASCII_LOWER_A: u32 = b'a' as u32;
 const ASCII_LOWER_Z: u32 = b'z' as u32;
+const ASCII_ZERO: u32 = b'0' as u32;
+const ASCII_NINE: u32 = b'9' as u32;
+const VARIABLE_MATH_CLASS: u32 = 7 << 12;
+const LETTER_MATH_FAMILY: u32 = 1 << 8;
 
 /// A TeX `\lccode` value.
 pub type LcCode = u32;
@@ -523,7 +527,13 @@ struct MathCodeDefaults;
 
 impl Defaults<MathCode> for MathCodeDefaults {
     fn default_for(code: u32) -> MathCode {
-        code
+        match code {
+            ASCII_ZERO..=ASCII_NINE => VARIABLE_MATH_CLASS | code,
+            ASCII_A..=ASCII_Z | ASCII_LOWER_A..=ASCII_LOWER_Z => {
+                VARIABLE_MATH_CLASS | LETTER_MATH_FAMILY | code
+            }
+            _ => code,
+        }
     }
 }
 

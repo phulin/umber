@@ -20,9 +20,9 @@ fn math_mode_builds_noads_styles_choices_and_mu_nodes() {
         noad.kind,
         tex_state::math::NoadKind::Normal(tex_state::math::NoadClass::Ord)
     ));
-    assert_math_char(&noad.nucleus, 0, 'a');
-    assert_math_char(&noad.subscript, 0, 'b');
-    assert_math_char(&noad.superscript, 0, 'c');
+    assert_math_char(&noad.nucleus, 1, 'a');
+    assert_math_char(&noad.subscript, 1, 'b');
+    assert_math_char(&noad.superscript, 1, 'c');
 
     assert!(matches!(
         math_noad(&nodes[1]).kind,
@@ -34,12 +34,12 @@ fn math_mode_builds_noads_styles_choices_and_mu_nodes() {
         op.kind,
         tex_state::math::NoadKind::Operator(LimitType::Limits)
     ));
-    assert_math_char(&op.nucleus, 0, 'x');
-    assert_math_char(&op.subscript, 0, 'y');
+    assert_math_char(&op.nucleus, 1, 'x');
+    assert_math_char(&op.subscript, 1, 'y');
 
     let overline = math_noad(&nodes[3]);
     assert!(matches!(overline.kind, tex_state::math::NoadKind::Overline));
-    assert_math_char(&overline.nucleus, 0, 'z');
+    assert_math_char(&overline.nucleus, 1, 'z');
 
     assert!(matches!(
         nodes[4],
@@ -179,8 +179,8 @@ fn plain_active_prime_shape_closes_brace_alias_math_field() {
 
     assert_eq!(nodes.len(), 1);
     let noad = math_noad(&nodes[0]);
-    assert_math_char(&noad.nucleus, 0, 'x');
-    assert_math_char(&noad.superscript, 0, 'p');
+    assert_math_char(&noad.nucleus, 1, 'x');
+    assert_math_char(&noad.superscript, 1, 'p');
 }
 
 #[test]
@@ -355,7 +355,7 @@ fn mathcode_8000_uses_current_active_meaning_and_fam_overrides_variable_family()
     stores.set_meaning(active_question, Meaning::MathCharGiven(0x0231));
 
     let mut input = InputStack::new(MemoryInput::new(
-        r#"\fam=5 \mathcode`x="7131 $?$ $x$ $x^?$"#,
+        r#"\mathcode`x="7131 $?$ $\fam=5 x$ $x^?$"#,
     ));
     let mut executor = Executor::new();
     executor
@@ -373,7 +373,22 @@ fn mathcode_8000_uses_current_active_meaning_and_fam_overrides_variable_family()
 
     let third = stores.nodes(math_lists[2].content);
     assert_eq!(third.len(), 1);
+    assert_math_char(&math_noad(&third[0]).nucleus, 1, '1');
     assert_math_char(&math_noad(&third[0]).superscript, 2, '1');
+}
+
+#[test]
+fn initex_letter_mathcodes_use_variable_family_one_and_honor_fam() {
+    let (stores, executor) = run_math_source(r"$a$ $\fam=2 S$");
+    assert_eq!(stores.mathcode('a'), 0x7161);
+    assert_eq!(stores.mathcode('S'), 0x7153);
+    let math_lists = math_list_nodes(&executor);
+
+    let default = stores.nodes(math_lists[0].content);
+    assert_math_char(&math_noad(&default[0]).nucleus, 1, 'a');
+
+    let overridden = stores.nodes(math_lists[1].content);
+    assert_math_char(&math_noad(&overridden[0]).nucleus, 2, 'S');
 }
 
 #[test]
@@ -383,9 +398,9 @@ fn showlists_reports_unfinished_math_noad_fields() {
 
     assert!(log.contains("### math mode entered at line 0"));
     assert!(log.contains("\\mathord"));
-    assert!(log.contains(".\\fam0 a"));
-    assert!(log.contains("^\\fam0 c"));
-    assert!(log.contains("_\\fam0 b"));
+    assert!(log.contains(".\\fam1 a"));
+    assert!(log.contains("^\\fam1 c"));
+    assert!(log.contains("_\\fam1 b"));
     assert!(log.contains("\\mathchoice"));
 }
 
@@ -395,7 +410,7 @@ fn par_in_math_finishes_math_with_tex_error_text() {
     let nodes = math_nodes(&stores, &executor);
 
     assert_eq!(nodes.len(), 1);
-    assert_math_char(&math_noad(&nodes[0]).nucleus, 0, 'a');
+    assert_math_char(&math_noad(&nodes[0]).nucleus, 1, 'a');
     assert!(terminal_effect_text(&stores).contains("! Missing $ inserted."));
 }
 
@@ -418,7 +433,7 @@ fn left_right_scans_nested_list_as_inner_noad() {
         math_noad(&enclosed[0]).kind,
         tex_state::math::NoadKind::LeftDelimiter { delimiter: 0 }
     ));
-    assert_math_char(&math_noad(&enclosed[1]).nucleus, 0, 'a');
+    assert_math_char(&math_noad(&enclosed[1]).nucleus, 1, 'a');
     assert!(matches!(
         math_noad(&enclosed[2]).kind,
         tex_state::math::NoadKind::RightDelimiter { delimiter: 0 }
@@ -430,7 +445,7 @@ fn mismatched_right_and_missing_right_use_tex_error_text() {
     let (extra_stores, extra_executor) = run_math_source(r"$a\right.$");
     let extra_nodes = math_nodes(&extra_stores, &extra_executor);
     assert_eq!(extra_nodes.len(), 1);
-    assert_math_char(&math_noad(&extra_nodes[0]).nucleus, 0, 'a');
+    assert_math_char(&math_noad(&extra_nodes[0]).nucleus, 1, 'a');
     assert!(terminal_effect_text(&extra_stores).contains("! Extra \\right."));
 
     let (missing_stores, missing_executor) = run_math_source(r"$\left. a$");
@@ -601,14 +616,14 @@ fn delimiter_radical_accent_and_vcenter_parse_to_math_noads() {
             delimiter: 0x270370
         }
     ));
-    assert_math_char(&radical.nucleus, 0, 'x');
+    assert_math_char(&radical.nucleus, 1, 'x');
 
     let accent = math_noad(&nodes[2]);
     assert!(matches!(
         accent.kind,
         tex_state::math::NoadKind::Accent { .. }
     ));
-    assert_math_char(&accent.nucleus, 0, 'y');
+    assert_math_char(&accent.nucleus, 1, 'y');
 
     let vcenter = math_noad(&nodes[3]);
     assert!(matches!(vcenter.kind, tex_state::math::NoadKind::VCenter));

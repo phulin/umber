@@ -118,6 +118,10 @@ where
     } else {
         None
     };
+    // tex.web `push_math(math_shift_group)` locally defines `\fam=-1` before
+    // `\everymath`/`\everydisplay`, so variable-family mathcodes retain their
+    // encoded family unless the formula explicitly selects another one.
+    stores.set_int_param(tex_state::env::banks::IntParam::FAM, -1);
     nest.push(if display {
         Mode::DisplayMath
     } else {

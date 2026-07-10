@@ -568,7 +568,10 @@ assignments, box building, and dispatch into the typesetting kernels.
   both tokens. The inserted replay and math-entry lookahead retain the
   triggering token's origin and remain part of the checkpointed input stack.
   `\mathcode"8000` redispatches through the current active-character meaning
-  at use time, and family font selectors live in the barriered Env font state.
+  at use time, INITEX ASCII letters/digits carry TeX82's variable-family
+  mathcodes, and math entry resets the barriered `\fam` parameter to -1 before
+  replaying `\everymath`/`\everydisplay`. Family font selectors live in the
+  barriered Env font state.
   Display math is packaged stomach-side: entering `$$` from unrestricted
   horizontal mode interrupts the paragraph through the ordinary line breaker,
   records `\predisplaysize`, `\displaywidth`, and `\displayindent` in
