@@ -11,6 +11,9 @@ shadow = []
 # Test-only escape hatches for replay/fuzz coverage of raw storage words.
 # Engine production builds must not enable this feature.
 testing = []
+# Ephemeral process-wide counters used to measure node mixes. The counters are
+# deliberately outside Universe and never participate in snapshots or hashes.
+node-stats = []
 
 [dependencies]
 ahash.workspace = true

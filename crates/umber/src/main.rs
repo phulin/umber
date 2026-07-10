@@ -101,6 +101,10 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
             ));
         }
     };
+    #[cfg(feature = "node-stats")]
+    for (kind, count) in tex_state::node::node_append_histogram() {
+        eprintln!("NODE_HISTOGRAM {kind} {count}");
+    }
     if let Some(output) = &opts.dvi {
         let dvi = umber::dvi_from_artifacts(&stores, &run.artifacts)?;
         stores.world_mut().write_file(output, dvi)?;

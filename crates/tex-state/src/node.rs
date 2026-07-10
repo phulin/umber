@@ -68,6 +68,92 @@ pub enum Node {
     Adjust(NodeListId),
 }
 
+#[cfg(feature = "node-stats")]
+mod stats {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use super::Node;
+
+    pub const NAMES: [&str; 22] = [
+        "char",
+        "lig",
+        "kern",
+        "glue",
+        "penalty",
+        "rule",
+        "hlist",
+        "vlist",
+        "unset",
+        "disc",
+        "mark",
+        "ins",
+        "whatsit",
+        "math_on",
+        "math_off",
+        "math_noad",
+        "fraction_noad",
+        "math_style",
+        "math_choice",
+        "math_list",
+        "nonscript",
+        "adjust",
+    ];
+    static COUNTS: [AtomicU64; NAMES.len()] = [const { AtomicU64::new(0) }; NAMES.len()];
+
+    pub fn record(node: &Node) {
+        let index = match node {
+            Node::Char { .. } => 0,
+            Node::Lig { .. } => 1,
+            Node::Kern { .. } => 2,
+            Node::Glue { .. } => 3,
+            Node::Penalty(_) => 4,
+            Node::Rule { .. } => 5,
+            Node::HList(_) => 6,
+            Node::VList(_) => 7,
+            Node::Unset(_) => 8,
+            Node::Disc { .. } => 9,
+            Node::Mark { .. } => 10,
+            Node::Ins { .. } => 11,
+            Node::Whatsit(_) => 12,
+            Node::MathOn(_) => 13,
+            Node::MathOff(_) => 14,
+            Node::MathNoad(_) => 15,
+            Node::FractionNoad(_) => 16,
+            Node::MathStyle(_) => 17,
+            Node::MathChoice(_) => 18,
+            Node::MathList(_) => 19,
+            Node::Nonscript => 20,
+            Node::Adjust(_) => 21,
+        };
+        COUNTS[index].fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn snapshot() -> Vec<(&'static str, u64)> {
+        NAMES
+            .iter()
+            .zip(&COUNTS)
+            .filter_map(|(&name, count)| {
+                let count = count.load(Ordering::Relaxed);
+                (count != 0).then_some((name, count))
+            })
+            .collect()
+    }
+}
+
+/// Returns the process-local node-append histogram used by measurement builds.
+///
+/// These relaxed counters are diagnostic-only and are not engine state.
+#[cfg(feature = "node-stats")]
+#[must_use]
+pub fn node_append_histogram() -> Vec<(&'static str, u64)> {
+    stats::snapshot()
+}
+
+#[cfg(feature = "node-stats")]
+pub(crate) fn record_node_append(node: &Node) {
+    stats::record(node);
+}
+
 /// A TeX box node payload shared by hlist and vlist nodes.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BoxNode {

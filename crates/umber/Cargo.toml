@@ -6,6 +6,7 @@ edition.workspace = true
 [features]
 default = []
 shadow = ["tex-state/shadow"]
+node-stats = ["tex-state/node-stats"]
 
 [dependencies]
 tex-exec = { path = "../tex-exec" }

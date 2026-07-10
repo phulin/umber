@@ -5,6 +5,15 @@ use crate::node::{BoxNode, BoxNodeFields, Node, Sign};
 use crate::scaled::{GlueSetRatio, Scaled};
 
 #[test]
+fn node_layout_baseline() {
+    assert_eq!(std::mem::size_of::<Node>(), 72);
+    assert_eq!(std::mem::size_of::<BoxNode>(), 44);
+    assert_eq!(std::mem::size_of::<crate::node::UnsetNode>(), 44);
+    assert_eq!(std::mem::size_of::<crate::node::Whatsit>(), 48);
+    assert_eq!(std::mem::size_of::<NodeListId>(), 16);
+}
+
+#[test]
 fn nested_lists_build_bottom_up_and_read_back() {
     let mut arena = NodeArena::new();
     let survivors = crate::survivor::SurvivorArena::new();
