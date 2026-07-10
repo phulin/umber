@@ -6,8 +6,7 @@ use tex_state::scaled::Scaled;
 use super::delimiters::make_delimiter;
 use super::{
     BoxAxis, Context, FetchedChar, FrozenHList, MathBox, MathNode, MathTypesetState, add,
-    boxed_node, char_box, clean_box, fetch, hpack, make_character_nucleus, scripts, source_node,
-    sub, vpack,
+    boxed_node, char_box, clean_box, fetch, make_character_nucleus, scripts, source_node, sub,
 };
 
 pub(super) struct AccentResult {
@@ -16,7 +15,7 @@ pub(super) struct AccentResult {
 }
 
 pub(super) fn make_over(
-    ctx: &Context<'_, impl MathTypesetState>,
+    ctx: &mut Context<'_, impl MathTypesetState>,
     nucleus: &MathField,
 ) -> FrozenHList {
     // AppG rule 10
@@ -25,18 +24,14 @@ pub(super) fn make_over(
         .for_size(ctx.style.size())
         .extension
         .default_rule_thickness;
-    let base = clean_box(ctx.state, nucleus, ctx.style.cramped_style(), ctx.params);
-    FrozenHList {
-        nodes: vec![boxed_node(overbar(
-            base,
-            Scaled::from_raw(3 * thickness.raw()),
-            thickness,
-        ))],
-    }
+    let style = ctx.style.cramped_style();
+    let base = clean_box(ctx, nucleus, style);
+    let overbar = overbar(ctx, base, Scaled::from_raw(3 * thickness.raw()), thickness);
+    ctx.layout.hlist([boxed_node(overbar)])
 }
 
 pub(super) fn make_under(
-    ctx: &Context<'_, impl MathTypesetState>,
+    ctx: &mut Context<'_, impl MathTypesetState>,
     nucleus: &MathField,
 ) -> FrozenHList {
     // AppG rule 9
@@ -45,33 +40,30 @@ pub(super) fn make_under(
         .for_size(ctx.style.size())
         .extension
         .default_rule_thickness;
-    let base = clean_box(ctx.state, nucleus, ctx.style, ctx.params);
+    let base = clean_box(ctx, nucleus, ctx.style);
     let base_height = base.height;
     let base_width = base.width;
-    let mut under = vpack(FrozenHList {
-        nodes: vec![
-            MathNode::HList(base),
-            MathNode::Kern {
-                amount: Scaled::from_raw(3 * thickness.raw()),
-                kind: KernKind::Explicit,
-            },
-            MathNode::Rule {
-                width: Some(base_width),
-                height: Some(thickness),
-                depth: Some(Scaled::from_raw(0)),
-            },
-        ],
-    });
+    let list = ctx.layout.hlist([
+        MathNode::HList(base),
+        MathNode::Kern {
+            amount: Scaled::from_raw(3 * thickness.raw()),
+            kind: KernKind::Explicit,
+        },
+        MathNode::Rule {
+            width: Some(base_width),
+            height: Some(thickness),
+            depth: Some(Scaled::from_raw(0)),
+        },
+    ]);
+    let mut under = ctx.layout.vpack(list);
     let delta = add(add(under.height, under.depth), thickness);
     under.height = base_height;
     under.depth = sub(delta, under.height);
-    FrozenHList {
-        nodes: vec![boxed_node(under)],
-    }
+    ctx.layout.hlist([boxed_node(under)])
 }
 
 pub(super) fn make_vcenter(
-    ctx: &Context<'_, impl MathTypesetState>,
+    ctx: &mut Context<'_, impl MathTypesetState>,
     nucleus: &MathField,
 ) -> FrozenHList {
     // AppG rule 18d
@@ -82,62 +74,53 @@ pub(super) fn make_vcenter(
         Scaled::from_raw(tex_arith::half(delta.raw())),
     );
     centered.depth = sub(delta, centered.height);
-    FrozenHList {
-        nodes: vec![boxed_node(centered)],
-    }
+    ctx.layout.hlist([boxed_node(centered)])
 }
 
-fn clean_vcenter_box(ctx: &Context<'_, impl MathTypesetState>, nucleus: &MathField) -> MathBox {
+fn clean_vcenter_box(ctx: &mut Context<'_, impl MathTypesetState>, nucleus: &MathField) -> MathBox {
     if let MathField::SubBox(list) = nucleus
         && let [Node::VList(boxed)] = ctx.state.nodes(*list)
     {
+        let nodes: Vec<_> = ctx
+            .state
+            .nodes(boxed.children)
+            .iter()
+            .map(|node| source_node(ctx.state, node))
+            .collect();
+        let list = ctx.layout.hlist(nodes);
         return MathBox {
             width: boxed.width,
             height: boxed.height,
             depth: boxed.depth,
             shift: boxed.shift,
-            list: FrozenHList {
-                nodes: ctx
-                    .state
-                    .nodes(boxed.children)
-                    .iter()
-                    .map(|node| source_node(ctx.state, node))
-                    .collect(),
-            },
+            list,
             axis: BoxAxis::Vertical,
         };
     }
-    clean_box(ctx.state, nucleus, ctx.style, ctx.params)
+    clean_box(ctx, nucleus, ctx.style)
 }
 
-fn unwrap_single_vlist(mut boxed: MathBox) -> MathBox {
+fn unwrap_single_vlist(ctx: &Context<'_, impl MathTypesetState>, boxed: MathBox) -> MathBox {
     if boxed.axis == BoxAxis::Horizontal
         && boxed.shift.raw() == 0
-        && boxed.list.nodes.len() == 1
-        && matches!(boxed.list.nodes.first(), Some(MathNode::VList(_)))
+        && let Some(MathNode::VList(inner)) = ctx.layout.single_node(boxed.list)
     {
-        let Some(MathNode::VList(inner)) = boxed.list.nodes.pop() else {
-            unreachable!("single vlist checked above")
-        };
-        return inner;
+        return inner.clone();
     }
     boxed
 }
 
 pub(super) fn make_radical(
-    ctx: &Context<'_, impl MathTypesetState>,
+    ctx: &mut Context<'_, impl MathTypesetState>,
     noad: &MathNoad,
     delimiter: u32,
 ) -> FrozenHList {
     // AppG rule 11
     let size_params = ctx.params.for_size(ctx.style.size());
     let thickness = size_params.extension.default_rule_thickness;
-    let x = unwrap_single_vlist(clean_box(
-        ctx.state,
-        &noad.nucleus,
-        ctx.style.cramped_style(),
-        ctx.params,
-    ));
+    let style = ctx.style.cramped_style();
+    let x = clean_box(ctx, &noad.nucleus, style);
+    let x = unwrap_single_vlist(ctx, x);
     let mut clearance = if ctx.style.is_display() {
         add(
             thickness,
@@ -153,23 +136,21 @@ pub(super) fn make_radical(
         clearance = add(clearance, Scaled::from_raw(tex_arith::half(delta.raw())));
     }
     delimiter.shift = add(x.height, clearance);
-    let bar = overbar(x, clearance, delimiter.height);
-    FrozenHList {
-        nodes: vec![MathNode::HList(hpack(FrozenHList {
-            nodes: vec![boxed_node(delimiter), boxed_node(bar)],
-        }))],
-    }
+    let bar = overbar(ctx, x, clearance, delimiter.height);
+    let inner = ctx.layout.hlist([boxed_node(delimiter), boxed_node(bar)]);
+    let packed = ctx.layout.hpack(inner);
+    ctx.layout.hlist([MathNode::HList(packed)])
 }
 
 pub(super) fn make_math_accent(
-    ctx: &Context<'_, impl MathTypesetState>,
+    ctx: &mut Context<'_, impl MathTypesetState>,
     noad: &MathNoad,
     accent: MathChar,
 ) -> AccentResult {
     // AppG rule 12
     let Some(fetched) = fetch(ctx.state, accent, ctx.style) else {
         return AccentResult {
-            hlist: FrozenHList::default(),
+            hlist: ctx.layout.empty(),
             scripts_handled: false,
         };
     };
@@ -177,12 +158,8 @@ pub(super) fn make_math_accent(
     let mut accent_code = fetched.ch as u8;
     let mut accent_metrics = fetched.metrics;
     let skew = accent_skew(ctx, &noad.nucleus);
-    let mut accentee = clean_box(
-        ctx.state,
-        &noad.nucleus,
-        ctx.style.cramped_style(),
-        ctx.params,
-    );
+    let style = ctx.style.cramped_style();
+    let mut accentee = clean_box(ctx, &noad.nucleus, style);
     let accentee_width = accentee.width;
     let mut accentee_height = accentee.height;
 
@@ -211,25 +188,27 @@ pub(super) fn make_math_accent(
         let mut script_delta = Scaled::from_raw(0);
         let mut base = make_character_nucleus(ctx, ch, false, &noad.subscript, &mut script_delta);
         scripts::make_scripts(
-            ctx.state,
+            ctx,
             &mut base,
             &noad.subscript,
             &noad.superscript,
             ctx.style,
-            ctx.params,
             script_delta,
         );
-        accentee = hpack(base);
+        accentee = ctx.layout.hpack(base);
         delta = add(delta, sub(accentee.height, accentee_height));
         accentee_height = accentee.height;
         scripts_handled = true;
     }
 
-    let mut accent_box = char_box(FetchedChar {
-        font: accent_font,
-        ch: char::from(accent_code),
-        metrics: accent_metrics,
-    });
+    let mut accent_box = char_box(
+        ctx,
+        FetchedChar {
+            font: accent_font,
+            ch: char::from(accent_code),
+            metrics: accent_metrics,
+        },
+    );
     accent_box.shift = add(
         skew,
         Scaled::from_raw(tex_arith::half(sub(accentee_width, accent_box.width).raw())),
@@ -237,55 +216,56 @@ pub(super) fn make_math_accent(
     accent_box.width = Scaled::from_raw(0);
 
     let accentee_width = accentee.width;
-    let mut packed = vpack(FrozenHList {
-        nodes: vec![
-            MathNode::HList(accent_box),
-            MathNode::Kern {
-                amount: Scaled::from_raw(-delta.raw()),
-                kind: KernKind::Accent,
-            },
-            MathNode::HList(accentee),
-        ],
-    });
+    let list = ctx.layout.hlist([
+        MathNode::HList(accent_box),
+        MathNode::Kern {
+            amount: Scaled::from_raw(-delta.raw()),
+            kind: KernKind::Accent,
+        },
+        MathNode::HList(accentee),
+    ]);
+    let mut packed = ctx.layout.vpack(list);
     packed.width = accentee_width;
     if packed.height < accentee_height {
-        packed.list.nodes.insert(
-            0,
+        packed.list = ctx.layout.hlist([
             MathNode::Kern {
                 amount: sub(accentee_height, packed.height),
                 kind: KernKind::Accent,
             },
-        );
+            MathNode::Sequence(packed.list),
+        ]);
         packed.height = accentee_height;
     }
     AccentResult {
-        hlist: FrozenHList {
-            nodes: vec![MathNode::VList(packed)],
-        },
+        hlist: ctx.layout.hlist([MathNode::VList(packed)]),
         scripts_handled,
     }
 }
 
-fn overbar(base: MathBox, clearance: Scaled, thickness: Scaled) -> MathBox {
+fn overbar(
+    ctx: &mut Context<'_, impl MathTypesetState>,
+    base: MathBox,
+    clearance: Scaled,
+    thickness: Scaled,
+) -> MathBox {
     let width = base.width;
-    vpack(FrozenHList {
-        nodes: vec![
-            MathNode::Kern {
-                amount: thickness,
-                kind: KernKind::Explicit,
-            },
-            MathNode::Rule {
-                width: Some(width),
-                height: Some(thickness),
-                depth: Some(Scaled::from_raw(0)),
-            },
-            MathNode::Kern {
-                amount: clearance,
-                kind: KernKind::Explicit,
-            },
-            boxed_node(base),
-        ],
-    })
+    let list = ctx.layout.hlist([
+        MathNode::Kern {
+            amount: thickness,
+            kind: KernKind::Explicit,
+        },
+        MathNode::Rule {
+            width: Some(width),
+            height: Some(thickness),
+            depth: Some(Scaled::from_raw(0)),
+        },
+        MathNode::Kern {
+            amount: clearance,
+            kind: KernKind::Explicit,
+        },
+        boxed_node(base),
+    ]);
+    ctx.layout.vpack(list)
 }
 
 fn accent_skew(ctx: &Context<'_, impl MathTypesetState>, nucleus: &MathField) -> Scaled {

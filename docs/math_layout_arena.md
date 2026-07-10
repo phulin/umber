@@ -49,22 +49,24 @@ creates a small wrapper span around the original list instead of inserting into
 an owned vector. Script attachment likewise composes the base and script spans
 without copying either list.
 
-The input math list remains immutable. The existing `make_ord` ligature/kern
-rewrite may use a conversion-local input buffer initially; it is independent of
-the output arena and can be replaced by a streaming rewrite later if profiling
-still justifies it.
+The input math list remains immutable. The `make_ord` ligature/kern rewrite is
+copy-on-write: recursive lists are borrowed directly unless an adjacent math
+character pair actually requires TeX's mutating ligature/kern rule.
 
 ## Lowering boundary
 
 `tex-typeset` remains pure: it reads through `MathTypesetState` and returns an
 owned `MathLayout`. `tex-exec` lowers the arena bottom-up through `Universe`.
-Each box child span is frozen exactly once into an epoch `NodeListId`; sequence
-references are flattened into their containing list and do not create boxes or
-observable nodes.
+Each box child span is frozen into an epoch `NodeListId`; sequence references
+are flattened into their containing list and do not create boxes or observable
+nodes. Lowering uses one node scratch vector plus box-frame start indices, so a
+completed child slice can be frozen and replaced by its box node without a
+per-box output vector. A formula-local cache also avoids repeatedly interning
+the same small set of spacing glues.
 
-Lowering must be iterative or explicitly depth-checked so pathologically deep
-math input cannot overflow the Rust stack. No raw node store or handle
-constructor crosses the aggregate `Universe` boundary.
+Lowering is iterative, so pathologically deep math input cannot overflow the
+Rust stack. No raw node store or handle constructor crosses the aggregate
+`Universe` boundary.
 
 ## Compatibility and validation
 

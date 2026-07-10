@@ -5,7 +5,7 @@ use tex_state::scaled::Scaled;
 
 use super::{
     BoxAxis, Context, FrozenHList, MathBox, MathNode, MathTypesetState, add, boxed_node, char_box,
-    clean_box, fetch, hpack, sub,
+    clean_box, fetch, sub,
 };
 
 pub(super) struct OperatorResult {
@@ -15,7 +15,7 @@ pub(super) struct OperatorResult {
 }
 
 pub(super) fn make_op(
-    ctx: &Context<'_, impl MathTypesetState>,
+    ctx: &mut Context<'_, impl MathTypesetState>,
     noad: &MathNoad,
     limit_type: LimitType,
 ) -> OperatorResult {
@@ -36,9 +36,7 @@ pub(super) fn make_op(
         }
     } else {
         OperatorResult {
-            hlist: FrozenHList {
-                nodes: vec![boxed_node(nucleus)],
-            },
+            hlist: ctx.layout.hlist([boxed_node(nucleus)]),
             delta,
             scripts_handled: false,
         }
@@ -95,8 +93,12 @@ pub(super) fn make_ord(
     }
 }
 
+pub(super) fn ord_pair_may_change(nodes: &[Node], index: usize) -> bool {
+    adjacent_math_chars(nodes, index).is_some()
+}
+
 fn operator_nucleus(
-    ctx: &Context<'_, impl MathTypesetState>,
+    ctx: &mut Context<'_, impl MathTypesetState>,
     noad: &MathNoad,
     effective_limits: LimitType,
     delta: &mut Scaled,
@@ -116,10 +118,10 @@ fn operator_nucleus(
     let mut boxed = match field {
         MathField::MathChar(ch) | MathField::MathTextChar(ch) => {
             let Some(fetched) = fetch(ctx.state, ch, ctx.style) else {
-                return hpack(FrozenHList::default());
+                return ctx.layout.hpack(ctx.layout.empty());
             };
             *delta = fetched.metrics.italic_correction;
-            let mut boxed = char_box(fetched);
+            let mut boxed = char_box(ctx, fetched);
             if !matches!(effective_limits, LimitType::Limits)
                 && !matches!(noad.subscript, MathField::Empty)
             {
@@ -127,7 +129,7 @@ fn operator_nucleus(
             }
             boxed
         }
-        _ => clean_box(ctx.state, &field, ctx.style, ctx.params),
+        _ => clean_box(ctx, &field, ctx.style),
     };
     let axis = ctx.params.for_size(ctx.style.size()).symbols.axis_height;
     boxed.shift = sub(
@@ -138,33 +140,24 @@ fn operator_nucleus(
 }
 
 fn displayed_limits(
-    ctx: &Context<'_, impl MathTypesetState>,
+    ctx: &mut Context<'_, impl MathTypesetState>,
     noad: &MathNoad,
     nucleus: MathBox,
     delta: Scaled,
 ) -> FrozenHList {
     // AppG rule 13a
     let size_params = ctx.params.for_size(ctx.style.size()).extension;
-    let mut sup = clean_box(
-        ctx.state,
-        &noad.superscript,
-        ctx.style.sup_style(),
-        ctx.params,
-    );
+    let sup_style = ctx.style.sup_style();
+    let sub_style = ctx.style.sub_style();
+    let mut sup = clean_box(ctx, &noad.superscript, sup_style);
     let mut op = nucleus;
-    let mut sub_box = clean_box(
-        ctx.state,
-        &noad.subscript,
-        ctx.style.sub_style(),
-        ctx.params,
-    );
+    let mut sub_box = clean_box(ctx, &noad.subscript, sub_style);
     let width = sup.width.max(op.width).max(sub_box.width);
-    rebox(&mut sup, width);
-    rebox(&mut op, width);
-    rebox(&mut sub_box, width);
-    let op = hpack(FrozenHList {
-        nodes: vec![MathNode::HList(op)],
-    });
+    rebox(ctx, &mut sup, width);
+    rebox(ctx, &mut op, width);
+    rebox(ctx, &mut sub_box, width);
+    let op_list = ctx.layout.hlist([MathNode::HList(op)]);
+    let op = ctx.layout.hpack(op_list);
     let skew = Scaled::from_raw(tex_arith::half(delta.raw()));
     sup.shift = skew;
     sub_box.shift = Scaled::from_raw(-skew.raw());
@@ -202,16 +195,16 @@ fn displayed_limits(
         });
         depth = add(depth, add(size_params.big_op_spacing5, sub_extent));
     }
-    FrozenHList {
-        nodes: vec![MathNode::VList(MathBox {
-            width,
-            height,
-            depth,
-            shift: Scaled::from_raw(0),
-            list: FrozenHList { nodes: list },
-            axis: BoxAxis::Vertical,
-        })],
-    }
+    let list = ctx.layout.hlist(list);
+    let limits = MathBox {
+        width,
+        height,
+        depth,
+        shift: Scaled::from_raw(0),
+        list,
+        axis: BoxAxis::Vertical,
+    };
+    ctx.layout.hlist([MathNode::VList(limits)])
 }
 
 fn adjacent_math_chars(nodes: &[Node], index: usize) -> Option<(MathChar, MathChar)> {
@@ -336,27 +329,26 @@ fn apply_math_ligature(nodes: &mut Vec<Node>, index: usize, ligature: LigatureCo
     restart
 }
 
-fn rebox(boxed: &mut MathBox, width: Scaled) {
+fn rebox(ctx: &mut Context<'_, impl MathTypesetState>, boxed: &mut MathBox, width: Scaled) {
     // AppG rule 13a
     let slack = sub(width, boxed.width);
     if slack.raw() != 0 && matches!(boxed.axis, BoxAxis::Horizontal) {
         let left = Scaled::from_raw(tex_arith::half(slack.raw()));
         let right = sub(slack, left);
-        if left.raw() != 0 {
-            boxed.list.nodes.insert(
-                0,
-                MathNode::Kern {
-                    amount: left,
-                    kind: KernKind::Explicit,
-                },
-            );
-        }
-        if right.raw() != 0 {
-            boxed.list.nodes.push(MathNode::Kern {
-                amount: right,
-                kind: KernKind::Explicit,
-            });
-        }
+        let left_node = (left.raw() != 0).then_some(MathNode::Kern {
+            amount: left,
+            kind: KernKind::Explicit,
+        });
+        let right_node = (right.raw() != 0).then_some(MathNode::Kern {
+            amount: right,
+            kind: KernKind::Explicit,
+        });
+        boxed.list = ctx.layout.hlist(
+            left_node
+                .into_iter()
+                .chain([MathNode::Sequence(boxed.list)])
+                .chain(right_node),
+        );
     }
     boxed.width = width;
 }

@@ -67,18 +67,19 @@ fn mlist_second_pass_inserts_spacing_and_penalties() {
     let params = MathParams::read(&universe);
 
     let hlist = mlist_to_hlist(&universe, input, Style::TEXT, true, &params);
+    let nodes = root_nodes(&hlist);
 
-    assert!(matches!(hlist.nodes[0], MathNode::Char { ch: 'b', .. }));
-    assert_glue_width(&hlist.nodes[1], 240);
-    assert!(matches!(hlist.nodes[2], MathNode::Char { ch: '+', .. }));
-    assert!(matches!(hlist.nodes[3], MathNode::Penalty(700)));
-    assert_glue_width(&hlist.nodes[4], 240);
-    assert!(matches!(hlist.nodes[5], MathNode::Char { ch: 'c', .. }));
-    assert_glue_width(&hlist.nodes[6], 360);
-    assert!(matches!(hlist.nodes[7], MathNode::Char { ch: '=', .. }));
-    assert!(matches!(hlist.nodes[8], MathNode::Penalty(500)));
-    assert_glue_width(&hlist.nodes[9], 360);
-    assert!(matches!(hlist.nodes[10], MathNode::Char { ch: 'b', .. }));
+    assert!(matches!(nodes[0], MathNode::Char { ch: 'b', .. }));
+    assert_glue_width(nodes[1], 240);
+    assert!(matches!(nodes[2], MathNode::Char { ch: '+', .. }));
+    assert!(matches!(nodes[3], MathNode::Penalty(700)));
+    assert_glue_width(nodes[4], 240);
+    assert!(matches!(nodes[5], MathNode::Char { ch: 'c', .. }));
+    assert_glue_width(nodes[6], 360);
+    assert!(matches!(nodes[7], MathNode::Char { ch: '=', .. }));
+    assert!(matches!(nodes[8], MathNode::Penalty(500)));
+    assert_glue_width(nodes[9], 360);
+    assert!(matches!(nodes[10], MathNode::Char { ch: 'b', .. }));
 }
 
 #[test]
@@ -117,22 +118,20 @@ fn mlist_penalties_use_current_parameters_and_infinite_threshold() {
     universe.set_int_param(IntParam::REL_PENALTY, 2);
 
     let hlist = mlist_to_hlist(&universe, input, Style::TEXT, true, &params);
+    let nodes = root_nodes(&hlist);
 
     assert!(
-        !hlist
-            .nodes
+        !nodes
             .iter()
             .any(|node| matches!(node, MathNode::Penalty(12_345)))
     );
     assert!(
-        hlist
-            .nodes
+        nodes
             .iter()
             .any(|node| matches!(node, MathNode::Penalty(99)))
     );
     assert!(
-        !hlist
-            .nodes
+        !nodes
             .iter()
             .any(|node| matches!(node, MathNode::Penalty(2)))
     );
@@ -148,20 +147,26 @@ fn script_pair_uses_italic_delta_scriptspace_and_cramped_substyle() {
     let params = MathParams::read(&universe);
 
     let hlist = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
+    let nodes = root_nodes(&hlist);
 
-    assert!(matches!(hlist.nodes[0], MathNode::Char { ch: 'a', .. }));
-    let MathNode::VList(script_box) = &hlist.nodes[1] else {
+    assert!(matches!(nodes[0], MathNode::Char { ch: 'a', .. }));
+    let MathNode::VList(script_box) = nodes[1] else {
         panic!("expected script box");
     };
     assert_eq!(script_box.axis, BoxAxis::Vertical);
     assert_eq!(script_box.shift, sc(-15));
-    let [
-        MathNode::HList(sup),
-        MathNode::Kern { amount, .. },
-        MathNode::HList(sub),
-    ] = script_box.list.nodes.as_slice()
-    else {
+    let script_nodes = list_nodes(&hlist, script_box.list);
+    let [sup_node, kern_node, sub_node] = script_nodes.as_slice() else {
         panic!("expected sup/kern/sub script vlist");
+    };
+    let MathNode::HList(sup) = sup_node else {
+        panic!("expected superscript")
+    };
+    let MathNode::Kern { amount, .. } = kern_node else {
+        panic!("expected script kern")
+    };
+    let MathNode::HList(sub) = sub_node else {
+        panic!("expected subscript")
     };
     assert_eq!(sup.shift, sc(2));
     assert_eq!(sup.width, sc(10));
@@ -179,23 +184,24 @@ fn make_ord_inserts_font_kern_between_adjacent_math_chars() {
     let params = MathParams::read(&universe);
 
     let hlist = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
+    let nodes = root_nodes(&hlist);
 
-    assert!(matches!(hlist.nodes[0], MathNode::Char { ch: 'a', .. }));
+    assert!(matches!(nodes[0], MathNode::Char { ch: 'a', .. }));
     assert!(matches!(
-        hlist.nodes[1],
+        nodes[1],
         MathNode::Kern {
             amount,
             kind: KernKind::Font,
-        } if amount == sc(2)
+        } if *amount == sc(2)
     ));
     assert!(matches!(
-        hlist.nodes[2],
+        nodes[2],
         MathNode::Kern {
             amount,
             kind: KernKind::Font,
-        } if amount == sc(7)
+        } if *amount == sc(7)
     ));
-    assert!(matches!(hlist.nodes[3], MathNode::Char { ch: 'b', .. }));
+    assert!(matches!(nodes[3], MathNode::Char { ch: 'b', .. }));
 }
 
 #[test]
@@ -204,18 +210,20 @@ fn var_delimiter_searches_small_chain_before_large_and_builds_extensible() {
     let params = MathParams::read(&universe);
     let delimiter = delimiter_code(1, b'(', 1, b'|');
 
-    let small = var_delimiter(&universe, &params, delimiter, MathFontSize::Text, sc(25));
+    let (small_layout, small) =
+        test_var_delimiter(&universe, &params, delimiter, MathFontSize::Text, sc(25));
     assert_eq!(small.axis, BoxAxis::Horizontal);
     assert!(matches!(
-        small.list.nodes.as_slice(),
+        list_nodes(&small_layout, small.list).as_slice(),
         [MathNode::Char { ch: '[', .. }]
     ));
 
-    let extensible = var_delimiter(&universe, &params, delimiter, MathFontSize::Text, sc(35));
+    let (extensible_layout, extensible) =
+        test_var_delimiter(&universe, &params, delimiter, MathFontSize::Text, sc(35));
     assert_eq!(extensible.axis, BoxAxis::Vertical);
     assert_eq!(extensible.height, sc(4));
     assert_eq!(extensible.depth, sc(34));
-    assert_eq!(extensible.list.nodes.len(), 5);
+    assert_eq!(list_nodes(&extensible_layout, extensible.list).len(), 5);
 }
 
 #[test]
@@ -234,34 +242,34 @@ fn make_fraction_uses_default_rule_and_delimiter_target() {
 
     let hlist = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
 
-    let [MathNode::HList(fraction)] = hlist.nodes.as_slice() else {
+    let nodes = root_nodes(&hlist);
+    let [fraction_node] = nodes.as_slice() else {
         panic!("expected fraction hbox");
     };
-    let [left, MathNode::VList(vlist), _right] = fraction.list.nodes.as_slice() else {
+    let MathNode::HList(fraction) = fraction_node else {
+        panic!("expected fraction hbox")
+    };
+    let fraction_nodes = list_nodes(&hlist, fraction.list);
+    let [left, vlist_node, _right] = fraction_nodes.as_slice() else {
         panic!("expected delimited fraction hlist");
     };
+    let MathNode::VList(vlist) = vlist_node else {
+        panic!("expected fraction vlist")
+    };
+    let MathNode::HList(left_box) = left else {
+        panic!("expected left delimiter box")
+    };
     assert!(matches!(
-        left,
-        MathNode::HList(MathBox {
-            list: FrozenHList { nodes },
-            ..
-        }) if matches!(nodes.as_slice(), [MathNode::Char { ch: '[', .. }])
+        list_nodes(&hlist, left_box.list).as_slice(),
+        [MathNode::Char { ch: '[', .. }]
     ));
     assert_eq!(vlist.height, sc(26));
     assert_eq!(vlist.depth, sc(18));
-    assert!(matches!(
-        vlist.list.nodes.as_slice(),
-        [
-            MathNode::HList(_),
-            MathNode::Kern { .. },
-            MathNode::Rule {
-                height: Some(thickness),
-                ..
-            },
-            MathNode::Kern { .. },
-            MathNode::HList(_),
-        ] if *thickness == sc(4)
-    ));
+    let vnodes = list_nodes(&hlist, vlist.list);
+    let [_, _, rule, _, _] = vnodes.as_slice() else {
+        panic!("expected fraction stack")
+    };
+    assert!(matches!(rule, MathNode::Rule { height: Some(thickness), .. } if *thickness == sc(4)));
 }
 
 #[test]
@@ -290,15 +298,16 @@ fn left_right_delimiters_size_to_enclosed_list() {
     let params = MathParams::read(&universe);
 
     let hlist = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
+    let nodes = root_nodes(&hlist);
 
-    assert!(matches!(
-        hlist.nodes.first(),
-        Some(MathNode::VList(MathBox { list, .. })) if list.nodes.len() > 3
-    ));
-    assert!(matches!(
-        hlist.nodes.last(),
-        Some(MathNode::VList(MathBox { list, .. })) if list.nodes.len() > 3
-    ));
+    let Some(MathNode::VList(left)) = nodes.first().copied() else {
+        panic!("expected left delimiter")
+    };
+    let Some(MathNode::VList(right)) = nodes.last().copied() else {
+        panic!("expected right delimiter")
+    };
+    assert!(list_nodes(&hlist, left.list).len() > 3);
+    assert!(list_nodes(&hlist, right.list).len() > 3);
 }
 
 #[test]
@@ -315,24 +324,27 @@ fn display_operator_uses_larger_variant_and_places_limits() {
 
     let hlist = mlist_to_hlist(&universe, input, Style::DISPLAY, false, &params);
 
-    let [MathNode::VList(limits)] = hlist.nodes.as_slice() else {
+    let nodes = root_nodes(&hlist);
+    let [limits_node] = nodes.as_slice() else {
         panic!("expected displayed-limits vbox");
     };
+    let MathNode::VList(limits) = limits_node else {
+        panic!("expected displayed-limits vbox")
+    };
     assert_eq!(limits.width, sc(16));
-    assert!(limits.list.nodes.iter().any(|node| match node {
-        MathNode::HList(MathBox {
-            list: FrozenHList { nodes },
-            ..
-        }) => nodes.iter().any(|node| {
+    assert!(list_nodes(&hlist, limits.list).iter().any(|node| {
+        let MathNode::HList(outer) = node else {
+            return false;
+        };
+        list_nodes(&hlist, outer.list).iter().any(|node| {
+            let MathNode::HList(inner) = node else {
+                return false;
+            };
             matches!(
-                node,
-                MathNode::HList(MathBox {
-                    list: FrozenHList { nodes },
-                    ..
-                }) if matches!(nodes.as_slice(), [MathNode::Char { ch: 'O', .. }])
+                list_nodes(&hlist, inner.list).as_slice(),
+                [MathNode::Char { ch: 'O', .. }]
             )
-        }),
-        _ => false,
+        })
     }));
 }
 
@@ -348,8 +360,12 @@ fn display_limits_operator_without_scripts_keeps_italic_correction_width() {
 
     let hlist = mlist_to_hlist(&universe, input, Style::DISPLAY, false, &params);
 
-    let [MathNode::VList(limits)] = hlist.nodes.as_slice() else {
+    let nodes = root_nodes(&hlist);
+    let [limits_node] = nodes.as_slice() else {
         panic!("expected displayed-limits vbox");
+    };
+    let MathNode::VList(limits) = limits_node else {
+        panic!("expected displayed-limits vbox")
     };
     assert_eq!(limits.width, sc(16));
 }
@@ -368,11 +384,19 @@ fn nolimits_operator_splits_italic_correction_into_script_placement() {
 
     let hlist = mlist_to_hlist(&universe, input, Style::DISPLAY, false, &params);
 
-    let [MathNode::HList(op_box), MathNode::VList(scripts)] = hlist.nodes.as_slice() else {
+    let nodes = root_nodes(&hlist);
+    let [op_node, scripts_node] = nodes.as_slice() else {
         panic!("expected operator followed by script box");
     };
+    let MathNode::HList(op_box) = op_node else {
+        panic!("expected operator box")
+    };
+    let MathNode::VList(scripts) = scripts_node else {
+        panic!("expected script box")
+    };
     assert_eq!(op_box.width, sc(14));
-    let [MathNode::HList(sup), ..] = scripts.list.nodes.as_slice() else {
+    let script_nodes = list_nodes(&hlist, scripts.list);
+    let Some(MathNode::HList(sup)) = script_nodes.first().copied() else {
         panic!("expected script pair");
     };
     assert_eq!(sup.shift, sc(2));
@@ -390,8 +414,12 @@ fn nolimits_operator_centers_nucleus_on_math_axis() {
 
     let hlist = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
 
-    let [MathNode::HList(op_box)] = hlist.nodes.as_slice() else {
+    let nodes = root_nodes(&hlist);
+    let [op_node] = nodes.as_slice() else {
         panic!("expected operator hbox");
+    };
+    let MathNode::HList(op_box) = op_node else {
+        panic!("expected operator hbox")
     };
     assert_eq!(op_box.shift, sc(1));
 }
@@ -429,16 +457,21 @@ fn math_accent_uses_skewchar_kern_and_larger_accent() {
 
     let hlist = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
 
-    let [MathNode::VList(accented)] = hlist.nodes.as_slice() else {
+    let nodes = root_nodes(&hlist);
+    let [accented_node] = nodes.as_slice() else {
         panic!("expected accent vbox");
     };
-    let [MathNode::HList(accent), ..] = accented.list.nodes.as_slice() else {
+    let MathNode::VList(accented) = accented_node else {
+        panic!("expected accent vbox")
+    };
+    let accented_nodes = list_nodes(&hlist, accented.list);
+    let Some(MathNode::HList(accent)) = accented_nodes.first().copied() else {
         panic!("expected accent on top");
     };
     assert_eq!(accent.shift, sc(6));
     assert_eq!(accent.width, sc(0));
     assert!(matches!(
-        accent.list.nodes.as_slice(),
+        list_nodes(&hlist, accent.list).as_slice(),
         [MathNode::Char { ch: '~', .. }]
     ));
 }
@@ -463,7 +496,7 @@ fn assert_inserted_math_glue_kind(classes: &[NoadClass], expected_kind: MathGlue
     let hlist = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
 
     assert!(
-        hlist.nodes.iter().any(|node| {
+        root_nodes(&hlist).iter().any(|node| {
             matches!(
                 node,
                 MathNode::Glue { spec, kind } if *kind == expected_kind && spec.width == sc(width)
@@ -473,23 +506,37 @@ fn assert_inserted_math_glue_kind(classes: &[NoadClass], expected_kind: MathGlue
     );
 }
 
-fn assert_radical_clearance(hlist: &FrozenHList, expected: Scaled) {
-    let [MathNode::HList(radical)] = hlist.nodes.as_slice() else {
+fn assert_radical_clearance(layout: &MathLayout, expected: Scaled) {
+    let nodes = root_nodes(layout);
+    let [radical_node] = nodes.as_slice() else {
         panic!("expected radical hbox");
     };
-    let [_delimiter, MathNode::VList(overbar)] = radical.list.nodes.as_slice() else {
+    let MathNode::HList(radical) = radical_node else {
+        panic!("expected radical hbox")
+    };
+    let radical_nodes = list_nodes(layout, radical.list);
+    let [_delimiter, overbar_node] = radical_nodes.as_slice() else {
         panic!("expected delimiter plus overbar");
     };
-    let [
-        MathNode::Kern { .. },
-        MathNode::Rule { .. },
-        MathNode::Kern { amount, .. },
-        MathNode::HList(_),
-    ] = overbar.list.nodes.as_slice()
-    else {
+    let MathNode::VList(overbar) = overbar_node else {
+        panic!("expected overbar")
+    };
+    let overbar_nodes = list_nodes(layout, overbar.list);
+    let [_, _, kern, _] = overbar_nodes.as_slice() else {
         panic!("expected overbar list");
     };
+    let MathNode::Kern { amount, .. } = kern else {
+        panic!("expected clearance kern")
+    };
     assert_eq!(*amount, expected);
+}
+
+fn root_nodes(layout: &MathLayout) -> Vec<&MathNode> {
+    layout.logical_nodes(layout.root())
+}
+
+fn list_nodes(layout: &MathLayout, list: FrozenHList) -> Vec<&MathNode> {
+    layout.logical_nodes(list)
 }
 
 fn noad(class: NoadClass, ch: char) -> MathNoad {

@@ -27,9 +27,11 @@ pub use convert::mlist_to_hlist;
 pub(crate) use convert::{
     Context, FetchedChar, add, char_box, clean_box, fetch, make_character_nucleus, source_node, sub,
 };
-pub use delimiters::{left_right_delimiter_target, var_delimiter};
-pub use model::{BoxAxis, FrozenHList, MathBox, MathGlueKind, MathNode};
-pub(crate) use model::{boxed_node, hlist_extents, hpack, node_is_char, vpack};
+pub use delimiters::left_right_delimiter_target;
+#[cfg(test)]
+pub(crate) use delimiters::test_var_delimiter;
+pub use model::{BoxAxis, FrozenHList, MathBox, MathGlueKind, MathLayout, MathNode};
+pub(crate) use model::{MathLayoutBuilder, boxed_node, hlist_extents, node_is_char};
 pub use params::{ExtensionParams, MathParamState, MathParams, SizeParams, SymbolParams};
 pub use spacing::{SpacingKind, inter_noad_spacing, math_glue, math_kern};
 pub use style::{Style, StyleFamily};

@@ -1,0 +1,35 @@
+% Deep math-list conversion and bottom-up box lowering workload.
+\input benchmark-preamble.inc
+\countdef\iterations=100
+\dimendef\checksum=100
+\chardef\formula=100
+\iterations=0 \checksum=0pt
+
+\def\NestedA{{t_u^v\over w+x_y^z}}
+\def\NestedB{{o_p^q\over r+\BenchmarkRadical{s+\NestedA}}}
+\def\NestedC{{j_k^l\over m+\BenchmarkRadical{n+\NestedB}}}
+\def\NestedD{{e_f^g\over h+\BenchmarkRadical{i+\NestedC}}}
+\def\DenA{{e\over f+g}}
+\def\DenB{{d+\DenA\over h+i}}
+\def\DenC{{c+\DenB\over j+k}}
+\def\DenD{{b+\DenC\over l+m}}
+
+\def\makeformula{%
+  \setbox\formula=\hbox{$\displaystyle
+    \left(
+      {a_b^c+\BenchmarkRadical{d+\NestedD}\over 1+a+\DenD}
+    \right)_{p_q^r}^{s_t^u}
+  $}%
+  \global\checksum=\wd\formula
+}
+
+\def\work{%
+  \advance\iterations by 1
+  \makeformula
+  \ifnum\iterations<10000 \expandafter\work\fi
+}
+\work
+\ifdim\checksum=0pt \errmessage{nested math checksum mismatch}\fi
+\message{BENCH math-nested \the\iterations}
+\copy\formula
+\benchmarkbye

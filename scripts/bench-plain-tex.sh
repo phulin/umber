@@ -15,6 +15,7 @@ inputs=(
   paragraph-wide.tex
   paragraph-narrow.tex
   math.tex
+  math-nested.tex
   pages.tex
   dvi.tex
 )
@@ -104,6 +105,7 @@ expected_marker() {
     paragraph-wide) printf '%s\n' 'BENCH pwide 2000' ;;
     paragraph-narrow) printf '%s\n' 'BENCH pnarrow 1000' ;;
     math) printf '%s\n' 'BENCH math 20000' ;;
+    math-nested) printf '%s\n' 'BENCH math-nested 10000' ;;
     pages) printf '%s\n' 'BENCH pages 502' ;;
     dvi) printf '%s\n' 'BENCH dvi 1000,48' ;;
     *) return 1 ;;

@@ -131,6 +131,40 @@ fn grouped_fraction_inside_hbox_keeps_box_brace_accounting_balanced() {
 }
 
 #[test]
+fn lowered_math_box_rolls_back_without_leaking_arena_handles() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let baseline = stores.freeze_node_list(&[Node::Kern {
+        amount: tex_state::scaled::Scaled::from_raw(17),
+        kind: KernKind::Explicit,
+    }]);
+    stores.set_box_reg(0, baseline);
+    let snapshot = stores.snapshot();
+    let before = snapshot.state_hash();
+
+    Executor::new()
+        .run(
+            &mut InputStack::new(MemoryInput::new(
+                r"\setbox0=\hbox{$\left({a+b\over c_d^e}\right)$}",
+            )),
+            &mut stores,
+        )
+        .expect("nested math box should lower into epoch-owned node lists");
+    let converted = stores.box_reg(0).expect("converted box should be assigned");
+    assert_ne!(converted, baseline);
+    assert_ne!(stores.snapshot().state_hash(), before);
+
+    stores.rollback(&snapshot);
+
+    assert_eq!(stores.snapshot().state_hash(), before);
+    let restored = stores.box_reg(0).expect("baseline box should be restored");
+    assert!(matches!(
+        stores.nodes(restored),
+        [Node::Kern { amount, kind: KernKind::Explicit }] if amount.raw() == 17
+    ));
+}
+
+#[test]
 fn mathcode_8000_uses_current_active_meaning_and_fam_overrides_variable_family() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

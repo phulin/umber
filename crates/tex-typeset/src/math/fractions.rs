@@ -4,12 +4,11 @@ use tex_state::scaled::Scaled;
 
 use super::delimiters::make_delimiter;
 use super::{
-    Context, FrozenHList, MathBox, MathNode, MathTypesetState, add, boxed_node, clean_box, hpack,
-    sub,
+    Context, FrozenHList, MathBox, MathNode, MathTypesetState, add, boxed_node, clean_box, sub,
 };
 
 pub(super) fn make_fraction(
-    ctx: &Context<'_, impl MathTypesetState>,
+    ctx: &mut Context<'_, impl MathTypesetState>,
     fraction: &MathFraction,
 ) -> FrozenHList {
     // AppG rule 15
@@ -18,23 +17,15 @@ pub(super) fn make_fraction(
         FractionThickness::Default => size_params.extension.default_rule_thickness,
         FractionThickness::Explicit(value) => value,
     };
-    let mut numerator = clean_box(
-        ctx.state,
-        &MathField::SubMlist(fraction.numerator),
-        ctx.style.num_style(),
-        ctx.params,
-    );
-    let mut denominator = clean_box(
-        ctx.state,
-        &MathField::SubMlist(fraction.denominator),
-        ctx.style.denom_style(),
-        ctx.params,
-    );
+    let num_style = ctx.style.num_style();
+    let denom_style = ctx.style.denom_style();
+    let mut numerator = clean_box(ctx, &MathField::SubMlist(fraction.numerator), num_style);
+    let mut denominator = clean_box(ctx, &MathField::SubMlist(fraction.denominator), denom_style);
     // AppG rule 15a
     if numerator.width < denominator.width {
-        rebox(&mut numerator, denominator.width);
+        rebox(ctx, &mut numerator, denominator.width);
     } else {
-        rebox(&mut denominator, numerator.width);
+        rebox(ctx, &mut denominator, numerator.width);
     }
 
     // AppG rule 15b
@@ -73,6 +64,7 @@ pub(super) fn make_fraction(
     }
 
     let fraction_box = fraction_vlist(
+        ctx,
         numerator,
         denominator,
         thickness,
@@ -88,16 +80,13 @@ pub(super) fn make_fraction(
     // AppG rule 15e
     let left = make_delimiter(ctx, fraction.left_delimiter.unwrap_or(0), target);
     let right = make_delimiter(ctx, fraction.right_delimiter.unwrap_or(0), target);
-    let boxed = hpack(FrozenHList {
-        nodes: vec![
-            boxed_node(left),
-            MathNode::VList(fraction_box),
-            boxed_node(right),
-        ],
-    });
-    FrozenHList {
-        nodes: vec![MathNode::HList(boxed)],
-    }
+    let list = ctx.layout.hlist([
+        boxed_node(left),
+        MathNode::VList(fraction_box),
+        boxed_node(right),
+    ]);
+    let boxed = ctx.layout.hpack(list);
+    ctx.layout.hlist([MathNode::HList(boxed)])
 }
 
 fn adjust_without_rule(
@@ -151,6 +140,7 @@ fn adjust_with_rule(
 }
 
 fn fraction_vlist(
+    ctx: &mut Context<'_, impl MathTypesetState>,
     numerator: MathBox,
     denominator: MathBox,
     thickness: Scaled,
@@ -162,8 +152,8 @@ fn fraction_vlist(
     let height = add(shift_up, numerator.height);
     let depth = add(denominator.depth, shift_down);
     let numerator_depth = numerator.depth;
-    let nodes = if thickness.raw() == 0 {
-        vec![
+    let list = if thickness.raw() == 0 {
+        ctx.layout.hlist([
             MathNode::HList(numerator),
             MathNode::Kern {
                 amount: sub(
@@ -173,10 +163,10 @@ fn fraction_vlist(
                 kind: KernKind::Explicit,
             },
             MathNode::HList(denominator),
-        ]
+        ])
     } else {
         let delta = Scaled::from_raw(tex_arith::half(thickness.raw()));
-        vec![
+        ctx.layout.hlist([
             MathNode::HList(numerator),
             MathNode::Kern {
                 amount: sub(sub(shift_up, numerator_depth), add(axis_height, delta)),
@@ -192,38 +182,36 @@ fn fraction_vlist(
                 kind: KernKind::Explicit,
             },
             MathNode::HList(denominator),
-        ]
+        ])
     };
     MathBox {
         width,
         height,
         depth,
         shift: Scaled::from_raw(0),
-        list: FrozenHList { nodes },
+        list,
         axis: super::BoxAxis::Vertical,
     }
 }
 
-fn rebox(boxed: &mut MathBox, width: Scaled) {
+fn rebox(ctx: &mut Context<'_, impl MathTypesetState>, boxed: &mut MathBox, width: Scaled) {
     let slack = sub(width, boxed.width);
     if slack.raw() != 0 && matches!(boxed.axis, super::BoxAxis::Horizontal) {
         let left = Scaled::from_raw(tex_arith::half(slack.raw()));
         let right = sub(slack, left);
-        if left.raw() != 0 {
-            boxed.list.nodes.insert(
-                0,
-                MathNode::Kern {
-                    amount: left,
-                    kind: KernKind::Explicit,
-                },
-            );
-        }
-        if right.raw() != 0 {
-            boxed.list.nodes.push(MathNode::Kern {
-                amount: right,
-                kind: KernKind::Explicit,
-            });
-        }
+        let left_node = (left.raw() != 0).then_some(MathNode::Kern {
+            amount: left,
+            kind: KernKind::Explicit,
+        });
+        let right_node = (right.raw() != 0).then_some(MathNode::Kern {
+            amount: right,
+            kind: KernKind::Explicit,
+        });
+        let nodes = left_node
+            .into_iter()
+            .chain([MathNode::Sequence(boxed.list)])
+            .chain(right_node);
+        boxed.list = ctx.layout.hlist(nodes);
     }
     boxed.width = width;
 }

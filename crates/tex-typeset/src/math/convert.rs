@@ -6,9 +6,9 @@ use tex_state::node::{KernKind, Node};
 use tex_state::scaled::Scaled;
 
 use super::{
-    BoxAxis, FrozenHList, MathBox, MathGlueKind, MathNode, MathParams, MathTypesetState,
-    SpacingKind, Style, StyleFamily, boxed_node, delimiters, fractions, hpack,
-    left_right_delimiter_target, operators, radicals, scripts, spacing,
+    BoxAxis, FrozenHList, MathBox, MathGlueKind, MathLayout, MathLayoutBuilder, MathNode,
+    MathParams, MathTypesetState, SpacingKind, Style, StyleFamily, boxed_node, delimiters,
+    fractions, left_right_delimiter_target, operators, radicals, scripts, spacing,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -27,27 +27,35 @@ pub fn mlist_to_hlist(
     style: Style,
     penalties: bool,
     params: &MathParams,
-) -> FrozenHList {
+) -> MathLayout {
     let mut ctx = Context {
         state,
         params,
         style,
         mu: math_unit(params, style),
+        layout: MathLayoutBuilder::new(),
     };
-    let input = state.nodes(input);
+    let root = convert_mlist(&mut ctx, input, style, penalties);
+    ctx.layout.finish(root)
+}
+
+fn convert_mlist<S: MathTypesetState>(
+    ctx: &mut Context<'_, S>,
+    input: NodeListId,
+    style: Style,
+    penalties: bool,
+) -> FrozenHList {
+    let saved_style = ctx.style;
+    ctx.set_style(style);
+    let input = ctx.state.nodes(input);
     let mut work = Vec::with_capacity(input.len());
     let mut max_height = Scaled::from_raw(0);
     let mut max_depth = Scaled::from_raw(0);
-    first_pass(
-        &mut ctx,
-        input,
-        &mut work,
-        &mut max_height,
-        &mut max_depth,
-        params,
-    );
+    first_pass(ctx, input, &mut work, &mut max_height, &mut max_depth);
     convert_final_bin_to_ord(&mut work);
-    second_pass(&mut ctx, style, work, penalties, max_height, max_depth)
+    let result = second_pass(ctx, style, work, penalties, max_height, max_depth);
+    ctx.set_style(saved_style);
+    result
 }
 
 #[derive(Clone, Debug)]
@@ -77,18 +85,22 @@ fn first_pass<S: MathTypesetState>(
     out: &mut Vec<WorkItem>,
     max_height: &mut Scaled,
     max_depth: &mut Scaled,
-    params: &MathParams,
 ) {
-    let mut input = input.to_vec();
+    let original = input;
+    let mut rewritten = None::<Vec<Node>>;
     let mut r_type = Some(NoadClass::Op);
     let mut index = 0;
-    while index < input.len() {
+    while index < rewritten.as_deref().unwrap_or(original).len() {
+        let input = rewritten.as_deref().unwrap_or(original);
         if matches!(
             &input[index],
             Node::MathNoad(noad) if matches!(noad.kind, NoadKind::Normal(NoadClass::Ord))
-        ) {
-            operators::make_ord(ctx, &mut input, index);
+        ) && operators::ord_pair_may_change(input, index)
+        {
+            let input = rewritten.get_or_insert_with(|| original.to_vec());
+            operators::make_ord(ctx, input, index);
         }
+        let input = rewritten.as_deref().unwrap_or(original);
         match &input[index] {
             Node::MathStyle(style) => {
                 // AppG rule 3
@@ -104,14 +116,7 @@ fn first_pass<S: MathTypesetState>(
                     StyleFamily::Script => choice.script,
                     StyleFamily::ScriptScript => choice.script_script,
                 };
-                first_pass(
-                    ctx,
-                    ctx.state.nodes(selected),
-                    out,
-                    max_height,
-                    max_depth,
-                    params,
-                );
+                first_pass(ctx, ctx.state.nodes(selected), out, max_height, max_depth);
             }
             Node::Glue { spec, kind, .. } => {
                 // AppG rule 2
@@ -194,8 +199,8 @@ fn first_pass<S: MathTypesetState>(
                     convert_final_bin_to_ord(out);
                 }
                 // AppG rule 7: Open and Inner atoms fall through unchanged to Rule 17.
-                let work = translate_noad(ctx, noad, class, params);
-                let (height, depth) = super::hlist_extents(&work.hlist);
+                let work = translate_noad(ctx, noad, class);
+                let (height, depth) = super::hlist_extents(work.hlist);
                 *max_height = (*max_height).max(height);
                 *max_depth = (*max_depth).max(depth);
                 r_type = Some(work.class);
@@ -204,7 +209,7 @@ fn first_pass<S: MathTypesetState>(
             Node::FractionNoad(fraction) => {
                 // AppG rule 15
                 let hlist = fractions::make_fraction(ctx, fraction);
-                let (height, depth) = super::hlist_extents(&hlist);
+                let (height, depth) = super::hlist_extents(hlist);
                 *max_height = (*max_height).max(height);
                 *max_depth = (*max_depth).max(depth);
                 r_type = Some(NoadClass::Ord);
@@ -224,10 +229,9 @@ fn first_pass<S: MathTypesetState>(
 }
 
 fn translate_noad<S: MathTypesetState>(
-    ctx: &Context<'_, S>,
+    ctx: &mut Context<'_, S>,
     noad: &MathNoad,
     class: NoadClass,
-    params: &MathParams,
 ) -> WorkNoad {
     let mut delta = Scaled::from_raw(0);
     let mut scripts_handled = false;
@@ -257,14 +261,10 @@ fn translate_noad<S: MathTypesetState>(
             &noad.subscript,
             &mut delta,
         ),
-        _ => FrozenHList {
-            nodes: vec![MathNode::HList(clean_box(
-                ctx.state,
-                &noad.nucleus,
-                ctx.style,
-                ctx.params,
-            ))],
-        },
+        _ => {
+            let boxed = clean_box(ctx, &noad.nucleus, ctx.style);
+            ctx.layout.hlist([MathNode::HList(boxed)])
+        }
     };
 
     if !scripts_handled
@@ -272,12 +272,11 @@ fn translate_noad<S: MathTypesetState>(
             || !matches!(noad.superscript, MathField::Empty))
     {
         scripts::make_scripts(
-            ctx.state,
+            ctx,
             &mut hlist,
             &noad.subscript,
             &noad.superscript,
             ctx.style,
-            ctx.params,
             delta,
         );
     }
@@ -285,8 +284,8 @@ fn translate_noad<S: MathTypesetState>(
         class,
         hlist,
         penalty: match class {
-            NoadClass::Bin => params.bin_op_penalty,
-            NoadClass::Rel => params.rel_penalty,
+            NoadClass::Bin => ctx.params.bin_op_penalty,
+            NoadClass::Rel => ctx.params.rel_penalty,
             _ => INF_PENALTY,
         },
     }
@@ -301,26 +300,24 @@ fn second_pass<S: MathTypesetState>(
     max_depth: Scaled,
 ) -> FrozenHList {
     // AppG rule 20
-    let mut output = FrozenHList {
-        nodes: Vec::with_capacity(work.len().saturating_mul(2)),
-    };
+    let mut output = Vec::with_capacity(work.len().saturating_mul(2));
     let mut previous = None;
     let mut work = work.into_iter().peekable();
     while let Some(item) = work.next() {
         match item {
             WorkItem::Style(style) => ctx.set_style(style),
-            WorkItem::Node(node) => output.nodes.push(node),
-            WorkItem::Noad(mut noad) => {
+            WorkItem::Node(node) => output.push(node),
+            WorkItem::Noad(noad) => {
                 if let Some(left) = previous
                     && let spacing = spacing::inter_noad_spacing(left, noad.class, ctx.style)
                     && let Some(spec) = spacing::spacing_glue(spacing, ctx.params, ctx.mu)
                 {
-                    output.nodes.push(MathNode::Glue {
+                    output.push(MathNode::Glue {
                         spec,
                         kind: math_glue_kind_for_spacing(spacing),
                     });
                 }
-                output.nodes.append(&mut noad.hlist.nodes);
+                output.push(MathNode::Sequence(noad.hlist));
                 if penalties
                     && noad.penalty < INF_PENALTY
                     && work.peek().is_some_and(|next| {
@@ -335,35 +332,32 @@ fn second_pass<S: MathTypesetState>(
                     })
                 {
                     // AppG rule 21
-                    output.nodes.push(MathNode::Penalty(noad.penalty));
+                    output.push(MathNode::Penalty(noad.penalty));
                 }
                 previous = Some(noad.class);
             }
             WorkItem::Delimiter(delimiter) => {
+                let class = delimiter.class;
                 // AppG rule 19
                 if let Some(left) = previous
                     && let spacing = spacing::inter_noad_spacing(left, delimiter.class, ctx.style)
                     && let Some(spec) = spacing::spacing_glue(spacing, ctx.params, ctx.mu)
                 {
-                    output.nodes.push(MathNode::Glue {
+                    output.push(MathNode::Glue {
                         spec,
                         kind: math_glue_kind_for_spacing(spacing),
                     });
                 }
                 let target =
                     left_right_delimiter_target(ctx.params, base_style, max_height, max_depth);
-                output.nodes.push(boxed_node(delimiters::var_delimiter(
-                    ctx.state,
-                    ctx.params,
-                    delimiter.delimiter,
-                    base_style.size(),
-                    target,
-                )));
-                previous = Some(delimiter.class);
+                let delimiter =
+                    delimiters::var_delimiter(ctx, delimiter.delimiter, base_style.size(), target);
+                output.push(boxed_node(delimiter));
+                previous = Some(class);
             }
         }
     }
-    output
+    ctx.layout.hlist(output)
 }
 
 fn math_glue_kind_for_spacing(spacing: SpacingKind) -> MathGlueKind {
@@ -376,34 +370,39 @@ fn math_glue_kind_for_spacing(spacing: SpacingKind) -> MathGlueKind {
 }
 
 pub(crate) fn clean_box(
-    state: &impl MathTypesetState,
+    ctx: &mut Context<'_, impl MathTypesetState>,
     field: &MathField,
     style: Style,
-    params: &MathParams,
 ) -> MathBox {
     // AppG rule 17
     match field {
-        MathField::Empty => hpack(FrozenHList::default()),
+        MathField::Empty => ctx.layout.hpack(ctx.layout.empty()),
         MathField::MathChar(ch) | MathField::MathTextChar(ch) => {
-            if let Some(fetched) = fetch(state, *ch, style) {
-                char_box(fetched)
+            if let Some(fetched) = fetch(ctx.state, *ch, style) {
+                char_box(ctx, fetched)
             } else {
-                hpack(FrozenHList::default())
+                ctx.layout.hpack(ctx.layout.empty())
             }
         }
-        MathField::SubBox(list) => hpack(FrozenHList {
-            nodes: state
+        MathField::SubBox(list) => {
+            let nodes: Vec<_> = ctx
+                .state
                 .nodes(*list)
                 .iter()
-                .map(|node| source_node(state, node))
-                .collect(),
-        }),
-        MathField::SubMlist(list) => hpack(mlist_to_hlist(state, *list, style, false, params)),
+                .map(|node| source_node(ctx.state, node))
+                .collect();
+            let list = ctx.layout.hlist(nodes);
+            ctx.layout.hpack(list)
+        }
+        MathField::SubMlist(list) => {
+            let list = convert_mlist(ctx, *list, style, false);
+            ctx.layout.hpack(list)
+        }
     }
 }
 
 pub(crate) fn make_character_nucleus<S: MathTypesetState>(
-    ctx: &Context<'_, S>,
+    ctx: &mut Context<'_, S>,
     ch: MathChar,
     text_char: bool,
     subscript: &MathField,
@@ -411,36 +410,39 @@ pub(crate) fn make_character_nucleus<S: MathTypesetState>(
 ) -> FrozenHList {
     // AppG rule 17
     let Some(fetched) = fetch(ctx.state, ch, ctx.style) else {
-        return FrozenHList::default();
+        return ctx.layout.empty();
     };
     *delta = fetched.metrics.italic_correction;
     if text_char && ctx.state.font_parameter(fetched.font, 2).raw() != 0 {
         *delta = Scaled::from_raw(0);
     }
-    let mut nodes = vec![MathNode::Char {
+    let character = MathNode::Char {
         font: fetched.font,
         ch: fetched.ch,
         metrics: fetched.metrics,
-    }];
+    };
     if matches!(subscript, MathField::Empty) && delta.raw() != 0 {
-        nodes.push(MathNode::Kern {
+        let kern = MathNode::Kern {
             amount: *delta,
             kind: KernKind::Font,
-        });
+        };
         *delta = Scaled::from_raw(0);
+        ctx.layout.hlist([character, kern])
+    } else {
+        ctx.layout.hlist([character])
     }
-    FrozenHList { nodes }
 }
 
-pub(crate) fn char_box(fetched: FetchedChar) -> MathBox {
+pub(crate) fn char_box(
+    ctx: &mut Context<'_, impl MathTypesetState>,
+    fetched: FetchedChar,
+) -> MathBox {
     // AppG rule 17
-    let list = FrozenHList {
-        nodes: vec![MathNode::Char {
-            font: fetched.font,
-            ch: fetched.ch,
-            metrics: fetched.metrics,
-        }],
-    };
+    let list = ctx.layout.hlist([MathNode::Char {
+        font: fetched.font,
+        ch: fetched.ch,
+        metrics: fetched.metrics,
+    }]);
     MathBox {
         width: add(fetched.metrics.width, fetched.metrics.italic_correction),
         height: fetched.metrics.height,
@@ -478,7 +480,7 @@ pub(crate) fn source_node(state: &impl MathTypesetState, node: &Node) -> MathNod
                     metrics,
                 }
             } else {
-                MathNode::Opaque(node.clone())
+                MathNode::Opaque(Box::new(node.clone()))
             }
         }
         Node::Kern { amount, kind } => MathNode::Kern {
@@ -499,9 +501,9 @@ pub(crate) fn source_node(state: &impl MathTypesetState, node: &Node) -> MathNod
             height: *height,
             depth: *depth,
         },
-        Node::HList(box_node) => MathNode::Opaque(Node::HList(box_node.clone())),
-        Node::VList(box_node) => MathNode::Opaque(Node::VList(box_node.clone())),
-        _ => MathNode::Opaque(node.clone()),
+        Node::HList(box_node) => MathNode::Opaque(Box::new(Node::HList(box_node.clone()))),
+        Node::VList(box_node) => MathNode::Opaque(Box::new(Node::VList(box_node.clone()))),
+        _ => MathNode::Opaque(Box::new(node.clone())),
     }
 }
 
@@ -555,6 +557,7 @@ pub(crate) struct Context<'a, S> {
     pub(crate) params: &'a MathParams,
     pub(crate) style: Style,
     pub(crate) mu: Scaled,
+    pub(crate) layout: MathLayoutBuilder,
 }
 
 impl<S> Context<'_, S> {

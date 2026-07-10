@@ -10,6 +10,7 @@ tests, and are intentionally excluded from `cargo test`.
 | `paragraph-wide.tex` | natural-language paragraph construction and line breaking at a comfortable width |
 | `paragraph-narrow.tex` | hyphenation and a larger active-breakpoint search at a narrow width |
 | `math.tex` | math-list construction, style changes, fractions, radicals, delimiters, and packing |
+| `math-nested.tex` | deeply nested fractions, radicals, scripts, and bottom-up box lowering |
 | `pages.tex` | vertical-list contribution, marks, insertions, page breaking, and the output routine |
 | `dvi.tex` | traversal and DVI serialization of dense, nested, multi-font pages |
 

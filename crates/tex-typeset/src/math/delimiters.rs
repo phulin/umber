@@ -3,10 +3,9 @@ use tex_state::ids::FontId;
 use tex_state::math::MathFontSize;
 use tex_state::scaled::Scaled;
 
-use super::params::MathParams;
 use super::style::Style;
 use super::{
-    BoxAxis, Context, FetchedChar, FrozenHList, MathBox, MathTypesetState, add, boxed_node,
+    BoxAxis, Context, FetchedChar, MathBox, MathParams, MathTypesetState, add, boxed_node,
     char_box, sub,
 };
 
@@ -48,9 +47,8 @@ pub fn left_right_delimiter_target(
 }
 
 #[must_use]
-pub fn var_delimiter(
-    state: &impl MathTypesetState,
-    params: &MathParams,
+pub(crate) fn var_delimiter(
+    ctx: &mut Context<'_, impl MathTypesetState>,
     delimiter: u32,
     size: MathFontSize,
     target: Scaled,
@@ -59,7 +57,7 @@ pub fn var_delimiter(
     let code = decode_delimiter(delimiter);
     let mut best = None;
     let candidate = search_variant_chain(
-        state,
+        ctx.state,
         code.small_family,
         code.small_char,
         size,
@@ -68,7 +66,7 @@ pub fn var_delimiter(
     )
     .or_else(|| {
         search_variant_chain(
-            state,
+            ctx.state,
             code.large_family,
             code.large_char,
             size,
@@ -85,24 +83,25 @@ pub fn var_delimiter(
 
     let mut boxed = if candidate.font == NULL_FONT {
         MathBox {
-            width: params.null_delimiter_space,
+            width: ctx.params.null_delimiter_space,
             height: Scaled::from_raw(0),
             depth: Scaled::from_raw(0),
             shift: Scaled::from_raw(0),
-            list: FrozenHList::default(),
+            list: ctx.layout.empty(),
             axis: BoxAxis::Horizontal,
         }
-    } else if state
+    } else if ctx
+        .state
         .font_extensible_recipe(candidate.font, candidate.code)
         .is_some()
     {
-        extensible_box(state, candidate.font, candidate.code, target)
+        extensible_box(ctx, candidate.font, candidate.code, target)
     } else {
-        char_box_for(state, candidate.font, candidate.code)
+        char_box_for(ctx, candidate.font, candidate.code)
             .expect("delimiter candidate came from a present character")
     };
 
-    let axis = params.for_size(size).symbols.axis_height;
+    let axis = ctx.params.for_size(size).symbols.axis_height;
     boxed.shift = sub(
         axis,
         Scaled::from_raw(tex_arith::half(sub(boxed.height, boxed.depth).raw())),
@@ -110,12 +109,32 @@ pub fn var_delimiter(
     boxed
 }
 
+#[cfg(test)]
+pub(crate) fn test_var_delimiter(
+    state: &impl MathTypesetState,
+    params: &MathParams,
+    delimiter: u32,
+    size: MathFontSize,
+    target: Scaled,
+) -> (super::MathLayout, MathBox) {
+    let mut ctx = Context {
+        state,
+        params,
+        style: Style::TEXT,
+        mu: Scaled::from_raw(0),
+        layout: super::MathLayoutBuilder::new(),
+    };
+    let boxed = var_delimiter(&mut ctx, delimiter, size, target);
+    let layout = ctx.layout.finish(boxed.list);
+    (layout, boxed)
+}
+
 pub(super) fn make_delimiter(
-    ctx: &Context<'_, impl MathTypesetState>,
+    ctx: &mut Context<'_, impl MathTypesetState>,
     delimiter: u32,
     target: Scaled,
 ) -> MathBox {
-    var_delimiter(ctx.state, ctx.params, delimiter, ctx.style.size(), target)
+    var_delimiter(ctx, delimiter, ctx.style.size(), target)
 }
 
 fn decode_delimiter(delimiter: u32) -> DelimiterCode {
@@ -192,18 +211,20 @@ fn delimiter_font_sizes(size: MathFontSize) -> impl Iterator<Item = MathFontSize
 }
 
 fn extensible_box(
-    state: &impl MathTypesetState,
+    ctx: &mut Context<'_, impl MathTypesetState>,
     font: FontId,
     code: u8,
     target: Scaled,
 ) -> MathBox {
     // AppG rule 15, rule 19
-    let recipe = state
+    let recipe = ctx
+        .state
         .font_extensible_recipe(font, code)
         .expect("caller checked for an extensible recipe");
     let repeated = recipe.repeated;
-    let repeat_size = height_plus_depth(state, font, repeated);
-    let repeated_metrics = state
+    let repeat_size = height_plus_depth(ctx.state, font, repeated);
+    let repeated_metrics = ctx
+        .state
         .font_char_metrics(font, repeated)
         .expect("TFM parser validates extensible repeated pieces");
     let mut total = Scaled::from_raw(0);
@@ -211,7 +232,7 @@ fn extensible_box(
         .into_iter()
         .flatten()
     {
-        total = add(total, height_plus_depth(state, font, code));
+        total = add(total, height_plus_depth(ctx.state, font, code));
     }
     let mut repeats = 0;
     if repeat_size.raw() > 0 {
@@ -224,40 +245,49 @@ fn extensible_box(
         }
     }
 
+    let mut pieces = Vec::new();
     let mut boxed = MathBox {
         width: add(repeated_metrics.width, repeated_metrics.italic_correction),
         height: Scaled::from_raw(0),
         depth: Scaled::from_raw(0),
         shift: Scaled::from_raw(0),
-        list: FrozenHList::default(),
+        list: ctx.layout.empty(),
         axis: BoxAxis::Vertical,
     };
 
     if let Some(code) = recipe.bottom {
-        stack_into_box(&mut boxed, state, font, code);
+        stack_into_box(&mut boxed, &mut pieces, ctx, font, code);
     }
     for _ in 0..repeats {
-        stack_into_box(&mut boxed, state, font, repeated);
+        stack_into_box(&mut boxed, &mut pieces, ctx, font, repeated);
     }
     if let Some(code) = recipe.middle {
-        stack_into_box(&mut boxed, state, font, code);
+        stack_into_box(&mut boxed, &mut pieces, ctx, font, code);
         for _ in 0..repeats {
-            stack_into_box(&mut boxed, state, font, repeated);
+            stack_into_box(&mut boxed, &mut pieces, ctx, font, repeated);
         }
     }
     if let Some(code) = recipe.top {
-        stack_into_box(&mut boxed, state, font, code);
+        stack_into_box(&mut boxed, &mut pieces, ctx, font, code);
     }
+    pieces.reverse();
+    boxed.list = ctx.layout.hlist(pieces);
     boxed.depth = sub(total, boxed.height);
     boxed
 }
 
-fn stack_into_box(boxed: &mut MathBox, state: &impl MathTypesetState, font: FontId, code: u8) {
+fn stack_into_box(
+    boxed: &mut MathBox,
+    pieces: &mut Vec<super::MathNode>,
+    ctx: &mut Context<'_, impl MathTypesetState>,
+    font: FontId,
+    code: u8,
+) {
     // AppG rule 15, rule 19
-    let component = char_box_for(state, font, code)
+    let component = char_box_for(ctx, font, code)
         .expect("TFM parser validates extensible recipe component characters");
     boxed.height = component.height;
-    boxed.list.nodes.insert(0, boxed_node(component));
+    pieces.push(boxed_node(component));
 }
 
 fn height_plus_depth(state: &impl MathTypesetState, font: FontId, code: u8) -> Scaled {
@@ -269,11 +299,18 @@ fn height_plus_depth(state: &impl MathTypesetState, font: FontId, code: u8) -> S
         })
 }
 
-fn char_box_for(state: &impl MathTypesetState, font: FontId, code: u8) -> Option<MathBox> {
-    let metrics = state.font_char_metrics(font, code)?;
-    Some(char_box(FetchedChar {
-        font,
-        ch: char::from(code),
-        metrics,
-    }))
+fn char_box_for(
+    ctx: &mut Context<'_, impl MathTypesetState>,
+    font: FontId,
+    code: u8,
+) -> Option<MathBox> {
+    let metrics = ctx.state.font_char_metrics(font, code)?;
+    Some(char_box(
+        ctx,
+        FetchedChar {
+            font,
+            ch: char::from(code),
+            metrics,
+        },
+    ))
 }
