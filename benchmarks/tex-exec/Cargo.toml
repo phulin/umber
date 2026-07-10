@@ -1,0 +1,18 @@
+[package]
+name = "tex-exec-benchmarks"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+criterion = "0.5"
+tex-exec = { path = "../../crates/tex-exec" }
+tex-expand = { path = "../../crates/tex-expand" }
+tex-lex = { path = "../../crates/tex-lex" }
+tex-state = { path = "../../crates/tex-state" }
+
+[[bench]]
+name = "shipout"
+harness = false
