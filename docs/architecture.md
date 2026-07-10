@@ -7,6 +7,13 @@ shipout), the service layers (fonts, output drivers), and the advanced
 consumers (incremental engine, JIT). The state layer itself (`tex-state`)
 is specified in `core_state.md` and treated here as a given.
 
+How to read this document: it is a normative design spec with
+implementation status woven in. Passages marked **Status:** (and sentences
+phrased "the implemented …" / "currently …") describe what exists today
+and change as milestones land; everything else states the architecture the
+implementation must converge to. File-level detail about each crate lives
+in that crate's `AGENTS.md`.
+
 ---
 
 ## 1. The big picture
@@ -72,32 +79,56 @@ Two flows to keep distinct when reading this document:
 
 ## 2. Crate map
 
+The workspace as it exists today (children are dependencies; the pipeline
+crates also sit on `tex-state`, except `tex-out` and `tex-fonts`, which
+must stay below it):
+
 ```text
-umber (CLI / driver)
- ├── tex-incr        incremental engine: convergence, memo store, speculation
- │    └── tex-engine       the interpreter proper
- │         ├── tex-expand       gullet: macros, conditionals, expandable prims
- │         ├── tex-exec        stomach: mode machine, unexpandable prims
- │         │                   snapshots execution parameters for pure kernels
- │         ├── tex-typeset    par builder, line break, math, alignment, page
- │         │                   consumes immutable state views and plain params
- │         ├── tex-lex        eyes+mouth: decoding, catcodes, input stack
- │         └── tex-fonts      font loading, metrics, shaping
- ├── tex-out         drivers: PDF, DVI, (later) HTML — consume page artifacts
- ├── tex-jit         privileged consumer of tex-state::layout (M5)
- └── tex-state       the state layer (core_state.md) — everybody's substrate
+umber (CLI / driver — composes the pipeline crates directly today)
+ └── tex-exec        stomach: mode machine, unexpandable prims, main-control
+      │              dispatch; snapshots execution parameters for pure kernels
+      ├── tex-expand     gullet: macros, conditionals, expandable prims
+      │    └── tex-lex       eyes+mouth: decoding, catcodes, input stack
+      ├── tex-typeset    pure kernels: par builder, line break, math, packing
+      │                  — consumes immutable state views and plain params
+      ├── tex-fonts      font loading, immutable metrics
+      └── tex-out        page artifact model + DVI driver (later PDF/HTML)
+
+tex-state    the state layer (core_state.md) — substrate under everything
+             above except tex-out and tex-fonts; itself depends on tex-fonts
+             only for the immutable loaded-font record type (never the reverse)
+tex-arith    shared scaled-point/TFM arithmetic under tex-state, tex-fonts,
+             tex-out, and tex-typeset; depends on nothing
 ```
 
-Dependency rules (enforced in CI like the effect lints):
+Support crates outside the pipeline: `test-support` (fixture and parity-test
+helpers, a dev-dependency only), `corpus-manifest` (dependency-free manifest
+parsing for host-side parity tooling), plus the `tools/` and `benchmarks/`
+crates described in the root `AGENTS.md`.
+
+Planned crates, not yet in the workspace:
+
+- `tex-incr` (P6, rides on M4): incremental engine — convergence, memo
+  store, speculation (§11).
+- `tex-jit` (M5): the privileged consumer of the sealed `tex-state::layout`
+  module (§12).
+- `tex-engine`: a possible interpreter-facade crate between the driver and
+  the pipeline crates; today `umber` plays that role directly.
+
+Dependency rules (the effect rules are enforced in CI via the clippy
+`disallowed-methods` list; the crate-graph rules by the workspace
+manifests and review):
 
 - Only `tex-state` owns mutation and history. No other crate defines a
   store, a cache keyed by mutable state, or interior mutability.
 - Only `tex-fonts` and `tex-out` may hold large immutable resources
   (font binaries, ICU tables); they are loaded through `World` so inputs
   stay content-addressed.
-- `tex-jit` is the sole consumer of the sealed `layout` module.
-- Nothing depends on `tex-incr`; it depends on everything. Incrementality
-  is a *driver strategy*, not a property scattered through the pipeline.
+- `tex-jit`, when it lands, is the sole consumer of the sealed `layout`
+  module.
+- Nothing will depend on `tex-incr`; it depends on everything.
+  Incrementality is a *driver strategy*, not a property scattered through
+  the pipeline.
 
 ---
 
@@ -151,8 +182,8 @@ supply.
   input diagnostics.
 - Line-oriented details TeX cares about (`\endlinechar`, trailing-space
   trimming, `%` line ends) live here, driven by parameters read through the
-  aggregate state API. The implemented `tex-lex` input layer exposes a local
-  `InputSource` trait for memory buffers and files, normalizes each physical
+  aggregate state API. **Status:** the implemented `tex-lex` input layer
+  exposes a local `InputSource` trait for memory buffers and files, normalizes each physical
   line by trimming trailing spaces and appending the current `\endlinechar`
   when valid, including for blank/all-space physical lines, and owns an
   `InputStack` whose `InputSummary` records resume-complete lexer-owned
@@ -291,7 +322,7 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   incremental engine asks for it, meaning lookups record `(cell, epoch)`
   pairs (`core_state.md` §9). Off by default, zero-cost when off (the
   recorder is a generic parameter of the loop, monomorphized away).
-- The implemented `tex-expand` scaffold exposes that loop over
+- **Status:** the implemented `tex-expand` scaffold exposes that loop over
   `tex-lex::InputStack` through the shared `ExpansionState` capability, not
   broad `&mut Universe`. Production callers wrap the owning `Universe` in
   `ExpansionContext` before entering the gullet. That capability allows meaning
@@ -344,8 +375,8 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   token with an `Inserted(NoExpand)` origin and suppresses expansion for
   exactly the next `get_x_token` read. This keeps suppression frame-local and
   avoids mutating `Env`.
-- Implemented conditional predicates evaluate in `tex-expand` and record their
-  result by pushing/updating `tex-lex` condition frames. `\if` and `\ifcat`
+- **Status:** implemented conditional predicates evaluate in `tex-expand` and
+  record their result by pushing/updating `tex-lex` condition frames. `\if` and `\ifcat`
   expand only to the two unexpandable comparison tokens; `\ifx` reads two raw
   tokens and compares macro meanings by flags plus semantic
   parameter/replacement token-list contents, with non-macro control sequences
@@ -385,8 +416,8 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   `\fontname` renders loaded font selector names. The mark-family expandables
   replay the frozen token lists stored in the Universe-owned page mark slots;
   empty slots replay the canonical empty token list.
-- The stomach implements the macro-definition assignment surface used by the
-  expansion conformance path: `\def`, `\edef`, `\gdef`, `\xdef`, `\let`,
+- **Status:** the stomach implements the macro-definition assignment surface
+  used by the expansion conformance path: `\def`, `\edef`, `\gdef`, `\xdef`, `\let`,
   `\futurelet`, prefix accumulation (`\global`, `\long`, `\outer`,
   `\protected`), and `\globaldefs` override behavior. Definition targets use
   TeX's `get_r_token` rule: either a control sequence or an active character
@@ -453,7 +484,9 @@ assignments, box building, and dispatch into the typesetting kernels.
   `\setbox` in math mode scans and builds through the ordinary box machinery
   and stores through the same barriered `Universe` box-register facade.
 - The arithmetic-only substrate for dimension scanning lives in
-  `tex-state::scaled`: TeX's `xn_over_d` conversion routine, decimal fraction
+  `tex-state::scaled` — a compatibility re-export of `tex-arith` (§9), which
+  owns the implementation so state and font parsing share it without a
+  dependency cycle: TeX's `xn_over_d` conversion routine, decimal fraction
   rounding, the physical-unit conversion table, and the `max_dimen` range
   check with the canonical `Dimension too large` diagnostic. Token parsing,
   signs, `true` magnification, internal units, and assignment effects remain
@@ -588,7 +621,8 @@ assignments, box building, and dispatch into the typesetting kernels.
   alignment template replay; snapshots inside those scopes remain rollback
   and hash checkpoints, but drivers must resume from the previous
   resume-valid boundary and replay forward.
-- The implemented `tex-exec` scaffold owns that explicit mode nest now. Its
+- **Status:** the implemented `tex-exec` scaffold owns that explicit mode
+  nest now. Its
   summary is a vector of mode levels, each carrying one of TeX's six modes
   (vertical/internal vertical, horizontal/restricted horizontal, math/display
   math) plus the node list under construction. Main control pulls through
@@ -706,7 +740,7 @@ makes box-level memoization (M4) sound.
   `tex-typeset::vert_break`, writes only the split mark slots, prunes the
   survivor remainder with `\splittopskip`, and replaces or clears the source
   register through the same-level `Universe` box facade.
-- **Implemented packing foundation**: `tex-typeset` currently provides pure
+- **Status — implemented packing foundation**: `tex-typeset` currently provides pure
   `hpack`, `vpack`, `vtop`, `vert_break`, and TeX.web §108 badness over frozen node lists.
   The crate reads `Universe` immutably, including frozen nodes, glue specs,
   and loaded font character metrics, copies packing parameters into plain
@@ -733,7 +767,7 @@ Responsibility: accumulate the main vertical list, fire `\output`, commit.
   contents state, page-level `\lastskip`/`\lastpenalty`/`\lastkern` mirrors,
   least-cost/best-break records, and the pending fire-up trigger. These fields
   are copied into snapshots and included in convergence hashes.
-- `tex-exec` currently ports the TeX.web accounting pass: discardables before
+- **Status:** `tex-exec` currently ports the TeX.web accounting pass: discardables before
   the first box are pruned when the builder catches up; the first box freezes
   page specs from `\vsize`/`\maxdepth` and inserts adjusted `\topskip`; box,
   rule, glue, kern, and penalty contributions update page totals and legal
@@ -787,7 +821,8 @@ Responsibility: accumulate the main vertical list, fire `\output`, commit.
   resource identities, `\count0..\count9`, and the page effect slice. The
   format is stored by content hash through `World`; drivers receive artifact
   bytes/ids, not live node handles.
-- The implemented stomach shipout path consumes the same box syntax as TeX's
+- **Status:** the implemented stomach shipout path consumes the same box
+  syntax as TeX's
   box primitives (`\shipout\hbox{...}`, `\shipout\boxN`, `\shipout\copyN`),
   traverses the box tree in node order, fires deferred stream whatsits, expands
   deferred-write token lists through the ordinary gullet, serializes the
@@ -880,8 +915,8 @@ Responsibility: page artifacts → bytes on disk. Strictly downstream.
   produce *effect-log entries* engine-side that the driver interprets —
   the engine never constructs PDF syntax.
 - DVI driver is the conformance driver: byte-comparable against Knuth's
-  `tex` for the parity corpus. The implemented DVI layer writes the file
-  container structure (`pre`, page `bop`/`eop`, first-use `fnt_def`, `post`,
+  `tex` for the parity corpus. **Status:** the implemented DVI layer writes
+  the file container structure (`pre`, page `bop`/`eop`, first-use `fnt_def`, `post`,
   `post_post`, and 223 padding) from committed artifacts, and traverses the
   committed box tree with TeX.web-style `hlist_out`/`vlist_out`, `movement()`
   w/x/y/z optimization, font switches, rules, glyphs, and DVI specials.
