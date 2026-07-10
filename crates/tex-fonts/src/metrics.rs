@@ -99,9 +99,14 @@ impl LoadedFont {
 /// The current producer is TFM parsing, but the query surface is deliberately
 /// phrased in TeX engine terms so an OpenType backend can populate the same
 /// immutable record or answer behind the same `Universe` facade later.
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct FontMetrics {
     characters: Vec<Option<CharMetrics>>,
+    /// Dense, immutable hot-path projection of `characters`.
+    ///
+    /// Missing byte characters have zero width. This is derived once when the
+    /// font is loaded and therefore carries no independent semantic state.
+    widths: [Scaled; 256],
     lig_kern_program: Vec<LigKernInstruction>,
     right_boundary_char: Option<u8>,
     left_boundary_program: Option<u16>,
@@ -117,8 +122,15 @@ impl FontMetrics {
         left_boundary_program: Option<u16>,
         extensible_recipes: Vec<ExtensibleRecipe>,
     ) -> Self {
+        let mut widths = [Scaled::from_raw(0); 256];
+        for (code, character) in characters.iter().take(256).enumerate() {
+            if let Some(metrics) = character {
+                widths[code] = metrics.width;
+            }
+        }
         Self {
             characters,
+            widths,
             lig_kern_program,
             right_boundary_char,
             left_boundary_program,
@@ -131,6 +143,12 @@ impl FontMetrics {
         self.characters
             .get(usize::from(code))
             .and_then(|entry| *entry)
+    }
+
+    /// Dense TFM-byte width table used by compact node-run scans.
+    #[must_use]
+    pub const fn widths(&self) -> &[Scaled; 256] {
+        &self.widths
     }
 
     #[must_use]
@@ -188,6 +206,12 @@ impl FontMetrics {
                 _ => None,
             },
         }
+    }
+}
+
+impl Default for FontMetrics {
+    fn default() -> Self {
+        Self::new(Vec::new(), Vec::new(), None, None, Vec::new())
     }
 }
 

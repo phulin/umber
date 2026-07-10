@@ -289,7 +289,23 @@ fn common_diagnostics(
 
 fn measure_hlist(state: &impl TypesetState, nodes: NodeList<'_>) -> Measurement {
     let mut meas = Measurement::ZERO;
-    for node in nodes {
+    let mut index = 0;
+    while index < nodes.len() {
+        if let Some(run) = nodes.char_run(index) {
+            let widths = state.font_widths(run.font());
+            for code in run.codes() {
+                // Keep TeX's saturating additions in source order. The compact
+                // run removes tag/font dispatch without changing overflow.
+                meas.width = add(meas.width, widths[usize::from(code)]);
+                if let Some(metrics) = state.font_char_metrics(run.font(), code) {
+                    meas.height = meas.height.max(metrics.height);
+                    meas.depth = meas.depth.max(metrics.depth);
+                }
+            }
+            index += run.len();
+            continue;
+        }
+        let node = nodes.get(index).expect("index is within node list");
         match node {
             NodeRef::Char { font, ch } | NodeRef::Lig { font, ch, .. } => {
                 if let Ok(code) = u8::try_from(ch as u32)
@@ -354,6 +370,7 @@ fn measure_hlist(state: &impl TypesetState, nodes: NodeList<'_>) -> Measurement 
                 meas.width = add(meas.width, width);
             }
         }
+        index += 1;
     }
     meas
 }

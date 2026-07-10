@@ -1470,6 +1470,12 @@ impl Universe {
         self.stores.font_char_metrics(font, code)
     }
 
+    /// Returns the immutable dense TFM-byte width projection for a live font.
+    #[must_use]
+    pub fn font_widths(&self, font: FontId) -> &[Scaled; 256] {
+        self.stores.font_widths(font)
+    }
+
     #[must_use]
     pub fn font_next_larger(&self, font: FontId, code: u8) -> Option<u8> {
         self.stores.font_next_larger(font, code)

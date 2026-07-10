@@ -76,12 +76,24 @@ pub(super) fn line_widths_view<S: TypesetState>(
     end: usize,
 ) -> Widths {
     let mut widths = Widths::zero();
-    for node in nodes
-        .iter()
-        .skip(start)
-        .take(end.min(nodes.len()).saturating_sub(start))
-    {
-        widths.add_assign(node_width_ref(state, node));
+    let limit = end.min(nodes.len());
+    let mut index = start.min(limit);
+    while index < limit {
+        if let Some(run) = nodes.char_run(index) {
+            let run_len = run.len().min(limit - index);
+            let table = state.font_widths(run.font());
+            for code in run.codes().take(run_len) {
+                // Preserve the scalar saturating-add order exactly.
+                widths.natural = add(widths.natural, table[usize::from(code)]);
+            }
+            index += run_len;
+        } else {
+            widths.add_assign(node_width_ref(
+                state,
+                nodes.get(index).expect("index is within node list"),
+            ));
+            index += 1;
+        }
     }
     widths
 }

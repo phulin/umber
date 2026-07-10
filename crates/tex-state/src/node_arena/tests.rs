@@ -174,6 +174,56 @@ fn every_inline_kind_uses_only_one_word_and_no_sidecar() {
 }
 
 #[test]
+fn byte_char_runs_stop_at_fonts_unicode_ligatures_and_other_nodes() {
+    let mut arena = NodeArena::new();
+    let f1 = FontId::testing_new(1);
+    let f2 = FontId::testing_new(2);
+    let id = arena.append(&[
+        Node::Char { font: f1, ch: 'a' },
+        Node::Char {
+            font: f1,
+            ch: '\u{ff}',
+        },
+        Node::Char { font: f2, ch: 'b' },
+        Node::Char {
+            font: f2,
+            ch: '\u{100}',
+        },
+        Node::Char { font: f2, ch: 'c' },
+        Node::Lig {
+            font: f2,
+            ch: 'd',
+            orig: ('c', 'd'),
+        },
+        Node::Kern {
+            amount: scaled(1),
+            kind: KernKind::Font,
+        },
+    ]);
+    let list = arena.get_epoch(id);
+    let first = list.char_run(0).expect("first run");
+    assert_eq!(first.font(), f1);
+    assert_eq!(first.codes().collect::<Vec<_>>(), vec![b'a', 255]);
+    assert_eq!(
+        list.char_run(2)
+            .expect("second run")
+            .codes()
+            .collect::<Vec<_>>(),
+        vec![b'b']
+    );
+    assert!(list.char_run(3).is_none());
+    assert_eq!(
+        list.char_run(4)
+            .expect("post-Unicode run")
+            .codes()
+            .collect::<Vec<_>>(),
+        vec![b'c']
+    );
+    assert!(list.char_run(5).is_none());
+    assert!(list.char_run(list.len()).is_none());
+}
+
+#[test]
 fn every_rare_kind_round_trips_through_its_sidecar() {
     let mut arena = NodeArena::new();
     let empty = arena.append(&[]);

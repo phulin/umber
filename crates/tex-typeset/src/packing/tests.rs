@@ -1,4 +1,6 @@
 use super::*;
+use tex_fonts::metrics::CharTag;
+use tex_fonts::{CharMetrics, FontMetrics, LoadedFont};
 use tex_state::Universe;
 use tex_state::node::{GlueKind, KernKind, LeaderPayload};
 
@@ -16,6 +18,117 @@ fn badness_matches_tex_web_boundaries() {
     assert_eq!(badness(sp(1291), sp(297)), INF_BAD);
     assert_eq!(badness(sp(7_230_584), sp(1)), INF_BAD);
     assert_eq!(badness(sp(7_230_585), sp(1_663_497)), 8189);
+}
+
+fn width_font(name: &str, salt: u8) -> LoadedFont {
+    let mut characters = vec![None; 256];
+    for code in 0_u8..=u8::MAX {
+        if code % 11 != 0 {
+            characters[usize::from(code)] = Some(CharMetrics {
+                width: sp(i32::from(code).wrapping_mul(7919).wrapping_sub(700_000)),
+                height: sp(i32::from(code % 17)),
+                depth: sp(i32::from(code % 7)),
+                italic_correction: sp(0),
+                tag: CharTag::None,
+            });
+        }
+    }
+    LoadedFont::new(
+        name,
+        name,
+        [salt; 32],
+        0,
+        sp(10),
+        sp(10),
+        vec![sp(0); 7],
+        FontMetrics::new(characters, Vec::new(), None, None, Vec::new()),
+    )
+}
+
+fn scalar_hlist(state: &impl TypesetState, nodes: NodeList<'_>) -> Measurement {
+    let mut out = Measurement::ZERO;
+    for node in nodes {
+        match node {
+            NodeRef::Char { font, ch } | NodeRef::Lig { font, ch, .. } => {
+                if let Ok(code) = u8::try_from(ch as u32)
+                    && let Some(metric) = state.font_char_metrics(font, code)
+                {
+                    out.width = add(out.width, metric.width);
+                    out.height = out.height.max(metric.height);
+                    out.depth = out.depth.max(metric.depth);
+                }
+            }
+            NodeRef::Kern { amount, .. } => out.width = add(out.width, amount),
+            NodeRef::Glue { spec, .. } => add_glue(&mut out, state.glue(spec), Axis::Horizontal),
+            NodeRef::MathOn(width) | NodeRef::MathOff(width) => out.width = add(out.width, width),
+            NodeRef::Penalty(_) => {}
+            _ => {}
+        }
+    }
+    out
+}
+
+#[test]
+fn compact_char_runs_differentially_match_scalar_mixed_lists_and_overflow() {
+    let mut universe = Universe::new();
+    let fonts = [
+        universe.intern_font(width_font("width-a", 1)),
+        universe.intern_font(width_font("width-b", 2)),
+    ];
+    let glue = universe.intern_glue(GlueSpec {
+        width: sp(31337),
+        ..GlueSpec::ZERO
+    });
+    let mut seed = 0x8bad_f00d_dead_beef_u64;
+    for case in 0..256 {
+        let mut nodes = Vec::new();
+        if case == 0 {
+            nodes.push(Node::Kern {
+                amount: sp(i32::MAX),
+                kind: KernKind::Explicit,
+            });
+        }
+        for _ in 0..(case % 97) {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            let font = fonts[(seed as usize >> 8) & 1];
+            let code = seed as u8;
+            match (seed >> 16) % 13 {
+                0 => nodes.push(Node::Char {
+                    font,
+                    ch: '\u{100}',
+                }),
+                1 => nodes.push(Node::Lig {
+                    font,
+                    ch: char::from(code),
+                    orig: ('a', 'b'),
+                }),
+                2 => nodes.push(Node::Kern {
+                    amount: sp(seed as i32),
+                    kind: KernKind::Font,
+                }),
+                3 => nodes.push(Node::Glue {
+                    spec: glue,
+                    kind: GlueKind::Normal,
+                    leader: None,
+                }),
+                4 => nodes.push(Node::Penalty(seed as i32)),
+                _ => nodes.push(Node::Char {
+                    font,
+                    ch: char::from(code),
+                }),
+            }
+        }
+        let id = universe.freeze_node_list(&nodes);
+        let view = universe.nodes(id);
+        let fast = measure_hlist(&universe, view);
+        let scalar = scalar_hlist(&universe, view);
+        assert_eq!(fast.width, scalar.width, "width case {case}");
+        assert_eq!(fast.height, scalar.height, "height case {case}");
+        assert_eq!(fast.depth, scalar.depth, "depth case {case}");
+        assert_eq!(fast.has_glue, scalar.has_glue, "glue case {case}");
+    }
 }
 
 #[test]

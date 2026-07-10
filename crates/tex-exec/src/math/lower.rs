@@ -150,6 +150,10 @@ impl TypesetState for LoweredMathSink<'_> {
     fn font_char_metrics(&self, font: FontId, code: u8) -> Option<tex_fonts::CharMetrics> {
         self.stores.font_char_metrics(font, code)
     }
+
+    fn font_widths(&self, font: FontId) -> &[Scaled; 256] {
+        self.stores.font_widths(font)
+    }
 }
 
 impl MathTypesetState for LoweredMathSink<'_> {

@@ -29,6 +29,7 @@ pub trait TypesetState {
     fn nodes(&self, id: NodeListId) -> NodeList<'_>;
     fn glue(&self, id: tex_state::ids::GlueId) -> GlueSpec;
     fn font_char_metrics(&self, font: FontId, code: u8) -> Option<tex_fonts::CharMetrics>;
+    fn font_widths(&self, font: FontId) -> &[Scaled; 256];
 }
 
 impl TypesetState for Universe {
@@ -42,6 +43,10 @@ impl TypesetState for Universe {
 
     fn font_char_metrics(&self, font: FontId, code: u8) -> Option<tex_fonts::CharMetrics> {
         Universe::font_char_metrics(self, font, code)
+    }
+
+    fn font_widths(&self, font: FontId) -> &[Scaled; 256] {
+        Universe::font_widths(self, font)
     }
 }
 

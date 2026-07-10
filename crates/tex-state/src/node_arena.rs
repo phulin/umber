@@ -919,6 +919,39 @@ impl<'a> NodeList<'a> {
             end: self.end,
         }
     }
+    /// Returns the maximal same-font run of inline byte-character words at
+    /// `index`. Ligatures and every non-character word deliberately terminate
+    /// a run so callers retain their ordinary semantic handling.
+    #[must_use]
+    pub fn char_run(self, index: usize) -> Option<CharRun<'a>> {
+        if index >= self.len() {
+            return None;
+        }
+        let first = *self.storage.words.get(self.start + index)?;
+        if first.tag() != 0 {
+            return None;
+        }
+        let font = crate::ids::FontId::new((first.payload() >> 21) as u32);
+        let mut end = self.start + index + 1;
+        while end < self.end {
+            let word = self.storage.words[end];
+            if word.tag() != 0 || (word.payload() >> 21) as u32 != font.raw() {
+                break;
+            }
+            // TFM widths are defined only for the byte character domain.
+            if word.payload() & 0x1f_ffff > u8::MAX as u64 {
+                break;
+            }
+            end += 1;
+        }
+        if first.payload() & 0x1f_ffff > u8::MAX as u64 {
+            return None;
+        }
+        Some(CharRun {
+            words: &self.storage.words[self.start + index..end],
+            font,
+        })
+    }
     #[must_use]
     pub fn to_vec(self) -> Vec<Node> {
         self.iter().map(|node| node.to_owned()).collect()
@@ -929,6 +962,31 @@ impl<'a> NodeList<'a> {
     #[doc(hidden)]
     pub fn testing_decoded(self) -> &'static [Node] {
         Box::leak(self.to_vec().into_boxed_slice())
+    }
+}
+
+/// Opaque zero-allocation view of a contiguous same-font byte-character run.
+#[derive(Clone, Copy, Debug)]
+pub struct CharRun<'a> {
+    words: &'a [NodeWord],
+    font: crate::ids::FontId,
+}
+
+impl<'a> CharRun<'a> {
+    #[must_use]
+    pub const fn font(self) -> crate::ids::FontId {
+        self.font
+    }
+    #[must_use]
+    pub const fn len(self) -> usize {
+        self.words.len()
+    }
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        self.words.is_empty()
+    }
+    pub fn codes(self) -> impl ExactSizeIterator<Item = u8> + 'a {
+        self.words.iter().map(|word| word.payload() as u8)
     }
 }
 

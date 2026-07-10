@@ -919,6 +919,11 @@ impl Stores {
     }
 
     #[must_use]
+    pub fn font_widths(&self, font: FontId) -> &[Scaled; 256] {
+        self.font(font).metrics().widths()
+    }
+
+    #[must_use]
     pub fn font_next_larger(&self, font: FontId, code: u8) -> Option<u8> {
         self.font(font).metrics().next_larger(code)
     }
