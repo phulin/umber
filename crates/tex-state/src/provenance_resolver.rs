@@ -155,7 +155,7 @@ impl<'a> ProvenanceResolver<'a> {
     }
 
     fn render_source_context(&self, out: &mut String, prefix: &str, source: SourceOrigin) {
-        let label = self.source_label(source.source());
+        let label = self.source_label_for_record(source.source(), source.input_record());
         let line_number = source.line().max(1);
         let column = source.column().saturating_add(1).max(1);
         let _ = writeln!(out, "{prefix} {label}:{line_number}:{column}");
@@ -169,24 +169,25 @@ impl<'a> ProvenanceResolver<'a> {
         let _ = writeln!(out, "  {} | {caret_padding}^", " ".repeat(gutter.len()));
     }
 
-    fn source_label(&self, source: SourceId) -> String {
-        if let Some(record) = self
-            .universe
-            .world()
-            .input_records()
-            .get(source.raw() as usize)
-        {
+    fn source_label_for_record(
+        &self,
+        source: SourceId,
+        input_record: Option<crate::InputRecordId>,
+    ) -> String {
+        let index = input_record.map_or(source.raw() as usize, |record| record.raw() as usize);
+        if let Some(record) = self.universe.world().input_records().get(index) {
             return display_path(record.path());
         }
         format!("<source {}>", source.raw())
     }
 
     fn source_line(&self, source: SourceOrigin) -> Option<String> {
-        let record = self
-            .universe
-            .world()
-            .input_records()
-            .get(source.source().raw() as usize)?;
+        let index = source
+            .input_record()
+            .map_or(source.source().raw() as usize, |record| {
+                record.raw() as usize
+            });
+        let record = self.universe.world().input_records().get(index)?;
         let bytes = self.universe.world().input_content(record.hash())?;
         let text = String::from_utf8_lossy(bytes);
         line_at(&text, source.line())
@@ -196,7 +197,7 @@ impl<'a> ProvenanceResolver<'a> {
         match self.record(origin) {
             Some(OriginRecord::UnknownBootstrap) | None => "unknown origin".to_owned(),
             Some(OriginRecord::Source(source)) => {
-                let label = self.source_label(source.source());
+                let label = self.source_label_for_record(source.source(), source.input_record());
                 format!(
                     "{label}:{}:{}",
                     source.line().max(1),

@@ -2,6 +2,13 @@
 
 use crate::interner::Symbol;
 
+/// Inaccessible TeX82 control tokens used only by engine-owned input replay.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum FrozenToken {
+    EndTemplate,
+    EndV,
+}
+
 /// TeX category codes, shared by lexing and token storage.
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -27,13 +34,20 @@ pub enum Catcode {
 /// A frozen TeX token.
 ///
 /// Parameter tokens carry the future macro parameter slot number, `1..=9`.
-/// Macro matching semantics live in the gullet; this type only stores the
-/// compact token representation.
+/// Frozen tokens are inaccessible engine sentinels; the lexer and control-
+/// sequence interner cannot manufacture them. Macro matching and sentinel
+/// delivery semantics live in the gullet; this type only stores the compact
+/// token representation.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Token {
-    Char { ch: char, cat: Catcode },
+    Char {
+        ch: char,
+        cat: Catcode,
+    },
     Cs(Symbol),
     Param(u8),
+    /// An inaccessible engine-owned token, never an interned control sequence.
+    Frozen(FrozenToken),
 }
 
 impl Token {
@@ -45,6 +59,30 @@ impl Token {
             "parameter token slot must be in 1..=9"
         );
         Self::Param(slot)
+    }
+
+    /// Returns TeX82's inaccessible `frozen_end_template` token.
+    #[must_use]
+    pub const fn frozen_end_template() -> Self {
+        Self::Frozen(FrozenToken::EndTemplate)
+    }
+
+    /// Returns TeX82's inaccessible `frozen_endv` token.
+    #[must_use]
+    pub const fn frozen_endv() -> Self {
+        Self::Frozen(FrozenToken::EndV)
+    }
+
+    /// Whether this is TeX82's inaccessible `frozen_end_template` token.
+    #[must_use]
+    pub const fn is_frozen_end_template(self) -> bool {
+        matches!(self, Self::Frozen(FrozenToken::EndTemplate))
+    }
+
+    /// Whether this is TeX82's inaccessible `frozen_endv` token.
+    #[must_use]
+    pub const fn is_frozen_endv(self) -> bool {
+        matches!(self, Self::Frozen(FrozenToken::EndV))
     }
 }
 
@@ -92,6 +130,7 @@ impl TracedTokenWord {
     const KIND_CHAR: u64 = 0;
     const KIND_CS: u64 = 1;
     const KIND_PARAM: u64 = 2;
+    const KIND_FROZEN: u64 = 3;
     const CATCODE_BITS: u32 = 4;
     const USV_BITS: u32 = 21;
     const USV_MASK: u32 = (1 << Self::USV_BITS) - 1;
@@ -113,6 +152,8 @@ impl TracedTokenWord {
                 debug_assert!(slot < 16);
                 (Self::KIND_PARAM, u32::from(slot))
             }
+            Token::Frozen(FrozenToken::EndTemplate) => (Self::KIND_FROZEN, 0),
+            Token::Frozen(FrozenToken::EndV) => (Self::KIND_FROZEN, 1),
         };
         Self(
             (kind << Self::KIND_SHIFT)
@@ -150,6 +191,11 @@ impl TracedTokenWord {
             Self::KIND_CS => Some(Token::Cs(Symbol::new(payload))),
             Self::KIND_PARAM => match payload {
                 1..=9 => Some(Token::Param(payload as u8)),
+                _ => None,
+            },
+            Self::KIND_FROZEN => match payload {
+                0 => Some(Token::Frozen(FrozenToken::EndTemplate)),
+                1 => Some(Token::Frozen(FrozenToken::EndV)),
                 _ => None,
             },
             _ => None,

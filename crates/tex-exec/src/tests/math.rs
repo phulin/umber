@@ -169,7 +169,7 @@ fn mathcode_8000_uses_current_active_meaning_and_fam_overrides_variable_family()
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
     stores.set_mathcode('?', 0x8000);
-    let active_question = stores.intern("?");
+    let active_question = stores.intern_active_character('?');
     stores.set_meaning(active_question, Meaning::MathCharGiven(0x0231));
 
     let mut input = InputStack::new(MemoryInput::new(
@@ -266,7 +266,9 @@ fn mismatched_right_and_missing_right_use_tex_error_text() {
 
 #[test]
 fn inline_math_finishing_emits_mathsurround_markers_and_penalties() {
-    let (mut stores, executor) = run_math_source(r"\mathsurround=3pt $a\mathbin+b\mathrel=c$");
+    let (mut stores, executor) = run_math_source(
+        r"\mathsurround=3pt \binoppenalty=700 \relpenalty=500 $a\mathbin+b\mathrel=c$",
+    );
     let list = math_list_nodes(&executor)
         .pop()
         .expect("inline math list should be present");

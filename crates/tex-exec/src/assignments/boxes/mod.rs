@@ -22,6 +22,7 @@ use leaders::{leader_glue_kind, scan_leader_glue, scan_leader_payload};
 pub(crate) use packaging::scan_box_group;
 use packaging::{
     ScannedBoxValue, first_box_node, kind_for_primitive, scan_box_node, scan_box_value,
+    take_last_box,
 };
 pub(super) use packaging::{hpack_with_overfull_rule, scan_required_box_node};
 use vsplit::scan_vsplit_node;
@@ -57,9 +58,54 @@ where
     Ok(())
 }
 
+pub(crate) fn scan_math_box<S, H>(
+    primitive: UnexpandablePrimitive,
+    context: TracedTokenWord,
+    nest: &mut ModeNest,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    hooks: &mut H,
+) -> Result<Option<Node>, ExecError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    let node = match primitive {
+        UnexpandablePrimitive::HBox | UnexpandablePrimitive::VBox | UnexpandablePrimitive::VTop => {
+            Some(scan_box_node(
+                kind_for_primitive(primitive)?,
+                input,
+                stores,
+                hooks,
+                context,
+            )?)
+        }
+        UnexpandablePrimitive::VSplit => scan_vsplit_node(input, stores, hooks, context)?,
+        UnexpandablePrimitive::Box | UnexpandablePrimitive::Copy => {
+            let index = scan_register_index(input, stores, hooks, context)?;
+            let id = if primitive == UnexpandablePrimitive::Box {
+                stores.take_box_reg_same_level(index)
+            } else {
+                stores.box_reg(index)
+            };
+            first_box_node(stores, id).map(|node| stores.clone_node_to_epoch(node))
+        }
+        UnexpandablePrimitive::Raise | UnexpandablePrimitive::Lower => {
+            let amount = scan_scaled(input, stores, hooks, context)?;
+            let mut node = packaging::scan_required_box_node(input, stores, hooks, context)?;
+            apply_shift(&mut node, primitive, amount)?;
+            Some(node)
+        }
+        _ => unreachable!("caller restricts math box commands"),
+    };
+    let _ = nest;
+    Ok(node)
+}
+
 pub(super) fn execute_setbox<S, H>(
     global: bool,
     context: TracedTokenWord,
+    nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
@@ -71,7 +117,7 @@ where
     let index = scan_register_index(input, stores, hooks, context)?;
     skip_optional_equals_x(input, stores, hooks)?;
     let boundary = stores.begin_box_build();
-    let value = match scan_box_value(input, stores, hooks, context) {
+    let value = match scan_box_value(Some(nest), input, stores, hooks, context) {
         Ok(Some(ScannedBoxValue::Fresh(node))) => {
             let list = stores.freeze_node_list(&[node]);
             Some(list)
@@ -159,12 +205,14 @@ where
             append_unboxed(nest, stores, id, primitive)?;
         }
         UnexpandablePrimitive::LastBox => {
-            if let Some(node) = nest.current_list_mut().pop_box() {
-                let list = stores.freeze_node_list(&[node]);
-                stores.set_box_reg(255, list);
-            } else {
-                let empty = stores.freeze_node_list(&[]);
-                stores.set_box_reg(255, empty);
+            if let Some(node) = take_last_box(nest, stores)? {
+                append_node_to_current_list(nest, stores, node)?;
+                if matches!(
+                    nest.current_mode(),
+                    Mode::Horizontal | Mode::RestrictedHorizontal
+                ) {
+                    nest.current_list_mut().set_space_factor(1000);
+                }
             }
         }
         UnexpandablePrimitive::Raise
@@ -178,7 +226,14 @@ where
         }
         _ => unreachable!("caller restricts box list commands"),
     }
-    if primitive != UnexpandablePrimitive::LastBox {
+    if !matches!(
+        primitive,
+        UnexpandablePrimitive::LastBox
+            | UnexpandablePrimitive::UnHBox
+            | UnexpandablePrimitive::UnHCopy
+            | UnexpandablePrimitive::UnVBox
+            | UnexpandablePrimitive::UnVCopy
+    ) {
         build_page_if_outer_vertical(nest, stores)?;
     }
     Ok(())

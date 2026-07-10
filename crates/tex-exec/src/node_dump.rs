@@ -15,6 +15,7 @@ use tex_state::node::{
     BoxNode, GlueKind, KernKind, LeaderPayload, Node, Sign, UnsetKind, UnsetNode,
 };
 use tex_state::scaled::{GLUE_SET_RATIO_SCALE, GlueSetRatio, Scaled};
+use tex_state::token::Token;
 
 pub(crate) struct DumpConfig {
     pub(crate) breadth: i32,
@@ -459,7 +460,7 @@ fn dump_font(stores: &Universe, font: tex_state::ids::FontId) -> String {
     if stores.current_font() == font
         && let Some(symbol) = stores.current_font_symbol()
     {
-        return format!("\\{}", stores.resolve(symbol));
+        return tex_expand::token_text(stores, Token::Cs(symbol));
     }
     format!("\\{}", stores.font_name(font))
 }

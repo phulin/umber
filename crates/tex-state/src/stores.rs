@@ -13,11 +13,11 @@ use crate::font::{
     CharMetrics, ExtensibleRecipe, FontMetrics, FontStore, FontStoreMark, LigKernChar,
     LigKernCommand, LigKernIter, LoadedFont, MissingCharacter, NULL_FONT,
 };
-use crate::glue::{GlueSpec, GlueStore, GlueStoreMark, Order};
+use crate::glue::{GlueSpec, GlueStore, GlueStoreMark};
 use crate::hyphenation::{ExceptionSpec, HyphenationTable, PatternSpec};
 use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, OriginListId, TokenListId};
 use crate::input::SourceId;
-use crate::interner::{Interner, InternerError, InternerMark, Symbol};
+use crate::interner::{ControlSequenceKind, Interner, InternerError, InternerMark, Symbol};
 use crate::macro_store::{MacroDefinitionProvenance, MacroMeaning, MacroStore, MacroStoreMark};
 use crate::math::MathFontSize;
 use crate::meaning::Meaning;
@@ -176,6 +176,9 @@ impl Clone for Stores {
 }
 
 impl Stores {
+    pub(crate) fn env_group_depth(&self) -> u32 {
+        self.env.group_depth()
+    }
     /// Creates an empty state-store tuple.
     #[must_use]
     pub fn new() -> Self {
@@ -197,47 +200,13 @@ impl Stores {
             semantic_hash_cache: state_hash::SemanticHashCache::default(),
         };
         stores.set_int_param(IntParam::MAG, 1000);
-        stores.set_int_param(IntParam::ESCAPE_CHAR, b'\\'.into());
-        stores.set_int_param(IntParam::DEFAULT_HYPHEN_CHAR, b'-'.into());
-        stores.set_int_param(IntParam::DEFAULT_SKEW_CHAR, -1);
-        stores.set_int_param(IntParam::FAM, -1);
-        stores.set_int_param(IntParam::UC_HYPH, 1);
-        stores.set_int_param(IntParam::LEFT_HYPHEN_MIN, 2);
-        stores.set_int_param(IntParam::RIGHT_HYPHEN_MIN, 3);
+        stores.set_int_param(IntParam::TOLERANCE, 10_000);
+        stores.set_int_param(IntParam::HANG_AFTER, 1);
         stores.set_int_param(IntParam::MAX_DEAD_CYCLES, 25);
-        stores.initialize_plain_layout_defaults();
+        stores.set_int_param(IntParam::ESCAPE_CHAR, b'\\'.into());
+        stores.set_int_param(IntParam::END_LINE_CHAR, 13);
         stores.initialize_font_banks(NULL_FONT, 7, &[]);
         stores
-    }
-
-    fn initialize_plain_layout_defaults(&mut self) {
-        self.set_int_param(IntParam::PRETOLERANCE, 100);
-        self.set_int_param(IntParam::TOLERANCE, 200);
-        self.set_int_param(IntParam::BIN_OP_PENALTY, 700);
-        self.set_int_param(IntParam::REL_PENALTY, 500);
-        self.set_dimen_param(
-            DimenParam::OVERFULL_RULE,
-            Scaled::from_raw(5 * Scaled::UNITY),
-        );
-        self.set_dimen_param(DimenParam::MAX_DEPTH, Scaled::from_raw(4 * Scaled::UNITY));
-
-        let baseline_skip = self.intern_glue(GlueSpec {
-            width: Scaled::from_raw(12 * Scaled::UNITY),
-            stretch: Scaled::from_raw(0),
-            stretch_order: Order::Normal,
-            shrink: Scaled::from_raw(0),
-            shrink_order: Order::Normal,
-        });
-        self.set_glue_param(GlueParam::BASELINE_SKIP, baseline_skip);
-
-        let par_fill_skip = self.intern_glue(GlueSpec {
-            width: Scaled::from_raw(0),
-            stretch: Scaled::from_raw(Scaled::UNITY),
-            stretch_order: Order::Fil,
-            shrink: Scaled::from_raw(0),
-            shrink_order: Order::Normal,
-        });
-        self.set_glue_param(GlueParam::PAR_FILL_SKIP, par_fill_skip);
     }
 
     /// Reads the owned environment.
@@ -262,6 +231,10 @@ impl Stores {
         self.code_tables.set_catcode(ch, value);
     }
 
+    pub fn set_catcode_global(&mut self, ch: char, value: Catcode) {
+        self.code_tables.set_catcode_global(ch, value);
+    }
+
     #[must_use]
     pub fn lccode(&self, ch: char) -> LcCode {
         self.code_tables.lccode(ch)
@@ -269,6 +242,10 @@ impl Stores {
 
     pub fn set_lccode(&mut self, ch: char, value: LcCode) {
         self.code_tables.set_lccode(ch, value);
+    }
+
+    pub fn set_lccode_global(&mut self, ch: char, value: LcCode) {
+        self.code_tables.set_lccode_global(ch, value);
     }
 
     #[must_use]
@@ -280,6 +257,10 @@ impl Stores {
         self.code_tables.set_uccode(ch, value);
     }
 
+    pub fn set_uccode_global(&mut self, ch: char, value: UcCode) {
+        self.code_tables.set_uccode_global(ch, value);
+    }
+
     #[must_use]
     pub fn sfcode(&self, ch: char) -> SfCode {
         self.code_tables.sfcode(ch)
@@ -287,6 +268,10 @@ impl Stores {
 
     pub fn set_sfcode(&mut self, ch: char, value: SfCode) {
         self.code_tables.set_sfcode(ch, value);
+    }
+
+    pub fn set_sfcode_global(&mut self, ch: char, value: SfCode) {
+        self.code_tables.set_sfcode_global(ch, value);
     }
 
     #[must_use]
@@ -298,6 +283,10 @@ impl Stores {
         self.code_tables.set_mathcode(ch, value);
     }
 
+    pub fn set_mathcode_global(&mut self, ch: char, value: MathCode) {
+        self.code_tables.set_mathcode_global(ch, value);
+    }
+
     #[must_use]
     pub fn delcode(&self, ch: char) -> DelCode {
         self.code_tables.delcode(ch)
@@ -305,6 +294,10 @@ impl Stores {
 
     pub fn set_delcode(&mut self, ch: char, value: DelCode) {
         self.code_tables.set_delcode(ch, value);
+    }
+
+    pub fn set_delcode_global(&mut self, ch: char, value: DelCode) {
+        self.code_tables.set_delcode_global(ch, value);
     }
 
     pub fn add_hyphenation_pattern(&mut self, pattern: PatternSpec) {
@@ -491,6 +484,13 @@ impl Stores {
             .expect("control-sequence symbol capacity exceeded")
     }
 
+    /// Interns an active-character control sequence in its TeX82 namespace.
+    pub fn intern_active_character(&mut self, ch: char) -> Symbol {
+        self.interner
+            .intern_active(ch)
+            .expect("control-sequence symbol capacity exceeded")
+    }
+
     /// Interns a control-sequence name, reporting packed-token capacity exhaustion.
     pub(crate) fn try_intern(&mut self, name: &str) -> Result<Symbol, InternerError> {
         self.interner.intern(name)
@@ -502,11 +502,24 @@ impl Stores {
         self.interner.get(name)
     }
 
+    /// Returns the live symbol for an already-interned active character.
+    #[must_use]
+    pub fn active_character_symbol(&self, ch: char) -> Option<Symbol> {
+        self.interner.get_active(ch)
+    }
+
     /// Resolves a live control-sequence symbol.
     #[must_use]
     pub fn resolve(&self, symbol: Symbol) -> &str {
         self.assert_live_symbol(symbol);
         self.interner.resolve(symbol)
+    }
+
+    /// Returns the TeX control-sequence namespace of a live symbol.
+    #[must_use]
+    pub fn control_sequence_kind(&self, symbol: Symbol) -> ControlSequenceKind {
+        self.assert_live_symbol(symbol);
+        self.interner.kind(symbol)
     }
 
     /// Creates a fresh owned scratch token-list builder.
@@ -553,6 +566,21 @@ impl Stores {
                 line,
                 column,
             )))
+    }
+
+    pub fn source_origin_with_input_record(
+        &mut self,
+        source: SourceId,
+        input_record: Option<crate::InputRecordId>,
+        byte_offset: u64,
+        line: u32,
+        column: u32,
+    ) -> OriginId {
+        let mut origin = SourceOrigin::new(source, byte_offset, line, column);
+        if let Some(input_record) = input_record {
+            origin = origin.with_input_record(input_record);
+        }
+        self.provenance.allocate(OriginRecord::Source(origin))
     }
 
     /// Allocates a macro-invocation origin.
@@ -711,6 +739,15 @@ impl Stores {
         id
     }
 
+    /// Interns a font and records the control sequence TeX uses for its
+    /// identifier token (the `font_id_text` associated with the font).
+    pub fn intern_font_with_identifier(&mut self, font: LoadedFont, symbol: Symbol) -> FontId {
+        self.assert_live_symbol(symbol);
+        let id = self.intern_font(font);
+        self.fonts.set_identifier(id, symbol);
+        id
+    }
+
     /// Reads a live immutable font record.
     #[must_use]
     pub fn font(&self, id: FontId) -> &LoadedFont {
@@ -721,6 +758,20 @@ impl Stores {
     #[must_use]
     pub fn font_name(&self, id: FontId) -> String {
         self.font(id).fontname_text()
+    }
+
+    #[must_use]
+    pub fn font_identifier_symbol(&self, id: FontId) -> Option<Symbol> {
+        self.assert_live_font(id);
+        let symbol = self.fonts.identifier(id)?;
+        self.assert_live_symbol(symbol);
+        Some(symbol)
+    }
+
+    pub fn set_font_identifier_symbol(&mut self, id: FontId, symbol: Symbol) {
+        self.assert_live_font(id);
+        self.assert_live_symbol(symbol);
+        self.fonts.set_identifier(id, symbol);
     }
 
     #[must_use]
@@ -842,6 +893,12 @@ impl Stores {
         self.env.font_dimen(font, number)
     }
 
+    #[must_use]
+    pub fn font_parameter_count(&self, font: FontId) -> u16 {
+        self.assert_live_font(font);
+        self.env.font_param_len(font)
+    }
+
     pub fn set_font_dimen(
         &mut self,
         font: FontId,
@@ -956,11 +1013,13 @@ impl Stores {
 
     /// Enters a TeX group.
     pub fn enter_group(&mut self) {
+        self.code_tables.enter_group();
         self.env.enter_group();
     }
 
     /// Enters a TeX group with a boundary kind used for mismatch diagnostics.
     pub fn enter_group_with_kind(&mut self, kind: GroupKind) {
+        self.code_tables.enter_group();
         self.env.enter_group_with_kind(kind);
     }
 
@@ -973,7 +1032,9 @@ impl Stores {
     #[must_use]
     pub fn leave_group(&mut self) -> Vec<Token> {
         self.account_current_group_box_refs();
-        self.env.leave_group()
+        let payloads = self.env.leave_group();
+        self.code_tables.leave_group();
+        payloads
     }
 
     /// Leaves the innermost TeX group after checking its boundary kind.
@@ -988,7 +1049,9 @@ impl Stores {
             return Err(GroupMismatch::new(expected, actual));
         }
         self.account_current_group_box_refs();
-        self.env.leave_group_with_kind(expected)
+        let payloads = self.env.leave_group_with_kind(expected)?;
+        self.code_tables.leave_group();
+        Ok(payloads)
     }
 
     /// Stores the token to insert after the next assignment.
@@ -1342,9 +1405,9 @@ impl Stores {
         self.testing_hash_env_by_content(&mut hasher);
         self.interner.len().hash(&mut hasher);
         for raw in 0..self.interner.len() {
-            self.interner
-                .resolve(Symbol::new(raw as u32))
-                .hash(&mut hasher);
+            let symbol = Symbol::new(raw as u32);
+            self.interner.kind(symbol).hash(&mut hasher);
+            self.interner.resolve(symbol).hash(&mut hasher);
         }
         self.tokens.testing_state_hash().hash(&mut hasher);
         self.glue.testing_state_hash().hash(&mut hasher);

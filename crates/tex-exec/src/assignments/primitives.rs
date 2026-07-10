@@ -121,6 +121,7 @@ pub fn install_unexpandable_primitives(stores: &mut Universe) {
         ("immediate", UnexpandablePrimitive::Immediate),
         ("write", UnexpandablePrimitive::Write),
         ("special", UnexpandablePrimitive::Special),
+        ("setlanguage", UnexpandablePrimitive::SetLanguage),
         ("read", UnexpandablePrimitive::Read),
         ("shipout", UnexpandablePrimitive::Shipout),
         ("show", UnexpandablePrimitive::Show),
@@ -177,6 +178,7 @@ pub fn install_unexpandable_primitives(stores: &mut Universe) {
             UnexpandablePrimitive::ScriptScriptStyle,
         ),
         ("end", UnexpandablePrimitive::End),
+        ("dump", UnexpandablePrimitive::Dump),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
@@ -185,11 +187,17 @@ pub fn install_unexpandable_primitives(stores: &mut Universe) {
     stores.set_meaning(relax, Meaning::Relax);
     let nullfont = stores.intern("nullfont");
     stores.set_meaning(nullfont, Meaning::Font(tex_state::font::NULL_FONT));
+    stores.set_font_identifier_symbol(tex_state::font::NULL_FONT, nullfont);
     stores.set_current_font_selector_global(nullfont, tex_state::font::NULL_FONT);
     install_parameter_meanings(stores);
     install_page_meanings(stores);
     let badness = stores.intern("badness");
     stores.set_meaning(badness, Meaning::InternalInteger(InternalInteger::Badness));
+    let inputlineno = stores.intern("inputlineno");
+    stores.set_meaning(
+        inputlineno,
+        Meaning::InternalInteger(InternalInteger::InputLineNumber),
+    );
 }
 
 fn install_parameter_meanings(stores: &mut Universe) {

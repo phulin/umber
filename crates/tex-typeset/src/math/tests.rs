@@ -1,12 +1,14 @@
 use super::*;
 use tex_fonts::metrics::CharTag;
 use tex_fonts::{CharMetrics, FontMetrics, LigKernCommand, LigKernInstruction, LoadedFont};
-use tex_state::env::banks::GlueParam;
+use tex_state::env::banks::{GlueParam, IntParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::math::{
     FractionThickness, LimitType, MathChar, MathField, MathFontSize, MathFraction, MathNoad,
     NoadClass, NoadKind,
 };
+use tex_state::node::{BoxNode, BoxNodeFields, Sign};
+use tex_state::scaled::GlueSetRatio;
 
 fn sc(raw: i32) -> Scaled {
     Scaled::from_raw(raw)
@@ -57,6 +59,8 @@ fn math_glue_converts_mu_dimensions_with_current_math_quad() {
 #[test]
 fn mlist_second_pass_inserts_spacing_and_penalties() {
     let mut universe = setup_universe();
+    universe.set_int_param(IntParam::BIN_OP_PENALTY, 700);
+    universe.set_int_param(IntParam::REL_PENALTY, 500);
     let input = universe.freeze_node_list(&[
         Node::MathNoad(noad(NoadClass::Ord, 'b')),
         Node::MathNoad(noad(NoadClass::Bin, '+')),
@@ -311,6 +315,36 @@ fn left_right_delimiters_size_to_enclosed_list() {
 }
 
 #[test]
+fn ordinary_sub_box_nucleus_is_not_repacked() {
+    let mut universe = setup_universe();
+    let children = universe.freeze_node_list(&[]);
+    let sub_box = Node::VList(BoxNode::new(BoxNodeFields {
+        width: sc(4),
+        height: sc(40),
+        depth: sc(10),
+        shift: sc(0),
+        display: false,
+        glue_set: GlueSetRatio::from_raw(0),
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children,
+    }));
+    let expected = sub_box.clone();
+    let sub_box = universe.freeze_node_list(&[sub_box]);
+    let input = universe.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+        NoadKind::Normal(NoadClass::Ord),
+        MathField::SubBox(sub_box),
+    ))]);
+    let params = MathParams::read(&universe);
+
+    let hlist = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
+
+    let logical = hlist.logical_nodes(hlist.root());
+    assert_eq!(logical.len(), 1);
+    assert_eq!(logical[0], &MathNode::Opaque(Box::new(expected)));
+}
+
+#[test]
 fn display_operator_uses_larger_variant_and_places_limits() {
     let mut universe = setup_universe();
     let mut op = MathNoad::new(
@@ -499,7 +533,7 @@ fn assert_inserted_math_glue_kind(classes: &[NoadClass], expected_kind: MathGlue
         root_nodes(&hlist).iter().any(|node| {
             matches!(
                 node,
-                MathNode::Glue { spec, kind } if *kind == expected_kind && spec.width == sc(width)
+                MathNode::Glue { spec, kind, .. } if *kind == expected_kind && spec.width == sc(width)
             )
         }),
         "expected {expected_kind:?} glue in {hlist:?}"

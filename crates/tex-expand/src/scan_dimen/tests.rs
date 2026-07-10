@@ -1,5 +1,7 @@
 use tex_lex::{InputStack, MemoryInput};
 use tex_state::Universe;
+use tex_state::env::banks::{DimenParam, GlueParam};
+use tex_state::glue::{GlueSpec, Order};
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::provenance::{OriginRecord, SourceOrigin};
@@ -193,6 +195,136 @@ fn scans_supported_internal_dimensions() {
     let (value, diagnostic, next) = scan_with_stores("\\dimen3 x", &mut stores);
 
     assert_eq!(value, 42_000);
+    assert_eq!(diagnostic, None);
+    assert_eq!(next, Some(char_token('x', Catcode::Letter)));
+}
+
+#[test]
+fn scans_named_dimension_parameter() {
+    let mut stores = Universe::new();
+    let hsize = stores.intern("hsize");
+    stores.set_meaning(hsize, Meaning::DimenParam(DimenParam::H_SIZE.raw()));
+    stores.set_dimen_param(DimenParam::H_SIZE, Scaled::from_raw(42_000));
+
+    let (value, diagnostic, next) = scan_with_stores("\\hsize x", &mut stores);
+
+    assert_eq!(value, 42_000);
+    assert_eq!(diagnostic, None);
+    assert_eq!(next, Some(char_token('x', Catcode::Letter)));
+}
+
+#[test]
+fn coerces_named_glue_parameter_width_to_internal_dimension() {
+    let mut stores = Universe::new();
+    let split_top_skip = stores.intern("splittopskip");
+    stores.set_meaning(
+        split_top_skip,
+        Meaning::GlueParam(GlueParam::SPLIT_TOP_SKIP.raw()),
+    );
+    let glue = stores.intern_glue(GlueSpec {
+        width: Scaled::from_raw(42_000),
+        stretch: Scaled::from_raw(7_000),
+        stretch_order: Order::Fil,
+        shrink: Scaled::from_raw(3_000),
+        shrink_order: Order::Normal,
+    });
+    stores.set_glue_param(GlueParam::SPLIT_TOP_SKIP, glue);
+
+    let (value, diagnostic, next) = scan_with_stores("\\splittopskip x", &mut stores);
+
+    assert_eq!(value, 42_000);
+    assert_eq!(diagnostic, None);
+    assert_eq!(next, Some(char_token('x', Catcode::Letter)));
+}
+
+#[test]
+fn coerces_named_skip_register_width_to_internal_dimension() {
+    let mut stores = Universe::new();
+    let named_skip = stores.intern("namedskip");
+    stores.set_meaning(named_skip, Meaning::SkipRegister(42));
+    let glue = stores.intern_glue(GlueSpec {
+        width: Scaled::from_raw(42_000),
+        stretch: Scaled::from_raw(7_000),
+        stretch_order: Order::Fil,
+        shrink: Scaled::from_raw(3_000),
+        shrink_order: Order::Fill,
+    });
+    stores.set_skip(42, glue);
+
+    let (value, diagnostic, next) = scan_with_stores("-\\namedskip x", &mut stores);
+
+    assert_eq!(value, -42_000);
+    assert_eq!(diagnostic, None);
+    assert_eq!(next, Some(char_token('x', Catcode::Letter)));
+}
+
+#[test]
+fn coerces_primitive_skip_register_width_to_internal_dimension() {
+    let mut stores = Universe::new();
+    let skip = stores.intern("skip");
+    stores.set_meaning(
+        skip,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Skip),
+    );
+    let glue = stores.intern_glue(GlueSpec {
+        width: Scaled::from_raw(42_000),
+        stretch: Scaled::from_raw(7_000),
+        stretch_order: Order::Fil,
+        shrink: Scaled::from_raw(3_000),
+        shrink_order: Order::Normal,
+    });
+    stores.set_skip(42, glue);
+
+    let (value, diagnostic, next) = scan_with_stores("\\skip42 x", &mut stores);
+
+    assert_eq!(value, 42_000);
+    assert_eq!(diagnostic, None);
+    assert_eq!(next, Some(char_token('x', Catcode::Letter)));
+}
+
+#[test]
+fn rejects_muglue_register_as_an_incompatible_dimension() {
+    let mut stores = Universe::new();
+    let named_muskip = stores.intern("namedmuskip");
+    stores.set_meaning(named_muskip, Meaning::MuskipRegister(42));
+    let mut input = InputStack::new(MemoryInput::new("\\namedmuskip"));
+
+    let error =
+        scan_dimen(&mut input, &mut stores, context()).expect_err("muglue is not a dimension");
+
+    assert!(matches!(
+        error,
+        super::ScanDimenError::IncompatibleGlueUnits { .. }
+    ));
+}
+
+#[test]
+fn decimal_factor_multiplies_dimension_register_unit_with_tex_rounding() {
+    let mut stores = Universe::new();
+    let p_unit = stores.intern("punit");
+    stores.set_meaning(p_unit, Meaning::DimenRegister(3));
+    stores.set_dimen(3, Scaled::from_raw(65_537));
+
+    let (value, diagnostic, next) = scan_with_stores("8.5\\punit x", &mut stores);
+
+    assert_eq!(value, 557_064);
+    assert_eq!(diagnostic, None);
+    assert_eq!(next, Some(char_token('x', Catcode::Letter)));
+}
+
+#[test]
+fn decimal_factor_multiplies_primitive_dimension_register_unit() {
+    let mut stores = Universe::new();
+    let dimen = stores.intern("dimen");
+    stores.set_meaning(
+        dimen,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen),
+    );
+    stores.set_dimen(3, Scaled::from_raw(42_001));
+
+    let (value, diagnostic, next) = scan_with_stores("8.5\\dimen3 x", &mut stores);
+
+    assert_eq!(value, 357_008);
     assert_eq!(diagnostic, None);
     assert_eq!(next, Some(char_token('x', Catcode::Letter)));
 }

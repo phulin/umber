@@ -274,6 +274,14 @@ where
         self.inner.open_input(input, name)
     }
 
+    fn open_font<C: tex_state::InputReadState>(
+        &mut self,
+        input: &mut C,
+        path: &std::path::Path,
+    ) -> Result<tex_state::FileContent, String> {
+        self.inner.open_font(input, path)
+    }
+
     fn job_name(&self) -> &str {
         self.inner.job_name()
     }

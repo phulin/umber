@@ -7,15 +7,16 @@
 #![forbid(unsafe_code)]
 
 use std::fmt;
+use std::path::Path;
 
 use tex_lex::{InputSource, InputStack, LexError, MacroArguments, TokenListReplayKind};
 use tex_state::glue::GlueSpec;
 use tex_state::interner::Symbol;
-use tex_state::meaning::Meaning;
+use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::provenance::{InsertedOriginKind, SynthesizedOriginKind};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
-use tex_state::{ExpansionState, InputOpenState, InputReadState, Universe};
+use tex_state::{ExpansionState, FileContent, InputOpenState, InputReadState, Universe};
 
 pub mod args;
 pub mod scan;
@@ -263,6 +264,19 @@ pub enum ExpandError {
     UnsupportedTheTarget {
         context: TracedTokenWord,
     },
+    MissingFontIdentifier {
+        context: TracedTokenWord,
+    },
+    MathFamilyOutOfRange {
+        value: i32,
+        context: TracedTokenWord,
+    },
+    FontDimenOutOfRange {
+        font_name: String,
+        number: i32,
+        available: u16,
+        context: TracedTokenWord,
+    },
     InvalidConditionalRelation {
         context: TracedTokenWord,
     },
@@ -314,6 +328,20 @@ impl fmt::Display for ExpandError {
                     semantic_token(*context)
                 )
             }
+            Self::MissingFontIdentifier { context } => write!(
+                f,
+                "missing font identifier at token {:?}",
+                semantic_token(*context)
+            ),
+            Self::MathFamilyOutOfRange { .. } => f.write_str("Bad number"),
+            Self::FontDimenOutOfRange {
+                font_name,
+                available,
+                ..
+            } => write!(
+                f,
+                "Font \\{font_name} has only {available} fontdimen parameters"
+            ),
             Self::InvalidConditionalRelation { context } => {
                 write!(
                     f,
@@ -350,6 +378,9 @@ impl std::error::Error for ExpandError {
             | Self::InputOpen { .. }
             | Self::UndefinedControlSequence { .. }
             | Self::UnsupportedTheTarget { .. }
+            | Self::MissingFontIdentifier { .. }
+            | Self::MathFamilyOutOfRange { .. }
+            | Self::FontDimenOutOfRange { .. }
             | Self::InvalidConditionalRelation { .. }
             | Self::IncompleteIf { .. }
             | Self::ExtraConditionalControl { .. }
@@ -374,6 +405,9 @@ impl ExpandError {
             }
             Self::NonCharacterInInputName { context }
             | Self::UnsupportedTheTarget { context }
+            | Self::MissingFontIdentifier { context }
+            | Self::MathFamilyOutOfRange { context, .. }
+            | Self::FontDimenOutOfRange { context, .. }
             | Self::InvalidConditionalRelation { context }
             | Self::IncompleteIf { context } => Some(context.origin()),
             Self::ScanInt(err) => err.primary_origin(),
@@ -391,6 +425,14 @@ impl ExpandError {
 /// to record and snapshot those reads.
 pub trait ExpansionHooks<S> {
     fn open_input<C: InputReadState>(&mut self, input: &mut C, name: &str) -> Result<S, String>;
+
+    fn open_font<C: InputReadState>(
+        &mut self,
+        input: &mut C,
+        path: &Path,
+    ) -> Result<FileContent, String> {
+        input.read_input_file(path).map_err(|err| err.to_string())
+    }
 
     fn job_name(&self) -> &str {
         "texput"
@@ -583,13 +625,28 @@ where
         let token = read.token();
         let traced = read.traced_token();
 
+        if token.is_frozen_end_template() {
+            return Ok(Some(TracedTokenWord::pack(
+                Token::frozen_endv(),
+                read.origin(),
+            )));
+        }
+
         if read.suppress_expansion() {
-            return Ok(Some(read.traced_token()));
+            if intercept_alignment_token(input, stores, traced) {
+                continue;
+            }
+            return Ok(Some(traced));
         }
 
         let symbol = match expandable_symbol(stores, traced) {
             Some(symbol) => symbol,
-            None => return Ok(Some(traced)),
+            None => {
+                if intercept_alignment_token(input, stores, traced) {
+                    continue;
+                }
+                return Ok(Some(traced));
+            }
         };
 
         let meaning = stores.meaning(symbol);
@@ -605,10 +662,59 @@ where
             meaning,
         )? {
             Dispatch::Continue => {}
-            Dispatch::Deliver(token) | Dispatch::DeliverNoExpand(token) => return Ok(Some(token)),
+            Dispatch::Deliver(token) | Dispatch::DeliverNoExpand(token) => {
+                if intercept_alignment_token(input, stores, token) {
+                    continue;
+                }
+                return Ok(Some(token));
+            }
             push @ Dispatch::Push { .. } => apply_dispatch_push(input, push),
         }
     }
+}
+
+fn intercept_alignment_token<S>(
+    input: &mut InputStack<S>,
+    stores: &impl ExpansionState,
+    traced: TracedTokenWord,
+) -> bool {
+    let token = semantic_token(traced);
+    let meaning = match token {
+        Token::Cs(symbol) => Some(stores.meaning(symbol)),
+        Token::Char {
+            ch,
+            cat: Catcode::Active,
+        } => stores
+            .active_character_symbol(ch)
+            .map(|symbol| stores.meaning(symbol)),
+        Token::Char { .. } | Token::Param(_) | Token::Frozen(_) => None,
+    };
+    let terminator = if matches!(
+        token,
+        Token::Char {
+            cat: Catcode::AlignmentTab,
+            ..
+        }
+    ) || matches!(
+        meaning,
+        Some(Meaning::CharToken {
+            cat: Catcode::AlignmentTab,
+            ..
+        })
+    ) {
+        Some(tex_lex::AlignmentTerminator::Tab)
+    } else {
+        match meaning {
+            Some(Meaning::UnexpandablePrimitive(
+                UnexpandablePrimitive::Cr | UnexpandablePrimitive::CrCr,
+            )) => Some(tex_lex::AlignmentTerminator::Cr),
+            Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Span)) => {
+                Some(tex_lex::AlignmentTerminator::Span)
+            }
+            _ => None,
+        }
+    };
+    input.intercept_alignment_token(traced, terminator, stores.execution_group_depth())
 }
 
 pub(crate) fn get_x_token_without_input_open<S, R, H>(
@@ -630,12 +736,20 @@ where
         let traced = read.traced_token();
 
         if read.suppress_expansion() {
-            return Ok(Some(read.traced_token()));
+            if intercept_alignment_token(input, stores, traced) {
+                continue;
+            }
+            return Ok(Some(traced));
         }
 
         let symbol = match expandable_symbol(stores, traced) {
             Some(symbol) => symbol,
-            None => return Ok(Some(traced)),
+            None => {
+                if intercept_alignment_token(input, stores, traced) {
+                    continue;
+                }
+                return Ok(Some(traced));
+            }
         };
 
         let meaning = stores.meaning(symbol);
@@ -651,7 +765,12 @@ where
             meaning,
         )? {
             Dispatch::Continue => {}
-            Dispatch::Deliver(token) | Dispatch::DeliverNoExpand(token) => return Ok(Some(token)),
+            Dispatch::Deliver(token) | Dispatch::DeliverNoExpand(token) => {
+                if intercept_alignment_token(input, stores, token) {
+                    continue;
+                }
+                return Ok(Some(token));
+            }
             push @ Dispatch::Push { .. } => apply_dispatch_push(input, push),
         }
     }
@@ -697,8 +816,8 @@ pub(crate) fn expandable_symbol(
         Token::Char {
             ch,
             cat: Catcode::Active,
-        } => Some(stores.intern(&ch.to_string())),
-        Token::Char { .. } | Token::Param(_) => None,
+        } => Some(stores.intern_active_character(ch)),
+        Token::Char { .. } | Token::Param(_) | Token::Frozen(_) => None,
     }
 }
 

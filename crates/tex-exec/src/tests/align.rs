@@ -75,13 +75,17 @@ fn unset_for_test(
 
 fn run_alignment_source(source: &str) -> Universe {
     let mut stores = support::stores_with_fonts();
+    run_alignment_source_in(&mut stores, source);
+    stores
+}
+
+fn run_alignment_source_in(stores: &mut Universe, source: &str) {
     let mut input = InputStack::new(MemoryInput::new(format!(
         "\\font\\f=cmr10 \\relax \\f {source}"
     )));
     Executor::new()
-        .run(&mut input, &mut stores)
+        .run(&mut input, stores)
         .expect("alignment source executes");
-    stores
 }
 
 fn run_alignment_source_err(source: &str) -> ExecError {
@@ -244,6 +248,207 @@ fn assert_no_unset(stores: &Universe, nodes: &[Node]) {
     }
 }
 
+fn contains_rule_leader(stores: &Universe, nodes: &[Node], kind: GlueKind, height: Scaled) -> bool {
+    nodes.iter().any(|node| match node {
+        Node::Glue {
+            kind: actual_kind,
+            leader: Some(tex_state::node::LeaderPayload::Rule { height: actual, .. }),
+            ..
+        } => *actual_kind == kind && *actual == Some(height),
+        Node::HList(box_node) | Node::VList(box_node) => {
+            contains_rule_leader(stores, stores.nodes(box_node.children), kind, height)
+        }
+        _ => false,
+    })
+}
+
+fn collect_infinite_glue(
+    stores: &Universe,
+    nodes: &[Node],
+    out: &mut Vec<tex_state::glue::GlueSpec>,
+) {
+    for node in nodes {
+        match node {
+            Node::Glue {
+                spec,
+                kind: GlueKind::Normal,
+                ..
+            } => {
+                let spec = stores.glue(*spec);
+                if spec.stretch_order != Order::Normal || spec.shrink_order != Order::Normal {
+                    out.push(spec);
+                }
+            }
+            Node::HList(box_node) | Node::VList(box_node) => {
+                collect_infinite_glue(stores, stores.nodes(box_node.children), out);
+            }
+            _ => {}
+        }
+    }
+}
+
+#[test]
+fn halign_in_unrestricted_horizontal_mode_finishes_paragraph_first() {
+    let stores = run_boxed_alignment_source("x\\halign{#\\cr y\\cr}");
+    let boxes = vlist_rows(&stores, box_zero_vlist(&stores));
+
+    assert_eq!(boxes.len(), 2, "paragraph line must precede alignment row");
+    assert_eq!(cell_text(&stores, row_cells(&stores, boxes[1])[0]), "y");
+}
+
+#[test]
+fn halign_head_for_vmode_replay_preserves_command_origin() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let halign = Token::Cs(stores.intern("halign"));
+    let command_origin = stores.synthetic_origin(tex_state::provenance::SyntheticOriginKind::Test);
+    let command = TracedTokenWord::pack(halign, command_origin);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    let mut nest = ModeNest::new();
+    nest.push(Mode::Horizontal);
+    let mut hooks = crate::executor::NoopExecHooks;
+
+    assert_eq!(
+        dispatch_delivered_token(&mut nest, command, &mut input, &mut stores, &mut hooks)
+            .expect("head_for_vmode dispatch"),
+        DispatchAction::Continue
+    );
+    let inserted = tex_expand::get_x_token_with_recorder_and_hooks(
+        &mut input,
+        &mut stores,
+        &mut NoopRecorder,
+        &mut hooks,
+    )
+    .expect("inserted paragraph read")
+    .expect("inserted paragraph token");
+    let replayed = tex_expand::get_x_token_with_recorder_and_hooks(
+        &mut input,
+        &mut stores,
+        &mut NoopRecorder,
+        &mut hooks,
+    )
+    .expect("halign replay read")
+    .expect("halign replay token");
+
+    assert_eq!(
+        tex_expand::semantic_token(inserted),
+        Token::Cs(stores.intern("par"))
+    );
+    let tex_state::provenance::OriginRecord::Inserted(inserted_origin) =
+        stores.origin(inserted.origin())
+    else {
+        panic!("synthetic paragraph should carry inserted provenance");
+    };
+    assert_eq!(
+        inserted_origin.kind(),
+        tex_state::provenance::InsertedOriginKind::Paragraph
+    );
+    assert_eq!(inserted_origin.parent(), command_origin);
+    assert_eq!(replayed, command);
+}
+
+#[test]
+fn halign_in_restricted_horizontal_mode_retains_off_save_recovery() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let halign = Token::Cs(stores.intern("halign"));
+    let command_origin = stores.synthetic_origin(tex_state::provenance::SyntheticOriginKind::Test);
+    let command = TracedTokenWord::pack(halign, command_origin);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    let mut nest = ModeNest::new();
+    nest.push(Mode::RestrictedHorizontal);
+    let mut hooks = crate::executor::NoopExecHooks;
+
+    dispatch_delivered_token(&mut nest, command, &mut input, &mut stores, &mut hooks)
+        .expect("off_save should insert a closing group");
+    let inserted = tex_expand::get_x_token_with_recorder_and_hooks(
+        &mut input,
+        &mut stores,
+        &mut NoopRecorder,
+        &mut hooks,
+    )
+    .expect("inserted group read")
+    .expect("inserted group token");
+    let replayed = tex_expand::get_x_token_with_recorder_and_hooks(
+        &mut input,
+        &mut stores,
+        &mut NoopRecorder,
+        &mut hooks,
+    )
+    .expect("halign replay read")
+    .expect("halign replay token");
+
+    assert_eq!(
+        tex_expand::semantic_token(inserted),
+        Token::Char {
+            ch: '}',
+            cat: Catcode::EndGroup,
+        }
+    );
+    let tex_state::provenance::OriginRecord::Inserted(inserted_origin) =
+        stores.origin(inserted.origin())
+    else {
+        panic!("off_save token should carry inserted provenance");
+    };
+    assert_eq!(
+        inserted_origin.kind(),
+        tex_state::provenance::InsertedOriginKind::ErrorRecovery
+    );
+    assert_eq!(inserted_origin.parent(), command_origin);
+    assert_eq!(replayed, command);
+    assert!(support::terminal_effect_text(&stores).contains("Missing } inserted"));
+}
+
+#[test]
+fn math_group_scanned_inside_cell_does_not_hide_row_terminator() {
+    let stores = run_boxed_alignment_source("\\halign{#\\cr ${}^1$\\cr}");
+    let rows = vlist_rows(&stores, box_zero_vlist(&stores));
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(row_cells(&stores, rows[0]).len(), 1);
+}
+
+#[test]
+fn split_hbox_template_injects_v_part_before_inline_math_row_terminator() {
+    let stores = run_boxed_alignment_source(
+        "\\halign{\\hbox to 20pt{#}\\cr \\hfil{}$\\mathrel{a}$Size$\\mathrel{b}$\\cr}",
+    );
+    let rows = vlist_rows(&stores, box_zero_vlist(&stores));
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(row_cells(&stores, rows[0]).len(), 1);
+}
+
+#[test]
+fn split_hbox_math_cell_replays_identically_after_rollback() {
+    let mut stores = support::stores_with_fonts();
+    let checkpoint = stores.snapshot();
+    let source = "\\setbox0=\\vbox{\\halign{\\hbox to 20pt{#}\\cr \\hfil{}$\\mathrel{a}$Size$\\mathrel{b}$\\cr}}";
+
+    run_alignment_source_in(&mut stores, source);
+    let first_hash = stores.snapshot().state_hash();
+
+    stores.rollback(&checkpoint);
+    run_alignment_source_in(&mut stores, source);
+
+    assert_eq!(stores.snapshot().state_hash(), first_hash);
+}
+
+#[test]
+fn math_group_cell_alignment_replays_identically_after_rollback() {
+    let mut stores = support::stores_with_fonts();
+    let checkpoint = stores.snapshot();
+    let source = "\\setbox0=\\vbox{\\halign{#\\cr ${}^1$\\cr}}";
+
+    run_alignment_source_in(&mut stores, source);
+    let first_hash = stores.snapshot().state_hash();
+
+    stores.rollback(&checkpoint);
+    run_alignment_source_in(&mut stores, source);
+
+    assert_eq!(stores.snapshot().state_hash(), first_hash);
+}
+
 #[test]
 fn scans_empty_u_template_and_end_template_sentinel() {
     let (stores, state) = scan_halign_preamble("{#v\\cr}");
@@ -254,7 +459,10 @@ fn scans_empty_u_template_and_end_template_sentinel() {
     assert!(stores.tokens(state.columns()[0].u_template).is_empty());
     assert_eq!(
         stores.tokens(state.columns()[0].v_template),
-        &[char_token('v', Catcode::Letter), state.end_template()]
+        &[
+            char_token('v', Catcode::Letter),
+            Token::frozen_end_template()
+        ]
     );
     assert_eq!(state.tabskips(), &[GlueId::ZERO, GlueId::ZERO]);
     assert_eq!(state.default_tabskip(), GlueId::ZERO);
@@ -298,8 +506,51 @@ fn records_repeat_point_and_resolves_extra_columns() {
     assert_eq!(state.column_for(5), Some(&state.columns()[3]));
     assert_eq!(
         stores.tokens(state.column_for(4).expect("repeat col").v_template),
-        &[char_token('c', Catcode::Letter), state.end_template()]
+        &[
+            char_token('c', Catcode::Letter),
+            Token::frozen_end_template()
+        ]
     );
+}
+
+#[test]
+fn plain_ialign_accepts_bgroup_and_leading_periodic_preamble() {
+    let stores = run_boxed_alignment_source("\\let\\bgroup={\\halign\\bgroup&#x\\cr a&b\\cr}");
+    let rows = vlist_rows(&stores, box_zero_vlist(&stores));
+    let cells = row_cells(&stores, rows[0]);
+
+    assert_eq!(cells.len(), 2);
+    assert_eq!(cell_text(&stores, cells[0]), "ax");
+    assert_eq!(cell_text(&stores, cells[1]), "bx");
+}
+
+#[test]
+fn plain_tab_row_closes_alignment_and_box_before_surrounding_begingroup() {
+    let source = "\\let\\bgroup={\\let\\egroup=}\
+         \\def\\tbbox{\\setbox0=\\hbox\\bgroup}\
+         \\def\\tbbx{\\egroup}\
+         \\count0=7\
+         \\def\\tabalign{\\begingroup\\count0=9\
+           \\setbox0=\\vbox\\bgroup\
+           \\def\\cr{\\crcr\\egroup\\egroup\\unvbox0\\lastbox\
+             \\endgroup\\count1=\\count0}\
+           \\halign\\bgroup&\\tbbox##\\tbbx\\crcr}\
+         \\tabalign a&b\\cr";
+    let mut stores = support::stores_with_fonts();
+    let checkpoint = stores.snapshot();
+
+    run_alignment_source_in(&mut stores, source);
+
+    assert_eq!(stores.count(0), 7);
+    assert_eq!(stores.count(1), 7);
+    let first_hash = stores.snapshot().state_hash();
+
+    stores.rollback(&checkpoint);
+    run_alignment_source_in(&mut stores, source);
+
+    assert_eq!(stores.count(0), 7);
+    assert_eq!(stores.count(1), 7);
+    assert_eq!(stores.snapshot().state_hash(), first_hash);
 }
 
 #[test]
@@ -334,7 +585,10 @@ fn span_expands_next_preamble_token_without_becoming_template_material() {
     );
     assert_eq!(
         stores.tokens(state.columns()[0].v_template),
-        &[char_token('y', Catcode::Letter), state.end_template()]
+        &[
+            char_token('y', Catcode::Letter),
+            Token::frozen_end_template()
+        ]
     );
 }
 
@@ -349,7 +603,7 @@ fn valign_and_crcr_use_alignment_preamble_scanner() {
     );
     assert_eq!(
         stores.tokens(state.columns()[0].v_template),
-        &[state.end_template()]
+        &[Token::frozen_end_template()]
     );
 }
 
@@ -510,6 +764,68 @@ fn executes_rows_and_replays_u_and_v_templates_into_set_cells() {
     assert_eq!(cells.len(), 1);
     assert_eq!(cell_text(&stores, cells[0]), "uxv");
     assert_no_unset(&stores, stores.nodes(vbox.children));
+}
+
+#[test]
+fn restricted_horizontal_u_template_ending_in_macro_stops_before_cell_input() {
+    let stores =
+        run_boxed_alignment_source("\\def\\templateend{\\relax}\\halign{\\templateend#\\cr x\\cr}");
+    let vbox = box_zero_vlist(&stores);
+    let rows = vlist_rows(&stores, vbox);
+    let cells = row_cells(&stores, rows[0]);
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(cells.len(), 1);
+    assert_eq!(cell_text(&stores, cells[0]), "x");
+}
+
+#[test]
+fn v_template_ending_in_macro_delivers_frozen_endv_after_frame_retirement() {
+    let stores =
+        run_boxed_alignment_source("\\def\\templateend{\\relax}\\halign{#\\templateend\\cr x\\cr}");
+    let vbox = box_zero_vlist(&stores);
+    let rows = vlist_rows(&stores, vbox);
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(cell_text(&stores, row_cells(&stores, rows[0])[0]), "x");
+}
+
+#[test]
+fn user_endtemplate_control_sequence_cannot_alias_frozen_sentinel() {
+    let stores = run_boxed_alignment_source("\\def\\endtemplate{BAD}\\halign{#\\cr x\\cr}");
+    let vbox = box_zero_vlist(&stores);
+    let rows = vlist_rows(&stores, vbox);
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(cell_text(&stores, row_cells(&stores, rows[0])[0]), "x");
+}
+
+#[test]
+fn frozen_endv_alignment_replays_identically_after_rollback() {
+    let mut stores = support::stores_with_fonts();
+    let checkpoint = stores.snapshot();
+    let source = "\\def\\templateend{\\relax}\\setbox0=\\vbox{\\halign{#\\templateend\\cr x\\cr}}";
+
+    run_alignment_source_in(&mut stores, source);
+    let first_hash = stores.snapshot().state_hash();
+
+    stores.rollback(&checkpoint);
+    run_alignment_source_in(&mut stores, source);
+
+    assert_eq!(stores.snapshot().state_hash(), first_hash);
+}
+
+#[test]
+fn grouped_plain_style_accent_survives_at_cell_start_and_mid_cell() {
+    let stores = run_boxed_alignment_source(
+        "\\def\\tilde#1{{\\accent\"7E #1}}\\halign{\\hfil#\\hfil\\cr \\tilde{}\\cr x\\tilde{}y\\cr}",
+    );
+    let vbox = box_zero_vlist(&stores);
+    let rows = vlist_rows(&stores, vbox);
+
+    assert_eq!(rows.len(), 2);
+    assert_eq!(cell_text(&stores, row_cells(&stores, rows[0])[0]), "~");
+    assert_eq!(cell_text(&stores, row_cells(&stores, rows[1])[0]), "x~y");
 }
 
 #[test]
@@ -713,7 +1029,7 @@ fn display_halign_appends_display_vertical_material() {
 
 #[test]
 fn nested_alignment_executes_inside_cell() {
-    let stores = run_boxed_alignment_source("\\halign{#\\cr \\halign{#\\cr x\\cr}\\cr}");
+    let stores = run_boxed_alignment_source("\\halign{#\\cr \\vbox{\\halign{#\\cr x\\cr}}\\cr}");
     let vbox = box_zero_vlist(&stores);
     let rows = vlist_rows(&stores, vbox);
     let cells = row_cells(&stores, rows[0]);
@@ -724,9 +1040,75 @@ fn nested_alignment_executes_inside_cell() {
         stores
             .nodes(cells[0].children)
             .iter()
-            .any(|node| matches!(node, Node::HList(_)))
+            .any(|node| matches!(node, Node::VList(_)))
     );
     assert_no_unset(&stores, stores.nodes(vbox.children));
+}
+
+#[test]
+fn alignment_cells_accept_all_fixed_infinite_glues_in_math_mode() {
+    let stores =
+        run_alignment_source(r"\setbox0=\vbox{\halign{$#$\cr \hfil\hfill\hss\hfilneg\cr}}");
+    let vbox = box_zero_vlist(&stores);
+    let mut glue = Vec::new();
+    collect_infinite_glue(&stores, stores.nodes(vbox.children), &mut glue);
+
+    assert_eq!(glue.len(), 4);
+    assert_eq!(glue[0].stretch_order, Order::Fil);
+    assert_eq!(glue[0].stretch.raw(), Scaled::UNITY);
+    assert_eq!(glue[1].stretch_order, Order::Fill);
+    assert_eq!(glue[1].stretch.raw(), Scaled::UNITY);
+    assert_eq!(glue[2].stretch_order, Order::Fil);
+    assert_eq!(glue[2].stretch.raw(), Scaled::UNITY);
+    assert_eq!(glue[2].shrink_order, Order::Fil);
+    assert_eq!(glue[2].shrink.raw(), Scaled::UNITY);
+    assert_eq!(glue[3].stretch_order, Order::Fil);
+    assert_eq!(glue[3].stretch.raw(), -Scaled::UNITY);
+    assert_no_unset(&stores, stores.nodes(vbox.children));
+}
+
+#[test]
+fn plain_angle_style_alignment_restores_outer_cell_after_nested_leader_row() {
+    let stores = run_boxed_alignment_source(
+        "\\def\\angle{{\\vbox{\\halign{##\\cr x\\cr\\noalign{\\nointerlineskip}\\leaders\\hrule height.34pt\\hfill\\cr}}}}\\halign{#\\cr $\\angle$\\cr}",
+    );
+    let vbox = box_zero_vlist(&stores);
+    let rows = vlist_rows(&stores, vbox);
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(row_cells(&stores, rows[0]).len(), 1);
+    assert_no_unset(&stores, stores.nodes(vbox.children));
+}
+
+#[test]
+fn plain_angle_style_nested_alignment_executes_math_wrapped_leader_row() {
+    let stores = run_alignment_source(
+        "\\def\\angle{{\\vbox{\\halign{$\\scriptstyle##$\\crcr x\\crcr\\noalign{\\nointerlineskip}\\mkern2.5mu\\leaders\\hrule height.34pt\\hfill\\mkern2.5mu\\crcr}}}}\\setbox0=\\vbox{\\halign{#\\cr $\\angle$\\cr}}",
+    );
+    let vbox = box_zero_vlist(&stores);
+
+    assert!(contains_rule_leader(
+        &stores,
+        stores.nodes(vbox.children),
+        GlueKind::Leaders,
+        Scaled::from_raw(22_282),
+    ));
+    assert_no_unset(&stores, stores.nodes(vbox.children));
+}
+
+#[test]
+fn plain_angle_style_nested_alignment_replays_identically_after_rollback() {
+    let mut stores = support::stores_with_fonts();
+    let checkpoint = stores.snapshot();
+    let source = "\\def\\angle{{\\vbox{\\halign{##\\cr x\\cr\\noalign{\\nointerlineskip}\\leaders\\hrule height.34pt\\hfill\\cr}}}}\\setbox0=\\vbox{\\halign{#\\cr $\\angle$\\cr}}";
+
+    run_alignment_source_in(&mut stores, source);
+    let first_hash = stores.snapshot().state_hash();
+
+    stores.rollback(&checkpoint);
+    run_alignment_source_in(&mut stores, source);
+
+    assert_eq!(stores.snapshot().state_hash(), first_hash);
 }
 
 #[test]
@@ -768,4 +1150,13 @@ fn right_brace_before_cr_uses_missing_cr_recovery() {
     assert_eq!(cells.len(), 1);
     assert_eq!(cell_text(&stores, cells[0]), "x");
     assert!(support::terminal_effect_text(&stores).contains("Missing \\cr inserted"));
+}
+
+#[test]
+fn empty_accent_group_preserves_later_alignment_delimiters() {
+    let stores = run_alignment_source("\\setbox0=\\vbox{\\halign{#\\cr {\\accent18}\\cr X\\cr}}");
+
+    assert!(stores.box_reg(0).is_some());
+    let vbox = box_zero_vlist(&stores);
+    assert_eq!(vlist_rows(&stores, vbox).len(), 2);
 }

@@ -18,6 +18,27 @@ use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{ExpansionState, InputOpenState, InputReadState, Universe};
 
+#[test]
+fn get_x_token_converts_frozen_end_template_without_losing_origin() {
+    let mut stores = Universe::new();
+    let origin = stores.source_origin(tex_state::SourceId::new(7), 19, 3, 5);
+    let tokens = stores.intern_token_list(&[Token::frozen_end_template()]);
+    let origins = stores.allocate_origin_list(&[origin]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list_with_origins(tokens, origins, TokenListReplayKind::Inserted);
+
+    let delivered = crate::get_x_token(&mut input, &mut stores)
+        .expect("frozen sentinel expansion")
+        .expect("frozen endv delivery");
+
+    assert_eq!(crate::semantic_token(delivered), Token::frozen_endv());
+    assert_eq!(delivered.origin(), origin);
+    assert_ne!(
+        Token::frozen_end_template(),
+        Token::Cs(stores.intern("endtemplate"))
+    );
+}
+
 #[derive(Default)]
 struct CountingRecorder {
     reads: usize,
@@ -1430,6 +1451,235 @@ fn fontname_renders_real_font_selector_name() {
 }
 
 #[test]
+fn the_fontdimen_accepts_current_font_with_exact_output_and_trace() {
+    #[derive(Default)]
+    struct SymbolRecorder(Vec<Symbol>);
+
+    impl ReadRecorder for SymbolRecorder {
+        fn record_meaning(&mut self, symbol: Symbol, _meaning: Meaning) {
+            self.0.push(symbol);
+        }
+    }
+
+    let mut stores = Universe::new();
+    let the = expandable_primitive(&mut stores, "the", ExpandablePrimitive::The);
+    let fontdimen = stores.intern("fontdimen");
+    stores.set_meaning(
+        fontdimen,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::FontDimen),
+    );
+    let font = stores.intern("font");
+    stores.set_meaning(
+        font,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Font),
+    );
+    let nullfont = stores.intern("nullfont");
+    stores.set_meaning(nullfont, Meaning::Font(tex_state::font::NULL_FONT));
+    stores.set_current_font_selector(nullfont, tex_state::font::NULL_FONT);
+    stores
+        .set_font_dimen(
+            tex_state::font::NULL_FONT,
+            1,
+            Scaled::from_raw(Scaled::UNITY + Scaled::UNITY / 2),
+            true,
+        )
+        .expect("current font parameter is writable");
+
+    let invocation = stores.source_origin(tex_state::SourceId::new(9), 90, 9, 1);
+    let tokens = stores.intern_token_list(&[
+        Token::Cs(the),
+        Token::Cs(fontdimen),
+        char_token('1'),
+        Token::Cs(font),
+    ]);
+    let origins = stores.allocate_repeated_origin_list(invocation, 4);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list_with_origins(tokens, origins, TokenListReplayKind::Inserted);
+    let mut recorder = SymbolRecorder::default();
+    let mut output = Vec::new();
+    while let Some(token) = crate::get_x_token_with_recorder(&mut input, &mut stores, &mut recorder)
+        .expect("fontdimen expansion should succeed")
+    {
+        output.push(token);
+    }
+
+    let text = output
+        .iter()
+        .map(
+            |token| match token.token().expect("rendered token decodes") {
+                Token::Char { ch, .. } => ch,
+                token => panic!("expected rendered character, got {token:?}"),
+            },
+        )
+        .collect::<String>();
+    assert_eq!(text, "1.5pt");
+    assert!(recorder.0.contains(&the));
+    assert!(recorder.0.contains(&fontdimen));
+    assert!(recorder.0.contains(&font));
+
+    let rendered_origin = output[0].origin();
+    assert!(output.iter().all(|token| token.origin() == rendered_origin));
+    assert_eq!(
+        stores.origin(rendered_origin),
+        OriginRecord::Synthesized(SynthesizedOrigin::new(
+            SynthesizedOriginKind::ValueRendering,
+            invocation,
+        ))
+    );
+}
+
+#[test]
+fn the_fontdimen_checks_parameter_count_after_scanning_font() {
+    let mut stores = Universe::new();
+    let the = expandable_primitive(&mut stores, "the", ExpandablePrimitive::The);
+    let fontdimen = stores.intern("fontdimen");
+    stores.set_meaning(
+        fontdimen,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::FontDimen),
+    );
+    let font = stores.intern("font");
+    stores.set_meaning(
+        font,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Font),
+    );
+    let nullfont = stores.intern("nullfont");
+    stores.set_meaning(nullfont, Meaning::Font(tex_state::font::NULL_FONT));
+    stores.set_current_font_selector(nullfont, tex_state::font::NULL_FONT);
+    assert_eq!(stores.font_parameter_count(tex_state::font::NULL_FONT), 7);
+
+    let invocation = stores.source_origin(tex_state::SourceId::new(10), 100, 10, 1);
+    let tokens = stores.intern_token_list(&[
+        Token::Cs(the),
+        Token::Cs(fontdimen),
+        char_token('8'),
+        Token::Cs(font),
+    ]);
+    let origins = stores.allocate_repeated_origin_list(invocation, 4);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list_with_origins(tokens, origins, TokenListReplayKind::Inserted);
+
+    let error = crate::get_x_token(&mut input, &mut stores)
+        .expect_err("an unavailable fontdimen must diagnose");
+    assert!(matches!(
+        error,
+        crate::ExpandError::FontDimenOutOfRange {
+            number: 8,
+            available: 7,
+            ..
+        }
+    ));
+    assert_eq!(error.primary_origin(), Some(invocation));
+}
+
+#[test]
+fn the_math_family_fonts_expand_to_identifier_tokens_with_trace_and_reads() {
+    #[derive(Default)]
+    struct SymbolRecorder(Vec<Symbol>);
+
+    impl ReadRecorder for SymbolRecorder {
+        fn record_meaning(&mut self, symbol: Symbol, _meaning: Meaning) {
+            self.0.push(symbol);
+        }
+    }
+
+    let mut stores = Universe::new();
+    let the = expandable_primitive(&mut stores, "the", ExpandablePrimitive::The);
+    let nullfont = stores.intern("nullfont");
+    stores.set_meaning(nullfont, Meaning::Font(tex_state::font::NULL_FONT));
+    stores.set_font_identifier_symbol(tex_state::font::NULL_FONT, nullfont);
+    let family_primitives = [
+        (
+            "textfont",
+            UnexpandablePrimitive::TextFont,
+            tex_state::math::MathFontSize::Text,
+        ),
+        (
+            "scriptfont",
+            UnexpandablePrimitive::ScriptFont,
+            tex_state::math::MathFontSize::Script,
+        ),
+        (
+            "scriptscriptfont",
+            UnexpandablePrimitive::ScriptScriptFont,
+            tex_state::math::MathFontSize::ScriptScript,
+        ),
+    ];
+    let mut input_tokens = Vec::new();
+    let mut primitive_symbols = Vec::new();
+    for (name, primitive, size) in family_primitives {
+        let symbol = stores.intern(name);
+        stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
+        stores.set_math_family_font(size, 1, tex_state::font::NULL_FONT, true);
+        primitive_symbols.push(symbol);
+        input_tokens.extend([Token::Cs(the), Token::Cs(symbol), char_token('1')]);
+    }
+    let invocation = stores.source_origin(tex_state::SourceId::new(11), 110, 11, 1);
+    let tokens = stores.intern_token_list(&input_tokens);
+    let origins = stores.allocate_repeated_origin_list(invocation, input_tokens.len());
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list_with_origins(tokens, origins, TokenListReplayKind::Inserted);
+    let mut recorder = SymbolRecorder::default();
+    let mut output = Vec::new();
+    while let Some(token) = crate::get_x_token_with_recorder(&mut input, &mut stores, &mut recorder)
+        .expect("math-family font identifiers should expand")
+    {
+        output.push(token);
+    }
+
+    assert_eq!(output.len(), 3);
+    assert!(
+        output
+            .iter()
+            .all(|token| token.token() == Some(Token::Cs(nullfont)))
+    );
+    assert!(recorder.0.contains(&the));
+    for symbol in primitive_symbols {
+        assert!(recorder.0.contains(&symbol));
+    }
+    for token in output {
+        assert_eq!(
+            stores.origin(token.origin()),
+            OriginRecord::Synthesized(SynthesizedOrigin::new(
+                SynthesizedOriginKind::ValueRendering,
+                invocation,
+            ))
+        );
+    }
+}
+
+#[test]
+fn the_math_family_font_rejects_out_of_range_family_at_number_origin() {
+    let mut stores = Universe::new();
+    let the = expandable_primitive(&mut stores, "the", ExpandablePrimitive::The);
+    let textfont = stores.intern("textfont");
+    stores.set_meaning(
+        textfont,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::TextFont),
+    );
+    let invocation = stores.source_origin(tex_state::SourceId::new(12), 120, 12, 1);
+    let number_origin = stores.source_origin(tex_state::SourceId::new(12), 129, 12, 10);
+    let tokens = stores.intern_token_list(&[
+        Token::Cs(the),
+        Token::Cs(textfont),
+        char_token('1'),
+        char_token('6'),
+    ]);
+    let origins =
+        stores.allocate_origin_list(&[invocation, invocation, number_origin, number_origin]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list_with_origins(tokens, origins, TokenListReplayKind::Inserted);
+
+    let error = crate::get_x_token(&mut input, &mut stores)
+        .expect_err("family 16 must be rejected by the four-bit scanner");
+    assert!(matches!(
+        error,
+        crate::ExpandError::MathFamilyOutOfRange { value: 16, .. }
+    ));
+    assert_eq!(error.to_string(), "Bad number");
+    assert!(error.primary_origin().is_some());
+}
+
+#[test]
 fn mark_family_primitives_expand_stored_page_marks() {
     let mut stores = Universe::new();
     for (name, primitive) in [
@@ -1710,7 +1960,88 @@ fn ifnum_and_ifdim_compare_scanned_values() {
 }
 
 #[test]
-fn ifnum_internal_operand_inserts_relax_before_else_during_evaluation() {
+fn ifdim_compares_named_skip_registers_by_width_only() {
+    let mut stores = Universe::new();
+    let (_, _, else_cs, fi) = conditional_primitives(&mut stores);
+    let ifdim = expandable_primitive(&mut stores, "ifdim", ExpandablePrimitive::IfDim);
+    let named_skip = stores.intern("namedskip");
+    stores.set_meaning(named_skip, Meaning::SkipRegister(42));
+    let glue = stores.intern_glue(tex_state::glue::GlueSpec {
+        width: Scaled::from_raw(2 * Scaled::UNITY),
+        stretch: Scaled::from_raw(20 * Scaled::UNITY),
+        stretch_order: tex_state::glue::Order::Fill,
+        shrink: Scaled::from_raw(10 * Scaled::UNITY),
+        shrink_order: tex_state::glue::Order::Fil,
+    });
+    stores.set_skip(42, glue);
+    let list = stores.intern_token_list(&[
+        Token::Cs(ifdim),
+        Token::Cs(named_skip),
+        char_token('<'),
+        char_token('3'),
+        char_token('p'),
+        char_token('t'),
+        char_token('y'),
+        Token::Cs(else_cs),
+        char_token('n'),
+        Token::Cs(fi),
+    ]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list(list, TokenListReplayKind::Inserted);
+
+    assert_eq!(next_expanded_chars(&mut input, &mut stores), "y");
+}
+
+#[test]
+fn ifdim_operand_nested_conditional_completes_exact_outer_frame() {
+    let mut stores = Universe::new();
+    let (iftrue, _, else_cs, fi) = conditional_primitives(&mut stores);
+    let ifdim = expandable_primitive(&mut stores, "ifdim", ExpandablePrimitive::IfDim);
+    let selected_skip = stores.intern("selectedskip");
+    stores.set_meaning(selected_skip, Meaning::SkipRegister(42));
+    let glue = stores.intern_glue(GlueSpec {
+        width: Scaled::from_raw(4 * Scaled::UNITY),
+        ..GlueSpec::ZERO
+    });
+    stores.set_skip(42, glue);
+
+    let choose_skip = stores.intern("chooseskip");
+    let params = stores.intern_token_list(&[]);
+    let body = stores.intern_token_list(&[
+        Token::Cs(iftrue),
+        Token::Cs(selected_skip),
+        Token::Cs(else_cs),
+        char_token('0'),
+        char_token('p'),
+        char_token('t'),
+        Token::Cs(fi),
+    ]);
+    stores.set_macro_meaning(
+        choose_skip,
+        MacroMeaning::new(MeaningFlags::EMPTY, params, body),
+    );
+
+    let list = stores.intern_token_list(&[
+        Token::Cs(ifdim),
+        Token::Cs(choose_skip),
+        char_token('<'),
+        char_token('3'),
+        char_token('p'),
+        char_token('t'),
+        char_token('y'),
+        Token::Cs(else_cs),
+        char_token('n'),
+        Token::Cs(fi),
+    ]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list(list, TokenListReplayKind::Inserted);
+
+    assert_eq!(next_expanded_chars(&mut input, &mut stores), "n");
+    assert!(input.current_condition().is_none());
+}
+
+#[test]
+fn ifnum_internal_operand_does_not_eagerly_expand_following_else() {
     let mut stores = Universe::new();
     let (_, _, else_cs, fi) = conditional_primitives(&mut stores);
     let ifnum = expandable_primitive(&mut stores, "ifnum", ExpandablePrimitive::IfNum);
@@ -1737,11 +2068,9 @@ fn ifnum_internal_operand_inserts_relax_before_else_during_evaluation() {
     ]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
-    let relax = stores.intern_relaxed_control_sequence("relax");
-
     assert_eq!(
         collect_expanded(&mut input, &mut stores),
-        vec![Token::Cs(relax), char_token('y')]
+        vec![char_token('y')]
     );
 }
 
@@ -2133,7 +2462,7 @@ fn active_expandable_primitive(
     ch: char,
     primitive: ExpandablePrimitive,
 ) -> Token {
-    let symbol = stores.intern(&ch.to_string());
+    let symbol = stores.intern_active_character(ch);
     stores.set_meaning(symbol, Meaning::ExpandablePrimitive(primitive));
     active_token(ch)
 }

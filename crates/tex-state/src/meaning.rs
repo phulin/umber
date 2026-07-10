@@ -108,6 +108,8 @@ pub enum Meaning {
 pub enum InternalInteger {
     /// Badness of the most recent glue setting.
     Badness,
+    /// Current physical input line number.
+    InputLineNumber,
 }
 
 impl InternalInteger {
@@ -115,6 +117,7 @@ impl InternalInteger {
     pub const fn operand(self) -> u64 {
         match self {
             Self::Badness => 0,
+            Self::InputLineNumber => 1,
         }
     }
 
@@ -122,6 +125,7 @@ impl InternalInteger {
     pub const fn from_operand(operand: u64) -> Option<Self> {
         match operand {
             0 => Some(Self::Badness),
+            1 => Some(Self::InputLineNumber),
             _ => None,
         }
     }
@@ -434,6 +438,8 @@ pub enum UnexpandablePrimitive {
     ScriptStyle,
     ScriptScriptStyle,
     End,
+    Dump,
+    SetLanguage,
 }
 
 impl UnexpandablePrimitive {
@@ -610,6 +616,8 @@ impl UnexpandablePrimitive {
             Self::EqNo => 154,
             Self::LeftEqNo => 155,
             Self::End => 54,
+            Self::Dump => 170,
+            Self::SetLanguage => 171,
         }
     }
 
@@ -786,6 +794,8 @@ impl UnexpandablePrimitive {
             154 => Some(Self::EqNo),
             155 => Some(Self::LeftEqNo),
             54 => Some(Self::End),
+            170 => Some(Self::Dump),
+            171 => Some(Self::SetLanguage),
             _ => None,
         }
     }

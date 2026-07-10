@@ -113,6 +113,14 @@ supply.
   The concrete file source used by `tex-lex` is `WorldInput`, built from a
   `World::read_file`/`\openin` `FileContent`; `tex-lex` itself owns line
   normalization and frame state, not host file handles.
+  The CLI driver's TeX input policy follows TeX82's `start_input` ordering:
+  after adding the default `.tex` extension, it probes the principal input's
+  directory first and, only for names without an explicit directory, probes
+  the ordered directories in `TEXINPUTS`. Empty `TEXINPUTS` elements are
+  ignored rather than acquiring an implicit host-dependent default. Every
+  probe uses the narrow `InputReadState` capability, so the successful path
+  and bytes become the ordinary content-addressed `World` input record and
+  require no additional checkpointed engine state.
 - **Decoding**: UTF-8 native. Legacy 8-bit input is a per-source decoder
   selected up front, not a per-character branch in the lexer.
 - **The input stack** is the one piece of pipeline-owned state the snapshot
@@ -126,14 +134,18 @@ supply.
   `Param(slot)` token pushes the corresponding argument list as a nested
   macro-argument frame while the replacement body id remains unchanged.
   Open conditionals are summarized as condition frames in the same vector,
-  not as expansion-owned side state. A condition frame records whether it is
-  a regular `\if...` or `\ifcase`, the current limb (`\if`, `\or`, or
+  not as expansion-owned side state. A condition frame records a stable
+  live-frame identity corresponding to TeX82's `cond_ptr`, whether it is a
+  regular `\if...` or `\ifcase`, the current limb (`\if`, `\or`, or
   `\else`), whether the condition is still evaluating its operands, whether
   the current and any previous limb has been taken, the `\ifcase` `\or`
   count, and the nested conditional depth observed during skip/resume scanning.
   Source reopen identity is owned by the `World` input record in the outer
-  snapshot: it pins file/editor content by content hash, reopens that exact
-  source, then applies the lexer-owned source-frame summary.
+  snapshot: each file-backed source frame carries its explicit `InputRecordId`,
+  which pins file/editor content by content hash, reopens that exact source,
+  then applies the lexer-owned source-frame summary. The record id is not
+  inferred from the source-frame ordinal: auxiliary reads such as TFM loads
+  share the `World` input log but never become text input frames.
   `last_source_frame` is also summarized with its source id so snapshots taken
   just after a source pops still have final source coordinates for EOF/current
   input diagnostics.
@@ -151,9 +163,10 @@ supply.
   one exists. Stored non-macro token lists without an origin-list home
   (`\toks`, `\everypar`, marks, output, writes) replay with synthetic
   per-replay-kind origins in v1; durable source identity is
-  the `World` input record captured in `Universe` snapshots, which pins file
-  bytes by content hash so a driver can reopen the exact source and apply the
-  lexer summary. `\endinput` is represented as a source-frame flag that lets
+  the explicit `World` input record captured on source origins and in
+  `Universe` snapshots, which pins file bytes by content hash so a driver can
+  reopen the exact source and apply the lexer summary. `\endinput` is
+  represented as a source-frame flag that lets
   the lexer finish the current normalized line and then pop that source
   without asking expansion to manage source internals.
 
@@ -174,7 +187,9 @@ Responsibility: characters → tokens, under mutable catcode law.
   (pre-lexing the rest of the buffer) precisely because tokens it produces
   carry the generation vector they were lexed under; consuming a stale
   token is impossible, only wasteful.
-- Control sequence names intern immediately to `Symbol`; the semantic token
+- Control-sequence identities intern immediately to `Symbol`; named sequences
+  and active characters occupy distinct interner namespaces even when their
+  printable spelling is identical. The semantic token
   type remains `Token = Char(char, Catcode) | Cs(Symbol) | Param(u8)` — one
   word, `Copy`. Hot token movement uses `TracedTokenWord(u64)` beside it:
   bits 63..62 are token kind, bits 61..32 are a 30-bit payload, and bits
@@ -200,8 +215,9 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   semantic token's meaning word in `Env` (one load); if expandable, push its
   expansion as a token-list frame and continue; else deliver the same
   `TracedTokenWord` downstream. Control-sequence tokens address their interned
-  symbol directly; active character tokens address the same one-character
-  symbol used by definition assignments. Compatibility callers that still need
+  symbol directly; active character tokens address the typed active-character
+  symbol used by definition assignments, distinct from an escaped
+  one-character control symbol with the same spelling. Compatibility callers that still need
   plain `Token` values decode only at their boundary and do not fabricate
   replacement origins.
   Undefined control sequences follow TeX82's expansion path: `get_x_token`
@@ -236,7 +252,9 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   understands TeX integer constants and currently readable integer-like state (`\count`, chardef
   values, `\endlinechar`, and raw-sp `\dimen` coercion), while the dimension
   scanner parses decimal constants, physical units, `true` units, supported
-  internal dimensions, `mu` dimensions for muglue callers, infinite `fil`
+  internal dimensions (including named dimension parameters, glue-parameter
+  widths coerced to dimensions, and decimal factors applied to internal units),
+  `mu` dimensions for muglue callers, infinite `fil`
   orders for glue components, and opt-in integer-to-sp coercion. The glue
   scanner parses optional `plus`/`minus` components and interns immutable glue
   specs through `Universe`. These scanners report recoverable numeric diagnostics
@@ -301,8 +319,8 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   naturally read-only; source-frame replay may intern newly encountered
   control sequence names through the lexer/interner capability. `\csname` uses a dedicated
   expansion scan that stops on `\endcsname`, accumulates only expanded character
-  tokens, and interns/relaxes the resulting control sequence through the same
-  aggregate boundary. Its synthesized control-sequence token is replayed through
+  tokens, and interns/relaxes the resulting control sequence through the named
+  namespace of the same aggregate boundary. Its synthesized control-sequence token is replayed through
   the ordinary `get_x_token` loop, so a macro result expands before execution
   sees a token and its synthesized origin remains the macro invocation parent.
   If expansion yields a non-character token before
@@ -348,8 +366,14 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   `\medmuskip`, and `\thickmuskip` are exposed as muglue assignment targets
   while their values remain in the glue-parameter bank at TeX's parameter
   indices. Font dimensions, box dimensions, page state, and
-  time/job parameters not yet backed by `Env` remain documented TODOs until
-  those classes are semantically available.
+  Font dimensions use TeX82's `scan_font_ident` forms, including `\font` for
+  the current font, and validate reads against the snapshot-covered Env-side
+  parameter count before rendering the exact scaled value. The same scanner
+  resolves `\textfont`, `\scriptfont`, and `\scriptscriptfont` through the
+  barriered three-by-sixteen family bank; `\the` replays the selected font's
+  immutable identifier control sequence, whose identity participates in font
+  semantic hashes. Time/job parameters not yet backed by `Env` remain
+  documented TODOs until those classes are semantically available.
 - Input/job expandables use explicit driver hooks: `tex-expand` scans the
   `\input` file name and asks the caller for a new `InputSource`, while
   `\jobname` renders the caller-provided job name. This preserves the rule
@@ -362,7 +386,18 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   `\futurelet`, prefix accumulation (`\global`, `\long`, `\outer`,
   `\protected`), and `\globaldefs` override behavior. Definition targets use
   TeX's `get_r_token` rule: either a control sequence or an active character
-  is accepted, with active characters stored under their one-character symbol.
+  is accepted, with active characters stored under their typed active-character
+  symbol rather than the same-spelling named control-symbol identity.
+  `\let` then follows TeX82's raw-token scan: it skips spaces before an
+  optional equals sign, skips at most one space after that sign, and copies the
+  already-tokenized command or character meaning without expansion. Prefix
+  accumulation itself follows TeX82's expanded scan: after each prefix,
+  it expands macros and skips spaces and `\relax` until the command to execute
+  is reached. Thus `\global` can qualify a macro whose expansion begins with an
+  assignment, while the delivered assignment token retains its expansion
+  provenance and read-set recording. Code-table
+  assignments use the same prefix/globaldefs policy as other definitions;
+  their structurally persistent roots restore local assignments at group exit.
   These commands scan through the shared gullet/token scanner where expansion
   is required and write meanings only through the barriered `Universe` facade. The
   `umber expand-dump` driver delegates those primitives to `tex-exec` before
@@ -409,15 +444,21 @@ assignments, box building, and dispatch into the typesetting kernels.
   primitives (`{`, `}`, `\begingroup`, `\endgroup`) map to journal
   group markers — the stomach contains **no save-stack logic**; it calls
   `universe.enter_group()` / `leave_group()` and `\aftergroup` tokens are
-  the group marker's payload.
+  the group marker's payload. Mode-independent assignments follow the same
+  executor path in vertical, horizontal, and math modes; in particular,
+  `\setbox` in math mode scans and builds through the ordinary box machinery
+  and stores through the same barriered `Universe` box-register facade.
 - The arithmetic-only substrate for dimension scanning lives in
   `tex-state::scaled`: TeX's `xn_over_d` conversion routine, decimal fraction
   rounding, the physical-unit conversion table, and the `max_dimen` range
   check with the canonical `Dimension too large` diagnostic. Token parsing,
   signs, `true` magnification, internal units, and assignment effects remain
   scanner/stomach responsibilities.
-- **Box building**: `\hbox{...}` etc. scan a packing spec, enter the brace
-  group as a normal journal-backed group, execute a nested
+- **Box building**: `\hbox{...}` etc. scan a packing spec and recognize the
+  opening and closing brace commands by meaning, so `\let` aliases of
+  begin/end-group characters delimit the box exactly like literal braces.
+  The scanner enters that brace group as a normal journal-backed group, then
+  executes a nested
   restricted-horizontal or internal-vertical list builder, freeze the
   finished list into the epoch arena, then call the pure `tex-typeset`
   packing kernel while the box-local assignments are still visible. The
@@ -430,7 +471,12 @@ assignments, box building, and dispatch into the typesetting kernels.
   register is the barriered promotion write. Pulling boxes back out through `\copy`,
   `\box`, unboxing, `\lastbox`, or box-dimension rewrites clones any
   survivor-backed node tree into the current epoch before it can be appended
-  to an unfinished mode list or promoted again. Horizontal list construction
+  to an unfinished mode list or promoted again. In math mode, the applicable
+  box command family (`\hbox`, `\vbox`, `\vtop`, `\box`, `\copy`, `\vsplit`,
+  and shifted `\raise`/`\lower` boxes) uses the same scanners and packers, then
+  contributes an Ord noad whose nucleus is the frozen one-box `SubBox` field;
+  register extraction still goes through the same-level `Universe` facade.
+  Horizontal list construction
   buffers adjacent font-backed characters in the stomach until a boundary
   command, then reconstitutes them through the loaded font's TFM ligature/kern
   program, updates the mode-local `\spacefactor`, and appends explicit
@@ -461,8 +507,20 @@ assignments, box building, and dispatch into the typesetting kernels.
   frozen `tex-state` math node payloads. A matching `\right` closes the
   nested math level and appends an inner noad whose nucleus is the delimited
   sub-mlist; delimiter sizing remains a pure conversion-time responsibility.
+  Non-radical delimiter scanning follows TeX82's `scan_delimiter`: expansion
+  skips blanks and `\relax`, character delimiters read `\delcode`, and the
+  unexpandable `\delimiter` command scans the exact 27-bit small-family,
+  small-character, large-family, large-character word. Invalid tokens are
+  replayed with their original traced origin before null-delimiter recovery,
+  so later diagnostics and restored input checkpoints retain the same source.
   The mode-list summary carries the pending incomplete fraction so snapshots
   preserve TeX's `\over`/`\atop`/`\above` state.
+  When a `math_comp` constructor such as `\mathopen` is delivered outside
+  math mode, main control follows TeX82's missing-dollar recovery: it replays
+  a traced math-shift token before the original traced constructor, reports
+  the diagnostic, and lets ordinary math entry and noad construction rescan
+  both tokens. The inserted replay and math-entry lookahead retain the
+  triggering token's origin and remain part of the checkpointed input stack.
   `\mathcode"8000` redispatches through the current active-character meaning
   at use time, and family font selectors live in the barriered Env font state.
   Display math is packaged stomach-side: entering `$$` from unrestricted
@@ -491,6 +549,12 @@ assignments, box building, and dispatch into the typesetting kernels.
   not create unrelated host-side files. Test support still normalizes banners,
   source line echoes, and memory-irrelevant trailer noise through one shared
   diagnostic-log normalizer for both execution and box-dump fixtures.
+- **Insertion building** follows the same meaning-based group boundary as box
+  building: `\insert` accepts `\let` aliases of begin/end-group characters,
+  preserves the traced opener while classifying its current meaning, and runs
+  the internal vertical builder inside a journal-backed `Universe` group.
+  Insertion parameters and content are captured before group exit, while only
+  global assignments made inside the insertion survive in the enclosing state.
 - **Paragraph and page hand-off**: paragraph start/end is stomach-owned.
   `\indent`, `\noindent`, implicit start from vertical-mode character
   material, `\parskip`, and `\everypar` replay are handled before entering
@@ -502,13 +566,14 @@ assignments, box building, and dispatch into the typesetting kernels.
   parameters, calls the pure line breaker over the prepared hlist, runs
   separate post-line-break surgery, freezes each resulting line list, hpack's
   it to the captured line width, and appends the hboxes through the shared
-  vertical append routine. Fresh engine state
-  installs the plain-format paragraph/layout defaults that affect this hand-off
-  (`\pretolerance=100`, `\tolerance=200`, `\baselineskip=12pt`,
-  `\parfillskip=0pt plus 1fil`, `\overfullrule=5pt`, and `\maxdepth=4pt`) so
-  parity fixtures only restate them when a case intentionally overrides the
-  format baseline. The page builder (§8) observes appends to the main vertical
-  list.
+  vertical append routine. Fresh engine state follows TeX82's INITEX
+  initialization: the integer and dimension banks start at zero except for
+  Knuth's explicit minimum defaults (`\tolerance=10000`, `\mag=1000`,
+  `\maxdeadcycles=25`, and `\hangafter=1`, plus the escape and end-line
+  characters). Plain-format paragraph/layout values are established by
+  loading `plain.tex`; primitive-only parity fixtures must state any format
+  baseline they require. The page builder (§8) observes appends to the main
+  vertical list.
 - The stomach is the *only* pipeline stage holding `&mut Universe`, and it
   holds it as a plain argument — re-entrancy (e.g. `\output` routines,
   `\vsplit`-triggered mark extraction) is recursion in Rust, with the mode
@@ -591,6 +656,11 @@ makes box-level memoization (M4) sound.
   compound builders for generalized fractions, radicals, big operators with
   displayed limits, variable delimiters and extensible recipes, math accents,
   over/under lines, and vcenter boxes under the same owned-output contract.
+  Appendix G `sub_box` nuclei retain their already-packed box node directly in
+  the converted hlist, including an explicit `\raise`/`\lower` shift; they are
+  not wrapped in a second hbox. `clean_box` still repacks fields where TeX
+  requires a clean subsidiary box, such as scripts and compound noad
+  construction.
 - **Alignment (`\halign`/`\valign`)**: the one kernel that is *not* pure —
   template expansion interleaves with the gullet by design. It is
   structured as a stomach sub-mode (it re-enters main control per cell),
@@ -670,7 +740,11 @@ Responsibility: accumulate the main vertical list, fire `\output`, commit.
   selected top-level page material for TeX82 mark nodes to set
   `\firstmark`/`\botmark`, distributes insertions to their class boxes, and
   vpackages the remaining page material into global `\box255` at the recorded
-  best size using the captured `\maxdepth`. Page-builder insert state is an
+  best size using the captured `\maxdepth`. This follows TeX.web's `fire_up`
+  ownership transfer: the packed page may combine fresh epoch lists with
+  survivor-owned descendants introduced by copied boxes, so the aggregate box
+  write promotes the mixed graph into one canonical survivor root before the
+  epoch can roll back. Page-builder insert state is an
   ordered per-class record list in `Universe` page state: first insertion of a
   class applies the `\skip<n>` correction once, `\count<n>` scales natural
   insertion size in TeX.web order, `\dimen<n>` caps class material, and split
@@ -748,6 +822,15 @@ immutable tables, with mutable font state kept behind the state timeline.
   compatibility; OpenType/TrueType via a
   vendored shaper for the modern path. All file access through `World`
   (fonts are inputs; cross-run memo sharing needs them pinned).
+- `tex-exec` applies TeX82's TFM filename rule (`.tfm` by default), then asks
+  the driver hook to resolve the path through the narrow `InputReadState`
+  capability. The CLI probes the principal input directory followed by the
+  ordered nonempty directories in `TEXFONTS` for area-less names; an explicit
+  font area is used as written, matching `read_font_info`'s `aire` branch.
+  The successful read is the ordinary content-addressed `World` input record,
+  so font search adds no engine-owned or non-checkpointable state. As in
+  TeX82's separate `tfm_file` handle, that auxiliary record does not replace
+  or renumber the active text source carried by the input stack.
 - A loaded font is an immutable object; `FontId` is the state-layer handle
   (`core_state.md` §10.3) minted at load time; `\font` assignment is an
   ordinary barriered `Env` write. Per-font mutable parameters

@@ -460,7 +460,7 @@ where
             .next()
             .map(|ch| ch as i32)
             .unwrap_or(0),
-        Token::Param(_) => return Ok(missing_number(token)),
+        Token::Param(_) | Token::Frozen(_) => return Ok(missing_number(token)),
     };
     consume_optional_space(input, stores, recorder, hooks, expander)?;
     Ok(ScannedInt::new(value, token))
@@ -485,51 +485,32 @@ where
     let meaning = stores.meaning(symbol);
     recorder.record_meaning(symbol, meaning);
     match meaning {
-        Meaning::CharGiven(ch) => {
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
-            Ok(ScannedInt::new(ch as i32, token))
-        }
-        Meaning::MathCharGiven(value) => {
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
-            Ok(ScannedInt::new(i32::from(value), token))
-        }
-        Meaning::CountRegister(index) => {
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
-            Ok(ScannedInt::new(stores.count(index), token))
-        }
-        Meaning::DimenRegister(index) => {
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
-            Ok(ScannedInt::new(stores.dimen(index).raw(), token))
-        }
-        Meaning::IntParam(index) => {
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
-            Ok(ScannedInt::new(
-                stores.int_param(IntParam::new(index)),
-                token,
-            ))
-        }
+        Meaning::CharGiven(ch) => Ok(ScannedInt::new(ch as i32, token)),
+        Meaning::MathCharGiven(value) => Ok(ScannedInt::new(i32::from(value), token)),
+        Meaning::CountRegister(index) => Ok(ScannedInt::new(stores.count(index), token)),
+        Meaning::DimenRegister(index) => Ok(ScannedInt::new(stores.dimen(index).raw(), token)),
+        Meaning::IntParam(index) => Ok(ScannedInt::new(
+            stores.int_param(IntParam::new(index)),
+            token,
+        )),
         Meaning::InternalInteger(InternalInteger::Badness) => {
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
             Ok(ScannedInt::new(stores.last_badness(), token))
         }
-        Meaning::DimenParam(index) => {
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
-            Ok(ScannedInt::new(
-                stores.dimen_param(DimenParam::new(index)).raw(),
-                token,
-            ))
+        Meaning::InternalInteger(InternalInteger::InputLineNumber) => {
+            let line = input
+                .current_source_frame()
+                .map_or(0, |frame| frame.line_number().min(i32::MAX as usize) as i32);
+            Ok(ScannedInt::new(line, token))
         }
-        Meaning::PageInteger(integer) => {
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
-            Ok(ScannedInt::new(stores.page_integer(integer), token))
-        }
-        Meaning::PageDimension(dimension) => {
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
-            Ok(ScannedInt::new(
-                stores.page_dimension(dimension).raw(),
-                token,
-            ))
-        }
+        Meaning::DimenParam(index) => Ok(ScannedInt::new(
+            stores.dimen_param(DimenParam::new(index)).raw(),
+            token,
+        )),
+        Meaning::PageInteger(integer) => Ok(ScannedInt::new(stores.page_integer(integer), token)),
+        Meaning::PageDimension(dimension) => Ok(ScannedInt::new(
+            stores.page_dimension(dimension).raw(),
+            token,
+        )),
         Meaning::Relax => {
             unread_token(input, stores, token);
             Ok(missing_number(token))
@@ -587,37 +568,29 @@ where
         tex_state::meaning::UnexpandablePrimitive::Count => {
             let index = scan_register_index(input, stores, recorder, hooks, expander, token)?;
             let value = stores.count(index);
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
             Ok(ScannedInt::new(value, token))
         }
         tex_state::meaning::UnexpandablePrimitive::Dimen => {
             let index = scan_register_index(input, stores, recorder, hooks, expander, token)?;
             let value = stores.dimen(index).raw();
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
             Ok(ScannedInt::new(value, token))
         }
         tex_state::meaning::UnexpandablePrimitive::SpaceFactor => {
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
             Ok(ScannedInt::new(hooks.space_factor(), token))
         }
         tex_state::meaning::UnexpandablePrimitive::PrevDepth => {
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
             Ok(ScannedInt::new(hooks.prev_depth().raw(), token))
         }
         tex_state::meaning::UnexpandablePrimitive::PrevGraf => {
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
             Ok(ScannedInt::new(hooks.prev_graf(), token))
         }
         tex_state::meaning::UnexpandablePrimitive::LastPenalty => {
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
             Ok(ScannedInt::new(hooks.last_penalty(), token))
         }
         tex_state::meaning::UnexpandablePrimitive::LastKern => {
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
             Ok(ScannedInt::new(hooks.last_kern().raw(), token))
         }
         tex_state::meaning::UnexpandablePrimitive::LastSkip => {
-            consume_optional_space(input, stores, recorder, hooks, expander)?;
             Ok(ScannedInt::new(hooks.last_skip().width.raw(), token))
         }
         tex_state::meaning::UnexpandablePrimitive::CatCode

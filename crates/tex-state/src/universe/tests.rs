@@ -1,6 +1,7 @@
 use super::{CheckpointResumeKind, ResumeFallback, Universe};
 use crate::font::NULL_FONT;
 use crate::glue::{GlueSpec, Order};
+use crate::ids::{ArenaRef, NodeListId};
 use crate::input::{
     InputFrameSummary, InputSummary, LexerState, MacroArguments, SourceFrameSummary,
     TokenListReplayKind, TracedTokenList,
@@ -42,6 +43,23 @@ fn rollback_restores_store_tuple_and_placeholder_scalars() {
     universe.rollback(&snapshot);
 
     assert_eq!(universe.meaning(symbol), Meaning::Undefined);
+}
+
+#[test]
+fn snapshot_round_trip_keeps_active_and_named_meanings_independent() {
+    let mut universe = Universe::new();
+    let named = universe.intern("~");
+    let active = universe.intern_active_character('~');
+    universe.set_meaning(named, Meaning::CharGiven('N'));
+    universe.set_meaning(active, Meaning::CharGiven('A'));
+    let snapshot = universe.snapshot();
+
+    universe.set_meaning(named, Meaning::Relax);
+    universe.set_meaning(active, Meaning::Undefined);
+    universe.rollback(&snapshot);
+
+    assert_eq!(universe.meaning(named), Meaning::CharGiven('N'));
+    assert_eq!(universe.meaning(active), Meaning::CharGiven('A'));
 }
 
 #[test]
@@ -94,6 +112,53 @@ fn semantic_hash_ignores_pending_source_token_origins() {
     let right_hash = universe.snapshot().state_hash();
 
     assert_eq!(left_hash, right_hash);
+}
+
+#[test]
+fn semantic_hash_distinguishes_evaluating_conditional_state() {
+    let mut universe = Universe::new();
+    let token = crate::input::ConditionFrameToken::new(0);
+    let context = TracedTokenWord::pack(Token::frozen_end_template(), OriginId::UNKNOWN);
+    universe.set_input_summary(InputSummary::new(
+        vec![InputFrameSummary::Condition {
+            token,
+            condition: crate::input::ConditionFrameSummary::evaluating_if(context),
+        }],
+        None,
+        None,
+    ));
+    let evaluating = universe.snapshot().state_hash();
+    universe.set_input_summary(InputSummary::new(
+        vec![InputFrameSummary::Condition {
+            token,
+            condition: crate::input::ConditionFrameSummary::new_if(context, false),
+        }],
+        None,
+        None,
+    ));
+
+    assert_ne!(universe.snapshot().state_hash(), evaluating);
+}
+
+#[test]
+fn semantic_hash_ignores_conditional_frame_identity() {
+    let mut universe = Universe::new();
+    let context = TracedTokenWord::pack(Token::frozen_end_template(), OriginId::UNKNOWN);
+    let summary = |raw| {
+        InputSummary::new(
+            vec![InputFrameSummary::Condition {
+                token: crate::input::ConditionFrameToken::new(raw),
+                condition: crate::input::ConditionFrameSummary::new_if(context, true),
+            }],
+            None,
+            None,
+        )
+    };
+    universe.set_input_summary(summary(3));
+    let first = universe.snapshot().state_hash();
+    universe.set_input_summary(summary(91));
+
+    assert_eq!(universe.snapshot().state_hash(), first);
 }
 
 #[test]
@@ -525,6 +590,32 @@ fn snapshot_state_hash_ignores_content_intern_order() {
 }
 
 #[test]
+fn snapshot_state_hash_keys_same_spelling_namespaces_independently() {
+    fn build(active_first: bool, active_meaning: Meaning) -> u64 {
+        let mut universe = Universe::new();
+        let (named, active) = if active_first {
+            let active = universe.intern_active_character('~');
+            (universe.intern("~"), active)
+        } else {
+            let named = universe.intern("~");
+            (named, universe.intern_active_character('~'))
+        };
+        universe.set_meaning(named, Meaning::CharGiven('N'));
+        universe.set_meaning(active, active_meaning);
+        universe.snapshot().state_hash()
+    }
+
+    assert_eq!(
+        build(false, Meaning::CharGiven('A')),
+        build(true, Meaning::CharGiven('A'))
+    );
+    assert_ne!(
+        build(false, Meaning::CharGiven('A')),
+        build(false, Meaning::CharGiven('B'))
+    );
+}
+
+#[test]
 fn snapshot_state_hash_changes_for_one_register_bit() {
     let mut unchanged = Universe::new();
     let mut changed = Universe::new();
@@ -584,6 +675,38 @@ fn snapshot_state_hash_distinguishes_font_content_identity() {
 }
 
 #[test]
+fn snapshot_state_hash_distinguishes_font_identifier_identity() {
+    let mut first = Universe::new();
+    let mut second = Universe::new();
+    let first_a = first.intern("a");
+    let first_b = first.intern("b");
+    let second_a = second.intern("a");
+    let second_b = second.intern("b");
+
+    let first_font = first.intern_font_with_identifier(test_font("cmr10", b"same"), first_a);
+    let second_font = second.intern_font_with_identifier(test_font("cmr10", b"same"), second_b);
+    first.set_meaning(first_b, Meaning::Font(first_font));
+    second.set_meaning(second_a, Meaning::Font(second_font));
+
+    assert_ne!(
+        first.snapshot().state_hash(),
+        second.snapshot().state_hash()
+    );
+}
+
+#[test]
+fn rollback_restores_font_identifier_registration() {
+    let mut universe = Universe::new();
+    let snapshot = universe.snapshot();
+    let nullfont = universe.intern("nullfont");
+    universe.set_font_identifier_symbol(NULL_FONT, nullfont);
+    assert_eq!(universe.font_identifier_symbol(NULL_FONT), Some(nullfont));
+
+    universe.rollback(&snapshot);
+    assert_eq!(universe.font_identifier_symbol(NULL_FONT), None);
+}
+
+#[test]
 fn rollback_restores_state_hash_cursor() {
     let mut universe = Universe::new();
     let base = universe.snapshot();
@@ -631,6 +754,66 @@ fn rollback_rebuilds_incremental_hash_baselines_after_node_handle_reuse() {
 
     assert_ne!(first_hash, reused_hash);
     assert_eq!(reused_hash, fresh_hash);
+}
+
+#[test]
+fn mixed_arena_box_promotion_replays_with_resolvable_equal_hashes() {
+    let mut universe = Universe::new();
+    let child = universe.freeze_node_list(&[Node::Char {
+        font: NULL_FONT,
+        ch: 'x',
+    }]);
+    universe.set_box_reg(0, child);
+    let base = universe.snapshot();
+
+    let first = promote_survivor_wrapped_box(&mut universe);
+    let first_hash = universe.snapshot().state_hash();
+    assert_promoted_wrapper_is_resolvable(&universe, first);
+
+    universe.rollback(&base);
+    let second = promote_survivor_wrapped_box(&mut universe);
+    let second_hash = universe.snapshot().state_hash();
+    assert_promoted_wrapper_is_resolvable(&universe, second);
+
+    assert_eq!(first_hash, second_hash);
+}
+
+fn promote_survivor_wrapped_box(universe: &mut Universe) -> NodeListId {
+    let child = universe
+        .box_reg(0)
+        .expect("survivor child should remain live");
+    let wrapper = universe.freeze_node_list(&[Node::VList(BoxNode::new(BoxNodeFields {
+        width: Scaled::from_raw(10),
+        height: Scaled::from_raw(7),
+        depth: Scaled::from_raw(3),
+        shift: Scaled::from_raw(0),
+        display: false,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children: child,
+    }))]);
+    universe.set_box_reg_global(255, wrapper);
+    universe.box_reg(255).expect("wrapper should be promoted")
+}
+
+fn assert_promoted_wrapper_is_resolvable(universe: &Universe, wrapper: NodeListId) {
+    let [Node::VList(box_node)] = universe.nodes(wrapper) else {
+        panic!("promoted wrapper should contain a vlist");
+    };
+    let (ArenaRef::Survivor(wrapper_root), ArenaRef::Survivor(child_root)) =
+        (wrapper.arena(), box_node.children.arena())
+    else {
+        panic!("promoted wrapper and child should be survivor-owned");
+    };
+    assert_eq!(wrapper_root, child_root);
+    assert_eq!(
+        universe.nodes(box_node.children),
+        &[Node::Char {
+            font: NULL_FONT,
+            ch: 'x'
+        }]
+    );
 }
 
 #[test]
@@ -834,6 +1017,7 @@ fn pending_source_summary(token: Token, origin: OriginId) -> InputSummary {
     InputSummary::new(
         vec![InputFrameSummary::Source {
             source_id: crate::input::SourceId::new(1),
+            input_record: None,
             source: SourceFrameSummary::new(
                 0,
                 1,

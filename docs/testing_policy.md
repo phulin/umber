@@ -153,9 +153,10 @@ Default cargo tests must not invoke live TeX tools. Fixture regeneration uses
 text/native fixture updates and the live `tftopl` font cross-check.
 
 External document corpus inputs for long-running parity live outside committed
-fixtures. The line-oriented `tests/corpus-manifest.txt` file pins each document
-URL, fetched-byte SHA-256, license determination, redistributability flag, and
-reference DVI SHA-256 after DVI preamble banner normalization. `scripts/parity.sh` runs
+fixtures. The line-oriented `tests/corpus-manifest.txt` file pins support files
+and documents by URL, fetched-byte SHA-256, license determination, and
+redistributability flag. Runnable documents also select a format source and pin
+the reference DVI SHA-256 after DVI preamble banner normalization. `scripts/parity.sh` runs
 `tools/corpus-sync` first to fetch or verify those inputs under gitignored
 `third_party/corpus/`; cached hash matches are a no-op, including in
 `--offline` mode. It also pins `SOURCE_DATE_EPOCH=1783604160` and
@@ -174,11 +175,17 @@ scripts/parity.sh e2e --offline
 
 This mode verifies acquisition, runs reference TeX through `tools/refexec`,
 checks the manifest-pinned normalized reference DVI hash for environment
-drift under the script-pinned job clock, runs `umber run --plain-format --dvi`,
-and byte-compares the normalized DVI files. The Umber plain-format path is a
-narrow corpus bootstrap for pinned external documents that assume plain-format
-macros; it is not full `plain.tex` loading, which remains owned by the plain
-bring-up work. On reference drift, Umber failure, or mismatch it writes a
+drift under the script-pinned job clock, and byte-compares the normalized DVI
+files. Each document names a manifest-pinned `format_source`; the harness
+stages that exact source, the document, hyphenation input, and required TFMs,
+then feeds both engines the same wrapper that inputs the format source before
+the document. Reference TeX uses INITEX mode and Umber executes the wrapper
+without its legacy `--plain-format` bootstrap. This follows TeX82's ordinary
+`start_input` stack behavior (sections 23 and 29); format dumping remains a
+terminal INITEX cleanup operation (sections 46, 50, and 51), not a way to
+continue into the document. The pinned modern `plain.tex` source contains no
+`\\dump`, so the unmodified file can be loaded directly. On reference drift,
+Umber failure, or mismatch it writes a
 triage bundle under
 `target/parity-triage/<doc-name>/` with byte context, page-limited
 dvitype-style disassemblies, a unified disassembly diff, tracing-output logs,

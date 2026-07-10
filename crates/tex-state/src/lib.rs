@@ -29,8 +29,8 @@ mod universe;
 pub mod world;
 
 pub use input::{
-    ConditionFrameSummary, ConditionKind, ConditionLimb, InputFrameSummary, InputSummary,
-    LexerState, MACRO_ARGUMENT_SLOTS, MacroArguments, SourceFrameSummary, SourceId,
+    ConditionFrameSummary, ConditionFrameToken, ConditionKind, ConditionLimb, InputFrameSummary,
+    InputSummary, LexerState, MACRO_ARGUMENT_SLOTS, MacroArguments, SourceFrameSummary, SourceId,
     TokenListReplayKind, TracedTokenList,
 };
 pub use page::{
@@ -45,9 +45,9 @@ pub use universe::{
     ResumeBoundary, ResumeFallback, Snapshot, Universe,
 };
 pub use world::{
-    ContentHash, EffectPos, EffectRecord, FileContent, InputRecord, JobClock, PrintSink,
-    ReadTarget, RngState, ShellEscapePolicy, ShellEscapeRecord, StreamBufState, StreamSlot, World,
-    WorldError, WorldSnapshot,
+    ContentHash, EffectPos, EffectRecord, FileContent, InputRecord, InputRecordId, JobClock,
+    PrintSink, ReadTarget, RngState, ShellEscapePolicy, ShellEscapeRecord, StreamBufState,
+    StreamSlot, World, WorldError, WorldSnapshot,
 };
 
 #[cfg(test)]

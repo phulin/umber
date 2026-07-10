@@ -20,6 +20,10 @@ pub enum ExecError {
     ScanGlue(tex_expand::scan_glue::ScanGlueError),
     World(WorldError),
     FontParse(tex_fonts::ParseError),
+    FontOpen {
+        name: String,
+        message: String,
+    },
     FontParameter(FontParameterError),
     EmptyModeNestSummary,
     CannotPopBaseMode,
@@ -139,6 +143,9 @@ impl fmt::Display for ExecError {
             Self::ScanGlue(err) => write!(f, "{err}"),
             Self::World(err) => write!(f, "{err}"),
             Self::FontParse(err) => write!(f, "{err}"),
+            Self::FontOpen { name, message } => {
+                write!(f, "could not open TFM for font {name}: {message}")
+            }
             Self::FontParameter(err) => write!(f, "{err:?}"),
             Self::EmptyModeNestSummary => write!(f, "mode nest summary has no levels"),
             Self::CannotPopBaseMode => write!(f, "cannot pop the base vertical mode level"),
@@ -260,7 +267,8 @@ impl std::error::Error for ExecError {
             Self::ScanGlue(err) => Some(err),
             Self::World(err) => Some(err),
             Self::FontParse(err) => Some(err),
-            Self::EmptyModeNestSummary
+            Self::FontOpen { .. }
+            | Self::EmptyModeNestSummary
             | Self::CannotPopBaseMode
             | Self::UndefinedControlSequence { .. }
             | Self::UnexpectedMacroDelivery { .. }
@@ -336,6 +344,7 @@ impl ExecError {
             | Self::ScanToks(_)
             | Self::World(_)
             | Self::FontParse(_)
+            | Self::FontOpen { .. }
             | Self::FontParameter(_)
             | Self::EmptyModeNestSummary
             | Self::CannotPopBaseMode

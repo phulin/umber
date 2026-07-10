@@ -10,11 +10,11 @@ use std::fmt;
 use tex_state::ids::{OriginListId, TokenListId};
 use tex_state::provenance::{InsertedOriginKind, SyntheticOriginKind};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
-use tex_state::{ExpansionState, FileContent, WorldError};
+use tex_state::{ExpansionState, FileContent, InputRecordId, WorldError};
 
 pub use tex_state::{
-    ConditionFrameSummary, ConditionKind, ConditionLimb, InputFrameSummary, InputSummary,
-    LexerState, MACRO_ARGUMENT_SLOTS, MacroArguments, SourceFrameSummary, SourceId,
+    ConditionFrameSummary, ConditionFrameToken, ConditionKind, ConditionLimb, InputFrameSummary,
+    InputSummary, LexerState, MACRO_ARGUMENT_SLOTS, MacroArguments, SourceFrameSummary, SourceId,
     TokenListReplayKind, TracedTokenList,
 };
 
@@ -25,6 +25,11 @@ pub use tex_state::{
 pub trait InputSource {
     /// Reads the next physical line without its line terminator.
     fn read_line(&mut self) -> Result<Option<String>, WorldError>;
+
+    /// Returns the durable `World` record for a file-backed source.
+    fn input_record(&self) -> Option<InputRecordId> {
+        None
+    }
 }
 
 /// In-memory input source for tests, `\scantokens`, and editor buffers.
@@ -51,22 +56,27 @@ impl InputSource for MemoryInput {
 /// Content-addressed input source created from `World` file content.
 #[derive(Debug)]
 pub struct WorldInput {
+    input_record: InputRecordId,
     lines: std::vec::IntoIter<String>,
 }
 
 impl WorldInput {
     #[must_use]
     pub fn from_content(content: FileContent) -> Self {
+        let input_record = content.record();
         let input = String::from_utf8_lossy(content.bytes()).into_owned();
         Self {
+            input_record,
             lines: split_physical_lines(&input).into_iter(),
         }
     }
 
     #[must_use]
     pub fn from_content_after_lines(content: FileContent, lines_read: usize) -> Self {
+        let input_record = content.record();
         let input = String::from_utf8_lossy(content.bytes()).into_owned();
         Self {
+            input_record,
             lines: split_physical_lines(&input)
                 .into_iter()
                 .skip(lines_read)
@@ -79,6 +89,10 @@ impl WorldInput {
 impl InputSource for WorldInput {
     fn read_line(&mut self) -> Result<Option<String>, WorldError> {
         Ok(self.lines.next())
+    }
+
+    fn input_record(&self) -> Option<InputRecordId> {
+        Some(self.input_record)
     }
 }
 
@@ -175,15 +189,21 @@ impl SourceFrame {
 #[derive(Debug)]
 struct SourceInputFrame<S> {
     source_id: SourceId,
+    input_record: Option<InputRecordId>,
     lines: LineReader<S>,
     frame: SourceFrame,
     next_source_offset: usize,
 }
 
 impl<S> SourceInputFrame<S> {
-    fn new(source_id: SourceId, source: S) -> Self {
+    fn new(source_id: SourceId, source: S) -> Self
+    where
+        S: InputSource,
+    {
+        let input_record = source.input_record();
         Self {
             source_id,
+            input_record,
             lines: LineReader::new(source),
             frame: SourceFrame::new(),
             next_source_offset: 0,
@@ -199,18 +219,30 @@ struct TokenListInputFrame {
     index: usize,
     macro_arguments: MacroArguments,
     macro_invocation: OriginId,
+    replay_marker: Option<TokenListReplayMarker>,
 }
+
+/// Identifies one live token-list replay frame independently of its content.
+///
+/// The marker is intentionally absent from resumable input summaries: callers
+/// use it only to delimit a synchronous replay operation on the current stack.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct TokenListReplayMarker(u64);
 
 #[derive(Debug)]
 enum InputFrame<S> {
     Source(SourceInputFrame<S>),
     TokenList(TokenListInputFrame),
-    Condition(ConditionFrameSummary),
+    Condition {
+        token: ConditionFrameToken,
+        condition: ConditionFrameSummary,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct LastSourceFrame {
     source_id: SourceId,
+    input_record: Option<InputRecordId>,
     frame: SourceFrame,
     next_source_offset: usize,
 }
@@ -298,22 +330,63 @@ pub struct InputStack<S> {
     next_source_id: u32,
     unicode_superscript_notation: bool,
     last_source_frame: Option<LastSourceFrame>,
+    next_replay_marker: u64,
+    next_condition_token: u64,
+    alignment_cells: Vec<AlignmentCellInput>,
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AlignmentCellPhase {
+    UTemplate(TokenListReplayMarker),
+    Body,
+    VTemplate,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AlignmentTerminator {
+    Tab,
+    Cr,
+    Span,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct AlignmentCellInput {
+    phase: AlignmentCellPhase,
+    v_template: TokenListId,
+    group_depth: u32,
+    terminator: Option<TracedTokenWord>,
+}
+
+/// Saved alignment-cell interception state while a nested preamble and body run.
+///
+/// Like TeX82's alignment-stack node, this value owns the exact outer state;
+/// nested input cannot observe or replace it before the matching restore.
+#[must_use]
+pub struct AlignmentCellSuspension(Option<AlignmentCellInput>);
 
 impl<S> InputStack<S> {
     #[must_use]
-    pub fn new(source: S) -> Self {
+    pub fn new(source: S) -> Self
+    where
+        S: InputSource,
+    {
         let mut stack = Self {
             frames: Vec::new(),
             next_source_id: 0,
             unicode_superscript_notation: true,
             last_source_frame: None,
+            next_replay_marker: 0,
+            next_condition_token: 0,
+            alignment_cells: Vec::new(),
         };
         stack.push_source(source);
         stack
     }
 
-    pub fn push_source(&mut self, source: S) -> SourceId {
+    pub fn push_source(&mut self, source: S) -> SourceId
+    where
+        S: InputSource,
+    {
         let source_id = SourceId::new(self.next_source_id);
         self.next_source_id = self
             .next_source_id
@@ -326,18 +399,23 @@ impl<S> InputStack<S> {
 
     pub fn from_summary<E, F>(summary: &InputSummary, mut reopen_source: F) -> Result<Self, E>
     where
-        F: FnMut(SourceId, &SourceFrameSummary) -> Result<S, E>,
+        F: FnMut(SourceId, Option<InputRecordId>, &SourceFrameSummary) -> Result<S, E>,
     {
         let mut max_source_id = None::<u32>;
         let mut frames = Vec::with_capacity(summary.frames().len());
         for frame in summary.frames() {
             match frame {
-                InputFrameSummary::Source { source_id, source } => {
+                InputFrameSummary::Source {
+                    source_id,
+                    input_record,
+                    source,
+                } => {
                     max_source_id =
                         Some(max_source_id.map_or(source_id.raw(), |max| max.max(source_id.raw())));
                     frames.push(InputFrame::Source(SourceInputFrame {
                         source_id: *source_id,
-                        lines: LineReader::new(reopen_source(*source_id, source)?),
+                        input_record: *input_record,
+                        lines: LineReader::new(reopen_source(*source_id, *input_record, source)?),
                         frame: SourceFrame::from_summary(source),
                         next_source_offset: source.next_source_offset(),
                     }));
@@ -356,9 +434,13 @@ impl<S> InputStack<S> {
                     index: *index,
                     macro_arguments: *macro_arguments,
                     macro_invocation: *macro_invocation,
+                    replay_marker: None,
                 })),
-                InputFrameSummary::Condition(condition) => {
-                    frames.push(InputFrame::Condition(*condition));
+                InputFrameSummary::Condition { token, condition } => {
+                    frames.push(InputFrame::Condition {
+                        token: *token,
+                        condition: *condition,
+                    });
                 }
             }
         }
@@ -373,14 +455,122 @@ impl<S> InputStack<S> {
                 source_id: summary
                     .last_source_id()
                     .expect("last source frame must retain its source id"),
+                input_record: summary.last_source_record(),
                 frame: SourceFrame::from_summary(source),
                 next_source_offset: source.next_source_offset(),
             }),
+            next_replay_marker: 0,
+            next_condition_token: summary
+                .frames()
+                .iter()
+                .filter_map(|frame| match frame {
+                    InputFrameSummary::Condition { token, .. } => Some(token.raw()),
+                    InputFrameSummary::Source { .. } | InputFrameSummary::TokenList { .. } => None,
+                })
+                .max()
+                .map_or(0, |token| {
+                    token
+                        .checked_add(1)
+                        .expect("condition frame token overflowed")
+                }),
+            alignment_cells: Vec::new(),
         })
     }
 
-    pub fn push_token_list(&mut self, token_list: TokenListId, replay_kind: TokenListReplayKind) {
-        self.push_token_list_with_origins(token_list, OriginListId::EMPTY, replay_kind);
+    /// Starts TeX82's `get_next` alignment-cell interception.
+    ///
+    /// The u-template marker is an exact live-frame boundary: once it is
+    /// retired, brace accounting begins on the first cell token. A top-level
+    /// tab, `\span`, or `\cr` is retained with its traced origin while the
+    /// v-template is inserted ahead of it, just as TeX82 does in `get_next`.
+    pub fn begin_alignment_cell(
+        &mut self,
+        u_template: Option<TokenListReplayMarker>,
+        v_template: TokenListId,
+        group_depth: u32,
+    ) {
+        self.alignment_cells.push(AlignmentCellInput {
+            phase: u_template.map_or(AlignmentCellPhase::Body, AlignmentCellPhase::UTemplate),
+            v_template,
+            group_depth,
+            terminator: None,
+        });
+    }
+
+    /// Completes the active cell after its frozen end-v token is delivered.
+    pub fn finish_alignment_cell(&mut self) -> Option<TracedTokenWord> {
+        let cell = self.alignment_cells.pop()?;
+        assert_eq!(cell.phase, AlignmentCellPhase::VTemplate);
+        cell.terminator
+    }
+
+    #[must_use]
+    pub fn alignment_cell_at_group_depth(&self, group_depth: u32) -> bool {
+        self.alignment_cells
+            .last()
+            .is_some_and(|cell| group_depth == cell.group_depth)
+    }
+
+    /// Suspends an outer cell while a nested alignment scans its preamble.
+    pub fn suspend_alignment_cell(&mut self) -> AlignmentCellSuspension {
+        let cell = self.alignment_cells.pop();
+        if let Some(cell) = cell.as_ref() {
+            assert_eq!(cell.phase, AlignmentCellPhase::Body);
+        }
+        AlignmentCellSuspension(cell)
+    }
+
+    pub fn resume_alignment_cell(&mut self, suspended: AlignmentCellSuspension) {
+        assert!(
+            self.alignment_cells.is_empty(),
+            "nested alignment cell remained active at pop_alignment"
+        );
+        if let Some(cell) = suspended.0 {
+            assert_eq!(cell.phase, AlignmentCellPhase::Body);
+            self.alignment_cells.push(cell);
+        }
+    }
+
+    /// Applies the alignment-sensitive part of TeX82 `get_next`.
+    ///
+    /// Returns `true` when the token was a cell terminator and has been
+    /// replaced in the input by the active v-template.
+    pub fn intercept_alignment_token(
+        &mut self,
+        traced: TracedTokenWord,
+        terminator: Option<AlignmentTerminator>,
+        group_depth: u32,
+    ) -> bool {
+        let Some(mut cell) = self.alignment_cells.pop() else {
+            return false;
+        };
+        if let AlignmentCellPhase::UTemplate(marker) = cell.phase
+            && !self.contains_token_list_replay_marker(marker)
+        {
+            cell.phase = AlignmentCellPhase::Body;
+            cell.group_depth = group_depth;
+        }
+        if cell.phase != AlignmentCellPhase::Body {
+            self.alignment_cells.push(cell);
+            return false;
+        }
+
+        let terminates = group_depth == cell.group_depth && terminator.is_some();
+        if terminates {
+            cell.phase = AlignmentCellPhase::VTemplate;
+            cell.terminator = Some(traced);
+            self.push_token_list(cell.v_template, TokenListReplayKind::Inserted);
+        }
+        self.alignment_cells.push(cell);
+        terminates
+    }
+
+    pub fn push_token_list(
+        &mut self,
+        token_list: TokenListId,
+        replay_kind: TokenListReplayKind,
+    ) -> TokenListReplayMarker {
+        self.push_token_list_with_origins(token_list, OriginListId::EMPTY, replay_kind)
     }
 
     pub fn push_token_list_with_origins(
@@ -388,7 +578,12 @@ impl<S> InputStack<S> {
         token_list: TokenListId,
         origin_list: OriginListId,
         replay_kind: TokenListReplayKind,
-    ) {
+    ) -> TokenListReplayMarker {
+        let replay_marker = TokenListReplayMarker(self.next_replay_marker);
+        self.next_replay_marker = self
+            .next_replay_marker
+            .checked_add(1)
+            .expect("token-list replay marker overflowed");
         self.frames.push(InputFrame::TokenList(TokenListInputFrame {
             token_list,
             origin_list,
@@ -396,7 +591,9 @@ impl<S> InputStack<S> {
             index: 0,
             macro_arguments: MacroArguments::new(),
             macro_invocation: OriginId::UNKNOWN,
+            replay_marker: Some(replay_marker),
         }));
+        replay_marker
     }
 
     pub fn push_macro_body(&mut self, token_list: TokenListId, macro_arguments: MacroArguments) {
@@ -431,28 +628,57 @@ impl<S> InputStack<S> {
             index: 0,
             macro_arguments,
             macro_invocation,
+            replay_marker: None,
         }));
     }
 
-    pub fn push_condition(&mut self, condition: ConditionFrameSummary) {
-        self.frames.push(InputFrame::Condition(condition));
+    pub fn push_condition(&mut self, condition: ConditionFrameSummary) -> ConditionFrameToken {
+        let token = ConditionFrameToken::new(self.next_condition_token);
+        self.next_condition_token = self
+            .next_condition_token
+            .checked_add(1)
+            .expect("condition frame token overflowed");
+        self.frames.push(InputFrame::Condition { token, condition });
+        token
     }
 
+    pub fn update_condition(
+        &mut self,
+        token: ConditionFrameToken,
+        condition: ConditionFrameSummary,
+    ) -> Option<ConditionFrameSummary> {
+        let frame = self.frames.iter_mut().rev().find_map(|frame| match frame {
+            InputFrame::Condition {
+                token: frame_token,
+                condition,
+            } if *frame_token == token => Some(condition),
+            InputFrame::Source(_) | InputFrame::TokenList(_) => None,
+            InputFrame::Condition { .. } => None,
+        })?;
+        Some(std::mem::replace(frame, condition))
+    }
+
+    /// Updates the innermost live conditional frame.
     pub fn update_current_condition(
         &mut self,
         condition: ConditionFrameSummary,
     ) -> Option<ConditionFrameSummary> {
-        let frame = self.frames.iter_mut().rev().find_map(|frame| match frame {
-            InputFrame::Condition(condition) => Some(condition),
-            InputFrame::Source(_) | InputFrame::TokenList(_) => None,
-        })?;
-        Some(std::mem::replace(frame, condition))
+        let token = self.current_condition_token()?;
+        self.update_condition(token, condition)
     }
 
     #[must_use]
     pub fn current_condition(&self) -> Option<ConditionFrameSummary> {
         self.frames.iter().rev().find_map(|frame| match frame {
-            InputFrame::Condition(condition) => Some(*condition),
+            InputFrame::Condition { condition, .. } => Some(*condition),
+            InputFrame::Source(_) | InputFrame::TokenList(_) => None,
+        })
+    }
+
+    #[must_use]
+    pub fn current_condition_token(&self) -> Option<ConditionFrameToken> {
+        self.frames.iter().rev().find_map(|frame| match frame {
+            InputFrame::Condition { token, .. } => Some(*token),
             InputFrame::Source(_) | InputFrame::TokenList(_) => None,
         })
     }
@@ -461,21 +687,22 @@ impl<S> InputStack<S> {
         let index = self
             .frames
             .iter()
-            .rposition(|frame| matches!(frame, InputFrame::Condition(_)))?;
+            .rposition(|frame| matches!(frame, InputFrame::Condition { .. }))?;
         match self.frames.remove(index) {
-            InputFrame::Condition(condition) => Some(condition),
+            InputFrame::Condition { condition, .. } => Some(condition),
             InputFrame::Source(_) | InputFrame::TokenList(_) => unreachable!("rposition matched"),
         }
     }
 
     #[must_use]
     pub fn summary(&self) -> InputSummary {
-        InputSummary::new(
+        InputSummary::new_with_source_records(
             self.frames
                 .iter()
                 .map(|frame| match frame {
                     InputFrame::Source(source) => InputFrameSummary::Source {
                         source_id: source.source_id,
+                        input_record: source.input_record,
                         source: source.frame.summary(source.next_source_offset),
                     },
                     InputFrame::TokenList(token_list) => InputFrameSummary::TokenList {
@@ -486,10 +713,16 @@ impl<S> InputStack<S> {
                         macro_arguments: token_list.macro_arguments,
                         macro_invocation: token_list.macro_invocation,
                     },
-                    InputFrame::Condition(condition) => InputFrameSummary::Condition(*condition),
+                    InputFrame::Condition { token, condition } => InputFrameSummary::Condition {
+                        token: *token,
+                        condition: *condition,
+                    },
                 })
                 .collect(),
             self.last_source_frame.as_ref().map(|last| last.source_id),
+            self.last_source_frame
+                .as_ref()
+                .and_then(|last| last.input_record),
             self.last_source_frame
                 .as_ref()
                 .map(|last| last.frame.summary(last.next_source_offset)),
@@ -500,7 +733,7 @@ impl<S> InputStack<S> {
     pub fn current_source_frame(&self) -> Option<&SourceFrame> {
         let current = self.frames.iter().rev().find_map(|frame| match frame {
             InputFrame::Source(source) => Some(&source.frame),
-            InputFrame::TokenList(_) | InputFrame::Condition(_) => None,
+            InputFrame::TokenList(_) | InputFrame::Condition { .. } => None,
         });
         current.or_else(|| self.last_source_frame.as_ref().map(|last| &last.frame))
     }
@@ -508,14 +741,14 @@ impl<S> InputStack<S> {
     pub fn current_input_origin(&mut self, stores: &mut impl ExpansionState) -> OriginId {
         if let Some(source) = self.frames.iter().rev().find_map(|frame| match frame {
             InputFrame::Source(source) => Some(source),
-            InputFrame::TokenList(_) | InputFrame::Condition(_) => None,
+            InputFrame::TokenList(_) | InputFrame::Condition { .. } => None,
         }) {
             return allocate_source_origin(stores, source_coordinate(source));
         }
         if let Some(last) = &self.last_source_frame {
             return allocate_source_origin(
                 stores,
-                source_coordinate_from_frame(last.source_id, &last.frame),
+                source_coordinate_from_frame(last.source_id, last.input_record, &last.frame),
             );
         }
         stores.synthetic_origin(SyntheticOriginKind::Engine)
@@ -543,7 +776,7 @@ impl<S> InputStack<S> {
     pub fn end_current_source_after_current_line(&mut self) -> bool {
         let Some(source) = self.frames.iter_mut().rev().find_map(|frame| match frame {
             InputFrame::Source(source) => Some(source),
-            InputFrame::TokenList(_) | InputFrame::Condition(_) => None,
+            InputFrame::TokenList(_) | InputFrame::Condition { .. } => None,
         }) else {
             return false;
         };
@@ -556,6 +789,7 @@ impl<S> InputStack<S> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct LexSourceContext {
     source_id: SourceId,
+    input_record: Option<InputRecordId>,
     byte_offset: u64,
     line: u32,
     column: u32,
@@ -646,7 +880,10 @@ pub struct Lexer<S> {
 
 impl<S> Lexer<S> {
     #[must_use]
-    pub fn new(source: S) -> Self {
+    pub fn new(source: S) -> Self
+    where
+        S: InputSource,
+    {
         Self {
             input: InputStack::new(source),
         }
@@ -677,7 +914,7 @@ impl<S> Lexer<S> {
     pub fn into_inner(self) -> S {
         match self.input.frames.into_iter().next() {
             Some(InputFrame::Source(source)) => source.lines.into_inner(),
-            Some(InputFrame::TokenList(_) | InputFrame::Condition(_)) | None => {
+            Some(InputFrame::TokenList(_) | InputFrame::Condition { .. }) | None => {
                 panic!("Lexer source was not at the bottom of the input stack")
             }
         }
@@ -737,6 +974,7 @@ where
                                 index: 0,
                                 macro_arguments: MacroArguments::new(),
                                 macro_invocation: OriginId::UNKNOWN,
+                                replay_marker: None,
                             }));
                             continue;
                         }
@@ -760,6 +998,7 @@ where
                             if let InputFrame::Source(source) = popped {
                                 self.last_source_frame = Some(LastSourceFrame {
                                     source_id: source.source_id,
+                                    input_record: source.input_record,
                                     frame: source.frame,
                                     next_source_offset: source.next_source_offset,
                                 });
@@ -771,6 +1010,7 @@ where
                             if let InputFrame::Source(source) = popped {
                                 self.last_source_frame = Some(LastSourceFrame {
                                     source_id: source.source_id,
+                                    input_record: source.input_record,
                                     frame: source.frame,
                                     next_source_offset: source.next_source_offset,
                                 });
@@ -786,7 +1026,7 @@ where
                     };
                     return Ok(Some(token));
                 }
-                InputFrame::Condition(_) => {
+                InputFrame::Condition { .. } => {
                     unreachable!("current_token_frame_index skips conditions")
                 }
             }
@@ -830,6 +1070,7 @@ where
                                 index: 0,
                                 macro_arguments: MacroArguments::new(),
                                 macro_invocation: OriginId::UNKNOWN,
+                                replay_marker: None,
                             }));
                             continue;
                         }
@@ -855,6 +1096,7 @@ where
                             if let InputFrame::Source(source) = popped {
                                 self.last_source_frame = Some(LastSourceFrame {
                                     source_id: source.source_id,
+                                    input_record: source.input_record,
                                     frame: source.frame,
                                     next_source_offset: source.next_source_offset,
                                 });
@@ -866,6 +1108,7 @@ where
                             if let InputFrame::Source(source) = popped {
                                 self.last_source_frame = Some(LastSourceFrame {
                                     source_id: source.source_id,
+                                    input_record: source.input_record,
                                     frame: source.frame,
                                     next_source_offset: source.next_source_offset,
                                 });
@@ -881,7 +1124,7 @@ where
                     };
                     return Ok(Some(TracedExpansionToken::new(token, false)));
                 }
-                InputFrame::Condition(_) => {
+                InputFrame::Condition { .. } => {
                     unreachable!("current_token_frame_index skips conditions")
                 }
             }
@@ -907,6 +1150,7 @@ where
                                 index: 0,
                                 macro_arguments: MacroArguments::new(),
                                 macro_invocation: OriginId::UNKNOWN,
+                                replay_marker: None,
                             }));
                             continue;
                         }
@@ -932,6 +1176,7 @@ where
                             if let InputFrame::Source(source) = popped {
                                 self.last_source_frame = Some(LastSourceFrame {
                                     source_id: source.source_id,
+                                    input_record: source.input_record,
                                     frame: source.frame,
                                     next_source_offset: source.next_source_offset,
                                 });
@@ -943,6 +1188,7 @@ where
                             if let InputFrame::Source(source) = popped {
                                 self.last_source_frame = Some(LastSourceFrame {
                                     source_id: source.source_id,
+                                    input_record: source.input_record,
                                     frame: source.frame,
                                     next_source_offset: source.next_source_offset,
                                 });
@@ -961,7 +1207,7 @@ where
                     };
                     return Ok(Some(ExpansionToken::new(token, false)));
                 }
-                InputFrame::Condition(_) => {
+                InputFrame::Condition { .. } => {
                     unreachable!("current_token_frame_index skips conditions")
                 }
             }
@@ -979,7 +1225,7 @@ impl<S> InputStack<S> {
                 token_list.replay_kind,
                 token_list.index,
             )),
-            InputFrame::Source(_) | InputFrame::Condition(_) => None,
+            InputFrame::Source(_) | InputFrame::Condition { .. } => None,
         }
     }
 
@@ -1015,6 +1261,57 @@ impl<S> InputStack<S> {
                     if frame.token_list == token_list && frame.replay_kind == replay_kind
             )
         })
+    }
+
+    /// Returns whether a synchronously delimited replay frame is still live.
+    #[must_use]
+    pub fn contains_token_list_replay_marker(&self, marker: TokenListReplayMarker) -> bool {
+        self.frames.iter().any(|frame| {
+            matches!(
+                frame,
+                InputFrame::TokenList(frame) if frame.replay_marker == Some(marker)
+            )
+        })
+    }
+
+    /// Retires a marked replay once it and every token-list replay above it
+    /// are exhausted, without reading the next token from the underlying
+    /// input frame.
+    ///
+    /// TeX82 performs this cleanup in `end_token_list` before `get_next`
+    /// resumes the input below a u-template. Macro and argument frames can be
+    /// exhausted above that template, so checking only the current frame
+    /// would read one token beyond the template boundary.
+    pub fn finish_exhausted_token_list_replay(
+        &mut self,
+        marker: TokenListReplayMarker,
+        stores: &impl ExpansionState,
+    ) -> bool {
+        let Some(marked_index) = self.frames.iter().position(|frame| {
+            matches!(
+                frame,
+                InputFrame::TokenList(frame) if frame.replay_marker == Some(marker)
+            )
+        }) else {
+            return true;
+        };
+
+        let can_finish = self.frames[marked_index..].iter().all(|frame| match frame {
+            InputFrame::TokenList(frame) => frame.index >= stores.tokens(frame.token_list).len(),
+            InputFrame::Condition { .. } => true,
+            InputFrame::Source(_) => false,
+        });
+        if !can_finish {
+            return false;
+        }
+
+        let mut index = 0usize;
+        self.frames.retain(|frame| {
+            let keep = index < marked_index || !matches!(frame, InputFrame::TokenList(_));
+            index += 1;
+            keep
+        });
+        true
     }
 
     fn current_token_frame_index(&self) -> Option<usize> {
@@ -1151,23 +1448,29 @@ where
     }
 }
 
-fn source_coordinate<S>(source: &SourceInputFrame<S>) -> LexSourceContext {
-    source_coordinate_from_frame(source.source_id, &source.frame)
-}
-
 fn next_line_source_context<S>(source: &SourceInputFrame<S>) -> LexSourceContext {
     LexSourceContext {
         source_id: source.source_id,
+        input_record: source.input_record,
         byte_offset: u64::try_from(source.next_source_offset).unwrap_or(u64::MAX),
         line: u32::try_from(source.frame.line_number.saturating_add(1)).unwrap_or(u32::MAX),
         column: 0,
     }
 }
 
-fn source_coordinate_from_frame(source_id: SourceId, frame: &SourceFrame) -> LexSourceContext {
+fn source_coordinate<S>(source: &SourceInputFrame<S>) -> LexSourceContext {
+    source_coordinate_from_frame(source.source_id, source.input_record, &source.frame)
+}
+
+fn source_coordinate_from_frame(
+    source_id: SourceId,
+    input_record: Option<InputRecordId>,
+    frame: &SourceFrame,
+) -> LexSourceContext {
     let byte_offset = frame.buffer_offset + byte_offset_for_char_offset(frame);
     LexSourceContext {
         source_id,
+        input_record,
         byte_offset: u64::try_from(byte_offset).unwrap_or(u64::MAX),
         line: u32::try_from(frame.line_number).unwrap_or(u32::MAX),
         column: u32::try_from(frame.column).unwrap_or(u32::MAX),
@@ -1196,8 +1499,9 @@ fn allocate_source_origin(
     stores: &mut impl ExpansionState,
     coordinate: LexSourceContext,
 ) -> OriginId {
-    stores.source_origin(
+    stores.source_origin_with_input_record(
         coordinate.source_id,
+        coordinate.input_record,
         coordinate.byte_offset,
         coordinate.line,
         coordinate.column,

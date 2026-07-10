@@ -91,7 +91,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [x] `\endinput` - Stops reading the current input source after the current line through the lexer input stack; source identity is pinned by World input records and lexer summaries can restore mid-source positions.
 - [x] `\immediate` - Executes the following output stream operation immediately for `\openout`, `\write`, and `\closeout`.
 - [x] `\input` - Pushes a driver-provided source at the current input position. `tex-expand` scans the file name and calls a source hook; it does not read the filesystem directly.
-- [ ] `\inputlineno` - Current line number in the active input file.
+- [x] `\inputlineno` - Current physical line number in the active input source, available as an internal integer and through `\the`.
 - [x] `\openin` - Opens a World-backed content-addressed input stream; missing files leave the slot at EOF.
 - [x] `\openout` - Opens a World output stream through a deferred whatsit fired at shipout.
 - [x] `\output` - Token list invoked by the page builder for output routine processing; output routines run through the shared main-control driver with `\box255` handling.
@@ -134,7 +134,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [x] `\lefthyphenmin` - Minimum characters before the first automatic hyphen; consumed by hlist hyphenation and `\showhyphens`.
 - [x] `\patterns` - Adds lccode-normalized INITEX-style Liang patterns for language 0 into the snapshot-covered hyphenation trie.
 - [x] `\righthyphenmin` - Minimum characters after the last automatic hyphen; consumed by hlist hyphenation and `\showhyphens`.
-- [ ] `\setlanguage` - Inserts a language whatsit into the current horizontal list.
+- [x] `\setlanguage` - Scans a TeX82 language number in horizontal mode and inserts a language whatsit carrying normalized language and hyphen minima.
 - [x] `\uchyph` - Enables hyphenation of words beginning with uppercase letters when positive.
 
 ## Insertions And Splits
@@ -152,7 +152,7 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 
 - [x] `\day` - Job-start day of the month. Assignable integer parameter initialized from `World`'s job clock; parity regeneration pins `SOURCE_DATE_EPOCH` for both Umber and reference TeX.
 - [x] `\deadcycles` - Number of output routine calls since the last `\shipout`; read/write page-builder counter.
-- [ ] `\dump` - Writes a format file in INITEX; otherwise ends the job.
+- [x] `\dump` - Ends the job through TeX's ordinary final-cleanup path, but emits one warning and does not write a format file; this deliberate divergence is recorded in `docs/divergences.md`.
 - [x] `\end` - Ends the job with TeX's final cleanup, flushing remaining page material through the output routine before exiting the batch loop.
 - [x] `\everyjob` - Token list inserted at the start of every job. Implemented as an assignable token list parameter; job-start insertion is tracked with plain.tex bring-up in the conformance epic.
 - [x] `\jobname` - Expands to the driver-provided job name as rendered character tokens.

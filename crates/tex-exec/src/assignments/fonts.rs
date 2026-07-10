@@ -1,6 +1,7 @@
 use super::*;
 use std::path::PathBuf;
 use tex_fonts::LoadedFont;
+use tex_state::InputOpenState;
 use tex_state::ids::FontId;
 use tex_state::scaled::FontSizeSpec;
 
@@ -21,7 +22,12 @@ where
     let font_name = scan_font_file_name(input, stores, hooks)?;
     let size_spec = scan_font_size_spec(input, stores, hooks, context)?;
     let path = tfm_path(&font_name);
-    let content = stores.world_mut().read_file(&path)?;
+    let content = hooks
+        .open_font(&mut stores.input_open_context(), &path)
+        .map_err(|message| ExecError::FontOpen {
+            name: font_name.clone(),
+            message,
+        })?;
     let tfm = tex_fonts::TfmFont::parse_with_size(content.bytes(), size_spec)?;
     let parameters = tfm
         .parameters
@@ -39,7 +45,7 @@ where
         parameters,
         tfm.font_metrics(),
     );
-    let id = stores.intern_font(loaded);
+    let id = stores.intern_font_with_identifier(loaded, target);
     let meaning = Meaning::Font(id);
     if apply_globaldefs(prefixes.global, stores) {
         stores.set_meaning_global(target, meaning);
@@ -233,7 +239,9 @@ fn append_font_name_token(name: &mut String, token: Token) -> Result<(), ExecErr
             name.push(ch);
             Ok(())
         }
-        Token::Cs(_) | Token::Param(_) => Err(ExecError::MissingToken { context: "\\font" }),
+        Token::Cs(_) | Token::Param(_) | Token::Frozen(_) => {
+            Err(ExecError::MissingToken { context: "\\font" })
+        }
     }
 }
 

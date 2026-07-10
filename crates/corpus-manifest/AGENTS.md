@@ -2,6 +2,8 @@
 
 Read the repository-level `AGENTS.md` before editing here. This crate owns the dependency-free parser and validator for `tests/corpus-manifest.txt`, which is consumed by host-side corpus acquisition and parity tooling.
 
+`src/lib.rs` owns the manifest model/parser and `src/tests.rs` owns its unit tests.
+
 ## Boundaries
 
 - Keep this crate free of third-party dependencies.

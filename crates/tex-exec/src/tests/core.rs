@@ -1,5 +1,7 @@
 use super::support::*;
 use super::*;
+use tex_state::ids::ArenaRef;
+use tex_state::node::Node;
 use tex_state::scaled::Scaled;
 
 #[test]
@@ -88,6 +90,65 @@ fn dispatch_relax_continues_without_state_mutation() {
         .expect("relax dispatch"),
         DispatchAction::Continue
     );
+}
+
+#[test]
+fn dump_warns_once_and_stops_before_following_input() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(r"\dump\dump"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("dump should finish through the end cleanup path");
+
+    let log = terminal_effect_text(&stores);
+    assert_eq!(log.matches("\\dump format serialization").count(), 1);
+}
+
+#[test]
+fn inputlineno_reports_current_physical_source_line() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\relax\n\\message{L=\\the\\inputlineno}\\end",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("inputlineno should expand as an internal integer");
+
+    assert!(terminal_effect_text(&stores).contains("L=2"));
+}
+
+#[test]
+fn setlanguage_appends_normalized_language_whatsit_in_hmode() {
+    let mut stores = Universe::new();
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        r"\lefthyphenmin=0 \righthyphenmin=99 \setbox0=\hbox{\setlanguage7}",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("setlanguage should append a language whatsit");
+
+    let box0 = stores.box_reg(0).expect("box should be assigned");
+    let [tex_state::node::Node::HList(box_node)] = stores.nodes(box0) else {
+        panic!("register 0 should hold an hbox");
+    };
+    assert!(matches!(
+        stores.nodes(box_node.children),
+        [tex_state::node::Node::Whatsit(
+            tex_state::node::Whatsit::Language {
+                language: 7,
+                left_hyphen_min: 1,
+                right_hyphen_min: 63,
+            }
+        )]
+    ));
 }
 
 #[test]
@@ -418,6 +479,41 @@ fn let_assigns_control_sequence_and_implicit_character_meanings() {
 }
 
 #[test]
+fn let_skips_spaces_before_optional_equals_and_aliases_control_symbol() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\def\\\\#1{#1}\\let\\alias   = \\\\ "));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("let should scan the raw control-symbol meaning");
+
+    let control_symbol = stores.symbol("\\").expect("control symbol");
+    let alias = stores.symbol("alias").expect("alias");
+    assert_eq!(stores.meaning(alias), stores.meaning(control_symbol));
+}
+
+#[test]
+fn plain_getf_ctor_setup_restores_catcodes_before_control_symbol_alias() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    stores.set_catcode('@', Catcode::Letter);
+    let mut input = InputStack::new(MemoryInput::new(
+        "{\\catcode`p=12 \\catcode`t=12 \\gdef\\\\#1pt{#1}} \\let\\getf@ctor=\\\\",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("plain.tex getf@ctor setup should execute");
+
+    assert_eq!(stores.catcode('p'), Catcode::Letter);
+    assert_eq!(stores.catcode('t'), Catcode::Letter);
+    let control_symbol = stores.symbol("\\").expect("control symbol");
+    let alias = stores.symbol("getf@ctor").expect("getf@ctor alias");
+    assert_eq!(stores.meaning(alias), stores.meaning(control_symbol));
+}
+
+#[test]
 fn futurelet_assigns_second_token_meaning_and_preserves_order() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
@@ -468,10 +564,30 @@ fn def_accepts_active_character_target_and_expands_it() {
 
     assert!(
         stores
-            .macro_meaning(stores.symbol("~").expect("active symbol"))
+            .macro_meaning(stores.active_character_symbol('~').expect("active symbol"))
             .is_some()
     );
     assert_eq!(macro_text(&stores, "x"), "OK");
+}
+
+#[test]
+fn active_character_and_same_spelling_control_symbol_expand_independently() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    stores.set_catcode('~', Catcode::Active);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\def~{ACTIVE}\\def\\~{NAMED}\\edef\\a{~}\\edef\\b{\\~}",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("colliding printed spellings remain independent");
+
+    let named = stores.symbol("~").expect("named control symbol");
+    let active = stores.active_character_symbol('~').expect("active symbol");
+    assert_ne!(named, active);
+    assert_eq!(macro_text(&stores, "a"), "ACTIVE");
+    assert_eq!(macro_text(&stores, "b"), "NAMED");
 }
 
 #[test]
@@ -509,7 +625,7 @@ fn futurelet_accepts_active_character_target() {
     .expect("futurelet executes");
 
     assert_eq!(
-        stores.meaning(stores.symbol("~").expect("active symbol")),
+        stores.meaning(stores.active_character_symbol('~').expect("active symbol")),
         Meaning::CharToken {
             ch: 'x',
             cat: Catcode::Letter
@@ -529,7 +645,7 @@ fn countdef_accepts_active_character_target_and_assigns_through_it() {
         .expect("active character countdef executes");
 
     assert_eq!(
-        stores.meaning(stores.symbol("~").expect("active symbol")),
+        stores.meaning(stores.active_character_symbol('~').expect("active symbol")),
         Meaning::CountRegister(12)
     );
     assert_eq!(stores.count(12), 7);
@@ -547,7 +663,7 @@ fn outer_def_accepts_active_character_target() {
         .expect("outer active character definition executes");
 
     assert!(matches!(
-        stores.meaning(stores.symbol("~").expect("active symbol")),
+        stores.meaning(stores.active_character_symbol('~').expect("active symbol")),
         Meaning::Macro { flags, .. } if flags.contains(tex_state::meaning::MeaningFlags::OUTER)
     ));
 }
@@ -579,6 +695,32 @@ fn box_primitives_round_trip_through_registers() {
         panic!("current page should contain copied-out hbox");
     };
     assert_eq!(appended.width.raw(), 10 * tex_state::scaled::Scaled::UNITY);
+}
+
+#[test]
+fn last_box_assignment_replays_with_identical_state_hash() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let checkpoint = stores.snapshot();
+    let source = "\\setbox0=\\hbox{\\raise2pt\\hbox to7pt{}\\global\\setbox1=\\lastbox}";
+
+    let mut input = InputStack::new(MemoryInput::new(source));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("first lastbox execution");
+    let first_box = stores.box_reg(1).expect("global lastbox destination");
+    let [Node::HList(first_node)] = stores.nodes(first_box) else {
+        panic!("lastbox destination should contain an hbox");
+    };
+    assert_eq!(first_node.shift.raw(), 0, "lastbox clears box shift");
+    let first_hash = stores.snapshot().state_hash();
+    stores.rollback(&checkpoint);
+    let mut input = InputStack::new(MemoryInput::new(source));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("replayed lastbox execution");
+
+    assert_eq!(stores.snapshot().state_hash(), first_hash);
 }
 
 #[test]
@@ -1417,6 +1559,46 @@ fn forced_page_penalty_runs_default_output() {
 }
 
 #[test]
+fn page_output_promotes_nested_survivor_children_into_one_root() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\output={\\global\\setbox2=\\copy255 \\shipout\\box255}\
+         \\topskip=0pt \\setbox0=\\hbox{X}\\copy0 \\penalty-10000",
+    ));
+
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("nested page output should promote without panicking");
+
+    assert_eq!(stats.shipped_artifacts.len(), 1);
+    let root = stores
+        .box_reg(2)
+        .expect("output routine should retain page copy");
+    let ArenaRef::Survivor(root_id) = root.arena() else {
+        panic!("retained page should be survivor-owned");
+    };
+    let mut pending = vec![root];
+    let mut nested_boxes = 0;
+    while let Some(list) = pending.pop() {
+        for node in stores.nodes(list) {
+            if let Node::HList(box_node) | Node::VList(box_node) = node {
+                let ArenaRef::Survivor(child_root) = box_node.children.arena() else {
+                    panic!("promoted page contains an epoch child");
+                };
+                assert_eq!(child_root, root_id);
+                nested_boxes += 1;
+                pending.push(box_node.children);
+            }
+        }
+    }
+    assert!(
+        nested_boxes >= 2,
+        "page should retain packed and source boxes"
+    );
+}
+
+#[test]
 fn mark_scans_raw_general_text_then_expands_payload() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);
@@ -1590,7 +1772,7 @@ fn macro_text(stores: &Universe, name: &str) -> String {
         .iter()
         .filter_map(|token| match token {
             Token::Char { ch, .. } => Some(*ch),
-            Token::Cs(_) | Token::Param(_) => None,
+            Token::Cs(_) | Token::Param(_) | Token::Frozen(_) => None,
         })
         .collect()
 }

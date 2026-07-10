@@ -4,6 +4,7 @@ use std::fmt;
 
 use tex_lex::{InputSource, InputStack, LexError, TokenListReplayKind};
 use tex_state::BoxDimension;
+use tex_state::env::banks::GlueParam;
 use tex_state::glue::Order;
 use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
@@ -676,6 +677,18 @@ where
                 stores.dimen_param(tex_state::env::banks::DimenParam::new(index)),
             ));
         }
+        Meaning::SkipRegister(index) => {
+            consume_optional_space(input, stores, recorder, hooks, expander)?;
+            return Ok(ScannedDimen::new(stores.glue(stores.skip(index)).width));
+        }
+        Meaning::GlueParam(index) => {
+            consume_optional_space(input, stores, recorder, hooks, expander)?;
+            let glue = stores.glue_param(GlueParam::new(index));
+            return Ok(ScannedDimen::new(stores.glue(glue).width));
+        }
+        Meaning::MuskipRegister(_) | Meaning::MuGlueParam(_) => {
+            return Err(ScanDimenError::IncompatibleGlueUnits { context: token });
+        }
         Meaning::PageDimension(dimension) => {
             consume_optional_space(input, stores, recorder, hooks, expander)?;
             return Ok(ScannedDimen::new(stores.page_dimension(dimension)));
@@ -684,6 +697,15 @@ where
             let index = scan_register_index(input, stores, recorder, hooks, expander, token)?;
             consume_optional_space(input, stores, recorder, hooks, expander)?;
             return Ok(ScannedDimen::new(stores.dimen(index)));
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Skip) => {
+            let index = scan_register_index(input, stores, recorder, hooks, expander, token)?;
+            consume_optional_space(input, stores, recorder, hooks, expander)?;
+            return Ok(ScannedDimen::new(stores.glue(stores.skip(index)).width));
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Muskip) => {
+            let _ = scan_register_index(input, stores, recorder, hooks, expander, token)?;
+            return Err(ScanDimenError::IncompatibleGlueUnits { context: token });
         }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::Wd
@@ -850,6 +872,39 @@ where
         None => return Ok(None),
     };
 
+    if let Token::Cs(symbol) = semantic_token(first) {
+        let meaning = stores.meaning(symbol);
+        recorder.record_meaning(symbol, meaning);
+        let internal = match meaning {
+            Meaning::DimenRegister(index) => Some(stores.dimen(index)),
+            Meaning::DimenParam(index) => {
+                Some(stores.dimen_param(tex_state::env::banks::DimenParam::new(index)))
+            }
+            Meaning::SkipRegister(index) => Some(stores.glue(stores.skip(index)).width),
+            Meaning::GlueParam(index) => {
+                Some(stores.glue(stores.glue_param(GlueParam::new(index))).width)
+            }
+            Meaning::PageDimension(dimension) => Some(stores.page_dimension(dimension)),
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen) => {
+                let index = scan_register_index(input, stores, recorder, hooks, expander, first)?;
+                Some(stores.dimen(index))
+            }
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Skip) => {
+                let index = scan_register_index(input, stores, recorder, hooks, expander, first)?;
+                Some(stores.glue(stores.skip(index)).width)
+            }
+            Meaning::MuskipRegister(_)
+            | Meaning::MuGlueParam(_)
+            | Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Muskip) => {
+                return Err(ScanDimenError::IncompatibleGlueUnits { context: first });
+            }
+            _ => None,
+        };
+        if let Some(unit) = internal {
+            return Ok(Some(ScannedUnit::Internal(unit)));
+        }
+    }
+
     if options.allow_infinite_units {
         match keyword_matches(input, stores, recorder, hooks, expander, first, "fil")? {
             ExpandedKeywordMatch::Matched => {
@@ -927,7 +982,9 @@ where
         Some(ScannedUnit::Ex) => Ok(Some(ScannedUnit::FontRelative {
             unit: stores.font_parameter(stores.current_font(), 5),
         })),
-        Some(ScannedUnit::Infinite(_)) => unreachable!("unit keywords never return infinity"),
+        Some(ScannedUnit::Infinite(_) | ScannedUnit::Internal(_)) => {
+            unreachable!("unit keywords never return non-keyword units")
+        }
         Some(ScannedUnit::FontRelative { .. }) => {
             unreachable!("unit keywords never return resolved font-relative units")
         }
@@ -996,6 +1053,7 @@ where
 enum ScannedUnit {
     Physical { unit: PhysicalUnit, true_unit: bool },
     Infinite(Order),
+    Internal(Scaled),
     FontRelative { unit: Scaled },
     Em,
     Ex,
@@ -1081,7 +1139,9 @@ fn convert_scanned_unit(
             scanned.order = order;
             Ok(scanned)
         }
-        ScannedUnit::FontRelative { unit } => convert_font_relative_unit(integer, fraction, unit),
+        ScannedUnit::Internal(unit) | ScannedUnit::FontRelative { unit } => {
+            convert_font_relative_unit(integer, fraction, unit)
+        }
         ScannedUnit::Em | ScannedUnit::Ex => unreachable!("font units are handled while scanning"),
     }
 }

@@ -1,6 +1,7 @@
 use tex_expand::{ExpansionHooks, NoopRecorder, ReadRecorder};
 use tex_lex::{InputSource, InputStack};
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
+use tex_state::provenance::InsertedOriginKind;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{ContentHash, GroupKind, GroupMismatch, Universe};
 
@@ -78,7 +79,7 @@ where
             stores.meaning(symbol)
         }
         Token::Char { .. } => return dispatch_character_token(nest, traced, input, stores, hooks),
-        Token::Param(_) => {
+        Token::Param(_) | Token::Frozen(_) => {
             return Ok(DispatchAction::NotConsumed);
         }
     };
@@ -197,7 +198,9 @@ where
             assignments::append_given_char(nest, input, stores, ch)?;
             Ok(DispatchAction::Continue)
         }
-        Token::Cs(_) | Token::Param(_) => unreachable!("caller passes a character token"),
+        Token::Cs(_) | Token::Param(_) | Token::Frozen(_) => {
+            unreachable!("caller passes a character token")
+        }
     }
 }
 
@@ -241,7 +244,15 @@ where
 {
     match stores.leave_group_with_kind(expected) {
         Ok(tokens) => {
-            push_tokens(input, stores, tokens);
+            let tokens: Vec<_> = tokens
+                .into_iter()
+                .map(|token| {
+                    let inserted =
+                        stores.inserted_origin(InsertedOriginKind::AfterGroup, token, origin);
+                    TracedTokenWord::pack(token, inserted)
+                })
+                .collect();
+            push_traced_tokens(input, stores, tokens);
             Ok(())
         }
         Err(mismatch) => Err(group_mismatch_error(expected, mismatch, origin)),
@@ -284,6 +295,29 @@ where
     input.push_token_list(token_list, tex_lex::TokenListReplayKind::Inserted);
 }
 
+pub(crate) fn push_traced_tokens<S, I>(input: &mut InputStack<S>, stores: &mut Universe, tokens: I)
+where
+    S: InputSource,
+    I: IntoIterator<Item = TracedTokenWord>,
+{
+    let traced: Vec<_> = tokens.into_iter().collect();
+    if traced.is_empty() {
+        return;
+    }
+    let semantic: Vec<_> = traced
+        .iter()
+        .map(|token| tex_expand::semantic_token(*token))
+        .collect();
+    let origins: Vec<_> = traced.iter().map(|token| token.origin()).collect();
+    let token_list = stores.intern_token_list(&semantic);
+    let origin_list = stores.allocate_origin_list(&origins);
+    input.push_token_list_with_origins(
+        token_list,
+        origin_list,
+        tex_lex::TokenListReplayKind::Inserted,
+    );
+}
+
 pub(crate) fn unimplemented_typesetting(
     mode: Mode,
     token: Token,
@@ -308,6 +342,7 @@ impl ResolveTokenName for Universe {
             Token::Cs(symbol) => self.resolve(symbol).to_owned(),
             Token::Char { ch, cat } => format!("{ch:?}/{cat:?}"),
             Token::Param(slot) => format!("#{slot}"),
+            Token::Frozen(_) => "\\endtemplate".to_owned(),
         }
     }
 }

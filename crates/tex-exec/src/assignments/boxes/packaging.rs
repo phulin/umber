@@ -3,7 +3,7 @@ use tex_lex::{InputSource, InputStack};
 use tex_state::ids::NodeListId;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::node::Node;
-use tex_state::token::TracedTokenWord;
+use tex_state::token::{Catcode, TracedTokenWord};
 use tex_state::{GroupKind, Universe};
 use tex_typeset::{PackDiagnostic, PackSpec};
 
@@ -11,8 +11,8 @@ use crate::packing_params::{hpack, hpack_params, vpack, vpack_params, vtop};
 use crate::{ExecError, Mode, ModeNest, leave_group};
 
 use super::super::{
-    flush_pending_hchars, is_begin_group, is_end_group, next_non_space_traced_x, next_non_space_x,
-    scan_optional_keyword_x, scan_register_index, scan_scaled,
+    flush_pending_hchars, has_catcode_meaning, next_non_space_traced_x, scan_optional_keyword_x,
+    scan_register_index, scan_scaled,
 };
 use super::vsplit::scan_vsplit_node;
 
@@ -48,12 +48,13 @@ where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    scan_box_value(input, stores, hooks, context)?
+    scan_box_value(None, input, stores, hooks, context)?
         .map(ScannedBoxValue::into_node)
         .ok_or(ExecError::MissingToken { context: "box" })
 }
 
 pub(super) fn scan_box_value<S, H>(
+    nest: Option<&mut ModeNest>,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
@@ -94,7 +95,40 @@ where
             scan_vsplit_node(input, stores, hooks, traced)
                 .map(|value| value.map(ScannedBoxValue::Fresh))
         }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastBox) => {
+            let nest = nest.ok_or(ExecError::MissingToken { context: "box" })?;
+            take_last_box(nest, stores).map(|value| value.map(ScannedBoxValue::Shared))
+        }
         _ => Err(ExecError::MissingToken { context: "box" }),
+    }
+}
+
+pub(super) fn take_last_box(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+) -> Result<Option<Node>, ExecError> {
+    flush_pending_hchars(nest, stores)?;
+    match nest.current_mode() {
+        Mode::Math | Mode::DisplayMath => {
+            stores.world_mut().write_text(
+                tex_state::PrintSink::TerminalAndLog,
+                "\n! You can't use `\\lastbox' in math mode.\nSorry; this \\lastbox will be void.\n",
+            );
+            Ok(None)
+        }
+        Mode::Vertical
+            if nest.current_list().is_empty() && stores.page_contributions().is_empty() =>
+        {
+            stores.world_mut().write_text(
+                tex_state::PrintSink::TerminalAndLog,
+                "\n! You can't use `\\lastbox' in vertical mode.\nSorry...I usually can't take things from the current page.\nThis \\lastbox will therefore be void.\n",
+            );
+            Ok(None)
+        }
+        Mode::Vertical => Ok(stores.take_page_contribution_last_box()),
+        Mode::InternalVertical | Mode::Horizontal | Mode::RestrictedHorizontal => {
+            Ok(nest.current_list_mut().take_last_box())
+        }
     }
 }
 
@@ -110,10 +144,14 @@ where
     H: ExpansionHooks<S>,
 {
     let spec = scan_pack_spec(input, stores, hooks, context)?;
-    let opener = next_non_space_x(input, stores, hooks)?.ok_or(ExecError::MissingToken {
+    let opener = next_non_space_traced_x(input, stores, hooks)?.ok_or(ExecError::MissingToken {
         context: "box group",
     })?;
-    if !is_begin_group(opener) {
+    if !has_catcode_meaning(
+        stores,
+        tex_expand::semantic_token(opener),
+        Catcode::BeginGroup,
+    ) {
         return Err(ExecError::MissingToken {
             context: "box group",
         });
@@ -190,10 +228,10 @@ where
             })?;
             let semantic = tex_expand::semantic_token(token);
             let math_mode = matches!(nest.current_mode(), Mode::Math | Mode::DisplayMath);
-            if !math_mode && is_begin_group(semantic) {
+            if !math_mode && has_catcode_meaning(stores, semantic, Catcode::BeginGroup) {
                 brace_depth += 1;
             }
-            if !math_mode && is_end_group(semantic) {
+            if !math_mode && has_catcode_meaning(stores, semantic, Catcode::EndGroup) {
                 brace_depth -= 1;
                 if brace_depth == 0 {
                     flush_pending_hchars(nest, stores)?;

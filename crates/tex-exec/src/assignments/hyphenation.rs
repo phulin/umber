@@ -98,7 +98,7 @@ where
                 }
             }
             Token::Char { ch, .. } => current.push(ch),
-            Token::Cs(_) | Token::Param(_) => {}
+            Token::Cs(_) | Token::Param(_) | Token::Frozen(_) => {}
         }
     }
     Err(ExecError::MissingToken { context })

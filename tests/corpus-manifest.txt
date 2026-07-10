@@ -2,14 +2,23 @@
 # The sha256 values are hashes of the fetched bytes exactly as served by the
 # recorded URL; do not normalize line endings before hashing.
 #
-# Each document starts with a doc line. Remaining lines use: key value
+# Support inputs start with a support line; runnable documents start with a
+# doc line and name their format source. Remaining lines use: key value
 # Values extend to the end of the line; comments must use their own line.
+
+support plain.tex
+url https://mirrors.ctan.org/macros/plain/base/plain.tex
+sha256 7c1223b880fa513542a616b86c4fa02d5ee703839427951982d7e311fd9049b2
+license Knuth-CTAN
+redistributable true
+notes CTAN identifies macros/plain/base as Knuth's definitive Plain TeX source under the Knuth License. The file header permits unlimited copying and redistribution while unmodified. corpus-sync fetches the exact upstream bytes into the gitignored corpus cache; do not modify or commit them.
 
 doc story.tex
 url https://mirrors.ctan.org/macros/plain/base/story.tex
 sha256 592939f339e78d7faca19c75017ec338db7c9efdea085c4374e5b13909cc8ec6
 license Knuth-CTAN
 redistributable true
+format_source plain.tex
 expected_ref_dvi_sha256 02bace3e2be9038cda788e2a19c7516b93349758f9ea09b8d7630403cb16e32c
 notes CTAN plain/base records the package license as Knuth License and the directory README identifies these as Donald E. Knuth's official master files. Keep the fetched file unmodified; the expected DVI hash is from pdftex DVI output with only the preamble banner comment normalized.
 
@@ -18,5 +27,6 @@ url https://mirrors.ctan.org/info/gentle/gentle.tex
 sha256 b3e1acf4a6feb6a13b0ace279a5be7f1546ac2198452188f6fb22b4eb590ba3f
 license LicenseRef-Gentle-redistributable
 redistributable true
+format_source plain.tex
 expected_ref_dvi_sha256 cdaa3304bd578a450bbc5fb71424e790cc6e4bb4372f2e53d46bad43a5c51884
 notes CTAN records gentle as a free license not otherwise listed, and the gentle.tex header says users should feel free to photocopy and/or distribute the manual if it remains in one piece. The expected DVI hash is from pdfTeX 3.141592653-2.6-1.40.27 (TeX Live 2025) DVI output with SOURCE_DATE_EPOCH=1783604160, FORCE_SOURCE_DATE=1, and only the preamble banner comment normalized; gentle.tex writes \\today and \\time, so the pinned job clock is part of the reference environment.

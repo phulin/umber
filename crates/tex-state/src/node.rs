@@ -251,6 +251,11 @@ pub enum Whatsit {
         class: String,
         payload: Vec<u8>,
     },
+    Language {
+        language: u8,
+        left_hyphen_min: u8,
+        right_hyphen_min: u8,
+    },
 }
 
 impl Node {

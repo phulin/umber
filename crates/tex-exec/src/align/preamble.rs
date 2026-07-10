@@ -6,7 +6,7 @@ use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::token::{Catcode, Token, TracedTokenWord};
 use tex_state::{GroupKind, Universe};
 
-use crate::assignments::{is_begin_group, next_non_space_x, scan_scaled};
+use crate::assignments::{has_catcode_meaning, next_non_space_x, scan_scaled};
 use crate::mode::{AlignColumn, AlignState, AlignmentKind, AlignmentPackSpec};
 use crate::{ExecError, assignments};
 
@@ -26,14 +26,14 @@ where
     let opener = next_non_space_x(input, stores, hooks)?.ok_or(ExecError::MissingToken {
         context: "alignment group",
     })?;
-    if !is_begin_group(opener) {
+    if !has_catcode_meaning(stores, opener, Catcode::BeginGroup) {
         return Err(ExecError::MissingToken {
             context: "alignment group",
         });
     }
     stores.enter_group_with_kind(GroupKind::Simple);
 
-    let end_template = Token::Cs(stores.intern("endtemplate"));
+    let end_template = Token::frozen_end_template();
     let mut scanner = PreambleScanner::new(input, stores, hooks);
     let mut columns = Vec::new();
     let mut tabskips = vec![scanner.current_tabskip()];
@@ -43,7 +43,7 @@ where
         let boundary = columns.len();
         ensure_boundary(&mut tabskips, boundary, scanner.current_tabskip());
 
-        let u_template = scan_u_template(&mut scanner)?;
+        let u_template = scan_u_template(&mut scanner, columns.len(), &mut loop_start)?;
         let (v_template, terminator) = scan_v_template(&mut scanner, end_template)?;
         columns.push(AlignColumn {
             u_template,
@@ -68,7 +68,6 @@ where
         tabskips,
         scanner.current_tabskip(),
         loop_start,
-        end_template,
     ))
 }
 
@@ -103,12 +102,17 @@ where
     }
 }
 
-fn scan_u_template<S, H>(scanner: &mut PreambleScanner<'_, S, H>) -> Result<TokenListId, ExecError>
+fn scan_u_template<S, H>(
+    scanner: &mut PreambleScanner<'_, S, H>,
+    column: usize,
+    loop_start: &mut Option<usize>,
+) -> Result<TokenListId, ExecError>
 where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
     let mut builder = scanner.stores.token_list_builder();
+    let mut has_material = false;
     loop {
         let token = scanner.next_token()?.ok_or(ExecError::MissingToken {
             context: "alignment preamble",
@@ -116,10 +120,17 @@ where
         if is_parameter_token(token) {
             return Ok(scanner.stores.finish_token_list(&mut builder));
         }
+        // TeX82 records a leading tab on an empty u-template as `cur_loop`;
+        // it is a periodic-preamble marker, not a missing-parameter error.
+        if is_alignment_tab_token(token) && !has_material && loop_start.is_none() {
+            *loop_start = Some(column);
+            continue;
+        }
         if is_alignment_tab_token(token) || is_cr_token(scanner.stores, token) {
             return Err(ExecError::MissingHashInAlignmentPreamble);
         }
         builder.push(token);
+        has_material = true;
     }
 }
 

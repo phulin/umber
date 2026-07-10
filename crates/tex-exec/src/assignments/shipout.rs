@@ -256,6 +256,7 @@ where
             },
             Token::Cs(symbol) => PageToken::ControlSequence(self.stores.resolve(symbol).to_owned()),
             Token::Param(slot) => PageToken::Param(slot),
+            Token::Frozen(_) => unreachable!("alignment sentinel escaped into shipout tokens"),
         }
     }
 
@@ -313,6 +314,7 @@ where
                         .map_err(|_| ExecError::ArithmeticOverflow)?,
                 }))
             }
+            Whatsit::Language { .. } => Ok(None),
         }
     }
 

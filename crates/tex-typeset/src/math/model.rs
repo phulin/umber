@@ -1,7 +1,7 @@
 use tex_fonts::CharMetrics;
 use tex_state::glue::GlueSpec;
 use tex_state::ids::FontId;
-use tex_state::node::{KernKind, Node};
+use tex_state::node::{GlueKind, KernKind, LeaderPayload, Node};
 use tex_state::scaled::Scaled;
 
 /// One converted math layout backed by a contiguous node arena.
@@ -119,7 +119,8 @@ pub enum MathNode {
     },
     Glue {
         spec: GlueSpec,
-        kind: MathGlueKind,
+        kind: GlueKind,
+        leader: Option<LeaderPayload>,
     },
     Penalty(i32),
     Rule {
@@ -136,16 +137,7 @@ pub enum MathNode {
 }
 
 /// Glue subtype retained without requiring a `GlueId`.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum MathGlueKind {
-    Normal,
-    MuSkip,
-    ThinMuSkip,
-    MedMuSkip,
-    ThickMuSkip,
-    NonScript,
-    Source,
-}
+pub type MathGlueKind = GlueKind;
 
 /// Owned box node whose children are stored in the surrounding layout arena.
 #[derive(Clone, Debug, PartialEq)]

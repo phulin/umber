@@ -242,7 +242,7 @@ fn read_terminal_read_line(
 }
 
 fn read_prompt(stores: &Universe, target: Symbol) -> String {
-    format!("\n\\{}=", stores.resolve(target))
+    format!("\n{}=", tex_expand::token_text(stores, Token::Cs(target)))
 }
 
 fn scan_read_line_tokens(
@@ -352,7 +352,9 @@ fn append_file_name_token(
             name.push(ch);
             Ok(())
         }
-        Token::Cs(_) | Token::Param(_) => Err(ExecError::MissingToken { context }),
+        Token::Cs(_) | Token::Param(_) | Token::Frozen(_) => {
+            Err(ExecError::MissingToken { context })
+        }
     }
 }
 

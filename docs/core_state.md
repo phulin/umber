@@ -87,8 +87,13 @@ that fallback as rollback-ready.
 
 ## 3. Identity: the interner
 
-- All names intern to dense `Symbol(u32)`. Backing: bump-allocated UTF-8
-  arena + open-addressing hash index. The packed traced-token representation
+- Control-sequence identities intern to dense `Symbol(u32)`. The interner key
+  is `(ControlSequenceKind, spelling)`, where named control sequences and
+  active-character control sequences are disjoint namespaces. Thus active `~`
+  and the escaped control symbol `\~` resolve to the same printable spelling
+  but have distinct symbols and independent Env cells, mirroring TeX82's
+  `active_base+c` and `single_base+c` ranges. Backing: bump-allocated UTF-8
+  arena + namespace-aware open-addressing hash index. The packed traced-token representation
   reserves 30 payload bits for control-sequence symbols, so `Interner::intern`
   is the single enforcement point for the hard `2^30` live-symbol capacity and
   returns `InternerError::TooManySymbols` instead of creating an unrepresentable
@@ -99,9 +104,11 @@ that fallback as rollback-ready.
   rollback is rare, so lazy rebuild is acceptable v1.
 - Dense ids make every downstream lookup an array index; stable ids are what
   compiled code embeds.
-- `\csname`-manufactured names go through the same interner (expl3 does this
-  constantly; the interner must be fast and its growth must be watermarked
-  like everything else).
+- `\csname`-manufactured names enter the named namespace through the same
+  interner (expl3 does this constantly; the interner must be fast and its
+  growth must be watermarked like everything else). Active-character lookup
+  has a separate aggregate facade so callers cannot recreate the old spelling
+  collision accidentally.
 
 ## 4. Meaning: the environment
 
@@ -222,6 +229,14 @@ rare and bursty (verbatim, `\makeatletter`, babel shorthands).
   `Universe::code_table_generations`. `Universe::snapshot` captures the
   structurally shared root pointers and generation counters, and
   `Universe::rollback` restores them atomically with the Env/content tuple.
+  TeX groups save the same six roots in a structurally shared group-root
+  vector: local code-table assignments restore those roots at group exit,
+  while global assignments update the saved roots as well as the live table.
+  The group-root vector is part of the code-table snapshot, so checkpoints
+  taken inside groups retain complete rollback state without a second save
+  stack outside `Stores`. Restoring a changed root at group exit also advances
+  that table's generation so lexer classification cannot outlive the restored
+  catcodes.
   Each implemented table root starts at a canonical shared default root whose
   pages are also canonical shared pages; the first effective write detaches
   the root and then copy-on-writes only the touched page.
@@ -711,6 +726,15 @@ the environment because no API accepts it. Builders are reusable owned scratch
 buffers so the gullet can read frozen lists while building new argument lists.
 Node lists likewise; promotion is expressed as the *only* signature for storing
 into a box register.
+Promotion accepts an epoch-owned root whose descendants may already be owned
+by either the epoch arena or a survivor root. The survivor arena selects the
+source store from each opaque child handle, memoizes each exact source span,
+and iteratively copies the mixed DAG into one new survivor allocation. Every
+descendant in that allocation is rewritten to the new root, shared spans are
+canonicalized once, and no epoch handle crosses the box-register boundary.
+This is required by TeX's ordinary ownership flow: `\copy` can place a node
+with survivor-owned children on the current page, and `fire_up` then packages
+that page into epoch-owned `\box255` material before the register write.
 Box-register replacement paths that preserve TeX's current visible box level
 (`\box`/`\vsplit`-style same-level writes and clears) are still aggregate
 `Universe` facades; downstream crates do not infer or mutate raw environment

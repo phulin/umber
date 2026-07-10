@@ -62,6 +62,22 @@ fn box_builder_groups_restore_local_assignments() {
 }
 
 #[test]
+fn brace_aliases_delimit_box_builder_groups_by_meaning() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\let\\bgroup={\\let\\egroup=}\\count0=1 \\setbox0=\\vbox\\bgroup\\count0=2\\bgroup\\count0=3\\egroup\\egroup",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("brace aliases delimit nested box groups");
+
+    assert!(stores.box_reg(0).is_some());
+    assert_eq!(stores.count(0), 1);
+}
+
+#[test]
 fn aftergroup_replays_tokens_fifo_on_group_exit() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

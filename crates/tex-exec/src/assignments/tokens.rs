@@ -125,7 +125,7 @@ where
 }
 
 pub(crate) fn active_character_symbol(stores: &mut Universe, ch: char) -> Symbol {
-    stores.intern(&ch.to_string())
+    stores.intern_active_character(ch)
 }
 
 pub(super) fn scan_optional_equals_one_space<S>(
@@ -135,11 +135,16 @@ pub(super) fn scan_optional_equals_one_space<S>(
 where
     S: InputSource,
 {
-    let first = input
-        .next_traced_token(stores)?
-        .ok_or(ExecError::MissingToken {
-            context: "\\let right-hand side",
-        })?;
+    let first = loop {
+        let token = input
+            .next_traced_token(stores)?
+            .ok_or(ExecError::MissingToken {
+                context: "\\let right-hand side",
+            })?;
+        if !is_space(tex_expand::semantic_token(token)) {
+            break token;
+        }
+    };
     if !is_other_equals(tex_expand::semantic_token(first)) {
         return Ok(first);
     }
@@ -170,10 +175,10 @@ pub(super) fn token_meaning_for_let(
             ch,
             cat: Catcode::Active,
         } => stores
-            .symbol(&ch.to_string())
+            .active_character_symbol(ch)
             .map_or(Ok(Meaning::Undefined), |symbol| Ok(stores.meaning(symbol))),
         Token::Char { ch, cat } => Ok(Meaning::CharToken { ch, cat }),
-        Token::Param(_) => Err(ExecError::InvalidLetRhs {
+        Token::Param(_) | Token::Frozen(_) => Err(ExecError::InvalidLetRhs {
             token,
             origin: traced.origin(),
         }),
@@ -245,6 +250,26 @@ pub(crate) fn is_begin_group(token: Token) -> bool {
             ..
         }
     )
+}
+
+pub(crate) fn has_catcode_meaning(stores: &Universe, token: Token, expected: Catcode) -> bool {
+    match token {
+        Token::Char {
+            ch,
+            cat: Catcode::Active,
+        } => stores.active_character_symbol(ch).is_some_and(|symbol| {
+            matches!(
+                stores.meaning(symbol),
+                Meaning::CharToken { cat, .. } if cat == expected
+            )
+        }),
+        Token::Char { cat, .. } => cat == expected,
+        Token::Cs(symbol) => matches!(
+            stores.meaning(symbol),
+            Meaning::CharToken { cat, .. } if cat == expected
+        ),
+        Token::Param(_) | Token::Frozen(_) => false,
+    }
 }
 
 pub(crate) fn is_end_group(token: Token) -> bool {

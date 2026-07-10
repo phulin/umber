@@ -95,7 +95,7 @@ where
     let meaning = stores.meaning(symbol);
     match (mode, meaning) {
         (
-            Mode::Horizontal | Mode::RestrictedHorizontal,
+            Mode::Horizontal | Mode::RestrictedHorizontal | Mode::Math | Mode::DisplayMath,
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HSkip),
         )
         | (
@@ -103,7 +103,7 @@ where
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VSkip),
         ) => scan_glue_id(input, stores, hooks, false, traced),
         (
-            Mode::Horizontal | Mode::RestrictedHorizontal,
+            Mode::Horizontal | Mode::RestrictedHorizontal | Mode::Math | Mode::DisplayMath,
             Meaning::UnexpandablePrimitive(
                 primitive @ (UnexpandablePrimitive::HFil
                 | UnexpandablePrimitive::HFill

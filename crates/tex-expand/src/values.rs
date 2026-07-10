@@ -2,6 +2,7 @@ use tex_lex::{InputSource, InputStack, MacroArguments};
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::{FontId, TokenListId};
+use tex_state::math::MathFontSize;
 use tex_state::meaning::{InternalInteger, Meaning, MeaningFlags};
 use tex_state::provenance::SynthesizedOriginKind;
 use tex_state::scaled::Scaled;
@@ -126,7 +127,7 @@ where
             }
             tex_state::meaning::UnexpandablePrimitive::Font => {
                 let symbol = stores
-                    .current_font_symbol()
+                    .font_identifier_symbol(stores.current_font())
                     .ok_or(ExpandError::UnsupportedTheTarget { context: token })?;
                 Ok(Dispatch::Push {
                     replay_kind: ExpansionReplayKind::TheOutput,
@@ -141,19 +142,48 @@ where
                     macro_invocation: OriginId::UNKNOWN,
                 })
             }
+            primitive @ (tex_state::meaning::UnexpandablePrimitive::TextFont
+            | tex_state::meaning::UnexpandablePrimitive::ScriptFont
+            | tex_state::meaning::UnexpandablePrimitive::ScriptScriptFont) => {
+                let family = scan_math_family(input, stores, recorder, hooks, expander, token)?;
+                let font = stores.math_family_font(math_font_size(primitive), family);
+                let symbol = stores
+                    .font_identifier_symbol(font)
+                    .ok_or(ExpandError::UnsupportedTheTarget { context: token })?;
+                Ok(push_rendered_tokens(
+                    stores,
+                    ExpansionReplayKind::TheOutput,
+                    [Token::Cs(symbol)],
+                    cause_origin,
+                ))
+            }
             tex_state::meaning::UnexpandablePrimitive::FontDimen => {
-                let number = scan_int::scan_int_with_expander_and_hooks(
+                let scanned = scan_int::scan_int_with_expander_and_hooks(
                     input, stores, recorder, hooks, expander, token,
-                )?
-                .value();
-                if !(1..=32_767).contains(&number) {
-                    return Err(ExpandError::UnsupportedTheTarget { context: token });
-                }
+                )?;
+                let number = scanned.value();
                 let font = scan_font_selector(input, stores, recorder, hooks, expander, token)?;
+                let available = stores.font_parameter_count(font);
+                let Ok(number) = u16::try_from(number) else {
+                    return Err(ExpandError::FontDimenOutOfRange {
+                        font_name: stores.font_name(font),
+                        number,
+                        available,
+                        context: scanned.context(),
+                    });
+                };
+                if number == 0 || number > available {
+                    return Err(ExpandError::FontDimenOutOfRange {
+                        font_name: stores.font_name(font),
+                        number: i32::from(number),
+                        available,
+                        context: scanned.context(),
+                    });
+                }
                 Ok(push_rendered_text(
                     stores,
                     ExpansionReplayKind::TheOutput,
-                    &format_scaled(stores.font_dimen(font, number as u16)),
+                    &format_scaled(stores.font_dimen(font, number)),
                     cause_origin,
                 ))
             }
@@ -304,6 +334,17 @@ where
             &stores.last_badness().to_string(),
             cause_origin,
         )),
+        Meaning::InternalInteger(InternalInteger::InputLineNumber) => {
+            let line = input
+                .current_source_frame()
+                .map_or(0, |frame| frame.line_number().min(i32::MAX as usize) as i32);
+            Ok(push_rendered_text(
+                stores,
+                ExpansionReplayKind::TheOutput,
+                &line.to_string(),
+                cause_origin,
+            ))
+        }
         Meaning::DimenParam(index) => Ok(push_rendered_text(
             stores,
             ExpansionReplayKind::TheOutput,
@@ -443,6 +484,7 @@ pub(crate) fn string_tokens(stores: &impl ExpansionState, token: Token) -> Vec<T
             out
         }
         Token::Param(slot) => text_tokens(&format!("#{slot}")),
+        Token::Frozen(_) => text_tokens("\\endtemplate"),
     }
 }
 
@@ -454,6 +496,7 @@ pub fn meaning_text(stores: &impl ExpansionState, token: Token) -> String {
         } => format!("the letter {ch}"),
         Token::Char { ch, .. } => format!("the character {ch}"),
         Token::Param(slot) => format!("macro parameter character #{slot}"),
+        Token::Frozen(_) => "end of alignment template".to_owned(),
         Token::Cs(symbol) => match stores.meaning(symbol) {
             Meaning::Undefined => "undefined".to_owned(),
             Meaning::Relax => "\\relax".to_owned(),
@@ -518,7 +561,7 @@ pub fn token_text(stores: &impl ExpansionState, token: Token) -> String {
         .into_iter()
         .filter_map(|token| match token {
             Token::Char { ch, .. } => Some(ch),
-            Token::Cs(_) | Token::Param(_) => None,
+            Token::Cs(_) | Token::Param(_) | Token::Frozen(_) => None,
         })
         .collect()
 }
@@ -734,6 +777,53 @@ where
     };
     match stores.meaning(symbol) {
         Meaning::Font(id) => Ok(id),
-        _ => Err(ExpandError::UnsupportedTheTarget { context: token }),
+        Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::Font) => {
+            Ok(stores.current_font())
+        }
+        Meaning::UnexpandablePrimitive(
+            primitive @ (tex_state::meaning::UnexpandablePrimitive::TextFont
+            | tex_state::meaning::UnexpandablePrimitive::ScriptFont
+            | tex_state::meaning::UnexpandablePrimitive::ScriptScriptFont),
+        ) => {
+            let family = scan_math_family(input, stores, recorder, hooks, expander, token)?;
+            Ok(stores.math_family_font(math_font_size(primitive), family))
+        }
+        _ => Err(ExpandError::MissingFontIdentifier { context: token }),
+    }
+}
+
+fn scan_math_family<S, St, R, H, E>(
+    input: &mut InputStack<S>,
+    stores: &mut St,
+    recorder: &mut R,
+    hooks: &mut H,
+    expander: &mut E,
+    context: TracedTokenWord,
+) -> Result<u8, ExpandError>
+where
+    S: InputSource,
+    St: ExpansionState,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
+{
+    let scanned = scan_int::scan_int_with_expander_and_hooks(
+        input, stores, recorder, hooks, expander, context,
+    )?;
+    u8::try_from(scanned.value())
+        .ok()
+        .filter(|family| *family < 16)
+        .ok_or(ExpandError::MathFamilyOutOfRange {
+            value: scanned.value(),
+            context: scanned.context(),
+        })
+}
+
+fn math_font_size(primitive: tex_state::meaning::UnexpandablePrimitive) -> MathFontSize {
+    match primitive {
+        tex_state::meaning::UnexpandablePrimitive::TextFont => MathFontSize::Text,
+        tex_state::meaning::UnexpandablePrimitive::ScriptFont => MathFontSize::Script,
+        tex_state::meaning::UnexpandablePrimitive::ScriptScriptFont => MathFontSize::ScriptScript,
+        _ => unreachable!("caller restricts math font primitive"),
     }
 }

@@ -9,6 +9,18 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::str;
 
+/// The TeX82 control-sequence namespace containing an interned symbol.
+///
+/// Active characters and escaped names have distinct meanings even when
+/// their printed spelling is the same (for example active `~` and `\~`).
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum ControlSequenceKind {
+    /// A name scanned after an escape character or manufactured by `\csname`.
+    Named,
+    /// A character whose current category code is active.
+    ActiveCharacter,
+}
+
 /// A dense interned-name identifier.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Symbol(u32);
@@ -54,6 +66,7 @@ pub(crate) struct InternerMark {
 pub struct Interner {
     arena: Vec<u8>,
     spans: Vec<(u32, u32)>,
+    kinds: Vec<ControlSequenceKind>,
     next_symbol: u32,
     index: HashMap<u64, Vec<Symbol>>,
     index_dirty: bool,
@@ -68,14 +81,31 @@ impl Interner {
 
     /// Interns `name`, returning its stable dense symbol while it remains live.
     pub(crate) fn intern(&mut self, name: &str) -> Result<Symbol, InternerError> {
+        self.intern_key(ControlSequenceKind::Named, name)
+    }
+
+    /// Interns an active-character control sequence.
+    pub(crate) fn intern_active(&mut self, ch: char) -> Result<Symbol, InternerError> {
+        let mut encoded = [0; 4];
+        self.intern_key(
+            ControlSequenceKind::ActiveCharacter,
+            ch.encode_utf8(&mut encoded),
+        )
+    }
+
+    fn intern_key(
+        &mut self,
+        kind: ControlSequenceKind,
+        name: &str,
+    ) -> Result<Symbol, InternerError> {
         if self.index_dirty {
             self.rebuild_index();
         }
 
-        let hash = content_hash(name);
+        let hash = content_hash(kind, name);
         if let Some(candidates) = self.index.get(&hash) {
             for &symbol in candidates {
-                if self.resolve(symbol) == name {
+                if self.kind(symbol) == kind && self.resolve(symbol) == name {
                     return Ok(symbol);
                 }
             }
@@ -91,6 +121,7 @@ impl Interner {
 
         self.arena.extend_from_slice(name.as_bytes());
         self.spans.push((start, len));
+        self.kinds.push(kind);
         self.next_symbol += 1;
         self.index.entry(hash).or_default().push(symbol);
 
@@ -100,12 +131,25 @@ impl Interner {
     /// Returns the live symbol for `name` without mutating the interner.
     #[must_use]
     pub fn get(&self, name: &str) -> Option<Symbol> {
-        let hash = content_hash(name);
+        self.get_key(ControlSequenceKind::Named, name)
+    }
+
+    /// Returns the live symbol for an active character without mutating.
+    #[must_use]
+    pub fn get_active(&self, ch: char) -> Option<Symbol> {
+        let mut encoded = [0; 4];
+        self.get_key(
+            ControlSequenceKind::ActiveCharacter,
+            ch.encode_utf8(&mut encoded),
+        )
+    }
+
+    fn get_key(&self, kind: ControlSequenceKind, name: &str) -> Option<Symbol> {
+        let hash = content_hash(kind, name);
         self.index.get(&hash).and_then(|candidates| {
-            candidates
-                .iter()
-                .copied()
-                .find(|&symbol| self.resolve(symbol) == name)
+            candidates.iter().copied().find(|&symbol| {
+                self.contains(symbol) && self.kind(symbol) == kind && self.resolve(symbol) == name
+            })
         })
     }
 
@@ -123,6 +167,14 @@ impl Interner {
             Ok(name) => name,
             Err(_) => panic!("interner arena contains invalid UTF-8"),
         }
+    }
+
+    /// Returns the TeX control-sequence namespace of a live symbol.
+    #[must_use]
+    pub fn kind(&self, symbol: Symbol) -> ControlSequenceKind {
+        let index = symbol.raw() as usize;
+        assert!(index < self.kinds.len(), "symbol is not live");
+        self.kinds[index]
     }
 
     /// Returns whether `symbol` names a currently-live interner slot.
@@ -147,6 +199,7 @@ impl Interner {
     #[must_use]
     pub(crate) fn watermark(&self) -> InternerMark {
         debug_assert_eq!(self.next_symbol as usize, self.spans.len());
+        debug_assert_eq!(self.kinds.len(), self.spans.len());
         InternerMark {
             spans: self.next_symbol,
             bytes: u32_len(self.arena.len(), "interner arena exceeds u32 bytes"),
@@ -173,8 +226,10 @@ impl Interner {
         );
 
         self.spans.truncate(spans);
+        self.kinds.truncate(spans);
         self.arena.truncate(bytes);
         self.next_symbol = mark.spans;
+        debug_assert_eq!(self.kinds.len(), self.spans.len());
         self.index_dirty = true;
     }
 
@@ -182,16 +237,17 @@ impl Interner {
         self.index.clear();
         for raw in 0..self.spans.len() {
             let symbol = Symbol::new(u32_len(raw, "interner spans exceed u32 entries"));
-            let hash = content_hash(self.resolve(symbol));
+            let hash = content_hash(self.kind(symbol), self.resolve(symbol));
             self.index.entry(hash).or_default().push(symbol);
         }
         self.index_dirty = false;
     }
 }
 
-fn content_hash(name: &str) -> u64 {
+fn content_hash(kind: ControlSequenceKind, name: &str) -> u64 {
     let mut hasher = DefaultHasher::new();
     // PERF: revisit hasher (fastpaths epic).
+    kind.hash(&mut hasher);
     name.hash(&mut hasher);
     hasher.finish()
 }

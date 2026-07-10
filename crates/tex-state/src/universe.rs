@@ -22,7 +22,7 @@ use crate::input::{
     ConditionKind, ConditionLimb, InputFrameSummary, InputSummary, LexerState, SourceId,
     TokenListReplayKind,
 };
-use crate::interner::Symbol;
+use crate::interner::{ControlSequenceKind, Symbol};
 use crate::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use crate::math::MathFontSize;
 use crate::meaning::Meaning;
@@ -62,6 +62,10 @@ use std::hash::{Hash, Hasher};
 /// code-table, font-parameter, grouping, snapshot, input-file reads, or World
 /// mutation APIs.
 pub trait ExpansionState {
+    /// Current execution-group depth used by TeX82 alignment `get_next`.
+    fn execution_group_depth(&self) -> u32 {
+        0
+    }
     fn catcode(&self, ch: char) -> Catcode;
     fn lccode(&self, ch: char) -> LcCode;
     fn uccode(&self, ch: char) -> UcCode;
@@ -74,8 +78,11 @@ pub trait ExpansionState {
     fn macro_meaning(&self, symbol: Symbol) -> Option<MacroMeaning>;
     fn intern_relaxed_control_sequence(&mut self, name: &str) -> Symbol;
     fn intern(&mut self, name: &str) -> Symbol;
+    fn intern_active_character(&mut self, ch: char) -> Symbol;
     fn symbol(&self, name: &str) -> Option<Symbol>;
+    fn active_character_symbol(&self, ch: char) -> Option<Symbol>;
     fn resolve(&self, symbol: Symbol) -> &str;
+    fn control_sequence_kind(&self, symbol: Symbol) -> ControlSequenceKind;
     fn token_list_builder(&self) -> TokenListBuilder;
     fn intern_token_list(&mut self, tokens: &[Token]) -> TokenListId;
     fn finish_token_list(&mut self, builder: &mut TokenListBuilder) -> TokenListId;
@@ -83,8 +90,10 @@ pub trait ExpansionState {
     fn intern_glue(&mut self, spec: GlueSpec) -> GlueId;
     fn glue(&self, id: GlueId) -> GlueSpec;
     fn font_name(&self, id: FontId) -> String;
+    fn font_identifier_symbol(&self, id: FontId) -> Option<Symbol>;
     fn font_parameter(&self, font: FontId, number: u16) -> Scaled;
     fn font_dimen(&self, font: FontId, number: u16) -> Scaled;
+    fn font_parameter_count(&self, font: FontId) -> u16;
     fn font_hyphen_char(&self, font: FontId) -> i32;
     fn font_skew_char(&self, font: FontId) -> i32;
     fn current_font(&self) -> FontId;
@@ -117,6 +126,14 @@ pub trait ExpansionState {
     fn source_origin(
         &mut self,
         source: SourceId,
+        byte_offset: u64,
+        line: u32,
+        column: u32,
+    ) -> OriginId;
+    fn source_origin_with_input_record(
+        &mut self,
+        source: SourceId,
+        input_record: Option<crate::InputRecordId>,
         byte_offset: u64,
         line: u32,
         column: u32,
@@ -917,6 +934,10 @@ impl Universe {
         self.stores.set_catcode(ch, value);
     }
 
+    pub fn set_catcode_global(&mut self, ch: char, value: Catcode) {
+        self.stores.set_catcode_global(ch, value);
+    }
+
     #[must_use]
     pub fn lccode(&self, ch: char) -> LcCode {
         self.stores.lccode(ch)
@@ -924,6 +945,10 @@ impl Universe {
 
     pub fn set_lccode(&mut self, ch: char, value: LcCode) {
         self.stores.set_lccode(ch, value);
+    }
+
+    pub fn set_lccode_global(&mut self, ch: char, value: LcCode) {
+        self.stores.set_lccode_global(ch, value);
     }
 
     #[must_use]
@@ -935,6 +960,10 @@ impl Universe {
         self.stores.set_uccode(ch, value);
     }
 
+    pub fn set_uccode_global(&mut self, ch: char, value: UcCode) {
+        self.stores.set_uccode_global(ch, value);
+    }
+
     #[must_use]
     pub fn sfcode(&self, ch: char) -> SfCode {
         self.stores.sfcode(ch)
@@ -942,6 +971,10 @@ impl Universe {
 
     pub fn set_sfcode(&mut self, ch: char, value: SfCode) {
         self.stores.set_sfcode(ch, value);
+    }
+
+    pub fn set_sfcode_global(&mut self, ch: char, value: SfCode) {
+        self.stores.set_sfcode_global(ch, value);
     }
 
     #[must_use]
@@ -953,6 +986,10 @@ impl Universe {
         self.stores.set_mathcode(ch, value);
     }
 
+    pub fn set_mathcode_global(&mut self, ch: char, value: MathCode) {
+        self.stores.set_mathcode_global(ch, value);
+    }
+
     #[must_use]
     pub fn delcode(&self, ch: char) -> DelCode {
         self.stores.delcode(ch)
@@ -960,6 +997,10 @@ impl Universe {
 
     pub fn set_delcode(&mut self, ch: char, value: DelCode) {
         self.stores.set_delcode(ch, value);
+    }
+
+    pub fn set_delcode_global(&mut self, ch: char, value: DelCode) {
+        self.stores.set_delcode_global(ch, value);
     }
 
     pub fn add_hyphenation_pattern(&mut self, pattern: PatternSpec) {
@@ -1057,14 +1098,31 @@ impl Universe {
         self.stores.intern(name)
     }
 
+    /// Interns an active-character control sequence in its TeX82 namespace.
+    pub fn intern_active_character(&mut self, ch: char) -> Symbol {
+        self.stores.intern_active_character(ch)
+    }
+
     #[must_use]
     pub fn symbol(&self, name: &str) -> Option<Symbol> {
         self.stores.symbol(name)
     }
 
+    /// Returns the live symbol for an already-interned active character.
+    #[must_use]
+    pub fn active_character_symbol(&self, ch: char) -> Option<Symbol> {
+        self.stores.active_character_symbol(ch)
+    }
+
     #[must_use]
     pub fn resolve(&self, symbol: Symbol) -> &str {
         self.stores.resolve(symbol)
+    }
+
+    /// Returns the TeX control-sequence namespace of a live symbol.
+    #[must_use]
+    pub fn control_sequence_kind(&self, symbol: Symbol) -> ControlSequenceKind {
+        self.stores.control_sequence_kind(symbol)
     }
 
     #[must_use]
@@ -1100,6 +1158,19 @@ impl Universe {
         column: u32,
     ) -> OriginId {
         self.stores.source_origin(source, byte_offset, line, column)
+    }
+
+    /// Allocates a source-coordinate origin bound to its durable input record.
+    pub fn source_origin_with_input_record(
+        &mut self,
+        source: SourceId,
+        input_record: Option<crate::InputRecordId>,
+        byte_offset: u64,
+        line: u32,
+        column: u32,
+    ) -> OriginId {
+        self.stores
+            .source_origin_with_input_record(source, input_record, byte_offset, line, column)
     }
 
     /// Allocates a macro-invocation origin.
@@ -1201,6 +1272,10 @@ impl Universe {
         self.stores.intern_font(font)
     }
 
+    pub fn intern_font_with_identifier(&mut self, font: LoadedFont, symbol: Symbol) -> FontId {
+        self.stores.intern_font_with_identifier(font, symbol)
+    }
+
     #[must_use]
     pub fn font(&self, id: FontId) -> &LoadedFont {
         self.stores.font(id)
@@ -1209,6 +1284,15 @@ impl Universe {
     #[must_use]
     pub fn font_name(&self, id: FontId) -> String {
         self.stores.font_name(id)
+    }
+
+    #[must_use]
+    pub fn font_identifier_symbol(&self, id: FontId) -> Option<Symbol> {
+        self.stores.font_identifier_symbol(id)
+    }
+
+    pub fn set_font_identifier_symbol(&mut self, id: FontId, symbol: Symbol) {
+        self.stores.set_font_identifier_symbol(id, symbol);
     }
 
     #[must_use]
@@ -1310,6 +1394,11 @@ impl Universe {
     #[must_use]
     pub fn font_dimen(&self, font: FontId, number: u16) -> Scaled {
         self.stores.font_dimen(font, number)
+    }
+
+    #[must_use]
+    pub fn font_parameter_count(&self, font: FontId) -> u16 {
+        self.stores.font_parameter_count(font)
     }
 
     pub fn set_font_dimen(
@@ -1632,6 +1721,29 @@ impl Universe {
 
     pub fn pop_page_contribution_tail(&mut self) -> Option<Node> {
         self.page.pop_contribution_tail()
+    }
+
+    /// Transfers the outer vertical contribution tail when it is a box.
+    ///
+    /// This is the page-owned counterpart of TeX's `\lastbox` tail operation:
+    /// intervening material is never searched or removed, and a transferred
+    /// box loses its previous raise/lower shift before entering a new context.
+    pub fn take_page_contribution_last_box(&mut self) -> Option<Node> {
+        match self.page.contribution_tail() {
+            Some(Node::HList(_)) | Some(Node::VList(_)) => {}
+            _ => return None,
+        }
+        let mut node = self
+            .page
+            .pop_contribution_tail()
+            .expect("contribution tail was just inspected");
+        match &mut node {
+            Node::HList(box_node) | Node::VList(box_node) => {
+                box_node.shift = Scaled::from_raw(0);
+            }
+            _ => unreachable!("contribution tail was checked to be a box"),
+        }
+        Some(node)
     }
 
     pub fn prepend_page_contributions(&mut self, nodes: Vec<Node>) {
@@ -2008,6 +2120,9 @@ fn set_box_dimension_in_nodes(nodes: &mut [Node], dimension: BoxDimension, value
 }
 
 impl ExpansionState for Universe {
+    fn execution_group_depth(&self) -> u32 {
+        self.stores.env_group_depth()
+    }
     fn catcode(&self, ch: char) -> Catcode {
         Self::catcode(self, ch)
     }
@@ -2056,12 +2171,24 @@ impl ExpansionState for Universe {
         Self::intern(self, name)
     }
 
+    fn intern_active_character(&mut self, ch: char) -> Symbol {
+        Self::intern_active_character(self, ch)
+    }
+
     fn symbol(&self, name: &str) -> Option<Symbol> {
         Self::symbol(self, name)
     }
 
+    fn active_character_symbol(&self, ch: char) -> Option<Symbol> {
+        Self::active_character_symbol(self, ch)
+    }
+
     fn resolve(&self, symbol: Symbol) -> &str {
         Self::resolve(self, symbol)
+    }
+
+    fn control_sequence_kind(&self, symbol: Symbol) -> ControlSequenceKind {
+        Self::control_sequence_kind(self, symbol)
     }
 
     fn token_list_builder(&self) -> TokenListBuilder {
@@ -2092,12 +2219,20 @@ impl ExpansionState for Universe {
         Self::font_name(self, id)
     }
 
+    fn font_identifier_symbol(&self, id: FontId) -> Option<Symbol> {
+        Self::font_identifier_symbol(self, id)
+    }
+
     fn font_parameter(&self, font: FontId, number: u16) -> Scaled {
         Self::font_parameter(self, font, number)
     }
 
     fn font_dimen(&self, font: FontId, number: u16) -> Scaled {
         Self::font_dimen(self, font, number)
+    }
+
+    fn font_parameter_count(&self, font: FontId) -> u16 {
+        Self::font_parameter_count(self, font)
     }
 
     fn font_hyphen_char(&self, font: FontId) -> i32 {
@@ -2222,6 +2357,17 @@ impl ExpansionState for Universe {
         Self::source_origin(self, source, byte_offset, line, column)
     }
 
+    fn source_origin_with_input_record(
+        &mut self,
+        source: SourceId,
+        input_record: Option<crate::InputRecordId>,
+        byte_offset: u64,
+        line: u32,
+        column: u32,
+    ) -> OriginId {
+        Self::source_origin_with_input_record(self, source, input_record, byte_offset, line, column)
+    }
+
     fn macro_invocation_origin(
         &mut self,
         definition: MacroDefinitionId,
@@ -2262,6 +2408,9 @@ impl ExpansionState for Universe {
 }
 
 impl ExpansionState for ExpansionContext<'_> {
+    fn execution_group_depth(&self) -> u32 {
+        self.universe.execution_group_depth()
+    }
     fn catcode(&self, ch: char) -> Catcode {
         self.universe.catcode(ch)
     }
@@ -2310,12 +2459,24 @@ impl ExpansionState for ExpansionContext<'_> {
         self.universe.intern(name)
     }
 
+    fn intern_active_character(&mut self, ch: char) -> Symbol {
+        self.universe.intern_active_character(ch)
+    }
+
     fn symbol(&self, name: &str) -> Option<Symbol> {
         self.universe.symbol(name)
     }
 
+    fn active_character_symbol(&self, ch: char) -> Option<Symbol> {
+        self.universe.active_character_symbol(ch)
+    }
+
     fn resolve(&self, symbol: Symbol) -> &str {
         self.universe.resolve(symbol)
+    }
+
+    fn control_sequence_kind(&self, symbol: Symbol) -> ControlSequenceKind {
+        self.universe.control_sequence_kind(symbol)
     }
 
     fn token_list_builder(&self) -> TokenListBuilder {
@@ -2346,12 +2507,20 @@ impl ExpansionState for ExpansionContext<'_> {
         self.universe.font_name(id)
     }
 
+    fn font_identifier_symbol(&self, id: FontId) -> Option<Symbol> {
+        self.universe.font_identifier_symbol(id)
+    }
+
     fn font_parameter(&self, font: FontId, number: u16) -> Scaled {
         self.universe.font_parameter(font, number)
     }
 
     fn font_dimen(&self, font: FontId, number: u16) -> Scaled {
         self.universe.font_dimen(font, number)
+    }
+
+    fn font_parameter_count(&self, font: FontId) -> u16 {
+        self.universe.font_parameter_count(font)
     }
 
     fn font_hyphen_char(&self, font: FontId) -> i32 {
@@ -2475,6 +2644,23 @@ impl ExpansionState for ExpansionContext<'_> {
     ) -> OriginId {
         self.universe
             .source_origin(source, byte_offset, line, column)
+    }
+
+    fn source_origin_with_input_record(
+        &mut self,
+        source: SourceId,
+        input_record: Option<crate::InputRecordId>,
+        byte_offset: u64,
+        line: u32,
+        column: u32,
+    ) -> OriginId {
+        self.universe.source_origin_with_input_record(
+            source,
+            input_record,
+            byte_offset,
+            line,
+            column,
+        )
     }
 
     fn macro_invocation_origin(
@@ -2635,9 +2821,14 @@ fn hash_input_summary_fields(stores: &Stores, summary: &InputSummary, hasher: &m
     hasher.usize(summary.frames().len());
     for frame in summary.frames() {
         match frame {
-            InputFrameSummary::Source { source_id, source } => {
+            InputFrameSummary::Source {
+                source_id,
+                input_record,
+                source,
+            } => {
                 hasher.tag(0);
                 hasher.u32(source_id.raw());
+                hash_input_record_id(*input_record, hasher);
                 hasher.usize(source.buffer_offset());
                 hasher.usize(source.next_source_offset());
                 hasher.usize(source.line_number());
@@ -2674,10 +2865,14 @@ fn hash_input_summary_fields(stores: &Stores, summary: &InputSummary, hasher: &m
                     }
                 }
             }
-            InputFrameSummary::Condition(condition) => {
+            InputFrameSummary::Condition {
+                token: _,
+                condition,
+            } => {
                 hasher.tag(2);
                 hash_condition_kind(condition.kind(), hasher);
                 hash_condition_limb(condition.limb(), hasher);
+                hasher.bool(condition.evaluating());
                 hasher.bool(condition.current_limb_taken());
                 hasher.bool(condition.any_limb_taken());
                 hasher.u32(condition.ifcase_or_count());
@@ -2694,6 +2889,7 @@ fn hash_input_summary_fields(stores: &Stores, summary: &InputSummary, hasher: &m
                     .expect("last source frame must retain its source id")
                     .raw(),
             );
+            hash_input_record_id(summary.last_source_record(), hasher);
             hasher.usize(source.buffer_offset());
             hasher.usize(source.next_source_offset());
             hasher.usize(source.line_number());
@@ -2707,6 +2903,16 @@ fn hash_input_summary_fields(stores: &Stores, summary: &InputSummary, hasher: &m
                 hash_traced_token_semantic(stores, *token, hasher);
             }
             hasher.bool(source.end_after_current_line());
+        }
+        None => hasher.bool(false),
+    }
+}
+
+fn hash_input_record_id(record: Option<crate::InputRecordId>, hasher: &mut StateHasher) {
+    match record {
+        Some(record) => {
+            hasher.bool(true);
+            hasher.u32(record.raw());
         }
         None => hasher.bool(false),
     }
@@ -2728,12 +2934,18 @@ fn hash_token(stores: &Stores, token: Token, hasher: &mut StateHasher) {
         }
         Token::Cs(symbol) => {
             hasher.tag(1);
+            hasher.u8(match stores.control_sequence_kind(symbol) {
+                ControlSequenceKind::Named => 0,
+                ControlSequenceKind::ActiveCharacter => 1,
+            });
             hasher.str(stores.resolve(symbol));
         }
         Token::Param(slot) => {
             hasher.tag(2);
             hasher.u8(slot);
         }
+        Token::Frozen(crate::token::FrozenToken::EndTemplate) => hasher.tag(3),
+        Token::Frozen(crate::token::FrozenToken::EndV) => hasher.tag(4),
     }
 }
 

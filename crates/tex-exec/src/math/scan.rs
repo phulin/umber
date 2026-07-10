@@ -23,6 +23,8 @@ use crate::{DispatchAction, ExecError, Mode, ModeNest};
 use super::{dispatch_math_token_with_recorder, support::report_math_error};
 
 mod chars;
+#[cfg(test)]
+mod tests;
 
 pub(crate) use chars::{
     append_math_char_code, append_mathcode_char, append_noad, attach_script, math_char_from_code,
@@ -93,7 +95,7 @@ where
                 Ok(MathField::SubMlist(id))
             }
         },
-        Token::Param(_) => Err(ExecError::MissingToken {
+        Token::Param(_) | Token::Frozen(_) => Err(ExecError::MissingToken {
             context: "math field",
         }),
     }
@@ -144,17 +146,19 @@ where
     }
 }
 
-pub(super) fn start_left_group<S, H>(
+pub(super) fn start_left_group<S, R, H>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
+    recorder: &mut R,
     hooks: &mut H,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
+    R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    let delimiter = scan_delimiter_token(input, stores, hooks)?;
+    let delimiter = scan_delimiter_token(input, stores, recorder, hooks)?;
     nest.push(Mode::Math);
     nest.current_list_mut().push(Node::MathNoad(MathNoad::new(
         NoadKind::LeftDelimiter { delimiter },
@@ -164,17 +168,19 @@ where
     Ok(())
 }
 
-pub(super) fn finish_left_group<S, H>(
+pub(super) fn finish_left_group<S, R, H>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
+    recorder: &mut R,
     hooks: &mut H,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
+    R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    let delimiter = scan_delimiter_token(input, stores, hooks)?;
+    let delimiter = scan_delimiter_token(input, stores, recorder, hooks)?;
     if !current_list_is_left_group(nest) {
         report_math_error(stores, "Extra \\right");
         return Ok(());
@@ -250,16 +256,18 @@ pub(super) fn finish_current_math_list(
     stores.freeze_node_list(&nodes)
 }
 
-pub(super) fn start_fraction<S, H>(
+pub(super) fn start_fraction<S, R, H>(
     primitive: UnexpandablePrimitive,
     context: TracedTokenWord,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
+    recorder: &mut R,
     hooks: &mut H,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
+    R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
     if nest.current_list().incomplete_fraction().is_some() {
@@ -270,8 +278,8 @@ where
         UnexpandablePrimitive::OverWithDelims
         | UnexpandablePrimitive::AtopWithDelims
         | UnexpandablePrimitive::AboveWithDelims => (
-            Some(scan_delimiter_token(input, stores, hooks)?),
-            Some(scan_delimiter_token(input, stores, hooks)?),
+            Some(scan_delimiter_token(input, stores, recorder, hooks)?),
+            Some(scan_delimiter_token(input, stores, recorder, hooks)?),
         ),
         _ => (None, None),
     };
@@ -440,34 +448,56 @@ where
     Ok(value as u32)
 }
 
-fn scan_delimiter_token<S, H>(
+fn scan_delimiter_token<S, R, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
+    recorder: &mut R,
     hooks: &mut H,
 ) -> Result<u32, ExecError>
 where
     S: InputSource,
+    R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    let token =
-        assignments::next_non_space_x(input, stores, hooks)?.ok_or(ExecError::MissingToken {
-            context: "delimiter",
-        })?;
-    match token {
-        Token::Char { ch: '.', .. } => Ok(0),
-        Token::Char { ch, .. } => {
-            let code = stores.delcode(ch);
-            Ok(if code >= 0 { code as u32 } else { 0 })
+    loop {
+        let Some(traced) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
+        else {
+            report_math_error(stores, "Missing delimiter (. inserted)");
+            return Ok(0);
+        };
+        let token = tex_expand::semantic_token(traced);
+        match token {
+            Token::Char {
+                cat: Catcode::Space,
+                ..
+            } => continue,
+            Token::Char {
+                ch,
+                cat: Catcode::Letter | Catcode::Other,
+            } => {
+                let code = if ch == '.' { 0 } else { stores.delcode(ch) };
+                if code >= 0 {
+                    return Ok(code as u32);
+                }
+            }
+            Token::Cs(symbol) => {
+                let meaning = stores.meaning(symbol);
+                recorder.record_meaning(symbol, meaning);
+                match meaning {
+                    Meaning::Relax => continue,
+                    Meaning::MathCharGiven(value) => return Ok(u32::from(value)),
+                    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Delimiter) => {
+                        return scan_delimiter_code(input, stores, hooks, traced);
+                    }
+                    _ => {}
+                }
+            }
+            Token::Char { .. } | Token::Param(_) | Token::Frozen(_) => {}
         }
-        Token::Cs(symbol) => match stores.meaning(symbol) {
-            Meaning::MathCharGiven(value) => Ok(u32::from(value)),
-            _ => Err(ExecError::MissingToken {
-                context: "delimiter",
-            }),
-        },
-        Token::Param(_) => Err(ExecError::MissingToken {
-            context: "delimiter",
-        }),
+
+        crate::push_traced_tokens(input, stores, [traced]);
+        report_math_error(stores, "Missing delimiter (. inserted)");
+        return Ok(0);
     }
 }
 

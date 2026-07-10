@@ -37,6 +37,72 @@ fn rollback_restores_env_and_interner_as_one_tuple() {
 }
 
 #[test]
+fn group_exit_restores_all_code_tables() {
+    let mut stores = Stores::new();
+    let ch = '@';
+    let before = (
+        stores.catcode(ch),
+        stores.lccode(ch),
+        stores.uccode(ch),
+        stores.sfcode(ch),
+        stores.mathcode(ch),
+        stores.delcode(ch),
+    );
+
+    stores.enter_group();
+    stores.set_catcode(ch, Catcode::Letter);
+    stores.set_lccode(ch, 'a' as u32);
+    stores.set_uccode(ch, 'A' as u32);
+    stores.set_sfcode(ch, 777);
+    stores.set_mathcode(ch, 1234);
+    stores.set_delcode(ch, 5678);
+    assert_eq!(stores.leave_group(), Vec::<Token>::new());
+
+    assert_eq!(
+        (
+            stores.catcode(ch),
+            stores.lccode(ch),
+            stores.uccode(ch),
+            stores.sfcode(ch),
+            stores.mathcode(ch),
+            stores.delcode(ch),
+        ),
+        before
+    );
+}
+
+#[test]
+fn global_code_table_assignments_survive_groups_but_not_snapshot_rollback() {
+    let mut stores = Stores::new();
+    let ch = '@';
+    let snapshot = stores.checkpoint();
+
+    stores.enter_group();
+    stores.set_catcode_global(ch, Catcode::Letter);
+    stores.set_lccode_global(ch, 'a' as u32);
+    stores.set_uccode_global(ch, 'A' as u32);
+    stores.set_sfcode_global(ch, 777);
+    stores.set_mathcode_global(ch, 1234);
+    stores.set_delcode_global(ch, 5678);
+    assert_eq!(stores.leave_group(), Vec::<Token>::new());
+
+    assert_eq!(stores.catcode(ch), Catcode::Letter);
+    assert_eq!(stores.lccode(ch), 'a' as u32);
+    assert_eq!(stores.uccode(ch), 'A' as u32);
+    assert_eq!(stores.sfcode(ch), 777);
+    assert_eq!(stores.mathcode(ch), 1234);
+    assert_eq!(stores.delcode(ch), 5678);
+
+    stores.rollback(&snapshot);
+    assert_eq!(stores.catcode(ch), Catcode::Other);
+    assert_eq!(stores.lccode(ch), 0);
+    assert_eq!(stores.uccode(ch), 0);
+    assert_eq!(stores.sfcode(ch), 1000);
+    assert_eq!(stores.mathcode(ch), ch as u32);
+    assert_eq!(stores.delcode(ch), -1);
+}
+
+#[test]
 fn rollback_restores_token_store_as_part_of_snapshot_tuple() {
     let mut stores = Stores::new();
     let snapshot = stores.checkpoint();
@@ -331,32 +397,32 @@ fn rollback_restores_glue_store_as_part_of_snapshot_tuple() {
 }
 
 #[test]
-fn paragraph_layout_defaults_match_plain_tex_format() {
+fn state_defaults_match_tex82_initex() {
     let stores = Stores::new();
 
-    assert_eq!(stores.int_param(IntParam::PRETOLERANCE), 100);
-    assert_eq!(stores.int_param(IntParam::TOLERANCE), 200);
-    assert_eq!(stores.dimen_param(DimenParam::OVERFULL_RULE), scaled_pt(5));
-    assert_eq!(stores.dimen_param(DimenParam::MAX_DEPTH), scaled_pt(4));
+    assert_eq!(stores.int_param(IntParam::PRETOLERANCE), 0);
+    assert_eq!(stores.int_param(IntParam::TOLERANCE), 10_000);
+    assert_eq!(stores.int_param(IntParam::MAG), 1000);
+    assert_eq!(stores.int_param(IntParam::MAX_DEAD_CYCLES), 25);
+    assert_eq!(stores.int_param(IntParam::HANG_AFTER), 1);
+    assert_eq!(stores.int_param(IntParam::ESCAPE_CHAR), b'\\' as i32);
+    assert_eq!(stores.int_param(IntParam::END_LINE_CHAR), 13);
+    assert_eq!(stores.int_param(IntParam::DEFAULT_HYPHEN_CHAR), 0);
+    assert_eq!(stores.int_param(IntParam::DEFAULT_SKEW_CHAR), 0);
+    assert_eq!(stores.int_param(IntParam::FAM), 0);
+    assert_eq!(stores.int_param(IntParam::UC_HYPH), 0);
+    assert_eq!(stores.int_param(IntParam::LEFT_HYPHEN_MIN), 0);
+    assert_eq!(stores.int_param(IntParam::RIGHT_HYPHEN_MIN), 0);
+    assert_eq!(stores.dimen(0), scaled(0));
+    assert_eq!(stores.dimen_param(DimenParam::OVERFULL_RULE), scaled(0));
+    assert_eq!(stores.dimen_param(DimenParam::MAX_DEPTH), scaled(0));
     assert_eq!(
-        stores.glue(stores.glue_param(GlueParam::BASELINE_SKIP)),
-        GlueSpec {
-            width: scaled_pt(12),
-            stretch: scaled(0),
-            stretch_order: Order::Normal,
-            shrink: scaled(0),
-            shrink_order: Order::Normal,
-        }
+        stores.glue_param(GlueParam::BASELINE_SKIP),
+        crate::ids::GlueId::ZERO
     );
     assert_eq!(
-        stores.glue(stores.glue_param(GlueParam::PAR_FILL_SKIP)),
-        GlueSpec {
-            width: scaled(0),
-            stretch: scaled_pt(1),
-            stretch_order: Order::Fil,
-            shrink: scaled(0),
-            shrink_order: Order::Normal,
-        }
+        stores.glue_param(GlueParam::PAR_FILL_SKIP),
+        crate::ids::GlueId::ZERO
     );
 }
 
@@ -905,6 +971,48 @@ fn promoted_nested_box_remaps_children_to_same_survivor_root() {
 }
 
 #[test]
+fn promotion_canonicalizes_shared_survivor_children_into_new_root() {
+    let mut stores = Stores::new();
+    let child = one_char(&mut stores, 'x');
+    stores.set_box_reg(0, child);
+    let child = stores.box_reg(0).expect("child box should be promoted");
+    let fields = BoxNodeFields {
+        width: scaled(10),
+        height: scaled(7),
+        depth: scaled(3),
+        shift: scaled(0),
+        display: false,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children: child,
+    };
+    let outer = stores.freeze_node_list(&[
+        Node::HList(BoxNode::new(fields)),
+        Node::VList(BoxNode::new(fields)),
+    ]);
+
+    stores.set_box_reg(255, outer);
+    let promoted = stores.box_reg(255).expect("outer box should be promoted");
+    let [Node::HList(first), Node::VList(second)] = stores.nodes(promoted) else {
+        panic!("promoted root should preserve both wrapper boxes");
+    };
+
+    assert_same_root(promoted, first.children);
+    assert_eq!(
+        first.children, second.children,
+        "shared child is copied once"
+    );
+    assert_eq!(
+        stores.nodes(first.children),
+        &[Node::Char {
+            font: NULL_FONT,
+            ch: 'x'
+        }]
+    );
+}
+
+#[test]
 fn mag_parameter_defaults_and_rolls_back_through_stores() {
     let mut stores = Stores::new();
     assert_eq!(stores.mag(), 1000);
@@ -1022,8 +1130,4 @@ fn assert_same_root(a: NodeListId, b: NodeListId) {
 
 fn scaled(raw: i32) -> Scaled {
     Scaled::from_raw(raw)
-}
-
-fn scaled_pt(points: i32) -> Scaled {
-    Scaled::from_raw(points * Scaled::UNITY)
 }

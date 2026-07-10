@@ -8,13 +8,14 @@ use tex_state::glue::GlueSpec;
 use tex_state::math::{MathChar, MathField, MathListNode, NoadClass, NoadKind};
 use tex_state::meaning::{ExpandablePrimitive, Meaning, UnexpandablePrimitive};
 use tex_state::node::{GlueKind, KernKind, Node};
+use tex_state::provenance::InsertedOriginKind;
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::assignments;
 use crate::executor::sync_engine_state;
 use crate::mode::DisplayInterrupt;
-use crate::{DispatchAction, ExecError, Mode, ModeNest, push_tokens};
+use crate::{DispatchAction, ExecError, Mode, ModeNest, push_tokens, push_traced_tokens};
 
 mod display;
 mod lower;
@@ -22,6 +23,32 @@ mod scan;
 mod support;
 
 use display::*;
+
+pub(crate) fn insert_dollar_sign<S>(
+    traced: TracedTokenWord,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+) where
+    S: InputSource,
+{
+    let origin = traced.origin();
+    let math_shift_token = Token::Char {
+        ch: '$',
+        cat: Catcode::MathShift,
+    };
+    let math_shift_origin =
+        stores.inserted_origin(InsertedOriginKind::ErrorRecovery, math_shift_token, origin);
+    let math_shift = TracedTokenWord::pack(math_shift_token, math_shift_origin);
+    push_traced_tokens(input, stores, [math_shift, traced]);
+    stores.world_mut().write_text(
+        tex_state::PrintSink::TerminalAndLog,
+        "\n! Missing $ inserted.\n\
+         <inserted text>\n\
+         <to be read again>\n\
+         I've inserted a begin-math/end-math symbol since I think\n\
+         you left one out. Proceed, with fingers crossed.\n",
+    );
+}
 #[cfg(test)]
 pub(crate) use lower::finish_math_list_node;
 pub(crate) use lower::finish_math_lists;
@@ -176,7 +203,7 @@ where
         Token::Cs(symbol) => {
             dispatch_math_control(nest, traced, symbol, input, stores, recorder, hooks)
         }
-        Token::Param(_) => Ok(DispatchAction::NotConsumed),
+        Token::Param(_) | Token::Frozen(_) => Ok(DispatchAction::NotConsumed),
     }
 }
 
@@ -367,7 +394,7 @@ where
         | UnexpandablePrimitive::OverWithDelims
         | UnexpandablePrimitive::AtopWithDelims
         | UnexpandablePrimitive::AboveWithDelims => {
-            start_fraction(primitive, traced, nest, input, stores, hooks)?;
+            start_fraction(primitive, traced, nest, input, stores, recorder, hooks)?;
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::Radical => {
@@ -386,6 +413,49 @@ where
         UnexpandablePrimitive::VCenter => {
             let field = scan_vcenter_field(input, stores, hooks)?;
             append_noad(nest, NoadKind::VCenter, field);
+            Ok(DispatchAction::Continue)
+        }
+        UnexpandablePrimitive::HBox
+        | UnexpandablePrimitive::VBox
+        | UnexpandablePrimitive::VTop
+        | UnexpandablePrimitive::VSplit
+        | UnexpandablePrimitive::Box
+        | UnexpandablePrimitive::Copy
+        | UnexpandablePrimitive::Raise
+        | UnexpandablePrimitive::Lower => {
+            if let Some(node) =
+                assignments::scan_math_box(primitive, traced, nest, input, stores, hooks)?
+            {
+                let list = stores.freeze_node_list(&[node]);
+                append_noad(
+                    nest,
+                    NoadKind::Normal(NoadClass::Ord),
+                    MathField::SubBox(list),
+                );
+            }
+            Ok(DispatchAction::Continue)
+        }
+        UnexpandablePrimitive::Leaders
+        | UnexpandablePrimitive::CLeaders
+        | UnexpandablePrimitive::XLeaders => assignments::execute_unexpandable_with_recorder(
+            primitive, traced, nest, input, stores, recorder, hooks,
+        ),
+        UnexpandablePrimitive::HSkip
+        | UnexpandablePrimitive::HFil
+        | UnexpandablePrimitive::HFill
+        | UnexpandablePrimitive::HSs
+        | UnexpandablePrimitive::HFilNeg => {
+            let spec = if primitive == UnexpandablePrimitive::HSkip {
+                assignments::scan_glue_id(input, stores, hooks, false, traced)?
+            } else {
+                let spec = assignments::fixed_infinite_glue(primitive);
+                stores.intern_glue(spec)
+            };
+            nest.current_list_mut().push(Node::Glue {
+                spec,
+                kind: GlueKind::Normal,
+                leader: None,
+            });
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::MSkip => {
@@ -427,11 +497,11 @@ where
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::Left => {
-            start_left_group(nest, input, stores, hooks)?;
+            start_left_group(nest, input, stores, recorder, hooks)?;
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::Right => {
-            finish_left_group(nest, input, stores, hooks)?;
+            finish_left_group(nest, input, stores, recorder, hooks)?;
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::DisplayStyle

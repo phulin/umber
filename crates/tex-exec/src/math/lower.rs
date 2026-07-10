@@ -103,7 +103,7 @@ impl<'a> LoweredMathSink<'a> {
                     amount: *amount,
                     kind: *kind,
                 }),
-                MathNode::Glue { spec, kind } => {
+                MathNode::Glue { spec, kind, leader } => {
                     let id = if let Some((_, id)) =
                         self.glue_cache.iter().find(|(cached, _)| cached == spec)
                     {
@@ -116,7 +116,7 @@ impl<'a> LoweredMathSink<'a> {
                     scratch.push(Node::Glue {
                         spec: id,
                         kind: lower_math_glue_kind(*kind),
-                        leader: None,
+                        leader: leader.clone(),
                     });
                 }
                 MathNode::Penalty(penalty) => scratch.push(Node::Penalty(*penalty)),
@@ -236,6 +236,7 @@ fn lower_math_glue_kind(kind: MathGlueKind) -> GlueKind {
         MathGlueKind::ThinMuSkip => GlueKind::ThinMuSkip,
         MathGlueKind::MedMuSkip => GlueKind::MedMuSkip,
         MathGlueKind::ThickMuSkip => GlueKind::ThickMuSkip,
-        MathGlueKind::Normal | MathGlueKind::Source => GlueKind::Normal,
+        MathGlueKind::Normal => GlueKind::Normal,
+        other => other,
     }
 }

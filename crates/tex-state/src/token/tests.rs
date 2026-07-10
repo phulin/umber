@@ -62,15 +62,34 @@ fn parameter_token_round_trips_with_origin() {
 }
 
 #[test]
+fn frozen_alignment_tokens_round_trip_as_distinct_non_symbol_tokens() {
+    let origin = OriginId::from_raw(23);
+    let end_template = Token::frozen_end_template();
+    let endv = Token::frozen_endv();
+
+    assert_ne!(end_template, endv);
+    assert!(!matches!(end_template, Token::Cs(_)));
+    assert_eq!(
+        TracedTokenWord::pack(end_template, origin).unpack(),
+        Some((end_template, origin))
+    );
+    assert_eq!(
+        TracedTokenWord::pack(endv, origin).unpack(),
+        Some((endv, origin))
+    );
+}
+
+#[test]
 fn packed_token_decode_rejects_unrepresentable_payloads() {
     let origin = OriginId::from_raw(99);
-    let bad_kind = TracedTokenWord::from_raw((3_u64 << 62) | u64::from(origin.raw()));
+    let bad_frozen =
+        TracedTokenWord::from_raw((3_u64 << 62) | (2_u64 << 32) | u64::from(origin.raw()));
     let bad_param_zero = TracedTokenWord::from_raw(2_u64 << 62);
     let bad_param_ten = TracedTokenWord::from_raw((2_u64 << 62) | (10_u64 << 32));
     let bad_char_scalar = TracedTokenWord::from_raw(0x11_0000_u64 << 36);
 
-    assert_eq!(bad_kind.origin(), origin);
-    assert_eq!(bad_kind.unpack(), None);
+    assert_eq!(bad_frozen.origin(), origin);
+    assert_eq!(bad_frozen.unpack(), None);
     assert_eq!(bad_param_zero.unpack(), None);
     assert_eq!(bad_param_ten.unpack(), None);
     assert_eq!(bad_char_scalar.unpack(), None);

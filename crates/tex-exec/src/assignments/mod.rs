@@ -16,6 +16,7 @@ use tex_state::ids::GlueId;
 use tex_state::interner::Symbol;
 use tex_state::math::MathFontSize;
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
+use tex_state::provenance::InsertedOriginKind;
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{GroupKind, InteractionMode, Universe};
@@ -23,6 +24,7 @@ use tex_state::{GroupKind, InteractionMode, Universe};
 use crate::ModeNest;
 use crate::{
     DispatchAction, ExecError, diagnostics, dispatch_delivered_token, leave_group_with_origin,
+    push_traced_tokens,
 };
 
 mod arithmetic;
@@ -40,8 +42,10 @@ mod variables;
 
 use arithmetic::*;
 pub(crate) use boxes::scan_box_group;
+pub(crate) use boxes::scan_math_box;
 use boxes::*;
 use fonts::*;
+pub(crate) use hmode::fixed_infinite_glue;
 use hmode::*;
 pub(crate) use hmode::{append_given_char, flush_pending_hchars, try_append_character};
 use hyphenation::*;
@@ -60,7 +64,9 @@ pub(crate) use scanning::{
 pub(crate) use shipout::shipout_node;
 use shipout::*;
 use tokens::*;
-pub(crate) use tokens::{active_character_symbol, is_begin_group, is_end_group, is_space};
+pub(crate) use tokens::{
+    active_character_symbol, has_catcode_meaning, is_begin_group, is_end_group, is_space,
+};
 use variables::*;
 
 /// Executes a delivered token if it is an assignment/prefix primitive.
@@ -112,9 +118,20 @@ where
         &mut prefixes,
         input,
         stores,
+        recorder,
+        hooks,
     )?;
-    if command.command == PrefixedCommand::Primitive(UnexpandablePrimitive::End) {
+    if matches!(
+        command.command,
+        PrefixedCommand::Primitive(UnexpandablePrimitive::End | UnexpandablePrimitive::Dump)
+    ) {
         reject_all_prefixes(prefixes)?;
+        if command.command == PrefixedCommand::Primitive(UnexpandablePrimitive::Dump) {
+            stores.world_mut().write_text(
+                tex_state::PrintSink::TerminalAndLog,
+                "\nwarning: \\dump format serialization is not implemented; ending without writing a format file.\n",
+            );
+        }
         return Ok(DispatchAction::End);
     }
     if command.command == PrefixedCommand::Primitive(UnexpandablePrimitive::Immediate) {
@@ -186,15 +203,17 @@ where
     H: ExpansionHooks<S>,
 {
     let mut prefixes = Prefixes::default();
+    let mut recorder = NoopRecorder;
     let command = accumulate_prefixes(
         PrefixedCommand::Meaning(meaning),
         traced,
         &mut prefixes,
         input,
         stores,
+        &mut recorder,
+        hooks,
     )?;
     let mut nest = ModeNest::new();
-    let mut recorder = NoopRecorder;
     let outcome = execute_prefixed_command(
         command,
         prefixes,
@@ -275,15 +294,52 @@ impl CommandOutcome {
     }
 }
 
-fn accumulate_prefixes<S>(
+fn head_for_vmode<S>(command: TracedTokenWord, input: &mut InputStack<S>, stores: &mut Universe)
+where
+    S: InputSource,
+{
+    let par = Token::Cs(stores.intern("par"));
+    let origin = stores.inserted_origin(InsertedOriginKind::Paragraph, par, command.origin());
+    push_traced_tokens(input, stores, [TracedTokenWord::pack(par, origin), command]);
+}
+
+fn off_save_alignment<S>(command: TracedTokenWord, input: &mut InputStack<S>, stores: &mut Universe)
+where
+    S: InputSource,
+{
+    let closing_group = Token::Char {
+        ch: '}',
+        cat: Catcode::EndGroup,
+    };
+    let origin = stores.inserted_origin(
+        InsertedOriginKind::ErrorRecovery,
+        closing_group,
+        command.origin(),
+    );
+    push_traced_tokens(
+        input,
+        stores,
+        [TracedTokenWord::pack(closing_group, origin), command],
+    );
+    stores.world_mut().write_text(
+        tex_state::PrintSink::TerminalAndLog,
+        "\n! Missing } inserted.\n",
+    );
+}
+
+fn accumulate_prefixes<S, R, H>(
     mut command: PrefixedCommand,
     traced: TracedTokenWord,
     prefixes: &mut Prefixes,
     input: &mut InputStack<S>,
     stores: &mut Universe,
+    recorder: &mut R,
+    hooks: &mut H,
 ) -> Result<TracedPrefixedCommand, ExecError>
 where
     S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
 {
     let mut token = tex_expand::semantic_token(traced);
     let mut origin = traced.origin();
@@ -313,8 +369,20 @@ where
             }
         }
 
-        let traced =
-            next_non_space_traced_raw(input, stores)?.ok_or(ExecError::MissingPrefixedCommand)?;
+        let traced = loop {
+            let traced = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
+                .ok_or(ExecError::MissingPrefixedCommand)?;
+            let token = tex_expand::semantic_token(traced);
+            if is_space(token) {
+                continue;
+            }
+            if let Token::Cs(symbol) = token
+                && stores.meaning(symbol) == Meaning::Relax
+            {
+                continue;
+            }
+            break traced;
+        };
         token = tex_expand::semantic_token(traced);
         origin = traced.origin();
         let Token::Cs(symbol) = token else {
@@ -426,7 +494,14 @@ where
             | UnexpandablePrimitive::SfCode
             | UnexpandablePrimitive::MathCode
             | UnexpandablePrimitive::DelCode => {
-                execute_code_table_assignment(primitive, command.traced, input, stores, hooks)?;
+                execute_code_table_assignment(
+                    primitive,
+                    prefixes,
+                    command.traced,
+                    input,
+                    stores,
+                    hooks,
+                )?;
                 Ok(CommandOutcome::assigned())
             }
             UnexpandablePrimitive::Font => {
@@ -489,6 +564,19 @@ where
             }
             UnexpandablePrimitive::HAlign | UnexpandablePrimitive::VAlign => {
                 reject_macro_prefixes(prefixes)?;
+                if primitive == UnexpandablePrimitive::HAlign {
+                    match nest.current_mode() {
+                        crate::Mode::Horizontal => {
+                            head_for_vmode(command.traced, input, stores);
+                            return Ok(CommandOutcome::continue_only());
+                        }
+                        crate::Mode::RestrictedHorizontal => {
+                            off_save_alignment(command.traced, input, stores);
+                            return Ok(CommandOutcome::continue_only());
+                        }
+                        _ => {}
+                    }
+                }
                 crate::align::execute_alignment(
                     primitive,
                     command.traced,
@@ -518,7 +606,7 @@ where
             }
             UnexpandablePrimitive::SetBox => {
                 reject_macro_prefixes(prefixes)?;
-                execute_setbox(prefixes.global, command.traced, input, stores, hooks)?;
+                execute_setbox(prefixes.global, command.traced, nest, input, stores, hooks)?;
                 Ok(CommandOutcome::assigned())
             }
             UnexpandablePrimitive::Box
@@ -590,7 +678,15 @@ where
             | UnexpandablePrimitive::VAdjust
             | UnexpandablePrimitive::Insert => {
                 reject_all_prefixes(prefixes)?;
-                execute_hmode_material(command.traced, primitive, nest, input, stores, hooks)?;
+                execute_hmode_material(
+                    command.traced,
+                    primitive,
+                    nest,
+                    input,
+                    stores,
+                    recorder,
+                    hooks,
+                )?;
                 Ok(CommandOutcome::assigned_if(
                     primitive == UnexpandablePrimitive::SpaceFactor,
                 ))
@@ -618,6 +714,35 @@ where
             UnexpandablePrimitive::Special => {
                 reject_all_prefixes(prefixes)?;
                 execute_special(command.traced, nest, input, stores, hooks)?;
+                Ok(CommandOutcome::continue_only())
+            }
+            UnexpandablePrimitive::SetLanguage => {
+                reject_all_prefixes(prefixes)?;
+                if !matches!(
+                    nest.current_mode(),
+                    crate::Mode::Horizontal | crate::Mode::RestrictedHorizontal
+                ) {
+                    return Err(ExecError::UnimplementedTypesetting {
+                        mode: nest.current_mode(),
+                        token: command.token,
+                        origin: command.origin,
+                        operation: "setlanguage outside horizontal mode",
+                    });
+                }
+                let language = scan_i32(input, stores, hooks, command.traced)?;
+                let language = u8::try_from(language).unwrap_or(0);
+                let normalize_min = |value: i32| u8::try_from(value.clamp(1, 63)).unwrap_or(1);
+                let left_hyphen_min = normalize_min(stores.int_param(IntParam::LEFT_HYPHEN_MIN));
+                let right_hyphen_min = normalize_min(stores.int_param(IntParam::RIGHT_HYPHEN_MIN));
+                crate::vertical::append_node_to_current_list(
+                    nest,
+                    stores,
+                    tex_state::node::Node::Whatsit(tex_state::node::Whatsit::Language {
+                        language,
+                        left_hyphen_min,
+                        right_hyphen_min,
+                    }),
+                )?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::Shipout => {
@@ -690,16 +815,6 @@ where
             }
             UnexpandablePrimitive::MathChar
             | UnexpandablePrimitive::Delimiter
-            | UnexpandablePrimitive::MathOrd
-            | UnexpandablePrimitive::MathOp
-            | UnexpandablePrimitive::MathBin
-            | UnexpandablePrimitive::MathRel
-            | UnexpandablePrimitive::MathOpen
-            | UnexpandablePrimitive::MathClose
-            | UnexpandablePrimitive::MathPunct
-            | UnexpandablePrimitive::MathInner
-            | UnexpandablePrimitive::Underline
-            | UnexpandablePrimitive::Overline
             | UnexpandablePrimitive::Limits
             | UnexpandablePrimitive::NoLimits
             | UnexpandablePrimitive::DisplayLimits
@@ -731,6 +846,20 @@ where
                     operation: "math primitive",
                 })
             }
+            UnexpandablePrimitive::MathOrd
+            | UnexpandablePrimitive::MathOp
+            | UnexpandablePrimitive::MathBin
+            | UnexpandablePrimitive::MathRel
+            | UnexpandablePrimitive::MathOpen
+            | UnexpandablePrimitive::MathClose
+            | UnexpandablePrimitive::MathPunct
+            | UnexpandablePrimitive::MathInner
+            | UnexpandablePrimitive::Underline
+            | UnexpandablePrimitive::Overline => {
+                reject_all_prefixes(prefixes)?;
+                crate::math::insert_dollar_sign(command.traced, input, stores);
+                Ok(CommandOutcome::continue_only())
+            }
             UnexpandablePrimitive::NoAlign => Err(ExecError::MisplacedNoAlign),
             UnexpandablePrimitive::Omit => Err(ExecError::MisplacedOmit),
             UnexpandablePrimitive::Cr
@@ -746,7 +875,8 @@ where
             | UnexpandablePrimitive::Outer
             | UnexpandablePrimitive::Protected
             | UnexpandablePrimitive::Immediate
-            | UnexpandablePrimitive::End => unreachable!("prefixes are accumulated first"),
+            | UnexpandablePrimitive::End
+            | UnexpandablePrimitive::Dump => unreachable!("prefixes are accumulated first"),
         },
         PrefixedCommand::Meaning(meaning) => {
             reject_macro_prefixes(prefixes)?;

@@ -1,4 +1,4 @@
-use tex_expand::ExpansionHooks;
+use tex_expand::{ExpansionHooks, ReadRecorder, get_x_token_with_recorder_and_hooks};
 use tex_fonts::{LigKernChar, LigKernCommand};
 use tex_lex::{InputSource, InputStack};
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
@@ -12,9 +12,10 @@ use tex_typeset::{INF_BAD, PackSpec, VpackParams};
 
 use super::paragraph::ensure_horizontal_for_character;
 use super::*;
+use crate::dispatch::dispatch_delivered_token_with_recorder;
 use crate::packing_params::vpack;
 use crate::vertical::{append_vertical_contribution, build_page_if_outer_vertical};
-use crate::{ExecError, Mode, ModeNest};
+use crate::{DispatchAction, ExecError, Mode, ModeNest, push_traced_tokens};
 
 pub(crate) fn try_append_character(
     nest: &mut ModeNest,
@@ -80,16 +81,18 @@ pub(crate) fn flush_pending_hchars(
     Ok(())
 }
 
-pub(super) fn execute_hmode_material<S, H>(
+pub(super) fn execute_hmode_material<S, R, H>(
     context: TracedTokenWord,
     primitive: UnexpandablePrimitive,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
+    recorder: &mut R,
     hooks: &mut H,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
+    R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
     match primitive {
@@ -177,7 +180,9 @@ where
             }
             nest.current_list_mut().set_space_factor(value);
         }
-        UnexpandablePrimitive::Accent => execute_accent(nest, input, stores, hooks, context)?,
+        UnexpandablePrimitive::Accent => {
+            execute_accent(nest, input, stores, recorder, hooks, context)?;
+        }
         UnexpandablePrimitive::Mark => {
             flush_pending_hchars(nest, stores)?;
             let tokens = scan_general_text_expanded_with_driver(input, stores, hooks, context)?;
@@ -209,15 +214,20 @@ where
             value,
         });
     }
-    let opener = next_non_space_x(input, stores, hooks)?.ok_or(ExecError::MissingToken {
+    let opener = next_non_space_traced_x(input, stores, hooks)?.ok_or(ExecError::MissingToken {
         context: "\\insert group",
     })?;
-    if !is_begin_group(opener) {
+    if !has_catcode_meaning(
+        stores,
+        tex_expand::semantic_token(opener),
+        Catcode::BeginGroup,
+    ) {
         return Err(ExecError::MissingToken {
             context: "\\insert group",
         });
     }
 
+    stores.enter_group_with_kind(tex_state::GroupKind::Simple);
     let mut inner = ModeNest::new();
     inner.push(Mode::InternalVertical);
     scan_box_group(&mut inner, input, stores, hooks)?;
@@ -238,6 +248,11 @@ where
         .height
         .checked_add(packed.node.depth)
         .ok_or(ExecError::ArithmeticOverflow)?;
+    let split_top_skip = stores.glue_param(GlueParam::SPLIT_TOP_SKIP);
+    let split_max_depth = stores.dimen_param(DimenParam::SPLIT_MAX_DEPTH);
+    let floating_penalty = stores.int_param(IntParam::FLOATING_PENALTY);
+
+    crate::leave_group(input, stores, tex_state::GroupKind::Simple)?;
 
     append_vertical_contribution(
         nest,
@@ -245,9 +260,9 @@ where
         Node::Ins {
             class: value as u16,
             size,
-            split_top_skip: stores.glue_param(GlueParam::SPLIT_TOP_SKIP),
-            split_max_depth: stores.dimen_param(DimenParam::SPLIT_MAX_DEPTH),
-            floating_penalty: stores.int_param(IntParam::FLOATING_PENALTY),
+            split_top_skip,
+            split_max_depth,
+            floating_penalty,
             content,
         },
     );
@@ -537,6 +552,24 @@ pub(super) fn infinite_glue(order: Order, negative: bool, shrink: bool) -> GlueS
     }
 }
 
+pub(crate) fn fixed_infinite_glue(primitive: UnexpandablePrimitive) -> GlueSpec {
+    match primitive {
+        UnexpandablePrimitive::HFil | UnexpandablePrimitive::VFil => {
+            infinite_glue(Order::Fil, false, false)
+        }
+        UnexpandablePrimitive::HFill | UnexpandablePrimitive::VFill => {
+            infinite_glue(Order::Fill, false, false)
+        }
+        UnexpandablePrimitive::HSs | UnexpandablePrimitive::VSs => {
+            infinite_glue(Order::Fil, false, true)
+        }
+        UnexpandablePrimitive::HFilNeg | UnexpandablePrimitive::VFilNeg => {
+            infinite_glue(Order::Fil, true, false)
+        }
+        _ => unreachable!("caller restricts fixed infinite glue primitives"),
+    }
+}
+
 fn report_missing_character(stores: &mut Universe, font: tex_state::ids::FontId, ch: char) {
     if stores.int_param(IntParam::new(36)) <= 0 {
         return;
@@ -551,15 +584,17 @@ fn report_missing_character(stores: &mut Universe, font: tex_state::ids::FontId,
         .write_text(PrintSink::TerminalAndLog, &text);
 }
 
-fn execute_accent<S, H>(
+fn execute_accent<S, R, H>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
+    recorder: &mut R,
     hooks: &mut H,
     context: TracedTokenWord,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
+    R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
     flush_pending_hchars(nest, stores)?;
@@ -568,68 +603,153 @@ where
         context: "\\accent",
         value: accent_value,
     })?;
-    let base = scan_accent_base(input, stores, hooks)?;
-    let font = stores.current_font();
-    let accent_metrics = stores.font_char_metrics(font, accent);
-    let base_metrics = stores.font_char_metrics(font, base);
-    let shift = match (accent_metrics, base_metrics) {
-        (Some(accent_metrics), Some(base_metrics)) => {
+    let accent_font = stores.current_font();
+    let Some(accent_metrics) = stores.font_char_metrics(accent_font, accent) else {
+        report_missing_character(stores, accent_font, char::from(accent));
+        return Ok(());
+    };
+    let base = scan_accent_base(nest, input, stores, recorder, hooks, context)?;
+    let Some(base) = base else {
+        nest.current_list_mut().push(Node::Char {
+            font: accent_font,
+            ch: char::from(accent),
+        });
+        return Ok(());
+    };
+    let base_font = stores.current_font();
+    let base_metrics = stores.font_char_metrics(base_font, base);
+    let shift = match base_metrics {
+        Some(base_metrics) => {
             Scaled::from_raw((base_metrics.width.raw() - accent_metrics.width.raw()) / 2)
         }
-        _ => Scaled::from_raw(0),
+        None => Scaled::from_raw(0),
     };
     nest.current_list_mut().push(Node::Kern {
         amount: shift,
         kind: KernKind::Accent,
     });
     nest.current_list_mut().push(Node::Char {
-        font,
+        font: accent_font,
         ch: char::from(accent),
     });
-    let back = accent_metrics
-        .map(|metrics| Scaled::from_raw(-metrics.width.raw() - shift.raw()))
-        .unwrap_or(Scaled::from_raw(-shift.raw()));
+    let back = Scaled::from_raw(-accent_metrics.width.raw() - shift.raw());
     nest.current_list_mut().push(Node::Kern {
         amount: back,
         kind: KernKind::Accent,
     });
     nest.current_list_mut().push(Node::Char {
-        font,
+        font: base_font,
         ch: char::from(base),
     });
     Ok(())
 }
 
-fn scan_accent_base<S, H>(
+fn scan_accent_base<S, R, H>(
+    nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
+    recorder: &mut R,
     hooks: &mut H,
-) -> Result<u8, ExecError>
+    context: TracedTokenWord,
+) -> Result<Option<u8>, ExecError>
 where
     S: InputSource,
+    R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    let token = next_non_space_x(input, stores, hooks)?.ok_or(ExecError::MissingToken {
-        context: "\\accent base",
-    })?;
-    match token {
-        Token::Char { ch, .. } => u8::try_from(ch as u32).map_err(|_| ExecError::InvalidCode {
-            context: "\\accent base",
-            value: ch as i32,
-        }),
-        Token::Cs(symbol) => match stores.meaning(symbol) {
-            Meaning::CharGiven(ch) => u8::try_from(ch as u32).map_err(|_| ExecError::InvalidCode {
+    loop {
+        let Some(traced) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
+        else {
+            return Ok(None);
+        };
+        let token = tex_expand::semantic_token(traced);
+        if is_space(token) {
+            continue;
+        }
+        let meaning = match token {
+            Token::Cs(symbol) => Some(stores.meaning(symbol)),
+            Token::Char {
+                ch,
+                cat: Catcode::Active,
+            } => {
+                let symbol = active_character_symbol(stores, ch);
+                Some(stores.meaning(symbol))
+            }
+            Token::Char { .. } | Token::Param(_) | Token::Frozen(_) => None,
+        };
+        if meaning == Some(Meaning::Relax) {
+            continue;
+        }
+        if meaning.is_some_and(is_accent_assignment_meaning) {
+            match dispatch_delivered_token_with_recorder(
+                nest, traced, input, stores, recorder, hooks,
+            )? {
+                DispatchAction::Continue => continue,
+                DispatchAction::End | DispatchAction::Shipout(_) | DispatchAction::NotConsumed => {
+                    unreachable!("TeX82 do_assignments only dispatches ordinary assignments")
+                }
+            }
+        }
+        let ch = match (token, meaning) {
+            (
+                Token::Char {
+                    ch,
+                    cat: Catcode::Letter | Catcode::Other,
+                },
+                _,
+            )
+            | (_, Some(Meaning::CharGiven(ch)))
+            | (
+                _,
+                Some(Meaning::CharToken {
+                    ch,
+                    cat: Catcode::Letter | Catcode::Other,
+                }),
+            ) => ch,
+            (_, Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char))) => {
+                let value = scan_i32(input, stores, hooks, context)?;
+                let ch = u8::try_from(value).map_err(|_| ExecError::InvalidCode {
+                    context: "\\accent base",
+                    value,
+                })?;
+                return Ok(Some(ch));
+            }
+            _ => {
+                push_traced_tokens(input, stores, [traced]);
+                return Ok(None);
+            }
+        };
+        return u8::try_from(ch as u32)
+            .map(Some)
+            .map_err(|_| ExecError::InvalidCode {
                 context: "\\accent base",
                 value: ch as i32,
-            }),
-            _ => Err(ExecError::MissingToken {
-                context: "\\accent base",
-            }),
-        },
-        Token::Param(_) => Err(ExecError::MissingToken {
-            context: "\\accent base",
-        }),
+            });
     }
+}
+
+fn is_accent_assignment_meaning(meaning: Meaning) -> bool {
+    if matches!(meaning, Meaning::Font(_)) {
+        return true;
+    }
+    if !is_assignment_meaning(meaning) {
+        return false;
+    }
+    !matches!(
+        meaning,
+        Meaning::UnexpandablePrimitive(
+            UnexpandablePrimitive::BeginGroup
+                | UnexpandablePrimitive::EndGroup
+                | UnexpandablePrimitive::AfterGroup
+                | UnexpandablePrimitive::AfterAssignment
+                | UnexpandablePrimitive::OpenIn
+                | UnexpandablePrimitive::CloseIn
+                | UnexpandablePrimitive::OpenOut
+                | UnexpandablePrimitive::CloseOut
+                | UnexpandablePrimitive::Immediate
+                | UnexpandablePrimitive::Write
+        )
+    )
 }
 
 pub(super) fn scan_rule_node<S, H>(

@@ -32,8 +32,18 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    let state = scan_preamble(primitive, context, input, stores, hooks)?;
-    execution::execute_alignment(state, nest, input, stores, recorder, hooks)
+    let suspended = input.suspend_alignment_cell();
+    let result = (|| {
+        let state = scan_preamble(primitive, context, input, stores, hooks)?;
+        execution::execute_alignment(state, nest, input, stores, recorder, hooks)
+    })();
+    match result {
+        Ok(()) => {
+            input.resume_alignment_cell(suspended);
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }
 }
 
 pub(crate) fn execute_display_halign<S, R, H>(
@@ -49,6 +59,16 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    let state = scan_preamble(UnexpandablePrimitive::HAlign, context, input, stores, hooks)?;
-    execution::execute_alignment_to_nodes(state, nest, input, stores, recorder, hooks)
+    let suspended = input.suspend_alignment_cell();
+    let result = (|| {
+        let state = scan_preamble(UnexpandablePrimitive::HAlign, context, input, stores, hooks)?;
+        execution::execute_alignment_to_nodes(state, nest, input, stores, recorder, hooks)
+    })();
+    match result {
+        Ok(nodes) => {
+            input.resume_alignment_cell(suspended);
+            Ok(nodes)
+        }
+        Err(error) => Err(error),
+    }
 }

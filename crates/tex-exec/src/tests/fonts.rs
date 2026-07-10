@@ -1,6 +1,28 @@
 use super::support::*;
 use super::*;
 
+struct RedirectedFontHooks;
+
+impl ExpansionHooks<MemoryInput> for RedirectedFontHooks {
+    fn open_input<C: tex_state::InputReadState>(
+        &mut self,
+        _input: &mut C,
+        name: &str,
+    ) -> Result<MemoryInput, String> {
+        Err(format!("unexpected input {name}"))
+    }
+
+    fn open_font<C: tex_state::InputReadState>(
+        &mut self,
+        input: &mut C,
+        path: &std::path::Path,
+    ) -> Result<tex_state::FileContent, String> {
+        input
+            .read_input_file(&std::path::Path::new("/fonts").join(path))
+            .map_err(|err| err.to_string())
+    }
+}
+
 #[test]
 fn font_definition_loads_tfm_via_world_and_reuses_identity() {
     let mut stores = stores_with_fonts();
@@ -18,6 +40,43 @@ fn font_definition_loads_tfm_via_world_and_reuses_identity() {
 }
 
 #[test]
+fn font_definition_uses_driver_font_resolution_and_records_resolved_path() {
+    const CMR10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
+    let mut stores = Universe::with_world(tex_state::World::memory());
+    crate::install_unexpandable_primitives(&mut stores);
+    stores
+        .world_mut()
+        .set_memory_file("/fonts/cmr10.tfm", CMR10.to_vec())
+        .expect("seed redirected font");
+    let snapshot = stores.snapshot();
+    let mut input = InputStack::new(MemoryInput::new("\\font\\f=cmr10 \\end"));
+    let mut recorder = NoopRecorder;
+
+    Executor::new()
+        .run_with_recorder_and_hooks(
+            &mut input,
+            &mut stores,
+            &mut recorder,
+            &mut RedirectedFontHooks,
+        )
+        .expect("font definition resolves through driver hook");
+
+    let font = font_meaning(&stores, "f");
+    assert_eq!(
+        stores.font(font).path(),
+        std::path::Path::new("/fonts/cmr10.tfm")
+    );
+    assert_eq!(stores.world().input_records().len(), 1);
+    assert_eq!(
+        stores.world().input_records()[0].path(),
+        std::path::Path::new("/fonts/cmr10.tfm")
+    );
+
+    stores.rollback(&snapshot);
+    assert!(stores.world().input_records().is_empty());
+}
+
+#[test]
 fn fontdimen_assignment_is_grouping_aware() {
     let mut stores = stores_with_fonts();
     tex_expand::install_expandable_primitives(&mut stores);
@@ -32,6 +91,21 @@ fn fontdimen_assignment_is_grouping_aware() {
     let output = terminal_effect_text(&stores);
     assert!(output.contains("in=20.0pt"));
     assert!(output.contains("out=10.0pt"));
+}
+
+#[test]
+fn the_fontdimen_reads_the_current_font_selector() {
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\font\\f=cmr10 \\fontdimen1\\f=1.5pt \\f\\message{slant=\\the\\fontdimen1\\font}\\end",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("current-font fontdimen expands");
+
+    assert!(terminal_effect_text(&stores).contains("slant=1.5pt"));
 }
 
 #[test]

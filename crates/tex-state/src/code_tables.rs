@@ -54,6 +54,18 @@ pub(crate) struct CodeTablesSnapshot {
     sfcodes: PagedTableSnapshot<SfCode>,
     mathcodes: PagedTableSnapshot<MathCode>,
     delcodes: PagedTableSnapshot<DelCode>,
+    group_roots: Arc<Vec<CodeTableRoots>>,
+}
+
+/// Structurally shared code-table roots saved at TeX group boundaries.
+#[derive(Clone, Debug)]
+struct CodeTableRoots {
+    catcodes: Arc<Root<Catcode>>,
+    lccodes: Arc<Root<LcCode>>,
+    uccodes: Arc<Root<UcCode>>,
+    sfcodes: Arc<Root<SfCode>>,
+    mathcodes: Arc<Root<MathCode>>,
+    delcodes: Arc<Root<DelCode>>,
 }
 
 /// The six mutable TeX code tables.
@@ -65,6 +77,7 @@ pub struct CodeTables {
     sfcodes: PagedTable<SfCode, SfCodeDefaults>,
     mathcodes: PagedTable<MathCode, MathCodeDefaults>,
     delcodes: PagedTable<DelCode, DelCodeDefaults>,
+    group_roots: Arc<Vec<CodeTableRoots>>,
 }
 
 impl CodeTables {
@@ -78,6 +91,7 @@ impl CodeTables {
             sfcodes: PagedTable::new(),
             mathcodes: PagedTable::new(),
             delcodes: PagedTable::new(),
+            group_roots: Arc::new(Vec::new()),
         }
     }
 
@@ -89,6 +103,7 @@ impl CodeTables {
             sfcodes: self.sfcodes.checkpoint(),
             mathcodes: self.mathcodes.checkpoint(),
             delcodes: self.delcodes.checkpoint(),
+            group_roots: Arc::clone(&self.group_roots),
         }
     }
 
@@ -99,6 +114,31 @@ impl CodeTables {
         self.sfcodes.rollback_to(snapshot.sfcodes);
         self.mathcodes.rollback_to(snapshot.mathcodes);
         self.delcodes.rollback_to(snapshot.delcodes);
+        self.group_roots = snapshot.group_roots;
+    }
+
+    pub(crate) fn enter_group(&mut self) {
+        let roots = CodeTableRoots {
+            catcodes: self.catcodes.root(),
+            lccodes: self.lccodes.root(),
+            uccodes: self.uccodes.root(),
+            sfcodes: self.sfcodes.root(),
+            mathcodes: self.mathcodes.root(),
+            delcodes: self.delcodes.root(),
+        };
+        Arc::make_mut(&mut self.group_roots).push(roots);
+    }
+
+    pub(crate) fn leave_group(&mut self) {
+        let roots = Arc::make_mut(&mut self.group_roots)
+            .pop()
+            .expect("leave_group without matching code-table roots");
+        self.catcodes.restore_group_root(roots.catcodes);
+        self.lccodes.restore_group_root(roots.lccodes);
+        self.uccodes.restore_group_root(roots.uccodes);
+        self.sfcodes.restore_group_root(roots.sfcodes);
+        self.mathcodes.restore_group_root(roots.mathcodes);
+        self.delcodes.restore_group_root(roots.delcodes);
     }
 
     /// Returns the generation vector for all code tables.
@@ -123,6 +163,14 @@ impl CodeTables {
         self.catcodes.set(ch, value);
     }
 
+    pub(crate) fn set_catcode_global(&mut self, ch: char, value: Catcode) {
+        self.catcodes.set(ch, value);
+        for roots in Arc::make_mut(&mut self.group_roots) {
+            roots.catcodes =
+                PagedTable::<Catcode, CatcodeDefaults>::root_with_value(&roots.catcodes, ch, value);
+        }
+    }
+
     #[must_use]
     pub fn lccode(&self, ch: char) -> LcCode {
         self.lccodes.get(ch)
@@ -131,6 +179,15 @@ impl CodeTables {
     pub(crate) fn set_lccode(&mut self, ch: char, value: LcCode) {
         assert_unicode_code(value, "lccode");
         self.lccodes.set(ch, value);
+    }
+
+    pub(crate) fn set_lccode_global(&mut self, ch: char, value: LcCode) {
+        assert_unicode_code(value, "lccode");
+        self.lccodes.set(ch, value);
+        for roots in Arc::make_mut(&mut self.group_roots) {
+            roots.lccodes =
+                PagedTable::<LcCode, LcCodeDefaults>::root_with_value(&roots.lccodes, ch, value);
+        }
     }
 
     #[must_use]
@@ -143,6 +200,15 @@ impl CodeTables {
         self.uccodes.set(ch, value);
     }
 
+    pub(crate) fn set_uccode_global(&mut self, ch: char, value: UcCode) {
+        assert_unicode_code(value, "uccode");
+        self.uccodes.set(ch, value);
+        for roots in Arc::make_mut(&mut self.group_roots) {
+            roots.uccodes =
+                PagedTable::<UcCode, UcCodeDefaults>::root_with_value(&roots.uccodes, ch, value);
+        }
+    }
+
     #[must_use]
     pub fn sfcode(&self, ch: char) -> SfCode {
         self.sfcodes.get(ch)
@@ -150,6 +216,14 @@ impl CodeTables {
 
     pub(crate) fn set_sfcode(&mut self, ch: char, value: SfCode) {
         self.sfcodes.set(ch, value);
+    }
+
+    pub(crate) fn set_sfcode_global(&mut self, ch: char, value: SfCode) {
+        self.sfcodes.set(ch, value);
+        for roots in Arc::make_mut(&mut self.group_roots) {
+            roots.sfcodes =
+                PagedTable::<SfCode, SfCodeDefaults>::root_with_value(&roots.sfcodes, ch, value);
+        }
     }
 
     #[must_use]
@@ -161,6 +235,17 @@ impl CodeTables {
         self.mathcodes.set(ch, value);
     }
 
+    pub(crate) fn set_mathcode_global(&mut self, ch: char, value: MathCode) {
+        self.mathcodes.set(ch, value);
+        for roots in Arc::make_mut(&mut self.group_roots) {
+            roots.mathcodes = PagedTable::<MathCode, MathCodeDefaults>::root_with_value(
+                &roots.mathcodes,
+                ch,
+                value,
+            );
+        }
+    }
+
     #[must_use]
     pub fn delcode(&self, ch: char) -> DelCode {
         self.delcodes.get(ch)
@@ -168,6 +253,14 @@ impl CodeTables {
 
     pub(crate) fn set_delcode(&mut self, ch: char, value: DelCode) {
         self.delcodes.set(ch, value);
+    }
+
+    pub(crate) fn set_delcode_global(&mut self, ch: char, value: DelCode) {
+        self.delcodes.set(ch, value);
+        for roots in Arc::make_mut(&mut self.group_roots) {
+            roots.delcodes =
+                PagedTable::<DelCode, DelCodeDefaults>::root_with_value(&roots.delcodes, ch, value);
+        }
     }
 
     #[cfg(any(test, feature = "testing", feature = "shadow"))]
@@ -228,6 +321,34 @@ where
         let root = Arc::make_mut(&mut self.root);
         let page = Arc::make_mut(&mut root.pages[page_index]);
         page.values[offset] = value;
+    }
+
+    fn root(&self) -> Arc<Root<T>> {
+        Arc::clone(&self.root)
+    }
+
+    fn root_with_value(root: &Arc<Root<T>>, ch: char, value: T) -> Arc<Root<T>> {
+        let (page_index, offset) = location(ch);
+        if root.pages[page_index].values[offset] == value {
+            return Arc::clone(root);
+        }
+
+        let mut updated = Arc::clone(root);
+        let root = Arc::make_mut(&mut updated);
+        let page = Arc::make_mut(&mut root.pages[page_index]);
+        page.values[offset] = value;
+        updated
+    }
+
+    fn restore_group_root(&mut self, root: Arc<Root<T>>) {
+        if Arc::ptr_eq(&self.root, &root) {
+            return;
+        }
+        self.root = root;
+        self.generation = self
+            .generation
+            .checked_add(1)
+            .expect("code-table generation overflow");
     }
 
     fn checkpoint(&self) -> PagedTableSnapshot<T> {

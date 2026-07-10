@@ -21,8 +21,9 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `Cargo.toml`: crate manifest declaring execution-layer dependencies and workspace lints.
 - `src/assignments/arithmetic.rs`: checked arithmetic helpers for `\advance`, `\multiply`, and `\divide`.
 - `src/assignments/boxes/`: box-making, `\setbox`, leader payload/glue scanning, `\vsplit`, packing scans, and box list contribution; `mod.rs` holds command-facing handlers while `leaders.rs`, `packaging.rs`, and `vsplit.rs` hold focused helpers.
-- `src/assignments/fonts.rs`: `\font`, font parameter, hyphenchar, and skewchar assignment behavior.
+- `src/assignments/fonts.rs`: `\font` scanning and driver-resolved TFM loading, plus font parameter, hyphenchar, and skewchar assignment behavior.
 - `src/assignments/hmode.rs`: horizontal-mode character, glue, kern, discretionary, and ligature handling.
+- `src/assignments/hmode/tests.rs`: focused text-accent scanner recovery and traced-token replay tests.
 - `src/assignments/hyphenation.rs`: `\patterns`, `\hyphenation`, and `\showhyphens` execution support.
 - `src/assignments/macros.rs`: macro-definition primitives plus `\aftergroup` and `\afterassignment`.
 - `src/assignments/mod.rs`: assignment dispatcher, prefix handling, group commands, and shared scan helpers.
@@ -41,6 +42,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/executor.rs`: `Executor` run loop and expansion-hook integration for engine mode and recovery.
 - `src/lib.rs`: public crate surface and module wiring for the TeX execution engine.
 - `src/math/`: math-mode stomach front-end that builds frozen mlists, noads, fractions, choices, styles, and mu nodes; split into dispatch, display packaging, lowering, scanner, and support modules.
+- `src/math/scan/tests.rs`: focused math scanner coverage for numeric delimiter bounds and traced-token recovery.
 - `src/mode.rs`: mode nest, mode summaries, pending horizontal chars, paragraph state, and list metadata.
 - `src/node_dump.rs`: TeX-style node-list dumping used by diagnostic output.
 - `src/output.rs`: output-routine fire-up, `\box255` packaging, held-over material, deadcycle handling, and final `\end` page cleanup.

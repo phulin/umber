@@ -162,6 +162,39 @@ fn expand_dump_execution_error_renders_primary_source_context() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary fixture setup and command execution.
+fn run_diagnostic_after_tfm_load_keeps_tex_source_path() {
+    let temp_dir = tempfile::tempdir().expect("create font provenance temp dir");
+    let source = temp_dir.path().join("after-font.tex");
+    let child = temp_dir.path().join("child.tex");
+    let tfm = temp_dir.path().join("cmr10.tfm");
+    fs::write(&source, "\\font\\f=cmr10 \\relax\n\\input child\n").expect("write main fixture");
+    fs::write(&child, "\\global X\n").expect("write diagnostic fixture");
+    fs::copy(
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../tex-fonts/tests/fixtures/cm/cmr10.tfm"
+        ),
+        &tfm,
+    )
+    .expect("copy TFM fixture");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .arg("run")
+        .arg(&source)
+        .output()
+        .expect("run font provenance fixture");
+
+    assert!(!output.status.success(), "invalid prefix use should fail");
+    let stderr = String::from_utf8(output.stderr).expect("stderr is utf-8");
+    assert!(stderr.contains("You can't use a prefix"), "{stderr}");
+    assert!(stderr.contains("child.tex:1:9"), "{stderr}");
+    assert!(stderr.contains("  1 | \\global X"), "{stderr}");
+    assert!(!stderr.contains("cmr10.tfm:1:9"), "{stderr}");
+}
+
+#[test]
 #[allow(clippy::disallowed_methods)] // host-side corpus discovery and command execution.
 fn run_exec_corpus_matches_committed_diagnostics() {
     run_corpus_matches_committed_log_fixtures("exec", false);
@@ -474,6 +507,75 @@ fn run_plain_format_bootstrap_defines_corpus_plain_macros() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn run_resolves_area_less_input_through_texinputs_and_advances() {
+    let temp_dir = tempfile::tempdir().expect("create TeX input search temp dir");
+    let job_dir = temp_dir.path().join("plain/base");
+    let search_dir = temp_dir.path().join("generic/hyphen");
+    fs::create_dir_all(&job_dir).expect("create principal input directory");
+    fs::create_dir_all(&search_dir).expect("create TeX input search directory");
+    let source = job_dir.join("plain.tex");
+    fs::write(&source, "\\input hyphen \\message{after-hyphen}\\end\n")
+        .expect("write principal input");
+    fs::write(search_dir.join("hyphen.tex"), "\\message{loaded-hyphen}\n")
+        .expect("write searched input");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .env("TEXINPUTS", &search_dir)
+        .arg("run")
+        .arg(&source)
+        .arg("--show-fixtures")
+        .output()
+        .expect("run input search smoke");
+
+    assert!(
+        output.status.success(),
+        "input search run failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
+    assert!(stdout.contains("loaded-hyphen"));
+    assert!(stdout.contains("after-hyphen"));
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn run_resolves_area_less_tfm_through_texfonts_and_advances() {
+    let temp_dir = tempfile::tempdir().expect("create TeX font search temp dir");
+    let job_dir = temp_dir.path().join("plain/base");
+    let font_dir = temp_dir.path().join("fonts/tfm/public/cm");
+    fs::create_dir_all(&job_dir).expect("create principal input directory");
+    fs::create_dir_all(&font_dir).expect("create TeX font search directory");
+    let source = job_dir.join("font-search.tex");
+    fs::write(
+        &source,
+        "\\font\\tenrm=cmr10 \\relax \\message{after-font}\\end\n",
+    )
+    .expect("write font search input");
+    let cmr10 = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../tex-fonts/tests/fixtures/cm/cmr10.tfm");
+    fs::copy(cmr10, font_dir.join("cmr10.tfm")).expect("copy searched TFM");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .env("TEXFONTS", &font_dir)
+        .arg("run")
+        .arg(&source)
+        .arg("--show-fixtures")
+        .output()
+        .expect("run font search smoke");
+
+    assert!(
+        output.status.success(),
+        "font search run failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
+    assert!(stdout.contains("after-font"));
+}
+
+#[test]
 #[allow(clippy::disallowed_methods)] // host-side fixture command execution and file checks.
 fn run_show_fixtures_harvests_without_committing_immediate_stream_effects() {
     let temp_dir = tempfile::tempdir().expect("create temp dir");
@@ -659,6 +761,10 @@ fn push_token(actual: &mut String, token: Token, stores: &Universe) {
         Token::Char { ch, cat } => format!("char:{}:{}", ch as u32, cat as u8),
         Token::Cs(symbol) => format!("cs:{}", stores.resolve(symbol)),
         Token::Param(slot) => format!("param:{slot}"),
+        Token::Frozen(tex_state::token::FrozenToken::EndTemplate) => {
+            "frozen:endtemplate".to_owned()
+        }
+        Token::Frozen(tex_state::token::FrozenToken::EndV) => "frozen:endv".to_owned(),
     };
     actual.push_str(&line);
     actual.push('\n');

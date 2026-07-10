@@ -537,6 +537,55 @@ fn token_list_frames_replay_before_sources_and_pop_at_end() {
 }
 
 #[test]
+fn replay_markers_distinguish_frames_with_identical_content() {
+    let mut stores = Universe::new();
+    let list = stores.intern_token_list(&[char_token('x', Catcode::Letter)]);
+    let mut input = InputStack::new(MemoryInput::new("a"));
+    let outer = input.push_token_list(list, TokenListReplayKind::Inserted);
+    let inner = input.push_token_list(list, TokenListReplayKind::Inserted);
+
+    assert_ne!(outer, inner);
+    assert!(input.contains_token_list_replay_marker(outer));
+    assert!(input.contains_token_list_replay_marker(inner));
+    assert_eq!(
+        input.next_token(&mut stores).expect("inner replay"),
+        Some(char_token('x', Catcode::Letter))
+    );
+    assert_eq!(
+        input.next_token(&mut stores).expect("outer replay"),
+        Some(char_token('x', Catcode::Letter))
+    );
+    assert!(!input.contains_token_list_replay_marker(inner));
+    assert!(input.contains_token_list_replay_marker(outer));
+}
+
+#[test]
+fn exhausted_nested_replays_finish_before_reading_below_marked_boundary() {
+    let mut stores = Universe::new();
+    let list = stores.intern_token_list(&[char_token('x', Catcode::Letter)]);
+    let mut input = InputStack::new(MemoryInput::new("a"));
+    let template = input.push_token_list(list, TokenListReplayKind::Inserted);
+
+    assert_eq!(
+        input.next_token(&mut stores).expect("template replay"),
+        Some(char_token('x', Catcode::Letter))
+    );
+    input.push_macro_body(list, MacroArguments::new());
+    assert_eq!(
+        input.next_token(&mut stores).expect("nested macro replay"),
+        Some(char_token('x', Catcode::Letter))
+    );
+
+    assert!(input.finish_exhausted_token_list_replay(template, &stores));
+    assert_eq!(
+        input
+            .next_token(&mut stores)
+            .expect("source after boundary"),
+        Some(char_token('a', Catcode::Letter))
+    );
+}
+
+#[test]
 fn token_list_replay_uses_frame_origin_list_without_changing_semantic_identity() {
     let mut stores = Universe::new();
     let tokens = [
@@ -658,6 +707,7 @@ fn source_summaries_track_position_and_eof_pop() {
         [InputFrameSummary::Source {
             source_id,
             source,
+            ..
         }] if source_id.raw() == 0
             && source.buffer_offset() == 0
             && source.line_number() == 1
@@ -685,7 +735,12 @@ fn source_summary_is_resume_complete_inside_current_line() {
         Some(char_token('é', Catcode::Other))
     );
     let summary = input.summary();
-    let [InputFrameSummary::Source { source_id, source }] = summary.frames() else {
+    let [
+        InputFrameSummary::Source {
+            source_id, source, ..
+        },
+    ] = summary.frames()
+    else {
         panic!("expected one source frame");
     };
 
@@ -745,7 +800,7 @@ fn condition_frames_round_trip_through_input_summary() {
         round_tripped.frames(),
         [
             InputFrameSummary::Source { .. },
-            InputFrameSummary::Condition(frame),
+            InputFrameSummary::Condition { condition: frame, .. },
         ] if frame.kind() == ConditionKind::IfCase
             && frame.limb() == ConditionLimb::Or
             && !frame.evaluating()
@@ -765,9 +820,26 @@ fn condition_frames_round_trip_through_input_summary() {
         input.summary().frames(),
         [
             InputFrameSummary::Source { source, .. },
-            InputFrameSummary::Condition(frame),
+            InputFrameSummary::Condition { condition: frame, .. },
         ] if source.column() == 1 && *frame == condition
     ));
+}
+
+#[test]
+fn frozen_alignment_token_survives_input_summary_restore() {
+    let mut stores = Universe::new();
+    let tokens = stores.intern_token_list(&[Token::frozen_end_template()]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list(tokens, TokenListReplayKind::Inserted);
+    let summary = input.summary();
+    let mut restored =
+        InputStack::from_summary(&summary, |_, _, _| Ok::<_, ()>(MemoryInput::new("")))
+            .expect("restore frozen-token input stack");
+
+    assert_eq!(
+        restored.next_token(&mut stores).expect("restored token"),
+        Some(Token::frozen_end_template())
+    );
 }
 
 #[test]
@@ -775,7 +847,8 @@ fn open_condition_survives_checkpoint_rollback_resume_summary() {
     let mut stores = Universe::new();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
     let mut input = InputStack::new(MemoryInput::new("xy"));
-    input.push_condition(ConditionFrameSummary::new_if(condition_context(), true));
+    let frame_token =
+        input.push_condition(ConditionFrameSummary::new_if(condition_context(), true));
 
     assert_eq!(
         input.next_token(&mut stores).expect("source token"),
@@ -790,7 +863,7 @@ fn open_condition_survives_checkpoint_rollback_resume_summary() {
         Some(ConditionFrameSummary::new_if(condition_context(), true))
     );
     assert_eq!(
-        input.update_current_condition(updated),
+        input.update_condition(frame_token, updated),
         Some(ConditionFrameSummary::new_if(condition_context(), true))
     );
     stores.set_int_param(IntParam::END_LINE_CHAR, b'!' as i32);
@@ -806,7 +879,7 @@ fn open_condition_survives_checkpoint_rollback_resume_summary() {
         resume_summary.frames(),
         [
             InputFrameSummary::Source { source, .. },
-            InputFrameSummary::Condition(frame),
+            InputFrameSummary::Condition { condition: frame, .. },
         ] if source.column() == 1
             && frame.kind() == ConditionKind::If
             && frame.limb() == ConditionLimb::If
@@ -816,6 +889,35 @@ fn open_condition_survives_checkpoint_rollback_resume_summary() {
             && frame.ifcase_or_count() == 0
             && frame.skip_nesting() == 0
     ));
+}
+
+#[test]
+fn condition_identity_targets_frame_below_nested_condition_and_survives_summary() {
+    let mut input = InputStack::new(MemoryInput::new(""));
+    let context = condition_context();
+    let outer = input.push_condition(ConditionFrameSummary::evaluating_if(context));
+    let nested = input.push_condition(ConditionFrameSummary::new_if(context, true));
+
+    assert_eq!(input.current_condition_token(), Some(nested));
+    assert_eq!(
+        input.update_condition(outer, ConditionFrameSummary::new_if(context, false)),
+        Some(ConditionFrameSummary::evaluating_if(context))
+    );
+    assert_eq!(
+        input.current_condition(),
+        Some(ConditionFrameSummary::new_if(context, true))
+    );
+
+    let summary = input.summary();
+    let mut restored =
+        InputStack::from_summary(&summary, |_, _, _| Ok::<_, ()>(MemoryInput::new("")))
+            .expect("condition summary restores");
+    assert_eq!(restored.summary(), summary);
+    assert_eq!(restored.current_condition_token(), Some(nested));
+    assert_eq!(
+        restored.update_condition(outer, ConditionFrameSummary::new_if(context, true)),
+        Some(ConditionFrameSummary::new_if(context, false))
+    );
 }
 
 #[test]
@@ -830,7 +932,15 @@ fn source_summary_restores_mid_world_input_from_recorded_content() {
         .world_mut()
         .set_memory_file("inc.tex", b"ab\nc".to_vec())
         .expect("seed include");
+    stores
+        .world_mut()
+        .set_memory_file("font.tfm", b"auxiliary metrics".to_vec())
+        .expect("seed auxiliary input");
     let main = stores.world_mut().read_file("main.tex").expect("read main");
+    stores
+        .world_mut()
+        .read_file("font.tfm")
+        .expect("read auxiliary input");
     let inc = stores
         .world_mut()
         .read_file("inc.tex")
@@ -856,10 +966,12 @@ fn source_summary_restores_mid_world_input_from_recorded_content() {
     stores.rollback(&snapshot);
 
     let summary = stores.input_summary().clone();
-    let mut restored = InputStack::from_summary(&summary, |source_id, source| {
+    let mut restored = InputStack::from_summary(&summary, |_source_id, input_record, source| {
         let content = stores
             .world()
-            .recorded_input_content(source_id.raw() as usize)
+            .recorded_input_content(
+                input_record.expect("world input frame retains its input record"),
+            )
             .expect("recorded source content");
         Ok::<_, ()>(super::WorldInput::from_content_after_lines(
             content,

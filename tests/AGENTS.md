@@ -154,12 +154,13 @@ scripts/parity.sh
 scripts/parity.sh --offline
 ```
 
-The acquisition step builds `tools/corpus-sync`, writes exact fetched bytes to
-gitignored `third_party/corpus/`, verifies the manifest SHA-256 values, and
-fails clearly on cached or fetched hash drift. Manifest entries use `key value`
-lines and also record the license, redistributability decision, and the
-reference DVI SHA-256 after the same banner-only normalization used by
-`tools/refexec`. `scripts/parity.sh` pins `SOURCE_DATE_EPOCH=1783604160` and
+The acquisition step builds `tools/corpus-sync`, writes exact fetched support
+inputs and documents to gitignored `third_party/corpus/`, verifies the manifest
+SHA-256 values, and fails clearly on cached or fetched hash drift. Manifest
+entries use `key value` lines. Support entries record provenance and licensing;
+document entries additionally select a `format_source` and record the reference
+DVI SHA-256 after the same banner-only normalization used by `tools/refexec`.
+`scripts/parity.sh` pins `SOURCE_DATE_EPOCH=1783604160` and
 `FORCE_SOURCE_DATE=1` by default before running the reference engine because
 external documents may write date primitives into the DVI body.
 
@@ -172,11 +173,13 @@ scripts/parity.sh e2e --doc story.tex
 ```
 
 The e2e mode first performs the same acquisition verification, then builds
-`tools/parity-harness` and `umber`. For each manifest entry it runs reference
-TeX in DVI mode through `refexec`, verifies `expected_ref_dvi_sha256` against
-the normalized reference DVI produced with the script-pinned job clock, runs
-`umber run --plain-format --dvi` with the harness's narrow corpus bootstrap
-for plain-format assumptions, and byte-compares the normalized DVI files.
+`tools/parity-harness` and `umber`. For each document it stages the selected
+real `format_source`, document, `third_party/hyphen/hyphen.tex`, and all TFM
+files loaded by Plain. Both engines receive the same wrapper that inputs the
+format source before the document; reference TeX runs in INITEX mode, while
+Umber runs the wrapper directly with no `--plain-format` shim. The harness
+verifies `expected_ref_dvi_sha256` against the normalized reference DVI
+produced with the script-pinned job clock and byte-compares normalized output.
 Reference drift, Umber failures, and byte mismatches
 write automatic triage bundles under `target/parity-triage/<doc-name>/`
 containing byte context, page-limited dvitype-style disassemblies and diff,

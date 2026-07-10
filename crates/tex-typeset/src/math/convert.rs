@@ -2,7 +2,7 @@ use tex_arith::x_over_n;
 use tex_fonts::CharMetrics;
 use tex_state::ids::{FontId, NodeListId};
 use tex_state::math::{MathChar, MathField, MathNoad, NoadClass, NoadKind};
-use tex_state::node::{KernKind, Node};
+use tex_state::node::{GlueKind, KernKind, Node};
 use tex_state::scaled::Scaled;
 
 use super::{
@@ -141,9 +141,9 @@ fn first_pass<S: MathTypesetState>(
                 };
                 first_pass(ctx, ctx.state.nodes(selected), out, max_height, max_depth);
             }
-            Node::Glue { spec, kind, .. } => {
+            Node::Glue { spec, kind, leader } => {
                 // AppG rule 2
-                if matches!(kind, tex_state::node::GlueKind::NonScript)
+                if matches!(kind, GlueKind::NonScript)
                     && ctx.style.is_script_or_smaller()
                     && input
                         .get(index + 1)
@@ -158,13 +158,8 @@ fn first_pass<S: MathTypesetState>(
                 };
                 out.push(WorkItem::Node(MathNode::Glue {
                     spec,
-                    kind: if matches!(kind, tex_state::node::GlueKind::MuSkip) {
-                        MathGlueKind::MuSkip
-                    } else if matches!(kind, tex_state::node::GlueKind::NonScript) {
-                        MathGlueKind::NonScript
-                    } else {
-                        MathGlueKind::Source
-                    },
+                    kind: *kind,
+                    leader: leader.clone(),
                 }));
             }
             Node::Kern { amount, kind } => {
@@ -284,7 +279,17 @@ fn translate_noad<S: MathTypesetState>(
             &noad.subscript,
             &mut delta,
         ),
-        _ => {
+        (_, MathField::Empty) => ctx.layout.empty(),
+        (_, MathField::SubBox(list)) => {
+            let nodes = ctx
+                .state
+                .nodes(*list)
+                .iter()
+                .map(|node| source_node(ctx.state, node))
+                .collect::<Vec<_>>();
+            ctx.layout.hlist(nodes)
+        }
+        (_, MathField::SubMlist(_)) => {
             let boxed = clean_box(ctx, &noad.nucleus, ctx.style);
             ctx.layout.hlist([MathNode::HList(boxed)])
         }
@@ -338,6 +343,7 @@ fn second_pass<S: MathTypesetState>(
                     output.push(MathNode::Glue {
                         spec,
                         kind: math_glue_kind_for_spacing(spacing),
+                        leader: None,
                     });
                 }
                 output.push(MathNode::Sequence(noad.hlist));
@@ -369,6 +375,7 @@ fn second_pass<S: MathTypesetState>(
                     output.push(MathNode::Glue {
                         spec,
                         kind: math_glue_kind_for_spacing(spacing),
+                        leader: None,
                     });
                 }
                 let target =
@@ -510,9 +517,10 @@ pub(crate) fn source_node(state: &impl MathTypesetState, node: &Node) -> MathNod
             amount: *amount,
             kind: *kind,
         },
-        Node::Glue { spec, .. } => MathNode::Glue {
+        Node::Glue { spec, kind, leader } => MathNode::Glue {
             spec: state.glue(*spec),
-            kind: MathGlueKind::Source,
+            kind: *kind,
+            leader: leader.clone(),
         },
         Node::Penalty(penalty) => MathNode::Penalty(*penalty),
         Node::Rule {

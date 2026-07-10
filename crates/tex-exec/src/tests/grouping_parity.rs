@@ -47,6 +47,21 @@ fn grouping_after_tokens_match_reference_micro_suite() {
 }
 
 #[test]
+fn prefix_expands_macros_before_selecting_the_assignment() {
+    let prefixed_macro = reference_fixture("prefixed_macro");
+    assert!(
+        prefixed_macro.contains("P:7"),
+        "reference prefixed-macro output changed:\n{}",
+        prefixed_macro
+    );
+
+    let stores =
+        run_umber_exec(r"\def\setglobal{\count0=7}{\global\relax\setglobal}\count1=\count0");
+    assert_eq!(stores.count(0), 7);
+    assert_eq!(stores.count(1), 7);
+}
+
+#[test]
 fn prepare_mag_cases_match_reference_micro_suite() {
     let illegal = reference_fixture("illegal_mag");
     assert!(illegal.contains("! Illegal magnification has been changed to 1000 (40000)."));
@@ -70,6 +85,13 @@ fn prepare_mag_cases_match_reference_micro_suite() {
 
 #[test]
 fn box_register_cases_match_reference_micro_suite() {
+    let brace_aliases = reference_fixture("box_brace_aliases");
+    assert!(
+        brace_aliases.contains("B:7.0pt"),
+        "reference brace-alias box output changed:\n{}",
+        brace_aliases
+    );
+
     let dimensions = reference_fixture("box_dimensions");
     assert!(
         dimensions.contains("B:12.0pt,3.0pt,2.0pt"),
@@ -128,6 +150,135 @@ fn box_register_cases_match_reference_micro_suite() {
     );
     assert_eq!(stores.count(0), 10_000);
     assert!(stores.box_reg(0).is_some());
+
+    stores =
+        run_umber_exec(r"\let\bgroup={\let\egroup=}\setbox0=\vbox\bgroup\hrule height7pt\egroup");
+    assert_eq!(
+        stores
+            .box_dimension(0, tex_state::BoxDimension::Height)
+            .expect("aliased box delimiters should produce a vbox")
+            .raw(),
+        7 * 65_536
+    );
+}
+
+#[test]
+fn last_box_cases_match_reference_micro_suite() {
+    let last_box = reference_fixture("last_box");
+    assert!(
+        last_box.contains("L:0.0pt,7.0pt;0.0pt,8.0pt;void;3.0pt,0.0pt;11.0pt;12.0pt;void,void"),
+        "reference last-box behavior changed:\n{last_box}"
+    );
+    assert!(last_box.contains("usually can't take things from the current page"));
+    assert!(last_box.contains("You can't use `\\lastbox' in math mode"));
+
+    let stores = run_umber_exec_with_box_expandables(include_str!(
+        "../../../../tests/corpus/tex_exec/last_box.tex"
+    ));
+    assert_eq!(
+        stores
+            .box_dimension(1, tex_state::BoxDimension::Width)
+            .expect("horizontal lastbox")
+            .raw(),
+        7 * tex_state::scaled::Scaled::UNITY
+    );
+    assert_eq!(
+        stores
+            .box_dimension(3, tex_state::BoxDimension::Width)
+            .expect("internal vertical lastbox")
+            .raw(),
+        8 * tex_state::scaled::Scaled::UNITY
+    );
+    assert!(stores.box_reg(5).is_none(), "a non-box tail blocks lastbox");
+    assert_eq!(
+        stores
+            .box_dimension(6, tex_state::BoxDimension::Width)
+            .expect("local lastbox assignment restores")
+            .raw(),
+        3 * tex_state::scaled::Scaled::UNITY
+    );
+    assert_eq!(
+        stores
+            .box_dimension(8, tex_state::BoxDimension::Width)
+            .expect("global lastbox assignment persists")
+            .raw(),
+        11 * tex_state::scaled::Scaled::UNITY
+    );
+    assert_eq!(
+        stores
+            .box_dimension(11, tex_state::BoxDimension::Width)
+            .expect("outer vertical unboxed tail remains available")
+            .raw(),
+        12 * tex_state::scaled::Scaled::UNITY
+    );
+    assert!(stores.box_reg(9).is_none());
+    assert!(stores.box_reg(10).is_none());
+}
+
+#[test]
+fn named_parameters_match_reference_as_internal_dimensions() {
+    let parameters = reference_fixture("internal_dimension_params");
+    assert!(
+        parameters.contains("D:11.0pt,7.0pt"),
+        "reference internal-dimension output changed:\n{}",
+        parameters
+    );
+
+    let stores = run_umber_exec(
+        r"\hsize=11pt\splittopskip=7pt plus 2fil minus 1pt\setbox0=\vbox to\hsize{}\setbox1=\vbox to\splittopskip{}",
+    );
+    assert_eq!(
+        stores
+            .box_dimension(0, tex_state::BoxDimension::Height)
+            .expect("dimension parameter should size the box")
+            .raw(),
+        11 * tex_state::scaled::Scaled::UNITY
+    );
+    assert_eq!(
+        stores
+            .box_dimension(1, tex_state::BoxDimension::Height)
+            .expect("glue parameter width should size the box")
+            .raw(),
+        7 * tex_state::scaled::Scaled::UNITY
+    );
+}
+
+#[test]
+fn insert_group_delimiters_match_reference_micro_suite() {
+    let insertion = reference_fixture("insert_brace_aliases");
+    assert!(
+        insertion.contains("I:1,3"),
+        "reference insertion grouping changed:\n{}",
+        insertion
+    );
+
+    let stores = run_umber_exec(
+        r"\let\bgroup={\let\egroup=}\count0=1\splittopskip=1pt\insert7\bgroup\count0=2\global\count1=3\splittopskip=9pt\hrule height4pt\egroup",
+    );
+    assert_eq!(stores.count(0), 1);
+    assert_eq!(stores.count(1), 3);
+    assert_eq!(
+        stores
+            .glue(stores.glue_param(tex_state::env::banks::GlueParam::SPLIT_TOP_SKIP))
+            .width,
+        tex_state::scaled::Scaled::from_raw(tex_state::scaled::Scaled::UNITY)
+    );
+    let insertion_split_top_skip = stores
+        .current_page_nodes()
+        .iter()
+        .find_map(|node| match node {
+            tex_state::node::Node::Ins {
+                class: 7,
+                split_top_skip,
+                ..
+            } => Some(stores.glue(*split_top_skip).width),
+            _ => None,
+        })
+        .expect("insertion node");
+    assert_eq!(
+        insertion_split_top_skip,
+        tex_state::scaled::Scaled::from_raw(9 * tex_state::scaled::Scaled::UNITY)
+    );
 }
 
 fn reference_fixture(stem: &str) -> String {

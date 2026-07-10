@@ -7,7 +7,10 @@ use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{ExpansionState, Universe};
 
-use crate::scan_int::{IntegerDiagnostic, ScanIntError, scan_int};
+use crate::scan_int::{
+    IntegerDiagnostic, ScanIntError, scan_int, scan_int_with_recorder_and_hooks,
+};
+use crate::{NoopExpansionHooks, ReadRecorder};
 
 fn scan(input: &str) -> (i32, Option<IntegerDiagnostic>, Option<Token>) {
     let mut stores = Universe::new();
@@ -130,6 +133,66 @@ fn scans_chardef_like_meanings() {
 
     assert_eq!(value, 65);
     assert_eq!(next, Some(char_token('x', Catcode::Letter)));
+}
+
+#[test]
+fn scans_mathchardef_meaning_direct_macro_and_signed_without_read_ahead() {
+    let mut stores = Universe::new();
+    let math = stores.intern("math");
+    stores.set_meaning(math, Meaning::MathCharGiven(10_000));
+    let wrapped = stores.intern("wrapped");
+    let replacement = stores.intern_token_list(&[Token::Cs(math)]);
+    let params = stores.intern_token_list(&[]);
+    stores.set_macro_meaning(
+        wrapped,
+        MacroMeaning::new(MeaningFlags::EMPTY, params, replacement),
+    );
+
+    let explicit_space = stores.intern_token_list(&[
+        Token::Cs(math),
+        char_token(' ', Catcode::Space),
+        char_token('X', Catcode::Letter),
+    ]);
+    let mut direct_input = InputStack::new(MemoryInput::new(""));
+    direct_input.push_token_list(explicit_space, tex_lex::TokenListReplayKind::Inserted);
+    let direct =
+        scan_int(&mut direct_input, &mut stores, context()).expect("direct math-given scan");
+    assert_eq!(direct.value(), 10_000);
+    assert_eq!(
+        direct_input.next_token(&mut stores).expect("space remains"),
+        Some(char_token(' ', Catcode::Space))
+    );
+    assert_eq!(scan_with_stores("-\\wrapped", &mut stores).0, -10_000);
+}
+
+#[derive(Default)]
+struct MeaningReads(Vec<(tex_state::interner::Symbol, Meaning)>);
+
+impl ReadRecorder for MeaningReads {
+    fn record_meaning(&mut self, symbol: tex_state::interner::Symbol, meaning: Meaning) {
+        self.0.push((symbol, meaning));
+    }
+}
+
+#[test]
+fn mathchardef_scan_records_the_live_meaning() {
+    let mut stores = Universe::new();
+    let math = stores.intern("math");
+    stores.set_meaning(math, Meaning::MathCharGiven(10_000));
+    let mut input = InputStack::new(MemoryInput::new("\\math"));
+    let mut reads = MeaningReads::default();
+
+    let scanned = scan_int_with_recorder_and_hooks(
+        &mut input,
+        &mut stores,
+        &mut reads,
+        &mut NoopExpansionHooks,
+        context(),
+    )
+    .expect("math-given scan should succeed");
+
+    assert_eq!(scanned.value(), 10_000);
+    assert!(reads.0.contains(&(math, Meaning::MathCharGiven(10_000))));
 }
 
 #[test]

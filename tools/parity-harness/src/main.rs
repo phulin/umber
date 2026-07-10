@@ -16,9 +16,13 @@ use tex_out::dvi::disasm::{DviFile, command_at_or_before, disassemble_page};
 
 const TRACE_PREFIX: &str =
     "\\tracingoutput=1 \\tracingonline=0 \\showboxbreadth=-1 \\showboxdepth=-1\n";
+const JOB_NAME: &str = "parity-job.tex";
 const CORPUS_TFMS: &[&str] = &[
-    "cmbx10", "cmcsc10", "cmmi10", "cmr10", "cmr7", "cmsl10", "cmss10", "cmsy10", "cmti10",
-    "cmtt10",
+    "cmbsy10", "cmbx10", "cmbx5", "cmbx6", "cmbx7", "cmbx8", "cmbx9", "cmcsc10", "cmdunh10",
+    "cmex10", "cmmi10", "cmmi5", "cmmi6", "cmmi7", "cmmi8", "cmmi9", "cmmib10", "cmr10", "cmr5",
+    "cmr6", "cmr7", "cmr8", "cmr9", "cmsl10", "cmsl8", "cmsl9", "cmsltt10", "cmss10", "cmssbx10",
+    "cmssi10", "cmssq8", "cmssqi8", "cmsy10", "cmsy5", "cmsy6", "cmsy7", "cmsy8", "cmsy9",
+    "cmti10", "cmti7", "cmti8", "cmti9", "cmtt10", "cmtt8", "cmtt9", "cmu10", "manfnt",
 ];
 
 fn main() -> ExitCode {
@@ -179,8 +183,9 @@ fn run_e2e(options: &Options) -> Result<bool> {
             .is_none_or(|filter| filter == &doc.name)
     }) {
         let source_path = options.corpus_dir.join(&doc.name);
+        let format_source_path = options.corpus_dir.join(&doc.format_source);
         println!("e2e {}", doc.name);
-        let reference = run_reference_dvi(&ref_tex, &source_path)
+        let reference = run_reference_dvi(&ref_tex, &source_path, &format_source_path)
             .with_context(|| format!("reference TeX failed for {}", doc.name))?;
         let reference_hash = sha256_hex(&reference.normalized);
         if reference_hash != doc.expected_ref_dvi_sha256 {
@@ -205,7 +210,7 @@ fn run_e2e(options: &Options) -> Result<bool> {
             continue;
         }
 
-        let umber_run = run_umber_dvi(&options.umber_bin, &source_path)
+        let umber_run = run_umber_dvi(&options.umber_bin, &source_path, &format_source_path)
             .with_context(|| format!("umber run failed to start for {}", doc.name))?;
         if !umber_run.success {
             ok = false;
@@ -253,6 +258,7 @@ fn run_e2e(options: &Options) -> Result<bool> {
                 &ref_tex,
                 &options.umber_bin,
                 &source_path,
+                &format_source_path,
                 &reference,
                 &umber,
             )
@@ -293,12 +299,18 @@ fn read_manifest(path: &Path) -> Result<Manifest> {
     Ok(manifest)
 }
 
-fn run_reference_dvi(ref_tex: &RefTex, source_path: &Path) -> Result<EngineDvi> {
-    let output = ref_tex.run(
-        source_path,
+fn run_reference_dvi(
+    ref_tex: &RefTex,
+    source_path: &Path,
+    format_source_path: &Path,
+) -> Result<EngineDvi> {
+    let temp = staged_source_dir(source_path, format_source_path, false)?;
+    let output = ref_tex.run_in_dir(
+        temp.path(),
+        Path::new(JOB_NAME),
         &RunOpts {
             dvi: true,
-            ini: false,
+            ini: true,
             extra_inputs: Vec::new(),
         },
     )?;
@@ -309,20 +321,19 @@ fn run_reference_dvi(ref_tex: &RefTex, source_path: &Path) -> Result<EngineDvi> 
     Ok(EngineDvi { bytes, normalized })
 }
 
-fn run_umber_dvi(umber_bin: &Path, source_path: &Path) -> Result<UmberRun> {
-    let temp = tempfile::tempdir().context("failed to create umber DVI temp dir")?;
-    copy_umber_inputs(source_path, temp.path())?;
-    let tex_name = source_path
-        .file_name()
-        .ok_or_else(|| anyhow!("path has no file name: {}", source_path.display()))?;
+fn run_umber_dvi(
+    umber_bin: &Path,
+    source_path: &Path,
+    format_source_path: &Path,
+) -> Result<UmberRun> {
+    let temp = staged_source_dir(source_path, format_source_path, false)?;
     let dvi_path = temp.path().join("umber.dvi");
     let umber_bin = runnable_umber_bin(umber_bin)?;
     let output = Command::new(&umber_bin)
         .env("SOURCE_DATE_EPOCH", "1783604160")
         .current_dir(temp.path())
         .arg("run")
-        .arg(tex_name)
-        .arg("--plain-format")
+        .arg(JOB_NAME)
         .arg("--dvi")
         .arg(&dvi_path)
         .output()
@@ -347,11 +358,12 @@ fn run_trace_bundle(
     ref_tex: &RefTex,
     umber_bin: &Path,
     source_path: &Path,
+    format_source_path: &Path,
     reference: &EngineDvi,
     umber: &EngineDvi,
 ) -> Result<TraceBundle> {
-    let reference_trace = run_reference_trace(ref_tex, source_path)?;
-    let umber_trace = run_umber_trace(umber_bin, source_path)?;
+    let reference_trace = run_reference_trace(ref_tex, source_path, format_source_path)?;
+    let umber_trace = run_umber_trace(umber_bin, source_path, format_source_path)?;
     let reference_stable = trace_stability(reference_trace.dvi.as_deref(), &reference.normalized)?;
     let umber_stable = trace_stability(umber_trace.dvi.as_deref(), &umber.normalized)?;
     Ok(TraceBundle {
@@ -369,17 +381,18 @@ fn trace_stability(traced: Option<&[u8]>, normal: &[u8]) -> Result<Option<bool>>
     Ok(Some(normalized_dvi_for_comparison(traced)? == normal))
 }
 
-fn run_reference_trace(ref_tex: &RefTex, source_path: &Path) -> Result<TraceRun> {
-    let temp = traced_source_dir(source_path)?;
-    let tex_name = source_path
-        .file_name()
-        .ok_or_else(|| anyhow!("path has no file name: {}", source_path.display()))?;
+fn run_reference_trace(
+    ref_tex: &RefTex,
+    source_path: &Path,
+    format_source_path: &Path,
+) -> Result<TraceRun> {
+    let temp = staged_source_dir(source_path, format_source_path, true)?;
     let output = ref_tex.run_in_dir(
         temp.path(),
-        Path::new(tex_name),
+        Path::new(JOB_NAME),
         &RunOpts {
             dvi: true,
-            ini: false,
+            ini: true,
             extra_inputs: Vec::new(),
         },
     )?;
@@ -390,20 +403,19 @@ fn run_reference_trace(ref_tex: &RefTex, source_path: &Path) -> Result<TraceRun>
     })
 }
 
-fn run_umber_trace(umber_bin: &Path, source_path: &Path) -> Result<TraceRun> {
-    let temp = traced_source_dir(source_path)?;
-    copy_corpus_tfms(temp.path())?;
-    let tex_name = source_path
-        .file_name()
-        .ok_or_else(|| anyhow!("path has no file name: {}", source_path.display()))?;
+fn run_umber_trace(
+    umber_bin: &Path,
+    source_path: &Path,
+    format_source_path: &Path,
+) -> Result<TraceRun> {
+    let temp = staged_source_dir(source_path, format_source_path, true)?;
     let dvi_path = temp.path().join("umber-trace.dvi");
     let umber_bin = runnable_umber_bin(umber_bin)?;
     let output = Command::new(&umber_bin)
         .env("SOURCE_DATE_EPOCH", "1783604160")
         .current_dir(temp.path())
         .arg("run")
-        .arg(tex_name)
-        .arg("--plain-format")
+        .arg(JOB_NAME)
         .arg("--show-fixtures")
         .arg("--dvi")
         .arg(&dvi_path)
@@ -434,28 +446,27 @@ fn runnable_umber_bin(umber_bin: &Path) -> Result<PathBuf> {
         .with_context(|| format!("failed to resolve umber binary {}", umber_bin.display()))
 }
 
-fn copy_umber_inputs(source_path: &Path, dest: &Path) -> Result<()> {
+fn copy_source(source_path: &Path, dest: &Path) -> Result<()> {
     let file_name = source_path
         .file_name()
         .ok_or_else(|| anyhow!("path has no file name: {}", source_path.display()))?;
     fs::copy(source_path, dest.join(file_name))
         .with_context(|| format!("failed to copy {}", source_path.display()))?;
-    copy_corpus_tfms(dest)?;
     Ok(())
 }
 
 fn copy_corpus_tfms(dest: &Path) -> Result<()> {
     for name in CORPUS_TFMS {
         let target = dest.join(format!("{name}.tfm"));
-        if let Some(source) = locate_tfm(name)? {
-            fs::copy(&source, &target).with_context(|| {
-                format!(
-                    "failed to copy {} to {}",
-                    source.display(),
-                    target.display()
-                )
-            })?;
-        }
+        let source = locate_tfm(name)?
+            .ok_or_else(|| anyhow!("could not locate required plain TeX font metric {name}.tfm"))?;
+        fs::copy(&source, &target).with_context(|| {
+            format!(
+                "failed to copy {} to {}",
+                source.display(),
+                target.display()
+            )
+        })?;
     }
     Ok(())
 }
@@ -483,30 +494,35 @@ fn locate_tfm(name: &str) -> Result<Option<PathBuf>> {
     }
 }
 
-fn traced_source_dir(source_path: &Path) -> Result<tempfile::TempDir> {
-    let temp = tempfile::tempdir().context("failed to create tracing temp dir")?;
-    let source_dir = source_path.parent().unwrap_or_else(|| Path::new("."));
-    for entry in fs::read_dir(source_dir)
-        .with_context(|| format!("failed to read source dir {}", source_dir.display()))?
-    {
-        let entry = entry?;
-        let file_type = entry.file_type()?;
-        if file_type.is_file() {
-            fs::copy(entry.path(), temp.path().join(entry.file_name())).with_context(|| {
-                format!("failed to copy {} for tracing", entry.path().display())
-            })?;
-        }
+fn staged_source_dir(
+    source_path: &Path,
+    format_source_path: &Path,
+    tracing: bool,
+) -> Result<tempfile::TempDir> {
+    let temp = tempfile::tempdir().context("failed to create parity job temp dir")?;
+    copy_source(source_path, temp.path())?;
+    copy_source(format_source_path, temp.path())?;
+    let hyphen = Path::new("third_party/hyphen/hyphen.tex");
+    if !hyphen.is_file() {
+        bail!(
+            "missing {}; run scripts/fetch-hyphen-corpus.sh before e2e parity",
+            hyphen.display()
+        );
     }
+    copy_source(hyphen, temp.path())?;
+    copy_corpus_tfms(temp.path())?;
     let file_name = source_path
         .file_name()
         .ok_or_else(|| anyhow!("path has no file name: {}", source_path.display()))?;
-    let traced_path = temp.path().join(file_name);
-    let original = fs::read(&traced_path)
-        .with_context(|| format!("failed to read tracing input {}", traced_path.display()))?;
-    let mut traced = TRACE_PREFIX.as_bytes().to_vec();
-    traced.extend_from_slice(&original);
-    fs::write(&traced_path, traced)
-        .with_context(|| format!("failed to write tracing input {}", traced_path.display()))?;
+    let format_name = format_source_path
+        .file_name()
+        .ok_or_else(|| anyhow!("path has no file name: {}", format_source_path.display()))?;
+    let mut wrapper = format!("\\input {}\n", format_name.to_string_lossy());
+    if tracing {
+        wrapper.push_str(TRACE_PREFIX);
+    }
+    writeln!(wrapper, "\\input {}", file_name.to_string_lossy())?;
+    fs::write(temp.path().join(JOB_NAME), wrapper).context("failed to write parity job wrapper")?;
     Ok(temp)
 }
 
@@ -739,6 +755,7 @@ fn run_self_test(triage_dir: &Path) -> Result<PathBuf> {
         sha256: sha256_hex(b"self-test"),
         license: "MIT".to_string(),
         redistributable: true,
+        format_source: "plain.tex".to_string(),
         expected_ref_dvi_sha256: sha256_hex(&reference.normalized),
         notes: "synthetic self-test".to_string(),
     };
