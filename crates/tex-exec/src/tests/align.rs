@@ -887,6 +887,33 @@ fn spanned_width_excess_is_added_to_last_spanned_column() {
 }
 
 #[test]
+fn leading_u_template_spaces_do_not_contribute_to_column_widths() {
+    let compact = run_boxed_alignment_source("\\halign{#&#\\cr a&b\\cr}");
+    let indented = run_boxed_alignment_source("\\halign{   #&   #\\cr a&b\\cr}");
+
+    let compact_vbox = box_zero_vlist(&compact);
+    let indented_vbox = box_zero_vlist(&indented);
+    let compact_rows = vlist_rows(&compact, compact_vbox);
+    let indented_rows = vlist_rows(&indented, indented_vbox);
+    let compact_cells = row_cells(&compact, compact_rows[0]);
+    let indented_cells = row_cells(&indented, indented_rows[0]);
+
+    assert_eq!(indented_rows[0].width, compact_rows[0].width);
+    assert_eq!(indented_cells[0].width, compact_cells[0].width);
+    assert_eq!(indented_cells[1].width, compact_cells[1].width);
+    assert_eq!(
+        indented
+            .nodes(indented_cells[0].children)
+            .first()
+            .expect("first cell should contain its character"),
+        compact
+            .nodes(compact_cells[0].children)
+            .first()
+            .expect("first cell should contain its character"),
+    );
+}
+
+#[test]
 fn outer_to_spec_sets_row_width_and_tabskip_glue() {
     let stores =
         run_boxed_alignment_source("\\tabskip=0pt plus 1fil\\halign to 30pt{#&#\\cr a&b\\cr}");

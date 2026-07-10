@@ -120,6 +120,13 @@ where
         if is_parameter_token(token) {
             return Ok(scanner.stores.finish_token_list(&mut builder));
         }
+        // TeX82 removes spacer commands from the start of every u-template.
+        // Otherwise source formatting after `&` becomes material at the
+        // beginning of every cell and incorrectly enlarges column maxima.
+        if !has_material && assignments::has_catcode_meaning(scanner.stores, token, Catcode::Space)
+        {
+            continue;
+        }
         // TeX82 records a leading tab on an empty u-template as `cur_loop`;
         // it is a periodic-preamble marker, not a missing-parameter error.
         if is_alignment_tab_token(token) && !has_material && loop_start.is_none() {
