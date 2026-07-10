@@ -7,6 +7,13 @@ Out of scope: expansion/typesetting algorithms, JIT codegen strategy, output
 drivers. Those are *consumers* of this layer and are referenced only where
 they constrain it.
 
+How to read this document: it is a normative design spec with
+implementation status woven in. Passages marked **Status:** (and sentences
+phrased "the implemented …" / "in the implementation …") describe what
+exists today and change as milestones land; everything else states the
+design the implementation must converge to. File-level detail lives in
+`crates/tex-state/AGENTS.md`.
+
 ---
 
 ## 1. Goals and non-goals
@@ -224,7 +231,7 @@ rare and bursty (verbatim, `\makeatletter`, babel shorthands).
   represent assignment activity, not effective value changes: a same-value
   code-table assignment still bumps the table generation, though it need not
   copy a page because the table content is unchanged.
-- In the implemented `tex-state` API, code tables live behind `Universe`:
+- **Status:** in the implemented `tex-state` API, code tables live behind `Universe`:
   reads and writes go through `Universe::{catcode,set_catcode,...}` and
   `Universe::code_table_generations`. `Universe::snapshot` captures the
   structurally shared root pointers and generation counters, and
@@ -617,7 +624,7 @@ pub struct Snapshot {
   slice), code-table generations, arena content hashes of the epoch slice,
   effect-log slice, RNG. Each slice hash must be a pure function of semantic
   state — never of addresses or allocation order.
-  The implemented f26.4 hash is maintained as
+  **Status:** the implemented f26.4 hash is maintained as
   `combine(previous_checkpoint_hash, semantic_slice_hash)`, a fold over the
   checkpoint timeline. The checkpoint `state_hash` is therefore
   **checkpoint-schedule-relative**, not a canonical fingerprint of the reached
@@ -779,9 +786,10 @@ pub struct Universe { env: Env, tokens: TokenStore, nodes: NodeArenas,
 One owned value = one isolated timeline. Speculation = move a rolled-back
 clone to another thread. No locks or atomics in the hot loop; `&mut
 Universe` *is* the isolation. `rollback(&mut self, &Snapshot)` is a method
-on `Universe` only (atomicity rule, §9). The implemented `Universe` wraps a
-private `Stores` composition so the M1/M2 liveness and aggregate-rollback
-discipline carries forward without exporting a `Stores` checkpoint path.
+on `Universe` only (atomicity rule, §9). **Status:** the implemented
+`Universe` wraps a private `Stores` composition so the M1/M2 liveness and
+aggregate-rollback discipline carries forward without exporting a `Stores`
+checkpoint path.
 Because `Symbol` dense ids can be reused after interner rollback, public
 meaning writes also live on `Universe`; the facade rejects symbols that are no
 longer live in its owned interner before mutating Env cells. `Universe`
