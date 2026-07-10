@@ -62,6 +62,10 @@ use std::hash::{Hash, Hasher};
 /// code-table, font-parameter, grouping, snapshot, input-file reads, or World
 /// mutation APIs.
 pub trait ExpansionState {
+    /// Current execution-group depth used by TeX82 alignment `get_next`.
+    fn execution_group_depth(&self) -> u32 {
+        0
+    }
     fn catcode(&self, ch: char) -> Catcode;
     fn lccode(&self, ch: char) -> LcCode;
     fn uccode(&self, ch: char) -> UcCode;
@@ -2030,6 +2034,9 @@ fn set_box_dimension_in_nodes(nodes: &mut [Node], dimension: BoxDimension, value
 }
 
 impl ExpansionState for Universe {
+    fn execution_group_depth(&self) -> u32 {
+        self.stores.env_group_depth()
+    }
     fn catcode(&self, ch: char) -> Catcode {
         Self::catcode(self, ch)
     }
@@ -2315,6 +2322,9 @@ impl ExpansionState for Universe {
 }
 
 impl ExpansionState for ExpansionContext<'_> {
+    fn execution_group_depth(&self) -> u32 {
+        self.universe.execution_group_depth()
+    }
     fn catcode(&self, ch: char) -> Catcode {
         self.universe.catcode(ch)
     }

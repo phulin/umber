@@ -328,6 +328,30 @@ pub struct InputStack<S> {
     unicode_superscript_notation: bool,
     last_source_frame: Option<LastSourceFrame>,
     next_replay_marker: u64,
+    alignment_cells: Vec<AlignmentCellInput>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AlignmentCellPhase {
+    UTemplate(TokenListReplayMarker),
+    Body,
+    VTemplate,
+    Suspended,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AlignmentTerminator {
+    Tab,
+    Cr,
+    Span,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct AlignmentCellInput {
+    phase: AlignmentCellPhase,
+    v_template: TokenListId,
+    group_depth: u32,
+    terminator: Option<TracedTokenWord>,
 }
 
 impl<S> InputStack<S> {
@@ -342,6 +366,7 @@ impl<S> InputStack<S> {
             unicode_superscript_notation: true,
             last_source_frame: None,
             next_replay_marker: 0,
+            alignment_cells: Vec::new(),
         };
         stack.push_source(source);
         stack
@@ -421,7 +446,98 @@ impl<S> InputStack<S> {
                 next_source_offset: source.next_source_offset(),
             }),
             next_replay_marker: 0,
+            alignment_cells: Vec::new(),
         })
+    }
+
+    /// Starts TeX82's `get_next` alignment-cell interception.
+    ///
+    /// The u-template marker is an exact live-frame boundary: once it is
+    /// retired, brace accounting begins on the first cell token. A top-level
+    /// tab, `\span`, or `\cr` is retained with its traced origin while the
+    /// v-template is inserted ahead of it, just as TeX82 does in `get_next`.
+    pub fn begin_alignment_cell(
+        &mut self,
+        u_template: Option<TokenListReplayMarker>,
+        v_template: TokenListId,
+        group_depth: u32,
+    ) {
+        self.alignment_cells.push(AlignmentCellInput {
+            phase: u_template.map_or(AlignmentCellPhase::Body, AlignmentCellPhase::UTemplate),
+            v_template,
+            group_depth,
+            terminator: None,
+        });
+    }
+
+    /// Completes the active cell after its frozen end-v token is delivered.
+    pub fn finish_alignment_cell(&mut self) -> Option<TracedTokenWord> {
+        let cell = self.alignment_cells.pop()?;
+        assert_eq!(cell.phase, AlignmentCellPhase::VTemplate);
+        cell.terminator
+    }
+
+    #[must_use]
+    pub fn alignment_cell_at_group_depth(&self, group_depth: u32) -> bool {
+        self.alignment_cells
+            .last()
+            .is_some_and(|cell| group_depth == cell.group_depth)
+    }
+
+    /// Suspends an outer cell while a nested alignment scans its preamble.
+    pub fn suspend_alignment_cell(&mut self) -> bool {
+        let Some(cell) = self.alignment_cells.last_mut() else {
+            return false;
+        };
+        assert_eq!(cell.phase, AlignmentCellPhase::Body);
+        cell.phase = AlignmentCellPhase::Suspended;
+        true
+    }
+
+    pub fn resume_alignment_cell(&mut self, suspended: bool) {
+        if !suspended {
+            return;
+        }
+        let cell = self
+            .alignment_cells
+            .last_mut()
+            .expect("suspended outer alignment cell");
+        assert_eq!(cell.phase, AlignmentCellPhase::Suspended);
+        cell.phase = AlignmentCellPhase::Body;
+    }
+
+    /// Applies the alignment-sensitive part of TeX82 `get_next`.
+    ///
+    /// Returns `true` when the token was a cell terminator and has been
+    /// replaced in the input by the active v-template.
+    pub fn intercept_alignment_token(
+        &mut self,
+        traced: TracedTokenWord,
+        terminator: Option<AlignmentTerminator>,
+        group_depth: u32,
+    ) -> bool {
+        let Some(mut cell) = self.alignment_cells.pop() else {
+            return false;
+        };
+        if let AlignmentCellPhase::UTemplate(marker) = cell.phase
+            && !self.contains_token_list_replay_marker(marker)
+        {
+            cell.phase = AlignmentCellPhase::Body;
+            cell.group_depth = group_depth;
+        }
+        if cell.phase != AlignmentCellPhase::Body {
+            self.alignment_cells.push(cell);
+            return false;
+        }
+
+        let terminates = group_depth == cell.group_depth && terminator.is_some();
+        if terminates {
+            cell.phase = AlignmentCellPhase::VTemplate;
+            cell.terminator = Some(traced);
+            self.push_token_list(cell.v_template, TokenListReplayKind::Inserted);
+        }
+        self.alignment_cells.push(cell);
+        terminates
     }
 
     pub fn push_token_list(

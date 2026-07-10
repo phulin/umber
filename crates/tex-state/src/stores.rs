@@ -174,6 +174,9 @@ impl Clone for Stores {
 }
 
 impl Stores {
+    pub(crate) fn env_group_depth(&self) -> u32 {
+        self.env.group_depth()
+    }
     /// Creates an empty state-store tuple.
     #[must_use]
     pub fn new() -> Self {

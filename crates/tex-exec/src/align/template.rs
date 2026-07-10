@@ -1,13 +1,13 @@
 use tex_expand::{ExpansionHooks, ReadRecorder};
 use tex_lex::{InputSource, InputStack, TokenListReplayKind};
-use tex_state::Universe;
 use tex_state::ids::TokenListId;
+use tex_state::{ExpansionState, Universe};
 
 use crate::{ExecError, ExecutionStats, ModeNest};
 
 pub(super) fn replay_template<S, R, H>(
     template: TokenListId,
-    expects_endv: bool,
+    cell_v_template: TokenListId,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
@@ -20,26 +20,25 @@ where
     H: ExpansionHooks<S>,
 {
     stores.with_hash_only_checkpoints(|stores| {
-        if stores.tokens(template).is_empty() {
-            return Ok(());
-        }
         // TeX82's end_token_list callback ends a u_template even when its
         // final token expands and pops the template below a macro frame. A
         // live-frame marker gives this synchronous replay the same boundary;
         // token-list identity alone is ambiguous for hash-consed templates.
         let replay_marker = input.push_token_list(template, TokenListReplayKind::Inserted);
+        input.begin_alignment_cell(
+            Some(replay_marker),
+            cell_v_template,
+            stores.execution_group_depth(),
+        );
         let mut stats = ExecutionStats::default();
         loop {
-            if !expects_endv && template_finished(input, stores, replay_marker) {
+            if template_finished(input, stores, replay_marker) {
                 return Ok(());
             }
             if super::execution::run_one_main_control_token(
                 nest, input, stores, recorder, hooks, &mut stats,
             )? {
-                assert!(expects_endv, "frozen endv escaped a v-template");
-                let finished = input.finish_exhausted_token_list_replay(replay_marker, stores);
-                assert!(finished, "frozen endv was not the final v-template token");
-                return Ok(());
+                unreachable!("v-template end escaped while replaying a u-template");
             }
         }
     })
@@ -47,7 +46,7 @@ where
 
 pub(super) fn expand_spanned_column_template_at_span_time<S, R, H>(
     template: TokenListId,
-    align_level: usize,
+    cell_v_template: TokenListId,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
@@ -62,8 +61,15 @@ where
     // Architecture §7 makes alignment the only impure kernel: span-time
     // template expansion is the single explicit gullet interleave while the
     // mutable alignment state on the mode nest is live.
-    let _ = align_level;
-    replay_template(template, false, nest, input, stores, recorder, hooks)
+    replay_template(
+        template,
+        cell_v_template,
+        nest,
+        input,
+        stores,
+        recorder,
+        hooks,
+    )
 }
 
 fn template_finished<S>(

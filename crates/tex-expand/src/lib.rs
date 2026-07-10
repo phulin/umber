@@ -12,7 +12,7 @@ use std::path::Path;
 use tex_lex::{InputSource, InputStack, LexError, MacroArguments, TokenListReplayKind};
 use tex_state::glue::GlueSpec;
 use tex_state::interner::Symbol;
-use tex_state::meaning::Meaning;
+use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::provenance::{InsertedOriginKind, SynthesizedOriginKind};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
@@ -607,12 +607,20 @@ where
         }
 
         if read.suppress_expansion() {
-            return Ok(Some(read.traced_token()));
+            if intercept_alignment_token(input, stores, traced) {
+                continue;
+            }
+            return Ok(Some(traced));
         }
 
         let symbol = match expandable_symbol(stores, traced) {
             Some(symbol) => symbol,
-            None => return Ok(Some(traced)),
+            None => {
+                if intercept_alignment_token(input, stores, traced) {
+                    continue;
+                }
+                return Ok(Some(traced));
+            }
         };
 
         let meaning = stores.meaning(symbol);
@@ -628,10 +636,59 @@ where
             meaning,
         )? {
             Dispatch::Continue => {}
-            Dispatch::Deliver(token) | Dispatch::DeliverNoExpand(token) => return Ok(Some(token)),
+            Dispatch::Deliver(token) | Dispatch::DeliverNoExpand(token) => {
+                if intercept_alignment_token(input, stores, token) {
+                    continue;
+                }
+                return Ok(Some(token));
+            }
             push @ Dispatch::Push { .. } => apply_dispatch_push(input, push),
         }
     }
+}
+
+fn intercept_alignment_token<S>(
+    input: &mut InputStack<S>,
+    stores: &impl ExpansionState,
+    traced: TracedTokenWord,
+) -> bool {
+    let token = semantic_token(traced);
+    let meaning = match token {
+        Token::Cs(symbol) => Some(stores.meaning(symbol)),
+        Token::Char {
+            ch,
+            cat: Catcode::Active,
+        } => stores
+            .active_character_symbol(ch)
+            .map(|symbol| stores.meaning(symbol)),
+        Token::Char { .. } | Token::Param(_) | Token::Frozen(_) => None,
+    };
+    let terminator = if matches!(
+        token,
+        Token::Char {
+            cat: Catcode::AlignmentTab,
+            ..
+        }
+    ) || matches!(
+        meaning,
+        Some(Meaning::CharToken {
+            cat: Catcode::AlignmentTab,
+            ..
+        })
+    ) {
+        Some(tex_lex::AlignmentTerminator::Tab)
+    } else {
+        match meaning {
+            Some(Meaning::UnexpandablePrimitive(
+                UnexpandablePrimitive::Cr | UnexpandablePrimitive::CrCr,
+            )) => Some(tex_lex::AlignmentTerminator::Cr),
+            Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Span)) => {
+                Some(tex_lex::AlignmentTerminator::Span)
+            }
+            _ => None,
+        }
+    };
+    input.intercept_alignment_token(traced, terminator, stores.execution_group_depth())
 }
 
 pub(crate) fn get_x_token_without_input_open<S, R, H>(
@@ -653,12 +710,20 @@ where
         let traced = read.traced_token();
 
         if read.suppress_expansion() {
-            return Ok(Some(read.traced_token()));
+            if intercept_alignment_token(input, stores, traced) {
+                continue;
+            }
+            return Ok(Some(traced));
         }
 
         let symbol = match expandable_symbol(stores, traced) {
             Some(symbol) => symbol,
-            None => return Ok(Some(traced)),
+            None => {
+                if intercept_alignment_token(input, stores, traced) {
+                    continue;
+                }
+                return Ok(Some(traced));
+            }
         };
 
         let meaning = stores.meaning(symbol);
@@ -674,7 +739,12 @@ where
             meaning,
         )? {
             Dispatch::Continue => {}
-            Dispatch::Deliver(token) | Dispatch::DeliverNoExpand(token) => return Ok(Some(token)),
+            Dispatch::Deliver(token) | Dispatch::DeliverNoExpand(token) => {
+                if intercept_alignment_token(input, stores, token) {
+                    continue;
+                }
+                return Ok(Some(token));
+            }
             push @ Dispatch::Push { .. } => apply_dispatch_push(input, push),
         }
     }

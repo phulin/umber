@@ -3,12 +3,11 @@ use tex_lex::{InputSource, InputStack, TokenListReplayKind};
 use tex_state::env::banks::TokParam;
 use tex_state::node::{GlueKind, Node};
 use tex_state::token::{Token, TracedTokenWord};
-use tex_state::{ExpansionContext, PrintSink, Universe};
+use tex_state::{ExpansionContext, ExpansionState, PrintSink, Universe};
 
 use super::support::{
-    align_kind, align_state, align_state_mut, alignment_mode, cell_mode, is_alignment_tab,
-    is_begin_group, is_cr, is_end_group, is_noalign, is_omit, is_span, row_mode,
-    set_align_brace_depth,
+    align_kind, align_state, align_state_mut, alignment_mode, cell_mode, is_alignment_tab, is_cr,
+    is_end_group, is_noalign, is_omit, is_span, row_mode, set_align_brace_depth,
 };
 use crate::assignments::{flush_pending_hchars, next_non_space_traced_x};
 use crate::dispatch::dispatch_delivered_token_with_recorder;
@@ -313,6 +312,11 @@ where
             .ok_or(ExecError::MissingToken {
                 context: "alignment template",
             })?;
+        let v_template = if omit {
+            stores.intern_token_list(&[Token::frozen_end_template()])
+        } else {
+            column_templates.v_template
+        };
         if !omit {
             if let Some(token) = initial {
                 push_traced_tokens(input, stores, [token]);
@@ -320,7 +324,7 @@ where
             if span_count > 1 {
                 super::template::expand_spanned_column_template_at_span_time(
                     column_templates.u_template,
-                    align_level,
+                    v_template,
                     nest,
                     input,
                     stores,
@@ -330,7 +334,7 @@ where
             } else {
                 super::template::replay_template(
                     column_templates.u_template,
-                    false,
+                    v_template,
                     nest,
                     input,
                     stores,
@@ -338,22 +342,13 @@ where
                     hooks,
                 )?;
             }
+        } else {
+            input.begin_alignment_cell(None, v_template, stores.execution_group_depth());
         }
         align_state_mut(nest, align_level)?.start_cell(column, span_count);
 
         let terminator =
             run_cell_body_until_terminator(align_level, nest, input, stores, recorder, hooks)?;
-        if !omit {
-            super::template::replay_template(
-                column_templates.v_template,
-                true,
-                nest,
-                input,
-                stores,
-                recorder,
-                hooks,
-            )?;
-        }
         match terminator {
             CellTerminator::Span => {
                 flush_pending_hchars(nest, stores)?;
@@ -420,7 +415,7 @@ enum CellTerminator {
 }
 
 fn run_cell_body_until_terminator<S, R, H>(
-    align_level: usize,
+    _align_level: usize,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
@@ -443,8 +438,13 @@ where
             context: "alignment cell",
         })?;
         let semantic = tex_expand::semantic_token(token);
-        stats.delivered_tokens += 1;
-        if align_state(nest, align_level)?.brace_depth() == 0 {
+        if semantic.is_frozen_endv() {
+            let terminator = input
+                .finish_alignment_cell()
+                .ok_or(ExecError::MissingToken {
+                    context: "alignment cell terminator",
+                })?;
+            let semantic = tex_expand::semantic_token(terminator);
             if is_alignment_tab(stores, semantic) {
                 return Ok(CellTerminator::AlignmentTab);
             }
@@ -454,19 +454,24 @@ where
             if is_span(stores, semantic) {
                 return Ok(CellTerminator::Span);
             }
-            if is_noalign(stores, semantic) {
-                return Err(ExecError::MisplacedNoAlign);
-            }
-            if is_omit(stores, semantic) {
-                return Err(ExecError::MisplacedOmit);
-            }
-            if is_end_group(stores, semantic) {
-                report_missing_cr_inserted(stores);
-                push_traced_tokens(input, stores, [token]);
-                return Ok(CellTerminator::Cr);
-            }
+            return Err(ExecError::MissingToken {
+                context: "alignment cell terminator",
+            });
         }
-        update_persistent_cell_brace_depth(align_level, nest, stores, semantic)?;
+        stats.delivered_tokens += 1;
+        if is_noalign(stores, semantic) {
+            return Err(ExecError::MisplacedNoAlign);
+        }
+        if is_omit(stores, semantic) {
+            return Err(ExecError::MisplacedOmit);
+        }
+        if is_end_group(stores, semantic)
+            && input.alignment_cell_at_group_depth(stores.execution_group_depth())
+        {
+            report_missing_cr_inserted(stores);
+            push_traced_tokens(input, stores, [token]);
+            return Ok(CellTerminator::Cr);
+        }
         dispatch_and_drain(nest, token, input, stores, recorder, hooks, &mut stats)?;
     }
 }
@@ -532,34 +537,6 @@ where
             operation: "alignment cell",
         }),
     }
-}
-
-fn update_persistent_cell_brace_depth(
-    align_level: usize,
-    nest: &mut ModeNest,
-    stores: &Universe,
-    token: Token,
-) -> Result<(), ExecError> {
-    // TeX82 updates align_state in get_next for both braces of a math group.
-    // Our math dispatcher scans that whole group synchronously after receiving
-    // its opening brace, so neither boundary persists across cell-loop pulls.
-    if matches!(nest.current_mode(), Mode::Math | Mode::DisplayMath)
-        && matches!(
-            token,
-            Token::Char {
-                cat: tex_state::token::Catcode::BeginGroup,
-                ..
-            }
-        )
-    {
-        return Ok(());
-    }
-    if is_begin_group(stores, token) {
-        align_state_mut(nest, align_level)?.increment_brace_depth();
-    } else if is_end_group(stores, token) {
-        align_state_mut(nest, align_level)?.decrement_brace_depth();
-    }
-    Ok(())
 }
 
 fn report_missing_cr_inserted(stores: &mut Universe) {

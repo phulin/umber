@@ -364,6 +364,34 @@ fn math_group_scanned_inside_cell_does_not_hide_row_terminator() {
 }
 
 #[test]
+fn split_hbox_template_injects_v_part_before_inline_math_row_terminator() {
+    let stores = run_boxed_alignment_source(
+        "\\halign{\\hbox to 20pt{#}\\cr \\hfil{}$\\mathrel{a}$Size$\\mathrel{b}$\\cr}",
+    );
+    let rows = vlist_rows(&stores, box_zero_vlist(&stores));
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(row_cells(&stores, rows[0]).len(), 1);
+}
+
+#[test]
+fn split_hbox_math_cell_replays_identically_after_rollback() {
+    let mut stores = support::stores_with_fonts();
+    let checkpoint = stores.snapshot();
+    let source = "\\setbox0=\\vbox{\\halign{\\hbox to 20pt{#}\\cr \\hfil{}$\\mathrel{a}$Size$\\mathrel{b}$\\cr}}";
+
+    run_alignment_source_in(&mut stores, source);
+    let first_box = stores.box_reg(0);
+    let first_hash = stores.snapshot().state_hash();
+
+    stores.rollback(&checkpoint);
+    run_alignment_source_in(&mut stores, source);
+
+    assert_eq!(stores.box_reg(0), first_box);
+    assert_eq!(stores.snapshot().state_hash(), first_hash);
+}
+
+#[test]
 fn math_group_cell_alignment_replays_identically_after_rollback() {
     let mut stores = support::stores_with_fonts();
     let checkpoint = stores.snapshot();
