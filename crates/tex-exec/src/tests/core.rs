@@ -759,6 +759,46 @@ fn control_space_appends_normal_font_space_glue() {
 }
 
 #[test]
+fn adjacent_cmr10_characters_emit_tfm_kern() {
+    let mut stores = stores_with_fonts();
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\font\\f=cmr10 \\relax \\f \\everypar{\\penalty10000}\\setbox0=\\vbox{Yo\\par}",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("font kern program executes");
+
+    let box0 = stores.box_reg(0).expect("box should be assigned");
+    let [Node::VList(box_node)] = stores.nodes(box0) else {
+        panic!("register 0 should hold a vbox");
+    };
+    let line = stores
+        .nodes(box_node.children)
+        .iter()
+        .find_map(|node| match node {
+            Node::HList(line) => Some(line),
+            _ => None,
+        })
+        .expect("paragraph should produce a line");
+    let children = stores.nodes(line.children);
+    assert!(
+        children.windows(3).any(|nodes| matches!(
+            nodes,
+            [
+                Node::Char { ch: 'Y', .. },
+                Node::Kern {
+                    amount,
+                    kind: tex_state::node::KernKind::Font,
+                },
+                Node::Char { ch: 'o', .. },
+            ] if amount.raw() == -54_614
+        )),
+        "unexpected Yo nodes: {children:?}"
+    );
+}
+
+#[test]
 fn appended_box_resets_space_factor_before_sentence_punctuation() {
     let mut stores = stores_with_fonts();
     tex_expand::install_expandable_primitives(&mut stores);

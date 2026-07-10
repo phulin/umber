@@ -89,6 +89,20 @@ where
         sync_engine_state::<S, _>(hooks, nest, stores);
     }
 
+    if matches!(mode, Mode::Vertical | Mode::InternalVertical)
+        && matches!(
+            meaning,
+            Meaning::CharGiven(_)
+                | Meaning::CharToken {
+                    cat: Catcode::Letter | Catcode::Other,
+                    ..
+                }
+        )
+    {
+        start_paragraph_before_replaying_character(nest, traced, input, stores)?;
+        return Ok(DispatchAction::Continue);
+    }
+
     match meaning {
         Meaning::Relax => Ok(DispatchAction::Continue),
         Meaning::Undefined => Err(ExecError::UndefinedControlSequence {
@@ -192,6 +206,10 @@ where
             Ok(DispatchAction::Continue)
         }
         Token::Char { ch, .. } => {
+            if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
+                start_paragraph_before_replaying_character(nest, traced, input, stores)?;
+                return Ok(DispatchAction::Continue);
+            }
             if assignments::try_append_character(nest, token, stores)? {
                 return Ok(DispatchAction::Continue);
             }
@@ -202,6 +220,21 @@ where
             unreachable!("caller passes a character token")
         }
     }
+}
+
+fn start_paragraph_before_replaying_character<S>(
+    nest: &mut ModeNest,
+    traced: TracedTokenWord,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+) -> Result<(), ExecError>
+where
+    S: InputSource,
+{
+    // TeX82 backs up the triggering token before `new_graf`, whose `every_par`
+    // replay must therefore run before that first character is reconsidered.
+    push_traced_tokens(input, stores, [traced]);
+    assignments::ensure_horizontal_for_character(nest, input, stores)
 }
 
 fn dispatch_delivered_expandable(
