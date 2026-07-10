@@ -1,5 +1,7 @@
 use super::support::*;
 use super::*;
+use tex_state::ids::ArenaRef;
+use tex_state::node::Node;
 use tex_state::scaled::Scaled;
 
 #[test]
@@ -1527,6 +1529,46 @@ fn forced_page_penalty_runs_default_output() {
     assert_eq!(
         stores.page_dimension(tex_state::page::PageDimension::Goal),
         tex_state::scaled::Scaled::MAX_DIMEN
+    );
+}
+
+#[test]
+fn page_output_promotes_nested_survivor_children_into_one_root() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\output={\\global\\setbox2=\\copy255 \\shipout\\box255}\
+         \\topskip=0pt \\setbox0=\\hbox{X}\\copy0 \\penalty-10000",
+    ));
+
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("nested page output should promote without panicking");
+
+    assert_eq!(stats.shipped_artifacts.len(), 1);
+    let root = stores
+        .box_reg(2)
+        .expect("output routine should retain page copy");
+    let ArenaRef::Survivor(root_id) = root.arena() else {
+        panic!("retained page should be survivor-owned");
+    };
+    let mut pending = vec![root];
+    let mut nested_boxes = 0;
+    while let Some(list) = pending.pop() {
+        for node in stores.nodes(list) {
+            if let Node::HList(box_node) | Node::VList(box_node) = node {
+                let ArenaRef::Survivor(child_root) = box_node.children.arena() else {
+                    panic!("promoted page contains an epoch child");
+                };
+                assert_eq!(child_root, root_id);
+                nested_boxes += 1;
+                pending.push(box_node.children);
+            }
+        }
+    }
+    assert!(
+        nested_boxes >= 2,
+        "page should retain packed and source boxes"
     );
 }
 

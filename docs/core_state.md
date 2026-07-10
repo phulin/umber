@@ -720,6 +720,15 @@ the environment because no API accepts it. Builders are reusable owned scratch
 buffers so the gullet can read frozen lists while building new argument lists.
 Node lists likewise; promotion is expressed as the *only* signature for storing
 into a box register.
+Promotion accepts an epoch-owned root whose descendants may already be owned
+by either the epoch arena or a survivor root. The survivor arena selects the
+source store from each opaque child handle, memoizes each exact source span,
+and iteratively copies the mixed DAG into one new survivor allocation. Every
+descendant in that allocation is rewritten to the new root, shared spans are
+canonicalized once, and no epoch handle crosses the box-register boundary.
+This is required by TeX's ordinary ownership flow: `\copy` can place a node
+with survivor-owned children on the current page, and `fire_up` then packages
+that page into epoch-owned `\box255` material before the register write.
 Box-register replacement paths that preserve TeX's current visible box level
 (`\box`/`\vsplit`-style same-level writes and clears) are still aggregate
 `Universe` facades; downstream crates do not infer or mutate raw environment

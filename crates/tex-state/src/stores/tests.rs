@@ -912,6 +912,48 @@ fn promoted_nested_box_remaps_children_to_same_survivor_root() {
 }
 
 #[test]
+fn promotion_canonicalizes_shared_survivor_children_into_new_root() {
+    let mut stores = Stores::new();
+    let child = one_char(&mut stores, 'x');
+    stores.set_box_reg(0, child);
+    let child = stores.box_reg(0).expect("child box should be promoted");
+    let fields = BoxNodeFields {
+        width: scaled(10),
+        height: scaled(7),
+        depth: scaled(3),
+        shift: scaled(0),
+        display: false,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children: child,
+    };
+    let outer = stores.freeze_node_list(&[
+        Node::HList(BoxNode::new(fields)),
+        Node::VList(BoxNode::new(fields)),
+    ]);
+
+    stores.set_box_reg(255, outer);
+    let promoted = stores.box_reg(255).expect("outer box should be promoted");
+    let [Node::HList(first), Node::VList(second)] = stores.nodes(promoted) else {
+        panic!("promoted root should preserve both wrapper boxes");
+    };
+
+    assert_same_root(promoted, first.children);
+    assert_eq!(
+        first.children, second.children,
+        "shared child is copied once"
+    );
+    assert_eq!(
+        stores.nodes(first.children),
+        &[Node::Char {
+            font: NULL_FONT,
+            ch: 'x'
+        }]
+    );
+}
+
+#[test]
 fn mag_parameter_defaults_and_rolls_back_through_stores() {
     let mut stores = Stores::new();
     assert_eq!(stores.mag(), 1000);

@@ -1,6 +1,7 @@
 use super::{CheckpointResumeKind, ResumeFallback, Universe};
 use crate::font::NULL_FONT;
 use crate::glue::{GlueSpec, Order};
+use crate::ids::{ArenaRef, NodeListId};
 use crate::input::{
     InputFrameSummary, InputSummary, LexerState, MacroArguments, SourceFrameSummary,
     TokenListReplayKind, TracedTokenList,
@@ -659,6 +660,66 @@ fn rollback_restores_state_hash_cursor() {
     let second = universe.snapshot();
 
     assert_eq!(first.state_hash(), second.state_hash());
+}
+
+#[test]
+fn mixed_arena_box_promotion_replays_with_resolvable_equal_hashes() {
+    let mut universe = Universe::new();
+    let child = universe.freeze_node_list(&[Node::Char {
+        font: NULL_FONT,
+        ch: 'x',
+    }]);
+    universe.set_box_reg(0, child);
+    let base = universe.snapshot();
+
+    let first = promote_survivor_wrapped_box(&mut universe);
+    let first_hash = universe.snapshot().state_hash();
+    assert_promoted_wrapper_is_resolvable(&universe, first);
+
+    universe.rollback(&base);
+    let second = promote_survivor_wrapped_box(&mut universe);
+    let second_hash = universe.snapshot().state_hash();
+    assert_promoted_wrapper_is_resolvable(&universe, second);
+
+    assert_eq!(first_hash, second_hash);
+}
+
+fn promote_survivor_wrapped_box(universe: &mut Universe) -> NodeListId {
+    let child = universe
+        .box_reg(0)
+        .expect("survivor child should remain live");
+    let wrapper = universe.freeze_node_list(&[Node::VList(BoxNode::new(BoxNodeFields {
+        width: Scaled::from_raw(10),
+        height: Scaled::from_raw(7),
+        depth: Scaled::from_raw(3),
+        shift: Scaled::from_raw(0),
+        display: false,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children: child,
+    }))]);
+    universe.set_box_reg_global(255, wrapper);
+    universe.box_reg(255).expect("wrapper should be promoted")
+}
+
+fn assert_promoted_wrapper_is_resolvable(universe: &Universe, wrapper: NodeListId) {
+    let [Node::VList(box_node)] = universe.nodes(wrapper) else {
+        panic!("promoted wrapper should contain a vlist");
+    };
+    let (ArenaRef::Survivor(wrapper_root), ArenaRef::Survivor(child_root)) =
+        (wrapper.arena(), box_node.children.arena())
+    else {
+        panic!("promoted wrapper and child should be survivor-owned");
+    };
+    assert_eq!(wrapper_root, child_root);
+    assert_eq!(
+        universe.nodes(box_node.children),
+        &[Node::Char {
+            font: NULL_FONT,
+            ch: 'x'
+        }]
+    );
 }
 
 #[test]

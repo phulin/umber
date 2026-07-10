@@ -739,7 +739,11 @@ Responsibility: accumulate the main vertical list, fire `\output`, commit.
   selected top-level page material for TeX82 mark nodes to set
   `\firstmark`/`\botmark`, distributes insertions to their class boxes, and
   vpackages the remaining page material into global `\box255` at the recorded
-  best size using the captured `\maxdepth`. Page-builder insert state is an
+  best size using the captured `\maxdepth`. This follows TeX.web's `fire_up`
+  ownership transfer: the packed page may combine fresh epoch lists with
+  survivor-owned descendants introduced by copied boxes, so the aggregate box
+  write promotes the mixed graph into one canonical survivor root before the
+  epoch can roll back. Page-builder insert state is an
   ordered per-class record list in `Universe` page state: first insertion of a
   class applies the `\skip<n>` correction once, `\count<n>` scales natural
   insertion size in TeX.web order, `\dimen<n>` caps class material, and split

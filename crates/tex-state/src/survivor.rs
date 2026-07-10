@@ -7,6 +7,7 @@ use crate::ids::{ArenaRef, NodeListId, SurvivorRootId};
 use crate::math::MathField;
 use crate::node::{LeaderPayload, Node};
 use crate::node_arena::NodeArena;
+use std::collections::HashMap;
 
 /// Arena for promoted node-list roots.
 #[derive(Clone, Debug)]
@@ -38,7 +39,7 @@ impl SurvivorArena {
             "only epoch node lists are promoted"
         );
 
-        let (nodes, start, len) = copy_list_iterative(id, epoch);
+        let (nodes, start, len) = copy_list_iterative(id, epoch, self);
         let root = self.allocate_root(nodes.into_boxed_slice());
         self.rewrite_root_ids(root);
         let promoted = NodeListId::new_survivor(root, start, len);
@@ -160,49 +161,75 @@ impl SurvivorArena {
     fn debug_assert_no_epoch_ids(&self, _id: NodeListId) {}
 }
 
-fn copy_list_iterative(id: NodeListId, epoch: &NodeArena) -> (Vec<Node>, u32, u32) {
-    let mut out = Vec::new();
-    let (root_start, root_len) = append_list(id, epoch, &mut out);
-    let mut pending: Vec<usize> = (root_start as usize..root_start as usize + root_len as usize)
-        .rev()
-        .collect();
+fn copy_list_iterative(
+    id: NodeListId,
+    epoch: &NodeArena,
+    survivor: &SurvivorArena,
+) -> (Vec<Node>, u32, u32) {
+    let mut copy = PromotionCopy::new(epoch, survivor);
+    let root = copy.copy_list(id);
 
-    while let Some(index) = pending.pop() {
-        remap_node_children(index, epoch, &mut out, &mut pending);
+    while let Some(index) = copy.pending.pop() {
+        remap_node_children(index, &mut copy);
     }
 
-    (out, root_start, root_len)
+    (copy.out, root.start(), root.len())
 }
 
-fn append_list(id: NodeListId, epoch: &NodeArena, out: &mut Vec<Node>) -> (u32, u32) {
-    let start = u32_len(out.len(), "promoted node root exceeds u32 entries");
-    out.extend_from_slice(epoch.get_epoch(id));
-    let len = id.len();
-    (start, len)
+/// Copies a mixed epoch/survivor DAG into one canonical survivor allocation.
+///
+/// The source arena is selected from the opaque handle's ownership tag inside
+/// the arena implementation. Exact list handles are memoized before their
+/// children are traversed, so shared children are copied and remapped once.
+struct PromotionCopy<'a> {
+    epoch: &'a NodeArena,
+    survivor: &'a SurvivorArena,
+    out: Vec<Node>,
+    remapped: HashMap<NodeListId, NodeListId>,
+    pending: Vec<usize>,
 }
 
-fn queue_children(start: u32, len: u32, pending: &mut Vec<usize>) {
-    pending.extend((start as usize..start as usize + len as usize).rev());
+impl<'a> PromotionCopy<'a> {
+    fn new(epoch: &'a NodeArena, survivor: &'a SurvivorArena) -> Self {
+        Self {
+            epoch,
+            survivor,
+            out: Vec::new(),
+            remapped: HashMap::new(),
+            pending: Vec::new(),
+        }
+    }
+
+    fn copy_list(&mut self, id: NodeListId) -> NodeListId {
+        if let Some(remapped) = self.remapped.get(&id) {
+            return *remapped;
+        }
+
+        let nodes = match id.arena() {
+            ArenaRef::Epoch => self.epoch.get_epoch(id),
+            ArenaRef::Survivor(_) => self.survivor.get(id),
+        }
+        .to_vec();
+        let start = u32_len(self.out.len(), "promoted node root exceeds u32 entries");
+        let len = id.len();
+        self.out.extend(nodes);
+        let remapped = NodeListId::new_survivor(SurvivorRootId::new(0), start, len);
+        self.remapped.insert(id, remapped);
+        self.pending
+            .extend((start as usize..start as usize + len as usize).rev());
+        remapped
+    }
 }
 
-fn remap_node_children(
-    index: usize,
-    epoch: &NodeArena,
-    out: &mut Vec<Node>,
-    pending: &mut Vec<usize>,
-) {
-    match out[index].clone() {
+fn remap_node_children(index: usize, copy: &mut PromotionCopy<'_>) {
+    match copy.out[index].clone() {
         Node::HList(mut box_node) => {
-            let (start, len) = append_list(box_node.children, epoch, out);
-            queue_children(start, len, pending);
-            box_node.children = NodeListId::new_survivor(SurvivorRootId::new(0), start, len);
-            out[index] = Node::HList(box_node);
+            box_node.children = copy.copy_list(box_node.children);
+            copy.out[index] = Node::HList(box_node);
         }
         Node::VList(mut box_node) => {
-            let (start, len) = append_list(box_node.children, epoch, out);
-            queue_children(start, len, pending);
-            box_node.children = NodeListId::new_survivor(SurvivorRootId::new(0), start, len);
-            out[index] = Node::VList(box_node);
+            box_node.children = copy.copy_list(box_node.children);
+            copy.out[index] = Node::VList(box_node);
         }
         Node::Disc {
             kind,
@@ -210,21 +237,11 @@ fn remap_node_children(
             post,
             replace,
         } => {
-            let (pre_start, pre_len) = append_list(pre, epoch, out);
-            queue_children(pre_start, pre_len, pending);
-            let (post_start, post_len) = append_list(post, epoch, out);
-            queue_children(post_start, post_len, pending);
-            let (replace_start, replace_len) = append_list(replace, epoch, out);
-            queue_children(replace_start, replace_len, pending);
-            out[index] = Node::Disc {
+            copy.out[index] = Node::Disc {
                 kind,
-                pre: NodeListId::new_survivor(SurvivorRootId::new(0), pre_start, pre_len),
-                post: NodeListId::new_survivor(SurvivorRootId::new(0), post_start, post_len),
-                replace: NodeListId::new_survivor(
-                    SurvivorRootId::new(0),
-                    replace_start,
-                    replace_len,
-                ),
+                pre: copy.copy_list(pre),
+                post: copy.copy_list(post),
+                replace: copy.copy_list(replace),
             };
         }
         Node::Ins {
@@ -235,58 +252,54 @@ fn remap_node_children(
             floating_penalty,
             content,
         } => {
-            let (start, len) = append_list(content, epoch, out);
-            queue_children(start, len, pending);
-            out[index] = Node::Ins {
+            copy.out[index] = Node::Ins {
                 class,
                 size,
                 split_top_skip,
                 split_max_depth,
                 floating_penalty,
-                content: NodeListId::new_survivor(SurvivorRootId::new(0), start, len),
+                content: copy.copy_list(content),
             };
         }
         Node::Adjust(content) => {
-            let (start, len) = append_list(content, epoch, out);
-            queue_children(start, len, pending);
-            out[index] = Node::Adjust(NodeListId::new_survivor(SurvivorRootId::new(0), start, len));
+            copy.out[index] = Node::Adjust(copy.copy_list(content));
         }
         Node::MathNoad(mut noad) => {
-            remap_math_field(&mut noad.nucleus, epoch, out, pending);
-            remap_math_field(&mut noad.subscript, epoch, out, pending);
-            remap_math_field(&mut noad.superscript, epoch, out, pending);
-            out[index] = Node::MathNoad(noad);
+            remap_math_field(&mut noad.nucleus, copy);
+            remap_math_field(&mut noad.subscript, copy);
+            remap_math_field(&mut noad.superscript, copy);
+            copy.out[index] = Node::MathNoad(noad);
         }
         Node::FractionNoad(mut fraction) => {
-            fraction.numerator = remap_list(fraction.numerator, epoch, out, pending);
-            fraction.denominator = remap_list(fraction.denominator, epoch, out, pending);
-            out[index] = Node::FractionNoad(fraction);
+            fraction.numerator = copy.copy_list(fraction.numerator);
+            fraction.denominator = copy.copy_list(fraction.denominator);
+            copy.out[index] = Node::FractionNoad(fraction);
         }
         Node::MathChoice(mut choice) => {
-            choice.display = remap_list(choice.display, epoch, out, pending);
-            choice.text = remap_list(choice.text, epoch, out, pending);
-            choice.script = remap_list(choice.script, epoch, out, pending);
-            choice.script_script = remap_list(choice.script_script, epoch, out, pending);
-            out[index] = Node::MathChoice(choice);
+            choice.display = copy.copy_list(choice.display);
+            choice.text = copy.copy_list(choice.text);
+            choice.script = copy.copy_list(choice.script);
+            choice.script_script = copy.copy_list(choice.script_script);
+            copy.out[index] = Node::MathChoice(choice);
         }
         Node::MathList(mut list) => {
-            list.content = remap_list(list.content, epoch, out, pending);
-            out[index] = Node::MathList(list);
+            list.content = copy.copy_list(list.content);
+            copy.out[index] = Node::MathList(list);
         }
         Node::Glue {
             spec,
             kind,
             leader: Some(payload),
         } => {
-            out[index] = Node::Glue {
+            copy.out[index] = Node::Glue {
                 spec,
                 kind,
-                leader: Some(remap_leader_payload(payload, epoch, out, pending)),
+                leader: Some(remap_leader_payload(payload, copy)),
             };
         }
         Node::Unset(mut unset) => {
-            unset.children = remap_list(unset.children, epoch, out, pending);
-            out[index] = Node::Unset(unset);
+            unset.children = copy.copy_list(unset.children);
+            copy.out[index] = Node::Unset(unset);
         }
         Node::Char { .. }
         | Node::Lig { .. }
@@ -358,41 +371,20 @@ fn rewrite_node_root_ids(node: &mut Node, root: SurvivorRootId) {
     }
 }
 
-fn remap_list(
-    id: NodeListId,
-    epoch: &NodeArena,
-    out: &mut Vec<Node>,
-    pending: &mut Vec<usize>,
-) -> NodeListId {
-    let (start, len) = append_list(id, epoch, out);
-    queue_children(start, len, pending);
-    NodeListId::new_survivor(SurvivorRootId::new(0), start, len)
-}
-
-fn remap_math_field(
-    field: &mut MathField,
-    epoch: &NodeArena,
-    out: &mut Vec<Node>,
-    pending: &mut Vec<usize>,
-) {
+fn remap_math_field(field: &mut MathField, copy: &mut PromotionCopy<'_>) {
     if let MathField::SubBox(list) | MathField::SubMlist(list) = field {
-        *list = remap_list(*list, epoch, out, pending);
+        *list = copy.copy_list(*list);
     }
 }
 
-fn remap_leader_payload(
-    payload: LeaderPayload,
-    epoch: &NodeArena,
-    out: &mut Vec<Node>,
-    pending: &mut Vec<usize>,
-) -> LeaderPayload {
+fn remap_leader_payload(payload: LeaderPayload, copy: &mut PromotionCopy<'_>) -> LeaderPayload {
     match payload {
         LeaderPayload::HList(mut box_node) => {
-            box_node.children = remap_list(box_node.children, epoch, out, pending);
+            box_node.children = copy.copy_list(box_node.children);
             LeaderPayload::HList(box_node)
         }
         LeaderPayload::VList(mut box_node) => {
-            box_node.children = remap_list(box_node.children, epoch, out, pending);
+            box_node.children = copy.copy_list(box_node.children);
             LeaderPayload::VList(box_node)
         }
         LeaderPayload::Rule {
