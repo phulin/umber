@@ -346,7 +346,7 @@ where
         ensure_horizontal_for_character(nest, input, stores)?;
     }
     flush_pending_hchars(nest, stores)?;
-    let spec = normal_font_space(stores);
+    let spec = nonzero_glue_param_or_font_space(stores, GlueParam::SPACE_SKIP, 1000);
     let id = stores.intern_glue(spec);
     nest.current_list_mut().push(Node::Glue {
         spec: id,
@@ -548,17 +548,6 @@ fn nonzero_glue_param_or_font_space(
         spec.shrink = scale_by_factor(spec.shrink, 1000, space_factor);
     }
     spec
-}
-
-fn normal_font_space(stores: &Universe) -> GlueSpec {
-    let font = stores.current_font();
-    GlueSpec {
-        width: stores.font_parameter(font, 2),
-        stretch: stores.font_parameter(font, 3),
-        stretch_order: Order::Normal,
-        shrink: stores.font_parameter(font, 4),
-        shrink_order: Order::Normal,
-    }
 }
 
 fn scale_by_factor(value: Scaled, num: i32, den: i32) -> Scaled {

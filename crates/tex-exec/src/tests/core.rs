@@ -724,7 +724,7 @@ fn last_box_assignment_replays_with_identical_state_hash() {
 }
 
 #[test]
-fn control_space_appends_normal_font_space_glue() {
+fn control_space_uses_space_skip_without_space_factor_scaling() {
     let mut stores = stores_with_fonts();
     let mut input = InputStack::new(MemoryInput::new(
         "\\font\\f=cmr10 \\relax \\f\
@@ -749,10 +749,10 @@ fn control_space_appends_normal_font_space_glue() {
             tex_state::node::Node::Glue { spec, kind: tex_state::node::GlueKind::Normal, leader: None },
             tex_state::node::Node::Char { ch: 'B', .. },
         ] if stores.glue(*spec) == GlueSpec {
-            width: Scaled::from_raw(10 * Scaled::UNITY),
-            stretch: Scaled::from_raw(2 * Scaled::UNITY),
+            width: Scaled::from_raw(20 * Scaled::UNITY),
+            stretch: Scaled::from_raw(0),
             stretch_order: tex_state::glue::Order::Normal,
-            shrink: Scaled::from_raw(3 * Scaled::UNITY),
+            shrink: Scaled::from_raw(0),
             shrink_order: tex_state::glue::Order::Normal,
         }
     ));
