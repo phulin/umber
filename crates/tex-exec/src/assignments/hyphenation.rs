@@ -3,7 +3,7 @@ use tex_lex::{InputSource, InputStack};
 use tex_state::Universe;
 use tex_state::env::banks::IntParam;
 use tex_state::hyphenation::{ExceptionSpec, PatternSpec};
-use tex_state::node::{DiscKind, Node};
+use tex_state::node::{DiscKind, KernKind, Node};
 use tex_state::token::{Catcode, Token};
 
 use super::*;
@@ -47,8 +47,8 @@ where
 pub(crate) fn hyphenated_hlist(stores: &mut Universe, nodes: &[Node]) -> Vec<Node> {
     let mut out = Vec::new();
     let mut word = Vec::new();
-    for node in nodes {
-        if push_word_node(stores, node, &mut word) {
+    for (index, node) in nodes.iter().enumerate() {
+        if push_word_node(stores, node, nodes.get(index + 1), &mut word) {
             continue;
         }
         flush_word(stores, &mut word, &mut out);
@@ -143,7 +143,12 @@ fn normalized_lccode(stores: &Universe, ch: char) -> Option<char> {
     char::from_u32(stores.lccode(ch)).filter(|&mapped| mapped != '\0')
 }
 
-fn push_word_node(stores: &Universe, node: &Node, word: &mut Vec<WordChar>) -> bool {
+fn push_word_node(
+    stores: &Universe,
+    node: &Node,
+    next: Option<&Node>,
+    word: &mut Vec<WordChar>,
+) -> bool {
     match node {
         Node::Char { font, ch } => {
             let Some(lower) = normalized_lccode(stores, *ch) else {
@@ -175,6 +180,20 @@ fn push_word_node(stores: &Universe, node: &Node, word: &mut Vec<WordChar>) -> b
             }
             true
         }
+        Node::Kern {
+            kind: KernKind::Font,
+            ..
+        } if !word.is_empty() && next.is_some_and(|node| is_word_node(stores, node)) => true,
+        _ => false,
+    }
+}
+
+fn is_word_node(stores: &Universe, node: &Node) -> bool {
+    match node {
+        Node::Char { ch, .. } => normalized_lccode(stores, *ch).is_some(),
+        Node::Lig { ch, orig, .. } => ligature_original_chars(*ch, *orig)
+            .into_iter()
+            .all(|ch| normalized_lccode(stores, ch).is_some()),
         _ => false,
     }
 }

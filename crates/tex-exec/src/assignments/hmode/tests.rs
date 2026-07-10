@@ -1,5 +1,6 @@
 use super::*;
 use crate::executor::NoopExecHooks;
+use crate::mode::PendingHChar;
 use tex_expand::{NoopRecorder, ReadRecorder};
 use tex_lex::MemoryInput;
 use tex_state::hyphenation::ExceptionSpec;
@@ -174,4 +175,50 @@ fn hyphenation_inside_ff_ligature_preserves_the_unbroken_ligature() {
         stores.nodes(disc.0)
     );
     assert!(matches!(stores.nodes(disc.1), [Node::Char { ch: 'f', .. }]));
+}
+
+#[test]
+fn hyphenation_keeps_scanning_across_font_kerns() {
+    const CMR10: &[u8] = include_bytes!("../../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
+    let mut stores = Universe::with_world(tex_state::World::memory());
+    crate::install_unexpandable_primitives(&mut stores);
+    stores
+        .world_mut()
+        .set_memory_file("cmr10.tfm", CMR10.to_vec())
+        .expect("seed cmr10");
+    let mut input = InputStack::new(MemoryInput::new("\\font\\f=cmr10 \\relax \\f"));
+    crate::Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("font selection should execute");
+    stores.add_hyphenation_exception(ExceptionSpec {
+        word: "availability".to_owned(),
+        positions: vec![5, 9],
+    });
+    let font = stores.current_font();
+    stores.set_font_hyphen_char(font, i32::from(b'-'), false);
+    let pending: Vec<_> = "availability"
+        .chars()
+        .map(|ch| PendingHChar { font, ch })
+        .collect();
+    let nodes = reconstitute(&stores, &pending, false);
+    assert!(
+        nodes.iter().any(|node| matches!(
+            node,
+            Node::Kern {
+                kind: KernKind::Font,
+                ..
+            }
+        )),
+        "the fixture must exercise an internal font kern: {nodes:?}"
+    );
+
+    let hyphenated = super::super::hyphenation::hyphenated_hlist(&mut stores, &nodes);
+    assert_eq!(
+        hyphenated
+            .iter()
+            .filter(|node| matches!(node, Node::Disc { .. }))
+            .count(),
+        2,
+        "both exception points must survive font-kern reconstitution: {hyphenated:?}"
+    );
 }
