@@ -299,7 +299,11 @@ fn run_pass<S: TypesetState>(
                 let id = candidates.len();
                 candidates.push(Candidate {
                     position: bp.position,
-                    width_position: bp.position,
+                    width_position: if bp.hyphenated {
+                        bp.position
+                    } else {
+                        next_width_position(nodes, bp.position)
+                    },
                     penalty: bp.penalty,
                     line: active_candidate.line + 1,
                     fitness,
@@ -323,6 +327,14 @@ fn run_pass<S: TypesetState>(
 
     let chosen = choose_final(&candidates, &finals, params.looseness)?;
     Some(reconstruct(nodes, &candidates, chosen))
+}
+
+fn next_width_position(nodes: &[Node], position: usize) -> usize {
+    let mut position = position.min(nodes.len());
+    while position < nodes.len() && is_discardable(&nodes[position]) {
+        position += 1;
+    }
+    position
 }
 
 fn record_best_candidate(best: &mut Vec<usize>, candidates: &[Candidate], candidate_id: usize) {

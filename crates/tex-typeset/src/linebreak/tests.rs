@@ -246,6 +246,56 @@ fn break_glue_does_not_contribute_to_preceding_line_width() {
 }
 
 #[test]
+fn discardable_tail_does_not_create_an_empty_final_line() {
+    let mut universe = Universe::new();
+    let trailing = universe.intern_glue(GlueSpec {
+        width: sp(10),
+        stretch: sp(0),
+        stretch_order: Order::Normal,
+        shrink: sp(10),
+        shrink_order: Order::Normal,
+    });
+    let par_fill = universe.intern_glue(GlueSpec {
+        width: sp(0),
+        stretch: sp(1),
+        stretch_order: Order::Fil,
+        shrink: sp(0),
+        shrink_order: Order::Normal,
+    });
+    let nodes = vec![
+        rule(100),
+        Node::Glue {
+            spec: trailing,
+            kind: GlueKind::Normal,
+            leader: None,
+        },
+        Node::Glue {
+            spec: trailing,
+            kind: GlueKind::Normal,
+            leader: None,
+        },
+        Node::Penalty(10_000),
+        Node::Glue {
+            spec: par_fill,
+            kind: GlueKind::ParFillSkip,
+            leader: None,
+        },
+    ];
+
+    let mut hook = NoHyphenation;
+    let result = line_break(&universe, &nodes, params(100), &mut hook);
+
+    assert_eq!(
+        result.breaks,
+        vec![BreakDecision {
+            position: nodes.len(),
+            penalty: -10_000,
+            hyphenated: false,
+        }]
+    );
+}
+
+#[test]
 fn mathoff_breaks_only_before_following_glue_and_zeroes_break_width() {
     let mut universe = Universe::new();
     let glue = universe.intern_glue(GlueSpec {
