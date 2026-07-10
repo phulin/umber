@@ -2,7 +2,9 @@ use super::*;
 use crate::executor::NoopExecHooks;
 use tex_expand::{NoopRecorder, ReadRecorder};
 use tex_lex::MemoryInput;
+use tex_state::hyphenation::ExceptionSpec;
 use tex_state::interner::Symbol;
+use tex_state::node::Node;
 use tex_state::provenance::SyntheticOriginKind;
 use tex_state::token::TracedTokenWord;
 
@@ -118,4 +120,58 @@ fn accent_delta_rounds_half_scaled_points_like_tex82() {
         ),
         Scaled::from_raw(5)
     );
+}
+
+#[test]
+fn hyphenation_inside_ff_ligature_preserves_the_unbroken_ligature() {
+    const CMR10: &[u8] = include_bytes!("../../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
+    let mut stores = Universe::with_world(tex_state::World::memory());
+    crate::install_unexpandable_primitives(&mut stores);
+    stores
+        .world_mut()
+        .set_memory_file("cmr10.tfm", CMR10.to_vec())
+        .expect("seed cmr10");
+    let mut input = InputStack::new(MemoryInput::new("\\font\\f=cmr10 \\relax \\f"));
+    crate::Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("font selection should execute");
+    stores.add_hyphenation_exception(ExceptionSpec {
+        word: "difference".to_owned(),
+        positions: vec![3],
+    });
+    let font = stores.current_font();
+    stores.set_font_hyphen_char(font, i32::from(b'-'), false);
+    let nodes: Vec<_> = "difference"
+        .chars()
+        .map(|ch| Node::Char { font, ch })
+        .collect();
+
+    let hyphenated = super::super::hyphenation::hyphenated_hlist(&mut stores, &nodes);
+    let disc = hyphenated
+        .iter()
+        .find_map(|node| match node {
+            Node::Disc {
+                pre, post, replace, ..
+            } => Some((*pre, *post, *replace)),
+            _ => None,
+        })
+        .expect("the exception should create a discretionary");
+
+    assert!(matches!(
+        stores.nodes(disc.2),
+        [Node::Lig {
+            ch: '\u{b}',
+            orig: ('f', 'f'),
+            ..
+        }]
+    ));
+    assert!(
+        matches!(
+            stores.nodes(disc.0),
+            [Node::Char { ch: 'f', .. }, Node::Char { ch: '-', .. }]
+        ),
+        "unexpected pre-break nodes: {:?}",
+        stores.nodes(disc.0)
+    );
+    assert!(matches!(stores.nodes(disc.1), [Node::Char { ch: 'f', .. }]));
 }

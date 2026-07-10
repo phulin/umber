@@ -430,6 +430,54 @@ fn post_line_break_keeps_migrating_nodes_for_execution_layer() {
 }
 
 #[test]
+fn post_line_break_splices_unbroken_discretionary_replacement() {
+    let mut universe = Universe::new();
+    let zero = universe.intern_glue(GlueSpec::ZERO);
+    let empty = universe.freeze_node_list(&[]);
+    let replacement = universe.freeze_node_list(&[rule(7)]);
+    let nodes = vec![
+        rule(3),
+        Node::Disc {
+            kind: DiscKind::AutomaticHyphen,
+            pre: empty,
+            post: empty,
+            replace: replacement,
+        },
+        Node::Penalty(10_000),
+    ];
+    let breaks = vec![BreakDecision {
+        position: nodes.len(),
+        penalty: 10_000,
+        hyphenated: false,
+    }];
+
+    let lines = post_line_break(
+        &universe,
+        &nodes,
+        &breaks,
+        PostLineBreakParams {
+            left_skip: zero,
+            right_skip: zero,
+            interline_penalty: 0,
+            club_penalty: 0,
+            widow_penalty: 0,
+            broken_penalty: 0,
+            shape: LineShape::natural(sp(100)),
+        },
+    );
+
+    assert!(matches!(
+        lines[0].nodes.as_slice(),
+        [
+            Node::Rule { width: Some(first), .. },
+            Node::Rule { width: Some(second), .. },
+            Node::Penalty(10_000),
+            Node::Glue { kind: GlueKind::RightSkip, .. },
+        ] if first.raw() == 3 && second.raw() == 7
+    ));
+}
+
+#[test]
 fn post_line_break_omits_only_zero_leftskip() {
     let mut universe = Universe::new();
     let zero = universe.intern_glue(GlueSpec::ZERO);

@@ -200,23 +200,98 @@ fn flush_word(stores: &mut Universe, word: &mut Vec<WordChar>, out: &mut Vec<Nod
         return;
     }
 
-    let mut start = 0usize;
-    for position in positions {
-        if position > start {
-            let pending: Vec<_> = word[start..position]
-                .iter()
-                .map(|ch| ch.pending())
-                .collect();
-            out.extend(super::hmode::reconstitute(stores, &pending, start != 0));
-        }
-        out.push(discretionary_hyphen(stores, word[position - 1].font));
-        start = position;
-    }
-    if start < word.len() {
-        let pending: Vec<_> = word[start..].iter().map(|ch| ch.pending()).collect();
-        out.extend(super::hmode::reconstitute(stores, &pending, start != 0));
-    }
+    append_hyphenated_word(stores, word, &positions, out);
     word.clear();
+}
+
+fn append_hyphenated_word(
+    stores: &mut Universe,
+    word: &[WordChar],
+    positions: &[usize],
+    out: &mut Vec<Node>,
+) {
+    let pending: Vec<_> = word.iter().map(WordChar::pending).collect();
+    let nodes = super::hmode::reconstitute(stores, &pending, false);
+    let mut position_index = 0;
+    let mut char_start = 0;
+
+    for node in nodes {
+        while positions.get(position_index) == Some(&char_start) {
+            out.push(discretionary_hyphen(stores, word[char_start - 1].font));
+            position_index += 1;
+        }
+
+        let char_end = char_start + node_original_len(&node);
+        if let Some(&position) = positions
+            .get(position_index)
+            .filter(|&&position| char_start < position && position < char_end)
+        {
+            out.push(discretionary_through_node(
+                stores, word, char_start, position, char_end, node,
+            ));
+            position_index += 1;
+            // TeX82 likewise suppresses another hyphenation point whose
+            // branches have not synchronized before this node ends.
+            while positions
+                .get(position_index)
+                .is_some_and(|&next| next < char_end)
+            {
+                position_index += 1;
+            }
+        } else {
+            out.push(node);
+        }
+        char_start = char_end;
+    }
+
+    while let Some(&position) = positions.get(position_index) {
+        debug_assert_eq!(position, char_start);
+        out.push(discretionary_hyphen(stores, word[position - 1].font));
+        position_index += 1;
+    }
+}
+
+fn discretionary_through_node(
+    stores: &mut Universe,
+    word: &[WordChar],
+    start: usize,
+    position: usize,
+    end: usize,
+    replacement: Node,
+) -> Node {
+    let font = word[position - 1].font;
+    let hyphen = u8::try_from(stores.font_hyphen_char(font))
+        .ok()
+        .map(char::from)
+        .unwrap_or('-');
+
+    let mut pre_pending: Vec<_> = word[start..position]
+        .iter()
+        .map(WordChar::pending)
+        .collect();
+    pre_pending.push(PendingHChar { font, ch: hyphen });
+    let pre = super::hmode::reconstitute(stores, &pre_pending, true);
+    let post_pending: Vec<_> = word[position..end].iter().map(WordChar::pending).collect();
+    let post = super::hmode::reconstitute(stores, &post_pending, false);
+
+    let pre = stores.freeze_node_list(&pre);
+    let post = stores.freeze_node_list(&post);
+    let replace = stores.freeze_node_list(&[replacement]);
+    Node::Disc {
+        kind: DiscKind::AutomaticHyphen,
+        pre,
+        post,
+        replace,
+    }
+}
+
+fn node_original_len(node: &Node) -> usize {
+    match node {
+        Node::Char { .. } => 1,
+        Node::Lig { ch, orig, .. } => ligature_original_chars(*ch, *orig).len(),
+        Node::Kern { .. } => 0,
+        _ => 0,
+    }
 }
 
 fn discretionary_hyphen(stores: &mut Universe, font: tex_state::ids::FontId) -> Node {

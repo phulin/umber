@@ -65,6 +65,7 @@ fn push_line_segment<S: TypesetState>(
                 out.extend_from_slice(state.nodes(*pre));
                 post.extend_from_slice(state.nodes(*post_list));
             }
+            Node::Disc { replace, .. } => out.extend_from_slice(state.nodes(*replace)),
             Node::Glue { .. } if absolute + 1 == end && end < nodes.len() => {}
             Node::MathOff(_) if absolute + 1 == end && end < nodes.len() => {
                 out.push(Node::MathOff(tex_state::scaled::Scaled::from_raw(0)));

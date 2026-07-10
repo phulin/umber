@@ -44,34 +44,31 @@ fn paragraph_hyphenation_honors_uchyph_for_uppercase_start() {
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
-        "\\font\\tenrm=cmr10 \\relax \\tenrm\\hsize=100pt \\vsize=1000pt \\patterns{a1ba}\\lefthyphenmin=1 \\righthyphenmin=1 \\pretolerance=-1 \\uchyph=0 Aba\\par \\uchyph=1 Aba\\par",
+        "\\font\\tenrm=cmr10 \\relax \\tenrm \\patterns{a1ba}\\lefthyphenmin=1 \\righthyphenmin=1 \\end",
     ));
 
-    let mut executor = Executor::new();
-    executor
+    Executor::new()
         .run(&mut input, &mut stores)
-        .expect("paragraph hyphenation executes");
+        .expect("hyphenation setup executes");
+    let font = stores.current_font();
+    let word: Vec<_> = "Aba"
+        .chars()
+        .map(|ch| tex_state::node::Node::Char { font, ch })
+        .collect();
 
-    let hlists: Vec<_> = executor
-        .nest()
-        .current_list()
-        .nodes()
-        .iter()
-        .chain(stores.current_page_nodes())
-        .filter_map(|node| match node {
-            tex_state::node::Node::HList(box_node) => Some(box_node.children),
-            _ => None,
-        })
-        .collect();
-    let disc_counts: Vec<_> = hlists
-        .iter()
-        .map(|&list| {
-            stores
-                .nodes(list)
-                .iter()
-                .filter(|node| matches!(node, tex_state::node::Node::Disc { .. }))
-                .count()
-        })
-        .collect();
-    assert_eq!(disc_counts, vec![0, 1]);
+    stores.set_int_param(IntParam::UC_HYPH, 0);
+    let lowercase_only = crate::assignments::test_hyphenated_hlist(&mut stores, &word);
+    stores.set_int_param(IntParam::UC_HYPH, 1);
+    let uppercase_enabled = crate::assignments::test_hyphenated_hlist(&mut stores, &word);
+
+    assert!(
+        !lowercase_only
+            .iter()
+            .any(|node| matches!(node, tex_state::node::Node::Disc { .. }))
+    );
+    assert!(
+        uppercase_enabled
+            .iter()
+            .any(|node| matches!(node, tex_state::node::Node::Disc { .. }))
+    );
 }

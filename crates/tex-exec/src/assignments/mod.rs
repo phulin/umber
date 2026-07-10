@@ -48,6 +48,8 @@ use fonts::*;
 pub(crate) use hmode::fixed_infinite_glue;
 use hmode::*;
 pub(crate) use hmode::{append_given_char, flush_pending_hchars, try_append_character};
+#[cfg(test)]
+pub(crate) use hyphenation::hyphenated_hlist as test_hyphenated_hlist;
 use hyphenation::*;
 use macros::*;
 use paragraph::*;
