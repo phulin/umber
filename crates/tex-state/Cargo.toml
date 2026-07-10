@@ -13,6 +13,7 @@ shadow = []
 testing = []
 
 [dependencies]
+ahash.workspace = true
 tex-arith = { path = "../tex-arith" }
 tex-fonts = { path = "../tex-fonts" }
 

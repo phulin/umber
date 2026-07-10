@@ -5,9 +5,40 @@
 
 use crate::ids::TokenListId;
 use crate::token::Token;
+use ahash::RandomState;
 use std::collections::HashMap;
+#[cfg(any(test, feature = "testing", feature = "shadow"))]
 use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
+#[cfg(any(test, feature = "testing", feature = "shadow"))]
+use std::hash::Hash;
+use std::hash::{BuildHasherDefault, Hasher};
+
+type TokenIndex = HashMap<u64, Vec<TokenListId>, BuildHasherDefault<PrehashedU64Hasher>>;
+
+/// Identity hasher for an index key that is already a keyed content hash.
+#[derive(Default)]
+struct PrehashedU64Hasher(u64);
+
+impl Hasher for PrehashedU64Hasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        // `TokenIndex` has only u64 keys, whose `Hash` implementation calls
+        // `write_u64`. Keep a valid fallback for the general Hasher contract.
+        let mut value = 0xcbf2_9ce4_8422_2325_u64;
+        for &byte in bytes {
+            value ^= u64::from(byte);
+            value = value.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        self.0 = value;
+    }
+
+    fn write_u64(&mut self, value: u64) {
+        self.0 = value;
+    }
+}
 
 /// A rollback watermark for the token store.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -64,7 +95,8 @@ impl TokenListBuilder {
 pub struct TokenStore {
     arena: Vec<Token>,
     spans: Vec<(u32, u32)>,
-    index: HashMap<u64, Vec<TokenListId>>,
+    index: TokenIndex,
+    hash_state: RandomState,
     index_dirty: bool,
 }
 
@@ -72,15 +104,17 @@ impl TokenStore {
     /// Creates a token store containing the canonical empty list.
     #[must_use]
     pub(crate) fn new() -> Self {
+        let hash_state = RandomState::new();
         let mut store = Self {
             arena: Vec::new(),
             spans: vec![(0, 0)],
-            index: HashMap::new(),
+            index: TokenIndex::default(),
+            hash_state,
             index_dirty: false,
         };
         store
             .index
-            .entry(content_hash(&[]))
+            .entry(store.content_hash(&[]))
             .or_default()
             .push(Self::empty_id());
         store
@@ -108,7 +142,7 @@ impl TokenStore {
             self.rebuild_index();
         }
 
-        let hash = content_hash(tokens);
+        let hash = self.content_hash(tokens);
         if let Some(candidates) = self.index.get(&hash) {
             for &id in candidates {
                 // Hash collisions are safe because the candidate span is
@@ -200,18 +234,15 @@ impl TokenStore {
         self.index.clear();
         for raw in 0..self.spans.len() {
             let id = TokenListId::new(u32_len(raw, "token-list spans exceed u32 entries"));
-            let hash = content_hash(self.get(id));
+            let hash = self.content_hash(self.get(id));
             self.index.entry(hash).or_default().push(id);
         }
         self.index_dirty = false;
     }
-}
 
-fn content_hash(tokens: &[Token]) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    // PERF: revisit hasher (fastpaths epic).
-    tokens.hash(&mut hasher);
-    hasher.finish()
+    fn content_hash(&self, tokens: &[Token]) -> u64 {
+        self.hash_state.hash_one(tokens)
+    }
 }
 
 fn u32_len(value: usize, message: &str) -> u32 {

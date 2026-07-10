@@ -54,6 +54,17 @@ fn hash_consing_same_content_twice_returns_same_id() {
     assert_eq!(first, second);
 }
 
+#[test]
+fn clone_preserves_keyed_content_hash_state() {
+    let mut original = TokenStore::new();
+    let tokens = [char_token('x'), char_token('y')];
+    let original_id = original.intern(&tokens);
+    let mut cloned = original.clone();
+
+    assert_eq!(original.content_hash(&tokens), cloned.content_hash(&tokens));
+    assert_eq!(cloned.intern(&tokens), original_id);
+}
+
 proptest! {
     #[test]
     fn ifx_as_id_compare_structurally_equal_lists_share_id(tokens in token_vec()) {
@@ -124,7 +135,7 @@ fn same_hash_bucket_still_compares_token_list_content() {
     let existing = [char_token('a')];
     let distinct = [char_token('b')];
     let existing_id = store.intern(&existing);
-    let distinct_hash = super::content_hash(&distinct);
+    let distinct_hash = store.content_hash(&distinct);
 
     store
         .index
