@@ -1686,8 +1686,13 @@ fn scan_control_sequence<S>(
     }
 
     let ch = read_expanded_char(source, stores, unicode_superscript_notation);
-    if stores.catcode(ch) != Catcode::Letter {
-        source.frame.state = LexerState::MidLine;
+    let cat = stores.catcode(ch);
+    if cat != Catcode::Letter {
+        source.frame.state = if cat == Catcode::Space {
+            LexerState::SkippingBlanks
+        } else {
+            LexerState::MidLine
+        };
         let token = Token::Cs(stores.intern(&ch.to_string()));
         return traced_source_token(stores, token, start);
     }
@@ -1722,8 +1727,13 @@ fn scan_control_sequence_readonly<S>(
     }
 
     let ch = read_expanded_char(source, stores, unicode_superscript_notation);
-    if stores.catcode(ch) != Catcode::Letter {
-        source.frame.state = LexerState::MidLine;
+    let cat = stores.catcode(ch);
+    if cat != Catcode::Letter {
+        source.frame.state = if cat == Catcode::Space {
+            LexerState::SkippingBlanks
+        } else {
+            LexerState::MidLine
+        };
         return readonly_cs_token(stores, &ch.to_string(), context);
     }
 

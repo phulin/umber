@@ -435,6 +435,38 @@ fn split_hbox_math_cell_replays_identically_after_rollback() {
 }
 
 #[test]
+fn control_space_cell_ignores_following_source_blanks() {
+    let stores = run_boxed_alignment_source(
+        "\\font\\t=cmtt10 \\def\\\\{\\char92{}}\\def\\sp{\\char32{}}\
+         \\halign{\\hfil\\t#\\hfil\\cr XXXXXXXXXX\\cr \\\\\\sp\\   \\cr}",
+    );
+    let rows = vlist_rows(&stores, box_zero_vlist(&stores));
+    let cell = row_cells(&stores, rows[1])[0];
+    let font = stores
+        .nodes(cell.children)
+        .iter()
+        .find_map(|node| match node {
+            Node::Char { font, .. } => Some(*font),
+            _ => None,
+        })
+        .expect("cell should contain typewriter characters");
+    let finite_spaces: Vec<_> = stores
+        .nodes(cell.children)
+        .iter()
+        .filter_map(|node| match node {
+            Node::Glue { spec, .. } if stores.glue(*spec).stretch_order == Order::Normal => {
+                Some(stores.glue(*spec))
+            }
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(cell_text(&stores, cell), "\\ ");
+    assert_eq!(finite_spaces.len(), 1);
+    assert_eq!(finite_spaces[0].width, stores.font_parameter(font, 2));
+}
+
+#[test]
 fn math_group_cell_alignment_replays_identically_after_rollback() {
     let mut stores = support::stores_with_fonts();
     let checkpoint = stores.snapshot();

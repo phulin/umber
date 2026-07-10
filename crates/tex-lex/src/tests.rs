@@ -170,6 +170,23 @@ fn scans_control_words_and_control_symbols() {
 }
 
 #[test]
+fn control_space_enters_skipping_blanks_state() {
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::END_LINE_CHAR, 13);
+    let mut lexer = Lexer::new(MemoryInput::new("a\\   b"));
+
+    assert_eq!(
+        collect_tokens(&mut lexer, &mut stores),
+        vec![
+            char_token('a', Catcode::Letter),
+            cs_token(&mut stores, " "),
+            char_token('b', Catcode::Letter),
+            char_token(' ', Catcode::Space),
+        ]
+    );
+}
+
+#[test]
 fn control_word_scanning_uses_current_catcodes() {
     let mut stores = Universe::new();
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
