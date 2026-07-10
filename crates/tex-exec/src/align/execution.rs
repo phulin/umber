@@ -35,7 +35,13 @@ where
 {
     stores.with_hash_only_checkpoints(|stores| {
         let alignment_kind = state.kind();
+        let enclosing_prev_depth = nest.current_list().prev_depth();
         nest.push(alignment_mode(alignment_kind));
+        if let Some(prev_depth) = enclosing_prev_depth {
+            // TeX.web push_nest preserves aux, so an ordinary vertical-mode
+            // alignment starts with the enclosing list's prev_depth too.
+            nest.current_list_mut().set_prev_depth(prev_depth);
+        }
         let align_level = nest.depth() - 1;
         nest.current_list_mut().set_align_state(state);
         // TeX82 keeps an entry align_group above the whole-alignment group.
@@ -107,8 +113,8 @@ where
         let enclosing_prev_depth = nest.current_list().prev_depth();
         nest.push(alignment_mode(alignment_kind));
         if let Some(prev_depth) = enclosing_prev_depth {
-            // TeX.web init_align reaches through display math to seed the
-            // alignment's internal vertical list from the enclosing vlist.
+            // TeX.web init_align reaches through display math to recover the
+            // enclosing vlist's prev_depth after push_nest preserves aux.
             nest.current_list_mut().set_prev_depth(prev_depth);
         }
         let align_level = nest.depth() - 1;

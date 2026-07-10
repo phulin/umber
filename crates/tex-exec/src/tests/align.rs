@@ -1123,6 +1123,28 @@ fn noalign_nointerlineskip_suppresses_next_row_baseline_glue() {
 }
 
 #[test]
+fn ordinary_halign_inherits_enclosing_prevdepth_for_first_row() {
+    let stores = run_alignment_source(
+        "\\baselineskip=20pt \\lineskiplimit=-100pt \
+         \\setbox1=\\hbox{} \\ht1=4pt \\dp1=1pt \
+         \\setbox0=\\vbox{\\copy1 \\halign{#\\cr \\copy1\\cr}}",
+    );
+    let vbox = box_zero_vlist(&stores);
+    let nodes = stores.nodes(vbox.children);
+
+    let [
+        Node::HList(_),
+        Node::Glue { spec, kind, .. },
+        Node::HList(_),
+    ] = nodes
+    else {
+        panic!("expected enclosing box, baseline glue, and alignment row, got {nodes:?}");
+    };
+    assert_eq!(*kind, GlueKind::BaselineSkip);
+    assert_eq!(stores.glue(*spec).width, sp(15));
+}
+
+#[test]
 fn everycr_can_insert_noalign_material() {
     let stores = run_boxed_alignment_source(
         "\\everycr{\\noalign{\\hrule height1pt}}\\halign{#\\cr a\\cr b\\cr}",

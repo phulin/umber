@@ -761,7 +761,10 @@ makes box-level memoization (M4) sound.
   templates through ordinary main control, recognizes unshielded `&`,
   `\span`, and `\cr` by meaning using an `AlignState` brace counter, buffers
   `\noalign{...}` material as ordinary internal-vertical nodes interleaved
-  with the unset rows, and packages cells/rows as unset node records. At
+  with the unset rows, and packages cells/rows as unset node records. An
+  ordinary vertical `\halign` inherits the enclosing list's `prev_depth`,
+  just as TeX.web's `push_nest` preserves `aux`, so the first row receives
+  the same baseline glue as any other appended box. At
   `fin_align`, `tex-exec::align::widths` runs TeX.web's span-chain width
   resolution over those frozen rows, including tabskip-width subtraction and
   last-spanned-column excess placement, converts every reachable unset row/cell
