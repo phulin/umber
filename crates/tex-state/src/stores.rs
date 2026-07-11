@@ -43,8 +43,11 @@ use std::hash::BuildHasher;
 use std::hash::{Hash, Hasher};
 use std::mem;
 
+mod format;
 mod handles;
 mod state_hash;
+
+pub(crate) use format::StoreFormatError;
 
 pub use crate::env::group::{GroupKind, GroupMismatch};
 pub(crate) use state_hash::StoreStateHashCursor;

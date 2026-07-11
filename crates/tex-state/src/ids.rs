@@ -7,7 +7,18 @@
 
 macro_rules! opaque_id {
     ($name:ident) => {
-        #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+        #[derive(
+            Clone,
+            Copy,
+            Debug,
+            Eq,
+            Hash,
+            Ord,
+            PartialEq,
+            PartialOrd,
+            serde::Deserialize,
+            serde::Serialize,
+        )]
         pub struct $name(u32);
 
         impl $name {
@@ -54,7 +65,9 @@ impl OriginListId {
 }
 
 /// A survivor arena root slot.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(
+    Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Deserialize, serde::Serialize,
+)]
 pub struct SurvivorRootId(u32);
 
 impl SurvivorRootId {
@@ -76,7 +89,9 @@ impl SurvivorRootId {
 }
 
 /// The arena namespace for a frozen node-list span.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(
+    Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Deserialize, serde::Serialize,
+)]
 pub enum ArenaRef {
     Epoch,
     Survivor(SurvivorRootId),
@@ -88,7 +103,9 @@ pub enum ArenaRef {
 /// arena, start, and length. Arena constructors are the sole production minting
 /// boundary.
 #[repr(transparent)]
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(
+    Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Deserialize, serde::Serialize,
+)]
 pub struct NodeListId(u64);
 
 const NODE_LIST_SURVIVOR_BIT: u64 = 1 << 63;

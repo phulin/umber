@@ -17,6 +17,8 @@ node-stats = []
 
 [dependencies]
 ahash.workspace = true
+bincode.workspace = true
+serde.workspace = true
 tex-arith = { path = "../tex-arith" }
 tex-fonts = { path = "../tex-fonts" }
 unicode-width.workspace = true

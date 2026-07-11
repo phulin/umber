@@ -287,9 +287,19 @@ where
     H: ExpansionHooks<S>,
 {
     let value = scan_i32(input, stores, hooks, context)?;
-    if !(0..tex_state::world::STREAM_SLOT_COUNT as i32).contains(&value) {
-        return Err(ExecError::RegisterNumberOutOfRange(value));
-    }
+    let value = if (0..tex_state::world::STREAM_SLOT_COUNT as i32).contains(&value) {
+        value
+    } else {
+        // TeX.web `scan_four_bit_int` section 435 substitutes stream zero
+        // after reporting an out-of-range open/close stream number.
+        stores.world_mut().write_text(
+            PrintSink::TerminalAndLog,
+            &format!(
+                "\n! Bad number ({value}).\nSince I expected to read a number between 0 and 15,\nI changed this one to zero.\n"
+            ),
+        );
+        0
+    };
     Ok(StreamSlot::new(value as u8))
 }
 
@@ -327,16 +337,19 @@ where
     };
     append_file_name_token(&mut name, first, context)?;
     let mut recorder = NoopRecorder;
-    while let Some(token) =
+    while let Some(traced) =
         get_x_token_with_recorder_and_hooks(input, stores, &mut recorder, hooks)?
-            .map(tex_expand::semantic_token)
     {
-        match token {
+        match tex_expand::semantic_token(traced) {
             Token::Char {
                 cat: Catcode::Space,
                 ..
             } => break,
-            token => append_file_name_token(&mut name, token, context)?,
+            token @ Token::Char { .. } => append_file_name_token(&mut name, token, context)?,
+            Token::Cs(_) | Token::Param(_) | Token::Frozen(_) => {
+                push_traced_tokens(input, stores, [traced]);
+                break;
+            }
         }
     }
     Ok(name)

@@ -183,7 +183,7 @@ impl InputRecord {
 }
 
 /// A TeX stream slot.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct StreamSlot(u8);
 
 impl StreamSlot {
@@ -207,7 +207,7 @@ impl StreamSlot {
 }
 
 /// The kind of sink a write is routed to.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum PrintSink {
     Terminal,
     Log,

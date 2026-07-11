@@ -6,7 +6,7 @@ use tex_expand::ExpansionHooks;
 use tex_lex::{InputStack, Lexer, WorldInput};
 use tex_state::env::banks::IntParam;
 use tex_state::token::Token;
-use tex_state::{Universe, World, WorldError};
+use tex_state::{FormatError, Universe, World, WorldError};
 use umber::{TexFontSearchPath, TexInputSearchPath};
 
 mod expand_dump;
@@ -73,9 +73,16 @@ fn lex_dump(path: &str) -> Result<(), CliError> {
 
 fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
     let path = opts.input.as_path();
-    let mut stores = Universe::with_world(World::real());
+    let mut world = World::real();
+    let mut stores = if let Some(format) = &opts.format {
+        let content = world.read_file(format)?;
+        Universe::from_format(world, content.bytes())?
+    } else {
+        let mut stores = Universe::with_world(world);
+        umber::prepare_run_stores(&mut stores);
+        stores
+    };
     let content = stores.world_mut().read_file(path)?;
-    umber::prepare_run_stores(&mut stores);
 
     let mut input = InputStack::new(WorldInput::from_content(content));
     let tex_input_areas = env::var_os("TEXINPUTS")
@@ -158,6 +165,14 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
         let dvi = umber::dvi_from_artifacts(&stores, &run.artifacts)?;
         stores.world_mut().write_file(output, dvi)?;
     }
+    if run.dumped_format {
+        let output = opts
+            .format_out
+            .as_ref()
+            .ok_or(CliError::Usage("\\dump requires --format-out <path>"))?;
+        let format = stores.dump_format()?;
+        stores.world_mut().write_file(output, format)?;
+    }
     if opts.show_fixtures {
         print!("{}", run.terminal_text);
         return Ok(());
@@ -171,6 +186,8 @@ struct RunCliOptions {
     input: PathBuf,
     show_fixtures: bool,
     dvi: Option<PathBuf>,
+    format: Option<PathBuf>,
+    format_out: Option<PathBuf>,
 }
 
 impl RunCliOptions {
@@ -178,6 +195,8 @@ impl RunCliOptions {
         let mut input = None;
         let mut show_fixtures = false;
         let mut dvi = None;
+        let mut format = None;
+        let mut format_out = None;
         let mut args = args.peekable();
         while let Some(arg) = args.next() {
             match arg.as_str() {
@@ -192,6 +211,24 @@ impl RunCliOptions {
                         return Err(CliError::Usage("missing output path for --dvi"));
                     };
                     dvi = Some(PathBuf::from(path));
+                }
+                "--format" => {
+                    if format.is_some() {
+                        return Err(CliError::Usage("run accepts at most one --format input"));
+                    }
+                    let Some(path) = args.next() else {
+                        return Err(CliError::Usage("missing input path for --format"));
+                    };
+                    format = Some(PathBuf::from(path));
+                }
+                "--format-out" => {
+                    if format_out.is_some() {
+                        return Err(CliError::Usage("run accepts at most one --format-out path"));
+                    }
+                    let Some(path) = args.next() else {
+                        return Err(CliError::Usage("missing output path for --format-out"));
+                    };
+                    format_out = Some(PathBuf::from(path));
                 }
                 flag if flag.starts_with('-') => {
                     return Err(CliError::Usage(
@@ -213,6 +250,8 @@ impl RunCliOptions {
             input,
             show_fixtures,
             dvi,
+            format,
+            format_out,
         })
     }
 }
@@ -284,6 +323,7 @@ enum CliError {
     Exec(tex_exec::ExecError),
     RenderedExec(String),
     Dvi(umber::DviBuildError),
+    Format(FormatError),
 }
 
 impl std::fmt::Display for CliError {
@@ -296,6 +336,7 @@ impl std::fmt::Display for CliError {
             Self::Exec(err) => write!(f, "{err}"),
             Self::RenderedExec(text) => f.write_str(text),
             Self::Dvi(err) => write!(f, "{err}"),
+            Self::Format(err) => write!(f, "{err}"),
         }
     }
 }
@@ -323,5 +364,11 @@ impl From<tex_exec::ExecError> for CliError {
 impl From<umber::DviBuildError> for CliError {
     fn from(value: umber::DviBuildError) -> Self {
         Self::Dvi(value)
+    }
+}
+
+impl From<FormatError> for CliError {
+    fn from(value: FormatError) -> Self {
+        Self::Format(value)
     }
 }

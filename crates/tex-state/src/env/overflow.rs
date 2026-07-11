@@ -120,7 +120,6 @@ where
         }
     }
 
-    #[cfg(any(test, feature = "testing", feature = "shadow"))]
     pub(crate) fn for_each_non_default_word(
         &self,
         bank: crate::cell::BankTag,

@@ -42,7 +42,7 @@ pub use provenance_resolver::ProvenanceResolver;
 pub use stores::{FontParameterError, GroupKind, GroupMismatch, PrepareMagDiagnostic};
 pub use universe::{
     BoxDimension, CheckpointId, CheckpointMetadata, CheckpointResumeKind, ExpansionContext,
-    ExpansionState, InputOpenContext, InputOpenState, InputReadState, InteractionMode,
+    ExpansionState, FormatError, InputOpenContext, InputOpenState, InputReadState, InteractionMode,
     ResumeBoundary, ResumeFallback, Snapshot, Universe,
 };
 pub use world::{

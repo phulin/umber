@@ -13,6 +13,7 @@ use crate::{ExecError, Mode, ModeNest, assignments};
 pub struct ExecutionStats {
     pub delivered_tokens: usize,
     pub shipped_artifacts: Vec<ContentHash>,
+    pub dumped_format: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

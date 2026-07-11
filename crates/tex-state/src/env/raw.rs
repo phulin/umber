@@ -132,7 +132,6 @@ impl Env {
         hasher.finish()
     }
 
-    #[cfg(any(test, feature = "testing", feature = "shadow"))]
     pub(crate) fn for_each_semantic_non_default_word(&self, mut f: impl FnMut(CellId, u64)) {
         for (segment_index, segment) in self.meaning_cells.iter().enumerate() {
             for (offset, &word) in segment.iter().enumerate() {
@@ -275,7 +274,6 @@ fn restore_font_bank_word(
     }
 }
 
-#[cfg(any(test, feature = "testing", feature = "shadow"))]
 fn for_each_font_bank_word(
     bank: BankTag,
     map: &std::collections::BTreeMap<u32, super::WordStamp>,

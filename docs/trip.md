@@ -124,3 +124,18 @@ The harness is allowed to expose current Umber failures; it must not normalize
 or bless them. Missing INITEX/format support or semantic TRIP failures should
 be filed as linked Beads work under `umber2-i8w` rather than hidden in this
 script.
+
+## Umber format images
+
+`umber run INPUT --format-out NAME.fmt` writes a format when INPUT terminates
+with `\dump`; `umber run INPUT --format NAME.fmt` starts from that image. The
+format has an explicit magic/version header, payload length, interaction mode,
+and checksum. Its deterministic payload contains semantic engine state only:
+control-sequence namespaces and meanings, immutable token/macro/glue/font and
+hyphenation content, code tables, and environment cells. Loading validates and
+rebuilds fresh dense stores; it never restores host pointers, hash-table
+layout, allocation capacities, journals, checkpoints, input cursors,
+provenance caches, or `World` effects. Logical node-graph serialization for
+box registers is the remaining lifecycle piece before this path is a passing
+TRIP gate; it must remap into a fresh arena rather than preserving
+process-local arena identities.

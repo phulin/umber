@@ -28,7 +28,7 @@ pub enum BankTag {
 }
 
 impl BankTag {
-    const fn from_bits(bits: u32) -> Self {
+    pub(crate) const fn from_bits(bits: u32) -> Self {
         match bits {
             0 => Self::Meaning,
             1 => Self::Count,

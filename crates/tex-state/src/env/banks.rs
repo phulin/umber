@@ -438,7 +438,6 @@ where
         self.values[checked_index::<N>(index)] = word;
     }
 
-    #[cfg(any(test, feature = "testing", feature = "shadow"))]
     pub(crate) fn for_each_non_default_word(&self, bank: BankTag, mut f: impl FnMut(CellId, u64)) {
         for (index, &word) in self.values.iter().enumerate() {
             if word != C::DEFAULT_WORD {

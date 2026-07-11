@@ -10,7 +10,9 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 /// The infinity order attached to stretch or shrink components.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(
+    Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Deserialize, serde::Serialize,
+)]
 #[repr(u8)]
 pub enum Order {
     Normal = 0,
@@ -43,7 +45,7 @@ impl GlueSpec {
 /// A rollback watermark for the glue store.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct GlueStoreMark {
-    specs: u32,
+    pub(crate) specs: u32,
 }
 
 /// Hash-consed immutable glue-spec arena.

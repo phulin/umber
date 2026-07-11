@@ -25,6 +25,51 @@ fn universe_is_send() {
     assert_send::<Universe>();
 }
 
+#[test]
+fn semantic_format_is_deterministic_validated_and_world_independent() {
+    let mut universe = Universe::with_world(World::memory());
+    let name = universe.intern("answer");
+    universe.set_meaning(name, Meaning::CountRegister(42));
+    universe.set_count(42, 1234);
+    let body = universe.intern_token_list(&[
+        Token::Cs(name),
+        Token::Char {
+            ch: '!',
+            cat: Catcode::Other,
+        },
+    ]);
+    let macro_name = universe.intern("m");
+    universe.set_macro_meaning(
+        macro_name,
+        MacroMeaning::new(MeaningFlags::LONG, crate::ids::TokenListId::EMPTY, body),
+    );
+    universe
+        .world_mut()
+        .write_text(PrintSink::TerminalAndLog, "must not enter format");
+
+    let first = universe.dump_format().expect("format encode");
+    let second = universe.dump_format().expect("deterministic format encode");
+    assert_eq!(first, second);
+
+    let restored = Universe::from_format(World::memory(), &first).expect("format decode");
+    let restored_name = restored.symbol("answer").expect("restored name");
+    assert_eq!(restored.meaning(restored_name), Meaning::CountRegister(42));
+    assert_eq!(restored.count(42), 1234);
+    let restored_macro = restored.symbol("m").expect("restored macro name");
+    assert!(matches!(
+        restored.meaning(restored_macro),
+        Meaning::Macro { .. }
+    ));
+    assert!(restored.world().effect_records().is_empty());
+
+    let mut corrupted = first.clone();
+    *corrupted.last_mut().expect("nonempty format") ^= 1;
+    assert!(matches!(
+        Universe::from_format(World::memory(), &corrupted),
+        Err(super::FormatError::Checksum)
+    ));
+}
+
 #[cfg(feature = "node-stats")]
 #[test]
 fn node_memory_measurement_is_nonsemantic_and_covers_recycled_storage() {

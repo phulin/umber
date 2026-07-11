@@ -218,6 +218,15 @@ where
                 output::drain_pending_output(nest, input, stores, recorder, hooks, stats)?;
             }
             DispatchAction::End => {
+                stats.dumped_format = match tex_expand::semantic_token(token) {
+                    tex_state::token::Token::Cs(symbol) => matches!(
+                        stores.meaning(symbol),
+                        tex_state::meaning::Meaning::UnexpandablePrimitive(
+                            tex_state::meaning::UnexpandablePrimitive::Dump
+                        )
+                    ),
+                    _ => false,
+                };
                 assignments::flush_pending_hchars(nest, stores)?;
                 return Ok(MainControlExit::End { token });
             }

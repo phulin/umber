@@ -494,7 +494,13 @@ run_umber_phase() {
   copy_trip_inputs "$dir"
   (
     cd "$dir"
-    "${umber_bin}" run trip.tex --show-fixtures --dvi trip.dvi > trip.log 2> trip.stderr || true
+    "${umber_bin}" run trip.tex --show-fixtures --format-out trip.fmt > tripin.log 2> tripin.stderr || true
+    if [[ -s tripin.stderr ]]; then
+      cat tripin.stderr >&2
+    fi
+    if [[ -f trip.fmt ]]; then
+      "${umber_bin}" run trip.tex --format trip.fmt --show-fixtures --dvi trip.dvi > trip.log 2> trip.stderr || true
+    fi
     if [[ -s trip.stderr ]]; then
       cat trip.stderr >&2
     fi
@@ -503,7 +509,7 @@ run_umber_phase() {
   local norm="${work_root}/normalized"
   mkdir -p "$norm"
   normalize_trip_log "${download_dir}/tripin.log" "${norm}/expected-umber-tripin.log"
-  normalize_trip_log "${dir}/trip.log" "${norm}/actual-umber-tripin.log" || true
+  normalize_trip_log "${dir}/tripin.log" "${norm}/actual-umber-tripin.log" || true
   local ok=0
   compare_text "umber-tripin-log" "${norm}/expected-umber-tripin.log" "${norm}/actual-umber-tripin.log" || ok=1
   if [[ -f "${dir}/trip.dvi" ]]; then

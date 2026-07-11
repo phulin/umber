@@ -24,7 +24,7 @@ pub struct MissingCharacter {
 /// Rollback watermark for loaded fonts.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct FontStoreMark {
-    len: u32,
+    pub(crate) len: u32,
     identifier_writes_len: u32,
 }
 

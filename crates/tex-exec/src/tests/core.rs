@@ -93,18 +93,16 @@ fn dispatch_relax_continues_without_state_mutation() {
 }
 
 #[test]
-fn dump_warns_once_and_stops_before_following_input() {
+fn dump_marks_format_stop_and_stops_before_following_input() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(r"\dump\dump"));
 
-    Executor::new()
+    let stats = Executor::new()
         .run(&mut input, &mut stores)
         .expect("dump should finish through the end cleanup path");
-
-    let log = terminal_effect_text(&stores);
-    assert_eq!(log.matches("\\dump format serialization").count(), 1);
+    assert!(stats.dumped_format);
 }
 
 #[test]

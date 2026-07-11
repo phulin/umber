@@ -43,7 +43,7 @@ impl Hasher for PrehashedU64Hasher {
 /// A rollback watermark for the token store.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct TokenStoreMark {
-    spans: u32,
+    pub(crate) spans: u32,
     tokens: u32,
 }
 

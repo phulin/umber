@@ -128,12 +128,6 @@ where
         PrefixedCommand::Primitive(UnexpandablePrimitive::End | UnexpandablePrimitive::Dump)
     ) {
         reject_all_prefixes(prefixes)?;
-        if command.command == PrefixedCommand::Primitive(UnexpandablePrimitive::Dump) {
-            stores.world_mut().write_text(
-                tex_state::PrintSink::TerminalAndLog,
-                "\nwarning: \\dump format serialization is not implemented; ending without writing a format file.\n",
-            );
-        }
         return Ok(DispatchAction::End);
     }
     if command.command == PrefixedCommand::Primitive(UnexpandablePrimitive::Immediate) {

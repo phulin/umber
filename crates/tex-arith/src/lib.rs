@@ -16,7 +16,9 @@ const TFM_MAX_SCALE: i32 = 32_768;
 const NX_PLUS_Y_MAX: Scaled = Scaled::MAX_DIMEN;
 
 /// A TeX scaled-point value.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(
+    Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Deserialize, serde::Serialize,
+)]
 pub struct Scaled(i32);
 
 impl Scaled {
@@ -102,7 +104,7 @@ impl std::error::Error for DimensionError {}
 pub const GLUE_SET_RATIO_SCALE: i32 = 1_000_000;
 
 /// Exact reduced glue-set ratio used by packed boxes and output drivers.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct GlueSetRatio {
     numerator: i32,
     denominator: i32,

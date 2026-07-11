@@ -7,7 +7,7 @@ use crate::scaled::Scaled;
 pub const MATH_FAMILY_COUNT: u8 = 16;
 
 /// One of TeX's three math font selectors per family.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum MathFontSize {
     Text,
     Script,
@@ -26,7 +26,7 @@ impl MathFontSize {
 }
 
 /// TeX math styles stored as style nodes in an mlist.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum MathStyle {
     Display,
     Text,
@@ -35,14 +35,14 @@ pub enum MathStyle {
 }
 
 /// A decoded math character field.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct MathChar {
     pub family: u8,
     pub character: char,
 }
 
 /// A noad field as described by tex.web.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum MathField {
     Empty,
     MathChar(MathChar),
@@ -52,7 +52,7 @@ pub enum MathField {
 }
 
 /// Ordinary noad classes.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum NoadClass {
     Ord,
     Op,
@@ -65,7 +65,7 @@ pub enum NoadClass {
 }
 
 /// Limit placement override on operator noads.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum LimitType {
     DisplayLimits,
     Limits,
@@ -73,7 +73,7 @@ pub enum LimitType {
 }
 
 /// Specialized noad subtype.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum NoadKind {
     Normal(NoadClass),
     Operator(LimitType),
@@ -87,7 +87,7 @@ pub enum NoadKind {
 }
 
 /// A TeX noad with nucleus, subscript, and superscript fields.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct MathNoad {
     pub kind: NoadKind,
     pub nucleus: MathField,
@@ -108,7 +108,7 @@ impl MathNoad {
 }
 
 /// Generalized fraction noad payload.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct MathFraction {
     pub numerator: NodeListId,
     pub denominator: NodeListId,
@@ -118,14 +118,14 @@ pub struct MathFraction {
 }
 
 /// TeX's generalized fraction rule thickness.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum FractionThickness {
     Default,
     Explicit(Scaled),
 }
 
 /// A four-way math choice.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct MathChoice {
     pub display: NodeListId,
     pub text: NodeListId,
@@ -134,7 +134,7 @@ pub struct MathChoice {
 }
 
 /// A completed math list appended to the enclosing list.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct MathListNode {
     pub display: bool,
     pub content: NodeListId,

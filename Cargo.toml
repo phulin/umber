@@ -21,6 +21,8 @@ tempfile = "3"
 similar = "2"
 proptest = "1"
 sha2 = "0.10"
+serde = { version = "1", features = ["derive"] }
+bincode = "1"
 unicode-width = "0.2"
 
 [profile.test]

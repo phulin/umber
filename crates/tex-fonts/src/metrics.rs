@@ -158,6 +158,26 @@ impl FontMetrics {
     }
 
     #[must_use]
+    pub fn lig_kern_program(&self) -> &[LigKernInstruction] {
+        &self.lig_kern_program
+    }
+
+    #[must_use]
+    pub const fn right_boundary_char(&self) -> Option<u8> {
+        self.right_boundary_char
+    }
+
+    #[must_use]
+    pub const fn left_boundary_program(&self) -> Option<u16> {
+        self.left_boundary_program
+    }
+
+    #[must_use]
+    pub fn extensible_recipes(&self) -> &[ExtensibleRecipe] {
+        &self.extensible_recipes
+    }
+
+    #[must_use]
     pub fn char_exists(&self, code: u8) -> bool {
         self.character(code).is_some()
     }
@@ -222,7 +242,7 @@ impl Default for FontMetrics {
 }
 
 /// Dimensions and tag data for a present character.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct CharMetrics {
     pub width: Scaled,
     pub height: Scaled,
@@ -232,7 +252,7 @@ pub struct CharMetrics {
 }
 
 /// Non-dimensional character table tag.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum CharTag {
     None,
     LigKern { program_index: u8, start_index: u16 },
@@ -241,14 +261,14 @@ pub enum CharTag {
 }
 
 /// A character code or TeX lig/kern boundary marker.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum LigKernChar {
     Char(u8),
     Boundary,
 }
 
 /// One executable lig/kern program instruction.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct LigKernInstruction {
     pub skip_byte: u8,
     pub next_char: u8,
@@ -256,14 +276,14 @@ pub struct LigKernInstruction {
 }
 
 /// Result of a matching lig/kern instruction.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum LigKernCommand {
     Ligature(LigatureCommand),
     Kern(Scaled),
 }
 
 /// Ligature operation including TeX's retention and pass-over bits.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct LigatureCommand {
     pub replacement: u8,
     pub delete_current: bool,
@@ -309,7 +329,7 @@ impl Iterator for LigKernIter<'_> {
 }
 
 /// A TeX extensible delimiter recipe.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct ExtensibleRecipe {
     pub top: Option<u8>,
     pub middle: Option<u8>,

@@ -15,6 +15,7 @@ pub use input_search::{TexFontSearchPath, TexInputSearchPath};
 pub struct RunResult {
     pub terminal_text: String,
     pub artifacts: Vec<ContentHash>,
+    pub dumped_format: bool,
 }
 
 /// Installs the primitive/state setup used by `umber run`.
@@ -53,6 +54,7 @@ where
     Ok(RunResult {
         terminal_text: uncommitted_terminal_text(stores),
         artifacts: stats.shipped_artifacts,
+        dumped_format: stats.dumped_format,
     })
 }
 

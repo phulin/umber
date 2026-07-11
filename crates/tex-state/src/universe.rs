@@ -45,7 +45,7 @@ use crate::state_hash::{INITIAL_STATE_HASH, StateHasher, combine};
 use crate::stores::StoreStateHashCursor;
 use crate::stores::{
     FontParameterError, GroupKind, GroupMismatch, PrepareMagDiagnostic, ShipoutNodeMark,
-    StoreSnapshot, Stores,
+    StoreFormatError, StoreSnapshot, Stores,
 };
 use crate::token::{Catcode, OriginId, Token, TracedTokenWord};
 use crate::token_store::TokenListBuilder;
@@ -500,6 +500,42 @@ pub enum InteractionMode {
     ErrorStop,
 }
 
+/// Validation or encoding failure for an Umber semantic format image.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FormatError {
+    OpenGroups(u32),
+    NonEmptyPage,
+    BadMagic,
+    UnsupportedVersion(u32),
+    Truncated,
+    TrailingBytes,
+    Checksum,
+    InvalidInteractionMode(u8),
+    InvalidState(String),
+}
+
+impl std::fmt::Display for FormatError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::OpenGroups(depth) => write!(f, "cannot dump a format with {depth} open groups"),
+            Self::NonEmptyPage => f.write_str("cannot dump a format with page-builder material"),
+            Self::BadMagic => f.write_str("not an Umber format file"),
+            Self::UnsupportedVersion(version) => {
+                write!(f, "unsupported Umber format version {version}")
+            }
+            Self::Truncated => f.write_str("truncated Umber format file"),
+            Self::TrailingBytes => f.write_str("trailing bytes in Umber format file"),
+            Self::Checksum => f.write_str("Umber format checksum mismatch"),
+            Self::InvalidInteractionMode(mode) => {
+                write!(f, "invalid format interaction mode {mode}")
+            }
+            Self::InvalidState(message) => write!(f, "invalid Umber format state: {message}"),
+        }
+    }
+}
+
+impl std::error::Error for FormatError {}
+
 #[derive(Clone, Debug)]
 struct StateHashBase {
     store: StoreStateHashCursor,
@@ -560,6 +596,9 @@ impl Default for Universe {
 }
 
 impl Universe {
+    const FORMAT_MAGIC: [u8; 8] = *b"UMBRFMT\0";
+    const FORMAT_VERSION: u32 = 1;
+
     /// Creates an isolated TeX state timeline.
     #[must_use]
     pub fn new() -> Self {
@@ -596,6 +635,83 @@ impl Universe {
             last_resume_boundary: None,
             last_checkpoint: None,
         }
+    }
+
+    /// Serializes the allocation-independent semantic engine state.
+    ///
+    /// Host effects, provenance, checkpoints, journals, caches, and input
+    /// cursors are intentionally absent. The image is deterministic for one
+    /// semantic state and carries an explicit schema version and checksum.
+    pub fn dump_format(&self) -> Result<Vec<u8>, FormatError> {
+        let payload = self
+            .stores
+            .encode_format()
+            .map_err(map_store_format_error)?;
+        let mode = encode_interaction_mode(self.interaction_mode);
+        let checksum = format_checksum(mode, &payload);
+        let mut bytes = Vec::with_capacity(29 + payload.len());
+        bytes.extend_from_slice(&Self::FORMAT_MAGIC);
+        bytes.extend_from_slice(&Self::FORMAT_VERSION.to_le_bytes());
+        bytes.push(mode);
+        bytes.extend_from_slice(&(payload.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(&checksum.to_le_bytes());
+        bytes.extend_from_slice(&payload);
+        Ok(bytes)
+    }
+
+    /// Constructs a fresh timeline from a validated semantic format image.
+    pub fn from_format(world: World, bytes: &[u8]) -> Result<Self, FormatError> {
+        const HEADER: usize = 29;
+        if bytes.len() < HEADER {
+            return Err(FormatError::Truncated);
+        }
+        if bytes[..8] != Self::FORMAT_MAGIC {
+            return Err(FormatError::BadMagic);
+        }
+        let version = u32::from_le_bytes(bytes[8..12].try_into().expect("fixed header slice"));
+        if version != Self::FORMAT_VERSION {
+            return Err(FormatError::UnsupportedVersion(version));
+        }
+        let mode_byte = bytes[12];
+        let mode = decode_interaction_mode(mode_byte)?;
+        let length = u64::from_le_bytes(bytes[13..21].try_into().expect("fixed header slice"));
+        let length = usize::try_from(length).map_err(|_| FormatError::Truncated)?;
+        let expected = HEADER.checked_add(length).ok_or(FormatError::Truncated)?;
+        if bytes.len() < expected {
+            return Err(FormatError::Truncated);
+        }
+        if bytes.len() > expected {
+            return Err(FormatError::TrailingBytes);
+        }
+        let checksum = u64::from_le_bytes(bytes[21..29].try_into().expect("fixed header slice"));
+        let payload = &bytes[HEADER..];
+        if checksum != format_checksum(mode_byte, payload) {
+            return Err(FormatError::Checksum);
+        }
+        let stores = Stores::decode_format(payload).map_err(map_store_format_error)?;
+        let input_summary = InputSummary::default();
+        let page = PageBuilderState::default();
+        let state_hash_base = StateHashBase {
+            store: stores.state_hash_cursor(),
+            world: world.state_hash_cursor(),
+            input_summary: input_summary.clone(),
+            interaction_mode: mode,
+            page: page.clone(),
+            checkpoint_hash: checksum,
+        };
+        Ok(Self {
+            owner: UniverseOwner::new(),
+            stores,
+            world,
+            interaction_mode: mode,
+            input_summary,
+            page,
+            state_hash_base,
+            next_checkpoint_id: 1,
+            hash_only_checkpoint_depth: 0,
+            last_resume_boundary: None,
+            last_checkpoint: None,
+        })
     }
 
     /// Takes an O(1) snapshot of the whole timeline tuple.
@@ -3299,6 +3415,42 @@ fn hash_condition_limb(limb: ConditionLimb, hasher: &mut StateHasher) {
         ConditionLimb::Or => 1,
         ConditionLimb::Else => 2,
     });
+}
+
+fn map_store_format_error(error: StoreFormatError) -> FormatError {
+    match error {
+        StoreFormatError::OpenGroups(depth) => FormatError::OpenGroups(depth),
+        StoreFormatError::Codec(message) => FormatError::InvalidState(message),
+        StoreFormatError::Invalid(message) => FormatError::InvalidState(message.to_owned()),
+    }
+}
+
+const fn encode_interaction_mode(mode: InteractionMode) -> u8 {
+    match mode {
+        InteractionMode::Batch => 0,
+        InteractionMode::Nonstop => 1,
+        InteractionMode::Scroll => 2,
+        InteractionMode::ErrorStop => 3,
+    }
+}
+
+fn decode_interaction_mode(mode: u8) -> Result<InteractionMode, FormatError> {
+    match mode {
+        0 => Ok(InteractionMode::Batch),
+        1 => Ok(InteractionMode::Nonstop),
+        2 => Ok(InteractionMode::Scroll),
+        3 => Ok(InteractionMode::ErrorStop),
+        _ => Err(FormatError::InvalidInteractionMode(mode)),
+    }
+}
+
+fn format_checksum(mode: u8, payload: &[u8]) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64 ^ u64::from(mode);
+    for byte in payload {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
 }
 
 #[cfg(test)]

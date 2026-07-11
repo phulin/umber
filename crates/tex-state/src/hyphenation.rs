@@ -6,13 +6,13 @@
 
 use std::collections::BTreeMap;
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct HyphenationTable {
     nodes: Vec<TrieNode>,
     exceptions: BTreeMap<String, Vec<usize>>,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 struct TrieNode {
     edges: Vec<(char, usize)>,
     values: Vec<u8>,

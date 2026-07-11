@@ -108,7 +108,7 @@ impl MacroDefinitionProvenance {
 /// A rollback watermark for the macro-definition store.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct MacroStoreMark {
-    definitions: u32,
+    pub(crate) definitions: u32,
 }
 
 /// Immutable macro-definition table.
