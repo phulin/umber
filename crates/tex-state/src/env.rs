@@ -36,7 +36,6 @@ const SEGMENT_BITS: u32 = 16;
 const SEGMENT_LEN: usize = 1 << SEGMENT_BITS;
 const SEGMENT_MASK: u32 = (SEGMENT_LEN as u32) - 1;
 const FONT_DIMEN_BITS: u32 = 15;
-const FONT_DIMEN_MASK: u32 = (1 << FONT_DIMEN_BITS) - 1;
 const MATH_FAMILY_FONT_COUNT: usize = 3 * MATH_FAMILY_COUNT as usize;
 
 type MeaningSegment = Box<[u64; SEGMENT_LEN]>;
@@ -683,13 +682,13 @@ impl Env {
 
     #[must_use]
     pub fn font_dimen(&self, font: FontId, number: u16) -> Scaled {
-        Scaled::from_raw(decode_i32(font_bank_word(
-            &self.font_dimens,
-            font_dimen_index(font, number),
-        )))
+        let Ok(index) = font_dimen_index(font, number) else {
+            return Scaled::from_raw(0);
+        };
+        Scaled::from_raw(decode_i32(font_bank_word(&self.font_dimens, index)))
     }
 
-    pub(crate) fn set_font_dimen(&mut self, font: FontId, number: u16, value: Scaled) {
+    pub(crate) fn set_font_dimen(&mut self, index: u32, value: Scaled) {
         set_font_bank_word(
             &mut self.font_dimens,
             &mut self.journal,
@@ -697,13 +696,13 @@ impl Env {
             &mut self.shadow,
             self.epoch,
             BankTag::FontDimen,
-            font_dimen_index(font, number),
+            index,
             encode_i32(value.raw()),
             false,
         );
     }
 
-    pub(crate) fn set_font_dimen_global(&mut self, font: FontId, number: u16, value: Scaled) {
+    pub(crate) fn set_font_dimen_global(&mut self, index: u32, value: Scaled) {
         set_font_bank_word(
             &mut self.font_dimens,
             &mut self.journal,
@@ -711,7 +710,7 @@ impl Env {
             &mut self.shadow,
             self.epoch,
             BankTag::FontDimen,
-            font_dimen_index(font, number),
+            index,
             encode_i32(value.raw()),
             true,
         );
@@ -900,14 +899,29 @@ fn checked_aftergroup_start(start: u32, len: usize) -> usize {
     start
 }
 
-fn font_dimen_index(font: FontId, number: u16) -> u32 {
-    assert!(number != 0, "fontdimen number must be positive");
-    let font = font.raw();
-    assert!(
-        font < (1 << (30 - FONT_DIMEN_BITS)),
-        "font id exceeds fontdimen cell range"
-    );
-    (font << FONT_DIMEN_BITS) | (u32::from(number - 1) & FONT_DIMEN_MASK)
+pub(crate) fn font_dimen_index(
+    font: FontId,
+    number: u16,
+) -> Result<u32, crate::stores::FontParameterError> {
+    use crate::font::{MAX_FONT_DIMEN, MAX_FONT_DIMEN_FONT_ID};
+    use crate::stores::FontParameterError;
+
+    if number == 0 {
+        return Err(FontParameterError::Zero);
+    }
+    if number > MAX_FONT_DIMEN {
+        return Err(FontParameterError::NumberOutOfRange {
+            number,
+            maximum: MAX_FONT_DIMEN,
+        });
+    }
+    if font.raw() > MAX_FONT_DIMEN_FONT_ID {
+        return Err(FontParameterError::FontOutOfRange {
+            font,
+            maximum: MAX_FONT_DIMEN_FONT_ID,
+        });
+    }
+    Ok((font.raw() << FONT_DIMEN_BITS) | u32::from(number - 1))
 }
 
 fn math_family_font_index(size: MathFontSize, family: u8) -> u16 {

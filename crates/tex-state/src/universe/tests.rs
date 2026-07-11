@@ -1,5 +1,5 @@
 use super::{CheckpointResumeKind, ResumeFallback, Universe};
-use crate::font::NULL_FONT;
+use crate::font::{MAX_FONT_DIMEN, NULL_FONT};
 use crate::glue::{GlueSpec, Order};
 use crate::ids::{ArenaRef, NodeListId};
 use crate::input::{
@@ -17,6 +17,120 @@ use crate::token::{Catcode, OriginId, Token, TracedTokenWord};
 use crate::world::{ContentHash, JobClock, PrintSink, StreamSlot, World};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
+
+#[test]
+fn maximum_fontdimen_is_distinct_grouped_rollback_safe_and_format_stable() {
+    let mut universe = Universe::new();
+    let identifier = universe.intern("boundaryfont");
+    let font =
+        universe.intern_font_with_identifier(test_font("boundaryfont", b"boundary"), identifier);
+    universe.set_meaning(identifier, Meaning::Font(font));
+    universe
+        .set_font_dimen(font, 1, Scaled::from_raw(11), true)
+        .expect("first fontdimen is writable");
+    let baseline = universe.snapshot();
+    let baseline_snapshot_hash = baseline.state_hash();
+    let baseline_hash = universe.testing_state_hash();
+
+    universe.enter_group();
+    universe
+        .set_font_dimen(font, MAX_FONT_DIMEN, Scaled::from_raw(22), false)
+        .expect("maximum fontdimen is writable");
+    assert_eq!(
+        universe.font_dimen(font, MAX_FONT_DIMEN),
+        Scaled::from_raw(22)
+    );
+    assert_ne!(universe.testing_state_hash(), baseline_hash);
+    assert!(universe.leave_group().is_empty());
+    assert_eq!(
+        universe.font_dimen(font, MAX_FONT_DIMEN),
+        Scaled::from_raw(0)
+    );
+    assert_eq!(universe.testing_state_hash(), baseline_hash);
+
+    let invalid = universe
+        .set_font_dimen(font, MAX_FONT_DIMEN + 1, Scaled::from_raw(99), false)
+        .expect_err("fontdimen above the slot domain is rejected");
+    assert!(matches!(
+        invalid,
+        super::FontParameterError::NumberOutOfRange { .. }
+    ));
+    assert_eq!(
+        universe.font_dimen(font, MAX_FONT_DIMEN + 1),
+        Scaled::from_raw(0)
+    );
+    assert_eq!(universe.font_dimen(font, 1), Scaled::from_raw(11));
+    assert_eq!(universe.testing_state_hash(), baseline_hash);
+
+    universe.enter_group();
+    universe
+        .set_font_dimen(font, MAX_FONT_DIMEN, Scaled::from_raw(33), true)
+        .expect("global maximum fontdimen is writable");
+    assert!(universe.leave_group().is_empty());
+    assert_eq!(
+        universe.font_dimen(font, MAX_FONT_DIMEN),
+        Scaled::from_raw(33)
+    );
+    universe.rollback(&baseline);
+    assert_eq!(
+        universe.font_dimen(font, MAX_FONT_DIMEN),
+        Scaled::from_raw(0)
+    );
+    assert_eq!(universe.testing_state_hash(), baseline_hash);
+    assert_eq!(universe.snapshot().state_hash(), baseline_snapshot_hash);
+
+    universe
+        .set_font_dimen(font, MAX_FONT_DIMEN, Scaled::from_raw(44), true)
+        .expect("maximum fontdimen is format-visible");
+    let bytes = universe.dump_format().expect("boundary format encodes");
+    let mut restored =
+        Universe::from_format(World::memory(), &bytes).expect("boundary format restores");
+    let restored_identifier = restored.intern("boundaryfont");
+    let Meaning::Font(restored_font) = restored.meaning(restored_identifier) else {
+        panic!("restored font identifier meaning");
+    };
+    assert_eq!(
+        restored.font_dimen(restored_font, MAX_FONT_DIMEN),
+        Scaled::from_raw(44)
+    );
+    assert_eq!(restored.font_dimen(restored_font, 1), Scaled::from_raw(11));
+    assert_eq!(
+        restored.dump_format().expect("boundary format redumps"),
+        bytes
+    );
+    let restored_snapshot = restored.snapshot();
+    let restored_hash = restored_snapshot.state_hash();
+    restored
+        .set_font_dimen(restored_font, MAX_FONT_DIMEN, Scaled::from_raw(55), false)
+        .expect("restored maximum fontdimen remains writable");
+    restored.rollback(&restored_snapshot);
+    assert_eq!(restored.snapshot().state_hash(), restored_hash);
+}
+
+#[test]
+fn oversized_immutable_font_parameter_table_is_rejected_before_publication() {
+    let mut universe = Universe::new();
+    let before = universe.testing_state_hash();
+    let oversized = crate::font::LoadedFont::new(
+        "oversized",
+        "oversized.tfm",
+        ContentHash::from_bytes(b"oversized").bytes(),
+        0,
+        Scaled::from_raw(Scaled::UNITY),
+        Scaled::from_raw(Scaled::UNITY),
+        vec![Scaled::from_raw(0); usize::from(MAX_FONT_DIMEN) + 1],
+        crate::font::FontMetrics::default(),
+    );
+
+    assert!(matches!(
+        universe.try_intern_font(oversized),
+        Err(super::FontParameterError::ParameterCountOutOfRange {
+            count,
+            maximum: MAX_FONT_DIMEN,
+        }) if count == usize::from(MAX_FONT_DIMEN) + 1
+    ));
+    assert_eq!(universe.testing_state_hash(), before);
+}
 
 #[test]
 fn universe_is_send() {

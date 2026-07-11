@@ -1586,12 +1586,24 @@ impl Universe {
         self.stores.intern_font(font)
     }
 
+    pub fn try_intern_font(&mut self, font: LoadedFont) -> Result<FontId, FontParameterError> {
+        self.stores.try_intern_font(font)
+    }
+
     pub fn intern_font_with_identifier(
         &mut self,
         font: LoadedFont,
         symbol: impl crate::interner::SymbolReference,
     ) -> FontId {
         self.stores.intern_font_with_identifier(font, symbol)
+    }
+
+    pub fn try_intern_font_with_identifier(
+        &mut self,
+        font: LoadedFont,
+        symbol: impl crate::interner::SymbolReference,
+    ) -> Result<FontId, FontParameterError> {
+        self.stores.try_intern_font_with_identifier(font, symbol)
     }
 
     #[must_use]

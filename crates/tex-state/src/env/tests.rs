@@ -1,7 +1,7 @@
-use super::{Env, SEGMENT_LEN};
+use super::{Env, SEGMENT_LEN, font_dimen_index};
 use crate::cell::{BankTag, CellId};
 use crate::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
-use crate::ids::{GlueId, NodeListId, TokenListId};
+use crate::ids::{FontId, GlueId, NodeListId, TokenListId};
 use crate::interner::Symbol;
 use crate::journal::{Entry, UndoRec};
 use crate::meaning::Meaning;
@@ -14,6 +14,31 @@ fn default_get_before_any_set_is_undefined() {
     let env = Env::new();
 
     assert_eq!(env.get(Symbol::new(10)), Meaning::Undefined);
+}
+
+#[test]
+fn fontdimen_key_codec_is_injective_at_both_field_boundaries() {
+    use crate::font::{MAX_FONT_DIMEN, MAX_FONT_DIMEN_FONT_ID};
+    use crate::stores::FontParameterError;
+
+    let first = font_dimen_index(FontId::new(0), 1).expect("first fontdimen key");
+    let last_slot =
+        font_dimen_index(FontId::new(0), MAX_FONT_DIMEN).expect("last slot of first font");
+    let next_font = font_dimen_index(FontId::new(1), 1).expect("first slot of next font");
+    let last = font_dimen_index(FontId::new(MAX_FONT_DIMEN_FONT_ID), MAX_FONT_DIMEN)
+        .expect("last representable fontdimen key");
+
+    assert_eq!(first, 0);
+    assert_eq!(last_slot + 1, next_font);
+    assert_eq!(last, (1 << 30) - 1);
+    assert!(matches!(
+        font_dimen_index(FontId::new(0), MAX_FONT_DIMEN + 1),
+        Err(FontParameterError::NumberOutOfRange { .. })
+    ));
+    assert!(matches!(
+        font_dimen_index(FontId::new(MAX_FONT_DIMEN_FONT_ID + 1), 1),
+        Err(FontParameterError::FontOutOfRange { .. })
+    ));
 }
 
 #[test]

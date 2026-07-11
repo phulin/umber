@@ -1655,15 +1655,27 @@ fn the_fontdimen_renders_zero_for_unavailable_parameter() {
     stores.set_meaning(nullfont, Meaning::Font(tex_state::font::NULL_FONT));
     stores.set_current_font_selector(nullfont, tex_state::font::NULL_FONT);
     assert_eq!(stores.font_parameter_count(tex_state::font::NULL_FONT), 7);
+    stores
+        .set_font_dimen(
+            tex_state::font::NULL_FONT,
+            1,
+            tex_state::scaled::Scaled::from_raw(123),
+            true,
+        )
+        .expect("first nullfont parameter is writable");
 
     let invocation = stores.source_origin(tex_state::SourceId::new(10), 100, 10, 1);
     let tokens = stores.intern_token_list(&[
         Token::Cs(the.symbol()),
         Token::Cs(fontdimen.symbol()),
-        char_token('8'),
+        char_token('3'),
+        char_token('2'),
+        char_token('7'),
+        char_token('6'),
+        char_token('9'),
         Token::Cs(font.symbol()),
     ]);
-    let origins = stores.allocate_repeated_origin_list(invocation, 4);
+    let origins = stores.allocate_repeated_origin_list(invocation, 8);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list_with_origins(tokens, origins, TokenListReplayKind::Inserted);
 

@@ -16,6 +16,18 @@ pub use tex_fonts::metrics::{
 /// TeX's predefined null font.
 pub const NULL_FONT: FontId = FontId::builtin(0);
 
+/// Largest TeX font-parameter number representable in a fontdimen cell key.
+pub const MAX_FONT_DIMEN: u16 = 1 << 15;
+
+/// Largest dense font id representable in a fontdimen cell key.
+pub const MAX_FONT_DIMEN_FONT_ID: u32 = (1 << 15) - 1;
+
+/// Maximum number of loaded fonts, including `nullfont`.
+pub(crate) const MAX_FONT_COUNT: usize = 1 << 15;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct FontStoreCapacityError;
+
 /// A missing-character event for consumers to report according to policy.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct MissingCharacter {
@@ -82,14 +94,17 @@ impl FontStore {
         }
     }
 
-    pub(crate) fn intern(&mut self, font: LoadedFont) -> FontId {
+    pub(crate) fn intern(&mut self, font: LoadedFont) -> Result<FontId, FontStoreCapacityError> {
         let key = FontKey {
             name: font.name().to_owned(),
             size: font.size(),
             content_hash: font.content_hash(),
         };
         if let Some(id) = self.by_key.get(&key).copied() {
-            return id;
+            return Ok(id);
+        }
+        if self.fonts.len() >= MAX_FONT_COUNT {
+            return Err(FontStoreCapacityError);
         }
         let id = FontId::from_identity(
             self.identities
@@ -99,7 +114,7 @@ impl FontStore {
         self.fonts.push(font);
         self.identifiers.push(None);
         self.by_key.insert(key, id);
-        id
+        Ok(id)
     }
 
     pub(crate) fn set_identifier(&mut self, id: FontId, symbol: SymbolId) {

@@ -365,7 +365,10 @@ impl StoreFormat {
             let id = if raw == 0 {
                 NULL_FONT
             } else {
-                let id = stores.fonts.intern(font.restore());
+                let id = stores
+                    .fonts
+                    .intern(font.restore())
+                    .map_err(|_| StoreFormatError::Invalid("font count exceeds bank capacity"))?;
                 if id.raw() as usize != raw {
                     return Err(StoreFormatError::Invalid("non-canonical font order"));
                 }

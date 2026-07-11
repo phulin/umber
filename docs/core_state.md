@@ -946,6 +946,12 @@ math-family, and last-loaded font selectors must be live. Only after that
 read-only pass may fresh stores be built and raw Env words restored. Thus a
 checksum authenticates transport integrity but never substitutes for semantic
 validation, and failure cannot expose a partially reconstructed live tuple.
+Fontdimen cells use an injective 15-bit-font/15-bit-slot split within the
+30-bit `CellId` index: font ids end at 32767 and one-based parameter numbers at
+32768. The checked encoder runs before parameter-count or journal mutation;
+there is no masking fallback, so 32769 cannot alias fontdimen 1. This changes
+no journal layout: `CellId`, `UndoRec`, and `Entry` retain the sizes documented
+in §6.
 
 ### 10.4 Builder-then-freeze for content
 
@@ -996,6 +1002,7 @@ aggregate timeline. Public modules may still expose immutable value types,
 handles, and the builder types returned by `Universe`; their constructors and
 raw store-finish hooks are crate-private unless compiled for crate-local tests.
 Loaded fonts follow the same aggregate rule: `Universe::intern_font`,
+the recoverable capacity-aware `Universe::try_intern_font`,
 `Universe::font`, `Universe::font_name`, and the font parameter/current-font
 facades are the public boundary. The three-by-sixteen TeX math-family font
 selectors (`\textfont`, `\scriptfont`, `\scriptscriptfont`) are Env-side
