@@ -73,6 +73,32 @@ fn repeated_origin_lists_allocate_without_extra_records() {
 }
 
 #[test]
+fn origin_list_rollback_reuse_invalidates_the_old_identity() {
+    let mut store = ProvenanceStore::new();
+    let mark = store.watermark();
+    let stale = store.allocate_list(&[OriginId::UNKNOWN]);
+    store.truncate_to(mark);
+    let reused = store.allocate_list(&[OriginId::UNKNOWN]);
+    assert_eq!(reused.raw(), stale.raw());
+    assert_ne!(reused, stale);
+    assert!(!store.contains_list(stale));
+    assert_eq!(store.list(reused), &[OriginId::UNKNOWN]);
+}
+
+#[test]
+fn provenance_fork_keeps_inherited_lists_but_separates_new_ones() {
+    let mut parent = ProvenanceStore::new();
+    let inherited = parent.allocate_list(&[OriginId::UNKNOWN]);
+    let mut child = parent.clone();
+    assert_eq!(child.list(inherited), &[OriginId::UNKNOWN]);
+    let parent_only = parent.allocate_list(&[OriginId::UNKNOWN; 2]);
+    let child_only = child.allocate_list(&[OriginId::UNKNOWN; 3]);
+    assert_eq!(parent_only.raw(), child_only.raw());
+    assert!(!child.contains_list(parent_only));
+    assert!(!parent.contains_list(child_only));
+}
+
+#[test]
 fn all_mandatory_origin_record_kinds_round_trip() {
     let mut stores = Universe::new();
     let params = stores.intern_token_list(&[]);

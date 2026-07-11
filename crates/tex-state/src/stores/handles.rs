@@ -107,7 +107,7 @@ impl Stores {
 
     pub(super) fn assert_live_origin_list(&self, id: OriginListId) {
         assert!(
-            self.provenance.contains_list(id),
+            self.provenance.resolve_stored_list(id).is_some(),
             "origin list id is not live in this Universe timeline"
         );
     }

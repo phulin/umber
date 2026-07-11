@@ -43,7 +43,6 @@ macro_rules! opaque_id {
     };
 }
 
-opaque_id!(OriginListId);
 opaque_id!(SnapshotId);
 
 macro_rules! semantic_id {
@@ -122,6 +121,7 @@ semantic_id!(TokenListId, 10, 1);
 semantic_id!(MacroDefinitionId, 11, 0);
 semantic_id!(GlueId, 12, 1);
 semantic_id!(FontId, 13, 1);
+semantic_id!(OriginListId, 14, 1);
 
 impl GlueId {
     /// The canonical zero-glue id, pre-interned by every glue store.
@@ -135,7 +135,7 @@ impl TokenListId {
 
 impl OriginListId {
     /// The canonical empty origin-list id, preallocated by every provenance store.
-    pub const EMPTY: Self = Self(0);
+    pub const EMPTY: Self = Self(crate::identity::HandleIdentity::builtin(0));
 }
 
 /// A survivor arena root slot.
