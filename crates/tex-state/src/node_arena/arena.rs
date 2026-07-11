@@ -117,7 +117,7 @@ impl NodeArena {
     pub(crate) fn memory_columns(&self) -> Vec<NodeMemoryColumn> {
         self.storage.memory_columns("epoch")
     }
-    #[cfg(any(test, feature = "testing", feature = "shadow"))]
+    #[cfg(any(test, feature = "testing"))]
     pub(crate) fn testing_node_count(&self) -> usize {
         self.storage.len()
     }
