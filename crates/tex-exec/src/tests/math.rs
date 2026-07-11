@@ -890,6 +890,14 @@ fn left_right_scans_nested_list_as_inner_noad() {
 }
 
 #[test]
+fn right_closes_left_group_whose_numerator_was_captured_by_fraction() {
+    let (stores, executor) = run_math_source(r"$\left.A\over A\abovewithdelims.?\right(+A$\end");
+
+    assert_eq!(executor.nest().current_mode(), Mode::Horizontal);
+    assert!(!support::terminal_effect_text(&stores).contains("Extra \\right"));
+}
+
+#[test]
 fn mismatched_right_and_missing_right_use_tex_error_text() {
     let (extra_stores, extra_executor) = run_math_source(r"$a\right.");
     let extra_nodes = math_nodes(&extra_stores, &extra_executor);

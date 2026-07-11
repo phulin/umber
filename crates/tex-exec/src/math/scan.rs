@@ -215,7 +215,7 @@ where
     H: ExpansionHooks<S>,
 {
     let delimiter = scan_delimiter_token(input, stores, recorder, hooks)?;
-    if !current_list_is_left_group(nest) {
+    if !current_list_is_left_group(nest, stores) {
         report_math_error(stores, "Extra \\right");
         return Ok(());
     }
@@ -228,7 +228,7 @@ pub(super) fn close_missing_left_group(
     nest: &mut ModeNest,
     stores: &mut Universe,
 ) -> Result<bool, ExecError> {
-    if !current_list_is_left_group(nest) {
+    if !current_list_is_left_group(nest, stores) {
         return Ok(false);
     }
     report_math_error(stores, "Missing \\right. inserted");
@@ -236,14 +236,28 @@ pub(super) fn close_missing_left_group(
     Ok(true)
 }
 
-fn current_list_is_left_group(nest: &ModeNest) -> bool {
-    matches!(
+fn current_list_is_left_group(nest: &ModeNest, stores: &Universe) -> bool {
+    let is_left = |node: Option<tex_state::node_arena::NodeRef<'_>>| {
+        matches!(
+            node,
+            Some(tex_state::node_arena::NodeRef::MathNoad(MathNoad {
+                kind: NoadKind::LeftDelimiter { .. },
+                ..
+            }))
+        )
+    };
+    if matches!(
         nest.current_list().nodes().first(),
         Some(Node::MathNoad(MathNoad {
             kind: NoadKind::LeftDelimiter { .. },
             ..
         }))
-    )
+    ) {
+        return true;
+    }
+    nest.current_list()
+        .incomplete_fraction()
+        .is_some_and(|fraction| is_left(stores.nodes(fraction.numerator).first()))
 }
 
 fn close_left_group(
