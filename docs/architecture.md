@@ -176,10 +176,13 @@ supply.
   count, and the nested conditional depth observed during skip/resume scanning.
   Source reopen identity is owned by the `World` input record in the outer
   snapshot: each file-backed source frame carries its explicit `InputRecordId`,
-  which pins file/editor content by content hash, reopens that exact source,
-  then applies the lexer-owned source-frame summary. The record id is not
-  inferred from the source-frame ordinal: auxiliary reads such as TFM loads
-  share the `World` input log but never become text input frames.
+  a generation-tagged runtime capability which pins file/editor content by
+  content hash, reopens that exact source, then applies the lexer-owned
+  source-frame summary. Rollback advances the World record generation before
+  a discarded dense slot is reused, and cloned timelines reject each other's
+  post-fork records. The record id is not inferred from the source-frame
+  ordinal: auxiliary reads such as TFM loads share the `World` input log but
+  never become text input frames.
   `last_source_frame` is also summarized with its source id so snapshots taken
   just after a source pops still have final source coordinates for EOF/current
   input diagnostics. The summary separately retains the next-source-id
