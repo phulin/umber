@@ -810,13 +810,10 @@ where
     let scanned = scan_int::scan_int_with_expander_and_hooks(
         input, stores, recorder, hooks, expander, context,
     )?;
-    u8::try_from(scanned.value())
+    Ok(u8::try_from(scanned.value())
         .ok()
         .filter(|family| *family < 16)
-        .ok_or(ExpandError::MathFamilyOutOfRange {
-            value: scanned.value(),
-            context: scanned.context(),
-        })
+        .unwrap_or(0))
 }
 
 fn math_font_size(primitive: tex_state::meaning::UnexpandablePrimitive) -> MathFontSize {

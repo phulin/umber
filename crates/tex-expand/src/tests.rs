@@ -1703,7 +1703,7 @@ fn the_math_family_fonts_expand_to_identifier_tokens_with_trace_and_reads() {
 }
 
 #[test]
-fn the_math_family_font_rejects_out_of_range_family_at_number_origin() {
+fn the_math_family_font_substitutes_family_zero_for_out_of_range_number() {
     let mut stores = Universe::new();
     let the = expandable_primitive(&mut stores, "the", ExpandablePrimitive::The);
     let textfont = stores.intern("textfont");
@@ -1725,13 +1725,11 @@ fn the_math_family_font_rejects_out_of_range_family_at_number_origin() {
     input.push_token_list_with_origins(tokens, origins, TokenListReplayKind::Inserted);
 
     let error = crate::get_x_token(&mut input, &mut stores)
-        .expect_err("family 16 must be rejected by the four-bit scanner");
+        .expect_err("the substituted null font has no printable control sequence");
     assert!(matches!(
         error,
-        crate::ExpandError::MathFamilyOutOfRange { value: 16, .. }
+        crate::ExpandError::UnsupportedTheTarget { .. }
     ));
-    assert_eq!(error.to_string(), "Bad number");
-    assert!(error.primary_origin().is_some());
 }
 
 #[test]

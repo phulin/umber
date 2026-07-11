@@ -437,6 +437,85 @@ fn equation_number_math_shift_group_restores_before_outer_display_group() {
 }
 
 #[test]
+fn equation_number_outside_display_inserts_math_shift_then_reports_illegal_case() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(r"\eqno x$\count0=7"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("non-math eqno recovery should continue after the closing math shift");
+
+    assert_eq!(stores.count(0), 7);
+    let output = support::terminal_effect_text(&stores);
+    assert!(output.contains("Missing $ inserted"));
+    assert!(output.contains("You can't use `\\eqno' in math mode"));
+}
+
+#[test]
+fn math_shift_inserts_endgroup_for_open_semisimple_group() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        r"\count0=1 $x\begingroup\count0=2$\count1=3",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("off_save should close begingroup before retrying the math shift");
+
+    assert_eq!(stores.count(0), 1);
+    assert_eq!(stores.count(1), 3);
+    assert!(support::terminal_effect_text(&stores).contains("Missing \\endgroup inserted"));
+}
+
+#[test]
+fn vadjust_is_accepted_in_math_mode() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        r"$x\vadjust{\penalty7}\prevgraf=8 \insert255{\penalty9}y$",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("tex.web permits vadjust in math mode");
+}
+
+#[test]
+fn vcenter_accepts_a_spread_pack_specification() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(r"$\vcenter spread -2pt{}$"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("vcenter uses TeX's ordinary vertical box specification scanner");
+}
+
+#[test]
+fn char_primitive_uses_the_characters_mathcode_in_math_mode() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(r"$\char`+$"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("math char_num follows tex.web's set_math_char path");
+}
+
+#[test]
+fn explicit_kern_is_accepted_in_math_mode() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(r"$x\kern1pt y$"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("tex.web accepts an ordinary kern in a math list");
+}
+
+#[test]
 fn math_brace_groups_restore_local_box_assignments_and_keep_globals() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

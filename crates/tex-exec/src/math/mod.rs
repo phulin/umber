@@ -238,6 +238,23 @@ fn finish_math<S>(
 where
     S: InputSource,
 {
+    // `off_save` inserts the terminator required by an intervening group and
+    // then retries the math shift (tex.web §1027). TRIP deliberately leaves
+    // a `\begingroup` open before a later `$`.
+    while stores.innermost_group_kind() == Some(tex_state::GroupKind::SemiSimple) {
+        stores.world_mut().write_text(
+            tex_state::PrintSink::TerminalAndLog,
+            "\n! Missing \\endgroup inserted.\nI've inserted something that you may have forgotten.\n",
+        );
+        leave_group_with_origin(input, stores, tex_state::GroupKind::SemiSimple, origin)?;
+    }
+    if stores.innermost_group_kind().is_none() {
+        // Malformed input can leave a math nest beneath the semisimple group
+        // that `off_save` has just removed. Re-establish the matching tracked
+        // boundary before finishing the nest so mode and environment state
+        // remain synchronized for checkpointing.
+        stores.enter_group_with_kind(tex_state::GroupKind::MathShift);
+    }
     if close_missing_left_group(nest, stores)? {
         return finish_math(nest, input, stores, origin);
     }
@@ -394,6 +411,17 @@ where
             append_math_char_code(nest, stores, code)?;
             Ok(DispatchAction::Continue)
         }
+        UnexpandablePrimitive::Char => {
+            let value = assignments::scan_i32(input, stores, hooks, traced)?;
+            let ch = u8::try_from(value)
+                .map(char::from)
+                .map_err(|_| ExecError::InvalidCode {
+                    context: "\\char",
+                    value,
+                })?;
+            append_mathcode_char(nest, input, stores, ch)?;
+            Ok(DispatchAction::Continue)
+        }
         UnexpandablePrimitive::Delimiter => {
             let delimiter = scan_delimiter_code(input, stores, hooks, traced)?;
             // TeX82 treats a standalone \delimiter as the math character in
@@ -455,7 +483,7 @@ where
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::VCenter => {
-            let field = scan_vcenter_field(input, stores, hooks)?;
+            let field = scan_vcenter_field(traced, input, stores, hooks)?;
             append_noad(nest, NoadKind::VCenter, field);
             Ok(DispatchAction::Continue)
         }
@@ -519,6 +547,14 @@ where
             });
             Ok(DispatchAction::Continue)
         }
+        UnexpandablePrimitive::Kern => {
+            let amount = assignments::scan_scaled(input, stores, hooks, traced)?;
+            nest.current_list_mut().push(Node::Kern {
+                amount,
+                kind: KernKind::Explicit,
+            });
+            Ok(DispatchAction::Continue)
+        }
         UnexpandablePrimitive::NonScript => {
             let spec = stores.intern_glue(GlueSpec::ZERO);
             nest.current_list_mut().push(Node::Glue {
@@ -538,7 +574,15 @@ where
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::EqNo | UnexpandablePrimitive::LeftEqNo => {
-            start_eq_no(nest, stores, primitive)?;
+            if nest.current_mode() == Mode::DisplayMath {
+                start_eq_no(nest, stores, primitive)?;
+            } else {
+                // `eq_no` is privileged in tex.web §1147. In ordinary
+                // (negative) math mode TeX reports the illegal case and
+                // ignores it; this is reached after non-math recovery has
+                // inserted `$` and replayed the command.
+                crate::diagnostics::report_illegal_case(stores, token, nest.current_mode());
+            }
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::HAlign if nest.current_mode() == Mode::DisplayMath => {

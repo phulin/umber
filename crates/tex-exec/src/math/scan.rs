@@ -12,7 +12,6 @@ use tex_state::node::Node;
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{GroupKind, Universe};
-use tex_typeset::PackSpec;
 
 use crate::assignments;
 use crate::executor::sync_engine_state;
@@ -410,6 +409,7 @@ where
 }
 
 pub(super) fn scan_vcenter_field<S, H>(
+    context: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
@@ -418,6 +418,7 @@ where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
+    let spec = assignments::scan_pack_spec(input, stores, hooks, context)?;
     let opener =
         assignments::next_non_space_x(input, stores, hooks)?.ok_or(ExecError::MissingToken {
             context: "\\vcenter",
@@ -437,7 +438,7 @@ where
         vpack(
             stores,
             children,
-            PackSpec::Natural,
+            spec,
             crate::packing_params::vpack_params(stores),
         )
         .node,

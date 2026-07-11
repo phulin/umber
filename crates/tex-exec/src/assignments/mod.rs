@@ -41,9 +41,9 @@ mod tokens;
 mod variables;
 
 use arithmetic::*;
-pub(crate) use boxes::scan_box_group;
 pub(crate) use boxes::scan_math_box;
 use boxes::*;
+pub(crate) use boxes::{scan_box_group, scan_pack_spec};
 use fonts::*;
 pub(crate) use hmode::fixed_infinite_glue;
 use hmode::*;
@@ -899,12 +899,12 @@ where
             | UnexpandablePrimitive::TextStyle
             | UnexpandablePrimitive::ScriptStyle
             | UnexpandablePrimitive::ScriptScriptStyle => {
-                Err(ExecError::UnimplementedTypesetting {
-                    mode: nest.current_mode(),
-                    token: command.token,
-                    origin: command.origin,
-                    operation: "math primitive",
-                })
+                reject_all_prefixes(prefixes)?;
+                // These are the `non_math` cases in tex.web §1043 and
+                // §1147: insert `$`, then reconsider the original command in
+                // math mode instead of consuming it or aborting execution.
+                crate::math::insert_dollar_sign(command.traced, input, stores);
+                Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::MathOrd
             | UnexpandablePrimitive::MathOp

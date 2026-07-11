@@ -280,7 +280,7 @@ where
     })
 }
 
-fn scan_pack_spec<S, H>(
+pub(crate) fn scan_pack_spec<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,

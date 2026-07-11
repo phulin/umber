@@ -208,12 +208,19 @@ where
     H: ExpansionHooks<S>,
 {
     flush_pending_hchars(nest, stores)?;
-    let value = scan_i32(input, stores, hooks, context)?;
-    if !(0..=254).contains(&value) {
+    let mut value = scan_i32(input, stores, hooks, context)?;
+    if !(0..=255).contains(&value) {
         return Err(ExecError::InvalidCode {
             context: "\\insert",
             value,
         });
+    }
+    if value == 255 {
+        stores.world_mut().write_text(
+            tex_state::PrintSink::TerminalAndLog,
+            "\n! You can't \\insert255.\nI'm changing to \\insert0; box 255 is special.\n",
+        );
+        value = 0;
     }
     let opener = next_non_space_traced_x(input, stores, hooks)?.ok_or(ExecError::MissingToken {
         context: "\\insert group",
@@ -287,7 +294,7 @@ where
 {
     if !matches!(
         nest.current_mode(),
-        Mode::Horizontal | Mode::RestrictedHorizontal
+        Mode::Horizontal | Mode::RestrictedHorizontal | Mode::Math | Mode::DisplayMath
     ) {
         return Err(ExecError::UnimplementedTypesetting {
             mode: nest.current_mode(),
@@ -296,7 +303,12 @@ where
             operation: "\\vadjust",
         });
     }
-    flush_pending_hchars(nest, stores)?;
+    if matches!(
+        nest.current_mode(),
+        Mode::Horizontal | Mode::RestrictedHorizontal
+    ) {
+        flush_pending_hchars(nest, stores)?;
+    }
     let opener = next_non_space_x(input, stores, hooks)?.ok_or(ExecError::MissingToken {
         context: "\\vadjust group",
     })?;
