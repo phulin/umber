@@ -1,7 +1,8 @@
 //! Stateful font handles and rollback storage.
 
+use crate::identity::{IdentityAllocator, IdentityMark};
 use crate::ids::FontId;
-use crate::interner::Symbol;
+use crate::interner::SymbolId;
 use crate::scaled::Scaled;
 use crate::world::ContentHash;
 use std::collections::BTreeMap;
@@ -13,7 +14,7 @@ pub use tex_fonts::metrics::{
 };
 
 /// TeX's predefined null font.
-pub const NULL_FONT: FontId = FontId::new(0);
+pub const NULL_FONT: FontId = FontId::builtin(0);
 
 /// A missing-character event for consumers to report according to policy.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -27,6 +28,7 @@ pub struct MissingCharacter {
 pub(crate) struct FontStoreMark {
     pub(crate) len: u32,
     identifier_writes_len: u32,
+    identities: IdentityMark,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -37,12 +39,25 @@ struct FontKey {
 }
 
 /// Immutable font store with dense ids and hash-consed load identity.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) struct FontStore {
     fonts: Vec<LoadedFont>,
-    identifiers: Vec<Option<Symbol>>,
+    identifiers: Vec<Option<SymbolId>>,
     identifier_writes: Vec<FontId>,
     by_key: BTreeMap<FontKey, FontId>,
+    identities: IdentityAllocator,
+}
+
+impl Clone for FontStore {
+    fn clone(&self) -> Self {
+        Self {
+            fonts: self.fonts.clone(),
+            identifiers: self.identifiers.clone(),
+            identifier_writes: self.identifier_writes.clone(),
+            by_key: self.by_key.clone(),
+            identities: self.identities.fork(),
+        }
+    }
 }
 
 impl FontStore {
@@ -63,6 +78,7 @@ impl FontStore {
             identifiers: vec![None],
             identifier_writes: Vec::new(),
             by_key: BTreeMap::new(),
+            identities: IdentityAllocator::new(1),
         }
     }
 
@@ -75,15 +91,22 @@ impl FontStore {
         if let Some(id) = self.by_key.get(&key).copied() {
             return id;
         }
-        let raw = u32::try_from(self.fonts.len()).expect("font store exceeds u32 ids");
-        let id = FontId::new(raw);
+        let id = FontId::from_identity(
+            self.identities
+                .allocate()
+                .expect("font store exceeds u32 ids"),
+        );
         self.fonts.push(font);
         self.identifiers.push(None);
         self.by_key.insert(key, id);
         id
     }
 
-    pub(crate) fn set_identifier(&mut self, id: FontId, symbol: Symbol) {
+    pub(crate) fn set_identifier(&mut self, id: FontId, symbol: SymbolId) {
+        assert!(
+            self.contains(id),
+            "font id is not live in this Universe timeline"
+        );
         let identifier = self
             .identifiers
             .get_mut(id.raw() as usize)
@@ -95,12 +118,20 @@ impl FontStore {
     }
 
     #[must_use]
-    pub(crate) fn identifier(&self, id: FontId) -> Option<Symbol> {
+    pub(crate) fn identifier(&self, id: FontId) -> Option<SymbolId> {
+        assert!(
+            self.contains(id),
+            "font id is not live in this Universe timeline"
+        );
         self.identifiers.get(id.raw() as usize).copied().flatten()
     }
 
     #[must_use]
     pub(crate) fn get(&self, id: FontId) -> &LoadedFont {
+        assert!(
+            self.contains(id),
+            "font id is not live in this Universe timeline"
+        );
         self.fonts
             .get(id.raw() as usize)
             .expect("font id is not live in this Universe timeline")
@@ -108,7 +139,20 @@ impl FontStore {
 
     #[must_use]
     pub(crate) fn contains(&self, id: FontId) -> bool {
-        (id.raw() as usize) < self.fonts.len()
+        self.identities.contains(id.identity())
+    }
+
+    #[must_use]
+    pub(crate) fn resolve_stored(&self, id: FontId) -> Option<FontId> {
+        if self.contains(id) {
+            return Some(id);
+        }
+        if !id.is_stored() {
+            return None;
+        }
+        self.identities
+            .identity_at(id.raw())
+            .map(FontId::from_identity)
     }
 
     #[must_use]
@@ -117,10 +161,14 @@ impl FontStore {
             len: u32::try_from(self.fonts.len()).expect("font store exceeds u32 ids"),
             identifier_writes_len: u32::try_from(self.identifier_writes.len())
                 .expect("font identifier write log exceeds u32 entries"),
+            identities: self.identities.watermark(),
         }
     }
 
     pub(crate) fn truncate_to(&mut self, mark: FontStoreMark) {
+        self.identities
+            .rollback(mark.identities)
+            .expect("font-store mark is not an ancestor");
         for id in self.identifier_writes[mark.identifier_writes_len as usize..]
             .iter()
             .copied()

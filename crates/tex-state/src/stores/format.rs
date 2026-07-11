@@ -1,8 +1,12 @@
 use super::*;
-use crate::ids::ArenaRef;
 use serde::{Deserialize, Serialize};
 
+mod node;
+use node::FormatNode;
+
 mod font_validation;
+#[cfg(test)]
+mod tests;
 #[cfg(test)]
 pub(crate) use font_validation::{TestingFontFormatCorruption, testing_corrupt_font_format};
 
@@ -25,11 +29,23 @@ struct StoreFormat {
     glue: Vec<FormatGlue>,
     fonts: Vec<FormatFont>,
     node_lists: Vec<FormatNodeList>,
-    env: Vec<(u32, u64)>,
+    env: Vec<FormatEnvEntry>,
     code_tables: Vec<FormatCodeTables>,
     hyphenation: HyphenationTable,
     prepared_mag: Option<i32>,
     last_loaded_font: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct FormatEnvEntry {
+    cell: u32,
+    value: FormatEnvValue,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+enum FormatEnvValue {
+    Raw(u64),
+    Box(FormatListKey),
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -100,7 +116,54 @@ struct FormatListKey {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct FormatNodeList {
     key: FormatListKey,
-    nodes: Vec<Node>,
+    nodes: Vec<FormatNode>,
+}
+
+fn capture_env_word(stores: &Stores, cell: crate::cell::CellId, word: u64) -> (u32, u64) {
+    let index = if cell.bank() == crate::cell::BankTag::Meaning {
+        stores
+            .resolve_stored_symbol(Symbol::new(cell.index()))
+            .raw()
+    } else {
+        cell.index()
+    };
+    let cell = crate::cell::CellId::new(cell.bank(), index);
+    let word = if cell.bank() == crate::cell::BankTag::CurrentFont {
+        let symbol_plus_one = word >> 32;
+        let symbol = if symbol_plus_one == 0 {
+            0
+        } else {
+            u64::from(
+                stores
+                    .resolve_stored_symbol(Symbol::new((symbol_plus_one - 1) as u32))
+                    .raw(),
+            ) + 1
+        };
+        (symbol << 32) | u64::from(word as u32)
+    } else {
+        word
+    };
+    (cell.raw(), word)
+}
+
+fn restore_current_font_word(stores: &Stores, word: u64) -> Result<u64, StoreFormatError> {
+    let symbol_plus_one = word >> 32;
+    let symbol = if symbol_plus_one == 0 {
+        0
+    } else {
+        let slot = u32::try_from(symbol_plus_one - 1)
+            .map_err(|_| StoreFormatError::Invalid("current-font identifier is not live"))?;
+        u64::from(
+            stores
+                .interner
+                .symbol_at_slot(slot)
+                .ok_or(StoreFormatError::Invalid(
+                    "current-font identifier is not live",
+                ))?
+                .raw(),
+        ) + 1
+    };
+    Ok((symbol << 32) | u64::from(word as u32))
 }
 
 impl Stores {
@@ -123,7 +186,10 @@ impl StoreFormat {
     fn capture(stores: &Stores) -> Result<Self, StoreFormatError> {
         let names = (0..stores.interner.len())
             .map(|raw| {
-                let symbol = Symbol::new(raw as u32);
+                let symbol = stores
+                    .interner
+                    .symbol_at_slot(raw as u32)
+                    .expect("captured interner slot should be live");
                 FormatName {
                     active: stores.interner.kind(symbol) == ControlSequenceKind::ActiveCharacter,
                     text: stores.interner.resolve(symbol).to_owned(),
@@ -135,17 +201,22 @@ impl StoreFormat {
             .map(|raw| {
                 stores
                     .tokens
-                    .get(TokenListId::new(raw))
+                    .get(stores.resolve_stored_token_list(TokenListId::new(raw)))
                     .iter()
                     .copied()
-                    .map(FormatToken::capture)
+                    .map(|token| FormatToken::capture(stores, token))
                     .collect()
             })
             .collect();
         let macro_mark = stores.macros.watermark();
         let macros = (0..macro_mark.definitions)
             .map(|raw| {
-                let meaning = stores.macros.get(MacroDefinitionId::new(raw));
+                let meaning = stores.macros.get(
+                    stores
+                        .macros
+                        .resolve_stored(MacroDefinitionId::new(raw))
+                        .expect("captured macro slot should be live"),
+                );
                 FormatMacro {
                     flags: meaning.flags().bits(),
                     parameter_text: meaning.parameter_text().raw(),
@@ -155,17 +226,25 @@ impl StoreFormat {
             .collect();
         let glue_mark = stores.glue.watermark();
         let glue = (0..glue_mark.specs)
-            .map(|raw| FormatGlue::capture(stores.glue.get(GlueId::new(raw))))
+            .map(|raw| {
+                FormatGlue::capture(
+                    stores
+                        .glue
+                        .get(stores.resolve_stored_glue(GlueId::new(raw))),
+                )
+            })
             .collect();
         let font_mark = stores.fonts.watermark();
         let fonts = (0..font_mark.len)
-            .map(|raw| FormatFont::capture(&stores.fonts, FontId::new(raw)))
+            .map(|raw| {
+                FormatFont::capture(&stores.fonts, stores.resolve_stored_font(FontId::new(raw)))
+            })
             .collect();
-        let mut env = Vec::new();
-        stores
-            .env
-            .for_each_semantic_non_default_word(|cell, word| env.push((cell.raw(), word)));
-        let roots: Vec<_> = env
+        let mut env_words = Vec::new();
+        stores.env.for_each_semantic_non_default_word(|cell, word| {
+            env_words.push(capture_env_word(stores, cell, word));
+        });
+        let roots: Vec<_> = env_words
             .iter()
             .filter_map(|&(raw, word)| {
                 (crate::cell::CellId::new(
@@ -180,10 +259,35 @@ impl StoreFormat {
             .collect();
         let mut seen = std::collections::BTreeSet::new();
         let mut visiting = std::collections::BTreeSet::new();
+        let mut survivor_roots = std::collections::BTreeMap::new();
         let mut node_lists = Vec::new();
         for root in roots {
-            capture_node_list(stores, root, &mut seen, &mut visiting, &mut node_lists)?;
+            capture_node_list(
+                stores,
+                root,
+                &mut seen,
+                &mut visiting,
+                &mut survivor_roots,
+                &mut node_lists,
+            )?;
         }
+        let env = env_words
+            .into_iter()
+            .map(|(raw, word)| {
+                let cell = crate::cell::CellId::new(
+                    crate::cell::BankTag::from_bits(raw >> 27),
+                    raw & ((1 << 26) - 1),
+                );
+                let value = if cell.bank() == crate::cell::BankTag::Box {
+                    let id = NodeListId::decode_box_word(word)
+                        .expect("non-default box format entry should contain a list");
+                    FormatEnvValue::Box(FormatListKey::capture(stores, id, &mut survivor_roots))
+                } else {
+                    FormatEnvValue::Raw(word)
+                };
+                FormatEnvEntry { cell: raw, value }
+            })
+            .collect();
         let code_tables = (0..=255)
             .map(|code| {
                 let ch = char::from_u32(code).expect("byte code is scalar");
@@ -237,7 +341,7 @@ impl StoreFormat {
         for (raw, tokens) in self.token_lists.into_iter().enumerate().skip(1) {
             let tokens = tokens
                 .into_iter()
-                .map(FormatToken::restore)
+                .map(|token| token.restore(&stores.interner))
                 .collect::<Result<Vec<_>, _>>()?;
             if stores.tokens.intern(&tokens).raw() as usize != raw {
                 return Err(StoreFormatError::Invalid("non-canonical token-list order"));
@@ -246,8 +350,8 @@ impl StoreFormat {
         for (raw, definition) in self.macros.into_iter().enumerate() {
             let meaning = MacroMeaning::new(
                 crate::meaning::MeaningFlags::from_bits(definition.flags),
-                TokenListId::new(definition.parameter_text),
-                TokenListId::new(definition.replacement_text),
+                stores.resolve_stored_token_list(TokenListId::new(definition.parameter_text)),
+                stores.resolve_stored_token_list(TokenListId::new(definition.replacement_text)),
             );
             if stores.macros.intern_with_provenance(meaning, None).raw() as usize != raw {
                 return Err(StoreFormatError::Invalid("macro order"));
@@ -270,7 +374,14 @@ impl StoreFormat {
                 id
             };
             if let Some(symbol) = identifier {
-                stores.fonts.set_identifier(id, Symbol::new(symbol));
+                stores.fonts.set_identifier(
+                    id,
+                    stores
+                        .interner
+                        .symbol_at_slot(symbol)
+                        .and_then(|symbol| stores.interner.resolve_stored(symbol))
+                        .ok_or(StoreFormatError::Invalid("font identifier symbol"))?,
+                );
             }
         }
         let mut node_ids = std::collections::BTreeMap::new();
@@ -278,7 +389,7 @@ impl StoreFormat {
             let nodes = list
                 .nodes
                 .into_iter()
-                .map(|node| remap_node(node, &node_ids))
+                .map(|node| node.restore(&stores, &node_ids))
                 .collect::<Result<Vec<_>, _>>()?;
             let id = stores.nodes.append(&nodes);
             node_ids.insert(list.key, id);
@@ -288,26 +399,43 @@ impl StoreFormat {
         }
         stores.hyphenation = self.hyphenation;
         stores.prepared_mag = self.prepared_mag;
-        stores.last_loaded_font = FontId::new(self.last_loaded_font);
-        for (raw, mut word) in self.env {
-            let bank_bits = raw >> 27;
+        stores.last_loaded_font = stores.resolve_stored_font(FontId::new(self.last_loaded_font));
+        for entry in self.env {
+            let bank_bits = entry.cell >> 27;
             if bank_bits > crate::cell::BankTag::MathFamilyFont as u32 {
                 return Err(StoreFormatError::Invalid("unknown environment bank"));
             }
-            let cell = crate::cell::CellId::new(
-                crate::cell::BankTag::from_bits(bank_bits),
-                raw & ((1 << 26) - 1),
-            );
-            if cell.bank() == crate::cell::BankTag::Box
-                && let Some(old) = NodeListId::decode_box_word(word)
-            {
-                let id = node_ids
-                    .get(&FormatListKey::from_reference(old))
-                    .copied()
-                    .ok_or(StoreFormatError::Invalid("missing box node list"))?;
-                let promoted = stores.prepare_box_value(id);
-                word = NodeListId::encode_box_word(Some(promoted));
-            }
+            let bank = crate::cell::BankTag::from_bits(bank_bits);
+            let dto_index = entry.cell & ((1 << 26) - 1);
+            let index = if bank == crate::cell::BankTag::Meaning {
+                stores
+                    .interner
+                    .symbol_at_slot(dto_index)
+                    .ok_or(StoreFormatError::Invalid("meaning symbol is not live"))?
+                    .raw()
+            } else {
+                dto_index
+            };
+            let cell = crate::cell::CellId::new(bank, index);
+            let word = match (cell.bank(), entry.value) {
+                (crate::cell::BankTag::Box, FormatEnvValue::Box(key)) => {
+                    let id = node_ids
+                        .get(&key)
+                        .copied()
+                        .ok_or(StoreFormatError::Invalid("missing box node list"))?;
+                    NodeListId::encode_box_word(Some(stores.prepare_box_value(id)))
+                }
+                (crate::cell::BankTag::Box, FormatEnvValue::Raw(_)) => {
+                    return Err(StoreFormatError::Invalid("raw box environment value"));
+                }
+                (crate::cell::BankTag::CurrentFont, FormatEnvValue::Raw(word)) => {
+                    restore_current_font_word(&stores, word)?
+                }
+                (_, FormatEnvValue::Raw(word)) => word,
+                (_, FormatEnvValue::Box(_)) => {
+                    return Err(StoreFormatError::Invalid("box value in non-box bank"));
+                }
+            };
             stores.env.restore_raw(cell, word);
         }
         Ok(stores)
@@ -315,7 +443,11 @@ impl StoreFormat {
 }
 
 impl FormatListKey {
-    fn capture(stores: &Stores, id: NodeListId) -> Self {
+    fn capture(
+        stores: &Stores,
+        id: NodeListId,
+        survivor_roots: &mut std::collections::BTreeMap<crate::ids::SurvivorRootId, u32>,
+    ) -> Self {
         let (start, len) = match id.arena() {
             crate::ids::ArenaRef::Epoch => {
                 let span = stores
@@ -329,30 +461,19 @@ impl FormatListKey {
         Self {
             survivor_root: match id.arena() {
                 crate::ids::ArenaRef::Epoch => None,
-                crate::ids::ArenaRef::Survivor(root) => Some(root.raw()),
+                crate::ids::ArenaRef::Survivor(root) => Some(match survivor_roots.get(&root) {
+                    Some(&detached) => detached,
+                    None => {
+                        let detached = u32::try_from(survivor_roots.len())
+                            .expect("format survivor roots exceed u32");
+                        survivor_roots.insert(root, detached);
+                        detached
+                    }
+                }),
             },
             start,
             len,
         }
-    }
-
-    fn from_reference(id: NodeListId) -> Self {
-        assert!(id.is_format_reference() || matches!(id.arena(), ArenaRef::Survivor(_)));
-        Self {
-            survivor_root: match id.arena() {
-                ArenaRef::Epoch => None,
-                ArenaRef::Survivor(root) => Some(root.raw()),
-            },
-            start: id.start(),
-            len: id.len(),
-        }
-    }
-
-    fn reference(self) -> NodeListId {
-        let arena = self.survivor_root.map_or(ArenaRef::Epoch, |root| {
-            ArenaRef::Survivor(crate::ids::SurvivorRootId::new(root))
-        });
-        NodeListId::format_reference(arena, self.start, self.len)
     }
 }
 
@@ -361,6 +482,7 @@ fn capture_node_list(
     id: NodeListId,
     seen: &mut std::collections::BTreeSet<NodeListId>,
     visiting: &mut std::collections::BTreeSet<NodeListId>,
+    survivor_roots: &mut std::collections::BTreeMap<crate::ids::SurvivorRootId, u32>,
     out: &mut Vec<FormatNodeList>,
 ) -> Result<(), StoreFormatError> {
     if seen.contains(&id) {
@@ -369,19 +491,20 @@ fn capture_node_list(
     if !visiting.insert(id) {
         return Err(StoreFormatError::Invalid("cyclic node-list graph"));
     }
-    let mut nodes = stores.nodes(id).to_vec();
+    let nodes = stores.nodes(id).to_vec();
     for node in &nodes {
         for child in node_child_ids(node) {
-            capture_node_list(stores, child, seen, visiting, out)?;
+            capture_node_list(stores, child, seen, visiting, survivor_roots, out)?;
         }
     }
     visiting.remove(&id);
     seen.insert(id);
-    for node in &mut nodes {
-        detach_node_handles(stores, node);
-    }
+    let nodes = nodes
+        .into_iter()
+        .map(|node| FormatNode::capture(stores, node, survivor_roots))
+        .collect();
     out.push(FormatNodeList {
-        key: FormatListKey::capture(stores, id),
+        key: FormatListKey::capture(stores, id, survivor_roots),
         nodes,
     });
     Ok(())
@@ -430,137 +553,28 @@ fn math_field_child(field: &crate::math::MathField, out: &mut Vec<NodeListId>) {
     }
 }
 
-fn detach_node_handles(stores: &Stores, node: &mut Node) {
-    let detach = |id: &mut NodeListId| {
-        *id = FormatListKey::capture(stores, *id).reference();
-    };
-    match node {
-        Node::HList(box_node) | Node::VList(box_node) => detach(&mut box_node.children),
-        Node::Glue {
-            leader:
-                Some(
-                    crate::node::LeaderPayload::HList(box_node)
-                    | crate::node::LeaderPayload::VList(box_node),
-                ),
-            ..
-        } => detach(&mut box_node.children),
-        Node::Unset(unset) => detach(&mut unset.children),
-        Node::Disc {
-            pre, post, replace, ..
-        } => {
-            detach(pre);
-            detach(post);
-            detach(replace);
-        }
-        Node::Ins { content, .. } | Node::Adjust(content) => detach(content),
-        Node::MathNoad(noad) => {
-            detach_math_field(&mut noad.nucleus, &detach);
-            detach_math_field(&mut noad.subscript, &detach);
-            detach_math_field(&mut noad.superscript, &detach);
-        }
-        Node::FractionNoad(fraction) => {
-            detach(&mut fraction.numerator);
-            detach(&mut fraction.denominator);
-        }
-        Node::MathChoice(choice) => {
-            detach(&mut choice.display);
-            detach(&mut choice.text);
-            detach(&mut choice.script);
-            detach(&mut choice.script_script);
-        }
-        Node::MathList(list) => detach(&mut list.content),
-        _ => {}
-    }
-}
-
-fn detach_math_field(field: &mut crate::math::MathField, detach: &impl Fn(&mut NodeListId)) {
-    if let crate::math::MathField::SubBox(id) | crate::math::MathField::SubMlist(id) = field {
-        detach(id);
-    }
-}
-
-fn remap_node(
-    mut node: Node,
-    ids: &std::collections::BTreeMap<FormatListKey, NodeListId>,
-) -> Result<Node, StoreFormatError> {
-    let remap = |id: &mut NodeListId| -> Result<(), StoreFormatError> {
-        *id = ids
-            .get(&FormatListKey::from_reference(*id))
-            .copied()
-            .ok_or(StoreFormatError::Invalid("node child precedes dependency"))?;
-        Ok(())
-    };
-    match &mut node {
-        Node::HList(box_node) | Node::VList(box_node) => remap(&mut box_node.children)?,
-        Node::Glue {
-            leader:
-                Some(
-                    crate::node::LeaderPayload::HList(box_node)
-                    | crate::node::LeaderPayload::VList(box_node),
-                ),
-            ..
-        } => remap(&mut box_node.children)?,
-        Node::Unset(unset) => remap(&mut unset.children)?,
-        Node::Disc {
-            pre, post, replace, ..
-        } => {
-            remap(pre)?;
-            remap(post)?;
-            remap(replace)?;
-        }
-        Node::Ins { content, .. } | Node::Adjust(content) => remap(content)?,
-        Node::MathNoad(noad) => {
-            remap_math_field(&mut noad.nucleus, ids)?;
-            remap_math_field(&mut noad.subscript, ids)?;
-            remap_math_field(&mut noad.superscript, ids)?;
-        }
-        Node::FractionNoad(fraction) => {
-            remap(&mut fraction.numerator)?;
-            remap(&mut fraction.denominator)?;
-        }
-        Node::MathChoice(choice) => {
-            remap(&mut choice.display)?;
-            remap(&mut choice.text)?;
-            remap(&mut choice.script)?;
-            remap(&mut choice.script_script)?;
-        }
-        Node::MathList(list) => remap(&mut list.content)?,
-        _ => {}
-    }
-    Ok(node)
-}
-
-fn remap_math_field(
-    field: &mut crate::math::MathField,
-    ids: &std::collections::BTreeMap<FormatListKey, NodeListId>,
-) -> Result<(), StoreFormatError> {
-    if let crate::math::MathField::SubBox(id) | crate::math::MathField::SubMlist(id) = field {
-        *id = ids
-            .get(&FormatListKey::from_reference(*id))
-            .copied()
-            .ok_or(StoreFormatError::Invalid("math child precedes dependency"))?;
-    }
-    Ok(())
-}
-
 impl FormatToken {
-    fn capture(token: Token) -> Self {
+    fn capture(stores: &Stores, token: Token) -> Self {
         match token {
             Token::Char { ch, cat } => Self::Char { ch, cat: cat as u8 },
-            Token::Cs(symbol) => Self::Cs(symbol.raw()),
+            Token::Cs(symbol) => Self::Cs(stores.resolve_stored_symbol(symbol).raw()),
             Token::Param(slot) => Self::Param(slot),
             Token::Frozen(crate::token::FrozenToken::EndTemplate) => Self::Frozen(0),
             Token::Frozen(crate::token::FrozenToken::EndV) => Self::Frozen(1),
         }
     }
 
-    fn restore(self) -> Result<Token, StoreFormatError> {
+    fn restore(self, interner: &crate::interner::Interner) -> Result<Token, StoreFormatError> {
         Ok(match self {
             Self::Char { ch, cat } => Token::Char {
                 ch,
                 cat: catcode(cat)?,
             },
-            Self::Cs(raw) => Token::Cs(Symbol::new(raw)),
+            Self::Cs(raw) => Token::Cs(
+                interner
+                    .symbol_at_slot(raw)
+                    .ok_or(StoreFormatError::Invalid("token symbol is not live"))?,
+            ),
             Self::Param(slot) => Token::Param(slot),
             Self::Frozen(0) => Token::Frozen(crate::token::FrozenToken::EndTemplate),
             Self::Frozen(1) => Token::Frozen(crate::token::FrozenToken::EndV),
@@ -607,7 +621,7 @@ impl FormatFont {
             right_boundary_char: font.metrics().right_boundary_char(),
             left_boundary_program: font.metrics().left_boundary_program(),
             extensible_recipes: font.metrics().extensible_recipes().to_vec(),
-            identifier: fonts.identifier(id).map(Symbol::raw),
+            identifier: fonts.identifier(id).map(crate::interner::SymbolId::raw),
         }
     }
 

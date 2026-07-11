@@ -3,6 +3,7 @@
 //! Glue watermarks are crate-private so rollback stays coupled to the
 //! aggregate `Universe` boundary.
 
+use crate::identity::{IdentityAllocator, IdentityMark};
 use crate::ids::GlueId;
 use crate::scaled::Scaled;
 use std::collections::HashMap;
@@ -46,14 +47,27 @@ impl GlueSpec {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct GlueStoreMark {
     pub(crate) specs: u32,
+    identities: IdentityMark,
 }
 
 /// Hash-consed immutable glue-spec arena.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct GlueStore {
     specs: Vec<GlueSpec>,
     index: HashMap<u64, Vec<GlueId>>,
     index_dirty: bool,
+    identities: IdentityAllocator,
+}
+
+impl Clone for GlueStore {
+    fn clone(&self) -> Self {
+        Self {
+            specs: self.specs.clone(),
+            index: self.index.clone(),
+            index_dirty: self.index_dirty,
+            identities: self.identities.fork(),
+        }
+    }
 }
 
 impl GlueStore {
@@ -64,6 +78,7 @@ impl GlueStore {
             specs: vec![GlueSpec::ZERO],
             index: HashMap::new(),
             index_dirty: false,
+            identities: IdentityAllocator::new(1),
         };
         store
             .index
@@ -92,7 +107,11 @@ impl GlueStore {
             }
         }
 
-        let id = GlueId::new(u32_len(self.specs.len(), "glue specs exceed u32 entries"));
+        let id = GlueId::from_identity(
+            self.identities
+                .allocate()
+                .expect("glue specs exceed u32 entries"),
+        );
         self.specs.push(spec);
         self.index.entry(hash).or_default().push(id);
         id
@@ -101,6 +120,7 @@ impl GlueStore {
     /// Reads a live frozen glue specification.
     #[must_use]
     pub(crate) fn get(&self, id: GlueId) -> GlueSpec {
+        assert!(self.contains(id), "glue id is not live");
         let index = id.raw() as usize;
         assert!(index < self.specs.len(), "glue id is not live");
         self.specs[index]
@@ -109,7 +129,20 @@ impl GlueStore {
     /// Returns whether `id` names a currently-live glue-spec slot.
     #[must_use]
     pub(crate) fn contains(&self, id: GlueId) -> bool {
-        (id.raw() as usize) < self.specs.len()
+        self.identities.contains(id.identity())
+    }
+
+    #[must_use]
+    pub(crate) fn resolve_stored(&self, id: GlueId) -> Option<GlueId> {
+        if self.contains(id) {
+            return Some(id);
+        }
+        if !id.is_stored() {
+            return None;
+        }
+        self.identities
+            .identity_at(id.raw())
+            .map(GlueId::from_identity)
     }
 
     /// Takes a rollback watermark for aggregate snapshots.
@@ -117,6 +150,7 @@ impl GlueStore {
     pub(crate) fn watermark(&self) -> GlueStoreMark {
         GlueStoreMark {
             specs: u32_len(self.specs.len(), "glue specs exceed u32 entries"),
+            identities: self.identities.watermark(),
         }
     }
 
@@ -129,6 +163,9 @@ impl GlueStore {
             "glue-store mark has too many specs"
         );
 
+        self.identities
+            .rollback(mark.identities)
+            .expect("glue-store mark is not an ancestor");
         self.specs.truncate(specs);
         self.index_dirty = true;
     }
@@ -144,7 +181,11 @@ impl GlueStore {
     fn rebuild_index(&mut self) {
         self.index.clear();
         for raw in 0..self.specs.len() {
-            let id = GlueId::new(u32_len(raw, "glue specs exceed u32 entries"));
+            let id = GlueId::from_identity(
+                self.identities
+                    .identity_at(u32_len(raw, "glue specs exceed u32 entries"))
+                    .expect("glue identity table matches specs"),
+            );
             let hash = content_hash(&self.get(id));
             self.index.entry(hash).or_default().push(id);
         }

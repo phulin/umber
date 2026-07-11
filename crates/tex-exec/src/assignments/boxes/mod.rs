@@ -357,7 +357,7 @@ where
         mode => {
             return Err(ExecError::UnimplementedTypesetting {
                 mode,
-                token: Token::Cs(stores.intern("hrule")),
+                token: Token::Cs(stores.intern("hrule").symbol()),
                 origin: OriginId::UNKNOWN,
                 operation: "\\hrule",
             });
@@ -449,7 +449,7 @@ where
     if !matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
         return Err(ExecError::UnimplementedTypesetting {
             mode: nest.current_mode(),
-            token: Token::Cs(stores.intern("vskip")),
+            token: Token::Cs(stores.intern("vskip").symbol()),
             origin: OriginId::UNKNOWN,
             operation: "\\vskip",
         });

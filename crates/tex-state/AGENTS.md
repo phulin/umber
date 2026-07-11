@@ -67,11 +67,14 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/stores/handles.rs`: Store-boundary liveness checks for symbols, token lists, origins, glue, fonts, macros, and node handles.
 - `src/stores/node_clone.rs`: Iterative child-first cloning of mixed node graphs into epoch storage.
 - `src/stores/format.rs`: Deterministic versioned format-image DTO capture/validation and fresh-store reconstruction.
+- `src/stores/format/node.rs`: Handle-free serialized node/math DTO graph and validated conversion to and from live nodes.
+- `src/stores/format/tests.rs`: Malformed format DTO validation tests that reject references before live-store publication.
 - `src/stores/format/font_validation.rs`: Pre-publication validation of detached font metrics, identifiers, and serialized Env font banks, plus test-only corruption fixtures.
 - `src/stores/state_hash.rs`: Store snapshot cursor and semantic hashing implementation for changed cells and store-owned slices.
 - `src/stores/tests.rs`: Unit tests for aggregate store rollback, builders, handle validation, parameters, boxes, and state hashes.
 - `src/survivor.rs`: Survivor arena for node lists that escape epoch rollback boundaries, including root-safe buffer recycling and feature-gated promotion measurements.
 - `src/tests.rs`: Crate-level integration-style unit tests for `Universe`, snapshots, world effects, and module test wiring.
+- `src/tests/handle_matrix.rs`: Table-driven aggregate rollback, fork, and cross-Universe liveness coverage for every production opaque handle class.
 - `src/tests/live_boundary.rs`: Unit tests proving live-state capability boundaries and restricted context APIs.
 - `src/tests/replay.rs`: Unit tests for snapshot/replay behavior and semantic state convergence.
 - `src/tests/replay_common.rs`: Shared helpers for replay tests, including model cells and expected hash state.
@@ -85,6 +88,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/world/tests.rs`: Unit tests for world snapshots, file records, streams, printing, randomness, shell escape, and effect replay.
 - `tests/it.rs`: Integration test harness that includes capability-boundary and live-boundary test modules.
 - `tests/it/capability_boundaries.rs`: Compile-fail integration tests asserting restricted expansion and input capabilities fail to compile.
+- `tests/it/handle_serialization.rs`: Downstream compile-fail probe proving serde and private constructors cannot mint live handles or handle-bearing nodes.
 - `tests/it/live_boundary.rs`: Downstream probe tests ensuring private stores and raw environment mutation stay inaccessible.
 - `tests/ui/expansion_context_forbidden.rs`: Compile-fail fixture that attempts forbidden privileged calls from `ExpansionContext`.
 - `tests/ui/expansion_state_input_forbidden.rs`: Compile-fail fixture that attempts input opening through generic `ExpansionState`.

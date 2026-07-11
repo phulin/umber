@@ -8,11 +8,15 @@ use crate::ids::{ArenaRef, NodeListId, SurvivorRootId};
 use crate::node::Node;
 use crate::node_arena::{ChildPatch, NodeArena, NodeList, NodeStorage};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
 #[cfg(feature = "node-stats")]
 use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(feature = "node-stats")]
 use std::time::Instant;
+
+const SURVIVOR_ROOT_MAX: u32 = (1 << 20) - 2;
+static NEXT_SURVIVOR_ROOT: AtomicU32 = AtomicU32::new(0);
 
 /// Process-local survivor-operation measurements. Times include the complete
 /// promotion/release operation; scratch bytes are allocator payload bytes and
@@ -92,8 +96,10 @@ pub fn survivor_measurement() -> SurvivorMeasurement {
 /// Arena for promoted node-list roots.
 #[derive(Clone, Debug)]
 pub struct SurvivorArena {
-    // Root ids are never reused: stale handles must never become live again.
+    // Storage slots are local and may be cloned, while packed root keys are
+    // process-unique so sibling forks cannot alias one another's new roots.
     slots: Vec<Option<SurvivorRoot>>,
+    root_slots: HashMap<SurvivorRootId, usize>,
     // Node storage is independent of identity and can safely be recycled.
     recycled: Vec<NodeStorage>,
     recycled_buffer_uses: usize,
@@ -113,6 +119,7 @@ impl SurvivorArena {
     pub(crate) fn new() -> Self {
         Self {
             slots: Vec::new(),
+            root_slots: HashMap::new(),
             recycled: Vec::new(),
             recycled_buffer_uses: 0,
             promotion_remap: HashMap::new(),
@@ -128,22 +135,15 @@ impl SurvivorArena {
             matches!(id.arena(), ArenaRef::Epoch),
             "only epoch node lists are promoted"
         );
-        assert!(
-            self.slots.len() < (1 << 20) - 1,
-            "survivor arena exceeds encodable roots"
-        );
-
-        let predicted_root = SurvivorRootId::new(u32_len(
-            self.slots.len(),
-            "survivor arena exceeds u32 roots",
-        ));
+        let root = allocate_survivor_root()
+            .map(SurvivorRootId::new)
+            .expect("survivor root identity space exhausted");
         let (storage, recycled) = self.take_recycled_buffer();
         #[cfg(not(feature = "node-stats"))]
         let _ = recycled;
         let remapped = core::mem::take(&mut self.promotion_remap);
         let pending = core::mem::take(&mut self.promotion_pending);
-        let copied =
-            copy_list_iterative(id, epoch, self, storage, predicted_root, remapped, pending);
+        let copied = copy_list_iterative(id, epoch, self, storage, root, remapped, pending);
         #[cfg(feature = "node-stats")]
         {
             measurement::PEAK_SCRATCH_LOGICAL
@@ -153,11 +153,7 @@ impl SurvivorArena {
         }
         self.promotion_remap = copied.remapped;
         self.promotion_pending = copied.pending;
-        let root = self.allocate_root(copied.storage);
-        assert_eq!(
-            root, predicted_root,
-            "predicted survivor root changed before publication"
-        );
+        self.allocate_root(root, copied.storage);
         self.debug_assert_no_epoch_ids(copied.promoted);
         #[cfg(feature = "node-stats")]
         {
@@ -214,9 +210,11 @@ impl SurvivorArena {
         if slot.refcount == 0 {
             #[cfg(feature = "node-stats")]
             let started = measurement::start_timer();
-            let mut root = self.slots[root.raw() as usize]
-                .take()
+            let index = self
+                .root_slots
+                .remove(&root)
                 .expect("survivor root is not live");
+            let mut root = self.slots[index].take().expect("survivor root is not live");
             root.storage.clear();
             self.recycled.push(root.storage);
             #[cfg(feature = "node-stats")]
@@ -234,7 +232,10 @@ impl SurvivorArena {
         let ArenaRef::Survivor(root) = id.arena() else {
             return false;
         };
-        let Some(Some(slot)) = self.slots.get(root.raw() as usize) else {
+        let Some(index) = self.root_slots.get(&root).copied() else {
+            return false;
+        };
+        let Some(Some(slot)) = self.slots.get(index) else {
             return false;
         };
         (id.start() as usize)
@@ -324,30 +325,50 @@ impl SurvivorArena {
         for storage in &self.recycled {
             add_storage(&mut totals, "survivor.recycled", storage);
         }
-        totals.into_values().collect()
+        let mut columns: Vec<_> = totals.into_values().collect();
+        let element_bytes = core::mem::size_of::<(SurvivorRootId, usize)>();
+        columns.push(crate::node_arena::NodeMemoryColumn {
+            name: "survivor.root_lookup_entries".to_owned(),
+            len: self.root_slots.len(),
+            capacity: self.root_slots.capacity(),
+            element_bytes,
+            logical_bytes: self.root_slots.len() * element_bytes,
+            retained_payload_bytes: self.root_slots.capacity() * element_bytes,
+        });
+        columns
     }
 
-    fn allocate_root(&mut self, storage: NodeStorage) -> SurvivorRootId {
+    fn allocate_root(&mut self, root: SurvivorRootId, storage: NodeStorage) {
         let slot = SurvivorRoot {
             storage,
             refcount: 1,
         };
-        let raw = u32_len(self.slots.len(), "survivor arena exceeds u32 roots");
-        assert!(raw < (1 << 20) - 1, "survivor root id exceeds encoding");
+        let index = self.slots.len();
+        assert!(
+            self.root_slots.insert(root, index).is_none(),
+            "survivor root identity was already published"
+        );
         self.slots.push(Some(slot));
-        SurvivorRootId::new(raw)
     }
 
     fn root(&self, root: SurvivorRootId) -> &SurvivorRoot {
+        let index = self
+            .root_slots
+            .get(&root)
+            .copied()
+            .expect("survivor root is not live");
         self.slots
-            .get(root.raw() as usize)
+            .get(index)
             .and_then(Option::as_ref)
             .expect("survivor root is not live")
     }
 
     fn root_mut(&mut self, root: SurvivorRootId) -> &mut SurvivorRoot {
-        let index = root.raw() as usize;
-        assert!(index < self.slots.len(), "survivor root is not live");
+        let index = self
+            .root_slots
+            .get(&root)
+            .copied()
+            .expect("survivor root is not live");
         self.slots[index]
             .as_mut()
             .expect("survivor root is not live")
@@ -362,6 +383,20 @@ impl SurvivorArena {
 
     #[cfg(not(debug_assertions))]
     fn debug_assert_no_epoch_ids(&self, _id: NodeListId) {}
+}
+
+fn allocate_survivor_root() -> Option<u32> {
+    NEXT_SURVIVOR_ROOT
+        .fetch_update(
+            AtomicOrdering::Relaxed,
+            AtomicOrdering::Relaxed,
+            survivor_root_successor,
+        )
+        .ok()
+}
+
+fn survivor_root_successor(next: u32) -> Option<u32> {
+    (next <= SURVIVOR_ROOT_MAX).then_some(next + 1)
 }
 
 struct PromotionResult {
@@ -520,9 +555,22 @@ fn u32_len(value: usize, message: &str) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::SurvivorArena;
+    use super::{SURVIVOR_ROOT_MAX, SurvivorArena, survivor_root_successor};
     use crate::node::Node;
     use crate::node_arena::NodeStorage;
+
+    #[test]
+    fn survivor_root_namespace_includes_its_last_packed_key() {
+        assert_eq!(
+            survivor_root_successor(SURVIVOR_ROOT_MAX - 1),
+            Some(SURVIVOR_ROOT_MAX)
+        );
+        assert_eq!(
+            survivor_root_successor(SURVIVOR_ROOT_MAX),
+            Some(SURVIVOR_ROOT_MAX + 1)
+        );
+        assert_eq!(survivor_root_successor(SURVIVOR_ROOT_MAX + 1), None);
+    }
 
     #[test]
     fn recycled_buffer_selection_prefers_largest_capacity() {

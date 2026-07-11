@@ -2101,7 +2101,7 @@ fn next_token_from_line<S>(
             let (token, kind) = match source.frame.state {
                 LexerState::NewLine => {
                     let par = stores.intern("par");
-                    (Token::Cs(par), InsertedOriginKind::Paragraph)
+                    (Token::Cs(par.symbol()), InsertedOriginKind::Paragraph)
                 }
                 LexerState::MidLine => (
                     Token::Char {
@@ -2202,7 +2202,7 @@ fn next_token_from_line_readonly<S>(
                             site: Box::new(DiagnosticSite::unknown()),
                         });
                     };
-                    Token::Cs(par)
+                    Token::Cs(par.symbol())
                 }
                 LexerState::MidLine => Token::Char {
                     ch: ' ',
@@ -2255,7 +2255,7 @@ fn scan_control_sequence<S>(
 ) -> TracedTokenWord {
     if source.frame.byte_offset >= source.frame.line.len() {
         source.frame.state = LexerState::SkippingBlanks;
-        let token = Token::Cs(stores.intern(""));
+        let token = Token::Cs(stores.intern("").symbol());
         return traced_source_token(stores, token, start, source_coordinate(source));
     }
 
@@ -2285,7 +2285,7 @@ fn scan_control_sequence<S>(
         }
     }
     source.frame.state = LexerState::SkippingBlanks;
-    let token = Token::Cs(stores.intern(&name));
+    let token = Token::Cs(stores.intern(&name).symbol());
     traced_source_token(stores, token, start, source_coordinate(source))
 }
 

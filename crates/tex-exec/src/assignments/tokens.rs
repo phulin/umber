@@ -84,7 +84,7 @@ where
                 tex_state::PrintSink::TerminalAndLog,
                 "\n! Missing control sequence inserted.\nPlease don't say `\\def cs{...}', say `\\def\\cs{...}'.\nI've inserted an inaccessible control sequence so that your\ndefinition will be completed without mixing me up too badly.\nYou can recover graciously from this error, if you're\ncareful; see exercise 27.2 in The TeXbook.\n",
             );
-            Ok(stores.intern("inaccessible"))
+            Ok(stores.intern("inaccessible").symbol())
         }
     }
 }
@@ -123,14 +123,14 @@ where
                 "\n! Missing control sequence inserted.\nPlease don't say `\\def cs{...}', say `\\def\\cs{...}'.\nI've inserted an inaccessible control sequence so that your\ndefinition will be completed without mixing me up too badly.\nYou can recover graciously from this error, if you're\ncareful; see exercise 27.2 in The TeXbook.\n",
             );
             let symbol = stores.intern("inaccessible");
-            let inserted_token = Token::Cs(symbol);
+            let inserted_token = Token::Cs(symbol.symbol());
             let origin = stores.inserted_origin(
                 InsertedOriginKind::ErrorRecovery,
                 inserted_token,
                 traced.origin(),
             );
             return Ok(TracedDefinitionTarget {
-                symbol,
+                symbol: symbol.symbol(),
                 traced: TracedTokenWord::pack(inserted_token, origin),
                 origin,
             });
@@ -144,7 +144,7 @@ where
 }
 
 pub(crate) fn active_character_symbol(stores: &mut Universe, ch: char) -> Symbol {
-    stores.intern_active_character(ch)
+    stores.intern_active_character(ch).symbol()
 }
 
 pub(super) fn scan_optional_equals_one_space<S>(

@@ -208,7 +208,7 @@ fn source_origin_direct_boundary_crossing_falls_back_to_one_span_arena() {
     ));
     assert!(matches!(
         first_wide.decode(),
-        crate::token::OriginEncoding::Arena(0)
+        crate::token::OriginEncoding::Arena(_)
     ));
     assert!(matches!(
         stores.origin(first_wide),
@@ -259,7 +259,7 @@ fn oversized_and_cumulative_sources_use_wide_fallback_without_narrowing_position
     let fallback = cumulative.source_token_origin(SourceId::new(1), 0, 1);
     assert!(matches!(
         fallback.decode(),
-        crate::token::OriginEncoding::Arena(0)
+        crate::token::OriginEncoding::Arena(_)
     ));
 }
 
@@ -361,6 +361,7 @@ fn rollback_restores_token_store_as_part_of_snapshot_tuple() {
     let reused = stores.intern_token_list(&[crate::token::Token::param(2)]);
 
     assert_eq!(reused.raw(), stale.raw());
+    assert_ne!(reused, stale);
     assert_eq!(stores.tokens(reused), &[crate::token::Token::param(2)]);
 }
 
@@ -369,7 +370,7 @@ fn token_list_builder_finishes_through_stores_boundary() {
     let mut stores = Stores::new();
     let symbol = stores.intern("macro");
     let mut builder = stores.token_list_builder();
-    builder.push(crate::token::Token::Cs(symbol));
+    builder.push(crate::token::Token::Cs(symbol.symbol()));
     builder.push(crate::token::Token::param(1));
 
     let id = stores.finish_token_list(&mut builder);
@@ -378,7 +379,7 @@ fn token_list_builder_finishes_through_stores_boundary() {
     assert_eq!(
         stores.tokens(id),
         &[
-            crate::token::Token::Cs(symbol),
+            crate::token::Token::Cs(symbol.symbol()),
             crate::token::Token::param(1)
         ]
     );
@@ -389,11 +390,57 @@ fn token_list_builder_finishes_through_stores_boundary() {
 }
 
 #[test]
+fn token_list_ingress_rejects_foreign_symbols_before_interning() {
+    let mut foreign = Stores::new();
+    let foreign_symbol = foreign.intern("foreign");
+    let token = Token::Cs(foreign_symbol.symbol());
+    let mut stores = Stores::new();
+
+    let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        stores.intern_token_list(&[token]);
+    }));
+    assert!(rejected.is_err());
+
+    let local = stores.intern("local");
+    let accepted = stores.intern_token_list(&[Token::Cs(local.symbol())]);
+    assert_eq!(
+        accepted.raw(),
+        1,
+        "rejected ingress must not allocate a list"
+    );
+}
+
+#[test]
+fn token_list_builder_rejection_is_atomic_and_preserves_scratch_content() {
+    let mut foreign = Stores::new();
+    let foreign_symbol = foreign.intern("foreign");
+    let mut stores = Stores::new();
+    let mut builder = stores.token_list_builder();
+    builder.push(Token::Cs(foreign_symbol.symbol()));
+
+    let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        stores.finish_token_list(&mut builder);
+    }));
+    assert!(rejected.is_err());
+    assert_eq!(builder.len(), 1, "rejected builder must remain reusable");
+
+    builder.clear();
+    builder.push(Token::param(1));
+    let accepted = stores.finish_token_list(&mut builder);
+    assert_eq!(
+        accepted.raw(),
+        1,
+        "rejected builder must not allocate a list"
+    );
+    assert!(builder.is_empty());
+}
+
+#[test]
 fn provenance_records_and_lists_round_trip_through_stores_boundary() {
     let mut stores = Stores::new();
     let symbol = stores.intern("m");
     let params = stores.intern_token_list(&[]);
-    let body = stores.intern_token_list(&[Token::Cs(symbol)]);
+    let body = stores.intern_token_list(&[Token::Cs(symbol.symbol())]);
     let definition = stores.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, params, body));
     let source = stores.source_origin(SourceId::new(3), 40, 5, 2);
     let macro_origin =
@@ -465,8 +512,10 @@ fn rollback_restores_provenance_as_part_of_snapshot_tuple() {
     let reused = stores.synthetic_origin(SyntheticOriginKind::Format);
     let reused_list = stores.allocate_origin_list(&[kept, reused]);
 
-    assert_eq!(reused.raw(), stale.raw());
+    assert_ne!(reused.raw(), stale.raw());
+    assert_eq!(stores.origin_if_live(stale), None);
     assert_eq!(reused_list.raw(), stale_list.raw());
+    assert_ne!(reused_list, stale_list);
     assert_eq!(
         stores.origin(reused),
         OriginRecord::Synthetic(SyntheticOrigin::new(SyntheticOriginKind::Format))
@@ -482,7 +531,7 @@ fn macro_meaning_round_trips_through_stores_boundary() {
         ch: '#',
         cat: Catcode::Parameter,
     }]);
-    let body = stores.intern_token_list(&[Token::param(1), Token::Cs(symbol)]);
+    let body = stores.intern_token_list(&[Token::param(1), Token::Cs(symbol.symbol())]);
     let macro_meaning = MacroMeaning::new(
         MeaningFlags::LONG | MeaningFlags::OUTER | MeaningFlags::PROTECTED,
         params,
@@ -504,8 +553,8 @@ fn separately_created_identical_macro_bodies_share_token_list_identity() {
     let mut stores = Stores::new();
     let a = stores.intern("a");
     let b = stores.intern("b");
-    let first_body = stores.intern_token_list(&[Token::param(1), Token::Cs(a)]);
-    let second_body = stores.intern_token_list(&[Token::param(1), Token::Cs(a)]);
+    let first_body = stores.intern_token_list(&[Token::param(1), Token::Cs(a.symbol())]);
+    let second_body = stores.intern_token_list(&[Token::param(1), Token::Cs(a.symbol())]);
     let params = stores.intern_token_list(&[]);
 
     assert_eq!(first_body, second_body);
@@ -530,7 +579,7 @@ fn identical_macro_definitions_get_distinct_definition_identity() {
     let mut stores = Stores::new();
     let symbol = stores.intern("same");
     let params = stores.intern_token_list(&[]);
-    let body = stores.intern_token_list(&[Token::Cs(symbol)]);
+    let body = stores.intern_token_list(&[Token::Cs(symbol.symbol())]);
     let macro_meaning = MacroMeaning::new(MeaningFlags::PROTECTED, params, body);
 
     let first = stores.intern_macro(macro_meaning);
@@ -549,7 +598,7 @@ fn identical_macro_definitions_keep_distinct_provenance() {
     let mut stores = Stores::new();
     let symbol = stores.intern("same");
     let params = stores.intern_token_list(&[]);
-    let body = stores.intern_token_list(&[Token::Cs(symbol)]);
+    let body = stores.intern_token_list(&[Token::Cs(symbol.symbol())]);
     let macro_meaning = MacroMeaning::new(MeaningFlags::PROTECTED, params, body);
     let first_origin = stores.source_origin(SourceId::new(1), 10, 2, 3);
     let second_origin = stores.source_origin(SourceId::new(2), 20, 4, 5);
@@ -618,7 +667,7 @@ fn rollback_restores_macro_store_as_part_of_snapshot_tuple() {
     let stale = stores.intern_macro(MacroMeaning::new(MeaningFlags::OUTER, params, stale_body));
 
     stores.rollback(&snapshot);
-    let reused_body = stores.intern_token_list(&[Token::Cs(symbol)]);
+    let reused_body = stores.intern_token_list(&[Token::Cs(symbol.symbol())]);
     let reused = stores.intern_macro(MacroMeaning::new(
         MeaningFlags::PROTECTED,
         params,
@@ -627,6 +676,8 @@ fn rollback_restores_macro_store_as_part_of_snapshot_tuple() {
 
     assert_eq!(stores.macro_definition(kept).replacement_text(), kept_body);
     assert_eq!(reused.raw(), stale.raw());
+    assert_ne!(reused, stale);
+    assert!(!stores.macros.contains(stale));
     assert_eq!(
         stores.macro_definition(reused).replacement_text(),
         reused_body
@@ -643,6 +694,8 @@ fn rollback_restores_glue_store_as_part_of_snapshot_tuple() {
     let reused = stores.intern_glue(glue_spec(2));
 
     assert_eq!(reused.raw(), stale.raw());
+    assert_ne!(reused, stale);
+    assert!(!stores.glue.contains(stale));
     assert_eq!(stores.glue(reused), glue_spec(2));
     assert_eq!(stores.glue(crate::ids::GlueId::ZERO), GlueSpec::ZERO);
 }
@@ -978,6 +1031,66 @@ fn rollback_restores_afterassignment_slot() {
 }
 
 #[test]
+fn invalid_aftergroup_token_is_rejected_without_changing_group_payload_order() {
+    let mut foreign = Stores::new();
+    let foreign_symbol = foreign.intern("foreign");
+    let mut stores = Stores::new();
+    let first = Token::param(1);
+    let last = Token::param(2);
+    stores.enter_group();
+    stores.push_aftergroup(first);
+
+    let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        stores.push_aftergroup(Token::Cs(foreign_symbol.symbol()));
+    }));
+    assert!(rejected.is_err());
+
+    stores.push_aftergroup(last);
+    assert_eq!(stores.leave_group(), vec![first, last]);
+}
+
+#[test]
+fn invalid_afterassignment_token_preserves_the_previous_payload() {
+    let mut foreign = Stores::new();
+    let foreign_symbol = foreign.intern("foreign");
+    let mut stores = Stores::new();
+    let original = Token::param(1);
+    stores.set_afterassignment(original);
+
+    let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        stores.set_afterassignment(Token::Cs(foreign_symbol.symbol()));
+    }));
+    assert!(rejected.is_err());
+    assert_eq!(stores.take_afterassignment(), Some(original));
+}
+
+#[test]
+fn rolled_back_symbol_token_is_rejected_at_every_scoped_ingress() {
+    let mut stores = Stores::new();
+    let snapshot = stores.checkpoint();
+    let stale = stores.intern("stale");
+    stores.rollback(&snapshot);
+    let token = Token::Cs(stale.symbol());
+
+    for ingress in ["intern", "builder", "aftergroup", "afterassignment"] {
+        let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match ingress {
+            "intern" => {
+                stores.intern_token_list(&[token]);
+            }
+            "builder" => {
+                let mut builder = stores.token_list_builder();
+                builder.push(token);
+                stores.finish_token_list(&mut builder);
+            }
+            "aftergroup" => stores.push_aftergroup(token),
+            "afterassignment" => stores.set_afterassignment(token),
+            _ => unreachable!(),
+        }));
+        assert!(rejected.is_err(), "{ingress} accepted a rolled-back symbol");
+    }
+}
+
+#[test]
 #[should_panic(expected = "symbol is not live in this Universe timeline")]
 fn stale_rolled_back_symbol_cannot_write_reused_meaning_cell() {
     let mut stores = Stores::new();
@@ -1002,6 +1115,49 @@ fn same_epoch_list_stored_twice_promotes_to_independent_roots() {
     assert_eq!(stores.testing_live_survivor_slot_count(), 2);
     assert_eq!(stores.testing_survivor_refcount(first), 1);
     assert_eq!(stores.testing_survivor_refcount(second), 1);
+}
+
+#[test]
+fn survivor_fork_keeps_inherited_roots_and_separates_new_roots() {
+    let mut parent = Stores::new();
+    let inherited_epoch = one_char(&mut parent, 'i');
+    let inherited = parent.prepare_box_value(inherited_epoch);
+    let mut child = parent.clone();
+
+    assert_eq!(
+        parent.nodes(inherited).to_vec(),
+        child.nodes(inherited).to_vec()
+    );
+
+    let parent_epoch = one_char(&mut parent, 'p');
+    let parent_only = parent.prepare_box_value(parent_epoch);
+    let child_epoch = one_char(&mut child, 'c');
+    let child_only = child.prepare_box_value(child_epoch);
+
+    assert_ne!(parent_only.arena(), child_only.arena());
+    assert!(parent.survivors.contains(parent_only));
+    assert!(!parent.survivors.contains(child_only));
+    assert!(child.survivors.contains(child_only));
+    assert!(!child.survivors.contains(parent_only));
+    assert!(std::panic::catch_unwind(|| parent.nodes(child_only)).is_err());
+    assert!(std::panic::catch_unwind(|| child.nodes(parent_only)).is_err());
+}
+
+#[test]
+fn released_survivor_key_stays_stale_when_its_storage_is_recycled() {
+    let mut stores = Stores::new();
+    let old_epoch = one_char(&mut stores, 'o');
+    let stale = stores.prepare_box_value(old_epoch);
+    stores.dec_survivor_ref(stale);
+
+    let new_epoch = one_char(&mut stores, 'n');
+    let replacement = stores.prepare_box_value(new_epoch);
+
+    assert_ne!(stale.arena(), replacement.arena());
+    assert!(!stores.survivors.contains(stale));
+    assert!(stores.survivors.contains(replacement));
+    assert_eq!(stores.testing_survivor_recycled_buffer_uses(), 1);
+    assert!(std::panic::catch_unwind(|| stores.nodes(stale)).is_err());
 }
 
 #[test]

@@ -4,37 +4,83 @@ use crate::env::EnvSnapshot;
 use crate::ids::{
     ArenaRef, FontId, GlueId, MacroDefinitionId, NodeListId, OriginListId, TokenListId,
 };
-use crate::interner::Symbol;
+use crate::interner::{Symbol, SymbolId, SymbolReference};
 use crate::math::MathField;
 use crate::meaning::Meaning;
 use crate::node::{LeaderPayload, Node};
 use crate::token::{OriginId, Token};
 
 impl Stores {
-    pub(super) fn assert_live_symbol(&self, symbol: Symbol) {
+    pub(crate) fn resolve_stored_symbol(&self, symbol: Symbol) -> SymbolId {
+        self.interner
+            .resolve_stored(symbol)
+            .expect("stored symbol slot is not live")
+    }
+
+    pub(crate) fn resolve_symbol_reference(&self, symbol: impl SymbolReference) -> SymbolId {
+        if let Some(id) = symbol.live_id() {
+            self.assert_live_symbol(id);
+            id
+        } else {
+            self.resolve_stored_symbol(symbol.stored_key().expect("symbol reference kind"))
+        }
+    }
+    pub(super) fn resolve_stored_token_list(&self, id: TokenListId) -> TokenListId {
+        self.tokens
+            .resolve_stored(id)
+            .expect("stored token-list slot is not live")
+    }
+
+    pub(super) fn resolve_stored_glue(&self, id: GlueId) -> GlueId {
+        self.glue
+            .resolve_stored(id)
+            .expect("stored glue slot is not live")
+    }
+
+    pub(super) fn resolve_stored_font(&self, id: FontId) -> FontId {
+        self.fonts
+            .resolve_stored(id)
+            .expect("stored font slot is not live")
+    }
+
+    pub(super) fn resolve_stored_meaning(&self, meaning: Meaning) -> Meaning {
+        match meaning {
+            Meaning::Macro { definition, flags } => Meaning::Macro {
+                definition: self
+                    .macros
+                    .resolve_stored(definition)
+                    .expect("stored macro-definition slot is not live"),
+                flags,
+            },
+            Meaning::Font(id) => Meaning::Font(self.resolve_stored_font(id)),
+            other => other,
+        }
+    }
+
+    pub(super) fn assert_live_symbol(&self, symbol: SymbolId) {
         assert!(
-            self.interner.contains(symbol),
+            self.interner.contains_id(symbol),
             "symbol is not live in this Universe timeline"
         );
     }
 
     pub(super) fn assert_live_token_list(&self, id: TokenListId) {
         assert!(
-            self.tokens.contains(id),
+            self.tokens.resolve_stored(id).is_some(),
             "token list is not live in this Universe timeline"
         );
     }
 
     pub(super) fn assert_live_glue(&self, id: GlueId) {
         assert!(
-            self.glue.contains(id),
+            self.glue.resolve_stored(id).is_some(),
             "glue id is not live in this Universe timeline"
         );
     }
 
     pub(super) fn assert_live_font(&self, id: FontId) {
         assert!(
-            self.fonts.contains(id),
+            self.fonts.resolve_stored(id).is_some(),
             "font id is not live in this Universe timeline"
         );
     }
@@ -61,14 +107,23 @@ impl Stores {
 
     pub(super) fn assert_live_origin_list(&self, id: OriginListId) {
         assert!(
-            self.provenance.contains_list(id),
+            self.provenance.resolve_stored_list(id).is_some(),
             "origin list id is not live in this Universe timeline"
         );
     }
 
     pub(super) fn assert_live_token(&self, token: Token) {
         if let Token::Cs(symbol) = token {
-            self.assert_live_symbol(symbol);
+            assert!(
+                self.interner.resolve_stored(symbol).is_some(),
+                "symbol is not live in this Universe timeline"
+            );
+        }
+    }
+
+    pub(super) fn assert_live_tokens(&self, tokens: &[Token]) {
+        for &token in tokens {
+            self.assert_live_token(token);
         }
     }
 

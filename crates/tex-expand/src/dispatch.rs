@@ -102,7 +102,7 @@ macro_rules! dispatch_match {
                 let symbol = stores.intern_relaxed_control_sequence(&name);
                 Ok(Dispatch::Push {
                     replay_kind: ExpansionReplayKind::Inserted,
-                    token_list: stores.intern_token_list(&[Token::Cs(symbol)]),
+                    token_list: stores.intern_token_list(&[Token::Cs(symbol.symbol())]),
                     origin_list: crate::synthesized_origin_list(
                         stores,
                         1,

@@ -95,19 +95,26 @@ that fallback as rollback-ready.
 
 ## 3. Identity: the interner
 
-- Control-sequence identities intern to dense `Symbol(u32)`. The interner key
+- Control-sequence live identities use `SymbolId`, while tokens and Env cells
+  retain a compact 30-bit `Symbol(u32)` key. Compact keys come from one
+  process-wide monotonic domain: rollback removes their local key-to-slot
+  mappings but never returns keys for reuse, and sibling forks inherit old
+  mappings while receiving disjoint keys for later names. Each interner keeps
+  a dense semantic slot table plus an O(1) compact-key-to-slot map, so hot token
+  and Env representations do not widen. The semantic interner key
   is `(ControlSequenceKind, spelling)`, where named control sequences and
   active-character control sequences are disjoint namespaces. Thus active `~`
   and the escaped control symbol `\~` resolve to the same printable spelling
   but have distinct symbols and independent Env cells, mirroring TeX82's
   `active_base+c` and `single_base+c` ranges. Backing: bump-allocated UTF-8
   arena + namespace-aware open-addressing hash index. The packed traced-token representation
-  reserves 30 payload bits for control-sequence symbols, so `Interner::intern`
-  is the single enforcement point for the hard `2^30` live-symbol capacity and
-  returns `InternerError::TooManySymbols` instead of creating an unrepresentable
-  symbol.
-- Append-only: nothing is un-interned. Rollback = truncate arena to
-  watermark. The hash index either records insertion order (rewindable) or
+  reserves 30 payload bits for control-sequence symbols. `Interner::intern`
+  therefore reserves from a nonwrapping `2^30` process-key domain and returns
+  `InternerError::TooManySymbols` instead of creating an unrepresentable or
+  revived key.
+- Semantic slots are append-only between rollbacks. Rollback truncates the
+  arena to its watermark and removes discarded compact-key mappings, while the
+  process key frontier remains monotonic. The hash index either records insertion order (rewindable) or
   is rebuilt lazily on first intern after a rollback — interning after
   rollback is rare, so lazy rebuild is acceptable v1.
 - Dense ids make every downstream lookup an array index; stable ids are what
@@ -367,7 +374,11 @@ cells[i] = new
 - The store owns one append-only `OriginRecord` arena and one append-only
   packed `OriginId` arena addressed by `OriginListId` spans. It is deliberately
   per-instance and not hash-consed: identical origin records or lists may have
-  different ids, and rollback only truncates arenas to the snapshot mark.
+  different ids. `OriginListId` is a generation-tagged runtime identity.
+  Packed arena `OriginId` values remain 32-bit token-side keys, but those keys
+  are process-unique and never reused; a rollback removes their O(1) lookup
+  entries while truncating records, so neither rollback nor a sibling fork can
+  make a stale packed origin resolve to replacement diagnostic content.
 - Origin-list builders are finished through the aggregate `Universe`/`Stores`
   API in parallel with token-list builders. Token-list replay frames carry a
   `TokenListId` plus an `OriginListId`; when the origin span is present its
@@ -442,13 +453,15 @@ cells[i] = new
   source frame uses it to encode in-range direct positions without repeating
   a source-map lookup; the capability exposes neither raw positions nor raw
   origin encodings, and wide fallback still goes through aggregate validation.
-- Store snapshots add only region/backing lengths and the next logical
-  position. Aggregate rollback truncates these with provenance while `World`
-  restores its input-record identity watermark. `InputRecordId` is a
-  generation-tagged live capability: rollback advances the non-restored
-  generation before a discarded record slot can be reused, so stale or foreign
-  records cannot resolve to replacement content. Reused `SourceId`, backing
-  id, and logical position values likewise cannot observe discarded content.
+- Store snapshots add region/backing lengths, the logical-position state, and
+  an O(1) region-identity mark. Aggregate rollback truncates these with
+  provenance while `World` restores its input-record identity watermark.
+  `InputRecordId` is a generation-tagged live capability: rollback advances
+  the non-restored generation before a discarded record slot can be reused, so
+  stale or foreign records cannot resolve to replacement content. Logical
+  `SourcePos` ranges are never reused in ordinary allocation, including across
+  sibling forks, and region identity validation prevents reused `SourceId` or
+  backing slots from making stale direct origins observe discarded content.
   Resolver line starts are derived lazily from stable immutable backing; no
   mutable cache keyed by reusable ids is retained. Source-map identity and
   diagnostic bytes are excluded from semantic hashing.
@@ -831,8 +844,10 @@ The type system is the write barrier's bodyguard. The rules:
 
 ### 10.3 Unforgeable handles
 
-`Symbol`, `TokenListId`, `NodeListId`, `FontId`, `GlueId`, `SnapshotId` are
-newtypes with private constructors; only their owning store mints them.
+`SymbolId`, `TokenListId`, `MacroDefinitionId`, `NodeListId`, `FontId`,
+`GlueId`, `OriginListId`, `OriginId`, `SourcePos`, and `InputRecordId` are
+opaque values with private production constructors; only their owning store
+mints them.
 Packed operand fields are decoded back into typed ids *inside* `tex-state`;
 raw integers never cross the crate boundary. Stored-word decoders that can
 mint handles from packed operands are crate-private; downstream raw decode and
@@ -863,16 +878,49 @@ reserved built-in namespace only when their meaning is identical in every
 store (for example, the empty token list); they are values, not foreign live
 capabilities.
 
-The runtime identity is deliberately not serializable. Format images,
-committed page artifacts, memo records, and future whole-engine checkpoint
-files use versioned DTO-local dense references or semantic content hashes.
-Loading validates those DTO graphs and mints fresh runtime identities through
-the aggregate `Stores`/`Universe` restore boundary. Aggregate in-memory
+Live handles implement neither `serde::Serialize` nor `serde::Deserialize`,
+and handle-bearing `Node` and math aggregates deliberately expose no blanket
+serde path either. Format images, committed page artifacts, memo records, and
+future whole-engine checkpoint files use versioned DTO-local dense references
+or semantic content hashes. In particular, format node graphs use private
+`FormatNode`/`FormatListKey` records, including a typed box-register value
+instead of disguising a wire key as a `NodeListId`. Loading validates and
+remaps those DTO graphs before minting fresh runtime identities through the
+aggregate `Stores`/`Universe` restore boundary. Aggregate in-memory
 snapshots instead include each store's O(1) identity watermark alongside its
 content watermark and restore both atomically. `tex-state::identity` implements
 this substrate; migration of existing token/glue/font/macro/provenance/source
 and node handle layouts is tracked separately so individual stores cannot
 invent incompatible generation schemes.
+
+The complete production handle matrix is:
+
+| Handle | Owner | Live runtime identity | Compact stored form | Durable DTO | Snapshot mark | Rollback and fork rule | Validation API |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `SymbolId` | `Interner` | generation identity plus its compact key | process-unique, nonreused `Symbol(u32)` in tokens and Env cells | DTO-local `FormatName` table index; fresh live id and compact key on load | `InternerMark` spans/bytes + identity mark | discarded slots retag and their key mappings are removed; compact keys never return to the process frontier; forks inherit old keys and allocate disjoint new keys | O(1) key-to-slot `Interner::resolve_stored` plus `contains_id`, exposed through `Stores`/`Universe` reads and writes |
+| `TokenListId` | `TokenStore` | 16-byte generation identity; universal empty builtin | dense `u32` in Env and macros; private format DTOs carry table keys | `StoreFormat.token_lists` index; validated keys are remapped to fresh ids by `Stores` | `TokenStoreMark` spans/tokens + identity mark | discarded slots retag; inherited ids remain valid in forks, new ids are branch-local | `TokenStore::contains`/`resolve_stored`, then aggregate token/register/node ingress |
+| `MacroDefinitionId` | `MacroStore` | 16-byte generation identity | dense `u32` operand in packed `Meaning` | `FormatMacro` table index | `MacroStoreMark` definition length + identity mark | discarded slots retag; post-fork definitions are foreign to siblings | `MacroStore::contains`/`resolve_stored`, then aggregate meaning access/mutation |
+| `GlueId` | `GlueStore` | 16-byte generation identity; universal zero builtin | dense `u32` in Env and node words/sidecars | `FormatGlue` table index | `GlueStoreMark` spec length + identity mark | discarded slots retag; post-fork specs are foreign to siblings | `GlueStore::contains`/`resolve_stored`, then aggregate register/node ingress |
+| `FontId` | `FontStore` | 16-byte generation identity; universal null-font builtin | dense `u32` in Env and compact nodes | `FormatFont` table index/content record | `FontStoreMark` lengths/write log + identity mark | discarded slots retag; post-fork fonts are foreign to siblings | `FontStore::contains`/`resolve_stored`, then aggregate font/meaning/node ingress |
+| `OriginListId` | `ProvenanceStore` | 16-byte generation identity; universal empty builtin | dense slot is used only in explicit detached/test storage; live replay summaries retain the full handle | no format/artifact DTO; provenance is diagnostic-only | `ProvenanceMark` list spans/entries + list identity mark | discarded slots retag; stale/foreign lists degrade to missing; forks separate new lists | `resolve_stored_list`/`contains_list`, exposed as `origin_list_if_live` |
+| arena `OriginId` | `ProvenanceStore` | 32-bit process-unique packed key mapped to a generation-tagged record identity | the same 32-bit key in `TracedTokenWord` and origin lists | no durable DTO; semantic formats/hashes drop provenance | `ProvenanceMark` records + record identity mark; lookup suffix removed | keys are never reassigned; rollback removes lookup entries and forks allocate distinct keys | `contains_origin`/`get`, exposed as `origin_if_live`; failure degrades to unknown |
+| `SourcePos`, `SourceSpan`, `RegisteredSource` | `SourceMap` | process-unique `u64` position/range; each region also carries a hidden generation tag | direct origins use the low 31-bit `SourcePos` payload; `GeneratedSourceId(u32)` is reachable only through a validated region | none; source diagnostics are session-local and World bytes use `ContentHash` | `SourceMapMark` region/backing lengths + region identity mark | position ranges are never reassigned; rollback truncates regions; forks allocate disjoint ranges | `region_for_position`/`span`/`position`; `Universe` validates World backing before registration |
+| epoch `NodeListId` | `NodeArena` | 16-byte generation identity; universal empty builtin | compact span lives in the arena's O(1) slot table, never in the handle | `FormatNodeList`/`FormatListKey` detached span reference; live handles reject serialization | one `NodeArenaMark` for storage, spans, and identity mark | discarded slots retag atomically with all columns; forks separate new namespaces | `NodeArena::contains`/`get_epoch`, then aggregate node/box ingress |
+| survivor `NodeListId` | `SurvivorArena` | packed 64-bit root/start/length inside the reserved survivor namespace; root key is process-unique | the same packed word in box Env cells | `FormatListKey` detached root/span reference; fresh survivor key on promotion | no truncation mark; refcounts are owned by live Env cells and journal records | released keys are never reused even when storage recycles; inherited roots survive clones and sibling forks receive distinct new keys | O(1) root-key-to-local-slot lookup in `SurvivorArena::contains`/`get`, then aggregate node/box ingress |
+| `InputRecordId` | `World` | 16-byte generation identity | no compact engine operand; source frames/regions retain the full capability | none; durable identity is `ContentHash` and format loading starts a fresh World | `WorldSnapshot` input length + identity mark | discarded records retag; inherited records survive clones and siblings reject new foreign records | `World::input_record`; `Universe::register_source` also checks byte length |
+
+Several opaque-looking integers are deliberately not full timeline capabilities.
+They must not be confused with the matrix above: `Symbol` is a process-unique
+nonreused compact stored key that is rehydrated through its owning interner;
+it cannot authorize a read after its local mapping is removed. `SourceId` and
+`GeneratedSourceId` are live aggregate-local indexes protected by source-region
+identity and non-reused positions; `SurvivorRootId` is only the private packed
+component of a validated survivor `NodeListId`; `CellId`, parameter ids, and
+`StreamSlot` are fixed value-domain indexes; `EffectPos` is an absolute effect
+log cursor; `CheckpointId` and `ConditionFrameToken` are execution labels, not
+content handles; and the legacy `SnapshotId` is currently only an internal
+journal-marker placeholder. None of these integers authorizes a live-store
+read without the aggregate owner and validation path listed above.
 
 Format restore is a validate-then-publish boundary even after the outer image
 checksum succeeds. In particular, detached font metrics are revalidated for

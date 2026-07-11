@@ -162,7 +162,7 @@ fn scans_mathchardef_meaning_direct_macro_and_signed_without_read_ahead() {
     let math = stores.intern("math");
     stores.set_meaning(math, Meaning::MathCharGiven(10_000));
     let wrapped = stores.intern("wrapped");
-    let replacement = stores.intern_token_list(&[Token::Cs(math)]);
+    let replacement = stores.intern_token_list(&[Token::Cs(math.symbol())]);
     let params = stores.intern_token_list(&[]);
     stores.set_macro_meaning(
         wrapped,
@@ -170,7 +170,7 @@ fn scans_mathchardef_meaning_direct_macro_and_signed_without_read_ahead() {
     );
 
     let explicit_space = stores.intern_token_list(&[
-        Token::Cs(math),
+        Token::Cs(math.symbol()),
         char_token(' ', Catcode::Space),
         char_token('X', Catcode::Letter),
     ]);
@@ -213,7 +213,11 @@ fn mathchardef_scan_records_the_live_meaning() {
     .expect("math-given scan should succeed");
 
     assert_eq!(scanned.value(), 10_000);
-    assert!(reads.0.contains(&(math, Meaning::MathCharGiven(10_000))));
+    assert!(
+        reads
+            .0
+            .contains(&(math.symbol(), Meaning::MathCharGiven(10_000)))
+    );
 }
 
 #[test]
@@ -310,7 +314,7 @@ fn relax_in_number_slot_recovers_zero_and_replays_token() {
     assert_eq!(scanned.diagnostic(), Some(IntegerDiagnostic::MissingNumber));
     assert_eq!(
         input.next_token(&mut stores).expect("token should replay"),
-        Some(Token::Cs(relax))
+        Some(Token::Cs(relax.symbol()))
     );
 }
 
@@ -334,7 +338,7 @@ fn ordinary_unexpandable_command_recovers_zero_and_preserves_origin() {
     assert_eq!(scanned.value(), 0);
     assert_eq!(scanned.diagnostic(), Some(IntegerDiagnostic::MissingNumber));
     assert_eq!(scanned.diagnostic_origin(), Some(replayed.origin()));
-    assert_eq!(replayed.token(), Some(Token::Cs(penalty)));
+    assert_eq!(replayed.token(), Some(Token::Cs(penalty.symbol())));
 }
 
 #[test]

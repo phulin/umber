@@ -52,7 +52,8 @@ impl StoreFormat {
         let mut parameter_counts = vec![None; self.fonts.len()];
         let mut dimension_slots = Vec::new();
         let mut seen_font_cells = std::collections::BTreeSet::new();
-        for &(raw, word) in &self.env {
+        for entry in &self.env {
+            let raw = entry.cell;
             let bank_bits = raw >> 27;
             if bank_bits > crate::cell::BankTag::MathFamilyFont as u32 {
                 return Err(StoreFormatError::Invalid("unknown environment bank"));
@@ -70,6 +71,14 @@ impl StoreFormat {
             if !is_font_cell {
                 continue;
             }
+            let word = match entry.value {
+                FormatEnvValue::Raw(word) => word,
+                FormatEnvValue::Box(_) => {
+                    return Err(StoreFormatError::Invalid(
+                        "box value in environment font bank",
+                    ));
+                }
+            };
             if raw & GLOBAL_BIT != 0 {
                 return Err(StoreFormatError::Invalid(
                     "format environment contains a global font cell",
@@ -251,22 +260,28 @@ pub(crate) fn testing_corrupt_font_format(
             format
                 .env
                 .iter_mut()
-                .find(|entry| entry.0 == raw)
+                .find(|entry| entry.cell == raw)
                 .expect("test format has a font parameter count")
-                .1 = 6;
+                .value = FormatEnvValue::Raw(6);
         }
         TestingFontFormatCorruption::FontDimenSlot => {
             let index = (1 << FONT_DIMEN_BITS) | 7;
             let raw = crate::cell::CellId::new(crate::cell::BankTag::FontDimen, index).raw();
-            format.env.push((raw, 1));
+            format.env.push(FormatEnvEntry {
+                cell: raw,
+                value: FormatEnvValue::Raw(1),
+            });
         }
         TestingFontFormatCorruption::CurrentFont => {
             let raw = crate::cell::CellId::new(crate::cell::BankTag::CurrentFont, 0).raw();
             let word = u64::from(u32::MAX);
-            if let Some(entry) = format.env.iter_mut().find(|entry| entry.0 == raw) {
-                entry.1 = word;
+            if let Some(entry) = format.env.iter_mut().find(|entry| entry.cell == raw) {
+                entry.value = FormatEnvValue::Raw(word);
             } else {
-                format.env.push((raw, word));
+                format.env.push(FormatEnvEntry {
+                    cell: raw,
+                    value: FormatEnvValue::Raw(word),
+                });
             }
         }
         TestingFontFormatCorruption::LastLoadedFont => {

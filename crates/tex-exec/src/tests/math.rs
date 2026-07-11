@@ -1281,7 +1281,7 @@ fn every_math_and_every_display_tokens_are_inserted_on_entry() {
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let displaystyle = stores.symbol("displaystyle").expect("displaystyle");
-    let every_math = stores.intern_token_list(&[Token::Cs(displaystyle)]);
+    let every_math = stores.intern_token_list(&[Token::Cs(displaystyle.symbol())]);
     stores.set_tok_param(TokParam::EVERY_MATH, every_math);
     let mut input = InputStack::new(MemoryInput::new("$a"));
     let mut executor = Executor::new();

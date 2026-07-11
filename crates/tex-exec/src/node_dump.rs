@@ -460,7 +460,7 @@ fn dump_font(stores: &Universe, font: tex_state::ids::FontId) -> String {
     if stores.current_font() == font
         && let Some(symbol) = stores.current_font_symbol()
     {
-        return tex_expand::token_text(stores, Token::Cs(symbol));
+        return tex_expand::token_text(stores, Token::Cs(symbol.symbol()));
     }
     format!("\\{}", stores.font_name(font))
 }

@@ -7,22 +7,12 @@
 
 macro_rules! opaque_id {
     ($name:ident) => {
-        #[derive(
-            Clone,
-            Copy,
-            Debug,
-            Eq,
-            Hash,
-            Ord,
-            PartialEq,
-            PartialOrd,
-            serde::Deserialize,
-            serde::Serialize,
-        )]
+        #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
         pub struct $name(u32);
 
         impl $name {
             #[allow(dead_code)]
+            #[allow(unused_comparisons)]
             pub(crate) const fn new(raw: u32) -> Self {
                 Self(raw)
             }
@@ -42,32 +32,83 @@ macro_rules! opaque_id {
     };
 }
 
-opaque_id!(TokenListId);
-opaque_id!(OriginListId);
-opaque_id!(MacroDefinitionId);
-opaque_id!(GlueId);
-opaque_id!(FontId);
 opaque_id!(SnapshotId);
+
+macro_rules! semantic_id {
+    ($name:ident, $namespace:expr, $builtin_slots:expr) => {
+        #[repr(transparent)]
+        #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+        pub struct $name(crate::identity::HandleIdentity);
+
+        #[allow(dead_code, unused_comparisons)]
+        impl $name {
+            pub(crate) const fn new(raw: u32) -> Self {
+                if raw < $builtin_slots {
+                    Self(crate::identity::HandleIdentity::builtin(raw))
+                } else {
+                    Self(crate::identity::HandleIdentity::reserved(
+                        $namespace,
+                        core::num::NonZeroU32::MIN,
+                        raw,
+                    ))
+                }
+            }
+
+            pub(crate) const fn from_identity(identity: crate::identity::HandleIdentity) -> Self {
+                Self(identity)
+            }
+
+            pub(crate) const fn builtin(slot: u32) -> Self {
+                Self(crate::identity::HandleIdentity::builtin(slot))
+            }
+
+            pub(crate) const fn identity(self) -> crate::identity::HandleIdentity {
+                self.0
+            }
+
+            pub(crate) const fn is_stored(self) -> bool {
+                self.0.namespace() == $namespace
+            }
+
+            /// Creates a placeholder id for tests that cover compact stored words.
+            #[cfg(any(test, feature = "testing"))]
+            #[must_use]
+            pub const fn testing_new(raw: u32) -> Self {
+                Self::new(raw)
+            }
+
+            /// Returns the dense store slot used by semantic DTOs and packed words.
+            #[must_use]
+            pub const fn raw(self) -> u32 {
+                self.0.slot()
+            }
+        }
+    };
+}
+
+semantic_id!(TokenListId, 10, 1);
+semantic_id!(MacroDefinitionId, 11, 0);
+semantic_id!(GlueId, 12, 1);
+semantic_id!(FontId, 13, 1);
+semantic_id!(OriginListId, 14, 1);
 
 impl GlueId {
     /// The canonical zero-glue id, pre-interned by every glue store.
-    pub const ZERO: Self = Self(0);
+    pub const ZERO: Self = Self(crate::identity::HandleIdentity::builtin(0));
 }
 
 impl TokenListId {
     /// The canonical empty token-list id, pre-interned by every token store.
-    pub const EMPTY: Self = Self(0);
+    pub const EMPTY: Self = Self(crate::identity::HandleIdentity::builtin(0));
 }
 
 impl OriginListId {
     /// The canonical empty origin-list id, preallocated by every provenance store.
-    pub const EMPTY: Self = Self(0);
+    pub const EMPTY: Self = Self(crate::identity::HandleIdentity::builtin(0));
 }
 
 /// A survivor arena root slot.
-#[derive(
-    Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Deserialize, serde::Serialize,
-)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct SurvivorRootId(u32);
 
 impl SurvivorRootId {
@@ -89,9 +130,7 @@ impl SurvivorRootId {
 }
 
 /// The arena namespace for a frozen node-list span.
-#[derive(
-    Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Deserialize, serde::Serialize,
-)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum ArenaRef {
     Epoch,
     Survivor(SurvivorRootId),
@@ -130,6 +169,7 @@ impl NodeListId {
         Self(identity)
     }
 
+    #[cfg(any(test, feature = "testing"))]
     const fn packed_epoch_span(start: u32, len: u32) -> u64 {
         assert!(
             len <= NODE_LIST_EPOCH_LEN_MAX,
@@ -164,6 +204,7 @@ impl NodeListId {
         )
     }
 
+    #[cfg(any(test, feature = "testing"))]
     pub(crate) const fn format_reference(arena: ArenaRef, start: u32, len: u32) -> Self {
         match arena {
             ArenaRef::Epoch => {
@@ -312,40 +353,6 @@ impl NodeListId {
             );
             Some(Self::from_reserved_word(NODE_LIST_SURVIVOR_NAMESPACE, word))
         }
-    }
-}
-
-impl serde::Serialize for NodeListId {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        if !self.is_format_reference() {
-            return Err(serde::ser::Error::custom(
-                "live node-list handles are not serializable",
-            ));
-        }
-        let (tag, root) = match self.arena() {
-            ArenaRef::Epoch => (0_u8, 0),
-            ArenaRef::Survivor(root) => (1, root.raw()),
-        };
-        (tag, root, self.start(), self.len()).serialize(serializer)
-    }
-}
-
-impl<'de> serde::Deserialize<'de> for NodeListId {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let (tag, root, start, len) =
-            <(u8, u32, u32, u32) as serde::Deserialize>::deserialize(deserializer)?;
-        let arena = match tag {
-            0 => ArenaRef::Epoch,
-            1 => ArenaRef::Survivor(SurvivorRootId::new(root)),
-            _ => return Err(serde::de::Error::custom("unknown node-list arena tag")),
-        };
-        Ok(Self::format_reference(arena, start, len))
     }
 }
 

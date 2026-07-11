@@ -482,7 +482,7 @@ fn delimited_output_tokens(
 ) -> tex_state::ids::TokenListId {
     let mut tokens = stores.tokens(output).to_vec();
     let relax = stores.intern("relax");
-    tokens.push(Token::Cs(relax));
+    tokens.push(Token::Cs(relax.symbol()));
     stores.intern_token_list(&tokens)
 }
 

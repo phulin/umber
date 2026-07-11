@@ -19,7 +19,9 @@ use crate::hyphenation::{ExceptionSpec, HyphenationTable, PatternSpec};
 use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, OriginListId, TokenListId};
 use crate::input::SourceId;
 use crate::input::TracedTokenList;
-use crate::interner::{ControlSequenceKind, Interner, InternerError, InternerMark, Symbol};
+use crate::interner::{
+    ControlSequenceKind, Interner, InternerError, InternerMark, Symbol, SymbolId, SymbolReference,
+};
 use crate::macro_store::{MacroDefinitionProvenance, MacroMeaning, MacroStore, MacroStoreMark};
 use crate::math::MathFontSize;
 use crate::meaning::Meaning;
@@ -346,22 +348,22 @@ impl Stores {
 
     /// Returns the meaning for a live control-sequence symbol.
     #[must_use]
-    pub fn meaning(&self, symbol: Symbol) -> Meaning {
-        self.assert_live_symbol(symbol);
-        self.env.get(symbol)
+    pub fn meaning(&self, symbol: impl SymbolReference) -> Meaning {
+        let symbol = self.resolve_symbol_reference(symbol);
+        self.resolve_stored_meaning(self.env.get(symbol.symbol()))
     }
 
     /// Sets the local meaning for a live control-sequence symbol.
-    pub fn set_meaning(&mut self, symbol: Symbol, meaning: Meaning) {
-        self.assert_live_symbol(symbol);
+    pub fn set_meaning(&mut self, symbol: impl SymbolReference, meaning: Meaning) {
+        let symbol = self.resolve_symbol_reference(symbol);
         self.assert_live_macro_definition_in_meaning(meaning);
         self.assert_live_font_in_meaning(meaning);
-        self.env.set(symbol, meaning);
+        self.env.set(symbol.symbol(), meaning);
     }
 
     /// Interns a control-sequence name and gives a previously undefined name
     /// TeX's `\csname`-created `\relax` meaning.
-    pub fn intern_relaxed_control_sequence(&mut self, name: &str) -> Symbol {
+    pub fn intern_relaxed_control_sequence(&mut self, name: &str) -> SymbolId {
         let symbol = self.intern(name);
         if self.meaning(symbol) == Meaning::Undefined {
             self.set_meaning(symbol, Meaning::Relax);
@@ -370,11 +372,11 @@ impl Stores {
     }
 
     /// Sets the global meaning for a live control-sequence symbol.
-    pub fn set_meaning_global(&mut self, symbol: Symbol, meaning: Meaning) {
-        self.assert_live_symbol(symbol);
+    pub fn set_meaning_global(&mut self, symbol: impl SymbolReference, meaning: Meaning) {
+        let symbol = self.resolve_symbol_reference(symbol);
         self.assert_live_macro_definition_in_meaning(meaning);
         self.assert_live_font_in_meaning(meaning);
-        self.env.set_global(symbol, meaning);
+        self.env.set_global(symbol.symbol(), meaning);
     }
 
     /// Interns a frozen macro definition in the owned macro-definition store.
@@ -438,7 +440,7 @@ impl Stores {
     }
 
     /// Sets a local macro meaning by freezing its public aggregate first.
-    pub fn set_macro_meaning(&mut self, symbol: Symbol, macro_meaning: MacroMeaning) {
+    pub fn set_macro_meaning(&mut self, symbol: impl SymbolReference, macro_meaning: MacroMeaning) {
         let definition = self.intern_macro(macro_meaning);
         self.set_meaning(
             symbol,
@@ -452,7 +454,7 @@ impl Stores {
     /// Sets a local macro meaning with diagnostic definition provenance.
     pub fn set_macro_meaning_with_provenance(
         &mut self,
-        symbol: Symbol,
+        symbol: impl SymbolReference,
         macro_meaning: MacroMeaning,
         provenance: MacroDefinitionProvenance,
     ) {
@@ -467,7 +469,11 @@ impl Stores {
     }
 
     /// Sets a global macro meaning by freezing its public aggregate first.
-    pub fn set_macro_meaning_global(&mut self, symbol: Symbol, macro_meaning: MacroMeaning) {
+    pub fn set_macro_meaning_global(
+        &mut self,
+        symbol: impl SymbolReference,
+        macro_meaning: MacroMeaning,
+    ) {
         let definition = self.intern_macro(macro_meaning);
         self.set_meaning_global(
             symbol,
@@ -481,7 +487,7 @@ impl Stores {
     /// Sets a global macro meaning with diagnostic definition provenance.
     pub fn set_macro_meaning_global_with_provenance(
         &mut self,
-        symbol: Symbol,
+        symbol: impl SymbolReference,
         macro_meaning: MacroMeaning,
         provenance: MacroDefinitionProvenance,
     ) {
@@ -497,7 +503,7 @@ impl Stores {
 
     /// Decodes a symbol's meaning as a public macro aggregate when applicable.
     #[must_use]
-    pub fn macro_meaning(&self, symbol: Symbol) -> Option<MacroMeaning> {
+    pub fn macro_meaning(&self, symbol: impl SymbolReference) -> Option<MacroMeaning> {
         match self.meaning(symbol) {
             Meaning::Macro { definition, .. } => Some(self.macro_definition(definition)),
             _ => None,
@@ -505,47 +511,47 @@ impl Stores {
     }
 
     /// Interns a control-sequence name in the owned interner.
-    pub fn intern(&mut self, name: &str) -> Symbol {
+    pub fn intern(&mut self, name: &str) -> SymbolId {
         self.try_intern(name)
             .expect("control-sequence symbol capacity exceeded")
     }
 
     /// Interns an active-character control sequence in its TeX82 namespace.
-    pub fn intern_active_character(&mut self, ch: char) -> Symbol {
+    pub fn intern_active_character(&mut self, ch: char) -> SymbolId {
         self.interner
             .intern_active(ch)
             .expect("control-sequence symbol capacity exceeded")
     }
 
     /// Interns a control-sequence name, reporting packed-token capacity exhaustion.
-    pub(crate) fn try_intern(&mut self, name: &str) -> Result<Symbol, InternerError> {
+    pub(crate) fn try_intern(&mut self, name: &str) -> Result<SymbolId, InternerError> {
         self.interner.intern(name)
     }
 
     /// Returns the live symbol for an already-interned control-sequence name.
     #[must_use]
-    pub fn symbol(&self, name: &str) -> Option<Symbol> {
+    pub fn symbol(&self, name: &str) -> Option<SymbolId> {
         self.interner.get(name)
     }
 
     /// Returns the live symbol for an already-interned active character.
     #[must_use]
-    pub fn active_character_symbol(&self, ch: char) -> Option<Symbol> {
+    pub fn active_character_symbol(&self, ch: char) -> Option<SymbolId> {
         self.interner.get_active(ch)
     }
 
     /// Resolves a live control-sequence symbol.
     #[must_use]
-    pub fn resolve(&self, symbol: Symbol) -> &str {
-        self.assert_live_symbol(symbol);
-        self.interner.resolve(symbol)
+    pub fn resolve(&self, symbol: impl SymbolReference) -> &str {
+        let symbol = self.resolve_symbol_reference(symbol);
+        self.interner.resolve_id(symbol)
     }
 
     /// Returns the TeX control-sequence namespace of a live symbol.
     #[must_use]
-    pub fn control_sequence_kind(&self, symbol: Symbol) -> ControlSequenceKind {
-        self.assert_live_symbol(symbol);
-        self.interner.kind(symbol)
+    pub fn control_sequence_kind(&self, symbol: impl SymbolReference) -> ControlSequenceKind {
+        let symbol = self.resolve_symbol_reference(symbol);
+        self.interner.kind_id(symbol)
     }
 
     /// Creates a fresh owned scratch token-list builder.
@@ -556,11 +562,13 @@ impl Stores {
 
     /// Interns a frozen token-list value in the owned token store.
     pub fn intern_token_list(&mut self, tokens: &[Token]) -> TokenListId {
+        self.assert_live_tokens(tokens);
         self.tokens.intern(tokens)
     }
 
     /// Interns the current token-list builder value and clears it for reuse.
     pub fn finish_token_list(&mut self, builder: &mut TokenListBuilder) -> TokenListId {
+        self.assert_live_tokens(builder.as_slice());
         builder.finish(&mut self.tokens)
     }
 
@@ -585,7 +593,7 @@ impl Stores {
     /// Reads a live frozen token list.
     #[must_use]
     pub fn tokens(&self, id: TokenListId) -> &[Token] {
-        self.assert_live_token_list(id);
+        let id = self.resolve_stored_token_list(id);
         self.tokens.get(id)
     }
 
@@ -785,7 +793,10 @@ impl Stores {
     /// Reads a live origin-list span.
     #[must_use]
     pub fn origin_list(&self, id: OriginListId) -> &[OriginId] {
-        self.assert_live_origin_list(id);
+        let id = self
+            .provenance
+            .resolve_stored_list(id)
+            .expect("origin list id is not live in this Universe timeline");
         self.provenance.list(id)
     }
 
@@ -793,8 +804,8 @@ impl Stores {
     #[must_use]
     pub fn origin_list_if_live(&self, id: OriginListId) -> Option<&[OriginId]> {
         self.provenance
-            .contains_list(id)
-            .then(|| self.provenance.list(id))
+            .resolve_stored_list(id)
+            .map(|id| self.provenance.list(id))
     }
 
     /// Returns live provenance arena length counters.
@@ -890,7 +901,7 @@ impl Stores {
     /// Reads a live frozen glue specification.
     #[must_use]
     pub fn glue(&self, id: GlueId) -> GlueSpec {
-        self.assert_live_glue(id);
+        let id = self.resolve_stored_glue(id);
         self.glue.get(id)
     }
 
@@ -909,8 +920,12 @@ impl Stores {
 
     /// Interns a font and records the control sequence TeX uses for its
     /// identifier token (the `font_id_text` associated with the font).
-    pub fn intern_font_with_identifier(&mut self, font: LoadedFont, symbol: Symbol) -> FontId {
-        self.assert_live_symbol(symbol);
+    pub fn intern_font_with_identifier(
+        &mut self,
+        font: LoadedFont,
+        symbol: impl SymbolReference,
+    ) -> FontId {
+        let symbol = self.resolve_symbol_reference(symbol);
         let id = self.intern_font(font);
         self.fonts.set_identifier(id, symbol);
         id
@@ -919,7 +934,7 @@ impl Stores {
     /// Reads a live immutable font record.
     #[must_use]
     pub fn font(&self, id: FontId) -> &LoadedFont {
-        self.assert_live_font(id);
+        let id = self.resolve_stored_font(id);
         self.fonts.get(id)
     }
 
@@ -929,16 +944,16 @@ impl Stores {
     }
 
     #[must_use]
-    pub fn font_identifier_symbol(&self, id: FontId) -> Option<Symbol> {
+    pub fn font_identifier_symbol(&self, id: FontId) -> Option<SymbolId> {
         self.assert_live_font(id);
         let symbol = self.fonts.identifier(id)?;
         self.assert_live_symbol(symbol);
         Some(symbol)
     }
 
-    pub fn set_font_identifier_symbol(&mut self, id: FontId, symbol: Symbol) {
+    pub fn set_font_identifier_symbol(&mut self, id: FontId, symbol: impl SymbolReference) {
         self.assert_live_font(id);
-        self.assert_live_symbol(symbol);
+        let symbol = self.resolve_symbol_reference(symbol);
         self.fonts.set_identifier(id, symbol);
     }
 
@@ -1009,16 +1024,13 @@ impl Stores {
 
     #[must_use]
     pub fn current_font(&self) -> FontId {
-        let id = self.env.current_font();
-        self.assert_live_font(id);
-        id
+        self.resolve_stored_font(self.env.current_font())
     }
 
     #[must_use]
-    pub fn current_font_symbol(&self) -> Option<Symbol> {
-        let symbol = self.env.current_font_symbol()?;
-        self.assert_live_symbol(symbol);
-        Some(symbol)
+    pub fn current_font_symbol(&self) -> Option<SymbolId> {
+        self.interner
+            .resolve_stored(self.env.current_font_symbol()?)
     }
 
     pub fn set_current_font(&mut self, id: FontId) {
@@ -1031,23 +1043,22 @@ impl Stores {
         self.env.set_current_font_global(id);
     }
 
-    pub fn set_current_font_selector(&mut self, symbol: Symbol, id: FontId) {
-        self.assert_live_symbol(symbol);
+    pub fn set_current_font_selector(&mut self, symbol: impl SymbolReference, id: FontId) {
+        let symbol = self.resolve_symbol_reference(symbol);
         self.assert_live_font(id);
-        self.env.set_current_font_selector(symbol, id);
+        self.env.set_current_font_selector(symbol.symbol(), id);
     }
 
-    pub fn set_current_font_selector_global(&mut self, symbol: Symbol, id: FontId) {
-        self.assert_live_symbol(symbol);
+    pub fn set_current_font_selector_global(&mut self, symbol: impl SymbolReference, id: FontId) {
+        let symbol = self.resolve_symbol_reference(symbol);
         self.assert_live_font(id);
-        self.env.set_current_font_selector_global(symbol, id);
+        self.env
+            .set_current_font_selector_global(symbol.symbol(), id);
     }
 
     #[must_use]
     pub fn math_family_font(&self, size: MathFontSize, family: u8) -> FontId {
-        let id = self.env.math_family_font(size, family);
-        self.assert_live_font(id);
-        id
+        self.resolve_stored_font(self.env.math_family_font(size, family))
     }
 
     pub fn set_math_family_font(
@@ -1203,6 +1214,7 @@ impl Stores {
 
     /// Pushes an `\aftergroup` token for the current group.
     pub fn push_aftergroup(&mut self, payload: Token) {
+        self.assert_live_token(payload);
         self.env.push_aftergroup(payload);
     }
 
@@ -1234,6 +1246,7 @@ impl Stores {
 
     /// Stores the token to insert after the next assignment.
     pub fn set_afterassignment(&mut self, token: Token) {
+        self.assert_live_token(token);
         self.env.set_afterassignment(token);
     }
 
@@ -1275,9 +1288,7 @@ impl Stores {
 
     #[must_use]
     pub fn skip(&self, index: u16) -> GlueId {
-        let value = self.env.skip(index);
-        self.assert_live_glue(value);
-        value
+        self.resolve_stored_glue(self.env.skip(index))
     }
 
     pub fn set_skip_global(&mut self, index: u16, value: GlueId) {
@@ -1292,9 +1303,7 @@ impl Stores {
 
     #[must_use]
     pub fn muskip(&self, index: u16) -> GlueId {
-        let value = self.env.muskip(index);
-        self.assert_live_glue(value);
-        value
+        self.resolve_stored_glue(self.env.muskip(index))
     }
 
     pub fn set_muskip_global(&mut self, index: u16, value: GlueId) {
@@ -1309,9 +1318,7 @@ impl Stores {
 
     #[must_use]
     pub fn toks(&self, index: u16) -> TokenListId {
-        let value = self.env.toks(index);
-        self.assert_live_token_list(value);
-        value
+        self.resolve_stored_token_list(self.env.toks(index))
     }
 
     pub fn set_toks_global(&mut self, index: u16, value: TokenListId) {
@@ -1466,9 +1473,7 @@ impl Stores {
 
     #[must_use]
     pub fn glue_param(&self, param: GlueParam) -> GlueId {
-        let value = self.env.glue_param(param);
-        self.assert_live_glue(value);
-        value
+        self.resolve_stored_glue(self.env.glue_param(param))
     }
 
     pub fn set_glue_param_global(&mut self, param: GlueParam, value: GlueId) {
@@ -1483,9 +1488,7 @@ impl Stores {
 
     #[must_use]
     pub fn tok_param(&self, param: TokParam) -> TokenListId {
-        let value = self.env.tok_param(param);
-        self.assert_live_token_list(value);
-        value
+        self.resolve_stored_token_list(self.env.tok_param(param))
     }
 
     pub fn set_tok_param_global(&mut self, param: TokParam, value: TokenListId) {
@@ -1585,11 +1588,23 @@ impl Stores {
         self.testing_hash_env_by_content(&mut hasher);
         self.interner.len().hash(&mut hasher);
         for raw in 0..self.interner.len() {
-            let symbol = Symbol::new(raw as u32);
+            let symbol = self
+                .interner
+                .symbol_at_slot(raw as u32)
+                .expect("live interner slot should have a compact key");
             self.interner.kind(symbol).hash(&mut hasher);
             self.interner.resolve(symbol).hash(&mut hasher);
         }
-        self.tokens.testing_state_hash().hash(&mut hasher);
+        let token_mark = self.tokens.watermark();
+        token_mark.spans.hash(&mut hasher);
+        for raw in 0..token_mark.spans {
+            let id = self.resolve_stored_token_list(TokenListId::new(raw));
+            let tokens = self.tokens.get(id);
+            tokens.len().hash(&mut hasher);
+            for &token in tokens {
+                self.testing_hash_token(token, &mut hasher);
+            }
+        }
         self.glue.testing_state_hash().hash(&mut hasher);
         self.fonts.testing_state_hash(&mut hasher);
         self.testing_hash_all_epoch_nodes(&mut hasher);
@@ -1602,15 +1617,61 @@ impl Stores {
     #[cfg(any(test, feature = "testing", feature = "shadow"))]
     fn testing_hash_env_by_content(&self, hasher: &mut impl Hasher) {
         self.env.for_each_semantic_non_default_word(|cell, word| {
-            cell.hash(hasher);
-            if cell.bank() == BankTag::Box {
-                self.testing_hash_box_word(word, hasher);
-            } else {
-                word.hash(hasher);
+            cell.bank().hash(hasher);
+            match cell.bank() {
+                BankTag::Meaning => {
+                    let symbol = self.resolve_stored_symbol(Symbol::new(cell.index()));
+                    self.interner.kind_id(symbol).hash(hasher);
+                    self.interner.resolve_id(symbol).hash(hasher);
+                    word.hash(hasher);
+                }
+                BankTag::Box => self.testing_hash_box_word(word, hasher),
+                BankTag::CurrentFont => {
+                    (word as u32).hash(hasher);
+                    match self.env.current_font_symbol() {
+                        Some(symbol) => {
+                            1_u8.hash(hasher);
+                            let symbol = self.resolve_stored_symbol(symbol);
+                            self.interner.kind_id(symbol).hash(hasher);
+                            self.interner.resolve_id(symbol).hash(hasher);
+                        }
+                        None => 0_u8.hash(hasher),
+                    }
+                }
+                _ => {
+                    cell.index().hash(hasher);
+                    word.hash(hasher);
+                }
             }
         });
-        self.env.testing_aftergroup_payloads().hash(hasher);
-        self.env.testing_afterassignment().hash(hasher);
+        for &token in self.env.testing_aftergroup_payloads() {
+            self.testing_hash_token(token, hasher);
+        }
+        match self.env.testing_afterassignment() {
+            Some(token) => {
+                1_u8.hash(hasher);
+                self.testing_hash_token(token, hasher);
+            }
+            None => 0_u8.hash(hasher),
+        }
+    }
+
+    #[cfg(any(test, feature = "testing", feature = "shadow"))]
+    fn testing_hash_token(&self, token: Token, hasher: &mut impl Hasher) {
+        core::mem::discriminant(&token).hash(hasher);
+        match token {
+            Token::Char { ch, cat } => {
+                ch.hash(hasher);
+                cat.hash(hasher);
+            }
+            Token::Cs(symbol) => {
+                let symbol = self.resolve_stored_symbol(symbol);
+                self.interner.kind_id(symbol).hash(hasher);
+                self.interner.resolve_id(symbol).hash(hasher);
+            }
+            Token::Param(slot) => slot.hash(hasher),
+            Token::Frozen(kind) => kind.hash(hasher),
+        }
     }
 
     fn assert_valid_snapshot(&self, snapshot: &StoreSnapshot) {

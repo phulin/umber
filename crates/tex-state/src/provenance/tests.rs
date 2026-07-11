@@ -1,6 +1,7 @@
 use super::{
     InsertedOrigin, InsertedOriginKind, MacroInvocationOrigin, OriginRecord, ProvenanceStore,
     SourceOrigin, SynthesizedOrigin, SynthesizedOriginKind, SyntheticOrigin, SyntheticOriginKind,
+    packed_origin_successor,
 };
 use crate::Universe;
 use crate::ids::OriginListId;
@@ -23,6 +24,13 @@ fn unknown_origin_and_empty_list_are_preallocated() {
 }
 
 #[test]
+fn packed_arena_origin_namespace_includes_its_last_payload() {
+    assert_eq!(packed_origin_successor(0x7fff_fffe), Some(0x7fff_ffff));
+    assert_eq!(packed_origin_successor(0x7fff_ffff), Some(0x8000_0000));
+    assert_eq!(packed_origin_successor(0x8000_0000), None);
+}
+
+#[test]
 fn records_and_origin_lists_allocate_and_read_back() {
     let mut store = ProvenanceStore::new();
     let source = store.allocate(OriginRecord::Source(SourceOrigin::new(
@@ -41,8 +49,9 @@ fn records_and_origin_lists_allocate_and_read_back() {
     )));
     let list = store.allocate_list(&[source, inserted]);
 
-    assert_eq!(source.raw(), 0x8000_0000);
-    assert_eq!(inserted.raw(), 0x8000_0001);
+    assert!(source.raw() & 0x8000_0000 != 0);
+    assert!(inserted.raw() & 0x8000_0000 != 0);
+    assert_ne!(source, inserted);
     assert_eq!(
         store.get(source),
         OriginRecord::Source(SourceOrigin::new(SourceId::new(7), 123, 4, 9))
@@ -70,6 +79,45 @@ fn repeated_origin_lists_allocate_without_extra_records() {
     assert_eq!(growth.origin_list_spans(), 1);
     assert_eq!(growth.origin_list_entries(), 4);
     assert!(growth.retained_bytes() >= growth.estimated_bytes());
+}
+
+#[test]
+fn origin_list_rollback_reuse_invalidates_the_old_identity() {
+    let mut store = ProvenanceStore::new();
+    let mark = store.watermark();
+    let stale = store.allocate_list(&[OriginId::UNKNOWN]);
+    store.truncate_to(mark);
+    let reused = store.allocate_list(&[OriginId::UNKNOWN]);
+    assert_eq!(reused.raw(), stale.raw());
+    assert_ne!(reused, stale);
+    assert!(!store.contains_list(stale));
+    assert_eq!(store.list(reused), &[OriginId::UNKNOWN]);
+}
+
+#[test]
+fn provenance_fork_keeps_inherited_lists_but_separates_new_ones() {
+    let mut parent = ProvenanceStore::new();
+    let inherited = parent.allocate_list(&[OriginId::UNKNOWN]);
+    let mut child = parent.clone();
+    assert_eq!(child.list(inherited), &[OriginId::UNKNOWN]);
+    let parent_only = parent.allocate_list(&[OriginId::UNKNOWN; 2]);
+    let child_only = child.allocate_list(&[OriginId::UNKNOWN; 3]);
+    assert_eq!(parent_only.raw(), child_only.raw());
+    assert!(!child.contains_list(parent_only));
+    assert!(!parent.contains_list(child_only));
+}
+
+#[test]
+fn provenance_fork_keeps_inherited_origins_but_separates_new_keys() {
+    let mut parent = ProvenanceStore::new();
+    let inherited = parent.allocate(OriginRecord::UnknownBootstrap);
+    let mut child = parent.clone();
+    assert!(child.contains_origin(inherited));
+    let parent_only = parent.allocate(OriginRecord::UnknownBootstrap);
+    let child_only = child.allocate(OriginRecord::UnknownBootstrap);
+    assert_ne!(parent_only, child_only);
+    assert!(!child.contains_origin(parent_only));
+    assert!(!parent.contains_origin(child_only));
 }
 
 #[test]
@@ -155,8 +203,10 @@ fn rollback_mark_truncates_records_and_lists() {
     )));
     let reused_list = store.allocate_list(&[reused]);
 
-    assert_eq!(reused.raw(), stale.raw());
+    assert_ne!(reused.raw(), stale.raw());
+    assert!(!store.contains_origin(stale));
     assert_eq!(reused_list.raw(), stale_list.raw());
+    assert_ne!(reused_list, stale_list);
     assert_eq!(
         store.get(reused),
         OriginRecord::Synthetic(SyntheticOrigin::new(SyntheticOriginKind::Format))

@@ -6,6 +6,7 @@
 //! definition is stored beside the semantic definition and is not part of
 //! [`MacroMeaning`].
 
+use crate::identity::{IdentityAllocator, IdentityMark};
 use crate::ids::{MacroDefinitionId, OriginListId, TokenListId};
 use crate::meaning::MeaningFlags;
 use crate::token::OriginId;
@@ -109,13 +110,25 @@ impl MacroDefinitionProvenance {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct MacroStoreMark {
     pub(crate) definitions: u32,
+    identities: IdentityMark,
 }
 
 /// Immutable macro-definition table.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct MacroStore {
     definitions: Vec<MacroMeaning>,
     provenance: Vec<Option<MacroDefinitionProvenance>>,
+    identities: IdentityAllocator,
+}
+
+impl Clone for MacroStore {
+    fn clone(&self) -> Self {
+        Self {
+            definitions: self.definitions.clone(),
+            provenance: self.provenance.clone(),
+            identities: self.identities.fork(),
+        }
+    }
 }
 
 impl MacroStore {
@@ -124,6 +137,7 @@ impl MacroStore {
         Self {
             definitions: Vec::new(),
             provenance: Vec::new(),
+            identities: IdentityAllocator::new(0),
         }
     }
 
@@ -132,10 +146,11 @@ impl MacroStore {
         meaning: MacroMeaning,
         provenance: Option<MacroDefinitionProvenance>,
     ) -> MacroDefinitionId {
-        let id = MacroDefinitionId::new(u32_len(
-            self.definitions.len(),
-            "macro definition table exceeds u32 entries",
-        ));
+        let id = MacroDefinitionId::from_identity(
+            self.identities
+                .allocate()
+                .expect("macro definition table exceeds u32 entries"),
+        );
         self.definitions.push(meaning);
         self.provenance.push(provenance);
         id
@@ -143,6 +158,7 @@ impl MacroStore {
 
     #[must_use]
     pub(crate) fn get(&self, id: MacroDefinitionId) -> MacroMeaning {
+        assert!(self.contains(id), "macro definition id is not live");
         self.definitions
             .get(id.raw() as usize)
             .copied()
@@ -151,12 +167,26 @@ impl MacroStore {
 
     #[must_use]
     pub(crate) fn provenance(&self, id: MacroDefinitionId) -> Option<MacroDefinitionProvenance> {
+        assert!(self.contains(id), "macro definition id is not live");
         self.provenance.get(id.raw() as usize).copied().flatten()
     }
 
     #[must_use]
     pub(crate) fn contains(&self, id: MacroDefinitionId) -> bool {
-        (id.raw() as usize) < self.definitions.len()
+        self.identities.contains(id.identity())
+    }
+
+    #[must_use]
+    pub(crate) fn resolve_stored(&self, id: MacroDefinitionId) -> Option<MacroDefinitionId> {
+        if self.contains(id) {
+            return Some(id);
+        }
+        if !id.is_stored() {
+            return None;
+        }
+        self.identities
+            .identity_at(id.raw())
+            .map(MacroDefinitionId::from_identity)
     }
 
     #[must_use]
@@ -166,6 +196,7 @@ impl MacroStore {
                 self.definitions.len(),
                 "macro definition table exceeds u32 entries",
             ),
+            identities: self.identities.watermark(),
         }
     }
 
@@ -175,6 +206,9 @@ impl MacroStore {
             definitions <= self.definitions.len(),
             "macro-store mark has too many definitions"
         );
+        self.identities
+            .rollback(mark.identities)
+            .expect("macro-store mark is not an ancestor");
         self.definitions.truncate(definitions);
         self.provenance.truncate(definitions);
     }

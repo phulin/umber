@@ -143,11 +143,11 @@ fn group_exit_epoch_amendment_smoke() {
     // semantic drift in group compaction and epoch handling (core_state §11).
     cell.set(&mut stores, 2, false);
     oracle.set(cell, 2, false);
-    oracle.assert_matches(stores.env(), &[cell]);
+    oracle.assert_matches(&stores, &[cell]);
     verify_shadow(&stores);
 
     stores.rollback(&outer_snapshot);
-    assert_eq!(cell.get(stores.env()), 0);
+    assert_eq!(cell.get(&stores), 0);
     verify_shadow(&stores);
 }
 
@@ -205,9 +205,9 @@ fn run_replay_identity(ops: &[Op]) {
             Op::Set { cell, word, global } => {
                 cell.set(&mut stores, *word, *global);
                 oracle.set(*cell, *word, *global);
-                oracle.assert_cell_matches(stores.env(), *cell);
+                oracle.assert_cell_matches(&stores, *cell);
                 if *global {
-                    oracle.assert_matches(stores.env(), &cells);
+                    oracle.assert_matches(&stores, &cells);
                 }
             }
             Op::InternTokens(tokens) => {
@@ -286,11 +286,11 @@ fn run_replay_identity(ops: &[Op]) {
                 oracle.leave_group();
                 box_oracle.leave_group();
                 depth -= 1;
-                oracle.assert_matches(stores.env(), &cells);
+                oracle.assert_matches(&stores, &cells);
                 box_oracle.assert_matches(&stores, &mut tree_cache);
             }
             Op::Checkpoint if depth == 0 => {
-                oracle.assert_matches(stores.env(), &cells);
+                oracle.assert_matches(&stores, &cells);
                 box_oracle.assert_matches(&stores, &mut tree_cache);
                 verify_shadow(&stores);
                 let hash = stores.testing_state_hash();

@@ -74,6 +74,8 @@ fn truncate_then_reintern_reuses_dense_glue_id() {
 
     let reinserted = store.intern(spec(2, 0, Order::Normal, 0, Order::Normal));
     assert_eq!(reinserted.raw(), truncated.raw());
+    assert_ne!(reinserted, truncated);
+    assert!(!store.contains(truncated));
     assert_eq!(
         store.get(reinserted),
         spec(2, 0, Order::Normal, 0, Order::Normal)
@@ -139,7 +141,9 @@ proptest! {
 
             prop_assert_eq!(store.specs.len(), model.len());
             for (raw, expected) in model.iter().copied().enumerate() {
-                let id = GlueId::new(raw as u32);
+                let id = store
+                    .resolve_stored(GlueId::new(raw as u32))
+                    .expect("model slot should resolve to a live glue identity");
                 prop_assert_eq!(store.get(id), expected);
                 prop_assert_eq!(store.intern(expected).raw() as usize, raw);
             }

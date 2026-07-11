@@ -22,7 +22,7 @@ use crate::input::{
     ConditionKind, ConditionLimb, InputFrameSummary, InputSummary, LexerState, SourceId,
     TokenListReplayKind, TracedTokenList,
 };
-use crate::interner::{ControlSequenceKind, Symbol};
+use crate::interner::{ControlSequenceKind, Symbol, SymbolId};
 use crate::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use crate::math::MathFontSize;
 use crate::meaning::Meaning;
@@ -606,7 +606,7 @@ impl Default for Universe {
 
 impl Universe {
     const FORMAT_MAGIC: [u8; 8] = *b"UMBRFMT\0";
-    const FORMAT_VERSION: u32 = 1;
+    const FORMAT_VERSION: u32 = 2;
 
     /// Creates an isolated TeX state timeline.
     #[must_use]
@@ -1175,19 +1175,23 @@ impl Universe {
     }
 
     #[must_use]
-    pub fn meaning(&self, symbol: Symbol) -> Meaning {
+    pub fn meaning(&self, symbol: impl crate::interner::SymbolReference) -> Meaning {
         self.stores.meaning(symbol)
     }
 
-    pub fn set_meaning(&mut self, symbol: Symbol, meaning: Meaning) {
+    pub fn set_meaning(&mut self, symbol: impl crate::interner::SymbolReference, meaning: Meaning) {
         self.stores.set_meaning(symbol, meaning);
     }
 
-    pub fn intern_relaxed_control_sequence(&mut self, name: &str) -> Symbol {
+    pub fn intern_relaxed_control_sequence(&mut self, name: &str) -> SymbolId {
         self.stores.intern_relaxed_control_sequence(name)
     }
 
-    pub fn set_meaning_global(&mut self, symbol: Symbol, meaning: Meaning) {
+    pub fn set_meaning_global(
+        &mut self,
+        symbol: impl crate::interner::SymbolReference,
+        meaning: Meaning,
+    ) {
         self.stores.set_meaning_global(symbol, meaning);
     }
 
@@ -1214,13 +1218,17 @@ impl Universe {
         self.stores.macro_definition_provenance(id)
     }
 
-    pub fn set_macro_meaning(&mut self, symbol: Symbol, macro_meaning: MacroMeaning) {
+    pub fn set_macro_meaning(
+        &mut self,
+        symbol: impl crate::interner::SymbolReference,
+        macro_meaning: MacroMeaning,
+    ) {
         self.stores.set_macro_meaning(symbol, macro_meaning);
     }
 
     pub fn set_macro_meaning_with_provenance(
         &mut self,
-        symbol: Symbol,
+        symbol: impl crate::interner::SymbolReference,
         macro_meaning: MacroMeaning,
         provenance: MacroDefinitionProvenance,
     ) {
@@ -1228,13 +1236,17 @@ impl Universe {
             .set_macro_meaning_with_provenance(symbol, macro_meaning, provenance);
     }
 
-    pub fn set_macro_meaning_global(&mut self, symbol: Symbol, macro_meaning: MacroMeaning) {
+    pub fn set_macro_meaning_global(
+        &mut self,
+        symbol: impl crate::interner::SymbolReference,
+        macro_meaning: MacroMeaning,
+    ) {
         self.stores.set_macro_meaning_global(symbol, macro_meaning);
     }
 
     pub fn set_macro_meaning_global_with_provenance(
         &mut self,
-        symbol: Symbol,
+        symbol: impl crate::interner::SymbolReference,
         macro_meaning: MacroMeaning,
         provenance: MacroDefinitionProvenance,
     ) {
@@ -1243,38 +1255,44 @@ impl Universe {
     }
 
     #[must_use]
-    pub fn macro_meaning(&self, symbol: Symbol) -> Option<MacroMeaning> {
+    pub fn macro_meaning(
+        &self,
+        symbol: impl crate::interner::SymbolReference,
+    ) -> Option<MacroMeaning> {
         self.stores.macro_meaning(symbol)
     }
 
-    pub fn intern(&mut self, name: &str) -> Symbol {
+    pub fn intern(&mut self, name: &str) -> SymbolId {
         self.stores.intern(name)
     }
 
     /// Interns an active-character control sequence in its TeX82 namespace.
-    pub fn intern_active_character(&mut self, ch: char) -> Symbol {
+    pub fn intern_active_character(&mut self, ch: char) -> SymbolId {
         self.stores.intern_active_character(ch)
     }
 
     #[must_use]
-    pub fn symbol(&self, name: &str) -> Option<Symbol> {
+    pub fn symbol(&self, name: &str) -> Option<SymbolId> {
         self.stores.symbol(name)
     }
 
     /// Returns the live symbol for an already-interned active character.
     #[must_use]
-    pub fn active_character_symbol(&self, ch: char) -> Option<Symbol> {
+    pub fn active_character_symbol(&self, ch: char) -> Option<SymbolId> {
         self.stores.active_character_symbol(ch)
     }
 
     #[must_use]
-    pub fn resolve(&self, symbol: Symbol) -> &str {
+    pub fn resolve(&self, symbol: impl crate::interner::SymbolReference) -> &str {
         self.stores.resolve(symbol)
     }
 
     /// Returns the TeX control-sequence namespace of a live symbol.
     #[must_use]
-    pub fn control_sequence_kind(&self, symbol: Symbol) -> ControlSequenceKind {
+    pub fn control_sequence_kind(
+        &self,
+        symbol: impl crate::interner::SymbolReference,
+    ) -> ControlSequenceKind {
         self.stores.control_sequence_kind(symbol)
     }
 
@@ -1568,7 +1586,11 @@ impl Universe {
         self.stores.intern_font(font)
     }
 
-    pub fn intern_font_with_identifier(&mut self, font: LoadedFont, symbol: Symbol) -> FontId {
+    pub fn intern_font_with_identifier(
+        &mut self,
+        font: LoadedFont,
+        symbol: impl crate::interner::SymbolReference,
+    ) -> FontId {
         self.stores.intern_font_with_identifier(font, symbol)
     }
 
@@ -1583,11 +1605,15 @@ impl Universe {
     }
 
     #[must_use]
-    pub fn font_identifier_symbol(&self, id: FontId) -> Option<Symbol> {
+    pub fn font_identifier_symbol(&self, id: FontId) -> Option<SymbolId> {
         self.stores.font_identifier_symbol(id)
     }
 
-    pub fn set_font_identifier_symbol(&mut self, id: FontId, symbol: Symbol) {
+    pub fn set_font_identifier_symbol(
+        &mut self,
+        id: FontId,
+        symbol: impl crate::interner::SymbolReference,
+    ) {
         self.stores.set_font_identifier_symbol(id, symbol);
     }
 
@@ -1663,7 +1689,7 @@ impl Universe {
     }
 
     #[must_use]
-    pub fn current_font_symbol(&self) -> Option<Symbol> {
+    pub fn current_font_symbol(&self) -> Option<SymbolId> {
         self.stores.current_font_symbol()
     }
 
@@ -1675,11 +1701,19 @@ impl Universe {
         self.stores.set_current_font_global(id);
     }
 
-    pub fn set_current_font_selector(&mut self, symbol: Symbol, id: FontId) {
+    pub fn set_current_font_selector(
+        &mut self,
+        symbol: impl crate::interner::SymbolReference,
+        id: FontId,
+    ) {
         self.stores.set_current_font_selector(symbol, id);
     }
 
-    pub fn set_current_font_selector_global(&mut self, symbol: Symbol, id: FontId) {
+    pub fn set_current_font_selector_global(
+        &mut self,
+        symbol: impl crate::interner::SymbolReference,
+        id: FontId,
+    ) {
         self.stores.set_current_font_selector_global(symbol, id);
     }
 
@@ -2547,7 +2581,7 @@ impl ExpansionState for Universe {
     }
 
     fn meaning(&self, symbol: Symbol) -> Meaning {
-        Self::meaning(self, symbol)
+        Self::meaning(self, self.stores.resolve_stored_symbol(symbol))
     }
 
     fn macro_definition(&self, id: MacroDefinitionId) -> MacroMeaning {
@@ -2559,35 +2593,35 @@ impl ExpansionState for Universe {
     }
 
     fn macro_meaning(&self, symbol: Symbol) -> Option<MacroMeaning> {
-        Self::macro_meaning(self, symbol)
+        Self::macro_meaning(self, self.stores.resolve_stored_symbol(symbol))
     }
 
     fn intern_relaxed_control_sequence(&mut self, name: &str) -> Symbol {
-        Self::intern_relaxed_control_sequence(self, name)
+        Self::intern_relaxed_control_sequence(self, name).symbol()
     }
 
     fn intern(&mut self, name: &str) -> Symbol {
-        Self::intern(self, name)
+        Self::intern(self, name).symbol()
     }
 
     fn intern_active_character(&mut self, ch: char) -> Symbol {
-        Self::intern_active_character(self, ch)
+        Self::intern_active_character(self, ch).symbol()
     }
 
     fn symbol(&self, name: &str) -> Option<Symbol> {
-        Self::symbol(self, name)
+        Self::symbol(self, name).map(SymbolId::symbol)
     }
 
     fn active_character_symbol(&self, ch: char) -> Option<Symbol> {
-        Self::active_character_symbol(self, ch)
+        Self::active_character_symbol(self, ch).map(SymbolId::symbol)
     }
 
     fn resolve(&self, symbol: Symbol) -> &str {
-        Self::resolve(self, symbol)
+        Self::resolve(self, self.stores.resolve_stored_symbol(symbol))
     }
 
     fn control_sequence_kind(&self, symbol: Symbol) -> ControlSequenceKind {
-        Self::control_sequence_kind(self, symbol)
+        Self::control_sequence_kind(self, self.stores.resolve_stored_symbol(symbol))
     }
 
     fn token_list_builder(&self) -> TokenListBuilder {
@@ -2623,7 +2657,7 @@ impl ExpansionState for Universe {
     }
 
     fn font_identifier_symbol(&self, id: FontId) -> Option<Symbol> {
-        Self::font_identifier_symbol(self, id)
+        Self::font_identifier_symbol(self, id).map(SymbolId::symbol)
     }
 
     fn font_parameter(&self, font: FontId, number: u16) -> Scaled {
@@ -2651,7 +2685,7 @@ impl ExpansionState for Universe {
     }
 
     fn current_font_symbol(&self) -> Option<Symbol> {
-        Self::current_font_symbol(self)
+        Self::current_font_symbol(self).map(SymbolId::symbol)
     }
 
     fn math_family_font(&self, size: MathFontSize, family: u8) -> FontId {
@@ -2884,7 +2918,8 @@ impl ExpansionState for ExpansionContext<'_> {
     }
 
     fn meaning(&self, symbol: Symbol) -> Meaning {
-        self.universe.meaning(symbol)
+        self.universe
+            .meaning(self.universe.stores.resolve_stored_symbol(symbol))
     }
 
     fn macro_definition(&self, id: MacroDefinitionId) -> MacroMeaning {
@@ -2896,35 +2931,40 @@ impl ExpansionState for ExpansionContext<'_> {
     }
 
     fn macro_meaning(&self, symbol: Symbol) -> Option<MacroMeaning> {
-        self.universe.macro_meaning(symbol)
+        self.universe
+            .macro_meaning(self.universe.stores.resolve_stored_symbol(symbol))
     }
 
     fn intern_relaxed_control_sequence(&mut self, name: &str) -> Symbol {
-        self.universe.intern_relaxed_control_sequence(name)
+        self.universe.intern_relaxed_control_sequence(name).symbol()
     }
 
     fn intern(&mut self, name: &str) -> Symbol {
-        self.universe.intern(name)
+        self.universe.intern(name).symbol()
     }
 
     fn intern_active_character(&mut self, ch: char) -> Symbol {
-        self.universe.intern_active_character(ch)
+        self.universe.intern_active_character(ch).symbol()
     }
 
     fn symbol(&self, name: &str) -> Option<Symbol> {
-        self.universe.symbol(name)
+        self.universe.symbol(name).map(SymbolId::symbol)
     }
 
     fn active_character_symbol(&self, ch: char) -> Option<Symbol> {
-        self.universe.active_character_symbol(ch)
+        self.universe
+            .active_character_symbol(ch)
+            .map(SymbolId::symbol)
     }
 
     fn resolve(&self, symbol: Symbol) -> &str {
-        self.universe.resolve(symbol)
+        self.universe
+            .resolve(self.universe.stores.resolve_stored_symbol(symbol))
     }
 
     fn control_sequence_kind(&self, symbol: Symbol) -> ControlSequenceKind {
-        self.universe.control_sequence_kind(symbol)
+        self.universe
+            .control_sequence_kind(self.universe.stores.resolve_stored_symbol(symbol))
     }
 
     fn token_list_builder(&self) -> TokenListBuilder {
@@ -2960,7 +3000,9 @@ impl ExpansionState for ExpansionContext<'_> {
     }
 
     fn font_identifier_symbol(&self, id: FontId) -> Option<Symbol> {
-        self.universe.font_identifier_symbol(id)
+        self.universe
+            .font_identifier_symbol(id)
+            .map(SymbolId::symbol)
     }
 
     fn font_parameter(&self, font: FontId, number: u16) -> Scaled {
@@ -2988,7 +3030,7 @@ impl ExpansionState for ExpansionContext<'_> {
     }
 
     fn current_font_symbol(&self) -> Option<Symbol> {
-        self.universe.current_font_symbol()
+        self.universe.current_font_symbol().map(SymbolId::symbol)
     }
 
     fn math_family_font(&self, size: MathFontSize, family: u8) -> FontId {
@@ -3455,6 +3497,7 @@ fn hash_token(stores: &Stores, token: Token, hasher: &mut StateHasher) {
             hasher.u8(cat as u8);
         }
         Token::Cs(symbol) => {
+            let symbol = stores.resolve_stored_symbol(symbol);
             hasher.tag(1);
             hasher.u8(match stores.control_sequence_kind(symbol) {
                 ControlSequenceKind::Named => 0,

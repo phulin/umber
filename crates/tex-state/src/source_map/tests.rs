@@ -20,16 +20,16 @@ fn regions_reserve_distinct_anchor_positions_and_validate_spans() {
         .register(SourceId::new(2), generated("é".as_bytes()))
         .expect("source-map operation succeeds");
 
-    assert_eq!(first.0, 0);
+    let base = first.0;
     assert_eq!(
         map.position(SourceId::new(0), 3)
             .expect("source-map operation succeeds")
             .0,
-        3
+        base + 3
     );
-    assert_eq!(empty.0, 4);
-    assert_eq!(last.0, 5);
-    assert!(map.span(first, SourcePos(3)).is_ok());
+    assert_eq!(empty.0, base + 4);
+    assert_eq!(last.0, base + 5);
+    assert!(map.span(first, SourcePos(base + 3)).is_ok());
     assert!(
         map.span(empty, empty)
             .expect("source-map operation succeeds")
@@ -59,7 +59,7 @@ fn registration_is_idempotent_but_rejects_conflicting_backing() {
     );
     assert_eq!(
         (map.regions.len(), map.generated.len(), map.next_pos),
-        (1, 1, 5)
+        (1, 1, first.0 + 5)
     );
     assert_eq!(
         map.register(SourceId::new(7), generated(b"different")),
@@ -83,7 +83,7 @@ fn registered_source_capability_encodes_only_backed_nonempty_direct_ranges() {
 }
 
 #[test]
-fn rollback_reuses_source_ids_generated_ids_and_logical_positions_without_aliasing() {
+fn rollback_reuses_source_and_backing_slots_but_not_logical_positions() {
     let mut map = SourceMap::default();
     map.register(SourceId::new(0), generated(b"root"))
         .expect("source-map operation succeeds");
@@ -104,17 +104,36 @@ fn rollback_reuses_source_ids_generated_ids_and_logical_positions_without_aliasi
     let reused = map
         .register(SourceId::new(1), generated(b"replacement"))
         .expect("source-map operation succeeds");
-    assert_eq!(reused, discarded);
+    assert_ne!(reused, discarded);
+    assert!(map.region_for_position(discarded).is_none());
     assert_eq!(map.generated.len(), 2);
     assert_eq!(map.generated[1].bytes(), b"replacement");
 }
 
 #[test]
+fn fork_keeps_inherited_regions_and_separates_new_logical_ranges() {
+    let mut parent = SourceMap::default();
+    let inherited = parent
+        .register(SourceId::new(0), generated(b"root"))
+        .expect("root registers");
+    let mut child = parent.clone();
+    assert_eq!(child.position(SourceId::new(0), 0), Ok(inherited));
+
+    let parent_only = parent
+        .register(SourceId::new(1), generated(b"parent"))
+        .expect("parent source registers");
+    let child_only = child
+        .register(SourceId::new(1), generated(b"child"))
+        .expect("child source registers");
+    assert_ne!(parent_only, child_only);
+    assert!(child.region_for_position(parent_only).is_none());
+    assert!(parent.region_for_position(child_only).is_none());
+}
+
+#[test]
 fn checked_registration_rejects_logical_u64_exhaustion_without_mutation() {
-    let mut map = SourceMap {
-        next_pos: u64::MAX,
-        ..SourceMap::default()
-    };
+    let mut map = SourceMap::default();
+    map.set_next_position_for_test(u64::MAX);
     let before = map.watermark();
     assert_eq!(
         map.register(SourceId::new(0), generated(b"")),

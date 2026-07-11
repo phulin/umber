@@ -24,18 +24,11 @@ fn generation_tagged_node_list_id_is_exactly_two_words() {
 }
 
 #[test]
-fn only_detached_node_list_references_are_serializable() {
-    let detached = NodeListId::testing_epoch(3, 4);
-    let bytes = bincode::serialize(&detached).expect("detached DTO reference serializes");
-    let restored: NodeListId =
-        bincode::deserialize(&bytes).expect("detached DTO reference deserializes");
-    assert_eq!(restored.arena(), ArenaRef::Epoch);
-    assert_eq!(restored.start(), 3);
-    assert_eq!(restored.len(), 4);
-
-    let mut arena = crate::node_arena::NodeArena::new();
-    let live = arena.append(&[crate::node::Node::Penalty(1)]);
-    assert!(bincode::serialize(&live).is_err());
+fn semantic_runtime_ids_are_exactly_two_words() {
+    assert_eq!(size_of::<TokenListId>(), 16);
+    assert_eq!(size_of::<super::MacroDefinitionId>(), 16);
+    assert_eq!(size_of::<GlueId>(), 16);
+    assert_eq!(size_of::<FontId>(), 16);
 }
 
 #[test]

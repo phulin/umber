@@ -36,7 +36,7 @@ fn traced_list_finish_reuses_semantics_but_preserves_each_origin_instance() {
             ch: '🦀',
             cat: Catcode::Other,
         },
-        Token::Cs(symbol),
+        Token::Cs(symbol.symbol()),
         Token::param(9),
         Token::frozen_end_template(),
         Token::frozen_endv(),
@@ -136,7 +136,7 @@ fn semantic_format_is_deterministic_validated_and_world_independent() {
     universe.set_meaning(name, Meaning::CountRegister(42));
     universe.set_count(42, 1234);
     let body = universe.intern_token_list(&[
-        Token::Cs(name),
+        Token::Cs(name.symbol()),
         Token::Char {
             ch: '!',
             cat: Catcode::Other,
@@ -205,6 +205,52 @@ fn semantic_format_is_deterministic_validated_and_world_independent() {
 }
 
 #[test]
+fn semantic_format_uses_dto_local_survivor_root_keys() {
+    fn boxed_universe() -> Universe {
+        let mut universe = Universe::new();
+        let list = universe.freeze_node_list(&[Node::Penalty(123)]);
+        universe.set_box_reg(0, list);
+        universe
+    }
+
+    let first = boxed_universe();
+    let second = boxed_universe();
+    assert_ne!(
+        first.box_reg(0).expect("first box").arena(),
+        second.box_reg(0).expect("second box").arena()
+    );
+    assert_eq!(
+        first.dump_format().expect("first format"),
+        second.dump_format().expect("second format")
+    );
+}
+
+#[test]
+fn semantic_format_and_hash_ignore_process_unique_symbol_keys() {
+    fn symbolic_universe() -> (Universe, crate::interner::Symbol) {
+        let mut universe = Universe::new();
+        let symbol = universe.intern("symbolic");
+        universe.set_meaning(symbol, Meaning::CountRegister(17));
+        let tokens = universe.intern_token_list(&[Token::Cs(symbol.symbol())]);
+        universe.set_toks(3, tokens);
+        universe.set_current_font_selector(symbol, NULL_FONT);
+        (universe, symbol.symbol())
+    }
+
+    let (mut first, first_key) = symbolic_universe();
+    let (mut second, second_key) = symbolic_universe();
+    assert_ne!(first_key, second_key);
+    assert_eq!(
+        first.snapshot().state_hash(),
+        second.snapshot().state_hash()
+    );
+    assert_eq!(
+        first.dump_format().expect("first symbolic format"),
+        second.dump_format().expect("second symbolic format")
+    );
+}
+
+#[test]
 fn semantic_format_restores_validated_fonts_banks_hashes_and_rollback_exactly() {
     let mut universe = Universe::new();
     let null_identifier = universe.intern("nullfont");
@@ -223,12 +269,16 @@ fn semantic_format_restores_validated_fonts_banks_hashes_and_rollback_exactly() 
     assert_eq!(restored.dump_format().expect("format redumps"), bytes);
     let restored_font = restored.current_font();
     assert_eq!(
-        restored.font_identifier_symbol(NULL_FONT),
-        Some(null_identifier)
+        restored
+            .font_identifier_symbol(NULL_FONT)
+            .map(|symbol| restored.resolve(symbol)),
+        Some("nullfont")
     );
     assert_eq!(
-        restored.font_identifier_symbol(restored_font),
-        Some(identifier)
+        restored
+            .font_identifier_symbol(restored_font)
+            .map(|symbol| restored.resolve(symbol)),
+        Some("structuredfont")
     );
     assert_eq!(restored.font_parameter_count(restored_font), 7);
     assert_eq!(
@@ -443,6 +493,11 @@ fn node_memory_measurement_is_nonsemantic_and_covers_recycled_storage() {
             && column.logical_bytes == 0
             && column.retained_payload_bytes > 0
     }));
+    assert!(columns.iter().any(|column| {
+        column.name == "survivor.root_lookup_entries"
+            && column.element_bytes == core::mem::size_of::<(crate::ids::SurvivorRootId, usize)>()
+            && column.logical_bytes > 0
+    }));
     assert_eq!(semantic_hash, universe.snapshot().state_hash());
 
     let timing = crate::survivor::survivor_measurement();
@@ -593,7 +648,7 @@ fn world_and_source_map_rollback_reuse_ids_and_positions_atomically() {
             SourceDescriptor::world(new.record(), new.bytes().len() as u64),
         )
         .expect("source-map integration operation succeeds");
-    assert_eq!(new_start, old_start);
+    assert_ne!(new_start, old_start);
     assert_eq!(
         universe.source_backing_bytes(
             universe
@@ -733,7 +788,7 @@ fn snapshot_reuses_hash_base_for_origin_only_input_summary_changes() {
 }
 
 #[test]
-fn universe_rollback_truncates_provenance_and_replay_reuses_origin_ids() {
+fn universe_rollback_truncates_provenance_without_reviving_origin_ids() {
     let mut universe = Universe::new();
     let mark = universe.snapshot();
 
@@ -748,8 +803,9 @@ fn universe_rollback_truncates_provenance_and_replay_reuses_origin_ids() {
 
     let replayed = universe.source_origin(crate::input::SourceId::new(7), 70, 8, 9);
     let replayed_list = universe.allocate_origin_list(&[replayed]);
-    assert_eq!(replayed.raw(), stale.raw());
+    assert_ne!(replayed.raw(), stale.raw());
     assert_eq!(replayed_list.raw(), stale_list.raw());
+    assert_ne!(replayed_list, stale_list);
     assert_eq!(
         universe.origin(replayed),
         OriginRecord::Source(SourceOrigin::new(crate::input::SourceId::new(7), 70, 8, 9))
@@ -1050,7 +1106,7 @@ fn snapshot_state_hash_ignores_content_intern_order() {
     first.set_meaning(first_zed, Meaning::Relax);
     let filler_tokens = first.intern_token_list(&[Token::param(1)]);
     let target_tokens = first.intern_token_list(&[
-        Token::Cs(alpha),
+        Token::Cs(alpha.symbol()),
         Token::Char {
             ch: 'x',
             cat: Catcode::Letter,
@@ -1085,7 +1141,7 @@ fn snapshot_state_hash_ignores_content_intern_order() {
     let macro_target = second.intern("macro_target");
     let alpha = second.intern("alpha");
     let target_tokens = second.intern_token_list(&[
-        Token::Cs(alpha),
+        Token::Cs(alpha.symbol()),
         Token::Char {
             ch: 'x',
             cat: Catcode::Letter,
@@ -1278,6 +1334,21 @@ fn rollback_restores_font_identifier_registration() {
 
     universe.rollback(&snapshot);
     assert_eq!(universe.font_identifier_symbol(NULL_FONT), None);
+}
+
+#[test]
+fn rollback_reuse_does_not_revive_stale_font_identity() {
+    let mut universe = Universe::new();
+    let snapshot = universe.snapshot();
+    let stale = universe.intern_font(test_font("stale", b"stale"));
+
+    universe.rollback(&snapshot);
+    let reused = universe.intern_font(test_font("reused", b"reused"));
+
+    assert_eq!(reused.raw(), stale.raw());
+    assert_ne!(reused, stale);
+    assert!(std::panic::catch_unwind(|| universe.font(stale)).is_err());
+    assert_eq!(universe.font(reused).name(), "reused");
 }
 
 #[test]
@@ -1602,7 +1673,7 @@ fn checkpoint_hashes_for_program() -> Vec<u64> {
     hashes.push(universe.snapshot().state_hash());
 
     let symbol = universe.intern("foo");
-    let tokens = universe.intern_token_list(&[Token::Cs(symbol)]);
+    let tokens = universe.intern_token_list(&[Token::Cs(symbol.symbol())]);
     universe.set_toks(2, tokens);
     universe
         .world_mut()

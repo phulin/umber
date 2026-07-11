@@ -240,7 +240,7 @@ fn insert_relax_before_token<S>(
     push_inserted_token(
         input,
         stores,
-        TracedTokenWord::pack(Token::Cs(relax), origin),
+        TracedTokenWord::pack(Token::Cs(relax.symbol()), origin),
         InsertedOriginKind::ErrorRecovery,
     );
 }

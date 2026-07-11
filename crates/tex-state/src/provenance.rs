@@ -5,12 +5,17 @@
 //! origin-record overflow degrades to [`OriginId::UNKNOWN`], and origin-list
 //! overflow degrades to [`OriginListId::EMPTY`].
 
+use crate::identity::{IdentityAllocator, IdentityMark};
 use crate::ids::{MacroDefinitionId, OriginListId};
 use crate::input::{SourceId, TokenListReplayKind};
 use crate::source_map::{SourceMapStats, SourceSpan};
 use crate::token::{OriginId, Token, TracedTokenWord};
 use crate::world::InputRecordId;
+use std::collections::HashMap;
 use std::mem;
+use std::sync::atomic::{AtomicU32, Ordering};
+
+static NEXT_PACKED_ARENA_ORIGIN: AtomicU32 = AtomicU32::new(0);
 
 /// A rollback watermark for the provenance store.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -18,6 +23,8 @@ pub(crate) struct ProvenanceStoreMark {
     records: u32,
     spans: u32,
     origins: u32,
+    list_identities: IdentityMark,
+    record_identities: IdentityMark,
 }
 
 /// Live provenance arena size counters.
@@ -581,11 +588,29 @@ pub enum OriginRecord {
 }
 
 /// Append-only origin-record and origin-list arenas.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) struct ProvenanceStore {
     records: Vec<OriginRecord>,
     spans: Vec<(u32, u32)>,
     origins: Vec<OriginId>,
+    list_identities: IdentityAllocator,
+    record_identities: IdentityAllocator,
+    record_keys: Vec<u32>,
+    record_lookup: HashMap<u32, crate::identity::HandleIdentity>,
+}
+
+impl Clone for ProvenanceStore {
+    fn clone(&self) -> Self {
+        Self {
+            records: self.records.clone(),
+            spans: self.spans.clone(),
+            origins: self.origins.clone(),
+            list_identities: self.list_identities.fork(),
+            record_identities: self.record_identities.fork(),
+            record_keys: self.record_keys.clone(),
+            record_lookup: self.record_lookup.clone(),
+        }
+    }
 }
 
 impl ProvenanceStore {
@@ -596,6 +621,10 @@ impl ProvenanceStore {
             records: Vec::new(),
             spans: vec![(0, 0)],
             origins: Vec::new(),
+            list_identities: IdentityAllocator::new(1),
+            record_identities: IdentityAllocator::new(0),
+            record_keys: Vec::new(),
+            record_lookup: HashMap::new(),
         }
     }
 
@@ -613,11 +642,18 @@ impl ProvenanceStore {
 
     /// Allocates a new origin record, saturating capacity overflow to unknown.
     pub(crate) fn allocate(&mut self, record: OriginRecord) -> OriginId {
-        let Some(index) = arena_index(self.records.len()) else {
+        let Some(key) = next_packed_arena_origin() else {
             return OriginId::UNKNOWN;
         };
+        let identity = match self.record_identities.allocate() {
+            Ok(identity) => identity,
+            Err(_) => return OriginId::UNKNOWN,
+        };
+        debug_assert_eq!(identity.slot() as usize, self.records.len());
         self.records.push(record);
-        OriginId::arena(index).expect("checked provenance arena index")
+        self.record_keys.push(key);
+        self.record_lookup.insert(key, identity);
+        OriginId::arena(key).expect("global packed provenance key is representable")
     }
 
     /// Allocates an origin-list span, saturating capacity overflow to empty.
@@ -625,7 +661,7 @@ impl ProvenanceStore {
         if origins.is_empty() {
             return OriginListId::EMPTY;
         }
-        let (Some(start), Some(len), Some(raw)) = (
+        let (Some(start), Some(len), Some(_raw)) = (
             u32_len(self.origins.len()),
             u32_len(origins.len()),
             u32_index(self.spans.len()),
@@ -637,7 +673,11 @@ impl ProvenanceStore {
         };
         self.origins.extend_from_slice(origins);
         self.spans.push((start, len));
-        OriginListId::new(raw)
+        OriginListId::from_identity(
+            self.list_identities
+                .allocate()
+                .expect("origin-list span capacity checked"),
+        )
     }
 
     /// Allocates the origin projection of an already-validated traced slice.
@@ -645,7 +685,7 @@ impl ProvenanceStore {
         if traced.is_empty() {
             return OriginListId::EMPTY;
         }
-        let (Some(start), Some(len), Some(raw)) = (
+        let (Some(start), Some(len), Some(_raw)) = (
             u32_len(self.origins.len()),
             u32_len(traced.len()),
             u32_index(self.spans.len()),
@@ -659,7 +699,11 @@ impl ProvenanceStore {
         self.spans.reserve(1);
         self.origins.extend(traced.iter().map(|word| word.origin()));
         self.spans.push((start, len));
-        OriginListId::new(raw)
+        OriginListId::from_identity(
+            self.list_identities
+                .allocate()
+                .expect("origin-list span capacity checked"),
+        )
     }
 
     /// Allocates an origin-list span by repeating one live origin.
@@ -667,7 +711,7 @@ impl ProvenanceStore {
         if len == 0 {
             return OriginListId::EMPTY;
         }
-        let (Some(start), Some(len), Some(raw)) = (
+        let (Some(start), Some(len), Some(_raw)) = (
             u32_len(self.origins.len()),
             u32_len(len),
             u32_index(self.spans.len()),
@@ -680,7 +724,11 @@ impl ProvenanceStore {
         self.origins
             .resize(self.origins.len() + len as usize, origin);
         self.spans.push((start, len));
-        OriginListId::new(raw)
+        OriginListId::from_identity(
+            self.list_identities
+                .allocate()
+                .expect("origin-list span capacity checked"),
+        )
     }
 
     /// Reads a live origin record.
@@ -692,14 +740,22 @@ impl ProvenanceStore {
         let crate::token::OriginEncoding::Arena(index) = id.decode() else {
             panic!("direct source origin has no provenance arena record");
         };
-        let index = index as usize;
-        assert!(index < self.records.len(), "origin id is not live");
+        let identity = *self
+            .record_lookup
+            .get(&index)
+            .expect("origin id is not live");
+        assert!(
+            self.record_identities.contains(identity),
+            "origin id is not live"
+        );
+        let index = identity.slot() as usize;
         self.records[index]
     }
 
     /// Reads a live origin-list span.
     #[must_use]
     pub(crate) fn list(&self, id: OriginListId) -> &[OriginId] {
+        assert!(self.contains_list(id), "origin list id is not live");
         let index = id.raw() as usize;
         assert!(index < self.spans.len(), "origin list id is not live");
         let (start, len) = self.spans[index];
@@ -714,7 +770,10 @@ impl ProvenanceStore {
     pub(crate) fn contains_origin(&self, id: OriginId) -> bool {
         match id.decode() {
             crate::token::OriginEncoding::Unknown => true,
-            crate::token::OriginEncoding::Arena(index) => (index as usize) < self.records.len(),
+            crate::token::OriginEncoding::Arena(index) => self
+                .record_lookup
+                .get(&index)
+                .is_some_and(|identity| self.record_identities.contains(*identity)),
             crate::token::OriginEncoding::DirectSource(_) => false,
         }
     }
@@ -722,7 +781,19 @@ impl ProvenanceStore {
     /// Returns whether `id` names a currently-live origin-list span.
     #[must_use]
     pub(crate) fn contains_list(&self, id: OriginListId) -> bool {
-        (id.raw() as usize) < self.spans.len()
+        self.list_identities.contains(id.identity())
+    }
+
+    pub(crate) fn resolve_stored_list(&self, id: OriginListId) -> Option<OriginListId> {
+        if self.contains_list(id) {
+            return Some(id);
+        }
+        if !id.is_stored() {
+            return None;
+        }
+        self.list_identities
+            .identity_at(id.raw())
+            .map(OriginListId::from_identity)
     }
 
     /// Returns live arena length counters.
@@ -748,6 +819,8 @@ impl ProvenanceStore {
                 .expect("provenance span arena exceeded representable mark"),
             origins: u32_len(self.origins.len())
                 .expect("provenance origin arena exceeded representable mark"),
+            list_identities: self.list_identities.watermark(),
+            record_identities: self.record_identities.watermark(),
         }
     }
 
@@ -776,6 +849,15 @@ impl ProvenanceStore {
             "provenance mark does not point to an origin-list boundary"
         );
 
+        self.list_identities
+            .rollback(mark.list_identities)
+            .expect("provenance mark is not an ancestor");
+        self.record_identities
+            .rollback(mark.record_identities)
+            .expect("provenance record mark is not an ancestor");
+        for key in self.record_keys.drain(records..) {
+            self.record_lookup.remove(&key);
+        }
         self.records.truncate(records);
         self.spans.truncate(spans);
         self.origins.truncate(origins);
@@ -786,11 +868,27 @@ fn u32_len(value: usize) -> Option<u32> {
     u32::try_from(value).ok()
 }
 
+fn next_packed_arena_origin() -> Option<u32> {
+    NEXT_PACKED_ARENA_ORIGIN
+        .fetch_update(
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+            packed_origin_successor,
+        )
+        .ok()
+}
+
+fn packed_origin_successor(next: u32) -> Option<u32> {
+    (next <= 0x7fff_ffff).then_some(next + 1)
+}
+
 fn u32_index(value: usize) -> Option<u32> {
     let value = u32_len(value)?;
     (value < u32::MAX).then_some(value)
 }
 
+#[cfg(any(test, feature = "testing"))]
+#[allow(dead_code)]
 fn arena_index(value: usize) -> Option<u32> {
     let value = u32::try_from(value).ok()?;
     (value <= 0x7fff_ffff).then_some(value)

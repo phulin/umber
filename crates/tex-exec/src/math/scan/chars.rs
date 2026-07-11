@@ -126,7 +126,7 @@ where
     S: InputSource,
 {
     let symbol = stores.intern_active_character(ch);
-    push_tokens(input, stores, [Token::Cs(symbol)]);
+    push_tokens(input, stores, [Token::Cs(symbol.symbol())]);
 }
 
 pub(crate) fn append_noad(nest: &mut ModeNest, kind: NoadKind, nucleus: MathField) {

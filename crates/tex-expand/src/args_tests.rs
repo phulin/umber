@@ -12,7 +12,7 @@ fn char_token(ch: char, cat: Catcode) -> Token {
 }
 
 fn cs_token(stores: &mut impl ExpansionState, name: &str) -> Token {
-    Token::Cs(stores.intern(name))
+    Token::Cs(stores.intern(name).symbol())
 }
 
 fn macro_meaning(
@@ -370,7 +370,7 @@ fn non_long_macro_rejects_paragraph_token_in_argument() {
     let par = stores.intern("par");
     let meaning = macro_meaning(&mut stores, MeaningFlags::EMPTY, &[Token::param(1)]);
 
-    let err = match_from_list(&mut stores, meaning, &[Token::Cs(par)])
+    let err = match_from_list(&mut stores, meaning, &[Token::Cs(par.symbol())])
         .expect_err("non-long macro should reject par");
 
     assert!(matches!(
@@ -386,10 +386,10 @@ fn long_macro_accepts_paragraph_token_in_argument() {
     let par = stores.intern("par");
     let meaning = macro_meaning(&mut stores, MeaningFlags::LONG, &[Token::param(1)]);
 
-    let args = match_from_list(&mut stores, meaning, &[Token::Cs(par)])
+    let args = match_from_list(&mut stores, meaning, &[Token::Cs(par.symbol())])
         .expect("long macro should accept par");
 
-    assert_eq!(args, vec![vec![Token::Cs(par)]]);
+    assert_eq!(args, vec![vec![Token::Cs(par.symbol())]]);
 }
 
 #[test]
@@ -401,17 +401,22 @@ fn non_long_delimited_argument_allows_par_from_failed_delimiter_prefix() {
     let meaning = macro_meaning(
         &mut stores,
         MeaningFlags::EMPTY,
-        &[Token::param(1), Token::Cs(par), bang],
+        &[Token::param(1), Token::Cs(par.symbol()), bang],
     );
 
     let args = match_from_list(
         &mut stores,
         meaning,
-        &[Token::Cs(par), question, Token::Cs(par), bang],
+        &[
+            Token::Cs(par.symbol()),
+            question,
+            Token::Cs(par.symbol()),
+            bang,
+        ],
     )
     .expect("failed delimiter prefix should allow recovered par");
 
-    assert_eq!(args, vec![vec![Token::Cs(par), question]]);
+    assert_eq!(args, vec![vec![Token::Cs(par.symbol()), question]]);
 }
 
 #[test]
@@ -431,7 +436,7 @@ fn non_long_delimited_argument_rejects_par_that_only_mismatches_delimiter() {
     let err = match_from_list(
         &mut stores,
         meaning,
-        &[char_token('a', Catcode::Letter), Token::Cs(par)],
+        &[char_token('a', Catcode::Letter), Token::Cs(par.symbol())],
     )
     .expect_err("mismatching par should still end a non-long argument");
 
@@ -450,7 +455,7 @@ fn rejects_outer_control_sequence_while_scanning_argument() {
     stores.set_macro_meaning(outer, MacroMeaning::new(MeaningFlags::OUTER, params, body));
     let meaning = macro_meaning(&mut stores, MeaningFlags::EMPTY, &[Token::param(1)]);
 
-    let err = match_from_list(&mut stores, meaning, &[Token::Cs(outer)])
+    let err = match_from_list(&mut stores, meaning, &[Token::Cs(outer.symbol())])
         .expect_err("outer token should be rejected");
 
     assert!(matches!(

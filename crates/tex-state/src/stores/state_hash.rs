@@ -170,7 +170,7 @@ impl Stores {
     }
 
     pub(crate) fn hash_token_list_semantic(&self, id: TokenListId, hasher: &mut StateHasher) {
-        self.assert_live_token_list(id);
+        let id = self.resolve_stored_token_list(id);
         let tokens = self.tokens.get(id);
         assert!(
             tokens.len() <= TOKEN_LIST_MAX_ITEMS,
@@ -301,14 +301,15 @@ impl Stores {
                 let (font, slot) = unpack_font_dimen_index(cell.index());
                 SemanticCellKey::FontBank {
                     bank: bank_order(cell.bank()),
-                    font: self.font_semantic_key(font),
+                    font: self.font_semantic_key(self.resolve_stored_font(font)),
                     index: u32::from(slot),
                 }
             }
             BankTag::FontParamLen | BankTag::FontHyphenChar | BankTag::FontSkewChar => {
                 SemanticCellKey::FontBank {
                     bank: bank_order(cell.bank()),
-                    font: self.font_semantic_key(FontId::new(cell.index())),
+                    font: self
+                        .font_semantic_key(self.resolve_stored_font(FontId::new(cell.index()))),
                     index: 0,
                 }
             }
@@ -354,14 +355,23 @@ impl Stores {
         node_frames: &mut Vec<NodeFrame>,
     ) {
         match cell.bank() {
-            BankTag::Meaning => self.hash_meaning(Meaning::decode_stored(word), hasher),
+            BankTag::Meaning => self.hash_meaning(
+                self.resolve_stored_meaning(Meaning::decode_stored(word)),
+                hasher,
+            ),
             BankTag::Count | BankTag::IntParam => hasher.i32(word as u32 as i32),
             BankTag::Dimen | BankTag::DimenParam => hasher.i32(word as u32 as i32),
             BankTag::Skip | BankTag::Muskip | BankTag::GlueParam => {
-                self.hash_glue(GlueId::new(decode_u32(word)), hasher);
+                self.hash_glue(
+                    self.resolve_stored_glue(GlueId::new(decode_u32(word))),
+                    hasher,
+                );
             }
             BankTag::Toks | BankTag::TokParam => {
-                self.hash_token_list_semantic(TokenListId::new(decode_u32(word)), hasher);
+                self.hash_token_list_semantic(
+                    self.resolve_stored_token_list(TokenListId::new(decode_u32(word))),
+                    hasher,
+                );
             }
             BankTag::Box => match NodeListId::decode_box_word(word) {
                 Some(id) => self.hash_node_list(id, hasher, node_frames),
@@ -371,7 +381,10 @@ impl Stores {
             BankTag::FontParamLen => hasher.u16(decode_u16(word)),
             BankTag::FontHyphenChar | BankTag::FontSkewChar => hasher.i32(word as u32 as i32),
             BankTag::CurrentFont => self.hash_current_font_word(word, hasher),
-            BankTag::MathFamilyFont => self.hash_font(FontId::new(decode_u32(word)), hasher),
+            BankTag::MathFamilyFont => self.hash_font(
+                self.resolve_stored_font(FontId::new(decode_u32(word))),
+                hasher,
+            ),
         }
     }
 
@@ -447,10 +460,10 @@ impl Stores {
                 hash_catcode(cat, hasher);
             }
             Token::Cs(symbol) => {
-                self.assert_live_symbol(symbol);
+                let symbol = self.resolve_stored_symbol(symbol);
                 hasher.tag(1);
-                hash_control_sequence_kind(self.interner.kind(symbol), hasher);
-                hasher.str(self.interner.resolve(symbol));
+                hash_control_sequence_kind(self.interner.kind_id(symbol), hasher);
+                hasher.str(self.interner.resolve_id(symbol));
             }
             Token::Param(slot) => {
                 hasher.tag(2);
@@ -462,7 +475,7 @@ impl Stores {
     }
 
     fn hash_glue(&self, id: GlueId, hasher: &mut StateHasher) {
-        self.assert_live_glue(id);
+        let id = self.resolve_stored_glue(id);
         let GlueSpec {
             width,
             stretch,
@@ -944,7 +957,7 @@ impl Stores {
     }
 
     fn hash_font(&self, font: FontId, hasher: &mut StateHasher) {
-        self.hash_font_fields(font, hasher);
+        self.hash_font_fields(self.resolve_stored_font(font), hasher);
     }
 
     fn hash_font_fields(&self, font: FontId, hasher: &mut StateHasher) {
@@ -964,8 +977,8 @@ impl Stores {
         match identifier {
             Some(symbol) => {
                 hasher.bool(true);
-                hash_control_sequence_kind(self.interner.kind(symbol), hasher);
-                hasher.str(self.interner.resolve(symbol));
+                hash_control_sequence_kind(self.interner.kind_id(symbol), hasher);
+                hasher.str(self.interner.resolve_id(symbol));
             }
             None => hasher.bool(false),
         }
@@ -978,8 +991,8 @@ impl Stores {
         let identifier = self.fonts.identifier(font).map(|symbol| {
             self.assert_live_symbol(symbol);
             (
-                self.interner.kind(symbol),
-                self.interner.resolve(symbol).to_owned(),
+                self.interner.kind_id(symbol),
+                self.interner.resolve_id(symbol).to_owned(),
             )
         });
         let font = self.fonts.get(font);
@@ -996,17 +1009,16 @@ impl Stores {
 
     fn hash_current_font_word(&self, word: u64, hasher: &mut StateHasher) {
         hasher.tag(0x69);
-        let font = FontId::new(word as u32);
+        let font = self.resolve_stored_font(FontId::new(word as u32));
         self.hash_font(font, hasher);
         let symbol = word >> 32;
         if symbol == 0 {
             hasher.bool(false);
         } else {
-            let symbol = Symbol::new((symbol - 1) as u32);
-            self.assert_live_symbol(symbol);
+            let symbol = self.resolve_stored_symbol(Symbol::new((symbol - 1) as u32));
             hasher.bool(true);
-            hash_control_sequence_kind(self.interner.kind(symbol), hasher);
-            hasher.str(self.interner.resolve(symbol));
+            hash_control_sequence_kind(self.interner.kind_id(symbol), hasher);
+            hasher.str(self.interner.resolve_id(symbol));
         }
     }
 

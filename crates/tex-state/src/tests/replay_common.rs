@@ -1,11 +1,9 @@
 use crate as tex_state;
 use std::collections::HashMap;
 use tex_state::Universe;
-use tex_state::env::Env;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::{GlueId, TokenListId};
-use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, RawMeaning};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
@@ -65,7 +63,9 @@ impl TestCell {
         match self {
             Self::Meaning(index) => {
                 let value = meaning(word);
-                let symbol = Symbol::testing_new(index);
+                let symbol = stores
+                    .symbol(&format!("test-cell-{index}"))
+                    .expect("prepared replay meaning symbol should be live");
                 if global {
                     stores.set_meaning_global(symbol, value);
                 } else {
@@ -147,9 +147,16 @@ impl TestCell {
         }
     }
 
-    pub(crate) fn get(self, env: &Env) -> u64 {
+    pub(crate) fn get(self, stores: &Universe) -> u64 {
+        let env = stores.env();
         match self {
-            Self::Meaning(index) => env.get(Symbol::testing_new(index)).encode(),
+            Self::Meaning(index) => stores
+                .meaning(
+                    stores
+                        .symbol(&format!("test-cell-{index}"))
+                        .expect("prepared replay meaning symbol should be live"),
+                )
+                .encode(),
             Self::Count(index) => u64::from(env.count(index) as u32),
             Self::Dimen(index) => u64::from(env.dimen(index).raw() as u32),
             Self::Skip(index) => u64::from(env.skip(index).raw()),
@@ -198,14 +205,18 @@ impl Oracle {
         }
     }
 
-    pub(crate) fn assert_matches(&self, env: &Env, cells: &[TestCell]) {
+    pub(crate) fn assert_matches(&self, stores: &Universe, cells: &[TestCell]) {
         for &cell in cells {
-            self.assert_cell_matches(env, cell);
+            self.assert_cell_matches(stores, cell);
         }
     }
 
-    pub(crate) fn assert_cell_matches(&self, env: &Env, cell: TestCell) {
-        assert_eq!(cell.get(env), self.get(cell), "oracle mismatch at {cell:?}");
+    pub(crate) fn assert_cell_matches(&self, stores: &Universe, cell: TestCell) {
+        assert_eq!(
+            cell.get(stores),
+            self.get(cell),
+            "oracle mismatch at {cell:?}"
+        );
     }
 
     pub(crate) fn get(&self, cell: TestCell) -> u64 {

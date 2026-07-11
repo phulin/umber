@@ -1024,7 +1024,7 @@ fn shipout_lowers_supported_whatsit_adjacent_nodes_without_reordering_effects() 
             ch: 'm',
             cat: Catcode::Letter,
         },
-        Token::Cs(cs),
+        Token::Cs(cs.symbol()),
         Token::param(2),
     ]);
     let disc_pre = stores.freeze_node_list(&[tex_state::node::Node::Kern {
