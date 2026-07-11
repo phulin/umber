@@ -27,6 +27,15 @@ mod support;
 
 use display::*;
 
+#[cfg(test)]
+pub(crate) fn testing_start_eq_no(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    primitive: UnexpandablePrimitive,
+) -> Result<(), ExecError> {
+    start_eq_no(nest, stores, primitive)
+}
+
 pub(crate) fn insert_dollar_sign<S>(
     traced: TracedTokenWord,
     input: &mut InputStack<S>,
@@ -185,7 +194,7 @@ where
                 );
                 Ok(DispatchAction::Continue)
             } else {
-                finish_math(nest, input, stores, origin)
+                finish_math(nest, input, stores, recorder, hooks, origin)
             }
         }
         Token::Char {
@@ -250,14 +259,18 @@ where
     }
 }
 
-fn finish_math<S>(
+fn finish_math<S, R, H>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
+    recorder: &mut R,
+    hooks: &mut H,
     origin: OriginId,
 ) -> Result<DispatchAction, ExecError>
 where
     S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
 {
     // `off_save` inserts the terminator required by an intervening group and
     // then retries the math shift (tex.web §1027). TRIP deliberately leaves
@@ -277,11 +290,14 @@ where
         stores.enter_group_with_kind(tex_state::GroupKind::MathShift);
     }
     if close_missing_left_group(nest, stores)? {
-        return finish_math(nest, input, stores, origin);
+        return finish_math(nest, input, stores, recorder, hooks, origin);
+    }
+    if nest.current_mode() == Mode::Math && nest.current_list().display_eq_no().is_some() {
+        return finish_equation_number(nest, input, stores, recorder, hooks, origin);
     }
     let display = nest.current_mode() == Mode::DisplayMath;
     if display {
-        match input.next_traced_token(stores)? {
+        match get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)? {
             Some(traced)
                 if matches!(
                     tex_expand::semantic_token(traced),
@@ -308,10 +324,6 @@ where
     }
     let mut level = nest.pop()?;
     if display {
-        let mut eq_no = level.list_mut().take_display_eq_no();
-        if !fonts_sufficient && let Some(eq_no) = &mut eq_no {
-            eq_no.display = stores.freeze_node_list(&[]);
-        }
         let _interrupt = level.list_mut().take_display_interrupt().ok_or(
             ExecError::UnimplementedTypesetting {
                 mode: Mode::DisplayMath,
@@ -320,14 +332,7 @@ where
                 operation: "display interrupt state",
             },
         )?;
-        let (display_content, finished_eq_no) = if let Some(eq_no) = eq_no {
-            let finished = finish_eq_no(stores, eq_no.side, content);
-            leave_group_with_origin(input, stores, tex_state::GroupKind::MathShift, origin)?;
-            (eq_no.display, Some(finished))
-        } else {
-            (content, None)
-        };
-        finish_display_math(nest, stores, display_content, finished_eq_no)?;
+        finish_display_math(nest, stores, content, None)?;
         if stores.innermost_group_kind() == Some(tex_state::GroupKind::MathShift) {
             leave_group_with_origin(input, stores, tex_state::GroupKind::MathShift, origin)?;
         }
@@ -342,6 +347,72 @@ where
         nest.current_list_mut().set_space_factor(1000);
         leave_group_with_origin(input, stores, tex_state::GroupKind::MathShift, origin)?;
     }
+    Ok(DispatchAction::Continue)
+}
+
+fn finish_equation_number<S, R, H>(
+    nest: &mut ModeNest,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    recorder: &mut R,
+    hooks: &mut H,
+    origin: OriginId,
+) -> Result<DispatchAction, ExecError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    match get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)? {
+        Some(traced)
+            if matches!(
+                tex_expand::semantic_token(traced),
+                Token::Char {
+                    cat: Catcode::MathShift,
+                    ..
+                }
+            ) => {}
+        Some(traced) => {
+            push_traced_tokens(input, stores, [traced]);
+            report_math_error(stores, "Display math should end with $$");
+        }
+        None => report_math_error(stores, "Display math should end with $$"),
+    }
+
+    let mut content = finish_current_math_list(nest, stores);
+    let fonts_sufficient = math_fonts_sufficient(stores);
+    if !fonts_sufficient {
+        content = stores.freeze_node_list(&[]);
+        stores.world_mut().write_text(
+            tex_state::PrintSink::TerminalAndLog,
+            "\n! Math formula deleted: Insufficient math fonts.\n",
+        );
+    }
+    let mut eq_level = nest.pop()?;
+    let mut eq_no = eq_level
+        .list_mut()
+        .take_display_eq_no()
+        .expect("equation-number mode carries its enclosing display");
+    if !fonts_sufficient {
+        eq_no.display = stores.freeze_node_list(&[]);
+    }
+    let finished_eq_no = finish_eq_no(stores, eq_no.side, content);
+    leave_group_with_origin(input, stores, tex_state::GroupKind::MathShift, origin)?;
+
+    let mut display_level = nest.pop()?;
+    let _interrupt = display_level.list_mut().take_display_interrupt().ok_or(
+        ExecError::UnimplementedTypesetting {
+            mode: Mode::DisplayMath,
+            token: Token::Cs(stores.intern("display")),
+            origin: OriginId::UNKNOWN,
+            operation: "display interrupt state",
+        },
+    )?;
+    finish_display_math(nest, stores, eq_no.display, Some(finished_eq_no))?;
+    if stores.innermost_group_kind() == Some(tex_state::GroupKind::MathShift) {
+        leave_group_with_origin(input, stores, tex_state::GroupKind::MathShift, origin)?;
+    }
+    resume_after_display(nest, input, stores)?;
     Ok(DispatchAction::Continue)
 }
 

@@ -25,7 +25,7 @@ pub(super) fn start_eq_no(
     stores: &mut Universe,
     primitive: UnexpandablePrimitive,
 ) -> Result<(), ExecError> {
-    if nest.current_mode() != Mode::DisplayMath || nest.current_list().display_eq_no().is_some() {
+    if nest.current_mode() != Mode::DisplayMath {
         return Err(ExecError::UnimplementedTypesetting {
             mode: nest.current_mode(),
             token: Token::Cs(stores.intern(if primitive == UnexpandablePrimitive::EqNo {
@@ -43,10 +43,15 @@ pub(super) fn start_eq_no(
     } else {
         EqNoSide::Right
     };
-    nest.current_list_mut()
-        .set_display_eq_no(DisplayEqNo { side, display });
     stores.enter_group_with_kind(tex_state::GroupKind::MathShift);
     stores.set_int_param(IntParam::FAM, -1);
+    // TeX.web enters negative math mode for the equation number. Keeping this
+    // as a real mode level is important: the first `$` closes the equation
+    // number and the following `$` closes the enclosing display, and both the
+    // mode nest and save stack must remain snapshot-coverable between them.
+    nest.push(Mode::Math);
+    nest.current_list_mut()
+        .set_display_eq_no(DisplayEqNo { side, display });
     Ok(())
 }
 

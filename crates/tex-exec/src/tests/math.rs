@@ -4,6 +4,7 @@ use tex_state::math::{
     FractionThickness, LimitType, MathChoice, MathField, MathListNode, MathNoad, NoadClass,
     NoadKind,
 };
+use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::node::{GlueKind, KernKind, Node};
 use tex_state::provenance::{InsertedOriginKind, OriginRecord};
 use tex_state::scaled::Scaled;
@@ -534,6 +535,69 @@ fn equation_number_math_shift_group_restores_before_outer_display_group() {
     assert_eq!(stores.count(0), 1);
     assert_eq!(stores.int_param(IntParam::FAM), 9);
     assert_eq!(executor.nest().current_mode(), Mode::Horizontal);
+}
+
+#[test]
+fn equation_number_uses_a_checkpointable_nested_math_level() {
+    let mut stores = Universe::new();
+    stores.enter_group_with_kind(tex_state::GroupKind::MathShift);
+    let mut nest = ModeNest::new();
+    nest.push(Mode::DisplayMath);
+
+    crate::math::testing_start_eq_no(&mut nest, &mut stores, UnexpandablePrimitive::EqNo)
+        .expect("equation number should enter ordinary math");
+
+    assert_eq!(nest.depth(), 3);
+    assert_eq!(nest.current_mode(), Mode::Math);
+    assert!(nest.current_list().display_eq_no().is_some());
+    let summary = nest.summary();
+    assert_eq!(
+        ModeNest::from_summary(summary.clone())
+            .expect("equation-number mode summary should restore")
+            .summary(),
+        summary
+    );
+    assert_eq!(tex_state::ExpansionState::execution_group_depth(&stores), 2);
+}
+
+#[test]
+fn equation_number_aftergroup_runs_after_its_nested_math_group_closes() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut executor = Executor::new();
+    executor
+        .run(
+            &mut InputStack::new(MemoryInput::new(
+                r"\def\mark{\global\count1=7}\noindent $$a\eqno\aftergroup\mark b$$",
+            )),
+            &mut stores,
+        )
+        .expect("equation-number aftergroup should execute");
+
+    assert_eq!(stores.count(1), 7);
+    assert_eq!(executor.nest().current_mode(), Mode::Horizontal);
+    assert_eq!(tex_state::ExpansionState::execution_group_depth(&stores), 0);
+}
+
+#[test]
+fn equation_number_expands_the_outer_display_closer() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut executor = Executor::new();
+    executor
+        .run(
+            &mut InputStack::new(MemoryInput::new(
+                r"\def\close{$}\noindent $$a\eqno b$\close\count1=7",
+            )),
+            &mut stores,
+        )
+        .expect("expanded display closer should finish the equation number");
+
+    assert_eq!(stores.count(1), 7);
+    assert_eq!(executor.nest().current_mode(), Mode::Horizontal);
+    assert!(!terminal_effect_text(&stores).contains("Display math should end with $$"));
 }
 
 #[test]
