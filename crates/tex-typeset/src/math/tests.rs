@@ -698,6 +698,32 @@ fn nolimits_operator_does_not_center_compound_nucleus() {
 }
 
 #[test]
+fn nolimits_operator_hpacks_a_single_box_sub_mlist_nucleus() {
+    let mut universe = setup_universe();
+    let inner = universe.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+        NoadKind::Underline,
+        MathField::MathChar(math_char('b')),
+    ))]);
+    let op = MathNoad::new(
+        NoadKind::Operator(LimitType::NoLimits),
+        MathField::SubMlist(inner),
+    );
+    let input = universe.freeze_node_list(&[Node::MathNoad(op)]);
+    let params = MathParams::read(&universe);
+
+    let layout = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
+
+    let [MathNode::HList(operator)] = root_nodes(&layout).as_slice() else {
+        panic!("expected operator nucleus box");
+    };
+    let operator_nodes = list_nodes(&layout, operator.list);
+    assert!(
+        matches!(operator_nodes.as_slice(), [MathNode::VList(_)]),
+        "{operator_nodes:#?}"
+    );
+}
+
+#[test]
 fn mathchar_operator_centers_inline_nucleus_and_places_side_scripts() {
     let mut universe = setup_universe();
     let mut op = MathNoad::new(

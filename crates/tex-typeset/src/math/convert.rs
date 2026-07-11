@@ -62,7 +62,7 @@ fn build_math_layout(
     ctx.layout.finish(root)
 }
 
-fn convert_mlist<S: MathTypesetState>(
+pub(super) fn convert_mlist<S: MathTypesetState>(
     ctx: &mut Context<'_, S>,
     input: NodeListId,
     style: Style,

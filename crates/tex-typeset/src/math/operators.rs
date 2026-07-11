@@ -3,6 +3,7 @@ use tex_state::math::{LimitType, MathChar, MathField, MathNoad, NoadClass, NoadK
 use tex_state::node::{KernKind, Node};
 use tex_state::scaled::Scaled;
 
+use super::convert::convert_mlist;
 use super::{
     BoxAxis, Context, FrozenHList, MathBox, MathNode, MathTypesetState, add, boxed_node, char_box,
     clean_box, fetch, sub,
@@ -133,6 +134,13 @@ fn operator_nucleus(
                 Scaled::from_raw(tex_arith::half(sub(boxed.height, boxed.depth).raw())),
             );
             boxed
+        }
+        MathField::SubMlist(list) => {
+            // TeX.web's mlist2 branch always hpacks a non-limits operator's
+            // sub-mlist nucleus. `clean_box` would incorrectly reuse a sole
+            // unshifted box and remove a DVI-visible structural level.
+            let list = convert_mlist(ctx, list, ctx.style, false);
+            ctx.layout.hpack(list)
         }
         _ => clean_box(ctx, &field, ctx.style),
     }
