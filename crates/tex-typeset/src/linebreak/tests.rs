@@ -580,6 +580,15 @@ fn final_hyphen_demerits_apply_to_penultimate_hyphenated_line() {
     base.pretolerance = -1;
     base.hyphen_penalty = 0;
     base.final_hyphen_demerits = 0;
+    // Keep the direct terminal route feasible so the hyphenated route is
+    // scored normally instead of using TeX's artificial-demerits fallback.
+    base.right_skip = GlueSpec {
+        width: sp(0),
+        stretch: sp(0),
+        stretch_order: Order::Normal,
+        shrink: sp(20),
+        shrink_order: Order::Normal,
+    };
     let mut hook = NoHyphenation;
     let without = line_break(&universe, &nodes, base.clone(), &mut hook).demerits;
     base.final_hyphen_demerits = 1234;
