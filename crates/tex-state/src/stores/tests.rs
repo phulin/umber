@@ -2,11 +2,18 @@ use super::{PrepareMagDiagnostic, Stores};
 use crate::env::banks::{DimenParam, GlueParam, IntParam};
 use crate::font::NULL_FONT;
 use crate::glue::{GlueSpec, Order};
-use crate::ids::{ArenaRef, NodeListId, OriginListId};
+use crate::ids::{ArenaRef, GlueId, NodeListId, OriginListId};
 use crate::macro_store::{MacroDefinitionProvenance, MacroMeaning};
+use crate::math::{
+    FractionThickness, MathChoice, MathField, MathFraction, MathListNode, MathNoad, MathStyle,
+    NoadClass, NoadKind,
+};
 use crate::meaning::Meaning;
 use crate::meaning::MeaningFlags;
-use crate::node::{BoxNode, BoxNodeFields, Node, Sign};
+use crate::node::{
+    BoxNode, BoxNodeFields, DiscKind, GlueKind, KernKind, LeaderPayload, Node, Sign, UnsetKind,
+    UnsetNode, UnsetNodeFields, Whatsit,
+};
 use crate::scaled::{GlueSetRatio, Scaled};
 use crate::source_map::SourceDescriptor;
 use crate::token::{Catcode, OriginId, Token};
@@ -36,6 +43,142 @@ fn rollback_restores_env_and_interner_as_one_tuple() {
     let reused = stores.intern("temporary");
     assert_eq!(reused.raw(), temporary.raw());
     assert_eq!(stores.meaning(reused), Meaning::Undefined);
+}
+
+#[test]
+fn owned_and_borrowed_semantic_hash_paths_match_every_node_variant() {
+    let mut stores = Stores::new();
+    let empty = stores.freeze_node_list(&[]);
+    let tokens = stores.intern_token_list(&[]);
+    let box_node = BoxNode::new(BoxNodeFields {
+        width: Scaled::from_raw(1),
+        height: Scaled::from_raw(2),
+        depth: Scaled::from_raw(3),
+        shift: Scaled::from_raw(4),
+        display: true,
+        glue_set: GlueSetRatio::from_raw(5),
+        glue_sign: Sign::Shrinking,
+        glue_order: Order::Fill,
+        children: empty,
+    });
+    let nodes = vec![
+        Node::Char {
+            font: NULL_FONT,
+            ch: 'x',
+        },
+        Node::Lig {
+            font: NULL_FONT,
+            ch: 'f',
+            orig: ('f', 'i'),
+        },
+        Node::Kern {
+            amount: Scaled::from_raw(-6),
+            kind: KernKind::Mu,
+        },
+        Node::Glue {
+            spec: GlueId::ZERO,
+            kind: GlueKind::Leaders,
+            leader: Some(LeaderPayload::Rule {
+                width: Some(Scaled::from_raw(7)),
+                height: None,
+                depth: Some(Scaled::from_raw(8)),
+            }),
+        },
+        Node::Penalty(-9),
+        Node::Rule {
+            width: None,
+            height: Some(Scaled::from_raw(10)),
+            depth: None,
+        },
+        Node::HList(box_node),
+        Node::VList(box_node),
+        Node::Unset(UnsetNode::new(UnsetNodeFields {
+            kind: UnsetKind::VBox,
+            width: Scaled::from_raw(11),
+            height: Scaled::from_raw(12),
+            depth: Scaled::from_raw(13),
+            span_count: 2,
+            stretch: Scaled::from_raw(14),
+            stretch_order: Order::Filll,
+            shrink: Scaled::from_raw(15),
+            shrink_order: Order::Fil,
+            children: empty,
+        })),
+        Node::Disc {
+            kind: DiscKind::AutomaticHyphen,
+            pre: empty,
+            post: empty,
+            replace: empty,
+        },
+        Node::Mark { class: 3, tokens },
+        Node::Ins {
+            class: 4,
+            size: Scaled::from_raw(16),
+            split_top_skip: GlueId::ZERO,
+            split_max_depth: Scaled::from_raw(17),
+            floating_penalty: -18,
+            content: empty,
+        },
+        Node::Whatsit(Whatsit::Language {
+            language: 19,
+            left_hyphen_min: 2,
+            right_hyphen_min: 3,
+        }),
+        Node::MathOn(Scaled::from_raw(20)),
+        Node::MathOff(Scaled::from_raw(21)),
+        Node::MathNoad(MathNoad::new(
+            NoadKind::Normal(NoadClass::Ord),
+            MathField::SubMlist(empty),
+        )),
+        Node::FractionNoad(MathFraction {
+            numerator: empty,
+            denominator: empty,
+            thickness: FractionThickness::Explicit(Scaled::from_raw(22)),
+            left_delimiter: Some(23),
+            right_delimiter: None,
+        }),
+        Node::MathStyle(MathStyle::ScriptScript),
+        Node::MathChoice(MathChoice {
+            display: empty,
+            text: empty,
+            script: empty,
+            script_script: empty,
+        }),
+        Node::MathList(MathListNode {
+            display: true,
+            content: empty,
+        }),
+        Node::Nonscript,
+        Node::Adjust(empty),
+    ];
+    let id = stores.freeze_node_list(&nodes);
+    stores.testing_assert_owned_borrowed_node_hashes_equal(id);
+}
+
+#[test]
+fn semantic_hash_scratch_reuses_capacity_but_store_clone_does_not_copy_it() {
+    let mut stores = Stores::new();
+    let symbols = (0..64)
+        .map(|index| stores.intern(&format!("hash-scratch-{index}")))
+        .collect::<Vec<_>>();
+    let cursor = stores.state_hash_cursor();
+    for (index, symbol) in symbols.into_iter().enumerate() {
+        stores.set_meaning(
+            symbol,
+            Meaning::CharGiven(char::from(b'a' + (index % 26) as u8)),
+        );
+    }
+    let end = stores.checkpoint();
+    let _ = stores.state_hash_slice(&cursor, &end);
+
+    let retained = stores.semantic_hash_cache.testing_scratch_capacities();
+    assert!(retained.0 > 0);
+    assert!(retained.1 > 0);
+    let cloned = stores.clone();
+    assert_eq!(
+        cloned.semantic_hash_cache.testing_scratch_capacities(),
+        (0, 0, 0)
+    );
 }
 
 #[test]

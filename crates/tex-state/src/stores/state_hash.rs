@@ -8,6 +8,7 @@ use crate::meaning::{
     ExpandablePrimitive, InternalInteger, Meaning, RawMeaning, UnexpandablePrimitive,
 };
 use crate::node::{BoxNode, GlueKind, KernKind, LeaderPayload, Node, Sign, Whatsit};
+use crate::node_arena::NodeRef;
 use crate::state_hash::StateHasher;
 use crate::token::{Catcode, Token};
 use std::collections::BTreeMap;
@@ -24,14 +25,40 @@ const FONT_DIMEN_MASK: u32 = (1 << FONT_DIMEN_BITS) - 1;
 /// This is an accelerator, not rollback state. [`Stores::rollback`] clears it
 /// so the next slice reconstructs any needed baseline from journal `old`
 /// words. Keeping it out of [`StoreSnapshot`] preserves O(1) snapshots.
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 pub(super) struct SemanticHashCache {
     cells: BTreeMap<CellId, CachedCellHash>,
+    first_old: Vec<(CellId, usize, u64)>,
+    changed_cells: Vec<CellId>,
+    node_frames: Vec<NodeFrame>,
+}
+
+impl Clone for SemanticHashCache {
+    fn clone(&self) -> Self {
+        Self {
+            cells: self.cells.clone(),
+            first_old: Vec::new(),
+            changed_cells: Vec::new(),
+            node_frames: Vec::new(),
+        }
+    }
 }
 
 impl SemanticHashCache {
     pub(super) fn clear(&mut self) {
         self.cells.clear();
+        self.first_old.clear();
+        self.changed_cells.clear();
+        self.node_frames.clear();
+    }
+
+    #[cfg(test)]
+    pub(super) fn testing_scratch_capacities(&self) -> (usize, usize, usize) {
+        (
+            self.first_old.capacity(),
+            self.changed_cells.capacity(),
+            self.node_frames.capacity(),
+        )
     }
 }
 
@@ -189,26 +216,31 @@ impl Stores {
     ) {
         let start_index = start.journal_pos.raw() as usize;
         let end_index = end.env_snapshot.journal_pos().raw() as usize;
-        let mut first_old = BTreeMap::<CellId, u64>::new();
-        for entry in &self.env.journal_entries_since(start.journal_pos)
+        let mut first_old = std::mem::take(&mut cache.first_old);
+        let mut changed_cells = std::mem::take(&mut cache.changed_cells);
+        let mut node_frames = std::mem::take(&mut cache.node_frames);
+        debug_assert!(first_old.is_empty());
+        debug_assert!(changed_cells.is_empty());
+        debug_assert!(node_frames.is_empty());
+        for (position, entry) in self.env.journal_entries_since(start.journal_pos)
             [..end_index.saturating_sub(start_index)]
+            .iter()
+            .enumerate()
         {
             let Entry::Undo(rec) = entry else {
                 continue;
             };
             let cell = canonical_cell(rec.cell());
-            first_old.entry(cell).or_insert(rec.old());
+            first_old.push((cell, position, rec.old()));
         }
+        first_old.sort_unstable_by_key(|&(cell, position, _)| (cell, position));
+        first_old.dedup_by_key(|entry| entry.0);
 
-        #[cfg(feature = "node-stats")]
-        let first_old_len = first_old.len();
-
-        let mut changed_cells = Vec::new();
-        for (cell, old_word) in first_old {
+        for &(cell, _, old_word) in &first_old {
             let new_word = self.env.semantic_word(cell);
-            let current_hash = self.cell_value_hash(cell, new_word);
+            let current_hash = self.cell_value_hash(cell, new_word, &mut node_frames);
             let baseline_hash = cache.cells.get(&cell).map_or_else(
-                || self.cell_value_hash(cell, old_word),
+                || self.cell_value_hash(cell, old_word, &mut node_frames),
                 |cached| cached.value_hash,
             );
 
@@ -236,17 +268,24 @@ impl Stores {
         #[cfg(feature = "node-stats")]
         crate::measurement::record_hash_changed_cells(
             changed_cells.len(),
-            first_old_len * core::mem::size_of::<(CellId, u64)>()
+            first_old.capacity() * core::mem::size_of::<(CellId, usize, u64)>()
                 + changed_cells.capacity() * core::mem::size_of::<CellId>(),
         );
 
         hasher.tag(0x10);
         hasher.usize(changed_cells.len());
-        for cell in changed_cells {
+        for &cell in &changed_cells {
             let cached = &cache.cells[&cell];
             self.hash_cell_key(&cached.key, hasher);
             hasher.u64(cached.value_hash);
         }
+
+        first_old.clear();
+        changed_cells.clear();
+        debug_assert!(node_frames.is_empty());
+        cache.first_old = first_old;
+        cache.changed_cells = changed_cells;
+        cache.node_frames = node_frames;
     }
 
     fn semantic_cell_key(&self, cell: CellId) -> SemanticCellKey {
@@ -301,13 +340,19 @@ impl Stores {
         }
     }
 
-    fn cell_value_hash(&self, cell: CellId, word: u64) -> u64 {
+    fn cell_value_hash(&self, cell: CellId, word: u64, node_frames: &mut Vec<NodeFrame>) -> u64 {
         let mut hasher = StateHasher::new(CELL_VALUE_DOMAIN);
-        self.hash_cell_value(cell, word, &mut hasher);
+        self.hash_cell_value(cell, word, &mut hasher, node_frames);
         hasher.finish()
     }
 
-    fn hash_cell_value(&self, cell: CellId, word: u64, hasher: &mut StateHasher) {
+    fn hash_cell_value(
+        &self,
+        cell: CellId,
+        word: u64,
+        hasher: &mut StateHasher,
+        node_frames: &mut Vec<NodeFrame>,
+    ) {
         match cell.bank() {
             BankTag::Meaning => self.hash_meaning(Meaning::decode_stored(word), hasher),
             BankTag::Count | BankTag::IntParam => hasher.i32(word as u32 as i32),
@@ -319,7 +364,7 @@ impl Stores {
                 self.hash_token_list_semantic(TokenListId::new(decode_u32(word)), hasher);
             }
             BankTag::Box => match NodeListId::decode_box_word(word) {
-                Some(id) => self.hash_node_list(id, hasher),
+                Some(id) => self.hash_node_list(id, hasher, node_frames),
                 None => hasher.tag(0),
             },
             BankTag::FontDimen => hasher.i32(word as u32 as i32),
@@ -433,16 +478,17 @@ impl Stores {
         hasher.u8(shrink_order as u8);
     }
 
-    fn hash_node_list(&self, id: NodeListId, hasher: &mut StateHasher) {
+    fn hash_node_list(&self, id: NodeListId, hasher: &mut StateHasher, stack: &mut Vec<NodeFrame>) {
         self.assert_live_node_list(id);
-        let mut stack = vec![NodeFrame::List(id)];
+        debug_assert!(stack.is_empty());
+        stack.push(NodeFrame::List(id));
         let mut seen = 0_usize;
         while let Some(frame) = stack.pop() {
             #[cfg(feature = "node-stats")]
             crate::measurement::record_hash_node_frame(
                 stack.capacity(),
                 core::mem::size_of::<NodeFrame>(),
-                matches!(&frame, NodeFrame::Node(_)),
+                false,
             );
             seen += 1;
             assert!(
@@ -455,13 +501,172 @@ impl Stores {
                     hasher.tag(0x70);
                     hasher.usize(nodes.len());
                     stack.push(NodeFrame::ListEnd);
-                    for node in nodes.iter().rev() {
-                        stack.push(NodeFrame::Node(node.to_owned()));
+                    for index in (0..nodes.len()).rev() {
+                        stack.push(NodeFrame::NodeAt(id, index));
                     }
                 }
                 NodeFrame::ListEnd => hasher.tag(0x71),
-                NodeFrame::Node(node) => self.hash_node(node, hasher, &mut stack),
+                NodeFrame::NodeAt(id, index) => {
+                    let node = self
+                        .nodes(id)
+                        .get(index)
+                        .expect("state-hash node frame is live");
+                    self.hash_node_ref(node, hasher, stack);
+                }
             }
+        }
+        debug_assert!(stack.is_empty());
+    }
+
+    fn hash_node_ref(
+        &self,
+        node: NodeRef<'_>,
+        hasher: &mut StateHasher,
+        stack: &mut Vec<NodeFrame>,
+    ) {
+        match node {
+            NodeRef::Char { font, ch } => {
+                hasher.tag(0);
+                self.hash_font(font, hasher);
+                hasher.u32(ch as u32);
+            }
+            NodeRef::Lig { font, ch, orig } => {
+                hasher.tag(1);
+                self.hash_font(font, hasher);
+                hasher.u32(ch as u32);
+                hasher.u32(orig.0 as u32);
+                hasher.u32(orig.1 as u32);
+            }
+            NodeRef::Kern { amount, kind } => {
+                hasher.tag(2);
+                hasher.i32(amount.raw());
+                hash_kern_kind(kind, hasher);
+            }
+            NodeRef::Glue { spec, kind, leader } => {
+                hasher.tag(3);
+                self.hash_glue(spec, hasher);
+                hash_glue_kind(kind, hasher);
+                self.hash_leader_payload_ref(leader, hasher, stack);
+            }
+            NodeRef::Penalty(value) => {
+                hasher.tag(4);
+                hasher.i32(value);
+            }
+            NodeRef::Rule {
+                width,
+                height,
+                depth,
+            } => {
+                hasher.tag(5);
+                hash_optional_scaled(width, hasher);
+                hash_optional_scaled(height, hasher);
+                hash_optional_scaled(depth, hasher);
+            }
+            NodeRef::HList(box_node) => self.hash_box_node(6, box_node, hasher, stack),
+            NodeRef::VList(box_node) => self.hash_box_node(7, box_node, hasher, stack),
+            NodeRef::Unset(unset) => {
+                hasher.tag(8);
+                hasher.u8(match unset.kind {
+                    crate::node::UnsetKind::HBox => 0,
+                    crate::node::UnsetKind::VBox => 1,
+                });
+                hasher.i32(unset.width.raw());
+                hasher.i32(unset.height.raw());
+                hasher.i32(unset.depth.raw());
+                hasher.u16(unset.span_count);
+                hasher.i32(unset.stretch.raw());
+                hasher.u8(unset.stretch_order as u8);
+                hasher.i32(unset.shrink.raw());
+                hasher.u8(unset.shrink_order as u8);
+                stack.push(NodeFrame::List(unset.children));
+            }
+            NodeRef::Disc {
+                kind,
+                pre,
+                post,
+                replace,
+            } => {
+                hasher.tag(9);
+                hasher.u8(match kind {
+                    crate::node::DiscKind::Discretionary => 0,
+                    crate::node::DiscKind::ExplicitHyphen => 1,
+                    crate::node::DiscKind::AutomaticHyphen => 2,
+                });
+                stack.push(NodeFrame::List(replace));
+                stack.push(NodeFrame::List(post));
+                stack.push(NodeFrame::List(pre));
+            }
+            NodeRef::Mark { class, tokens } => {
+                hasher.tag(10);
+                hasher.u16(class);
+                self.hash_token_list_semantic(tokens, hasher);
+            }
+            NodeRef::Ins {
+                class,
+                size,
+                split_top_skip,
+                split_max_depth,
+                floating_penalty,
+                content,
+            } => {
+                hasher.tag(11);
+                hasher.u16(class);
+                hasher.i32(size.raw());
+                self.hash_glue_semantic(split_top_skip, hasher);
+                hasher.i32(split_max_depth.raw());
+                hasher.i32(floating_penalty);
+                stack.push(NodeFrame::List(content));
+            }
+            NodeRef::Whatsit(whatsit) => self.hash_whatsit_ref(whatsit, hasher),
+            NodeRef::MathOn(width) => {
+                hasher.tag(13);
+                hasher.i32(width.raw());
+            }
+            NodeRef::MathOff(width) => {
+                hasher.tag(14);
+                hasher.i32(width.raw());
+            }
+            NodeRef::Adjust(content) => {
+                hasher.tag(15);
+                stack.push(NodeFrame::List(content));
+            }
+            NodeRef::MathNoad(noad) => {
+                hasher.tag(16);
+                hash_noad_kind(&noad.kind, hasher);
+                self.hash_math_field(noad.nucleus, hasher, stack);
+                self.hash_math_field(noad.subscript, hasher, stack);
+                self.hash_math_field(noad.superscript, hasher, stack);
+            }
+            NodeRef::FractionNoad(fraction) => {
+                hasher.tag(17);
+                stack.push(NodeFrame::List(fraction.denominator));
+                stack.push(NodeFrame::List(fraction.numerator));
+                hash_fraction_thickness(fraction.thickness, hasher);
+                hash_optional_delimiter(fraction.left_delimiter, hasher);
+                hash_optional_delimiter(fraction.right_delimiter, hasher);
+            }
+            NodeRef::MathStyle(style) => {
+                hasher.tag(18);
+                hasher.u8(match style {
+                    crate::math::MathStyle::Display => 0,
+                    crate::math::MathStyle::Text => 1,
+                    crate::math::MathStyle::Script => 2,
+                    crate::math::MathStyle::ScriptScript => 3,
+                });
+            }
+            NodeRef::MathChoice(choice) => {
+                hasher.tag(19);
+                stack.push(NodeFrame::List(choice.script_script));
+                stack.push(NodeFrame::List(choice.script));
+                stack.push(NodeFrame::List(choice.text));
+                stack.push(NodeFrame::List(choice.display));
+            }
+            NodeRef::MathList(list) => {
+                hasher.tag(20);
+                hasher.u8(u8::from(list.display));
+                stack.push(NodeFrame::List(list.content));
+            }
+            NodeRef::Nonscript => hasher.tag(21),
         }
     }
 
@@ -559,7 +764,7 @@ impl Stores {
                 hasher.i32(floating_penalty);
                 stack.push(NodeFrame::List(content));
             }
-            Node::Whatsit(whatsit) => self.hash_whatsit(whatsit, hasher),
+            Node::Whatsit(whatsit) => self.hash_whatsit_ref(&whatsit, hasher),
             Node::MathOn(width) => {
                 hasher.tag(13);
                 hasher.i32(width.raw());
@@ -681,12 +886,35 @@ impl Stores {
         }
     }
 
-    fn hash_whatsit(&self, whatsit: Whatsit, hasher: &mut StateHasher) {
+    fn hash_leader_payload_ref(
+        &self,
+        payload: Option<&LeaderPayload>,
+        hasher: &mut StateHasher,
+        stack: &mut Vec<NodeFrame>,
+    ) {
+        match payload {
+            None => hasher.tag(0),
+            Some(LeaderPayload::HList(box_node)) => self.hash_box_node(1, *box_node, hasher, stack),
+            Some(LeaderPayload::VList(box_node)) => self.hash_box_node(2, *box_node, hasher, stack),
+            Some(LeaderPayload::Rule {
+                width,
+                height,
+                depth,
+            }) => {
+                hasher.tag(3);
+                hash_optional_scaled(*width, hasher);
+                hash_optional_scaled(*height, hasher);
+                hash_optional_scaled(*depth, hasher);
+            }
+        }
+    }
+
+    fn hash_whatsit_ref(&self, whatsit: &Whatsit, hasher: &mut StateHasher) {
         match whatsit {
             Whatsit::OpenOut { slot, path } => {
                 hasher.tag(13);
                 hasher.u8(slot.raw());
-                hasher.str(&path);
+                hasher.str(path);
             }
             Whatsit::CloseOut { slot } => {
                 hasher.tag(14);
@@ -694,13 +922,13 @@ impl Stores {
             }
             Whatsit::DeferredWrite { sink, tokens } => {
                 hasher.tag(12);
-                hash_print_sink(sink, hasher);
-                self.hash_token_list_semantic(tokens, hasher);
+                hash_print_sink(*sink, hasher);
+                self.hash_token_list_semantic(*tokens, hasher);
             }
             Whatsit::Special { class, payload } => {
                 hasher.tag(16);
                 hasher.bytes(class.as_bytes());
-                hasher.bytes(&payload);
+                hasher.bytes(payload);
             }
             Whatsit::Language {
                 language,
@@ -708,16 +936,39 @@ impl Stores {
                 right_hyphen_min,
             } => {
                 hasher.tag(17);
-                hasher.u8(language);
-                hasher.u8(left_hyphen_min);
-                hasher.u8(right_hyphen_min);
+                hasher.u8(*language);
+                hasher.u8(*left_hyphen_min);
+                hasher.u8(*right_hyphen_min);
             }
         }
     }
 
     fn hash_font(&self, font: FontId, hasher: &mut StateHasher) {
+        self.hash_font_fields(font, hasher);
+    }
+
+    fn hash_font_fields(&self, font: FontId, hasher: &mut StateHasher) {
         self.assert_live_font(font);
-        hash_font_semantic_key(&self.font_semantic_key(font), hasher);
+        let identifier = self.fonts.identifier(font);
+        if let Some(symbol) = identifier {
+            self.assert_live_symbol(symbol);
+        }
+        let font = self.fonts.get(font);
+        hasher.tag(0x68);
+        hasher.str(font.name());
+        hasher.str(&font.path().to_string_lossy());
+        hasher.bytes(&font.content_hash());
+        hasher.u32(font.checksum());
+        hasher.i32(font.design_size().raw());
+        hasher.i32(font.size().raw());
+        match identifier {
+            Some(symbol) => {
+                hasher.bool(true);
+                hash_control_sequence_kind(self.interner.kind(symbol), hasher);
+                hasher.str(self.interner.resolve(symbol));
+            }
+            None => hasher.bool(false),
+        }
     }
 
     fn font_semantic_key(&self, font: FontId) -> FontSemanticKey {
@@ -785,7 +1036,7 @@ impl Stores {
             crate::measurement::record_hash_node_frame(
                 stack.capacity(),
                 core::mem::size_of::<NodeFrame>(),
-                matches!(&frame, NodeFrame::Node(_)),
+                false,
             );
             seen += 1;
             assert!(
@@ -798,13 +1049,65 @@ impl Stores {
                     hasher.tag(0x70);
                     hasher.usize(nodes.len());
                     stack.push(NodeFrame::ListEnd);
-                    for node in nodes.iter().rev() {
-                        stack.push(NodeFrame::Node(node.to_owned()));
+                    for index in (0..nodes.len()).rev() {
+                        stack.push(NodeFrame::NodeAt(id, index));
                     }
                 }
                 NodeFrame::ListEnd => hasher.tag(0x71),
-                NodeFrame::Node(node) => self.hash_node(node, hasher, &mut stack),
+                NodeFrame::NodeAt(id, index) => {
+                    let node = self
+                        .nodes(id)
+                        .get(index)
+                        .expect("state-hash node frame is live");
+                    self.hash_node_ref(node, hasher, &mut stack);
+                }
             }
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn testing_assert_owned_borrowed_node_hashes_equal(&self, id: NodeListId) {
+        let nodes = self.nodes(id);
+        for index in 0..nodes.len() {
+            let owned = nodes
+                .get(index)
+                .expect("test node index is live")
+                .to_owned();
+            let mut owned_hasher = StateHasher::new(0x6e6f_6465_5f65_7175);
+            self.hash_node_tree_from_node(owned, &mut owned_hasher);
+
+            let mut borrowed_hasher = StateHasher::new(0x6e6f_6465_5f65_7175);
+            let mut stack = Vec::new();
+            self.hash_node_ref(
+                nodes.get(index).expect("test node index is live"),
+                &mut borrowed_hasher,
+                &mut stack,
+            );
+            let mut seen = 0_usize;
+            while let Some(frame) = stack.pop() {
+                seen += 1;
+                assert!(seen <= NODE_LIST_MAX_ITEMS);
+                match frame {
+                    NodeFrame::List(id) => {
+                        let list = self.nodes(id);
+                        borrowed_hasher.tag(0x70);
+                        borrowed_hasher.usize(list.len());
+                        stack.push(NodeFrame::ListEnd);
+                        for child_index in (0..list.len()).rev() {
+                            stack.push(NodeFrame::NodeAt(id, child_index));
+                        }
+                    }
+                    NodeFrame::ListEnd => borrowed_hasher.tag(0x71),
+                    NodeFrame::NodeAt(id, child_index) => self.hash_node_ref(
+                        self.nodes(id)
+                            .get(child_index)
+                            .expect("test child index is live"),
+                        &mut borrowed_hasher,
+                        &mut stack,
+                    ),
+                }
+            }
+            assert_eq!(owned_hasher.finish(), borrowed_hasher.finish());
         }
     }
 }
@@ -860,7 +1163,7 @@ struct FontSemanticKey {
 enum NodeFrame {
     List(NodeListId),
     ListEnd,
-    Node(Node),
+    NodeAt(NodeListId, usize),
 }
 
 fn canonical_cell(cell: CellId) -> CellId {
