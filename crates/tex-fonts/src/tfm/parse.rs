@@ -3,7 +3,7 @@ use tex_arith::{
     tfm_slant_fix_word_to_scaled_ratio,
 };
 
-use crate::metrics::MIN_TEX_FONT_PARAMETERS;
+use crate::metrics::{MAX_LIG_KERN_PROGRAM_LEN, MIN_TEX_FONT_PARAMETERS};
 
 use super::error::ParseError;
 use super::types::{
@@ -199,6 +199,12 @@ impl Counts {
             if len == 0 {
                 return Err(ParseError::EmptyMetricTable(table));
             }
+        }
+        if self.nl > MAX_LIG_KERN_PROGRAM_LEN {
+            return Err(ParseError::LigKernProgramTooLong {
+                len: self.nl,
+                max: MAX_LIG_KERN_PROGRAM_LEN,
+            });
         }
 
         let computed = [
