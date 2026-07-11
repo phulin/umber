@@ -390,18 +390,20 @@ fn token_list_builder_finishes_through_stores_boundary() {
 }
 
 #[test]
-fn token_list_ingress_rejects_foreign_symbols_before_interning() {
+fn token_list_ingress_rejects_equal_slot_foreign_symbols_before_interning() {
     let mut foreign = Stores::new();
     let foreign_symbol = foreign.intern("foreign");
     let token = Token::Cs(foreign_symbol.symbol());
     let mut stores = Stores::new();
+    let local = stores.intern("local");
+    assert_eq!(foreign_symbol.raw(), local.raw());
+    assert_ne!(foreign_symbol.symbol(), local.symbol());
 
     let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         stores.intern_token_list(&[token]);
     }));
     assert!(rejected.is_err());
 
-    let local = stores.intern("local");
     let accepted = stores.intern_token_list(&[Token::Cs(local.symbol())]);
     assert_eq!(
         accepted.raw(),
@@ -411,10 +413,13 @@ fn token_list_ingress_rejects_foreign_symbols_before_interning() {
 }
 
 #[test]
-fn token_list_builder_rejection_is_atomic_and_preserves_scratch_content() {
+fn token_list_builder_rejects_equal_slot_foreign_symbol_atomically() {
     let mut foreign = Stores::new();
     let foreign_symbol = foreign.intern("foreign");
     let mut stores = Stores::new();
+    let local = stores.intern("local");
+    assert_eq!(foreign_symbol.raw(), local.raw());
+    assert_ne!(foreign_symbol.symbol(), local.symbol());
     let mut builder = stores.token_list_builder();
     builder.push(Token::Cs(foreign_symbol.symbol()));
 
@@ -425,7 +430,7 @@ fn token_list_builder_rejection_is_atomic_and_preserves_scratch_content() {
     assert_eq!(builder.len(), 1, "rejected builder must remain reusable");
 
     builder.clear();
-    builder.push(Token::param(1));
+    builder.push(Token::Cs(local.symbol()));
     let accepted = stores.finish_token_list(&mut builder);
     assert_eq!(
         accepted.raw(),
@@ -1031,12 +1036,15 @@ fn rollback_restores_afterassignment_slot() {
 }
 
 #[test]
-fn invalid_aftergroup_token_is_rejected_without_changing_group_payload_order() {
+fn equal_slot_foreign_aftergroup_token_preserves_payload_order() {
     let mut foreign = Stores::new();
     let foreign_symbol = foreign.intern("foreign");
     let mut stores = Stores::new();
+    let local = stores.intern("local");
+    assert_eq!(foreign_symbol.raw(), local.raw());
+    assert_ne!(foreign_symbol.symbol(), local.symbol());
     let first = Token::param(1);
-    let last = Token::param(2);
+    let last = Token::Cs(local.symbol());
     stores.enter_group();
     stores.push_aftergroup(first);
 
@@ -1050,11 +1058,14 @@ fn invalid_aftergroup_token_is_rejected_without_changing_group_payload_order() {
 }
 
 #[test]
-fn invalid_afterassignment_token_preserves_the_previous_payload() {
+fn equal_slot_foreign_afterassignment_token_preserves_previous_payload() {
     let mut foreign = Stores::new();
     let foreign_symbol = foreign.intern("foreign");
     let mut stores = Stores::new();
-    let original = Token::param(1);
+    let local = stores.intern("local");
+    assert_eq!(foreign_symbol.raw(), local.raw());
+    assert_ne!(foreign_symbol.symbol(), local.symbol());
+    let original = Token::Cs(local.symbol());
     stores.set_afterassignment(original);
 
     let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -1065,12 +1076,16 @@ fn invalid_afterassignment_token_preserves_the_previous_payload() {
 }
 
 #[test]
-fn rolled_back_symbol_token_is_rejected_at_every_scoped_ingress() {
+fn post_reuse_symbol_token_is_rejected_at_every_scoped_ingress() {
     let mut stores = Stores::new();
     let snapshot = stores.checkpoint();
     let stale = stores.intern("stale");
     stores.rollback(&snapshot);
+    let replacement = stores.intern("replacement");
+    assert_eq!(stale.raw(), replacement.raw());
+    assert_ne!(stale.symbol(), replacement.symbol());
     let token = Token::Cs(stale.symbol());
+    stores.enter_group();
 
     for ingress in ["intern", "builder", "aftergroup", "afterassignment"] {
         let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match ingress {
@@ -1088,6 +1103,19 @@ fn rolled_back_symbol_token_is_rejected_at_every_scoped_ingress() {
         }));
         assert!(rejected.is_err(), "{ingress} accepted a rolled-back symbol");
     }
+
+    assert_eq!(stores.take_afterassignment(), None);
+    let replacement_token = Token::Cs(replacement.symbol());
+    let accepted = stores.intern_token_list(&[replacement_token]);
+    assert_eq!(
+        accepted.raw(),
+        1,
+        "rejections must not allocate token lists"
+    );
+    stores.push_aftergroup(replacement_token);
+    assert_eq!(stores.leave_group(), vec![replacement_token]);
+    stores.set_afterassignment(replacement_token);
+    assert_eq!(stores.take_afterassignment(), Some(replacement_token));
 }
 
 #[test]
