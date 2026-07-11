@@ -115,7 +115,7 @@ impl NodeArena {
     }
     #[cfg(feature = "node-stats")]
     pub(crate) fn memory_columns(&self) -> Vec<NodeMemoryColumn> {
-        self.storage.memory_columns("epoch")
+        self.measurement_columns("epoch")
     }
     #[cfg(any(test, feature = "testing"))]
     pub(crate) fn testing_node_count(&self) -> usize {
@@ -218,7 +218,53 @@ impl NodeArena {
             "node-list identity and span tables diverged"
         );
         self.spans.push(EpochSpan { start, len });
-        NodeListId::new_epoch(identity)
+        let id = NodeListId::new_epoch(identity);
+        #[cfg(feature = "node-stats")]
+        self.record_peak();
+        id
+    }
+
+    #[cfg(feature = "node-stats")]
+    pub(super) fn measurement_columns(&self, prefix: &str) -> Vec<NodeMemoryColumn> {
+        let mut columns = self.storage.memory_columns(prefix);
+        let (len, capacity, element_bytes) = self.identities.measurement_shape();
+        columns.push(NodeMemoryColumn {
+            name: format!("{prefix}.identity_tags"),
+            len,
+            capacity,
+            element_bytes,
+            logical_bytes: len * element_bytes,
+            retained_payload_bytes: capacity * element_bytes,
+        });
+        let element_bytes = core::mem::size_of::<EpochSpan>();
+        columns.push(NodeMemoryColumn {
+            name: format!("{prefix}.spans"),
+            len: self.spans.len(),
+            capacity: self.spans.capacity(),
+            element_bytes,
+            logical_bytes: self.spans.len() * element_bytes,
+            retained_payload_bytes: self.spans.capacity() * element_bytes,
+        });
+        columns
+    }
+
+    #[cfg(feature = "node-stats")]
+    pub(super) fn measurement_payload_bytes(&self) -> (u64, u64) {
+        let (mut logical, mut retained) = self.storage.payload_bytes();
+        let (len, capacity, element_bytes) = self.identities.measurement_shape();
+        logical += (len * element_bytes) as u64;
+        retained += (capacity * element_bytes) as u64;
+        let element_bytes = core::mem::size_of::<EpochSpan>();
+        logical += (self.spans.len() * element_bytes) as u64;
+        retained += (self.spans.capacity() * element_bytes) as u64;
+        (logical, retained)
+    }
+
+    #[cfg(feature = "node-stats")]
+    fn record_peak(&self) {
+        super::measurement::record_peak_observation(self.measurement_payload_bytes(), || {
+            self.measurement_columns("peak")
+        });
     }
 
     #[cfg(test)]

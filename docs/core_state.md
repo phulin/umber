@@ -522,13 +522,15 @@ cells[i] = new
   6–9% faster paragraph workloads, and about 45% lower peak process memory,
   with no end-to-end regression above 5%.
 - Feature-gated node measurement computes logical and allocator-retained bytes
-  on demand from the actual epoch/live-survivor/recycled vectors and records
-  process-local promotion scratch/timing outside `Universe`. The largest
-  canonical storage is one coherent observation ordered by logical bytes and
-  then retained bytes; its totals are sums of its own complete column record,
-  including owned whatsit payloads. It is absent from normal builds and never
-  becomes snapshot, rollback, hash, or replay state; the full reproducible
-  accounting and adoption evidence live in `node_word_arena.md`.
+  on demand from the actual epoch/live-survivor/recycled vectors, including
+  the epoch generation-tag and span tables, and records process-local
+  promotion scratch/timing outside `Universe`. The largest canonical storage
+  is one coherent observation ordered by logical bytes and then retained
+  bytes; epoch candidates are recorded after span minting, and totals are sums
+  of the complete column record, including owned whatsit payloads. It is absent
+  from normal builds and never becomes snapshot, rollback, hash, or replay
+  state; the full reproducible accounting and adoption evidence live in
+  `node_word_arena.md`.
 
 ## 8. External effects: the virtualized world
 
