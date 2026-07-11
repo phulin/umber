@@ -107,6 +107,34 @@ fn true_units_use_current_mag_before_physical_unit_conversion() {
 }
 
 #[test]
+fn true_physical_units_match_tex_fixed_point_order_at_mag_two_thousand() {
+    let cases = [
+        ("12.truept x", 393_216),
+        ("12.truein x", 28_417_720),
+        ("12.truepc x", 4_718_592),
+        ("12.truecm x", 11_188_078),
+        ("12.truemm x", 1_118_807),
+        ("12.truebp x", 394_690),
+        ("12.truedd x", 420_744),
+        ("12.truecc x", 5_048_934),
+    ];
+
+    for (source, expected) in cases {
+        let mut stores = Universe::new();
+        stores.set_mag(2000);
+        assert_eq!(
+            scan_with_stores(source, &mut stores).0,
+            expected,
+            "{source}"
+        );
+    }
+
+    let mut stores = Universe::new();
+    stores.set_mag(2000);
+    assert_eq!(scan_with_stores("-12.truedd x", &mut stores).0, -420_744);
+}
+
+#[test]
 fn true_unit_scaling_folds_xn_over_d_remainder_into_fraction() {
     let mut stores = Universe::new();
     stores.set_mag(1200);

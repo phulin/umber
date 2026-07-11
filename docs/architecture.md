@@ -823,6 +823,10 @@ makes box-level memoization (M4) sound.
   preambles into snapshot-covered `AlignState` on the mode-list level:
   frozen u/v template token lists, frozen tabskip boundary glue ids, an
   end-template sentinel token, and optional `&&` repeat metadata. The
+  repeat metadata maps both templates and their following tabskip boundaries;
+  columns extended past the declared preamble therefore reuse TeX's periodic
+  boundary glue instead of the final declared `\tabskip` value.
+  The
   stomach alignment sub-mode now runs the row/cell loop, replays u/v
   templates through ordinary main control, recognizes unshielded `&`,
   `\span`, and `\cr` by meaning using an `AlignState` brace counter, buffers

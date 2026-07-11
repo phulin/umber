@@ -369,8 +369,24 @@ impl AlignState {
 
     #[must_use]
     pub fn tabskip_for_boundary(&self, boundary: usize) -> GlueId {
+        if let Some(tabskip) = self.tabskips.get(boundary) {
+            return *tabskip;
+        }
+        let Some(column) = boundary.checked_sub(1) else {
+            return self.default_tabskip;
+        };
+        let Some(loop_start) = self.loop_start else {
+            return self.default_tabskip;
+        };
+        let Some(repeat_len) = self.columns.len().checked_sub(loop_start) else {
+            return self.default_tabskip;
+        };
+        if repeat_len == 0 || column < loop_start {
+            return self.default_tabskip;
+        }
+        let repeated_column = loop_start + (column - loop_start) % repeat_len;
         self.tabskips
-            .get(boundary)
+            .get(repeated_column + 1)
             .copied()
             .unwrap_or(self.default_tabskip)
     }

@@ -641,7 +641,8 @@ fn captures_mid_preamble_tabskip_boundaries() {
 
 #[test]
 fn records_repeat_point_and_resolves_extra_columns() {
-    let (stores, state) = scan_halign_preamble("{#a&#b&&#c&#d\\cr}");
+    let (stores, state) =
+        scan_halign_preamble("{#a&\\tabskip=1pt#b&&\\tabskip=2pt#c&\\tabskip=3pt#d\\cr}");
 
     assert_eq!(state.columns().len(), 4);
     assert_eq!(state.loop_start(), Some(2));
@@ -649,6 +650,16 @@ fn records_repeat_point_and_resolves_extra_columns() {
     assert_eq!(state.column_for(3), Some(&state.columns()[3]));
     assert_eq!(state.column_for(4), Some(&state.columns()[2]));
     assert_eq!(state.column_for(5), Some(&state.columns()[3]));
+    assert_eq!(
+        stores.glue(state.tabskip_for_boundary(5)).width.raw(),
+        2 * Scaled::UNITY,
+        "the boundary after repeated column 2 repeats boundary 3",
+    );
+    assert_eq!(
+        stores.glue(state.tabskip_for_boundary(6)).width.raw(),
+        3 * Scaled::UNITY,
+        "the boundary after repeated column 3 repeats boundary 4",
+    );
     assert_eq!(
         stores.tokens(state.column_for(4).expect("repeat col").v_template),
         &[
