@@ -9,6 +9,7 @@ use tex_state::math::{
 };
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::node::Node;
+use tex_state::provenance::InsertedOriginKind;
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{GroupKind, Universe};
@@ -42,10 +43,12 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    let token =
-        next_non_space_x(input, stores, recorder, hooks)?.ok_or(ExecError::MissingToken {
+    let traced = next_non_space_traced_x(input, stores, recorder, hooks)?.ok_or(
+        ExecError::MissingToken {
             context: "math field",
-        })?;
+        },
+    )?;
+    let token = tex_expand::semantic_token(traced);
     match token {
         Token::Char {
             cat: Catcode::BeginGroup,
@@ -93,16 +96,36 @@ where
                 let (_, math_char) = math_char_from_mathcode(ch, stores.mathcode(ch), stores)?;
                 Ok(MathField::MathChar(math_char))
             }
+            Meaning::UnexpandablePrimitive(
+                UnexpandablePrimitive::Leaders
+                | UnexpandablePrimitive::CLeaders
+                | UnexpandablePrimitive::XLeaders,
+            ) => {
+                stores.world_mut().write_text(
+                    tex_state::PrintSink::TerminalAndLog,
+                    "\n! Missing { inserted.\nA left brace was mandatory here, so I've put one in.\n",
+                );
+                let opener = Token::Char {
+                    ch: '{',
+                    cat: Catcode::BeginGroup,
+                };
+                let origin = stores.inserted_origin(
+                    InsertedOriginKind::ErrorRecovery,
+                    opener,
+                    traced.origin(),
+                );
+                crate::push_traced_tokens(
+                    input,
+                    stores,
+                    [TracedTokenWord::pack(opener, origin), traced],
+                );
+                scan_math_field(nest, input, stores, recorder, hooks)
+            }
             _ => {
                 let mut temp = ModeNest::new();
                 temp.push(nest.current_mode());
                 dispatch_math_token_with_recorder(
-                    &mut temp,
-                    TracedTokenWord::pack(Token::Cs(symbol), OriginId::UNKNOWN),
-                    input,
-                    stores,
-                    recorder,
-                    hooks,
+                    &mut temp, traced, input, stores, recorder, hooks,
                 )?;
                 let id = finish_current_math_list(&mut temp, stores);
                 Ok(MathField::SubMlist(id))
@@ -672,6 +695,28 @@ where
         };
         if !assignments::is_space(token) {
             return Ok(Some(token));
+        }
+    }
+}
+
+fn next_non_space_traced_x<S, R, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<Option<TracedTokenWord>, ExecError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    loop {
+        let Some(traced) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
+        else {
+            return Ok(None);
+        };
+        if !assignments::is_space(tex_expand::semantic_token(traced)) {
+            return Ok(Some(traced));
         }
     }
 }

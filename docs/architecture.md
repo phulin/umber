@@ -633,6 +633,13 @@ assignments, box building, and dispatch into the typesetting kernels.
   the diagnostic, and lets ordinary math entry and noad construction rescan
   both tokens. The inserted replay and math-entry lookahead retain the
   triggering token's origin and remain part of the checkpointed input stack.
+  Superscript and subscript character tokens use the same missing-dollar
+  recovery outside math mode: the original traced token is replayed after
+  entering math so the math dispatcher, rather than horizontal character
+  handling, scans the script. If a leaders command is then rejected where a
+  script field is required, the scanner inserts a traced brace-recovery group
+  around the following material, preserving both the offending token's origin
+  and the recovered sub-mlist in checkpointable engine state.
   `\mathcode"8000` redispatches through the current active-character meaning
   at use time, INITEX ASCII letters/digits carry TeX82's variable-family
   mathcodes, and every inline/display formula opens a distinct journal-backed

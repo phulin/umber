@@ -159,6 +159,33 @@ fn math_mode_builds_noads_styles_choices_and_mu_nodes() {
 }
 
 #[test]
+fn invalid_superscript_command_inserts_a_group_around_following_material() {
+    let (stores, executor) = run_math_source(r"^\leaders\vrule\mskip0mu M}");
+    let nodes = math_nodes(&stores, &executor);
+    let scripted = math_noad(&nodes[0]);
+    let MathField::SubMlist(list) = scripted.superscript else {
+        panic!("recovered superscript should be a sub-mlist");
+    };
+    let contains_m = stores.nodes(list).iter().any(|node| {
+        matches!(
+            node,
+            tex_state::node_arena::NodeRef::MathNoad(noad)
+                if matches!(
+                    noad.nucleus,
+                    MathField::MathChar(tex_state::math::MathChar { family: 1, character: 'M' })
+                )
+        )
+    });
+
+    assert!(
+        contains_m,
+        "M must remain inside the recovered superscript group"
+    );
+    assert!(terminal_effect_text(&stores).contains("Missing { inserted"));
+    assert!(terminal_effect_text(&stores).contains("Missing $ inserted"));
+}
+
+#[test]
 fn limit_switch_applies_to_mathchardef_operator() {
     let (stores, executor) = run_math_source(r#"\mathchardef\op="1352 $\op\nolimits"#);
     let nodes = math_nodes(&stores, &executor);

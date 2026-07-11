@@ -70,6 +70,20 @@ where
     if matches!(
         token,
         Token::Char {
+            cat: Catcode::Superscript | Catcode::Subscript,
+            ..
+        }
+    ) {
+        stores.world_mut().write_text(
+            tex_state::PrintSink::TerminalAndLog,
+            "\n! Missing $ inserted.\nI've inserted a begin-math/end-math symbol since I think\nyou left one out. Proceed, with fingers crossed.\n",
+        );
+        push_traced_tokens(input, stores, [traced]);
+        return crate::math::enter_math(nest, input, stores, hooks);
+    }
+    if matches!(
+        token,
+        Token::Char {
             cat: Catcode::MathShift,
             ..
         }
