@@ -124,6 +124,14 @@ impl Stores {
             "state hash cursor journal position is after snapshot"
         );
 
+        #[cfg(feature = "node-stats")]
+        crate::measurement::record_hash_call(
+            end.env_snapshot
+                .journal_pos()
+                .raw()
+                .saturating_sub(start.journal_pos.raw()) as usize,
+        );
+
         let mut hasher = StateHasher::new(STORE_SLICE_DOMAIN);
         let mut cache = std::mem::take(&mut self.semantic_hash_cache);
         self.hash_journal_changed_cells(start, end, &mut cache, &mut hasher);
@@ -192,6 +200,9 @@ impl Stores {
             first_old.entry(cell).or_insert(rec.old());
         }
 
+        #[cfg(feature = "node-stats")]
+        let first_old_len = first_old.len();
+
         let mut changed_cells = Vec::new();
         for (cell, old_word) in first_old {
             let new_word = self.env.semantic_word(cell);
@@ -221,6 +232,13 @@ impl Stores {
         changed_cells
             .sort_unstable_by(|left, right| cache.cells[left].key.cmp(&cache.cells[right].key));
         changed_cells.dedup_by(|right, left| cache.cells[left].key == cache.cells[right].key);
+
+        #[cfg(feature = "node-stats")]
+        crate::measurement::record_hash_changed_cells(
+            changed_cells.len(),
+            first_old_len * core::mem::size_of::<(CellId, u64)>()
+                + changed_cells.capacity() * core::mem::size_of::<CellId>(),
+        );
 
         hasher.tag(0x10);
         hasher.usize(changed_cells.len());
@@ -420,6 +438,12 @@ impl Stores {
         let mut stack = vec![NodeFrame::List(id)];
         let mut seen = 0_usize;
         while let Some(frame) = stack.pop() {
+            #[cfg(feature = "node-stats")]
+            crate::measurement::record_hash_node_frame(
+                stack.capacity(),
+                core::mem::size_of::<NodeFrame>(),
+                matches!(&frame, NodeFrame::Node(_)),
+            );
             seen += 1;
             assert!(
                 seen <= NODE_LIST_MAX_ITEMS,
@@ -697,6 +721,8 @@ impl Stores {
     }
 
     fn font_semantic_key(&self, font: FontId) -> FontSemanticKey {
+        #[cfg(feature = "node-stats")]
+        crate::measurement::record_owned_font_key();
         self.assert_live_font(font);
         let identifier = self.fonts.identifier(font).map(|symbol| {
             self.assert_live_symbol(symbol);
@@ -746,9 +772,21 @@ impl Stores {
 
     fn hash_node_tree_from_node(&self, node: Node, hasher: &mut StateHasher) {
         let mut stack = Vec::new();
+        #[cfg(feature = "node-stats")]
+        crate::measurement::record_hash_node_frame(
+            stack.capacity(),
+            core::mem::size_of::<NodeFrame>(),
+            true,
+        );
         self.hash_node(node, hasher, &mut stack);
         let mut seen = 0_usize;
         while let Some(frame) = stack.pop() {
+            #[cfg(feature = "node-stats")]
+            crate::measurement::record_hash_node_frame(
+                stack.capacity(),
+                core::mem::size_of::<NodeFrame>(),
+                matches!(&frame, NodeFrame::Node(_)),
+            );
             seen += 1;
             assert!(
                 seen <= NODE_LIST_MAX_ITEMS,

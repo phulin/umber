@@ -147,6 +147,12 @@ fn node_memory_measurement_is_nonsemantic_and_covers_recycled_storage() {
     assert!(timing.recycled_promotions > 0);
     assert!(timing.releases_to_recycling > 0);
     assert!(timing.peak_promotion_scratch_retained_bytes > 0);
+    let append = crate::measurement::node_append_measurement();
+    assert!(append.calls > 0);
+    assert!(append.words > 0);
+    let hash = crate::measurement::state_hash_measurement();
+    assert!(hash.calls > 0);
+    assert_eq!(semantic_hash, universe.snapshot().state_hash());
 }
 
 #[test]

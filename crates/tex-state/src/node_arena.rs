@@ -353,6 +353,104 @@ impl NodeStorage {
     }
 
     #[cfg(feature = "node-stats")]
+    fn capacity_signature(&self) -> [usize; 39] {
+        [
+            self.words.capacity(),
+            self.boxes.width.capacity(),
+            self.boxes.height.capacity(),
+            self.boxes.depth.capacity(),
+            self.boxes.shift.capacity(),
+            self.boxes.display.capacity(),
+            self.boxes.glue_set.capacity(),
+            self.boxes.glue_sign.capacity(),
+            self.boxes.glue_order.capacity(),
+            self.boxes.children.capacity(),
+            self.unsets.kind.capacity(),
+            self.unsets.width.capacity(),
+            self.unsets.height.capacity(),
+            self.unsets.depth.capacity(),
+            self.unsets.span_count.capacity(),
+            self.unsets.stretch.capacity(),
+            self.unsets.stretch_order.capacity(),
+            self.unsets.shrink.capacity(),
+            self.unsets.shrink_order.capacity(),
+            self.unsets.children.capacity(),
+            self.rules.capacity(),
+            self.leaders.capacity(),
+            self.discs.capacity(),
+            self.marks.capacity(),
+            self.insertions.class.capacity(),
+            self.insertions.size.capacity(),
+            self.insertions.split_top_skip.capacity(),
+            self.insertions.split_max_depth.capacity(),
+            self.insertions.floating_penalty.capacity(),
+            self.insertions.content.capacity(),
+            self.whatsits.capacity(),
+            self.noads.kind.capacity(),
+            self.noads.nucleus.capacity(),
+            self.noads.subscript.capacity(),
+            self.noads.superscript.capacity(),
+            self.fractions.capacity(),
+            self.choices.capacity(),
+            self.math_lists.capacity(),
+            self.adjusts.capacity(),
+        ]
+    }
+
+    #[cfg(feature = "node-stats")]
+    fn retained_payload_bytes(&self) -> usize {
+        fn bytes<T>(values: &Vec<T>) -> usize {
+            values.capacity() * core::mem::size_of::<T>()
+        }
+        let mut retained = 0;
+        macro_rules! add {
+            ($value:expr) => {
+                retained += bytes(&$value);
+            };
+        }
+        add!(self.words);
+        add!(self.boxes.width);
+        add!(self.boxes.height);
+        add!(self.boxes.depth);
+        add!(self.boxes.shift);
+        add!(self.boxes.display);
+        add!(self.boxes.glue_set);
+        add!(self.boxes.glue_sign);
+        add!(self.boxes.glue_order);
+        add!(self.boxes.children);
+        add!(self.unsets.kind);
+        add!(self.unsets.width);
+        add!(self.unsets.height);
+        add!(self.unsets.depth);
+        add!(self.unsets.span_count);
+        add!(self.unsets.stretch);
+        add!(self.unsets.stretch_order);
+        add!(self.unsets.shrink);
+        add!(self.unsets.shrink_order);
+        add!(self.unsets.children);
+        add!(self.rules);
+        add!(self.leaders);
+        add!(self.discs);
+        add!(self.marks);
+        add!(self.insertions.class);
+        add!(self.insertions.size);
+        add!(self.insertions.split_top_skip);
+        add!(self.insertions.split_max_depth);
+        add!(self.insertions.floating_penalty);
+        add!(self.insertions.content);
+        add!(self.whatsits);
+        add!(self.noads.kind);
+        add!(self.noads.nucleus);
+        add!(self.noads.subscript);
+        add!(self.noads.superscript);
+        add!(self.fractions);
+        add!(self.choices);
+        add!(self.math_lists);
+        add!(self.adjusts);
+        retained
+    }
+
+    #[cfg(feature = "node-stats")]
     pub(crate) fn memory_columns(&self, prefix: &str) -> Vec<NodeMemoryColumn> {
         let mut out = Vec::new();
         macro_rules! column {
@@ -586,6 +684,10 @@ impl NodeStorage {
     }
 
     pub(crate) fn append(&mut self, nodes: &[Node]) -> (u32, u32) {
+        #[cfg(feature = "node-stats")]
+        let capacity_before = self.capacity_signature();
+        #[cfg(feature = "node-stats")]
+        let retained_before = self.retained_payload_bytes();
         let start = checked_len(self.words.len(), "node arena exceeds u32 entries");
         let len = checked_len(nodes.len(), "node list exceeds u32 entries");
         start
@@ -610,7 +712,25 @@ impl NodeStorage {
             self.words.push(word);
         }
         #[cfg(feature = "node-stats")]
-        self.record_peak();
+        {
+            let capacity_after = self.capacity_signature();
+            let growth_events = capacity_before
+                .iter()
+                .zip(capacity_after)
+                .filter(|(before, after)| **before != *after)
+                .count();
+            let retained_after = self.retained_payload_bytes();
+            crate::measurement::record_node_append(
+                nodes.len(),
+                [
+                    needs[0], needs[1], needs[2], needs[3], needs[4], needs[5], needs[6], needs[7],
+                    needs[8], needs[9], needs[10], needs[11], needs[12],
+                ],
+                growth_events,
+                retained_after.saturating_sub(retained_before),
+            );
+            self.record_peak();
+        }
         (start, len)
     }
 

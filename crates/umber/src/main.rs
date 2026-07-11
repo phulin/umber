@@ -150,7 +150,7 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
         }
         let survivor = tex_state::survivor::survivor_measurement();
         eprintln!(
-            "NODE_SURVIVOR fresh_calls={} fresh_nanos={} recycled_calls={} recycled_nanos={} release_calls={} release_nanos={} peak_scratch_logical_bytes={} peak_scratch_retained_bytes={}",
+            "NODE_SURVIVOR fresh_calls={} fresh_nanos={} recycled_calls={} recycled_nanos={} release_calls={} release_nanos={} peak_scratch_logical_bytes={} peak_scratch_retained_bytes={} source_words={} child_bearing_nodes={} remap_entries={} pending_entries={} peak_remap_entries={} peak_pending_entries={}",
             survivor.fresh_promotions,
             survivor.fresh_promotion_nanos,
             survivor.recycled_promotions,
@@ -158,7 +158,56 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
             survivor.releases_to_recycling,
             survivor.release_nanos,
             survivor.peak_promotion_scratch_logical_bytes,
-            survivor.peak_promotion_scratch_retained_bytes
+            survivor.peak_promotion_scratch_retained_bytes,
+            survivor.source_words,
+            survivor.child_bearing_nodes,
+            survivor.remap_entries,
+            survivor.pending_entries,
+            survivor.peak_remap_entries,
+            survivor.peak_pending_entries
+        );
+        let append = tex_state::measurement::node_append_measurement();
+        eprintln!(
+            "ALLOC_NODE_APPEND calls={} words={} sidecar_rows={:?} growth_events={} grown_bytes={}",
+            append.calls,
+            append.words,
+            append.sidecar_rows,
+            append.capacity_growth_events,
+            append.retained_payload_bytes_grown,
+        );
+        let clone = tex_state::measurement::epoch_clone_measurement();
+        eprintln!(
+            "ALLOC_EPOCH_CLONE calls={} source_words={} transient_owned_node_bytes={}",
+            clone.list_calls, clone.source_words, clone.transient_owned_node_bytes,
+        );
+        let hash = tex_state::measurement::state_hash_measurement();
+        eprintln!(
+            "ALLOC_STATE_HASH calls={} journal_entries={} changed_cells={} node_frames={} owned_node_bytes={} owned_font_keys={} peak_changed_scratch_bytes={} peak_node_scratch_bytes={}",
+            hash.calls,
+            hash.journal_entries,
+            hash.changed_cells,
+            hash.node_frames,
+            hash.owned_node_bytes,
+            hash.owned_font_keys,
+            hash.peak_changed_cell_scratch_bytes,
+            hash.peak_node_scratch_bytes,
+        );
+        let traced = tex_state::measurement::traced_list_measurement();
+        eprintln!(
+            "ALLOC_TRACED_LIST finishes={} tokens={} token_builder_bytes={} origin_builder_bytes={}",
+            traced.finishes,
+            traced.tokens,
+            traced.token_builder_retained_bytes,
+            traced.origin_builder_retained_bytes,
+        );
+        let token_store = tex_state::measurement::token_store_measurement();
+        eprintln!(
+            "ALLOC_TOKEN_STORE calls={} hits={} misses={} requested_tokens={} arena_grown_bytes={}",
+            token_store.intern_calls,
+            token_store.hits,
+            token_store.misses,
+            token_store.requested_tokens,
+            token_store.arena_capacity_bytes_grown,
         );
     }
     if let Some(output) = &opts.dvi {

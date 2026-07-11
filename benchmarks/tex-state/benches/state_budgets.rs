@@ -8,13 +8,14 @@ use tex_state::SourceId;
 use tex_state::Universe;
 use tex_state::glue::Order;
 use tex_state::ids::OriginListId;
+use tex_state::math::{MathChar, MathField, MathNoad, NoadClass, NoadKind};
 use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::meaning::Meaning;
 use tex_state::meaning::MeaningFlags;
 use tex_state::node::{BoxNode, BoxNodeFields, KernKind, Node, Sign};
 use tex_state::provenance::ProvenanceStats;
 use tex_state::scaled::{GlueSetRatio, Scaled};
-use tex_state::token::{Catcode, Token};
+use tex_state::token::{Catcode, Token, TracedTokenWord};
 
 const GROUP_SIZES: [usize; 3] = [4, 64, 512];
 const ROLLBACK_TOTAL_CELLS: [usize; 2] = [1024, 4096];
@@ -30,6 +31,225 @@ const MACRO_CALLS: usize = 2_048;
 const MACRO_BODY_LEN: usize = 16;
 const SCANNER_REPETITIONS: usize = 1_024;
 const TRANSIENT_BOX_OVERWRITES: usize = 20_000;
+const ALLOCATION_GRAPH_DEPTH: usize = 128;
+const ALLOCATION_LIST_LEN: usize = 1_024;
+
+fn allocation_node_append(c: &mut Criterion) {
+    let mut group = c.benchmark_group("allocation_node_append");
+    for shape in ["inline", "box", "math", "mixed"] {
+        group.throughput(Throughput::Elements(ALLOCATION_LIST_LEN as u64));
+        group.bench_function(shape, |b| {
+            b.iter_batched(
+                || allocation_append_case(shape),
+                |(mut stores, nodes)| black_box(stores.freeze_node_list(&nodes)),
+                BatchSize::SmallInput,
+            );
+        });
+    }
+    group.finish();
+}
+
+fn allocation_append_case(shape: &str) -> (Universe, Vec<Node>) {
+    let mut stores = Universe::new();
+    let empty = stores.freeze_node_list(&[]);
+    let font = stores.current_font();
+    let nodes = (0..ALLOCATION_LIST_LEN)
+        .map(|index| match shape {
+            "inline" => Node::Kern {
+                amount: Scaled::from_raw(index as i32),
+                kind: KernKind::Explicit,
+            },
+            "box" => Node::HList(benchmark_box(empty, index as i32)),
+            "math" => Node::MathNoad(MathNoad::new(
+                NoadKind::Normal(NoadClass::Ord),
+                MathField::MathChar(MathChar {
+                    family: (index % 16) as u8,
+                    character: char::from(b'a' + (index % 26) as u8),
+                }),
+            )),
+            "mixed" => match index % 4 {
+                0 => Node::Char {
+                    font,
+                    ch: char::from(b'a' + (index % 26) as u8),
+                },
+                1 => Node::HList(benchmark_box(empty, index as i32)),
+                2 => Node::MathNoad(MathNoad::new(
+                    NoadKind::Normal(NoadClass::Ord),
+                    MathField::Empty,
+                )),
+                _ => Node::Rule {
+                    width: Some(Scaled::from_raw(index as i32)),
+                    height: None,
+                    depth: None,
+                },
+            },
+            _ => unreachable!("known allocation append shape"),
+        })
+        .collect();
+    (stores, nodes)
+}
+
+fn allocation_graph_transfer(c: &mut Criterion) {
+    let mut group = c.benchmark_group("allocation_graph_transfer");
+
+    group.bench_function("promote_fresh/deep", |b| {
+        b.iter_batched(
+            || {
+                let mut stores = Universe::new();
+                let root = deep_epoch_graph(&mut stores, ALLOCATION_GRAPH_DEPTH);
+                (stores, root)
+            },
+            |(mut stores, root)| {
+                stores.set_box_reg(0, root);
+                black_box(stores.box_reg(0))
+            },
+            BatchSize::SmallInput,
+        );
+    });
+
+    group.bench_function("promote_recycled/deep", |b| {
+        b.iter_batched(
+            recycled_promotion_case,
+            |(mut stores, root)| {
+                stores.set_box_reg(0, root);
+                black_box(stores.box_reg(0))
+            },
+            BatchSize::SmallInput,
+        );
+    });
+
+    group.bench_function("promote_fresh/shared_dag", |b| {
+        b.iter_batched(
+            shared_graph_case,
+            |(mut stores, root)| {
+                stores.set_box_reg(0, root);
+                black_box(stores.box_reg(0))
+            },
+            BatchSize::SmallInput,
+        );
+    });
+
+    group.bench_function("promote_fresh/mixed_ownership", |b| {
+        b.iter_batched(
+            mixed_ownership_case,
+            |(mut stores, root)| {
+                stores.set_box_reg(1, root);
+                black_box(stores.box_reg(1))
+            },
+            BatchSize::SmallInput,
+        );
+    });
+
+    group.bench_function("clone_to_epoch/deep", |b| {
+        b.iter_batched(
+            survivor_deep_graph_case,
+            |(mut stores, root)| black_box(stores.clone_node_list_to_epoch(root)),
+            BatchSize::SmallInput,
+        );
+    });
+    group.finish();
+}
+
+fn allocation_traced_freeze(c: &mut Criterion) {
+    let mut group = c.benchmark_group("allocation_traced_freeze");
+    for &(name, len, preintern) in &[
+        ("short_miss", 8, false),
+        ("short_hit", 8, true),
+        ("long_miss", 1_024, false),
+        ("long_hit_distinct_origins", 1_024, true),
+    ] {
+        group.throughput(Throughput::Elements(len as u64));
+        group.bench_function(name, |b| {
+            b.iter_batched(
+                || traced_freeze_case(len, preintern),
+                |(mut stores, traced)| {
+                    black_box(stores.finish_traced_token_list(&traced));
+                },
+                BatchSize::SmallInput,
+            );
+        });
+    }
+    group.finish();
+}
+
+fn benchmark_box(children: tex_state::ids::NodeListId, value: i32) -> BoxNode {
+    BoxNode::new(BoxNodeFields {
+        width: Scaled::from_raw(value),
+        height: Scaled::from_raw(0),
+        depth: Scaled::from_raw(0),
+        shift: Scaled::from_raw(0),
+        display: false,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children,
+    })
+}
+
+fn deep_epoch_graph(stores: &mut Universe, depth: usize) -> tex_state::ids::NodeListId {
+    let mut child = stores.freeze_node_list(&[Node::Penalty(0)]);
+    for level in 0..depth {
+        child = stores.freeze_node_list(&[Node::HList(benchmark_box(child, level as i32))]);
+    }
+    child
+}
+
+fn recycled_promotion_case() -> (Universe, tex_state::ids::NodeListId) {
+    let mut stores = Universe::new();
+    let first = deep_epoch_graph(&mut stores, ALLOCATION_GRAPH_DEPTH);
+    stores.set_box_reg(0, first);
+    let second = deep_epoch_graph(&mut stores, ALLOCATION_GRAPH_DEPTH / 2);
+    stores.set_box_reg(0, second);
+    let third = deep_epoch_graph(&mut stores, ALLOCATION_GRAPH_DEPTH);
+    (stores, third)
+}
+
+fn shared_graph_case() -> (Universe, tex_state::ids::NodeListId) {
+    let mut stores = Universe::new();
+    let shared = deep_epoch_graph(&mut stores, 16);
+    let root = stores.freeze_node_list(&[
+        Node::HList(benchmark_box(shared, 1)),
+        Node::VList(benchmark_box(shared, 2)),
+    ]);
+    (stores, root)
+}
+
+fn mixed_ownership_case() -> (Universe, tex_state::ids::NodeListId) {
+    let mut stores = Universe::new();
+    let survivor_source = deep_epoch_graph(&mut stores, 16);
+    stores.set_box_reg(0, survivor_source);
+    let survivor = stores.box_reg(0).expect("survivor should be live");
+    let epoch = deep_epoch_graph(&mut stores, 16);
+    let root = stores.freeze_node_list(&[
+        Node::HList(benchmark_box(survivor, 1)),
+        Node::VList(benchmark_box(epoch, 2)),
+    ]);
+    (stores, root)
+}
+
+fn survivor_deep_graph_case() -> (Universe, tex_state::ids::NodeListId) {
+    let mut stores = Universe::new();
+    let epoch = deep_epoch_graph(&mut stores, ALLOCATION_GRAPH_DEPTH);
+    stores.set_box_reg(0, epoch);
+    let survivor = stores.box_reg(0).expect("survivor should be live");
+    (stores, survivor)
+}
+
+fn traced_freeze_case(len: usize, preintern: bool) -> (Universe, Vec<TracedTokenWord>) {
+    let mut stores = Universe::new();
+    let semantic = (0..len)
+        .map(|index| char_token(char::from(b'a' + (index % 26) as u8)))
+        .collect::<Vec<_>>();
+    if preintern {
+        stores.intern_token_list(&semantic);
+    }
+    let mut traced = Vec::with_capacity(len);
+    for (index, token) in semantic.into_iter().enumerate() {
+        let origin = stores.source_origin(SourceId::new(7), index as u64, 1, index as u32 + 1);
+        traced.push(TracedTokenWord::pack(token, origin));
+    }
+    (stores, traced)
+}
 
 fn meaning_lookup(c: &mut Criterion) {
     let mut stores = Universe::new();
@@ -109,6 +329,27 @@ fn checkpoint_state_hash(c: &mut Criterion) {
                 let snapshot = stores.snapshot();
                 black_box(snapshot.state_hash());
             },
+            BatchSize::SmallInput,
+        );
+    });
+
+    group.bench_function("font_dense_box_tree", |b| {
+        b.iter_batched(
+            || {
+                let mut stores = Universe::new();
+                let _ = stores.snapshot();
+                let font = stores.current_font();
+                let chars = (0..ALLOCATION_LIST_LEN)
+                    .map(|index| Node::Char {
+                        font,
+                        ch: char::from(b'a' + (index % 26) as u8),
+                    })
+                    .collect::<Vec<_>>();
+                let list = stores.freeze_node_list(&chars);
+                stores.set_box_reg(0, list);
+                stores
+            },
+            |mut stores| black_box(stores.snapshot().state_hash()),
             BatchSize::SmallInput,
         );
     });
@@ -691,6 +932,9 @@ fn space_token() -> Token {
 
 criterion_group!(
     benches,
+    allocation_node_append,
+    allocation_graph_transfer,
+    allocation_traced_freeze,
     meaning_lookup,
     barrier_write,
     snapshot_take,

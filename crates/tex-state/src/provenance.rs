@@ -233,6 +233,12 @@ impl OriginListBuilder {
         self.buf.clear();
     }
 
+    #[cfg(feature = "node-stats")]
+    #[must_use]
+    pub(crate) fn capacity(&self) -> usize {
+        self.buf.capacity()
+    }
+
     #[must_use]
     pub(crate) fn as_slice(&self) -> &[OriginId] {
         &self.buf

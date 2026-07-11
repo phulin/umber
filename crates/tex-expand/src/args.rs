@@ -579,15 +579,7 @@ fn freeze_traced_tokens(
     stores: &mut impl ExpansionState,
     tokens: &[TracedTokenWord],
 ) -> TracedTokenList {
-    let mut builder = stores.token_list_builder();
-    let mut origins = stores.origin_list_builder();
-    for &token in tokens {
-        builder.push(traced_semantic_token(token));
-        origins.push(token.origin());
-    }
-    let token_list = stores.finish_token_list(&mut builder);
-    let origin_list = stores.finish_origin_list(&mut origins);
-    TracedTokenList::new(token_list, origin_list)
+    stores.finish_traced_token_list(tokens)
 }
 
 fn traced_semantic_token(token: TracedTokenWord) -> Token {

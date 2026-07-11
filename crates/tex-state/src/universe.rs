@@ -20,7 +20,7 @@ use crate::hyphenation::{ExceptionSpec, PatternSpec};
 use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, OriginListId, TokenListId};
 use crate::input::{
     ConditionKind, ConditionLimb, InputFrameSummary, InputSummary, LexerState, SourceId,
-    TokenListReplayKind,
+    TokenListReplayKind, TracedTokenList,
 };
 use crate::interner::{ControlSequenceKind, Symbol};
 use crate::macro_store::{MacroDefinitionProvenance, MacroMeaning};
@@ -90,6 +90,7 @@ pub trait ExpansionState {
     fn token_list_builder(&self) -> TokenListBuilder;
     fn intern_token_list(&mut self, tokens: &[Token]) -> TokenListId;
     fn finish_token_list(&mut self, builder: &mut TokenListBuilder) -> TokenListId;
+    fn finish_traced_token_list(&mut self, tokens: &[TracedTokenWord]) -> TracedTokenList;
     fn tokens(&self, id: TokenListId) -> &[Token];
     fn intern_glue(&mut self, spec: GlueSpec) -> GlueId;
     fn glue(&self, id: GlueId) -> GlueSpec;
@@ -1283,6 +1284,29 @@ impl Universe {
         self.stores.finish_token_list(builder)
     }
 
+    /// Freezes paired semantic tokens and diagnostic origins through the
+    /// aggregate state boundary.
+    pub fn finish_traced_token_list(&mut self, tokens: &[TracedTokenWord]) -> TracedTokenList {
+        let mut semantic = self.token_list_builder();
+        let mut origins = self.origin_list_builder();
+        for &word in tokens {
+            let token = word
+                .token()
+                .expect("traced token list contains an invalid semantic token");
+            semantic.push(token);
+            origins.push(word.origin());
+        }
+        #[cfg(feature = "node-stats")]
+        crate::measurement::record_traced_list_finish(
+            tokens.len(),
+            semantic.capacity(),
+            origins.capacity(),
+        );
+        let token_list = self.finish_token_list(&mut semantic);
+        let origin_list = self.finish_origin_list(&mut origins);
+        TracedTokenList::new(token_list, origin_list)
+    }
+
     #[must_use]
     pub fn tokens(&self, id: TokenListId) -> &[Token] {
         self.stores.tokens(id)
@@ -2157,6 +2181,8 @@ impl Universe {
     }
 
     pub fn clone_node_list_to_epoch(&mut self, id: NodeListId) -> NodeListId {
+        #[cfg(feature = "node-stats")]
+        crate::measurement::record_epoch_clone(self.nodes(id).len());
         let nodes = self.nodes(id).to_vec();
         let cloned: Vec<_> = nodes
             .into_iter()
@@ -2545,6 +2571,10 @@ impl ExpansionState for Universe {
         Self::finish_token_list(self, builder)
     }
 
+    fn finish_traced_token_list(&mut self, tokens: &[TracedTokenWord]) -> TracedTokenList {
+        Self::finish_traced_token_list(self, tokens)
+    }
+
     fn tokens(&self, id: TokenListId) -> &[Token] {
         Self::tokens(self, id)
     }
@@ -2876,6 +2906,10 @@ impl ExpansionState for ExpansionContext<'_> {
 
     fn finish_token_list(&mut self, builder: &mut TokenListBuilder) -> TokenListId {
         self.universe.finish_token_list(builder)
+    }
+
+    fn finish_traced_token_list(&mut self, tokens: &[TracedTokenWord]) -> TracedTokenList {
+        self.universe.finish_traced_token_list(tokens)
     }
 
     fn tokens(&self, id: TokenListId) -> &[Token] {

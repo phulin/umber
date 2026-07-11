@@ -41,6 +41,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/math.rs`: Immutable math-list model for noads, fields, fractions, styles, choices, and math font families.
 - `src/meaning.rs`: TeX meaning representation, primitive enums, flags, and packed raw meaning encode/decode logic.
 - `src/meaning/tests.rs`: Unit tests for meaning round trips, flag packing, and primitive encoding.
+- `src/measurement.rs`: Feature-gated process-local allocation-owner counters used by profiling builds.
 - `src/node.rs`: Immutable TeX node, box, glue, kern, penalty, rule, whatsit, math-list, discretionary, and list-field model.
 - `src/node_arena.rs`: Compact epoch node-word/sidecar storage, immutable list views, aggregate watermarks, rollback, and feature-gated allocator accounting.
 - `src/node_arena/tests.rs`: Unit tests for node-list allocation, lookup, rollback, and arena liveness.

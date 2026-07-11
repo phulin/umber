@@ -9,15 +9,20 @@ if [[ "$target_dir" != /* ]]; then
   target_dir="$repo_root/$target_dir"
 fi
 umber_bin="$target_dir/release/umber"
-runs="${MEASURE_RUNS:-5}"
-inputs=(paragraph-wide.tex pages.tex math.tex math-nested.tex)
+runs="${MEASURE_RUNS:-1}"
+inputs=(
+  expand.tex
+  paragraph-wide.tex
+  paragraph-narrow.tex
+  math.tex
+  math-nested.tex
+  pages.tex
+  dvi.tex
+)
 
-if [[ "${MEASURE_CLEAN:-0}" == 1 ]]; then
-  cargo clean -p umber
-fi
 cargo build --release -p umber --features node-stats
 
-work_dir="$(mktemp -d "${TMPDIR:-/tmp}/umber-node-arena.XXXXXX")"
+work_dir="$(mktemp -d "${TMPDIR:-/tmp}/umber-allocation-owners.XXXXXX")"
 trap 'rm -rf "$work_dir"' EXIT
 
 for input in "${inputs[@]}"; do
@@ -40,16 +45,10 @@ for input in "${inputs[@]}"; do
       exit 1
     fi
     expected_hash="$artifact_hash"
-
-    printf 'NODE_SAMPLE workload=%s sample=%d dvi_sha256=%s\n' \
+    printf 'ALLOCATION_SAMPLE workload=%s sample=%d dvi_sha256=%s\n' \
       "$input" "$sample" "$artifact_hash"
     grep -E \
-      '^(NODE_MEMORY_TOTAL|NODE_STORAGE_PEAK |NODE_SURVIVOR|ALLOC_)|maximum resident set size|peak memory footprint' \
+      '^(ALLOC_|NODE_SURVIVOR|NODE_MEMORY_TOTAL|NODE_STORAGE_PEAK )|real |maximum resident set size|peak memory footprint' \
       "$run_dir/measurement"
-    if [[ "$sample" == 1 ]]; then
-      grep -E \
-        '^(NODE_HISTOGRAM|NODE_MEMORY |NODE_STORAGE_PEAK_COLUMN)' \
-        "$run_dir/measurement"
-    fi
   done
 done

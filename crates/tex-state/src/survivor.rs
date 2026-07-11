@@ -28,6 +28,12 @@ pub struct SurvivorMeasurement {
     pub release_nanos: u64,
     pub peak_promotion_scratch_logical_bytes: u64,
     pub peak_promotion_scratch_retained_bytes: u64,
+    pub source_words: u64,
+    pub child_bearing_nodes: u64,
+    pub remap_entries: u64,
+    pub pending_entries: u64,
+    pub peak_remap_entries: u64,
+    pub peak_pending_entries: u64,
 }
 
 #[cfg(feature = "node-stats")]
@@ -42,6 +48,12 @@ mod measurement {
     pub static RELEASE_NANOS: AtomicU64 = AtomicU64::new(0);
     pub static PEAK_SCRATCH_LOGICAL: AtomicU64 = AtomicU64::new(0);
     pub static PEAK_SCRATCH_RETAINED: AtomicU64 = AtomicU64::new(0);
+    pub static SOURCE_WORDS: AtomicU64 = AtomicU64::new(0);
+    pub static CHILD_BEARING_NODES: AtomicU64 = AtomicU64::new(0);
+    pub static REMAP_ENTRIES: AtomicU64 = AtomicU64::new(0);
+    pub static PENDING_ENTRIES: AtomicU64 = AtomicU64::new(0);
+    pub static PEAK_REMAP_ENTRIES: AtomicU64 = AtomicU64::new(0);
+    pub static PEAK_PENDING_ENTRIES: AtomicU64 = AtomicU64::new(0);
 
     #[allow(
         clippy::disallowed_methods,
@@ -61,6 +73,12 @@ mod measurement {
             release_nanos: RELEASE_NANOS.load(Ordering::Relaxed),
             peak_promotion_scratch_logical_bytes: PEAK_SCRATCH_LOGICAL.load(Ordering::Relaxed),
             peak_promotion_scratch_retained_bytes: PEAK_SCRATCH_RETAINED.load(Ordering::Relaxed),
+            source_words: SOURCE_WORDS.load(Ordering::Relaxed),
+            child_bearing_nodes: CHILD_BEARING_NODES.load(Ordering::Relaxed),
+            remap_entries: REMAP_ENTRIES.load(Ordering::Relaxed),
+            pending_entries: PENDING_ENTRIES.load(Ordering::Relaxed),
+            peak_remap_entries: PEAK_REMAP_ENTRIES.load(Ordering::Relaxed),
+            peak_pending_entries: PEAK_PENDING_ENTRIES.load(Ordering::Relaxed),
         }
     }
 }
@@ -425,6 +443,8 @@ impl<'a> PromotionCopy<'a> {
             + self.remapped.capacity() * map_entry;
         self.peak_scratch_logical = self.peak_scratch_logical.max(logical);
         self.peak_scratch_retained = self.peak_scratch_retained.max(retained);
+        measurement::PEAK_REMAP_ENTRIES.fetch_max(self.remapped.len() as u64, Ordering::Relaxed);
+        measurement::PEAK_PENDING_ENTRIES.fetch_max(self.pending.len() as u64, Ordering::Relaxed);
     }
 
     fn copy_list(&mut self, id: NodeListId) -> NodeListId {
@@ -450,11 +470,21 @@ impl<'a> PromotionCopy<'a> {
         self.remapped.insert(id, remapped);
         self.pending
             .extend((start as usize..start as usize + len as usize).rev());
+        #[cfg(feature = "node-stats")]
+        {
+            measurement::SOURCE_WORDS.fetch_add(u64::from(len), Ordering::Relaxed);
+            measurement::REMAP_ENTRIES.fetch_add(1, Ordering::Relaxed);
+            measurement::PENDING_ENTRIES.fetch_add(u64::from(len), Ordering::Relaxed);
+        }
         remapped
     }
 }
 
 fn remap_node_children(index: usize, copy: &mut PromotionCopy<'_>) {
+    #[cfg(feature = "node-stats")]
+    if node_has_children(&copy.out[index]) {
+        measurement::CHILD_BEARING_NODES.fetch_add(1, Ordering::Relaxed);
+    }
     match copy.out[index].clone() {
         Node::HList(mut box_node) => {
             box_node.children = copy.copy_list(box_node.children);
@@ -546,6 +576,48 @@ fn remap_node_children(index: usize, copy: &mut PromotionCopy<'_>) {
         | Node::MathOff(_)
         | Node::MathStyle(_)
         | Node::Nonscript => {}
+    }
+}
+
+#[cfg(feature = "node-stats")]
+fn node_has_children(node: &Node) -> bool {
+    match node {
+        Node::HList(_)
+        | Node::VList(_)
+        | Node::Unset(_)
+        | Node::Disc { .. }
+        | Node::Ins { .. }
+        | Node::Adjust(_)
+        | Node::FractionNoad(_)
+        | Node::MathChoice(_)
+        | Node::MathList(_) => true,
+        Node::MathNoad(noad) => {
+            matches!(noad.nucleus, MathField::SubBox(_) | MathField::SubMlist(_))
+                || matches!(
+                    noad.subscript,
+                    MathField::SubBox(_) | MathField::SubMlist(_)
+                )
+                || matches!(
+                    noad.superscript,
+                    MathField::SubBox(_) | MathField::SubMlist(_)
+                )
+        }
+        Node::Glue {
+            leader: Some(LeaderPayload::HList(_) | LeaderPayload::VList(_)),
+            ..
+        } => true,
+        Node::Char { .. }
+        | Node::Lig { .. }
+        | Node::Kern { .. }
+        | Node::Glue { .. }
+        | Node::Penalty(_)
+        | Node::Rule { .. }
+        | Node::Mark { .. }
+        | Node::Whatsit(_)
+        | Node::MathOn(_)
+        | Node::MathOff(_)
+        | Node::MathStyle(_)
+        | Node::Nonscript => false,
     }
 }
 

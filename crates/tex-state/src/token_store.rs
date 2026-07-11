@@ -82,6 +82,12 @@ impl TokenListBuilder {
         self.buf.clear();
     }
 
+    #[cfg(feature = "node-stats")]
+    #[must_use]
+    pub(crate) fn capacity(&self) -> usize {
+        self.buf.capacity()
+    }
+
     /// Interns the current token list and clears the builder for reuse.
     pub(crate) fn finish(&mut self, store: &mut TokenStore) -> TokenListId {
         let id = store.intern(&self.buf);
@@ -134,7 +140,11 @@ impl TokenStore {
 
     /// Interns `tokens`, returning a dense id for the live token-list content.
     pub(crate) fn intern(&mut self, tokens: &[Token]) -> TokenListId {
+        #[cfg(feature = "node-stats")]
+        let capacity_before = self.arena.capacity();
         if tokens.is_empty() {
+            #[cfg(feature = "node-stats")]
+            crate::measurement::record_token_intern(tokens.len(), true, 0);
             return Self::empty_id();
         }
 
@@ -148,6 +158,8 @@ impl TokenStore {
                 // Hash collisions are safe because the candidate span is
                 // compared by content before the id is reused.
                 if self.get(id) == tokens {
+                    #[cfg(feature = "node-stats")]
+                    crate::measurement::record_token_intern(tokens.len(), true, 0);
                     return id;
                 }
             }
@@ -163,6 +175,12 @@ impl TokenStore {
         self.arena.extend_from_slice(tokens);
         self.spans.push((start, len));
         self.index.entry(hash).or_default().push(id);
+        #[cfg(feature = "node-stats")]
+        crate::measurement::record_token_intern(
+            tokens.len(),
+            false,
+            self.arena.capacity().saturating_sub(capacity_before) * core::mem::size_of::<Token>(),
+        );
         id
     }
 
