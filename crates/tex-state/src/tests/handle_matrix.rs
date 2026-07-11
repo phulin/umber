@@ -22,7 +22,7 @@ enum HandleClass {
     Font,
     OriginList,
     ArenaOrigin,
-    DirectSourceOrigin,
+    SourcePosition,
     EpochNodeList,
     SurvivorNodeList,
     WorldInputRecord,
@@ -36,7 +36,7 @@ const HANDLE_CLASSES: &[HandleClass] = &[
     HandleClass::Font,
     HandleClass::OriginList,
     HandleClass::ArenaOrigin,
-    HandleClass::DirectSourceOrigin,
+    HandleClass::SourcePosition,
     HandleClass::EpochNodeList,
     HandleClass::SurvivorNodeList,
     HandleClass::WorldInputRecord,
@@ -135,15 +135,18 @@ fn exercise_rollback_reallocate(class: HandleClass) {
             assert!(universe.origin_if_live(stale).is_none(), "{class:?}");
             assert!(universe.origin_if_live(replacement).is_some(), "{class:?}");
         }
-        HandleClass::DirectSourceOrigin => {
+        HandleClass::SourcePosition => {
             let mut universe = Universe::new();
             let snapshot = universe.snapshot();
-            let stale = direct_origin(&mut universe, 0, b"s");
+            let stale = source_position(&mut universe, 0, b"s");
             universe.rollback(&snapshot);
-            let replacement = direct_origin(&mut universe, 0, b"r");
-            assert_ne!(stale.raw(), replacement.raw(), "{class:?}");
-            assert!(universe.origin_if_live(stale).is_none(), "{class:?}");
-            assert!(universe.origin_if_live(replacement).is_some(), "{class:?}");
+            let replacement = source_position(&mut universe, 0, b"r");
+            assert_ne!(stale, replacement, "{class:?}");
+            assert!(universe.source_span(stale, stale).is_err(), "{class:?}");
+            assert!(
+                universe.source_span(replacement, replacement).is_ok(),
+                "{class:?}"
+            );
         }
         HandleClass::EpochNodeList => {
             let mut universe = Universe::new();
@@ -275,16 +278,25 @@ fn exercise_fork(class: HandleClass) {
             assert!(parent.origin_if_live(child_only).is_none(), "{class:?}");
             assert!(child.origin_if_live(parent_only).is_none(), "{class:?}");
         }
-        HandleClass::DirectSourceOrigin => {
+        HandleClass::SourcePosition => {
             let mut parent = Universe::new();
-            let inherited = direct_origin(&mut parent, 0, b"i");
+            let inherited = source_position(&mut parent, 0, b"i");
             let mut child = parent.clone();
-            assert!(parent.origin_if_live(inherited).is_some(), "{class:?}");
-            assert!(child.origin_if_live(inherited).is_some(), "{class:?}");
-            let parent_only = direct_origin(&mut parent, 1, b"p");
-            let child_only = direct_origin(&mut child, 1, b"c");
-            assert!(parent.origin_if_live(child_only).is_none(), "{class:?}");
-            assert!(child.origin_if_live(parent_only).is_none(), "{class:?}");
+            assert!(
+                parent.source_span(inherited, inherited).is_ok(),
+                "{class:?}"
+            );
+            assert!(child.source_span(inherited, inherited).is_ok(), "{class:?}");
+            let parent_only = source_position(&mut parent, 1, b"p");
+            let child_only = source_position(&mut child, 1, b"c");
+            assert!(
+                parent.source_span(child_only, child_only).is_err(),
+                "{class:?}"
+            );
+            assert!(
+                child.source_span(parent_only, parent_only).is_err(),
+                "{class:?}"
+            );
         }
         HandleClass::EpochNodeList => {
             let mut parent = Universe::new();
@@ -391,11 +403,11 @@ fn exercise_cross_universe(class: HandleClass) {
             let other = Universe::new();
             assert!(other.origin_if_live(foreign).is_none(), "{class:?}");
         }
-        HandleClass::DirectSourceOrigin => {
+        HandleClass::SourcePosition => {
             let mut owner = Universe::new();
-            let foreign = direct_origin(&mut owner, 0, b"f");
+            let foreign = source_position(&mut owner, 0, b"f");
             let other = Universe::new();
-            assert!(other.origin_if_live(foreign).is_none(), "{class:?}");
+            assert!(other.source_span(foreign, foreign).is_err(), "{class:?}");
         }
         HandleClass::EpochNodeList => {
             let mut owner = Universe::new();
@@ -460,16 +472,20 @@ fn font(name: &str, bytes: &[u8]) -> LoadedFont {
     )
 }
 
-fn direct_origin(universe: &mut Universe, source: u32, bytes: &[u8]) -> crate::token::OriginId {
-    let registered = universe
-        .register_input_source(
+fn source_position(
+    universe: &mut Universe,
+    source: u32,
+    bytes: &[u8],
+) -> crate::source_map::SourcePos {
+    universe
+        .register_source(
             SourceId::new(source),
             SourceDescriptor::generated(Arc::from(bytes)),
         )
         .expect("register generated source");
-    registered
-        .direct_origin(0, 1)
-        .expect("one-byte source has a direct origin")
+    universe
+        .source_position(SourceId::new(source), 0)
+        .expect("registered source has a start position")
 }
 
 fn store_box(universe: &mut Universe, register: u16, penalty: i32) -> NodeListId {
