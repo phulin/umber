@@ -355,6 +355,49 @@ fn empty_post_discretionary_before_parfill_does_not_create_empty_final_line() {
 }
 
 #[test]
+fn unmet_looseness_retries_after_the_pretolerance_pass() {
+    let mut universe = Universe::new();
+    let break_glue = universe.intern_glue(GlueSpec {
+        width: sp(0),
+        stretch: sp(100),
+        stretch_order: Order::Normal,
+        shrink: sp(0),
+        shrink_order: Order::Normal,
+    });
+    let par_fill = universe.intern_glue(GlueSpec {
+        width: sp(0),
+        stretch: sp(1),
+        stretch_order: Order::Fil,
+        shrink: sp(0),
+        shrink_order: Order::Normal,
+    });
+    let nodes = vec![
+        rule(10),
+        Node::Glue {
+            spec: break_glue,
+            kind: GlueKind::Normal,
+            leader: None,
+        },
+        rule(10),
+        Node::Penalty(10_000),
+        Node::Glue {
+            spec: par_fill,
+            kind: GlueKind::ParFillSkip,
+            leader: None,
+        },
+    ];
+    let mut p = params(100);
+    p.pretolerance = 0;
+    p.tolerance = 10_000;
+    p.looseness = 1;
+    let mut hook = NoHyphenation;
+
+    let result = line_break(&universe, &nodes, p, &mut hook);
+
+    assert_eq!(result.breaks.len(), 2);
+}
+
+#[test]
 fn mathoff_breaks_only_before_following_glue_and_zeroes_break_width() {
     let mut universe = Universe::new();
     let glue = universe.intern_glue(GlueSpec {

@@ -331,6 +331,11 @@ fn run_pass<S: TypesetState>(
     }
 
     let chosen = choose_final(&candidates, &finals, params.looseness)?;
+    let best = *finals.iter().min_by_key(|&&id| candidates[id].demerits)?;
+    let actual_looseness = candidates[chosen].line as i32 - candidates[best].line as i32;
+    if !final_pass && actual_looseness != params.looseness {
+        return None;
+    }
     Some(reconstruct(nodes, &candidates, chosen))
 }
 
