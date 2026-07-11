@@ -2042,6 +2042,44 @@ fn explicit_hbox_migrates_vadjust_material_to_enclosing_vlist() {
 }
 
 #[test]
+fn nested_hbox_retains_vadjust_through_incompatible_unhbox() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\setbox10=\\vbox to8192pt{\\hbox{\\hbox{\\vadjust{A}}}}%\n\\vrule\\unhbox10\\hrule",
+    ));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("incompatible unboxing recovers without moving nested adjustment material");
+
+    let root = stores
+        .box_reg(10)
+        .expect("incompatible unhbox leaves box10 intact");
+    let Some(tex_state::node_arena::NodeRef::VList(vbox)) = stores.nodes(root).first() else {
+        panic!("box10 should remain a vbox");
+    };
+    let Some(tex_state::node_arena::NodeRef::HList(outer)) = stores.nodes(vbox.children).first()
+    else {
+        panic!("vbox should retain its outer hbox");
+    };
+    let Some(tex_state::node_arena::NodeRef::HList(inner)) = stores.nodes(outer.children).first()
+    else {
+        panic!("outer hbox should retain its inner hbox");
+    };
+    assert!(matches!(
+        stores.nodes(inner.children).first(),
+        Some(tex_state::node_arena::NodeRef::Adjust(_))
+    ));
+    assert!(
+        !stores
+            .current_page_nodes()
+            .iter()
+            .any(|node| matches!(node, Node::VList(_)))
+    );
+}
+
+#[test]
 fn empty_negative_width_hbox_does_not_gain_an_overfull_rule() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);
