@@ -271,6 +271,17 @@ where
             let _ = assignments::try_append_character(nest, token, stores)?;
             Ok(DispatchAction::Continue)
         }
+        Token::Char {
+            cat: Catcode::Parameter,
+            ..
+        } => {
+            // TeX.web §1046 routes `any_mode(mac_param)` through
+            // `report_illegal_case`. In particular, a stray `#` in outer
+            // vertical mode is consumed without starting a paragraph (and
+            // therefore without invoking the page builder).
+            crate::diagnostics::report_illegal_case(stores, token, nest.current_mode());
+            Ok(DispatchAction::Continue)
+        }
         Token::Char { ch, .. } => {
             if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
                 start_paragraph_before_replaying_character(nest, traced, input, stores)?;

@@ -1817,6 +1817,23 @@ fn showlists_reports_vertical_rule_and_ignored_prevdepth() {
 }
 
 #[test]
+fn macro_parameter_in_vertical_mode_does_not_build_recent_rule() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\hrule width7pt#\\showlists"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("forbidden macro parameter is diagnosed and consumed");
+
+    assert!(stores.current_page_nodes().is_empty());
+    assert!(matches!(stores.page_contributions(), [Node::Rule { .. }]));
+    let log = terminal_effect_text(&stores);
+    assert!(log.contains("You can't use `Char { ch: '#', cat: Parameter }' in vertical mode"));
+    assert!(log.contains("### recent contributions:"));
+}
+
+#[test]
 fn outer_paragraph_retains_zero_parskip_after_existing_material() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);
