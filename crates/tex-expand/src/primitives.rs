@@ -162,8 +162,11 @@ where
     let mut name = String::new();
     append_input_name_token(&mut name, first)?;
     loop {
-        let Some(token) = get_x_token_without_input_open(input, stores, recorder, hooks)? else {
-            break;
+        let token = match get_x_token_without_input_open(input, stores, recorder, hooks) {
+            Ok(Some(token)) => token,
+            Ok(None) => break,
+            Err(ExpandError::InputOpen { .. }) if !name.is_empty() => break,
+            Err(error) => return Err(error),
         };
         let semantic = crate::semantic_token(token);
         if matches!(

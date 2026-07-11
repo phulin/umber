@@ -12,7 +12,7 @@ use std::path::Path;
 use tex_lex::{InputSource, InputStack, LexError, MacroArguments, TokenListReplayKind};
 use tex_state::glue::GlueSpec;
 use tex_state::interner::Symbol;
-use tex_state::meaning::{ExpandablePrimitive, Meaning, UnexpandablePrimitive};
+use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::provenance::{DiagnosticSite, InsertedOriginKind, SynthesizedOriginKind};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
@@ -641,28 +641,6 @@ where
             meaning,
         )
     }
-
-    fn dispatch_raw_token_after(
-        &mut self,
-        saved: TracedTokenWord,
-        target: TracedTokenWord,
-        input: &mut InputStack<S>,
-        stores: &mut St,
-        recorder: &mut R,
-        hooks: &mut H,
-    ) -> Result<(), ExpandError> {
-        let target_meaning = expandable_symbol(stores, target).map(|symbol| stores.meaning(symbol));
-        if target_meaning == Some(Meaning::ExpandablePrimitive(ExpandablePrimitive::Input)) {
-            push_inserted_token(input, stores, saved, InsertedOriginKind::ExpandAfter);
-            let dispatch = self.dispatch_raw_token(target, input, stores, recorder, hooks)?;
-            push_dispatch_result(input, stores, dispatch);
-        } else {
-            let dispatch = self.dispatch_raw_token(target, input, stores, recorder, hooks)?;
-            push_dispatch_result(input, stores, dispatch);
-            push_inserted_token(input, stores, saved, InsertedOriginKind::ExpandAfter);
-        }
-        Ok(())
-    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -806,7 +784,7 @@ where
         let meaning = stores.meaning(symbol);
         recorder.record_meaning(symbol, meaning);
 
-        match dispatch_with_hooks(
+        let dispatched = dispatch_with_hooks(
             token,
             read.origin(),
             input,
@@ -814,7 +792,18 @@ where
             recorder,
             hooks,
             meaning,
-        )? {
+        );
+        let dispatched = match dispatched {
+            Ok(dispatched) => dispatched,
+            Err(ExpandError::MacroCall(args::MacroCallError::DoesNotMatchDefinition {
+                ..
+            })) => continue,
+            Err(ExpandError::MacroCall(args::MacroCallError::EndOfInput { .. })) => {
+                return Ok(None);
+            }
+            Err(error) => return Err(error),
+        };
+        match dispatched {
             Dispatch::Continue => {}
             Dispatch::Deliver(token) | Dispatch::DeliverNoExpand(token) => {
                 if intercept_alignment_token(input, stores, token) {
@@ -912,7 +901,7 @@ where
         let meaning = stores.meaning(symbol);
         recorder.record_meaning(symbol, meaning);
 
-        match dispatch::dispatch_without_input_open(
+        let dispatched = dispatch::dispatch_without_input_open(
             token,
             read.origin(),
             input,
@@ -920,7 +909,18 @@ where
             recorder,
             hooks,
             meaning,
-        )? {
+        );
+        let dispatched = match dispatched {
+            Ok(dispatched) => dispatched,
+            Err(ExpandError::MacroCall(args::MacroCallError::DoesNotMatchDefinition {
+                ..
+            })) => continue,
+            Err(ExpandError::MacroCall(args::MacroCallError::EndOfInput { .. })) => {
+                return Ok(None);
+            }
+            Err(error) => return Err(error),
+        };
+        match dispatched {
             Dispatch::Continue => {}
             Dispatch::Deliver(token) | Dispatch::DeliverNoExpand(token) => {
                 if intercept_alignment_token(input, stores, token) {

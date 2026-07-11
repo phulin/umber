@@ -400,10 +400,20 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    let opener = next_non_space_x(input, stores, recorder, hooks)?
-        .ok_or(ExecError::MissingToken { context })?;
+    let Some(opener) = next_non_space_x(input, stores, recorder, hooks)? else {
+        stores.world_mut().write_text(
+            tex_state::PrintSink::TerminalAndLog,
+            &format!("\n! Missing {{ inserted while scanning {context}.\n"),
+        );
+        return Ok(stores.freeze_node_list(&[]));
+    };
     if !assignments::has_catcode_meaning(stores, opener, Catcode::BeginGroup) {
-        return Err(ExecError::MissingToken { context });
+        stores.world_mut().write_text(
+            tex_state::PrintSink::TerminalAndLog,
+            &format!("\n! Missing {{ inserted while scanning {context}.\n"),
+        );
+        crate::push_tokens(input, stores, [opener]);
+        return Ok(stores.freeze_node_list(&[]));
     }
     scan_math_group_after_open(nest, input, stores, recorder, hooks)
 }

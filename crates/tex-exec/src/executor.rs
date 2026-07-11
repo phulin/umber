@@ -198,6 +198,19 @@ where
                         continue;
                     }
                     tex_expand::ExpandError::MacroCall(
+                        tex_expand::args::MacroCallError::DoesNotMatchDefinition {
+                            macro_name,
+                            context,
+                        },
+                    ) => {
+                        crate::push_traced_tokens(input, stores, [context]);
+                        stores.world_mut().write_text(
+                            tex_state::PrintSink::TerminalAndLog,
+                            &format!("\n! Use of {macro_name} doesn't match its definition.\n"),
+                        );
+                        continue;
+                    }
+                    tex_expand::ExpandError::MacroCall(
                         tex_expand::args::MacroCallError::ParagraphEndedBeforeComplete {
                             macro_name,
                             context,
@@ -259,6 +272,19 @@ where
                     stores.world_mut().write_text(
                         tex_state::PrintSink::TerminalAndLog,
                         &format!("\n! Text line contains an invalid character ({ch}).\n"),
+                    );
+                    continue;
+                }
+                Err(tex_expand::ExpandError::MacroCall(
+                    tex_expand::args::MacroCallError::DoesNotMatchDefinition {
+                        macro_name,
+                        context,
+                    },
+                )) => {
+                    crate::push_traced_tokens(input, stores, [context]);
+                    stores.world_mut().write_text(
+                        tex_state::PrintSink::TerminalAndLog,
+                        &format!("\n! Use of {macro_name} doesn't match its definition.\n"),
                     );
                     continue;
                 }
@@ -325,6 +351,25 @@ where
                 );
                 continue;
             }
+            Err(ExecError::UnsupportedAssignmentTarget) => {
+                stores.world_mut().write_text(
+                    tex_state::PrintSink::TerminalAndLog,
+                    "\n! Improper assignment target; this assignment is ignored.\n",
+                );
+                continue;
+            }
+            Err(
+                ExecError::UnexpectedMacroDelivery { .. }
+                | ExecError::UnexpectedExpandableDelivery { .. },
+            ) => continue,
+            Err(
+                ExecError::ExtraRightBraceOrForgottenEndgroup { .. }
+                | ExecError::ExtraRightBraceOrForgottenDollar { .. }
+                | ExecError::TooManyRightBraces { .. }
+                | ExecError::ExtraEndGroup { .. }
+                | ExecError::EndGroupMismatch { .. }
+                | ExecError::MathShiftGroupMismatch { .. },
+            ) => continue,
             Err(err) => {
                 stores.set_input_summary(input.summary());
                 return Err(err);
