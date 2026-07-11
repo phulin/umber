@@ -5,8 +5,10 @@ use std::time::{Duration, Instant};
 
 use tex_state::token::Catcode;
 use tex_state_benchmarks::{
+    DEEP_GROUP_GLOBAL_WRITE_BUDGET, DEEP_GROUP_LARGE_DEPTH, DEEP_GROUP_SMALL_DEPTH,
     DETACHED_CODE_TABLE_WRITE_BUDGET, LATENCY_NOISE_ALLOWANCE_NS, LATENCY_SCALE_BUDGET,
     RETAINED_BYTES_PER_CAPTURE_BUDGET, RETAINED_CAPTURES, WORKLOADS, WorkloadKind, build_workload,
+    deep_group_code_table_workload,
 };
 
 struct TrackingAllocator;
@@ -101,6 +103,7 @@ fn main() {
     }
     if workload_filter.is_none_or(|filter| filter == WorkloadKind::UnicodeCodeTables.name()) {
         check_detached_code_table_write(&mut failures);
+        check_deep_group_global_write(&mut failures);
     }
     if selected == 0 {
         eprintln!(
@@ -122,6 +125,60 @@ fn main() {
             failures.len()
         );
     }
+}
+
+fn check_deep_group_global_write(failures: &mut Vec<String>) {
+    let small_latency = deep_group_global_write_median(DEEP_GROUP_SMALL_DEPTH);
+    let large_latency = deep_group_global_write_median(DEEP_GROUP_LARGE_DEPTH);
+    let mut universe = deep_group_code_table_workload(DEEP_GROUP_LARGE_DEPTH);
+    let snapshot = universe.snapshot();
+    let (observation, ()) = allocation_delta(|| {
+        universe.set_catcode_global('\u{10fffc}', Catcode::Active);
+    });
+    black_box(&snapshot);
+    println!(
+        "unicode_code_tables deep_group_global_write {} {} {} {}",
+        small_latency.as_nanos(),
+        large_latency.as_nanos(),
+        observation.retained_bytes,
+        observation.peak_bytes,
+    );
+
+    let latency_limit = small_latency
+        .as_nanos()
+        .saturating_mul(LATENCY_SCALE_BUDGET)
+        .saturating_add(LATENCY_NOISE_ALLOWANCE_NS);
+    if large_latency.as_nanos() > latency_limit {
+        failures.push(format!(
+            "Unicode global write scales with group depth: small={}ns large={}ns limit={}ns",
+            small_latency.as_nanos(),
+            large_latency.as_nanos(),
+            latency_limit,
+        ));
+    }
+    if observation.retained_bytes > DEEP_GROUP_GLOBAL_WRITE_BUDGET {
+        failures.push(format!(
+            "Unicode deep-group global write retained {} bytes (budget {})",
+            observation.retained_bytes, DEEP_GROUP_GLOBAL_WRITE_BUDGET,
+        ));
+    }
+}
+
+// Group construction and snapshot capture stay outside this assignment-only
+// timing boundary so the row detects depth-dependent saved-root rewriting.
+#[allow(clippy::disallowed_methods)]
+fn deep_group_global_write_median(depth: usize) -> Duration {
+    let mut timings = Vec::with_capacity(31);
+    for _ in 0..31 {
+        let mut universe = deep_group_code_table_workload(depth);
+        let snapshot = universe.snapshot();
+        let start = Instant::now();
+        universe.set_catcode_global('\u{10fffc}', Catcode::Active);
+        timings.push(start.elapsed());
+        black_box(snapshot);
+    }
+    timings.sort_unstable();
+    timings[timings.len() / 2]
 }
 
 fn check_detached_code_table_write(failures: &mut Vec<String>) {

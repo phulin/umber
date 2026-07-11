@@ -11,6 +11,9 @@ use tex_state::{Snapshot, SourceId, Universe};
 
 pub const RETAINED_BYTES_PER_CAPTURE_BUDGET: u64 = 32 * 1024;
 pub const DETACHED_CODE_TABLE_WRITE_BUDGET: u64 = 8 * 1024;
+pub const DEEP_GROUP_GLOBAL_WRITE_BUDGET: u64 = 8 * 1024;
+pub const DEEP_GROUP_SMALL_DEPTH: usize = 8;
+pub const DEEP_GROUP_LARGE_DEPTH: usize = 4_096;
 pub const LATENCY_SCALE_BUDGET: u128 = 4;
 pub const LATENCY_NOISE_ALLOWANCE_NS: u128 = 25_000;
 pub const RETAINED_CAPTURES: usize = 32;
@@ -133,6 +136,15 @@ pub fn build_workload(kind: WorkloadKind, units: usize) -> Workload {
         WorkloadKind::Provenance => provenance_workload(units),
         WorkloadKind::UnicodeCodeTables => unicode_code_table_workload(units),
     }
+}
+
+#[must_use]
+pub fn deep_group_code_table_workload(depth: usize) -> Universe {
+    let mut universe = Universe::new();
+    for _ in 0..depth {
+        universe.enter_group();
+    }
+    universe
 }
 
 fn input_workload(bytes: usize) -> Workload {
