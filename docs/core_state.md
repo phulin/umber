@@ -476,6 +476,12 @@ cells[i] = new
 - Nodes are born into a **per-epoch bump arena**. The overwhelming common
   case — node dies within its page — is freed by arena truncation (rollback)
   or wholesale release (after shipout). No free lists, no tracing GC.
+- Every frozen epoch list receives a generation-tagged allocation identity
+  from the common runtime-identity substrate (§10.3). `NodeArena` resolves its
+  dense allocation slot to the compact word span in O(1). Identity and storage
+  watermarks roll back atomically; the generation does not rewind, so equal or
+  covering word-span reuse cannot revive a discarded `NodeListId`. Survivor
+  handles retain their root-relative packed representation and ownership rules.
 - The epoch arena is one compact eight-byte `NodeWord` stream plus aggregate
   per-kind sidecars. Immutable packed `NodeListId` spans are minted only by
   `NodeListBuilder::finish(&mut NodeArena)`. Builders are owned scratch

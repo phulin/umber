@@ -6,7 +6,7 @@ fn placeholder_ids_preserve_raw_values_inside_the_crate() {
     assert_eq!(TokenListId::new(1).raw(), 1);
     assert_eq!(OriginListId::new(6).raw(), 6);
     assert_eq!(GlueId::new(2).raw(), 2);
-    let nodes = NodeListId::new_epoch(3, 4);
+    let nodes = NodeListId::testing_epoch(3, 4);
     assert_eq!(nodes.start(), 3);
     assert_eq!(nodes.len(), 4);
     assert_eq!(FontId::new(4).raw(), 4);
@@ -19,8 +19,23 @@ fn canonical_origin_list_id_is_empty() {
 }
 
 #[test]
-fn packed_node_list_id_is_exactly_one_word() {
-    assert_eq!(size_of::<NodeListId>(), 8);
+fn generation_tagged_node_list_id_is_exactly_two_words() {
+    assert_eq!(size_of::<NodeListId>(), 16);
+}
+
+#[test]
+fn only_detached_node_list_references_are_serializable() {
+    let detached = NodeListId::testing_epoch(3, 4);
+    let bytes = bincode::serialize(&detached).expect("detached DTO reference serializes");
+    let restored: NodeListId =
+        bincode::deserialize(&bytes).expect("detached DTO reference deserializes");
+    assert_eq!(restored.arena(), ArenaRef::Epoch);
+    assert_eq!(restored.start(), 3);
+    assert_eq!(restored.len(), 4);
+
+    let mut arena = crate::node_arena::NodeArena::new();
+    let live = arena.append(&[crate::node::Node::Penalty(1)]);
+    assert!(bincode::serialize(&live).is_err());
 }
 
 #[test]
@@ -31,14 +46,10 @@ fn epoch_node_list_boundaries_round_trip() {
         (0, (1 << 31) - 1),
         (u32::MAX - ((1 << 31) - 1), (1 << 31) - 1),
     ] {
-        let id = NodeListId::new_epoch(start, len);
+        let id = NodeListId::testing_epoch(start, len);
         assert_eq!(id.arena(), ArenaRef::Epoch);
         assert_eq!(id.start(), start);
         assert_eq!(id.len(), len);
-        assert_eq!(
-            NodeListId::decode_box_word(NodeListId::encode_box_word(Some(id))),
-            Some(id)
-        );
     }
 }
 
@@ -60,10 +71,12 @@ fn survivor_node_list_boundaries_round_trip() {
 }
 
 #[test]
-fn box_word_uses_canonical_none_without_translating_live_ids() {
-    let zero = NodeListId::new_epoch(0, 0);
-    assert_eq!(NodeListId::encode_box_word(Some(zero)), 0);
-    assert_eq!(NodeListId::decode_box_word(0), Some(zero));
+fn box_word_uses_canonical_none_without_translating_survivor_ids() {
+    let zero = NodeListId::testing_survivor(0, 0, 0);
+    assert_eq!(
+        NodeListId::decode_box_word(NodeListId::encode_box_word(Some(zero))),
+        Some(zero)
+    );
     assert_eq!(NodeListId::encode_box_word(None), u64::MAX);
     assert_eq!(NodeListId::decode_box_word(u64::MAX), None);
 }
@@ -71,13 +84,13 @@ fn box_word_uses_canonical_none_without_translating_live_ids() {
 #[test]
 #[should_panic(expected = "epoch node-list length exceeds encoding")]
 fn epoch_length_above_capacity_is_rejected() {
-    let _ = NodeListId::new_epoch(0, 1 << 31);
+    let _ = NodeListId::testing_epoch(0, 1 << 31);
 }
 
 #[test]
 #[should_panic(expected = "epoch node-list span overflows storage index")]
 fn epoch_span_overflow_is_rejected() {
-    let _ = NodeListId::new_epoch(u32::MAX, 1);
+    let _ = NodeListId::testing_epoch(u32::MAX, 1);
 }
 
 #[test]

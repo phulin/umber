@@ -10,14 +10,15 @@ use crate::node::{
     UnsetNode, UnsetNodeFields, Whatsit,
 };
 use crate::scaled::{GlueSetRatio, Scaled};
+use proptest::prelude::*;
 
 #[test]
 fn node_layout_baseline() {
-    assert_eq!(std::mem::size_of::<Node>(), 64);
-    assert_eq!(std::mem::size_of::<BoxNode>(), 40);
-    assert_eq!(std::mem::size_of::<crate::node::UnsetNode>(), 40);
+    assert_eq!(std::mem::size_of::<Node>(), 80);
+    assert_eq!(std::mem::size_of::<BoxNode>(), 48);
+    assert_eq!(std::mem::size_of::<crate::node::UnsetNode>(), 48);
     assert_eq!(std::mem::size_of::<crate::node::Whatsit>(), 48);
-    assert_eq!(std::mem::size_of::<NodeListId>(), 8);
+    assert_eq!(std::mem::size_of::<NodeListId>(), 16);
 }
 
 #[test]
@@ -80,7 +81,7 @@ fn nested_lists_build_bottom_up_and_read_back() {
 
 #[test]
 #[cfg(debug_assertions)]
-#[should_panic(expected = "child node-list span must be frozen below the parent span")]
+#[should_panic(expected = "child node-list id is not live")]
 fn bottom_up_debug_assert_fires_on_hand_constructed_violation() {
     let mut arena = NodeArena::new();
     let future_id = NodeListId::testing_epoch(0, 1);
@@ -105,7 +106,14 @@ fn watermark_truncation_drops_exactly_the_suffix() {
     assert_eq!(arena.get(kept, &survivors).len(), 1);
     assert!(!arena.contains(dropped));
     let replacement = one_char(&mut arena, 'c');
-    assert_eq!(replacement.start(), dropped.start());
+    assert_eq!(
+        arena.span(replacement).expect("replacement is live").start,
+        1
+    );
+    assert!(
+        !arena.contains(dropped),
+        "reallocation must not revive stale id"
+    );
     assert_eq!(
         arena.get(replacement, &survivors).first(),
         Some(NodeRef::Char {
@@ -113,6 +121,45 @@ fn watermark_truncation_drops_exactly_the_suffix() {
             ch: 'c',
         })
     );
+}
+
+#[test]
+fn covering_reallocation_never_revives_a_discarded_epoch_handle() {
+    let mut arena = NodeArena::new();
+    let kept = one_char(&mut arena, 'a');
+    let mark = arena.watermark();
+    let stale = arena.append(&[Node::Penalty(1), Node::Penalty(2)]);
+
+    arena.truncate_to(mark);
+    let covering = arena.append(&[Node::Penalty(3), Node::Penalty(4), Node::Penalty(5)]);
+
+    assert!(arena.contains(kept));
+    assert!(arena.contains(covering));
+    assert!(!arena.contains(stale));
+}
+
+proptest! {
+    #[test]
+    fn arbitrary_reallocation_sequences_never_revive_discarded_epoch_handles(
+        stale_width in 1_usize..32,
+        replacement_widths in prop::collection::vec(1_usize..32, 1..128),
+    ) {
+        let mut arena = NodeArena::new();
+        let retained = one_char(&mut arena, 'r');
+        let mark = arena.watermark();
+        let stale_nodes = vec![Node::Penalty(1); stale_width];
+        let stale = arena.append(&stale_nodes);
+
+        arena.truncate_to(mark);
+        prop_assert!(arena.contains(retained));
+        prop_assert!(!arena.contains(stale));
+
+        for width in replacement_widths {
+            let replacement = arena.append(&vec![Node::Penalty(2); width]);
+            prop_assert!(arena.contains(replacement));
+            prop_assert!(!arena.contains(stale));
+        }
+    }
 }
 
 #[test]
@@ -137,6 +184,20 @@ fn builder_reuse_after_finish_leaves_buffer_empty() {
         &[Node::MathOff(Scaled::from_raw(0))]
     );
     assert!(builder.is_empty());
+}
+
+#[test]
+fn arena_fork_retains_ancestry_and_separates_new_allocations() {
+    let mut parent = NodeArena::new();
+    let inherited = one_char(&mut parent, 'a');
+    let mut child = parent.clone();
+    let parent_only = one_char(&mut parent, 'p');
+    let child_only = one_char(&mut child, 'c');
+
+    assert!(parent.contains(inherited));
+    assert!(child.contains(inherited));
+    assert!(!parent.contains(child_only));
+    assert!(!child.contains(parent_only));
 }
 
 #[test]

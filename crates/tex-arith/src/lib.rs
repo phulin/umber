@@ -84,9 +84,13 @@ impl Scaled {
 }
 
 const fn scaled_from_wide_saturating(value: i64) -> Scaled {
-    if value > i32::MAX as i64 {
+    scaled_from_widest_saturating(value as i128)
+}
+
+const fn scaled_from_widest_saturating(value: i128) -> Scaled {
+    if value > i32::MAX as i128 {
         Scaled::MAX
-    } else if value < i32::MIN as i64 {
+    } else if value < i32::MIN as i128 {
         Scaled::MIN
     } else {
         Scaled::from_raw(value as i32)
@@ -116,6 +120,34 @@ pub const fn saturating_sub(left: Scaled, right: Scaled) -> Scaled {
 #[must_use]
 pub const fn saturating_mul(factor: i32, value: Scaled) -> Scaled {
     scaled_from_wide_saturating(factor as i64 * value.0 as i64)
+}
+
+/// Computes TeX82's horizontal text-accent displacement exactly.
+///
+/// This is `round((w-a)/2 + h*t - x*s)`, where widths and heights are scaled
+/// dimensions and `t`/`s` are scaled slant ratios. TeX's runtime `round`
+/// convention takes half ties away from zero. Widened integer arithmetic
+/// preserves that rule without a semantic `real`.
+#[must_use]
+pub fn text_accent_delta(
+    base_width: Scaled,
+    accent_width: Scaled,
+    base_height: Scaled,
+    base_slant: Scaled,
+    accent_x_height: Scaled,
+    accent_slant: Scaled,
+) -> Scaled {
+    let unity = i128::from(Scaled::UNITY);
+    let numerator = (i128::from(base_width.raw()) - i128::from(accent_width.raw())) * unity
+        + 2 * i128::from(base_height.raw()) * i128::from(base_slant.raw())
+        - 2 * i128::from(accent_x_height.raw()) * i128::from(accent_slant.raw());
+    let denominator = 2 * unity;
+    let rounded = if numerator >= 0 {
+        (numerator + denominator / 2) / denominator
+    } else {
+        -((-numerator + denominator / 2) / denominator)
+    };
+    scaled_from_widest_saturating(rounded)
 }
 
 /// Errors produced by TeX scaled arithmetic.
