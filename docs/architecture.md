@@ -176,10 +176,13 @@ supply.
   count, and the nested conditional depth observed during skip/resume scanning.
   Source reopen identity is owned by the `World` input record in the outer
   snapshot: each file-backed source frame carries its explicit `InputRecordId`,
-  which pins file/editor content by content hash, reopens that exact source,
-  then applies the lexer-owned source-frame summary. The record id is not
-  inferred from the source-frame ordinal: auxiliary reads such as TFM loads
-  share the `World` input log but never become text input frames.
+  a generation-tagged runtime capability which pins file/editor content by
+  content hash, reopens that exact source, then applies the lexer-owned
+  source-frame summary. Rollback advances the World record generation before
+  a discarded dense slot is reused, and cloned timelines reject each other's
+  post-fork records. The record id is not inferred from the source-frame
+  ordinal: auxiliary reads such as TFM loads share the `World` input log but
+  never become text input frames.
   `last_source_frame` is also summarized with its source id so snapshots taken
   just after a source pops still have final source coordinates for EOF/current
   input diagnostics. The summary separately retains the next-source-id
@@ -1048,6 +1051,16 @@ immutable tables, with mutable font state kept behind the state timeline.
   compatibility; OpenType/TrueType via a
   vendored shaper for the modern path. All file access through `World`
   (fonts are inputs; cross-run memo sharing needs them pinned).
+  The TFM parser is a TeX82-compatible validation boundary: its size words use
+  `read_sixteen`'s 15-bit domain, section totals must equal `lf`, and complete
+  trailing words after `lf` are ignored. Declared `bc..ec` membership is kept
+  distinct from `char_exists` (a nonzero width index). Raw width-zero
+  `char_info` tags are therefore structurally validated; next-larger links use
+  range and cycle checks without requiring the target to exist, while
+  lig/kern match and replacement operands and extensible recipe pieces apply
+  TeX's stronger existence check (except the declared boundary character
+  match). Rust additionally bounds every table index, restart, skip, and
+  traversal before publishing the immutable metrics.
 - `tex-exec` applies TeX82's TFM filename rule (`.tfm` by default), then asks
   the driver hook to resolve the path through the narrow `InputReadState`
   capability. The CLI probes the principal input directory followed by the

@@ -446,11 +446,15 @@ cells[i] = new
   source frame uses it to encode in-range direct positions without repeating
   a source-map lookup; the capability exposes neither raw positions nor raw
   origin encodings, and wide fallback still goes through aggregate validation.
-- Store snapshots add region/backing lengths and an O(1) region-identity mark.
-  Aggregate rollback truncates these with provenance while `World` restores
-  its input-record watermark. Logical `SourcePos` ranges are never reused,
-  including across sibling forks, so reused `SourceId`, `InputRecordId`, or
-  backing slots cannot make a stale direct origin observe discarded content.
+- Store snapshots add region/backing lengths, the logical-position state, and
+  an O(1) region-identity mark. Aggregate rollback truncates these with
+  provenance while `World` restores its input-record identity watermark.
+  `InputRecordId` is a generation-tagged live capability: rollback advances
+  the non-restored generation before a discarded record slot can be reused, so
+  stale or foreign records cannot resolve to replacement content. Logical
+  `SourcePos` ranges are never reused in ordinary allocation, including across
+  sibling forks, and region identity validation prevents reused `SourceId` or
+  backing slots from making stale direct origins observe discarded content.
   Resolver line starts are derived lazily from stable immutable backing; no
   mutable cache keyed by reusable ids is retained. Source-map identity and
   diagnostic bytes are excluded from semantic hashing.
@@ -543,12 +547,17 @@ Nothing in the engine touches the OS directly. A single `World` object owns:
 
 - **Content-addressed inputs**: `World::read_file` and `\openin` reads
   return bytes plus a stable `ContentHash`, and append an `InputRecord` to
-  the snapshot-owned World state. The real backend is the only engine code
-  that uses host files; the in-memory backend exposes the same API for
-  hermetic tests and corpus drivers. `\read` terminal input is also owned by
-  `World`; in-memory worlds keep a replayable terminal line buffer plus a
-  snapshot-owned cursor, while real worlds read stdin only through this
-  boundary.
+  the snapshot-owned World state. Its `InputRecordId` is a two-word runtime
+  capability validated by `World`; snapshots retain an O(1) identity
+  watermark and rollback never revives a discarded record when its dense slot
+  is reused. Cloned timelines accept inherited records but reject each other's
+  later reads. The capability has no serialized representation; format loading
+  starts a fresh World/session identity timeline. The real backend is the only
+  engine code that uses host files;
+  the in-memory backend exposes the same API for hermetic tests and corpus
+  drivers. `\read` terminal input is also owned by `World`; in-memory worlds
+  keep a replayable terminal line buffer plus a snapshot-owned cursor, while
+  real worlds read stdin only through this boundary.
 - **Output streams** (`\openout`/`\write`, aux/toc/idx): writes append to an
   effect log; stream buffer state *including partial lines* is snapshot
   state. TeX's own defer-`\write`-to-shipout semantics is the model —
@@ -688,9 +697,11 @@ pub struct Snapshot {
   (`\if`, `\or`, or `\else`), whether condition operands are still being
   evaluated, current/previous taken bits, `\ifcase` `\or` count, and skip
   nesting depth needed to resume token-level skipping.
-  Durable source reopen identity is not a `tex-lex` field; it is part of the
-  `World` input/effect snapshot that pins file/editor content by content hash
-  and recreates the `InputSource` before these frame summaries are applied.
+  Durable source reopen identity is not allocated by `tex-lex`; each frame
+  carries a generation-tagged `World` input-record capability. The `World`
+  snapshot retains its identity watermark and pins file/editor content by
+  content hash, then validates the record and recreates the `InputSource`
+  before these frame summaries are applied.
 - **Rollback**: replay journal to marker (restoring cells and old code-table
   roots); truncate arenas to watermarks; release survivor owners held by the
   truncated box-register journal records while restored registers reclaim

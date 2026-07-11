@@ -441,6 +441,7 @@ fn world_and_source_map_rollback_reuse_ids_and_positions_atomically() {
         )
         .expect("source-map integration operation succeeds");
     universe.rollback(&snapshot);
+    assert!(universe.world().input_record(old_record).is_none());
     assert_eq!(
         universe.source_position(crate::SourceId::new(0), 0),
         Err(SourceMapError::UnknownSource)
@@ -454,7 +455,16 @@ fn world_and_source_map_rollback_reuse_ids_and_positions_atomically() {
         .world_mut()
         .read_file("input.tex")
         .expect("source-map integration operation succeeds");
-    assert_eq!(new.record(), old_record);
+    assert_eq!(new.record().raw(), old_record.raw());
+    assert_ne!(new.record(), old_record);
+    assert!(universe.world().input_record(old_record).is_none());
+    assert_eq!(
+        universe.register_source(
+            crate::SourceId::new(0),
+            SourceDescriptor::world(old_record, old.bytes().len() as u64),
+        ),
+        Err(SourceMapError::MissingWorldInput)
+    );
     let new_start = universe
         .register_source(
             crate::SourceId::new(0),

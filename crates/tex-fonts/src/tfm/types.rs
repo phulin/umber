@@ -140,6 +140,14 @@ pub struct CharacterBounds {
     pub ec: u8,
 }
 
+impl CharacterBounds {
+    /// Returns whether a byte code lies in the TFM's declared character range.
+    #[must_use]
+    pub const fn contains(self, code: u8) -> bool {
+        code >= self.bc && code <= self.ec
+    }
+}
+
 /// A present character and its unpacked `char_info` fields.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Character {

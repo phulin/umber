@@ -99,12 +99,15 @@ fn source_origin_accessors_are_covered_for_resolver_inputs() {
 #[test]
 fn resolver_derives_utf8_crlf_and_missing_final_newline_coordinates_from_world_backing() {
     let mut stores = stores_with_input("utf8.tex", "α\r\nbéta".as_bytes());
+    let content = stores
+        .world_mut()
+        .read_file("utf8.tex")
+        .expect("source-map input can be reread");
+    let record_id = content.record();
     let record = stores
         .world()
-        .input_records()
-        .first()
+        .input_record(record_id)
         .expect("source-map operation succeeds");
-    let record_id = crate::InputRecordId::new(0);
     stores
         .register_source(
             crate::SourceId::new(9),

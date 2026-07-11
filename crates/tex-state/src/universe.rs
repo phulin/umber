@@ -1500,8 +1500,7 @@ impl Universe {
         {
             let record = self
                 .world
-                .input_records()
-                .get(input_record.raw() as usize)
+                .input_record(input_record)
                 .ok_or(SourceMapError::MissingWorldInput)?;
             if u64::try_from(record.len()).ok() != Some(byte_len) {
                 return Err(SourceMapError::WorldInputLengthMismatch);
@@ -1550,7 +1549,7 @@ impl Universe {
     pub(crate) fn source_backing_bytes(&self, region: SourceRegion) -> Option<&[u8]> {
         match region.backing {
             SourceBacking::World(record_id) => {
-                let record = self.world.input_records().get(record_id.raw() as usize)?;
+                let record = self.world.input_record(record_id)?;
                 self.world.input_content(record.hash())
             }
             SourceBacking::Generated(_) => self
