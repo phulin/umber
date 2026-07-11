@@ -321,6 +321,11 @@ fn node_memory_measurement_is_nonsemantic_and_covers_recycled_storage() {
             && column.logical_bytes == 0
             && column.retained_payload_bytes > 0
     }));
+    assert!(columns.iter().any(|column| {
+        column.name == "survivor.root_lookup_entries"
+            && column.element_bytes == core::mem::size_of::<(crate::ids::SurvivorRootId, usize)>()
+            && column.logical_bytes > 0
+    }));
     assert_eq!(semantic_hash, universe.snapshot().state_hash());
 
     let timing = crate::survivor::survivor_measurement();

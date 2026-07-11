@@ -1012,6 +1012,49 @@ fn same_epoch_list_stored_twice_promotes_to_independent_roots() {
 }
 
 #[test]
+fn survivor_fork_keeps_inherited_roots_and_separates_new_roots() {
+    let mut parent = Stores::new();
+    let inherited_epoch = one_char(&mut parent, 'i');
+    let inherited = parent.prepare_box_value(inherited_epoch);
+    let mut child = parent.clone();
+
+    assert_eq!(
+        parent.nodes(inherited).to_vec(),
+        child.nodes(inherited).to_vec()
+    );
+
+    let parent_epoch = one_char(&mut parent, 'p');
+    let parent_only = parent.prepare_box_value(parent_epoch);
+    let child_epoch = one_char(&mut child, 'c');
+    let child_only = child.prepare_box_value(child_epoch);
+
+    assert_ne!(parent_only.arena(), child_only.arena());
+    assert!(parent.survivors.contains(parent_only));
+    assert!(!parent.survivors.contains(child_only));
+    assert!(child.survivors.contains(child_only));
+    assert!(!child.survivors.contains(parent_only));
+    assert!(std::panic::catch_unwind(|| parent.nodes(child_only)).is_err());
+    assert!(std::panic::catch_unwind(|| child.nodes(parent_only)).is_err());
+}
+
+#[test]
+fn released_survivor_key_stays_stale_when_its_storage_is_recycled() {
+    let mut stores = Stores::new();
+    let old_epoch = one_char(&mut stores, 'o');
+    let stale = stores.prepare_box_value(old_epoch);
+    stores.dec_survivor_ref(stale);
+
+    let new_epoch = one_char(&mut stores, 'n');
+    let replacement = stores.prepare_box_value(new_epoch);
+
+    assert_ne!(stale.arena(), replacement.arena());
+    assert!(!stores.survivors.contains(stale));
+    assert!(stores.survivors.contains(replacement));
+    assert_eq!(stores.testing_survivor_recycled_buffer_uses(), 1);
+    assert!(std::panic::catch_unwind(|| stores.nodes(stale)).is_err());
+}
+
+#[test]
 fn repeated_survivor_replacement_recycles_buffers_without_reviving_stale_ids() {
     const REPLACEMENTS: usize = 20_000;
 
