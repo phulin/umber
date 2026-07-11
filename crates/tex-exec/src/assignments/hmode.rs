@@ -408,13 +408,14 @@ pub(crate) fn reconstitute(
         })
         .collect();
     let mut i = 0;
+    let mut left_boundary_done = no_left_boundary;
     while i < chars.len() {
         let current = chars[i];
-        if !no_left_boundary
-            && i == 0
-            && let Some(node) = boundary_command_node(stores, current.into_pending(), true)
-        {
-            out.push(node);
+        if !left_boundary_done && i == 0 {
+            left_boundary_done = true;
+            if let Some(node) = boundary_command_node(stores, current.into_pending(), true) {
+                out.push(node);
+            }
         }
         if i + 1 < chars.len()
             && current.font == chars[i + 1].font
