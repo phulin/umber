@@ -137,11 +137,21 @@ fn group_mismatch_errors_use_tex_primary_text() {
 
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new("\\begingroup}"));
-    let err = Executor::new()
-        .run(&mut input, &mut stores)
-        .expect_err("right brace cannot close begingroup");
+    stores.enter_group_with_kind(tex_state::GroupKind::SemiSimple);
+    let mut input = InputStack::new(MemoryInput::new("}"));
+    let token = tex_expand::get_x_token(&mut input, &mut stores)
+        .expect("right brace tokenizes")
+        .expect("right brace exists");
+    let err = crate::dispatch::dispatch_delivered_token(
+        &mut ModeNest::new(),
+        token,
+        &mut input,
+        &mut stores,
+        &mut NoopExecHooks,
+    )
+    .expect_err("direct dispatch exposes the recoverable mismatch");
     assert_eq!(err.to_string(), "Extra }, or forgotten \\endgroup.");
+    assert_ne!(err.primary_origin(), Some(OriginId::UNKNOWN));
 
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
@@ -153,9 +163,19 @@ fn group_mismatch_errors_use_tex_primary_text() {
 
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new("{\\endgroup"));
-    let err = Executor::new()
-        .run(&mut input, &mut stores)
-        .expect_err("endgroup cannot close brace group");
+    stores.enter_group_with_kind(tex_state::GroupKind::Simple);
+    let mut input = InputStack::new(MemoryInput::new("\\endgroup"));
+    let token = tex_expand::get_x_token(&mut input, &mut stores)
+        .expect("endgroup tokenizes")
+        .expect("endgroup exists");
+    let err = crate::dispatch::dispatch_delivered_token(
+        &mut ModeNest::new(),
+        token,
+        &mut input,
+        &mut stores,
+        &mut NoopExecHooks,
+    )
+    .expect_err("direct dispatch exposes the recoverable mismatch");
     assert_eq!(err.to_string(), "\\endgroup ended a group started by {");
+    assert_ne!(err.primary_origin(), Some(OriginId::UNKNOWN));
 }

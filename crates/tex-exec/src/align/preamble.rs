@@ -1,8 +1,9 @@
-use tex_expand::{ExpansionHooks, NoopRecorder, get_x_token_with_recorder_and_hooks};
+use tex_expand::{ExpansionHooks, NoopRecorder, expand_once_then_get_token_with_hooks};
 use tex_lex::{InputSource, InputStack};
 use tex_state::env::banks::GlueParam;
 use tex_state::ids::{GlueId, TokenListId};
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
+use tex_state::provenance::InsertedOriginKind;
 use tex_state::token::{Catcode, Token, TracedTokenWord};
 use tex_state::{GroupKind, Universe};
 
@@ -116,9 +117,15 @@ where
     let mut builder = scanner.stores.token_list_builder();
     let mut has_material = false;
     loop {
-        let token = scanner.next_token()?.ok_or(ExecError::MissingToken {
-            context: "alignment preamble",
-        })?;
+        let token = match scanner.next_token()? {
+            Some(PreambleToken::Token(token)) => token,
+            Some(PreambleToken::RecoveryCr) => {
+                scanner.lookahead = Some(PreambleToken::RecoveryCr);
+                scanner.report_missing_parameter();
+                return Ok(scanner.stores.finish_token_list(&mut builder));
+            }
+            None => unreachable!("preamble EOF is converted to recovery tokens"),
+        };
         if is_parameter_token(token) {
             return Ok(scanner.stores.finish_token_list(&mut builder));
         }
@@ -142,11 +149,8 @@ where
         if scanner.at_template_level()
             && (is_alignment_tab_token(token) || is_cr_token(scanner.stores, token))
         {
-            scanner.lookahead = Some(token);
-            scanner.stores.world_mut().write_text(
-                tex_state::PrintSink::TerminalAndLog,
-                "\n! Missing # inserted in alignment preamble.\nThere should be exactly one # between &'s, when an\n\\halign or \\valign is being set up. In this case you had\nnone, so I've put one in; maybe that will work.\n",
-            );
+            scanner.lookahead = Some(PreambleToken::Token(token));
+            scanner.report_missing_parameter();
             return Ok(scanner.stores.finish_token_list(&mut builder));
         }
         builder.push(token);
@@ -164,9 +168,17 @@ where
 {
     let mut builder = scanner.stores.token_list_builder();
     loop {
-        let token = scanner.next_token()?.ok_or(ExecError::MissingToken {
-            context: "alignment preamble",
-        })?;
+        let token = match scanner.next_token()? {
+            Some(PreambleToken::Token(token)) => token,
+            Some(PreambleToken::RecoveryCr) => {
+                builder.push(end_template);
+                return Ok((
+                    scanner.stores.finish_token_list(&mut builder),
+                    PreambleTerminator::Cr,
+                ));
+            }
+            None => unreachable!("preamble EOF is converted to recovery tokens"),
+        };
         if is_parameter_token(token) {
             scanner.stores.world_mut().write_text(
                 tex_state::PrintSink::TerminalAndLog,
@@ -208,9 +220,16 @@ struct PreambleScanner<'a, S, H> {
     input: &'a mut InputStack<S>,
     stores: &'a mut Universe,
     hooks: &'a mut H,
-    lookahead: Option<Token>,
+    lookahead: Option<PreambleToken>,
     current_tabskip: GlueId,
     brace_depth: i32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PreambleToken {
+    Token(Token),
+    /// TeX82's inaccessible `frozen_cr`, used only by scanner recovery.
+    RecoveryCr,
 }
 
 impl<'a, S, H> PreambleScanner<'a, S, H>
@@ -242,7 +261,8 @@ where
         let Some(token) = self.next_token()? else {
             return Ok(false);
         };
-        if self.at_template_level() && is_alignment_tab_token(token) {
+        if matches!(token, PreambleToken::Token(token) if self.at_template_level() && is_alignment_tab_token(token))
+        {
             Ok(true)
         } else {
             self.lookahead = Some(token);
@@ -250,7 +270,7 @@ where
         }
     }
 
-    fn next_token(&mut self) -> Result<Option<Token>, ExecError> {
+    fn next_token(&mut self) -> Result<Option<PreambleToken>, ExecError> {
         if let Some(token) = self.lookahead.take() {
             return Ok(Some(token));
         }
@@ -258,14 +278,18 @@ where
             // TeX82's get_preamble_token copies ordinary tokens without
             // expansion. Template macros must observe the state of each cell
             // when they are replayed; only \span requests an expansion here.
-            let Some(mut token) = self.next_raw()? else {
-                return Ok(None);
+            let Some(read) = self.next_raw()? else {
+                return Ok(Some(self.recover_preamble_eof()));
+            };
+            let PreambleToken::Token(mut token) = read else {
+                return Ok(Some(read));
             };
             while is_span_token(self.stores, token) {
                 let Some(expanded) = self.next_expanded()? else {
-                    return Err(ExecError::MissingToken {
-                        context: "token after \\span",
-                    });
+                    return Ok(Some(self.recover_preamble_eof()));
+                };
+                let PreambleToken::Token(expanded) = expanded else {
+                    return Ok(Some(expanded));
                 };
                 token = expanded;
             }
@@ -273,25 +297,94 @@ where
             if self.try_scan_tabskip_assignment(token)? {
                 continue;
             }
-            return Ok(Some(token));
+            return Ok(Some(PreambleToken::Token(token)));
         }
     }
 
-    fn next_raw(&mut self) -> Result<Option<Token>, ExecError> {
-        self.input.next_token(self.stores).map_err(ExecError::from)
+    fn next_raw(&mut self) -> Result<Option<PreambleToken>, ExecError> {
+        let Some(traced) = self.input.next_traced_token(self.stores)? else {
+            return Ok(None);
+        };
+        Ok(Some(self.recover_outer_or_token(traced)))
     }
 
-    fn next_expanded(&mut self) -> Result<Option<Token>, ExecError> {
+    fn next_expanded(&mut self) -> Result<Option<PreambleToken>, ExecError> {
         let mut recorder = NoopRecorder;
-        Ok(
-            get_x_token_with_recorder_and_hooks(
-                self.input,
-                self.stores,
-                &mut recorder,
-                self.hooks,
-            )?
-            .map(tex_expand::semantic_token),
-        )
+        let Some(traced) = expand_once_then_get_token_with_hooks(
+            self.input,
+            self.stores,
+            &mut recorder,
+            self.hooks,
+        )?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(self.recover_outer_or_token(traced)))
+    }
+
+    fn recover_outer_or_token(&mut self, traced: TracedTokenWord) -> PreambleToken {
+        let token = tex_expand::semantic_token(traced);
+        if !is_outer_macro(self.stores, token) {
+            return PreambleToken::Token(token);
+        }
+
+        // TeX.web §336 backs up the forbidden outer token, substitutes a
+        // spacer for the current read, and inserts frozen \cr plus `}`. The
+        // private RecoveryCr marker preserves frozen identity without making
+        // an inaccessible engine token representable in user token lists.
+        let right_brace = Token::Char {
+            ch: '}',
+            cat: Catcode::EndGroup,
+        };
+        let right_origin = self.stores.inserted_origin(
+            InsertedOriginKind::ErrorRecovery,
+            right_brace,
+            traced.origin(),
+        );
+        crate::push_traced_tokens(
+            self.input,
+            self.stores,
+            [TracedTokenWord::pack(right_brace, right_origin), traced],
+        );
+        self.lookahead = Some(PreambleToken::RecoveryCr);
+        self.report_runaway_preamble();
+        PreambleToken::Token(Token::Char {
+            ch: ' ',
+            cat: Catcode::Space,
+        })
+    }
+
+    fn recover_preamble_eof(&mut self) -> PreambleToken {
+        let right_brace = Token::Char {
+            ch: '}',
+            cat: Catcode::EndGroup,
+        };
+        let origin = self.stores.inserted_origin(
+            InsertedOriginKind::ErrorRecovery,
+            right_brace,
+            tex_state::token::OriginId::UNKNOWN,
+        );
+        crate::push_traced_tokens(
+            self.input,
+            self.stores,
+            [TracedTokenWord::pack(right_brace, origin)],
+        );
+        self.report_runaway_preamble();
+        PreambleToken::RecoveryCr
+    }
+
+    fn report_runaway_preamble(&mut self) {
+        self.stores.world_mut().write_text(
+            tex_state::PrintSink::TerminalAndLog,
+            "\n! File ended or forbidden control sequence found while scanning alignment preamble.\nI've inserted \\cr and a closing brace and will continue.\n",
+        );
+    }
+
+    fn report_missing_parameter(&mut self) {
+        self.stores.world_mut().write_text(
+            tex_state::PrintSink::TerminalAndLog,
+            "\n! Missing # inserted in alignment preamble.\nThere should be exactly one # between &'s, when an\n\\halign or \\valign is being set up. In this case you had\nnone, so I've put one in; maybe that will work.\n",
+        );
     }
 
     fn update_brace_depth(&mut self, token: Token) {
@@ -351,6 +444,23 @@ fn is_tabskip_token(stores: &Universe, token: Token) -> bool {
     matches!(
         stores.meaning(symbol),
         Meaning::GlueParam(index) if index == GlueParam::TAB_SKIP.raw()
+    )
+}
+
+fn is_outer_macro(stores: &Universe, token: Token) -> bool {
+    let meaning = match token {
+        Token::Cs(symbol) => stores.meaning(symbol),
+        Token::Char {
+            ch,
+            cat: Catcode::Active,
+        } => stores
+            .active_character_symbol(ch)
+            .map_or(Meaning::Undefined, |symbol| stores.meaning(symbol)),
+        Token::Char { .. } | Token::Param(_) | Token::Frozen(_) => Meaning::Undefined,
+    };
+    matches!(
+        meaning,
+        Meaning::Macro { flags, .. } if flags.contains(tex_state::meaning::MeaningFlags::OUTER)
     )
 }
 

@@ -879,6 +879,42 @@ where
     }
 }
 
+/// Implements TeX82's `get_preamble_token` operation after `\span`: fetch
+/// one raw token, expand that token once when it is expandable, then fetch
+/// one raw token from the resulting input. Unlike `get_x_token`, this does
+/// not recursively expand the token produced by that single expansion.
+pub fn expand_once_then_get_token_with_hooks<S, R, H>(
+    input: &mut InputStack<S>,
+    stores: &mut (impl ExpansionState + InputOpenState),
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<Option<TracedTokenWord>, ExpandError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    let Some(target) = get_token(input, stores)? else {
+        return Ok(None);
+    };
+    let Some(symbol) = expandable_symbol(stores, target) else {
+        return Ok(Some(target));
+    };
+    let meaning = stores.meaning(symbol);
+    recorder.record_meaning(symbol, meaning);
+    let dispatch = dispatch_with_hooks(
+        semantic_token(target),
+        target.origin(),
+        input,
+        stores,
+        recorder,
+        hooks,
+        meaning,
+    )?;
+    push_dispatch_result(input, stores, dispatch);
+    get_token(input, stores)
+}
+
 pub(crate) fn get_x_token_without_input_open<S, R, H>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,

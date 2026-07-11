@@ -1359,11 +1359,13 @@ fn display_halign_runs_assignments_before_missing_closer_recovery() {
          \\global\\setbox= \\eqno \\end",
     ));
 
-    let _ = Executor::new().run(&mut input, &mut stores);
+    let result = Executor::new().run(&mut input, &mut stores);
 
     assert_eq!(stores.count(6), 5);
     assert_eq!(stores.int_param(IntParam::POST_DISPLAY_PENALTY), -17);
-    assert!(support::terminal_effect_text(&stores).contains("Improper \\setbox"));
+    let stats = result.expect("display recovery should reach final cleanup");
+    assert_eq!(stats.shipped_artifacts.len(), 1);
+    assert_eq!(stores.execution_group_depth(), 0);
 }
 
 #[test]
@@ -1403,8 +1405,12 @@ fn nested_alignment_in_template_does_not_end_outer_preamble() {
 
 #[test]
 fn alignment_cells_accept_all_fixed_infinite_glues_in_math_mode() {
-    let stores =
-        run_alignment_source(r"\setbox0=\vbox{\halign{$#$\cr \hfil\hfill\hss\hfilneg\cr}}");
+    let stores = run_alignment_source(
+        r"\font\sy=cmsy10 \font\ex=cmex10
+          \textfont2=\sy \scriptfont2=\sy \scriptscriptfont2=\sy
+          \textfont3=\ex \scriptfont3=\ex \scriptscriptfont3=\ex
+          \setbox0=\vbox{\halign{$#$\cr \hfil\hfill\hss\hfilneg\cr}}",
+    );
     let vbox = box_zero_vlist(&stores);
     let mut glue = Vec::new();
     collect_infinite_glue(
@@ -1443,7 +1449,7 @@ fn plain_angle_style_alignment_restores_outer_cell_after_nested_leader_row() {
 #[test]
 fn plain_angle_style_nested_alignment_executes_math_wrapped_leader_row() {
     let stores = run_alignment_source(
-        "\\def\\angle{{\\vbox{\\halign{$\\scriptstyle##$\\crcr x\\crcr\\noalign{\\nointerlineskip}\\mkern2.5mu\\leaders\\hrule height.34pt\\hfill\\mkern2.5mu\\crcr}}}}\\setbox0=\\vbox{\\halign{#\\cr $\\angle$\\cr}}",
+        "\\font\\sy=cmsy10 \\font\\ex=cmex10 \\textfont2=\\sy \\scriptfont2=\\sy \\scriptscriptfont2=\\sy \\textfont3=\\ex \\scriptfont3=\\ex \\scriptscriptfont3=\\ex \\def\\angle{{\\vbox{\\halign{$\\scriptstyle##$\\crcr x\\crcr\\noalign{\\nointerlineskip}\\mkern2.5mu\\leaders\\hrule height.34pt\\hfill\\mkern2.5mu\\crcr}}}}\\setbox0=\\vbox{\\halign{#\\cr $\\angle$\\cr}}",
     );
     let vbox = box_zero_vlist(&stores);
 
@@ -1608,4 +1614,30 @@ fn trip_show_of_aliased_tab_recovers_and_closes_alignment() {
         "input stack fully retires"
     );
     assert!(stores.env_journal_bytes_since(&before) < 1_000_000);
+}
+
+#[test]
+fn outer_macro_in_skipped_span_expansion_recovers_runaway_preamble() {
+    let mut stores = support::stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    let before = stores.snapshot();
+    let source = r#"
+        \outer\def\lo{}
+        \halign{{\span\ifcase3 \lo#\cr............89{}\cr}
+        \global\count7=456
+    "#;
+    let mut input = InputStack::new(MemoryInput::new(source));
+
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("runaway preamble recovery should resume ordinary execution");
+
+    assert_eq!(stores.count(7), 456, "tokens after recovery must execute");
+    assert!(support::terminal_effect_text(&stores).contains("while scanning alignment preamble"));
+    assert!(
+        stats.delivered_tokens < 1_000,
+        "recovery must make bounded progress"
+    );
+    assert!(input.summary().frames().is_empty());
+    assert!(stores.env_journal_bytes_since(&before) < 100_000);
 }

@@ -39,6 +39,39 @@ fn get_x_token_converts_frozen_end_template_without_losing_origin() {
     );
 }
 
+#[test]
+fn preamble_span_operation_expands_exactly_one_token() {
+    let mut stores = Universe::new();
+    let first = stores.intern("first");
+    let second = stores.intern("second");
+    let empty = stores.intern_token_list(&[]);
+    let first_body = stores.intern_token_list(&[Token::Cs(second)]);
+    let second_body = stores.intern_token_list(&[Token::Char {
+        ch: 'x',
+        cat: Catcode::Letter,
+    }]);
+    stores.set_macro_meaning(
+        first,
+        MacroMeaning::new(MeaningFlags::EMPTY, empty, first_body),
+    );
+    stores.set_macro_meaning(
+        second,
+        MacroMeaning::new(MeaningFlags::EMPTY, empty, second_body),
+    );
+    let mut input = InputStack::new(MemoryInput::new("\\first"));
+
+    let delivered = crate::expand_once_then_get_token_with_hooks(
+        &mut input,
+        &mut stores,
+        &mut NoopRecorder,
+        &mut NoopExpansionHooks,
+    )
+    .expect("one expansion should succeed")
+    .expect("macro body should provide a raw token");
+
+    assert_eq!(crate::semantic_token(delivered), Token::Cs(second));
+}
+
 #[derive(Default)]
 struct CountingRecorder {
     reads: usize,

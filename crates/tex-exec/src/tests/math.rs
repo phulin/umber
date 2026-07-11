@@ -418,11 +418,22 @@ fn math_group_mismatch_reports_the_closing_token_origin() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(r"$\begingroup}"));
-
-    let err = Executor::new()
-        .run(&mut input, &mut stores)
-        .expect_err("right brace cannot close a semi-simple math group");
+    stores.enter_group_with_kind(tex_state::GroupKind::MathShift);
+    stores.enter_group_with_kind(tex_state::GroupKind::SemiSimple);
+    let mut nest = ModeNest::new();
+    nest.push(Mode::Math);
+    let mut input = InputStack::new(MemoryInput::new("}"));
+    let token = tex_expand::get_x_token(&mut input, &mut stores)
+        .expect("right brace tokenizes")
+        .expect("right brace exists");
+    let err = crate::dispatch::dispatch_delivered_token(
+        &mut nest,
+        token,
+        &mut input,
+        &mut stores,
+        &mut NoopExecHooks,
+    )
+    .expect_err("direct dispatch exposes the recoverable math-group mismatch");
 
     assert!(matches!(
         &err,
@@ -433,10 +444,21 @@ fn math_group_mismatch_reports_the_closing_token_origin() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(r"$\endgroup"));
-    let err = Executor::new()
-        .run(&mut input, &mut stores)
-        .expect_err("endgroup cannot close the outer math level");
+    stores.enter_group_with_kind(tex_state::GroupKind::MathShift);
+    let mut nest = ModeNest::new();
+    nest.push(Mode::Math);
+    let mut input = InputStack::new(MemoryInput::new(r"\endgroup"));
+    let token = tex_expand::get_x_token(&mut input, &mut stores)
+        .expect("endgroup tokenizes")
+        .expect("endgroup exists");
+    let err = crate::dispatch::dispatch_delivered_token(
+        &mut nest,
+        token,
+        &mut input,
+        &mut stores,
+        &mut NoopExecHooks,
+    )
+    .expect_err("direct dispatch exposes the recoverable math-group mismatch");
 
     assert!(matches!(&err, ExecError::EndGroupMismatch { .. }));
     assert_ne!(err.primary_origin(), Some(OriginId::UNKNOWN));
@@ -1179,6 +1201,7 @@ fn assert_replayed_math_error_is_source_backed(source: &str) {
     let mut stores = Universe::with_world(tex_state::World::memory());
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
+    let source = source.replace(r"\noexpand\input", r"\global\count7=1\relax\noexpand\input");
     stores
         .world_mut()
         .set_memory_file(PATH, source.as_bytes().to_vec())
@@ -1188,10 +1211,50 @@ fn assert_replayed_math_error_is_source_backed(source: &str) {
         .read_file(PATH)
         .expect("memory source should be readable");
     let mut input = InputStack::new(WorldInput::from_content(content));
+    let mut executor = Executor::new();
+    let mut recorder = NoopRecorder;
+    let mut hooks = NoopExecHooks;
+    let mut stats = ExecutionStats::default();
+    let exit = crate::executor::run_main_control_until(
+        executor.nest_mut(),
+        &mut input,
+        &mut stores,
+        &mut recorder,
+        &mut hooks,
+        &mut stats,
+        |_, stores| stores.count(7) == 1,
+    )
+    .expect("execution reaches the provenance sentinel");
+    assert_eq!(exit, crate::executor::MainControlExit::Stopped);
 
-    let err = Executor::new()
-        .run(&mut input, &mut stores)
-        .expect_err("suppressed expandable token should fail at dispatch");
+    let relax = tex_expand::get_x_token_with_recorder_and_hooks(
+        &mut input,
+        &mut stores,
+        &mut recorder,
+        &mut hooks,
+    )
+    .expect("replayed relax tokenizes")
+    .expect("replayed relax exists");
+    assert!(matches!(
+        tex_expand::semantic_token(relax),
+        Token::Cs(symbol) if matches!(stores.meaning(symbol), Meaning::Relax)
+    ));
+    let sentinel = tex_expand::get_x_token_with_recorder_and_hooks(
+        &mut input,
+        &mut stores,
+        &mut recorder,
+        &mut hooks,
+    )
+    .expect("suppressed expandable tokenizes")
+    .expect("suppressed expandable exists");
+    let err = crate::dispatch::dispatch_delivered_token(
+        executor.nest_mut(),
+        sentinel,
+        &mut input,
+        &mut stores,
+        &mut hooks,
+    )
+    .expect_err("direct dispatch exposes the recoverable delivery error");
     assert!(
         matches!(&err, ExecError::UnexpectedExpandableDelivery { .. }),
         "unexpected replay error: {err:?}"
