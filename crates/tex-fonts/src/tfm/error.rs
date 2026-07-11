@@ -17,6 +17,10 @@ pub enum ParseError {
         declared_words: u16,
         actual_words: usize,
     },
+    SizeFieldOutOfRange {
+        field: &'static str,
+        value: u16,
+    },
     SectionLengthMismatch {
         declared_words: u16,
         computed_words: usize,
@@ -48,10 +52,6 @@ pub enum ParseError {
         index: u8,
         len: usize,
     },
-    MissingCharacterHasTag {
-        code: u8,
-        tag: u8,
-    },
     LigKernProgramIndexOutOfBounds {
         code: u8,
         index: u8,
@@ -72,9 +72,23 @@ pub enum ParseError {
         index: u16,
         len: usize,
     },
-    NextLargerCharacterMissing {
+    LigKernCharacterOutOfBounds {
+        instruction: usize,
+        field: &'static str,
+        code: u8,
+        bc: u8,
+        ec: u8,
+    },
+    LigKernCharacterMissing {
+        instruction: usize,
+        field: &'static str,
+        code: u8,
+    },
+    NextLargerCharacterOutOfBounds {
         code: u8,
         next: u8,
+        bc: u8,
+        ec: u8,
     },
     NextLargerCycle {
         code: u8,
@@ -88,6 +102,13 @@ pub enum ParseError {
         recipe: usize,
         field: &'static str,
         code: u8,
+    },
+    ExtensibleRecipeCharacterOutOfBounds {
+        recipe: usize,
+        field: &'static str,
+        code: u8,
+        bc: u8,
+        ec: u8,
     },
 }
 
@@ -110,6 +131,9 @@ impl fmt::Display for ParseError {
                 f,
                 "TFM declared length {declared_words} words does not match actual length {actual_words}"
             ),
+            Self::SizeFieldOutOfRange { field, value } => {
+                write!(f, "TFM size field {field} exceeds 15 bits: {value}")
+            }
             Self::SectionLengthMismatch {
                 declared_words,
                 computed_words,
@@ -154,9 +178,6 @@ impl fmt::Display for ParseError {
                 f,
                 "character {code} references {table:?} index {index}, but table has {len} entries"
             ),
-            Self::MissingCharacterHasTag { code, tag } => {
-                write!(f, "missing character {code} has nonzero tag {tag}")
-            }
             Self::LigKernProgramIndexOutOfBounds { code, index, len } => write!(
                 f,
                 "character {code} references lig/kern program index {index}, but table has {len} entries"
@@ -177,12 +198,28 @@ impl fmt::Display for ParseError {
                 f,
                 "lig/kern instruction {instruction} references kern index {index}, but table has {len} entries"
             ),
-            Self::NextLargerCharacterMissing { code, next } => {
-                write!(
-                    f,
-                    "character {code} points to missing next-larger character {next}"
-                )
-            }
+            Self::LigKernCharacterOutOfBounds {
+                instruction,
+                field,
+                code,
+                bc,
+                ec,
+            } => write!(
+                f,
+                "lig/kern instruction {instruction} {field} character {code} is outside {bc}..={ec}"
+            ),
+            Self::LigKernCharacterMissing {
+                instruction,
+                field,
+                code,
+            } => write!(
+                f,
+                "lig/kern instruction {instruction} {field} character {code} does not exist"
+            ),
+            Self::NextLargerCharacterOutOfBounds { code, next, bc, ec } => write!(
+                f,
+                "character {code} points to next-larger character {next} outside {bc}..={ec}"
+            ),
             Self::NextLargerCycle { code } => {
                 write!(f, "next-larger chain starting at character {code} cycles")
             }
@@ -197,6 +234,16 @@ impl fmt::Display for ParseError {
             } => write!(
                 f,
                 "extensible recipe {recipe} {field} references missing character {code}"
+            ),
+            Self::ExtensibleRecipeCharacterOutOfBounds {
+                recipe,
+                field,
+                code,
+                bc,
+                ec,
+            } => write!(
+                f,
+                "extensible recipe {recipe} {field} character {code} is outside {bc}..={ec}"
             ),
         }
     }
