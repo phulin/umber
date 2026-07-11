@@ -210,6 +210,15 @@ impl IdentityAllocator {
         }
     }
 
+    #[cfg(feature = "node-stats")]
+    pub(crate) fn measurement_shape(&self) -> (usize, usize, usize) {
+        (
+            self.slots.len(),
+            self.slots.capacity(),
+            core::mem::size_of::<AllocationTag>(),
+        )
+    }
+
     /// Truncates to an ancestor mark and advances the generation before reuse.
     ///
     /// The active generation is intentionally absent from `IdentityMark` and

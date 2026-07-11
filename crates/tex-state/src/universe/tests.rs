@@ -282,6 +282,12 @@ fn node_memory_measurement_is_nonsemantic_and_covers_recycled_storage() {
     let before = universe.snapshot().state_hash();
     let empty = universe.node_memory_columns();
     assert!(empty.iter().any(|column| column.name == "epoch.words"));
+    assert!(
+        empty
+            .iter()
+            .any(|column| column.name == "epoch.identity_tags")
+    );
+    assert!(empty.iter().any(|column| column.name == "epoch.spans"));
     assert_eq!(before, universe.snapshot().state_hash());
 
     for amount in 0..32 {
