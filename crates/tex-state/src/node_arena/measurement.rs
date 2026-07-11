@@ -43,29 +43,93 @@ impl NodeMemoryColumn {
     }
 }
 
+/// One complete canonical-node-storage observation.
+///
+/// The totals are sums of this record's columns, so consumers never receive
+/// totals and column details from different storages.
 #[cfg(feature = "node-stats")]
-static PEAK_STORAGE_LOGICAL: AtomicU64 = AtomicU64::new(0);
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NodeStorageObservation {
+    pub logical_bytes: u64,
+    pub retained_payload_bytes: u64,
+    pub columns: Vec<NodeMemoryColumn>,
+}
+
 #[cfg(feature = "node-stats")]
-static PEAK_STORAGE_RETAINED: AtomicU64 = AtomicU64::new(0);
+impl NodeStorageObservation {
+    fn from_columns(columns: Vec<NodeMemoryColumn>) -> Self {
+        Self {
+            logical_bytes: columns
+                .iter()
+                .map(|column| column.logical_bytes as u64)
+                .sum(),
+            retained_payload_bytes: columns
+                .iter()
+                .map(|column| column.retained_payload_bytes as u64)
+                .sum(),
+            columns,
+        }
+    }
+
+    const fn order_key(&self) -> (u64, u64) {
+        (self.logical_bytes, self.retained_payload_bytes)
+    }
+}
+
 #[cfg(feature = "node-stats")]
-static PEAK_STORAGE_COLUMNS: OnceLock<Mutex<Vec<NodeMemoryColumn>>> = OnceLock::new();
+#[derive(Debug, Default)]
+struct PeakNodeStorageRecorder {
+    logical_hint: AtomicU64,
+    observation: Mutex<Option<NodeStorageObservation>>,
+}
+
+#[cfg(feature = "node-stats")]
+impl PeakNodeStorageRecorder {
+    fn observe(&self, storage: &NodeStorage) {
+        let (logical_bytes, retained_payload_bytes) = storage.payload_bytes();
+        if logical_bytes < self.logical_hint.load(Ordering::Relaxed) {
+            return;
+        }
+
+        let observation = NodeStorageObservation::from_columns(storage.memory_columns("peak"));
+        debug_assert_eq!(
+            observation.order_key(),
+            (logical_bytes, retained_payload_bytes)
+        );
+        let mut peak = self
+            .observation
+            .lock()
+            .expect("node measurement mutex poisoned");
+        if peak
+            .as_ref()
+            .is_none_or(|current| observation.order_key() > current.order_key())
+        {
+            self.logical_hint
+                .store(observation.logical_bytes, Ordering::Relaxed);
+            *peak = Some(observation);
+        }
+    }
+
+    fn snapshot(&self) -> Option<NodeStorageObservation> {
+        self.observation
+            .lock()
+            .expect("node measurement mutex poisoned")
+            .clone()
+    }
+}
+
+#[cfg(feature = "node-stats")]
+static PEAK_STORAGE: OnceLock<PeakNodeStorageRecorder> = OnceLock::new();
 
 /// Largest individual canonical storage observed during this process.
 /// Survivor scratch is reported separately; aggregate end-state storage is
 /// available through `Universe::node_memory_columns`.
 #[cfg(feature = "node-stats")]
 #[must_use]
-pub fn peak_node_storage_measurement() -> (u64, u64, Vec<NodeMemoryColumn>) {
-    let columns = PEAK_STORAGE_COLUMNS
-        .get_or_init(|| Mutex::new(Vec::new()))
-        .lock()
-        .expect("node measurement mutex poisoned")
-        .clone();
-    (
-        PEAK_STORAGE_LOGICAL.load(Ordering::Relaxed),
-        PEAK_STORAGE_RETAINED.load(Ordering::Relaxed),
-        columns,
-    )
+pub fn peak_node_storage_measurement() -> Option<NodeStorageObservation> {
+    PEAK_STORAGE
+        .get()
+        .and_then(PeakNodeStorageRecorder::snapshot)
 }
 
 impl NodeStorage {
@@ -116,14 +180,25 @@ impl NodeStorage {
 
     #[cfg(feature = "node-stats")]
     pub(super) fn retained_payload_bytes(&self) -> usize {
-        fn bytes<T>(values: &Vec<T>) -> usize {
-            values.capacity() * core::mem::size_of::<T>()
+        usize::try_from(self.payload_bytes().1).expect("node storage retained bytes exceed usize")
+    }
+
+    #[cfg(feature = "node-stats")]
+    fn payload_bytes(&self) -> (u64, u64) {
+        fn bytes<T>(values: &Vec<T>) -> (u64, u64) {
+            (
+                (values.len() * core::mem::size_of::<T>()) as u64,
+                (values.capacity() * core::mem::size_of::<T>()) as u64,
+            )
         }
-        let mut retained = 0;
+        let mut logical = 0_u64;
+        let mut retained = 0_u64;
         macro_rules! add {
-            ($value:expr) => {
-                retained += bytes(&$value);
-            };
+            ($value:expr) => {{
+                let measured = bytes(&$value);
+                logical += measured.0;
+                retained += measured.1;
+            }};
         }
         add!(self.words);
         add!(self.boxes.width);
@@ -164,7 +239,22 @@ impl NodeStorage {
         add!(self.choices);
         add!(self.math_lists);
         add!(self.adjusts);
-        retained
+        for whatsit in &self.whatsits {
+            match whatsit {
+                crate::node::Whatsit::OpenOut { path, .. } => {
+                    logical += path.len() as u64;
+                    retained += path.capacity() as u64;
+                }
+                crate::node::Whatsit::Special { class, payload } => {
+                    logical += (class.len() + payload.len()) as u64;
+                    retained += (class.capacity() + payload.capacity()) as u64;
+                }
+                crate::node::Whatsit::CloseOut { .. }
+                | crate::node::Whatsit::DeferredWrite { .. }
+                | crate::node::Whatsit::Language { .. } => {}
+            }
+        }
+        (logical, retained)
     }
 
     #[cfg(feature = "node-stats")]
@@ -260,86 +350,11 @@ impl NodeStorage {
 
     #[cfg(feature = "node-stats")]
     pub(super) fn record_peak(&self) {
-        fn bytes<T>(value: &Vec<T>) -> (u64, u64) {
-            (
-                (value.len() * core::mem::size_of::<T>()) as u64,
-                (value.capacity() * core::mem::size_of::<T>()) as u64,
-            )
-        }
-        let mut logical = 0_u64;
-        let mut retained = 0_u64;
-        macro_rules! add {
-            ($value:expr) => {{
-                let measured = bytes(&$value);
-                logical += measured.0;
-                retained += measured.1;
-            }};
-        }
-        add!(self.words);
-        add!(self.boxes.width);
-        add!(self.boxes.height);
-        add!(self.boxes.depth);
-        add!(self.boxes.shift);
-        add!(self.boxes.display);
-        add!(self.boxes.glue_set);
-        add!(self.boxes.glue_sign);
-        add!(self.boxes.glue_order);
-        add!(self.boxes.children);
-        add!(self.unsets.kind);
-        add!(self.unsets.width);
-        add!(self.unsets.height);
-        add!(self.unsets.depth);
-        add!(self.unsets.span_count);
-        add!(self.unsets.stretch);
-        add!(self.unsets.stretch_order);
-        add!(self.unsets.shrink);
-        add!(self.unsets.shrink_order);
-        add!(self.unsets.children);
-        add!(self.rules);
-        add!(self.leaders);
-        add!(self.discs);
-        add!(self.marks);
-        add!(self.insertions.class);
-        add!(self.insertions.size);
-        add!(self.insertions.split_top_skip);
-        add!(self.insertions.split_max_depth);
-        add!(self.insertions.floating_penalty);
-        add!(self.insertions.content);
-        add!(self.whatsits);
-        add!(self.noads.kind);
-        add!(self.noads.nucleus);
-        add!(self.noads.subscript);
-        add!(self.noads.superscript);
-        add!(self.fractions);
-        add!(self.choices);
-        add!(self.math_lists);
-        add!(self.adjusts);
-        for whatsit in &self.whatsits {
-            match whatsit {
-                crate::node::Whatsit::OpenOut { path, .. } => {
-                    logical += path.len() as u64;
-                    retained += path.capacity() as u64;
-                }
-                crate::node::Whatsit::Special { class, payload } => {
-                    logical += (class.len() + payload.len()) as u64;
-                    retained += (class.capacity() + payload.capacity()) as u64;
-                }
-                crate::node::Whatsit::CloseOut { .. }
-                | crate::node::Whatsit::DeferredWrite { .. }
-                | crate::node::Whatsit::Language { .. } => {}
-            }
-        }
-        let previous = PEAK_STORAGE_LOGICAL.fetch_max(logical, Ordering::Relaxed);
-        PEAK_STORAGE_RETAINED.fetch_max(retained, Ordering::Relaxed);
-        if logical > previous {
-            let columns = self.memory_columns("peak");
-            let mut recorded = PEAK_STORAGE_COLUMNS
-                .get_or_init(|| Mutex::new(Vec::new()))
-                .lock()
-                .expect("node measurement mutex poisoned");
-            if logical == PEAK_STORAGE_LOGICAL.load(Ordering::Relaxed) {
-                *recorded = columns;
-            }
-        }
+        PEAK_STORAGE
+            .get_or_init(PeakNodeStorageRecorder::default)
+            .observe(self);
     }
 }
+
+#[cfg(all(test, feature = "node-stats"))]
+mod tests;

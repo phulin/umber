@@ -132,21 +132,22 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
             .map(|column| column.retained_payload_bytes)
             .sum();
         eprintln!("NODE_MEMORY_TOTAL logical_bytes={logical} retained_payload_bytes={retained}");
-        let (peak_logical, peak_retained, peak_columns) =
-            tex_state::node_arena::peak_node_storage_measurement();
-        eprintln!(
-            "NODE_STORAGE_PEAK logical_bytes={peak_logical} retained_payload_bytes={peak_retained}"
-        );
-        for column in peak_columns {
+        if let Some(peak) = tex_state::node_arena::peak_node_storage_measurement() {
             eprintln!(
-                "NODE_STORAGE_PEAK_COLUMN {} len={} capacity={} element_bytes={} logical_bytes={} retained_payload_bytes={}",
-                column.name,
-                column.len,
-                column.capacity,
-                column.element_bytes,
-                column.logical_bytes,
-                column.retained_payload_bytes
+                "NODE_STORAGE_PEAK logical_bytes={} retained_payload_bytes={}",
+                peak.logical_bytes, peak.retained_payload_bytes
             );
+            for column in peak.columns {
+                eprintln!(
+                    "NODE_STORAGE_PEAK_COLUMN {} len={} capacity={} element_bytes={} logical_bytes={} retained_payload_bytes={}",
+                    column.name,
+                    column.len,
+                    column.capacity,
+                    column.element_bytes,
+                    column.logical_bytes,
+                    column.retained_payload_bytes
+                );
+            }
         }
         let survivor = tex_state::survivor::survivor_measurement();
         eprintln!(
