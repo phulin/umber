@@ -644,6 +644,16 @@ pub fn tfm_fix_word_to_scaled(
     Ok(Scaled::from_raw(value))
 }
 
+/// Decodes TFM `fontdimen1` (slant) into TeX's scaled ratio representation.
+///
+/// TeX82 takes the signed high 24 bits and adds the high nibble of the final
+/// byte. This is an arithmetic right shift of the signed fix_word, including
+/// floor semantics for negative values whose low nibble is nonzero.
+#[must_use]
+pub const fn tfm_slant_fix_word_to_scaled_ratio(bytes: [u8; 4]) -> Scaled {
+    Scaled::from_raw(i32::from_be_bytes(bytes) >> 4)
+}
+
 /// Converts TFM header word 1, the design-size fix_word, to TeX scaled points.
 pub fn tfm_design_size_from_fix_word(bytes: [u8; 4]) -> Result<Scaled, TfmConversionError> {
     if bytes[0] > 127 {
