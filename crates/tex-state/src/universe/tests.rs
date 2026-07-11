@@ -595,7 +595,7 @@ fn snapshot_reuses_hash_base_for_origin_only_input_summary_changes() {
 }
 
 #[test]
-fn universe_rollback_truncates_provenance_and_replay_reuses_origin_ids() {
+fn universe_rollback_truncates_provenance_without_reviving_origin_ids() {
     let mut universe = Universe::new();
     let mark = universe.snapshot();
 
@@ -610,8 +610,9 @@ fn universe_rollback_truncates_provenance_and_replay_reuses_origin_ids() {
 
     let replayed = universe.source_origin(crate::input::SourceId::new(7), 70, 8, 9);
     let replayed_list = universe.allocate_origin_list(&[replayed]);
-    assert_eq!(replayed.raw(), stale.raw());
+    assert_ne!(replayed.raw(), stale.raw());
     assert_eq!(replayed_list.raw(), stale_list.raw());
+    assert_ne!(replayed_list, stale_list);
     assert_eq!(
         universe.origin(replayed),
         OriginRecord::Source(SourceOrigin::new(crate::input::SourceId::new(7), 70, 8, 9))
