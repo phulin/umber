@@ -15,7 +15,7 @@ mod view;
 pub use arena::{NodeArena, NodeListBuilder};
 pub(crate) use copy::ChildPatch;
 #[cfg(feature = "node-stats")]
-pub use measurement::{NodeMemoryColumn, peak_node_storage_measurement};
+pub use measurement::{NodeMemoryColumn, NodeStorageObservation, peak_node_storage_measurement};
 pub(crate) use storage::{NodeArenaMark, NodeStorage};
 pub use view::{CharCodes, CharRun, NodeIter, NodeList, NodeRef};
 
