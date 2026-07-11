@@ -1257,6 +1257,15 @@ fn valign_column_extent_includes_cell_depth() {
 }
 
 #[test]
+fn valign_in_vertical_mode_starts_a_paragraph() {
+    let stores = run_alignment_source("\\setbox0=\\vbox{\\valign{#\\cr \\cr}\\par}");
+    let vbox = box_zero_vlist(&stores);
+    let children = stores.nodes(vbox.children).testing_decoded();
+
+    assert!(matches!(children, [Node::HList(_)]));
+}
+
+#[test]
 fn display_halign_appends_display_vertical_material() {
     let stores = run_alignment_source(
         "\\setbox0=\\vbox{\\hsize=50pt \\predisplaypenalty=11 \\postdisplaypenalty=22 \

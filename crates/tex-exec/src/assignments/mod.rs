@@ -663,6 +663,16 @@ where
                         }
                         _ => {}
                     }
+                } else if matches!(
+                    nest.current_mode(),
+                    crate::Mode::Vertical | crate::Mode::InternalVertical
+                ) {
+                    // TeX's main_control handles \valign through the hmode
+                    // entry path: in vertical mode it starts an indented
+                    // paragraph and retries the alignment there.
+                    push_traced_tokens(input, stores, [command.traced]);
+                    ensure_horizontal_for_character(nest, input, stores)?;
+                    return Ok(CommandOutcome::continue_only());
                 }
                 crate::align::execute_alignment(
                     primitive,
