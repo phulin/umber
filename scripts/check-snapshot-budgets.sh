@@ -6,4 +6,4 @@ manifest="$repo_root/benchmarks/tex-state/Cargo.toml"
 target_dir="${CARGO_TARGET_DIR:-$repo_root/benchmarks/tex-state/target}"
 
 cargo run --release --manifest-path "$manifest" --target-dir "$target_dir" \
-  --bin snapshot_gate -- --enforce
+  --bin snapshot_gate -- --enforce "$@"

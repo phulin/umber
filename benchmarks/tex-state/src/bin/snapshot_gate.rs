@@ -3,9 +3,10 @@ use std::hint::black_box;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use tex_state::token::Catcode;
 use tex_state_benchmarks::{
-    LATENCY_NOISE_ALLOWANCE_NS, LATENCY_SCALE_BUDGET, RETAINED_BYTES_PER_CAPTURE_BUDGET,
-    RETAINED_CAPTURES, WORKLOADS, WorkloadKind, build_workload,
+    DETACHED_CODE_TABLE_WRITE_BUDGET, LATENCY_NOISE_ALLOWANCE_NS, LATENCY_SCALE_BUDGET,
+    RETAINED_BYTES_PER_CAPTURE_BUDGET, RETAINED_CAPTURES, WORKLOADS, WorkloadKind, build_workload,
 };
 
 struct TrackingAllocator;
@@ -78,18 +79,35 @@ struct GateObservation {
 }
 
 fn main() {
-    let enforce = std::env::args().any(|arg| arg == "--enforce");
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    let enforce = args.iter().any(|arg| arg == "--enforce");
+    let workload_filter = args.iter().find_map(|arg| arg.strip_prefix("--workload="));
     let mut failures = Vec::new();
+    let mut selected = 0_usize;
     println!(
         "workload scale logical_live_bytes median_ns one_retained_bytes one_peak_bytes retained_{}_bytes retained_{}_peak_bytes",
         RETAINED_CAPTURES, RETAINED_CAPTURES
     );
     for kind in WORKLOADS {
+        if workload_filter.is_some_and(|filter| filter != kind.name()) {
+            continue;
+        }
+        selected += 1;
         let small = observe(kind, kind.small_units());
         let large = observe(kind, kind.large_units());
         print_observation(kind, "small", small);
         print_observation(kind, "large", large);
         check(kind, small, large, &mut failures);
+    }
+    if workload_filter.is_none_or(|filter| filter == WorkloadKind::UnicodeCodeTables.name()) {
+        check_detached_code_table_write(&mut failures);
+    }
+    if selected == 0 {
+        eprintln!(
+            "snapshot-gate: unknown workload {}",
+            workload_filter.expect("a filter excluded every workload")
+        );
+        std::process::exit(2);
     }
     if failures.is_empty() {
         println!("snapshot-gate: all budgets met");
@@ -103,6 +121,30 @@ fn main() {
             "snapshot-gate: {} budget violation(s); rerun with --enforce to fail",
             failures.len()
         );
+    }
+}
+
+fn check_detached_code_table_write(failures: &mut Vec<String>) {
+    let mut workload = build_workload(
+        WorkloadKind::UnicodeCodeTables,
+        WorkloadKind::UnicodeCodeTables.large_units(),
+    );
+    workload.warm_capture();
+    let snapshot = workload.capture();
+    let (observation, ()) = allocation_delta(|| {
+        workload.set_unicode_catcode('\u{10fffd}', Catcode::Active);
+    });
+    black_box(&snapshot);
+    println!(
+        "unicode_code_tables detached_write {} {}",
+        observation.retained_bytes, observation.peak_bytes
+    );
+    drop(snapshot);
+    if observation.retained_bytes > DETACHED_CODE_TABLE_WRITE_BUDGET {
+        failures.push(format!(
+            "Unicode detached write retained {} bytes (budget {})",
+            observation.retained_bytes, DETACHED_CODE_TABLE_WRITE_BUDGET,
+        ));
     }
 }
 
