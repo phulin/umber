@@ -855,6 +855,7 @@ fn mid_alignment_snapshot_rollback_restores_summary_and_unset_rows() {
         state.start_row();
         state.start_cell(1, 2);
         state.increment_brace_depth();
+        state.set_suppress_redundant_cr(true);
     }
     stores.set_input_summary(input_summary.clone());
     let snapshot = stores.snapshot();
@@ -882,6 +883,7 @@ fn mid_alignment_snapshot_rollback_restores_summary_and_unset_rows() {
     assert_eq!(restored_state.current_col(), 1);
     assert_eq!(restored_state.current_span(), 2);
     assert_eq!(restored_state.brace_depth(), 1);
+    assert!(restored_state.suppress_redundant_cr());
     let [Node::Unset(row)] = restored.current_list().nodes() else {
         panic!(
             "expected a partial unset alignment row, got {:?}",
@@ -1731,8 +1733,8 @@ fn trip_conditional_preamble_recovery_stops_before_following_input() {
             .iter()
             .filter(|node| matches!(node, Node::Penalty(97)))
             .count(),
-        3,
-        "TeX runs everycr before and around both ordinary empty rows"
+        2,
+        "TeX runs everycr before and around the recovered rows"
     );
     assert!(stats.delivered_tokens < 1_000);
     let first_hash = stores.snapshot().state_hash();
