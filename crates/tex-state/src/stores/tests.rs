@@ -390,6 +390,52 @@ fn token_list_builder_finishes_through_stores_boundary() {
 }
 
 #[test]
+fn token_list_ingress_rejects_foreign_symbols_before_interning() {
+    let mut foreign = Stores::new();
+    let foreign_symbol = foreign.intern("foreign");
+    let token = Token::Cs(foreign_symbol.symbol());
+    let mut stores = Stores::new();
+
+    let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        stores.intern_token_list(&[token]);
+    }));
+    assert!(rejected.is_err());
+
+    let local = stores.intern("local");
+    let accepted = stores.intern_token_list(&[Token::Cs(local.symbol())]);
+    assert_eq!(
+        accepted.raw(),
+        1,
+        "rejected ingress must not allocate a list"
+    );
+}
+
+#[test]
+fn token_list_builder_rejection_is_atomic_and_preserves_scratch_content() {
+    let mut foreign = Stores::new();
+    let foreign_symbol = foreign.intern("foreign");
+    let mut stores = Stores::new();
+    let mut builder = stores.token_list_builder();
+    builder.push(Token::Cs(foreign_symbol.symbol()));
+
+    let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        stores.finish_token_list(&mut builder);
+    }));
+    assert!(rejected.is_err());
+    assert_eq!(builder.len(), 1, "rejected builder must remain reusable");
+
+    builder.clear();
+    builder.push(Token::param(1));
+    let accepted = stores.finish_token_list(&mut builder);
+    assert_eq!(
+        accepted.raw(),
+        1,
+        "rejected builder must not allocate a list"
+    );
+    assert!(builder.is_empty());
+}
+
+#[test]
 fn provenance_records_and_lists_round_trip_through_stores_boundary() {
     let mut stores = Stores::new();
     let symbol = stores.intern("m");
@@ -982,6 +1028,66 @@ fn rollback_restores_afterassignment_slot() {
 
     assert_eq!(stores.take_afterassignment(), Some(original));
     assert_eq!(stores.take_afterassignment(), None);
+}
+
+#[test]
+fn invalid_aftergroup_token_is_rejected_without_changing_group_payload_order() {
+    let mut foreign = Stores::new();
+    let foreign_symbol = foreign.intern("foreign");
+    let mut stores = Stores::new();
+    let first = Token::param(1);
+    let last = Token::param(2);
+    stores.enter_group();
+    stores.push_aftergroup(first);
+
+    let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        stores.push_aftergroup(Token::Cs(foreign_symbol.symbol()));
+    }));
+    assert!(rejected.is_err());
+
+    stores.push_aftergroup(last);
+    assert_eq!(stores.leave_group(), vec![first, last]);
+}
+
+#[test]
+fn invalid_afterassignment_token_preserves_the_previous_payload() {
+    let mut foreign = Stores::new();
+    let foreign_symbol = foreign.intern("foreign");
+    let mut stores = Stores::new();
+    let original = Token::param(1);
+    stores.set_afterassignment(original);
+
+    let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        stores.set_afterassignment(Token::Cs(foreign_symbol.symbol()));
+    }));
+    assert!(rejected.is_err());
+    assert_eq!(stores.take_afterassignment(), Some(original));
+}
+
+#[test]
+fn rolled_back_symbol_token_is_rejected_at_every_scoped_ingress() {
+    let mut stores = Stores::new();
+    let snapshot = stores.checkpoint();
+    let stale = stores.intern("stale");
+    stores.rollback(&snapshot);
+    let token = Token::Cs(stale.symbol());
+
+    for ingress in ["intern", "builder", "aftergroup", "afterassignment"] {
+        let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match ingress {
+            "intern" => {
+                stores.intern_token_list(&[token]);
+            }
+            "builder" => {
+                let mut builder = stores.token_list_builder();
+                builder.push(token);
+                stores.finish_token_list(&mut builder);
+            }
+            "aftergroup" => stores.push_aftergroup(token),
+            "afterassignment" => stores.set_afterassignment(token),
+            _ => unreachable!(),
+        }));
+        assert!(rejected.is_err(), "{ingress} accepted a rolled-back symbol");
+    }
 }
 
 #[test]

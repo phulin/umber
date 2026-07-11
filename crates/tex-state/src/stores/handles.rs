@@ -121,6 +121,12 @@ impl Stores {
         }
     }
 
+    pub(super) fn assert_live_tokens(&self, tokens: &[Token]) {
+        for &token in tokens {
+            self.assert_live_token(token);
+        }
+    }
+
     pub(super) fn assert_live_node_list(&self, id: NodeListId) {
         let live = match id.arena() {
             ArenaRef::Epoch => self.nodes.contains(id),

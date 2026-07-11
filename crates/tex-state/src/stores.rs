@@ -559,11 +559,13 @@ impl Stores {
 
     /// Interns a frozen token-list value in the owned token store.
     pub fn intern_token_list(&mut self, tokens: &[Token]) -> TokenListId {
+        self.assert_live_tokens(tokens);
         self.tokens.intern(tokens)
     }
 
     /// Interns the current token-list builder value and clears it for reuse.
     pub fn finish_token_list(&mut self, builder: &mut TokenListBuilder) -> TokenListId {
+        self.assert_live_tokens(builder.as_slice());
         builder.finish(&mut self.tokens)
     }
 
@@ -1209,6 +1211,7 @@ impl Stores {
 
     /// Pushes an `\aftergroup` token for the current group.
     pub fn push_aftergroup(&mut self, payload: Token) {
+        self.assert_live_token(payload);
         self.env.push_aftergroup(payload);
     }
 
@@ -1240,6 +1243,7 @@ impl Stores {
 
     /// Stores the token to insert after the next assignment.
     pub fn set_afterassignment(&mut self, token: Token) {
+        self.assert_live_token(token);
         self.env.set_afterassignment(token);
     }
 

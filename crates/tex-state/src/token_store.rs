@@ -87,6 +87,12 @@ impl TokenListBuilder {
         self.buf.clear();
     }
 
+    /// Borrows the unfinished semantic token sequence for aggregate validation.
+    #[must_use]
+    pub(crate) fn as_slice(&self) -> &[Token] {
+        &self.buf
+    }
+
     /// Interns the current token list and clears the builder for reuse.
     pub(crate) fn finish(&mut self, store: &mut TokenStore) -> TokenListId {
         let id = store.intern(&self.buf);
