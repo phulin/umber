@@ -211,9 +211,10 @@ Rules:
   provenance. Macro-definition semantic hashing and `\ifx` comparison use
   flags plus semantic parameter/replacement token-list content, not
   definition-id or origin-list identity.
-- Addresses of `cells` are stable for the process lifetime (no reallocation:
-  size the array to the interner's max, grow by chunked segments if needed —
-  segments never move).
+- Addresses of materialized meaning cells are stable for the process lifetime:
+  a sparse vector of optional 65,536-cell segments grows to cover compact
+  symbol keys, while only touched segments allocate and segment boxes never
+  move.
 
 ### Register overflow (e-TeX sparse tier)
 
@@ -299,9 +300,16 @@ sets make checkpoint cost visible.
 One append-only log for all barriered state:
 
 ```rust
-struct UndoRec { cell: CellId, old: u64 }   // 16 bytes; CellId spans all banks
+struct UndoRec { cell: CellId, old: u64, new: u64 } // 24 bytes; CellId spans all banks
 enum Marker { Group, Checkpoint(SnapshotId) }
 ```
+
+`CellId` is a 36-bit key stored in a `u64`: 5 bank bits, one global-assignment
+bit, and a 30-bit index matching the complete compact `Symbol` domain. Moving
+the cell key from `u32` to `u64` does not enlarge `UndoRec`: its two `u64`
+value words already gave the record eight-byte alignment and a 24-byte size.
+The tagged `Entry` remains 32 bytes. StoreFormat v2 carries the detached raw
+cell key as `u64` and validates its reserved bank bits before rehydration.
 
 **Barrier** (the same ~5 instructions whether emitted by `Env::set` or by
 the JIT):
@@ -912,7 +920,9 @@ The complete production handle matrix is:
 Several opaque-looking integers are deliberately not full timeline capabilities.
 They must not be confused with the matrix above: `Symbol` is a process-unique
 nonreused compact stored key that is rehydrated through its owning interner;
-it cannot authorize a read after its local mapping is removed. `SourceId` and
+it cannot authorize a read after its local mapping is removed. `CellId` uses
+the same 30-bit index domain plus bank/global tags in a validated `u64` key;
+`SourceId` and
 `GeneratedSourceId` are live aggregate-local indexes protected by source-region
 identity and non-reused positions; `SurvivorRootId` is only the private packed
 component of a validated survivor `NodeListId`; `CellId`, parameter ids, and

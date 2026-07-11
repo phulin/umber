@@ -124,11 +124,11 @@ fn fork_preserves_inherited_symbol_ids_and_separates_new_allocations() {
 }
 
 #[test]
-fn compact_symbol_and_token_words_keep_their_hot_path_sizes() {
+fn compact_symbol_token_and_cell_layouts_match_their_bit_domains() {
     assert_eq!(core::mem::size_of::<Symbol>(), 4);
     assert_eq!(core::mem::size_of::<crate::token::Token>(), 8);
     assert_eq!(core::mem::size_of::<crate::token::TracedTokenWord>(), 8);
-    assert_eq!(core::mem::size_of::<crate::cell::CellId>(), 4);
+    assert_eq!(core::mem::size_of::<crate::cell::CellId>(), 8);
 }
 
 #[test]

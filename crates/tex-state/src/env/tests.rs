@@ -88,15 +88,75 @@ fn segment_growth_keeps_earlier_segment_addresses_stable() {
     let second_segment = Symbol::new(SEGMENT_LEN as u32);
 
     env.set(first, Meaning::Relax);
-    let cells_ptr = env.meaning_cells[0].as_ptr();
-    let stamps_ptr = env.meaning_stamps[0].as_ptr();
+    let cells_ptr = env.meaning_cells[0]
+        .as_ref()
+        .expect("first meaning segment")
+        .as_ptr();
+    let stamps_ptr = env.meaning_stamps[0]
+        .as_ref()
+        .expect("first stamp segment")
+        .as_ptr();
 
     env.set(second_segment, Meaning::CharGiven('z'));
 
-    assert_eq!(env.meaning_cells[0].as_ptr(), cells_ptr);
-    assert_eq!(env.meaning_stamps[0].as_ptr(), stamps_ptr);
+    assert_eq!(
+        env.meaning_cells[0]
+            .as_ref()
+            .expect("first meaning segment")
+            .as_ptr(),
+        cells_ptr
+    );
+    assert_eq!(
+        env.meaning_stamps[0]
+            .as_ref()
+            .expect("first stamp segment")
+            .as_ptr(),
+        stamps_ptr
+    );
     assert_eq!(env.get(first), Meaning::Relax);
     assert_eq!(env.get(second_segment), Meaning::CharGiven('z'));
+}
+
+#[test]
+fn meaning_boundaries_above_26_bits_preserve_journal_group_and_hash_semantics() {
+    for index in [1 << 26, (1 << 30) - 1] {
+        let mut env = Env::new();
+        let symbol = Symbol::new(index);
+        let initial_hash = env.testing_state_hash();
+
+        env.enter_group();
+        let group_start = env.journal_pos();
+        env.set(symbol, Meaning::Relax);
+        assert_eq!(
+            env.journal_entries_since(group_start),
+            &[Entry::Undo(UndoRec::new(
+                CellId::new(BankTag::Meaning, index),
+                Meaning::Undefined.encode(),
+                Meaning::Relax.encode(),
+            ))]
+        );
+        assert_ne!(env.testing_state_hash(), initial_hash);
+        assert_eq!(env.leave_group(), Vec::<Token>::new());
+        assert_eq!(env.get(symbol), Meaning::Undefined);
+        assert_eq!(env.testing_state_hash(), initial_hash);
+
+        let checkpoint = env.checkpoint();
+        env.enter_group();
+        env.set_global(symbol, Meaning::CharGiven('x'));
+        assert_eq!(env.leave_group(), Vec::<Token>::new());
+        assert_eq!(env.get(symbol), Meaning::CharGiven('x'));
+        assert_ne!(env.testing_state_hash(), initial_hash);
+        env.rollback_to(checkpoint);
+        assert_eq!(env.get(symbol), Meaning::Undefined);
+        assert_eq!(env.testing_state_hash(), initial_hash);
+
+        let cell = CellId::new(BankTag::Meaning, index);
+        env.restore_raw(cell, Meaning::Relax.encode());
+        assert_eq!(env.get(symbol), Meaning::Relax);
+        assert_ne!(env.testing_state_hash(), initial_hash);
+        env.restore_raw(cell, Meaning::Undefined.encode());
+        assert_eq!(env.testing_state_hash(), initial_hash);
+    }
 }
 
 #[test]

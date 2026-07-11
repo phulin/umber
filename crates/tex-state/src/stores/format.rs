@@ -38,7 +38,7 @@ struct StoreFormat {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct FormatEnvEntry {
-    cell: u32,
+    cell: u64,
     value: FormatEnvValue,
 }
 
@@ -119,7 +119,11 @@ struct FormatNodeList {
     nodes: Vec<FormatNode>,
 }
 
-fn capture_env_word(stores: &Stores, cell: crate::cell::CellId, word: u64) -> (u32, u64) {
+fn capture_env_word(
+    stores: &Stores,
+    cell: crate::cell::CellId,
+    word: u64,
+) -> (crate::cell::CellId, u64) {
     let index = if cell.bank() == crate::cell::BankTag::Meaning {
         stores
             .resolve_stored_symbol(Symbol::new(cell.index()))
@@ -143,7 +147,7 @@ fn capture_env_word(stores: &Stores, cell: crate::cell::CellId, word: u64) -> (u
     } else {
         word
     };
-    (cell.raw(), word)
+    (cell, word)
 }
 
 fn restore_current_font_word(stores: &Stores, word: u64) -> Result<u64, StoreFormatError> {
@@ -246,13 +250,8 @@ impl StoreFormat {
         });
         let roots: Vec<_> = env_words
             .iter()
-            .filter_map(|&(raw, word)| {
-                (crate::cell::CellId::new(
-                    crate::cell::BankTag::from_bits(raw >> 27),
-                    raw & ((1 << 26) - 1),
-                )
-                .bank()
-                    == crate::cell::BankTag::Box)
+            .filter_map(|&(cell, word)| {
+                (cell.bank() == crate::cell::BankTag::Box)
                     .then(|| NodeListId::decode_box_word(word))
                     .flatten()
             })
@@ -273,11 +272,7 @@ impl StoreFormat {
         }
         let env = env_words
             .into_iter()
-            .map(|(raw, word)| {
-                let cell = crate::cell::CellId::new(
-                    crate::cell::BankTag::from_bits(raw >> 27),
-                    raw & ((1 << 26) - 1),
-                );
+            .map(|(cell, word)| {
                 let value = if cell.bank() == crate::cell::BankTag::Box {
                     let id = NodeListId::decode_box_word(word)
                         .expect("non-default box format entry should contain a list");
@@ -285,7 +280,10 @@ impl StoreFormat {
                 } else {
                     FormatEnvValue::Raw(word)
                 };
-                FormatEnvEntry { cell: raw, value }
+                FormatEnvEntry {
+                    cell: cell.raw(),
+                    value,
+                }
             })
             .collect();
         let code_tables = (0..=255)
@@ -401,12 +399,10 @@ impl StoreFormat {
         stores.prepared_mag = self.prepared_mag;
         stores.last_loaded_font = stores.resolve_stored_font(FontId::new(self.last_loaded_font));
         for entry in self.env {
-            let bank_bits = entry.cell >> 27;
-            if bank_bits > crate::cell::BankTag::MathFamilyFont as u32 {
-                return Err(StoreFormatError::Invalid("unknown environment bank"));
-            }
-            let bank = crate::cell::BankTag::from_bits(bank_bits);
-            let dto_index = entry.cell & ((1 << 26) - 1);
+            let dto_cell = crate::cell::CellId::from_raw(entry.cell)
+                .ok_or(StoreFormatError::Invalid("unknown environment cell"))?;
+            let bank = dto_cell.bank();
+            let dto_index = dto_cell.index();
             let index = if bank == crate::cell::BankTag::Meaning {
                 stores
                     .interner
