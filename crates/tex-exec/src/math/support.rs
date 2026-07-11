@@ -95,6 +95,12 @@ pub(super) fn math_allows_assignment_primitive(primitive: UnexpandablePrimitive)
             | UnexpandablePrimitive::Immediate
             | UnexpandablePrimitive::Lowercase
             | UnexpandablePrimitive::Uppercase
+            | UnexpandablePrimitive::Cr
+            | UnexpandablePrimitive::CrCr
+            | UnexpandablePrimitive::Span
+            | UnexpandablePrimitive::Omit
+            | UnexpandablePrimitive::NoAlign
+            | UnexpandablePrimitive::Mark
     )
 }
 

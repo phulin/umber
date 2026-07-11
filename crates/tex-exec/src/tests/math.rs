@@ -526,6 +526,17 @@ fn explicit_kern_is_accepted_in_math_mode() {
 }
 
 #[test]
+fn italic_correction_in_math_appends_a_zero_kern() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(r"$x\/$"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("tex.web defines math italic correction as a zero kern");
+}
+
+#[test]
 fn math_discretionary_deletes_a_nonempty_replacement_part() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
@@ -562,6 +573,22 @@ fn spacefactor_in_math_reports_illegal_case_without_scanning_an_assignment() {
         .expect("illegal math spacefactor is ignored and its following digit remains input");
 
     assert!(support::terminal_effect_text(&stores).contains("You can't use `\\spacefactor'"));
+}
+
+#[test]
+fn misplaced_alignment_commands_and_mark_recover_in_math_mode() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(r"$\span\omit\mark{a}\cr$"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("misplaced alignment commands are reported and ignored in math mode");
+
+    let output = support::terminal_effect_text(&stores);
+    assert!(output.contains("Misplaced \\span"));
+    assert!(output.contains("Misplaced \\omit"));
+    assert!(output.contains("Misplaced \\cr"));
 }
 
 #[test]

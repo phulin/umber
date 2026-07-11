@@ -2294,8 +2294,16 @@ fn long_prefix_on_let_reports_tex_prefix_error() {
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\long\\let\\a=b"));
 
-    let err = Executor::new()
+    Executor::new()
         .run(&mut input, &mut stores)
-        .expect_err("prefix is illegal");
-    assert!(err.to_string().contains("You can't use a prefix with"));
+        .expect("irrelevant long prefix is reported, discarded, and let continues");
+    assert!(support::terminal_effect_text(&stores).contains("You can't use `\\long'"));
+    let a = stores.symbol("a").expect("let target exists");
+    assert_eq!(
+        stores.meaning(a),
+        Meaning::CharToken {
+            ch: 'b',
+            cat: Catcode::Letter
+        }
+    );
 }

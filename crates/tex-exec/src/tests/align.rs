@@ -722,15 +722,17 @@ fn alignment_preamble_errors_match_reference_wording() {
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("{abc\\cr}"));
     let mut hooks = crate::executor::NoopExecHooks;
-    let err = crate::align::scan_preamble(
+    crate::align::scan_preamble(
         UnexpandablePrimitive::HAlign,
         alignment_context(),
         &mut input,
         &mut stores,
         &mut hooks,
     )
-    .expect_err("missing hash should be rejected");
-    assert_eq!(err.to_string(), "Missing # inserted in alignment preamble.");
+    .expect("missing hash should be inserted recoverably");
+    assert!(
+        support::terminal_effect_text(&stores).contains("Missing # inserted in alignment preamble")
+    );
 
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

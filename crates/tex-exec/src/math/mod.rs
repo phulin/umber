@@ -317,7 +317,9 @@ where
             (content, None)
         };
         finish_display_math(nest, stores, display_content, finished_eq_no)?;
-        leave_group_with_origin(input, stores, tex_state::GroupKind::MathShift, origin)?;
+        if stores.innermost_group_kind() == Some(tex_state::GroupKind::MathShift) {
+            leave_group_with_origin(input, stores, tex_state::GroupKind::MathShift, origin)?;
+        }
         resume_after_display(nest, input, stores)?;
     } else {
         let insert_penalties = nest.current_mode() == Mode::Horizontal;
@@ -576,6 +578,13 @@ where
             let amount = assignments::scan_scaled(input, stores, hooks, traced)?;
             nest.current_list_mut().push(Node::Kern {
                 amount,
+                kind: KernKind::Explicit,
+            });
+            Ok(DispatchAction::Continue)
+        }
+        UnexpandablePrimitive::ItalicCorrection => {
+            nest.current_list_mut().push(Node::Kern {
+                amount: Scaled::from_raw(0),
                 kind: KernKind::Explicit,
             });
             Ok(DispatchAction::Continue)

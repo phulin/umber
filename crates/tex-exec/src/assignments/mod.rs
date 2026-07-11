@@ -139,8 +139,20 @@ where
         }
         return Ok(outcome.action);
     }
-    let outcome =
-        execute_prefixed_command(command, prefixes, nest, input, stores, recorder, hooks)?;
+    let outcome = match execute_prefixed_command(
+        command, prefixes, nest, input, stores, recorder, hooks,
+    ) {
+        Ok(outcome) => outcome,
+        Err(ExecError::PrefixWithNonDefinition { .. }) => {
+            push_traced_tokens(input, stores, [command.traced]);
+            stores.world_mut().write_text(
+                tex_state::PrintSink::TerminalAndLog,
+                "\n! You can't use a prefix with this command.\nI'll pretend you didn't say \\long or \\outer or \\global.\n",
+            );
+            return Ok(DispatchAction::Continue);
+        }
+        Err(error) => return Err(error),
+    };
     if outcome.assigned {
         fire_afterassignment(input, stores);
     }
@@ -403,7 +415,7 @@ where
 
 fn execute_prefixed_command<S, H>(
     command: TracedPrefixedCommand,
-    prefixes: Prefixes,
+    mut prefixes: Prefixes,
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
@@ -414,6 +426,22 @@ where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
+    let accepts_macro_flags = matches!(
+        command.command,
+        PrefixedCommand::Primitive(
+            UnexpandablePrimitive::Def
+                | UnexpandablePrimitive::Edef
+                | UnexpandablePrimitive::Gdef
+                | UnexpandablePrimitive::Xdef
+        )
+    );
+    if !accepts_macro_flags && prefixes.flags != MeaningFlags::EMPTY {
+        stores.world_mut().write_text(
+            tex_state::PrintSink::TerminalAndLog,
+            "\n! You can't use `\\long' or `\\outer' with this command.\nI'll pretend you didn't say \\long or \\outer.\n",
+        );
+        prefixes.flags = MeaningFlags::EMPTY;
+    }
     match command.command {
         PrefixedCommand::Primitive(primitive) => match primitive {
             UnexpandablePrimitive::Def
@@ -568,7 +596,20 @@ where
             | UnexpandablePrimitive::PrevDepth
             | UnexpandablePrimitive::PrevGraf
             | UnexpandablePrimitive::NoInterlineSkip => {
-                reject_all_prefixes(prefixes)?;
+                reject_macro_prefixes(prefixes)?;
+                if prefixes.global
+                    && matches!(
+                        primitive,
+                        UnexpandablePrimitive::PrevDepth
+                            | UnexpandablePrimitive::PrevGraf
+                            | UnexpandablePrimitive::NoInterlineSkip
+                    )
+                {
+                    stores.world_mut().write_text(
+                        tex_state::PrintSink::TerminalAndLog,
+                        "\n! You can't use a prefix with this command.\nI'll pretend you didn't say \\global.\n",
+                    );
+                }
                 execute_paragraph_command(primitive, command.traced, nest, input, stores, hooks)?;
                 Ok(CommandOutcome::assigned_if(
                     primitive == UnexpandablePrimitive::ParShape
@@ -930,16 +971,33 @@ where
                 crate::math::insert_dollar_sign(command.traced, input, stores);
                 Ok(CommandOutcome::continue_only())
             }
-            UnexpandablePrimitive::NoAlign => Err(ExecError::MisplacedNoAlign),
-            UnexpandablePrimitive::Omit => Err(ExecError::MisplacedOmit),
+            UnexpandablePrimitive::NoAlign | UnexpandablePrimitive::Omit => {
+                let name = if primitive == UnexpandablePrimitive::NoAlign {
+                    "noalign"
+                } else {
+                    "omit"
+                };
+                stores.world_mut().write_text(
+                    tex_state::PrintSink::TerminalAndLog,
+                    &format!("\n! Misplaced \\{name}.\nI expect to see \\{name} only after the \\cr of an alignment.\n"),
+                );
+                Ok(CommandOutcome::continue_only())
+            }
             UnexpandablePrimitive::Cr
             | UnexpandablePrimitive::CrCr
-            | UnexpandablePrimitive::Span => Err(ExecError::UnimplementedTypesetting {
-                mode: nest.current_mode(),
-                token: command.token,
-                origin: command.origin,
-                operation: "alignment primitive",
-            }),
+            | UnexpandablePrimitive::Span => {
+                let name = match primitive {
+                    UnexpandablePrimitive::Cr => "cr",
+                    UnexpandablePrimitive::CrCr => "crcr",
+                    UnexpandablePrimitive::Span => "span",
+                    _ => unreachable!(),
+                };
+                stores.world_mut().write_text(
+                    tex_state::PrintSink::TerminalAndLog,
+                    &format!("\n! Misplaced \\{name}.\nI can't figure out why you would want to use this alignment command here.\n"),
+                );
+                Ok(CommandOutcome::continue_only())
+            }
             UnexpandablePrimitive::Global
             | UnexpandablePrimitive::Long
             | UnexpandablePrimitive::Outer

@@ -134,7 +134,12 @@ where
             continue;
         }
         if is_alignment_tab_token(token) || is_cr_token(scanner.stores, token) {
-            return Err(ExecError::MissingHashInAlignmentPreamble);
+            scanner.lookahead = Some(token);
+            scanner.stores.world_mut().write_text(
+                tex_state::PrintSink::TerminalAndLog,
+                "\n! Missing # inserted in alignment preamble.\nThere should be exactly one # between &'s, when an\n\\halign or \\valign is being set up. In this case you had\nnone, so I've put one in; maybe that will work.\n",
+            );
+            return Ok(scanner.stores.finish_token_list(&mut builder));
         }
         builder.push(token);
         has_material = true;
