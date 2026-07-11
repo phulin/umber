@@ -1159,6 +1159,18 @@ fn macro_after_span_executes_remaining_assignment_tokens() {
 }
 
 #[test]
+fn expandafter_intercepts_span_before_replaying_saved_macro() {
+    let mut stores = support::stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    run_alignment_source_in(
+        &mut stores,
+        "\\setbox0=\\vbox{\\def\\A{\\ifnum\\count4=0 \\global\\count2=1\\fi \\global\\advance\\count4 by1}\\def\\xx{\\global\\def\\A{\\ifnum\\count4=0 \\global\\count2=2\\fi \\global\\advance\\count4 by1}}\\halign{#\\A&#\\cr z\\expandafter\\xx\\span x&y\\cr}}",
+    );
+
+    assert_eq!(stores.count(2), 1);
+}
+
+#[test]
 fn noalign_material_is_spliced_between_finished_rows() {
     let stores =
         run_boxed_alignment_source("\\halign{#\\cr a\\cr\\noalign{\\hrule height2pt}b\\cr}");
