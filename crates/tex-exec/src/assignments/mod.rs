@@ -1025,8 +1025,6 @@ where
             | UnexpandablePrimitive::MathChoice
             | UnexpandablePrimitive::Left
             | UnexpandablePrimitive::Right
-            | UnexpandablePrimitive::EqNo
-            | UnexpandablePrimitive::LeftEqNo
             | UnexpandablePrimitive::DisplayStyle
             | UnexpandablePrimitive::TextStyle
             | UnexpandablePrimitive::ScriptStyle
@@ -1036,6 +1034,11 @@ where
                 // §1147: insert `$`, then reconsider the original command in
                 // math mode instead of consuming it or aborting execution.
                 crate::math::insert_dollar_sign(command.traced, input, stores);
+                Ok(CommandOutcome::continue_only())
+            }
+            UnexpandablePrimitive::EqNo | UnexpandablePrimitive::LeftEqNo => {
+                reject_all_prefixes(prefixes)?;
+                crate::diagnostics::report_illegal_case(stores, command.token, nest.current_mode());
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::MathOrd

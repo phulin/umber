@@ -265,13 +265,22 @@ fn close_left_group(
     stores: &mut Universe,
     right_delimiter: u32,
 ) -> Result<(), ExecError> {
-    nest.current_list_mut().push(Node::MathNoad(MathNoad::new(
+    // TeX completes an outstanding generalized fraction before appending the
+    // matching \right noad. Otherwise the right delimiter incorrectly becomes
+    // part of the fraction denominator.
+    let content = finish_current_math_list(nest, stores);
+    let mut nodes: Vec<_> = stores
+        .nodes(content)
+        .into_iter()
+        .map(|node| node.to_owned())
+        .collect();
+    nodes.push(Node::MathNoad(MathNoad::new(
         NoadKind::RightDelimiter {
             delimiter: right_delimiter,
         },
         MathField::Empty,
     )));
-    let content = finish_current_math_list(nest, stores);
+    let content = stores.freeze_node_list(&nodes);
     let _ = nest.pop()?;
     append_noad(
         nest,
@@ -291,13 +300,26 @@ pub(super) fn finish_current_math_list(
     };
     let nodes = if let Some(incomplete) = incomplete {
         let denominator = stores.freeze_node_list(&nodes);
-        vec![Node::FractionNoad(MathFraction {
-            numerator: incomplete.numerator,
+        let mut numerator_nodes: Vec<_> = stores
+            .nodes(incomplete.numerator)
+            .into_iter()
+            .map(|node| node.to_owned())
+            .collect();
+        let leading_left = matches!(numerator_nodes.first(), Some(Node::MathNoad(noad)) if matches!(noad.kind, NoadKind::LeftDelimiter { .. }))
+            .then(|| numerator_nodes.remove(0));
+        let numerator = if leading_left.is_some() {
+            stores.freeze_node_list(&numerator_nodes)
+        } else {
+            incomplete.numerator
+        };
+        let fraction = Node::FractionNoad(MathFraction {
+            numerator,
             denominator,
             thickness: incomplete.thickness,
             left_delimiter: incomplete.left_delimiter,
             right_delimiter: incomplete.right_delimiter,
-        })]
+        });
+        leading_left.into_iter().chain([fraction]).collect()
     } else {
         nodes
     };

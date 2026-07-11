@@ -303,15 +303,20 @@ where
     let prev_graf = nest.enclosing_vertical_prev_graf().saturating_add(3);
     nest.set_enclosing_vertical_prev_graf(prev_graf);
     let par_shape = nest.current_list().par_shape().cloned();
-    match input.next_traced_token(stores)? {
-        Some(traced)
-            if matches!(
-                tex_expand::semantic_token(traced),
-                Token::Char {
-                    cat: Catcode::Space,
-                    ..
-                }
-            ) => {}
+    let next = loop {
+        match input.next_traced_token(stores)? {
+            Some(traced)
+                if matches!(
+                    tex_expand::semantic_token(traced),
+                    Token::Char {
+                        cat: Catcode::Space,
+                        ..
+                    }
+                ) => {}
+            other => break other,
+        }
+    };
+    match next {
         Some(traced) if is_par_or_end_group(stores, tex_expand::semantic_token(traced)) => {
             crate::push_traced_tokens(input, stores, [traced]);
         }

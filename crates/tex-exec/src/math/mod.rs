@@ -859,6 +859,17 @@ where
                 tex_state::PrintSink::TerminalAndLog,
                 "\n! Improper \\setbox.\nSorry, \\setbox is not allowed after \\halign in a display,\nor between \\accent and an accented character.\n",
             );
+            if let Some(next) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
+                && !matches!(
+                    tex_expand::semantic_token(next),
+                    Token::Char {
+                        ch: '=',
+                        cat: Catcode::Other,
+                    }
+                )
+            {
+                push_traced_tokens(input, stores, [next]);
+            }
             return Ok(());
         }
 

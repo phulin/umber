@@ -495,19 +495,19 @@ fn equation_number_math_shift_group_restores_before_outer_display_group() {
 }
 
 #[test]
-fn equation_number_outside_display_inserts_math_shift_then_reports_illegal_case() {
+fn equation_number_outside_display_reports_illegal_case_without_starting_math() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(r"\eqno x$\count0=7"));
 
     Executor::new()
         .run(&mut input, &mut stores)
-        .expect("non-math eqno recovery should continue after the closing math shift");
+        .expect("non-math eqno recovery should continue");
 
     assert_eq!(stores.count(0), 7);
     let output = support::terminal_effect_text(&stores);
-    assert!(output.contains("Missing $ inserted"));
-    assert!(output.contains("You can't use `\\eqno' in math mode"));
+    assert!(!output.contains("Missing $ inserted"));
+    assert!(output.contains("You can't use `\\eqno' in vertical mode"));
 }
 
 #[test]
@@ -896,10 +896,25 @@ fn left_right_scans_nested_list_as_inner_noad() {
 
 #[test]
 fn right_closes_left_group_whose_numerator_was_captured_by_fraction() {
-    let (stores, executor) = run_math_source(r"$\left.A\over A\abovewithdelims.?\right(+A$\end");
+    let (stores, executor) = run_math_source(r"$\left.A\over A\abovewithdelims.?\right(+A");
 
-    assert_eq!(executor.nest().current_mode(), Mode::Horizontal);
+    assert_eq!(executor.nest().current_mode(), Mode::Math);
     assert!(!support::terminal_effect_text(&stores).contains("Extra \\right"));
+    let nodes = math_nodes(&stores, &executor);
+    let inner = math_noad(&nodes[0]);
+    let MathField::SubMlist(list) = inner.nucleus else {
+        panic!("expected left/right inner noad to hold a sub-mlist");
+    };
+    let enclosed = stores.nodes(list).testing_decoded();
+    assert!(matches!(
+        math_noad(&enclosed[0]).kind,
+        NoadKind::LeftDelimiter { .. }
+    ));
+    assert!(matches!(enclosed[1], Node::FractionNoad(_)));
+    assert!(matches!(
+        math_noad(&enclosed[2]).kind,
+        NoadKind::RightDelimiter { .. }
+    ));
 }
 
 #[test]
