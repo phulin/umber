@@ -200,7 +200,7 @@ fn unrestricted_reconstitution_inserts_null_disc_after_font_hyphen() {
             Node::Char { ch: 'n', .. },
             Node::Char { ch: '-', .. },
             Node::Disc {
-                kind: DiscKind::ExplicitHyphen,
+                kind: DiscKind::AutomaticHyphen,
                 ..
             },
             Node::Char { ch: 'l', .. },

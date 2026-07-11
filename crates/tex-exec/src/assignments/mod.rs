@@ -843,6 +843,18 @@ where
                     ensure_horizontal_for_character(nest, input, stores)?;
                     return Ok(CommandOutcome::continue_only());
                 }
+                if matches!(
+                    primitive,
+                    UnexpandablePrimitive::Discretionary
+                        | UnexpandablePrimitive::DiscretionaryHyphen
+                ) && matches!(
+                    nest.current_mode(),
+                    crate::Mode::Vertical | crate::Mode::InternalVertical
+                ) {
+                    push_traced_tokens(input, stores, [command.traced]);
+                    ensure_horizontal_for_character(nest, input, stores)?;
+                    return Ok(CommandOutcome::continue_only());
+                }
                 execute_hmode_material(
                     command.traced,
                     primitive,

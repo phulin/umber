@@ -1955,6 +1955,27 @@ fn empty_negative_width_hbox_does_not_gain_an_overfull_rule() {
 }
 
 #[test]
+fn vertical_mode_discretionary_hyphen_starts_a_paragraph() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\setbox0=\\vbox{\\-\\par}"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("discretionary paragraph executes");
+
+    let root = stores.box_reg(0).expect("box0");
+    let Some(tex_state::node_arena::NodeRef::VList(vbox)) = stores.nodes(root).first() else {
+        panic!("box0 should contain a vbox");
+    };
+    assert!(matches!(
+        stores.nodes(vbox.children).testing_decoded(),
+        [Node::HList(_)]
+    ));
+}
+
+#[test]
 fn insertion_starts_with_normal_paragraph_parameters() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);

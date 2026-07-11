@@ -482,7 +482,10 @@ fn append_literal_hyphen_disc(
     }
     let empty = stores.freeze_node_list(&[]);
     out.push(Node::Disc {
-        kind: DiscKind::ExplicitHyphen,
+        // TeX's null discretionary after a font hyphen uses
+        // \hyphenpenalty; only the explicit \- primitive uses
+        // \exhyphenpenalty.
+        kind: DiscKind::AutomaticHyphen,
         pre: empty,
         post: empty,
         replace: empty,
