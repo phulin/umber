@@ -24,37 +24,19 @@ where
     H: ExpansionHooks<S>,
     E: crate::ExpandNext<S, St, R, H>,
 {
-    let Some(saved) = next_get_token(input, stores)? else {
+    let Some(saved) = crate::get_token(input, stores)? else {
         return Err(ExpandError::MissingTokenAfterPrimitive {
             opcode: ExpandableOpcode::ExpandAfter,
             context,
         });
     };
-    let Some(target) = next_get_token(input, stores)? else {
+    let Some(target) = crate::get_token(input, stores)? else {
         return Err(ExpandError::MissingTokenAfterPrimitive {
             opcode: ExpandableOpcode::ExpandAfter,
             context,
         });
     };
     expander.dispatch_raw_token_after(saved, target, input, stores, recorder, hooks)
-}
-
-fn next_get_token<S, St>(
-    input: &mut InputStack<S>,
-    stores: &mut St,
-) -> Result<Option<TracedTokenWord>, ExpandError>
-where
-    S: InputSource,
-    St: ExpansionState,
-{
-    loop {
-        let Some(token) = input.next_traced_token(stores)? else {
-            return Ok(None);
-        };
-        if !crate::intercept_alignment_token(input, stores, token) {
-            return Ok(Some(token));
-        }
-    }
 }
 
 pub(crate) fn scan_csname<S, R, H>(

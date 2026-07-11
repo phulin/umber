@@ -1115,6 +1115,14 @@ fn misplaced_noalign_outside_row_boundary_reports_reference_primary_text() {
 }
 
 #[test]
+fn show_get_token_intercepts_cell_terminator_before_reading_v_template() {
+    let stores =
+        run_boxed_alignment_source("\\def\\A{seen}\\halign{#\\A\\cr \\show\\cr \\omit x\\cr}");
+
+    assert!(support::terminal_effect_text(&stores).contains("> \\A=macro:"));
+}
+
+#[test]
 fn omit_span_chain_merges_template_free_cells() {
     let stores = run_boxed_alignment_source(
         "\\halign{<#>&[#]&( # )\\cr \\omit a\\span\\omit b\\span\\omit c\\cr}",

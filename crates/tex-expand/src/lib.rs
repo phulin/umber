@@ -860,6 +860,25 @@ pub(crate) fn intercept_alignment_token<S>(
     input.intercept_alignment_token(traced, terminator, stores.execution_group_depth())
 }
 
+/// Implements TeX's unexpanded `get_token`, including alignment delimiter
+/// interception performed by `get_next` before the token reaches its caller.
+pub fn get_token<S>(
+    input: &mut InputStack<S>,
+    stores: &mut impl ExpansionState,
+) -> Result<Option<TracedTokenWord>, ExpandError>
+where
+    S: InputSource,
+{
+    loop {
+        let Some(token) = input.next_traced_token(stores)? else {
+            return Ok(None);
+        };
+        if !intercept_alignment_token(input, stores, token) {
+            return Ok(Some(token));
+        }
+    }
+}
+
 pub(crate) fn get_x_token_without_input_open<S, R, H>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,

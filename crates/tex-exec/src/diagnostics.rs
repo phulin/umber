@@ -43,9 +43,9 @@ pub(crate) fn execute_show<S>(
 where
     S: InputSource,
 {
-    let token = input
-        .next_token(stores)?
+    let token = tex_expand::get_token(input, stores)?
         .ok_or(ExecError::MissingToken { context: "\\show" })?;
+    let token = tex_expand::semantic_token(token);
     let text = match token {
         Token::Cs(_) => {
             format!(
