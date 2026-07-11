@@ -8,8 +8,9 @@ use crate::world::ContentHash;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 pub use tex_fonts::metrics::{
-    CharMetrics, CharTag, ExtensibleRecipe, FontContentHash, FontMetrics, LigKernChar,
-    LigKernCommand, LigKernInstruction, LigKernIter, LigKernStep, LigatureCommand, LoadedFont,
+    CharMetrics, CharTag, ExtensibleRecipe, FontContentHash, FontMetrics,
+    FontMetricsValidationError, LigKernChar, LigKernCommand, LigKernInstruction, LigKernIter,
+    LigKernStep, LigatureCommand, LoadedFont,
 };
 
 /// TeX's predefined null font.

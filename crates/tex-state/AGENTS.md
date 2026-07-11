@@ -69,6 +69,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/stores/format.rs`: Deterministic versioned format-image DTO capture/validation and fresh-store reconstruction.
 - `src/stores/format/node.rs`: Handle-free serialized node/math DTO graph and validated conversion to and from live nodes.
 - `src/stores/format/tests.rs`: Malformed format DTO validation tests that reject references before live-store publication.
+- `src/stores/format/font_validation.rs`: Pre-publication validation of detached font metrics, identifiers, and serialized Env font banks, plus test-only corruption fixtures.
 - `src/stores/state_hash.rs`: Store snapshot cursor and semantic hashing implementation for changed cells and store-owned slices.
 - `src/stores/tests.rs`: Unit tests for aggregate store rollback, builders, handle validation, parameters, boxes, and state hashes.
 - `src/survivor.rs`: Survivor arena for node lists that escape epoch rollback boundaries, including root-safe buffer recycling and feature-gated promotion measurements.

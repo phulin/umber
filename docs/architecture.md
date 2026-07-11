@@ -1060,7 +1060,11 @@ immutable tables, with mutable font state kept behind the state timeline.
   lig/kern match and replacement operands and extensible recipe pieces apply
   TeX's stronger existence check (except the declared boundary character
   match). Rust additionally bounds every table index, restart, skip, and
-  traversal before publishing the immutable metrics.
+  traversal before publishing the immutable metrics. The detached lig/kern
+  program has one shared runtime capacity of 65,536 instructions: its final
+  addressable index is `u16::MAX`, and an instruction at that index must stop.
+  TFM parsing and format restore enforce the same bound, while the runtime
+  iterator uses a checked cursor transition even for hand-built metrics.
 - `tex-exec` applies TeX82's TFM filename rule (`.tfm` by default), then asks
   the driver hook to resolve the path through the narrow `InputReadState`
   capability. The CLI probes the principal input directory followed by the

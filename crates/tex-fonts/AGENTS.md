@@ -22,6 +22,7 @@ Use this crate for font-domain parsing and metric representation that does not r
 - `src/lib.rs`: public module wiring and re-exports for font metric and TFM APIs.
 - `src/metrics.rs`: immutable loaded-font records and backend-neutral metric query types.
 - `src/tests.rs`: crate-internal test module declarations for TFM parsing and cross-checks.
+- `src/tests/metrics_validation.rs`: Detached metric capacity/reference validation and runtime lig/kern cursor boundary tests.
 - `src/tests/tfm_parse.rs`: unit tests and helpers for parsing fixtures, metrics conversion, and malformed TFM validation.
 - `src/tfm/error.rs`: structured TFM parse error variants and display messages.
 - `src/tfm/mod.rs`: TFM module boundary and public re-exports.
