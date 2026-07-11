@@ -1637,9 +1637,7 @@ impl Stores {
 
     #[cfg(any(test, feature = "testing", feature = "shadow"))]
     fn testing_hash_all_epoch_nodes(&self, hasher: &mut impl Hasher) {
-        let len = u32::try_from(self.nodes.testing_node_count())
-            .expect("node arena test hash cannot cover more than u32 entries");
-        for node in self.nodes.get_epoch(NodeListId::new_epoch(0, len)) {
+        for node in self.nodes.testing_all_nodes() {
             self.testing_hash_node_content_bounded(&node.to_owned(), hasher, 0);
         }
     }
