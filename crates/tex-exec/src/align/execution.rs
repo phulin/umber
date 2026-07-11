@@ -52,7 +52,7 @@ where
         while let Some(first_token) = align_peek(align_level, nest, input, stores, recorder, hooks)?
         {
             init_row(align_level, nest)?;
-            let suppress_redundant_cr = execute_row(
+            execute_row(
                 align_level,
                 first_token,
                 nest,
@@ -61,7 +61,6 @@ where
                 recorder,
                 hooks,
             )?;
-            align_state_mut(nest, align_level)?.set_suppress_redundant_cr(suppress_redundant_cr);
             fin_row(align_level, nest, stores)?;
             replay_everycr(input, stores);
         }
@@ -127,7 +126,7 @@ where
         while let Some(first_token) = align_peek(align_level, nest, input, stores, recorder, hooks)?
         {
             init_row(align_level, nest)?;
-            let suppress_redundant_cr = execute_row(
+            execute_row(
                 align_level,
                 first_token,
                 nest,
@@ -136,7 +135,6 @@ where
                 recorder,
                 hooks,
             )?;
-            align_state_mut(nest, align_level)?.set_suppress_redundant_cr(suppress_redundant_cr);
             fin_row(align_level, nest, stores)?;
             replay_everycr(input, stores);
         }
@@ -204,19 +202,12 @@ where
             leave_group(input, stores, tex_state::GroupKind::Simple)?;
             return Ok(None);
         }
-        // WEB changes an extra alignment tab to a row-ending \cr. A source
-        // \cr immediately following that recovery is the redundant terminator
-        // of the same malformed row, not the start of another empty row.
-        if align_state(nest, align_level)?.suppress_redundant_cr() && is_cr(stores, semantic) {
-            continue;
-        }
         // align_peek ignores \crcr between rows, but a bare \cr starts and
         // immediately terminates an empty row through the normal template
         // interception path.
         if is_crcr(stores, semantic) {
             continue;
         }
-        align_state_mut(nest, align_level)?.set_suppress_redundant_cr(false);
         return Ok(Some(token));
     }
 }
@@ -245,7 +236,7 @@ fn execute_row<S, R, H>(
     stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
-) -> Result<bool, ExecError>
+) -> Result<(), ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
@@ -268,7 +259,7 @@ where
         )?;
         column = result.next_column;
         if result.ended_row {
-            return Ok(result.extra_alignment_tab);
+            return Ok(());
         }
         start_token = Some(next_non_space_traced_x(input, stores, hooks)?.ok_or(
             ExecError::MissingToken {
@@ -306,7 +297,6 @@ fn fin_row(
 struct CellResult {
     next_column: usize,
     ended_row: bool,
-    extra_alignment_tab: bool,
 }
 
 struct CellStart {
@@ -416,7 +406,6 @@ where
                 return Ok(CellResult {
                     next_column,
                     ended_row: matches!(terminator, CellTerminator::Cr) || extra_alignment_tab,
-                    extra_alignment_tab,
                 });
             }
         }

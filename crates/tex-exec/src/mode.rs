@@ -277,7 +277,6 @@ pub struct AlignState {
     current_col: usize,
     current_span: u16,
     brace_depth: i32,
-    suppress_redundant_cr: bool,
 }
 
 impl AlignState {
@@ -301,7 +300,6 @@ impl AlignState {
             current_col: 0,
             current_span: 1,
             brace_depth: 0,
-            suppress_redundant_cr: false,
         }
     }
 
@@ -353,15 +351,6 @@ impl AlignState {
     #[must_use]
     pub const fn brace_depth(&self) -> i32 {
         self.brace_depth
-    }
-
-    #[must_use]
-    pub const fn suppress_redundant_cr(&self) -> bool {
-        self.suppress_redundant_cr
-    }
-
-    pub fn set_suppress_redundant_cr(&mut self, value: bool) {
-        self.suppress_redundant_cr = value;
     }
 
     #[must_use]
