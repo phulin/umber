@@ -15,3 +15,7 @@ conversion result and its pure lowering boundary.
 combines measurements with the representation, sidecar ownership, migration,
 validation, and conditional adoption design. Do not create a separate
 `node_word_layout.md` whose encoding or rollback rules could drift.
+
+`wasm_mvp.md` specifies the proposed browser WebAssembly package, including
+the restart-on-fetch driver protocol, hosted TeX Live manifest, cache and
+resource limits, binding API, and MVP verification boundary.
