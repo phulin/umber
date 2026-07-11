@@ -216,6 +216,9 @@ impl Default for EngineStateSnapshot {
 }
 
 /// Result of one expansion dispatch.
+// Keeping dispatch copyable avoids ownership machinery in the expansion loop;
+// generation-tagged replay handles make the uncommon Push variant larger.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Dispatch {
     Continue,

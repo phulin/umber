@@ -42,21 +42,90 @@ macro_rules! opaque_id {
     };
 }
 
-opaque_id!(TokenListId);
 opaque_id!(OriginListId);
-opaque_id!(MacroDefinitionId);
-opaque_id!(GlueId);
-opaque_id!(FontId);
 opaque_id!(SnapshotId);
+
+macro_rules! semantic_id {
+    ($name:ident, $namespace:expr) => {
+        #[repr(transparent)]
+        #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+        pub struct $name(crate::identity::HandleIdentity);
+
+        #[allow(dead_code)]
+        impl $name {
+            pub(crate) const fn new(raw: u32) -> Self {
+                Self(crate::identity::HandleIdentity::reserved(
+                    $namespace,
+                    core::num::NonZeroU32::MIN,
+                    raw,
+                ))
+            }
+
+            pub(crate) const fn from_identity(identity: crate::identity::HandleIdentity) -> Self {
+                Self(identity)
+            }
+
+            pub(crate) const fn builtin(slot: u32) -> Self {
+                Self(crate::identity::HandleIdentity::builtin(slot))
+            }
+
+            pub(crate) const fn identity(self) -> crate::identity::HandleIdentity {
+                self.0
+            }
+
+            pub(crate) const fn is_stored(self) -> bool {
+                self.0.namespace() == $namespace
+            }
+
+            /// Creates a placeholder id for tests that cover compact stored words.
+            #[cfg(any(test, feature = "testing"))]
+            #[must_use]
+            pub const fn testing_new(raw: u32) -> Self {
+                Self::new(raw)
+            }
+
+            /// Returns the dense store slot used by semantic DTOs and packed words.
+            #[must_use]
+            pub const fn raw(self) -> u32 {
+                self.0.slot()
+            }
+        }
+
+        impl serde::Serialize for $name {
+            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: serde::Serializer,
+            {
+                serializer.serialize_u32(self.raw())
+            }
+        }
+
+        impl<'de> serde::Deserialize<'de> for $name {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                Ok(Self::new(<u32 as serde::Deserialize>::deserialize(
+                    deserializer,
+                )?))
+            }
+        }
+    };
+}
+
+semantic_id!(TokenListId, 10);
+semantic_id!(MacroDefinitionId, 11);
+semantic_id!(GlueId, 12);
+semantic_id!(FontId, 13);
 
 impl GlueId {
     /// The canonical zero-glue id, pre-interned by every glue store.
-    pub const ZERO: Self = Self(0);
+    pub const ZERO: Self = Self(crate::identity::HandleIdentity::builtin(0));
 }
 
 impl TokenListId {
     /// The canonical empty token-list id, pre-interned by every token store.
-    pub const EMPTY: Self = Self(0);
+    pub const EMPTY: Self = Self(crate::identity::HandleIdentity::builtin(0));
 }
 
 impl OriginListId {

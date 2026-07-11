@@ -189,6 +189,18 @@ impl IdentityAllocator {
         self.slots.get(id.slot as usize).copied() == Some(id.tag())
     }
 
+    /// Returns the live identity at a dense slot for aggregate decoding of a
+    /// compact stored reference.
+    #[must_use]
+    pub(crate) fn identity_at(&self, slot: u32) -> Option<HandleIdentity> {
+        let tag = self.slots.get(slot as usize).copied()?;
+        Some(HandleIdentity {
+            namespace: tag.namespace,
+            generation: tag.generation,
+            slot,
+        })
+    }
+
     /// Captures the identity component of an aggregate store snapshot in O(1).
     #[must_use]
     pub(crate) fn watermark(&self) -> IdentityMark {

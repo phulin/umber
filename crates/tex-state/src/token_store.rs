@@ -3,6 +3,7 @@
 //! Token-list watermarks are crate-private so rollback can stay coupled to
 //! the aggregate `Universe` boundary.
 
+use crate::identity::{IdentityAllocator, IdentityMark};
 use crate::ids::TokenListId;
 use crate::token::{Token, TracedTokenWord};
 use ahash::RandomState;
@@ -43,6 +44,7 @@ impl Hasher for PrehashedU64Hasher {
 pub(crate) struct TokenStoreMark {
     pub(crate) spans: u32,
     tokens: u32,
+    identities: IdentityMark,
 }
 
 /// An owned scratch buffer for building a token list before freezing it.
@@ -94,13 +96,27 @@ impl TokenListBuilder {
 }
 
 /// Hash-consed immutable token-list arena.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct TokenStore {
     arena: Vec<Token>,
     spans: Vec<(u32, u32)>,
     index: TokenIndex,
     hash_state: RandomState,
     index_dirty: bool,
+    identities: IdentityAllocator,
+}
+
+impl Clone for TokenStore {
+    fn clone(&self) -> Self {
+        Self {
+            arena: self.arena.clone(),
+            spans: self.spans.clone(),
+            index: self.index.clone(),
+            hash_state: self.hash_state.clone(),
+            index_dirty: self.index_dirty,
+            identities: self.identities.fork(),
+        }
+    }
 }
 
 impl TokenStore {
@@ -114,6 +130,7 @@ impl TokenStore {
             index: TokenIndex::default(),
             hash_state,
             index_dirty: false,
+            identities: IdentityAllocator::new(1),
         };
         store
             .index
@@ -132,7 +149,7 @@ impl TokenStore {
     /// Returns the canonical empty token-list id.
     #[must_use]
     pub const fn empty_id() -> TokenListId {
-        TokenListId::new(0)
+        TokenListId::EMPTY
     }
 
     /// Interns `tokens`, returning a dense id for the live token-list content.
@@ -164,10 +181,7 @@ impl TokenStore {
 
         let start = u32_len(self.arena.len(), "token arena exceeds u32 entries");
         let len = u32_len(tokens.len(), "token list exceeds u32 entries");
-        let id = TokenListId::new(u32_len(
-            self.spans.len(),
-            "token-list spans exceed u32 entries",
-        ));
+        let id = self.allocate_id();
 
         self.arena.extend_from_slice(tokens);
         self.spans.push((start, len));
@@ -218,10 +232,7 @@ impl TokenStore {
 
         let start = u32_len(self.arena.len(), "token arena exceeds u32 entries");
         let len = u32_len(traced.len(), "token list exceeds u32 entries");
-        let id = TokenListId::new(u32_len(
-            self.spans.len(),
-            "token-list spans exceed u32 entries",
-        ));
+        let id = self.allocate_id();
 
         self.arena.reserve(traced.len());
         self.spans.reserve(1);
@@ -243,6 +254,10 @@ impl TokenStore {
     /// Reads a live frozen token list.
     #[must_use]
     pub(crate) fn get(&self, id: TokenListId) -> &[Token] {
+        assert!(
+            self.identities.contains(id.identity()),
+            "token list id is not live"
+        );
         let index = id.raw() as usize;
         assert!(index < self.spans.len(), "token list id is not live");
         let (start, len) = self.spans[index];
@@ -255,7 +270,21 @@ impl TokenStore {
     /// Returns whether `id` names a currently-live token-list slot.
     #[must_use]
     pub(crate) fn contains(&self, id: TokenListId) -> bool {
-        (id.raw() as usize) < self.spans.len()
+        self.identities.contains(id.identity())
+    }
+
+    #[must_use]
+    #[allow(dead_code)]
+    pub(crate) fn resolve_stored(&self, id: TokenListId) -> Option<TokenListId> {
+        if self.contains(id) {
+            return Some(id);
+        }
+        if !id.is_stored() {
+            return None;
+        }
+        self.identities
+            .identity_at(id.raw())
+            .map(TokenListId::from_identity)
     }
 
     /// Takes a rollback watermark for aggregate snapshots.
@@ -264,6 +293,7 @@ impl TokenStore {
         TokenStoreMark {
             spans: u32_len(self.spans.len(), "token-list spans exceed u32 entries"),
             tokens: u32_len(self.arena.len(), "token arena exceeds u32 entries"),
+            identities: self.identities.watermark(),
         }
     }
 
@@ -287,6 +317,9 @@ impl TokenStore {
             "token-store mark does not point to a span boundary"
         );
 
+        self.identities
+            .rollback(mark.identities)
+            .expect("token identity mark must name a retained ancestor");
         self.spans.truncate(spans);
         self.arena.truncate(tokens);
         self.index_dirty = true;
@@ -298,7 +331,7 @@ impl TokenStore {
         let mut hasher = DefaultHasher::new();
         self.spans.len().hash(&mut hasher);
         for raw in 0..self.spans.len() {
-            let id = TokenListId::new(u32_len(raw, "token-list spans exceed u32 entries"));
+            let id = self.id_at(u32_len(raw, "token-list spans exceed u32 entries"));
             self.get(id).hash(&mut hasher);
         }
         hasher.finish()
@@ -307,7 +340,7 @@ impl TokenStore {
     fn rebuild_index(&mut self) {
         self.index.clear();
         for raw in 0..self.spans.len() {
-            let id = TokenListId::new(u32_len(raw, "token-list spans exceed u32 entries"));
+            let id = self.id_at(u32_len(raw, "token-list spans exceed u32 entries"));
             let hash = self.content_hash(self.get(id));
             self.index.entry(hash).or_default().push(id);
         }
@@ -316,6 +349,23 @@ impl TokenStore {
 
     fn content_hash(&self, tokens: &[Token]) -> u64 {
         self.hash_state.hash_one(tokens)
+    }
+
+    fn allocate_id(&mut self) -> TokenListId {
+        let identity = self
+            .identities
+            .allocate()
+            .expect("token-list identity capacity exhausted");
+        assert_eq!(identity.slot() as usize, self.spans.len());
+        TokenListId::from_identity(identity)
+    }
+
+    fn id_at(&self, raw: u32) -> TokenListId {
+        TokenListId::from_identity(
+            self.identities
+                .identity_at(raw)
+                .expect("token-list slot is not live"),
+        )
     }
 }
 

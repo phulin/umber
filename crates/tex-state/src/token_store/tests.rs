@@ -96,6 +96,21 @@ fn clone_preserves_keyed_content_hash_state() {
     assert_eq!(cloned.intern(&tokens), original_id);
 }
 
+#[test]
+fn fork_preserves_inherited_ids_and_separates_new_allocations() {
+    let mut parent = TokenStore::new();
+    let inherited = parent.intern(&[char_token('i')]);
+    let mut child = parent.clone();
+
+    assert_eq!(child.get(inherited), &[char_token('i')]);
+
+    let parent_only = parent.intern(&[char_token('p')]);
+    let child_only = child.intern(&[char_token('c')]);
+    assert_eq!(parent_only.raw(), child_only.raw());
+    assert!(!child.contains(parent_only));
+    assert!(!parent.contains(child_only));
+}
+
 proptest! {
     #[test]
     fn ifx_as_id_compare_structurally_equal_lists_share_id(tokens in token_vec()) {
@@ -145,6 +160,8 @@ fn truncate_then_reintern_reuses_dense_token_list_id() {
 
     let reinserted = store.intern(&[char_token('t')]);
     assert_eq!(reinserted.raw(), truncated.raw());
+    assert_ne!(reinserted, truncated);
+    assert!(!store.contains(truncated));
     assert_eq!(store.get(reinserted), &[char_token('t')]);
 }
 
@@ -240,7 +257,9 @@ proptest! {
 
             prop_assert_eq!(store.spans.len(), model.len());
             for (raw, expected) in model.iter().enumerate() {
-                let id = TokenListId::new(raw as u32);
+                let id = store
+                    .resolve_stored(TokenListId::new(raw as u32))
+                    .expect("model slot should resolve to a live token-list identity");
                 prop_assert_eq!(store.get(id), expected.as_slice());
                 prop_assert_eq!(store.intern(expected).raw() as usize, raw);
             }

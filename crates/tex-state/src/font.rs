@@ -12,7 +12,7 @@ pub use tex_fonts::metrics::{
 };
 
 /// TeX's predefined null font.
-pub const NULL_FONT: FontId = FontId::new(0);
+pub const NULL_FONT: FontId = FontId::builtin(0);
 
 /// A missing-character event for consumers to report according to policy.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
