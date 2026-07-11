@@ -219,6 +219,90 @@ fn no_op_write_bumps_generation_without_copying_root() {
     assert!(Arc::ptr_eq(&tables.catcodes.root, &snapshot.catcodes.root));
 }
 
+#[test]
+fn deep_group_global_assignment_appends_one_write_without_rewriting_frames() {
+    const DEPTH: usize = 4_096;
+    let mut tables = CodeTables::new();
+    for _ in 0..DEPTH {
+        tables.enter_group();
+    }
+    let saved_frames = Arc::clone(&tables.group_roots);
+    let generation = tables.generations().catcode;
+
+    tables.set_catcode_global('􏿽', Catcode::Active);
+
+    assert!(Arc::ptr_eq(&tables.group_roots, &saved_frames));
+    assert_eq!(tables.global_writes.len(), 1);
+    assert_eq!(tables.generations().catcode, generation + 1);
+    assert!(
+        saved_frames
+            .iter()
+            .all(|frame| frame.catcodes.page(location('􏿽').0).is_none())
+    );
+    drop(saved_frames);
+
+    for _ in 0..DEPTH {
+        tables.leave_group();
+    }
+    assert_eq!(tables.catcode('􏿽'), Catcode::Active);
+    assert_eq!(tables.global_writes.len(), 0);
+}
+
+#[test]
+fn global_writes_override_interleaved_locals_at_each_group_exit() {
+    let mut tables = CodeTables::new();
+    tables.enter_group();
+    tables.set_catcode('@', Catcode::Letter);
+    tables.set_lccode('@', u32::from('a'));
+    tables.enter_group();
+    tables.set_catcode_global('@', Catcode::Active);
+    tables.set_lccode_global('@', u32::from('z'));
+    tables.set_catcode('@', Catcode::Comment);
+    tables.set_lccode('@', u32::from('x'));
+
+    tables.leave_group();
+    assert_eq!(tables.catcode('@'), Catcode::Active);
+    assert_eq!(tables.lccode('@'), u32::from('z'));
+    tables.set_catcode('@', Catcode::Letter);
+    tables.set_lccode('@', u32::from('y'));
+
+    tables.leave_group();
+    assert_eq!(tables.catcode('@'), Catcode::Active);
+    assert_eq!(tables.lccode('@'), u32::from('z'));
+}
+
+#[test]
+fn same_value_global_assignment_records_activity_without_copying_roots() {
+    let mut tables = CodeTables::new();
+    tables.enter_group();
+    let root = Arc::clone(&tables.catcodes.root);
+    let generation = tables.generations().catcode;
+
+    tables.set_catcode_global('@', Catcode::Other);
+
+    assert_eq!(tables.global_writes.len(), 1);
+    assert_eq!(tables.generations().catcode, generation + 1);
+    assert!(Arc::ptr_eq(&tables.catcodes.root, &root));
+    tables.leave_group();
+    assert_eq!(tables.catcode('@'), Catcode::Other);
+    assert_eq!(tables.generations().catcode, generation + 1);
+}
+
+#[test]
+fn rollback_restores_the_global_write_history_inside_groups() {
+    let mut tables = CodeTables::new();
+    tables.enter_group();
+    let snapshot = tables.checkpoint();
+    tables.set_catcode_global('@', Catcode::Letter);
+    assert_eq!(tables.global_writes.len(), 1);
+
+    tables.rollback_to(snapshot);
+
+    assert_eq!(tables.global_writes.len(), 0);
+    tables.leave_group();
+    assert_eq!(tables.catcode('@'), Catcode::Other);
+}
+
 proptest! {
     #[test]
     fn structural_persistence_restores_catcode_roots(
