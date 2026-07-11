@@ -234,7 +234,7 @@ fn cell_glue_setting(
     cell: &UnsetNode,
     target: Scaled,
 ) -> Result<GlueSetting, ExecError> {
-    let natural = unset_axis_size(kind, cell);
+    let natural = unset_axis_size(kind, cell)?;
     let diff = i64::from(target.raw()) - i64::from(natural.raw());
     if diff == 0 {
         return Ok(GlueSetting {

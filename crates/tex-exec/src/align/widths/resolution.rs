@@ -34,7 +34,7 @@ pub(super) fn resolve_widths(
         state,
         &mut records,
         &mut tabskips,
-    );
+    )?;
 
     let mut index = 0;
     while index < records.len() {
@@ -81,7 +81,7 @@ fn collect_width_requirements(
     state: &AlignState,
     records: &mut Vec<ColumnRecord>,
     tabskips: &mut Vec<GlueId>,
-) {
+) -> Result<(), ExecError> {
     for node in rows {
         let Node::Unset(row) = node else {
             continue;
@@ -93,10 +93,11 @@ fn collect_width_requirements(
             };
             let span = usize::from(cell.span_count.max(1));
             ensure_layout_len(records, tabskips, state, column + span);
-            merge_width(&mut records[column], span, unset_axis_size(kind, &cell));
+            merge_width(&mut records[column], span, unset_axis_size(kind, &cell)?);
             column += span;
         }
     }
+    Ok(())
 }
 
 fn ensure_layout_len(

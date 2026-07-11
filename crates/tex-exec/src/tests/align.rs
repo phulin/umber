@@ -1226,6 +1226,37 @@ fn everycr_replayed_crcr_is_ignored_around_rows_and_after_last_cr() {
 }
 
 #[test]
+fn bare_cr_builds_an_empty_alignment_row() {
+    let stores = run_boxed_alignment_source("\\halign{#\\cr\\cr}");
+    let vbox = box_zero_vlist(&stores);
+    let rows = vlist_rows(&stores, vbox);
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(cell_text(&stores, row_cells(&stores, rows[0])[0]), "");
+}
+
+#[test]
+fn valign_column_extent_includes_cell_depth() {
+    let stores = run_alignment_source(
+        "\\setbox0=\\hbox{\\valign{#\\cr \\vbox{\\hrule height20pt depth2pt}\\cr}}",
+    );
+    let root = stores.box_reg(0).expect("box0");
+    let Some(Node::HList(hbox)) = stores.nodes(root).testing_decoded().first().cloned() else {
+        panic!("box0 should contain an hbox");
+    };
+    let Some(Node::VList(cell)) = stores
+        .nodes(hbox.children)
+        .testing_decoded()
+        .first()
+        .cloned()
+    else {
+        panic!("valign should contain a vertical cell");
+    };
+
+    assert_eq!(cell.height.raw(), 22 * 65_536);
+}
+
+#[test]
 fn display_halign_appends_display_vertical_material() {
     let stores = run_alignment_source(
         "\\setbox0=\\vbox{\\hsize=50pt \\predisplaypenalty=11 \\postdisplaypenalty=22 \

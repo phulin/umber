@@ -77,10 +77,10 @@ fn pack_spec(spec: AlignmentPackSpec) -> PackSpec {
     }
 }
 
-fn unset_axis_size(kind: AlignmentKind, unset: &UnsetNode) -> Scaled {
+fn unset_axis_size(kind: AlignmentKind, unset: &UnsetNode) -> Result<Scaled, ExecError> {
     match kind {
-        AlignmentKind::HAlign => unset.width,
-        AlignmentKind::VAlign => unset.height,
+        AlignmentKind::HAlign => Ok(unset.width),
+        AlignmentKind::VAlign => add_scaled(unset.height, unset.depth),
     }
 }
 

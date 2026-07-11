@@ -7,7 +7,7 @@ use tex_state::{ExpansionContext, ExpansionState, PrintSink, Universe};
 
 use super::support::{
     align_kind, align_state, align_state_mut, alignment_mode, cell_mode, is_alignment_tab, is_cr,
-    is_end_group, is_noalign, is_omit, is_span, row_mode, set_align_brace_depth,
+    is_crcr, is_end_group, is_noalign, is_omit, is_span, row_mode, set_align_brace_depth,
 };
 use crate::assignments::{flush_pending_hchars, next_non_space_traced_x};
 use crate::dispatch::dispatch_delivered_token_with_recorder;
@@ -202,7 +202,10 @@ where
             leave_group(input, stores, tex_state::GroupKind::Simple)?;
             return Ok(None);
         }
-        if is_cr(stores, semantic) {
+        // align_peek ignores \crcr between rows, but a bare \cr starts and
+        // immediately terminates an empty row through the normal template
+        // interception path.
+        if is_crcr(stores, semantic) {
             continue;
         }
         return Ok(Some(token));

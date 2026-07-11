@@ -118,6 +118,10 @@ pub(super) fn is_cr(stores: &Universe, token: Token) -> bool {
     )
 }
 
+pub(super) fn is_crcr(stores: &Universe, token: Token) -> bool {
+    primitive_token(stores, token) == Some(UnexpandablePrimitive::CrCr)
+}
+
 pub(super) fn is_span(stores: &Universe, token: Token) -> bool {
     primitive_token(stores, token) == Some(UnexpandablePrimitive::Span)
 }
