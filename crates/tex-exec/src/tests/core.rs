@@ -1421,6 +1421,45 @@ fn paragraph_end_appends_single_line_through_vertical_spacing() {
 }
 
 #[test]
+fn paragraph_hpack_appends_overfull_rule_for_insufficient_normal_shrink() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(concat!(
+        "\\setbox0=\\vbox{\\hsize=10pt \\overfullrule=5pt ",
+        "\\leftskip=8pt minus4pt \\noindent\\kern9pt\\par}"
+    )));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("overfull paragraph executes");
+
+    let root = stores.box_reg(0).expect("box0");
+    let Some(tex_state::node_arena::NodeRef::VList(vbox)) = stores.nodes(root).first() else {
+        panic!("box0 should contain a vbox");
+    };
+    let has_rule = stores.nodes(vbox.children).iter().any(|node| {
+        let tex_state::node_arena::NodeRef::HList(line) = node else {
+            return false;
+        };
+        stores.nodes(line.children).iter().any(|node| {
+            matches!(
+                node,
+                tex_state::node_arena::NodeRef::Rule {
+                    width: Some(width),
+                    height: None,
+                    depth: None,
+                } if width.raw() == 5 * Scaled::UNITY
+            )
+        })
+    });
+    assert!(
+        has_rule,
+        "overfull paragraph line should end in a five-point rule"
+    );
+}
+
+#[test]
 fn paragraph_end_ignores_empty_unindented_paragraph() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

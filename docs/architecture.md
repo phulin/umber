@@ -866,7 +866,10 @@ makes box-level memoization (M4) sound.
   primitives live in `tex-exec`; execution records the latest packing badness
   through `Universe` for the read-only `\badness` internal integer. When hpack
   diagnostics require TeX's overfull marker, `tex-exec` materializes the
-  synthetic rule while freezing the final child list. Infinite-order stretch
+  synthetic rule while freezing the final child list. Insufficient normal
+  shrink is overfull whenever its residual exceeds `\hfuzz`, independently
+  of the cubic badness value; diagnostics report that post-shrink residual.
+  Infinite-order stretch
   or shrink sets glue with zero badness and never emits finite-order packing
   diagnostics, as in TeX82. Packed boxes retain the
   glue-set ratio as a reduced exact fraction, so cumulative TeX.web glue

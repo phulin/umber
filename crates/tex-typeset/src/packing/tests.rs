@@ -366,7 +366,48 @@ fn hpack_clamps_overfull_normal_shrink_ratio_to_one() {
     assert_eq!(packed.node.glue_set, GlueSetRatio::UNITY);
     assert_eq!(
         packed.diagnostics,
-        vec![PackDiagnostic::Overfull { excess: sp(10) }]
+        vec![PackDiagnostic::Overfull { excess: sp(8) }]
+    );
+}
+
+#[test]
+fn hpack_reports_insufficient_normal_shrink_even_below_infinite_badness() {
+    let mut universe = Universe::new();
+    let glue = universe.intern_glue(GlueSpec {
+        width: sp(8),
+        stretch: sp(0),
+        stretch_order: Order::Normal,
+        shrink: sp(4),
+        shrink_order: Order::Normal,
+    });
+    let list = universe.freeze_node_list(&[
+        Node::Kern {
+            amount: sp(9),
+            kind: KernKind::Explicit,
+        },
+        Node::Glue {
+            spec: glue,
+            kind: GlueKind::Normal,
+            leader: None,
+        },
+    ]);
+
+    let packed = hpack(
+        &universe,
+        list,
+        PackSpec::Exactly(sp(10)),
+        HpackParams {
+            hbadness: 0,
+            hfuzz: sp(2),
+            overfull_rule: sp(5),
+        },
+    );
+
+    assert_eq!(packed.node.glue_set, GlueSetRatio::UNITY);
+    assert_eq!(packed.badness, 533);
+    assert_eq!(
+        packed.diagnostics,
+        vec![PackDiagnostic::Overfull { excess: sp(3) }]
     );
 }
 

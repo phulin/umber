@@ -6,7 +6,9 @@ use tex_state::node::{BoxNode, BoxNodeFields, LeaderPayload, Sign, UnsetKind};
 use tex_state::node_arena::{NodeList, NodeRef};
 use tex_state::scaled::{GlueSetRatio, Scaled};
 
-use crate::{INF_BAD, TypesetState, badness};
+#[cfg(test)]
+use crate::INF_BAD;
+use crate::{TypesetState, badness};
 
 /// A requested box size.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -93,7 +95,7 @@ pub fn hpack(
     let meas = measure_hlist(state, state.nodes(list));
     let width = target_size(meas.width, spec);
     let glue = set_glue(width, meas.width, &meas);
-    let diagnostics = hpack_diagnostics(width, meas.width, glue, params);
+    let diagnostics = hpack_diagnostics(glue, params);
     PackedBox {
         node: BoxNode::new(BoxNodeFields {
             width,
@@ -122,7 +124,7 @@ pub fn vpack(
     clamp_depth(&mut meas, params.box_max_depth);
     let height = target_size(meas.height, spec);
     let glue = set_glue(height, meas.height, &meas);
-    let diagnostics = vpack_diagnostics(height, meas.height, glue, params);
+    let diagnostics = vpack_diagnostics(glue, params);
     PackedBox {
         node: BoxNode::new(BoxNodeFields {
             width: meas.width,
@@ -182,6 +184,7 @@ struct GlueSetting {
     order: Order,
     badness: i32,
     excess: Scaled,
+    overfull_excess: Scaled,
 }
 
 fn target_size(natural: Scaled, spec: PackSpec) -> Scaled {
@@ -201,6 +204,7 @@ fn set_glue(target: Scaled, natural: Scaled, meas: &Measurement) -> GlueSetting 
             order: Order::Normal,
             badness: 0,
             excess: Scaled::from_raw(0),
+            overfull_excess: Scaled::from_raw(0),
         };
     }
     let (sign, totals) = if diff > 0 {
@@ -218,6 +222,12 @@ fn set_glue(target: Scaled, natural: Scaled, meas: &Measurement) -> GlueSetting 
     } else {
         GlueSetRatio::from_scaled_ratio(excess, Scaled::from_raw(total))
     };
+    let overfull_excess =
+        if sign == Sign::Shrinking && order == Order::Normal && excess.raw() > total {
+            Scaled::from_raw(excess.raw().saturating_sub(total))
+        } else {
+            Scaled::from_raw(0)
+        };
     GlueSetting {
         ratio,
         sign,
@@ -228,6 +238,7 @@ fn set_glue(target: Scaled, natural: Scaled, meas: &Measurement) -> GlueSetting 
             0
         },
         excess,
+        overfull_excess,
     }
 }
 
@@ -240,35 +251,22 @@ fn highest_order(values: [Scaled; 4]) -> Order {
     Order::Normal
 }
 
-fn hpack_diagnostics(
-    target: Scaled,
-    natural: Scaled,
-    glue: GlueSetting,
-    params: HpackParams,
-) -> Vec<PackDiagnostic> {
-    common_diagnostics(target, natural, glue, params.hbadness, params.hfuzz)
+fn hpack_diagnostics(glue: GlueSetting, params: HpackParams) -> Vec<PackDiagnostic> {
+    common_diagnostics(glue, params.hbadness, params.hfuzz)
 }
 
-fn vpack_diagnostics(
-    target: Scaled,
-    natural: Scaled,
-    glue: GlueSetting,
-    params: VpackParams,
-) -> Vec<PackDiagnostic> {
-    common_diagnostics(target, natural, glue, params.vbadness, params.vfuzz)
+fn vpack_diagnostics(glue: GlueSetting, params: VpackParams) -> Vec<PackDiagnostic> {
+    common_diagnostics(glue, params.vbadness, params.vfuzz)
 }
 
 fn common_diagnostics(
-    target: Scaled,
-    natural: Scaled,
     glue: GlueSetting,
     badness_threshold: i32,
     fuzz: Scaled,
 ) -> Vec<PackDiagnostic> {
-    let shortfall = natural.raw() - target.raw();
-    if shortfall > fuzz.raw() && glue.sign == Sign::Shrinking && glue.badness >= INF_BAD {
+    if glue.overfull_excess.raw() > fuzz.raw() {
         return vec![PackDiagnostic::Overfull {
-            excess: Scaled::from_raw(shortfall),
+            excess: glue.overfull_excess,
         }];
     }
     if glue.badness <= badness_threshold {
