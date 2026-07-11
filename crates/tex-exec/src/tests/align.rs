@@ -1528,3 +1528,84 @@ fn empty_accent_group_preserves_later_alignment_delimiters() {
     let vbox = box_zero_vlist(&stores);
     assert_eq!(vlist_rows(&stores, vbox).len(), 2);
 }
+
+#[test]
+fn trip_pathological_alignment_closes_before_following_material() {
+    let mut stores = support::stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    let before = stores.snapshot();
+    let source = r#"
+        \font\f=cmr10 \f \let\smalltrip=\f
+        \def\t12#101001#{-.#1pt}
+        \def\d#1\d{#1#1}
+        \setbox3=\vtop{\vskip-3mm}
+        \tabskip 1009.9sp minus .25cc
+        \let\A=\relax \count1=2
+        \halign spread-12.truedd{&#\span\iftrue\A\span\else\span\fi\span&
+          \vbox{\halign to 0pt{\t2\dp3\A\crcr}#A}
+          &\hss\tabskip1ex plus7200bp minus 4\wd4\d#\d\cr
+          \global\let\t=\tabskip \spaceskip=4pt minus 1sp
+          \def\A{B}\def\xx{\global\gdef\A{\global\count\count1=####\cr
+            \omit\cr\tabskip}}\expandafter\xx\span
+          A&\omit\valign to -5pt{#&#\cr A\char`}\span\cr{ }\span\cr}\cr
+          \global\def\A{B}
+          \lccode`Q=`b \span\omit$$\span\A&\show\cr\omit\cr
+          \noalign{\global\prevdepth20pt}
+          \omit\mark{a}&\omit\mark{b}\cr}
+        \global\count7=123
+    "#;
+    let mut input = InputStack::new(MemoryInput::new(source));
+
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("TRIP alignment and following sentinel execute");
+
+    assert_eq!(stores.count(2), -1_118_806);
+    assert_eq!(stores.count(7), 123, "execution must leave the alignment");
+    assert!(
+        stats.delivered_tokens < 10_000,
+        "alignment made bounded progress"
+    );
+    assert!(
+        input.summary().frames().is_empty(),
+        "input stack fully retires"
+    );
+    assert!(
+        stores.env_journal_bytes_since(&before) < 1_000_000,
+        "alignment must not grow the state journal without bound"
+    );
+}
+
+#[test]
+fn trip_show_of_aliased_tab_recovers_and_closes_alignment() {
+    let mut stores = support::stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    let before = stores.snapshot();
+    let source = r#"
+        \font\f=cmr10 \f
+        \long\def\l#1{}
+        \noindent{\halign to 1pt\expandafter{\csname#\endcsname#&#&\l{#}\cr
+          \global\futurelet\endt\foo&\show\endt&$&&&.}
+        \global\count7=321}
+    "#;
+    let mut input = InputStack::new(MemoryInput::new(source));
+
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("aliased-tab show recovery and following sentinel execute");
+
+    assert_eq!(stores.count(7), 321, "execution must leave the alignment");
+    assert_eq!(
+        stores.meaning(stores.symbol("endt").expect("futurelet target")),
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate)
+    );
+    assert!(
+        stats.delivered_tokens < 10_000,
+        "recovery made bounded progress"
+    );
+    assert!(
+        input.summary().frames().is_empty(),
+        "input stack fully retires"
+    );
+    assert!(stores.env_journal_bytes_since(&before) < 1_000_000);
+}

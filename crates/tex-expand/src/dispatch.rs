@@ -116,6 +116,9 @@ macro_rules! dispatch_match {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::EndCsName) => {
                 Ok(Dispatch::Deliver(TracedTokenWord::pack(token, call_origin)))
             }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate) => Ok(
+                Dispatch::Deliver(TracedTokenWord::pack(Token::frozen_endv(), call_origin)),
+            ),
             Meaning::ExpandablePrimitive(ExpandablePrimitive::String) => {
                 let Some(target) = input.next_traced_token(stores)? else {
                     return Err(ExpandError::MissingTokenAfterPrimitive {

@@ -41,6 +41,9 @@ fn meaning_variants_round_trip() {
     round_trip(Meaning::ExpandablePrimitive(ExpandablePrimitive::NoExpand));
     round_trip(Meaning::ExpandablePrimitive(ExpandablePrimitive::CsName));
     round_trip(Meaning::ExpandablePrimitive(ExpandablePrimitive::EndCsName));
+    round_trip(Meaning::ExpandablePrimitive(
+        ExpandablePrimitive::EndTemplate,
+    ));
     round_trip(Meaning::ExpandablePrimitive(ExpandablePrimitive::String));
     round_trip(Meaning::ExpandablePrimitive(ExpandablePrimitive::Number));
     round_trip(Meaning::ExpandablePrimitive(

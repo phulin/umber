@@ -197,6 +197,9 @@ pub(super) fn token_meaning_for_let(
             .active_character_symbol(ch)
             .map_or(Ok(Meaning::Undefined), |symbol| Ok(stores.meaning(symbol))),
         Token::Char { ch, cat } => Ok(Meaning::CharToken { ch, cat }),
+        Token::Frozen(tex_state::token::FrozenToken::EndTemplate) => Ok(
+            Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::EndTemplate),
+        ),
         Token::Param(_) | Token::Frozen(_) => Err(ExecError::InvalidLetRhs {
             token,
             origin: traced.origin(),

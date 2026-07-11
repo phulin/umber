@@ -172,6 +172,8 @@ pub enum ExpandablePrimitive {
     Else,
     Or,
     Fi,
+    /// TeX's inaccessible outer end-template command, aliasable via `\let`.
+    EndTemplate,
 }
 
 impl ExpandablePrimitive {
@@ -216,6 +218,7 @@ impl ExpandablePrimitive {
             Self::Else => 35,
             Self::Or => 36,
             Self::Fi => 37,
+            Self::EndTemplate => 38,
         }
     }
 
@@ -260,6 +263,7 @@ impl ExpandablePrimitive {
             35 => Some(Self::Else),
             36 => Some(Self::Or),
             37 => Some(Self::Fi),
+            38 => Some(Self::EndTemplate),
             _ => None,
         }
     }

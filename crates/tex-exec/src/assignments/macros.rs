@@ -110,21 +110,22 @@ where
 {
     reject_macro_prefixes(prefixes)?;
     let target = scan_definition_target(input, stores, "\\futurelet")?;
-    let first = input.next_token(stores)?.ok_or(ExecError::MissingToken {
+    // TeX.web future_let uses get_token for both lookahead tokens. This is
+    // observable inside alignments: fetching the second token can intercept a
+    // cell delimiter and expose the v-template's frozen end marker instead.
+    let first = tex_expand::get_token(input, stores)?.ok_or(ExecError::MissingToken {
         context: "\\futurelet lookahead",
     })?;
-    let second = input
-        .next_traced_token(stores)?
-        .ok_or(ExecError::MissingToken {
-            context: "\\futurelet lookahead",
-        })?;
+    let second = tex_expand::get_token(input, stores)?.ok_or(ExecError::MissingToken {
+        context: "\\futurelet lookahead",
+    })?;
     let meaning = token_meaning_for_let(second, stores)?;
     if apply_globaldefs(prefixes.global, stores) {
         stores.set_meaning_global(target, meaning);
     } else {
         stores.set_meaning(target, meaning);
     }
-    push_tokens(input, stores, [first, tex_expand::semantic_token(second)]);
+    push_traced_tokens(input, stores, [first, second]);
     Ok(())
 }
 
