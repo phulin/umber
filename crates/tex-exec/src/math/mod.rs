@@ -196,8 +196,8 @@ where
             cat: Catcode::BeginGroup,
             ..
         } => {
-            let field = scan_math_field_group_after_open(nest, input, stores, recorder, hooks)?;
-            append_noad(nest, NoadKind::Normal(NoadClass::Ord), field);
+            let noad = scan::scan_math_atom_group_after_open(nest, input, stores, recorder, hooks)?;
+            nest.current_list_mut().push(Node::MathNoad(noad));
             Ok(DispatchAction::Continue)
         }
         Token::Char {

@@ -414,6 +414,17 @@ fn math_field_groups_remove_braces_around_single_unscripted_ord_box() {
 }
 
 #[test]
+fn math_atom_group_around_accent_replaces_the_ord_wrapper() {
+    let (stores, executor) = run_math_source(r#"${\mathaccent"7013 y}"#);
+    let nodes = math_nodes(&stores, &executor);
+
+    let [Node::MathNoad(noad)] = nodes else {
+        panic!("grouped accent should remain one noad")
+    };
+    assert!(matches!(noad.kind, NoadKind::Accent { .. }));
+}
+
+#[test]
 fn math_group_mismatch_reports_the_closing_token_origin() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);

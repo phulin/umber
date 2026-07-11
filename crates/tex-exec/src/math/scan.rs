@@ -177,6 +177,35 @@ where
     Ok(simplify_math_group_field(stores, list))
 }
 
+pub(super) fn scan_math_atom_group_after_open<S, R, H>(
+    nest: &mut ModeNest,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<MathNoad, ExecError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    let list = scan_math_group_after_open(nest, input, stores, recorder, hooks)?;
+    let nodes = stores.nodes(list);
+    if nodes.len() == 1
+        && let Some(tex_state::node_arena::NodeRef::MathNoad(noad)) = nodes.first()
+        && matches!(noad.kind, NoadKind::Accent { .. })
+    {
+        // TeX.web §1196 replaces the placeholder Ord noad by a sole accent
+        // noad when braces supplied that Ord's nucleus. Keeping the wrapper
+        // would add an observable hbox/push around the accent.
+        return Ok(noad.clone());
+    }
+    Ok(MathNoad::new(
+        NoadKind::Normal(NoadClass::Ord),
+        simplify_math_group_field(stores, list),
+    ))
+}
+
 fn simplify_math_group_field(stores: &Universe, list: tex_state::ids::NodeListId) -> MathField {
     // TeX.web removes braces around a single unscripted Ord atom by copying
     // its nucleus into the field that the group was scanned to fill.
