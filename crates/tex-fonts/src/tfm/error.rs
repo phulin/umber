@@ -57,6 +57,10 @@ pub enum ParseError {
         index: u8,
         len: usize,
     },
+    LigKernProgramTooLong {
+        len: usize,
+        max: usize,
+    },
     LigKernSkipOutOfBounds {
         index: usize,
         target: usize,
@@ -181,6 +185,10 @@ impl fmt::Display for ParseError {
             Self::LigKernProgramIndexOutOfBounds { code, index, len } => write!(
                 f,
                 "character {code} references lig/kern program index {index}, but table has {len} entries"
+            ),
+            Self::LigKernProgramTooLong { len, max } => write!(
+                f,
+                "TFM lig/kern program has {len} entries; runtime cursor capacity is {max}"
             ),
             Self::LigKernSkipOutOfBounds { index, target, len } => write!(
                 f,

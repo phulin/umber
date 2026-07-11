@@ -6,6 +6,13 @@ use tex_arith::Scaled;
 /// TeX82 guarantees `fontdimen1` through `fontdimen7` for every loaded font.
 pub const MIN_TEX_FONT_PARAMETERS: usize = 7;
 
+/// Maximum lig/kern program length addressable by the runtime `u16` cursor.
+///
+/// Length 65,536 is valid: its final instruction has index `u16::MAX` and
+/// must terminate rather than advance. Any longer table has unaddressable
+/// instructions and is rejected before becoming live metric state.
+pub const MAX_LIG_KERN_PROGRAM_LEN: usize = u16::MAX as usize + 1;
+
 /// Stable content identity for loaded font bytes.
 pub type FontContentHash = [u8; 32];
 
@@ -145,6 +152,10 @@ pub enum FontMetricsValidationError {
         index: u16,
         len: usize,
     },
+    LigKernProgramTooLong {
+        len: usize,
+        max: usize,
+    },
     LigKernSkipOutOfBounds {
         instruction: usize,
         target: usize,
@@ -194,6 +205,10 @@ impl std::fmt::Display for FontMetricsValidationError {
             Self::LeftBoundaryProgramOutOfBounds { index, len } => write!(
                 f,
                 "left-boundary lig/kern index {index} is outside program length {len}"
+            ),
+            Self::LigKernProgramTooLong { len, max } => write!(
+                f,
+                "lig/kern program has {len} entries; runtime cursor capacity is {max}"
             ),
             Self::LigKernSkipOutOfBounds {
                 instruction,
@@ -263,6 +278,12 @@ impl FontMetrics {
         if self.characters.len() > 256 {
             return Err(FontMetricsValidationError::TooManyCharacters {
                 len: self.characters.len(),
+            });
+        }
+        if self.lig_kern_program.len() > MAX_LIG_KERN_PROGRAM_LEN {
+            return Err(FontMetricsValidationError::LigKernProgramTooLong {
+                len: self.lig_kern_program.len(),
+                max: MAX_LIG_KERN_PROGRAM_LEN,
             });
         }
 
@@ -570,7 +591,8 @@ impl Iterator for LigKernIter<'_> {
         self.next_index = if instruction.skip_byte >= 128 {
             None
         } else {
-            Some(index + u16::from(instruction.skip_byte) + 1)
+            let target = usize::from(index) + usize::from(instruction.skip_byte) + 1;
+            u16::try_from(target).ok()
         };
         Some(LigKernStep {
             instruction_index: index,
