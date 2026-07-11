@@ -1605,7 +1605,7 @@ fn right_brace_before_cr_uses_missing_cr_recovery() {
 }
 
 #[test]
-fn noexpand_cr_is_relax_for_one_delivery_inside_alignment() {
+fn noexpand_unexpandable_cr_terminates_alignment_row() {
     let mut stores = support::stores_with_fonts();
     tex_expand::install_expandable_primitives(&mut stores);
     run_alignment_source_in(
@@ -1613,11 +1613,25 @@ fn noexpand_cr_is_relax_for_one_delivery_inside_alignment() {
         "\\setbox0=\\vbox{\\halign{#\\cr x\\noexpand\\cr y\\cr}}",
     );
     let vbox = box_zero_vlist(&stores);
-    assert_eq!(vlist_rows(&stores, vbox).len(), 1);
-    assert_eq!(
-        cell_text(&stores, row_cells(&stores, vlist_rows(&stores, vbox)[0])[0]),
-        "xy"
+    let rows = vlist_rows(&stores, vbox);
+    assert_eq!(rows.len(), 2);
+    assert_eq!(cell_text(&stores, row_cells(&stores, rows[0])[0]), "x");
+    assert_eq!(cell_text(&stores, row_cells(&stores, rows[1])[0]), "y");
+}
+
+#[test]
+fn noexpand_preserves_unexpandable_cr_alias_but_suppresses_macro_alias() {
+    let mut stores = support::stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    run_alignment_source_in(
+        &mut stores,
+        "\\def\\m{M}\\let\\endrow=\\cr \\setbox0=\\vbox{\\halign{#\\cr x\\noexpand\\m y\\noexpand\\endrow z\\cr}}",
     );
+    let vbox = box_zero_vlist(&stores);
+    let rows = vlist_rows(&stores, vbox);
+    assert_eq!(rows.len(), 2);
+    assert_eq!(cell_text(&stores, row_cells(&stores, rows[0])[0]), "xy");
+    assert_eq!(cell_text(&stores, row_cells(&stores, rows[1])[0]), "z");
 }
 
 #[test]
@@ -1806,7 +1820,7 @@ fn trip_conditional_preamble_recovery_stops_before_following_input() {
             .filter(|node| matches!(node, Node::Penalty(97)))
             .count(),
         3,
-        "TeX runs everycr at preamble completion and after both recovered rows"
+        "this line-420 reduction runs everycr initially and after two rows"
     );
     assert!(stats.delivered_tokens < 1_000);
     let first_hash = stores.snapshot().state_hash();

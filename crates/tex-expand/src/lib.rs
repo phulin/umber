@@ -773,7 +773,9 @@ where
         }
 
         if read.suppress_expansion() {
-            input.intercept_alignment_token(traced, tex_lex::AlignmentTokenDelivery::Other, None);
+            if intercept_suppressed_alignment_token(input, stores, traced) {
+                continue;
+            }
             return Ok(Some(traced));
         }
 
@@ -817,11 +819,9 @@ where
         match dispatched {
             Dispatch::Continue => {}
             Dispatch::DeliverNoExpand(token) => {
-                input.intercept_alignment_token(
-                    token,
-                    tex_lex::AlignmentTokenDelivery::Other,
-                    None,
-                );
+                if intercept_suppressed_alignment_token(input, stores, token) {
+                    continue;
+                }
                 return Ok(Some(token));
             }
             Dispatch::Deliver(token) => {
@@ -908,6 +908,29 @@ pub(crate) fn intercept_alignment_token<S>(
         }
     };
     input.intercept_alignment_token(traced, delivery, terminator)
+}
+
+/// Applies TeX82's `dont_expand` command-code test to alignment delivery.
+///
+/// An expandable meaning is delivered as the one-shot `no_expand_flag`
+/// variant of `\relax`. An already-unexpandable meaning retains its ordinary
+/// brace or delimiter behavior, including `\cr` interception.
+fn intercept_suppressed_alignment_token<S>(
+    input: &mut InputStack<S>,
+    stores: &mut impl ExpansionState,
+    traced: TracedTokenWord,
+) -> bool {
+    let expandable = expandable_symbol(stores, traced).is_some_and(|symbol| {
+        matches!(
+            stores.meaning(symbol),
+            Meaning::Undefined | Meaning::Macro { .. } | Meaning::ExpandablePrimitive(_)
+        )
+    });
+    if expandable {
+        input.intercept_alignment_token(traced, tex_lex::AlignmentTokenDelivery::Other, None)
+    } else {
+        intercept_alignment_token(input, stores, traced)
+    }
 }
 
 pub fn back_input<S, I>(input: &mut InputStack<S>, stores: &mut impl ExpansionState, tokens: I)
@@ -1013,6 +1036,9 @@ where
         let traced = read.traced_token();
 
         if read.suppress_expansion() {
+            if intercept_suppressed_alignment_token(input, stores, traced) {
+                continue;
+            }
             return Ok(Some(traced));
         }
 
@@ -1050,7 +1076,12 @@ where
         };
         match dispatched {
             Dispatch::Continue => {}
-            Dispatch::DeliverNoExpand(token) => return Ok(Some(token)),
+            Dispatch::DeliverNoExpand(token) => {
+                if intercept_suppressed_alignment_token(input, stores, token) {
+                    continue;
+                }
+                return Ok(Some(token));
+            }
             Dispatch::Deliver(token) => {
                 if intercept_alignment_token(input, stores, token) {
                     continue;

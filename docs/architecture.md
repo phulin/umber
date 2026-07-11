@@ -368,13 +368,15 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   read `Env` and mint fresh frozen token/origin lists.
 - **`\noexpand`** preserves the suppressed control-sequence token and its
   provenance for token-identity consumers, while its checkpointed replay kind
-  and inserted origin make that single main-control delivery behave as
-  `\relax`; alignment delimiter interception therefore cannot mistake a
-  suppressed `\cr`, `\span`, or tab for a live cell terminator.
+  and inserted origin make an expandable meaning behave as `\relax` for that
+  single main-control delivery. TeX82 leaves an already-unexpandable meaning
+  unchanged, so a suppressed `\cr` or `\span` still terminates an alignment
+  cell normally.
 - **Alignment delivery state** lives with the active `tex-lex` cell input,
   not with stomach group depth. `tex-expand` classifies each delivered token
-  by effective meaning (including character-token brace aliases), while
-  noexpand-suppressed tokens classify as ordinary. Scanner back-input uses one
+  by effective meaning (including character-token brace aliases), while an
+  expandable noexpand-suppressed meaning classifies as ordinary and an
+  unexpandable suppressed meaning retains its brace/delimiter class. Scanner back-input uses one
   boundary that reverses only a transition recorded for an actually delivered
   token before replay; synthetic insertion therefore cannot perturb the cell's
   lexical brace depth. Suspending a cell for a nested alignment preserves this
