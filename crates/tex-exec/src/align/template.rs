@@ -1,7 +1,7 @@
 use tex_expand::{ExpansionHooks, ReadRecorder};
 use tex_lex::{InputSource, InputStack, TokenListReplayKind};
-use tex_state::Universe;
 use tex_state::ids::TokenListId;
+use tex_state::{ExpansionState, Universe};
 
 use crate::{ExecError, ExecutionStats, ModeNest};
 
@@ -41,8 +41,7 @@ where
                     // while a u-template replay is still retiring. Preserve the
                     // pending alignment-cell boundary by replaying a fresh frozen
                     // end marker for the cell-body driver instead of panicking.
-                    let end =
-                        stores.intern_token_list(&[tex_state::token::Token::frozen_end_template()]);
+                    let end = stores.intern_token_list(&[stores.frozen_end_template_token()]);
                     input.push_token_list(end, TokenListReplayKind::Inserted);
                     stores.world_mut().write_text(
                         tex_state::PrintSink::TerminalAndLog,

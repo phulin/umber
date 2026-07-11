@@ -22,7 +22,7 @@ use tex_state::{ExpansionState, InputOpenState, InputReadState, Universe};
 fn get_x_token_converts_frozen_end_template_without_losing_origin() {
     let mut stores = Universe::new();
     let origin = stores.source_origin(tex_state::SourceId::new(7), 19, 3, 5);
-    let tokens = stores.intern_token_list(&[Token::frozen_end_template()]);
+    let tokens = stores.intern_token_list(&[stores.frozen_end_template_token()]);
     let origins = stores.allocate_origin_list(&[origin]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list_with_origins(tokens, origins, TokenListReplayKind::Inserted);
@@ -31,10 +31,10 @@ fn get_x_token_converts_frozen_end_template_without_losing_origin() {
         .expect("frozen sentinel expansion")
         .expect("frozen endv delivery");
 
-    assert_eq!(crate::semantic_token(delivered), Token::frozen_endv());
+    assert_eq!(crate::semantic_token(delivered), stores.frozen_endv_token());
     assert_eq!(delivered.origin(), origin);
     assert_ne!(
-        Token::frozen_end_template(),
+        stores.frozen_end_template_token(),
         Token::Cs(stores.intern("endtemplate").symbol())
     );
 }

@@ -37,6 +37,7 @@ use tex_state::ids::{
 };
 use tex_state::math::MathField;
 use tex_state::node::Node;
+use tex_state::token::{FrozenToken, Token};
 
 fn require_deserialize<T: DeserializeOwned>() {}
 fn require_serialize<T: Serialize>() {}
@@ -60,6 +61,8 @@ fn main() {
 
     let _ = TokenListId::new(1);
     let _ = SurvivorRootId::new(1);
+    let _ = Token::frozen_end_template();
+    let _ = Token::Frozen(FrozenToken(0));
 }
 "#,
     )
@@ -105,5 +108,10 @@ fn main() {
     assert!(
         stderr.contains("associated function `new` is private"),
         "probe did not reject private constructors:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("associated function `frozen_end_template` is private")
+            && stderr.contains("cannot initialize a tuple struct which contains private fields"),
+        "probe did not reject frozen-token construction:\n{stderr}"
     );
 }

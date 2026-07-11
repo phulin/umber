@@ -66,6 +66,14 @@ use std::hash::{Hash, Hasher};
 /// code-table, font-parameter, grouping, snapshot, input-file reads, or World
 /// mutation APIs.
 pub trait ExpansionState {
+    #[doc(hidden)]
+    fn frozen_end_template_token(&self) -> Token {
+        Token::frozen_end_template()
+    }
+    #[doc(hidden)]
+    fn frozen_endv_token(&self) -> Token {
+        Token::frozen_endv()
+    }
     /// Current execution-group depth used by TeX82 alignment `get_next`.
     fn execution_group_depth(&self) -> u32 {
         0
@@ -3533,8 +3541,9 @@ fn hash_token(stores: &Stores, token: Token, hasher: &mut StateHasher) {
             hasher.tag(2);
             hasher.u8(slot);
         }
-        Token::Frozen(crate::token::FrozenToken::EndTemplate) => hasher.tag(3),
-        Token::Frozen(crate::token::FrozenToken::EndV) => hasher.tag(4),
+        Token::Frozen(crate::token::FrozenToken::END_TEMPLATE) => hasher.tag(3),
+        Token::Frozen(crate::token::FrozenToken::END_V) => hasher.tag(4),
+        Token::Frozen(_) => unreachable!("invalid frozen token payload"),
     }
 }
 

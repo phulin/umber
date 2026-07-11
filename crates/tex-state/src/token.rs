@@ -4,9 +4,11 @@ use crate::interner::Symbol;
 
 /// Inaccessible TeX82 control tokens used only by engine-owned input replay.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum FrozenToken {
-    EndTemplate,
-    EndV,
+pub struct FrozenToken(u8);
+
+impl FrozenToken {
+    pub(crate) const END_TEMPLATE: Self = Self(0);
+    pub(crate) const END_V: Self = Self(1);
 }
 
 /// TeX category codes, shared by lexing and token storage.
@@ -63,26 +65,26 @@ impl Token {
 
     /// Returns TeX82's inaccessible `frozen_end_template` token.
     #[must_use]
-    pub const fn frozen_end_template() -> Self {
-        Self::Frozen(FrozenToken::EndTemplate)
+    pub(crate) const fn frozen_end_template() -> Self {
+        Self::Frozen(FrozenToken::END_TEMPLATE)
     }
 
     /// Returns TeX82's inaccessible `frozen_endv` token.
     #[must_use]
-    pub const fn frozen_endv() -> Self {
-        Self::Frozen(FrozenToken::EndV)
+    pub(crate) const fn frozen_endv() -> Self {
+        Self::Frozen(FrozenToken::END_V)
     }
 
     /// Whether this is TeX82's inaccessible `frozen_end_template` token.
     #[must_use]
     pub const fn is_frozen_end_template(self) -> bool {
-        matches!(self, Self::Frozen(FrozenToken::EndTemplate))
+        matches!(self, Self::Frozen(FrozenToken::END_TEMPLATE))
     }
 
     /// Whether this is TeX82's inaccessible `frozen_endv` token.
     #[must_use]
     pub const fn is_frozen_endv(self) -> bool {
-        matches!(self, Self::Frozen(FrozenToken::EndV))
+        matches!(self, Self::Frozen(FrozenToken::END_V))
     }
 }
 
@@ -210,8 +212,9 @@ impl TracedTokenWord {
                 debug_assert!(slot < 16);
                 (Self::KIND_PARAM, u32::from(slot))
             }
-            Token::Frozen(FrozenToken::EndTemplate) => (Self::KIND_FROZEN, 0),
-            Token::Frozen(FrozenToken::EndV) => (Self::KIND_FROZEN, 1),
+            Token::Frozen(FrozenToken::END_TEMPLATE) => (Self::KIND_FROZEN, 0),
+            Token::Frozen(FrozenToken::END_V) => (Self::KIND_FROZEN, 1),
+            Token::Frozen(_) => unreachable!("invalid frozen token payload"),
         };
         Self(
             (kind << Self::KIND_SHIFT)
@@ -246,8 +249,8 @@ impl TracedTokenWord {
                 _ => None,
             },
             Self::KIND_FROZEN => match payload {
-                0 => Some(Token::Frozen(FrozenToken::EndTemplate)),
-                1 => Some(Token::Frozen(FrozenToken::EndV)),
+                0 => Some(Token::Frozen(FrozenToken::END_TEMPLATE)),
+                1 => Some(Token::Frozen(FrozenToken::END_V)),
                 _ => None,
             },
             _ => None,

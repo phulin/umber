@@ -13,7 +13,7 @@ use tempfile::TempDir;
 use test_support::{corpus_cases, corpus_root, fixture_path, normalize};
 use tex_lex::{Lexer, WorldInput};
 use tex_state::env::banks::IntParam;
-use tex_state::token::{Catcode, FrozenToken, Token};
+use tex_state::token::{Catcode, Token};
 use tex_state::{Universe, World};
 
 const TEXT_AREAS: &[&str] = &[
@@ -496,8 +496,9 @@ fn push_token(actual: &mut String, token: Token, stores: &Universe) {
         Token::Char { ch, cat } => format!("char:{}:{}", ch as u32, cat as u8),
         Token::Cs(symbol) => format!("cs:{}", stores.resolve(symbol)),
         Token::Param(slot) => format!("param:{slot}"),
-        Token::Frozen(FrozenToken::EndTemplate) => "frozen:endtemplate".to_owned(),
-        Token::Frozen(FrozenToken::EndV) => "frozen:endv".to_owned(),
+        token if token.is_frozen_end_template() => "frozen:endtemplate".to_owned(),
+        token if token.is_frozen_endv() => "frozen:endv".to_owned(),
+        Token::Frozen(_) => unreachable!("invalid frozen token payload"),
     };
     actual.push_str(&line);
     actual.push('\n');

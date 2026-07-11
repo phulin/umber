@@ -3,7 +3,7 @@ use tex_lex::{AlignmentTerminator, InputSource, InputStack, TokenListReplayKind}
 use tex_state::env::banks::TokParam;
 use tex_state::node::{GlueKind, Node};
 use tex_state::token::{Token, TracedTokenWord};
-use tex_state::{ExpansionContext, PrintSink, Universe};
+use tex_state::{ExpansionContext, ExpansionState, PrintSink, Universe};
 
 use super::support::{
     align_kind, align_state, align_state_mut, alignment_mode, cell_mode, is_alignment_tab, is_cr,
@@ -358,7 +358,7 @@ where
                 context: "alignment template",
             })?;
         let v_template = if omit {
-            stores.intern_token_list(&[Token::frozen_end_template()])
+            stores.intern_token_list(&[stores.frozen_end_template_token()])
         } else {
             column_templates.v_template
         };

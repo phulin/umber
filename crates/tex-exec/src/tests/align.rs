@@ -5,7 +5,7 @@ use tex_state::ids::GlueId;
 use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::node::{BoxNode, GlueKind, Node, Sign, UnsetKind, UnsetNode, UnsetNodeFields};
 use tex_state::scaled::Scaled;
-use tex_state::{CheckpointMetadata, CheckpointResumeKind, ResumeFallback};
+use tex_state::{CheckpointMetadata, CheckpointResumeKind, ExpansionState, ResumeFallback};
 
 fn scan_halign_preamble(source: &str) -> (Universe, AlignState) {
     let mut stores = Universe::new();
@@ -590,7 +590,7 @@ fn scans_empty_u_template_and_end_template_sentinel() {
         stores.tokens(state.columns()[0].v_template),
         &[
             char_token('v', Catcode::Letter),
-            Token::frozen_end_template()
+            stores.frozen_end_template_token()
         ]
     );
     assert_eq!(state.tabskips(), &[GlueId::ZERO, GlueId::ZERO]);
@@ -708,7 +708,7 @@ fn records_repeat_point_and_resolves_extra_columns() {
         stores.tokens(state.column_for(4).expect("repeat col").v_template),
         &[
             char_token('c', Catcode::Letter),
-            Token::frozen_end_template()
+            stores.frozen_end_template_token()
         ]
     );
 }
@@ -787,7 +787,7 @@ fn span_expands_next_preamble_token_without_becoming_template_material() {
         stores.tokens(state.columns()[0].v_template),
         &[
             char_token('y', Catcode::Letter),
-            Token::frozen_end_template()
+            stores.frozen_end_template_token()
         ]
     );
 }
@@ -803,7 +803,7 @@ fn valign_and_crcr_use_alignment_preamble_scanner() {
     );
     assert_eq!(
         stores.tokens(state.columns()[0].v_template),
-        &[Token::frozen_end_template()]
+        &[stores.frozen_end_template_token()]
     );
 }
 
@@ -849,7 +849,7 @@ fn alignment_preamble_errors_match_reference_wording() {
                 ch: 'b',
                 cat: Catcode::Letter,
             },
-            Token::frozen_end_template(),
+            stores.frozen_end_template_token(),
         ]
     );
 }
@@ -1492,7 +1492,7 @@ fn nested_alignment_in_template_does_not_end_outer_preamble() {
             .count(),
         2
     );
-    assert_eq!(template.last(), Some(&Token::frozen_end_template()));
+    assert_eq!(template.last(), Some(&stores.frozen_end_template_token()));
 }
 
 #[test]

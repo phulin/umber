@@ -469,8 +469,9 @@ impl Stores {
                 hasher.tag(2);
                 hasher.u8(slot);
             }
-            Token::Frozen(crate::token::FrozenToken::EndTemplate) => hasher.tag(3),
-            Token::Frozen(crate::token::FrozenToken::EndV) => hasher.tag(4),
+            Token::Frozen(crate::token::FrozenToken::END_TEMPLATE) => hasher.tag(3),
+            Token::Frozen(crate::token::FrozenToken::END_V) => hasher.tag(4),
+            Token::Frozen(_) => unreachable!("invalid frozen token payload"),
         }
     }
 

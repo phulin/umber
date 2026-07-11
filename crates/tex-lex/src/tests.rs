@@ -1288,7 +1288,7 @@ fn condition_frames_round_trip_through_input_summary() {
 #[test]
 fn frozen_alignment_token_survives_input_summary_restore() {
     let mut stores = Universe::new();
-    let tokens = stores.intern_token_list(&[Token::frozen_end_template()]);
+    let tokens = stores.intern_token_list(&[stores.frozen_end_template_token()]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(tokens, TokenListReplayKind::Inserted);
     let summary = input.summary();
@@ -1298,7 +1298,7 @@ fn frozen_alignment_token_survives_input_summary_restore() {
 
     assert_eq!(
         restored.next_token(&mut stores).expect("restored token"),
-        Some(Token::frozen_end_template())
+        Some(stores.frozen_end_template_token())
     );
 }
 

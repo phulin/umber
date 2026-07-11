@@ -5,7 +5,7 @@ use tex_state::ids::{GlueId, TokenListId};
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::provenance::InsertedOriginKind;
 use tex_state::token::{Catcode, Token, TracedTokenWord};
-use tex_state::{GroupKind, Universe};
+use tex_state::{ExpansionState, GroupKind, Universe};
 
 use crate::assignments::{has_catcode_meaning, next_non_space_x, scan_scaled};
 use crate::mode::{AlignColumn, AlignState, AlignmentKind, AlignmentPackSpec};
@@ -52,7 +52,7 @@ where
     }
     stores.enter_group_with_kind(GroupKind::Simple);
 
-    let end_template = Token::frozen_end_template();
+    let end_template = stores.frozen_end_template_token();
     let mut scanner = PreambleScanner::new(input, stores, hooks);
     let mut columns = Vec::new();
     let mut tabskips = vec![scanner.current_tabskip()];

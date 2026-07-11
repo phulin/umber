@@ -770,7 +770,7 @@ where
 
         if token.is_frozen_end_template() {
             return Ok(Some(TracedTokenWord::pack(
-                Token::frozen_endv(),
+                stores.frozen_endv_token(),
                 read.origin(),
             )));
         }

@@ -357,10 +357,9 @@ fn format_token(token: Token, stores: &Universe) -> String {
         Token::Char { ch, cat } => format!("char:{}:{}", ch as u32, cat as u8),
         Token::Cs(symbol) => format!("cs:{}", stores.resolve(symbol)),
         Token::Param(slot) => format!("param:{slot}"),
-        Token::Frozen(tex_state::token::FrozenToken::EndTemplate) => {
-            "frozen:endtemplate".to_owned()
-        }
-        Token::Frozen(tex_state::token::FrozenToken::EndV) => "frozen:endv".to_owned(),
+        token if token.is_frozen_end_template() => "frozen:endtemplate".to_owned(),
+        token if token.is_frozen_endv() => "frozen:endv".to_owned(),
+        Token::Frozen(_) => unreachable!("invalid frozen token payload"),
     }
 }
 
