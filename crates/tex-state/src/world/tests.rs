@@ -26,6 +26,102 @@ fn memory_world_reads_and_records_hashes() {
     assert_eq!(content.bytes(), b"hello");
     assert_eq!(content.hash(), ContentHash::from_bytes(b"hello"));
     assert_eq!(world.input_records()[0].hash(), content.hash());
+    assert_eq!(
+        world.input_record(content.record()),
+        Some(&world.input_records()[0])
+    );
+}
+
+#[test]
+fn input_record_id_is_a_two_word_runtime_capability() {
+    assert_eq!(core::mem::size_of::<InputRecordId>(), 16);
+}
+
+#[test]
+fn rolled_back_input_record_never_revives_when_its_slot_is_reused() {
+    let mut world = World::memory();
+    world
+        .set_memory_file("input.tex", b"old".to_vec())
+        .expect("seed old input");
+    let snapshot = world.snapshot();
+    let old = world.read_file("input.tex").expect("read old input");
+
+    world.rollback(&snapshot);
+    assert!(world.input_record(old.record()).is_none());
+    assert!(world.recorded_input_content(old.record()).is_none());
+
+    world
+        .set_memory_file("input.tex", b"new".to_vec())
+        .expect("replace input");
+    let new = world.read_file("input.tex").expect("read new input");
+
+    assert_eq!(old.record().raw(), new.record().raw());
+    assert_ne!(old.record(), new.record());
+    assert!(world.input_record(old.record()).is_none());
+    assert_eq!(
+        world.input_record(new.record()).expect("new record").path(),
+        Path::new("input.tex")
+    );
+    assert_eq!(
+        world
+            .recorded_input_content(new.record())
+            .expect("new content")
+            .bytes(),
+        b"new"
+    );
+}
+
+#[test]
+fn rollback_retains_prefix_records_and_invalidates_only_the_suffix() {
+    let mut world = World::memory();
+    world
+        .set_memory_file("first.tex", b"first".to_vec())
+        .expect("seed first input");
+    world
+        .set_memory_file("second.tex", b"second".to_vec())
+        .expect("seed second input");
+    let first = world.read_file("first.tex").expect("read first input");
+    let snapshot = world.snapshot();
+    let discarded = world.read_file("second.tex").expect("read second input");
+
+    world.rollback(&snapshot);
+
+    assert_eq!(
+        world
+            .recorded_input_content(first.record())
+            .expect("retained content")
+            .bytes(),
+        b"first"
+    );
+    assert!(world.input_record(discarded.record()).is_none());
+    let replacement = world.read_file("second.tex").expect("reread second input");
+    assert_ne!(discarded.record(), replacement.record());
+}
+
+#[test]
+fn cloned_worlds_share_inherited_records_but_reject_each_others_new_records() {
+    let mut left = World::memory();
+    left.set_memory_file("inherited.tex", b"base".to_vec())
+        .expect("seed inherited input");
+    left.set_memory_file("branch.tex", b"left".to_vec())
+        .expect("seed branch input");
+    let inherited = left
+        .read_file("inherited.tex")
+        .expect("read inherited input");
+    let mut right = left.clone();
+    right
+        .set_memory_file("branch.tex", b"right".to_vec())
+        .expect("replace right branch input");
+
+    let left_only = left.read_file("branch.tex").expect("read left branch");
+    let right_only = right.read_file("branch.tex").expect("read right branch");
+
+    assert!(left.input_record(inherited.record()).is_some());
+    assert!(right.input_record(inherited.record()).is_some());
+    assert_eq!(left_only.record().raw(), right_only.record().raw());
+    assert_ne!(left_only.record(), right_only.record());
+    assert!(left.input_record(right_only.record()).is_none());
+    assert!(right.input_record(left_only.record()).is_none());
 }
 
 #[test]

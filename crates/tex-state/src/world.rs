@@ -7,13 +7,13 @@
 #![allow(clippy::disallowed_methods)]
 
 use crate::env::banks::IntParam;
+use crate::identity::{HandleIdentity, IdentityAllocator, IdentityMark};
 use crate::ids::TokenListId;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fmt;
 use std::fs::OpenOptions;
 use std::io::{self, Write};
-use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -130,25 +130,26 @@ impl FileContent {
     }
 }
 
-/// Stable index of one successful read in the `World` input log.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct InputRecordId(NonZeroU32);
+/// Rollback-safe identity of one successful read in the `World` input log.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InputRecordId(HandleIdentity);
 
 impl InputRecordId {
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn new(raw: u32) -> Self {
-        Self(
-            NonZeroU32::new(
-                raw.checked_add(1)
-                    .expect("World input record capacity exceeded"),
-            )
-            .expect("offset input record id is nonzero"),
-        )
+        Self(HandleIdentity::builtin(raw))
     }
 
     #[must_use]
     pub(crate) const fn raw(self) -> u32 {
-        self.0.get() - 1
+        self.0.slot()
+    }
+}
+
+impl std::hash::Hash for InputRecordId {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::hash::Hash::hash(&self.raw(), state);
     }
 }
 
@@ -468,7 +469,7 @@ impl fmt::Display for WorldError {
 impl std::error::Error for WorldError {}
 
 /// Snapshot-owned `World` state.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorldSnapshot {
     effect_pos: EffectPos,
     stream_bufs: StreamBufState,
@@ -476,6 +477,7 @@ pub struct WorldSnapshot {
     job_clock: JobClock,
     shell_escape_policy: ShellEscapePolicy,
     input_len: usize,
+    input_identities: IdentityMark,
     shell_escape_len: usize,
 }
 
@@ -492,7 +494,7 @@ pub(crate) struct WorldStateHashCursor {
 }
 
 /// Engine capability object for all external effects.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub struct World {
     backend: WorldBackend,
     effect_base: EffectPos,
@@ -503,11 +505,53 @@ pub struct World {
     job_clock: JobClock,
     shell_escape_policy: ShellEscapePolicy,
     inputs: Vec<InputRecord>,
+    input_identities: IdentityAllocator,
     input_contents: BTreeMap<ContentHash, Vec<u8>>,
     terminal_inputs: Vec<String>,
     shell_escapes: Vec<ShellEscapeRecord>,
     artifact_commits: Vec<ContentHash>,
 }
+
+impl Clone for World {
+    fn clone(&self) -> Self {
+        Self {
+            backend: self.backend.clone(),
+            effect_base: self.effect_base,
+            effects: self.effects.clone(),
+            stream_bufs: self.stream_bufs.clone(),
+            committed_write_streams: self.committed_write_streams.clone(),
+            rng: self.rng,
+            job_clock: self.job_clock,
+            shell_escape_policy: self.shell_escape_policy,
+            inputs: self.inputs.clone(),
+            input_identities: self.input_identities.fork(),
+            input_contents: self.input_contents.clone(),
+            terminal_inputs: self.terminal_inputs.clone(),
+            shell_escapes: self.shell_escapes.clone(),
+            artifact_commits: self.artifact_commits.clone(),
+        }
+    }
+}
+
+impl PartialEq for World {
+    fn eq(&self, other: &Self) -> bool {
+        self.backend == other.backend
+            && self.effect_base == other.effect_base
+            && self.effects == other.effects
+            && self.stream_bufs == other.stream_bufs
+            && self.committed_write_streams == other.committed_write_streams
+            && self.rng == other.rng
+            && self.job_clock == other.job_clock
+            && self.shell_escape_policy == other.shell_escape_policy
+            && self.inputs == other.inputs
+            && self.input_contents == other.input_contents
+            && self.terminal_inputs == other.terminal_inputs
+            && self.shell_escapes == other.shell_escapes
+            && self.artifact_commits == other.artifact_commits
+    }
+}
+
+impl Eq for World {}
 
 impl World {
     /// Creates a deterministic in-memory world for tests and hermetic runs.
@@ -551,6 +595,7 @@ impl World {
             job_clock,
             shell_escape_policy: ShellEscapePolicy::default(),
             inputs: Vec::new(),
+            input_identities: IdentityAllocator::new(0),
             input_contents: BTreeMap::new(),
             terminal_inputs: Vec::new(),
             shell_escapes: Vec::new(),
@@ -606,9 +651,7 @@ impl World {
                 )
             })?,
         };
-        let record = InputRecordId::new(
-            u32::try_from(self.inputs.len()).expect("World input record capacity exceeded"),
-        );
+        let record = self.allocate_input_record();
         let content = FileContent::new(record, path.to_owned(), bytes);
         self.input_contents
             .entry(content.hash)
@@ -720,9 +763,7 @@ impl World {
         };
         self.stream_bufs.terminal_input_next += 1;
         let bytes = line.as_bytes().to_vec();
-        let record = InputRecordId::new(
-            u32::try_from(self.inputs.len()).expect("World input record capacity exceeded"),
-        );
+        let record = self.allocate_input_record();
         let content = FileContent::new(record, PathBuf::from("<terminal>"), bytes);
         self.input_contents
             .entry(content.hash)
@@ -736,8 +777,7 @@ impl World {
     }
 
     pub fn recorded_input_content(&self, id: InputRecordId) -> Option<FileContent> {
-        let index = id.raw() as usize;
-        let record = self.inputs.get(index)?;
+        let record = self.input_record(id)?;
         let bytes = self.input_contents.get(&record.hash)?.clone();
         Some(FileContent {
             record: id,
@@ -943,6 +983,15 @@ impl World {
         &self.inputs
     }
 
+    /// Returns a recorded input only when `id` is live in this World timeline.
+    #[must_use]
+    pub fn input_record(&self, id: InputRecordId) -> Option<&InputRecord> {
+        if !self.input_identities.contains(id.0) {
+            return None;
+        }
+        self.inputs.get(id.raw() as usize)
+    }
+
     /// Returns the content-addressed bytes for a previously-read input.
     #[must_use]
     pub fn input_content(&self, hash: ContentHash) -> Option<&[u8]> {
@@ -1123,6 +1172,7 @@ impl World {
             job_clock: self.job_clock,
             shell_escape_policy: self.shell_escape_policy,
             input_len: self.inputs.len(),
+            input_identities: self.input_identities.watermark(),
             shell_escape_len: self.shell_escapes.len(),
         }
     }
@@ -1136,6 +1186,9 @@ impl World {
 
     pub(crate) fn rollback(&mut self, snapshot: &WorldSnapshot) {
         self.assert_snapshot_retained(snapshot);
+        self.input_identities
+            .rollback(snapshot.input_identities)
+            .expect("World input identity mark must name a retained ancestor");
         self.effects
             .truncate((snapshot.effect_pos.raw() - self.effect_base.raw()) as usize);
         self.stream_bufs = snapshot.stream_bufs.clone();
@@ -1143,6 +1196,19 @@ impl World {
         self.shell_escape_policy = snapshot.shell_escape_policy;
         self.inputs.truncate(snapshot.input_len);
         self.shell_escapes.truncate(snapshot.shell_escape_len);
+    }
+
+    fn allocate_input_record(&mut self) -> InputRecordId {
+        let identity = self
+            .input_identities
+            .allocate()
+            .expect("World input record identity capacity exhausted");
+        assert_eq!(
+            identity.slot() as usize,
+            self.inputs.len(),
+            "World input identities and records diverged"
+        );
+        InputRecordId(identity)
     }
 
     fn append_effect(&mut self, record: EffectRecord) {
