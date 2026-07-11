@@ -1,0 +1,483 @@
+use super::storage::{NodeStorage, NodeWord, decode_glue, decode_kern, decode_style};
+use crate::ids::{GlueId, NodeListId};
+use crate::math::MathStyle;
+use crate::node::{
+    BoxNode, BoxNodeFields, DiscKind, GlueKind, KernKind, Node, UnsetNode, UnsetNodeFields,
+};
+use crate::scaled::Scaled;
+
+/// A zero-allocation logical view of one compact arena node.
+#[derive(Clone, Debug, PartialEq)]
+pub enum NodeRef<'a> {
+    Char {
+        font: crate::ids::FontId,
+        ch: char,
+    },
+    Lig {
+        font: crate::ids::FontId,
+        ch: char,
+        orig: (char, char),
+    },
+    Kern {
+        amount: Scaled,
+        kind: KernKind,
+    },
+    Glue {
+        spec: GlueId,
+        kind: GlueKind,
+        leader: Option<&'a crate::node::LeaderPayload>,
+    },
+    Penalty(i32),
+    Rule {
+        width: Option<Scaled>,
+        height: Option<Scaled>,
+        depth: Option<Scaled>,
+    },
+    HList(BoxNode),
+    VList(BoxNode),
+    Unset(UnsetNode),
+    Disc {
+        kind: DiscKind,
+        pre: NodeListId,
+        post: NodeListId,
+        replace: NodeListId,
+    },
+    Mark {
+        class: u16,
+        tokens: crate::ids::TokenListId,
+    },
+    Ins {
+        class: u16,
+        size: Scaled,
+        split_top_skip: GlueId,
+        split_max_depth: Scaled,
+        floating_penalty: i32,
+        content: NodeListId,
+    },
+    Whatsit(&'a crate::node::Whatsit),
+    MathOn(Scaled),
+    MathOff(Scaled),
+    MathNoad(crate::math::MathNoad),
+    FractionNoad(&'a crate::math::MathFraction),
+    MathStyle(MathStyle),
+    MathChoice(&'a crate::math::MathChoice),
+    MathList(crate::math::MathListNode),
+    Nonscript,
+    Adjust(NodeListId),
+}
+
+impl NodeRef<'_> {
+    /// Materializes an owned node for builder/list-surgery output, never for storage.
+    #[must_use]
+    pub fn to_owned(&self) -> Node {
+        match self {
+            Self::Char { font, ch } => Node::Char {
+                font: *font,
+                ch: *ch,
+            },
+            Self::Lig { font, ch, orig } => Node::Lig {
+                font: *font,
+                ch: *ch,
+                orig: *orig,
+            },
+            Self::Kern { amount, kind } => Node::Kern {
+                amount: *amount,
+                kind: *kind,
+            },
+            Self::Glue { spec, kind, leader } => Node::Glue {
+                spec: *spec,
+                kind: *kind,
+                leader: leader.cloned(),
+            },
+            Self::Penalty(v) => Node::Penalty(*v),
+            Self::Rule {
+                width,
+                height,
+                depth,
+            } => Node::Rule {
+                width: *width,
+                height: *height,
+                depth: *depth,
+            },
+            Self::HList(v) => Node::HList(*v),
+            Self::VList(v) => Node::VList(*v),
+            Self::Unset(v) => Node::Unset(*v),
+            Self::Disc {
+                kind,
+                pre,
+                post,
+                replace,
+            } => Node::Disc {
+                kind: *kind,
+                pre: *pre,
+                post: *post,
+                replace: *replace,
+            },
+            Self::Mark { class, tokens } => Node::Mark {
+                class: *class,
+                tokens: *tokens,
+            },
+            Self::Ins {
+                class,
+                size,
+                split_top_skip,
+                split_max_depth,
+                floating_penalty,
+                content,
+            } => Node::Ins {
+                class: *class,
+                size: *size,
+                split_top_skip: *split_top_skip,
+                split_max_depth: *split_max_depth,
+                floating_penalty: *floating_penalty,
+                content: *content,
+            },
+            Self::Whatsit(v) => Node::Whatsit((*v).clone()),
+            Self::MathOn(v) => Node::MathOn(*v),
+            Self::MathOff(v) => Node::MathOff(*v),
+            Self::MathNoad(v) => Node::MathNoad(v.clone()),
+            Self::FractionNoad(v) => Node::FractionNoad((*v).clone()),
+            Self::MathStyle(v) => Node::MathStyle(*v),
+            Self::MathChoice(v) => Node::MathChoice((*v).clone()),
+            Self::MathList(v) => Node::MathList(*v),
+            Self::Nonscript => Node::Nonscript,
+            Self::Adjust(v) => Node::Adjust(*v),
+        }
+    }
+}
+
+/// An immutable compact node-list span.
+#[derive(Clone, Copy)]
+pub struct NodeList<'a> {
+    pub(super) storage: &'a NodeStorage,
+    pub(super) start: usize,
+    pub(super) end: usize,
+}
+
+impl core::fmt::Debug for NodeList<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_list().entries(self.iter()).finish()
+    }
+}
+impl<const N: usize> PartialEq<&[Node; N]> for NodeList<'_> {
+    fn eq(&self, rhs: &&[Node; N]) -> bool {
+        self.to_vec().as_slice() == *rhs
+    }
+}
+impl PartialEq<&[Node]> for NodeList<'_> {
+    fn eq(&self, rhs: &&[Node]) -> bool {
+        self.to_vec().as_slice() == *rhs
+    }
+}
+impl PartialEq<Vec<Node>> for NodeList<'_> {
+    fn eq(&self, rhs: &Vec<Node>) -> bool {
+        self.to_vec() == *rhs
+    }
+}
+
+impl<'a> NodeList<'a> {
+    #[must_use]
+    pub const fn len(self) -> usize {
+        self.end - self.start
+    }
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        self.start == self.end
+    }
+    #[must_use]
+    pub fn get(self, index: usize) -> Option<NodeRef<'a>> {
+        (self.start + index < self.end).then(|| self.storage.decode(self.start + index))
+    }
+    #[must_use]
+    pub fn first(self) -> Option<NodeRef<'a>> {
+        self.get(0)
+    }
+    #[must_use]
+    pub fn last(self) -> Option<NodeRef<'a>> {
+        (!self.is_empty()).then(|| self.storage.decode(self.end - 1))
+    }
+    pub fn iter(self) -> NodeIter<'a> {
+        NodeIter {
+            storage: self.storage,
+            next: self.start,
+            end: self.end,
+        }
+    }
+    /// Returns the maximal same-font run of inline byte-character words at
+    /// `index`. Ligatures and every non-character word deliberately terminate
+    /// a run so callers retain their ordinary semantic handling.
+    #[must_use]
+    pub fn char_run(self, index: usize) -> Option<CharRun<'a>> {
+        if index >= self.len() {
+            return None;
+        }
+        let first = *self.storage.words.get(self.start + index)?;
+        if first.tag() != 0 {
+            return None;
+        }
+        let font = crate::ids::FontId::new((first.payload() >> 21) as u32);
+        let mut end = self.start + index + 1;
+        while end < self.end {
+            let word = self.storage.words[end];
+            if word.tag() != 0 || (word.payload() >> 21) as u32 != font.raw() {
+                break;
+            }
+            // TFM widths are defined only for the byte character domain.
+            if word.payload() & 0x1f_ffff > u8::MAX as u64 {
+                break;
+            }
+            end += 1;
+        }
+        if first.payload() & 0x1f_ffff > u8::MAX as u64 {
+            return None;
+        }
+        Some(CharRun {
+            words: &self.storage.words[self.start + index..end],
+            font,
+        })
+    }
+
+    /// Creates a lazy, single-pass iterator over the same-font byte-character
+    /// run beginning at `index`.
+    #[must_use]
+    pub fn char_codes(self, index: usize) -> Option<CharCodes<'a>> {
+        if index >= self.len() {
+            return None;
+        }
+        let first = self.storage.words[self.start + index];
+        let payload = first.payload();
+        if first.tag() != 0 || payload & 0x1f_ffff > u8::MAX as u64 {
+            return None;
+        }
+        Some(CharCodes {
+            words: &self.storage.words[self.start + index..self.end],
+            next: 0,
+            font: crate::ids::FontId::new((payload >> 21) as u32),
+        })
+    }
+    #[must_use]
+    pub fn to_vec(self) -> Vec<Node> {
+        self.iter().map(|node| node.to_owned()).collect()
+    }
+    /// Test/debug-only decoded view for legacy structural assertions.
+    #[cfg(any(test, feature = "testing"))]
+    #[must_use]
+    #[doc(hidden)]
+    pub fn testing_decoded(self) -> &'static [Node] {
+        Box::leak(self.to_vec().into_boxed_slice())
+    }
+}
+
+/// Lazy byte codes from one contiguous same-font inline character run.
+pub struct CharCodes<'a> {
+    words: &'a [NodeWord],
+    next: usize,
+    font: crate::ids::FontId,
+}
+
+impl CharCodes<'_> {
+    #[must_use]
+    pub const fn font(&self) -> crate::ids::FontId {
+        self.font
+    }
+}
+
+impl Iterator for CharCodes<'_> {
+    type Item = u8;
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        let word = *self.words.get(self.next)?;
+        let payload = word.payload();
+        if word.tag() != 0
+            || (payload >> 21) as u32 != self.font.raw()
+            || payload & 0x1f_ffff > u8::MAX as u64
+        {
+            return None;
+        }
+        self.next += 1;
+        Some(payload as u8)
+    }
+}
+
+/// Opaque zero-allocation view of a contiguous same-font byte-character run.
+#[derive(Clone, Copy, Debug)]
+pub struct CharRun<'a> {
+    words: &'a [NodeWord],
+    font: crate::ids::FontId,
+}
+
+impl<'a> CharRun<'a> {
+    #[must_use]
+    pub const fn font(self) -> crate::ids::FontId {
+        self.font
+    }
+    #[must_use]
+    pub const fn len(self) -> usize {
+        self.words.len()
+    }
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        self.words.is_empty()
+    }
+    pub fn codes(self) -> impl ExactSizeIterator<Item = u8> + 'a {
+        self.words.iter().map(|word| word.payload() as u8)
+    }
+}
+
+impl<'a> IntoIterator for NodeList<'a> {
+    type Item = NodeRef<'a>;
+    type IntoIter = NodeIter<'a>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+pub struct NodeIter<'a> {
+    storage: &'a NodeStorage,
+    next: usize,
+    end: usize,
+}
+impl<'a> Iterator for NodeIter<'a> {
+    type Item = NodeRef<'a>;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.next == self.end {
+            None
+        } else {
+            let node = self.storage.decode(self.next);
+            self.next += 1;
+            Some(node)
+        }
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let n = self.end - self.next;
+        (n, Some(n))
+    }
+}
+impl<'a> DoubleEndedIterator for NodeIter<'a> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        if self.next == self.end {
+            None
+        } else {
+            self.end -= 1;
+            Some(self.storage.decode(self.end))
+        }
+    }
+}
+impl ExactSizeIterator for NodeIter<'_> {}
+
+impl NodeStorage {
+    fn decode(&self, index: usize) -> NodeRef<'_> {
+        let word = self.words[index];
+        let payload = word.payload();
+        let side = payload as usize;
+        match word.tag() {
+            0 => NodeRef::Char {
+                font: crate::ids::FontId::new((payload >> 21) as u32),
+                ch: char::from_u32((payload & 0x1f_ffff) as u32).expect("invalid stored scalar"),
+            },
+            1 => NodeRef::Lig {
+                font: crate::ids::FontId::new((payload >> 24) as u32),
+                ch: char::from_u32((payload & 0xff) as u32).expect("stored TFM byte is scalar"),
+                orig: (
+                    char::from_u32(((payload >> 8) & 0xff) as u32)
+                        .expect("stored TFM byte is scalar"),
+                    char::from_u32(((payload >> 16) & 0xff) as u32)
+                        .expect("stored TFM byte is scalar"),
+                ),
+            },
+            2 => NodeRef::Kern {
+                amount: Scaled::from_raw(payload as u32 as i32),
+                kind: decode_kern(((payload >> 32) & 3) as u8),
+            },
+            3 => NodeRef::Glue {
+                spec: GlueId::new(payload as u32),
+                kind: decode_glue(((payload >> 32) & 0x3f) as u8),
+                leader: None,
+            },
+            4 => NodeRef::Penalty(payload as u32 as i32),
+            5 => NodeRef::MathOn(Scaled::from_raw(payload as u32 as i32)),
+            6 => NodeRef::MathOff(Scaled::from_raw(payload as u32 as i32)),
+            7 => NodeRef::MathStyle(decode_style(payload as u8)),
+            8 => NodeRef::Nonscript,
+            9 | 10 => {
+                let b = BoxNode::new(BoxNodeFields {
+                    width: self.boxes.width[side],
+                    height: self.boxes.height[side],
+                    depth: self.boxes.depth[side],
+                    shift: self.boxes.shift[side],
+                    display: self.boxes.display[side],
+                    glue_set: self.boxes.glue_set[side],
+                    glue_sign: self.boxes.glue_sign[side],
+                    glue_order: self.boxes.glue_order[side],
+                    children: self.boxes.children[side],
+                });
+                if word.tag() == 9 {
+                    NodeRef::HList(b)
+                } else {
+                    NodeRef::VList(b)
+                }
+            }
+            11 => NodeRef::Unset(UnsetNode::new(UnsetNodeFields {
+                kind: self.unsets.kind[side],
+                width: self.unsets.width[side],
+                height: self.unsets.height[side],
+                depth: self.unsets.depth[side],
+                span_count: self.unsets.span_count[side],
+                stretch: self.unsets.stretch[side],
+                stretch_order: self.unsets.stretch_order[side],
+                shrink: self.unsets.shrink[side],
+                shrink_order: self.unsets.shrink_order[side],
+                children: self.unsets.children[side],
+            })),
+            12 => {
+                let (width, height, depth) = self.rules[side];
+                NodeRef::Rule {
+                    width,
+                    height,
+                    depth,
+                }
+            }
+            13 => {
+                let (spec, kind, leader) = &self.leaders[side];
+                NodeRef::Glue {
+                    spec: *spec,
+                    kind: *kind,
+                    leader: Some(leader),
+                }
+            }
+            14 => {
+                let (kind, pre, post, replace) = self.discs[side];
+                NodeRef::Disc {
+                    kind,
+                    pre,
+                    post,
+                    replace,
+                }
+            }
+            15 => {
+                let (class, tokens) = self.marks[side];
+                NodeRef::Mark { class, tokens }
+            }
+            16 => NodeRef::Ins {
+                class: self.insertions.class[side],
+                size: self.insertions.size[side],
+                split_top_skip: self.insertions.split_top_skip[side],
+                split_max_depth: self.insertions.split_max_depth[side],
+                floating_penalty: self.insertions.floating_penalty[side],
+                content: self.insertions.content[side],
+            },
+            17 => NodeRef::Whatsit(&self.whatsits[side]),
+            18 => NodeRef::MathNoad(crate::math::MathNoad {
+                kind: self.noads.kind[side].clone(),
+                nucleus: self.noads.nucleus[side].clone(),
+                subscript: self.noads.subscript[side].clone(),
+                superscript: self.noads.superscript[side].clone(),
+            }),
+            19 => NodeRef::FractionNoad(&self.fractions[side]),
+            20 => NodeRef::MathChoice(&self.choices[side]),
+            21 => NodeRef::MathList(self.math_lists[side]),
+            22 => NodeRef::Adjust(self.adjusts[side]),
+            _ => panic!("reserved node-word tag"),
+        }
+    }
+}

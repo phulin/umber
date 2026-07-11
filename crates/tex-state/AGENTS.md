@@ -43,7 +43,13 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/meaning/tests.rs`: Unit tests for meaning round trips, flag packing, and primitive encoding.
 - `src/measurement.rs`: Feature-gated process-local allocation-owner counters used by profiling builds.
 - `src/node.rs`: Immutable TeX node, box, glue, kern, penalty, rule, whatsit, math-list, discretionary, and list-field model.
-- `src/node_arena.rs`: Compact epoch node-word/sidecar storage, immutable list views, aggregate watermarks, rollback, and feature-gated allocator accounting.
+- `src/node_arena.rs`: Compact-node module boundary and deliberately narrow re-exports.
+- `src/node_arena/arena.rs`: Epoch arena facade and reusable owned node-list builder.
+- `src/node_arena/measurement.rs`: Feature-gated compact-column and peak-storage accounting.
+- `src/node_arena/mutation.rs`: Private shape-preserving compact-row replacement operations.
+- `src/node_arena/storage.rs`: Canonical node words, sidecar coordination, encoding, aggregate watermarks, and rollback.
+- `src/node_arena/tables.rs`: Typed structure-of-arrays sidecar tables for boxes, unsets, insertions, and noads.
+- `src/node_arena/view.rs`: Zero-allocation node references, list spans, character runs, and iterators.
 - `src/node_arena/tests.rs`: Unit tests for node-list allocation, lookup, rollback, and arena liveness.
 - `src/page.rs`: Snapshot-owned page-builder state, page dimensions/integers, contribution/current-page queues, and fire-up records.
 - `src/provenance.rs`: Diagnostic origin-record and origin-list arenas with rollback watermarks.
