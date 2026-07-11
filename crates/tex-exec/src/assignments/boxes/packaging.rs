@@ -217,7 +217,11 @@ pub(in crate::assignments) fn hpack_with_overfull_rule(
 ) -> tex_state::node::BoxNode {
     let params = hpack_params(stores);
     let mut packed = hpack(stores, children, spec, params);
-    if params.overfull_rule.raw() > 0
+    // TeX's hpack overfull branch is guarded by list_ptr(r) <> null. An
+    // explicitly negative-width empty hbox is therefore not decorated even
+    // when \overfullrule is positive.
+    if !stores.nodes(children).is_empty()
+        && params.overfull_rule.raw() > 0
         && packed
             .diagnostics
             .iter()

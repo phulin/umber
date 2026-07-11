@@ -1909,6 +1909,52 @@ fn insert_node_captures_split_parameters_and_natural_size() {
 }
 
 #[test]
+fn explicit_hbox_migrates_vadjust_material_to_enclosing_vlist() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\setbox0=\\vbox{\\hbox{\\vadjust{\\penalty123}}}",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("explicit hbox adjustment migrates");
+
+    let root = stores.box_reg(0).expect("box0");
+    let Some(tex_state::node_arena::NodeRef::VList(vbox)) = stores.nodes(root).first() else {
+        panic!("box0 should contain a vbox");
+    };
+    let children = stores.nodes(vbox.children).testing_decoded();
+    assert!(matches!(children, [Node::HList(_), Node::Penalty(123)]));
+    let Node::HList(hbox) = &children[0] else {
+        unreachable!()
+    };
+    assert!(stores.nodes(hbox.children).is_empty());
+}
+
+#[test]
+fn empty_negative_width_hbox_does_not_gain_an_overfull_rule() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\overfullrule=5pt \\setbox0=\\hbox to -10pt{}",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("empty negative-width hbox packs");
+
+    let root = stores.box_reg(0).expect("box0");
+    let Some(tex_state::node_arena::NodeRef::HList(hbox)) = stores.nodes(root).first() else {
+        panic!("box0 should contain an hbox");
+    };
+    assert_eq!(hbox.width.raw(), -655_360);
+    assert!(stores.nodes(hbox.children).is_empty());
+}
+
+#[test]
 fn insertion_starts_with_normal_paragraph_parameters() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);

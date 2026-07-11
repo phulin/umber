@@ -485,9 +485,17 @@ fn append_box_register(
 fn append_box_node_to_current_list(
     nest: &mut ModeNest,
     stores: &mut Universe,
-    node: Node,
+    mut node: Node,
 ) -> Result<(), ExecError> {
+    let migrated = if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
+        extract_box_migrations(stores, &mut node)
+    } else {
+        Vec::new()
+    };
     append_node_to_current_list(nest, stores, node)?;
+    for node in migrated {
+        append_vertical_contribution(nest, stores, node);
+    }
     if matches!(
         nest.current_mode(),
         Mode::Horizontal | Mode::RestrictedHorizontal
@@ -495,6 +503,27 @@ fn append_box_node_to_current_list(
         nest.current_list_mut().set_space_factor(1000);
     }
     Ok(())
+}
+
+fn extract_box_migrations(stores: &mut Universe, node: &mut Node) -> Vec<Node> {
+    let Node::HList(boxed) = node else {
+        return Vec::new();
+    };
+    let mut retained = Vec::new();
+    let mut migrated = Vec::new();
+    for child in stores.nodes(boxed.children) {
+        match child.to_owned() {
+            child @ (Node::Mark { .. } | Node::Ins { .. }) => migrated.push(child),
+            Node::Adjust(list) => {
+                migrated.extend(stores.nodes(list).into_iter().map(|node| node.to_owned()));
+            }
+            child => retained.push(child),
+        }
+    }
+    if !migrated.is_empty() {
+        boxed.children = stores.freeze_node_list(&retained);
+    }
+    migrated
 }
 
 fn append_unboxed(
