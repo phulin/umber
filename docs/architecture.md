@@ -1029,9 +1029,12 @@ Responsibility: every question about glyphs, loaded once, answered from
 immutable tables, with mutable font state kept behind the state timeline.
 
 - `tex-arith` owns TeX fixed-point arithmetic shared across scanners, state,
-  and font parsing: `Scaled`, physical-unit conversion, `xn_over_d`/
-  `nx_plus_y`, `FontSizeSpec`, and TFM fix_word/font-size scaling helpers.
-  It has no dependency on state, fonts, or I/O.
+  and font parsing: `Scaled`, physical-unit and `true`-dimension conversion,
+  `xn_over_d`/`nx_plus_y`, widened saturating scaled accumulation,
+  `FontSizeSpec`, and TFM fix_word/font-size scaling helpers. The saturating
+  helpers clamp only at the representable scaled boundary; legal TeX
+  dimensions retain TeX.web's integer operation order and exact results. The
+  crate has no dependency on state, fonts, or I/O.
 - Loading and immutable font-domain data live in `tex-fonts`: TFM for classic
   compatibility; OpenType/TrueType via a
   vendored shaper for the modern path. All file access through `World`

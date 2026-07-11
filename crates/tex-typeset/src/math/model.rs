@@ -1,3 +1,4 @@
+use tex_arith::{saturating_add as add, saturating_sub as sub};
 use tex_fonts::CharMetrics;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::FontId;
@@ -406,12 +407,4 @@ impl Measurement {
         height: Scaled::from_raw(0),
         depth: Scaled::from_raw(0),
     };
-}
-
-fn add(left: Scaled, right: Scaled) -> Scaled {
-    Scaled::from_raw(left.raw().saturating_add(right.raw()))
-}
-
-fn sub(left: Scaled, right: Scaled) -> Scaled {
-    Scaled::from_raw(left.raw().saturating_sub(right.raw()))
 }

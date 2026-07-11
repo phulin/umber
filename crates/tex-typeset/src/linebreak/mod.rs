@@ -1,3 +1,4 @@
+use tex_arith::{saturating_add as add, saturating_sub as sub_scaled};
 use tex_state::glue::GlueSpec;
 use tex_state::ids::GlueId;
 use tex_state::node::{KernKind, Node};
@@ -100,12 +101,12 @@ impl LineShape {
         if amount >= 0 {
             LineDimensions {
                 indent: self.hang_indent,
-                width: Scaled::from_raw(self.hsize.raw().saturating_sub(amount)),
+                width: sub_scaled(self.hsize, Scaled::from_raw(amount)),
             }
         } else {
             LineDimensions {
                 indent: Scaled::from_raw(0),
-                width: Scaled::from_raw(self.hsize.raw().saturating_add(amount)),
+                width: add(self.hsize, Scaled::from_raw(amount)),
             }
         }
     }
@@ -563,14 +564,6 @@ fn reconstruct(nodes: &[Node], candidates: &[Candidate], mut id: usize) -> LineB
         demerits,
         nodes: nodes.to_vec(),
     }
-}
-
-fn add(left: Scaled, right: Scaled) -> Scaled {
-    Scaled::from_raw(left.raw().saturating_add(right.raw()))
-}
-
-fn sub_scaled(left: Scaled, right: Scaled) -> Scaled {
-    Scaled::from_raw(left.raw().saturating_sub(right.raw()))
 }
 
 #[cfg(test)]
