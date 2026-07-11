@@ -64,7 +64,7 @@ impl Stores {
         );
     }
 
-    pub(super) fn assert_live_token_list(&self, id: TokenListId) {
+    pub(crate) fn assert_live_token_list(&self, id: TokenListId) {
         assert!(
             self.tokens.resolve_stored(id).is_some(),
             "token list is not live in this Universe timeline"
