@@ -1,6 +1,7 @@
 use super::{CodeTableGenerations, CodeTables, location};
 use crate::token::Catcode;
 use proptest::prelude::*;
+use std::hash::Hasher;
 use std::sync::Arc;
 
 #[test]
@@ -79,11 +80,8 @@ fn snapshots_keep_old_shared_pages_after_copy_on_write() {
 
     tables.set_catcode('@', Catcode::Letter);
     assert_eq!(tables.catcode('@'), Catcode::Letter);
-    let (page, offset) = location('@');
-    assert_eq!(
-        snapshot.catcodes.root.pages[page].values[offset],
-        Catcode::Other
-    );
+    let (page, _) = location('@');
+    assert!(snapshot.catcodes.root.page(page).is_none());
 }
 
 #[test]
@@ -92,10 +90,8 @@ fn new_tables_share_canonical_default_roots_and_pages() {
     let second = CodeTables::new();
 
     assert!(Arc::ptr_eq(&first.catcodes.root, &second.catcodes.root));
-    assert!(Arc::ptr_eq(
-        &first.catcodes.root.pages[0],
-        &second.catcodes.root.pages[0]
-    ));
+    assert_eq!(first.catcodes.root.materialized_page_count(), 0);
+    assert_eq!(second.catcodes.root.materialized_page_count(), 0);
     assert!(Arc::ptr_eq(&first.lccodes.root, &second.lccodes.root));
     assert!(Arc::ptr_eq(&first.uccodes.root, &second.uccodes.root));
     assert!(Arc::ptr_eq(&first.sfcodes.root, &second.sfcodes.root));
@@ -116,11 +112,98 @@ fn checkpoint_captures_root_pointers_without_cloning_root_arrays() {
 
     assert!(!Arc::ptr_eq(&tables.catcodes.root, &old_root));
     assert_eq!(tables.catcode('!'), Catcode::Letter);
-    let (page, offset) = location('!');
+    let (page, _) = location('!');
     assert_eq!(
-        snapshot.catcodes.root.pages[page].values[offset],
-        Catcode::Other
+        snapshot.catcodes.root.page(page).expect("old page").values[usize::from(b'@')],
+        Catcode::Letter
     );
+    assert_eq!(snapshot.catcodes.root.materialized_page_count(), 1);
+    assert_eq!(tables.catcodes.root.materialized_page_count(), 1);
+}
+
+#[test]
+fn detached_write_copies_only_one_bounded_radix_path() {
+    let mut tables = CodeTables::new();
+    let first = char::from_u32(0x0100).expect("scalar");
+    let second = char::from_u32(0x0200).expect("scalar");
+    let distant = char::from_u32(0x1_0100).expect("scalar");
+    tables.set_catcode(first, Catcode::Letter);
+    tables.set_catcode(distant, Catcode::Letter);
+    let snapshot = tables.checkpoint();
+
+    let (first_page, _) = location(first);
+    let (second_page, _) = location(second);
+    let (distant_page, _) = location(distant);
+    let (near_chunk, _) = super::page_location(first_page);
+    let (distant_chunk, _) = super::page_location(distant_page);
+    let old_near = Arc::clone(
+        snapshot.catcodes.root.chunks[near_chunk]
+            .as_ref()
+            .expect("near chunk"),
+    );
+    let old_distant = Arc::clone(
+        snapshot.catcodes.root.chunks[distant_chunk]
+            .as_ref()
+            .expect("distant chunk"),
+    );
+    let old_first_page = Arc::clone(
+        old_near.pages[super::page_location(first_page).1]
+            .as_ref()
+            .expect("first page"),
+    );
+
+    tables.set_catcode(second, Catcode::Letter);
+
+    let new_near = tables.catcodes.root.chunks[near_chunk]
+        .as_ref()
+        .expect("new near chunk");
+    assert!(!Arc::ptr_eq(new_near, &old_near));
+    assert!(Arc::ptr_eq(
+        tables.catcodes.root.chunks[distant_chunk]
+            .as_ref()
+            .expect("new distant chunk"),
+        &old_distant
+    ));
+    assert!(Arc::ptr_eq(
+        new_near.pages[super::page_location(first_page).1]
+            .as_ref()
+            .expect("new first page"),
+        &old_first_page
+    ));
+    assert!(tables.catcodes.root.page(second_page).is_some());
+    assert_eq!(tables.catcodes.root.materialized_page_count(), 3);
+}
+
+#[test]
+fn restoring_a_page_to_defaults_reuses_the_canonical_empty_root() {
+    let mut tables = CodeTables::new();
+    let default_root = Arc::clone(&tables.catcodes.root);
+    let ch = '🦀';
+
+    tables.set_catcode(ch, Catcode::Letter);
+    assert_eq!(tables.catcodes.root.materialized_page_count(), 1);
+    tables.set_catcode(ch, Catcode::Other);
+
+    assert_eq!(tables.catcodes.root.materialized_page_count(), 0);
+    assert!(Arc::ptr_eq(&tables.catcodes.root, &default_root));
+}
+
+#[test]
+fn testing_hash_is_independent_of_sparse_update_order() {
+    let mut left = CodeTables::new();
+    left.set_catcode('🦀', Catcode::Letter);
+    left.set_catcode('λ', Catcode::Active);
+    let mut right = CodeTables::new();
+    right.set_catcode('λ', Catcode::Active);
+    right.set_catcode('🦀', Catcode::Letter);
+
+    let mut left_hash = std::collections::hash_map::DefaultHasher::new();
+    left.testing_hash_content(&mut left_hash);
+    let mut right_hash = std::collections::hash_map::DefaultHasher::new();
+    right.testing_hash_content(&mut right_hash);
+
+    assert_eq!(left.generations(), right.generations());
+    assert_eq!(left_hash.finish(), right_hash.finish());
 }
 
 #[test]

@@ -14,7 +14,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `Cargo.toml`: Crate manifest, dependencies, features, library target, and integration test wiring.
 - `src/cell.rs`: Packed environment cell identifiers and bank tags used by journals and raw storage.
 - `src/cell/tests.rs`: Unit tests for cell id packing, bank decoding, and global-bit handling.
-- `src/code_tables.rs`: Sparse paged TeX catcode, lc/uc/sf/math/delcode tables with generation stamps and snapshots.
+- `src/code_tables.rs`: Sparse persistent-radix TeX catcode, lc/uc/sf/math/delcode tables with virtual canonical defaults, generation stamps, groups, and snapshots.
 - `src/code_tables/tests.rs`: Unit tests for code-table defaults, writes, sparse pages, generations, and snapshots.
 - `src/env.rs`: Barriered mutable environment storage for meanings, registers, parameters, font values, grouping, and journals.
 - `src/env/banks.rs`: Dense fixed-size bank codecs, parameter ids, and typed bank access helpers.

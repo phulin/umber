@@ -1,8 +1,9 @@
 //! TeX code tables over Unicode scalar values.
 //!
-//! Code-table writes are sparse, so each table is represented as a 256-way
-//! root of 256-entry pages. Snapshot history is structural: snapshots keep old
-//! roots and writes copy a touched shared page before replacing the value.
+//! Code-table writes are sparse, so each table is represented as a two-level
+//! persistent radix whose absent pages mean the algorithmic INITEX defaults.
+//! Snapshot history is structural: snapshots keep old roots and writes copy a
+//! bounded root/chunk path plus the touched 256-entry page.
 //! Generations track write events, including same-value assignments, so lexer
 //! classifiers can invalidate on assignment activity rather than value changes.
 
@@ -17,6 +18,8 @@ const PAGE_LEN: usize = 1 << PAGE_BITS;
 const PAGE_MASK: u32 = PAGE_LEN as u32 - 1;
 const UNICODE_SCALAR_COUNT: usize = 0x11_0000;
 const ROOT_LEN: usize = UNICODE_SCALAR_COUNT / PAGE_LEN;
+const ROOT_CHUNK_LEN: usize = PAGE_LEN;
+const ROOT_CHUNK_COUNT: usize = ROOT_LEN.div_ceil(ROOT_CHUNK_LEN);
 const DELCODE_DEFAULT: i32 = -1;
 const ASCII_A: u32 = b'A' as u32;
 const ASCII_Z: u32 = b'Z' as u32;
@@ -307,8 +310,7 @@ where
     }
 
     fn get(&self, ch: char) -> T {
-        let (page, offset) = location(ch);
-        self.root.pages[page].values[offset]
+        Self::value_in_root(&self.root, ch)
     }
 
     fn set(&mut self, ch: char, value: T) {
@@ -318,13 +320,14 @@ where
             .checked_add(1)
             .expect("code-table generation overflow");
 
-        if self.root.pages[page_index].values[offset] == value {
+        if Self::value_in_root(&self.root, ch) == value {
             return;
         }
 
-        let root = Arc::make_mut(&mut self.root);
-        let page = Arc::make_mut(&mut root.pages[page_index]);
-        page.values[offset] = value;
+        Self::write_value(&mut self.root, page_index, offset, value);
+        if self.root.is_empty() {
+            self.root = D::default_root();
+        }
     }
 
     fn root(&self) -> Arc<Root<T>> {
@@ -333,15 +336,17 @@ where
 
     fn root_with_value(root: &Arc<Root<T>>, ch: char, value: T) -> Arc<Root<T>> {
         let (page_index, offset) = location(ch);
-        if root.pages[page_index].values[offset] == value {
+        if Self::value_in_root(root, ch) == value {
             return Arc::clone(root);
         }
 
         let mut updated = Arc::clone(root);
-        let root = Arc::make_mut(&mut updated);
-        let page = Arc::make_mut(&mut root.pages[page_index]);
-        page.values[offset] = value;
-        updated
+        Self::write_value(&mut updated, page_index, offset, value);
+        if updated.is_empty() {
+            D::default_root()
+        } else {
+            updated
+        }
     }
 
     fn restore_group_root(&mut self, root: Arc<Root<T>>) {
@@ -373,8 +378,35 @@ where
         T: Hash,
     {
         self.generation.hash(hasher);
-        for page in self.root.pages.iter() {
-            page.values.hash(hasher);
+        for page_index in 0..ROOT_LEN {
+            if let Some(page) = self.root.page(page_index) {
+                page.values.hash(hasher);
+            } else {
+                Page::default_for::<D>(page_index).values.hash(hasher);
+            }
+        }
+    }
+
+    fn value_in_root(root: &Root<T>, ch: char) -> T {
+        let (page_index, offset) = location(ch);
+        root.page(page_index)
+            .map_or_else(|| D::default_for(ch as u32), |page| page.values[offset])
+    }
+
+    fn write_value(root: &mut Arc<Root<T>>, page_index: usize, offset: usize, value: T) {
+        let (chunk_index, page_slot) = page_location(page_index);
+        let root = Arc::make_mut(root);
+        let chunk = root.chunks[chunk_index].get_or_insert_with(|| Arc::new(PageChunk::empty()));
+        let chunk = Arc::make_mut(chunk);
+        let page = chunk.pages[page_slot]
+            .get_or_insert_with(|| Arc::new(Page::default_for::<D>(page_index)));
+        Arc::make_mut(page).values[offset] = value;
+
+        if page.is_default_for::<D>(page_index) {
+            chunk.pages[page_slot] = None;
+        }
+        if chunk.is_empty() {
+            root.chunks[chunk_index] = None;
         }
     }
 }
@@ -387,7 +419,52 @@ struct PagedTableSnapshot<T> {
 
 #[derive(Clone, Debug)]
 struct Root<T> {
-    pages: Box<[Arc<Page<T>>]>,
+    chunks: [Option<Arc<PageChunk<T>>>; ROOT_CHUNK_COUNT],
+}
+
+impl<T> Root<T> {
+    fn empty() -> Self {
+        Self {
+            chunks: array::from_fn(|_| None),
+        }
+    }
+
+    fn page(&self, page_index: usize) -> Option<&Page<T>> {
+        let (chunk_index, page_slot) = page_location(page_index);
+        self.chunks[chunk_index]
+            .as_deref()
+            .and_then(|chunk| chunk.pages[page_slot].as_deref())
+    }
+
+    fn is_empty(&self) -> bool {
+        self.chunks.iter().all(Option::is_none)
+    }
+
+    #[cfg(test)]
+    fn materialized_page_count(&self) -> usize {
+        self.chunks
+            .iter()
+            .filter_map(Option::as_deref)
+            .map(|chunk| chunk.pages.iter().filter(|page| page.is_some()).count())
+            .sum()
+    }
+}
+
+#[derive(Clone, Debug)]
+struct PageChunk<T> {
+    pages: [Option<Arc<Page<T>>>; ROOT_CHUNK_LEN],
+}
+
+impl<T> PageChunk<T> {
+    fn empty() -> Self {
+        Self {
+            pages: array::from_fn(|_| None),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.pages.iter().all(Option::is_none)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -397,7 +474,7 @@ struct Page<T> {
 
 impl<T> Page<T>
 where
-    T: Copy,
+    T: Copy + Eq,
 {
     fn default_for<D>(page: usize) -> Self
     where
@@ -407,6 +484,17 @@ where
         Self {
             values: array::from_fn(|offset| D::default_for(base + offset as u32)),
         }
+    }
+
+    fn is_default_for<D>(&self, page: usize) -> bool
+    where
+        D: Defaults<T>,
+    {
+        let base = page as u32 * PAGE_LEN as u32;
+        self.values
+            .iter()
+            .enumerate()
+            .all(|(offset, value)| *value == D::default_for(base + offset as u32))
     }
 }
 
@@ -418,17 +506,8 @@ trait StaticDefaultRoot<T> {
     fn default_root() -> Arc<Root<T>>;
 }
 
-fn build_default_root<T, D>() -> Arc<Root<T>>
-where
-    T: Copy,
-    D: Defaults<T>,
-{
-    let pages: Vec<_> = (0..ROOT_LEN)
-        .map(|page| Arc::new(Page::default_for::<D>(page)))
-        .collect();
-    Arc::new(Root {
-        pages: pages.into_boxed_slice(),
-    })
+fn build_default_root<T>() -> Arc<Root<T>> {
+    Arc::new(Root::empty())
 }
 
 #[derive(Clone, Debug)]
@@ -459,7 +538,7 @@ impl Defaults<Catcode> for CatcodeDefaults {
 impl StaticDefaultRoot<Catcode> for CatcodeDefaults {
     fn default_root() -> Arc<Root<Catcode>> {
         static ROOT: OnceLock<Arc<Root<Catcode>>> = OnceLock::new();
-        Arc::clone(ROOT.get_or_init(build_default_root::<Catcode, CatcodeDefaults>))
+        Arc::clone(ROOT.get_or_init(build_default_root::<Catcode>))
     }
 }
 
@@ -479,7 +558,7 @@ impl Defaults<LcCode> for LcCodeDefaults {
 impl StaticDefaultRoot<LcCode> for LcCodeDefaults {
     fn default_root() -> Arc<Root<LcCode>> {
         static ROOT: OnceLock<Arc<Root<LcCode>>> = OnceLock::new();
-        Arc::clone(ROOT.get_or_init(build_default_root::<LcCode, LcCodeDefaults>))
+        Arc::clone(ROOT.get_or_init(build_default_root::<LcCode>))
     }
 }
 
@@ -499,7 +578,7 @@ impl Defaults<UcCode> for UcCodeDefaults {
 impl StaticDefaultRoot<UcCode> for UcCodeDefaults {
     fn default_root() -> Arc<Root<UcCode>> {
         static ROOT: OnceLock<Arc<Root<UcCode>>> = OnceLock::new();
-        Arc::clone(ROOT.get_or_init(build_default_root::<UcCode, UcCodeDefaults>))
+        Arc::clone(ROOT.get_or_init(build_default_root::<UcCode>))
     }
 }
 
@@ -518,7 +597,7 @@ impl Defaults<SfCode> for SfCodeDefaults {
 impl StaticDefaultRoot<SfCode> for SfCodeDefaults {
     fn default_root() -> Arc<Root<SfCode>> {
         static ROOT: OnceLock<Arc<Root<SfCode>>> = OnceLock::new();
-        Arc::clone(ROOT.get_or_init(build_default_root::<SfCode, SfCodeDefaults>))
+        Arc::clone(ROOT.get_or_init(build_default_root::<SfCode>))
     }
 }
 
@@ -540,7 +619,7 @@ impl Defaults<MathCode> for MathCodeDefaults {
 impl StaticDefaultRoot<MathCode> for MathCodeDefaults {
     fn default_root() -> Arc<Root<MathCode>> {
         static ROOT: OnceLock<Arc<Root<MathCode>>> = OnceLock::new();
-        Arc::clone(ROOT.get_or_init(build_default_root::<MathCode, MathCodeDefaults>))
+        Arc::clone(ROOT.get_or_init(build_default_root::<MathCode>))
     }
 }
 
@@ -556,13 +635,17 @@ impl Defaults<DelCode> for DelCodeDefaults {
 impl StaticDefaultRoot<DelCode> for DelCodeDefaults {
     fn default_root() -> Arc<Root<DelCode>> {
         static ROOT: OnceLock<Arc<Root<DelCode>>> = OnceLock::new();
-        Arc::clone(ROOT.get_or_init(build_default_root::<DelCode, DelCodeDefaults>))
+        Arc::clone(ROOT.get_or_init(build_default_root::<DelCode>))
     }
 }
 
 fn location(ch: char) -> (usize, usize) {
     let code = ch as u32;
     ((code >> PAGE_BITS) as usize, (code & PAGE_MASK) as usize)
+}
+
+fn page_location(page_index: usize) -> (usize, usize) {
+    (page_index / ROOT_CHUNK_LEN, page_index % ROOT_CHUNK_LEN)
 }
 
 fn assert_unicode_code(value: u32, table: &str) {

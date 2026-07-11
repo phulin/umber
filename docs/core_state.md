@@ -220,11 +220,18 @@ machinery: **one write path for all registers**.
 Six tables over ~1.1M codepoints; overwhelmingly default-valued; writes are
 rare and bursty (verbatim, `\makeatletter`, babel shorthands).
 
-- Representation: two-level paged radix tree; root of page pointers →
-  pages of 256 entries. All-default pages alias canonical shared constants.
+- Representation: a two-level persistent radix over logical 256-entry pages.
+  The 4,352-page Unicode domain is covered by 17 fixed root slots, each of
+  which optionally points to a 256-way page chunk. Missing chunks and pages
+  are the canonical virtual-default representation; INITEX defaults are
+  computed directly, so a fresh table allocates no Unicode pages.
 - **Copy-on-write at page granularity**: first write to a shared page clones
-  it. Old snapshots keep the old root; no journaling of individual entries
-  needed (the root swap is the undo record — the journal stores old roots).
+  it. A detached write copies at most 17 root handles, 256 page handles, and
+  one 256-value page, independent of the Unicode domain. A page restored
+  entirely to defaults is removed, and a root with no materialized pages
+  reuses its table's canonical empty root. Old snapshots keep the old root; no
+  journaling of individual entries is needed (the root swap is the undo record
+  — the journal stores old roots).
 - Each table carries a **generation counter**, bumped on any write. The
   lexer's SIMD fast path is compiled/validated against a generation vector
   and never touches the tree until a generation bump forces reclassification.
@@ -245,9 +252,9 @@ rare and bursty (verbatim, `\makeatletter`, babel shorthands).
   stack outside `Stores`. Restoring a changed root at group exit also advances
   that table's generation so lexer classification cannot outlive the restored
   catcodes.
-  Each implemented table root starts at a canonical shared default root whose
-  pages are also canonical shared pages; the first effective write detaches
-  the root and then copy-on-writes only the touched page.
+  Each implemented table root starts at one canonical shared empty root; the
+  virtual missing-page sentinel canonically represents every default page.
+  The first effective write materializes only its radix path and touched page.
 - INITEX defaults are TeX82-compatible for the classic 0..255 range and
   extended over Unicode by the same default rules: ASCII letters have letter
   catcode and case mappings, uppercase ASCII has `sfcode` 999, ASCII digits
