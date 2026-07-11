@@ -11,8 +11,8 @@ use crate::packing_params::{hpack, hpack_params, vpack, vpack_params, vtop};
 use crate::{ExecError, Mode, ModeNest, leave_group, push_traced_tokens};
 
 use super::super::{
-    flush_pending_hchars, has_catcode_meaning, next_non_space_traced_x, scan_optional_keyword_x,
-    scan_register_index, scan_scaled,
+    flush_pending_hchars, has_catcode_meaning, next_non_space_traced_x, normal_paragraph,
+    scan_optional_keyword_x, scan_register_index, scan_scaled,
 };
 use super::vsplit::scan_vsplit_node;
 
@@ -184,6 +184,13 @@ where
         Mode::InternalVertical
     };
     let mut inner = ModeNest::new();
+    if kind != BoxKind::HBox {
+        // TeX82 begin_box normalizes paragraph-scoped parameters after the
+        // vbox/vtop group has opened, so the defaults are local to the box.
+        // In particular, stale outer parshape data must not determine a
+        // display started in this internal vertical list.
+        normal_paragraph(&mut inner, stores);
+    }
     inner.push(mode);
     scan_box_group(&mut inner, input, stores, hooks)?;
     if kind != BoxKind::HBox && inner.current_mode() == Mode::Horizontal {

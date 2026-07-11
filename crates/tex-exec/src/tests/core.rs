@@ -2031,6 +2031,57 @@ fn insertion_starts_with_normal_paragraph_parameters() {
 }
 
 #[test]
+fn vtop_normalizes_paragraph_parameters_locally_before_display() {
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let source = concat!(
+        "\\font\\f=cmr10 \\f \\hsize=100pt ",
+        "\\parshape=1 3pt 13pt \\hangindent=-10pt \\hangafter=-12 \\looseness=-2 ",
+        "\\setbox0=\\vtop{\\noindent$$$$}"
+    );
+    let checkpoint = stores.snapshot();
+
+    let mut input = InputStack::new(MemoryInput::new(source));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("vtop display executes");
+
+    let first_hash = stores.snapshot().state_hash();
+    let root = stores.box_reg(0).expect("box0");
+    let Some(tex_state::node_arena::NodeRef::VList(vtop)) = stores.nodes(root).first() else {
+        panic!("box0 should contain a vtop");
+    };
+    assert_eq!(vtop.width.raw(), 50 * Scaled::UNITY);
+    let display = stores
+        .nodes(vtop.children)
+        .iter()
+        .find_map(|node| match node {
+            tex_state::node_arena::NodeRef::HList(node) if node.display => Some(node),
+            _ => None,
+        })
+        .expect("display box");
+    assert_eq!(display.width.raw(), 0);
+    assert_eq!(display.shift.raw(), 50 * Scaled::UNITY);
+
+    // begin_box's normal_paragraph assignments are local to the box group.
+    assert_eq!(stores.paragraph_shape()[0].indent.raw(), 3 * Scaled::UNITY);
+    assert_eq!(
+        stores.dimen_param(DimenParam::HANG_INDENT).raw(),
+        -10 * Scaled::UNITY
+    );
+    assert_eq!(stores.int_param(IntParam::HANG_AFTER), -12);
+    assert_eq!(stores.int_param(IntParam::LOOSENESS), -2);
+
+    stores.rollback(&checkpoint);
+    let mut replay = InputStack::new(MemoryInput::new(source));
+    Executor::new()
+        .run(&mut replay, &mut stores)
+        .expect("vtop display replay executes");
+    assert_eq!(stores.snapshot().state_hash(), first_hash);
+}
+
+#[test]
 fn insertion_omits_parskip_before_first_internal_vlist_paragraph() {
     let mut stores = stores_with_fonts();
     tex_expand::install_expandable_primitives(&mut stores);

@@ -669,6 +669,10 @@ assignments, box building, and dispatch into the typesetting kernels.
   is line-broken before the internal vertical list is frozen. Starting the
   first paragraph of an empty internal vertical list omits `\parskip`, while
   later paragraphs retain it, matching TeX82's signed-mode `new_graf` test.
+  Entering every `\vbox` or `\vtop` likewise applies `normal_paragraph`
+  after its journal-backed group opens, so inherited `\parshape`,
+  `\looseness`, `\hangindent`, and `\hangafter` values cannot shape the
+  internal list and are restored when the box closes.
   Insertion parameters and content are captured before group exit, while only
   global assignments made inside the insertion survive in the enclosing state.
 - **Paragraph and page hand-off**: paragraph start/end is stomach-owned.
