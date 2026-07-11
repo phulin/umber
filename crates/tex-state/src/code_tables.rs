@@ -13,6 +13,8 @@ use core::array;
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, OnceLock};
 
+use self::global::{GlobalCodeTableWrite, GlobalWriteHistory};
+
 const PAGE_BITS: u32 = 8;
 const PAGE_LEN: usize = 1 << PAGE_BITS;
 const PAGE_MASK: u32 = PAGE_LEN as u32 - 1;
@@ -62,6 +64,7 @@ pub(crate) struct CodeTablesSnapshot {
     mathcodes: PagedTableSnapshot<MathCode>,
     delcodes: PagedTableSnapshot<DelCode>,
     group_roots: Arc<Vec<CodeTableRoots>>,
+    global_writes: GlobalWriteHistory,
 }
 
 /// Structurally shared code-table roots saved at TeX group boundaries.
@@ -73,6 +76,58 @@ struct CodeTableRoots {
     sfcodes: Arc<Root<SfCode>>,
     mathcodes: Arc<Root<MathCode>>,
     delcodes: Arc<Root<DelCode>>,
+    global_writes: GlobalWriteHistory,
+}
+
+impl CodeTableRoots {
+    fn apply_global_writes(&mut self, writes: &[GlobalCodeTableWrite]) {
+        for write in writes {
+            match *write {
+                GlobalCodeTableWrite::Catcode(ch, value) => {
+                    self.catcodes = PagedTable::<Catcode, CatcodeDefaults>::root_with_value(
+                        &self.catcodes,
+                        ch,
+                        value,
+                    );
+                }
+                GlobalCodeTableWrite::LcCode(ch, value) => {
+                    self.lccodes = PagedTable::<LcCode, LcCodeDefaults>::root_with_value(
+                        &self.lccodes,
+                        ch,
+                        value,
+                    );
+                }
+                GlobalCodeTableWrite::UcCode(ch, value) => {
+                    self.uccodes = PagedTable::<UcCode, UcCodeDefaults>::root_with_value(
+                        &self.uccodes,
+                        ch,
+                        value,
+                    );
+                }
+                GlobalCodeTableWrite::SfCode(ch, value) => {
+                    self.sfcodes = PagedTable::<SfCode, SfCodeDefaults>::root_with_value(
+                        &self.sfcodes,
+                        ch,
+                        value,
+                    );
+                }
+                GlobalCodeTableWrite::MathCode(ch, value) => {
+                    self.mathcodes = PagedTable::<MathCode, MathCodeDefaults>::root_with_value(
+                        &self.mathcodes,
+                        ch,
+                        value,
+                    );
+                }
+                GlobalCodeTableWrite::DelCode(ch, value) => {
+                    self.delcodes = PagedTable::<DelCode, DelCodeDefaults>::root_with_value(
+                        &self.delcodes,
+                        ch,
+                        value,
+                    );
+                }
+            }
+        }
+    }
 }
 
 /// The six mutable TeX code tables.
@@ -85,6 +140,7 @@ pub struct CodeTables {
     mathcodes: PagedTable<MathCode, MathCodeDefaults>,
     delcodes: PagedTable<DelCode, DelCodeDefaults>,
     group_roots: Arc<Vec<CodeTableRoots>>,
+    global_writes: GlobalWriteHistory,
 }
 
 impl CodeTables {
@@ -99,6 +155,7 @@ impl CodeTables {
             mathcodes: PagedTable::new(),
             delcodes: PagedTable::new(),
             group_roots: Arc::new(Vec::new()),
+            global_writes: GlobalWriteHistory::default(),
         }
     }
 
@@ -111,6 +168,7 @@ impl CodeTables {
             mathcodes: self.mathcodes.checkpoint(),
             delcodes: self.delcodes.checkpoint(),
             group_roots: Arc::clone(&self.group_roots),
+            global_writes: self.global_writes.clone(),
         }
     }
 
@@ -122,6 +180,7 @@ impl CodeTables {
         self.mathcodes.rollback_to(snapshot.mathcodes);
         self.delcodes.rollback_to(snapshot.delcodes);
         self.group_roots = snapshot.group_roots;
+        self.global_writes = snapshot.global_writes;
     }
 
     pub(crate) fn enter_group(&mut self) {
@@ -132,20 +191,26 @@ impl CodeTables {
             sfcodes: self.sfcodes.root(),
             mathcodes: self.mathcodes.root(),
             delcodes: self.delcodes.root(),
+            global_writes: self.global_writes.clone(),
         };
         Arc::make_mut(&mut self.group_roots).push(roots);
     }
 
     pub(crate) fn leave_group(&mut self) {
-        let roots = Arc::make_mut(&mut self.group_roots)
+        let mut roots = Arc::make_mut(&mut self.group_roots)
             .pop()
             .expect("leave_group without matching code-table roots");
+        let writes = self.global_writes.writes_since(&roots.global_writes);
+        roots.apply_global_writes(&writes);
         self.catcodes.restore_group_root(roots.catcodes);
         self.lccodes.restore_group_root(roots.lccodes);
         self.uccodes.restore_group_root(roots.uccodes);
         self.sfcodes.restore_group_root(roots.sfcodes);
         self.mathcodes.restore_group_root(roots.mathcodes);
         self.delcodes.restore_group_root(roots.delcodes);
+        if self.group_roots.is_empty() {
+            self.global_writes = GlobalWriteHistory::default();
+        }
     }
 
     /// Returns the generation vector for all code tables.
@@ -172,10 +237,7 @@ impl CodeTables {
 
     pub(crate) fn set_catcode_global(&mut self, ch: char, value: Catcode) {
         self.catcodes.set(ch, value);
-        for roots in Arc::make_mut(&mut self.group_roots) {
-            roots.catcodes =
-                PagedTable::<Catcode, CatcodeDefaults>::root_with_value(&roots.catcodes, ch, value);
-        }
+        self.record_global(GlobalCodeTableWrite::Catcode(ch, value));
     }
 
     #[must_use]
@@ -191,10 +253,7 @@ impl CodeTables {
     pub(crate) fn set_lccode_global(&mut self, ch: char, value: LcCode) {
         assert_unicode_code(value, "lccode");
         self.lccodes.set(ch, value);
-        for roots in Arc::make_mut(&mut self.group_roots) {
-            roots.lccodes =
-                PagedTable::<LcCode, LcCodeDefaults>::root_with_value(&roots.lccodes, ch, value);
-        }
+        self.record_global(GlobalCodeTableWrite::LcCode(ch, value));
     }
 
     #[must_use]
@@ -210,10 +269,7 @@ impl CodeTables {
     pub(crate) fn set_uccode_global(&mut self, ch: char, value: UcCode) {
         assert_unicode_code(value, "uccode");
         self.uccodes.set(ch, value);
-        for roots in Arc::make_mut(&mut self.group_roots) {
-            roots.uccodes =
-                PagedTable::<UcCode, UcCodeDefaults>::root_with_value(&roots.uccodes, ch, value);
-        }
+        self.record_global(GlobalCodeTableWrite::UcCode(ch, value));
     }
 
     #[must_use]
@@ -227,10 +283,7 @@ impl CodeTables {
 
     pub(crate) fn set_sfcode_global(&mut self, ch: char, value: SfCode) {
         self.sfcodes.set(ch, value);
-        for roots in Arc::make_mut(&mut self.group_roots) {
-            roots.sfcodes =
-                PagedTable::<SfCode, SfCodeDefaults>::root_with_value(&roots.sfcodes, ch, value);
-        }
+        self.record_global(GlobalCodeTableWrite::SfCode(ch, value));
     }
 
     #[must_use]
@@ -244,13 +297,7 @@ impl CodeTables {
 
     pub(crate) fn set_mathcode_global(&mut self, ch: char, value: MathCode) {
         self.mathcodes.set(ch, value);
-        for roots in Arc::make_mut(&mut self.group_roots) {
-            roots.mathcodes = PagedTable::<MathCode, MathCodeDefaults>::root_with_value(
-                &roots.mathcodes,
-                ch,
-                value,
-            );
-        }
+        self.record_global(GlobalCodeTableWrite::MathCode(ch, value));
     }
 
     #[must_use]
@@ -264,9 +311,12 @@ impl CodeTables {
 
     pub(crate) fn set_delcode_global(&mut self, ch: char, value: DelCode) {
         self.delcodes.set(ch, value);
-        for roots in Arc::make_mut(&mut self.group_roots) {
-            roots.delcodes =
-                PagedTable::<DelCode, DelCodeDefaults>::root_with_value(&roots.delcodes, ch, value);
+        self.record_global(GlobalCodeTableWrite::DelCode(ch, value));
+    }
+
+    fn record_global(&mut self, write: GlobalCodeTableWrite) {
+        if !self.group_roots.is_empty() {
+            self.global_writes.push(write);
         }
     }
 
@@ -654,6 +704,8 @@ fn assert_unicode_code(value: u32, table: &str) {
         "{table} value exceeds Unicode scalar range"
     );
 }
+
+mod global;
 
 #[cfg(test)]
 mod tests;
