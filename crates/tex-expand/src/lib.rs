@@ -431,7 +431,7 @@ impl ExpandError {
         match self {
             Self::Captured { site, .. } => site.clone(),
             Self::Lex(err) => err.diagnostic_site().clone(),
-            _ => DiagnosticSite::new(self.primary_origin(), [], []),
+            _ => DiagnosticSite::new(self.primary_origin(), [], None),
         }
     }
 
@@ -442,7 +442,7 @@ impl ExpandError {
             return self;
         }
         let site = input.diagnostic_site(self.primary_origin(), []);
-        if site.expansion_trace().is_empty() {
+        if site.expansion_head().is_none() {
             self
         } else {
             Self::Captured {

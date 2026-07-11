@@ -46,8 +46,12 @@ fn resolver_renders_bounded_live_macro_trace() {
         parameter_text,
         replacement_text,
     ));
-    let macro_origin =
-        stores.macro_invocation_origin(definition, invocation_origin, definition_origin);
+    let macro_origin = stores.macro_invocation_origin(
+        definition,
+        invocation_origin,
+        definition_origin,
+        OriginId::UNKNOWN,
+    );
     stores.set_input_summary(InputSummary::new(
         vec![InputFrameSummary::TokenList {
             token_list: replacement_text,
@@ -56,6 +60,7 @@ fn resolver_renders_bounded_live_macro_trace() {
             index: 0,
             macro_arguments: MacroArguments::new(),
             macro_invocation: macro_origin,
+            parent_macro_invocation: OriginId::UNKNOWN,
         }],
         None,
         None,
@@ -197,14 +202,19 @@ fn captured_site_renders_related_locations_and_trace_after_frames_are_gone() {
         parameter_text,
         replacement_text,
     ));
-    let macro_origin = stores.macro_invocation_origin(definition, invocation, definition_origin);
+    let macro_origin = stores.macro_invocation_origin(
+        definition,
+        invocation,
+        definition_origin,
+        OriginId::UNKNOWN,
+    );
     let site = DiagnosticSite::new(
         Some(invocation),
         [RelatedLocation::new(
             RelatedLocationRole::Definition,
             definition_origin,
         )],
-        [macro_origin],
+        Some(macro_origin),
     );
     stores.set_input_summary(InputSummary::new(vec![], None, None));
 
@@ -212,4 +222,36 @@ fn captured_site_renders_related_locations_and_trace_after_frames_are_gone() {
     assert!(rendered.contains("defined here"), "{rendered}");
     assert!(rendered.contains("expansion trace:"), "{rendered}");
     assert!(rendered.contains("invoked at main.tex:1:1"), "{rendered}");
+}
+
+#[test]
+fn captured_macro_chain_honors_renderer_depth_beyond_the_default() {
+    let mut stores = stores_with_input("main.tex", b"abcdefghijkl\n");
+    let parameter_text = stores.intern_token_list(&[]);
+    let replacement_text = stores.intern_token_list(&[]);
+    let definition = stores.intern_macro(MacroMeaning::new(
+        MeaningFlags::from_bits(0),
+        parameter_text,
+        replacement_text,
+    ));
+    let definition_origin = stores.source_origin(crate::SourceId::new(0), 0, 1, 0);
+    let mut head = OriginId::UNKNOWN;
+    for offset in 0..12 {
+        let invocation = stores.source_origin(crate::SourceId::new(0), offset, 1, offset as u32);
+        head = stores.macro_invocation_origin(definition, invocation, definition_origin, head);
+    }
+    let site = DiagnosticSite::new(None, [], Some(head));
+
+    let truncated =
+        ProvenanceResolver::with_trace_depth(&stores, 8).render_diagnostic_site("boom", &site);
+    assert!(truncated.contains("      ..."), "{truncated}");
+
+    let complete =
+        ProvenanceResolver::with_trace_depth(&stores, 12).render_diagnostic_site("boom", &site);
+    assert!(!complete.contains("      ..."), "{complete}");
+    assert_eq!(
+        complete.matches("      invoked at").count(),
+        12,
+        "{complete}"
+    );
 }

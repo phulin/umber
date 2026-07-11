@@ -405,7 +405,7 @@ impl ExecError {
             Self::Captured { site, .. } => site.clone(),
             Self::Lex(err) => err.diagnostic_site().clone(),
             Self::Expand(err) => err.diagnostic_site(),
-            _ => DiagnosticSite::new(self.primary_origin(), [], []),
+            _ => DiagnosticSite::new(self.primary_origin(), [], None),
         }
     }
 
@@ -414,7 +414,7 @@ impl ExecError {
             return self;
         }
         let inherited = self.diagnostic_site();
-        if !inherited.expansion_trace().is_empty() {
+        if inherited.expansion_head().is_some() {
             return Self::Captured {
                 error: Box::new(self),
                 site: inherited,
@@ -422,7 +422,7 @@ impl ExecError {
         }
         let site =
             input.diagnostic_site(self.primary_origin(), inherited.related().iter().copied());
-        if site.expansion_trace().is_empty() {
+        if site.expansion_head().is_none() {
             self
         } else {
             Self::Captured {

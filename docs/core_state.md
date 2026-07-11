@@ -384,9 +384,9 @@ cells[i] = new
   benchmark-only id inspection rather than a production per-token counter
   write; none of these values participate in semantic hashing.
 - User-facing provenance is resolved only at diagnostic formatting
-  boundaries. Errors own a bounded `DiagnosticSite`: a primary origin,
-  labeled related origins, and invocation-origin ids captured while relevant
-  replay frames are live. No site stores rendered paths, excerpts, line
+  boundaries. Errors own a `DiagnosticSite`: a primary origin, bounded labeled
+  related origins, and one parent-linked macro-invocation head captured while
+  relevant replay frames are live. No site stores rendered paths, excerpts, line
   indexes, or display widths. `ProvenanceResolver` reads live origin records,
   world input records, and interned names to render source labels, exact
   half-open source ranges, source line/caret context, and the captured macro
@@ -398,18 +398,19 @@ cells[i] = new
 - Raw `OriginId`s are valid only while their append-only provenance records
   remain live. Any diagnostic that must survive speculative/replayed execution
   rollback must be rendered to text before rolling back past its provenance
-  watermark. Expansion backtraces are copied as bounded invocation ids when an
-  error crosses the lexer, expansion, or execution boundary, not reconstructed
-  from mutable current-location state or per-token chain records.
+  watermark. Expansion backtraces follow persistent parent-linked invocation
+  records from the head captured when an error crosses the lexer, expansion,
+  or execution boundary; they are not reconstructed from mutable
+  current-location state or stored beside individual tokens.
   Coordinate rendering stays lazy so future splice-time line-delta remapping
   can be inserted at the resolver boundary.
 - Token-list delivery treats a missing or rolled-back origin-list span as
   unknown diagnostic provenance while continuing to deliver the still-live
-  semantic token list. A popped macro replay frame contributes its one shared
-  invocation id to a fixed bounded buffer for the current delivery attempt;
-  nested pops accumulate inner-to-outer ids, and the buffer is cleared before
-  the next attempt so traces neither disappear at an EOF/pre-token error nor
-  leak onto unrelated later tokens. No body-token wrapper record is allocated.
+  semantic token list. Macro invocation records link to their parent, and the
+  input stack maintains the active chain head in O(1). The innermost head
+  popped during one delivery attempt is retained until the next attempt, so
+  traces neither disappear at an EOF/pre-token error nor leak onto unrelated
+  later tokens. No body-token wrapper record is allocated.
 - Provenance statistics distinguish live records, origin-list spans/entries,
   source regions, generated backings, and logical bytes from retained arena
   capacity. Aggregate rollback restores every live counter to its snapshot

@@ -980,9 +980,14 @@ fn macro_body_frame_invocation_origin_does_not_affect_summary_equality() {
         params,
         token_list,
     ));
-    let left_invocation = stores.macro_invocation_origin(definition, left_call, definition_origin);
-    let right_invocation =
-        stores.macro_invocation_origin(definition, right_call, definition_origin);
+    let left_invocation =
+        stores.macro_invocation_origin(definition, left_call, definition_origin, OriginId::UNKNOWN);
+    let right_invocation = stores.macro_invocation_origin(
+        definition,
+        right_call,
+        definition_origin,
+        OriginId::UNKNOWN,
+    );
     let mut left = InputStack::new(MemoryInput::new(""));
     left.push_macro_body_with_origins_and_invocation(
         token_list,
@@ -1040,7 +1045,7 @@ fn stale_replay_origin_list_degrades_to_unknown_after_rollback() {
 }
 
 #[test]
-fn nested_popped_invocations_remain_bounded_for_one_delivery_attempt() {
+fn nested_popped_invocations_retain_the_complete_parent_chain_for_one_delivery_attempt() {
     let mut stores = Universe::new();
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);
     let empty = stores.intern_token_list(&[]);
@@ -1052,14 +1057,19 @@ fn nested_popped_invocations_remain_bounded_for_one_delivery_attempt() {
     let definition_origin = stores.source_origin(tex_state::SourceId::new(1), 0, 1, 1);
     let mut input = InputStack::new(MemoryInput::new(""));
     let mut invocations = Vec::new();
-    for offset in 0..(tex_state::provenance::DiagnosticSite::MAX_EXPANSION_TRACE + 3) {
+    for offset in 0..64 {
         let call = stores.source_origin(
             tex_state::SourceId::new(2),
             u64::try_from(offset).expect("small test offset"),
             1,
             u32::try_from(offset + 1).expect("small test column"),
         );
-        let invocation = stores.macro_invocation_origin(definition, call, definition_origin);
+        let invocation = stores.macro_invocation_origin(
+            definition,
+            call,
+            definition_origin,
+            input.active_macro_invocation(),
+        );
         invocations.push(invocation);
         input.push_macro_body_with_origins_and_invocation(
             empty,
@@ -1069,6 +1079,16 @@ fn nested_popped_invocations_remain_bounded_for_one_delivery_attempt() {
         );
     }
 
+    let summary = input.summary();
+    let mut input = InputStack::from_summary(&summary, |_, _, _| {
+        Ok::<_, std::convert::Infallible>(MemoryInput::new(""))
+    })
+    .expect("input summary should restore");
+    assert_eq!(
+        input.active_macro_invocation(),
+        invocations.last().copied().expect("nested invocation")
+    );
+
     assert!(
         input
             .next_traced_token(&mut stores)
@@ -1076,13 +1096,20 @@ fn nested_popped_invocations_remain_bounded_for_one_delivery_attempt() {
             .is_none()
     );
     let site = input.diagnostic_site(None, []);
-    let expected = invocations
-        .iter()
-        .rev()
-        .take(tex_state::provenance::DiagnosticSite::MAX_EXPANSION_TRACE)
-        .copied()
-        .collect::<Vec<_>>();
-    assert_eq!(site.expansion_trace(), expected);
+    let mut actual = Vec::new();
+    let mut current = site.expansion_head();
+    while let Some(origin) = current {
+        actual.push(origin);
+        let OriginRecord::MacroInvocation(invocation) = stores.origin(origin) else {
+            panic!("expansion chain must contain only macro invocation origins");
+        };
+        current = (invocation.parent_invocation() != OriginId::UNKNOWN)
+            .then_some(invocation.parent_invocation());
+    }
+    assert_eq!(
+        actual,
+        invocations.iter().rev().copied().collect::<Vec<_>>()
+    );
 
     assert!(
         input
@@ -1090,7 +1117,7 @@ fn nested_popped_invocations_remain_bounded_for_one_delivery_attempt() {
             .expect("repeated EOF should remain harmless")
             .is_none()
     );
-    assert!(input.diagnostic_site(None, []).expansion_trace().is_empty());
+    assert_eq!(input.diagnostic_site(None, []).expansion_head(), None);
 }
 
 #[test]

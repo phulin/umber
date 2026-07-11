@@ -47,7 +47,7 @@ impl<'a> ProvenanceResolver<'a> {
     /// Renders a complete diagnostic message with optional primary origin.
     #[must_use]
     pub fn render_diagnostic(&self, message: &str, primary: Option<OriginId>) -> String {
-        let site = DiagnosticSite::new(primary, [], self.live_macro_invocations());
+        let site = DiagnosticSite::new(primary, [], self.live_macro_invocation_head());
         self.render_diagnostic_site(message, &site)
     }
 
@@ -101,8 +101,16 @@ impl<'a> ProvenanceResolver<'a> {
 
     fn render_captured_macro_trace(&self, out: &mut String, site: &DiagnosticSite) {
         let mut rendered = 0;
-        for &origin in site.expansion_trace() {
+        let mut current = site.expansion_head();
+        while let Some(origin) = current {
+            let parent = match self.record(origin) {
+                Some(OriginRecord::MacroInvocation(invocation)) => (invocation.parent_invocation()
+                    != OriginId::UNKNOWN)
+                    .then_some(invocation.parent_invocation()),
+                _ => None,
+            };
             if site.primary_origin() == Some(origin) {
+                current = parent;
                 continue;
             }
             if rendered == 0 {
@@ -126,16 +134,17 @@ impl<'a> ProvenanceResolver<'a> {
                 let _ = writeln!(out, "      {}", self.origin_summary(origin));
             }
             rendered += 1;
+            current = parent;
         }
     }
 
-    fn live_macro_invocations(&self) -> impl Iterator<Item = OriginId> + '_ {
+    fn live_macro_invocation_head(&self) -> Option<OriginId> {
         self.universe
             .input_summary()
             .frames()
             .iter()
             .rev()
-            .filter_map(|frame| match frame {
+            .find_map(|frame| match frame {
                 InputFrameSummary::TokenList {
                     macro_invocation, ..
                 } if *macro_invocation != OriginId::UNKNOWN => Some(*macro_invocation),

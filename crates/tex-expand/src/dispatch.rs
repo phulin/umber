@@ -76,6 +76,7 @@ macro_rules! dispatch_match {
                         definition,
                         call_origin,
                         provenance.definition_origin(),
+                        input.active_macro_invocation(),
                     ),
                 })
             }

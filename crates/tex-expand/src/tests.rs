@@ -327,7 +327,8 @@ fn get_x_token_pushes_macro_body_frame_and_continues() {
                     if origin == MacroInvocationOrigin::new(
                         definition,
                         call_origin,
-                        definition_origin
+                        definition_origin,
+                        OriginId::UNKNOWN,
                     )
             )
     ));
@@ -369,7 +370,7 @@ fn expansion_error_captures_invocation_chain_before_macro_frame_pops() {
         .expect_err("undefined body token must diagnose");
     let site = error.diagnostic_site();
     assert_eq!(site.primary_origin(), Some(body_origin));
-    assert_eq!(site.expansion_trace().len(), 1);
+    let expansion_head = site.expansion_head().expect("macro expansion head");
 
     assert!(
         input
@@ -378,8 +379,8 @@ fn expansion_error_captures_invocation_chain_before_macro_frame_pops() {
             .is_none()
     );
     assert_eq!(
-        error.diagnostic_site().expansion_trace(),
-        site.expansion_trace()
+        error.diagnostic_site().expansion_head(),
+        Some(expansion_head)
     );
 }
 

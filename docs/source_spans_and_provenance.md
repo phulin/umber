@@ -69,9 +69,9 @@ The design has four goals:
 - `SourcePos` is a logical `u64` coordinate. The smaller direct payload in
   `OriginId` is an encoding optimization, not the definition of the source
   coordinate domain.
-- A diagnostic captures its primary origin, labeled related origins, and a
-  bounded list of macro-invocation origin ids while the relevant replay frames
-  are live. Paths, lines, excerpts, display widths, and strings remain lazy.
+- A diagnostic captures its primary origin, labeled related origins, and the
+  head of a persistent parent-linked macro-invocation chain. Paths, lines,
+  excerpts, display widths, trace depth, and strings remain lazy.
 - All mutation and liveness validation remain behind `Universe`, `Stores`, or
   capability-appropriate aggregate facades. Downstream crates do not receive
   raw source-map or provenance-store mutation access.
@@ -299,16 +299,15 @@ without a format change.
 
 Macro replacement tokens reuse their definition-time origin list. Macro
 arguments reuse their call-site origin lists. A replay frame carries one shared
-`MacroInvocation` origin linking the invocation location and definition
-location. Delivering body or argument tokens never allocates per-token wrapper
-records.
+`MacroInvocation` origin linking the invocation location, definition location,
+and parent invocation. Delivering body or argument tokens never allocates
+per-token wrapper records.
 
-Live replay frames are authoritative while expansion is running, but a
-diagnostic may be rendered after a scanner has consumed and popped one of
-those frames. When an error or recoverable diagnostic is created, the input
-layer therefore copies the bounded list of live `MacroInvocation` origin ids
-into the diagnostic site. Only ids are copied; resolving them to source text
-and formatting the trace remain lazy.
+The input stack maintains the active invocation head in O(1). When nested
+frames retire before one delivery attempt completes, it retains only the
+innermost retired head; its parent links preserve the complete outer chain.
+An error captures that head in its diagnostic site. Resolving invocation and
+definition locations, choosing trace depth, and formatting remain lazy.
 
 ### 6.3 Scanners and execution
 
@@ -340,7 +339,7 @@ Errors use a structured payload conceptually equivalent to:
 struct DiagnosticSite {
     primary: Option<OriginId>,
     related: InlineRelatedLocations,
-    expansion_trace: InlineInvocationOrigins,
+    expansion_head: Option<OriginId>,
 }
 
 struct RelatedLocation {
@@ -349,8 +348,8 @@ struct RelatedLocation {
 }
 ```
 
-The bounded collections may be fixed inline arrays or allocate only on the
-error path; they are not stored beside ordinary tokens. Roles distinguish at
+The bounded related-location collection may be fixed inline or allocate only
+on the error path; it is not stored beside ordinary tokens. Roles distinguish at
 least invocation, definition, recovery frontier, and secondary consumed
 spelling. Errors must not depend on a mutable global "current location" or on
 replay frames remaining live. Diagnostic rendering converts the captured ids
@@ -366,12 +365,12 @@ The resolver handles all logical forms of `OriginId`:
 2. An arena value is checked against the live provenance watermark and its
    record is read.
 3. Inserted and synthesized records follow their parent.
-4. Macro invocation records expose invocation and definition locations, and
-   the diagnostic site's captured invocation list supplies the bounded trace.
+4. Macro invocation records expose invocation and definition locations plus a
+   parent invocation; the diagnostic site's captured head supplies the trace.
 5. Missing, rolled-back, or exhausted data resolves to unknown.
 
-Line text, line number, display column, caret width, source label, and bounded
-macro traces are produced only at this boundary.
+Line text, line number, display column, caret width, source label, and
+presentation-bounded macro traces are produced only at this boundary.
 
 Internal byte offsets and spans are zero-based. User-facing line and column
 numbers are one-based. Display columns use Unicode display-cell width; tabs
@@ -571,7 +570,8 @@ artifacts are unchanged.
 initial scanner join to ordered endpoints from one still-live physical frame;
 integer-overflow diagnostics are the first consumer. Lexer, expansion, and
 execution errors cross their public boundaries with owned bounded
-`DiagnosticSite` values, including invocation ids retained across frame pop.
+`DiagnosticSite` values, including an invocation-chain head retained across
+frame pop.
 
 - Use validated half-open `SourceSpan` origin records for exact, zero-width,
   and multi-line locations.
@@ -580,8 +580,7 @@ execution errors cross their public boundaries with owned bounded
 - Add physical-source-frame range joining for a demonstrated scanner
   diagnostic. Do not infer compatible expansion context from two origins.
 - Add structured `DiagnosticSite` values with a primary origin, labeled
-  related locations, and bounded invocation-origin ids captured at error
-  creation.
+  related locations, and an invocation-chain head captured at error creation.
 - Upgrade lexer, expansion, execution, and rendering errors to use those sites
   and the defined Unicode/tab/multi-line display policy.
 
@@ -618,7 +617,7 @@ the adoption guardrails.
 Exit gate: every token-delivery path carries valid best-effort provenance,
 discarded timelines retain no live arena/source-map growth, retained capacity
 is reported separately, source/input id reuse cannot alias stale data, and
-expansion traces remain bounded and presentation-lazy after frame pop.
+expansion traces remain presentation-bounded and lazy after frame pop.
 
 ### Phase 6: Measurement, cleanup, and adoption decision
 

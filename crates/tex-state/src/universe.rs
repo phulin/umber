@@ -169,6 +169,7 @@ pub trait ExpansionState {
         definition: MacroDefinitionId,
         invocation: OriginId,
         definition_origin: OriginId,
+        parent_invocation: OriginId,
     ) -> OriginId;
     fn inserted_origin(
         &mut self,
@@ -1344,9 +1345,14 @@ impl Universe {
         definition: MacroDefinitionId,
         invocation: OriginId,
         definition_origin: OriginId,
+        parent_invocation: OriginId,
     ) -> OriginId {
-        self.stores
-            .macro_invocation_origin(definition, invocation, definition_origin)
+        self.stores.macro_invocation_origin(
+            definition,
+            invocation,
+            definition_origin,
+            parent_invocation,
+        )
     }
 
     /// Allocates an inserted-token origin.
@@ -2742,8 +2748,15 @@ impl ExpansionState for Universe {
         definition: MacroDefinitionId,
         invocation: OriginId,
         definition_origin: OriginId,
+        parent_invocation: OriginId,
     ) -> OriginId {
-        Self::macro_invocation_origin(self, definition, invocation, definition_origin)
+        Self::macro_invocation_origin(
+            self,
+            definition,
+            invocation,
+            definition_origin,
+            parent_invocation,
+        )
     }
 
     fn inserted_origin(
@@ -3077,9 +3090,14 @@ impl ExpansionState for ExpansionContext<'_> {
         definition: MacroDefinitionId,
         invocation: OriginId,
         definition_origin: OriginId,
+        parent_invocation: OriginId,
     ) -> OriginId {
-        self.universe
-            .macro_invocation_origin(definition, invocation, definition_origin)
+        self.universe.macro_invocation_origin(
+            definition,
+            invocation,
+            definition_origin,
+            parent_invocation,
+        )
     }
 
     fn inserted_origin(
@@ -3276,6 +3294,7 @@ fn hash_input_summary_fields(stores: &Stores, summary: &InputSummary, hasher: &m
                 index,
                 macro_arguments,
                 macro_invocation: _,
+                parent_macro_invocation: _,
             } => {
                 hasher.tag(1);
                 stores.hash_token_list_semantic(*token_list, hasher);

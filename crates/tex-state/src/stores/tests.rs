@@ -253,7 +253,8 @@ fn provenance_records_and_lists_round_trip_through_stores_boundary() {
     let body = stores.intern_token_list(&[Token::Cs(symbol)]);
     let definition = stores.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, params, body));
     let source = stores.source_origin(SourceId::new(3), 40, 5, 2);
-    let macro_origin = stores.macro_invocation_origin(definition, source, OriginId::UNKNOWN);
+    let macro_origin =
+        stores.macro_invocation_origin(definition, source, OriginId::UNKNOWN, OriginId::UNKNOWN);
     let inserted = stores.inserted_origin(
         InsertedOriginKind::Paragraph,
         Token::Char {
@@ -276,7 +277,8 @@ fn provenance_records_and_lists_round_trip_through_stores_boundary() {
         OriginRecord::MacroInvocation(MacroInvocationOrigin::new(
             definition,
             source,
-            OriginId::UNKNOWN
+            OriginId::UNKNOWN,
+            OriginId::UNKNOWN,
         ))
     );
     assert_eq!(

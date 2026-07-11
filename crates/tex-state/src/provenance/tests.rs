@@ -83,7 +83,8 @@ fn all_mandatory_origin_record_kinds_round_trip() {
     let definition = stores.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, params, body));
     let source = stores.source_origin(SourceId::new(9), 88, 6, 4);
     let invocation = stores.source_origin(SourceId::new(10), 144, 8, 12);
-    let macro_origin = stores.macro_invocation_origin(definition, invocation, source);
+    let macro_origin =
+        stores.macro_invocation_origin(definition, invocation, source, OriginId::UNKNOWN);
     let inserted = stores.inserted_origin(
         InsertedOriginKind::TokenListReplay(TokenListReplayKind::MacroBody),
         Token::param(1),
@@ -98,7 +99,12 @@ fn all_mandatory_origin_record_kinds_round_trip() {
     );
     assert_eq!(
         stores.origin(macro_origin),
-        OriginRecord::MacroInvocation(MacroInvocationOrigin::new(definition, invocation, source))
+        OriginRecord::MacroInvocation(MacroInvocationOrigin::new(
+            definition,
+            invocation,
+            source,
+            OriginId::UNKNOWN,
+        ))
     );
     assert_eq!(
         stores.origin(inserted),

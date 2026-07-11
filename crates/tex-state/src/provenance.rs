@@ -308,6 +308,7 @@ pub struct MacroInvocationOrigin {
     definition: MacroDefinitionId,
     invocation: OriginId,
     definition_origin: OriginId,
+    parent_invocation: OriginId,
 }
 
 impl MacroInvocationOrigin {
@@ -317,11 +318,13 @@ impl MacroInvocationOrigin {
         definition: MacroDefinitionId,
         invocation: OriginId,
         definition_origin: OriginId,
+        parent_invocation: OriginId,
     ) -> Self {
         Self {
             definition,
             invocation,
             definition_origin,
+            parent_invocation,
         }
     }
 
@@ -338,6 +341,11 @@ impl MacroInvocationOrigin {
     #[must_use]
     pub const fn definition_origin(self) -> OriginId {
         self.definition_origin
+    }
+
+    #[must_use]
+    pub const fn parent_invocation(self) -> OriginId {
+        self.parent_invocation
     }
 }
 
@@ -502,49 +510,39 @@ impl RelatedLocation {
 
 /// Origins retained by an error independently of mutable input-stack state.
 ///
-/// These error-path collections are deliberately bounded. They contain no
-/// rendered strings, source bytes, line indexes, or display coordinates.
+/// The expansion head names a persistent parent-linked macro invocation
+/// chain. Presentation decides how much of that chain to render.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DiagnosticSite {
     primary: Option<OriginId>,
     related: Box<[RelatedLocation]>,
-    expansion_trace: Box<[OriginId]>,
+    expansion_head: Option<OriginId>,
 }
 
 impl DiagnosticSite {
     pub const MAX_RELATED: usize = 8;
-    pub const MAX_EXPANSION_TRACE: usize = 8;
 
     #[must_use]
     pub fn new(
         primary: Option<OriginId>,
         related: impl IntoIterator<Item = RelatedLocation>,
-        expansion_trace: impl IntoIterator<Item = OriginId>,
+        expansion_head: Option<OriginId>,
     ) -> Self {
-        let mut trace = Vec::with_capacity(Self::MAX_EXPANSION_TRACE);
-        for origin in expansion_trace {
-            if origin != OriginId::UNKNOWN && !trace.contains(&origin) {
-                trace.push(origin);
-                if trace.len() == Self::MAX_EXPANSION_TRACE {
-                    break;
-                }
-            }
-        }
         Self {
             primary,
             related: related.into_iter().take(Self::MAX_RELATED).collect(),
-            expansion_trace: trace.into_boxed_slice(),
+            expansion_head: expansion_head.filter(|origin| *origin != OriginId::UNKNOWN),
         }
     }
 
     #[must_use]
     pub fn primary(primary: OriginId) -> Self {
-        Self::new(Some(primary), [], [])
+        Self::new(Some(primary), [], None)
     }
 
     #[must_use]
     pub fn unknown() -> Self {
-        Self::new(None, [], [])
+        Self::new(None, [], None)
     }
 
     #[must_use]
@@ -558,8 +556,8 @@ impl DiagnosticSite {
     }
 
     #[must_use]
-    pub fn expansion_trace(&self) -> &[OriginId] {
-        &self.expansion_trace
+    pub const fn expansion_head(&self) -> Option<OriginId> {
+        self.expansion_head
     }
 }
 

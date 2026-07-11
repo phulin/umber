@@ -285,8 +285,12 @@ fn execution_error_capture_retains_macro_trace_after_frame_pop() {
     };
     let invocation_origin = stores.source_origin(tex_state::SourceId::new(1), 1, 1, 1);
     let definition_origin = stores.source_origin(tex_state::SourceId::new(1), 2, 1, 2);
-    let invocation =
-        stores.macro_invocation_origin(definition, invocation_origin, definition_origin);
+    let invocation = stores.macro_invocation_origin(
+        definition,
+        invocation_origin,
+        definition_origin,
+        OriginId::UNKNOWN,
+    );
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_macro_body_with_origins_and_invocation(
         body,
@@ -300,7 +304,7 @@ fn execution_error_capture_retains_macro_trace_after_frame_pop() {
         origin,
     }
     .capture(&input);
-    assert_eq!(error.diagnostic_site().expansion_trace(), &[invocation]);
+    assert_eq!(error.diagnostic_site().expansion_head(), Some(invocation));
 
     assert!(
         input
@@ -308,7 +312,7 @@ fn execution_error_capture_retains_macro_trace_after_frame_pop() {
             .expect("pop frame")
             .is_none()
     );
-    assert_eq!(error.diagnostic_site().expansion_trace(), &[invocation]);
+    assert_eq!(error.diagnostic_site().expansion_head(), Some(invocation));
 }
 
 #[test]

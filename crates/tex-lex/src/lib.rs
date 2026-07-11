@@ -370,6 +370,7 @@ struct TokenListInputFrame {
     index: usize,
     macro_arguments: MacroArguments,
     macro_invocation: OriginId,
+    parent_macro_invocation: OriginId,
     replay_marker: Option<TokenListReplayMarker>,
 }
 
@@ -484,8 +485,8 @@ pub struct InputStack<S> {
     next_replay_marker: u64,
     next_condition_token: u64,
     alignment_cells: Vec<AlignmentCellInput>,
-    recently_popped_trace: [OriginId; DiagnosticSite::MAX_EXPANSION_TRACE],
-    recently_popped_trace_len: usize,
+    active_macro_invocation: OriginId,
+    recently_popped_invocation: Option<OriginId>,
 }
 
 /// Proof that one token was delivered directly from a physical source frame.
@@ -541,8 +542,8 @@ impl<S> InputStack<S> {
             next_replay_marker: 0,
             next_condition_token: 0,
             alignment_cells: Vec::new(),
-            recently_popped_trace: [OriginId::UNKNOWN; DiagnosticSite::MAX_EXPANSION_TRACE],
-            recently_popped_trace_len: 0,
+            active_macro_invocation: OriginId::UNKNOWN,
+            recently_popped_invocation: None,
         };
         stack.push_source(source);
         stack
@@ -595,6 +596,7 @@ impl<S> InputStack<S> {
                     index,
                     macro_arguments,
                     macro_invocation,
+                    parent_macro_invocation,
                 } => frames.push(InputFrame::TokenList(TokenListInputFrame {
                     token_list: *token_list,
                     origin_list: *origin_list,
@@ -602,6 +604,7 @@ impl<S> InputStack<S> {
                     index: *index,
                     macro_arguments: *macro_arguments,
                     macro_invocation: *macro_invocation,
+                    parent_macro_invocation: *parent_macro_invocation,
                     replay_marker: None,
                 })),
                 InputFrameSummary::Condition { token, condition } => {
@@ -612,6 +615,19 @@ impl<S> InputStack<S> {
                 }
             }
         }
+
+        let active_macro_invocation = frames
+            .iter()
+            .rev()
+            .find_map(|frame| match frame {
+                InputFrame::TokenList(frame) if frame.macro_invocation != OriginId::UNKNOWN => {
+                    Some(frame.macro_invocation)
+                }
+                InputFrame::Source(_) | InputFrame::TokenList(_) | InputFrame::Condition { .. } => {
+                    None
+                }
+            })
+            .unwrap_or(OriginId::UNKNOWN);
 
         Ok(Self {
             frames,
@@ -640,8 +656,8 @@ impl<S> InputStack<S> {
                         .expect("condition frame token overflowed")
                 }),
             alignment_cells: Vec::new(),
-            recently_popped_trace: [OriginId::UNKNOWN; DiagnosticSite::MAX_EXPANSION_TRACE],
-            recently_popped_trace_len: 0,
+            active_macro_invocation,
+            recently_popped_invocation: None,
         })
     }
 
@@ -759,6 +775,7 @@ impl<S> InputStack<S> {
             index: 0,
             macro_arguments: MacroArguments::new(),
             macro_invocation: OriginId::UNKNOWN,
+            parent_macro_invocation: OriginId::UNKNOWN,
             replay_marker: Some(replay_marker),
         }));
         replay_marker
@@ -789,6 +806,7 @@ impl<S> InputStack<S> {
         macro_arguments: MacroArguments,
         macro_invocation: OriginId,
     ) {
+        let parent_macro_invocation = self.active_macro_invocation;
         self.frames.push(InputFrame::TokenList(TokenListInputFrame {
             token_list,
             origin_list,
@@ -796,8 +814,17 @@ impl<S> InputStack<S> {
             index: 0,
             macro_arguments,
             macro_invocation,
+            parent_macro_invocation,
             replay_marker: None,
         }));
+        if macro_invocation != OriginId::UNKNOWN {
+            self.active_macro_invocation = macro_invocation;
+        }
+    }
+
+    #[must_use]
+    pub const fn active_macro_invocation(&self) -> OriginId {
+        self.active_macro_invocation
     }
 
     pub fn push_condition(&mut self, condition: ConditionFrameSummary) -> ConditionFrameToken {
@@ -880,6 +907,7 @@ impl<S> InputStack<S> {
                         index: token_list.index,
                         macro_arguments: token_list.macro_arguments,
                         macro_invocation: token_list.macro_invocation,
+                        parent_macro_invocation: token_list.parent_macro_invocation,
                     },
                     InputFrame::Condition { token, condition } => InputFrameSummary::Condition {
                         token: *token,
@@ -925,23 +953,14 @@ impl<S> InputStack<S> {
         stores.synthetic_origin(SyntheticOriginKind::Engine)
     }
 
-    /// Captures the bounded expansion context while its replay frames are live.
+    /// Captures the persistent expansion-chain head at an error boundary.
     #[must_use]
     pub fn diagnostic_site(
         &self,
         primary: Option<OriginId>,
         related: impl IntoIterator<Item = RelatedLocation>,
     ) -> DiagnosticSite {
-        let live_trace = self.frames.iter().rev().filter_map(|frame| match frame {
-            InputFrame::TokenList(frame) if frame.macro_invocation != OriginId::UNKNOWN => {
-                Some(frame.macro_invocation)
-            }
-            InputFrame::Source(_) | InputFrame::TokenList(_) | InputFrame::Condition { .. } => None,
-        });
-        let retained_trace = self.recently_popped_trace[..self.recently_popped_trace_len]
-            .iter()
-            .copied();
-        DiagnosticSite::new(primary, related, live_trace.chain(retained_trace))
+        DiagnosticSite::new(primary, related, self.diagnostic_expansion_head())
     }
 
     /// Takes proof for the immediately preceding delivery when it was the
@@ -987,32 +1006,20 @@ impl<S> InputStack<S> {
         frame_is_live.then(|| stores.source_range_origin(first.source, first.start, last.end))
     }
 
-    fn record_popped_invocation(&mut self, popped: OriginId) {
-        if popped == OriginId::UNKNOWN {
-            return;
-        }
-        self.retain_invocation(popped);
-        for index in (0..self.frames.len()).rev() {
-            let origin = match &self.frames[index] {
-                InputFrame::TokenList(frame) if frame.macro_invocation != OriginId::UNKNOWN => {
-                    frame.macro_invocation
-                }
-                InputFrame::Source(_) | InputFrame::TokenList(_) | InputFrame::Condition { .. } => {
-                    continue;
-                }
-            };
-            self.retain_invocation(origin);
-        }
+    fn diagnostic_expansion_head(&self) -> Option<OriginId> {
+        self.recently_popped_invocation
+            .or((self.active_macro_invocation != OriginId::UNKNOWN)
+                .then_some(self.active_macro_invocation))
     }
 
-    fn retain_invocation(&mut self, origin: OriginId) {
-        if self.recently_popped_trace[..self.recently_popped_trace_len].contains(&origin)
-            || self.recently_popped_trace_len == self.recently_popped_trace.len()
-        {
+    fn retire_token_list_frame(&mut self, frame: TokenListInputFrame) {
+        if frame.macro_invocation == OriginId::UNKNOWN {
             return;
         }
-        self.recently_popped_trace[self.recently_popped_trace_len] = origin;
-        self.recently_popped_trace_len += 1;
+        debug_assert_eq!(self.active_macro_invocation, frame.macro_invocation);
+        self.active_macro_invocation = frame.parent_macro_invocation;
+        self.recently_popped_invocation
+            .get_or_insert(frame.macro_invocation);
     }
 
     #[must_use]
@@ -1182,11 +1189,11 @@ impl LexError {
         self
     }
 
-    fn with_expansion_trace(mut self, trace: impl IntoIterator<Item = OriginId>) -> Self {
+    fn with_expansion_head(mut self, expansion_head: Option<OriginId>) -> Self {
         let captured = DiagnosticSite::new(
             self.diagnostic_site().primary_origin(),
             self.diagnostic_site().related().iter().copied(),
-            trace,
+            expansion_head,
         );
         match &mut self {
             Self::Input { site, .. }
@@ -1297,9 +1304,7 @@ where
         &mut self,
         stores: &mut impl ExpansionState,
     ) -> Result<Option<TracedTokenWord>, LexError> {
-        if self.recently_popped_trace_len != 0 {
-            self.recently_popped_trace_len = 0;
-        }
+        self.recently_popped_invocation = None;
         loop {
             let Some(frame_index) = self.current_token_frame_index() else {
                 return Ok(None);
@@ -1315,6 +1320,7 @@ where
                                 index: 0,
                                 macro_arguments: MacroArguments::new(),
                                 macro_invocation: OriginId::UNKNOWN,
+                                parent_macro_invocation: OriginId::UNKNOWN,
                                 replay_marker: None,
                             }));
                             continue;
@@ -1326,9 +1332,10 @@ where
                             return Ok(Some(token));
                         }
                         None => {
-                            let invocation = token_list.macro_invocation;
-                            self.frames.remove(frame_index);
-                            self.record_popped_invocation(invocation);
+                            let removed = self.frames.remove(frame_index);
+                            if let InputFrame::TokenList(frame) = removed {
+                                self.retire_token_list_frame(frame);
+                            }
                         }
                     };
                 }
@@ -1413,9 +1420,7 @@ where
         &mut self,
         stores: &mut impl ExpansionState,
     ) -> Result<Option<TracedExpansionToken>, LexError> {
-        if self.recently_popped_trace_len != 0 {
-            self.recently_popped_trace_len = 0;
-        }
+        self.recently_popped_invocation = None;
         loop {
             let Some(frame_index) = self.current_token_frame_index() else {
                 return Ok(None);
@@ -1431,6 +1436,7 @@ where
                                 index: 0,
                                 macro_arguments: MacroArguments::new(),
                                 macro_invocation: OriginId::UNKNOWN,
+                                parent_macro_invocation: OriginId::UNKNOWN,
                                 replay_marker: None,
                             }));
                             continue;
@@ -1442,9 +1448,10 @@ where
                             return Ok(Some(TracedExpansionToken::new(token, true)));
                         }
                         None => {
-                            let invocation = token_list.macro_invocation;
-                            self.frames.remove(frame_index);
-                            self.record_popped_invocation(invocation);
+                            let removed = self.frames.remove(frame_index);
+                            if let InputFrame::TokenList(frame) = removed {
+                                self.retire_token_list_frame(frame);
+                            }
                         }
                     };
                 }
@@ -1514,6 +1521,7 @@ where
                                 index: 0,
                                 macro_arguments: MacroArguments::new(),
                                 macro_invocation: OriginId::UNKNOWN,
+                                parent_macro_invocation: OriginId::UNKNOWN,
                                 replay_marker: None,
                             }));
                             continue;
@@ -1581,16 +1589,7 @@ where
     #[cold]
     #[inline(never)]
     fn capture_lex_error(&self, error: LexError) -> LexError {
-        let live_trace = self.frames.iter().rev().filter_map(|frame| match frame {
-            InputFrame::TokenList(frame) if frame.macro_invocation != OriginId::UNKNOWN => {
-                Some(frame.macro_invocation)
-            }
-            InputFrame::Source(_) | InputFrame::TokenList(_) | InputFrame::Condition { .. } => None,
-        });
-        let retained_trace = self.recently_popped_trace[..self.recently_popped_trace_len]
-            .iter()
-            .copied();
-        error.with_expansion_trace(retained_trace.chain(live_trace))
+        error.with_expansion_head(self.diagnostic_expansion_head())
     }
 }
 
@@ -1624,7 +1623,7 @@ impl<S> InputStack<S> {
         if matches {
             let removed = self.frames.remove(frame_index);
             if let InputFrame::TokenList(frame) = removed {
-                self.record_popped_invocation(frame.macro_invocation);
+                self.retire_token_list_frame(frame);
             }
         }
         matches
@@ -1691,7 +1690,7 @@ impl<S> InputStack<S> {
             if matches!(self.frames[index], InputFrame::TokenList(_)) {
                 let removed = self.frames.remove(index);
                 if let InputFrame::TokenList(frame) = removed {
-                    self.record_popped_invocation(frame.macro_invocation);
+                    self.retire_token_list_frame(frame);
                 }
             }
         }

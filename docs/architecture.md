@@ -269,12 +269,14 @@ Responsibility: characters → tokens, under mutable catcode law.
   diagnostic side-channel arenas. User-facing source labels, line/caret
   snippets, and expansion traces are rendered lazily by the provenance
   resolver at diagnostic formatting boundaries. Errors capture a bounded
-  primary/related/invocation-id `DiagnosticSite` before replay frames pop;
+  primary/related `DiagnosticSite` plus one macro-invocation chain head before
+  replay frames pop;
   paths, excerpts, line indexes, and Unicode/tab display widths remain lazy.
-  One invocation origin is shared by each macro replay frame. Nested popped
-  frames retain their inner-to-outer ids in a fixed bounded buffer for the
-  current delivery attempt only, so EOF and pre-token errors keep their trace
-  without leaking it to a later unrelated token. Macro-body delivery reuses
+  One parent-linked invocation origin is shared by each macro replay frame.
+  The input stack maintains its active head in O(1); one innermost retired head
+  is retained for the current delivery attempt so EOF and pre-token errors keep
+  the complete chain without leaking it to a later unrelated token. The
+  resolver applies the requested presentation depth. Macro-body delivery reuses
   frozen origin lists and performs no provenance write per delivered token.
   Scanner range composition requires lexer-issued proof of two ordered direct
   deliveries from the same still-live physical frame, so replayed or expanded

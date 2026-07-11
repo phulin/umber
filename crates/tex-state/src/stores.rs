@@ -644,15 +644,18 @@ impl Stores {
         definition: MacroDefinitionId,
         invocation: OriginId,
         definition_origin: OriginId,
+        parent_invocation: OriginId,
     ) -> OriginId {
         self.assert_live_macro_definition(definition);
         self.assert_live_origin(invocation);
         self.assert_live_origin(definition_origin);
+        self.assert_live_origin(parent_invocation);
         self.provenance
             .allocate(OriginRecord::MacroInvocation(MacroInvocationOrigin::new(
                 definition,
                 invocation,
                 definition_origin,
+                parent_invocation,
             )))
     }
 

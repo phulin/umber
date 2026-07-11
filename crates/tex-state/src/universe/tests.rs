@@ -397,8 +397,10 @@ fn snapshot_reuses_hash_base_for_origin_only_input_summary_changes() {
     let right_origin = universe.source_origin(crate::input::SourceId::new(2), 20, 4, 5);
     let left_origins = universe.allocate_origin_list(&[left_origin]);
     let right_origins = universe.allocate_origin_list(&[right_origin]);
-    let left_invocation = universe.macro_invocation_origin(definition, left_origin, left_origin);
-    let right_invocation = universe.macro_invocation_origin(definition, right_origin, right_origin);
+    let left_invocation =
+        universe.macro_invocation_origin(definition, left_origin, left_origin, OriginId::UNKNOWN);
+    let right_invocation =
+        universe.macro_invocation_origin(definition, right_origin, right_origin, OriginId::UNKNOWN);
     let left_summary = macro_replay_summary(body, argument, left_origins, left_invocation);
     let right_summary = macro_replay_summary(body, argument, right_origins, right_invocation);
     assert_eq!(left_summary, right_summary);
@@ -1322,6 +1324,7 @@ fn macro_replay_summary(
             index: 0,
             macro_arguments: arguments,
             macro_invocation: invocation,
+            parent_macro_invocation: OriginId::UNKNOWN,
         }],
         None,
         None,

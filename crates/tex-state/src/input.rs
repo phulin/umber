@@ -451,6 +451,7 @@ pub enum InputFrameSummary {
         index: usize,
         macro_arguments: MacroArguments,
         macro_invocation: crate::token::OriginId,
+        parent_macro_invocation: crate::token::OriginId,
     },
     Condition {
         token: ConditionFrameToken,
