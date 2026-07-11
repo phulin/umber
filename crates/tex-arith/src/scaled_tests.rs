@@ -1,8 +1,8 @@
 use crate::{
     ArithmeticError, DimensionError, FontSizeSpec, GLUE_SET_RATIO_SCALE, GlueSetRatio,
-    PhysicalUnit, Scaled, TfmConversionError, XOverN, XnOverD, half, mult_and_add, nx_plus_y,
-    round_decimal_fraction, saturating_add, saturating_mul, saturating_sub,
-    scale_true_dimension_parts, scaled_from_decimal_parts, text_accent_delta,
+    GlueSetRatioError, PhysicalUnit, Scaled, TfmConversionError, XOverN, XnOverD, half,
+    mult_and_add, nx_plus_y, round_decimal_fraction, saturating_add, saturating_mul,
+    saturating_sub, scale_true_dimension_parts, scaled_from_decimal_parts, text_accent_delta,
     tfm_design_size_from_fix_word, tfm_fix_word_to_scaled, tfm_font_size,
     tfm_slant_fix_word_to_scaled_ratio, x_over_n, xn_over_d,
 };
@@ -122,6 +122,58 @@ fn glue_set_ratio_preserves_exact_reduced_fraction() {
         GlueSetRatio::from_scaled_ratio(Scaled::from_raw(i32::MAX), Scaled::from_raw(1)),
         GlueSetRatio::from_ratio_parts(i32::MAX, 1)
     );
+}
+
+#[test]
+fn glue_set_ratio_deserialization_reconstructs_only_canonical_values() {
+    fn wire(numerator: i32, denominator: i32) -> Vec<u8> {
+        bincode::serialize(&(numerator, denominator)).expect("ratio wire serializes")
+    }
+
+    assert_eq!(
+        bincode::deserialize::<GlueSetRatio>(&wire(6, 8)).expect("reducible ratio decodes"),
+        GlueSetRatio::from_ratio_parts(3, 4)
+    );
+    assert_eq!(
+        bincode::deserialize::<GlueSetRatio>(&wire(-6, 8)).expect("sign normalizes"),
+        GlueSetRatio::from_ratio_parts(3, 4)
+    );
+    assert_eq!(
+        bincode::deserialize::<GlueSetRatio>(&wire(0, 99)).expect("zero ratio decodes"),
+        GlueSetRatio::ZERO
+    );
+    for malformed in [wire(1, 0), wire(1, -1), wire(i32::MIN, 1)] {
+        assert!(bincode::deserialize::<GlueSetRatio>(&malformed).is_err());
+    }
+    assert_eq!(
+        GlueSetRatio::try_from_ratio_parts(1, 0),
+        Err(GlueSetRatioError::NonPositiveDenominator)
+    );
+    assert_eq!(
+        GlueSetRatio::try_from_ratio_parts(i32::MIN, 1),
+        Err(GlueSetRatioError::UnrepresentableNumerator)
+    );
+}
+
+#[test]
+fn canonical_glue_set_ratio_round_trips_with_identical_hash() {
+    use std::hash::{Hash, Hasher};
+
+    let ratio = GlueSetRatio::from_ratio_parts(37, 101);
+    let bytes = bincode::serialize(&ratio).expect("canonical ratio serializes");
+    let restored: GlueSetRatio = bincode::deserialize(&bytes).expect("canonical ratio decodes");
+    assert_eq!(restored, ratio);
+    assert_eq!(
+        bincode::serialize(&restored).expect("restored ratio serializes"),
+        bytes
+    );
+
+    let hash = |value: GlueSetRatio| {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        value.hash(&mut hasher);
+        hasher.finish()
+    };
+    assert_eq!(hash(restored), hash(ratio));
 }
 
 #[test]
