@@ -85,13 +85,16 @@ struct PeakNodeStorageRecorder {
 
 #[cfg(feature = "node-stats")]
 impl PeakNodeStorageRecorder {
-    fn observe(&self, storage: &NodeStorage) {
-        let (logical_bytes, retained_payload_bytes) = storage.payload_bytes();
+    fn observe(
+        &self,
+        (logical_bytes, retained_payload_bytes): (u64, u64),
+        columns: impl FnOnce() -> Vec<NodeMemoryColumn>,
+    ) {
         if logical_bytes < self.logical_hint.load(Ordering::Relaxed) {
             return;
         }
 
-        let observation = NodeStorageObservation::from_columns(storage.memory_columns("peak"));
+        let observation = NodeStorageObservation::from_columns(columns());
         debug_assert_eq!(
             observation.order_key(),
             (logical_bytes, retained_payload_bytes)
@@ -120,6 +123,16 @@ impl PeakNodeStorageRecorder {
 
 #[cfg(feature = "node-stats")]
 static PEAK_STORAGE: OnceLock<PeakNodeStorageRecorder> = OnceLock::new();
+
+#[cfg(feature = "node-stats")]
+pub(super) fn record_peak_observation(
+    totals: (u64, u64),
+    columns: impl FnOnce() -> Vec<NodeMemoryColumn>,
+) {
+    PEAK_STORAGE
+        .get_or_init(PeakNodeStorageRecorder::default)
+        .observe(totals, columns);
+}
 
 /// Largest individual canonical storage observed during this process.
 /// Survivor scratch is reported separately; aggregate end-state storage is
@@ -184,7 +197,7 @@ impl NodeStorage {
     }
 
     #[cfg(feature = "node-stats")]
-    fn payload_bytes(&self) -> (u64, u64) {
+    pub(super) fn payload_bytes(&self) -> (u64, u64) {
         fn bytes<T>(values: &Vec<T>) -> (u64, u64) {
             (
                 (values.len() * core::mem::size_of::<T>()) as u64,
@@ -350,9 +363,7 @@ impl NodeStorage {
 
     #[cfg(feature = "node-stats")]
     pub(super) fn record_peak(&self) {
-        PEAK_STORAGE
-            .get_or_init(PeakNodeStorageRecorder::default)
-            .observe(self);
+        record_peak_observation(self.payload_bytes(), || self.memory_columns("peak"));
     }
 }
 

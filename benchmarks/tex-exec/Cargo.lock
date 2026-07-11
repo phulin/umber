@@ -43,6 +43,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
+name = "bincode"
+version = "1.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1f45e9417d87227c7a56d22e471c6206462cba514c7590c09aff4cf6d1ddcad"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -493,6 +502,9 @@ dependencies = [
 [[package]]
 name = "tex-arith"
 version = "0.1.0"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "tex-exec"
@@ -531,6 +543,7 @@ dependencies = [
 name = "tex-fonts"
 version = "0.1.0"
 dependencies = [
+ "serde",
  "tex-arith",
 ]
 
@@ -553,6 +566,8 @@ name = "tex-state"
 version = "0.1.0"
 dependencies = [
  "ahash",
+ "bincode",
+ "serde",
  "tex-arith",
  "tex-fonts",
  "unicode-width",
