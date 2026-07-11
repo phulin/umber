@@ -39,6 +39,19 @@ and should stay under a warmed two-minute local budget. Use
 `scripts/check-and-test.sh` for the full workspace test suite followed by that
 quality gate.
 
+Snapshot scaling has a separate explicit performance tier:
+
+```bash
+cargo bench --manifest-path benchmarks/tex-state/Cargo.toml --bench snapshot_budgets
+scripts/check-snapshot-budgets.sh
+```
+
+The Criterion command records the small/large latency rows. The script enforces
+the low-noise latency ratio and requested-allocation retention budgets described
+in `snapshot_performance.md`. Neither belongs in `cargo test --tests`: workload
+construction deliberately materializes large input, page, mode, stream,
+hyphenation, provenance, and Unicode code-table state.
+
 Regenerate committed fixtures only through `scripts/regen-fixtures.sh`, which
 is the blessed live-reference rewrite path. Its `--area fonts` mode owns the
 explicit live `tftopl` cross-check and does not rewrite fixtures.

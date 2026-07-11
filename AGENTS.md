@@ -38,6 +38,7 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - `benchmarks/`: opt-in standalone benchmark crates kept outside the root workspace.
 - `benchmarks/plain-tex`: fixed end-to-end Plain TeX engine workloads and runner.
 - `benchmarks/tex-exec`: focused execution-layer Criterion benchmarks, including shipout lowering.
+- `benchmarks/tex-state`: focused state-layer latency and allocation-budget benchmarks.
 - `tests/`: committed fixtures and parity test definitions.
 - `docs/`: architecture, phase, and design documents.
 - `scripts/`: local development scripts and versioned git hook templates.
@@ -51,6 +52,8 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
   workspace test suite followed by the format and clippy gate.
 - For fixture regeneration, follow `tests/AGENTS.md` and use
   `scripts/regen-fixtures.sh`.
+- Run `scripts/check-snapshot-budgets.sh` in the explicit performance tier;
+  snapshot allocation and latency gates do not run under ordinary cargo tests.
 
 ## Beads Issue Tracker
 
