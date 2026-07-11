@@ -12,7 +12,7 @@ use std::path::Path;
 use tex_lex::{InputSource, InputStack, LexError, MacroArguments, TokenListReplayKind};
 use tex_state::glue::GlueSpec;
 use tex_state::interner::Symbol;
-use tex_state::meaning::{Meaning, UnexpandablePrimitive};
+use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::provenance::{DiagnosticSite, InsertedOriginKind, SynthesizedOriginKind};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
@@ -297,6 +297,9 @@ pub enum ExpandError {
         name: String,
         context: TracedTokenWord,
     },
+    ForbiddenOuterTokenInAlignment {
+        context: TracedTokenWord,
+    },
 }
 
 impl fmt::Display for ExpandError {
@@ -366,6 +369,9 @@ impl fmt::Display for ExpandError {
                     "Forbidden control sequence found while scanning conditional text: {name}"
                 )
             }
+            Self::ForbiddenOuterTokenInAlignment { .. } => {
+                f.write_str("Forbidden control sequence found while scanning an alignment")
+            }
         }
     }
 }
@@ -393,6 +399,7 @@ impl std::error::Error for ExpandError {
             | Self::IncompleteIf { .. }
             | Self::ExtraConditionalControl { .. }
             | Self::ForbiddenOuterTokenInSkippedConditional { .. } => None,
+            Self::ForbiddenOuterTokenInAlignment { .. } => None,
         }
     }
 }
@@ -412,6 +419,7 @@ impl ExpandError {
             | Self::ForbiddenOuterTokenInSkippedConditional { context, .. } => {
                 Some(context.origin())
             }
+            Self::ForbiddenOuterTokenInAlignment { context } => Some(context.origin()),
             Self::NonCharacterInInputName { context }
             | Self::UnsupportedTheTarget { context }
             | Self::MissingFontIdentifier { context }
@@ -780,6 +788,11 @@ where
 
         let meaning = stores.meaning(symbol);
         recorder.record_meaning(symbol, meaning);
+        if input.has_active_alignment_cell()
+            && matches!(meaning, Meaning::Macro { flags, .. } if flags.contains(MeaningFlags::OUTER))
+        {
+            return Err(ExpandError::ForbiddenOuterTokenInAlignment { context: traced });
+        }
 
         let dispatched = dispatch_with_hooks(
             token,

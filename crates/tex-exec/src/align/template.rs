@@ -35,21 +35,25 @@ where
             if template_finished(input, stores, replay_marker) {
                 return Ok(());
             }
-            if super::execution::run_one_main_control_token(
+            match super::execution::run_one_main_control_token(
                 nest, input, stores, recorder, hooks, &mut stats,
             )? {
-                // Malformed preambles can cause the cell terminator to fire
-                // while a u-template replay is still retiring. Preserve the
-                // pending alignment-cell boundary by replaying a fresh frozen
-                // end marker for the cell-body driver instead of panicking.
-                let end =
-                    stores.intern_token_list(&[tex_state::token::Token::frozen_end_template()]);
-                input.push_token_list(end, TokenListReplayKind::Inserted);
-                stores.world_mut().write_text(
-                    tex_state::PrintSink::TerminalAndLog,
-                    "\n! Missing alignment template material inserted.\n",
-                );
-                return Ok(());
+                super::execution::TemplateStep::Continue => {}
+                super::execution::TemplateStep::DeferredOuterRecovery => return Ok(()),
+                super::execution::TemplateStep::EndV => {
+                    // Malformed preambles can cause the cell terminator to fire
+                    // while a u-template replay is still retiring. Preserve the
+                    // pending alignment-cell boundary by replaying a fresh frozen
+                    // end marker for the cell-body driver instead of panicking.
+                    let end =
+                        stores.intern_token_list(&[tex_state::token::Token::frozen_end_template()]);
+                    input.push_token_list(end, TokenListReplayKind::Inserted);
+                    stores.world_mut().write_text(
+                        tex_state::PrintSink::TerminalAndLog,
+                        "\n! Missing alignment template material inserted.\n",
+                    );
+                    return Ok(());
+                }
             }
         }
     })

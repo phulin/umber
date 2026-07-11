@@ -491,6 +491,23 @@ where
                 );
                 continue;
             }
+            Err(tex_expand::ExpandError::ForbiddenOuterTokenInAlignment { context }) => {
+                recover_outer_alignment_token(context, input, stores);
+                continue;
+            }
+            Err(tex_expand::ExpandError::Captured { error, .. })
+                if matches!(
+                    error.as_ref(),
+                    tex_expand::ExpandError::ForbiddenOuterTokenInAlignment { .. }
+                ) =>
+            {
+                let tex_expand::ExpandError::ForbiddenOuterTokenInAlignment { context } = *error
+                else {
+                    unreachable!("guard restricts captured expansion error")
+                };
+                recover_outer_alignment_token(context, input, stores);
+                continue;
+            }
             Err(tex_expand::ExpandError::Captured { error, .. })
                 if matches!(
                     error.as_ref(),
@@ -523,6 +540,12 @@ where
         }
         if is_omit(stores, semantic) {
             return Err(ExecError::MisplacedOmit);
+        }
+        if is_alignment_par(stores, semantic)
+            && input.alignment_cell_at_group_depth(stores.execution_group_depth())
+        {
+            recover_outer_alignment_token(token, input, stores);
+            continue;
         }
         if is_end_group(stores, semantic)
             && input.alignment_cell_at_group_depth(stores.execution_group_depth())
@@ -563,6 +586,12 @@ fn classify_cell_terminator(
     })
 }
 
+pub(super) enum TemplateStep {
+    Continue,
+    EndV,
+    DeferredOuterRecovery,
+}
+
 pub(super) fn run_one_main_control_token<S, R, H>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
@@ -570,26 +599,44 @@ pub(super) fn run_one_main_control_token<S, R, H>(
     recorder: &mut R,
     hooks: &mut H,
     stats: &mut ExecutionStats,
-) -> Result<bool, ExecError>
+) -> Result<TemplateStep, ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
     sync_engine_state::<S, _>(hooks, nest, stores);
-    let token = {
+    let fetched = {
         let mut expansion = ExpansionContext::new(stores);
-        get_x_token_with_recorder_and_hooks(input, &mut expansion, recorder, hooks)?
-    }
-    .ok_or(ExecError::MissingToken {
-        context: "alignment template",
-    })?;
+        get_x_token_with_recorder_and_hooks(input, &mut expansion, recorder, hooks)
+    };
+    let token = match fetched {
+        Ok(Some(token)) => token,
+        Ok(None) => {
+            return Err(ExecError::MissingToken {
+                context: "alignment template",
+            });
+        }
+        Err(tex_expand::ExpandError::Captured { error, .. })
+            if matches!(
+                error.as_ref(),
+                tex_expand::ExpandError::ForbiddenOuterTokenInAlignment { .. }
+            ) =>
+        {
+            let tex_expand::ExpandError::ForbiddenOuterTokenInAlignment { context } = *error else {
+                unreachable!("guard restricts captured expansion error")
+            };
+            recover_outer_alignment_token(context, input, stores);
+            return Ok(TemplateStep::DeferredOuterRecovery);
+        }
+        Err(error) => return Err(error.into()),
+    };
     stats.delivered_tokens += 1;
     if tex_expand::semantic_token(token).is_frozen_endv() {
-        return Ok(true);
+        return Ok(TemplateStep::EndV);
     }
     dispatch_and_drain(nest, token, input, stores, recorder, hooks, stats)?;
-    Ok(false)
+    Ok(TemplateStep::Continue)
 }
 
 pub(super) fn dispatch_and_drain<S, R, H>(
@@ -660,4 +707,44 @@ fn report_missing_cr_inserted(stores: &mut Universe) {
     stores
         .world_mut()
         .write_text(PrintSink::TerminalAndLog, "\n! Missing \\cr inserted.\n");
+}
+
+fn is_alignment_par(stores: &Universe, token: Token) -> bool {
+    let Token::Cs(symbol) = token else {
+        return false;
+    };
+    matches!(
+        stores.meaning(symbol),
+        tex_state::meaning::Meaning::UnexpandablePrimitive(
+            tex_state::meaning::UnexpandablePrimitive::Par
+                | tex_state::meaning::UnexpandablePrimitive::EndGraf
+        )
+    )
+}
+
+fn recover_outer_alignment_token<S>(
+    context: TracedTokenWord,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+) where
+    S: InputSource,
+{
+    stores.world_mut().write_text(
+        PrintSink::TerminalAndLog,
+        "\n! Missing } inserted.\nI've inserted something that you may have forgotten.\n",
+    );
+    let closing = Token::Char {
+        ch: '}',
+        cat: tex_state::token::Catcode::EndGroup,
+    };
+    let origin = stores.inserted_origin(
+        tex_state::provenance::InsertedOriginKind::ErrorRecovery,
+        closing,
+        context.origin(),
+    );
+    push_traced_tokens(
+        input,
+        stores,
+        [TracedTokenWord::pack(closing, origin), context],
+    );
 }

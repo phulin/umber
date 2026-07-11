@@ -1652,6 +1652,36 @@ fn trip_show_of_aliased_tab_recovers_and_closes_alignment() {
 }
 
 #[test]
+fn malformed_template_row_closes_before_following_box() {
+    let mut stores = support::stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    let before = stores.snapshot();
+    let source = r#"
+        \font\f=cmr10 \f
+        \long\def\l#1{}
+        \let\PAR=\par \gdef\par{\relax\PAR}
+        \halign to 1pt\expandafter{\csname#\endcsname#&#&\l{#}\cr
+          \global\futurelet\endt\foo&\show\endt&$&&&.}
+        \par
+        \global\count7=\ifvmode1\else2\fi
+        \hbox{Z}
+        \cr}
+    "#;
+    let mut input = InputStack::new(MemoryInput::new(source));
+
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("malformed row recovery should finish the alignment");
+
+    assert_eq!(stores.count(7), 1, "following material is in vertical mode");
+    assert!(support::terminal_effect_text(&stores).contains("Missing } inserted"));
+    assert_eq!(stores.execution_group_depth(), 0);
+    assert!(input.summary().frames().is_empty());
+    assert!(stats.delivered_tokens < 1_000);
+    assert!(stores.env_journal_bytes_since(&before) < 100_000);
+}
+
+#[test]
 fn outer_macro_in_skipped_span_expansion_recovers_runaway_preamble() {
     let mut stores = support::stores_with_fonts();
     tex_expand::install_expandable_primitives(&mut stores);

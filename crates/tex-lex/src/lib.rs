@@ -708,6 +708,11 @@ impl<S> InputStack<S> {
         })
     }
 
+    #[must_use]
+    pub fn has_active_alignment_cell(&self) -> bool {
+        !self.alignment_cells.is_empty()
+    }
+
     /// Suspends an outer cell while a nested alignment scans and executes.
     ///
     /// TeX's `push_alignment` preserves the complete alignment scanner state;

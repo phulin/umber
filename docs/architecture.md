@@ -856,6 +856,12 @@ makes box-level memoization (M4) sound.
   `\span`, and `\cr` by meaning using an `AlignState` brace counter, buffers
   `\noalign{...}` material as ordinary internal-vertical nodes interleaved
   with the unset rows, and packages cells/rows as unset node records. An
+  alignment-cell paragraph token at the entry group depth follows TeX's
+  aligning-scanner recovery: the traced token is backed up behind an inserted
+  provenance-bearing right brace, so ordinary missing-`\cr` recovery closes
+  the cell and row before the token is replayed outside the alignment. Outer
+  macros are likewise stopped before expansion while an alignment cell is
+  active, keeping the recovery input frames and origins checkpointable. An
   ordinary vertical `\halign` inherits the enclosing list's `prev_depth`,
   just as TeX.web's `push_nest` preserves `aux`, so the first row receives
   the same baseline glue as any other appended box. At
