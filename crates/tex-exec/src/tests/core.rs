@@ -884,6 +884,45 @@ fn box_scanner_inserts_missing_left_brace_and_replays_body_token() {
 }
 
 #[test]
+fn box_scanner_closes_by_execution_group_after_message_argument() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\setbox0=\\hbox{\\message{x}\\vbox{\\hrule height2pt}}\\hrule height3pt",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("box with a message argument executes");
+
+    let box0 = stores.box_reg(0).expect("setbox destination remains owned");
+    let [Node::HList(hbox)] = stores.nodes(box0).testing_decoded() else {
+        panic!("box0 should contain the outer hbox");
+    };
+    assert!(
+        stores
+            .nodes(hbox.children)
+            .testing_decoded()
+            .iter()
+            .any(|node| matches!(node, Node::VList(_))),
+        "box0 should own the nested vbox"
+    );
+    assert!(
+        stores
+            .current_page_nodes()
+            .iter()
+            .all(|node| !matches!(node, Node::VList(_))),
+        "the nested vbox must not escape to the outer vertical list"
+    );
+    assert!(
+        stores.page_contributions().iter().any(
+            |node| matches!(node, Node::Rule { height: Some(height), .. } if height.raw() == 3 * Scaled::UNITY)
+        ),
+        "outer material should remain outside box0"
+    );
+}
+
+#[test]
 fn last_box_assignment_replays_with_identical_state_hash() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

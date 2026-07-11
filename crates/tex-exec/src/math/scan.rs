@@ -12,7 +12,7 @@ use tex_state::node::Node;
 use tex_state::provenance::InsertedOriginKind;
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
-use tex_state::{GroupKind, Universe};
+use tex_state::{ExpansionState, GroupKind, Universe};
 
 use crate::assignments;
 use crate::executor::sync_engine_state;
@@ -540,9 +540,10 @@ where
         });
     }
     stores.enter_group_with_kind(GroupKind::Simple);
+    let box_group_depth = stores.execution_group_depth();
     let mut inner = ModeNest::new();
     inner.push(Mode::InternalVertical);
-    assignments::scan_box_group(&mut inner, input, stores, hooks)?;
+    assignments::scan_box_group(&mut inner, input, stores, hooks, box_group_depth)?;
     let level = inner.pop()?;
     let children = stores.freeze_node_list(level.list().nodes());
     let vbox = Node::VList(

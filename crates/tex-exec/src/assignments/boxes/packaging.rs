@@ -4,7 +4,7 @@ use tex_state::ids::NodeListId;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::node::Node;
 use tex_state::token::{Catcode, TracedTokenWord};
-use tex_state::{GroupKind, Universe};
+use tex_state::{ExpansionState, GroupKind, Universe};
 use tex_typeset::{PackDiagnostic, PackSpec};
 
 use crate::packing_params::{hpack, hpack_params, vpack, vpack_params, vtop};
@@ -178,6 +178,7 @@ where
         );
     }
     stores.enter_group_with_kind(GroupKind::Simple);
+    let box_group_depth = stores.execution_group_depth();
     let mode = if kind == BoxKind::HBox {
         Mode::RestrictedHorizontal
     } else {
@@ -192,7 +193,7 @@ where
         normal_paragraph(&mut inner, stores);
     }
     inner.push(mode);
-    scan_box_group(&mut inner, input, stores, hooks)?;
+    scan_box_group(&mut inner, input, stores, hooks, box_group_depth)?;
     if kind != BoxKind::HBox && inner.current_mode() == Mode::Horizontal {
         // TeX82's vbox_group/vtop_group right-brace handler runs end_graf
         // before package. This matters when display math has resumed an empty
@@ -250,13 +251,13 @@ pub(crate) fn scan_box_group<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
+    box_group_depth: u32,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
     stores.with_hash_only_checkpoints(|stores| {
-        let mut brace_depth = 1usize;
         loop {
             crate::executor::sync_engine_state::<S, _>(hooks, nest, stores);
             let token = {
@@ -268,15 +269,15 @@ where
             })?;
             let semantic = tex_expand::semantic_token(token);
             let math_mode = matches!(nest.current_mode(), Mode::Math | Mode::DisplayMath);
-            if !math_mode && has_catcode_meaning(stores, semantic, Catcode::BeginGroup) {
-                brace_depth += 1;
-            }
-            if !math_mode && has_catcode_meaning(stores, semantic, Catcode::EndGroup) {
-                brace_depth -= 1;
-                if brace_depth == 0 {
-                    flush_pending_hchars(nest, stores)?;
-                    return Ok(());
-                }
+            // TeX.web §1084 packages on the right brace for the active box
+            // save-stack group. Scanners such as \message consume their own
+            // balanced braces, so delivered-token brace counting is insufficient.
+            if !math_mode
+                && stores.execution_group_depth() == box_group_depth
+                && has_catcode_meaning(stores, semantic, Catcode::EndGroup)
+            {
+                flush_pending_hchars(nest, stores)?;
+                return Ok(());
             }
             match crate::dispatch_delivered_token(nest, token, input, stores, hooks)? {
                 crate::DispatchAction::Continue => {}

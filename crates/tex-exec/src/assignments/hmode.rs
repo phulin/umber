@@ -7,7 +7,7 @@ use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::node::{DiscKind, GlueKind, KernKind, Node};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
-use tex_state::{PrintSink, Universe};
+use tex_state::{ExpansionState, PrintSink, Universe};
 use tex_typeset::{INF_BAD, PackSpec, VpackParams};
 
 use super::paragraph::{end_paragraph, ensure_horizontal_for_character, normal_paragraph};
@@ -247,10 +247,11 @@ where
     }
 
     stores.enter_group_with_kind(tex_state::GroupKind::Simple);
+    let box_group_depth = stores.execution_group_depth();
     let mut inner = ModeNest::new();
     inner.push(Mode::InternalVertical);
     normal_paragraph(&mut inner, stores);
-    scan_box_group(&mut inner, input, stores, hooks)?;
+    scan_box_group(&mut inner, input, stores, hooks, box_group_depth)?;
     if inner.current_mode() == Mode::Horizontal {
         end_paragraph(&mut inner, stores)?;
     }
@@ -329,10 +330,11 @@ where
         });
     }
     stores.enter_group_with_kind(tex_state::GroupKind::Simple);
+    let box_group_depth = stores.execution_group_depth();
     let mut inner = ModeNest::new();
     inner.push(Mode::InternalVertical);
     normal_paragraph(&mut inner, stores);
-    scan_box_group(&mut inner, input, stores, hooks)?;
+    scan_box_group(&mut inner, input, stores, hooks, box_group_depth)?;
     if inner.current_mode() == Mode::Horizontal {
         end_paragraph(&mut inner, stores)?;
     }
@@ -895,7 +897,8 @@ where
     }
     let mut inner = ModeNest::new();
     inner.push(Mode::RestrictedHorizontal);
-    scan_box_group(&mut inner, input, stores, hooks)?;
+    let box_group_depth = stores.execution_group_depth();
+    scan_box_group(&mut inner, input, stores, hooks, box_group_depth)?;
     let level = inner.pop()?;
     Ok(stores.freeze_node_list(level.list().nodes()))
 }
