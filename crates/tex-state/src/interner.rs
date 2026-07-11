@@ -4,6 +4,7 @@
 //! a watermark, but that rollback machinery is crate-private so the live
 //! interner rolls back only as part of the aggregate `Universe` tuple.
 
+use crate::identity::{HandleIdentity, IdentityAllocator, IdentityMark};
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -25,6 +26,37 @@ pub enum ControlSequenceKind {
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Symbol(u32);
 
+/// A live generation-tagged capability for an interned control-sequence name.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct SymbolId(HandleIdentity);
+
+/// A live symbol capability or an explicitly compact token/Env symbol key.
+pub trait SymbolReference: Copy {
+    #[doc(hidden)]
+    fn live_id(self) -> Option<SymbolId>;
+    #[doc(hidden)]
+    fn stored_key(self) -> Option<Symbol>;
+}
+
+impl SymbolReference for SymbolId {
+    fn live_id(self) -> Option<SymbolId> {
+        Some(self)
+    }
+    fn stored_key(self) -> Option<Symbol> {
+        None
+    }
+}
+
+impl SymbolReference for Symbol {
+    fn live_id(self) -> Option<SymbolId> {
+        None
+    }
+    fn stored_key(self) -> Option<Symbol> {
+        Some(self)
+    }
+}
+
 /// Maximum number of symbols that can be represented in a packed token word.
 pub const SYMBOL_CAPACITY: u32 = 1 << 30;
 
@@ -45,6 +77,29 @@ impl Symbol {
     pub const fn raw(self) -> u32 {
         self.0
     }
+
+    /// Returns this compact token/Env key (parallel to `SymbolId::symbol`).
+    #[must_use]
+    pub const fn symbol(self) -> Self {
+        self
+    }
+}
+
+impl SymbolId {
+    const fn from_identity(identity: HandleIdentity) -> Self {
+        Self(identity)
+    }
+    const fn identity(self) -> HandleIdentity {
+        self.0
+    }
+    #[must_use]
+    pub const fn symbol(self) -> Symbol {
+        Symbol(self.0.slot())
+    }
+    #[must_use]
+    pub const fn raw(self) -> u32 {
+        self.0.slot()
+    }
 }
 
 /// Failure to intern a new control-sequence name.
@@ -59,33 +114,57 @@ pub enum InternerError {
 pub(crate) struct InternerMark {
     spans: u32,
     bytes: u32,
+    identities: IdentityMark,
 }
 
 /// Interned UTF-8 string arena.
-#[derive(Clone, Debug, Default)]
+#[derive(Debug)]
 pub struct Interner {
     arena: Vec<u8>,
     spans: Vec<(u32, u32)>,
     kinds: Vec<ControlSequenceKind>,
     next_symbol: u32,
-    index: HashMap<u64, Vec<Symbol>>,
+    index: HashMap<u64, Vec<SymbolId>>,
     index_dirty: bool,
+    identities: IdentityAllocator,
+}
+
+impl Clone for Interner {
+    fn clone(&self) -> Self {
+        Self {
+            arena: self.arena.clone(),
+            spans: self.spans.clone(),
+            kinds: self.kinds.clone(),
+            next_symbol: self.next_symbol,
+            index: self.index.clone(),
+            index_dirty: self.index_dirty,
+            identities: self.identities.fork(),
+        }
+    }
 }
 
 impl Interner {
     /// Creates an empty interner.
     #[must_use]
     pub(crate) fn new() -> Self {
-        Self::default()
+        Self {
+            arena: Vec::new(),
+            spans: Vec::new(),
+            kinds: Vec::new(),
+            next_symbol: 0,
+            index: HashMap::new(),
+            index_dirty: false,
+            identities: IdentityAllocator::new(0),
+        }
     }
 
     /// Interns `name`, returning its stable dense symbol while it remains live.
-    pub(crate) fn intern(&mut self, name: &str) -> Result<Symbol, InternerError> {
+    pub(crate) fn intern(&mut self, name: &str) -> Result<SymbolId, InternerError> {
         self.intern_key(ControlSequenceKind::Named, name)
     }
 
     /// Interns an active-character control sequence.
-    pub(crate) fn intern_active(&mut self, ch: char) -> Result<Symbol, InternerError> {
+    pub(crate) fn intern_active(&mut self, ch: char) -> Result<SymbolId, InternerError> {
         let mut encoded = [0; 4];
         self.intern_key(
             ControlSequenceKind::ActiveCharacter,
@@ -97,7 +176,7 @@ impl Interner {
         &mut self,
         kind: ControlSequenceKind,
         name: &str,
-    ) -> Result<Symbol, InternerError> {
+    ) -> Result<SymbolId, InternerError> {
         if self.index_dirty {
             self.rebuild_index();
         }
@@ -105,7 +184,7 @@ impl Interner {
         let hash = content_hash(kind, name);
         if let Some(candidates) = self.index.get(&hash) {
             for &symbol in candidates {
-                if self.kind(symbol) == kind && self.resolve(symbol) == name {
+                if self.kind_id(symbol) == kind && self.resolve_id(symbol) == name {
                     return Ok(symbol);
                 }
             }
@@ -117,7 +196,11 @@ impl Interner {
 
         let start = u32_len(self.arena.len(), "interner arena exceeds u32 bytes");
         let len = u32_len(name.len(), "interned string exceeds u32 bytes");
-        let symbol = Symbol::new(self.next_symbol);
+        let symbol = SymbolId::from_identity(
+            self.identities
+                .allocate()
+                .map_err(|_| InternerError::TooManySymbols)?,
+        );
 
         self.arena.extend_from_slice(name.as_bytes());
         self.spans.push((start, len));
@@ -130,13 +213,13 @@ impl Interner {
 
     /// Returns the live symbol for `name` without mutating the interner.
     #[must_use]
-    pub fn get(&self, name: &str) -> Option<Symbol> {
+    pub fn get(&self, name: &str) -> Option<SymbolId> {
         self.get_key(ControlSequenceKind::Named, name)
     }
 
     /// Returns the live symbol for an active character without mutating.
     #[must_use]
-    pub fn get_active(&self, ch: char) -> Option<Symbol> {
+    pub fn get_active(&self, ch: char) -> Option<SymbolId> {
         let mut encoded = [0; 4];
         self.get_key(
             ControlSequenceKind::ActiveCharacter,
@@ -144,18 +227,21 @@ impl Interner {
         )
     }
 
-    fn get_key(&self, kind: ControlSequenceKind, name: &str) -> Option<Symbol> {
+    fn get_key(&self, kind: ControlSequenceKind, name: &str) -> Option<SymbolId> {
         let hash = content_hash(kind, name);
         self.index.get(&hash).and_then(|candidates| {
             candidates.iter().copied().find(|&symbol| {
-                self.contains(symbol) && self.kind(symbol) == kind && self.resolve(symbol) == name
+                self.contains_id(symbol)
+                    && self.kind_id(symbol) == kind
+                    && self.resolve_id(symbol) == name
             })
         })
     }
 
     /// Resolves a live symbol to its interned string.
     #[must_use]
-    pub fn resolve(&self, symbol: Symbol) -> &str {
+    pub fn resolve_id(&self, symbol: SymbolId) -> &str {
+        assert!(self.contains_id(symbol), "symbol is not live");
         let index = symbol.raw() as usize;
         assert!(index < self.spans.len(), "symbol is not live");
         let (start, len) = self.spans[index];
@@ -171,7 +257,8 @@ impl Interner {
 
     /// Returns the TeX control-sequence namespace of a live symbol.
     #[must_use]
-    pub fn kind(&self, symbol: Symbol) -> ControlSequenceKind {
+    pub fn kind_id(&self, symbol: SymbolId) -> ControlSequenceKind {
+        assert!(self.contains_id(symbol), "symbol is not live");
         let index = symbol.raw() as usize;
         assert!(index < self.kinds.len(), "symbol is not live");
         self.kinds[index]
@@ -179,8 +266,30 @@ impl Interner {
 
     /// Returns whether `symbol` names a currently-live interner slot.
     #[must_use]
+    pub fn contains_id(&self, symbol: SymbolId) -> bool {
+        self.identities.contains(symbol.identity())
+    }
+
+    /// Resolves a compact stored symbol key through the owning interner.
+    #[must_use]
+    pub fn resolve(&self, symbol: Symbol) -> &str {
+        self.resolve_id(self.resolve_stored(symbol).expect("symbol is not live"))
+    }
+
+    #[must_use]
+    pub fn kind(&self, symbol: Symbol) -> ControlSequenceKind {
+        self.kind_id(self.resolve_stored(symbol).expect("symbol is not live"))
+    }
+
+    #[must_use]
     pub fn contains(&self, symbol: Symbol) -> bool {
-        (symbol.raw() as usize) < self.spans.len()
+        self.resolve_stored(symbol).is_some()
+    }
+
+    pub(crate) fn resolve_stored(&self, symbol: Symbol) -> Option<SymbolId> {
+        self.identities
+            .identity_at(symbol.raw())
+            .map(SymbolId::from_identity)
     }
 
     /// Returns the number of live interned names.
@@ -203,6 +312,7 @@ impl Interner {
         InternerMark {
             spans: self.next_symbol,
             bytes: u32_len(self.arena.len(), "interner arena exceeds u32 bytes"),
+            identities: self.identities.watermark(),
         }
     }
 
@@ -225,6 +335,9 @@ impl Interner {
             "interner mark does not point to a span boundary"
         );
 
+        self.identities
+            .rollback(mark.identities)
+            .expect("interner mark is not an ancestor");
         self.spans.truncate(spans);
         self.kinds.truncate(spans);
         self.arena.truncate(bytes);
@@ -236,8 +349,13 @@ impl Interner {
     fn rebuild_index(&mut self) {
         self.index.clear();
         for raw in 0..self.spans.len() {
-            let symbol = Symbol::new(u32_len(raw, "interner spans exceed u32 entries"));
-            let hash = content_hash(self.kind(symbol), self.resolve(symbol));
+            let symbol = self
+                .resolve_stored(Symbol::new(u32_len(
+                    raw,
+                    "interner spans exceed u32 entries",
+                )))
+                .expect("live interner slot should have identity");
+            let hash = content_hash(self.kind_id(symbol), self.resolve_id(symbol));
             self.index.entry(hash).or_default().push(symbol);
         }
         self.index_dirty = false;

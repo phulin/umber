@@ -35,7 +35,7 @@ fn get_x_token_converts_frozen_end_template_without_losing_origin() {
     assert_eq!(delivered.origin(), origin);
     assert_ne!(
         Token::frozen_end_template(),
-        Token::Cs(stores.intern("endtemplate"))
+        Token::Cs(stores.intern("endtemplate").symbol())
     );
 }
 
@@ -45,7 +45,7 @@ fn preamble_span_operation_expands_exactly_one_token() {
     let first = stores.intern("first");
     let second = stores.intern("second");
     let empty = stores.intern_token_list(&[]);
-    let first_body = stores.intern_token_list(&[Token::Cs(second)]);
+    let first_body = stores.intern_token_list(&[Token::Cs(second.symbol())]);
     let second_body = stores.intern_token_list(&[Token::Char {
         ch: 'x',
         cat: Catcode::Letter,
@@ -69,7 +69,7 @@ fn preamble_span_operation_expands_exactly_one_token() {
     .expect("one expansion should succeed")
     .expect("macro body should provide a raw token");
 
-    assert_eq!(crate::semantic_token(delivered), Token::Cs(second));
+    assert_eq!(crate::semantic_token(delivered), Token::Cs(second.symbol()));
 }
 
 #[derive(Default)]
@@ -178,7 +178,7 @@ fn invalid_conditional_relation_assumes_equal_and_replays_offending_token() {
     let mut stores = Universe::new();
     let mut input = InputStack::new(MemoryInput::new("!"));
     let ifnum = stores.intern("ifnum");
-    let context = TracedTokenWord::pack(Token::Cs(ifnum), OriginId::UNKNOWN);
+    let context = TracedTokenWord::pack(Token::Cs(ifnum.symbol()), OriginId::UNKNOWN);
     let relation = crate::conditionals::scan_conditional_relation_with_expander_and_hooks(
         &mut input,
         &mut stores,
@@ -211,12 +211,12 @@ fn get_x_token_delivers_unexpandable_control_sequence() {
     let relax = stores.intern("relax");
     stores.set_meaning(relax, Meaning::Relax);
     let mut input = InputStack::new(MemoryInput::new(""));
-    let list = stores.intern_token_list(&[Token::Cs(relax)]);
+    let list = stores.intern_token_list(&[Token::Cs(relax.symbol())]);
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
     assert_eq!(
         get_x_token(&mut input, &mut stores).expect("expansion should succeed"),
-        Some(Token::Cs(relax))
+        Some(Token::Cs(relax.symbol()))
     );
 }
 
@@ -227,7 +227,8 @@ fn get_x_token_reports_undefined_control_sequence_and_forgets_it() {
     let after = stores.intern("after");
     stores.set_meaning(after, Meaning::Relax);
     let mut input = InputStack::new(MemoryInput::new(""));
-    let list = stores.intern_token_list(&[Token::Cs(undefined), Token::Cs(after)]);
+    let list =
+        stores.intern_token_list(&[Token::Cs(undefined.symbol()), Token::Cs(after.symbol())]);
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
     let err =
@@ -240,7 +241,7 @@ fn get_x_token_reports_undefined_control_sequence_and_forgets_it() {
     assert_ne!(origin, OriginId::UNKNOWN);
     assert_eq!(
         get_x_token(&mut input, &mut stores).expect("following token should still be readable"),
-        Some(Token::Cs(after))
+        Some(Token::Cs(after.symbol()))
     );
 }
 
@@ -249,7 +250,11 @@ fn conditional_operand_scan_reports_undefined_control_sequence() {
     let mut stores = Universe::new();
     let if_cs = expandable_primitive(&mut stores, "if", ExpandablePrimitive::If);
     let undefined = stores.intern("missing");
-    let list = stores.intern_token_list(&[Token::Cs(if_cs), Token::Cs(undefined), char_token('x')]);
+    let list = stores.intern_token_list(&[
+        Token::Cs(if_cs.symbol()),
+        Token::Cs(undefined.symbol()),
+        char_token('x'),
+    ]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
@@ -297,7 +302,7 @@ fn get_x_token_pulls_from_source_frames_with_interner_access() {
     );
     assert_eq!(
         get_x_token(&mut input, &mut stores).expect("source expansion should succeed"),
-        Some(Token::Cs(relax))
+        Some(Token::Cs(relax.symbol()))
     );
 }
 
@@ -331,7 +336,7 @@ fn get_x_token_pushes_macro_body_frame_and_continues() {
     let Meaning::Macro { definition, .. } = stores.meaning(macro_cs) else {
         panic!("expected macro meaning");
     };
-    let invocation = stores.intern_token_list(&[Token::Cs(macro_cs)]);
+    let invocation = stores.intern_token_list(&[Token::Cs(macro_cs.symbol())]);
     let call_origin = stores.source_origin(tex_state::SourceId::new(8), 50, 5, 1);
     let invocation_origins = stores.allocate_origin_list(&[call_origin]);
     let mut input = InputStack::new(MemoryInput::new(""));
@@ -384,7 +389,7 @@ fn expansion_error_captures_invocation_chain_before_macro_frame_pops() {
     let mut stores = Universe::new();
     let macro_cs = stores.intern("m");
     let missing = stores.intern("missing");
-    let body = stores.intern_token_list(&[Token::Cs(missing)]);
+    let body = stores.intern_token_list(&[Token::Cs(missing.symbol())]);
     let params = stores.intern_token_list(&[]);
     let definition_origin = stores.source_origin(tex_state::SourceId::new(7), 10, 1, 10);
     let body_origin = stores.source_origin(tex_state::SourceId::new(7), 12, 1, 12);
@@ -398,7 +403,7 @@ fn expansion_error_captures_invocation_chain_before_macro_frame_pops() {
             body_origins,
         ),
     );
-    let call = stores.intern_token_list(&[Token::Cs(macro_cs)]);
+    let call = stores.intern_token_list(&[Token::Cs(macro_cs.symbol())]);
     let call_origin = stores.source_origin(tex_state::SourceId::new(8), 1, 1, 1);
     let call_origins = stores.allocate_origin_list(&[call_origin]);
     let mut input = InputStack::new(MemoryInput::new(""));
@@ -436,7 +441,7 @@ fn macro_replay_without_definition_provenance_degrades_to_unknown_origins() {
         macro_cs,
         MacroMeaning::new(MeaningFlags::EMPTY, params, body),
     );
-    let invocation = stores.intern_token_list(&[Token::Cs(macro_cs)]);
+    let invocation = stores.intern_token_list(&[Token::Cs(macro_cs.symbol())]);
     let call_origin = stores.source_origin(tex_state::SourceId::new(12), 90, 9, 1);
     let invocation_origins = stores.allocate_origin_list(&[call_origin]);
     let mut input = InputStack::new(MemoryInput::new(""));
@@ -459,7 +464,7 @@ fn recorder_observes_one_meaning_read_per_control_sequence_token() {
     let mut stores = Universe::new();
     let relax = stores.intern("relax");
     stores.set_meaning(relax, Meaning::Relax);
-    let list = stores.intern_token_list(&[Token::Cs(relax)]);
+    let list = stores.intern_token_list(&[Token::Cs(relax.symbol())]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
     let mut recorder = CountingRecorder::default();
@@ -467,7 +472,7 @@ fn recorder_observes_one_meaning_read_per_control_sequence_token() {
     assert_eq!(
         get_x_token_with_recorder(&mut input, &mut stores, &mut recorder)
             .expect("expansion should succeed"),
-        Some(Token::Cs(relax))
+        Some(Token::Cs(relax.symbol()))
     );
     assert_eq!(recorder.reads, 1);
 }
@@ -485,8 +490,11 @@ fn expandafter_expands_second_token_then_replays_saved_token_first() {
         MacroMeaning::new(MeaningFlags::EMPTY, params, body),
     );
 
-    let input_list =
-        stores.intern_token_list(&[Token::Cs(expandafter), char_token('a'), Token::Cs(macro_cs)]);
+    let input_list = stores.intern_token_list(&[
+        Token::Cs(expandafter.symbol()),
+        char_token('a'),
+        Token::Cs(macro_cs.symbol()),
+    ]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(input_list, TokenListReplayKind::Inserted);
 
@@ -513,11 +521,11 @@ fn expandafter_chains_match_tex_pushback_order() {
     );
 
     let input_list = stores.intern_token_list(&[
-        Token::Cs(expandafter),
-        Token::Cs(expandafter),
-        Token::Cs(expandafter),
-        Token::Cs(first),
-        Token::Cs(second),
+        Token::Cs(expandafter.symbol()),
+        Token::Cs(expandafter.symbol()),
+        Token::Cs(expandafter.symbol()),
+        Token::Cs(first.symbol()),
+        Token::Cs(second.symbol()),
     ]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(input_list, TokenListReplayKind::Inserted);
@@ -537,16 +545,16 @@ fn noexpand_suppresses_next_control_sequence_for_one_get_x_token() {
         MacroMeaning::new(MeaningFlags::EMPTY, params, body),
     );
     let input_list = stores.intern_token_list(&[
-        Token::Cs(noexpand),
-        Token::Cs(macro_cs),
-        Token::Cs(macro_cs),
+        Token::Cs(noexpand.symbol()),
+        Token::Cs(macro_cs.symbol()),
+        Token::Cs(macro_cs.symbol()),
     ]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(input_list, TokenListReplayKind::Inserted);
 
     assert_eq!(
         get_x_token(&mut input, &mut stores).expect("expansion should succeed"),
-        Some(Token::Cs(macro_cs))
+        Some(Token::Cs(macro_cs.symbol()))
     );
     assert_eq!(
         get_x_token(&mut input, &mut stores).expect("expansion should succeed"),
@@ -561,7 +569,8 @@ fn noexpand_delivers_inserted_origin_for_suppressed_token() {
     let relax = stores.intern_relaxed_control_sequence("relax");
     let noexpand_origin = stores.source_origin(tex_state::SourceId::new(20), 100, 10, 1);
     let target_origin = stores.source_origin(tex_state::SourceId::new(20), 110, 10, 11);
-    let input_list = stores.intern_token_list(&[Token::Cs(noexpand), Token::Cs(relax)]);
+    let input_list =
+        stores.intern_token_list(&[Token::Cs(noexpand.symbol()), Token::Cs(relax.symbol())]);
     let origins = stores.allocate_origin_list(&[noexpand_origin, target_origin]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list_with_origins(input_list, origins, TokenListReplayKind::Inserted);
@@ -570,12 +579,12 @@ fn noexpand_delivers_inserted_origin_for_suppressed_token() {
         .expect("noexpand should succeed")
         .expect("suppressed token should be delivered");
 
-    assert_eq!(traced.token(), Some(Token::Cs(relax)));
+    assert_eq!(traced.token(), Some(Token::Cs(relax.symbol())));
     assert_eq!(
         stores.origin(traced.origin()),
         OriginRecord::Inserted(InsertedOrigin::new(
             InsertedOriginKind::NoExpand,
-            Token::Cs(relax),
+            Token::Cs(relax.symbol()),
             target_origin,
         ))
     );
@@ -595,11 +604,11 @@ fn expandafter_preserves_noexpand_for_later_frame_step() {
         MacroMeaning::new(MeaningFlags::EMPTY, params, body),
     );
     let input_list = stores.intern_token_list(&[
-        Token::Cs(expandafter),
+        Token::Cs(expandafter.symbol()),
         char_token('a'),
-        Token::Cs(noexpand),
-        Token::Cs(macro_cs),
-        Token::Cs(macro_cs),
+        Token::Cs(noexpand.symbol()),
+        Token::Cs(macro_cs.symbol()),
+        Token::Cs(macro_cs.symbol()),
     ]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(input_list, TokenListReplayKind::Inserted);
@@ -610,7 +619,7 @@ fn expandafter_preserves_noexpand_for_later_frame_step() {
     );
     assert_eq!(
         get_x_token(&mut input, &mut stores).expect("expansion should succeed"),
-        Some(Token::Cs(macro_cs))
+        Some(Token::Cs(macro_cs.symbol()))
     );
     assert_eq!(
         get_x_token(&mut input, &mut stores).expect("expansion should succeed"),
@@ -623,11 +632,11 @@ fn csname_interns_undefined_name_and_assigns_relax() {
     let mut stores = Universe::new();
     let (csname, endcsname) = csname_primitives(&mut stores);
     let input_list = stores.intern_token_list(&[
-        Token::Cs(csname),
+        Token::Cs(csname.symbol()),
         char_token('f'),
         char_token('o'),
         char_token('o'),
-        Token::Cs(endcsname),
+        Token::Cs(endcsname.symbol()),
     ]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(input_list, TokenListReplayKind::Inserted);
@@ -657,10 +666,10 @@ fn csname_expands_name_pieces_before_interning() {
         MacroMeaning::new(MeaningFlags::EMPTY, params, body),
     );
     let input_list = stores.intern_token_list(&[
-        Token::Cs(csname),
+        Token::Cs(csname.symbol()),
         char_token('f'),
-        Token::Cs(macro_cs),
-        Token::Cs(endcsname),
+        Token::Cs(macro_cs.symbol()),
+        Token::Cs(endcsname.symbol()),
     ]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(input_list, TokenListReplayKind::Inserted);
@@ -671,6 +680,7 @@ fn csname_expands_name_pieces_before_interning() {
             stores
                 .symbol("fbar")
                 .expect("expanded name should be interned")
+                .symbol()
         ))
     );
 }
@@ -687,7 +697,7 @@ fn csname_reexpands_a_macro_result_with_synthesized_provenance() {
     );
 
     let params = stores.intern_token_list(&[]);
-    let body = stores.intern_token_list(&[Token::Cs(let_cs)]);
+    let body = stores.intern_token_list(&[Token::Cs(let_cs.symbol())]);
     let definition_origin = stores.source_origin(tex_state::SourceId::new(25), 40, 4, 1);
     let body_origins = stores.allocate_repeated_origin_list(definition_origin, 1);
     stores.set_macro_meaning_with_provenance(
@@ -704,7 +714,7 @@ fn csname_reexpands_a_macro_result_with_synthesized_provenance() {
     };
 
     let input_tokens = [
-        Token::Cs(csname),
+        Token::Cs(csname.symbol()),
         char_token('u'),
         char_token('s'),
         char_token('@'),
@@ -713,7 +723,7 @@ fn csname_reexpands_a_macro_result_with_synthesized_provenance() {
         char_token('l'),
         char_token('s'),
         char_token('e'),
-        Token::Cs(endcsname),
+        Token::Cs(endcsname.symbol()),
     ];
     let csname_origin = stores.source_origin(tex_state::SourceId::new(26), 80, 8, 1);
     let origins = stores.allocate_repeated_origin_list(csname_origin, input_tokens.len());
@@ -724,7 +734,7 @@ fn csname_reexpands_a_macro_result_with_synthesized_provenance() {
     let delivered = crate::get_x_token(&mut input, &mut stores)
         .expect("csname macro result should expand")
         .expect("macro body should deliver its unexpandable token");
-    assert_eq!(delivered.token(), Some(Token::Cs(let_cs)));
+    assert_eq!(delivered.token(), Some(Token::Cs(let_cs.symbol())));
 
     let summary = input.summary();
     let Some(tex_lex::InputFrameSummary::TokenList {
@@ -752,8 +762,11 @@ fn csname_recovers_from_non_character_material_after_expansion() {
     let (csname, endcsname) = csname_primitives(&mut stores);
     let relax = stores.intern("relax");
     stores.set_meaning(relax, Meaning::Relax);
-    let input_list =
-        stores.intern_token_list(&[Token::Cs(csname), Token::Cs(relax), Token::Cs(endcsname)]);
+    let input_list = stores.intern_token_list(&[
+        Token::Cs(csname.symbol()),
+        Token::Cs(relax.symbol()),
+        Token::Cs(endcsname.symbol()),
+    ]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(input_list, TokenListReplayKind::Inserted);
 
@@ -767,11 +780,11 @@ fn csname_recovers_from_non_character_material_after_expansion() {
 
     assert_eq!(
         get_x_token(&mut input, &mut stores).expect("pushed-back token should expand"),
-        Some(Token::Cs(relax))
+        Some(Token::Cs(relax.symbol()))
     );
     assert_eq!(
         get_x_token(&mut input, &mut stores).expect("remaining endcsname should be delivered"),
-        Some(Token::Cs(endcsname))
+        Some(Token::Cs(endcsname.symbol()))
     );
 }
 
@@ -782,20 +795,20 @@ fn csname_preserves_existing_meaning_for_ifx_relax_comparison() {
     let existing = stores.intern("known");
     stores.set_meaning(existing, Meaning::CharGiven('K'));
     let input_list = stores.intern_token_list(&[
-        Token::Cs(csname),
+        Token::Cs(csname.symbol()),
         char_token('k'),
         char_token('n'),
         char_token('o'),
         char_token('w'),
         char_token('n'),
-        Token::Cs(endcsname),
+        Token::Cs(endcsname.symbol()),
     ]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(input_list, TokenListReplayKind::Inserted);
 
     assert_eq!(
         get_x_token(&mut input, &mut stores).expect("csname expansion should succeed"),
-        Some(Token::Cs(existing))
+        Some(Token::Cs(existing.symbol()))
     );
     assert_eq!(stores.meaning(existing), Meaning::CharGiven('K'));
 }
@@ -807,11 +820,11 @@ fn csname_created_undefined_name_is_meaning_equal_to_relax() {
     let relax = stores.intern("relax");
     stores.set_meaning(relax, Meaning::Relax);
     let input_list = stores.intern_token_list(&[
-        Token::Cs(csname),
+        Token::Cs(csname.symbol()),
         char_token('n'),
         char_token('e'),
         char_token('w'),
-        Token::Cs(endcsname),
+        Token::Cs(endcsname.symbol()),
     ]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(input_list, TokenListReplayKind::Inserted);
@@ -836,7 +849,7 @@ fn macro_body_replay_substitutes_frozen_argument_lists() {
         MacroMeaning::new(MeaningFlags::EMPTY, params, body),
     );
     let invocation = stores.intern_token_list(&[
-        Token::Cs(macro_cs),
+        Token::Cs(macro_cs.symbol()),
         char_token('{'),
         char_token('x'),
         char_token('y'),
@@ -875,7 +888,7 @@ fn macro_argument_replay_delivers_call_site_argument_origins() {
         macro_invocation,
         ..
     } = dispatch(
-        Token::Cs(macro_cs),
+        Token::Cs(macro_cs.symbol()),
         &mut input,
         &mut stores,
         &mut NoopRecorder,
@@ -929,7 +942,7 @@ fn macro_body_delivery_does_not_write_provenance_per_token() {
         macro_invocation,
         ..
     } = dispatch_with_hooks(
-        Token::Cs(macro_cs),
+        Token::Cs(macro_cs.symbol()),
         invocation_origin,
         &mut input,
         &mut stores,
@@ -974,7 +987,7 @@ fn generated_value_tokens_share_one_synthesized_origin_record() {
     install_expandable_primitives(&mut stores);
     let number = stores.symbol("number").expect("number primitive");
     let input_tokens = [
-        Token::Cs(number),
+        Token::Cs(number.symbol()),
         char_token('1'),
         char_token('2'),
         char_token('3'),
@@ -1017,7 +1030,7 @@ fn nested_macro_calls_replay_arguments_from_outer_frozen_frame() {
     let outer = stores.intern("outer");
     let outer_params = stores.intern_token_list(&[Token::param(1)]);
     let outer_body = stores.intern_token_list(&[
-        Token::Cs(wrap),
+        Token::Cs(wrap.symbol()),
         char_token('{'),
         Token::param(1),
         char_token('}'),
@@ -1028,7 +1041,7 @@ fn nested_macro_calls_replay_arguments_from_outer_frozen_frame() {
     );
 
     let invocation = stores.intern_token_list(&[
-        Token::Cs(outer),
+        Token::Cs(outer.symbol()),
         char_token('{'),
         char_token('x'),
         char_token('y'),
@@ -1063,7 +1076,7 @@ fn identical_macro_bodies_keep_shared_body_identity_with_distinct_arguments() {
     left_input.push_token_list(left_arg, TokenListReplayKind::Inserted);
     let left_meaning = stores.meaning(left);
     let left_dispatch = dispatch(
-        Token::Cs(left),
+        Token::Cs(left.symbol()),
         &mut left_input,
         &mut stores,
         &mut NoopRecorder,
@@ -1089,7 +1102,7 @@ fn identical_macro_bodies_keep_shared_body_identity_with_distinct_arguments() {
     right_input.push_token_list(right_arg, TokenListReplayKind::Inserted);
     let right_meaning = stores.meaning(right);
     let right_dispatch = dispatch(
-        Token::Cs(right),
+        Token::Cs(right.symbol()),
         &mut right_input,
         &mut stores,
         &mut NoopRecorder,
@@ -1111,9 +1124,9 @@ fn identical_macro_bodies_keep_shared_body_identity_with_distinct_arguments() {
     );
 
     let invocation = stores.intern_token_list(&[
-        Token::Cs(left),
+        Token::Cs(left.symbol()),
         char_token('x'),
-        Token::Cs(right),
+        Token::Cs(right.symbol()),
         char_token('y'),
     ]);
     let mut input = InputStack::new(MemoryInput::new(""));
@@ -1128,9 +1141,9 @@ fn string_respects_escapechar_and_renders_other_catcodes() {
     let string = expandable_primitive(&mut stores, "string", ExpandablePrimitive::String);
     let target = stores.intern("foo");
     let list = stores.intern_token_list(&[
-        Token::Cs(string),
-        Token::Cs(target),
-        Token::Cs(string),
+        Token::Cs(string.symbol()),
+        Token::Cs(target.symbol()),
+        Token::Cs(string.symbol()),
         Token::Char {
             ch: 'a',
             cat: Catcode::Letter,
@@ -1172,7 +1185,7 @@ fn string_omits_invalid_escapechar() {
     stores.set_int_param(tex_state::env::banks::IntParam::ESCAPE_CHAR, -1);
     let string = expandable_primitive(&mut stores, "string", ExpandablePrimitive::String);
     let target = stores.intern("foo");
-    let list = stores.intern_token_list(&[Token::Cs(string), Token::Cs(target)]);
+    let list = stores.intern_token_list(&[Token::Cs(string.symbol()), Token::Cs(target.symbol())]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
@@ -1193,17 +1206,17 @@ fn number_and_romannumeral_scan_expanded_integer_edge_cases() {
     let body = stores.intern_token_list(&[char_token('1'), char_token('9')]);
     stores.set_macro_meaning(digits, MacroMeaning::new(MeaningFlags::EMPTY, params, body));
     let list = stores.intern_token_list(&[
-        Token::Cs(number),
+        Token::Cs(number.symbol()),
         Token::Char {
             ch: '-',
             cat: Catcode::Other,
         },
-        Token::Cs(digits),
+        Token::Cs(digits.symbol()),
         Token::Char {
             ch: ' ',
             cat: Catcode::Space,
         },
-        Token::Cs(roman),
+        Token::Cs(roman.symbol()),
         Token::Char {
             ch: '0',
             cat: Catcode::Other,
@@ -1212,7 +1225,7 @@ fn number_and_romannumeral_scan_expanded_integer_edge_cases() {
             ch: ' ',
             cat: Catcode::Space,
         },
-        Token::Cs(roman),
+        Token::Cs(roman.symbol()),
         Token::Char {
             ch: '4',
             cat: Catcode::Other,
@@ -1295,7 +1308,7 @@ fn number_scanner_preserves_driver_hooks_during_nested_expansion() {
     let digits = stores.intern("digits");
     let params = stores.intern_token_list(&[]);
     let body = stores.intern_token_list(&[
-        Token::Cs(input_primitive),
+        Token::Cs(input_primitive.symbol()),
         char_token('d'),
         char_token('i'),
         char_token('g'),
@@ -1306,7 +1319,7 @@ fn number_scanner_preserves_driver_hooks_during_nested_expansion() {
         },
     ]);
     stores.set_macro_meaning(digits, MacroMeaning::new(MeaningFlags::EMPTY, params, body));
-    let list = stores.intern_token_list(&[Token::Cs(number), Token::Cs(digits)]);
+    let list = stores.intern_token_list(&[Token::Cs(number.symbol()), Token::Cs(digits.symbol())]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
     let mut hooks = MemoryHooks::new("job").with_source("digs", "42");
@@ -1329,7 +1342,8 @@ fn meaning_renders_macro_text_and_output_catcodes() {
         macro_cs,
         MacroMeaning::new(MeaningFlags::EMPTY, params, body),
     );
-    let list = stores.intern_token_list(&[Token::Cs(meaning), Token::Cs(macro_cs)]);
+    let list =
+        stores.intern_token_list(&[Token::Cs(meaning.symbol()), Token::Cs(macro_cs.symbol())]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
@@ -1385,22 +1399,22 @@ fn the_renders_supported_registers_and_token_registers() {
     ]);
     stores.set_toks(4, toks_value);
     let list = stores.intern_token_list(&[
-        Token::Cs(the),
-        Token::Cs(count),
+        Token::Cs(the.symbol()),
+        Token::Cs(count.symbol()),
         char_token('2'),
         Token::Char {
             ch: ' ',
             cat: Catcode::Space,
         },
-        Token::Cs(the),
-        Token::Cs(dimen),
+        Token::Cs(the.symbol()),
+        Token::Cs(dimen.symbol()),
         char_token('3'),
         Token::Char {
             ch: ' ',
             cat: Catcode::Space,
         },
-        Token::Cs(the),
-        Token::Cs(toks),
+        Token::Cs(the.symbol()),
+        Token::Cs(toks.symbol()),
         char_token('4'),
     ]);
     let mut input = InputStack::new(MemoryInput::new(""));
@@ -1417,7 +1431,7 @@ fn rendered_output_is_frozen_and_rollback_removes_it() {
     let mut stores = Universe::new();
     let snapshot = stores.snapshot();
     let number = expandable_primitive(&mut stores, "number", ExpandablePrimitive::Number);
-    let list = stores.intern_token_list(&[Token::Cs(number), char_token('7')]);
+    let list = stores.intern_token_list(&[Token::Cs(number.symbol()), char_token('7')]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
@@ -1447,7 +1461,8 @@ fn number_output_tokens_share_synthesized_origin_from_primitive() {
     let number = expandable_primitive(&mut stores, "number", ExpandablePrimitive::Number);
     let number_origin = stores.source_origin(tex_state::SourceId::new(21), 120, 12, 1);
     let digit_origin = stores.source_origin(tex_state::SourceId::new(21), 128, 12, 9);
-    let list = stores.intern_token_list(&[Token::Cs(number), char_token('4'), char_token('2')]);
+    let list =
+        stores.intern_token_list(&[Token::Cs(number.symbol()), char_token('4'), char_token('2')]);
     let origins = stores.allocate_origin_list(&[number_origin, digit_origin, digit_origin]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list_with_origins(list, origins, TokenListReplayKind::Inserted);
@@ -1534,8 +1549,8 @@ fn fontname_renders_real_font_selector_name() {
     let nullfont = stores.intern("nullfont");
     stores.set_meaning(nullfont, Meaning::Font(tex_state::font::NULL_FONT));
     let list = stores.intern_token_list(&[
-        Token::Cs(stores.symbol("fontname").expect("fontname")),
-        Token::Cs(nullfont),
+        Token::Cs(stores.symbol("fontname").expect("fontname").symbol()),
+        Token::Cs(nullfont.symbol()),
         char_token('z'),
     ]);
     let mut input = InputStack::new(MemoryInput::new(""));
@@ -1581,10 +1596,10 @@ fn the_fontdimen_accepts_current_font_with_exact_output_and_trace() {
 
     let invocation = stores.source_origin(tex_state::SourceId::new(9), 90, 9, 1);
     let tokens = stores.intern_token_list(&[
-        Token::Cs(the),
-        Token::Cs(fontdimen),
+        Token::Cs(the.symbol()),
+        Token::Cs(fontdimen.symbol()),
         char_token('1'),
-        Token::Cs(font),
+        Token::Cs(font.symbol()),
     ]);
     let origins = stores.allocate_repeated_origin_list(invocation, 4);
     let mut input = InputStack::new(MemoryInput::new(""));
@@ -1608,8 +1623,8 @@ fn the_fontdimen_accepts_current_font_with_exact_output_and_trace() {
         .collect::<String>();
     assert_eq!(text, "1.5pt");
     assert!(recorder.0.contains(&the));
-    assert!(recorder.0.contains(&fontdimen));
-    assert!(recorder.0.contains(&font));
+    assert!(recorder.0.contains(&fontdimen.symbol()));
+    assert!(recorder.0.contains(&font.symbol()));
 
     let rendered_origin = output[0].origin();
     assert!(output.iter().all(|token| token.origin() == rendered_origin));
@@ -1643,10 +1658,10 @@ fn the_fontdimen_renders_zero_for_unavailable_parameter() {
 
     let invocation = stores.source_origin(tex_state::SourceId::new(10), 100, 10, 1);
     let tokens = stores.intern_token_list(&[
-        Token::Cs(the),
-        Token::Cs(fontdimen),
+        Token::Cs(the.symbol()),
+        Token::Cs(fontdimen.symbol()),
         char_token('8'),
-        Token::Cs(font),
+        Token::Cs(font.symbol()),
     ]);
     let origins = stores.allocate_repeated_origin_list(invocation, 4);
     let mut input = InputStack::new(MemoryInput::new(""));
@@ -1704,7 +1719,11 @@ fn the_math_family_fonts_expand_to_identifier_tokens_with_trace_and_reads() {
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
         stores.set_math_family_font(size, 1, tex_state::font::NULL_FONT, true);
         primitive_symbols.push(symbol);
-        input_tokens.extend([Token::Cs(the), Token::Cs(symbol), char_token('1')]);
+        input_tokens.extend([
+            Token::Cs(the.symbol()),
+            Token::Cs(symbol.symbol()),
+            char_token('1'),
+        ]);
     }
     let invocation = stores.source_origin(tex_state::SourceId::new(11), 110, 11, 1);
     let tokens = stores.intern_token_list(&input_tokens);
@@ -1723,11 +1742,11 @@ fn the_math_family_fonts_expand_to_identifier_tokens_with_trace_and_reads() {
     assert!(
         output
             .iter()
-            .all(|token| token.token() == Some(Token::Cs(nullfont)))
+            .all(|token| token.token() == Some(Token::Cs(nullfont.symbol())))
     );
     assert!(recorder.0.contains(&the));
     for symbol in primitive_symbols {
-        assert!(recorder.0.contains(&symbol));
+        assert!(recorder.0.contains(&symbol.symbol()));
     }
     for token in output {
         assert_eq!(
@@ -1752,8 +1771,8 @@ fn the_math_family_font_substitutes_family_zero_for_out_of_range_number() {
     let invocation = stores.source_origin(tex_state::SourceId::new(12), 120, 12, 1);
     let number_origin = stores.source_origin(tex_state::SourceId::new(12), 129, 12, 10);
     let tokens = stores.intern_token_list(&[
-        Token::Cs(the),
-        Token::Cs(textfont),
+        Token::Cs(the.symbol()),
+        Token::Cs(textfont.symbol()),
         char_token('1'),
         char_token('6'),
     ]);
@@ -1783,11 +1802,21 @@ fn mark_family_primitives_expand_stored_page_marks() {
         expandable_primitive(&mut stores, name, primitive);
     }
     let list = stores.intern_token_list(&[
-        Token::Cs(stores.symbol("topmark").expect("topmark")),
-        Token::Cs(stores.symbol("firstmark").expect("firstmark")),
-        Token::Cs(stores.symbol("botmark").expect("botmark")),
-        Token::Cs(stores.symbol("splitfirstmark").expect("splitfirstmark")),
-        Token::Cs(stores.symbol("splitbotmark").expect("splitbotmark")),
+        Token::Cs(stores.symbol("topmark").expect("topmark").symbol()),
+        Token::Cs(stores.symbol("firstmark").expect("firstmark").symbol()),
+        Token::Cs(stores.symbol("botmark").expect("botmark").symbol()),
+        Token::Cs(
+            stores
+                .symbol("splitfirstmark")
+                .expect("splitfirstmark")
+                .symbol(),
+        ),
+        Token::Cs(
+            stores
+                .symbol("splitbotmark")
+                .expect("splitbotmark")
+                .symbol(),
+        ),
         char_token('z'),
     ]);
     let mut input = InputStack::new(MemoryInput::new(""));
@@ -1806,11 +1835,21 @@ fn mark_family_primitives_expand_stored_page_marks() {
     stores.set_page_mark(PageMark::SplitFirst, split_first);
     stores.set_page_mark(PageMark::SplitBot, split_bot);
     let list = stores.intern_token_list(&[
-        Token::Cs(stores.symbol("topmark").expect("topmark")),
-        Token::Cs(stores.symbol("firstmark").expect("firstmark")),
-        Token::Cs(stores.symbol("botmark").expect("botmark")),
-        Token::Cs(stores.symbol("splitfirstmark").expect("splitfirstmark")),
-        Token::Cs(stores.symbol("splitbotmark").expect("splitbotmark")),
+        Token::Cs(stores.symbol("topmark").expect("topmark").symbol()),
+        Token::Cs(stores.symbol("firstmark").expect("firstmark").symbol()),
+        Token::Cs(stores.symbol("botmark").expect("botmark").symbol()),
+        Token::Cs(
+            stores
+                .symbol("splitfirstmark")
+                .expect("splitfirstmark")
+                .symbol(),
+        ),
+        Token::Cs(
+            stores
+                .symbol("splitbotmark")
+                .expect("splitbotmark")
+                .symbol(),
+        ),
     ]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
@@ -1823,16 +1862,16 @@ fn iftrue_and_iffalse_select_expected_two_limb_branches() {
     let mut stores = Universe::new();
     let (iftrue, iffalse, else_cs, fi) = conditional_primitives(&mut stores);
     let list = stores.intern_token_list(&[
-        Token::Cs(iftrue),
+        Token::Cs(iftrue.symbol()),
         char_token('t'),
-        Token::Cs(else_cs),
+        Token::Cs(else_cs.symbol()),
         char_token('f'),
-        Token::Cs(fi),
-        Token::Cs(iffalse),
+        Token::Cs(fi.symbol()),
+        Token::Cs(iffalse.symbol()),
         char_token('f'),
-        Token::Cs(else_cs),
+        Token::Cs(else_cs.symbol()),
         char_token('t'),
-        Token::Cs(fi),
+        Token::Cs(fi.symbol()),
     ]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
@@ -1862,13 +1901,13 @@ fn if_expands_to_two_unexpandable_character_tokens_before_comparing_charcodes() 
         MacroMeaning::new(MeaningFlags::EMPTY, params, right_body),
     );
     let list = stores.intern_token_list(&[
-        Token::Cs(if_cs),
-        Token::Cs(left),
-        Token::Cs(right),
+        Token::Cs(if_cs.symbol()),
+        Token::Cs(left.symbol()),
+        Token::Cs(right.symbol()),
         char_token('y'),
-        Token::Cs(else_cs),
+        Token::Cs(else_cs.symbol()),
         char_token('n'),
-        Token::Cs(fi),
+        Token::Cs(fi.symbol()),
     ]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
@@ -1889,23 +1928,23 @@ fn ifcat_compares_category_codes_after_expansion() {
         MacroMeaning::new(MeaningFlags::EMPTY, params, body),
     );
     let list = stores.intern_token_list(&[
-        Token::Cs(ifcat),
+        Token::Cs(ifcat.symbol()),
         char_token('a'),
-        Token::Cs(macro_cs),
+        Token::Cs(macro_cs.symbol()),
         char_token('y'),
-        Token::Cs(else_cs),
+        Token::Cs(else_cs.symbol()),
         char_token('n'),
-        Token::Cs(fi),
-        Token::Cs(ifcat),
+        Token::Cs(fi.symbol()),
+        Token::Cs(ifcat.symbol()),
         char_token('a'),
         Token::Char {
             ch: '1',
             cat: Catcode::Other,
         },
         char_token('n'),
-        Token::Cs(else_cs),
+        Token::Cs(else_cs.symbol()),
         char_token('y'),
-        Token::Cs(fi),
+        Token::Cs(fi.symbol()),
     ]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
@@ -1945,20 +1984,20 @@ fn ifx_compares_macro_definitions_semantically_ignoring_origin_lists() {
         MacroMeaning::new(MeaningFlags::PROTECTED, params, right_body),
     );
     let list = stores.intern_token_list(&[
-        Token::Cs(ifx),
-        Token::Cs(left),
-        Token::Cs(right),
+        Token::Cs(ifx.symbol()),
+        Token::Cs(left.symbol()),
+        Token::Cs(right.symbol()),
         char_token('y'),
-        Token::Cs(else_cs),
+        Token::Cs(else_cs.symbol()),
         char_token('n'),
-        Token::Cs(fi),
-        Token::Cs(ifx),
-        Token::Cs(left),
-        Token::Cs(protected),
+        Token::Cs(fi.symbol()),
+        Token::Cs(ifx.symbol()),
+        Token::Cs(left.symbol()),
+        Token::Cs(protected.symbol()),
         char_token('n'),
-        Token::Cs(else_cs),
+        Token::Cs(else_cs.symbol()),
         char_token('y'),
-        Token::Cs(fi),
+        Token::Cs(fi.symbol()),
     ]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
@@ -1983,20 +2022,20 @@ fn ifx_uses_meaning_word_equality_for_non_macros_without_expansion() {
         MacroMeaning::new(MeaningFlags::EMPTY, params, body),
     );
     let list = stores.intern_token_list(&[
-        Token::Cs(ifx),
-        Token::Cs(first),
-        Token::Cs(second),
+        Token::Cs(ifx.symbol()),
+        Token::Cs(first.symbol()),
+        Token::Cs(second.symbol()),
         char_token('y'),
-        Token::Cs(else_cs),
+        Token::Cs(else_cs.symbol()),
         char_token('n'),
-        Token::Cs(fi),
-        Token::Cs(ifx),
-        Token::Cs(macro_cs),
+        Token::Cs(fi.symbol()),
+        Token::Cs(ifx.symbol()),
+        Token::Cs(macro_cs.symbol()),
         char_token('a'),
         char_token('n'),
-        Token::Cs(else_cs),
+        Token::Cs(else_cs.symbol()),
         char_token('y'),
-        Token::Cs(fi),
+        Token::Cs(fi.symbol()),
     ]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
@@ -2023,26 +2062,26 @@ fn ifnum_and_ifdim_compare_scanned_values() {
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen),
     );
     let list = stores.intern_token_list(&[
-        Token::Cs(ifnum),
-        Token::Cs(count),
+        Token::Cs(ifnum.symbol()),
+        Token::Cs(count.symbol()),
         char_token('2'),
         char_token('>'),
         char_token('6'),
         char_token('y'),
-        Token::Cs(else_cs),
+        Token::Cs(else_cs.symbol()),
         char_token('n'),
-        Token::Cs(fi),
-        Token::Cs(ifdim),
-        Token::Cs(dimen),
+        Token::Cs(fi.symbol()),
+        Token::Cs(ifdim.symbol()),
+        Token::Cs(dimen.symbol()),
         char_token('3'),
         char_token('='),
         char_token('1'),
         char_token('p'),
         char_token('t'),
         char_token('y'),
-        Token::Cs(else_cs),
+        Token::Cs(else_cs.symbol()),
         char_token('n'),
-        Token::Cs(fi),
+        Token::Cs(fi.symbol()),
     ]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
@@ -2066,16 +2105,16 @@ fn ifdim_compares_named_skip_registers_by_width_only() {
     });
     stores.set_skip(42, glue);
     let list = stores.intern_token_list(&[
-        Token::Cs(ifdim),
-        Token::Cs(named_skip),
+        Token::Cs(ifdim.symbol()),
+        Token::Cs(named_skip.symbol()),
         char_token('<'),
         char_token('3'),
         char_token('p'),
         char_token('t'),
         char_token('y'),
-        Token::Cs(else_cs),
+        Token::Cs(else_cs.symbol()),
         char_token('n'),
-        Token::Cs(fi),
+        Token::Cs(fi.symbol()),
     ]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
@@ -2099,13 +2138,13 @@ fn ifdim_operand_nested_conditional_completes_exact_outer_frame() {
     let choose_skip = stores.intern("chooseskip");
     let params = stores.intern_token_list(&[]);
     let body = stores.intern_token_list(&[
-        Token::Cs(iftrue),
-        Token::Cs(selected_skip),
-        Token::Cs(else_cs),
+        Token::Cs(iftrue.symbol()),
+        Token::Cs(selected_skip.symbol()),
+        Token::Cs(else_cs.symbol()),
         char_token('0'),
         char_token('p'),
         char_token('t'),
-        Token::Cs(fi),
+        Token::Cs(fi.symbol()),
     ]);
     stores.set_macro_meaning(
         choose_skip,
@@ -2113,16 +2152,16 @@ fn ifdim_operand_nested_conditional_completes_exact_outer_frame() {
     );
 
     let list = stores.intern_token_list(&[
-        Token::Cs(ifdim),
-        Token::Cs(choose_skip),
+        Token::Cs(ifdim.symbol()),
+        Token::Cs(choose_skip.symbol()),
         char_token('<'),
         char_token('3'),
         char_token('p'),
         char_token('t'),
         char_token('y'),
-        Token::Cs(else_cs),
+        Token::Cs(else_cs.symbol()),
         char_token('n'),
-        Token::Cs(fi),
+        Token::Cs(fi.symbol()),
     ]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
@@ -2137,17 +2176,17 @@ fn conditional_operand_recovery_preserves_nested_and_outer_frame_identity() {
     let (iftrue, _, else_cs, fi) = conditional_primitives(&mut stores);
     let if_cs = expandable_primitive(&mut stores, "if", ExpandablePrimitive::If);
     let list = stores.intern_token_list(&[
-        Token::Cs(if_cs),
-        Token::Cs(iftrue),
+        Token::Cs(if_cs.symbol()),
+        Token::Cs(iftrue.symbol()),
         char_token('a'),
         char_token('b'),
-        Token::Cs(else_cs),
+        Token::Cs(else_cs.symbol()),
         char_token('c'),
-        Token::Cs(fi),
+        Token::Cs(fi.symbol()),
         char_token('x'),
-        Token::Cs(else_cs),
+        Token::Cs(else_cs.symbol()),
         char_token('y'),
-        Token::Cs(fi),
+        Token::Cs(fi.symbol()),
     ]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
@@ -2171,15 +2210,15 @@ fn ifnum_internal_operand_does_not_eagerly_expand_following_else() {
     stores.set_count(11, 10);
     stores.set_count(20, 255);
     let list = stores.intern_token_list(&[
-        Token::Cs(ifnum),
-        Token::Cs(count),
+        Token::Cs(ifnum.symbol()),
+        Token::Cs(count.symbol()),
         char_token('1'),
         char_token('1'),
         char_token('<'),
-        Token::Cs(limit),
-        Token::Cs(else_cs),
+        Token::Cs(limit.symbol()),
+        Token::Cs(else_cs.symbol()),
         char_token('n'),
-        Token::Cs(fi),
+        Token::Cs(fi.symbol()),
         char_token('y'),
     ]);
     let mut input = InputStack::new(MemoryInput::new(""));
@@ -2198,25 +2237,25 @@ fn ifodd_and_ifcase_select_expected_limb() {
     let ifodd = expandable_primitive(&mut stores, "ifodd", ExpandablePrimitive::IfOdd);
     let ifcase = expandable_primitive(&mut stores, "ifcase", ExpandablePrimitive::IfCase);
     let list = stores.intern_token_list(&[
-        Token::Cs(ifodd),
+        Token::Cs(ifodd.symbol()),
         char_token('-'),
         char_token('3'),
         char_token('y'),
-        Token::Cs(else_cs),
+        Token::Cs(else_cs.symbol()),
         char_token('n'),
-        Token::Cs(fi),
-        Token::Cs(ifcase),
+        Token::Cs(fi.symbol()),
+        Token::Cs(ifcase.symbol()),
         char_token('2'),
         char_token('z'),
-        Token::Cs(or_cs),
+        Token::Cs(or_cs.symbol()),
         char_token('o'),
-        Token::Cs(or_cs),
+        Token::Cs(or_cs.symbol()),
         char_token('t'),
-        Token::Cs(or_cs),
+        Token::Cs(or_cs.symbol()),
         char_token('x'),
-        Token::Cs(else_cs),
+        Token::Cs(else_cs.symbol()),
         char_token('e'),
-        Token::Cs(fi),
+        Token::Cs(fi.symbol()),
     ]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
@@ -2237,21 +2276,21 @@ fn mode_predicates_use_driver_hook() {
         expandable_primitive(&mut stores, name, primitive);
     }
     let list = stores.intern_token_list(&[
-        Token::Cs(stores.symbol("ifhmode").expect("ifhmode")),
+        Token::Cs(stores.symbol("ifhmode").expect("ifhmode").symbol()),
         char_token('h'),
-        Token::Cs(else_cs),
+        Token::Cs(else_cs.symbol()),
         char_token('n'),
-        Token::Cs(fi),
-        Token::Cs(stores.symbol("ifvmode").expect("ifvmode")),
+        Token::Cs(fi.symbol()),
+        Token::Cs(stores.symbol("ifvmode").expect("ifvmode").symbol()),
         char_token('n'),
-        Token::Cs(else_cs),
+        Token::Cs(else_cs.symbol()),
         char_token('v'),
-        Token::Cs(fi),
-        Token::Cs(stores.symbol("ifinner").expect("ifinner")),
+        Token::Cs(fi.symbol()),
+        Token::Cs(stores.symbol("ifinner").expect("ifinner").symbol()),
         char_token('i'),
-        Token::Cs(else_cs),
+        Token::Cs(else_cs.symbol()),
         char_token('n'),
-        Token::Cs(fi),
+        Token::Cs(fi.symbol()),
     ]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
@@ -2277,30 +2316,30 @@ fn box_predicates_read_box_register_state() {
     stores.set_box_reg(1, hbox);
     stores.set_box_reg(2, vbox);
     let list = stores.intern_token_list(&[
-        Token::Cs(ifvoid),
+        Token::Cs(ifvoid.symbol()),
         char_token('0'),
         char_token('v'),
-        Token::Cs(else_cs),
+        Token::Cs(else_cs.symbol()),
         char_token('n'),
-        Token::Cs(fi),
-        Token::Cs(ifhbox),
+        Token::Cs(fi.symbol()),
+        Token::Cs(ifhbox.symbol()),
         char_token('1'),
         char_token('h'),
-        Token::Cs(else_cs),
+        Token::Cs(else_cs.symbol()),
         char_token('n'),
-        Token::Cs(fi),
-        Token::Cs(ifvbox),
+        Token::Cs(fi.symbol()),
+        Token::Cs(ifvbox.symbol()),
         char_token('2'),
         char_token('b'),
-        Token::Cs(else_cs),
+        Token::Cs(else_cs.symbol()),
         char_token('n'),
-        Token::Cs(fi),
-        Token::Cs(ifhbox),
+        Token::Cs(fi.symbol()),
+        Token::Cs(ifhbox.symbol()),
         char_token('2'),
         char_token('n'),
-        Token::Cs(else_cs),
+        Token::Cs(else_cs.symbol()),
         char_token('x'),
-        Token::Cs(fi),
+        Token::Cs(fi.symbol()),
     ]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
@@ -2314,18 +2353,18 @@ fn ifeof_uses_hook_and_default_world_stream_state() {
     let (_, _, else_cs, fi) = conditional_primitives(&mut stores);
     let ifeof = expandable_primitive(&mut stores, "ifeof", ExpandablePrimitive::IfEof);
     let list = stores.intern_token_list(&[
-        Token::Cs(ifeof),
+        Token::Cs(ifeof.symbol()),
         char_token('1'),
         char_token('n'),
-        Token::Cs(else_cs),
+        Token::Cs(else_cs.symbol()),
         char_token('o'),
-        Token::Cs(fi),
-        Token::Cs(ifeof),
+        Token::Cs(fi.symbol()),
+        Token::Cs(ifeof.symbol()),
         char_token('2'),
         char_token('e'),
-        Token::Cs(else_cs),
+        Token::Cs(else_cs.symbol()),
         char_token('n'),
-        Token::Cs(fi),
+        Token::Cs(fi.symbol()),
     ]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
@@ -2339,12 +2378,12 @@ fn ifeof_uses_hook_and_default_world_stream_state() {
     );
 
     let list = stores.intern_token_list(&[
-        Token::Cs(ifeof),
+        Token::Cs(ifeof.symbol()),
         char_token('9'),
         char_token('e'),
-        Token::Cs(else_cs),
+        Token::Cs(else_cs.symbol()),
         char_token('n'),
-        Token::Cs(fi),
+        Token::Cs(fi.symbol()),
     ]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
@@ -2357,16 +2396,16 @@ fn skipped_false_limb_tracks_nested_conditionals() {
     let mut stores = Universe::new();
     let (iftrue, iffalse, else_cs, fi) = conditional_primitives(&mut stores);
     let list = stores.intern_token_list(&[
-        Token::Cs(iffalse),
+        Token::Cs(iffalse.symbol()),
         char_token('x'),
-        Token::Cs(iftrue),
+        Token::Cs(iftrue.symbol()),
         char_token('y'),
-        Token::Cs(else_cs),
+        Token::Cs(else_cs.symbol()),
         char_token('z'),
-        Token::Cs(fi),
-        Token::Cs(else_cs),
+        Token::Cs(fi.symbol()),
+        Token::Cs(else_cs.symbol()),
         char_token('t'),
-        Token::Cs(fi),
+        Token::Cs(fi.symbol()),
     ]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
@@ -2382,7 +2421,7 @@ fn skipped_false_limb_resolves_active_conditional_meanings() {
     let active_else = active_expandable_primitive(&mut stores, '~', ExpandablePrimitive::Else);
     let active_fi = active_expandable_primitive(&mut stores, '!', ExpandablePrimitive::Fi);
     let list = stores.intern_token_list(&[
-        Token::Cs(iffalse),
+        Token::Cs(iffalse.symbol()),
         char_token('x'),
         active_iftrue,
         char_token('y'),
@@ -2406,23 +2445,23 @@ fn ifcase_selects_selected_limb_and_else_fallback() {
     let ifcase = expandable_primitive(&mut stores, "ifcase", ExpandablePrimitive::IfCase);
     let or_cs = expandable_primitive(&mut stores, "or", ExpandablePrimitive::Or);
     let list = stores.intern_token_list(&[
-        Token::Cs(ifcase),
+        Token::Cs(ifcase.symbol()),
         char_token('0'),
         char_token('z'),
-        Token::Cs(or_cs),
+        Token::Cs(or_cs.symbol()),
         char_token('o'),
-        Token::Cs(else_cs),
+        Token::Cs(else_cs.symbol()),
         char_token('e'),
-        Token::Cs(fi),
-        Token::Cs(ifcase),
+        Token::Cs(fi.symbol()),
+        Token::Cs(ifcase.symbol()),
         char_token('-'),
         char_token('1'),
         char_token('z'),
-        Token::Cs(or_cs),
+        Token::Cs(or_cs.symbol()),
         char_token('o'),
-        Token::Cs(else_cs),
+        Token::Cs(else_cs.symbol()),
         char_token('e'),
-        Token::Cs(fi),
+        Token::Cs(fi.symbol()),
     ]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
@@ -2439,7 +2478,7 @@ fn else_or_fi_report_extra_without_open_conditional() {
     ] {
         let mut stores = Universe::new();
         let control = expandable_primitive(&mut stores, name, primitive);
-        let list = stores.intern_token_list(&[Token::Cs(control)]);
+        let list = stores.intern_token_list(&[Token::Cs(control.symbol())]);
         let mut input = InputStack::new(MemoryInput::new(""));
         input.push_token_list(list, TokenListReplayKind::Inserted);
 
@@ -2454,7 +2493,7 @@ fn else_or_fi_report_extra_without_open_conditional() {
 fn skipped_conditional_reports_incomplete_if_at_eof() {
     let mut stores = Universe::new();
     let (_, iffalse, _, _) = conditional_primitives(&mut stores);
-    let list = stores.intern_token_list(&[Token::Cs(iffalse), char_token('x')]);
+    let list = stores.intern_token_list(&[Token::Cs(iffalse.symbol()), char_token('x')]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
@@ -2473,11 +2512,11 @@ fn skipped_conditional_closes_and_replays_outer_macro_token() {
     let body = stores.intern_token_list(&[char_token('x')]);
     stores.set_macro_meaning(outer, MacroMeaning::new(MeaningFlags::OUTER, params, body));
     let list = stores.intern_token_list(&[
-        Token::Cs(iffalse),
-        Token::Cs(outer),
-        Token::Cs(else_cs),
+        Token::Cs(iffalse.symbol()),
+        Token::Cs(outer.symbol()),
+        Token::Cs(else_cs.symbol()),
         char_token('t'),
-        Token::Cs(fi),
+        Token::Cs(fi.symbol()),
     ]);
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
@@ -2615,7 +2654,7 @@ fn expandable_primitive(
 ) -> Symbol {
     let symbol = stores.intern(name);
     stores.set_meaning(symbol, Meaning::ExpandablePrimitive(primitive));
-    symbol
+    symbol.symbol()
 }
 
 fn csname_primitives(stores: &mut Universe) -> (Symbol, Symbol) {

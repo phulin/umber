@@ -370,7 +370,7 @@ fn token_list_builder_finishes_through_stores_boundary() {
     let mut stores = Stores::new();
     let symbol = stores.intern("macro");
     let mut builder = stores.token_list_builder();
-    builder.push(crate::token::Token::Cs(symbol));
+    builder.push(crate::token::Token::Cs(symbol.symbol()));
     builder.push(crate::token::Token::param(1));
 
     let id = stores.finish_token_list(&mut builder);
@@ -379,7 +379,7 @@ fn token_list_builder_finishes_through_stores_boundary() {
     assert_eq!(
         stores.tokens(id),
         &[
-            crate::token::Token::Cs(symbol),
+            crate::token::Token::Cs(symbol.symbol()),
             crate::token::Token::param(1)
         ]
     );
@@ -394,7 +394,7 @@ fn provenance_records_and_lists_round_trip_through_stores_boundary() {
     let mut stores = Stores::new();
     let symbol = stores.intern("m");
     let params = stores.intern_token_list(&[]);
-    let body = stores.intern_token_list(&[Token::Cs(symbol)]);
+    let body = stores.intern_token_list(&[Token::Cs(symbol.symbol())]);
     let definition = stores.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, params, body));
     let source = stores.source_origin(SourceId::new(3), 40, 5, 2);
     let macro_origin =
@@ -483,7 +483,7 @@ fn macro_meaning_round_trips_through_stores_boundary() {
         ch: '#',
         cat: Catcode::Parameter,
     }]);
-    let body = stores.intern_token_list(&[Token::param(1), Token::Cs(symbol)]);
+    let body = stores.intern_token_list(&[Token::param(1), Token::Cs(symbol.symbol())]);
     let macro_meaning = MacroMeaning::new(
         MeaningFlags::LONG | MeaningFlags::OUTER | MeaningFlags::PROTECTED,
         params,
@@ -505,8 +505,8 @@ fn separately_created_identical_macro_bodies_share_token_list_identity() {
     let mut stores = Stores::new();
     let a = stores.intern("a");
     let b = stores.intern("b");
-    let first_body = stores.intern_token_list(&[Token::param(1), Token::Cs(a)]);
-    let second_body = stores.intern_token_list(&[Token::param(1), Token::Cs(a)]);
+    let first_body = stores.intern_token_list(&[Token::param(1), Token::Cs(a.symbol())]);
+    let second_body = stores.intern_token_list(&[Token::param(1), Token::Cs(a.symbol())]);
     let params = stores.intern_token_list(&[]);
 
     assert_eq!(first_body, second_body);
@@ -531,7 +531,7 @@ fn identical_macro_definitions_get_distinct_definition_identity() {
     let mut stores = Stores::new();
     let symbol = stores.intern("same");
     let params = stores.intern_token_list(&[]);
-    let body = stores.intern_token_list(&[Token::Cs(symbol)]);
+    let body = stores.intern_token_list(&[Token::Cs(symbol.symbol())]);
     let macro_meaning = MacroMeaning::new(MeaningFlags::PROTECTED, params, body);
 
     let first = stores.intern_macro(macro_meaning);
@@ -550,7 +550,7 @@ fn identical_macro_definitions_keep_distinct_provenance() {
     let mut stores = Stores::new();
     let symbol = stores.intern("same");
     let params = stores.intern_token_list(&[]);
-    let body = stores.intern_token_list(&[Token::Cs(symbol)]);
+    let body = stores.intern_token_list(&[Token::Cs(symbol.symbol())]);
     let macro_meaning = MacroMeaning::new(MeaningFlags::PROTECTED, params, body);
     let first_origin = stores.source_origin(SourceId::new(1), 10, 2, 3);
     let second_origin = stores.source_origin(SourceId::new(2), 20, 4, 5);
@@ -619,7 +619,7 @@ fn rollback_restores_macro_store_as_part_of_snapshot_tuple() {
     let stale = stores.intern_macro(MacroMeaning::new(MeaningFlags::OUTER, params, stale_body));
 
     stores.rollback(&snapshot);
-    let reused_body = stores.intern_token_list(&[Token::Cs(symbol)]);
+    let reused_body = stores.intern_token_list(&[Token::Cs(symbol.symbol())]);
     let reused = stores.intern_macro(MacroMeaning::new(
         MeaningFlags::PROTECTED,
         params,

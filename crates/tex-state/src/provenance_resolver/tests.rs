@@ -40,7 +40,7 @@ fn resolver_renders_bounded_live_macro_trace() {
     let invocation_origin = stores.source_origin(crate::SourceId::new(0), 18, 1, 18);
     let parameter_text = stores.intern_token_list(&[]);
     let endgroup = stores.intern("endgroup");
-    let replacement_text = stores.intern_token_list(&[Token::Cs(endgroup)]);
+    let replacement_text = stores.intern_token_list(&[Token::Cs(endgroup.symbol())]);
     let definition = stores.intern_macro(MacroMeaning::new(
         MeaningFlags::from_bits(0),
         parameter_text,

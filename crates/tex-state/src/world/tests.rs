@@ -352,7 +352,7 @@ fn deferred_write_record_keeps_unexpanded_token_list_id() {
     let mut universe = Universe::new();
     let escape = universe.intern("the");
     let tokens = universe.intern_token_list(&[
-        Token::Cs(escape),
+        Token::Cs(escape.symbol()),
         Token::Char {
             ch: 'x',
             cat: Catcode::Letter,

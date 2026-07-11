@@ -533,7 +533,7 @@ fn expanded_command_recovery_keeps_replay_frontier_origin() {
     );
     let nobreak = stores.intern("nobreak");
     let params = stores.intern_token_list(&[]);
-    let body = stores.intern_token_list(&[Token::Cs(penalty)]);
+    let body = stores.intern_token_list(&[Token::Cs(penalty.symbol())]);
     let definition_origin = stores.source_origin(tex_state::SourceId::new(7), 10, 2, 1);
     let body_origin = stores.source_origin(tex_state::SourceId::new(7), 21, 2, 12);
     let body_origins = stores.allocate_origin_list(&[body_origin]);
@@ -570,7 +570,7 @@ fn expanded_command_recovery_keeps_replay_frontier_origin() {
         .next_traced_token(&mut stores)
         .expect("replay should succeed")
         .expect("rejected command should remain at the replay frontier");
-    assert_eq!(replayed.token(), Some(Token::Cs(penalty)));
+    assert_eq!(replayed.token(), Some(Token::Cs(penalty.symbol())));
     assert_eq!(replayed.origin(), body_origin);
 
     verify_shadow(&stores);

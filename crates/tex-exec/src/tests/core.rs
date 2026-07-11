@@ -82,7 +82,7 @@ fn dispatch_relax_continues_without_state_mutation() {
     assert_eq!(
         dispatch_delivered_token(
             &mut ModeNest::new(),
-            TracedTokenWord::pack(Token::Cs(relax), OriginId::UNKNOWN),
+            TracedTokenWord::pack(Token::Cs(relax.symbol()), OriginId::UNKNOWN),
             &mut input,
             &mut stores,
             &mut hooks
@@ -253,7 +253,7 @@ fn dispatch_undefined_control_sequence_reports_and_continues() {
 
     let action = dispatch_delivered_token(
         &mut ModeNest::new(),
-        TracedTokenWord::pack(Token::Cs(undefined), origin),
+        TracedTokenWord::pack(Token::Cs(undefined.symbol()), origin),
         &mut input,
         &mut stores,
         &mut hooks,
@@ -326,7 +326,7 @@ fn extra_endcsname_delivery_reports_and_continues() {
 
     let action = dispatch_delivered_token(
         &mut ModeNest::new(),
-        TracedTokenWord::pack(Token::Cs(endcsname), origin),
+        TracedTokenWord::pack(Token::Cs(endcsname.symbol()), origin),
         &mut input,
         &mut stores,
         &mut hooks,
@@ -348,7 +348,7 @@ fn illegal_prefix_replays_scanned_token_with_its_origin() {
 
     let action = dispatch_delivered_token(
         &mut ModeNest::new(),
-        TracedTokenWord::pack(Token::Cs(global), prefix_origin),
+        TracedTokenWord::pack(Token::Cs(global.symbol()), prefix_origin),
         &mut input,
         &mut stores,
         &mut hooks,
@@ -493,7 +493,7 @@ fn edef_omits_noexpand_command_and_freezes_the_output() {
     let a = stores.intern("a");
     let b = stores.intern("b");
     stores.set_meaning(b, Meaning::Relax);
-    let toks_body = stores.intern_token_list(&[Token::Cs(b)]);
+    let toks_body = stores.intern_token_list(&[Token::Cs(b.symbol())]);
     stores.set_toks(0, toks_body);
     let mut input = InputStack::new(MemoryInput::new("\\edef\\e{\\noexpand\\a\\the\\toks0}"));
 
@@ -505,7 +505,7 @@ fn edef_omits_noexpand_command_and_freezes_the_output() {
 
     assert_eq!(
         stores.tokens(meaning.replacement_text()),
-        &[Token::Cs(a), Token::Cs(b)]
+        &[Token::Cs(a.symbol()), Token::Cs(b.symbol())]
     );
 }
 
@@ -694,7 +694,7 @@ fn futurelet_assigns_second_token_meaning_and_preserves_order() {
 
     dispatch_delivered_token(
         &mut ModeNest::new(),
-        TracedTokenWord::pack(Token::Cs(futurelet), OriginId::UNKNOWN),
+        TracedTokenWord::pack(Token::Cs(futurelet.symbol()), OriginId::UNKNOWN),
         &mut input,
         &mut stores,
         &mut hooks,
@@ -711,7 +711,7 @@ fn futurelet_assigns_second_token_meaning_and_preserves_order() {
     );
     assert_eq!(
         input.next_token(&mut stores).expect("first replayed"),
-        Some(Token::Cs(stores.symbol("first").expect("first")))
+        Some(Token::Cs(stores.symbol("first").expect("first").symbol()))
     );
     assert_eq!(
         input.next_token(&mut stores).expect("second replayed"),
@@ -786,7 +786,7 @@ fn futurelet_accepts_active_character_target() {
     dispatch_delivered_token(
         &mut ModeNest::new(),
         TracedTokenWord::pack(
-            Token::Cs(stores.symbol("futurelet").expect("futurelet")),
+            Token::Cs(stores.symbol("futurelet").expect("futurelet").symbol()),
             OriginId::UNKNOWN,
         ),
         &mut input,
@@ -1486,8 +1486,8 @@ fn everypar_replays_through_input_stack_and_mutates_state() {
     let global = stores.intern("global");
     let count = stores.intern("count");
     let everypar = stores.intern_token_list(&[
-        Token::Cs(global),
-        Token::Cs(count),
+        Token::Cs(global.symbol()),
+        Token::Cs(count.symbol()),
         Token::Char {
             ch: '0',
             cat: Catcode::Other,

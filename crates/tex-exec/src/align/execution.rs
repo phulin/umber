@@ -570,7 +570,7 @@ where
                 let cr = stores.symbol("cr").ok_or(ExecError::MissingToken {
                     context: "alignment recovery cr",
                 })?;
-                let cr = TracedTokenWord::pack(Token::Cs(cr), token.origin());
+                let cr = TracedTokenWord::pack(Token::Cs(cr.symbol()), token.origin());
                 push_traced_tokens(input, stores, [token]);
                 input.reset_alignment_cell_to_base_depth();
                 assert!(input.intercept_alignment_token(
@@ -586,7 +586,7 @@ where
             let cr = stores.symbol("cr").ok_or(ExecError::MissingToken {
                 context: "alignment recovery cr",
             })?;
-            let cr = TracedTokenWord::pack(Token::Cs(cr), token.origin());
+            let cr = TracedTokenWord::pack(Token::Cs(cr.symbol()), token.origin());
             push_traced_tokens(input, stores, [token]);
             input.reset_alignment_cell_to_base_depth();
             assert!(input.intercept_alignment_token(

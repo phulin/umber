@@ -310,7 +310,7 @@ where
     ) {
         return Err(ExecError::UnimplementedTypesetting {
             mode: nest.current_mode(),
-            token: Token::Cs(stores.intern("vadjust")),
+            token: Token::Cs(stores.intern("vadjust").symbol()),
             origin: OriginId::UNKNOWN,
             operation: "\\vadjust",
         });

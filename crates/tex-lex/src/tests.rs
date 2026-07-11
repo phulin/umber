@@ -483,7 +483,7 @@ fn superscript_notation_reprocesses_a_generated_superscript_character() {
 
     assert_eq!(
         tokens[0],
-        Token::Cs(stores.symbol("box").expect("control word"))
+        Token::Cs(stores.symbol("box").expect("control word").symbol())
     );
     assert_eq!(tokens[1], char_token('1', Catcode::Other));
     assert_eq!(tokens[2], char_token('0', Catcode::Other));
@@ -1461,7 +1461,7 @@ fn char_token(ch: char, cat: Catcode) -> Token {
 }
 
 fn cs_token(stores: &mut impl ExpansionState, name: &str) -> Token {
-    Token::Cs(stores.intern(name))
+    Token::Cs(stores.intern(name).symbol())
 }
 
 fn assert_source_origin(

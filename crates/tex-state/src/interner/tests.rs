@@ -1,8 +1,15 @@
 use super::{ControlSequenceKind, Interner, InternerError, InternerMark, SYMBOL_CAPACITY};
-use crate::interner::Symbol;
+use crate::interner::{Symbol, SymbolId};
 use proptest::prelude::*;
 
 fn intern(interner: &mut Interner, name: &str) -> Symbol {
+    interner
+        .intern(name)
+        .expect("test interner should not reach symbol capacity")
+        .symbol()
+}
+
+fn intern_id(interner: &mut Interner, name: &str) -> SymbolId {
     interner
         .intern(name)
         .expect("test interner should not reach symbol capacity")
@@ -36,11 +43,11 @@ fn active_character_and_same_spelling_named_sequence_are_distinct() {
     let mut interner = Interner::new();
 
     let named = intern(&mut interner, "~");
-    let active = interner.intern_active('~').expect("active symbol");
+    let active = interner.intern_active('~').expect("active symbol").symbol();
 
     assert_ne!(named, active);
-    assert_eq!(interner.get("~"), Some(named));
-    assert_eq!(interner.get_active('~'), Some(active));
+    assert_eq!(interner.get("~").map(SymbolId::symbol), Some(named));
+    assert_eq!(interner.get_active('~').map(SymbolId::symbol), Some(active));
     assert_eq!(interner.resolve(named), "~");
     assert_eq!(interner.resolve(active), "~");
     assert_eq!(interner.kind(named), ControlSequenceKind::Named);
@@ -52,13 +59,16 @@ fn rollback_rebuild_preserves_control_sequence_namespace() {
     let mut interner = Interner::new();
     let named = intern(&mut interner, "~");
     let mark = interner.watermark();
-    let discarded_active = interner.intern_active('~').expect("active symbol");
+    let discarded_active = interner.intern_active('~').expect("active symbol").symbol();
 
     interner.truncate_to(mark);
-    assert_eq!(interner.get("~"), Some(named));
+    assert_eq!(interner.get("~").map(SymbolId::symbol), Some(named));
     assert_eq!(interner.get_active('~'), None);
 
-    let active = interner.intern_active('~').expect("reintern active symbol");
+    let active = interner
+        .intern_active('~')
+        .expect("reintern active symbol")
+        .symbol();
     assert_eq!(active.raw(), discarded_active.raw());
     assert_ne!(active, named);
 }
@@ -69,16 +79,18 @@ fn truncate_then_reintern_reuses_dense_symbol_id() {
 
     let kept = intern(&mut interner, "kept");
     let mark = interner.watermark();
-    let truncated = intern(&mut interner, "temporary");
+    let truncated = intern_id(&mut interner, "temporary");
     assert_eq!(truncated.raw(), 1);
 
     interner.truncate_to(mark);
     assert_eq!(interner.len(), 1);
     assert_eq!(interner.resolve(kept), "kept");
 
-    let reinserted = intern(&mut interner, "temporary");
+    let reinserted = intern_id(&mut interner, "temporary");
     assert_eq!(reinserted.raw(), truncated.raw());
-    assert_eq!(interner.resolve(reinserted), "temporary");
+    assert_ne!(reinserted, truncated);
+    assert!(!interner.contains_id(truncated));
+    assert_eq!(interner.resolve_id(reinserted), "temporary");
 }
 
 #[test]
@@ -86,11 +98,24 @@ fn truncate_then_reintern_reuses_dense_symbol_id() {
 fn stale_symbol_panics_after_truncation() {
     let mut interner = Interner::new();
     let mark = interner.watermark();
-    let stale = intern(&mut interner, "rolled-back");
+    let stale = intern_id(&mut interner, "rolled-back");
 
     interner.truncate_to(mark);
 
-    let _ = interner.resolve(stale);
+    let _ = interner.resolve_id(stale);
+}
+
+#[test]
+fn fork_preserves_inherited_symbol_ids_and_separates_new_allocations() {
+    let mut parent = Interner::new();
+    let inherited = intern_id(&mut parent, "inherited");
+    let mut child = parent.clone();
+    assert_eq!(child.resolve_id(inherited), "inherited");
+    let parent_only = intern_id(&mut parent, "parent");
+    let child_only = intern_id(&mut child, "child");
+    assert_eq!(parent_only.raw(), child_only.raw());
+    assert!(!child.contains_id(parent_only));
+    assert!(!parent.contains_id(child_only));
 }
 
 #[test]

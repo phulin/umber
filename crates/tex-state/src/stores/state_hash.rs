@@ -170,7 +170,7 @@ impl Stores {
     }
 
     pub(crate) fn hash_token_list_semantic(&self, id: TokenListId, hasher: &mut StateHasher) {
-        self.assert_live_token_list(id);
+        let id = self.resolve_stored_token_list(id);
         let tokens = self.tokens.get(id);
         assert!(
             tokens.len() <= TOKEN_LIST_MAX_ITEMS,
@@ -460,10 +460,10 @@ impl Stores {
                 hash_catcode(cat, hasher);
             }
             Token::Cs(symbol) => {
-                self.assert_live_symbol(symbol);
+                let symbol = self.resolve_stored_symbol(symbol);
                 hasher.tag(1);
-                hash_control_sequence_kind(self.interner.kind(symbol), hasher);
-                hasher.str(self.interner.resolve(symbol));
+                hash_control_sequence_kind(self.interner.kind_id(symbol), hasher);
+                hasher.str(self.interner.resolve_id(symbol));
             }
             Token::Param(slot) => {
                 hasher.tag(2);
@@ -475,7 +475,7 @@ impl Stores {
     }
 
     fn hash_glue(&self, id: GlueId, hasher: &mut StateHasher) {
-        self.assert_live_glue(id);
+        let id = self.resolve_stored_glue(id);
         let GlueSpec {
             width,
             stretch,
@@ -957,7 +957,7 @@ impl Stores {
     }
 
     fn hash_font(&self, font: FontId, hasher: &mut StateHasher) {
-        self.hash_font_fields(font, hasher);
+        self.hash_font_fields(self.resolve_stored_font(font), hasher);
     }
 
     fn hash_font_fields(&self, font: FontId, hasher: &mut StateHasher) {
@@ -977,8 +977,8 @@ impl Stores {
         match identifier {
             Some(symbol) => {
                 hasher.bool(true);
-                hash_control_sequence_kind(self.interner.kind(symbol), hasher);
-                hasher.str(self.interner.resolve(symbol));
+                hash_control_sequence_kind(self.interner.kind_id(symbol), hasher);
+                hasher.str(self.interner.resolve_id(symbol));
             }
             None => hasher.bool(false),
         }
@@ -991,8 +991,8 @@ impl Stores {
         let identifier = self.fonts.identifier(font).map(|symbol| {
             self.assert_live_symbol(symbol);
             (
-                self.interner.kind(symbol),
-                self.interner.resolve(symbol).to_owned(),
+                self.interner.kind_id(symbol),
+                self.interner.resolve_id(symbol).to_owned(),
             )
         });
         let font = self.fonts.get(font);
@@ -1015,11 +1015,10 @@ impl Stores {
         if symbol == 0 {
             hasher.bool(false);
         } else {
-            let symbol = Symbol::new((symbol - 1) as u32);
-            self.assert_live_symbol(symbol);
+            let symbol = self.resolve_stored_symbol(Symbol::new((symbol - 1) as u32));
             hasher.bool(true);
-            hash_control_sequence_kind(self.interner.kind(symbol), hasher);
-            hasher.str(self.interner.resolve(symbol));
+            hash_control_sequence_kind(self.interner.kind_id(symbol), hasher);
+            hasher.str(self.interner.resolve_id(symbol));
         }
     }
 

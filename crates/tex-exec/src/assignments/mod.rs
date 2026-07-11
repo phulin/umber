@@ -348,7 +348,7 @@ fn head_for_vmode<S>(command: TracedTokenWord, input: &mut InputStack<S>, stores
 where
     S: InputSource,
 {
-    let par = Token::Cs(stores.intern("par"));
+    let par = Token::Cs(stores.intern("par").symbol());
     let origin = stores.inserted_origin(InsertedOriginKind::Paragraph, par, command.origin());
     push_traced_tokens(input, stores, [TracedTokenWord::pack(par, origin), command]);
 }

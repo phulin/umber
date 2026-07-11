@@ -269,7 +269,13 @@ impl StoreFormat {
                 return Err(StoreFormatError::Invalid("non-canonical font order"));
             }
             if let Some(symbol) = identifier {
-                stores.fonts.set_identifier(id, Symbol::new(symbol));
+                stores.fonts.set_identifier(
+                    id,
+                    stores
+                        .interner
+                        .resolve_stored(Symbol::new(symbol))
+                        .ok_or(StoreFormatError::Invalid("font identifier symbol"))?,
+                );
             }
         }
         let mut node_ids = std::collections::BTreeMap::new();
@@ -606,7 +612,7 @@ impl FormatFont {
             right_boundary_char: font.metrics().right_boundary_char(),
             left_boundary_program: font.metrics().left_boundary_program(),
             extensible_recipes: font.metrics().extensible_recipes().to_vec(),
-            identifier: fonts.identifier(id).map(Symbol::raw),
+            identifier: fonts.identifier(id).map(crate::interner::SymbolId::raw),
         }
     }
 

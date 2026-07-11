@@ -327,7 +327,7 @@ where
         let _interrupt = level.list_mut().take_display_interrupt().ok_or(
             ExecError::UnimplementedTypesetting {
                 mode: Mode::DisplayMath,
-                token: Token::Cs(stores.intern("display")),
+                token: Token::Cs(stores.intern("display").symbol()),
                 origin: OriginId::UNKNOWN,
                 operation: "display interrupt state",
             },
@@ -403,7 +403,7 @@ where
     let _interrupt = display_level.list_mut().take_display_interrupt().ok_or(
         ExecError::UnimplementedTypesetting {
             mode: Mode::DisplayMath,
-            token: Token::Cs(stores.intern("display")),
+            token: Token::Cs(stores.intern("display").symbol()),
             origin: OriginId::UNKNOWN,
             operation: "display interrupt state",
         },
@@ -842,7 +842,7 @@ where
             .take_display_interrupt()
             .ok_or(ExecError::UnimplementedTypesetting {
                 mode: Mode::DisplayMath,
-                token: Token::Cs(stores.intern("display")),
+                token: Token::Cs(stores.intern("display").symbol()),
                 origin: OriginId::UNKNOWN,
                 operation: "display interrupt state",
             })?;

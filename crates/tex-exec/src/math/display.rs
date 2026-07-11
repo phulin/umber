@@ -31,11 +31,15 @@ pub(super) fn start_eq_no(
     if nest.current_mode() != Mode::DisplayMath {
         return Err(ExecError::UnimplementedTypesetting {
             mode: nest.current_mode(),
-            token: Token::Cs(stores.intern(if primitive == UnexpandablePrimitive::EqNo {
-                "eqno"
-            } else {
-                "leqno"
-            })),
+            token: Token::Cs(
+                stores
+                    .intern(if primitive == UnexpandablePrimitive::EqNo {
+                        "eqno"
+                    } else {
+                        "leqno"
+                    })
+                    .symbol(),
+            ),
             origin: OriginId::UNKNOWN,
             operation: "equation number",
         });

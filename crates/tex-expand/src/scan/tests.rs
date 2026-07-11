@@ -8,7 +8,8 @@ use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 fn scan(input: &str) -> (Universe, Vec<Token>, Vec<Token>) {
     let mut stores = Universe::new();
     let mut input = InputStack::new(MemoryInput::new(input));
-    let context = TracedTokenWord::pack(Token::Cs(stores.intern("def")), OriginId::UNKNOWN);
+    let context =
+        TracedTokenWord::pack(Token::Cs(stores.intern("def").symbol()), OriginId::UNKNOWN);
     let scanned = scan_toks(&mut input, &mut stores, MeaningFlags::EMPTY, context)
         .expect("scan should succeed");
     let params = stores.tokens(scanned.parameter_text()).to_vec();
@@ -53,14 +54,15 @@ fn forbidden_outer_macro_closes_replacement_and_is_replayed() {
         tex_state::macro_store::MacroMeaning::new(MeaningFlags::OUTER, empty, empty),
     );
     let mut input = InputStack::new(MemoryInput::new("{\\outermacro trailing}"));
-    let context = TracedTokenWord::pack(Token::Cs(stores.intern("def")), OriginId::UNKNOWN);
+    let context =
+        TracedTokenWord::pack(Token::Cs(stores.intern("def").symbol()), OriginId::UNKNOWN);
 
     let scanned = scan_toks(&mut input, &mut stores, MeaningFlags::EMPTY, context)
         .expect("outer token inserts a synthetic closing brace");
     assert!(stores.tokens(scanned.replacement_text()).is_empty());
     assert_eq!(
         input.next_token(&mut stores).expect("read replayed outer"),
-        Some(Token::Cs(outer))
+        Some(Token::Cs(outer.symbol()))
     );
 }
 
@@ -68,7 +70,8 @@ fn forbidden_outer_macro_closes_replacement_and_is_replayed() {
 fn freezes_parameter_and_replacement_origin_lists_from_source_tokens() {
     let mut stores = Universe::new();
     let mut input = InputStack::new(MemoryInput::new("#1{#1x}"));
-    let context = TracedTokenWord::pack(Token::Cs(stores.intern("def")), OriginId::UNKNOWN);
+    let context =
+        TracedTokenWord::pack(Token::Cs(stores.intern("def").symbol()), OriginId::UNKNOWN);
 
     let scanned = scan_toks(&mut input, &mut stores, MeaningFlags::EMPTY, context)
         .expect("scan should succeed");
@@ -105,7 +108,8 @@ fn out_of_order_parameter_inserts_expected_and_replays_wrong_digit() {
     let mut stores = Universe::new();
     let mut input = InputStack::new(MemoryInput::new("#2{}"));
 
-    let context = TracedTokenWord::pack(Token::Cs(stores.intern("def")), OriginId::UNKNOWN);
+    let context =
+        TracedTokenWord::pack(Token::Cs(stores.intern("def").symbol()), OriginId::UNKNOWN);
     let scanned = scan_toks(&mut input, &mut stores, MeaningFlags::EMPTY, context)
         .expect("scan should recover an out-of-order parameter");
 

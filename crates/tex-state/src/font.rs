@@ -2,7 +2,7 @@
 
 use crate::identity::{IdentityAllocator, IdentityMark};
 use crate::ids::FontId;
-use crate::interner::Symbol;
+use crate::interner::SymbolId;
 use crate::scaled::Scaled;
 use crate::world::ContentHash;
 use std::collections::BTreeMap;
@@ -41,7 +41,7 @@ struct FontKey {
 #[derive(Debug)]
 pub(crate) struct FontStore {
     fonts: Vec<LoadedFont>,
-    identifiers: Vec<Option<Symbol>>,
+    identifiers: Vec<Option<SymbolId>>,
     identifier_writes: Vec<FontId>,
     by_key: BTreeMap<FontKey, FontId>,
     identities: IdentityAllocator,
@@ -101,7 +101,7 @@ impl FontStore {
         id
     }
 
-    pub(crate) fn set_identifier(&mut self, id: FontId, symbol: Symbol) {
+    pub(crate) fn set_identifier(&mut self, id: FontId, symbol: SymbolId) {
         assert!(
             self.contains(id),
             "font id is not live in this Universe timeline"
@@ -117,7 +117,7 @@ impl FontStore {
     }
 
     #[must_use]
-    pub(crate) fn identifier(&self, id: FontId) -> Option<Symbol> {
+    pub(crate) fn identifier(&self, id: FontId) -> Option<SymbolId> {
         assert!(
             self.contains(id),
             "font id is not live in this Universe timeline"

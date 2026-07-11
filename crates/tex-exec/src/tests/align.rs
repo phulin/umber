@@ -312,7 +312,7 @@ fn halign_in_unrestricted_horizontal_mode_finishes_paragraph_first() {
 fn halign_head_for_vmode_replay_preserves_command_origin() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
-    let halign = Token::Cs(stores.intern("halign"));
+    let halign = Token::Cs(stores.intern("halign").symbol());
     let command_origin = stores.synthetic_origin(tex_state::provenance::SyntheticOriginKind::Test);
     let command = TracedTokenWord::pack(halign, command_origin);
     let mut input = InputStack::new(MemoryInput::new(""));
@@ -344,7 +344,7 @@ fn halign_head_for_vmode_replay_preserves_command_origin() {
 
     assert_eq!(
         tex_expand::semantic_token(inserted),
-        Token::Cs(stores.intern("par"))
+        Token::Cs(stores.intern("par").symbol())
     );
     let tex_state::provenance::OriginRecord::Inserted(inserted_origin) =
         stores.origin(inserted.origin())
@@ -363,7 +363,7 @@ fn halign_head_for_vmode_replay_preserves_command_origin() {
 fn hrule_head_for_vmode_defers_rule_until_after_paragraph_dispatch() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
-    let hrule = Token::Cs(stores.intern("hrule"));
+    let hrule = Token::Cs(stores.intern("hrule").symbol());
     let command_origin = stores.synthetic_origin(tex_state::provenance::SyntheticOriginKind::Test);
     let command = TracedTokenWord::pack(hrule, command_origin);
     let mut input = InputStack::new(MemoryInput::new(""));
@@ -388,7 +388,7 @@ fn hrule_head_for_vmode_defers_rule_until_after_paragraph_dispatch() {
     .expect("inserted paragraph token");
     assert_eq!(
         tex_expand::semantic_token(inserted),
-        Token::Cs(stores.intern("par"))
+        Token::Cs(stores.intern("par").symbol())
     );
 
     let replayed = tex_expand::get_x_token_with_recorder_and_hooks(
@@ -407,7 +407,7 @@ fn hrule_head_for_vmode_defers_rule_until_after_paragraph_dispatch() {
 fn halign_in_restricted_horizontal_mode_retains_off_save_recovery() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
-    let halign = Token::Cs(stores.intern("halign"));
+    let halign = Token::Cs(stores.intern("halign").symbol());
     let command_origin = stores.synthetic_origin(tex_state::provenance::SyntheticOriginKind::Test);
     let command = TracedTokenWord::pack(halign, command_origin);
     let mut input = InputStack::new(MemoryInput::new(""));

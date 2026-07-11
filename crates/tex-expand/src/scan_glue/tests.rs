@@ -197,7 +197,7 @@ fn macro_expanding_to_penalty_recovers_zero_glue_and_replays_command() {
     );
     let nobreak = stores.intern("nobreak");
     let params = stores.intern_token_list(&[]);
-    let replacement = stores.intern_token_list(&[Token::Cs(penalty)]);
+    let replacement = stores.intern_token_list(&[Token::Cs(penalty.symbol())]);
     stores.set_macro_meaning(
         nobreak,
         MacroMeaning::new(MeaningFlags::EMPTY, params, replacement),
@@ -223,5 +223,5 @@ fn macro_expanding_to_penalty_recovers_zero_glue_and_replays_command() {
     let diagnostic_records = scanned.diagnostic_records().collect::<Vec<_>>();
     assert_eq!(diagnostic_records[0].1, replayed.origin());
     assert_eq!(diagnostic_records[1].1, replayed.origin());
-    assert_eq!(replayed.token(), Some(Token::Cs(penalty)));
+    assert_eq!(replayed.token(), Some(Token::Cs(penalty.symbol())));
 }

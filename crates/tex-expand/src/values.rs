@@ -131,7 +131,7 @@ where
                     .ok_or(ExpandError::UnsupportedTheTarget { context: token })?;
                 Ok(Dispatch::Push {
                     replay_kind: ExpansionReplayKind::TheOutput,
-                    token_list: stores.intern_token_list(&[Token::Cs(symbol)]),
+                    token_list: stores.intern_token_list(&[Token::Cs(symbol.symbol())]),
                     origin_list: crate::synthesized_origin_list(
                         stores,
                         1,
@@ -153,7 +153,7 @@ where
                 Ok(push_rendered_tokens(
                     stores,
                     ExpansionReplayKind::TheOutput,
-                    [Token::Cs(symbol)],
+                    [Token::Cs(symbol.symbol())],
                     cause_origin,
                 ))
             }

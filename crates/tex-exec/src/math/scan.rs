@@ -84,7 +84,7 @@ where
                 stores,
             )?)),
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char) => {
-                let context = TracedTokenWord::pack(Token::Cs(symbol), OriginId::UNKNOWN);
+                let context = TracedTokenWord::pack(Token::Cs(symbol.symbol()), OriginId::UNKNOWN);
                 let value = assignments::scan_i32(input, stores, hooks, context)?;
                 let ch =
                     u8::try_from(value)

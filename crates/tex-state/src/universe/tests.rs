@@ -36,7 +36,7 @@ fn traced_list_finish_reuses_semantics_but_preserves_each_origin_instance() {
             ch: '🦀',
             cat: Catcode::Other,
         },
-        Token::Cs(symbol),
+        Token::Cs(symbol.symbol()),
         Token::param(9),
         Token::frozen_end_template(),
         Token::frozen_endv(),
@@ -136,7 +136,7 @@ fn semantic_format_is_deterministic_validated_and_world_independent() {
     universe.set_meaning(name, Meaning::CountRegister(42));
     universe.set_count(42, 1234);
     let body = universe.intern_token_list(&[
-        Token::Cs(name),
+        Token::Cs(name.symbol()),
         Token::Char {
             ch: '!',
             cat: Catcode::Other,
@@ -841,7 +841,7 @@ fn snapshot_state_hash_ignores_content_intern_order() {
     first.set_meaning(first_zed, Meaning::Relax);
     let filler_tokens = first.intern_token_list(&[Token::param(1)]);
     let target_tokens = first.intern_token_list(&[
-        Token::Cs(alpha),
+        Token::Cs(alpha.symbol()),
         Token::Char {
             ch: 'x',
             cat: Catcode::Letter,
@@ -876,7 +876,7 @@ fn snapshot_state_hash_ignores_content_intern_order() {
     let macro_target = second.intern("macro_target");
     let alpha = second.intern("alpha");
     let target_tokens = second.intern_token_list(&[
-        Token::Cs(alpha),
+        Token::Cs(alpha.symbol()),
         Token::Char {
             ch: 'x',
             cat: Catcode::Letter,
@@ -1408,7 +1408,7 @@ fn checkpoint_hashes_for_program() -> Vec<u64> {
     hashes.push(universe.snapshot().state_hash());
 
     let symbol = universe.intern("foo");
-    let tokens = universe.intern_token_list(&[Token::Cs(symbol)]);
+    let tokens = universe.intern_token_list(&[Token::Cs(symbol.symbol())]);
     universe.set_toks(2, tokens);
     universe
         .world_mut()
