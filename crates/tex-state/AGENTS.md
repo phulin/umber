@@ -29,6 +29,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/glue/tests.rs`: Unit tests for glue interning, canonical zero glue, rollback, and hash-index rebuilds.
 - `src/hyphenation.rs`: Hyphenation pattern trie and exception table implementing Liang-style position lookup.
 - `src/hyphenation/tests.rs`: Unit tests for hyphenation patterns, exceptions, bounds, and overlapping matches.
+- `src/identity.rs`: Shared generation-tagged runtime identity allocator for rollback-truncated stores.
+- `src/identity/tests.rs`: Property and boundary tests for rollback, fork, exhaustion, and foreign-handle rejection.
 - `src/ids.rs`: Opaque ids for token lists, origin lists, macros, glue, fonts, snapshots, survivor roots, and node-list spans.
 - `src/ids/tests.rs`: Unit tests for opaque id raw values and node/origin-list span metadata.
 - `src/input.rs`: Snapshot-ready lexer/input stack summaries, macro argument slots, source ids, and replay frame metadata.

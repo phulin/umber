@@ -1202,6 +1202,14 @@ to native code that plays by the rules.
    expansion traces → stomach vs. `\showlists` → pages vs. DVI bytes.
    Each pipeline stage gets a differential harness against the reference
    *before* the next stage builds on it (mirrors `core_state.md` §11.5).
+7. **Live identity is generation tagged, serialized identity is semantic.**
+   Every rollback-truncated store uses the state layer's common
+   `(namespace, generation, slot)` allocator and O(1) tag validation. A
+   rollback generation never rewinds or wraps, and forked timelines share only
+   inherited handles. Durable formats and committed artifacts never serialize
+   these runtime capabilities: they encode validated DTO-local references or
+   content identities and mint fresh handles only while reconstructing the
+   aggregate live state.
 
 ## 14. Build order
 
