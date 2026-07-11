@@ -367,7 +367,11 @@ cells[i] = new
 - The store owns one append-only `OriginRecord` arena and one append-only
   packed `OriginId` arena addressed by `OriginListId` spans. It is deliberately
   per-instance and not hash-consed: identical origin records or lists may have
-  different ids, and rollback only truncates arenas to the snapshot mark.
+  different ids. `OriginListId` is a generation-tagged runtime identity.
+  Packed arena `OriginId` values remain 32-bit token-side keys, but those keys
+  are process-unique and never reused; a rollback removes their O(1) lookup
+  entries while truncating records, so neither rollback nor a sibling fork can
+  make a stale packed origin resolve to replacement diagnostic content.
 - Origin-list builders are finished through the aggregate `Universe`/`Stores`
   API in parallel with token-list builders. Token-list replay frames carry a
   `TokenListId` plus an `OriginListId`; when the origin span is present its
@@ -442,10 +446,11 @@ cells[i] = new
   source frame uses it to encode in-range direct positions without repeating
   a source-map lookup; the capability exposes neither raw positions nor raw
   origin encodings, and wide fallback still goes through aggregate validation.
-- Store snapshots add only region/backing lengths and the next logical
-  position. Aggregate rollback truncates these with provenance while `World`
-  restores its input-record watermark, so reused `SourceId`, `InputRecordId`,
-  backing id, and logical position values cannot observe discarded content.
+- Store snapshots add region/backing lengths and an O(1) region-identity mark.
+  Aggregate rollback truncates these with provenance while `World` restores
+  its input-record watermark. Logical `SourcePos` ranges are never reused,
+  including across sibling forks, so reused `SourceId`, `InputRecordId`, or
+  backing slots cannot make a stale direct origin observe discarded content.
   Resolver line starts are derived lazily from stable immutable backing; no
   mutable cache keyed by reusable ids is retained. Source-map identity and
   diagnostic bytes are excluded from semantic hashing.

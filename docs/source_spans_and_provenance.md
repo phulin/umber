@@ -135,10 +135,10 @@ source id, while `InputSummary` separately stores the next-source-id
 high-water mark so resumed input cannot reuse a still-live id.
 
 Regions are append-only within a timeline. A source-map watermark joins the
-aggregate store snapshot, and rollback truncates regions and restores the next
-global position. Reusing discarded positions after rollback is safe for the
-same reason that reusing discarded arena ids is safe: values from the discarded
-timeline are no longer live. Registration uses checked `u64` arithmetic. If a
+aggregate store snapshot, and rollback truncates regions plus their allocation
+identity tags. Logical positions are process-unique and are not rewound or
+reused after rollback; fork descendants therefore cannot reinterpret one
+another's direct-origin payloads. Registration uses checked `u64` arithmetic. If a
 region and its anchor cannot be represented, that source remains executable
 but its new source origins degrade to `OriginId::UNKNOWN`.
 
@@ -391,7 +391,9 @@ An aggregate snapshot records:
 
 Rollback restores these together with the World input-record watermark as one
 aggregate tuple. Direct positions in retained regions stay live. Direct
-positions in discarded regions fail liveness checks. Arena records,
+positions in discarded regions fail liveness checks and are never reassigned.
+Packed arena-origin keys are likewise never reassigned; rollback removes their
+lookup entries. Arena records,
 generated backings, and origin-list entries follow the existing truncation
 policy. A derived cache that survives rollback must be keyed by stable content
 identity, so reuse of `SourceId`, `InputRecordId`, or logical positions cannot

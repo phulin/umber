@@ -461,7 +461,7 @@ fn world_and_source_map_rollback_reuse_ids_and_positions_atomically() {
             SourceDescriptor::world(new.record(), new.bytes().len() as u64),
         )
         .expect("source-map integration operation succeeds");
-    assert_eq!(new_start, old_start);
+    assert_ne!(new_start, old_start);
     assert_eq!(
         universe.source_backing_bytes(
             universe

@@ -208,7 +208,7 @@ fn source_origin_direct_boundary_crossing_falls_back_to_one_span_arena() {
     ));
     assert!(matches!(
         first_wide.decode(),
-        crate::token::OriginEncoding::Arena(0)
+        crate::token::OriginEncoding::Arena(_)
     ));
     assert!(matches!(
         stores.origin(first_wide),
@@ -259,7 +259,7 @@ fn oversized_and_cumulative_sources_use_wide_fallback_without_narrowing_position
     let fallback = cumulative.source_token_origin(SourceId::new(1), 0, 1);
     assert!(matches!(
         fallback.decode(),
-        crate::token::OriginEncoding::Arena(0)
+        crate::token::OriginEncoding::Arena(_)
     ));
 }
 
@@ -466,8 +466,10 @@ fn rollback_restores_provenance_as_part_of_snapshot_tuple() {
     let reused = stores.synthetic_origin(SyntheticOriginKind::Format);
     let reused_list = stores.allocate_origin_list(&[kept, reused]);
 
-    assert_eq!(reused.raw(), stale.raw());
+    assert_ne!(reused.raw(), stale.raw());
+    assert_eq!(stores.origin_if_live(stale), None);
     assert_eq!(reused_list.raw(), stale_list.raw());
+    assert_ne!(reused_list, stale_list);
     assert_eq!(
         stores.origin(reused),
         OriginRecord::Synthetic(SyntheticOrigin::new(SyntheticOriginKind::Format))
