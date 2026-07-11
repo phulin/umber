@@ -855,6 +855,7 @@ fn mid_alignment_snapshot_rollback_restores_summary_and_unset_rows() {
         state.start_row();
         state.start_cell(1, 2);
         state.increment_brace_depth();
+        state.set_suppress_redundant_cr(true);
     }
     stores.set_input_summary(input_summary.clone());
     let snapshot = stores.snapshot();
@@ -882,6 +883,7 @@ fn mid_alignment_snapshot_rollback_restores_summary_and_unset_rows() {
     assert_eq!(restored_state.current_col(), 1);
     assert_eq!(restored_state.current_span(), 2);
     assert_eq!(restored_state.brace_depth(), 1);
+    assert!(restored_state.suppress_redundant_cr());
     let [Node::Unset(row)] = restored.current_list().nodes() else {
         panic!(
             "expected a partial unset alignment row, got {:?}",
@@ -1713,6 +1715,7 @@ fn trip_conditional_preamble_recovery_stops_before_following_input() {
     tex_expand::install_expandable_primitives(&mut stores);
     let checkpoint = stores.snapshot();
     let source = r#"
+        \setbox0=\hbox{}\copy0
         \everycr{\noalign{\penalty97}}
         \halign\relax{\span\iffalse}\fi\cr#&\ifnum0=`{\fi\cr\cr}
         \global\count7=777
@@ -1724,6 +1727,15 @@ fn trip_conditional_preamble_recovery_stops_before_following_input() {
         .expect("malformed conditional preamble should recover");
 
     assert_eq!(stores.count(7), 777, "following input must execute");
+    assert_eq!(
+        stores
+            .current_page_nodes()
+            .iter()
+            .filter(|node| matches!(node, Node::Penalty(97)))
+            .count(),
+        2,
+        "TeX runs everycr before and around the recovered rows"
+    );
     assert!(stats.delivered_tokens < 1_000);
     let first_hash = stores.snapshot().state_hash();
 
