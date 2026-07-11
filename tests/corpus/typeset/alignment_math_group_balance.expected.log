@@ -1,10 +1,14 @@
+! Math formula deleted: Insufficient extension fonts.
+Sorry, but I can't typeset math unless \textfont 3
+and \scriptfont 3 and \scriptscriptfont 3 have all
+the \fontdimen values needed in math extension fonts.
+
 > \box0=
 \vbox(0.0+0.0)x0.0
 .\hbox(0.0+0.0)x0.0
 ..\glue(\tabskip) 0.0
 ..\hbox(0.0+0.0)x0.0
 ...\mathon
-...\hbox(0.0+0.0)x0.0
 ...\mathoff
 ..\glue(\tabskip) 0.0
 
