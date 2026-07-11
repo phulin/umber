@@ -23,6 +23,13 @@ Run the deterministic allocation and latency gate with:
 scripts/check-snapshot-budgets.sh
 ```
 
+During a staged persistent-state migration, select one strict workload without
+masking still-open sibling rows:
+
+```bash
+scripts/check-snapshot-budgets.sh --workload=unicode_code_tables
+```
+
 For an informational report that does not exit unsuccessfully on a budget
 violation, omit `--enforce` and invoke the binary directly:
 
@@ -65,6 +72,14 @@ the migration baseline. Input, page, mode, stream, and hyphenation rows expose
 known payload-linear captures owned by the persistent-root epic; the strict gate
 is expected to remain red for those rows until their representation issues land.
 Do not relax the budgets to make an owned-payload representation pass.
+
+Unicode code-table updates have an additional post-snapshot gate. After a
+large sparse workload shares its root with a snapshot, one write to a new page
+may retain at most 8 KiB. The adopted 17-by-256 persistent radix retains 2,488
+requested bytes in this observation: one bounded root/chunk/page path. The old
+flat root required copying all 4,352 page handles (at least 34,816 bytes for
+the pointer array alone) before cloning the touched page. Fresh roots now
+materialize zero Unicode pages, enforced by state-layer structural tests.
 
 The gate intentionally keeps retained snapshots alive for one observation, so
 capacity reuse or immediate drop cannot hide retained growth. It reports the

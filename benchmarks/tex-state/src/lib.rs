@@ -10,6 +10,7 @@ use tex_state::world::{PrintSink, StreamSlot};
 use tex_state::{Snapshot, SourceId, Universe};
 
 pub const RETAINED_BYTES_PER_CAPTURE_BUDGET: u64 = 32 * 1024;
+pub const DETACHED_CODE_TABLE_WRITE_BUDGET: u64 = 8 * 1024;
 pub const LATENCY_SCALE_BUDGET: u128 = 4;
 pub const LATENCY_NOISE_ALLOWANCE_NS: u128 = 25_000;
 pub const RETAINED_CAPTURES: usize = 32;
@@ -111,6 +112,13 @@ impl Workload {
             Self::Universe { universe, .. } => CapturedState::Universe(universe.snapshot()),
             Self::Mode { nest, .. } => CapturedState::Mode(nest.summary()),
         }
+    }
+
+    pub fn set_unicode_catcode(&mut self, ch: char, value: Catcode) {
+        let Self::Universe { universe, .. } = self else {
+            panic!("Unicode code-table mutation requires a Universe workload");
+        };
+        universe.set_catcode(ch, value);
     }
 }
 
