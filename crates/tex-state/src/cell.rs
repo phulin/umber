@@ -1,7 +1,7 @@
 //! Packed environment cell identifiers.
 
-const BANK_SHIFT: u32 = 27;
-const GLOBAL_SHIFT: u32 = 26;
+const BANK_SHIFT: u32 = 31;
+const GLOBAL_SHIFT: u32 = 30;
 const INDEX_MASK: u32 = (1 << GLOBAL_SHIFT) - 1;
 
 /// The bank tag encoded in a [`CellId`].
@@ -52,45 +52,61 @@ impl BankTag {
     }
 }
 
-/// A packed environment cell id: `bank:5 | global:1 | index:26`.
+/// A packed environment cell id: `bank:5 | global:1 | index:30`.
+///
+/// The 30-bit index matches the complete compact [`crate::interner::Symbol`]
+/// domain. The key uses 36 bits of a `u64`; widening from `u32` does not grow
+/// journal undo records because their following `u64` words already imposed
+/// eight-byte alignment.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct CellId(u32);
+pub struct CellId(u64);
 
 impl CellId {
     #[allow(dead_code)]
     pub(crate) const fn new(bank: BankTag, index: u32) -> Self {
-        assert!(index <= INDEX_MASK, "cell index exceeds 26 bits");
-        Self(((bank as u32) << BANK_SHIFT) | index)
+        assert!(index <= INDEX_MASK, "cell index exceeds 30 bits");
+        Self(((bank as u64) << BANK_SHIFT) | index as u64)
     }
 
     #[allow(dead_code)]
     pub(crate) const fn new_global(bank: BankTag, index: u32) -> Self {
-        assert!(index <= INDEX_MASK, "cell index exceeds 26 bits");
-        Self(((bank as u32) << BANK_SHIFT) | (1 << GLOBAL_SHIFT) | index)
+        assert!(index <= INDEX_MASK, "cell index exceeds 30 bits");
+        Self(((bank as u64) << BANK_SHIFT) | (1_u64 << GLOBAL_SHIFT) | index as u64)
+    }
+
+    /// Decodes a detached raw cell key, rejecting reserved bank tags and bits.
+    #[must_use]
+    pub(crate) const fn from_raw(raw: u64) -> Option<Self> {
+        let bank = raw >> BANK_SHIFT;
+        if bank <= BankTag::MathFamilyFont as u64 {
+            Some(Self(raw))
+        } else {
+            None
+        }
     }
 
     /// Returns the raw packed cell id.
     #[must_use]
-    pub const fn raw(self) -> u32 {
+    pub const fn raw(self) -> u64 {
         self.0
     }
 
     /// Returns the encoded bank tag.
     #[must_use]
     pub const fn bank(self) -> BankTag {
-        BankTag::from_bits(self.0 >> BANK_SHIFT)
+        BankTag::from_bits((self.0 >> BANK_SHIFT) as u32)
     }
 
     /// Returns whether this cell id marks a global assignment journal record.
     #[must_use]
     pub const fn is_global(self) -> bool {
-        (self.0 & (1 << GLOBAL_SHIFT)) != 0
+        (self.0 & (1_u64 << GLOBAL_SHIFT)) != 0
     }
 
     /// Returns the encoded cell index.
     #[must_use]
     pub const fn index(self) -> u32 {
-        self.0 & INDEX_MASK
+        (self.0 as u32) & INDEX_MASK
     }
 }
 
