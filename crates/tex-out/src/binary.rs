@@ -19,6 +19,7 @@ pub enum ParseError {
     InvalidUtf8,
     LengthOverflow,
     InvalidTag { kind: &'static str, tag: u8 },
+    InvalidGlueSetRatio { numerator: i32, denominator: i32 },
 }
 
 impl fmt::Display for ParseError {
@@ -35,6 +36,13 @@ impl fmt::Display for ParseError {
             Self::InvalidUtf8 => f.write_str("page artifact contains invalid UTF-8"),
             Self::LengthOverflow => f.write_str("page artifact length exceeds this platform"),
             Self::InvalidTag { kind, tag } => write!(f, "invalid {kind} tag {tag}"),
+            Self::InvalidGlueSetRatio {
+                numerator,
+                denominator,
+            } => write!(
+                f,
+                "invalid glue-set ratio {numerator}/{denominator} in page artifact"
+            ),
         }
     }
 }
@@ -626,7 +634,15 @@ impl Reader<'_> {
         let height = self.scaled()?;
         let depth = self.scaled()?;
         let shift = self.scaled()?;
-        let glue_set = GlueSetRatio::from_ratio_parts(self.i32()?, self.i32()?);
+        let numerator = self.i32()?;
+        let denominator = self.i32()?;
+        let glue_set =
+            GlueSetRatio::try_from_ratio_parts(numerator, denominator).map_err(|_| {
+                ParseError::InvalidGlueSetRatio {
+                    numerator,
+                    denominator,
+                }
+            })?;
         let glue_sign = parse_glue_sign(self.u8()?)?;
         let glue_order = parse_glue_order(self.u8()?)?;
         let children = self.node_list()?;
