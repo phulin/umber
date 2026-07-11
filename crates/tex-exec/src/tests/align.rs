@@ -1733,8 +1733,8 @@ fn trip_conditional_preamble_recovery_stops_before_following_input() {
             .iter()
             .filter(|node| matches!(node, Node::Penalty(97)))
             .count(),
-        2,
-        "TeX runs everycr before and around the recovered rows"
+        3,
+        "TeX runs everycr at preamble completion and after both recovered rows"
     );
     assert!(stats.delivered_tokens < 1_000);
     let first_hash = stores.snapshot().state_hash();

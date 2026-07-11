@@ -208,6 +208,7 @@ where
         // \cr immediately following that recovery is the redundant terminator
         // of the same malformed row, not the start of another empty row.
         if align_state(nest, align_level)?.suppress_redundant_cr() && is_cr(stores, semantic) {
+            align_state_mut(nest, align_level)?.set_suppress_redundant_cr(false);
             continue;
         }
         // align_peek ignores \crcr between rows, but a bare \cr starts and
