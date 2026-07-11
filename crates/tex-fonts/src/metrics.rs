@@ -3,6 +3,9 @@
 use std::path::PathBuf;
 use tex_arith::Scaled;
 
+/// TeX82 guarantees `fontdimen1` through `fontdimen7` for every loaded font.
+pub const MIN_TEX_FONT_PARAMETERS: usize = 7;
+
 /// Stable content identity for loaded font bytes.
 pub type FontContentHash = [u8; 32];
 
@@ -29,9 +32,13 @@ impl LoadedFont {
         checksum: u32,
         design_size: Scaled,
         size: Scaled,
-        parameters: Vec<Scaled>,
+        mut parameters: Vec<Scaled>,
         metrics: FontMetrics,
     ) -> Self {
+        parameters.resize(
+            MIN_TEX_FONT_PARAMETERS.max(parameters.len()),
+            Scaled::from_raw(0),
+        );
         Self {
             name: name.into(),
             path: path.into(),

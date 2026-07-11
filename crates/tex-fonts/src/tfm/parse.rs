@@ -1,6 +1,9 @@
 use tex_arith::{
     FontSizeSpec, Scaled, tfm_design_size_from_fix_word, tfm_fix_word_to_scaled, tfm_font_size,
+    tfm_slant_fix_word_to_scaled_ratio,
 };
+
+use crate::metrics::MIN_TEX_FONT_PARAMETERS;
 
 use super::error::ParseError;
 use super::types::{
@@ -593,7 +596,7 @@ fn require_recipe_piece(
 }
 
 fn parse_parameters(words: &[[u8; 4]], font_size: Scaled) -> Result<FontParameters, ParseError> {
-    let values = words
+    let mut values = words
         .iter()
         .enumerate()
         .map(|(index, &word)| {
@@ -603,7 +606,7 @@ fn parse_parameters(words: &[[u8; 4]], font_size: Scaled) -> Result<FontParamete
                 FontParameterKind::Dimension
             };
             let size = if index == 0 {
-                let value = slant_fix_word_to_scaled_ratio(word);
+                let value = tfm_slant_fix_word_to_scaled_ratio(word);
                 return Ok(FontParameter {
                     number: (index + 1) as u16,
                     value,
@@ -626,9 +629,17 @@ fn parse_parameters(words: &[[u8; 4]], font_size: Scaled) -> Result<FontParamete
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
+    while values.len() < MIN_TEX_FONT_PARAMETERS {
+        let index = values.len();
+        values.push(FontParameter {
+            number: (index + 1) as u16,
+            value: Scaled::from_raw(0),
+            kind: if index == 0 {
+                FontParameterKind::SlantRatio
+            } else {
+                FontParameterKind::Dimension
+            },
+        });
+    }
     Ok(FontParameters { values })
-}
-
-fn slant_fix_word_to_scaled_ratio(word: [u8; 4]) -> Scaled {
-    Scaled::from_raw(i32::from_be_bytes(word) / 16)
 }
