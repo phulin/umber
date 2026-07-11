@@ -360,6 +360,50 @@ fn halign_head_for_vmode_replay_preserves_command_origin() {
 }
 
 #[test]
+fn hrule_head_for_vmode_defers_rule_until_after_paragraph_dispatch() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let hrule = Token::Cs(stores.intern("hrule"));
+    let command_origin = stores.synthetic_origin(tex_state::provenance::SyntheticOriginKind::Test);
+    let command = TracedTokenWord::pack(hrule, command_origin);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    let mut nest = ModeNest::new();
+    nest.push(Mode::Horizontal);
+    let mut hooks = crate::executor::NoopExecHooks;
+
+    assert_eq!(
+        dispatch_delivered_token(&mut nest, command, &mut input, &mut stores, &mut hooks)
+            .expect("head_for_vmode dispatch"),
+        DispatchAction::Continue
+    );
+    assert!(stores.page_contributions().is_empty());
+
+    let inserted = tex_expand::get_x_token_with_recorder_and_hooks(
+        &mut input,
+        &mut stores,
+        &mut NoopRecorder,
+        &mut hooks,
+    )
+    .expect("inserted paragraph read")
+    .expect("inserted paragraph token");
+    assert_eq!(
+        tex_expand::semantic_token(inserted),
+        Token::Cs(stores.intern("par"))
+    );
+
+    let replayed = tex_expand::get_x_token_with_recorder_and_hooks(
+        &mut input,
+        &mut stores,
+        &mut NoopRecorder,
+        &mut hooks,
+    )
+    .expect("replayed hrule read")
+    .expect("replayed hrule token");
+    assert_eq!(tex_expand::semantic_token(replayed), hrule);
+    assert_eq!(replayed.origin(), command_origin);
+}
+
+#[test]
 fn halign_in_restricted_horizontal_mode_retains_off_save_recovery() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

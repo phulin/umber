@@ -805,6 +805,14 @@ where
             }
             UnexpandablePrimitive::HRule => {
                 reject_all_prefixes(prefixes)?;
+                if nest.current_mode() == crate::Mode::Horizontal {
+                    // TeX.web's head_for_vmode ends the paragraph as a
+                    // separate main-control step, then retries the rule. A
+                    // page break found while ending the paragraph must fire
+                    // before the rule is added to the contribution list.
+                    head_for_vmode(command.traced, input, stores);
+                    return Ok(CommandOutcome::continue_only());
+                }
                 execute_hrule(command.traced, nest, input, stores, hooks)?;
                 Ok(CommandOutcome::continue_only())
             }
