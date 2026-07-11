@@ -378,6 +378,25 @@ fn set_font_dimen_recovering(
             );
             Ok(())
         }
+        Err(tex_state::FontParameterError::NumberOutOfRange { number, maximum }) => {
+            stores.world_mut().write_text(
+                tex_state::PrintSink::TerminalAndLog,
+                &format!(
+                    "\n! Bad fontdimen number ({number}).\nThe largest representable fontdimen number is {maximum};\nI ignored this assignment.\n"
+                ),
+            );
+            Ok(())
+        }
+        Err(tex_state::FontParameterError::FontOutOfRange { font, maximum }) => {
+            stores.world_mut().write_text(
+                tex_state::PrintSink::TerminalAndLog,
+                &format!(
+                    "\n! Font id {} is outside the fontdimen cell range.\nThe largest representable font id is {maximum};\nI ignored this assignment.\n",
+                    font.raw()
+                ),
+            );
+            Ok(())
+        }
         Err(error) => Err(error.into()),
     }
 }

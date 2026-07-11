@@ -1105,7 +1105,13 @@ immutable tables, with mutable font state kept behind the state timeline.
   parameter values only seed those banks at load time. TFM parsing and the
   backend-neutral loaded-font boundary both enforce TeX82's guaranteed
   `\fontdimen1` through `\fontdimen7`, padding absent values with zero before
-  the snapshot-covered Env bank is initialized.
+  the snapshot-covered Env bank is initialized. The journal cell codec splits
+  its 30-bit index evenly between a 15-bit dense `FontId` and a 15-bit
+  zero-based parameter slot: font ids `0..=32767` and fontdimens `1..=32768`
+  are injective, with the final pair mapping to index `(1 << 30) - 1`.
+  Runtime loading and assignment preflight reject either field beyond that
+  domain before publishing a font or changing parameter-count state; invalid
+  reads use TeX's zero-valued dummy font-info behavior.
 - Later OpenType support should lower backend data behind the same boundary:
   glyph metrics can populate the immutable metric record, while complex
   shaping can replace the TFM pair-program implementation without exposing

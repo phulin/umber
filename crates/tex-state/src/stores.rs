@@ -164,6 +164,14 @@ pub enum PrepareMagDiagnostic {
 pub enum FontParameterError {
     /// TeX font parameter numbers start at 1.
     Zero,
+    /// The parameter number exceeds the injective fontdimen slot domain.
+    NumberOutOfRange { number: u16, maximum: u16 },
+    /// The dense font id exceeds the fontdimen key's font field.
+    FontOutOfRange { font: FontId, maximum: u32 },
+    /// A loaded immutable font has more parameters than the cell key can name.
+    ParameterCountOutOfRange { count: usize, maximum: u16 },
+    /// Loading another distinct font would exceed the fontdimen font field.
+    TooManyFonts { maximum: u32 },
     /// Only the most recently loaded font may grow its parameter table.
     CannotGrow {
         font: FontId,
@@ -906,29 +914,56 @@ impl Stores {
     }
 
     /// Interns a loaded immutable font and initializes its Env-side banks.
-    pub fn intern_font(&mut self, font: LoadedFont) -> FontId {
-        let parameter_count = u16::try_from(font.parameters().len())
-            .expect("loaded font has more than u16::MAX parameters");
+    pub fn try_intern_font(&mut self, font: LoadedFont) -> Result<FontId, FontParameterError> {
+        let parameter_len = font.parameters().len();
+        let parameter_count = u16::try_from(parameter_len)
+            .ok()
+            .filter(|&count| count <= crate::font::MAX_FONT_DIMEN)
+            .ok_or(FontParameterError::ParameterCountOutOfRange {
+                count: parameter_len,
+                maximum: crate::font::MAX_FONT_DIMEN,
+            })?;
         let parameters = font.parameters().to_vec();
-        let id = self.fonts.intern(font);
+        let id = self
+            .fonts
+            .intern(font)
+            .map_err(|_| FontParameterError::TooManyFonts {
+                maximum: crate::font::MAX_FONT_DIMEN_FONT_ID,
+            })?;
         if self.env.font_param_len(id) == 0 && id != NULL_FONT {
             self.initialize_font_banks(id, parameter_count, &parameters);
         }
         self.last_loaded_font = id;
-        id
+        Ok(id)
+    }
+
+    /// Interns a font for callers that construct bounded in-memory fonts.
+    /// Runtime loading should use [`Self::try_intern_font`] for recovery.
+    pub fn intern_font(&mut self, font: LoadedFont) -> FontId {
+        self.try_intern_font(font)
+            .expect("loaded font exceeds the fontdimen cell domain")
     }
 
     /// Interns a font and records the control sequence TeX uses for its
     /// identifier token (the `font_id_text` associated with the font).
+    pub fn try_intern_font_with_identifier(
+        &mut self,
+        font: LoadedFont,
+        symbol: impl SymbolReference,
+    ) -> Result<FontId, FontParameterError> {
+        let symbol = self.resolve_symbol_reference(symbol);
+        let id = self.try_intern_font(font)?;
+        self.fonts.set_identifier(id, symbol);
+        Ok(id)
+    }
+
     pub fn intern_font_with_identifier(
         &mut self,
         font: LoadedFont,
         symbol: impl SymbolReference,
     ) -> FontId {
-        let symbol = self.resolve_symbol_reference(symbol);
-        let id = self.intern_font(font);
-        self.fonts.set_identifier(id, symbol);
-        id
+        self.try_intern_font_with_identifier(font, symbol)
+            .expect("loaded font exceeds the fontdimen cell domain")
     }
 
     /// Reads a live immutable font record.
@@ -1095,11 +1130,11 @@ impl Stores {
         value: Scaled,
         global: bool,
     ) -> Result<(), FontParameterError> {
-        self.prepare_font_dimen_write(font, number, global)?;
+        let index = self.prepare_font_dimen_write(font, number, global)?;
         if global {
-            self.env.set_font_dimen_global(font, number, value);
+            self.env.set_font_dimen_global(index, value);
         } else {
-            self.env.set_font_dimen(font, number, value);
+            self.env.set_font_dimen(index, value);
         }
         Ok(())
     }
@@ -1138,7 +1173,9 @@ impl Stores {
         self.env.set_font_param_len_global(font, parameter_count);
         for (index, value) in parameters.iter().copied().enumerate() {
             let number = u16::try_from(index + 1).expect("font parameter index exceeds u16");
-            self.env.set_font_dimen_global(font, number, value);
+            let index = crate::env::font_dimen_index(font, number)
+                .expect("validated loaded font parameters fit the fontdimen key");
+            self.env.set_font_dimen_global(index, value);
         }
         self.env
             .set_font_hyphen_char_global(font, self.env.int_param(IntParam::DEFAULT_HYPHEN_CHAR));
@@ -1151,11 +1188,9 @@ impl Stores {
         font: FontId,
         number: u16,
         global: bool,
-    ) -> Result<(), FontParameterError> {
+    ) -> Result<u32, FontParameterError> {
         self.assert_live_font(font);
-        if number == 0 {
-            return Err(FontParameterError::Zero);
-        }
+        let index = crate::env::font_dimen_index(font, number)?;
         let current_len = self.env.font_param_len(font);
         if number > current_len {
             if font != self.last_loaded_font {
@@ -1172,7 +1207,7 @@ impl Stores {
                 self.env.set_font_param_len(font, number);
             }
         }
-        Ok(())
+        Ok(index)
     }
 
     /// Creates a fresh owned scratch node-list builder.

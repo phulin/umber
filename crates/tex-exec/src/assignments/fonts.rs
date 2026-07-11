@@ -62,7 +62,7 @@ where
         parameters,
         tfm.font_metrics(),
     );
-    let id = stores.intern_font_with_identifier(loaded, target);
+    let id = stores.try_intern_font_with_identifier(loaded, target)?;
     let meaning = Meaning::Font(id);
     if apply_globaldefs(prefixes.global, stores) {
         stores.set_meaning_global(target, meaning);
@@ -86,7 +86,7 @@ where
     match primitive {
         UnexpandablePrimitive::FontDimen => {
             let number = scan_i32(input, stores, hooks, context)?;
-            if !(1..=32_767).contains(&number) {
+            if !(1..=i32::from(u16::MAX)).contains(&number) {
                 return Err(ExecError::RegisterNumberOutOfRange(number));
             }
             let font = scan_font_selector(input, stores, hooks)?;
