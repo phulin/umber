@@ -8,7 +8,7 @@
 use crate::ids::{MacroDefinitionId, OriginListId};
 use crate::input::{SourceId, TokenListReplayKind};
 use crate::source_map::{SourceMapStats, SourceSpan};
-use crate::token::{OriginId, Token};
+use crate::token::{OriginId, Token, TracedTokenWord};
 use crate::world::InputRecordId;
 use std::mem;
 
@@ -236,12 +236,6 @@ impl OriginListBuilder {
     /// Clears the unfinished list without allocating a span.
     pub fn clear(&mut self) {
         self.buf.clear();
-    }
-
-    #[cfg(feature = "node-stats")]
-    #[must_use]
-    pub(crate) fn capacity(&self) -> usize {
-        self.buf.capacity()
     }
 
     #[must_use]
@@ -642,6 +636,28 @@ impl ProvenanceStore {
             return OriginListId::EMPTY;
         };
         self.origins.extend_from_slice(origins);
+        self.spans.push((start, len));
+        OriginListId::new(raw)
+    }
+
+    /// Allocates the origin projection of an already-validated traced slice.
+    pub(crate) fn allocate_traced_list(&mut self, traced: &[TracedTokenWord]) -> OriginListId {
+        if traced.is_empty() {
+            return OriginListId::EMPTY;
+        }
+        let (Some(start), Some(len), Some(raw)) = (
+            u32_len(self.origins.len()),
+            u32_len(traced.len()),
+            u32_index(self.spans.len()),
+        ) else {
+            return OriginListId::EMPTY;
+        };
+        let Some(_end) = start.checked_add(len) else {
+            return OriginListId::EMPTY;
+        };
+        self.origins.reserve(traced.len());
+        self.spans.reserve(1);
+        self.origins.extend(traced.iter().map(|word| word.origin()));
         self.spans.push((start, len));
         OriginListId::new(raw)
     }

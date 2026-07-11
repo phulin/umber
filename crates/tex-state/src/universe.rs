@@ -1287,26 +1287,7 @@ impl Universe {
     /// Freezes paired semantic tokens and diagnostic origins through the
     /// aggregate state boundary.
     pub fn finish_traced_token_list(&mut self, tokens: &[TracedTokenWord]) -> TracedTokenList {
-        let mut semantic = self.token_list_builder();
-        let mut origins = self.origin_list_builder();
-        semantic.reserve(tokens.len());
-        origins.reserve(tokens.len());
-        for &word in tokens {
-            let token = word
-                .token()
-                .expect("traced token list contains an invalid semantic token");
-            semantic.push(token);
-            origins.push(word.origin());
-        }
-        #[cfg(feature = "node-stats")]
-        crate::measurement::record_traced_list_finish(
-            tokens.len(),
-            semantic.capacity(),
-            origins.capacity(),
-        );
-        let token_list = self.finish_token_list(&mut semantic);
-        let origin_list = self.finish_origin_list(&mut origins);
-        TracedTokenList::new(token_list, origin_list)
+        self.stores.finish_traced_token_list(tokens)
     }
 
     #[must_use]

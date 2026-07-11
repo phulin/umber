@@ -1,7 +1,7 @@
 use super::{TokenListBuilder, TokenStore, TokenStoreMark};
 use crate::ids::TokenListId;
 use crate::interner::Symbol;
-use crate::token::{Catcode, Token};
+use crate::token::{Catcode, OriginId, Token, TracedTokenWord};
 use proptest::prelude::*;
 use std::collections::HashMap;
 
@@ -52,6 +52,37 @@ fn hash_consing_same_content_twice_returns_same_id() {
     let second = store.intern(&tokens);
 
     assert_eq!(first, second);
+}
+
+#[test]
+fn traced_projection_hashes_and_interns_like_owned_tokens() {
+    let mut store = TokenStore::new();
+    let tokens = [
+        Token::Char {
+            ch: '🦀',
+            cat: Catcode::Other,
+        },
+        Token::Cs(Symbol::new(9)),
+        Token::param(3),
+        Token::frozen_end_template(),
+        Token::frozen_endv(),
+    ];
+    let traced: Vec<_> = tokens
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(index, token)| TracedTokenWord::pack(token, OriginId::from_raw(index as u32)))
+        .collect();
+
+    assert_eq!(
+        store.content_hash(&tokens),
+        store
+            .hash_state
+            .hash_one(super::TracedTokenProjection(&traced))
+    );
+    let direct = store.intern_traced(&traced);
+    assert_eq!(store.get(direct), tokens);
+    assert_eq!(store.intern(&tokens), direct);
 }
 
 #[test]

@@ -17,6 +17,7 @@ use crate::glue::{GlueSpec, GlueStore, GlueStoreMark};
 use crate::hyphenation::{ExceptionSpec, HyphenationTable, PatternSpec};
 use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, OriginListId, TokenListId};
 use crate::input::SourceId;
+use crate::input::TracedTokenList;
 use crate::interner::{ControlSequenceKind, Interner, InternerError, InternerMark, Symbol};
 use crate::macro_store::{MacroDefinitionProvenance, MacroMeaning, MacroStore, MacroStoreMark};
 use crate::math::MathFontSize;
@@ -36,7 +37,7 @@ use crate::source_map::{
     SourcePos, SourceRegion, SourceSpan,
 };
 use crate::survivor::SurvivorArena;
-use crate::token::{Catcode, OriginId, Token};
+use crate::token::{Catcode, OriginId, Token, TracedTokenWord};
 use crate::token_store::{TokenListBuilder, TokenStore, TokenStoreMark};
 use std::hash::BuildHasher;
 #[cfg(any(test, feature = "testing", feature = "shadow"))]
@@ -553,6 +554,24 @@ impl Stores {
     /// Interns the current token-list builder value and clears it for reuse.
     pub fn finish_token_list(&mut self, builder: &mut TokenListBuilder) -> TokenListId {
         builder.finish(&mut self.tokens)
+    }
+
+    /// Freezes semantic tokens and per-instance origins directly from their
+    /// packed traced representation.
+    pub fn finish_traced_token_list(&mut self, traced: &[TracedTokenWord]) -> TracedTokenList {
+        for &word in traced {
+            let token = word
+                .token()
+                .expect("traced token list contains an invalid semantic token");
+            self.assert_live_token(token);
+            self.assert_live_origin(word.origin());
+        }
+
+        #[cfg(feature = "node-stats")]
+        crate::measurement::record_traced_list_finish(traced.len(), 0, 0);
+        let token_list = self.tokens.intern_traced(traced);
+        let origin_list = self.provenance.allocate_traced_list(traced);
+        TracedTokenList::new(token_list, origin_list)
     }
 
     /// Reads a live frozen token list.

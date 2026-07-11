@@ -26,6 +26,110 @@ fn universe_is_send() {
 }
 
 #[test]
+fn traced_list_finish_reuses_semantics_but_preserves_each_origin_instance() {
+    let mut universe = Universe::new();
+    let symbol = universe.intern("traced-list-cs");
+    let first_origin = universe.synthetic_origin(SyntheticOriginKind::Test);
+    let second_origin = universe.synthetic_origin(SyntheticOriginKind::Engine);
+    let tokens = [
+        Token::Char {
+            ch: '🦀',
+            cat: Catcode::Other,
+        },
+        Token::Cs(symbol),
+        Token::param(9),
+        Token::frozen_end_template(),
+        Token::frozen_endv(),
+    ];
+    let first: Vec<_> = tokens
+        .iter()
+        .copied()
+        .map(|token| TracedTokenWord::pack(token, first_origin))
+        .collect();
+    let second: Vec<_> = tokens
+        .iter()
+        .copied()
+        .map(|token| TracedTokenWord::pack(token, second_origin))
+        .collect();
+
+    let first_list = universe.finish_traced_token_list(&first);
+    let second_list = universe.finish_traced_token_list(&second);
+
+    assert_eq!(first_list.token_list(), second_list.token_list());
+    assert_ne!(first_list.origin_list(), second_list.origin_list());
+    assert_eq!(universe.tokens(first_list.token_list()), tokens);
+    assert_eq!(
+        universe.origin_list(first_list.origin_list()),
+        vec![first_origin; tokens.len()]
+    );
+    assert_eq!(
+        universe.origin_list(second_list.origin_list()),
+        vec![second_origin; tokens.len()]
+    );
+
+    let empty = universe.finish_traced_token_list(&[]);
+    assert_eq!(empty.token_list(), crate::ids::TokenListId::EMPTY);
+    assert_eq!(empty.origin_list(), crate::ids::OriginListId::EMPTY);
+}
+
+#[test]
+fn traced_list_finish_validates_every_word_before_publishing() {
+    let mut universe = Universe::new();
+    let valid = TracedTokenWord::pack(
+        Token::Char {
+            ch: 'v',
+            cat: Catcode::Letter,
+        },
+        OriginId::UNKNOWN,
+    );
+    let invalid = TracedTokenWord::from_raw(2_u64 << 62);
+
+    assert!(
+        catch_unwind(AssertUnwindSafe(|| {
+            universe.finish_traced_token_list(&[valid, invalid]);
+        }))
+        .is_err()
+    );
+
+    let finished = universe.finish_traced_token_list(&[valid]);
+    assert_eq!(finished.token_list().raw(), 1);
+    assert_eq!(finished.origin_list().raw(), 1);
+}
+
+#[test]
+fn traced_list_finish_rejects_rolled_back_origins_before_publishing() {
+    let mut universe = Universe::new();
+    let snapshot = universe.snapshot();
+    let stale = universe.synthetic_origin(SyntheticOriginKind::Test);
+    universe.rollback(&snapshot);
+    let traced = TracedTokenWord::pack(
+        Token::Char {
+            ch: 'x',
+            cat: Catcode::Letter,
+        },
+        stale,
+    );
+
+    assert!(
+        catch_unwind(AssertUnwindSafe(|| {
+            universe.finish_traced_token_list(&[traced]);
+        }))
+        .is_err()
+    );
+
+    let valid = TracedTokenWord::pack(
+        Token::Char {
+            ch: 'x',
+            cat: Catcode::Letter,
+        },
+        OriginId::UNKNOWN,
+    );
+    let finished = universe.finish_traced_token_list(&[valid]);
+    assert_eq!(finished.token_list().raw(), 1);
+    assert_eq!(finished.origin_list().raw(), 1);
+}
+
+#[test]
 fn semantic_format_is_deterministic_validated_and_world_independent() {
     let mut universe = Universe::with_world(World::memory());
     let name = universe.intern("answer");

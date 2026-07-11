@@ -4,14 +4,12 @@
 //! the aggregate `Universe` boundary.
 
 use crate::ids::TokenListId;
-use crate::token::Token;
+use crate::token::{Token, TracedTokenWord};
 use ahash::RandomState;
 use std::collections::HashMap;
 #[cfg(any(test, feature = "testing", feature = "shadow"))]
 use std::collections::hash_map::DefaultHasher;
-#[cfg(any(test, feature = "testing", feature = "shadow"))]
-use std::hash::Hash;
-use std::hash::{BuildHasherDefault, Hasher};
+use std::hash::{BuildHasherDefault, Hash, Hasher};
 
 type TokenIndex = HashMap<u64, Vec<TokenListId>, BuildHasherDefault<PrehashedU64Hasher>>;
 
@@ -85,12 +83,6 @@ impl TokenListBuilder {
     /// Clears the unfinished list without interning it.
     pub fn clear(&mut self) {
         self.buf.clear();
-    }
-
-    #[cfg(feature = "node-stats")]
-    #[must_use]
-    pub(crate) fn capacity(&self) -> usize {
-        self.buf.capacity()
     }
 
     /// Interns the current token list and clears the builder for reuse.
@@ -189,6 +181,65 @@ impl TokenStore {
         id
     }
 
+    /// Interns the semantic projection of an already-validated traced slice.
+    ///
+    /// The caller owns aggregate token/origin liveness validation. Keeping the
+    /// projection borrowed avoids materializing a second token vector on both
+    /// hash-cons hits and misses.
+    pub(crate) fn intern_traced(&mut self, traced: &[TracedTokenWord]) -> TokenListId {
+        #[cfg(feature = "node-stats")]
+        let capacity_before = self.arena.capacity();
+        if traced.is_empty() {
+            #[cfg(feature = "node-stats")]
+            crate::measurement::record_token_intern(0, true, 0);
+            return Self::empty_id();
+        }
+
+        if self.index_dirty {
+            self.rebuild_index();
+        }
+
+        let hash = self.hash_state.hash_one(TracedTokenProjection(traced));
+        if let Some(candidates) = self.index.get(&hash) {
+            for &id in candidates {
+                let candidate = self.get(id);
+                if candidate.len() == traced.len()
+                    && candidate
+                        .iter()
+                        .zip(traced)
+                        .all(|(&token, &word)| word.token() == Some(token))
+                {
+                    #[cfg(feature = "node-stats")]
+                    crate::measurement::record_token_intern(traced.len(), true, 0);
+                    return id;
+                }
+            }
+        }
+
+        let start = u32_len(self.arena.len(), "token arena exceeds u32 entries");
+        let len = u32_len(traced.len(), "token list exceeds u32 entries");
+        let id = TokenListId::new(u32_len(
+            self.spans.len(),
+            "token-list spans exceed u32 entries",
+        ));
+
+        self.arena.reserve(traced.len());
+        self.spans.reserve(1);
+        self.arena.extend(traced.iter().map(|word| {
+            word.token()
+                .expect("validated traced token became invalid during interning")
+        }));
+        self.spans.push((start, len));
+        self.index.entry(hash).or_default().push(id);
+        #[cfg(feature = "node-stats")]
+        crate::measurement::record_token_intern(
+            traced.len(),
+            false,
+            self.arena.capacity().saturating_sub(capacity_before) * core::mem::size_of::<Token>(),
+        );
+        id
+    }
+
     /// Reads a live frozen token list.
     #[must_use]
     pub(crate) fn get(&self, id: TokenListId) -> &[Token] {
@@ -265,6 +316,19 @@ impl TokenStore {
 
     fn content_hash(&self, tokens: &[Token]) -> u64 {
         self.hash_state.hash_one(tokens)
+    }
+}
+
+struct TracedTokenProjection<'a>(&'a [TracedTokenWord]);
+
+impl Hash for TracedTokenProjection<'_> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.len().hash(state);
+        for word in self.0 {
+            word.token()
+                .expect("traced token projection contains an invalid semantic token")
+                .hash(state);
+        }
     }
 }
 
