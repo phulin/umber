@@ -5,7 +5,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use refexec::RefTftopl;
+use refexec::{RefTex, RefTftopl, RunOpts};
+use tempfile::TempDir;
 use test_support::pl::{
     PlCharacter, PlExtensibleRecipe, PlFont, PlLigCommand, PlLigLabel, PlNumber,
 };
@@ -26,6 +27,7 @@ const VARIANTS: &[(&str, FontSizeSpec)] = &[
 
 pub fn run(repo_root: &Path) -> Result<()> {
     let tftopl = RefTftopl::locate()?;
+    let tex = RefTex::locate()?;
 
     match corpus_font_paths(&repo_root.join("third_party/fonts")) {
         Ok(font_paths) => {
@@ -41,7 +43,242 @@ pub fn run(repo_root: &Path) -> Result<()> {
         crosscheck_font(&tftopl, name, &edge_root.join(format!("{name}.tfm")))?;
     }
 
+    crosscheck_synthetic_validation(&tex, &tftopl)?;
+
     Ok(())
+}
+
+fn crosscheck_synthetic_validation(tex: &RefTex, tftopl: &RefTftopl) -> Result<()> {
+    let temp = TempDir::new().context("create synthetic TFM reference directory")?;
+    fs::write(
+        temp.path().join("probe.tex"),
+        "\\font\\f=synthetic \\relax\n\\ifx\\f\\nullfont\\message{TFM-REJECT}\\else\\message{TFM-ACCEPT}\\fi\n\\end\n",
+    )?;
+
+    for case in synthetic_validation_cases() {
+        let path = temp.path().join("synthetic.tfm");
+        fs::write(&path, &case.bytes)?;
+        let umber_accepts = TfmFont::parse(&case.bytes).is_ok();
+        let reference = tex.run_in_dir(temp.path(), Path::new("probe.tex"), &RunOpts::default())?;
+        let tex_accepts = reference.log.contains("TFM-ACCEPT");
+        if umber_accepts != case.accept || tex_accepts != case.accept {
+            bail!(
+                "synthetic TFM {} acceptance mismatch: expected {}, Umber {}, TeX {}\n{}",
+                case.name,
+                case.accept,
+                umber_accepts,
+                tex_accepts,
+                reference.log
+            );
+        }
+
+        // TFtoPL repairs several malformed references instead of rejecting the
+        // file, so TeX is the accept/reject oracle. Still run TFtoPL on every
+        // case, and require cleanly accepted files to produce usable PL.
+        let tftopl_result = tftopl.to_pl(&path);
+        if case.accept {
+            tftopl_result.with_context(|| format!("TFtoPL rejected accepted case {}", case.name))?;
+        }
+    }
+    Ok(())
+}
+
+struct SyntheticValidationCase {
+    name: &'static str,
+    bytes: Vec<u8>,
+    accept: bool,
+}
+
+fn synthetic_validation_cases() -> Vec<SyntheticValidationCase> {
+    let mut trailing = synthetic_tfm(SyntheticSections::minimal());
+    trailing.extend_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
+
+    let mut wide_count = synthetic_tfm(SyntheticSections::minimal());
+    wide_count[16..18].copy_from_slice(&0x8000_u16.to_be_bytes());
+
+    vec![
+        synthetic_case(
+            "missing-width-lig-tag",
+            SyntheticSections {
+                bc: b'A',
+                ec: b'B',
+                char_info: vec![[0, 0, 1, 0], [1, 0, 0, 0]],
+                lig_kerns: vec![[255, 0, 0, 0]],
+                ..SyntheticSections::minimal()
+            },
+            true,
+        ),
+        synthetic_case(
+            "missing-width-list-tag-and-absent-successor",
+            SyntheticSections {
+                bc: b'A',
+                ec: b'B',
+                char_info: vec![[1, 0, 2, b'B'], [0, 0, 0, 0]],
+                ..SyntheticSections::minimal()
+            },
+            true,
+        ),
+        synthetic_case(
+            "missing-width-ext-tag",
+            SyntheticSections {
+                bc: b'A',
+                ec: b'B',
+                char_info: vec![[0, 0, 3, 0], [1, 0, 0, 0]],
+                extensibles: vec![[0, 0, 0, b'B']],
+                ..SyntheticSections::minimal()
+            },
+            true,
+        ),
+        synthetic_case(
+            "next-larger-out-of-range",
+            SyntheticSections {
+                char_info: vec![[1, 0, 2, b'B']],
+                ..SyntheticSections::minimal()
+            },
+            false,
+        ),
+        synthetic_case(
+            "next-larger-cycle-through-missing-char",
+            SyntheticSections {
+                bc: b'A',
+                ec: b'B',
+                char_info: vec![[1, 0, 2, b'B'], [0, 0, 2, b'A']],
+                ..SyntheticSections::minimal()
+            },
+            false,
+        ),
+        synthetic_case(
+            "lig-match-out-of-range",
+            SyntheticSections {
+                bc: b'A',
+                ec: b'B',
+                char_info: vec![[1, 0, 1, 0], [1, 0, 0, 0]],
+                lig_kerns: vec![[128, b'C', 128, 0]],
+                kerns: vec![[0, 0, 0, 0]],
+                ..SyntheticSections::minimal()
+            },
+            false,
+        ),
+        synthetic_case(
+            "lig-replacement-out-of-range",
+            SyntheticSections {
+                bc: b'A',
+                ec: b'B',
+                char_info: vec![[1, 0, 1, 0], [1, 0, 0, 0]],
+                lig_kerns: vec![[128, b'B', 0, b'C']],
+                ..SyntheticSections::minimal()
+            },
+            false,
+        ),
+        synthetic_case(
+            "recipe-piece-in-range-but-missing",
+            SyntheticSections {
+                bc: b'A',
+                ec: b'B',
+                char_info: vec![[1, 0, 3, 0], [0, 0, 0, 0]],
+                extensibles: vec![[0, 0, 0, b'B']],
+                ..SyntheticSections::minimal()
+            },
+            false,
+        ),
+        SyntheticValidationCase {
+            name: "fifteen-bit-count",
+            bytes: wide_count,
+            accept: false,
+        },
+        SyntheticValidationCase {
+            name: "trailing-word",
+            bytes: trailing,
+            accept: true,
+        },
+    ]
+}
+
+fn synthetic_case(
+    name: &'static str,
+    sections: SyntheticSections,
+    accept: bool,
+) -> SyntheticValidationCase {
+    SyntheticValidationCase {
+        name,
+        bytes: synthetic_tfm(sections),
+        accept,
+    }
+}
+
+struct SyntheticSections {
+    bc: u8,
+    ec: u8,
+    char_info: Vec<[u8; 4]>,
+    lig_kerns: Vec<[u8; 4]>,
+    kerns: Vec<[u8; 4]>,
+    extensibles: Vec<[u8; 4]>,
+}
+
+impl SyntheticSections {
+    fn minimal() -> Self {
+        Self {
+            bc: b'A',
+            ec: b'A',
+            char_info: vec![[1, 0, 0, 0]],
+            lig_kerns: Vec::new(),
+            kerns: Vec::new(),
+            extensibles: Vec::new(),
+        }
+    }
+}
+
+fn synthetic_tfm(sections: SyntheticSections) -> Vec<u8> {
+    let lh = 2usize;
+    let nw = 2usize;
+    let nh = 1usize;
+    let nd = 1usize;
+    let ni = 1usize;
+    let lf = 6
+        + lh
+        + sections.char_info.len()
+        + nw
+        + nh
+        + nd
+        + ni
+        + sections.lig_kerns.len()
+        + sections.kerns.len()
+        + sections.extensibles.len();
+    let mut bytes = Vec::new();
+    for value in [
+        lf,
+        lh,
+        usize::from(sections.bc),
+        usize::from(sections.ec),
+        nw,
+        nh,
+        nd,
+        ni,
+        sections.lig_kerns.len(),
+        sections.kerns.len(),
+        sections.extensibles.len(),
+        0,
+    ] {
+        bytes.extend_from_slice(
+            &u16::try_from(value)
+                .expect("synthetic TFM count fits u16")
+                .to_be_bytes(),
+        );
+    }
+    for word in [[0, 0, 0, 0], [0, 0xa0, 0, 0]]
+        .into_iter()
+        .chain(sections.char_info)
+        .chain([[0, 0, 0, 0], [0, 8, 0, 0]])
+        .chain([[0, 0, 0, 0]])
+        .chain([[0, 0, 0, 0]])
+        .chain([[0, 0, 0, 0]])
+        .chain(sections.lig_kerns)
+        .chain(sections.kerns)
+        .chain(sections.extensibles)
+    {
+        bytes.extend_from_slice(&word);
+    }
+    bytes
 }
 
 fn crosscheck_font(tftopl: &RefTftopl, name: &str, path: &Path) -> Result<()> {

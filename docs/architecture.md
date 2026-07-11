@@ -1048,6 +1048,16 @@ immutable tables, with mutable font state kept behind the state timeline.
   compatibility; OpenType/TrueType via a
   vendored shaper for the modern path. All file access through `World`
   (fonts are inputs; cross-run memo sharing needs them pinned).
+  The TFM parser is a TeX82-compatible validation boundary: its size words use
+  `read_sixteen`'s 15-bit domain, section totals must equal `lf`, and complete
+  trailing words after `lf` are ignored. Declared `bc..ec` membership is kept
+  distinct from `char_exists` (a nonzero width index). Raw width-zero
+  `char_info` tags are therefore structurally validated; next-larger links use
+  range and cycle checks without requiring the target to exist, while
+  lig/kern match and replacement operands and extensible recipe pieces apply
+  TeX's stronger existence check (except the declared boundary character
+  match). Rust additionally bounds every table index, restart, skip, and
+  traversal before publishing the immutable metrics.
 - `tex-exec` applies TeX82's TFM filename rule (`.tfm` by default), then asks
   the driver hook to resolve the path through the narrow `InputReadState`
   capability. The CLI probes the principal input directory followed by the
