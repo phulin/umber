@@ -2,8 +2,9 @@ use crate::{
     ArithmeticError, DimensionError, FontSizeSpec, GLUE_SET_RATIO_SCALE, GlueSetRatio,
     PhysicalUnit, Scaled, TfmConversionError, XOverN, XnOverD, half, mult_and_add, nx_plus_y,
     round_decimal_fraction, saturating_add, saturating_mul, saturating_sub,
-    scale_true_dimension_parts, scaled_from_decimal_parts, tfm_design_size_from_fix_word,
-    tfm_fix_word_to_scaled, tfm_font_size, tfm_slant_fix_word_to_scaled_ratio, x_over_n, xn_over_d,
+    scale_true_dimension_parts, scaled_from_decimal_parts, text_accent_delta,
+    tfm_design_size_from_fix_word, tfm_fix_word_to_scaled, tfm_font_size,
+    tfm_slant_fix_word_to_scaled_ratio, x_over_n, xn_over_d,
 };
 
 #[test]
@@ -37,6 +38,55 @@ fn saturating_scaled_arithmetic_uses_widened_intermediates() {
     assert_eq!(
         saturating_add(Scaled::MAX_DIMEN, Scaled::from_raw(-1)),
         Scaled::from_raw(Scaled::MAX_DIMEN.raw() - 1)
+    );
+}
+
+#[test]
+fn text_accent_delta_matches_tex_rounding_for_signed_ties_and_products() {
+    let zero = Scaled::from_raw(0);
+    assert_eq!(
+        text_accent_delta(
+            Scaled::from_raw(10),
+            Scaled::from_raw(1),
+            zero,
+            zero,
+            zero,
+            zero,
+        ),
+        Scaled::from_raw(5)
+    );
+    assert_eq!(
+        text_accent_delta(
+            Scaled::from_raw(1),
+            Scaled::from_raw(10),
+            zero,
+            zero,
+            zero,
+            zero,
+        ),
+        Scaled::from_raw(-5)
+    );
+    assert_eq!(
+        text_accent_delta(
+            zero,
+            zero,
+            Scaled::from_raw(1),
+            Scaled::from_raw(Scaled::UNITY / 2),
+            zero,
+            zero,
+        ),
+        Scaled::from_raw(1)
+    );
+    assert_eq!(
+        text_accent_delta(
+            zero,
+            zero,
+            Scaled::from_raw(1),
+            Scaled::from_raw(-Scaled::UNITY / 2),
+            zero,
+            zero,
+        ),
+        Scaled::from_raw(-1)
     );
 }
 

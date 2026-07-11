@@ -679,7 +679,7 @@ where
     let accent_x_height = stores.font_parameter(accent_font, 5);
     let accent_slant = stores.font_parameter(accent_font, 1);
     let base_slant = stores.font_parameter(base_font, 1);
-    let delta = accent_delta(
+    let delta = tex_state::scaled::text_accent_delta(
         base_metrics.width,
         accent_metrics.width,
         base_metrics.height,
@@ -719,22 +719,6 @@ where
     });
     nest.current_list_mut().set_space_factor(1000);
     Ok(())
-}
-
-fn accent_delta(
-    base_width: Scaled,
-    accent_width: Scaled,
-    base_height: Scaled,
-    base_slant: Scaled,
-    accent_x_height: Scaled,
-    accent_slant: Scaled,
-) -> Scaled {
-    let base_slant = f64::from(base_slant.raw()) / f64::from(Scaled::UNITY);
-    let accent_slant = f64::from(accent_slant.raw()) / f64::from(Scaled::UNITY);
-    let delta = f64::from(base_width.raw() - accent_width.raw()) / 2.0
-        + f64::from(base_height.raw()) * base_slant
-        - f64::from(accent_x_height.raw()) * accent_slant;
-    Scaled::from_raw(delta.round() as i32)
 }
 
 fn scan_accent_base<S, R, H>(
