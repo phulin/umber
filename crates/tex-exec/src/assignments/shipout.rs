@@ -34,7 +34,7 @@ pub(super) fn execute_shipout<S, R, H>(
     stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
-) -> Result<ContentHash, ExecError>
+) -> Result<Option<ContentHash>, ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
@@ -48,10 +48,17 @@ pub(crate) fn shipout_node<R>(
     node: Node,
     stores: &mut Universe,
     recorder: &mut R,
-) -> Result<ContentHash, ExecError>
+) -> Result<Option<ContentHash>, ExecError>
 where
     R: ReadRecorder,
 {
+    if huge_shipout_box(&node, stores) {
+        stores.world_mut().write_text(
+            PrintSink::TerminalAndLog,
+            "\n! Huge page cannot be shipped out.\nThe page just created is more than 18 feet tall or\nmore than 18 feet wide, so I suspect something went wrong.\n",
+        );
+        return Ok(None);
+    }
     let boundary = stores.begin_shipout();
     let pending_effects = pending_page_effects(stores.world().effect_records());
     let counts = page_counts(stores);
@@ -88,7 +95,25 @@ where
     let effect_pos = stores.world().effect_pos();
     let hash = stores.commit_shipout(boundary, &bytes, effect_pos)?;
     stores.set_page_integer(PageInteger::DeadCycles, 0);
-    Ok(hash)
+    Ok(Some(hash))
+}
+
+fn huge_shipout_box(node: &Node, stores: &Universe) -> bool {
+    let (width, height, depth) = match node {
+        Node::HList(box_node) | Node::VList(box_node) => {
+            (box_node.width, box_node.height, box_node.depth)
+        }
+        _ => return false,
+    };
+    height > tex_state::scaled::Scaled::MAX_DIMEN
+        || depth > tex_state::scaled::Scaled::MAX_DIMEN
+        || height
+            .checked_add(depth)
+            .and_then(|value| value.checked_add(stores.dimen_param(DimenParam::V_OFFSET)))
+            .is_none_or(|value| value > tex_state::scaled::Scaled::MAX_DIMEN)
+        || width
+            .checked_add(stores.dimen_param(DimenParam::H_OFFSET))
+            .is_none_or(|value| value > tex_state::scaled::Scaled::MAX_DIMEN)
 }
 
 struct ShipoutLowerer<'a, R> {

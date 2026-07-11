@@ -933,8 +933,10 @@ where
             }
             UnexpandablePrimitive::Shipout => {
                 reject_all_prefixes(prefixes)?;
-                let hash = execute_shipout(command.traced, input, stores, recorder, hooks)?;
-                Ok(CommandOutcome::shipout(hash))
+                match execute_shipout(command.traced, input, stores, recorder, hooks)? {
+                    Some(hash) => Ok(CommandOutcome::shipout(hash)),
+                    None => Ok(CommandOutcome::continue_only()),
+                }
             }
             UnexpandablePrimitive::OpenIn
             | UnexpandablePrimitive::CloseIn

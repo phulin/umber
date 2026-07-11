@@ -608,6 +608,33 @@ fn shipout_artifact_captures_page_offsets() {
 }
 
 #[test]
+fn huge_shipout_is_diagnosed_without_committing_an_artifact() {
+    let mut stores = support::stores_with_fonts();
+    let before = stores.snapshot();
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\setbox0=\\vbox to8192pt{}\\shipout\\vbox{\\copy0\\box0}\\end",
+    ));
+
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("huge shipout should recover");
+
+    assert!(stats.shipped_artifacts.is_empty());
+    assert!(stores.world().artifact_commits().is_empty());
+    assert!(support::terminal_effect_text(&stores).contains("Huge page cannot be shipped out"));
+    let first_hash = stores.snapshot().state_hash();
+
+    stores.rollback(&before);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\setbox0=\\vbox to8192pt{}\\shipout\\vbox{\\copy0\\box0}\\end",
+    ));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("huge shipout replay should recover");
+    assert_eq!(stores.snapshot().state_hash(), first_hash);
+}
+
+#[test]
 fn shipout_reports_incompatible_magnification_diagnostic() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);

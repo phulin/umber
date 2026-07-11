@@ -974,6 +974,10 @@ Responsibility: accumulate the main vertical list, fire `\output`, commit.
   `tex-out` artifact, and commits it through `Universe::commit_shipout`, which
   stores the artifact bytes, flushes the committed effect prefix, releases
   shipout-local epoch nodes, and takes the next checkpoint as one boundary.
+  Before opening that commit boundary, shipout applies TeX's `max_dimen`
+  checks to box height, depth, height-plus-depth-plus-`\voffset`, and
+  width-plus-`\hoffset`; a huge page is diagnosed and discarded without an
+  artifact, effect commit, dead-cycle reset, or checkpoint.
   Deferred `\openout` and `\closeout` whatsits append the same World stream
   records as `\immediate` stream commands, while deferred `\write` appends the
   routed stream-write record after shipout-time expansion. The same lowering
