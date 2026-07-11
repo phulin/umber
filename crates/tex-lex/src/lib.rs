@@ -690,9 +690,9 @@ impl<S> InputStack<S> {
 
     #[must_use]
     pub fn alignment_cell_at_group_depth(&self, group_depth: u32) -> bool {
-        self.alignment_cells
-            .last()
-            .is_some_and(|cell| group_depth == cell.group_depth)
+        self.alignment_cells.last().is_some_and(|cell| {
+            cell.phase == AlignmentCellPhase::Body && group_depth == cell.group_depth
+        })
     }
 
     /// Suspends an outer cell while a nested alignment scans its preamble.

@@ -36,6 +36,69 @@ fn openin_read_defines_control_sequence_from_world_stream() {
 }
 
 #[test]
+fn read_consumes_invalid_category_characters_without_unwinding() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    stores.set_catcode('0', Catcode::Invalid);
+    stores
+        .world_mut()
+        .set_memory_file("stream.tex", b"a0b".to_vec())
+        .expect("seed stream");
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\openin1=stream.tex \\read1 to \\foo \\message{\\foo}\\end",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("read skips invalid-category input characters");
+
+    assert!(terminal_effect_text(&stores).contains("ab"));
+}
+
+#[test]
+fn read_closes_partial_group_and_stops_at_outer_macro() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    stores
+        .world_mut()
+        .set_memory_file("stream.tex", b"{a\\stop".to_vec())
+        .expect("seed stream");
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\outer\\def\\stop{}\\openin1=stream.tex \\read1 to \\foo",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("outer token aborts read recoverably");
+
+    let foo = stores.symbol("foo").expect("read target");
+    let meaning = stores.macro_meaning(foo).expect("read-defined macro");
+    assert_eq!(stores.tokens(meaning.replacement_text()).len(), 3);
+}
+
+#[test]
+fn read_loop_observes_eof_after_outer_aborted_final_line() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    stores
+        .world_mut()
+        .set_memory_file("tripos", b"\\uppercase{0[".to_vec())
+        .expect("seed stream");
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\openin0=tripos \\def\\loop{\\ifeof0\\let\\loop=\\relax\\else{\\global\\read0to\\a}\\fi\\loop}\\catcode`0=15\\catcode`[=1\\outer\\def\\uppercase{}\\loop\\count1=7",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("read loop reaches eof after final unterminated line");
+
+    assert_eq!(stores.count(1), 7);
+}
+
+#[test]
 fn read_consumes_additional_stream_lines_until_braces_balance() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);

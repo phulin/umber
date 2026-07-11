@@ -81,7 +81,7 @@ macro_rules! dispatch_match {
                 })
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::ExpandAfter) => {
-                expand_after(input, stores, recorder, hooks, call_context)?;
+                expand_after(input, stores, recorder, hooks, &mut expander, call_context)?;
                 Ok(Dispatch::Continue)
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::NoExpand) => {

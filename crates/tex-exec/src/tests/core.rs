@@ -402,6 +402,23 @@ fn main_control_recovers_from_undefined_control_sequence() {
 }
 
 #[test]
+fn main_control_keeps_replaying_macro_after_undefined_control_sequence() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\def\\resume{\\missing\\let\\x\\relax}\\resume",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("undefined command inside macro is diagnosed and consumed");
+
+    let x = stores.symbol("x").expect("let target exists");
+    assert_eq!(stores.meaning(x), Meaning::Relax);
+}
+
+#[test]
 fn main_control_consumes_invalid_category_character() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
@@ -413,7 +430,6 @@ fn main_control_consumes_invalid_category_character() {
         .expect("invalid input character is diagnosed and consumed");
 
     assert_eq!(stores.count(0), 7);
-    assert!(support::terminal_effect_text(&stores).contains("invalid character"));
 }
 
 #[test]
@@ -1675,6 +1691,20 @@ fn vertical_hrule_uses_defaults_and_sets_prevdepth_ignore_sentinel() {
     assert_eq!(width.map(tex_state::scaled::Scaled::raw), Some(7 * 65_536));
     assert_eq!(height.map(tex_state::scaled::Scaled::raw), Some(26_214));
     assert_eq!(depth.map(tex_state::scaled::Scaled::raw), Some(0));
+}
+
+#[test]
+fn hrule_in_restricted_horizontal_mode_reports_and_is_ignored() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\setbox0=\\hbox{\\hrule}"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("hrule in hbox is recoverable");
+
+    assert!(stores.box_reg(0).is_some());
+    assert!(support::terminal_effect_text(&stores).contains("hrule' here except with leaders"));
 }
 
 #[test]

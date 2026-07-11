@@ -339,7 +339,13 @@ where
     match nest.current_mode() {
         Mode::Vertical | Mode::InternalVertical => {}
         Mode::Horizontal => end_paragraph(nest, stores)?,
-        Mode::RestrictedHorizontal => return Err(ExecError::HRuleHereExceptLeaders),
+        Mode::RestrictedHorizontal => {
+            stores.world_mut().write_text(
+                tex_state::PrintSink::TerminalAndLog,
+                "\n! You can't use `\\hrule' here except with leaders.\nTo put a horizontal rule in an hbox or an alignment,\nyou should use \\leaders or \\hrulefill.\n",
+            );
+            return Ok(());
+        }
         mode => {
             return Err(ExecError::UnimplementedTypesetting {
                 mode,

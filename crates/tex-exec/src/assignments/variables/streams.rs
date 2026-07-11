@@ -205,7 +205,9 @@ fn scan_read_tokens(
         let Some(line) = line else {
             return Err(ExecError::ReadNotImplemented);
         };
-        scan_read_line_tokens(&line, stores, &mut tokens, &mut depth)?;
+        if scan_read_line_tokens(&line, stores, &mut tokens, &mut depth)? {
+            return Ok(tokens);
+        }
         if depth == 0 {
             return Ok(tokens);
         }
@@ -250,8 +252,35 @@ fn scan_read_line_tokens(
     stores: &mut Universe,
     tokens: &mut Vec<Token>,
     depth: &mut usize,
-) -> Result<(), ExecError> {
+) -> Result<bool, ExecError> {
     for token in tokenize_read_line(line, stores)? {
+        let meaning = match token {
+            Token::Cs(symbol) => stores.meaning(symbol),
+            Token::Char {
+                ch,
+                cat: Catcode::Active,
+            } => {
+                let symbol = active_character_symbol(stores, ch);
+                stores.meaning(symbol)
+            }
+            _ => Meaning::Undefined,
+        };
+        if matches!(
+            meaning,
+            Meaning::Macro { flags, .. } if flags.contains(MeaningFlags::OUTER)
+        ) {
+            // TeX.web §336/§484 aborts a \read at an outer token. The
+            // outer token is not replayed for file streams; inserted closing
+            // braces finish the partial balanced definition.
+            while *depth > 0 {
+                tokens.push(Token::Char {
+                    ch: '}',
+                    cat: Catcode::EndGroup,
+                });
+                *depth -= 1;
+            }
+            return Ok(true);
+        }
         match token {
             Token::Char {
                 cat: Catcode::BeginGroup,
@@ -265,7 +294,7 @@ fn scan_read_line_tokens(
                 ..
             } => {
                 if *depth == 0 {
-                    return Ok(());
+                    return Ok(true);
                 }
                 *depth -= 1;
                 tokens.push(token);
@@ -273,7 +302,7 @@ fn scan_read_line_tokens(
             _ => tokens.push(token),
         }
     }
-    Ok(())
+    Ok(false)
 }
 
 fn scan_stream_slot<S, H>(
@@ -374,8 +403,13 @@ fn append_file_name_token(
 fn tokenize_read_line(line: &str, stores: &mut Universe) -> Result<Vec<Token>, ExecError> {
     let mut input = InputStack::new(tex_lex::MemoryInput::new(format!("{line}\n")));
     let mut tokens = Vec::new();
-    while let Some(token) = input.next_token(stores)? {
-        tokens.push(token);
+    loop {
+        match input.next_token(stores) {
+            Ok(Some(token)) => tokens.push(token),
+            Ok(None) => break,
+            Err(tex_lex::LexError::InvalidCharacter { .. }) => continue,
+            Err(error) => return Err(error.into()),
+        }
     }
     Ok(tokens)
 }

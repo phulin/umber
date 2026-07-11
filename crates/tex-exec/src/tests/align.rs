@@ -565,6 +565,41 @@ fn v_template_macros_expand_when_the_cell_finishes() {
 }
 
 #[test]
+fn futurelet_undefined_recovery_stays_inside_alignment_cell_driver() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\halign{#&#\\cr \\futurelet\\x\\missing&a\\cr}",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("undefined futurelet token recovers without unwinding alignment");
+
+    assert!(
+        support::terminal_effect_text(&stores).contains("Undefined control sequence \\missing")
+    );
+}
+
+#[test]
+fn extra_alignment_tab_is_changed_to_row_terminator() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\halign{#\\cr a&b\\cr}"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("extra alignment tab ends the row recoverably");
+
+    assert!(
+        support::terminal_effect_text(&stores)
+            .contains("Extra alignment tab has been changed to \\cr")
+    );
+}
+
+#[test]
 fn u_template_macro_argument_interleaves_cell_body_and_v_template() {
     let stores =
         run_boxed_alignment_source("\\def\\wrap#1{\\hbox{#1}}\\halign{\\wrap{#}\\cr x\\cr}");

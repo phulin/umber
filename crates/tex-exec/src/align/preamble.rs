@@ -27,9 +27,11 @@ where
         context: "alignment group",
     })?;
     if !has_catcode_meaning(stores, opener, Catcode::BeginGroup) {
-        return Err(ExecError::MissingToken {
-            context: "alignment group",
-        });
+        stores.world_mut().write_text(
+            tex_state::PrintSink::TerminalAndLog,
+            "\n! Missing { inserted while scanning alignment preamble.\n",
+        );
+        crate::push_tokens(input, stores, [opener]);
     }
     stores.enter_group_with_kind(GroupKind::Simple);
 

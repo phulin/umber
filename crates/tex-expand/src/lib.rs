@@ -531,6 +531,19 @@ pub trait ExpandNext<S, St: ExpansionState, R, H> {
         S: InputSource,
         R: ReadRecorder,
         H: ExpansionHooks<S>;
+
+    fn dispatch_raw_token(
+        &mut self,
+        token: TracedTokenWord,
+        input: &mut InputStack<S>,
+        stores: &mut St,
+        recorder: &mut R,
+        hooks: &mut H,
+    ) -> Result<Dispatch, ExpandError>
+    where
+        S: InputSource,
+        R: ReadRecorder,
+        H: ExpansionHooks<S>;
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -552,6 +565,17 @@ where
     ) -> Result<Option<TracedTokenWord>, ExpandError> {
         get_x_token_without_input_open(input, stores, recorder, hooks)
     }
+
+    fn dispatch_raw_token(
+        &mut self,
+        token: TracedTokenWord,
+        input: &mut InputStack<S>,
+        stores: &mut St,
+        recorder: &mut R,
+        hooks: &mut H,
+    ) -> Result<Dispatch, ExpandError> {
+        dispatch_one_raw_token_with_hooks(token, input, stores, recorder, hooks)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -572,6 +596,30 @@ where
         hooks: &mut H,
     ) -> Result<Option<TracedTokenWord>, ExpandError> {
         get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)
+    }
+
+    fn dispatch_raw_token(
+        &mut self,
+        token: TracedTokenWord,
+        input: &mut InputStack<S>,
+        stores: &mut St,
+        recorder: &mut R,
+        hooks: &mut H,
+    ) -> Result<Dispatch, ExpandError> {
+        let Some(symbol) = expandable_symbol(stores, token) else {
+            return Ok(Dispatch::Deliver(token));
+        };
+        let meaning = stores.meaning(symbol);
+        recorder.record_meaning(symbol, meaning);
+        dispatch::dispatch_with_hooks(
+            semantic_token(token),
+            token.origin(),
+            input,
+            stores,
+            recorder,
+            hooks,
+            meaning,
+        )
     }
 }
 
@@ -675,8 +723,16 @@ where
     H: ExpansionHooks<S>,
 {
     loop {
-        let Some(read) = input.next_traced_expansion_token(stores)? else {
-            return Ok(None);
+        let read = match input.next_traced_expansion_token(stores) {
+            Ok(Some(read)) => read,
+            Ok(None) => return Ok(None),
+            Err(tex_lex::LexError::InvalidCharacter { .. }) => {
+                // TeX.web `get_next` reports a catcode-15 character and
+                // restarts after consuming it. Keeping recovery here prevents
+                // nested scanners (notably \read) from unwinding.
+                continue;
+            }
+            Err(error) => return Err(error.into()),
         };
         let token = read.token();
         let traced = read.traced_token();
@@ -785,8 +841,11 @@ where
     H: ExpansionHooks<S>,
 {
     loop {
-        let Some(read) = input.next_traced_expansion_token(stores)? else {
-            return Ok(None);
+        let read = match input.next_traced_expansion_token(stores) {
+            Ok(Some(read)) => read,
+            Ok(None) => return Ok(None),
+            Err(tex_lex::LexError::InvalidCharacter { .. }) => continue,
+            Err(error) => return Err(error.into()),
         };
         let token = read.token();
         let traced = read.traced_token();

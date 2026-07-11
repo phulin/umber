@@ -6,21 +6,23 @@ use tex_state::token::{Catcode, Token, TracedTokenWord};
 
 use crate::{
     Dispatch, ExpandError, ExpandableOpcode, ExpansionHooks, ReadRecorder, apply_dispatch_push,
-    dispatch_one_raw_token_with_hooks, get_x_token_without_input_open, push_dispatch_result,
-    push_inserted_token, scan_helpers,
+    get_x_token_without_input_open, push_dispatch_result, push_inserted_token, scan_helpers,
 };
 
-pub(crate) fn expand_after<S, R, H>(
+pub(crate) fn expand_after<S, St, R, H, E>(
     input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
+    stores: &mut St,
     recorder: &mut R,
     hooks: &mut H,
+    expander: &mut E,
     context: TracedTokenWord,
 ) -> Result<(), ExpandError>
 where
     S: InputSource,
+    St: ExpansionState,
     R: ReadRecorder,
     H: ExpansionHooks<S>,
+    E: crate::ExpandNext<S, St, R, H>,
 {
     let Some(saved) = input.next_traced_token(stores)? else {
         return Err(ExpandError::MissingTokenAfterPrimitive {
@@ -35,8 +37,7 @@ where
         });
     };
 
-    let target_dispatch =
-        dispatch_one_raw_token_with_hooks(target, input, stores, recorder, hooks)?;
+    let target_dispatch = expander.dispatch_raw_token(target, input, stores, recorder, hooks)?;
     push_dispatch_result(input, stores, target_dispatch);
     push_inserted_token(input, stores, saved, InsertedOriginKind::ExpandAfter);
     Ok(())

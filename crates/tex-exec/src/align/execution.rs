@@ -1,5 +1,5 @@
 use tex_expand::{ExpansionHooks, ReadRecorder, get_x_token_with_recorder_and_hooks};
-use tex_lex::{InputSource, InputStack, TokenListReplayKind};
+use tex_lex::{AlignmentTerminator, InputSource, InputStack, TokenListReplayKind};
 use tex_state::env::banks::TokParam;
 use tex_state::node::{GlueKind, Node};
 use tex_state::token::{Token, TracedTokenWord};
@@ -380,6 +380,16 @@ where
             }
             CellTerminator::AlignmentTab | CellTerminator::Cr => {
                 let next_column = column + 1;
+                let extra_alignment_tab = matches!(terminator, CellTerminator::AlignmentTab)
+                    && align_state(nest, align_level)?
+                        .column_for(next_column)
+                        .is_none();
+                if extra_alignment_tab {
+                    stores.world_mut().write_text(
+                        PrintSink::TerminalAndLog,
+                        "\n! Extra alignment tab has been changed to \\cr.\n",
+                    );
+                }
                 package_cell(align_level, kind, span_count, next_column, nest, stores)?;
                 leave_group(input, stores, tex_state::GroupKind::Simple)?;
                 // WEB fin_col immediately installs the next entry align_group,
@@ -388,7 +398,7 @@ where
                 align_state_mut(nest, align_level)?.finish_cell(next_column);
                 return Ok(CellResult {
                     next_column,
-                    ended_row: matches!(terminator, CellTerminator::Cr),
+                    ended_row: matches!(terminator, CellTerminator::Cr) || extra_alignment_tab,
                 });
             }
         }
@@ -453,13 +463,41 @@ where
     let mut stats = ExecutionStats::default();
     loop {
         sync_engine_state::<S, _>(hooks, nest, stores);
-        let token = {
+        let fetched = {
             let mut expansion = ExpansionContext::new(stores);
-            get_x_token_with_recorder_and_hooks(input, &mut expansion, recorder, hooks)?
-        }
-        .ok_or(ExecError::MissingToken {
-            context: "alignment cell",
-        })?;
+            get_x_token_with_recorder_and_hooks(input, &mut expansion, recorder, hooks)
+        };
+        let token = match fetched {
+            Ok(Some(token)) => token,
+            Ok(None) => {
+                return Err(ExecError::MissingToken {
+                    context: "alignment cell",
+                });
+            }
+            Err(tex_expand::ExpandError::UndefinedControlSequence { name, .. }) => {
+                stores.world_mut().write_text(
+                    PrintSink::TerminalAndLog,
+                    &format!("\n! Undefined control sequence \\{name}.\n"),
+                );
+                continue;
+            }
+            Err(tex_expand::ExpandError::Captured { error, .. })
+                if matches!(
+                    error.as_ref(),
+                    tex_expand::ExpandError::UndefinedControlSequence { .. }
+                ) =>
+            {
+                let tex_expand::ExpandError::UndefinedControlSequence { name, .. } = *error else {
+                    unreachable!("guard restricts captured expansion error")
+                };
+                stores.world_mut().write_text(
+                    PrintSink::TerminalAndLog,
+                    &format!("\n! Undefined control sequence \\{name}.\n"),
+                );
+                continue;
+            }
+            Err(error) => return Err(error.into()),
+        };
         let semantic = tex_expand::semantic_token(token);
         if semantic.is_frozen_endv() {
             let terminator = input
@@ -495,11 +533,13 @@ where
             let cr = stores.symbol("cr").ok_or(ExecError::MissingToken {
                 context: "alignment recovery cr",
             })?;
-            push_traced_tokens(
-                input,
-                stores,
-                [TracedTokenWord::pack(Token::Cs(cr), token.origin()), token],
-            );
+            let cr = TracedTokenWord::pack(Token::Cs(cr), token.origin());
+            push_traced_tokens(input, stores, [token]);
+            assert!(input.intercept_alignment_token(
+                cr,
+                Some(AlignmentTerminator::Cr),
+                stores.execution_group_depth(),
+            ));
             continue;
         }
         dispatch_and_drain(nest, token, input, stores, recorder, hooks, &mut stats)?;
@@ -549,7 +589,37 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    match dispatch_delivered_token_with_recorder(nest, token, input, stores, recorder, hooks)? {
+    let action =
+        match dispatch_delivered_token_with_recorder(nest, token, input, stores, recorder, hooks) {
+            Ok(action) => action,
+            Err(ExecError::Expand(tex_expand::ExpandError::UndefinedControlSequence {
+                name,
+                ..
+            })) => {
+                stores.world_mut().write_text(
+                    PrintSink::TerminalAndLog,
+                    &format!("\n! Undefined control sequence \\{name}.\n"),
+                );
+                return Ok(());
+            }
+            Err(ExecError::Expand(tex_expand::ExpandError::Captured { error, .. }))
+                if matches!(
+                    error.as_ref(),
+                    tex_expand::ExpandError::UndefinedControlSequence { .. }
+                ) =>
+            {
+                let tex_expand::ExpandError::UndefinedControlSequence { name, .. } = *error else {
+                    unreachable!("guard restricts captured expansion error")
+                };
+                stores.world_mut().write_text(
+                    PrintSink::TerminalAndLog,
+                    &format!("\n! Undefined control sequence \\{name}.\n"),
+                );
+                return Ok(());
+            }
+            Err(error) => return Err(error),
+        };
+    match action {
         DispatchAction::Continue => {
             crate::output::drain_pending_output(nest, input, stores, recorder, hooks, stats)?;
             Ok(())

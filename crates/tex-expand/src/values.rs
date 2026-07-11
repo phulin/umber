@@ -164,26 +164,20 @@ where
                 let number = scanned.value();
                 let font = scan_font_selector(input, stores, recorder, hooks, expander, token)?;
                 let available = stores.font_parameter_count(font);
-                let Ok(number) = u16::try_from(number) else {
-                    return Err(ExpandError::FontDimenOutOfRange {
-                        font_name: stores.font_name(font),
-                        number,
-                        available,
-                        context: scanned.context(),
-                    });
-                };
-                if number == 0 || number > available {
-                    return Err(ExpandError::FontDimenOutOfRange {
-                        font_name: stores.font_name(font),
-                        number: i32::from(number),
-                        available,
-                        context: scanned.context(),
-                    });
-                }
+                let number = u16::try_from(number)
+                    .ok()
+                    .filter(|number| *number > 0 && *number <= available);
+                // TeX.web §578 diagnoses an unavailable parameter but
+                // points at its zero-valued dummy font-info cell, so \the
+                // still expands to a usable dimension.
+                let value = number.map_or_else(
+                    || tex_state::scaled::Scaled::from_raw(0),
+                    |number| stores.font_dimen(font, number),
+                );
                 Ok(push_rendered_text(
                     stores,
                     ExpansionReplayKind::TheOutput,
-                    &format_scaled(stores.font_dimen(font, number)),
+                    &format_scaled(value),
                     cause_origin,
                 ))
             }

@@ -1590,7 +1590,7 @@ fn the_fontdimen_accepts_current_font_with_exact_output_and_trace() {
 }
 
 #[test]
-fn the_fontdimen_checks_parameter_count_after_scanning_font() {
+fn the_fontdimen_renders_zero_for_unavailable_parameter() {
     let mut stores = Universe::new();
     let the = expandable_primitive(&mut stores, "the", ExpandablePrimitive::The);
     let fontdimen = stores.intern("fontdimen");
@@ -1619,17 +1619,16 @@ fn the_fontdimen_checks_parameter_count_after_scanning_font() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list_with_origins(tokens, origins, TokenListReplayKind::Inserted);
 
-    let error = crate::get_x_token(&mut input, &mut stores)
-        .expect_err("an unavailable fontdimen must diagnose");
-    assert!(matches!(
-        error,
-        crate::ExpandError::FontDimenOutOfRange {
-            number: 8,
-            available: 7,
-            ..
-        }
-    ));
-    assert_eq!(error.primary_origin(), Some(invocation));
+    let mut output = String::new();
+    while let Some(token) =
+        crate::get_x_token(&mut input, &mut stores).expect("unavailable fontdimen yields zero")
+    {
+        let Token::Char { ch, .. } = token.token().expect("rendered token") else {
+            panic!("fontdimen should render characters");
+        };
+        output.push(ch);
+    }
+    assert_eq!(output, "0.0pt");
 }
 
 #[test]

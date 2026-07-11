@@ -300,6 +300,31 @@ where
             nest, token, input, stores, recorder, hooks,
         ) {
             Ok(action) => action,
+            Err(ExecError::Expand(tex_expand::ExpandError::UndefinedControlSequence {
+                name,
+                ..
+            })) => {
+                stores.world_mut().write_text(
+                    tex_state::PrintSink::TerminalAndLog,
+                    &format!("\n! Undefined control sequence \\{name}.\n"),
+                );
+                continue;
+            }
+            Err(ExecError::Expand(tex_expand::ExpandError::Captured { error, .. }))
+                if matches!(
+                    error.as_ref(),
+                    tex_expand::ExpandError::UndefinedControlSequence { .. }
+                ) =>
+            {
+                let tex_expand::ExpandError::UndefinedControlSequence { name, .. } = *error else {
+                    unreachable!("guard restricts captured expansion error")
+                };
+                stores.world_mut().write_text(
+                    tex_state::PrintSink::TerminalAndLog,
+                    &format!("\n! Undefined control sequence \\{name}.\n"),
+                );
+                continue;
+            }
             Err(err) => {
                 stores.set_input_summary(input.summary());
                 return Err(err);
