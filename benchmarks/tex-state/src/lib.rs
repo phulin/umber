@@ -1,10 +1,12 @@
 use std::mem::size_of;
+use std::sync::Arc;
 
 use tex_exec::{Mode, ModeNest, ModeNestSummary};
 use tex_state::hyphenation::PatternSpec;
 use tex_state::input::{InputFrameSummary, InputSummary, LexerState, SourceFrameSummary};
 use tex_state::node::{KernKind, Node};
 use tex_state::scaled::Scaled;
+use tex_state::source_map::SourceDescriptor;
 use tex_state::token::Catcode;
 use tex_state::world::{PrintSink, StreamSlot};
 use tex_state::{Snapshot, SourceId, Universe};
@@ -150,6 +152,12 @@ pub fn deep_group_code_table_workload(depth: usize) -> Universe {
 fn input_workload(bytes: usize) -> Workload {
     let mut universe = Universe::new();
     let line = "a".repeat(bytes);
+    let registration = universe
+        .register_input_source(
+            SourceId::new(0),
+            SourceDescriptor::generated(Arc::from(line.as_bytes())),
+        )
+        .expect("register benchmark input source");
     let frame = SourceFrameSummary::new(
         0,
         bytes,
@@ -160,7 +168,8 @@ fn input_workload(bytes: usize) -> Workload {
         0,
         Vec::new(),
         false,
-    );
+    )
+    .with_registration(Some(registration));
     universe.set_input_summary(InputSummary::new(
         vec![InputFrameSummary::Source {
             source_id: SourceId::new(0),
