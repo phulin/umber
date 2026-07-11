@@ -568,7 +568,10 @@ assignments, box building, and dispatch into the typesetting kernels.
   register is the barriered promotion write. Pulling boxes back out through `\copy`,
   `\box`, unboxing, `\lastbox`, or box-dimension rewrites clones any
   survivor-backed node tree into the current epoch before it can be appended
-  to an unfinished mode list or promoted again. In math mode, the applicable
+  to an unfinished mode list or promoted again. Destructive unboxing validates
+  the requested horizontal/vertical list kind before taking the register, so
+  TeX's incompatible-list recovery preserves the register and its survivor
+  ownership exactly; copy variants never clear it. In math mode, the applicable
   box command family (`\hbox`, `\vbox`, `\vtop`, `\box`, `\copy`, `\vsplit`,
   and shifted `\raise`/`\lower` boxes) uses the same scanners and packers, then
   contributes an Ord noad whose nucleus is the frozen one-box `SubBox` field;

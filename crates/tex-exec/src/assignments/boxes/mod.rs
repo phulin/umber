@@ -195,13 +195,20 @@ where
         | UnexpandablePrimitive::UnVBox
         | UnexpandablePrimitive::UnVCopy => {
             let index = scan_register_index(input, stores, hooks, context)?;
+            let id = stores.box_reg(index);
+            if let Some(node) = first_box_node(stores, id)
+                && !unbox_kind_matches(primitive, &node)
+            {
+                report_incompatible_unbox(stores);
+                return Ok(());
+            }
             let id = if matches!(
                 primitive,
                 UnexpandablePrimitive::UnHBox | UnexpandablePrimitive::UnVBox
             ) {
                 stores.take_box_reg_same_level(index)
             } else {
-                stores.box_reg(index)
+                id
             };
             append_unboxed(nest, stores, id, primitive)?;
         }
@@ -551,11 +558,28 @@ fn append_unboxed(
             }
             Ok(())
         }
-        (_, node) => {
-            append_node_to_current_list(nest, stores, node)?;
-            Ok(())
-        }
+        _ => unreachable!("unbox compatibility is validated before register mutation"),
     }
+}
+
+fn unbox_kind_matches(primitive: UnexpandablePrimitive, node: &Node) -> bool {
+    matches!(
+        (primitive, node),
+        (
+            UnexpandablePrimitive::UnHBox | UnexpandablePrimitive::UnHCopy,
+            Node::HList(_)
+        ) | (
+            UnexpandablePrimitive::UnVBox | UnexpandablePrimitive::UnVCopy,
+            Node::VList(_)
+        )
+    )
+}
+
+fn report_incompatible_unbox(stores: &mut Universe) {
+    stores.world_mut().write_text(
+        tex_state::PrintSink::TerminalAndLog,
+        "\n! Incompatible list can't be unboxed.\nSorry, Pandora. (You sneaky devil.)\nI refuse to unbox an \\hbox in vertical mode or vice versa.\nAnd I can't open any boxes in math mode.\n",
+    );
 }
 
 fn apply_shift(

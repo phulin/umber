@@ -1159,6 +1159,39 @@ fn uncopy_primitives_unbox_without_clearing_registers() {
 }
 
 #[test]
+fn incompatible_unbox_commands_preserve_registers_and_replay_state() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut setup = InputStack::new(MemoryInput::new(
+        "\\setbox0=\\vbox{\\hbox{}}\\setbox1=\\hbox{\\kern1pt}",
+    ));
+    Executor::new()
+        .run(&mut setup, &mut stores)
+        .expect("box setup executes");
+    let vbox = stores.box_reg(0);
+    let hbox = stores.box_reg(1);
+    let checkpoint = stores.snapshot();
+    let source = "\\unhbox0\\par\\unhcopy0\\par\\unvbox1\\unvcopy1";
+
+    let mut input = InputStack::new(MemoryInput::new(source));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("incompatible unbox commands recover");
+    assert_eq!(stores.box_reg(0), vbox);
+    assert_eq!(stores.box_reg(1), hbox);
+    let first_hash = stores.snapshot().state_hash();
+
+    stores.rollback(&checkpoint);
+    let mut input = InputStack::new(MemoryInput::new(source));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("incompatible unbox replay recovers");
+    assert_eq!(stores.box_reg(0), vbox);
+    assert_eq!(stores.box_reg(1), hbox);
+    assert_eq!(stores.snapshot().state_hash(), first_hash);
+}
+
+#[test]
 fn unvbox_splices_vertical_nodes_without_inserting_baseline_glue() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
