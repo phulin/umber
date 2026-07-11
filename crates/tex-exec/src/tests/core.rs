@@ -945,6 +945,25 @@ fn control_space_uses_space_skip_without_space_factor_scaling() {
 }
 
 #[test]
+fn invalid_space_factor_reports_and_preserves_the_previous_value() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+
+    Executor::new()
+        .run(
+            &mut InputStack::new(MemoryInput::new(
+                r"\noindent\spacefactor=2000\spacefactor=0\count0=\spacefactor",
+            )),
+            &mut stores,
+        )
+        .expect("bad space factor should be recoverable");
+
+    assert_eq!(stores.count(0), 2000);
+    assert!(support::terminal_effect_text(&stores).contains("Bad space factor (0)"));
+}
+
+#[test]
 fn adjacent_cmr10_characters_emit_tfm_kern() {
     let mut stores = stores_with_fonts();
     let mut input = InputStack::new(MemoryInput::new(

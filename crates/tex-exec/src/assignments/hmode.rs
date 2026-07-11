@@ -182,12 +182,15 @@ where
             skip_optional_equals_x(input, stores, hooks)?;
             let value = scan_i32(input, stores, hooks, context)?;
             if !(1..=32767).contains(&value) {
-                return Err(ExecError::InvalidCode {
-                    context: "\\spacefactor",
-                    value,
-                });
+                stores.world_mut().write_text(
+                    tex_state::PrintSink::TerminalAndLog,
+                    &format!(
+                        "\n! Bad space factor ({value}).\nI allow only values in the range 1..32767 here.\n"
+                    ),
+                );
+            } else {
+                nest.current_list_mut().set_space_factor(value);
             }
-            nest.current_list_mut().set_space_factor(value);
         }
         UnexpandablePrimitive::Accent => {
             execute_accent(nest, input, stores, recorder, hooks, context)?;
