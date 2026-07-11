@@ -1289,6 +1289,8 @@ impl Universe {
     pub fn finish_traced_token_list(&mut self, tokens: &[TracedTokenWord]) -> TracedTokenList {
         let mut semantic = self.token_list_builder();
         let mut origins = self.origin_list_builder();
+        semantic.reserve(tokens.len());
+        origins.reserve(tokens.len());
         for &word in tokens {
             let token = word
                 .token()

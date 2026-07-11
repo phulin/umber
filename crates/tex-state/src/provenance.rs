@@ -216,6 +216,11 @@ impl OriginListBuilder {
         self.buf.push(origin);
     }
 
+    /// Reserves capacity when the caller already knows the remaining size.
+    pub fn reserve(&mut self, additional: usize) {
+        self.buf.reserve(additional);
+    }
+
     /// Returns the number of origins currently buffered.
     #[must_use]
     pub fn len(&self) -> usize {

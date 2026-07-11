@@ -354,6 +354,47 @@ fn capacity_preflight_accepts_boundary_without_mutation() {
 }
 
 #[test]
+fn append_reserves_every_column_of_selected_sidecar_tables() {
+    let mut arena = NodeArena::new();
+    let empty = arena.append(&[]);
+    let boxes = (0..32)
+        .map(|raw| {
+            Node::HList(BoxNode::new(BoxNodeFields {
+                width: scaled(raw),
+                height: scaled(0),
+                depth: scaled(0),
+                shift: scaled(0),
+                display: false,
+                glue_set: GlueSetRatio::ZERO,
+                glue_sign: Sign::Normal,
+                glue_order: Order::Normal,
+                children: empty,
+            }))
+        })
+        .collect::<Vec<_>>();
+
+    arena.append(&boxes);
+
+    let capacities = [
+        arena.storage.boxes.width.capacity(),
+        arena.storage.boxes.height.capacity(),
+        arena.storage.boxes.depth.capacity(),
+        arena.storage.boxes.shift.capacity(),
+        arena.storage.boxes.display.capacity(),
+        arena.storage.boxes.glue_set.capacity(),
+        arena.storage.boxes.glue_sign.capacity(),
+        arena.storage.boxes.glue_order.capacity(),
+        arena.storage.boxes.children.capacity(),
+    ];
+    assert!(
+        capacities
+            .into_iter()
+            .all(|capacity| capacity >= boxes.len())
+    );
+    assert_eq!(arena.storage.boxes.len(), boxes.len());
+}
+
+#[test]
 #[should_panic(expected = "sidecar overflow")]
 fn capacity_preflight_rejects_overflow_before_publication() {
     let _ = preflight_capacity(u32::MAX, 1, "sidecar overflow");

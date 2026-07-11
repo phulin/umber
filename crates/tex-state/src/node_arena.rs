@@ -68,6 +68,75 @@ struct StorageMark {
     adjusts: u32,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct SidecarNeeds {
+    boxes: u32,
+    unsets: u32,
+    rules: u32,
+    leaders: u32,
+    discs: u32,
+    marks: u32,
+    insertions: u32,
+    whatsits: u32,
+    noads: u32,
+    fractions: u32,
+    choices: u32,
+    math_lists: u32,
+    adjusts: u32,
+}
+
+impl SidecarNeeds {
+    fn count(&mut self, node: &Node) {
+        let target = match node {
+            Node::HList(_) | Node::VList(_) => Some(&mut self.boxes),
+            Node::Unset(_) => Some(&mut self.unsets),
+            Node::Rule { .. } => Some(&mut self.rules),
+            Node::Glue {
+                leader: Some(_), ..
+            } => Some(&mut self.leaders),
+            Node::Disc { .. } => Some(&mut self.discs),
+            Node::Mark { .. } => Some(&mut self.marks),
+            Node::Ins { .. } => Some(&mut self.insertions),
+            Node::Whatsit(_) => Some(&mut self.whatsits),
+            Node::MathNoad(_) => Some(&mut self.noads),
+            Node::FractionNoad(_) => Some(&mut self.fractions),
+            Node::MathChoice(_) => Some(&mut self.choices),
+            Node::MathList(_) => Some(&mut self.math_lists),
+            Node::Adjust(_) => Some(&mut self.adjusts),
+            Node::Char { .. }
+            | Node::Lig { .. }
+            | Node::Kern { .. }
+            | Node::Glue { leader: None, .. }
+            | Node::Penalty(_)
+            | Node::MathOn(_)
+            | Node::MathOff(_)
+            | Node::MathStyle(_)
+            | Node::Nonscript => None,
+        };
+        if let Some(target) = target {
+            *target = target.checked_add(1).expect("sidecar count overflow");
+        }
+    }
+
+    fn as_array(self) -> [u32; 13] {
+        [
+            self.boxes,
+            self.unsets,
+            self.rules,
+            self.leaders,
+            self.discs,
+            self.marks,
+            self.insertions,
+            self.whatsits,
+            self.noads,
+            self.fractions,
+            self.choices,
+            self.math_lists,
+            self.adjusts,
+        ]
+    }
+}
+
 /// Canonical compact storage shared by epoch and survivor arenas.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct NodeStorage {
@@ -170,6 +239,17 @@ impl BoxTable {
     fn len(&self) -> usize {
         self.width.len()
     }
+    fn reserve(&mut self, additional: usize) {
+        self.width.reserve(additional);
+        self.height.reserve(additional);
+        self.depth.reserve(additional);
+        self.shift.reserve(additional);
+        self.display.reserve(additional);
+        self.glue_set.reserve(additional);
+        self.glue_sign.reserve(additional);
+        self.glue_order.reserve(additional);
+        self.children.reserve(additional);
+    }
     fn push(&mut self, value: crate::node::BoxNode) -> u32 {
         let index = checked_len(self.len(), "box sidecar exceeds u32 entries");
         self.width.push(value.width);
@@ -224,6 +304,18 @@ impl UnsetTable {
     fn len(&self) -> usize {
         self.kind.len()
     }
+    fn reserve(&mut self, additional: usize) {
+        self.kind.reserve(additional);
+        self.width.reserve(additional);
+        self.height.reserve(additional);
+        self.depth.reserve(additional);
+        self.span_count.reserve(additional);
+        self.stretch.reserve(additional);
+        self.stretch_order.reserve(additional);
+        self.shrink.reserve(additional);
+        self.shrink_order.reserve(additional);
+        self.children.reserve(additional);
+    }
     fn push(&mut self, v: crate::node::UnsetNode) -> u32 {
         let i = checked_len(self.len(), "unset sidecar exceeds u32 entries");
         self.kind.push(v.kind);
@@ -277,6 +369,14 @@ impl InsertionTable {
     fn len(&self) -> usize {
         self.class.len()
     }
+    fn reserve(&mut self, additional: usize) {
+        self.class.reserve(additional);
+        self.size.reserve(additional);
+        self.split_top_skip.reserve(additional);
+        self.split_max_depth.reserve(additional);
+        self.floating_penalty.reserve(additional);
+        self.content.reserve(additional);
+    }
     fn push(&mut self, v: (u16, Scaled, GlueId, Scaled, i32, NodeListId)) -> u32 {
         let i = checked_len(self.len(), "insertion sidecar exceeds u32 entries");
         self.class.push(v.0);
@@ -315,6 +415,12 @@ struct NoadTable {
 impl NoadTable {
     fn len(&self) -> usize {
         self.kind.len()
+    }
+    fn reserve(&mut self, additional: usize) {
+        self.kind.reserve(additional);
+        self.nucleus.reserve(additional);
+        self.subscript.reserve(additional);
+        self.superscript.reserve(additional);
     }
     fn push(&mut self, v: crate::math::MathNoad) -> u32 {
         let i = checked_len(self.len(), "noad sidecar exceeds u32 entries");
@@ -696,17 +802,16 @@ impl NodeStorage {
         // Validate every encoding and selected table before reserving or
         // publishing either rows or words. Publication below is infallible
         // apart from process-aborting allocation failure.
-        let mut needs = [0_u32; 14];
+        let mut needs = SidecarNeeds::default();
         for node in nodes {
             preflight_encoding(node);
-            let class = sidecar_class(node);
-            needs[class] = needs[class].checked_add(1).expect("sidecar count overflow");
+            needs.count(node);
         }
-        let current = self.sidecar_lengths();
-        for (have, add) in current.into_iter().zip(needs) {
+        for (have, add) in self.sidecar_lengths().into_iter().zip(needs.as_array()) {
             preflight_capacity(have, add, "node sidecar exceeds u32 entries");
         }
         self.words.reserve(nodes.len());
+        self.reserve_sidecars(needs);
         for node in nodes {
             let word = self.encode(node);
             self.words.push(word);
@@ -722,10 +827,7 @@ impl NodeStorage {
             let retained_after = self.retained_payload_bytes();
             crate::measurement::record_node_append(
                 nodes.len(),
-                [
-                    needs[0], needs[1], needs[2], needs[3], needs[4], needs[5], needs[6], needs[7],
-                    needs[8], needs[9], needs[10], needs[11], needs[12],
-                ],
+                needs.as_array(),
                 growth_events,
                 retained_after.saturating_sub(retained_before),
             );
@@ -734,7 +836,7 @@ impl NodeStorage {
         (start, len)
     }
 
-    fn sidecar_lengths(&self) -> [u32; 14] {
+    fn sidecar_lengths(&self) -> [u32; 13] {
         let m = self.mark();
         [
             m.boxes,
@@ -750,8 +852,23 @@ impl NodeStorage {
             m.choices,
             m.math_lists,
             m.adjusts,
-            0,
         ]
+    }
+
+    fn reserve_sidecars(&mut self, needs: SidecarNeeds) {
+        self.boxes.reserve(needs.boxes as usize);
+        self.unsets.reserve(needs.unsets as usize);
+        self.rules.reserve(needs.rules as usize);
+        self.leaders.reserve(needs.leaders as usize);
+        self.discs.reserve(needs.discs as usize);
+        self.marks.reserve(needs.marks as usize);
+        self.insertions.reserve(needs.insertions as usize);
+        self.whatsits.reserve(needs.whatsits as usize);
+        self.noads.reserve(needs.noads as usize);
+        self.fractions.reserve(needs.fractions as usize);
+        self.choices.reserve(needs.choices as usize);
+        self.math_lists.reserve(needs.math_lists as usize);
+        self.adjusts.reserve(needs.adjusts as usize);
     }
 
     fn encode(&mut self, node: &Node) -> NodeWord {
@@ -1003,26 +1120,6 @@ fn preflight_encoding(node: &Node) {
             (orig.1 as u32) <= u8::MAX as u32,
             "ligature original exceeds TFM byte domain"
         );
-    }
-}
-fn sidecar_class(node: &Node) -> usize {
-    match node {
-        Node::HList(_) | Node::VList(_) => 0,
-        Node::Unset(_) => 1,
-        Node::Rule { .. } => 2,
-        Node::Glue {
-            leader: Some(_), ..
-        } => 3,
-        Node::Disc { .. } => 4,
-        Node::Mark { .. } => 5,
-        Node::Ins { .. } => 6,
-        Node::Whatsit(_) => 7,
-        Node::MathNoad(_) => 8,
-        Node::FractionNoad(_) => 9,
-        Node::MathChoice(_) => 10,
-        Node::MathList(_) => 11,
-        Node::Adjust(_) => 12,
-        _ => 13,
     }
 }
 fn kern_code(v: KernKind) -> u8 {
@@ -1599,6 +1696,9 @@ impl NodeListBuilder {
     }
     pub fn push(&mut self, node: Node) {
         self.buf.push(node)
+    }
+    pub fn reserve(&mut self, additional: usize) {
+        self.buf.reserve(additional)
     }
     #[must_use]
     pub fn len(&self) -> usize {
