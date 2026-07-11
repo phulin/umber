@@ -941,6 +941,24 @@ where
                 let index = scan_register_index(input, stores, recorder, hooks, expander, first)?;
                 Some(stores.glue(stores.muskip(index)).width)
             }
+            Meaning::UnexpandablePrimitive(
+                primitive @ (UnexpandablePrimitive::Wd
+                | UnexpandablePrimitive::Ht
+                | UnexpandablePrimitive::Dp),
+            ) => {
+                let index = scan_register_index(input, stores, recorder, hooks, expander, first)?;
+                let dimension = match primitive {
+                    UnexpandablePrimitive::Wd => BoxDimension::Width,
+                    UnexpandablePrimitive::Ht => BoxDimension::Height,
+                    UnexpandablePrimitive::Dp => BoxDimension::Depth,
+                    _ => unreachable!("outer match restricts primitive"),
+                };
+                Some(
+                    stores
+                        .box_dimension(index, dimension)
+                        .unwrap_or_else(|| Scaled::from_raw(0)),
+                )
+            }
             _ => None,
         };
         if let Some(unit) = internal {

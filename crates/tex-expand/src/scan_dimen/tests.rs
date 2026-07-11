@@ -4,8 +4,11 @@ use tex_state::env::banks::{DimenParam, GlueParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
+use tex_state::node::{BoxNode, BoxNodeFields, Node, Sign};
 use tex_state::provenance::OriginRecord;
-use tex_state::scaled::{PhysicalUnit, Scaled, round_decimal_fraction, scaled_from_decimal_parts};
+use tex_state::scaled::{
+    GlueSetRatio, PhysicalUnit, Scaled, round_decimal_fraction, scaled_from_decimal_parts,
+};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::scan_dimen::{
@@ -195,6 +198,35 @@ fn scans_supported_internal_dimensions() {
     let (value, diagnostic, next) = scan_with_stores("\\dimen3 x", &mut stores);
 
     assert_eq!(value, 42_000);
+    assert_eq!(diagnostic, None);
+    assert_eq!(next, Some(char_token('x', Catcode::Letter)));
+}
+
+#[test]
+fn scales_box_dimensions_used_as_internal_units() {
+    let mut stores = Universe::new();
+    let dp = stores.intern("dp");
+    stores.set_meaning(
+        dp,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dp),
+    );
+    let empty = stores.freeze_node_list(&[]);
+    let boxed = stores.freeze_node_list(&[Node::VList(BoxNode::new(BoxNodeFields {
+        width: Scaled::from_raw(0),
+        height: Scaled::from_raw(0),
+        depth: Scaled::from_raw(-559_403),
+        shift: Scaled::from_raw(0),
+        display: false,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children: empty,
+    }))]);
+    stores.set_box_reg(3, boxed);
+
+    let (value, diagnostic, next) = scan_with_stores("2\\dp3 x", &mut stores);
+
+    assert_eq!(value, -1_118_806);
     assert_eq!(diagnostic, None);
     assert_eq!(next, Some(char_token('x', Catcode::Letter)));
 }
