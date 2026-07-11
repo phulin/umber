@@ -530,6 +530,18 @@ where
             stores.dimen_param(DimenParam::new(index)).raw(),
             token,
         )),
+        Meaning::SkipRegister(index) => Ok(ScannedInt::new(
+            stores.glue(stores.skip(index)).width.raw(),
+            token,
+        )),
+        Meaning::MuskipRegister(index) => Ok(ScannedInt::new(
+            stores.glue(stores.muskip(index)).width.raw(),
+            token,
+        )),
+        Meaning::GlueParam(index) | Meaning::MuGlueParam(index) => {
+            let glue = stores.glue_param(tex_state::env::banks::GlueParam::new(index));
+            Ok(ScannedInt::new(stores.glue(glue).width.raw(), token))
+        }
         Meaning::PageInteger(integer) => Ok(ScannedInt::new(stores.page_integer(integer), token)),
         Meaning::PageDimension(dimension) => Ok(ScannedInt::new(
             stores.page_dimension(dimension).raw(),

@@ -1,5 +1,6 @@
 use tex_lex::{InputStack, MemoryInput};
-use tex_state::env::banks::IntParam;
+use tex_state::env::banks::{GlueParam, IntParam};
+use tex_state::glue::{GlueSpec, Order};
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::provenance::OriginRecord;
@@ -44,6 +45,26 @@ fn context() -> TracedTokenWord {
         },
         OriginId::UNKNOWN,
     )
+}
+
+#[test]
+fn scans_glue_parameter_width_as_an_internal_integer() {
+    let mut stores = Universe::new();
+    let tabskip = stores.intern("tabskip");
+    stores.set_meaning(tabskip, Meaning::GlueParam(GlueParam::TAB_SKIP.raw()));
+    let glue = stores.intern_glue(GlueSpec {
+        width: Scaled::from_raw(-1_118_806),
+        stretch: Scaled::from_raw(7),
+        stretch_order: Order::Fil,
+        shrink: Scaled::from_raw(9),
+        shrink_order: Order::Normal,
+    });
+    stores.set_glue_param(GlueParam::TAB_SKIP, glue);
+
+    let (value, next) = scan_with_stores("\\tabskip x", &mut stores);
+
+    assert_eq!(value, -1_118_806);
+    assert_eq!(next, Some(char_token('x', Catcode::Letter)));
 }
 
 #[test]
