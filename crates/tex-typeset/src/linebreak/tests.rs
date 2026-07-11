@@ -561,7 +561,7 @@ fn final_pass_deactivates_unshrinkable_active_line() {
 }
 
 #[test]
-fn discretionary_penalty_comes_from_source_kind() {
+fn discretionary_penalty_depends_on_pre_break_text() {
     let mut universe = Universe::new();
     let pre = universe.freeze_node_list(&[kern(0)]);
     let empty = universe.freeze_node_list(&[]);
@@ -578,23 +578,34 @@ fn discretionary_penalty_comes_from_source_kind() {
             replace: empty,
         },
         kern(20),
+        rule(1),
     ];
-    let mut hook = NoHyphenation;
-    let result = line_break(&universe, &nodes, params.clone(), &mut hook);
-    assert_eq!(result.breaks.first().map(|br| br.penalty), Some(321));
+    let breakpoints = legal_breakpoints(&universe, &nodes, &params);
+    assert_eq!(breakpoints.first().map(|br| br.penalty), Some(321));
 
     let nodes = vec![
         kern(20),
         Node::Disc {
             kind: DiscKind::ExplicitHyphen,
-            pre,
+            pre: empty,
             post: empty,
             replace: empty,
         },
         kern(20),
+        rule(1),
     ];
-    let result = line_break(&universe, &nodes, params, &mut hook);
-    assert_eq!(result.breaks.first().map(|br| br.penalty), Some(654));
+    let breakpoints = legal_breakpoints(&universe, &nodes, &params);
+    assert_eq!(breakpoints.first().map(|br| br.penalty), Some(654));
+}
+
+#[test]
+fn font_kern_is_not_discarded_at_start_of_next_line() {
+    let nodes = [Node::Kern {
+        amount: sp(1),
+        kind: KernKind::Font,
+    }];
+
+    assert_eq!(next_width_position(&nodes, 0), 0);
 }
 
 #[test]

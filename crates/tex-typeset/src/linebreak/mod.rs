@@ -1,6 +1,6 @@
 use tex_state::glue::GlueSpec;
 use tex_state::ids::GlueId;
-use tex_state::node::{DiscKind, KernKind, Node};
+use tex_state::node::{KernKind, Node};
 use tex_state::scaled::Scaled;
 
 use crate::{INF_BAD, TypesetState};
@@ -409,11 +409,11 @@ fn compute_demerits(
     dem.saturating_add(active.path_demerits)
 }
 
-fn discretionary_penalty(kind: DiscKind, params: &LineBreakParams) -> i32 {
-    match kind {
-        DiscKind::AutomaticHyphen => params.hyphen_penalty,
-        DiscKind::ExplicitHyphen => params.ex_hyphen_penalty,
-        DiscKind::Discretionary => 0,
+fn discretionary_penalty(pre_is_empty: bool, params: &LineBreakParams) -> i32 {
+    if pre_is_empty {
+        params.ex_hyphen_penalty
+    } else {
+        params.hyphen_penalty
     }
 }
 
@@ -457,15 +457,14 @@ fn legal_breakpoints<S: TypesetState>(
                 hyphenated: false,
                 add_width: Widths::zero(),
             }),
-            Node::Disc {
-                kind, pre, post, ..
-            } if !state.nodes(*post).is_empty()
-                || next_width_position(nodes, i + 1) < nodes.len() =>
+            Node::Disc { pre, post, .. }
+                if !state.nodes(*post).is_empty()
+                    || next_width_position(nodes, i + 1) < nodes.len() =>
             {
                 out.push(Breakpoint {
                     position: i + 1,
                     width_position: i,
-                    penalty: discretionary_penalty(*kind, params),
+                    penalty: discretionary_penalty(state.nodes(*pre).is_empty(), params),
                     hyphenated: true,
                     add_width: line_widths_view(
                         state,
@@ -506,7 +505,10 @@ fn is_discardable(node: &Node) -> bool {
     matches!(
         node,
         Node::Glue { .. }
-            | Node::Kern { .. }
+            | Node::Kern {
+                kind: KernKind::Explicit | KernKind::Mu,
+                ..
+            }
             | Node::Penalty(_)
             | Node::MathOn(_)
             | Node::MathOff(_)

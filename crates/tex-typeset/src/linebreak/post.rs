@@ -1,5 +1,5 @@
 use tex_state::glue::GlueSpec;
-use tex_state::node::{GlueKind, Node};
+use tex_state::node::{GlueKind, KernKind, Node};
 
 use crate::TypesetState;
 
@@ -120,7 +120,10 @@ fn is_discardable(node: &Node) -> bool {
     matches!(
         node,
         Node::Glue { .. }
-            | Node::Kern { .. }
+            | Node::Kern {
+                kind: KernKind::Explicit | KernKind::Mu,
+                ..
+            }
             | Node::Penalty(_)
             | Node::MathOn(_)
             | Node::MathOff(_)
