@@ -41,8 +41,9 @@ fn records_and_origin_lists_allocate_and_read_back() {
     )));
     let list = store.allocate_list(&[source, inserted]);
 
-    assert_eq!(source.raw(), 0x8000_0000);
-    assert_eq!(inserted.raw(), 0x8000_0001);
+    assert!(source.raw() & 0x8000_0000 != 0);
+    assert!(inserted.raw() & 0x8000_0000 != 0);
+    assert_ne!(source, inserted);
     assert_eq!(
         store.get(source),
         OriginRecord::Source(SourceOrigin::new(SourceId::new(7), 123, 4, 9))
@@ -96,6 +97,19 @@ fn provenance_fork_keeps_inherited_lists_but_separates_new_ones() {
     assert_eq!(parent_only.raw(), child_only.raw());
     assert!(!child.contains_list(parent_only));
     assert!(!parent.contains_list(child_only));
+}
+
+#[test]
+fn provenance_fork_keeps_inherited_origins_but_separates_new_keys() {
+    let mut parent = ProvenanceStore::new();
+    let inherited = parent.allocate(OriginRecord::UnknownBootstrap);
+    let mut child = parent.clone();
+    assert!(child.contains_origin(inherited));
+    let parent_only = parent.allocate(OriginRecord::UnknownBootstrap);
+    let child_only = child.allocate(OriginRecord::UnknownBootstrap);
+    assert_ne!(parent_only, child_only);
+    assert!(!child.contains_origin(parent_only));
+    assert!(!parent.contains_origin(child_only));
 }
 
 #[test]
@@ -181,8 +195,10 @@ fn rollback_mark_truncates_records_and_lists() {
     )));
     let reused_list = store.allocate_list(&[reused]);
 
-    assert_eq!(reused.raw(), stale.raw());
+    assert_ne!(reused.raw(), stale.raw());
+    assert!(!store.contains_origin(stale));
     assert_eq!(reused_list.raw(), stale_list.raw());
+    assert_ne!(reused_list, stale_list);
     assert_eq!(
         store.get(reused),
         OriginRecord::Synthetic(SyntheticOrigin::new(SyntheticOriginKind::Format))
