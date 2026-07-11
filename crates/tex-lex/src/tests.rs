@@ -474,6 +474,22 @@ fn superscript_notation_is_expanded_before_catcode_lookup() {
 }
 
 #[test]
+fn superscript_notation_reprocesses_a_generated_superscript_character() {
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::END_LINE_CHAR, 13);
+    stores.set_catcode('q', Catcode::Superscript);
+    let mut lexer = Lexer::new(MemoryInput::new("qq5e^5cbox10"));
+    let tokens = collect_tokens(&mut lexer, &mut stores);
+
+    assert_eq!(
+        tokens[0],
+        Token::Cs(stores.symbol("box").expect("control word"))
+    );
+    assert_eq!(tokens[1], char_token('1', Catcode::Other));
+    assert_eq!(tokens[2], char_token('0', Catcode::Other));
+}
+
+#[test]
 fn traced_source_origins_use_token_start_coordinates() {
     let mut stores = Universe::new();
     stores.set_int_param(IntParam::END_LINE_CHAR, -1);

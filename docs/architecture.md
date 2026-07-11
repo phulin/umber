@@ -445,6 +445,11 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   diagnostics. A delimiter expanded while the current condition is still
   evaluating its operands is handled like TeX.web's `insert_relax`: the
   delimiter is pushed back and a relaxed token is inserted ahead of it.
+- **Superscript notation** is normalized before catcode-driven tokenization
+  using the current superscript catcode, including TeX's chained case where
+  one doubled-character escape decodes to another superscript character that
+  immediately combines with the following input (for example the TRIP
+  `qq5e^5c` construction after `q` becomes superscript).
 - Value-rendering expandables (`\string`, `\number`, `\romannumeral`,
   `\meaning`, and the currently supported `\the` classes) mint their visible
   output through the explicit token-list freezing capability. `\the` covers

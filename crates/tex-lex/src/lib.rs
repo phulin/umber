@@ -2350,6 +2350,14 @@ fn expand_superscript_notation<S>(
     if stores.catcode(ch) != Catcode::Superscript {
         return None;
     }
+    expand_superscript_after_first(source, stores, unicode_superscript_notation)
+}
+
+fn expand_superscript_after_first<S>(
+    source: &mut SourceInputFrame<S>,
+    stores: &impl ExpansionState,
+    unicode_superscript_notation: bool,
+) -> Option<char> {
     let saved = cursor_mark(&source.frame);
     let second = source.frame.line[source.frame.byte_offset..]
         .chars()
@@ -2368,7 +2376,12 @@ fn expand_superscript_notation<S>(
             && let Some(value) = take_ascii_hex(&mut source.frame, 4)
             && let Some(decoded) = char::from_u32(value)
         {
-            return Some(decoded);
+            return Some(chain_superscript_expansion(
+                source,
+                decoded,
+                stores,
+                unicode_superscript_notation,
+            ));
         }
         restore_cursor(&mut source.frame, unicode_mark);
     }
@@ -2377,7 +2390,12 @@ fn expand_superscript_notation<S>(
     if let Some(value) = take_ascii_hex(&mut source.frame, 2)
         && let Some(decoded) = char::from_u32(value)
     {
-        return Some(decoded);
+        return Some(chain_superscript_expansion(
+            source,
+            decoded,
+            stores,
+            unicode_superscript_notation,
+        ));
     }
     restore_cursor(&mut source.frame, hex_mark);
 
@@ -2387,10 +2405,30 @@ fn expand_superscript_notation<S>(
     };
     let code = target as u32;
     let decoded = if code < 64 { code + 64 } else { code - 64 };
-    char::from_u32(decoded).or_else(|| {
+    let decoded = char::from_u32(decoded).or_else(|| {
         restore_cursor(&mut source.frame, saved);
         None
-    })
+    })?;
+    Some(chain_superscript_expansion(
+        source,
+        decoded,
+        stores,
+        unicode_superscript_notation,
+    ))
+}
+
+fn chain_superscript_expansion<S>(
+    source: &mut SourceInputFrame<S>,
+    decoded: char,
+    stores: &impl ExpansionState,
+    unicode_superscript_notation: bool,
+) -> char {
+    if stores.catcode(decoded) == Catcode::Superscript {
+        expand_superscript_after_first(source, stores, unicode_superscript_notation)
+            .unwrap_or(decoded)
+    } else {
+        decoded
+    }
 }
 
 impl<S> LineReader<S> {
