@@ -174,9 +174,13 @@ fn search_variant_chain(
                 });
             }
             let height_plus_depth = add(metrics.height, metrics.depth);
-            if best
-                .as_ref()
-                .is_none_or(|old| height_plus_depth > old.height_plus_depth)
+            // TeX initializes the best extent `w` to zero and only records a
+            // candidate when `u > w`; a present zero-extent glyph is not a
+            // delimiter candidate and must fall back to null_delimiter_space.
+            if height_plus_depth
+                > best
+                    .as_ref()
+                    .map_or(Scaled::from_raw(0), |old| old.height_plus_depth)
             {
                 let candidate = DelimiterCandidate {
                     font,
