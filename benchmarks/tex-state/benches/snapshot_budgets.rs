@@ -1,6 +1,9 @@
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use tex_state::token::Catcode;
-use tex_state_benchmarks::{WORKLOADS, WorkloadKind, build_workload};
+use tex_state_benchmarks::{
+    DEEP_GROUP_LARGE_DEPTH, DEEP_GROUP_SMALL_DEPTH, WORKLOADS, WorkloadKind, build_workload,
+    deep_group_code_table_workload,
+};
 
 fn snapshot_capture(c: &mut Criterion) {
     let mut group = c.benchmark_group("snapshot_capture");
@@ -38,5 +41,26 @@ fn detached_code_table_write(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, snapshot_capture, detached_code_table_write);
+fn deep_group_global_code_table_write(c: &mut Criterion) {
+    let mut group = c.benchmark_group("snapshot_update/deep_group_global_code_table");
+    for depth in [DEEP_GROUP_SMALL_DEPTH, DEEP_GROUP_LARGE_DEPTH] {
+        let mut universe = deep_group_code_table_workload(depth);
+        group.bench_with_input(BenchmarkId::from_parameter(depth), &depth, |b, _| {
+            b.iter(|| {
+                let snapshot = universe.snapshot();
+                universe.set_catcode_global('\u{10fffc}', Catcode::Active);
+                universe.rollback(&snapshot);
+                black_box(&snapshot);
+            });
+        });
+    }
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    snapshot_capture,
+    detached_code_table_write,
+    deep_group_global_code_table_write
+);
 criterion_main!(benches);

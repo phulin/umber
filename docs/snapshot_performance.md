@@ -81,6 +81,15 @@ flat root required copying all 4,352 page handles (at least 34,816 bytes for
 the pointer array alone) before cloning the touched page. Fresh roots now
 materialize zero Unicode pages, enforced by state-layer structural tests.
 
+Global Unicode code-table assignment has a second focused gate at group depths
+8 and 4,096. Group construction and snapshot capture occur outside the timed
+region; the measured assignment may retain at most 8 KiB, and the large-depth
+median must remain within the standard four-times-plus-25-us latency bound.
+This rejects the former depth-times-root behavior, where a global assignment
+copied the shared group-frame vector and rewrote all saved roots. The immutable
+global-write history now appends one bounded record and defers replay of only
+the relevant write suffix to group exit.
+
 The gate intentionally keeps retained snapshots alive for one observation, so
 capacity reuse or immediate drop cannot hide retained growth. It reports the
 single-capture and 32-capture observations separately, which distinguishes a
