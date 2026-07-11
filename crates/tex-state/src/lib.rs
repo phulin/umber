@@ -45,7 +45,7 @@ pub use stores::{FontParameterError, GroupKind, GroupMismatch, PrepareMagDiagnos
 pub use universe::{
     BoxDimension, CheckpointId, CheckpointMetadata, CheckpointResumeKind, ExpansionContext,
     ExpansionState, FormatError, InputOpenContext, InputOpenState, InputReadState, InteractionMode,
-    ResumeBoundary, ResumeFallback, Snapshot, Universe,
+    ParagraphShapeLine, ResumeBoundary, ResumeFallback, Snapshot, Universe,
 };
 pub use world::{
     ContentHash, EffectPos, EffectRecord, FileContent, InputRecord, InputRecordId, JobClock,

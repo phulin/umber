@@ -303,6 +303,10 @@ impl GlueParam {
 }
 
 impl TokParam {
+    /// Internal immutable payload backing TeX's scoped `\parshape` value.
+    /// This is not a user-visible token-list parameter.
+    pub(crate) const PAR_SHAPE_INTERNAL: Self = Self::new(127);
+
     /// TeX's `\output` token-list parameter.
     pub const OUTPUT: Self = Self::new(0);
 

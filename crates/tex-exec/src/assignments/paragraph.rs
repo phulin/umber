@@ -1,8 +1,8 @@
 use tex_lex::{InputSource, InputStack, TokenListReplayKind};
-use tex_state::Universe;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::node::{BoxNode, GlueKind, Node};
 use tex_state::scaled::Scaled;
+use tex_state::{ParagraphShapeLine, Universe};
 use tex_typeset::PackSpec;
 use tex_typeset::linebreak::{
     HyphenationHook, LineBreakParams, LineDimensions, LineShape, LineShapeEntry,
@@ -11,7 +11,7 @@ use tex_typeset::linebreak::{
 
 use super::boxes::hpack_with_overfull_rule;
 use super::*;
-use crate::mode::{IGNORE_DEPTH, ParagraphParams, ParagraphShape, ParagraphShapeLine};
+use crate::mode::{IGNORE_DEPTH, ParagraphParams};
 use crate::vertical::{
     append_migrated_contribution, append_node_to_current_list, append_vertical_contribution,
     build_page_if_outer_vertical,
@@ -25,6 +25,7 @@ pub(super) fn execute_paragraph_command<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
+    global: bool,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
@@ -34,7 +35,7 @@ where
         UnexpandablePrimitive::Par | UnexpandablePrimitive::EndGraf => end_paragraph(nest, stores),
         UnexpandablePrimitive::Indent => start_paragraph(nest, input, stores, true),
         UnexpandablePrimitive::NoIndent => start_paragraph(nest, input, stores, false),
-        UnexpandablePrimitive::ParShape => assign_parshape(nest, input, stores, hooks, context),
+        UnexpandablePrimitive::ParShape => assign_parshape(input, stores, hooks, context, global),
         UnexpandablePrimitive::PrevDepth => assign_prevdepth(nest, input, stores, hooks, context),
         UnexpandablePrimitive::PrevGraf => assign_prevgraf(nest, input, stores, hooks, context),
         UnexpandablePrimitive::NoInterlineSkip => {
@@ -74,7 +75,6 @@ where
             // enclosing prev_graf is only a continuation offset while a
             // paragraph is interrupted by display math.
             nest.set_enclosing_vertical_prev_graf(0);
-            let par_shape = nest.current_list().par_shape().cloned();
             let parskip = stores.glue_param(GlueParam::PAR_SKIP);
             if nest.current_mode() == Mode::Vertical || !nest.current_list().is_empty() {
                 append_vertical_contribution(
@@ -89,9 +89,6 @@ where
                 build_page_if_outer_vertical(nest, stores)?;
             }
             nest.push(Mode::Horizontal);
-            if let Some(shape) = par_shape {
-                nest.current_list_mut().set_par_shape(shape);
-            }
             if indent {
                 append_indent_box(nest, stores)?;
             }
@@ -168,7 +165,7 @@ pub(crate) fn display_line_dimensions(nest: &ModeNest, stores: &Universe) -> Lin
         left_skip: stores.glue_param(GlueParam::LEFT_SKIP),
         right_skip: stores.glue_param(GlueParam::RIGHT_SKIP),
         par_fill_skip: stores.glue_param(GlueParam::PAR_FILL_SKIP),
-        par_shape: nest.current_list().par_shape().cloned(),
+        par_shape: stores.paragraph_shape(),
         prev_graf: nest.enclosing_vertical_prev_graf(),
         hang_indent: stores.dimen_param(DimenParam::HANG_INDENT),
         hang_after: stores.int_param(IntParam::HANG_AFTER),
@@ -207,9 +204,6 @@ fn break_current_paragraph(
         leader: None,
     });
     let level = nest.pop()?;
-    if let Some(shape) = params.par_shape.clone() {
-        nest.current_list_mut().set_par_shape(shape);
-    }
     let hlist = crate::math::finish_math_lists(stores, level.list().nodes(), true);
     let line_params = line_break_params(stores, &params);
     let hyphenated = super::hyphenation::hyphenated_hlist(stores, &hlist);
@@ -275,7 +269,7 @@ fn snapshot_paragraph_params(nest: &ModeNest, stores: &Universe) -> ParagraphPar
         left_skip: stores.glue_param(GlueParam::LEFT_SKIP),
         right_skip: stores.glue_param(GlueParam::RIGHT_SKIP),
         par_fill_skip: stores.glue_param(GlueParam::PAR_FILL_SKIP),
-        par_shape: nest.current_list().par_shape().cloned(),
+        par_shape: stores.paragraph_shape(),
         prev_graf: nest.enclosing_vertical_prev_graf(),
         hang_indent: stores.dimen_param(DimenParam::HANG_INDENT),
         hang_after: stores.int_param(IntParam::HANG_AFTER),
@@ -333,27 +327,24 @@ fn post_line_break_params(
 fn line_shape(params: &ParagraphParams) -> LineShape {
     LineShape {
         hsize: params.hsize,
-        parshape: params
-            .par_shape
-            .as_ref()
-            .map(|shape| TypesetParagraphShape {
-                lines: shape
-                    .lines()
-                    .iter()
-                    .map(|line| LineShapeEntry {
-                        indent: line.indent,
-                        width: line.width,
-                    })
-                    .collect(),
-            }),
+        parshape: (!params.par_shape.is_empty()).then(|| TypesetParagraphShape {
+            lines: params
+                .par_shape
+                .iter()
+                .map(|line| LineShapeEntry {
+                    indent: line.indent,
+                    width: line.width,
+                })
+                .collect(),
+        }),
         hang_indent: params.hang_indent,
         hang_after: params.hang_after,
         line_offset: params.prev_graf.max(0) as usize,
     }
 }
 
-pub(crate) fn normal_paragraph(nest: &mut ModeNest, stores: &mut Universe) {
-    nest.current_list_mut().reset_par_shape();
+pub(crate) fn normal_paragraph(_nest: &mut ModeNest, stores: &mut Universe) {
+    stores.set_paragraph_shape(&[], false);
     if stores.int_param(IntParam::LOOSENESS) != 0 {
         stores.set_int_param(IntParam::LOOSENESS, 0);
     }
@@ -376,11 +367,11 @@ fn remove_final_glue(list: &mut crate::ModeList) {
 }
 
 fn assign_parshape<S, H>(
-    nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,
     context: TracedTokenWord,
+    global: bool,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
@@ -395,8 +386,7 @@ where
             width: scan_scaled(input, stores, hooks, context)?,
         });
     }
-    nest.current_list_mut()
-        .set_par_shape(ParagraphShape::new(lines));
+    stores.set_paragraph_shape(&lines, global);
     Ok(())
 }
 

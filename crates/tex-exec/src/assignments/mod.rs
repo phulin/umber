@@ -643,7 +643,15 @@ where
                         "\n! You can't use a prefix with this command.\nI'll pretend you didn't say \\global.\n",
                     );
                 }
-                execute_paragraph_command(primitive, command.traced, nest, input, stores, hooks)?;
+                execute_paragraph_command(
+                    primitive,
+                    command.traced,
+                    nest,
+                    input,
+                    stores,
+                    hooks,
+                    prefixes.global,
+                )?;
                 Ok(CommandOutcome::assigned_if(
                     primitive == UnexpandablePrimitive::ParShape
                         || primitive == UnexpandablePrimitive::PrevDepth

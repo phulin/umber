@@ -297,7 +297,6 @@ where
 {
     let prev_graf = nest.enclosing_vertical_prev_graf().saturating_add(3);
     nest.set_enclosing_vertical_prev_graf(prev_graf);
-    let par_shape = nest.current_list().par_shape().cloned();
     let next = loop {
         match input.next_traced_token(stores)? {
             Some(traced)
@@ -317,9 +316,6 @@ where
         }
         Some(traced) => {
             nest.push(Mode::Horizontal);
-            if let Some(shape) = par_shape {
-                nest.current_list_mut().set_par_shape(shape);
-            }
             nest.current_list_mut().set_space_factor(1000);
             crate::push_traced_tokens(input, stores, [traced]);
         }
@@ -384,11 +380,7 @@ where
 {
     let prev_graf = nest.enclosing_vertical_prev_graf().saturating_add(3);
     nest.set_enclosing_vertical_prev_graf(prev_graf);
-    let par_shape = nest.current_list().par_shape().cloned();
     nest.push(Mode::Horizontal);
-    if let Some(shape) = par_shape {
-        nest.current_list_mut().set_par_shape(shape);
-    }
     nest.current_list_mut().set_space_factor(1000);
     match input.next_traced_token(stores)? {
         Some(traced)

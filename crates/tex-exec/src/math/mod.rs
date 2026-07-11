@@ -461,8 +461,8 @@ where
     let origin = traced.origin();
     match primitive {
         UnexpandablePrimitive::Par | UnexpandablePrimitive::EndGraf => {
-            report_math_error(stores, "Missing $ inserted");
-            finish_math(nest, input, stores, origin)
+            insert_dollar_sign(traced, input, stores);
+            Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::SpaceFactor => {
             crate::diagnostics::report_illegal_case(stores, token, nest.current_mode());

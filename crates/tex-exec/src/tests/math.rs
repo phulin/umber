@@ -857,23 +857,7 @@ fn showlists_reports_unfinished_math_noad_fields() {
 #[test]
 fn par_in_math_finishes_math_with_tex_error_text() {
     let (stores, executor) = run_math_source(r"$a\par");
-    assert_eq!(executor.nest().current_mode(), Mode::Horizontal);
-    assert!(
-        executor
-            .nest()
-            .current_list()
-            .nodes()
-            .iter()
-            .any(|node| matches!(node, Node::MathOn(_)))
-    );
-    assert!(
-        executor
-            .nest()
-            .current_list()
-            .nodes()
-            .iter()
-            .any(|node| matches!(node, Node::MathOff(_)))
-    );
+    assert_eq!(executor.nest().current_mode(), Mode::Vertical);
     assert!(terminal_effect_text(&stores).contains("! Missing $ inserted."));
 }
 

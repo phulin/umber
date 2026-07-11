@@ -1,8 +1,9 @@
-use crate::Universe;
 use crate::hyphenation::{ExceptionSpec, PatternSpec};
 use crate::ids::TokenListId;
 use crate::page::PageMark;
+use crate::scaled::Scaled;
 use crate::token::{Catcode, Token};
+use crate::{ParagraphShapeLine, Universe, World};
 
 mod live_boundary;
 #[cfg(feature = "testing")]
@@ -13,6 +14,35 @@ mod replay_common;
 #[test]
 fn smoke() {
     assert!(!env!("CARGO_PKG_NAME").is_empty());
+}
+
+#[test]
+fn paragraph_shape_is_grouped_checkpointed_and_format_stable() {
+    let outer = [ParagraphShapeLine {
+        indent: Scaled::from_raw(3),
+        width: Scaled::from_raw(40),
+    }];
+    let inner = [ParagraphShapeLine {
+        indent: Scaled::from_raw(-7),
+        width: Scaled::from_raw(90),
+    }];
+    let mut universe = Universe::new();
+    universe.set_paragraph_shape(&outer, false);
+    let snapshot = universe.snapshot();
+
+    universe.enter_group();
+    universe.set_paragraph_shape(&inner, false);
+    assert_eq!(universe.paragraph_shape(), inner);
+    let _ = universe.leave_group();
+    assert_eq!(universe.paragraph_shape(), outer);
+
+    universe.set_paragraph_shape(&inner, false);
+    universe.rollback(&snapshot);
+    assert_eq!(universe.paragraph_shape(), outer);
+
+    let format = universe.dump_format().expect("paragraph shape format");
+    let loaded = Universe::from_format(World::default(), &format).expect("load paragraph shape");
+    assert_eq!(loaded.paragraph_shape(), outer);
 }
 
 #[test]

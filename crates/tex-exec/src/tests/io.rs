@@ -1149,6 +1149,22 @@ fn format_special_payloads(payloads: &[Vec<u8>]) -> String {
     output
 }
 
+#[test]
+fn deferred_write_does_not_absorb_following_par() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\def\\x{x\\write10{\\the\\spacefactor}\\par}\\x",
+    ));
+    let mut executor = Executor::new();
+
+    executor
+        .run(&mut input, &mut stores)
+        .expect("write followed by par executes");
+
+    assert_eq!(executor.nest().current_mode(), crate::Mode::Vertical);
+}
+
 fn shipout_artifact_bytes(source: &str) -> Vec<u8> {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);

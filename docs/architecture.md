@@ -764,7 +764,12 @@ makes box-level memoization (M4) sound.
   Post-line-break produces line node vectors with named
   `\leftskip`/`\rightskip` glue, per-line width/indent dimensions selected
   from `\parshape` first and otherwise TeX's `\hangindent`/`\hangafter`
-  rules, and interline penalty decisions. Forced breakpoint penalties are not
+  rules, and interline penalty decisions. The current `\parshape` payload is
+  owned by `Universe` and referenced through an ordinary barriered token-list
+  parameter, so local/global assignment, group restoration, checkpoints,
+  semantic hashing, and format serialization all share the same state path;
+  mode-list snapshots only copy its decoded value into immutable line-breaking
+  parameters. Forced breakpoint penalties are not
   passable. The stomach remains responsible for extracting top-level
   mark/insert/adjust material from each line, freezing the retained line
   vectors, hpacking to the selected line width, applying the selected indent

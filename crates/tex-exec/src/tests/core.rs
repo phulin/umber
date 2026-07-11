@@ -2538,7 +2538,30 @@ fn parshape_and_hanging_parameters_reset_after_paragraph() {
     assert_eq!(stores.dimen_param(DimenParam::HANG_INDENT).raw(), 0);
     assert_eq!(stores.int_param(IntParam::HANG_AFTER), 1);
     assert_eq!(stores.int_param(IntParam::LOOSENESS), 0);
-    assert!(executor.nest().current_list().par_shape().is_none());
+    assert!(stores.paragraph_shape().is_empty());
+}
+
+#[test]
+fn parshape_assignment_obeys_local_and_global_grouping() {
+    let mut local_stores = Universe::new();
+    install_unexpandable_primitives(&mut local_stores);
+    let mut local_input =
+        InputStack::new(MemoryInput::new("\\parshape=1 3pt 40pt{\\parshape=0}\\end"));
+    Executor::new()
+        .run(&mut local_input, &mut local_stores)
+        .expect("locally grouped parshape executes");
+    assert_eq!(local_stores.paragraph_shape().len(), 1);
+    assert_eq!(local_stores.paragraph_shape()[0].indent.raw(), 3 * 65_536);
+
+    let mut global_stores = Universe::new();
+    install_unexpandable_primitives(&mut global_stores);
+    let mut global_input =
+        InputStack::new(MemoryInput::new("{\\global\\parshape=1 7pt 80pt}\\end"));
+    Executor::new()
+        .run(&mut global_input, &mut global_stores)
+        .expect("globally grouped parshape executes");
+    assert_eq!(global_stores.paragraph_shape().len(), 1);
+    assert_eq!(global_stores.paragraph_shape()[0].indent.raw(), 7 * 65_536);
 }
 
 fn macro_text(stores: &Universe, name: &str) -> String {

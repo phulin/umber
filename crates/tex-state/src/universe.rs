@@ -564,6 +564,13 @@ pub struct Universe {
     last_checkpoint: Option<CheckpointMetadata>,
 }
 
+/// One indent/width pair in TeX's current `\parshape` value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ParagraphShapeLine {
+    pub indent: Scaled,
+    pub width: Scaled,
+}
+
 impl Clone for Universe {
     fn clone(&self) -> Self {
         let stores = self.stores.clone();
@@ -2354,6 +2361,55 @@ impl Universe {
 
     pub fn set_tok_param_global(&mut self, param: TokParam, value: TokenListId) {
         self.stores.set_tok_param_global(param, value);
+    }
+
+    /// Returns the current barriered, group-scoped `\parshape` value.
+    #[must_use]
+    pub fn paragraph_shape(&self) -> Vec<ParagraphShapeLine> {
+        let id = self.tok_param(TokParam::PAR_SHAPE_INTERNAL);
+        let tokens = self.tokens(id);
+        assert_eq!(
+            tokens.len() % 8,
+            0,
+            "internal parshape payload is truncated"
+        );
+        tokens
+            .chunks_exact(8)
+            .map(|chunk| {
+                let mut raw = [0_u8; 8];
+                for (byte, token) in raw.iter_mut().zip(chunk) {
+                    let Token::Param(value) = token else {
+                        panic!("internal parshape payload has a non-byte token");
+                    };
+                    *byte = *value;
+                }
+                ParagraphShapeLine {
+                    indent: Scaled::from_raw(i32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]])),
+                    width: Scaled::from_raw(i32::from_le_bytes([raw[4], raw[5], raw[6], raw[7]])),
+                }
+            })
+            .collect()
+    }
+
+    /// Assigns TeX's `\parshape` through the ordinary group write barrier.
+    pub fn set_paragraph_shape(&mut self, lines: &[ParagraphShapeLine], global: bool) {
+        let mut tokens = Vec::with_capacity(lines.len().saturating_mul(8));
+        for line in lines {
+            tokens.extend(
+                line.indent
+                    .raw()
+                    .to_le_bytes()
+                    .into_iter()
+                    .chain(line.width.raw().to_le_bytes())
+                    .map(Token::Param),
+            );
+        }
+        let id = self.intern_token_list(&tokens);
+        if global {
+            self.set_tok_param_global(TokParam::PAR_SHAPE_INTERNAL, id);
+        } else {
+            self.set_tok_param(TokParam::PAR_SHAPE_INTERNAL, id);
+        }
     }
 
     #[must_use]
