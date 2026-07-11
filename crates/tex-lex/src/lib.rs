@@ -395,6 +395,7 @@ enum InputFrame<S> {
 struct LastSourceFrame {
     source_id: SourceId,
     input_record: Option<InputRecordId>,
+    registration: Option<RegisteredSource>,
     frame: SourceFrame,
     next_source_offset: usize,
 }
@@ -593,8 +594,8 @@ impl<S> InputStack<S> {
                         frame: SourceFrame::from_summary(source),
                         next_source_offset: source.next_source_offset(),
                         descriptor,
-                        registration_attempted: false,
-                        registration: None,
+                        registration_attempted: source.registration().is_some(),
+                        registration: source.registration(),
                     }));
                 }
                 InputFrameSummary::TokenList {
@@ -646,6 +647,7 @@ impl<S> InputStack<S> {
                     .last_source_id()
                     .expect("last source frame must retain its source id"),
                 input_record: summary.last_source_record(),
+                registration: source.registration(),
                 frame: SourceFrame::from_summary(source),
                 next_source_offset: source.next_source_offset(),
             }),
@@ -969,7 +971,10 @@ impl<S> InputStack<S> {
                     InputFrame::Source(source) => InputFrameSummary::Source {
                         source_id: source.source_id,
                         input_record: source.input_record,
-                        source: source.frame.summary(source.next_source_offset),
+                        source: source
+                            .frame
+                            .summary(source.next_source_offset)
+                            .with_registration(source.registration),
                     },
                     InputFrame::TokenList(token_list) => InputFrameSummary::TokenList {
                         token_list: token_list.token_list,
@@ -990,12 +995,25 @@ impl<S> InputStack<S> {
             self.last_source_frame
                 .as_ref()
                 .and_then(|last| last.input_record),
-            self.last_source_frame
-                .as_ref()
-                .map(|last| last.frame.summary(last.next_source_offset)),
+            self.last_source_frame.as_ref().map(|last| {
+                last.frame
+                    .summary(last.next_source_offset)
+                    .with_registration(last.registration)
+            }),
             self.next_source_id,
             self.unicode_superscript_notation,
         )
+    }
+
+    /// Captures a summary whose source capabilities are ready for publication
+    /// through [`tex_state::Universe::set_input_summary`].
+    pub fn publication_summary(&mut self, stores: &mut impl ExpansionState) -> InputSummary {
+        for frame in &mut self.frames {
+            if let InputFrame::Source(source) = frame {
+                ensure_source_registered(source, stores);
+            }
+        }
+        self.summary()
     }
 
     #[must_use]
@@ -1436,6 +1454,7 @@ where
                                 self.last_source_frame = Some(LastSourceFrame {
                                     source_id: source.source_id,
                                     input_record: source.input_record,
+                                    registration: source.registration,
                                     frame: source.frame,
                                     next_source_offset: source.next_source_offset,
                                 });
@@ -1448,6 +1467,7 @@ where
                                 self.last_source_frame = Some(LastSourceFrame {
                                     source_id: source.source_id,
                                     input_record: source.input_record,
+                                    registration: source.registration,
                                     frame: source.frame,
                                     next_source_offset: source.next_source_offset,
                                 });
@@ -1552,6 +1572,7 @@ where
                                 self.last_source_frame = Some(LastSourceFrame {
                                     source_id: source.source_id,
                                     input_record: source.input_record,
+                                    registration: source.registration,
                                     frame: source.frame,
                                     next_source_offset: source.next_source_offset,
                                 });
@@ -1564,6 +1585,7 @@ where
                                 self.last_source_frame = Some(LastSourceFrame {
                                     source_id: source.source_id,
                                     input_record: source.input_record,
+                                    registration: source.registration,
                                     frame: source.frame,
                                     next_source_offset: source.next_source_offset,
                                 });
@@ -1633,6 +1655,7 @@ where
                                 self.last_source_frame = Some(LastSourceFrame {
                                     source_id: source.source_id,
                                     input_record: source.input_record,
+                                    registration: source.registration,
                                     frame: source.frame,
                                     next_source_offset: source.next_source_offset,
                                 });
@@ -1645,6 +1668,7 @@ where
                                 self.last_source_frame = Some(LastSourceFrame {
                                     source_id: source.source_id,
                                     input_record: source.input_record,
+                                    registration: source.registration,
                                     frame: source.frame,
                                     next_source_offset: source.next_source_offset,
                                 });

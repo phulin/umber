@@ -857,8 +857,15 @@ fn alignment_preamble_errors_match_reference_wording() {
 #[test]
 fn mid_alignment_snapshot_rollback_restores_summary_and_unset_rows() {
     let (mut stores, state) = scan_halign_preamble("{#&#\\cr}");
-    let input = InputStack::new(MemoryInput::new("b&c\\cr}"));
-    let input_summary = input.summary();
+    let seed =
+        tex_state::InputSummary::new_with_resume_state(Vec::new(), None, None, None, 1, true);
+    let mut input =
+        InputStack::<MemoryInput>::from_summary(&seed, |_, _, _| -> Result<MemoryInput, ()> {
+            unreachable!("empty seed has no source to restore")
+        })
+        .expect("restore empty input stack");
+    input.push_source(MemoryInput::new("b&c\\cr}"));
+    let input_summary = input.publication_summary(&mut stores);
     let mut nest = ModeNest::new();
     nest.push(Mode::InternalVertical);
     nest.current_list_mut().set_align_state(state);
