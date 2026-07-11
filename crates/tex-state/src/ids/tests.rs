@@ -24,6 +24,26 @@ fn generation_tagged_node_list_id_is_exactly_two_words() {
 }
 
 #[test]
+fn semantic_runtime_ids_are_exactly_two_words() {
+    assert_eq!(size_of::<TokenListId>(), 16);
+    assert_eq!(size_of::<super::MacroDefinitionId>(), 16);
+    assert_eq!(size_of::<GlueId>(), 16);
+    assert_eq!(size_of::<FontId>(), 16);
+}
+
+#[test]
+fn semantic_id_serialization_emits_a_detached_slot_reference() {
+    let mut store = crate::token_store::TokenStore::new();
+    let live = store.intern(&[crate::token::Token::param(1)]);
+    let bytes = bincode::serialize(&live).expect("semantic DTO slot serializes");
+    let detached: TokenListId =
+        bincode::deserialize(&bytes).expect("semantic DTO slot deserializes");
+    assert_eq!(detached.raw(), live.raw());
+    assert_ne!(detached, live);
+    assert_eq!(store.resolve_stored(detached), Some(live));
+}
+
+#[test]
 fn only_detached_node_list_references_are_serializable() {
     let detached = NodeListId::testing_epoch(3, 4);
     let bytes = bincode::serialize(&detached).expect("detached DTO reference serializes");
