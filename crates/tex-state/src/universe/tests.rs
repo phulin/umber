@@ -205,6 +205,27 @@ fn semantic_format_is_deterministic_validated_and_world_independent() {
 }
 
 #[test]
+fn semantic_format_uses_dto_local_survivor_root_keys() {
+    fn boxed_universe() -> Universe {
+        let mut universe = Universe::new();
+        let list = universe.freeze_node_list(&[Node::Penalty(123)]);
+        universe.set_box_reg(0, list);
+        universe
+    }
+
+    let first = boxed_universe();
+    let second = boxed_universe();
+    assert_ne!(
+        first.box_reg(0).expect("first box").arena(),
+        second.box_reg(0).expect("second box").arena()
+    );
+    assert_eq!(
+        first.dump_format().expect("first format"),
+        second.dump_format().expect("second format")
+    );
+}
+
+#[test]
 fn semantic_format_validates_and_canonicalizes_glue_set_ratios() {
     const CANONICAL: (i32, i32) = (123_457, 765_431);
 

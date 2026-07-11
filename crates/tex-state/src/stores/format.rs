@@ -185,9 +185,36 @@ impl StoreFormat {
             .collect();
         let mut seen = std::collections::BTreeSet::new();
         let mut visiting = std::collections::BTreeSet::new();
+        let mut survivor_roots = std::collections::BTreeMap::new();
         let mut node_lists = Vec::new();
         for root in roots {
-            capture_node_list(stores, root, &mut seen, &mut visiting, &mut node_lists)?;
+            capture_node_list(
+                stores,
+                root,
+                &mut seen,
+                &mut visiting,
+                &mut survivor_roots,
+                &mut node_lists,
+            )?;
+        }
+        for (raw, word) in &mut env {
+            let cell = crate::cell::CellId::new(
+                crate::cell::BankTag::from_bits(*raw >> 27),
+                *raw & ((1 << 26) - 1),
+            );
+            if cell.bank() == crate::cell::BankTag::Box
+                && let Some(id) = NodeListId::decode_box_word(*word)
+            {
+                let key = FormatListKey::capture(stores, id, &mut survivor_roots);
+                *word = NodeListId::encode_box_word(Some(NodeListId::new_survivor(
+                    crate::ids::SurvivorRootId::new(
+                        key.survivor_root
+                            .expect("box format key has a survivor root"),
+                    ),
+                    key.start,
+                    key.len,
+                )));
+            }
         }
         let code_tables = (0..=255)
             .map(|code| {
@@ -320,7 +347,11 @@ impl StoreFormat {
 }
 
 impl FormatListKey {
-    fn capture(stores: &Stores, id: NodeListId) -> Self {
+    fn capture(
+        stores: &Stores,
+        id: NodeListId,
+        survivor_roots: &mut std::collections::BTreeMap<crate::ids::SurvivorRootId, u32>,
+    ) -> Self {
         let (start, len) = match id.arena() {
             crate::ids::ArenaRef::Epoch => {
                 let span = stores
@@ -334,7 +365,15 @@ impl FormatListKey {
         Self {
             survivor_root: match id.arena() {
                 crate::ids::ArenaRef::Epoch => None,
-                crate::ids::ArenaRef::Survivor(root) => Some(root.raw()),
+                crate::ids::ArenaRef::Survivor(root) => Some(match survivor_roots.get(&root) {
+                    Some(&detached) => detached,
+                    None => {
+                        let detached = u32::try_from(survivor_roots.len())
+                            .expect("format survivor roots exceed u32");
+                        survivor_roots.insert(root, detached);
+                        detached
+                    }
+                }),
             },
             start,
             len,
@@ -366,6 +405,7 @@ fn capture_node_list(
     id: NodeListId,
     seen: &mut std::collections::BTreeSet<NodeListId>,
     visiting: &mut std::collections::BTreeSet<NodeListId>,
+    survivor_roots: &mut std::collections::BTreeMap<crate::ids::SurvivorRootId, u32>,
     out: &mut Vec<FormatNodeList>,
 ) -> Result<(), StoreFormatError> {
     if seen.contains(&id) {
@@ -377,16 +417,16 @@ fn capture_node_list(
     let mut nodes = stores.nodes(id).to_vec();
     for node in &nodes {
         for child in node_child_ids(node) {
-            capture_node_list(stores, child, seen, visiting, out)?;
+            capture_node_list(stores, child, seen, visiting, survivor_roots, out)?;
         }
     }
     visiting.remove(&id);
     seen.insert(id);
     for node in &mut nodes {
-        detach_node_handles(stores, node);
+        detach_node_handles(stores, node, survivor_roots);
     }
     out.push(FormatNodeList {
-        key: FormatListKey::capture(stores, id),
+        key: FormatListKey::capture(stores, id, survivor_roots),
         nodes,
     });
     Ok(())
@@ -435,9 +475,13 @@ fn math_field_child(field: &crate::math::MathField, out: &mut Vec<NodeListId>) {
     }
 }
 
-fn detach_node_handles(stores: &Stores, node: &mut Node) {
-    let detach = |id: &mut NodeListId| {
-        *id = FormatListKey::capture(stores, *id).reference();
+fn detach_node_handles(
+    stores: &Stores,
+    node: &mut Node,
+    survivor_roots: &mut std::collections::BTreeMap<crate::ids::SurvivorRootId, u32>,
+) {
+    let mut detach = |id: &mut NodeListId| {
+        *id = FormatListKey::capture(stores, *id, survivor_roots).reference();
     };
     match node {
         Node::HList(box_node) | Node::VList(box_node) => detach(&mut box_node.children),
@@ -459,9 +503,9 @@ fn detach_node_handles(stores: &Stores, node: &mut Node) {
         }
         Node::Ins { content, .. } | Node::Adjust(content) => detach(content),
         Node::MathNoad(noad) => {
-            detach_math_field(&mut noad.nucleus, &detach);
-            detach_math_field(&mut noad.subscript, &detach);
-            detach_math_field(&mut noad.superscript, &detach);
+            detach_math_field(&mut noad.nucleus, &mut detach);
+            detach_math_field(&mut noad.subscript, &mut detach);
+            detach_math_field(&mut noad.superscript, &mut detach);
         }
         Node::FractionNoad(fraction) => {
             detach(&mut fraction.numerator);
@@ -478,7 +522,7 @@ fn detach_node_handles(stores: &Stores, node: &mut Node) {
     }
 }
 
-fn detach_math_field(field: &mut crate::math::MathField, detach: &impl Fn(&mut NodeListId)) {
+fn detach_math_field(field: &mut crate::math::MathField, detach: &mut impl FnMut(&mut NodeListId)) {
     if let crate::math::MathField::SubBox(id) | crate::math::MathField::SubMlist(id) = field {
         detach(id);
     }
