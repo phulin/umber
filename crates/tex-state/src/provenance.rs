@@ -596,7 +596,7 @@ pub(crate) struct ProvenanceStore {
     list_identities: IdentityAllocator,
     record_identities: IdentityAllocator,
     record_keys: Vec<u32>,
-    record_lookup: HashMap<u32, usize>,
+    record_lookup: HashMap<u32, crate::identity::HandleIdentity>,
 }
 
 impl Clone for ProvenanceStore {
@@ -650,10 +650,9 @@ impl ProvenanceStore {
             Err(_) => return OriginId::UNKNOWN,
         };
         debug_assert_eq!(identity.slot() as usize, self.records.len());
-        let index = self.records.len();
         self.records.push(record);
         self.record_keys.push(key);
-        self.record_lookup.insert(key, index);
+        self.record_lookup.insert(key, identity);
         OriginId::arena(key).expect("global packed provenance key is representable")
     }
 
@@ -741,10 +740,15 @@ impl ProvenanceStore {
         let crate::token::OriginEncoding::Arena(index) = id.decode() else {
             panic!("direct source origin has no provenance arena record");
         };
-        let index = *self
+        let identity = *self
             .record_lookup
             .get(&index)
             .expect("origin id is not live");
+        assert!(
+            self.record_identities.contains(identity),
+            "origin id is not live"
+        );
+        let index = identity.slot() as usize;
         self.records[index]
     }
 
@@ -766,7 +770,10 @@ impl ProvenanceStore {
     pub(crate) fn contains_origin(&self, id: OriginId) -> bool {
         match id.decode() {
             crate::token::OriginEncoding::Unknown => true,
-            crate::token::OriginEncoding::Arena(index) => self.record_lookup.contains_key(&index),
+            crate::token::OriginEncoding::Arena(index) => self
+                .record_lookup
+                .get(&index)
+                .is_some_and(|identity| self.record_identities.contains(*identity)),
             crate::token::OriginEncoding::DirectSource(_) => false,
         }
     }

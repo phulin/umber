@@ -386,6 +386,7 @@ impl SourceMap {
     pub(crate) fn region_for_source(&self, source: SourceId) -> Option<SourceRegion> {
         if let Some(region) = self.regions.get(source.raw() as usize).copied()
             && region.source == source
+            && self.identities.contains(region.identity)
         {
             return Some(region);
         }
@@ -393,7 +394,7 @@ impl SourceMap {
             .iter()
             .rev()
             .copied()
-            .find(|region| region.source == source)
+            .find(|region| region.source == source && self.identities.contains(region.identity))
     }
 
     pub(crate) fn region_for_position(&self, position: SourcePos) -> Option<SourceRegion> {
@@ -402,7 +403,8 @@ impl SourceMap {
             .partition_point(|region| region.start.0 <= position.0)
             .checked_sub(1)?;
         let region = self.regions[index];
-        (position.0 <= region.anchor().0).then_some(region)
+        (position.0 <= region.anchor().0 && self.identities.contains(region.identity))
+            .then_some(region)
     }
 
     pub(crate) fn region_for_backed_position(&self, position: SourcePos) -> Option<SourceRegion> {
