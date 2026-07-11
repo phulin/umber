@@ -506,6 +506,7 @@ pub struct World {
     input_contents: BTreeMap<ContentHash, Vec<u8>>,
     terminal_inputs: Vec<String>,
     shell_escapes: Vec<ShellEscapeRecord>,
+    artifact_commits: Vec<ContentHash>,
 }
 
 impl World {
@@ -553,6 +554,7 @@ impl World {
             input_contents: BTreeMap::new(),
             terminal_inputs: Vec::new(),
             shell_escapes: Vec::new(),
+            artifact_commits: Vec::new(),
         }
     }
 
@@ -795,6 +797,19 @@ impl World {
             }
             WorldBackend::Memory(memory) => Ok(memory.artifacts.get(&hash).cloned()),
         }
+    }
+
+    /// Returns committed page artifact ids in shipout order.
+    ///
+    /// This is downstream notification state: shipout is the commit barrier,
+    /// so these entries are never rolled back or included in semantic hashes.
+    #[must_use]
+    pub fn artifact_commits(&self) -> &[ContentHash] {
+        &self.artifact_commits
+    }
+
+    pub(crate) fn record_artifact_commit(&mut self, hash: ContentHash) {
+        self.artifact_commits.push(hash);
     }
 
     pub fn open_out(&mut self, slot: StreamSlot, path: impl Into<PathBuf>) {

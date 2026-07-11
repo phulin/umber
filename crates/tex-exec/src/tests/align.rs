@@ -109,9 +109,10 @@ fn run_nested_shipout_source(stores: &mut Universe, source: &str) -> CheckpointM
     let stats = Executor::new()
         .run(&mut input, stores)
         .expect("nested shipout source executes");
-    assert!(
-        stats.shipped_artifacts.is_empty(),
-        "nested shipout artifacts are intentionally not surfaced through top-level stats"
+    assert_eq!(
+        stats.shipped_artifacts.len(),
+        1,
+        "every committed nested shipout is surfaced to the output driver"
     );
     stores
         .last_checkpoint()

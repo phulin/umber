@@ -1140,6 +1140,22 @@ fn shipout_artifact_bytes(source: &str) -> Vec<u8> {
         .expect("artifact stored")
 }
 
+#[test]
+fn shipout_nested_in_box_scan_is_reported_to_driver() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\setbox0=\\hbox{\\shipout\\hbox{A}}\\end",
+    ));
+
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("nested shipout succeeds");
+
+    assert_eq!(stats.shipped_artifacts.len(), 1);
+    assert_eq!(stores.world().artifact_commits(), stats.shipped_artifacts);
+}
+
 fn format_output_presence(stores: &Universe, paths: &[&str]) -> String {
     let mut output = String::new();
     for path in paths {

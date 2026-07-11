@@ -1006,6 +1006,7 @@ impl Universe {
         }
         self.stores.release_shipout_nodes(boundary.node_mark);
         let _checkpoint = self.checkpoint_after_committed_boundary(hash_base);
+        self.world.record_artifact_commit(hash);
         Ok(hash)
     }
 

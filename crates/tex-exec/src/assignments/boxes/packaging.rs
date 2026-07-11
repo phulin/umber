@@ -270,7 +270,14 @@ where
             match crate::dispatch_delivered_token(nest, token, input, stores, hooks)? {
                 crate::DispatchAction::Continue => {}
                 crate::DispatchAction::Shipout(_) => {}
-                crate::DispatchAction::End => return Ok(()),
+                crate::DispatchAction::End => {
+                    // A stop command cannot terminate TeX from inside an
+                    // unfinished box. Close this recovery scan and replay it
+                    // so outer main control can perform the ordinary final
+                    // page-builder cleanup in vertical mode.
+                    push_traced_tokens(input, stores, [token]);
+                    return Ok(());
+                }
                 crate::DispatchAction::NotConsumed => {
                     return Err(ExecError::UnimplementedTypesetting {
                         mode: nest.current_mode(),

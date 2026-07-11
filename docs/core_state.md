@@ -689,7 +689,12 @@ pub struct Snapshot {
 - **Commit barrier = shipout**: page artifact serialized and stored through
   `World`, effects flushed, shipped-page epoch nodes released, and then the
   next checkpoint taken through one aggregate `Universe::commit_shipout`
-  boundary. The flushed effect prefix is dropped too, leaving only the
+  boundary. `World` also retains the ordered artifact ids as append-only
+  downstream notifications so driver composition cannot lose a shipout that
+  occurs inside a nested box or alignment scanner. This sequence is committed
+  output history: like the artifacts themselves it is neither rollback state
+  nor part of semantic convergence hashing.
+  The flushed effect prefix is dropped too, leaving only the
   uncommitted suffix and the committed backend stream state. History is
   bounded. The implemented boundary retargets hash cursors past dropped effect
   prefixes before checkpointing, so later shipout checkpoints never try to hash

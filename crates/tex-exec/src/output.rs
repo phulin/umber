@@ -22,7 +22,7 @@ use crate::mode::IGNORE_DEPTH;
 use crate::packing_params::vpack;
 use crate::page_builder::build_page;
 use crate::splitting::{natural_vlist_size, prune_page_top, vpack_natural};
-use crate::{ExecError, ExecutionStats, Mode, ModeNest, leave_group};
+use crate::{ExecError, ExecutionStats, Mode, ModeNest, leave_group, push_traced_tokens};
 
 pub(crate) fn drain_pending_output<S, R, H>(
     nest: &mut ModeNest,
@@ -84,7 +84,7 @@ where
         prepend_output_heldover(stores, Vec::new());
         let node = take_box255_node(stores)?;
         let artifact = shipout_node(node, stores, recorder)?;
-        stats.shipped_artifacts.push(artifact);
+        let _ = artifact;
         build_page(stores)?;
         return Ok(());
     }
@@ -92,7 +92,17 @@ where
     let dead_cycles = stores.page_integer(PageInteger::DeadCycles);
     let max_dead_cycles = stores.int_param(IntParam::MAX_DEAD_CYCLES);
     if dead_cycles >= max_dead_cycles {
-        return Err(ExecError::OutputLoop { dead_cycles });
+        stores.world_mut().write_text(
+            tex_state::PrintSink::TerminalAndLog,
+            &format!(
+                "\n! Output loop---{dead_cycles} consecutive dead cycles.\nI've concluded that your \\output is awry; it never does a\n\\shipout, so I'm shipping \\box255 out myself. Next time\nincrease \\maxdeadcycles if you want me to be more patient!\n"
+            ),
+        );
+        prepend_output_heldover(stores, Vec::new());
+        let node = take_box255_node(stores)?;
+        let _artifact = shipout_node(node, stores, recorder)?;
+        build_page(stores)?;
+        return Ok(());
     }
     stores.set_page_integer(PageInteger::DeadCycles, dead_cycles.saturating_add(1));
     run_output_routine(nest, input, stores, recorder, hooks, stats, output)?;
@@ -419,12 +429,11 @@ where
             }
         }
         MainControlExit::End { token } => {
-            return Err(ExecError::UnimplementedTypesetting {
-                mode: nest.current_mode(),
-                token: tex_expand::semantic_token(token),
-                origin: token.origin(),
-                operation: "\\end inside \\output",
-            });
+            // TeX's off_save recovery closes the output group before a stop
+            // command can be reconsidered by outer vertical main control.
+            // Preserve the command for that reconsideration while completing
+            // the ordinary output-routine teardown below.
+            push_traced_tokens(input, stores, [token]);
         }
         MainControlExit::NotConsumed { token } => {
             return Err(ExecError::UnimplementedTypesetting {

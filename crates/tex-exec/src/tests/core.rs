@@ -2403,11 +2403,20 @@ fn deadcycles_overflow_reports_output_loop() {
          \\copy0 \\penalty-10000",
     ));
 
-    let err = Executor::new()
+    let stats = Executor::new()
         .run(&mut input, &mut stores)
-        .expect_err("second dead cycle should overflow");
+        .expect("TeX recovers from an output loop with default shipout");
 
-    assert_eq!(err.to_string(), "Output loop---1 consecutive dead cycles");
+    assert_eq!(stats.shipped_artifacts.len(), 1);
+    assert!(
+        String::from_utf8_lossy(
+            stores
+                .world()
+                .memory_terminal_output()
+                .expect("memory output")
+        )
+        .contains("Output loop---1 consecutive dead cycles")
+    );
 }
 
 #[test]
@@ -2429,6 +2438,21 @@ fn end_cleanup_ejects_residual_page() {
         stores.page_integer(tex_state::page::PageInteger::DeadCycles),
         0
     );
+}
+
+#[test]
+fn end_inside_unterminated_box_reaches_outer_cleanup() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\hbox{A\\end"));
+
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("stop command is reconsidered after box recovery");
+
+    assert_eq!(stats.shipped_artifacts.len(), 1);
+    assert!(stores.current_page_nodes().is_empty());
+    assert!(stores.page_contributions().is_empty());
 }
 
 #[test]

@@ -639,7 +639,7 @@ where
             Ok(())
         }
         DispatchAction::Shipout(artifact) => {
-            stats.shipped_artifacts.push(artifact);
+            let _ = artifact;
             crate::output::drain_pending_output(nest, input, stores, recorder, hooks, stats)?;
             Ok(())
         }

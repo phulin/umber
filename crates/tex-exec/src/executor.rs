@@ -88,6 +88,7 @@ impl Executor {
         R: ReadRecorder,
         H: ExpansionHooks<S>,
     {
+        let artifact_start = stores.world().artifact_commits().len();
         let mut exec_hooks = ExecExpansionHooks::new(hooks);
         let mut stats = ExecutionStats::default();
         let exit = match run_main_control_until(
@@ -105,7 +106,7 @@ impl Executor {
                 return Err(err);
             }
         };
-        match exit {
+        let result = match exit {
             MainControlExit::EndOfInput => Ok(stats),
             MainControlExit::Stopped => {
                 unreachable!("top-level main control has no stop condition")
@@ -132,7 +133,11 @@ impl Executor {
             )
             .expect_err("unimplemented_typesetting always returns Err")
             .capture(input)),
-        }
+        };
+        result.map(|mut stats| {
+            stats.shipped_artifacts = stores.world().artifact_commits()[artifact_start..].to_vec();
+            stats
+        })
     }
 }
 
@@ -380,7 +385,7 @@ where
                 output::drain_pending_output(nest, input, stores, recorder, hooks, stats)?;
             }
             DispatchAction::Shipout(artifact) => {
-                stats.shipped_artifacts.push(artifact);
+                let _ = artifact;
                 output::drain_pending_output(nest, input, stores, recorder, hooks, stats)?;
             }
             DispatchAction::End => {
