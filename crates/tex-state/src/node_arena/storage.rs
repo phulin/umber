@@ -1,6 +1,7 @@
 use super::tables::{BoxTable, InsertionTable, NoadTable, UnsetTable};
 use super::view::NodeList;
 use super::{checked_len, preflight_capacity};
+use crate::identity::IdentityMark;
 use crate::ids::{GlueId, NodeListId};
 use crate::math::MathStyle;
 use crate::node::{DiscKind, GlueKind, KernKind, Node};
@@ -37,7 +38,10 @@ impl NodeWord {
 
 /// One opaque aggregate rollback watermark.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct NodeArenaMark(pub(super) StorageMark);
+pub(crate) struct NodeArenaMark {
+    pub(super) storage: StorageMark,
+    pub(super) identities: IdentityMark,
+}
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(super) struct StorageMark {

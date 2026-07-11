@@ -777,7 +777,32 @@ fn freeze_node_list_rejects_stale_rolled_back_child_node_list() {
     let stale = one_char(&mut stores, 'x');
 
     stores.rollback(&snapshot);
+    stores.freeze_node_list(&[Node::Penalty(1), Node::Penalty(2)]);
     stores.freeze_node_list(&[Node::Adjust(stale)]);
+}
+
+#[test]
+#[should_panic(expected = "node list is not live in this Universe timeline")]
+fn aggregate_read_rejects_stale_epoch_list_after_covering_reallocation() {
+    let mut stores = Stores::new();
+    let snapshot = stores.checkpoint();
+    let stale = one_char(&mut stores, 'x');
+
+    stores.rollback(&snapshot);
+    stores.freeze_node_list(&[Node::Penalty(1), Node::Penalty(2)]);
+    let _ = stores.nodes(stale);
+}
+
+#[test]
+#[should_panic(expected = "node list is not live in this Universe timeline")]
+fn box_write_rejects_stale_epoch_list_after_equal_reallocation() {
+    let mut stores = Stores::new();
+    let snapshot = stores.checkpoint();
+    let stale = one_char(&mut stores, 'x');
+
+    stores.rollback(&snapshot);
+    let _replacement = one_char(&mut stores, 'y');
+    stores.set_box_reg(0, stale);
 }
 
 #[test]
@@ -1423,7 +1448,7 @@ fn promotion_patches_every_child_bearing_compact_row() {
 fn promotion_copies_overlapping_source_spans_independently() {
     let mut stores = Stores::new();
     let whole = stores.freeze_node_list(&[Node::Penalty(10), Node::Penalty(20)]);
-    let suffix = NodeListId::new_epoch(whole.start() + 1, 1);
+    let suffix = stores.nodes.testing_subspan(whole, 1, 1);
     let fields = |children| {
         BoxNode::new(BoxNodeFields {
             width: scaled(1),
@@ -1579,7 +1604,9 @@ fn survivor_clone_to_epoch_is_iterative_and_child_first() {
             panic!("deep clone should retain hlist shape");
         };
         assert!(matches!(value.children.arena(), ArenaRef::Epoch));
-        assert!(value.children.start() + value.children.len() <= parent.start());
+        let child_span = stores.nodes.span(value.children).expect("child is live");
+        let parent_span = stores.nodes.span(parent).expect("parent is live");
+        assert!(child_span.start + child_span.len <= parent_span.start);
         cloned = value.children;
     }
     assert_eq!(
@@ -1624,7 +1651,9 @@ fn mixed_epoch_survivor_clone_memoizes_shared_exact_spans() {
     };
     assert_eq!(first.children, second.children, "shared span cloned once");
     assert!(matches!(first.children.arena(), ArenaRef::Epoch));
-    assert!(first.children.start() + first.children.len() <= cloned.start());
+    let child_span = stores.nodes.span(first.children).expect("child is live");
+    let parent_span = stores.nodes.span(cloned).expect("parent is live");
+    assert!(child_span.start + child_span.len <= parent_span.start);
     assert_eq!(
         stores.nodes(first.children),
         &[Node::Char {

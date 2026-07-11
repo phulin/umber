@@ -1054,7 +1054,7 @@ fn rollback_restores_state_hash_cursor() {
 }
 
 #[test]
-fn rollback_rebuilds_incremental_hash_baselines_after_node_handle_reuse() {
+fn rollback_rebuilds_incremental_hash_baselines_after_node_span_reuse() {
     let mut reused = Universe::new();
     let base = reused.snapshot();
     let first_list = reused.freeze_node_list(&[Node::Char {
@@ -1069,9 +1069,9 @@ fn rollback_rebuilds_incremental_hash_baselines_after_node_handle_reuse() {
         font: NULL_FONT,
         ch: 'y',
     }]);
-    assert_eq!(
+    assert_ne!(
         first_list, second_list,
-        "rollback should reuse this epoch node span"
+        "rollback must retag the reused epoch node span"
     );
     reused.set_box_reg(0, second_list);
     let reused_hash = reused.snapshot().state_hash();

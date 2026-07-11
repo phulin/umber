@@ -173,26 +173,44 @@ Capacity details:
 - a glue with a leader cannot use tag 3. Its sidecar owns the glue spec/kind
   and the complete leader payload, so there is no hidden parallel leader map.
 
-## 4. Packed `NodeListId`
+## 4. Generation-tagged `NodeListId`
 
-`NodeListId` becomes one private `u64`, with a compile-time eight-byte size
-assertion. Its logical accessors remain `arena()`, `start()`, `len()`, and
-`is_empty()`; no downstream code sees the packed word or can mint a handle.
+`NodeListId` is a private two-word runtime identity with a compile-time
+sixteen-byte size assertion. Epoch handles wrap the common state-layer
+`(namespace, generation, slot)` identity. The owning `NodeArena` keeps a dense
+parallel table from allocation slot to compact `(start, len)` span, so a read
+performs one bounds/tag comparison and one indexed span load. Raw span
+accessors no longer exist for live epoch handles: resolving storage without
+the owning arena would bypass liveness validation. Empty epoch lists use the
+universal immutable built-in identity and span `(0, 0)`.
+
+Survivor handles retain the previous self-contained packed word inside a
+reserved identity namespace:
 
 ```text
-epoch:    0 | len:31 | start:32
 survivor: 1 | root:20 | start:21 | len:22
 ```
 
-Epoch spans support starts `0..=u32::MAX` and lengths `0..=2^31-1`.
+Epoch span-table entries support starts `0..=u32::MAX` and lengths
+`0..=2^31-1`.
 Survivor spans support roots `0..=2^20-2`, starts `0..=2^21-1`, and lengths
 `0..=2^22-1`. The all-ones word is reserved and is the exact `None` encoding
-in the Env box-register bank; every other live packed word encodes `Some(id)`
-without arithmetic translation. Constructors check `start + len` in the owning storage and
-reject overflow before minting a handle. A survivor root is folded into every
+in the Env box-register bank; every other stored box word is a survivor handle.
+Epoch handles never enter raw Env words: box assignment promotes them first.
+Constructors check `start + len` in the owning storage and reject overflow
+before minting a handle. A survivor root is folded into every
 child handle during promotion, making each span self-describing without a
 second root pointer. Root slot identities remain monotonic and are never
 reused; only their storage buffers recycle.
+
+The identity-table watermark and compact-storage watermark are one
+`NodeArenaMark`. Rollback validates and truncates the identity suffix, advances
+the non-restored generation before a discarded allocation slot can be reused,
+then truncates words and all sidecars. Handles below the mark remain live;
+discarded handles cannot revive after equal or covering span reuse. Cloning an
+arena preserves inherited allocation tags and selects a fresh namespace for
+post-fork allocations. Survivor identity, refcounting, promotion, and buffer
+recycling are unchanged.
 
 The reserved final root id is never allocated, even for a list that will not
 enter a box register. This makes null encoding canonical throughout the state
@@ -200,9 +218,12 @@ layer and avoids the current `id + 1` overflow edge. Reaching that root limit
 is an explicit survivor-arena capacity failure; it never aliases `None` or
 falls back to an epoch handle.
 
-`NodeListId` packing is an in-memory implementation detail. Artifacts and
-semantic hashes encode the referenced logical node content, not raw handle
-bits.
+`NodeListId` encoding is an in-memory implementation detail. Live handles do
+not implement successful serialization. Format capture first replaces every
+node child with a detached DTO-local arena/span reference; format restore
+validates/remaps those references and mints fresh epoch identities through the
+aggregate arena. Artifacts and semantic hashes encode referenced logical node
+content, not runtime identity or allocation order.
 
 ## 5. Sidecar storage and ownership
 
@@ -594,11 +615,11 @@ end-to-end regression ceiling.
 
 | Area | Required cases |
 | --- | --- |
-| Layout | compile-time 8-byte assertions; every tag; reserved tags rejected; signed extrema; Unicode scalar validation; TFM ligature bounds |
-| Handle packing | epoch/survivor zero and maxima; start+len overflow; empty lists; max root; optional box-register null; raw constructors inaccessible downstream |
+| Layout | compile-time 16-byte handle and 8-byte node-word assertions; every tag; reserved tags rejected; signed extrema; Unicode scalar validation; TFM ligature bounds |
+| Handle identity | epoch generation/namespace/slot validation; equal and covering reuse; retained prefix; fork ancestry; survivor zero/maxima; start+len overflow; empty lists; max root; optional box-register null; raw constructors inaccessible downstream |
 | Sidecars | every kind; zero/max indexes; leader glue; owned whatsit payloads; no word published without a row; column lengths agree |
 | Bottom-up graph | epoch children, mixed survivor children, shared spans, deep graphs, cycles/forward references rejected |
-| Rollback | mark/truncate all columns; rollback/reappend id behavior; retained capacities distinguished from live bytes; shipout release |
+| Rollback | atomic identity/storage mark; truncate all columns; arbitrary rollback/reappend never revives stale ids; retained capacities distinguished from live bytes; shipout release |
 | Survivors | promotion, root folding, refcounts, journal-held owners, group exit, root non-reuse, buffer recycling, nested boxes/math/leader payloads |
 | Access boundary | compile-fail probes for raw words, sidecars, constructors, partial marks, mutable views; shadow remains production-like |
 | Hash/replay | equal logical graphs with different sidecar/root/recycling histories hash equally; changed fields differ; rollback convergence; deep iterative traversal |
