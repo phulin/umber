@@ -889,13 +889,9 @@ impl World {
         }
     }
 
-    /// Records a deferred `\write` token list without expanding it.
-    ///
-    /// Normal stomach `\write` execution stores this payload in a whatsit so
-    /// copied boxes expand it once per shipout. This low-level record shape
-    /// remains available for direct World/effect-log tests and future effect
-    /// replay paths.
-    pub fn record_deferred_write(&mut self, stream: StreamSlot, tokens: TokenListId) {
+    /// Appends a deferred `\write` after the owning `Universe` validates the
+    /// token-list capability against its live store timeline.
+    pub(crate) fn record_deferred_write(&mut self, stream: StreamSlot, tokens: TokenListId) {
         self.append_effect(EffectRecord::DeferredWrite { stream, tokens });
     }
 
