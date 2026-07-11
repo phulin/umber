@@ -200,7 +200,13 @@ fn fraction_vlist(
 
 fn rebox(ctx: &mut Context<'_, impl MathTypesetState>, boxed: &mut MathBox, width: Scaled) {
     let slack = sub(width, boxed.width);
-    if slack.raw() != 0 && matches!(boxed.axis, super::BoxAxis::Horizontal) {
+    // TeX's rebox changes the width field directly when list_ptr(b)=null.
+    // Materializing centering nodes in that case turns an empty box into a
+    // nonempty one and can force an otherwise-dead DVI cursor movement.
+    if slack.raw() != 0
+        && !boxed.list.is_empty()
+        && matches!(boxed.axis, super::BoxAxis::Horizontal)
+    {
         let left = Scaled::from_raw(tex_arith::half(slack.raw()));
         let right = sub(slack, left);
         let left_node = (left.raw() != 0).then_some(MathNode::Kern {

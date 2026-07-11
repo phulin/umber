@@ -303,6 +303,42 @@ fn make_fraction_uses_default_rule_and_delimiter_target() {
 }
 
 #[test]
+fn fraction_rebox_keeps_an_empty_denominator_structurally_empty() {
+    let mut universe = setup_universe();
+    let numerator = universe.freeze_node_list(&[Node::MathNoad(noad(NoadClass::Ord, 'a'))]);
+    let denominator = universe.freeze_node_list(&[]);
+    let input = universe.freeze_node_list(&[Node::FractionNoad(MathFraction {
+        numerator,
+        denominator,
+        thickness: FractionThickness::Default,
+        left_delimiter: None,
+        right_delimiter: None,
+    })]);
+    let params = MathParams::read(&universe);
+
+    let layout = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
+
+    let [MathNode::HList(fraction)] = root_nodes(&layout).as_slice() else {
+        panic!("expected fraction hbox");
+    };
+    let [_, MathNode::VList(stack), _] = list_nodes(&layout, fraction.list).as_slice() else {
+        panic!("expected delimited fraction stack");
+    };
+    let [
+        MathNode::HList(numerator),
+        _,
+        _,
+        _,
+        MathNode::HList(denominator),
+    ] = list_nodes(&layout, stack.list).as_slice()
+    else {
+        panic!("expected ruled fraction stack");
+    };
+    assert_eq!(denominator.width, numerator.width);
+    assert!(list_nodes(&layout, denominator.list).is_empty());
+}
+
+#[test]
 fn fraction_reuses_single_explicit_numerator_box() {
     let mut universe = setup_universe();
     let children = universe.freeze_node_list(&[]);
