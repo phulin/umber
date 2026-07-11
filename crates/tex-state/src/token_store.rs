@@ -8,8 +8,6 @@ use crate::ids::TokenListId;
 use crate::token::{Token, TracedTokenWord};
 use ahash::RandomState;
 use std::collections::HashMap;
-#[cfg(any(test, feature = "testing", feature = "shadow"))]
-use std::collections::hash_map::DefaultHasher;
 use std::hash::{BuildHasherDefault, Hash, Hasher};
 
 type TokenIndex = HashMap<u64, Vec<TokenListId>, BuildHasherDefault<PrehashedU64Hasher>>;
@@ -329,18 +327,6 @@ impl TokenStore {
         self.spans.truncate(spans);
         self.arena.truncate(tokens);
         self.index_dirty = true;
-    }
-
-    #[cfg(any(test, feature = "testing", feature = "shadow"))]
-    #[must_use]
-    pub(crate) fn testing_state_hash(&self) -> u64 {
-        let mut hasher = DefaultHasher::new();
-        self.spans.len().hash(&mut hasher);
-        for raw in 0..self.spans.len() {
-            let id = self.id_at(u32_len(raw, "token-list spans exceed u32 entries"));
-            self.get(id).hash(&mut hasher);
-        }
-        hasher.finish()
     }
 
     fn rebuild_index(&mut self) {

@@ -1,4 +1,7 @@
-use super::{ControlSequenceKind, Interner, InternerError, InternerMark, SYMBOL_CAPACITY};
+use super::{
+    ControlSequenceKind, Interner, InternerError, InternerMark, SYMBOL_CAPACITY,
+    next_symbol_key_from, symbol_key_successor,
+};
 use crate::interner::{Symbol, SymbolId};
 use proptest::prelude::*;
 
@@ -23,7 +26,7 @@ fn intern_is_idempotent() {
     let second = intern(&mut interner, "count");
 
     assert_eq!(first, second);
-    assert_eq!(first.raw(), 0);
+    assert!(first.raw() < SYMBOL_CAPACITY);
     assert_eq!(interner.len(), 1);
 }
 
@@ -69,7 +72,7 @@ fn rollback_rebuild_preserves_control_sequence_namespace() {
         .intern_active('~')
         .expect("reintern active symbol")
         .symbol();
-    assert_eq!(active.raw(), discarded_active.raw());
+    assert_ne!(active, discarded_active);
     assert_ne!(active, named);
 }
 
@@ -111,22 +114,74 @@ fn fork_preserves_inherited_symbol_ids_and_separates_new_allocations() {
     let inherited = intern_id(&mut parent, "inherited");
     let mut child = parent.clone();
     assert_eq!(child.resolve_id(inherited), "inherited");
+    assert_eq!(child.get("inherited"), Some(inherited));
     let parent_only = intern_id(&mut parent, "parent");
     let child_only = intern_id(&mut child, "child");
     assert_eq!(parent_only.raw(), child_only.raw());
+    assert_ne!(parent_only.symbol(), child_only.symbol());
     assert!(!child.contains_id(parent_only));
     assert!(!parent.contains_id(child_only));
 }
 
 #[test]
-fn intern_rejects_new_symbol_at_packed_token_capacity() {
-    let mut interner = Interner::new();
-    interner.next_symbol = SYMBOL_CAPACITY;
+fn compact_symbol_and_token_words_keep_their_hot_path_sizes() {
+    assert_eq!(core::mem::size_of::<Symbol>(), 4);
+    assert_eq!(core::mem::size_of::<crate::token::Token>(), 8);
+    assert_eq!(core::mem::size_of::<crate::token::TracedTokenWord>(), 8);
+    assert_eq!(core::mem::size_of::<crate::cell::CellId>(), 4);
+}
 
+#[test]
+fn intern_rejects_new_symbol_at_packed_token_capacity() {
     assert_eq!(
-        interner.intern("overflow"),
+        symbol_key_successor(SYMBOL_CAPACITY - 1),
+        Some(SYMBOL_CAPACITY)
+    );
+    assert_eq!(symbol_key_successor(SYMBOL_CAPACITY), None);
+    assert_eq!(symbol_key_successor(u32::MAX), None);
+
+    let frontier = std::sync::atomic::AtomicU32::new(SYMBOL_CAPACITY - 1);
+    assert_eq!(
+        next_symbol_key_from(&frontier).map(|symbol| symbol.raw()),
+        Ok(SYMBOL_CAPACITY - 1)
+    );
+    assert_eq!(
+        next_symbol_key_from(&frontier),
         Err(InternerError::TooManySymbols)
     );
+    assert_eq!(
+        frontier.load(std::sync::atomic::Ordering::Relaxed),
+        SYMBOL_CAPACITY,
+        "exhaustion must leave the frontier unchanged"
+    );
+}
+
+#[test]
+fn compact_key_never_revives_after_dense_slot_reuse() {
+    let mut interner = Interner::new();
+    let mark = interner.watermark();
+    let stale = intern_id(&mut interner, "stale");
+    interner.truncate_to(mark);
+    let replacement = intern_id(&mut interner, "replacement");
+
+    assert_eq!(stale.raw(), replacement.raw());
+    assert_ne!(stale.symbol(), replacement.symbol());
+    assert_eq!(interner.resolve_stored(stale.symbol()), None);
+    assert_eq!(
+        interner.resolve_stored(replacement.symbol()),
+        Some(replacement)
+    );
+}
+
+#[test]
+fn independent_interners_never_alias_compact_keys() {
+    let mut left = Interner::new();
+    let mut right = Interner::new();
+    let left = intern_id(&mut left, "same");
+    let right = intern_id(&mut right, "same");
+
+    assert_eq!(left.raw(), right.raw());
+    assert_ne!(left.symbol(), right.symbol());
 }
 
 #[derive(Clone, Debug)]
@@ -171,7 +226,7 @@ proptest! {
                         }
                     };
 
-                    prop_assert_eq!(symbol.raw() as usize, model_index);
+                    prop_assert_eq!(interner.resolve_stored(symbol).map(SymbolId::raw), Some(model_index as u32));
                     prop_assert_eq!(interner.resolve(symbol), name.as_str());
                 }
                 Op::Mark => {
@@ -188,9 +243,9 @@ proptest! {
 
             prop_assert_eq!(interner.len(), model.len());
             for (raw, expected) in model.iter().enumerate() {
-                let symbol = super::Symbol::new(raw as u32);
+                let symbol = interner.symbol_at_slot(raw as u32).expect("model slot should be live");
                 prop_assert_eq!(interner.resolve(symbol), expected.as_str());
-                prop_assert_eq!(intern(&mut interner, expected).raw() as usize, raw);
+                prop_assert_eq!(intern(&mut interner, expected), symbol);
             }
         }
     }

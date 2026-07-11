@@ -95,19 +95,26 @@ that fallback as rollback-ready.
 
 ## 3. Identity: the interner
 
-- Control-sequence identities intern to dense `Symbol(u32)`. The interner key
+- Control-sequence live identities use `SymbolId`, while tokens and Env cells
+  retain a compact 30-bit `Symbol(u32)` key. Compact keys come from one
+  process-wide monotonic domain: rollback removes their local key-to-slot
+  mappings but never returns keys for reuse, and sibling forks inherit old
+  mappings while receiving disjoint keys for later names. Each interner keeps
+  a dense semantic slot table plus an O(1) compact-key-to-slot map, so hot token
+  and Env representations do not widen. The semantic interner key
   is `(ControlSequenceKind, spelling)`, where named control sequences and
   active-character control sequences are disjoint namespaces. Thus active `~`
   and the escaped control symbol `\~` resolve to the same printable spelling
   but have distinct symbols and independent Env cells, mirroring TeX82's
   `active_base+c` and `single_base+c` ranges. Backing: bump-allocated UTF-8
   arena + namespace-aware open-addressing hash index. The packed traced-token representation
-  reserves 30 payload bits for control-sequence symbols, so `Interner::intern`
-  is the single enforcement point for the hard `2^30` live-symbol capacity and
-  returns `InternerError::TooManySymbols` instead of creating an unrepresentable
-  symbol.
-- Append-only: nothing is un-interned. Rollback = truncate arena to
-  watermark. The hash index either records insertion order (rewindable) or
+  reserves 30 payload bits for control-sequence symbols. `Interner::intern`
+  therefore reserves from a nonwrapping `2^30` process-key domain and returns
+  `InternerError::TooManySymbols` instead of creating an unrepresentable or
+  revived key.
+- Semantic slots are append-only between rollbacks. Rollback truncates the
+  arena to its watermark and removes discarded compact-key mappings, while the
+  process key frontier remains monotonic. The hash index either records insertion order (rewindable) or
   is rebuilt lazily on first intern after a rollback — interning after
   rollback is rare, so lazy rebuild is acceptable v1.
 - Dense ids make every downstream lookup an array index; stable ids are what
@@ -890,7 +897,7 @@ The complete production handle matrix is:
 
 | Handle | Owner | Live runtime identity | Compact stored form | Durable DTO | Snapshot mark | Rollback and fork rule | Validation API |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `SymbolId` | `Interner` | 16-byte generation identity | `Symbol(u32)` in tokens and Env cells | `FormatName` table index; fresh id on load | `InternerMark` spans/bytes + identity mark | discarded slots retag; forks share inherited tags and separate new namespaces | `Interner::contains_id`/`resolve_stored`, exposed through `Stores`/`Universe` symbol reads and writes |
+| `SymbolId` | `Interner` | generation identity plus its compact key | process-unique, nonreused `Symbol(u32)` in tokens and Env cells | DTO-local `FormatName` table index; fresh live id and compact key on load | `InternerMark` spans/bytes + identity mark | discarded slots retag and their key mappings are removed; compact keys never return to the process frontier; forks inherit old keys and allocate disjoint new keys | O(1) key-to-slot `Interner::resolve_stored` plus `contains_id`, exposed through `Stores`/`Universe` reads and writes |
 | `TokenListId` | `TokenStore` | 16-byte generation identity; universal empty builtin | dense `u32` in Env and macros; private format DTOs carry table keys | `StoreFormat.token_lists` index; validated keys are remapped to fresh ids by `Stores` | `TokenStoreMark` spans/tokens + identity mark | discarded slots retag; inherited ids remain valid in forks, new ids are branch-local | `TokenStore::contains`/`resolve_stored`, then aggregate token/register/node ingress |
 | `MacroDefinitionId` | `MacroStore` | 16-byte generation identity | dense `u32` operand in packed `Meaning` | `FormatMacro` table index | `MacroStoreMark` definition length + identity mark | discarded slots retag; post-fork definitions are foreign to siblings | `MacroStore::contains`/`resolve_stored`, then aggregate meaning access/mutation |
 | `GlueId` | `GlueStore` | 16-byte generation identity; universal zero builtin | dense `u32` in Env and node words/sidecars | `FormatGlue` table index | `GlueStoreMark` spec length + identity mark | discarded slots retag; post-fork specs are foreign to siblings | `GlueStore::contains`/`resolve_stored`, then aggregate register/node ingress |
@@ -902,9 +909,10 @@ The complete production handle matrix is:
 | survivor `NodeListId` | `SurvivorArena` | packed 64-bit root/start/length inside the reserved survivor namespace; root key is process-unique | the same packed word in box Env cells | `FormatListKey` detached root/span reference; fresh survivor key on promotion | no truncation mark; refcounts are owned by live Env cells and journal records | released keys are never reused even when storage recycles; inherited roots survive clones and sibling forks receive distinct new keys | O(1) root-key-to-local-slot lookup in `SurvivorArena::contains`/`get`, then aggregate node/box ingress |
 | `InputRecordId` | `World` | 16-byte generation identity | no compact engine operand; source frames/regions retain the full capability | none; durable identity is `ContentHash` and format loading starts a fresh World | `WorldSnapshot` input length + identity mark | discarded records retag; inherited records survive clones and siblings reject new foreign records | `World::input_record`; `Universe::register_source` also checks byte length |
 
-Several opaque-looking integers are deliberately not timeline capabilities.
-They must not be confused with the matrix above: `Symbol` is a compact stored
-key that is rehydrated through its owning interner; `SourceId` and
+Several opaque-looking integers are deliberately not full timeline capabilities.
+They must not be confused with the matrix above: `Symbol` is a process-unique
+nonreused compact stored key that is rehydrated through its owning interner;
+it cannot authorize a read after its local mapping is removed. `SourceId` and
 `GeneratedSourceId` are live aggregate-local indexes protected by source-region
 identity and non-reused positions; `SurvivorRootId` is only the private packed
 component of a validated survivor `NodeListId`; `CellId`, parameter ids, and

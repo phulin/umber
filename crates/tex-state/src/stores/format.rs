@@ -119,6 +119,53 @@ struct FormatNodeList {
     nodes: Vec<FormatNode>,
 }
 
+fn capture_env_word(stores: &Stores, cell: crate::cell::CellId, word: u64) -> (u32, u64) {
+    let index = if cell.bank() == crate::cell::BankTag::Meaning {
+        stores
+            .resolve_stored_symbol(Symbol::new(cell.index()))
+            .raw()
+    } else {
+        cell.index()
+    };
+    let cell = crate::cell::CellId::new(cell.bank(), index);
+    let word = if cell.bank() == crate::cell::BankTag::CurrentFont {
+        let symbol_plus_one = word >> 32;
+        let symbol = if symbol_plus_one == 0 {
+            0
+        } else {
+            u64::from(
+                stores
+                    .resolve_stored_symbol(Symbol::new((symbol_plus_one - 1) as u32))
+                    .raw(),
+            ) + 1
+        };
+        (symbol << 32) | u64::from(word as u32)
+    } else {
+        word
+    };
+    (cell.raw(), word)
+}
+
+fn restore_current_font_word(stores: &Stores, word: u64) -> Result<u64, StoreFormatError> {
+    let symbol_plus_one = word >> 32;
+    let symbol = if symbol_plus_one == 0 {
+        0
+    } else {
+        let slot = u32::try_from(symbol_plus_one - 1)
+            .map_err(|_| StoreFormatError::Invalid("current-font identifier is not live"))?;
+        u64::from(
+            stores
+                .interner
+                .symbol_at_slot(slot)
+                .ok_or(StoreFormatError::Invalid(
+                    "current-font identifier is not live",
+                ))?
+                .raw(),
+        ) + 1
+    };
+    Ok((symbol << 32) | u64::from(word as u32))
+}
+
 impl Stores {
     pub(crate) fn encode_format(&self) -> Result<Vec<u8>, StoreFormatError> {
         if self.env.group_depth() != 0 {
@@ -139,7 +186,10 @@ impl StoreFormat {
     fn capture(stores: &Stores) -> Result<Self, StoreFormatError> {
         let names = (0..stores.interner.len())
             .map(|raw| {
-                let symbol = Symbol::new(raw as u32);
+                let symbol = stores
+                    .interner
+                    .symbol_at_slot(raw as u32)
+                    .expect("captured interner slot should be live");
                 FormatName {
                     active: stores.interner.kind(symbol) == ControlSequenceKind::ActiveCharacter,
                     text: stores.interner.resolve(symbol).to_owned(),
@@ -154,7 +204,7 @@ impl StoreFormat {
                     .get(stores.resolve_stored_token_list(TokenListId::new(raw)))
                     .iter()
                     .copied()
-                    .map(FormatToken::capture)
+                    .map(|token| FormatToken::capture(stores, token))
                     .collect()
             })
             .collect();
@@ -191,9 +241,9 @@ impl StoreFormat {
             })
             .collect();
         let mut env_words = Vec::new();
-        stores
-            .env
-            .for_each_semantic_non_default_word(|cell, word| env_words.push((cell.raw(), word)));
+        stores.env.for_each_semantic_non_default_word(|cell, word| {
+            env_words.push(capture_env_word(stores, cell, word));
+        });
         let roots: Vec<_> = env_words
             .iter()
             .filter_map(|&(raw, word)| {
@@ -291,7 +341,7 @@ impl StoreFormat {
         for (raw, tokens) in self.token_lists.into_iter().enumerate().skip(1) {
             let tokens = tokens
                 .into_iter()
-                .map(FormatToken::restore)
+                .map(|token| token.restore(&stores.interner))
                 .collect::<Result<Vec<_>, _>>()?;
             if stores.tokens.intern(&tokens).raw() as usize != raw {
                 return Err(StoreFormatError::Invalid("non-canonical token-list order"));
@@ -328,7 +378,8 @@ impl StoreFormat {
                     id,
                     stores
                         .interner
-                        .resolve_stored(Symbol::new(symbol))
+                        .symbol_at_slot(symbol)
+                        .and_then(|symbol| stores.interner.resolve_stored(symbol))
                         .ok_or(StoreFormatError::Invalid("font identifier symbol"))?,
                 );
             }
@@ -354,10 +405,18 @@ impl StoreFormat {
             if bank_bits > crate::cell::BankTag::MathFamilyFont as u32 {
                 return Err(StoreFormatError::Invalid("unknown environment bank"));
             }
-            let cell = crate::cell::CellId::new(
-                crate::cell::BankTag::from_bits(bank_bits),
-                entry.cell & ((1 << 26) - 1),
-            );
+            let bank = crate::cell::BankTag::from_bits(bank_bits);
+            let dto_index = entry.cell & ((1 << 26) - 1);
+            let index = if bank == crate::cell::BankTag::Meaning {
+                stores
+                    .interner
+                    .symbol_at_slot(dto_index)
+                    .ok_or(StoreFormatError::Invalid("meaning symbol is not live"))?
+                    .raw()
+            } else {
+                dto_index
+            };
+            let cell = crate::cell::CellId::new(bank, index);
             let word = match (cell.bank(), entry.value) {
                 (crate::cell::BankTag::Box, FormatEnvValue::Box(key)) => {
                     let id = node_ids
@@ -368,6 +427,9 @@ impl StoreFormat {
                 }
                 (crate::cell::BankTag::Box, FormatEnvValue::Raw(_)) => {
                     return Err(StoreFormatError::Invalid("raw box environment value"));
+                }
+                (crate::cell::BankTag::CurrentFont, FormatEnvValue::Raw(word)) => {
+                    restore_current_font_word(&stores, word)?
                 }
                 (_, FormatEnvValue::Raw(word)) => word,
                 (_, FormatEnvValue::Box(_)) => {
@@ -492,23 +554,27 @@ fn math_field_child(field: &crate::math::MathField, out: &mut Vec<NodeListId>) {
 }
 
 impl FormatToken {
-    fn capture(token: Token) -> Self {
+    fn capture(stores: &Stores, token: Token) -> Self {
         match token {
             Token::Char { ch, cat } => Self::Char { ch, cat: cat as u8 },
-            Token::Cs(symbol) => Self::Cs(symbol.raw()),
+            Token::Cs(symbol) => Self::Cs(stores.resolve_stored_symbol(symbol).raw()),
             Token::Param(slot) => Self::Param(slot),
             Token::Frozen(crate::token::FrozenToken::EndTemplate) => Self::Frozen(0),
             Token::Frozen(crate::token::FrozenToken::EndV) => Self::Frozen(1),
         }
     }
 
-    fn restore(self) -> Result<Token, StoreFormatError> {
+    fn restore(self, interner: &crate::interner::Interner) -> Result<Token, StoreFormatError> {
         Ok(match self {
             Self::Char { ch, cat } => Token::Char {
                 ch,
                 cat: catcode(cat)?,
             },
-            Self::Cs(raw) => Token::Cs(Symbol::new(raw)),
+            Self::Cs(raw) => Token::Cs(
+                interner
+                    .symbol_at_slot(raw)
+                    .ok_or(StoreFormatError::Invalid("token symbol is not live"))?,
+            ),
             Self::Param(slot) => Token::Param(slot),
             Self::Frozen(0) => Token::Frozen(crate::token::FrozenToken::EndTemplate),
             Self::Frozen(1) => Token::Frozen(crate::token::FrozenToken::EndV),

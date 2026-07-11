@@ -226,6 +226,31 @@ fn semantic_format_uses_dto_local_survivor_root_keys() {
 }
 
 #[test]
+fn semantic_format_and_hash_ignore_process_unique_symbol_keys() {
+    fn symbolic_universe() -> (Universe, crate::interner::Symbol) {
+        let mut universe = Universe::new();
+        let symbol = universe.intern("symbolic");
+        universe.set_meaning(symbol, Meaning::CountRegister(17));
+        let tokens = universe.intern_token_list(&[Token::Cs(symbol.symbol())]);
+        universe.set_toks(3, tokens);
+        universe.set_current_font_selector(symbol, NULL_FONT);
+        (universe, symbol.symbol())
+    }
+
+    let (mut first, first_key) = symbolic_universe();
+    let (mut second, second_key) = symbolic_universe();
+    assert_ne!(first_key, second_key);
+    assert_eq!(
+        first.snapshot().state_hash(),
+        second.snapshot().state_hash()
+    );
+    assert_eq!(
+        first.dump_format().expect("first symbolic format"),
+        second.dump_format().expect("second symbolic format")
+    );
+}
+
+#[test]
 fn semantic_format_restores_validated_fonts_banks_hashes_and_rollback_exactly() {
     let mut universe = Universe::new();
     let null_identifier = universe.intern("nullfont");

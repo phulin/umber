@@ -1588,11 +1588,23 @@ impl Stores {
         self.testing_hash_env_by_content(&mut hasher);
         self.interner.len().hash(&mut hasher);
         for raw in 0..self.interner.len() {
-            let symbol = Symbol::new(raw as u32);
+            let symbol = self
+                .interner
+                .symbol_at_slot(raw as u32)
+                .expect("live interner slot should have a compact key");
             self.interner.kind(symbol).hash(&mut hasher);
             self.interner.resolve(symbol).hash(&mut hasher);
         }
-        self.tokens.testing_state_hash().hash(&mut hasher);
+        let token_mark = self.tokens.watermark();
+        token_mark.spans.hash(&mut hasher);
+        for raw in 0..token_mark.spans {
+            let id = self.resolve_stored_token_list(TokenListId::new(raw));
+            let tokens = self.tokens.get(id);
+            tokens.len().hash(&mut hasher);
+            for &token in tokens {
+                self.testing_hash_token(token, &mut hasher);
+            }
+        }
         self.glue.testing_state_hash().hash(&mut hasher);
         self.fonts.testing_state_hash(&mut hasher);
         self.testing_hash_all_epoch_nodes(&mut hasher);
@@ -1605,15 +1617,61 @@ impl Stores {
     #[cfg(any(test, feature = "testing", feature = "shadow"))]
     fn testing_hash_env_by_content(&self, hasher: &mut impl Hasher) {
         self.env.for_each_semantic_non_default_word(|cell, word| {
-            cell.hash(hasher);
-            if cell.bank() == BankTag::Box {
-                self.testing_hash_box_word(word, hasher);
-            } else {
-                word.hash(hasher);
+            cell.bank().hash(hasher);
+            match cell.bank() {
+                BankTag::Meaning => {
+                    let symbol = self.resolve_stored_symbol(Symbol::new(cell.index()));
+                    self.interner.kind_id(symbol).hash(hasher);
+                    self.interner.resolve_id(symbol).hash(hasher);
+                    word.hash(hasher);
+                }
+                BankTag::Box => self.testing_hash_box_word(word, hasher),
+                BankTag::CurrentFont => {
+                    (word as u32).hash(hasher);
+                    match self.env.current_font_symbol() {
+                        Some(symbol) => {
+                            1_u8.hash(hasher);
+                            let symbol = self.resolve_stored_symbol(symbol);
+                            self.interner.kind_id(symbol).hash(hasher);
+                            self.interner.resolve_id(symbol).hash(hasher);
+                        }
+                        None => 0_u8.hash(hasher),
+                    }
+                }
+                _ => {
+                    cell.index().hash(hasher);
+                    word.hash(hasher);
+                }
             }
         });
-        self.env.testing_aftergroup_payloads().hash(hasher);
-        self.env.testing_afterassignment().hash(hasher);
+        for &token in self.env.testing_aftergroup_payloads() {
+            self.testing_hash_token(token, hasher);
+        }
+        match self.env.testing_afterassignment() {
+            Some(token) => {
+                1_u8.hash(hasher);
+                self.testing_hash_token(token, hasher);
+            }
+            None => 0_u8.hash(hasher),
+        }
+    }
+
+    #[cfg(any(test, feature = "testing", feature = "shadow"))]
+    fn testing_hash_token(&self, token: Token, hasher: &mut impl Hasher) {
+        core::mem::discriminant(&token).hash(hasher);
+        match token {
+            Token::Char { ch, cat } => {
+                ch.hash(hasher);
+                cat.hash(hasher);
+            }
+            Token::Cs(symbol) => {
+                let symbol = self.resolve_stored_symbol(symbol);
+                self.interner.kind_id(symbol).hash(hasher);
+                self.interner.resolve_id(symbol).hash(hasher);
+            }
+            Token::Param(slot) => slot.hash(hasher),
+            Token::Frozen(kind) => kind.hash(hasher),
+        }
     }
 
     fn assert_valid_snapshot(&self, snapshot: &StoreSnapshot) {
