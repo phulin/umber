@@ -12,6 +12,8 @@ target/
 .codex
 .claude
 
+.umber
+
 # Parallel subagent worktrees
 .worktrees/
 
