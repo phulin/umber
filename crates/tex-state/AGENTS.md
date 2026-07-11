@@ -61,6 +61,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/state_hash.rs`: Deterministic semantic state hasher used by snapshots and replay convergence checks.
 - `src/stores.rs`: Internal aggregate store tuple that coordinates interner, env, token, provenance, glue, node, font, survivor, input, and rollback state.
 - `src/stores/handles.rs`: Store-boundary liveness checks for symbols, token lists, origins, glue, fonts, macros, and node handles.
+- `src/stores/node_clone.rs`: Iterative child-first cloning of mixed node graphs into epoch storage.
 - `src/stores/format.rs`: Deterministic versioned format-image DTO capture/validation and fresh-store reconstruction.
 - `src/stores/state_hash.rs`: Store snapshot cursor and semantic hashing implementation for changed cells and store-owned slices.
 - `src/stores/tests.rs`: Unit tests for aggregate store rollback, builders, handle validation, parameters, boxes, and state hashes.

@@ -46,11 +46,13 @@ use std::mem;
 
 mod format;
 mod handles;
+mod node_clone;
 mod state_hash;
 
 pub(crate) use format::StoreFormatError;
 
 pub use crate::env::group::{GroupKind, GroupMismatch};
+use node_clone::EpochCloneScratch;
 pub(crate) use state_hash::StoreStateHashCursor;
 
 #[cfg(any(test, feature = "testing", feature = "shadow"))]
@@ -142,6 +144,7 @@ pub struct Stores {
     prepared_mag: Option<i32>,
     last_loaded_font: FontId,
     semantic_hash_cache: state_hash::SemanticHashCache,
+    epoch_clone_scratch: EpochCloneScratch,
 }
 
 /// Recoverable diagnostics from TeX's `prepare_mag` operation.
@@ -184,6 +187,7 @@ impl Clone for Stores {
             prepared_mag: self.prepared_mag,
             last_loaded_font: self.last_loaded_font,
             semantic_hash_cache: self.semantic_hash_cache.clone(),
+            epoch_clone_scratch: EpochCloneScratch::default(),
         }
     }
 }
@@ -216,6 +220,7 @@ impl Stores {
             prepared_mag: None,
             last_loaded_font: NULL_FONT,
             semantic_hash_cache: state_hash::SemanticHashCache::default(),
+            epoch_clone_scratch: EpochCloneScratch::default(),
         };
         stores.set_int_param(IntParam::MAG, 1000);
         stores.set_int_param(IntParam::TOLERANCE, 10_000);

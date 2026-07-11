@@ -242,6 +242,13 @@ impl SurvivorArena {
             .is_some_and(|end| end <= slot.storage.len())
     }
 
+    pub(crate) fn root_storage_len(&self, id: NodeListId) -> usize {
+        let ArenaRef::Survivor(root) = id.arena() else {
+            panic!("expected survivor node-list id");
+        };
+        self.root(root).storage.len()
+    }
+
     #[cfg(any(test, feature = "testing"))]
     #[must_use]
     pub fn testing_live_slot_count(&self) -> usize {

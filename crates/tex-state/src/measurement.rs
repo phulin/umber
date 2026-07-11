@@ -96,13 +96,15 @@ pub(crate) fn record_node_append(
     NODE_APPEND_GROWN_BYTES.fetch_add(retained_payload_bytes_grown as u64, Ordering::Relaxed);
 }
 
-pub(crate) fn record_epoch_clone(source_words: usize) {
+pub(crate) fn record_epoch_clone(source_words: usize, owned_words: Option<usize>) {
     EPOCH_CLONE_CALLS.fetch_add(1, Ordering::Relaxed);
     EPOCH_CLONE_WORDS.fetch_add(source_words as u64, Ordering::Relaxed);
-    EPOCH_CLONE_OWNED_BYTES.fetch_add(
-        (source_words * core::mem::size_of::<crate::node::Node>()) as u64,
-        Ordering::Relaxed,
-    );
+    if let Some(owned_words) = owned_words {
+        EPOCH_CLONE_OWNED_BYTES.fetch_add(
+            (owned_words * core::mem::size_of::<crate::node::Node>()) as u64,
+            Ordering::Relaxed,
+        );
+    }
 }
 
 pub(crate) fn record_hash_call(journal_entries: usize) {

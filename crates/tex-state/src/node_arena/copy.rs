@@ -76,9 +76,73 @@ impl ChildPatch {
         }
         self
     }
+
+    #[cfg(debug_assertions)]
+    pub(crate) fn for_each_child(&self, mut visit: impl FnMut(NodeListId)) {
+        match self {
+            Self::Box { child, .. }
+            | Self::Unset { child, .. }
+            | Self::Leader { child, .. }
+            | Self::Insertion { child, .. }
+            | Self::MathList { child, .. }
+            | Self::Adjust { child, .. } => visit(*child),
+            Self::Disc { children, .. } => children.iter().copied().for_each(&mut visit),
+            Self::Fraction { children, .. } => children.iter().copied().for_each(&mut visit),
+            Self::Noad { children, .. } => children.iter().flatten().copied().for_each(visit),
+            Self::Choice { children, .. } => children.iter().copied().for_each(visit),
+        }
+    }
 }
 
 impl NodeStorage {
+    pub(super) fn collect_compact_children(&self, source: NodeList<'_>, out: &mut Vec<NodeListId>) {
+        for word in &source.storage.words[source.start..source.end] {
+            let side = word.payload() as usize;
+            match word.tag() {
+                9 | 10 => out.push(self.boxes.children[side]),
+                11 => out.push(self.unsets.children[side]),
+                13 => {
+                    if let Some(child) = leader_child(&self.leaders[side].2) {
+                        out.push(child);
+                    }
+                }
+                14 => {
+                    let (_, pre, post, replace) = self.discs[side];
+                    out.extend([pre, post, replace]);
+                }
+                16 => out.push(self.insertions.content[side]),
+                18 => {
+                    out.extend(
+                        [
+                            &self.noads.nucleus[side],
+                            &self.noads.subscript[side],
+                            &self.noads.superscript[side],
+                        ]
+                        .into_iter()
+                        .filter_map(math_field_child),
+                    );
+                }
+                19 => out.extend([
+                    self.fractions[side].numerator,
+                    self.fractions[side].denominator,
+                ]),
+                20 => {
+                    let choice = &self.choices[side];
+                    out.extend([
+                        choice.display,
+                        choice.text,
+                        choice.script,
+                        choice.script_script,
+                    ]);
+                }
+                21 => out.push(self.math_lists[side].content),
+                22 => out.push(self.adjusts[side]),
+                0..=8 | 12 | 15 | 17 => {}
+                _ => panic!("reserved node-word tag"),
+            }
+        }
+    }
+
     /// Appends one source span without decoding it to owned `Node` values.
     /// Child-bearing rows are copied shallowly and recorded for later patching.
     pub(crate) fn append_compact(

@@ -1,4 +1,5 @@
 use super::checked_len;
+use super::copy::ChildPatch;
 #[cfg(feature = "node-stats")]
 use super::measurement::NodeMemoryColumn;
 use super::storage::{NodeArenaMark, NodeStorage};
@@ -91,6 +92,32 @@ impl NodeArena {
             crate::node::record_node_append(n);
         }
         let (start, len) = self.storage.append(nodes);
+        NodeListId::new_epoch(start, len)
+    }
+    pub(crate) fn append_compact_remapped(
+        &mut self,
+        source: NodeList<'_>,
+        patches: &mut Vec<ChildPatch>,
+        mut remap: impl FnMut(NodeListId) -> NodeListId,
+    ) -> NodeListId {
+        debug_assert!(
+            patches.is_empty(),
+            "epoch child-patch scratch must be clear"
+        );
+        let (start, len) = self.storage.append_compact(source, patches);
+        for patch in patches.drain(..) {
+            let patch = patch.remap(&mut remap);
+            #[cfg(debug_assertions)]
+            patch.for_each_child(|child| {
+                let end = child
+                    .start()
+                    .checked_add(child.len())
+                    .expect("child span overflow");
+                debug_assert!(matches!(child.arena(), ArenaRef::Epoch));
+                debug_assert!(end <= start, "epoch child must end before its parent");
+            });
+            self.storage.apply_child_patch(patch);
+        }
         NodeListId::new_epoch(start, len)
     }
     #[cfg(debug_assertions)]

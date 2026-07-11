@@ -2164,14 +2164,7 @@ impl Universe {
     }
 
     pub fn clone_node_list_to_epoch(&mut self, id: NodeListId) -> NodeListId {
-        #[cfg(feature = "node-stats")]
-        crate::measurement::record_epoch_clone(self.nodes(id).len());
-        let nodes = self.nodes(id).to_vec();
-        let cloned: Vec<_> = nodes
-            .into_iter()
-            .map(|node| self.clone_node_to_epoch(node))
-            .collect();
-        self.freeze_node_list(&cloned)
+        self.stores.clone_node_list_to_epoch(id)
     }
 
     pub fn clone_node_to_epoch(&mut self, node: Node) -> Node {
