@@ -30,6 +30,11 @@ Arguments after `--` are appended to `bd github sync --push-only`.
 Prerequisites:
   bd, gh, jq, and GitHub CLI authentication. If GH_TOKEN is unset but
   GITHUB_TOKEN is set, this script exports GH_TOKEN=GITHUB_TOKEN for gh.
+
+Environment:
+  GITHUB_API_RETRY_ATTEMPTS       Total attempts for GitHub API calls. Default: 4.
+  GITHUB_API_RETRY_DELAY_SECONDS  Initial retry delay, doubled after each failure.
+                                  Default: 2.
 USAGE
 }
 
@@ -45,6 +50,8 @@ sync_status=1
 sync_labels=1
 sync_projects=1
 bd_sync_args=()
+github_api_retry_attempts="${GITHUB_API_RETRY_ATTEMPTS:-4}"
+github_api_retry_delay_seconds="${GITHUB_API_RETRY_DELAY_SECONDS:-2}"
 
 while (($# > 0)); do
   case "$1" in
@@ -114,16 +121,60 @@ run() {
   fi
 }
 
+retry_github_api() {
+  local attempt=1
+  local delay="$github_api_retry_delay_seconds"
+  local exit_code
+  local stdout_file
+
+  while true; do
+    stdout_file="$(mktemp "${TMPDIR:-/tmp}/github-api-retry.XXXXXX")"
+    if "$@" >"$stdout_file"; then
+      cat "$stdout_file"
+      rm -f "$stdout_file"
+      return 0
+    else
+      exit_code=$?
+    fi
+    rm -f "$stdout_file"
+
+    if ((attempt >= github_api_retry_attempts)); then
+      printf 'error: GitHub API command failed after %d attempts:' \
+        "$github_api_retry_attempts" >&2
+      printf ' %q' "$@" >&2
+      printf '\n' >&2
+      return "$exit_code"
+    fi
+
+    printf 'warning: GitHub API command failed (attempt %d/%d); retrying in %ss:' \
+      "$attempt" "$github_api_retry_attempts" "$delay" >&2
+    printf ' %q' "$@" >&2
+    printf '\n' >&2
+    sleep "$delay"
+    delay=$((delay * 2))
+    attempt=$((attempt + 1))
+  done
+}
+
 capture_or_empty() {
   if ((dry_run)); then
     return 0
   fi
-  "$@" 2>/dev/null || true
+  retry_github_api "$@" 2>/dev/null || true
 }
 
 need_cmd bd
 need_cmd gh
 need_cmd jq
+
+if [[ ! "$github_api_retry_attempts" =~ ^[1-9][0-9]*$ ]]; then
+  echo "error: GITHUB_API_RETRY_ATTEMPTS must be a positive integer" >&2
+  exit 2
+fi
+if [[ ! "$github_api_retry_delay_seconds" =~ ^[0-9]+$ ]]; then
+  echo "error: GITHUB_API_RETRY_DELAY_SECONDS must be a non-negative integer" >&2
+  exit 2
+fi
 
 if [[ -z "${GH_TOKEN:-}" && -n "${GITHUB_TOKEN:-}" ]]; then
   export GH_TOKEN="$GITHUB_TOKEN"
@@ -173,7 +224,7 @@ else
   if ((${#bd_sync_args[@]})); then
     bd_sync_cmd+=("${bd_sync_args[@]}")
   fi
-  "${bd_sync_cmd[@]}"
+  retry_github_api "${bd_sync_cmd[@]}"
 fi
 
 issues_json="$workdir/issues.json"
@@ -329,7 +380,7 @@ ensure_label() {
       --description "Beads epic: $epic_title" \
       --force
   else
-    gh label create "$label" \
+    retry_github_api gh label create "$label" \
       --repo "$repo" \
       --color "6A737D" \
       --description "Beads epic: $epic_title" \
@@ -340,12 +391,20 @@ ensure_label() {
 project_number_for_title() {
   local title="$1"
   local number
+  local projects_json
+  local exit_code
 
-  number="$(gh project list \
+  if projects_json="$(gh project list \
     --owner "$project_owner" \
     --limit 1000 \
-    --format json 2>/dev/null \
-    | jq -r --arg title "$title" 'first(.projects[] | select(.title == $title) | .number) // empty')"
+    --format json 2>/dev/null)"; then
+    number="$(jq -r --arg title "$title" \
+      'first(.projects[] | select(.title == $title) | .number) // empty' \
+      <<<"$projects_json")"
+  else
+    exit_code=$?
+    return "$exit_code"
+  fi
 
   if [[ -n "$number" ]]; then
     printf '%s\n' "$number"
@@ -376,14 +435,14 @@ if ((sync_status)); then
       continue
     fi
 
-    github_state="$(gh issue view "$issue_number" --repo "$repo" --json state --jq '.state')"
+    github_state="$(retry_github_api gh issue view "$issue_number" --repo "$repo" --json state --jq '.state')"
     if [[ "$bead_status" == "closed" && "$github_state" != "CLOSED" ]]; then
       echo "[$status_index/$target_count] Closing #$issue_number from $bead_id: $title"
-      run gh issue close "$issue_number" --repo "$repo" --reason completed
+      retry_github_api gh issue close "$issue_number" --repo "$repo" --reason completed
       status_changed=$((status_changed + 1))
     elif [[ "$bead_status" != "closed" && "$github_state" == "CLOSED" ]]; then
       echo "[$status_index/$target_count] Reopening #$issue_number from $bead_id: $title"
-      run gh issue reopen "$issue_number" --repo "$repo"
+      retry_github_api gh issue reopen "$issue_number" --repo "$repo"
       status_changed=$((status_changed + 1))
     else
       echo "[$status_index/$target_count] Status already aligned for #$issue_number from $bead_id: local=$bead_status github=$github_state"
@@ -417,7 +476,7 @@ if ((sync_labels)); then
     if ((dry_run)); then
       run gh issue edit "$issue_number" --repo "$repo" --add-label "$epic_label"
     else
-      gh issue edit "$issue_number" --repo "$repo" --add-label "$epic_label" >/dev/null
+      retry_github_api gh issue edit "$issue_number" --repo "$repo" --add-label "$epic_label" >/dev/null
     fi
   done <"$records_tsv"
   echo "Label phase complete: ensured $label_count labels, applied labels to $target_count issues"
@@ -435,7 +494,7 @@ if ((sync_projects)); then
       run gh project create --owner "$project_owner" --title "$project_title"
       project_number="DRY-RUN"
     else
-      project_number="$(project_number_for_title "$project_title")"
+      project_number="$(retry_github_api project_number_for_title "$project_title")"
     fi
     printf '%s\t%s\n' "$project_title" "$project_number" >>"$projects_done"
   done <"$project_targets_tsv"
@@ -449,7 +508,7 @@ if ((sync_projects)); then
     if ((dry_run)); then
       run gh project item-add "<project-number>" --owner "$project_owner" --url "$issue_url"
     else
-      gh project item-add "$project_number" \
+      retry_github_api gh project item-add "$project_number" \
         --owner "$project_owner" \
         --url "$issue_url" >/dev/null
     fi
