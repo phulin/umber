@@ -1,113 +1,52 @@
+//! Typed child-handle patches applied before compact storage publication.
+
+use super::copy::ChildPatch;
 use super::storage::NodeStorage;
-use crate::node::Node;
+use crate::math::MathField;
 
 impl NodeStorage {
-    pub(crate) fn replace_node(&mut self, index: usize, node: Node) {
-        // Survivor remapping changes handles but not table shape. Replace the
-        // corresponding sidecar row and word through the aggregate storage.
-        let old = self.words[index];
-        let side = old.payload() as usize;
-        match old.tag() {
-            9 | 10 => {
-                if let Node::HList(v) | Node::VList(v) = node {
-                    self.boxes.replace(side, v)
-                } else {
-                    unreachable!()
+    pub(crate) fn apply_child_patch(&mut self, patch: ChildPatch) {
+        match patch {
+            ChildPatch::Box { row, child } => self.boxes.children[row] = child,
+            ChildPatch::Unset { row, child } => self.unsets.children[row] = child,
+            ChildPatch::Leader { row, child } => match &mut self.leaders[row].2 {
+                crate::node::LeaderPayload::HList(value)
+                | crate::node::LeaderPayload::VList(value) => value.children = child,
+                crate::node::LeaderPayload::Rule { .. } => {
+                    unreachable!("rule leader cannot carry a child patch")
                 }
+            },
+            ChildPatch::Disc { row, children } => {
+                self.discs[row].1 = children[0];
+                self.discs[row].2 = children[1];
+                self.discs[row].3 = children[2];
             }
-            11 => {
-                if let Node::Unset(v) = node {
-                    self.unsets.replace(side, v)
-                } else {
-                    unreachable!()
-                }
+            ChildPatch::Insertion { row, child } => self.insertions.content[row] = child,
+            ChildPatch::Noad { row, children } => {
+                replace_math_child(&mut self.noads.nucleus[row], children[0]);
+                replace_math_child(&mut self.noads.subscript[row], children[1]);
+                replace_math_child(&mut self.noads.superscript[row], children[2]);
             }
-            13 => {
-                if let Node::Glue {
-                    spec,
-                    kind,
-                    leader: Some(v),
-                } = node
-                {
-                    self.leaders[side] = (spec, kind, v)
-                } else {
-                    unreachable!()
-                }
+            ChildPatch::Fraction { row, children } => {
+                self.fractions[row].numerator = children[0];
+                self.fractions[row].denominator = children[1];
             }
-            14 => {
-                if let Node::Disc {
-                    kind,
-                    pre,
-                    post,
-                    replace,
-                } = node
-                {
-                    self.discs[side] = (kind, pre, post, replace)
-                } else {
-                    unreachable!()
-                }
+            ChildPatch::Choice { row, children } => {
+                self.choices[row].display = children[0];
+                self.choices[row].text = children[1];
+                self.choices[row].script = children[2];
+                self.choices[row].script_script = children[3];
             }
-            16 => {
-                if let Node::Ins {
-                    class,
-                    size,
-                    split_top_skip,
-                    split_max_depth,
-                    floating_penalty,
-                    content,
-                } = node
-                {
-                    self.insertions.replace(
-                        side,
-                        (
-                            class,
-                            size,
-                            split_top_skip,
-                            split_max_depth,
-                            floating_penalty,
-                            content,
-                        ),
-                    )
-                } else {
-                    unreachable!()
-                }
-            }
-            18 => {
-                if let Node::MathNoad(v) = node {
-                    self.noads.replace(side, v)
-                } else {
-                    unreachable!()
-                }
-            }
-            19 => {
-                if let Node::FractionNoad(v) = node {
-                    self.fractions[side] = v
-                } else {
-                    unreachable!()
-                }
-            }
-            20 => {
-                if let Node::MathChoice(v) = node {
-                    self.choices[side] = v
-                } else {
-                    unreachable!()
-                }
-            }
-            21 => {
-                if let Node::MathList(v) = node {
-                    self.math_lists[side] = v
-                } else {
-                    unreachable!()
-                }
-            }
-            22 => {
-                if let Node::Adjust(v) = node {
-                    self.adjusts[side] = v
-                } else {
-                    unreachable!()
-                }
-            }
-            _ => {}
+            ChildPatch::MathList { row, child } => self.math_lists[row].content = child,
+            ChildPatch::Adjust { row, child } => self.adjusts[row] = child,
         }
+    }
+}
+
+fn replace_math_child(field: &mut MathField, child: Option<crate::ids::NodeListId>) {
+    match (field, child) {
+        (MathField::SubBox(id) | MathField::SubMlist(id), Some(child)) => *id = child,
+        (MathField::Empty | MathField::MathChar(_) | MathField::MathTextChar(_), None) => {}
+        _ => unreachable!("math child patch shape changed during compact copy"),
     }
 }

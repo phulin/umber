@@ -1323,6 +1323,141 @@ fn promotion_canonicalizes_shared_survivor_children_into_new_root() {
 }
 
 #[test]
+fn promotion_patches_every_child_bearing_compact_row() {
+    let mut stores = Stores::new();
+    let child = one_char(&mut stores, 'c');
+    let box_node = BoxNode::new(BoxNodeFields {
+        width: scaled(1),
+        height: scaled(2),
+        depth: scaled(3),
+        shift: scaled(4),
+        display: false,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children: child,
+    });
+    let noad = MathNoad {
+        kind: NoadKind::Normal(NoadClass::Ord),
+        nucleus: MathField::SubBox(child),
+        subscript: MathField::SubMlist(child),
+        superscript: MathField::SubBox(child),
+    };
+    let root = stores.freeze_node_list(&[
+        Node::HList(box_node),
+        Node::VList(box_node),
+        Node::Unset(UnsetNode::new(UnsetNodeFields {
+            kind: UnsetKind::HBox,
+            width: scaled(5),
+            height: scaled(6),
+            depth: scaled(7),
+            span_count: 2,
+            stretch: scaled(8),
+            stretch_order: Order::Fil,
+            shrink: scaled(9),
+            shrink_order: Order::Fill,
+            children: child,
+        })),
+        Node::Glue {
+            spec: GlueId::ZERO,
+            kind: GlueKind::Leaders,
+            leader: Some(LeaderPayload::HList(box_node)),
+        },
+        Node::Disc {
+            kind: DiscKind::Discretionary,
+            pre: child,
+            post: child,
+            replace: child,
+        },
+        Node::Ins {
+            class: 1,
+            size: scaled(10),
+            split_top_skip: GlueId::ZERO,
+            split_max_depth: scaled(11),
+            floating_penalty: 12,
+            content: child,
+        },
+        Node::MathNoad(noad),
+        Node::FractionNoad(MathFraction {
+            numerator: child,
+            denominator: child,
+            thickness: FractionThickness::Default,
+            left_delimiter: None,
+            right_delimiter: None,
+        }),
+        Node::MathChoice(MathChoice {
+            display: child,
+            text: child,
+            script: child,
+            script_script: child,
+        }),
+        Node::MathList(MathListNode {
+            display: false,
+            content: child,
+        }),
+        Node::Adjust(child),
+    ]);
+
+    stores.set_box_reg(17, root);
+    let promoted = stores.box_reg(17).expect("root should be promoted");
+    let mut child_count = 0;
+    for node in stores.nodes(promoted) {
+        let mut children = Vec::new();
+        node.to_owned().child_lists(&mut children);
+        for child in children {
+            assert_same_root(promoted, child);
+            assert_eq!(
+                stores.nodes(child),
+                &[Node::Char {
+                    font: NULL_FONT,
+                    ch: 'c'
+                }]
+            );
+            child_count += 1;
+        }
+    }
+    assert_eq!(child_count, 19);
+}
+
+#[test]
+fn promotion_copies_overlapping_source_spans_independently() {
+    let mut stores = Stores::new();
+    let whole = stores.freeze_node_list(&[Node::Penalty(10), Node::Penalty(20)]);
+    let suffix = NodeListId::new_epoch(whole.start() + 1, 1);
+    let fields = |children| {
+        BoxNode::new(BoxNodeFields {
+            width: scaled(1),
+            height: scaled(1),
+            depth: scaled(0),
+            shift: scaled(0),
+            display: false,
+            glue_set: GlueSetRatio::ZERO,
+            glue_sign: Sign::Normal,
+            glue_order: Order::Normal,
+            children,
+        })
+    };
+    let root = stores.freeze_node_list(&[Node::HList(fields(whole)), Node::HList(fields(suffix))]);
+
+    stores.set_box_reg(18, root);
+    let promoted = stores.box_reg(18).expect("root should be promoted");
+    let nodes = stores.nodes(promoted);
+    let (
+        Some(crate::node_arena::NodeRef::HList(whole)),
+        Some(crate::node_arena::NodeRef::HList(suffix)),
+    ) = (nodes.get(0), nodes.get(1))
+    else {
+        panic!("wrapper nodes should survive promotion");
+    };
+    assert_ne!(whole.children.start(), suffix.children.start());
+    assert_eq!(
+        stores.nodes(whole.children),
+        &[Node::Penalty(10), Node::Penalty(20)]
+    );
+    assert_eq!(stores.nodes(suffix.children), &[Node::Penalty(20)]);
+}
+
+#[test]
 fn mag_parameter_defaults_and_rolls_back_through_stores() {
     let mut stores = Stores::new();
     assert_eq!(stores.mag(), 1000);

@@ -4,9 +4,9 @@
 //! and rewrites child spans to be relative to the survivor root.
 
 use crate::ids::{ArenaRef, NodeListId, SurvivorRootId};
-use crate::math::MathField;
-use crate::node::{LeaderPayload, Node};
-use crate::node_arena::{NodeArena, NodeList, NodeStorage};
+#[cfg(debug_assertions)]
+use crate::node::Node;
+use crate::node_arena::{ChildPatch, NodeArena, NodeList, NodeStorage};
 use std::collections::HashMap;
 
 #[cfg(feature = "node-stats")]
@@ -97,6 +97,8 @@ pub struct SurvivorArena {
     // Node storage is independent of identity and can safely be recycled.
     recycled: Vec<NodeStorage>,
     recycled_buffer_uses: usize,
+    promotion_remap: HashMap<NodeListId, NodeListId>,
+    promotion_pending: Vec<ChildPatch>,
 }
 
 #[derive(Clone, Debug)]
@@ -113,6 +115,8 @@ impl SurvivorArena {
             slots: Vec::new(),
             recycled: Vec::new(),
             recycled_buffer_uses: 0,
+            promotion_remap: HashMap::new(),
+            promotion_pending: Vec::new(),
         }
     }
 
@@ -129,10 +133,17 @@ impl SurvivorArena {
             "survivor arena exceeds encodable roots"
         );
 
+        let predicted_root = SurvivorRootId::new(u32_len(
+            self.slots.len(),
+            "survivor arena exceeds u32 roots",
+        ));
         let (storage, recycled) = self.take_recycled_buffer();
         #[cfg(not(feature = "node-stats"))]
         let _ = recycled;
-        let copied = copy_list_iterative(id, epoch, self, Vec::new());
+        let remapped = core::mem::take(&mut self.promotion_remap);
+        let pending = core::mem::take(&mut self.promotion_pending);
+        let copied =
+            copy_list_iterative(id, epoch, self, storage, predicted_root, remapped, pending);
         #[cfg(feature = "node-stats")]
         {
             measurement::PEAK_SCRATCH_LOGICAL
@@ -140,14 +151,14 @@ impl SurvivorArena {
             measurement::PEAK_SCRATCH_RETAINED
                 .fetch_max(copied.peak_scratch_retained as u64, Ordering::Relaxed);
         }
-        let (nodes, start, len) = (copied.nodes, copied.start, copied.len);
-        let mut storage = storage;
-        debug_assert!(storage.is_empty());
-        storage.append(&nodes);
-        let root = self.allocate_root(storage);
-        self.rewrite_root_ids(root);
-        let promoted = NodeListId::new_survivor(root, start, len);
-        self.debug_assert_no_epoch_ids(promoted);
+        self.promotion_remap = copied.remapped;
+        self.promotion_pending = copied.pending;
+        let root = self.allocate_root(copied.storage);
+        assert_eq!(
+            root, predicted_root,
+            "predicted survivor root changed before publication"
+        );
+        self.debug_assert_no_epoch_ids(copied.promoted);
         #[cfg(feature = "node-stats")]
         {
             let nanos = started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;
@@ -159,7 +170,7 @@ impl SurvivorArena {
                 measurement::FRESH_NANOS.fetch_add(nanos, Ordering::Relaxed);
             }
         }
-        promoted
+        copied.promoted
     }
 
     /// Reads a live survivor span.
@@ -335,21 +346,6 @@ impl SurvivorArena {
             .expect("survivor root is not live")
     }
 
-    fn rewrite_root_ids(&mut self, root: SurvivorRootId) {
-        let len = self.root(root).storage.len();
-        for index in 0..len {
-            let mut node = self
-                .root(root)
-                .storage
-                .all_nodes()
-                .get(index)
-                .expect("survivor rewrite index is live")
-                .to_owned();
-            rewrite_node_root_ids(&mut node, root);
-            self.root_mut(root).storage.replace_node(index, node);
-        }
-    }
-
     #[cfg(debug_assertions)]
     fn debug_assert_no_epoch_ids(&self, id: NodeListId) {
         for node in self.get(id) {
@@ -362,9 +358,10 @@ impl SurvivorArena {
 }
 
 struct PromotionResult {
-    nodes: Vec<Node>,
-    start: u32,
-    len: u32,
+    storage: NodeStorage,
+    promoted: NodeListId,
+    remapped: HashMap<NodeListId, NodeListId>,
+    pending: Vec<ChildPatch>,
     #[cfg(feature = "node-stats")]
     peak_scratch_logical: usize,
     #[cfg(feature = "node-stats")]
@@ -375,23 +372,30 @@ fn copy_list_iterative(
     id: NodeListId,
     epoch: &NodeArena,
     survivor: &SurvivorArena,
-    out: Vec<Node>,
+    storage: NodeStorage,
+    root: SurvivorRootId,
+    remapped: HashMap<NodeListId, NodeListId>,
+    pending: Vec<ChildPatch>,
 ) -> PromotionResult {
-    let mut copy = PromotionCopy::new(epoch, survivor, out);
-    let root = copy.copy_list(id);
+    let mut copy = PromotionCopy::new(epoch, survivor, storage, root, remapped, pending);
+    let promoted = copy.copy_list(id);
     #[cfg(feature = "node-stats")]
     copy.measure_scratch();
 
-    while let Some(index) = copy.pending.pop() {
-        remap_node_children(index, &mut copy);
+    while let Some(patch) = copy.pending.pop() {
+        let patch = patch.remap(|child| copy.copy_list(child));
+        copy.storage.apply_child_patch(patch);
         #[cfg(feature = "node-stats")]
         copy.measure_scratch();
     }
 
+    copy.remapped.clear();
+    copy.pending.clear();
     PromotionResult {
-        nodes: copy.out,
-        start: root.start(),
-        len: root.len(),
+        storage: copy.storage,
+        promoted,
+        remapped: copy.remapped,
+        pending: copy.pending,
         #[cfg(feature = "node-stats")]
         peak_scratch_logical: copy.peak_scratch_logical,
         #[cfg(feature = "node-stats")]
@@ -400,16 +404,15 @@ fn copy_list_iterative(
 }
 
 /// Copies a mixed epoch/survivor DAG into one canonical survivor allocation.
-///
-/// The source arena is selected from the opaque handle's ownership tag inside
-/// the arena implementation. Exact list handles are memoized before their
-/// children are traversed, so shared children are copied and remapped once.
+/// Exact list handles are memoized before child patches are traversed, so
+/// shared spans copy once while overlapping but unequal spans stay independent.
 struct PromotionCopy<'a> {
     epoch: &'a NodeArena,
     survivor: &'a SurvivorArena,
-    out: Vec<Node>,
+    storage: NodeStorage,
+    root: SurvivorRootId,
     remapped: HashMap<NodeListId, NodeListId>,
-    pending: Vec<usize>,
+    pending: Vec<ChildPatch>,
     #[cfg(feature = "node-stats")]
     peak_scratch_logical: usize,
     #[cfg(feature = "node-stats")]
@@ -417,14 +420,24 @@ struct PromotionCopy<'a> {
 }
 
 impl<'a> PromotionCopy<'a> {
-    fn new(epoch: &'a NodeArena, survivor: &'a SurvivorArena, out: Vec<Node>) -> Self {
-        debug_assert!(out.is_empty(), "recycled survivor buffer must be empty");
+    fn new(
+        epoch: &'a NodeArena,
+        survivor: &'a SurvivorArena,
+        storage: NodeStorage,
+        root: SurvivorRootId,
+        remapped: HashMap<NodeListId, NodeListId>,
+        pending: Vec<ChildPatch>,
+    ) -> Self {
+        debug_assert!(storage.is_empty(), "recycled survivor buffer must be empty");
+        debug_assert!(remapped.is_empty(), "promotion remap scratch must be clear");
+        debug_assert!(pending.is_empty(), "promotion patch scratch must be clear");
         Self {
             epoch,
             survivor,
-            out,
-            remapped: HashMap::new(),
-            pending: Vec::new(),
+            storage,
+            root,
+            remapped,
+            pending,
             #[cfg(feature = "node-stats")]
             peak_scratch_logical: 0,
             #[cfg(feature = "node-stats")]
@@ -435,12 +448,9 @@ impl<'a> PromotionCopy<'a> {
     #[cfg(feature = "node-stats")]
     fn measure_scratch(&mut self) {
         let map_entry = core::mem::size_of::<(NodeListId, NodeListId)>();
-        let logical = self.out.len() * core::mem::size_of::<Node>()
-            + self.pending.len() * core::mem::size_of::<usize>()
-            + self.remapped.len() * map_entry;
-        let retained = self.out.capacity() * core::mem::size_of::<Node>()
-            + self.pending.capacity() * core::mem::size_of::<usize>()
-            + self.remapped.capacity() * map_entry;
+        let patch = core::mem::size_of::<ChildPatch>();
+        let logical = self.pending.len() * patch + self.remapped.len() * map_entry;
+        let retained = self.pending.capacity() * patch + self.remapped.capacity() * map_entry;
         self.peak_scratch_logical = self.peak_scratch_logical.max(logical);
         self.peak_scratch_retained = self.peak_scratch_retained.max(retained);
         measurement::PEAK_REMAP_ENTRIES.fetch_max(self.remapped.len() as u64, Ordering::Relaxed);
@@ -448,8 +458,8 @@ impl<'a> PromotionCopy<'a> {
     }
 
     fn copy_list(&mut self, id: NodeListId) -> NodeListId {
-        if let Some(remapped) = self.remapped.get(&id) {
-            return *remapped;
+        if let Some(&remapped) = self.remapped.get(&id) {
+            return remapped;
         }
 
         let nodes = match id.arena() {
@@ -461,269 +471,24 @@ impl<'a> PromotionCopy<'a> {
                 );
                 self.survivor.get(id)
             }
-        }
-        .to_vec();
-        let start = u32_len(self.out.len(), "promoted node root exceeds u32 entries");
-        let len = id.len();
-        self.out.extend(nodes);
-        let remapped = NodeListId::new_survivor(SurvivorRootId::new(0), start, len);
+        };
+        let start = u32_len(self.storage.len(), "promoted node root exceeds u32 entries");
+        let remapped = NodeListId::new_survivor(self.root, start, id.len());
         self.remapped.insert(id, remapped);
-        self.pending
-            .extend((start as usize..start as usize + len as usize).rev());
+        #[cfg(feature = "node-stats")]
+        let pending_before = self.pending.len();
+        let appended = self.storage.append_compact(nodes, &mut self.pending);
+        assert_eq!(appended, (start, id.len()));
         #[cfg(feature = "node-stats")]
         {
-            measurement::SOURCE_WORDS.fetch_add(u64::from(len), Ordering::Relaxed);
+            let child_patches = self.pending.len() - pending_before;
+            measurement::SOURCE_WORDS.fetch_add(u64::from(id.len()), Ordering::Relaxed);
+            measurement::CHILD_BEARING_NODES.fetch_add(child_patches as u64, Ordering::Relaxed);
             measurement::REMAP_ENTRIES.fetch_add(1, Ordering::Relaxed);
-            measurement::PENDING_ENTRIES.fetch_add(u64::from(len), Ordering::Relaxed);
+            measurement::PENDING_ENTRIES.fetch_add(child_patches as u64, Ordering::Relaxed);
         }
         remapped
     }
-}
-
-fn remap_node_children(index: usize, copy: &mut PromotionCopy<'_>) {
-    #[cfg(feature = "node-stats")]
-    if node_has_children(&copy.out[index]) {
-        measurement::CHILD_BEARING_NODES.fetch_add(1, Ordering::Relaxed);
-    }
-    match copy.out[index].clone() {
-        Node::HList(mut box_node) => {
-            box_node.children = copy.copy_list(box_node.children);
-            copy.out[index] = Node::HList(box_node);
-        }
-        Node::VList(mut box_node) => {
-            box_node.children = copy.copy_list(box_node.children);
-            copy.out[index] = Node::VList(box_node);
-        }
-        Node::Disc {
-            kind,
-            pre,
-            post,
-            replace,
-        } => {
-            copy.out[index] = Node::Disc {
-                kind,
-                pre: copy.copy_list(pre),
-                post: copy.copy_list(post),
-                replace: copy.copy_list(replace),
-            };
-        }
-        Node::Ins {
-            class,
-            size,
-            split_top_skip,
-            split_max_depth,
-            floating_penalty,
-            content,
-        } => {
-            copy.out[index] = Node::Ins {
-                class,
-                size,
-                split_top_skip,
-                split_max_depth,
-                floating_penalty,
-                content: copy.copy_list(content),
-            };
-        }
-        Node::Adjust(content) => {
-            copy.out[index] = Node::Adjust(copy.copy_list(content));
-        }
-        Node::MathNoad(mut noad) => {
-            remap_math_field(&mut noad.nucleus, copy);
-            remap_math_field(&mut noad.subscript, copy);
-            remap_math_field(&mut noad.superscript, copy);
-            copy.out[index] = Node::MathNoad(noad);
-        }
-        Node::FractionNoad(mut fraction) => {
-            fraction.numerator = copy.copy_list(fraction.numerator);
-            fraction.denominator = copy.copy_list(fraction.denominator);
-            copy.out[index] = Node::FractionNoad(fraction);
-        }
-        Node::MathChoice(mut choice) => {
-            choice.display = copy.copy_list(choice.display);
-            choice.text = copy.copy_list(choice.text);
-            choice.script = copy.copy_list(choice.script);
-            choice.script_script = copy.copy_list(choice.script_script);
-            copy.out[index] = Node::MathChoice(choice);
-        }
-        Node::MathList(mut list) => {
-            list.content = copy.copy_list(list.content);
-            copy.out[index] = Node::MathList(list);
-        }
-        Node::Glue {
-            spec,
-            kind,
-            leader: Some(payload),
-        } => {
-            copy.out[index] = Node::Glue {
-                spec,
-                kind,
-                leader: Some(remap_leader_payload(payload, copy)),
-            };
-        }
-        Node::Unset(mut unset) => {
-            unset.children = copy.copy_list(unset.children);
-            copy.out[index] = Node::Unset(unset);
-        }
-        Node::Char { .. }
-        | Node::Lig { .. }
-        | Node::Kern { .. }
-        | Node::Glue { .. }
-        | Node::Penalty(_)
-        | Node::Rule { .. }
-        | Node::Mark { .. }
-        | Node::Whatsit(_)
-        | Node::MathOn(_)
-        | Node::MathOff(_)
-        | Node::MathStyle(_)
-        | Node::Nonscript => {}
-    }
-}
-
-#[cfg(feature = "node-stats")]
-fn node_has_children(node: &Node) -> bool {
-    match node {
-        Node::HList(_)
-        | Node::VList(_)
-        | Node::Unset(_)
-        | Node::Disc { .. }
-        | Node::Ins { .. }
-        | Node::Adjust(_)
-        | Node::FractionNoad(_)
-        | Node::MathChoice(_)
-        | Node::MathList(_) => true,
-        Node::MathNoad(noad) => {
-            matches!(noad.nucleus, MathField::SubBox(_) | MathField::SubMlist(_))
-                || matches!(
-                    noad.subscript,
-                    MathField::SubBox(_) | MathField::SubMlist(_)
-                )
-                || matches!(
-                    noad.superscript,
-                    MathField::SubBox(_) | MathField::SubMlist(_)
-                )
-        }
-        Node::Glue {
-            leader: Some(LeaderPayload::HList(_) | LeaderPayload::VList(_)),
-            ..
-        } => true,
-        Node::Char { .. }
-        | Node::Lig { .. }
-        | Node::Kern { .. }
-        | Node::Glue { .. }
-        | Node::Penalty(_)
-        | Node::Rule { .. }
-        | Node::Mark { .. }
-        | Node::Whatsit(_)
-        | Node::MathOn(_)
-        | Node::MathOff(_)
-        | Node::MathStyle(_)
-        | Node::Nonscript => false,
-    }
-}
-
-fn rewrite_node_root_ids(node: &mut Node, root: SurvivorRootId) {
-    match node {
-        Node::HList(box_node) | Node::VList(box_node) => {
-            box_node.children = with_root(box_node.children, root);
-        }
-        Node::Disc {
-            pre, post, replace, ..
-        } => {
-            *pre = with_root(*pre, root);
-            *post = with_root(*post, root);
-            *replace = with_root(*replace, root);
-        }
-        Node::Ins { content, .. } | Node::Adjust(content) => {
-            *content = with_root(*content, root);
-        }
-        Node::MathNoad(noad) => {
-            rewrite_math_field_root(&mut noad.nucleus, root);
-            rewrite_math_field_root(&mut noad.subscript, root);
-            rewrite_math_field_root(&mut noad.superscript, root);
-        }
-        Node::FractionNoad(fraction) => {
-            fraction.numerator = with_root(fraction.numerator, root);
-            fraction.denominator = with_root(fraction.denominator, root);
-        }
-        Node::MathChoice(choice) => {
-            choice.display = with_root(choice.display, root);
-            choice.text = with_root(choice.text, root);
-            choice.script = with_root(choice.script, root);
-            choice.script_script = with_root(choice.script_script, root);
-        }
-        Node::MathList(list) => {
-            list.content = with_root(list.content, root);
-        }
-        Node::Glue {
-            leader: Some(payload),
-            ..
-        } => rewrite_leader_payload_root(payload, root),
-        Node::Unset(unset) => {
-            unset.children = with_root(unset.children, root);
-        }
-        Node::Char { .. }
-        | Node::Lig { .. }
-        | Node::Kern { .. }
-        | Node::Glue { .. }
-        | Node::Penalty(_)
-        | Node::Rule { .. }
-        | Node::Mark { .. }
-        | Node::Whatsit(_)
-        | Node::MathOn(_)
-        | Node::MathOff(_)
-        | Node::MathStyle(_)
-        | Node::Nonscript => {}
-    }
-}
-
-fn remap_math_field(field: &mut MathField, copy: &mut PromotionCopy<'_>) {
-    if let MathField::SubBox(list) | MathField::SubMlist(list) = field {
-        *list = copy.copy_list(*list);
-    }
-}
-
-fn remap_leader_payload(payload: LeaderPayload, copy: &mut PromotionCopy<'_>) -> LeaderPayload {
-    match payload {
-        LeaderPayload::HList(mut box_node) => {
-            box_node.children = copy.copy_list(box_node.children);
-            LeaderPayload::HList(box_node)
-        }
-        LeaderPayload::VList(mut box_node) => {
-            box_node.children = copy.copy_list(box_node.children);
-            LeaderPayload::VList(box_node)
-        }
-        LeaderPayload::Rule {
-            width,
-            height,
-            depth,
-        } => LeaderPayload::Rule {
-            width,
-            height,
-            depth,
-        },
-    }
-}
-
-fn rewrite_leader_payload_root(payload: &mut LeaderPayload, root: SurvivorRootId) {
-    match payload {
-        LeaderPayload::HList(box_node) | LeaderPayload::VList(box_node) => {
-            box_node.children = with_root(box_node.children, root);
-        }
-        LeaderPayload::Rule { .. } => {}
-    }
-}
-
-fn rewrite_math_field_root(field: &mut MathField, root: SurvivorRootId) {
-    if let MathField::SubBox(list) | MathField::SubMlist(list) = field {
-        *list = with_root(*list, root);
-    }
-}
-
-fn with_root(id: NodeListId, root: SurvivorRootId) -> NodeListId {
-    let ArenaRef::Survivor(_) = id.arena() else {
-        panic!("promoted child should already be survivor-rooted");
-    };
-    NodeListId::new_survivor(root, id.start(), id.len())
 }
 
 #[cfg(debug_assertions)]

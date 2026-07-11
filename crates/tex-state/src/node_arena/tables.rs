@@ -43,16 +43,18 @@ impl BoxTable {
         self.children.push(value.children);
         index
     }
-    pub(super) fn replace(&mut self, index: usize, value: crate::node::BoxNode) {
-        self.width[index] = value.width;
-        self.height[index] = value.height;
-        self.depth[index] = value.depth;
-        self.shift[index] = value.shift;
-        self.display[index] = value.display;
-        self.glue_set[index] = value.glue_set;
-        self.glue_sign[index] = value.glue_sign;
-        self.glue_order[index] = value.glue_order;
-        self.children[index] = value.children;
+    pub(super) fn copy_row(&mut self, source: &Self, index: usize) -> u32 {
+        self.push(crate::node::BoxNode::new(crate::node::BoxNodeFields {
+            width: source.width[index],
+            height: source.height[index],
+            depth: source.depth[index],
+            shift: source.shift[index],
+            display: source.display[index],
+            glue_set: source.glue_set[index],
+            glue_sign: source.glue_sign[index],
+            glue_order: source.glue_order[index],
+            children: source.children[index],
+        }))
     }
     pub(super) fn truncate(&mut self, len: usize) {
         self.width.truncate(len);
@@ -110,17 +112,19 @@ impl UnsetTable {
         self.children.push(v.children);
         i
     }
-    pub(super) fn replace(&mut self, i: usize, v: crate::node::UnsetNode) {
-        self.kind[i] = v.kind;
-        self.width[i] = v.width;
-        self.height[i] = v.height;
-        self.depth[i] = v.depth;
-        self.span_count[i] = v.span_count;
-        self.stretch[i] = v.stretch;
-        self.stretch_order[i] = v.stretch_order;
-        self.shrink[i] = v.shrink;
-        self.shrink_order[i] = v.shrink_order;
-        self.children[i] = v.children
+    pub(super) fn copy_row(&mut self, source: &Self, index: usize) -> u32 {
+        self.push(crate::node::UnsetNode::new(crate::node::UnsetNodeFields {
+            kind: source.kind[index],
+            width: source.width[index],
+            height: source.height[index],
+            depth: source.depth[index],
+            span_count: source.span_count[index],
+            stretch: source.stretch[index],
+            stretch_order: source.stretch_order[index],
+            shrink: source.shrink[index],
+            shrink_order: source.shrink_order[index],
+            children: source.children[index],
+        }))
     }
     pub(super) fn truncate(&mut self, n: usize) {
         self.kind.truncate(n);
@@ -167,13 +171,15 @@ impl InsertionTable {
         self.content.push(v.5);
         i
     }
-    pub(super) fn replace(&mut self, i: usize, v: (u16, Scaled, GlueId, Scaled, i32, NodeListId)) {
-        self.class[i] = v.0;
-        self.size[i] = v.1;
-        self.split_top_skip[i] = v.2;
-        self.split_max_depth[i] = v.3;
-        self.floating_penalty[i] = v.4;
-        self.content[i] = v.5
+    pub(super) fn copy_row(&mut self, source: &Self, index: usize) -> u32 {
+        self.push((
+            source.class[index],
+            source.size[index],
+            source.split_top_skip[index],
+            source.split_max_depth[index],
+            source.floating_penalty[index],
+            source.content[index],
+        ))
     }
     pub(super) fn truncate(&mut self, n: usize) {
         self.class.truncate(n);
@@ -210,11 +216,13 @@ impl NoadTable {
         self.superscript.push(v.superscript);
         i
     }
-    pub(super) fn replace(&mut self, i: usize, v: crate::math::MathNoad) {
-        self.kind[i] = v.kind;
-        self.nucleus[i] = v.nucleus;
-        self.subscript[i] = v.subscript;
-        self.superscript[i] = v.superscript
+    pub(super) fn copy_row(&mut self, source: &Self, index: usize) -> u32 {
+        self.push(crate::math::MathNoad {
+            kind: source.kind[index].clone(),
+            nucleus: source.nucleus[index].clone(),
+            subscript: source.subscript[index].clone(),
+            superscript: source.superscript[index].clone(),
+        })
     }
     pub(super) fn truncate(&mut self, n: usize) {
         self.kind.truncate(n);

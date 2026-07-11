@@ -4,6 +4,7 @@
 //! receive only logical node-list views or the aggregate arena facade.
 
 mod arena;
+mod copy;
 #[cfg(feature = "node-stats")]
 mod measurement;
 mod mutation;
@@ -12,6 +13,7 @@ mod tables;
 mod view;
 
 pub use arena::{NodeArena, NodeListBuilder};
+pub(crate) use copy::ChildPatch;
 #[cfg(feature = "node-stats")]
 pub use measurement::{NodeMemoryColumn, peak_node_storage_measurement};
 pub(crate) use storage::{NodeArenaMark, NodeStorage};

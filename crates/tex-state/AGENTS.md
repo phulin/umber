@@ -45,6 +45,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/node.rs`: Immutable TeX node, box, glue, kern, penalty, rule, whatsit, math-list, discretionary, and list-field model.
 - `src/node_arena.rs`: Compact-node module boundary and deliberately narrow re-exports.
 - `src/node_arena/arena.rs`: Epoch arena facade and reusable owned node-list builder.
+- `src/node_arena/copy.rs`: Private compact-to-compact span copying and typed child-patch descriptions.
 - `src/node_arena/measurement.rs`: Feature-gated compact-column and peak-storage accounting.
 - `src/node_arena/mutation.rs`: Private shape-preserving compact-row replacement operations.
 - `src/node_arena/storage.rs`: Canonical node words, sidecar coordination, encoding, aggregate watermarks, and rollback.

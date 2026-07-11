@@ -30,7 +30,7 @@ impl NodeWord {
         self.0 & PAYLOAD_MASK
     }
 
-    const fn sidecar(tag: u8, index: u32) -> Self {
+    pub(super) const fn sidecar(tag: u8, index: u32) -> Self {
         Self::new(tag, index as u64)
     }
 }
@@ -58,7 +58,7 @@ pub(super) struct StorageMark {
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-struct SidecarNeeds {
+pub(super) struct SidecarNeeds {
     pub(super) boxes: u32,
     pub(super) unsets: u32,
     pub(super) rules: u32,
@@ -107,7 +107,7 @@ impl SidecarNeeds {
         }
     }
 
-    fn as_array(self) -> [u32; 13] {
+    pub(super) fn as_array(self) -> [u32; 13] {
         [
             self.boxes,
             self.unsets,
@@ -263,7 +263,7 @@ impl NodeStorage {
         (start, len)
     }
 
-    fn sidecar_lengths(&self) -> [u32; 13] {
+    pub(super) fn sidecar_lengths(&self) -> [u32; 13] {
         let m = self.mark();
         [
             m.boxes,
@@ -282,7 +282,7 @@ impl NodeStorage {
         ]
     }
 
-    fn reserve_sidecars(&mut self, needs: SidecarNeeds) {
+    pub(super) fn reserve_sidecars(&mut self, needs: SidecarNeeds) {
         self.boxes.reserve(needs.boxes as usize);
         self.unsets.reserve(needs.unsets as usize);
         self.rules.reserve(needs.rules as usize);
@@ -386,6 +386,7 @@ impl NodeStorage {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn all_nodes(&self) -> NodeList<'_> {
         self.view(
             0,
