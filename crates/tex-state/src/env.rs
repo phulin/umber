@@ -135,8 +135,8 @@ macro_rules! register_accessors {
 /// TeX environment cells plus the journal that makes mutation replayable.
 #[derive(Clone, Debug)]
 pub struct Env {
-    meaning_cells: Vec<MeaningSegment>,
-    meaning_stamps: Vec<StampSegment>,
+    meaning_cells: Vec<Option<MeaningSegment>>,
+    meaning_stamps: Vec<Option<StampSegment>>,
     counts: FixedBank<I32Codec, DENSE_REGISTER_COUNT>,
     dimens: FixedBank<ScaledCodec, DENSE_REGISTER_COUNT>,
     skips: FixedBank<GlueIdCodec, DENSE_REGISTER_COUNT>,
@@ -904,7 +904,7 @@ fn font_dimen_index(font: FontId, number: u16) -> u32 {
     assert!(number != 0, "fontdimen number must be positive");
     let font = font.raw();
     assert!(
-        font < (1 << (27 - FONT_DIMEN_BITS)),
+        font < (1 << (30 - FONT_DIMEN_BITS)),
         "font id exceeds fontdimen cell range"
     );
     (font << FONT_DIMEN_BITS) | (u32::from(number - 1) & FONT_DIMEN_MASK)

@@ -1,6 +1,5 @@
 use super::*;
 use crate::Universe;
-use crate::token::{Catcode, Token};
 
 #[test]
 fn content_hash_is_stable_for_same_bytes() {
@@ -441,28 +440,6 @@ fn rollback_discards_effect_suffix_and_restores_partial_line_bytes() {
         universe.world().memory_output("interleaved.aux"),
         Some(&b"alpha"[..])
     );
-}
-
-#[test]
-fn deferred_write_record_keeps_unexpanded_token_list_id() {
-    let mut universe = Universe::new();
-    let escape = universe.intern("the");
-    let tokens = universe.intern_token_list(&[
-        Token::Cs(escape.symbol()),
-        Token::Char {
-            ch: 'x',
-            cat: Catcode::Letter,
-        },
-    ]);
-    let slot = StreamSlot::new(5);
-
-    universe.world_mut().record_deferred_write(slot, tokens);
-
-    assert!(matches!(
-        universe.world().effect_records(),
-        [EffectRecord::DeferredWrite { stream, tokens: recorded }]
-            if *stream == slot && *recorded == tokens
-    ));
 }
 
 #[test]

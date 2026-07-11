@@ -1407,3 +1407,18 @@ fn decode_u16(word: u64) -> u16 {
         Err(_) => panic!("font parameter count exceeds u16"),
     }
 }
+
+#[cfg(test)]
+mod cell_tests {
+    use super::*;
+
+    #[test]
+    fn canonical_hash_cells_preserve_full_symbol_index_and_drop_global_bit() {
+        for index in [1 << 26, (1 << 30) - 1] {
+            let canonical = canonical_cell(CellId::new_global(BankTag::Meaning, index));
+            assert_eq!(canonical, CellId::new(BankTag::Meaning, index));
+            assert_eq!(canonical.index(), index);
+            assert!(!canonical.is_global());
+        }
+    }
+}

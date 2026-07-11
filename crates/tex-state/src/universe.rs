@@ -983,6 +983,13 @@ impl Universe {
         &mut self.world
     }
 
+    /// Records an unexpanded deferred-write payload after validating that its
+    /// token list belongs to this live timeline.
+    pub fn record_deferred_write(&mut self, stream: StreamSlot, tokens: TokenListId) {
+        self.stores.assert_live_token_list(tokens);
+        self.world.record_deferred_write(stream, tokens);
+    }
+
     /// Marks the start of node allocations owned by one in-progress shipout.
     #[must_use]
     pub fn begin_shipout(&self) -> ShipoutBoundary {

@@ -134,6 +134,9 @@ impl Env {
 
     pub(crate) fn for_each_semantic_non_default_word(&self, mut f: impl FnMut(CellId, u64)) {
         for (segment_index, segment) in self.meaning_cells.iter().enumerate() {
+            let Some(segment) = segment else {
+                continue;
+            };
             for (offset, &word) in segment.iter().enumerate() {
                 if word != 0 {
                     let index = ((segment_index as u32) << super::SEGMENT_BITS) | offset as u32;
@@ -194,7 +197,10 @@ impl Env {
     pub(super) fn meaning_word(&self, index: u32) -> Option<u64> {
         let segment = segment_index(index);
         let offset = segment_offset(index);
-        self.meaning_cells.get(segment).map(|cells| cells[offset])
+        self.meaning_cells
+            .get(segment)
+            .and_then(Option::as_ref)
+            .map(|cells| cells[offset])
     }
 
     pub(super) fn set_meaning_word(&mut self, symbol: Symbol, word: u64, global: bool) {
@@ -202,6 +208,12 @@ impl Env {
         self.ensure_meaning_segment(index);
         let segment = segment_index(index);
         let offset = segment_offset(index);
+        let cells = self.meaning_cells[segment]
+            .as_mut()
+            .expect("ensured meaning segment");
+        let stamps = self.meaning_stamps[segment]
+            .as_mut()
+            .expect("ensured meaning stamp segment");
         let cell = if global {
             CellId::new_global(BankTag::Meaning, index)
         } else {
@@ -209,8 +221,8 @@ impl Env {
         };
 
         barrier(
-            &mut self.meaning_cells[segment][offset],
-            &mut self.meaning_stamps[segment][offset],
+            &mut cells[offset],
+            &mut stamps[offset],
             &mut self.journal,
             #[cfg(feature = "shadow")]
             &mut self.shadow,
@@ -222,10 +234,12 @@ impl Env {
 
     fn ensure_meaning_segment(&mut self, index: u32) {
         let required_len = segment_index(index) + 1;
-        while self.meaning_cells.len() < required_len {
-            self.meaning_cells.push(Box::new([0; SEGMENT_LEN]));
-            self.meaning_stamps
-                .push(Box::new([Epoch::ZERO; SEGMENT_LEN]));
+        self.meaning_cells.resize_with(required_len, || None);
+        self.meaning_stamps.resize_with(required_len, || None);
+        let segment = required_len - 1;
+        if self.meaning_cells[segment].is_none() {
+            self.meaning_cells[segment] = Some(Box::new([0; SEGMENT_LEN]));
+            self.meaning_stamps[segment] = Some(Box::new([Epoch::ZERO; SEGMENT_LEN]));
         }
     }
 
@@ -234,7 +248,9 @@ impl Env {
         self.ensure_meaning_segment(index);
         let segment = segment_index(index);
         let offset = segment_offset(index);
-        self.meaning_cells[segment][offset] = word;
+        self.meaning_cells[segment]
+            .as_mut()
+            .expect("ensured meaning segment")[offset] = word;
     }
 
     #[allow(dead_code)]
