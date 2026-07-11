@@ -71,6 +71,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/stores/tests.rs`: Unit tests for aggregate store rollback, builders, handle validation, parameters, boxes, and state hashes.
 - `src/survivor.rs`: Survivor arena for node lists that escape epoch rollback boundaries, including root-safe buffer recycling and feature-gated promotion measurements.
 - `src/tests.rs`: Crate-level integration-style unit tests for `Universe`, snapshots, world effects, and module test wiring.
+- `src/tests/handle_matrix.rs`: Table-driven aggregate rollback, fork, and cross-Universe liveness coverage for every production opaque handle class.
 - `src/tests/live_boundary.rs`: Unit tests proving live-state capability boundaries and restricted context APIs.
 - `src/tests/replay.rs`: Unit tests for snapshot/replay behavior and semantic state convergence.
 - `src/tests/replay_common.rs`: Shared helpers for replay tests, including model cells and expected hash state.

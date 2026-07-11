@@ -291,7 +291,11 @@ self-contained and makes recursive ownership inspection independent of the
 source arenas.
 
 Root slots and refcounts remain in `SurvivorArena` under aggregate Env-journal
-ownership. Live box registers and retained undo records own references;
+ownership. A process-unique 20-bit root key is folded into every packed
+survivor handle and resolves through an O(1) arena-local key-to-slot table.
+Cloning preserves inherited key mappings, while sibling forks cannot mint the
+same later key. Exhausting the encodable key space is deterministic and never
+wraps. Live box registers and retained undo records own references;
 replacement, group exit, rollback, and shipout release them through the same
 barriered paths as today. At refcount zero, all destination vectors are
 cleared and move together into a recycled `NodeStorage` pool. Recycling may
@@ -300,6 +304,12 @@ reuse counters are derived allocator state: cloning may copy them and rollback
 need not restore their exact capacity/order, because they cannot affect
 meaning, liveness, ids, hashes, or output. Tests must prove that claim by
 replay/hash equality with different recycling histories.
+
+The lookup table adds one `(SurvivorRootId, usize)` payload per live root (16
+bytes on the supported 64-bit targets), plus standard hash-table control
+metadata. Feature-gated node-memory reporting exposes this payload as
+`survivor.root_lookup_entries`; it remains derived measurement data and does
+not enter snapshots, hashes, or replay state.
 
 ## 6. Read and mutation boundaries
 
@@ -684,11 +694,11 @@ end-to-end regression ceiling.
 | Area | Required cases |
 | --- | --- |
 | Layout | compile-time 16-byte handle and 8-byte node-word assertions; every tag; reserved tags rejected; signed extrema; Unicode scalar validation; TFM ligature bounds |
-| Handle identity | epoch generation/namespace/slot validation; equal and covering reuse; retained prefix; fork ancestry; survivor zero/maxima; start+len overflow; empty lists; max root; optional box-register null; raw constructors inaccessible downstream |
+| Handle identity | epoch generation/namespace/slot validation; equal and covering reuse; retained prefix; fork ancestry; survivor inherited roots plus sibling-key separation; survivor zero/maxima; start+len overflow; empty lists; max root; optional box-register null; raw constructors inaccessible downstream |
 | Sidecars | every kind; zero/max indexes; leader glue; owned whatsit payloads; no word published without a row; column lengths agree |
 | Bottom-up graph | epoch children, mixed survivor children, shared spans, deep graphs, cycles/forward references rejected |
 | Rollback | atomic identity/storage mark; truncate all columns; arbitrary rollback/reappend never revives stale ids; retained capacities distinguished from live bytes; shipout release |
-| Survivors | promotion, root folding, refcounts, journal-held owners, group exit, root non-reuse, buffer recycling, nested boxes/math/leader payloads |
+| Survivors | promotion, process-unique root folding, sibling-fork foreign lookup rejection, deterministic key exhaustion, refcounts, journal-held owners, group exit, root non-reuse, buffer recycling, nested boxes/math/leader payloads |
 | Access boundary | compile-fail probes for raw words, sidecars, constructors, partial marks, mutable views; shadow remains production-like |
 | Hash/replay | equal logical graphs with different sidecar/root/recycling histories hash equally; changed fields differ; rollback convergence; deep iterative traversal |
 | Kernels | hpack/vpack/vtop, vertical breaking, line breaking, diagnostics, page builder, insertion/mark handling, math lowering |
