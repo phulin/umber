@@ -73,9 +73,47 @@ where
     H: ExpansionHooks<S>,
 {
     let mut recorder = NoopRecorder;
-    let text = scan_the_text_with_hooks(input, stores, &mut recorder, hooks, context)?;
+    let text = match scan_the_text_with_hooks(input, stores, &mut recorder, hooks, context) {
+        Ok(text) => text,
+        Err(tex_expand::ExpandError::UnsupportedTheTarget { context }) => {
+            let token = tex_expand::semantic_token(context);
+            let rendered = match token {
+                Token::Char { ch, cat } => format!("{} character {ch}", catcode_name(cat)),
+                _ => meaning_text(stores, token),
+            };
+            stores.world_mut().write_text(
+                PrintSink::TerminalAndLog,
+                &format!(
+                    "\n! You can't use `{rendered}' after \\the.\nI'm forgetting what you said and using zero instead.\n"
+                ),
+            );
+            "0".to_owned()
+        }
+        Err(error) => return Err(error.into()),
+    };
     write_diagnostic(stores, &format!("\n> {text}.\n"));
     Ok(())
+}
+
+fn catcode_name(cat: Catcode) -> &'static str {
+    match cat {
+        Catcode::MathShift => "math shift",
+        Catcode::BeginGroup => "begin-group",
+        Catcode::EndGroup => "end-group",
+        Catcode::AlignmentTab => "alignment tab",
+        Catcode::Parameter => "macro parameter",
+        Catcode::Superscript => "superscript",
+        Catcode::Subscript => "subscript",
+        Catcode::Space => "blank space",
+        Catcode::Letter => "the letter",
+        Catcode::Other => "the character",
+        Catcode::Active => "active character",
+        Catcode::Escape => "escape",
+        Catcode::EndLine => "end of line",
+        Catcode::Ignored => "ignored",
+        Catcode::Comment => "comment",
+        Catcode::Invalid => "invalid character",
+    }
 }
 
 pub(crate) fn execute_showtokens<S>(

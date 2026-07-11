@@ -490,7 +490,7 @@ where
     Ok(ScannedInt::new(value, token))
 }
 
-fn scan_internal_integer<S, St, R, H, E>(
+pub(crate) fn scan_internal_integer<S, St, R, H, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
     recorder: &mut R,

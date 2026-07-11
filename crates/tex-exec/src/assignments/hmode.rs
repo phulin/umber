@@ -285,7 +285,10 @@ where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    if nest.current_mode() != Mode::Horizontal {
+    if !matches!(
+        nest.current_mode(),
+        Mode::Horizontal | Mode::RestrictedHorizontal
+    ) {
         return Err(ExecError::UnimplementedTypesetting {
             mode: nest.current_mode(),
             token: Token::Cs(stores.intern("vadjust")),

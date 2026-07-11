@@ -103,7 +103,10 @@ where
 fn prepare_box255(stores: &mut Universe, fire_up: PageFireUp) -> Result<(), ExecError> {
     if stores.box_reg(255).is_some() {
         let _ = stores.take_box_reg_same_level(255);
-        return Err(ExecError::Box255NotVoidBeforeOutput);
+        stores.world_mut().write_text(
+            tex_state::PrintSink::TerminalAndLog,
+            "\n! \\box255 is not void.\nYou shouldn't use \\box255 except in \\output routines.\nProceed, and I'll discard its present contents.\n",
+        );
     }
 
     let split_index = fire_up.best_break().index();
@@ -438,7 +441,10 @@ where
     leave_group(input, stores, GroupKind::Simple)?;
     if stores.box_reg(255).is_some() {
         let _ = stores.take_box_reg_same_level(255);
-        return Err(ExecError::OutputRoutineBox255NotVoid);
+        stores.world_mut().write_text(
+            tex_state::PrintSink::TerminalAndLog,
+            "\n! Output routine didn't use all of \\box255.\nYour \\output commands should empty \\box255,\ne.g., by saying `\\shipout\\box255'.\nProceed; I'll discard its present contents.\n",
+        );
     }
     prepend_output_heldover(stores, output_level.list().nodes().to_vec());
     Ok(())

@@ -46,6 +46,23 @@ fn semantic_format_is_deterministic_validated_and_world_independent() {
     universe
         .world_mut()
         .write_text(PrintSink::TerminalAndLog, "must not enter format");
+    let child = universe.freeze_node_list(&[Node::Rule {
+        width: Some(Scaled::from_raw(10)),
+        height: Some(Scaled::from_raw(20)),
+        depth: None,
+    }]);
+    let root = universe.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
+        width: Scaled::from_raw(10),
+        height: Scaled::from_raw(20),
+        depth: Scaled::from_raw(0),
+        shift: Scaled::from_raw(0),
+        display: false,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children: child,
+    }))]);
+    universe.set_box_reg(7, root);
 
     let first = universe.dump_format().expect("format encode");
     let second = universe.dump_format().expect("deterministic format encode");
@@ -60,6 +77,19 @@ fn semantic_format_is_deterministic_validated_and_world_independent() {
         restored.meaning(restored_macro),
         Meaning::Macro { .. }
     ));
+    let restored_root = restored.box_reg(7).expect("restored box register");
+    let restored_nodes = restored.nodes(restored_root).to_vec();
+    let Node::HList(restored_box) = restored_nodes[0] else {
+        panic!("restored box node kind");
+    };
+    assert_eq!(
+        restored.nodes(restored_box.children).to_vec(),
+        [Node::Rule {
+            width: Some(Scaled::from_raw(10)),
+            height: Some(Scaled::from_raw(20)),
+            depth: None,
+        }]
+    );
     assert!(restored.world().effect_records().is_empty());
 
     let mut corrupted = first.clone();

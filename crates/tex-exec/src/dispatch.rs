@@ -200,7 +200,16 @@ where
             ..
         } => {
             assignments::flush_pending_hchars(nest, stores)?;
-            leave_group_with_origin(input, stores, GroupKind::Simple, origin)?;
+            if let Err(error) = leave_group_with_origin(input, stores, GroupKind::Simple, origin) {
+                if matches!(error, ExecError::TooManyRightBraces { .. }) {
+                    stores.world_mut().write_text(
+                        tex_state::PrintSink::TerminalAndLog,
+                        "\n! Too many }'s.\nYou've closed more groups than you opened.\nSuch booboos are generally harmless, so keep going.\n",
+                    );
+                } else {
+                    return Err(error);
+                }
+            }
             Ok(DispatchAction::Continue)
         }
         Token::Char {

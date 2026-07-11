@@ -907,6 +907,23 @@ where
         if let Some(unit) = internal {
             return Ok(UnitScan::Scanned(ScannedUnit::Internal(unit)));
         }
+        if matches!(
+            meaning,
+            Meaning::CharGiven(_)
+                | Meaning::MathCharGiven(_)
+                | Meaning::CountRegister(_)
+                | Meaning::IntParam(_)
+                | Meaning::InternalInteger(_)
+                | Meaning::PageInteger(_)
+                | Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Count)
+        ) {
+            let integer = scan_int::scan_internal_integer(
+                input, stores, recorder, hooks, expander, first, symbol,
+            )?;
+            return Ok(UnitScan::Scanned(ScannedUnit::Internal(Scaled::from_raw(
+                integer.value(),
+            ))));
+        }
     }
 
     if options.allow_infinite_units {

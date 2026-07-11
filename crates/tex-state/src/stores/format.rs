@@ -15,6 +15,7 @@ struct StoreFormat {
     macros: Vec<FormatMacro>,
     glue: Vec<FormatGlue>,
     fonts: Vec<FormatFont>,
+    node_lists: Vec<FormatNodeList>,
     env: Vec<(u32, u64)>,
     code_tables: Vec<FormatCodeTables>,
     hyphenation: HyphenationTable,
@@ -80,6 +81,19 @@ struct FormatCodeTables {
     delcode: i32,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+struct FormatListKey {
+    survivor_root: Option<u32>,
+    start: u32,
+    len: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct FormatNodeList {
+    key: FormatListKey,
+    nodes: Vec<Node>,
+}
+
 impl Stores {
     pub(crate) fn encode_format(&self) -> Result<Vec<u8>, StoreFormatError> {
         if self.env.group_depth() != 0 {
@@ -142,6 +156,25 @@ impl StoreFormat {
         stores
             .env
             .for_each_semantic_non_default_word(|cell, word| env.push((cell.raw(), word)));
+        let roots: Vec<_> = env
+            .iter()
+            .filter_map(|&(raw, word)| {
+                (crate::cell::CellId::new(
+                    crate::cell::BankTag::from_bits(raw >> 27),
+                    raw & ((1 << 26) - 1),
+                )
+                .bank()
+                    == crate::cell::BankTag::Box)
+                    .then(|| NodeListId::decode_box_word(word))
+                    .flatten()
+            })
+            .collect();
+        let mut seen = std::collections::BTreeSet::new();
+        let mut visiting = std::collections::BTreeSet::new();
+        let mut node_lists = Vec::new();
+        for root in roots {
+            capture_node_list(stores, root, &mut seen, &mut visiting, &mut node_lists)?;
+        }
         let code_tables = (0..=255)
             .map(|code| {
                 let ch = char::from_u32(code).expect("byte code is scalar");
@@ -162,6 +195,7 @@ impl StoreFormat {
             macros,
             glue,
             fonts,
+            node_lists,
             env,
             code_tables,
             hyphenation: stores.hyphenation.clone(),
@@ -224,13 +258,23 @@ impl StoreFormat {
                 stores.fonts.set_identifier(id, Symbol::new(symbol));
             }
         }
+        let mut node_ids = std::collections::BTreeMap::new();
+        for list in self.node_lists {
+            let nodes = list
+                .nodes
+                .into_iter()
+                .map(|node| remap_node(node, &node_ids))
+                .collect::<Result<Vec<_>, _>>()?;
+            let id = stores.nodes.append(&nodes);
+            node_ids.insert(list.key, id);
+        }
         for entry in self.code_tables {
             entry.restore(&mut stores.code_tables)?;
         }
         stores.hyphenation = self.hyphenation;
         stores.prepared_mag = self.prepared_mag;
         stores.last_loaded_font = FontId::new(self.last_loaded_font);
-        for (raw, word) in self.env {
+        for (raw, mut word) in self.env {
             let bank_bits = raw >> 27;
             if bank_bits > crate::cell::BankTag::MathFamilyFont as u32 {
                 return Err(StoreFormatError::Invalid("unknown environment bank"));
@@ -239,10 +283,167 @@ impl StoreFormat {
                 crate::cell::BankTag::from_bits(bank_bits),
                 raw & ((1 << 26) - 1),
             );
+            if cell.bank() == crate::cell::BankTag::Box
+                && let Some(old) = NodeListId::decode_box_word(word)
+            {
+                let id = node_ids
+                    .get(&FormatListKey::from_id(old))
+                    .copied()
+                    .ok_or(StoreFormatError::Invalid("missing box node list"))?;
+                word = NodeListId::encode_box_word(Some(id));
+            }
             stores.env.restore_raw(cell, word);
         }
         Ok(stores)
     }
+}
+
+impl FormatListKey {
+    fn from_id(id: NodeListId) -> Self {
+        Self {
+            survivor_root: match id.arena() {
+                crate::ids::ArenaRef::Epoch => None,
+                crate::ids::ArenaRef::Survivor(root) => Some(root.raw()),
+            },
+            start: id.start(),
+            len: id.len(),
+        }
+    }
+}
+
+fn capture_node_list(
+    stores: &Stores,
+    id: NodeListId,
+    seen: &mut std::collections::BTreeSet<NodeListId>,
+    visiting: &mut std::collections::BTreeSet<NodeListId>,
+    out: &mut Vec<FormatNodeList>,
+) -> Result<(), StoreFormatError> {
+    if seen.contains(&id) {
+        return Ok(());
+    }
+    if !visiting.insert(id) {
+        return Err(StoreFormatError::Invalid("cyclic node-list graph"));
+    }
+    let nodes = stores.nodes(id).to_vec();
+    for node in &nodes {
+        for child in node_child_ids(node) {
+            capture_node_list(stores, child, seen, visiting, out)?;
+        }
+    }
+    visiting.remove(&id);
+    seen.insert(id);
+    out.push(FormatNodeList {
+        key: FormatListKey::from_id(id),
+        nodes,
+    });
+    Ok(())
+}
+
+fn node_child_ids(node: &Node) -> Vec<NodeListId> {
+    let mut out = Vec::new();
+    match node {
+        Node::HList(box_node) | Node::VList(box_node) => out.push(box_node.children),
+        Node::Glue {
+            leader:
+                Some(
+                    crate::node::LeaderPayload::HList(box_node)
+                    | crate::node::LeaderPayload::VList(box_node),
+                ),
+            ..
+        } => out.push(box_node.children),
+        Node::Unset(unset) => out.push(unset.children),
+        Node::Disc {
+            pre, post, replace, ..
+        } => out.extend([*pre, *post, *replace]),
+        Node::Ins { content, .. } | Node::Adjust(content) => out.push(*content),
+        Node::MathNoad(noad) => {
+            math_field_child(&noad.nucleus, &mut out);
+            math_field_child(&noad.subscript, &mut out);
+            math_field_child(&noad.superscript, &mut out);
+        }
+        Node::FractionNoad(fraction) => {
+            out.extend([fraction.numerator, fraction.denominator]);
+        }
+        Node::MathChoice(choice) => out.extend([
+            choice.display,
+            choice.text,
+            choice.script,
+            choice.script_script,
+        ]),
+        Node::MathList(list) => out.push(list.content),
+        _ => {}
+    }
+    out
+}
+
+fn math_field_child(field: &crate::math::MathField, out: &mut Vec<NodeListId>) {
+    if let crate::math::MathField::SubBox(id) | crate::math::MathField::SubMlist(id) = field {
+        out.push(*id);
+    }
+}
+
+fn remap_node(
+    mut node: Node,
+    ids: &std::collections::BTreeMap<FormatListKey, NodeListId>,
+) -> Result<Node, StoreFormatError> {
+    let remap = |id: &mut NodeListId| -> Result<(), StoreFormatError> {
+        *id = ids
+            .get(&FormatListKey::from_id(*id))
+            .copied()
+            .ok_or(StoreFormatError::Invalid("node child precedes dependency"))?;
+        Ok(())
+    };
+    match &mut node {
+        Node::HList(box_node) | Node::VList(box_node) => remap(&mut box_node.children)?,
+        Node::Glue {
+            leader:
+                Some(
+                    crate::node::LeaderPayload::HList(box_node)
+                    | crate::node::LeaderPayload::VList(box_node),
+                ),
+            ..
+        } => remap(&mut box_node.children)?,
+        Node::Unset(unset) => remap(&mut unset.children)?,
+        Node::Disc {
+            pre, post, replace, ..
+        } => {
+            remap(pre)?;
+            remap(post)?;
+            remap(replace)?;
+        }
+        Node::Ins { content, .. } | Node::Adjust(content) => remap(content)?,
+        Node::MathNoad(noad) => {
+            remap_math_field(&mut noad.nucleus, ids)?;
+            remap_math_field(&mut noad.subscript, ids)?;
+            remap_math_field(&mut noad.superscript, ids)?;
+        }
+        Node::FractionNoad(fraction) => {
+            remap(&mut fraction.numerator)?;
+            remap(&mut fraction.denominator)?;
+        }
+        Node::MathChoice(choice) => {
+            remap(&mut choice.display)?;
+            remap(&mut choice.text)?;
+            remap(&mut choice.script)?;
+            remap(&mut choice.script_script)?;
+        }
+        Node::MathList(list) => remap(&mut list.content)?,
+        _ => {}
+    }
+    Ok(node)
+}
+
+fn remap_math_field(
+    field: &mut crate::math::MathField,
+    ids: &std::collections::BTreeMap<FormatListKey, NodeListId>,
+) -> Result<(), StoreFormatError> {
+    if let crate::math::MathField::SubBox(id) | crate::math::MathField::SubMlist(id) = field {
+        *id = ids
+            .get(&FormatListKey::from_id(*id))
+            .copied()
+            .ok_or(StoreFormatError::Invalid("math child precedes dependency"))?;
+    }
+    Ok(())
 }
 
 impl FormatToken {

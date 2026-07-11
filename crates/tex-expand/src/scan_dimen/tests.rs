@@ -343,6 +343,19 @@ fn scans_integer_like_internal_values_with_units() {
 }
 
 #[test]
+fn decimal_factor_accepts_internal_integer_as_scaled_point_unit() {
+    let mut stores = Universe::new();
+    let mag = stores.intern("mag");
+    stores.set_meaning(
+        mag,
+        Meaning::IntParam(tex_state::env::banks::IntParam::MAG.raw()),
+    );
+    stores.set_mag(2000);
+
+    assert_eq!(scan_with_stores(".5\\mag x", &mut stores).0, 1000);
+}
+
+#[test]
 fn scans_hex_integer_constants_with_units() {
     assert_eq!(scan("\"7Fpt x").0, 127 * Scaled::UNITY);
 }

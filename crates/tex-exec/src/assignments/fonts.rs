@@ -22,12 +22,29 @@ where
     let font_name = scan_font_file_name(input, stores, hooks)?;
     let size_spec = scan_font_size_spec(input, stores, hooks, context)?;
     let path = tfm_path(&font_name);
-    let content = hooks
-        .open_font(&mut stores.input_open_context(), &path)
-        .map_err(|message| ExecError::FontOpen {
-            name: font_name.clone(),
-            message,
-        })?;
+    let content = match hooks.open_font(&mut stores.input_open_context(), &path) {
+        Ok(content) => content,
+        Err(_) => {
+            // TeX.web `new_font` leaves the newly defined selector at
+            // `null_font` after a TFM open failure and continues after the
+            // ordinary recoverable font diagnostic.
+            let selector = stores.resolve(target).to_owned();
+            stores.world_mut().write_text(
+                tex_state::PrintSink::TerminalAndLog,
+                &format!(
+                    "\n! Font \\{}={} not loadable: Metric (TFM) file not found.\nI wasn't able to read the size data for this font,\nso I will ignore the font specification.\n",
+                    selector, font_name
+                ),
+            );
+            let meaning = Meaning::Font(tex_state::font::NULL_FONT);
+            if apply_globaldefs(prefixes.global, stores) {
+                stores.set_meaning_global(target, meaning);
+            } else {
+                stores.set_meaning(target, meaning);
+            }
+            return Ok(());
+        }
+    };
     let tfm = tex_fonts::TfmFont::parse_with_size(content.bytes(), size_spec)?;
     let parameters = tfm
         .parameters
@@ -191,9 +208,20 @@ where
     H: ExpansionHooks<S>,
 {
     if scan_optional_keyword_x(input, stores, hooks, "at")? {
-        return Ok(FontSizeSpec::At(scan_scaled(
-            input, stores, hooks, context,
-        )?));
+        let requested = scan_scaled(input, stores, hooks, context)?;
+        let size = if requested.raw() > 0 && requested.raw() < 2048 * Scaled::UNITY {
+            requested
+        } else {
+            let rendered = crate::node_dump::format_scaled_for_diagnostics(requested);
+            stores.world_mut().write_text(
+                tex_state::PrintSink::TerminalAndLog,
+                &format!(
+                    "\n! Improper `at' size ({rendered}pt), replaced by 10pt.\nI can only handle fonts at positive sizes that are\nless than 2048pt, so I've changed what you said to 10pt.\n"
+                ),
+            );
+            Scaled::from_raw(10 * Scaled::UNITY)
+        };
+        return Ok(FontSizeSpec::At(size));
     }
     if scan_optional_keyword_x(input, stores, hooks, "scaled")? {
         let requested = scan_i32(input, stores, hooks, context)?;

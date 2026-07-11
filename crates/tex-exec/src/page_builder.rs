@@ -171,7 +171,7 @@ fn create_page_insertion(stores: &mut Universe, class: u16) -> Result<PageInsert
     Ok(insertion)
 }
 
-fn insertion_box_size(stores: &Universe, class: u16) -> Result<Scaled, ExecError> {
+fn insertion_box_size(stores: &mut Universe, class: u16) -> Result<Scaled, ExecError> {
     let Some(list) = stores.box_reg(class) else {
         return Ok(Scaled::from_raw(0));
     };
@@ -180,9 +180,14 @@ fn insertion_box_size(stores: &Universe, class: u16) -> Result<Scaled, ExecError
     };
     match node {
         tex_state::node_arena::NodeRef::VList(box_node) => add(box_node.height, box_node.depth),
-        tex_state::node_arena::NodeRef::HList(_) => Err(ExecError::UnsupportedShipoutNode {
-            node: "hbox insertion box",
-        }),
+        tex_state::node_arena::NodeRef::HList(_) => {
+            stores.world_mut().write_text(
+                tex_state::PrintSink::TerminalAndLog,
+                "\n! Insertions can only be added to a vbox.\nTut tut: You're trying to \\insert into a\n\\box register that now contains an \\hbox.\nProceed, and I'll discard its present contents.\n",
+            );
+            stores.clear_box_reg(class);
+            Ok(Scaled::from_raw(0))
+        }
         _ => Ok(Scaled::from_raw(0)),
     }
 }
