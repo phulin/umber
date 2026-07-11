@@ -9,7 +9,7 @@ use crate::scaled::{GlueSetRatio, Scaled};
 use crate::world::{PrintSink, StreamSlot};
 
 /// A frozen TeX node.
-#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Node {
     Char {
         font: FontId,
@@ -155,7 +155,7 @@ pub(crate) fn record_node_append(node: &Node) {
 }
 
 /// A TeX box node payload shared by hlist and vlist nodes.
-#[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BoxNode {
     pub width: Scaled,
     pub height: Scaled,
@@ -187,7 +187,7 @@ impl BoxNode {
 }
 
 /// Construction fields for a TeX box node payload.
-#[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BoxNodeFields {
     pub width: Scaled,
     pub height: Scaled,
@@ -201,7 +201,7 @@ pub struct BoxNodeFields {
 }
 
 /// Repeated material attached to a leader glue node.
-#[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum LeaderPayload {
     HList(BoxNode),
     VList(BoxNode),
@@ -213,7 +213,7 @@ pub enum LeaderPayload {
 }
 
 /// A TeX unset box used while alignments are being measured and resolved.
-#[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct UnsetNode {
     pub kind: UnsetKind,
     pub width: Scaled,
@@ -247,7 +247,7 @@ impl UnsetNode {
 }
 
 /// Construction fields for an unset alignment box.
-#[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct UnsetNodeFields {
     pub kind: UnsetKind,
     pub width: Scaled,
@@ -320,7 +320,7 @@ pub enum Sign {
 }
 
 /// Extension nodes whose effects are interpreted by later subsystems.
-#[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum Whatsit {
     OpenOut {
         slot: StreamSlot,

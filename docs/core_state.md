@@ -871,11 +871,15 @@ reserved built-in namespace only when their meaning is identical in every
 store (for example, the empty token list); they are values, not foreign live
 capabilities.
 
-The runtime identity is deliberately not serializable. Format images,
-committed page artifacts, memo records, and future whole-engine checkpoint
-files use versioned DTO-local dense references or semantic content hashes.
-Loading validates those DTO graphs and mints fresh runtime identities through
-the aggregate `Stores`/`Universe` restore boundary. Aggregate in-memory
+Live handles implement neither `serde::Serialize` nor `serde::Deserialize`,
+and handle-bearing `Node` and math aggregates deliberately expose no blanket
+serde path either. Format images, committed page artifacts, memo records, and
+future whole-engine checkpoint files use versioned DTO-local dense references
+or semantic content hashes. In particular, format node graphs use private
+`FormatNode`/`FormatListKey` records, including a typed box-register value
+instead of disguising a wire key as a `NodeListId`. Loading validates and
+remaps those DTO graphs before minting fresh runtime identities through the
+aggregate `Stores`/`Universe` restore boundary. Aggregate in-memory
 snapshots instead include each store's O(1) identity watermark alongside its
 content watermark and restore both atomically. `tex-state::identity` implements
 this substrate; migration of existing token/glue/font/macro/provenance/source
@@ -887,7 +891,7 @@ The complete production handle matrix is:
 | Handle | Owner | Live runtime identity | Compact stored form | Durable DTO | Snapshot mark | Rollback and fork rule | Validation API |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `SymbolId` | `Interner` | 16-byte generation identity | `Symbol(u32)` in tokens and Env cells | `FormatName` table index; fresh id on load | `InternerMark` spans/bytes + identity mark | discarded slots retag; forks share inherited tags and separate new namespaces | `Interner::contains_id`/`resolve_stored`, exposed through `Stores`/`Universe` symbol reads and writes |
-| `TokenListId` | `TokenStore` | 16-byte generation identity; universal empty builtin | dense `u32` in Env, macros, and format-local references | `StoreFormat.token_lists` index; deserialized ids are detached references rehydrated by `Stores` | `TokenStoreMark` spans/tokens + identity mark | discarded slots retag; inherited ids remain valid in forks, new ids are branch-local | `TokenStore::contains`/`resolve_stored`, then aggregate token/register/node ingress |
+| `TokenListId` | `TokenStore` | 16-byte generation identity; universal empty builtin | dense `u32` in Env and macros; private format DTOs carry table keys | `StoreFormat.token_lists` index; validated keys are remapped to fresh ids by `Stores` | `TokenStoreMark` spans/tokens + identity mark | discarded slots retag; inherited ids remain valid in forks, new ids are branch-local | `TokenStore::contains`/`resolve_stored`, then aggregate token/register/node ingress |
 | `MacroDefinitionId` | `MacroStore` | 16-byte generation identity | dense `u32` operand in packed `Meaning` | `FormatMacro` table index | `MacroStoreMark` definition length + identity mark | discarded slots retag; post-fork definitions are foreign to siblings | `MacroStore::contains`/`resolve_stored`, then aggregate meaning access/mutation |
 | `GlueId` | `GlueStore` | 16-byte generation identity; universal zero builtin | dense `u32` in Env and node words/sidecars | `FormatGlue` table index | `GlueStoreMark` spec length + identity mark | discarded slots retag; post-fork specs are foreign to siblings | `GlueStore::contains`/`resolve_stored`, then aggregate register/node ingress |
 | `FontId` | `FontStore` | 16-byte generation identity; universal null-font builtin | dense `u32` in Env and compact nodes | `FormatFont` table index/content record | `FontStoreMark` lengths/write log + identity mark | discarded slots retag; post-fork fonts are foreign to siblings | `FontStore::contains`/`resolve_stored`, then aggregate font/meaning/node ingress |

@@ -42,7 +42,7 @@ pub struct MathChar {
 }
 
 /// A noad field as described by tex.web.
-#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum MathField {
     Empty,
     MathChar(MathChar),
@@ -87,7 +87,7 @@ pub enum NoadKind {
 }
 
 /// A TeX noad with nucleus, subscript, and superscript fields.
-#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct MathNoad {
     pub kind: NoadKind,
     pub nucleus: MathField,
@@ -108,7 +108,7 @@ impl MathNoad {
 }
 
 /// Generalized fraction noad payload.
-#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct MathFraction {
     pub numerator: NodeListId,
     pub denominator: NodeListId,
@@ -125,7 +125,7 @@ pub enum FractionThickness {
 }
 
 /// A four-way math choice.
-#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct MathChoice {
     pub display: NodeListId,
     pub text: NodeListId,
@@ -134,7 +134,7 @@ pub struct MathChoice {
 }
 
 /// A completed math list appended to the enclosing list.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct MathListNode {
     pub display: bool,
     pub content: NodeListId,

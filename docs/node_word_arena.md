@@ -225,12 +225,15 @@ layer and avoids the current `id + 1` overflow edge. Reaching that root limit
 is an explicit survivor-arena capacity failure; it never aliases `None` or
 falls back to an epoch handle.
 
-`NodeListId` encoding is an in-memory implementation detail. Live handles do
-not implement successful serialization. Format capture first replaces every
-node child with a detached DTO-local arena/span reference; format restore
-validates/remaps those references and mints fresh epoch identities through the
-aggregate arena. Artifacts and semantic hashes encode referenced logical node
-content, not runtime identity or allocation order.
+`NodeListId` encoding is an in-memory implementation detail. Live handles and
+handle-bearing `Node`/math aggregates implement neither serde serialization
+nor deserialization. Format capture replaces the graph with private
+`FormatNode` records whose children are `FormatListKey` values and whose
+font/glue/token-list references are dense table keys. Box-register DTOs carry
+the same typed list key rather than a handle-shaped integer. Format restore
+validates and remaps the complete DTO graph before minting fresh identities
+through the aggregate arena. Artifacts and semantic hashes encode referenced
+logical node content, not runtime identity or allocation order.
 
 ## 5. Sidecar storage and ownership
 

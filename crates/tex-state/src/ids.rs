@@ -7,18 +7,7 @@
 
 macro_rules! opaque_id {
     ($name:ident) => {
-        #[derive(
-            Clone,
-            Copy,
-            Debug,
-            Eq,
-            Hash,
-            Ord,
-            PartialEq,
-            PartialOrd,
-            serde::Deserialize,
-            serde::Serialize,
-        )]
+        #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
         pub struct $name(u32);
 
         impl $name {
@@ -94,26 +83,6 @@ macro_rules! semantic_id {
                 self.0.slot()
             }
         }
-
-        impl serde::Serialize for $name {
-            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-            where
-                S: serde::Serializer,
-            {
-                serializer.serialize_u32(self.raw())
-            }
-        }
-
-        impl<'de> serde::Deserialize<'de> for $name {
-            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-            where
-                D: serde::Deserializer<'de>,
-            {
-                Ok(Self::new(<u32 as serde::Deserialize>::deserialize(
-                    deserializer,
-                )?))
-            }
-        }
     };
 }
 
@@ -139,9 +108,7 @@ impl OriginListId {
 }
 
 /// A survivor arena root slot.
-#[derive(
-    Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Deserialize, serde::Serialize,
-)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct SurvivorRootId(u32);
 
 impl SurvivorRootId {
@@ -163,9 +130,7 @@ impl SurvivorRootId {
 }
 
 /// The arena namespace for a frozen node-list span.
-#[derive(
-    Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Deserialize, serde::Serialize,
-)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum ArenaRef {
     Epoch,
     Survivor(SurvivorRootId),
@@ -204,6 +169,7 @@ impl NodeListId {
         Self(identity)
     }
 
+    #[cfg(any(test, feature = "testing"))]
     const fn packed_epoch_span(start: u32, len: u32) -> u64 {
         assert!(
             len <= NODE_LIST_EPOCH_LEN_MAX,
@@ -238,6 +204,7 @@ impl NodeListId {
         )
     }
 
+    #[cfg(any(test, feature = "testing"))]
     pub(crate) const fn format_reference(arena: ArenaRef, start: u32, len: u32) -> Self {
         match arena {
             ArenaRef::Epoch => {
@@ -386,40 +353,6 @@ impl NodeListId {
             );
             Some(Self::from_reserved_word(NODE_LIST_SURVIVOR_NAMESPACE, word))
         }
-    }
-}
-
-impl serde::Serialize for NodeListId {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        if !self.is_format_reference() {
-            return Err(serde::ser::Error::custom(
-                "live node-list handles are not serializable",
-            ));
-        }
-        let (tag, root) = match self.arena() {
-            ArenaRef::Epoch => (0_u8, 0),
-            ArenaRef::Survivor(root) => (1, root.raw()),
-        };
-        (tag, root, self.start(), self.len()).serialize(serializer)
-    }
-}
-
-impl<'de> serde::Deserialize<'de> for NodeListId {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let (tag, root, start, len) =
-            <(u8, u32, u32, u32) as serde::Deserialize>::deserialize(deserializer)?;
-        let arena = match tag {
-            0 => ArenaRef::Epoch,
-            1 => ArenaRef::Survivor(SurvivorRootId::new(root)),
-            _ => return Err(serde::de::Error::custom("unknown node-list arena tag")),
-        };
-        Ok(Self::format_reference(arena, start, len))
     }
 }
 
