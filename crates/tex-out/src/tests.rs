@@ -30,6 +30,37 @@ fn artifact_bytes_and_hash_are_deterministic() {
 }
 
 #[test]
+fn artifact_decode_canonicalizes_glue_set_ratios_once() {
+    let artifact = sample_artifact();
+    let canonical = artifact.to_bytes();
+    let mut noncanonical = canonical.clone();
+    replace_unique_ratio(&mut noncanonical, (37, 101), (74, 202));
+
+    let parsed = PageArtifact::from_bytes(&noncanonical).expect("reducible ratio decodes");
+    let PageNode::VList(root) = &parsed.root else {
+        panic!("sample root is a vlist");
+    };
+    assert_eq!(root.glue_set, GlueSetRatio::from_ratio_parts(37, 101));
+    assert_eq!(parsed.to_bytes(), canonical);
+    assert_eq!(parsed.content_hash(), artifact.content_hash());
+}
+
+#[test]
+fn artifact_decode_rejects_invalid_glue_set_ratios() {
+    for malformed in [(37, 0), (37, -101), (i32::MIN, 101)] {
+        let mut bytes = sample_artifact().to_bytes();
+        replace_unique_ratio(&mut bytes, (37, 101), malformed);
+        assert_eq!(
+            PageArtifact::from_bytes(&bytes),
+            Err(ParseError::InvalidGlueSetRatio {
+                numerator: malformed.0,
+                denominator: malformed.1,
+            })
+        );
+    }
+}
+
+#[test]
 fn rejects_unknown_version() {
     let mut bytes = sample_artifact().to_bytes();
     bytes[4] = 99;
@@ -196,7 +227,7 @@ fn sample_artifact() -> PageArtifact {
             height: Scaled::from_raw(200),
             depth: Scaled::from_raw(30),
             shift: Scaled::from_raw(0),
-            glue_set: GlueSetRatio::from_ratio_parts(1, 3),
+            glue_set: GlueSetRatio::from_ratio_parts(37, 101),
             glue_sign: GlueSign::Stretching,
             glue_order: GlueOrder::Fil,
             children: vec![
@@ -288,4 +319,16 @@ fn sample_artifact() -> PageArtifact {
             PageEffect::CloseOut { stream: 2 },
         ],
     }
+}
+
+fn replace_unique_ratio(bytes: &mut [u8], old: (i32, i32), new: (i32, i32)) {
+    let old = [old.0.to_le_bytes(), old.1.to_le_bytes()].concat();
+    let replacement = [new.0.to_le_bytes(), new.1.to_le_bytes()].concat();
+    let offsets: Vec<_> = bytes
+        .windows(old.len())
+        .enumerate()
+        .filter_map(|(offset, window)| (window == old).then_some(offset))
+        .collect();
+    assert_eq!(offsets.len(), 1, "ratio wire must occur exactly once");
+    bytes[offsets[0]..offsets[0] + replacement.len()].copy_from_slice(&replacement);
 }

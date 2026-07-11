@@ -1093,7 +1093,12 @@ Responsibility: page artifacts → bytes on disk. Strictly downstream.
   all (editor preview may rasterize page artifacts directly).
 - `tex-out` owns the page artifact model and version-9 binary reader/writer.
   Exact glue-set numerator and denominator fields cross this commit boundary
-  and participate in deterministic semantic hashing. The crate has no
+  and participate in deterministic semantic hashing. `GlueSetRatio` performs
+  checked canonical reconstruction at every serde boundary, and the artifact
+  reader applies the same fallible constructor explicitly: nonpositive
+  denominators and unrepresentable magnitudes are rejected, while reducible
+  ratios and zero are normalized before they enter packing or driver code.
+  The crate has no
   dependency on `tex-state` or `Universe`; shipout code lowers live state into
   artifact bytes before asking `World` to store them.
 - The artifact record captures the effective job magnification, banner,

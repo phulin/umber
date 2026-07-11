@@ -204,6 +204,77 @@ fn semantic_format_is_deterministic_validated_and_world_independent() {
     ));
 }
 
+#[test]
+fn semantic_format_validates_and_canonicalizes_glue_set_ratios() {
+    const CANONICAL: (i32, i32) = (123_457, 765_431);
+
+    let canonical =
+        format_with_box_glue_set(GlueSetRatio::from_ratio_parts(CANONICAL.0, CANONICAL.1));
+    let mut reducible = canonical.clone();
+    replace_format_ratio(
+        &mut reducible,
+        CANONICAL,
+        (CANONICAL.0 * 2, CANONICAL.1 * 2),
+    );
+    refresh_format_checksum(&mut reducible);
+    let restored = Universe::from_format(World::memory(), &reducible)
+        .expect("reducible glue-set ratio restores");
+    assert_eq!(restored.dump_format().expect("canonical redump"), canonical);
+
+    for malformed in [
+        (CANONICAL.0, 0),
+        (CANONICAL.0, -CANONICAL.1),
+        (i32::MIN, CANONICAL.1),
+    ] {
+        let mut bytes = canonical.clone();
+        replace_format_ratio(&mut bytes, CANONICAL, malformed);
+        refresh_format_checksum(&mut bytes);
+        let error = Universe::from_format(World::memory(), &bytes)
+            .expect_err("invalid glue-set ratio must fail format restore");
+        assert!(
+            matches!(error, super::FormatError::InvalidState(ref message) if message.contains("glue-set ratio")),
+            "unexpected structured format error: {error:?}"
+        );
+    }
+}
+
+fn format_with_box_glue_set(glue_set: GlueSetRatio) -> Vec<u8> {
+    let mut universe = Universe::with_world(World::memory());
+    let children = universe.freeze_node_list(&[]);
+    let root = universe.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
+        width: Scaled::from_raw(1),
+        height: Scaled::from_raw(2),
+        depth: Scaled::from_raw(3),
+        shift: Scaled::from_raw(4),
+        display: false,
+        glue_set,
+        glue_sign: Sign::Stretching,
+        glue_order: Order::Normal,
+        children,
+    }))]);
+    universe.set_box_reg(19, root);
+    universe.dump_format().expect("format encodes")
+}
+
+fn replace_format_ratio(bytes: &mut [u8], old: (i32, i32), new: (i32, i32)) {
+    const HEADER: usize = 29;
+    let old = [old.0.to_le_bytes(), old.1.to_le_bytes()].concat();
+    let replacement = [new.0.to_le_bytes(), new.1.to_le_bytes()].concat();
+    let offsets: Vec<_> = bytes[HEADER..]
+        .windows(old.len())
+        .enumerate()
+        .filter_map(|(offset, window)| (window == old).then_some(HEADER + offset))
+        .collect();
+    assert_eq!(offsets.len(), 1, "ratio wire must occur exactly once");
+    bytes[offsets[0]..offsets[0] + replacement.len()].copy_from_slice(&replacement);
+}
+
+fn refresh_format_checksum(bytes: &mut [u8]) {
+    const HEADER: usize = 29;
+    let checksum = super::format_checksum(bytes[12], &bytes[HEADER..]);
+    bytes[21..29].copy_from_slice(&checksum.to_le_bytes());
+}
+
 #[cfg(feature = "node-stats")]
 #[test]
 fn node_memory_measurement_is_nonsemantic_and_covers_recycled_storage() {
