@@ -234,14 +234,29 @@ fn flush_word(stores: &mut Universe, word: &mut Vec<WordChar>, out: &mut Vec<Nod
     } else {
         stores.hyphen_positions(&lowercase, left, right)
     };
+    // A font kern immediately before the word is the left-boundary program's
+    // output from main control. Reconstitution must not run that program a
+    // second time while hyphenating the already-built horizontal list.
+    let no_left_boundary = matches!(
+        out.last(),
+        Some(Node::Kern {
+            kind: KernKind::Font,
+            ..
+        })
+    );
     if positions.is_empty() {
         let pending: Vec<_> = word.iter().map(|ch| ch.pending()).collect();
-        out.extend(super::hmode::reconstitute(stores, &pending, false, false));
+        out.extend(super::hmode::reconstitute(
+            stores,
+            &pending,
+            no_left_boundary,
+            false,
+        ));
         word.clear();
         return;
     }
 
-    append_hyphenated_word(stores, word, &positions, out);
+    append_hyphenated_word(stores, word, &positions, no_left_boundary, out);
     word.clear();
 }
 
@@ -249,10 +264,11 @@ fn append_hyphenated_word(
     stores: &mut Universe,
     word: &[WordChar],
     positions: &[usize],
+    no_left_boundary: bool,
     out: &mut Vec<Node>,
 ) {
     let pending: Vec<_> = word.iter().map(WordChar::pending).collect();
-    let nodes = super::hmode::reconstitute(stores, &pending, false, false);
+    let nodes = super::hmode::reconstitute(stores, &pending, no_left_boundary, false);
     let mut position_index = 0;
     let mut char_start = 0;
 

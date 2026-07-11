@@ -200,7 +200,7 @@ fn unrestricted_reconstitution_inserts_null_disc_after_font_hyphen() {
             Node::Char { ch: 'n', .. },
             Node::Char { ch: '-', .. },
             Node::Disc {
-                kind: DiscKind::AutomaticHyphen,
+                kind: DiscKind::ExplicitHyphen,
                 ..
             },
             Node::Char { ch: 'l', .. },
@@ -301,6 +301,37 @@ fn repeated_character_ligature_recovers_both_original_characters() {
 }
 
 #[test]
+fn char_primitive_continues_the_pending_ligature_run() {
+    const CMR10: &[u8] = include_bytes!("../../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
+    let mut stores = Universe::with_world(tex_state::World::memory());
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    stores
+        .world_mut()
+        .set_memory_file("cmr10.tfm", CMR10.to_vec())
+        .expect("seed cmr10");
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\font\\f=cmr10 \\relax \\f \\setbox0=\\hbox{f\\char102}",
+    ));
+
+    crate::Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("character run should execute");
+
+    let root = stores.box_reg(0).expect("box0");
+    let Some(tex_state::node_arena::NodeRef::HList(hbox)) = stores.nodes(root).first() else {
+        panic!("box0 should contain an hbox");
+    };
+    assert!(matches!(
+        stores.nodes(hbox.children).testing_decoded(),
+        [Node::Lig {
+            orig: ('f', 'f'),
+            ..
+        }]
+    ));
+}
+
+#[test]
 fn hyphenation_does_not_partially_consume_a_boundary_ligature() {
     let mut stores = Universe::new();
     let font = stores.current_font();
@@ -366,4 +397,31 @@ fn hyphenation_keeps_scanning_across_font_kerns() {
         2,
         "both exception points must survive font-kern reconstitution: {hyphenated:?}"
     );
+}
+
+#[test]
+fn hyphenation_does_not_repeat_a_left_boundary_kern() {
+    let mut stores = Universe::new();
+    let font = stores.current_font();
+    stores.set_lccode('A', 'a' as u32);
+    let nodes = [
+        Node::Kern {
+            amount: Scaled::from_raw(-65537),
+            kind: KernKind::Font,
+        },
+        Node::Char { font, ch: 'A' },
+    ];
+
+    let hyphenated = super::super::hyphenation::hyphenated_hlist(&mut stores, &nodes);
+
+    assert!(matches!(
+        hyphenated.as_slice(),
+        [
+            Node::Kern {
+                kind: KernKind::Font,
+                ..
+            },
+            Node::Char { ch: 'A', .. }
+        ]
+    ));
 }

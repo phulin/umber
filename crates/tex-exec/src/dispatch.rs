@@ -1,6 +1,6 @@
 use tex_expand::{ExpansionHooks, NoopRecorder, ReadRecorder};
 use tex_lex::{InputSource, InputStack};
-use tex_state::meaning::{ExpandablePrimitive, Meaning};
+use tex_state::meaning::{ExpandablePrimitive, Meaning, UnexpandablePrimitive};
 use tex_state::provenance::InsertedOriginKind;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{ContentHash, GroupKind, GroupMismatch, Universe};
@@ -85,7 +85,16 @@ where
         }
     };
 
-    if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal) {
+    let continues_character_run = matches!(
+        meaning,
+        Meaning::CharGiven(_)
+            | Meaning::CharToken {
+                cat: Catcode::Letter | Catcode::Other,
+                ..
+            }
+            | Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char)
+    );
+    if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal) && !continues_character_run {
         assignments::flush_pending_hchars(nest, stores)?;
         sync_engine_state::<S, _>(hooks, nest, stores);
     }
