@@ -79,6 +79,10 @@ const PAGE_OUTPUT_FLOAT_GUARD_SOURCES: &[(&str, &str)] = &[
         "crates/tex-exec/src/assignments/shipout.rs",
         include_str!("../../tex-exec/src/assignments/shipout.rs"),
     ),
+    (
+        "crates/tex-exec/src/assignments/hmode.rs",
+        include_str!("../../tex-exec/src/assignments/hmode.rs"),
+    ),
     ("crates/tex-out/src/model.rs", include_str!("model.rs")),
     ("crates/tex-out/src/binary.rs", include_str!("binary.rs")),
     ("crates/tex-out/src/dvi.rs", include_str!("dvi.rs")),

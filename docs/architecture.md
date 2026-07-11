@@ -597,7 +597,10 @@ assignments, box building, and dispatch into the typesetting kernels.
   constructs such as `{f}i` suppress cross-boundary ligatures. The stomach
   updates the mode-local `\spacefactor` and appends explicit
   h-mode nodes for spaces, kerns, skips, finite-fill glue, penalties, rules,
-  discretionaries, accents, and italic corrections. Paragraph breaking is a
+  discretionaries, accents, and italic corrections. Text-accent horizontal
+  displacement uses `tex-arith`'s widened fixed-point form of TeX82's formula
+  and signed tie rounding; no semantic `real` enters the constructed kerns.
+  Paragraph breaking is a
   hand-off to the pure `tex-typeset` line breaker; resulting outer-vertical
   material is appended to the Universe-owned page contribution list.
   Leader primitives scan a box or rule payload followed by mode-appropriate

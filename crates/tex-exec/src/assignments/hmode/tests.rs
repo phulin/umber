@@ -111,7 +111,7 @@ fn sentence_space_factor_does_not_jump_after_an_uppercase_letter() {
 #[test]
 fn accent_delta_rounds_half_scaled_points_like_tex82() {
     assert_eq!(
-        accent_delta(
+        tex_state::scaled::text_accent_delta(
             Scaled::from_raw(10),
             Scaled::from_raw(1),
             Scaled::from_raw(0),
