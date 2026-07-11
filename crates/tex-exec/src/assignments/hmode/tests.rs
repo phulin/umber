@@ -274,6 +274,55 @@ fn hyphenation_inside_ff_ligature_preserves_the_unbroken_ligature() {
 }
 
 #[test]
+fn composite_rechar_keeps_ligature_provenance_when_emitted() {
+    let current = ReChar {
+        font: tex_state::ids::FontId::testing_new(7),
+        ch: 'A',
+        orig_first: 'B',
+        orig_last: 'B',
+    };
+
+    assert!(matches!(
+        rechar_node(current),
+        Node::Lig {
+            font,
+            ch: 'A',
+            orig: ('B', 'B'),
+        } if font == current.font
+    ));
+}
+
+#[test]
+fn repeated_character_ligature_recovers_both_original_characters() {
+    assert_eq!(
+        super::super::hyphenation::ligature_original_chars('A', ('B', 'B')),
+        ['B', 'B']
+    );
+}
+
+#[test]
+fn hyphenation_does_not_partially_consume_a_boundary_ligature() {
+    let mut stores = Universe::new();
+    let font = stores.current_font();
+    stores.set_lccode('C', 'c' as u32);
+    stores.set_lccode('/', 0);
+    let nodes = [
+        Node::Char { font, ch: 'C' },
+        Node::Lig {
+            font,
+            ch: 'B',
+            orig: ('C', '/'),
+        },
+    ];
+
+    let hyphenated = super::super::hyphenation::hyphenated_hlist(&mut stores, &nodes);
+    assert!(matches!(
+        hyphenated.as_slice(),
+        [Node::Char { ch: 'C', .. }, Node::Lig { ch: 'B', .. }]
+    ));
+}
+
+#[test]
 fn hyphenation_keeps_scanning_across_font_kerns() {
     const CMR10: &[u8] = include_bytes!("../../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
     let mut stores = Universe::with_world(tex_state::World::memory());

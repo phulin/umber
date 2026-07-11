@@ -183,13 +183,14 @@ fn push_word_node(
         }
         Node::Lig { font, ch, orig } => {
             let chars = ligature_original_chars(*ch, *orig);
-            if chars.is_empty() {
+            let normalized: Option<Vec<_>> = chars
+                .into_iter()
+                .map(|ch| normalized_lccode(stores, ch).map(|lower| (ch, lower)))
+                .collect();
+            let Some(normalized) = normalized else {
                 return false;
-            }
-            for ch in chars {
-                let Some(lower) = normalized_lccode(stores, ch) else {
-                    return false;
-                };
+            };
+            for (ch, lower) in normalized {
                 word.push(WordChar {
                     font: *font,
                     ch,
@@ -349,14 +350,13 @@ fn discretionary_hyphen(stores: &mut Universe, font: tex_state::ids::FontId) -> 
     }
 }
 
-fn ligature_original_chars(ch: char, orig: (char, char)) -> Vec<char> {
+pub(super) fn ligature_original_chars(ch: char, orig: (char, char)) -> Vec<char> {
     match ch as u32 {
         0o13 => vec!['f', 'f'],
         0o14 => vec!['f', 'i'],
         0o15 => vec!['f', 'l'],
         0o16 => vec!['f', 'f', 'i'],
         0o17 => vec!['f', 'f', 'l'],
-        _ if orig.0 == orig.1 => vec![orig.0],
         _ => vec![orig.0, orig.1],
     }
 }

@@ -427,10 +427,7 @@ pub(crate) fn reconstitute(
         {
             match command {
                 LigKernCommand::Kern(amount) => {
-                    out.push(Node::Char {
-                        font: current.font,
-                        ch: current.ch,
-                    });
+                    out.push(rechar_node(current));
                     append_literal_hyphen_disc(stores, current, insert_hyphen_discs, &mut out);
                     out.push(Node::Kern {
                         amount,
@@ -452,22 +449,26 @@ pub(crate) fn reconstitute(
                 LigKernCommand::Ligature(_) => {}
             }
         }
-        if current.orig_first == current.ch && current.orig_last == current.ch {
-            out.push(Node::Char {
-                font: current.font,
-                ch: current.ch,
-            });
-        } else {
-            out.push(Node::Lig {
-                font: current.font,
-                ch: current.ch,
-                orig: (current.orig_first, current.orig_last),
-            });
-        }
+        out.push(rechar_node(current));
         append_literal_hyphen_disc(stores, current, insert_hyphen_discs, &mut out);
         i += 1;
     }
     out
+}
+
+fn rechar_node(current: ReChar) -> Node {
+    if current.orig_first == current.ch && current.orig_last == current.ch {
+        Node::Char {
+            font: current.font,
+            ch: current.ch,
+        }
+    } else {
+        Node::Lig {
+            font: current.font,
+            ch: current.ch,
+            orig: (current.orig_first, current.orig_last),
+        }
+    }
 }
 
 fn append_literal_hyphen_disc(
