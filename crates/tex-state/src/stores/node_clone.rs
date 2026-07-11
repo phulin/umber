@@ -8,6 +8,7 @@ use crate::node_arena::ChildPatch;
 use std::collections::HashMap;
 
 type CloneMap = HashMap<NodeListId, CloneState, ahash::RandomState>;
+const RETAINED_SCRATCH_LIMIT: usize = 4_096;
 
 #[derive(Clone, Copy, Debug)]
 enum CloneState {
@@ -37,7 +38,10 @@ impl Stores {
         debug_assert!(scratch.children.is_empty());
         debug_assert!(scratch.patches.is_empty());
         if matches!(root.arena(), ArenaRef::Survivor(_)) {
-            let graph_words = self.survivors.root_storage_len(root);
+            let graph_words = self
+                .survivors
+                .root_storage_len(root)
+                .min(RETAINED_SCRATCH_LIMIT);
             scratch.states.reserve(graph_words);
             scratch.tasks.reserve(graph_words.saturating_mul(2));
             scratch.children.reserve(4);
@@ -101,6 +105,12 @@ impl Stores {
         scratch.tasks.clear();
         scratch.children.clear();
         scratch.patches.clear();
+        if scratch.states.capacity() > RETAINED_SCRATCH_LIMIT {
+            scratch.states.shrink_to(RETAINED_SCRATCH_LIMIT);
+        }
+        if scratch.tasks.capacity() > RETAINED_SCRATCH_LIMIT * 2 {
+            scratch.tasks.shrink_to(RETAINED_SCRATCH_LIMIT * 2);
+        }
         self.epoch_clone_scratch = scratch;
         result
     }
