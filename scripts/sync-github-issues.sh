@@ -125,18 +125,36 @@ retry_github_api() {
   local attempt=1
   local delay="$github_api_retry_delay_seconds"
   local exit_code
+  local stderr_file
   local stdout_file
 
   while true; do
     stdout_file="$(mktemp "${TMPDIR:-/tmp}/github-api-retry.XXXXXX")"
-    if "$@" >"$stdout_file"; then
+    stderr_file="$(mktemp "${TMPDIR:-/tmp}/github-api-retry.XXXXXX")"
+    if "$@" >"$stdout_file" 2>"$stderr_file"; then
       cat "$stdout_file"
-      rm -f "$stdout_file"
+      cat "$stderr_file" >&2
+      rm -f "$stdout_file" "$stderr_file"
       return 0
     else
       exit_code=$?
     fi
+    cat "$stderr_file" >&2
     rm -f "$stdout_file"
+
+    if grep -Eiq \
+      'missing required scopes|authentication token is missing|bad credentials|authentication failed|resource not accessible by integration' \
+      "$stderr_file"; then
+      printf 'error: GitHub API command failed permanently:' >&2
+      printf ' %q' "$@" >&2
+      printf '\n' >&2
+      if grep -Eiq 'missing required scopes' "$stderr_file"; then
+        echo "hint: refresh GitHub CLI scopes with 'gh auth refresh -s read:project -s project', or provide a GH_TOKEN with those scopes." >&2
+      fi
+      rm -f "$stderr_file"
+      return "$exit_code"
+    fi
+    rm -f "$stderr_file"
 
     if ((attempt >= github_api_retry_attempts)); then
       printf 'error: GitHub API command failed after %d attempts:' \
@@ -397,7 +415,7 @@ project_number_for_title() {
   if projects_json="$(gh project list \
     --owner "$project_owner" \
     --limit 1000 \
-    --format json 2>/dev/null)"; then
+    --format json)"; then
     number="$(jq -r --arg title "$title" \
       'first(.projects[] | select(.title == $title) | .number) // empty' \
       <<<"$projects_json")"

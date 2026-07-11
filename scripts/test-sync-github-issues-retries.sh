@@ -53,6 +53,14 @@ if [[ "$1 $2" == "auth status" ]]; then
   exit 0
 fi
 
+if [[ "${MOCK_PERMANENT_PROJECT_ERROR:-0}" == "1" && "$1 $2" == "project list" ]]; then
+  count_file="$MOCK_STATE/permanent-project-count"
+  count="$(cat "$count_file" 2>/dev/null || printf '0')"
+  printf '%s\n' "$((count + 1))" >"$count_file"
+  echo "error: your authentication token is missing required scopes [read:project]" >&2
+  exit 1
+fi
+
 key="$(printf '%s' "$*" | cksum | awk '{print $1}')"
 count_file="$MOCK_STATE/gh-$key-count"
 count="$(cat "$count_file" 2>/dev/null || printf '0')"
@@ -96,6 +104,31 @@ if grep -q "github=PARTIAL" "$output"; then
 fi
 if [[ "$(cat "$test_dir/state/bd-sync-count")" != "2" ]]; then
   echo "bd github sync was not retried exactly once" >&2
+  exit 1
+fi
+
+mkdir -p "$test_dir/permanent-state"
+permanent_output="$test_dir/permanent-output"
+if PATH="$test_dir/bin:$PATH" \
+  MOCK_STATE="$test_dir/permanent-state" \
+  MOCK_PERMANENT_PROJECT_ERROR=1 \
+  GITHUB_API_RETRY_ATTEMPTS=3 \
+  GITHUB_API_RETRY_DELAY_SECONDS=0 \
+  "$repo_root/scripts/sync-github-issues.sh" --repo owner/repo \
+  >"$permanent_output" 2>&1; then
+  echo "permanent GitHub scope error unexpectedly succeeded" >&2
+  exit 1
+fi
+
+grep -q "authentication token is missing required scopes \[read:project\]" "$permanent_output"
+grep -q "GitHub API command failed permanently: project_number_for_title" "$permanent_output"
+grep -q "gh auth refresh -s read:project -s project" "$permanent_output"
+if grep -q "retrying.*project_number_for_title" "$permanent_output"; then
+  echo "permanent GitHub scope error was retried" >&2
+  exit 1
+fi
+if [[ "$(cat "$test_dir/permanent-state/permanent-project-count")" != "1" ]]; then
+  echo "permanent GitHub scope error was not attempted exactly once" >&2
   exit 1
 fi
 
