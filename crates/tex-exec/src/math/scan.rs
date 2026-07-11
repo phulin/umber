@@ -80,6 +80,19 @@ where
                 u32::from(value),
                 stores,
             )?)),
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char) => {
+                let context = TracedTokenWord::pack(Token::Cs(symbol), OriginId::UNKNOWN);
+                let value = assignments::scan_i32(input, stores, hooks, context)?;
+                let ch =
+                    u8::try_from(value)
+                        .map(char::from)
+                        .map_err(|_| ExecError::InvalidCode {
+                            context: "\\char",
+                            value,
+                        })?;
+                let (_, math_char) = math_char_from_mathcode(ch, stores.mathcode(ch), stores)?;
+                Ok(MathField::MathChar(math_char))
+            }
             _ => {
                 let mut temp = ModeNest::new();
                 temp.push(nest.current_mode());

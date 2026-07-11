@@ -14,6 +14,15 @@ fn null_math_fonts_are_insufficient_for_formula_conversion() {
 }
 
 #[test]
+fn char_primitive_scans_as_a_direct_math_field() {
+    let (stores, executor) = run_math_source(r"$\mathop\char66");
+    let nodes = math_nodes(&stores, &executor);
+    let operator = math_noad(&nodes[0]);
+
+    assert!(matches!(operator.nucleus, MathField::MathChar(_)));
+}
+
+#[test]
 fn remove_item_commands_apply_to_math_lists() {
     let (stores, executor) =
         run_math_source(r"$\penalty10\unpenalty\kern1pt\unkern\hskip1pt\unskip");
