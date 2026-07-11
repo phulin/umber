@@ -923,6 +923,54 @@ fn box_scanner_closes_by_execution_group_after_message_argument() {
 }
 
 #[test]
+fn malformed_math_right_brace_preserves_box_packaging_boundary_and_replays() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let checkpoint = stores.snapshot();
+    let source = "\\setbox0=\\hbox{\x24x}\x24\\vbox{\\hrule height2pt}}\\hrule height3pt";
+    let mut first_hash = None;
+
+    for pass in 0..2 {
+        let mut input = InputStack::new(MemoryInput::new(source));
+        Executor::new()
+            .run(&mut input, &mut stores)
+            .expect("malformed math recovery remains inside the hbox scan");
+
+        assert_eq!(stores.execution_group_depth(), 0, "pass {pass}");
+        let box0 = stores.box_reg(0).expect("recovered setbox remains nonvoid");
+        let [Node::HList(hbox)] = stores.nodes(box0).testing_decoded() else {
+            panic!("box0 should own the recovered outer hbox");
+        };
+        assert!(
+            stores
+                .nodes(hbox.children)
+                .testing_decoded()
+                .iter()
+                .any(|node| matches!(node, Node::HList(_) | Node::VList(_))),
+            "recovered nested material remains owned by box0"
+        );
+        assert!(
+            stores
+                .current_page_nodes()
+                .iter()
+                .all(|node| !matches!(node, Node::VList(_))),
+            "nested vbox must not leak to the outer page"
+        );
+        assert!(stores.page_contributions().iter().any(
+            |node| matches!(node, Node::Rule { height: Some(height), .. } if height.raw() == 3 * Scaled::UNITY)
+        ));
+
+        let hash = stores.snapshot().state_hash();
+        if let Some(expected) = first_hash {
+            assert_eq!(hash, expected, "rollback replay must converge");
+        } else {
+            first_hash = Some(hash);
+            stores.rollback(&checkpoint);
+        }
+    }
+}
+
+#[test]
 fn last_box_assignment_replays_with_identical_state_hash() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

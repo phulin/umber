@@ -383,23 +383,38 @@ fn group_mismatch_error(
         (GroupKind::Simple, GroupKind::MathShift, false) => {
             ExecError::ExtraRightBraceOrForgottenDollar { origin }
         }
-        (GroupKind::SemiSimple, _, true) => ExecError::ExtraEndGroup { origin },
-        (GroupKind::SemiSimple, GroupKind::Simple | GroupKind::MathShift, false) => {
-            ExecError::EndGroupMismatch {
-                started_by: mismatch.actual().start_text(),
-                origin,
-            }
+        (GroupKind::Simple, GroupKind::Box, false) => {
+            ExecError::ExtraRightBraceOrForgottenDollar { origin }
         }
+        (GroupKind::SemiSimple, _, true) => ExecError::ExtraEndGroup { origin },
+        (GroupKind::Box, _, true) => ExecError::EndGroupMismatch {
+            started_by: "the outer level",
+            origin,
+        },
+        (GroupKind::Box, _, false) => ExecError::EndGroupMismatch {
+            started_by: mismatch.actual().start_text(),
+            origin,
+        },
+        (
+            GroupKind::SemiSimple,
+            GroupKind::Simple | GroupKind::Box | GroupKind::MathShift,
+            false,
+        ) => ExecError::EndGroupMismatch {
+            started_by: mismatch.actual().start_text(),
+            origin,
+        },
         (GroupKind::MathShift, _, true) => ExecError::MathShiftGroupMismatch {
             started_by: "the outer level",
             origin,
         },
-        (GroupKind::MathShift, GroupKind::Simple | GroupKind::SemiSimple, false) => {
-            ExecError::MathShiftGroupMismatch {
-                started_by: mismatch.actual().start_text(),
-                origin,
-            }
-        }
+        (
+            GroupKind::MathShift,
+            GroupKind::Simple | GroupKind::Box | GroupKind::SemiSimple,
+            false,
+        ) => ExecError::MathShiftGroupMismatch {
+            started_by: mismatch.actual().start_text(),
+            origin,
+        },
         (GroupKind::Simple, GroupKind::Simple, false)
         | (GroupKind::SemiSimple, GroupKind::SemiSimple, false)
         | (GroupKind::MathShift, GroupKind::MathShift, false) => {

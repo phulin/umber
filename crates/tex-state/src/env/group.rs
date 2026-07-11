@@ -8,6 +8,8 @@ use std::collections::{HashMap, HashSet};
 pub enum GroupKind {
     /// A `{` ... `}` group.
     Simple,
+    /// A box-packaging group whose closing brace is owned by its scanner.
+    Box,
     /// A `\begingroup` ... `\endgroup` group.
     SemiSimple,
     /// A `$` ... `$` or `$$` ... `$$` math-shift group.
@@ -19,6 +21,7 @@ impl GroupKind {
     pub const fn start_text(self) -> &'static str {
         match self {
             Self::Simple => "{",
+            Self::Box => "{",
             Self::SemiSimple => "\\begingroup",
             Self::MathShift => "$",
         }
@@ -28,6 +31,7 @@ impl GroupKind {
     pub const fn end_text(self) -> &'static str {
         match self {
             Self::Simple => "}",
+            Self::Box => "}",
             Self::SemiSimple => "\\endgroup",
             Self::MathShift => "$",
         }

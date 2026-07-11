@@ -246,7 +246,7 @@ where
         });
     }
 
-    stores.enter_group_with_kind(tex_state::GroupKind::Simple);
+    stores.enter_group_with_kind(tex_state::GroupKind::Box);
     let box_group_depth = stores.execution_group_depth();
     let mut inner = ModeNest::new();
     inner.push(Mode::InternalVertical);
@@ -276,7 +276,7 @@ where
     let split_max_depth = stores.dimen_param(DimenParam::SPLIT_MAX_DEPTH);
     let floating_penalty = stores.int_param(IntParam::FLOATING_PENALTY);
 
-    crate::leave_group(input, stores, tex_state::GroupKind::Simple)?;
+    crate::leave_group(input, stores, tex_state::GroupKind::Box)?;
 
     append_vertical_contribution(
         nest,
@@ -329,7 +329,7 @@ where
             context: "\\vadjust group",
         });
     }
-    stores.enter_group_with_kind(tex_state::GroupKind::Simple);
+    stores.enter_group_with_kind(tex_state::GroupKind::Box);
     let box_group_depth = stores.execution_group_depth();
     let mut inner = ModeNest::new();
     inner.push(Mode::InternalVertical);
@@ -340,7 +340,7 @@ where
     }
     let level = inner.pop()?;
     let content = stores.freeze_node_list(level.list().nodes());
-    crate::leave_group(input, stores, tex_state::GroupKind::Simple)?;
+    crate::leave_group(input, stores, tex_state::GroupKind::Box)?;
     nest.current_list_mut().push(Node::Adjust(content));
     Ok(())
 }
@@ -895,12 +895,15 @@ where
     if !is_begin_group(opener) {
         return Err(ExecError::MissingToken { context });
     }
+    stores.enter_group_with_kind(tex_state::GroupKind::Box);
     let mut inner = ModeNest::new();
     inner.push(Mode::RestrictedHorizontal);
     let box_group_depth = stores.execution_group_depth();
     scan_box_group(&mut inner, input, stores, hooks, box_group_depth)?;
     let level = inner.pop()?;
-    Ok(stores.freeze_node_list(level.list().nodes()))
+    let nodes = stores.freeze_node_list(level.list().nodes());
+    crate::leave_group(input, stores, tex_state::GroupKind::Box)?;
+    Ok(nodes)
 }
 
 fn append_italic_correction(nest: &mut ModeNest, stores: &mut Universe) -> Result<(), ExecError> {

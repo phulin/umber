@@ -539,7 +539,7 @@ where
             context: "\\vcenter",
         });
     }
-    stores.enter_group_with_kind(GroupKind::Simple);
+    stores.enter_group_with_kind(GroupKind::Box);
     let box_group_depth = stores.execution_group_depth();
     let mut inner = ModeNest::new();
     inner.push(Mode::InternalVertical);
@@ -556,7 +556,7 @@ where
         .node,
     );
     let boxed = stores.freeze_node_list(&[vbox]);
-    crate::leave_group(input, stores, GroupKind::Simple)?;
+    crate::leave_group(input, stores, GroupKind::Box)?;
     Ok(MathField::SubBox(boxed))
 }
 
