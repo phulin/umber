@@ -110,7 +110,7 @@ impl<'a> DviWriter<'a> {
             return Err(DviError::NoPages);
         };
         for page in pages {
-            if page.job != first.job {
+            if page.job.mag != first.job.mag || page.job.banner != first.job.banner {
                 return Err(DviError::InconsistentJobInfo);
             }
         }

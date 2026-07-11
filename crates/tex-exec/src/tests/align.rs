@@ -1395,6 +1395,13 @@ fn right_brace_before_cr_uses_missing_cr_recovery() {
 }
 
 #[test]
+fn noexpand_cr_still_terminates_alignment_cell() {
+    let stores = run_boxed_alignment_source("\\halign{#\\cr x\\noexpand\\cr}");
+    let vbox = box_zero_vlist(&stores);
+    assert_eq!(vlist_rows(&stores, vbox).len(), 1);
+}
+
+#[test]
 fn empty_accent_group_preserves_later_alignment_delimiters() {
     let stores = run_alignment_source("\\setbox0=\\vbox{\\halign{#\\cr {\\accent18}\\cr X\\cr}}");
 

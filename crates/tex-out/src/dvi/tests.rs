@@ -104,6 +104,16 @@ fn chains_bop_pointers_across_pages() {
 }
 
 #[test]
+fn permits_page_local_offset_changes() {
+    let first = empty_page(1);
+    let mut second = empty_page(2);
+    second.job.h_offset = sp(17);
+    second.job.v_offset = sp(-23);
+
+    write_dvi(&[first, second]).expect("page offsets are not DVI preamble identity");
+}
+
+#[test]
 fn defines_fonts_at_first_use_and_uses_fnt_num_or_fnt1() {
     let mut page = empty_page(0);
     page.fonts = (0..65)

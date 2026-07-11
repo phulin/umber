@@ -625,6 +625,7 @@ where
         {
             let context = TracedTokenWord::pack(token, call_origin);
             let name = scan_input_name(input, stores, recorder, hooks, context)?;
+            let transfer_endinput = input.take_current_source_end_after_current_line();
             let source = hooks
                 .open_input(&mut stores.input_open_context(), &name)
                 .map_err(|message| ExpandError::InputOpen {
@@ -633,6 +634,9 @@ where
                     context,
                 })?;
             input.push_source(source);
+            if transfer_endinput {
+                input.end_current_source_after_current_line();
+            }
             Ok(Dispatch::Continue)
         }
     )

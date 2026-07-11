@@ -6,7 +6,7 @@ use tex_state::token::{Catcode, Token, TracedTokenWord};
 
 use crate::{
     Dispatch, ExpandError, ExpandableOpcode, ExpansionHooks, ReadRecorder, apply_dispatch_push,
-    get_x_token_without_input_open, push_dispatch_result, push_inserted_token, scan_helpers,
+    get_x_token_without_input_open, push_inserted_token, scan_helpers,
 };
 
 pub(crate) fn expand_after<S, St, R, H, E>(
@@ -36,11 +36,7 @@ where
             context,
         });
     };
-
-    let target_dispatch = expander.dispatch_raw_token(target, input, stores, recorder, hooks)?;
-    push_dispatch_result(input, stores, target_dispatch);
-    push_inserted_token(input, stores, saved, InsertedOriginKind::ExpandAfter);
-    Ok(())
+    expander.dispatch_raw_token_after(saved, target, input, stores, recorder, hooks)
 }
 
 pub(crate) fn scan_csname<S, R, H>(

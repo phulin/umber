@@ -181,9 +181,13 @@ where
     loop {
         set_align_brace_depth(nest, align_level, 1_000_000);
         let Some(token) = next_non_space_traced_x(input, stores, hooks)? else {
-            return Err(ExecError::MissingToken {
-                context: "alignment row",
-            });
+            stores.world_mut().write_text(
+                PrintSink::TerminalAndLog,
+                "\n! Missing } inserted while finishing alignment.\n",
+            );
+            leave_group(input, stores, tex_state::GroupKind::Simple)?;
+            leave_group(input, stores, tex_state::GroupKind::Simple)?;
+            return Ok(None);
         };
         set_align_brace_depth(nest, align_level, 0);
         let semantic = tex_expand::semantic_token(token);
@@ -470,6 +474,9 @@ where
         let token = match fetched {
             Ok(Some(token)) => token,
             Ok(None) => {
+                if let Some(terminator) = input.finish_terminating_alignment_cell() {
+                    return classify_cell_terminator(stores, terminator);
+                }
                 return Err(ExecError::MissingToken {
                     context: "alignment cell",
                 });
@@ -505,19 +512,7 @@ where
                 .ok_or(ExecError::MissingToken {
                     context: "alignment cell terminator",
                 })?;
-            let semantic = tex_expand::semantic_token(terminator);
-            if is_alignment_tab(stores, semantic) {
-                return Ok(CellTerminator::AlignmentTab);
-            }
-            if is_cr(stores, semantic) {
-                return Ok(CellTerminator::Cr);
-            }
-            if is_span(stores, semantic) {
-                return Ok(CellTerminator::Span);
-            }
-            return Err(ExecError::MissingToken {
-                context: "alignment cell terminator",
-            });
+            return classify_cell_terminator(stores, terminator);
         }
         stats.delivered_tokens += 1;
         if is_noalign(stores, semantic) {
@@ -544,6 +539,25 @@ where
         }
         dispatch_and_drain(nest, token, input, stores, recorder, hooks, &mut stats)?;
     }
+}
+
+fn classify_cell_terminator(
+    stores: &mut Universe,
+    terminator: TracedTokenWord,
+) -> Result<CellTerminator, ExecError> {
+    let semantic = tex_expand::semantic_token(terminator);
+    if is_alignment_tab(stores, semantic) {
+        return Ok(CellTerminator::AlignmentTab);
+    }
+    if is_cr(stores, semantic) {
+        return Ok(CellTerminator::Cr);
+    }
+    if is_span(stores, semantic) {
+        return Ok(CellTerminator::Span);
+    }
+    Err(ExecError::MissingToken {
+        context: "alignment cell terminator",
+    })
 }
 
 pub(super) fn run_one_main_control_token<S, R, H>(

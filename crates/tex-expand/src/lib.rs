@@ -12,7 +12,7 @@ use std::path::Path;
 use tex_lex::{InputSource, InputStack, LexError, MacroArguments, TokenListReplayKind};
 use tex_state::glue::GlueSpec;
 use tex_state::interner::Symbol;
-use tex_state::meaning::{Meaning, UnexpandablePrimitive};
+use tex_state::meaning::{ExpandablePrimitive, Meaning, UnexpandablePrimitive};
 use tex_state::provenance::{DiagnosticSite, InsertedOriginKind, SynthesizedOriginKind};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
@@ -544,6 +544,26 @@ pub trait ExpandNext<S, St: ExpansionState, R, H> {
         S: InputSource,
         R: ReadRecorder,
         H: ExpansionHooks<S>;
+
+    fn dispatch_raw_token_after(
+        &mut self,
+        saved: TracedTokenWord,
+        target: TracedTokenWord,
+        input: &mut InputStack<S>,
+        stores: &mut St,
+        recorder: &mut R,
+        hooks: &mut H,
+    ) -> Result<(), ExpandError>
+    where
+        S: InputSource,
+        R: ReadRecorder,
+        H: ExpansionHooks<S>,
+    {
+        let dispatch = self.dispatch_raw_token(target, input, stores, recorder, hooks)?;
+        push_dispatch_result(input, stores, dispatch);
+        push_inserted_token(input, stores, saved, InsertedOriginKind::ExpandAfter);
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -620,6 +640,28 @@ where
             hooks,
             meaning,
         )
+    }
+
+    fn dispatch_raw_token_after(
+        &mut self,
+        saved: TracedTokenWord,
+        target: TracedTokenWord,
+        input: &mut InputStack<S>,
+        stores: &mut St,
+        recorder: &mut R,
+        hooks: &mut H,
+    ) -> Result<(), ExpandError> {
+        let target_meaning = expandable_symbol(stores, target).map(|symbol| stores.meaning(symbol));
+        if target_meaning == Some(Meaning::ExpandablePrimitive(ExpandablePrimitive::Input)) {
+            push_inserted_token(input, stores, saved, InsertedOriginKind::ExpandAfter);
+            let dispatch = self.dispatch_raw_token(target, input, stores, recorder, hooks)?;
+            push_dispatch_result(input, stores, dispatch);
+        } else {
+            let dispatch = self.dispatch_raw_token(target, input, stores, recorder, hooks)?;
+            push_dispatch_result(input, stores, dispatch);
+            push_inserted_token(input, stores, saved, InsertedOriginKind::ExpandAfter);
+        }
+        Ok(())
     }
 }
 

@@ -688,6 +688,19 @@ impl<S> InputStack<S> {
         cell.terminator
     }
 
+    /// Completes a cell whose terminator was already intercepted when later
+    /// recovery consumed the synthetic end-v marker.
+    pub fn finish_terminating_alignment_cell(&mut self) -> Option<TracedTokenWord> {
+        if self
+            .alignment_cells
+            .last()
+            .is_some_and(|cell| cell.phase == AlignmentCellPhase::VTemplate)
+        {
+            return self.alignment_cells.pop()?.terminator;
+        }
+        None
+    }
+
     #[must_use]
     pub fn alignment_cell_at_group_depth(&self, group_depth: u32) -> bool {
         self.alignment_cells.last().is_some_and(|cell| {
@@ -1050,6 +1063,19 @@ impl<S> InputStack<S> {
         };
         source.frame.end_after_current_line = true;
         true
+    }
+
+    /// Clears and returns the pending end-of-input flag on the current source.
+    /// An `\input` expansion uses this to transfer TeX's global `force_eof`
+    /// state to the source it opens while scanning the file name.
+    pub fn take_current_source_end_after_current_line(&mut self) -> bool {
+        let Some(source) = self.frames.iter_mut().rev().find_map(|frame| match frame {
+            InputFrame::Source(source) => Some(source),
+            InputFrame::TokenList(_) | InputFrame::Condition { .. } => None,
+        }) else {
+            return false;
+        };
+        std::mem::take(&mut source.frame.end_after_current_line)
     }
 }
 
