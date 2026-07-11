@@ -25,7 +25,8 @@ pub fn expand_dump(path: &str) -> Result<(), ExpandDumpError> {
     match driver.dump() {
         Ok(()) => Ok(()),
         Err(err) => {
-            driver.stores.set_input_summary(driver.input.summary());
+            let summary = driver.input.publication_summary(&mut driver.stores);
+            driver.stores.set_input_summary(summary);
             Err(err.render_with_provenance(&driver.stores))
         }
     }

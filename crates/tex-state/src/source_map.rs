@@ -397,6 +397,16 @@ impl SourceMap {
             .find(|region| region.source == source && self.identities.contains(region.identity))
     }
 
+    pub(crate) fn contains_registration(
+        &self,
+        source: SourceId,
+        registration: RegisteredSource,
+    ) -> bool {
+        self.region_for_source(source).is_some_and(|region| {
+            region.start == registration.start && region.byte_len == registration.byte_len
+        })
+    }
+
     pub(crate) fn region_for_position(&self, position: SourcePos) -> Option<SourceRegion> {
         let index = self
             .regions

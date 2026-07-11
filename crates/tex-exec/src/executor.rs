@@ -102,7 +102,8 @@ impl Executor {
         ) {
             Ok(exit) => exit,
             Err(err) => {
-                stores.set_input_summary(input.summary());
+                let summary = input.publication_summary(stores);
+                stores.set_input_summary(summary);
                 return Err(err);
             }
         };
@@ -120,7 +121,8 @@ impl Executor {
                     &mut exec_hooks,
                     &mut stats,
                 ) {
-                    stores.set_input_summary(input.summary());
+                    let summary = input.publication_summary(stores);
+                    stores.set_input_summary(summary);
                     return Err(err.capture(input));
                 }
                 Ok(stats)
@@ -242,7 +244,8 @@ where
                         continue;
                     }
                     error => {
-                        stores.set_input_summary(input.summary());
+                        let summary = input.publication_summary(stores);
+                        stores.set_input_summary(summary);
                         return Err(tex_expand::ExpandError::Captured {
                             error: Box::new(error),
                             site,
@@ -317,7 +320,8 @@ where
                     continue;
                 }
                 Err(err) => {
-                    stores.set_input_summary(input.summary());
+                    let summary = input.publication_summary(stores);
+                    stores.set_input_summary(summary);
                     return Err(err.into());
                 }
             }
@@ -376,7 +380,8 @@ where
                 | ExecError::MathShiftGroupMismatch { .. },
             ) => continue,
             Err(err) => {
-                stores.set_input_summary(input.summary());
+                let summary = input.publication_summary(stores);
+                stores.set_input_summary(summary);
                 return Err(err);
             }
         };

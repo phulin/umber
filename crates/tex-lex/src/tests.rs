@@ -1412,7 +1412,8 @@ fn source_summary_restores_mid_world_input_from_recorded_content() {
         input.next_token(&mut stores).expect("first include token"),
         Some(char_token('a', Catcode::Letter))
     );
-    stores.set_input_summary(input.summary());
+    let summary = input.publication_summary(&mut stores);
+    stores.set_input_summary(summary);
     let snapshot = stores.snapshot();
 
     assert_eq!(

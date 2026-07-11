@@ -1059,6 +1059,7 @@ impl Universe {
 
     /// Records the current lexer-owned input stack state for the next snapshot.
     pub fn set_input_summary(&mut self, summary: InputSummary) {
+        self.stores.assert_live_input_summary(&self.world, &summary);
         self.input_summary = summary;
     }
 
