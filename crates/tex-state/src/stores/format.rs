@@ -2,11 +2,19 @@ use super::*;
 use crate::ids::ArenaRef;
 use serde::{Deserialize, Serialize};
 
+mod font_validation;
+#[cfg(test)]
+pub(crate) use font_validation::{TestingFontFormatCorruption, testing_corrupt_font_format};
+
 #[derive(Debug)]
 pub(crate) enum StoreFormatError {
     OpenGroups(u32),
     Codec(String),
     Invalid(&'static str),
+    InvalidFontMetrics {
+        font: usize,
+        source: FontMetricsValidationError,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -54,7 +62,7 @@ struct FormatGlue {
     shrink_order: u8,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 struct FormatFont {
     name: String,
     path: std::path::PathBuf,
@@ -206,6 +214,7 @@ impl StoreFormat {
     }
 
     fn restore(self) -> Result<Stores, StoreFormatError> {
+        self.validate_font_state()?;
         let mut stores = Stores::new();
         for (raw, name) in self.names.into_iter().enumerate() {
             let symbol = if name.active {
@@ -249,12 +258,17 @@ impl StoreFormat {
                 return Err(StoreFormatError::Invalid("non-canonical glue order"));
             }
         }
-        for (raw, font) in self.fonts.into_iter().enumerate().skip(1) {
+        for (raw, font) in self.fonts.into_iter().enumerate() {
             let identifier = font.identifier;
-            let id = stores.fonts.intern(font.restore());
-            if id.raw() as usize != raw {
-                return Err(StoreFormatError::Invalid("non-canonical font order"));
-            }
+            let id = if raw == 0 {
+                NULL_FONT
+            } else {
+                let id = stores.fonts.intern(font.restore());
+                if id.raw() as usize != raw {
+                    return Err(StoreFormatError::Invalid("non-canonical font order"));
+                }
+                id
+            };
             if let Some(symbol) = identifier {
                 stores.fonts.set_identifier(id, Symbol::new(symbol));
             }
@@ -613,6 +627,16 @@ impl FormatFont {
                 self.left_boundary_program,
                 self.extensible_recipes,
             ),
+        )
+    }
+
+    fn metrics(&self) -> FontMetrics {
+        FontMetrics::new(
+            self.characters.clone(),
+            self.lig_kern_program.clone(),
+            self.right_boundary_char,
+            self.left_boundary_program,
+            self.extensible_recipes.clone(),
         )
     }
 }

@@ -864,6 +864,18 @@ this substrate; migration of existing token/glue/font/macro/provenance/source
 and node handle layouts is tracked separately so individual stores cannot
 invent incompatible generation schemes.
 
+Format restore is a validate-then-publish boundary even after the outer image
+checksum succeeds. In particular, detached font metrics are revalidated for
+their character-table shape and lig/kern, next-larger, and extensible-recipe
+references before any font is interned. The complete serialized font-bank view
+is then checked against those DTOs: font and identifier handles must be live,
+every font has at least TeX82's seven parameters, each parameter count covers
+the immutable parameter prefix and every stored `fontdimen`, and current,
+math-family, and last-loaded font selectors must be live. Only after that
+read-only pass may fresh stores be built and raw Env words restored. Thus a
+checksum authenticates transport integrity but never substitutes for semantic
+validation, and failure cannot expose a partially reconstructed live tuple.
+
 ### 10.4 Builder-then-freeze for content
 
 ```rust
