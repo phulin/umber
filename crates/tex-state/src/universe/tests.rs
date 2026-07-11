@@ -205,6 +205,92 @@ fn semantic_format_is_deterministic_validated_and_world_independent() {
 }
 
 #[test]
+fn semantic_format_restores_validated_fonts_banks_hashes_and_rollback_exactly() {
+    let mut universe = Universe::new();
+    let null_identifier = universe.intern("nullfont");
+    universe.set_font_identifier_symbol(NULL_FONT, null_identifier);
+    let identifier = universe.intern("structuredfont");
+    let font = universe.intern_font_with_identifier(structured_format_font(), identifier);
+    universe.set_current_font_selector(identifier, font);
+    universe.set_math_family_font(crate::math::MathFontSize::Text, 3, font, true);
+    universe
+        .set_font_dimen(font, 7, Scaled::from_raw(777), true)
+        .expect("guaranteed parameter is writable");
+
+    let bytes = universe.dump_format().expect("valid format encodes");
+    let mut restored =
+        Universe::from_format(World::memory(), &bytes).expect("valid format restores");
+    assert_eq!(restored.dump_format().expect("format redumps"), bytes);
+    let restored_font = restored.current_font();
+    assert_eq!(
+        restored.font_identifier_symbol(NULL_FONT),
+        Some(null_identifier)
+    );
+    assert_eq!(
+        restored.font_identifier_symbol(restored_font),
+        Some(identifier)
+    );
+    assert_eq!(restored.font_parameter_count(restored_font), 7);
+    assert_eq!(
+        restored.font_parameter(restored_font, 7),
+        Scaled::from_raw(777)
+    );
+    assert_eq!(
+        restored.math_family_font(crate::math::MathFontSize::Text, 3),
+        restored_font
+    );
+    restored
+        .font_metrics(restored_font)
+        .validate()
+        .expect("restored metrics retain canonical invariants");
+
+    let snapshot = restored.snapshot();
+    let before_hash = snapshot.state_hash();
+    restored
+        .set_font_dimen(restored_font, 7, Scaled::from_raw(-9), false)
+        .expect("font parameter mutation");
+    restored.set_current_font(NULL_FONT);
+    restored.set_math_family_font(crate::math::MathFontSize::Text, 3, NULL_FONT, false);
+    restored.rollback(&snapshot);
+    assert_eq!(restored.snapshot().state_hash(), before_hash);
+    assert_eq!(restored.dump_format().expect("rollback redump"), bytes);
+}
+
+#[test]
+fn checksum_valid_malformed_font_formats_fail_with_structured_errors() {
+    use crate::stores::TestingFontFormatCorruption as Corruption;
+
+    let mut universe = Universe::new();
+    let identifier = universe.intern("structuredfont");
+    let font = universe.intern_font_with_identifier(structured_format_font(), identifier);
+    universe.set_current_font_selector(identifier, font);
+    let valid = universe.dump_format().expect("valid format encodes");
+
+    for (corruption, expected) in [
+        (Corruption::TooManyCharacters, "metrics"),
+        (Corruption::LigKernStart, "lig/kern"),
+        (Corruption::ExtensibleRecipeIndex, "extensible recipe"),
+        (Corruption::FontIdentifier, "identifier"),
+        (Corruption::FontParameterCount, "parameter count"),
+        (Corruption::FontDimenSlot, "fontdimen slot"),
+        (Corruption::CurrentFont, "current font"),
+        (Corruption::LastLoadedFont, "last loaded font"),
+    ] {
+        let mut bytes = valid.clone();
+        replace_store_format_payload(
+            &mut bytes,
+            crate::stores::testing_corrupt_font_format(&valid[29..], corruption),
+        );
+        let error = Universe::from_format(World::memory(), &bytes)
+            .expect_err("malformed font format must fail closed");
+        assert!(
+            matches!(error, super::FormatError::InvalidState(ref message) if message.contains(expected)),
+            "{corruption:?} returned unexpected structured error: {error:?}"
+        );
+    }
+}
+
+#[test]
 fn semantic_format_validates_and_canonicalizes_glue_set_ratios() {
     const CANONICAL: (i32, i32) = (123_457, 765_431);
 
@@ -273,6 +359,14 @@ fn refresh_format_checksum(bytes: &mut [u8]) {
     const HEADER: usize = 29;
     let checksum = super::format_checksum(bytes[12], &bytes[HEADER..]);
     bytes[21..29].copy_from_slice(&checksum.to_le_bytes());
+}
+
+fn replace_store_format_payload(bytes: &mut Vec<u8>, payload: Vec<u8>) {
+    const HEADER: usize = 29;
+    bytes.truncate(HEADER);
+    bytes[13..21].copy_from_slice(&(payload.len() as u64).to_le_bytes());
+    bytes.extend_from_slice(&payload);
+    refresh_format_checksum(bytes);
 }
 
 #[cfg(feature = "node-stats")]
@@ -1512,6 +1606,62 @@ fn test_font(name: &str, bytes: &[u8]) -> crate::font::LoadedFont {
         Scaled::from_raw(10 * Scaled::UNITY),
         vec![Scaled::from_raw(0); 7],
         crate::font::FontMetrics::default(),
+    )
+}
+
+fn structured_format_font() -> crate::font::LoadedFont {
+    use crate::font::{
+        CharMetrics, CharTag, ExtensibleRecipe, FontMetrics, LigKernCommand, LigKernInstruction,
+        LigatureCommand, LoadedFont,
+    };
+
+    let mut characters = vec![None; 256];
+    let metric = |tag| {
+        Some(CharMetrics {
+            width: Scaled::from_raw(500),
+            height: Scaled::from_raw(300),
+            depth: Scaled::from_raw(100),
+            italic_correction: Scaled::from_raw(25),
+            tag,
+        })
+    };
+    characters[usize::from(b'A')] = metric(CharTag::LigKern {
+        program_index: 0,
+        start_index: 0,
+    });
+    characters[usize::from(b'B')] = metric(CharTag::Extensible(0));
+    characters[usize::from(b'C')] = metric(CharTag::None);
+    let metrics = FontMetrics::new(
+        characters,
+        vec![LigKernInstruction {
+            skip_byte: 128,
+            next_char: b'C',
+            command: Some(LigKernCommand::Ligature(LigatureCommand {
+                replacement: b'C',
+                delete_current: true,
+                delete_next: true,
+                pass_over: 0,
+            })),
+        }],
+        None,
+        None,
+        vec![ExtensibleRecipe {
+            top: None,
+            middle: None,
+            bottom: Some(b'B'),
+            repeated: b'C',
+        }],
+    );
+    metrics.validate().expect("test metric structure is valid");
+    LoadedFont::new(
+        "structuredfont",
+        "structuredfont.tfm",
+        ContentHash::from_bytes(b"structuredfont").bytes(),
+        0x1234_5678,
+        Scaled::from_raw(10 * Scaled::UNITY),
+        Scaled::from_raw(10 * Scaled::UNITY),
+        (1..=7).map(Scaled::from_raw).collect(),
+        metrics,
     )
 }
 

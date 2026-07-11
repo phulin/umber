@@ -3512,6 +3512,9 @@ fn map_store_format_error(error: StoreFormatError) -> FormatError {
         StoreFormatError::OpenGroups(depth) => FormatError::OpenGroups(depth),
         StoreFormatError::Codec(message) => FormatError::InvalidState(message),
         StoreFormatError::Invalid(message) => FormatError::InvalidState(message.to_owned()),
+        StoreFormatError::InvalidFontMetrics { font, source } => {
+            FormatError::InvalidState(format!("font {font} metrics: {source}"))
+        }
     }
 }
 

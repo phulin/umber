@@ -120,6 +120,114 @@ pub struct FontMetrics {
     extensible_recipes: Vec<ExtensibleRecipe>,
 }
 
+/// Structural validation failure for a detached immutable metric record.
+///
+/// TFM parsing performs these checks while decoding the source tables. This
+/// error type lets other untrusted-data boundaries, such as format restore,
+/// enforce the same query-safety invariants before constructing live state.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FontMetricsValidationError {
+    TooManyCharacters {
+        len: usize,
+    },
+    LigKernProgramIndexOutOfBounds {
+        character: u8,
+        field: &'static str,
+        index: u16,
+        len: usize,
+    },
+    ExtensibleRecipeIndexOutOfBounds {
+        character: u8,
+        index: u8,
+        len: usize,
+    },
+    LeftBoundaryProgramOutOfBounds {
+        index: u16,
+        len: usize,
+    },
+    LigKernSkipOutOfBounds {
+        instruction: usize,
+        target: usize,
+        len: usize,
+    },
+    LigKernCharacterMissing {
+        instruction: usize,
+        field: &'static str,
+        character: u8,
+    },
+    ExtensibleRecipeCharacterMissing {
+        recipe: usize,
+        field: &'static str,
+        character: u8,
+    },
+    NextLargerCycle {
+        character: u8,
+    },
+}
+
+impl std::fmt::Display for FontMetricsValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TooManyCharacters { len } => {
+                write!(
+                    f,
+                    "character table has {len} entries; at most 256 are addressable"
+                )
+            }
+            Self::LigKernProgramIndexOutOfBounds {
+                character,
+                field,
+                index,
+                len,
+            } => write!(
+                f,
+                "character {character} lig/kern {field} index {index} is outside program length {len}"
+            ),
+            Self::ExtensibleRecipeIndexOutOfBounds {
+                character,
+                index,
+                len,
+            } => write!(
+                f,
+                "character {character} extensible recipe index {index} is outside recipe count {len}"
+            ),
+            Self::LeftBoundaryProgramOutOfBounds { index, len } => write!(
+                f,
+                "left-boundary lig/kern index {index} is outside program length {len}"
+            ),
+            Self::LigKernSkipOutOfBounds {
+                instruction,
+                target,
+                len,
+            } => write!(
+                f,
+                "lig/kern instruction {instruction} skips to {target} outside program length {len}"
+            ),
+            Self::LigKernCharacterMissing {
+                instruction,
+                field,
+                character,
+            } => write!(
+                f,
+                "lig/kern instruction {instruction} {field} character {character} is absent"
+            ),
+            Self::ExtensibleRecipeCharacterMissing {
+                recipe,
+                field,
+                character,
+            } => write!(
+                f,
+                "extensible recipe {recipe} {field} character {character} is absent"
+            ),
+            Self::NextLargerCycle { character } => {
+                write!(f, "next-larger chain from character {character} is cyclic")
+            }
+        }
+    }
+}
+
+impl std::error::Error for FontMetricsValidationError {}
+
 impl FontMetrics {
     #[must_use]
     pub fn new(
@@ -143,6 +251,144 @@ impl FontMetrics {
             left_boundary_program,
             extensible_recipes,
         }
+    }
+
+    /// Validates all shape and reference invariants needed by metric queries.
+    ///
+    /// This intentionally mirrors the structural checks made by the TFM
+    /// parser after raw table indices have been projected into this detached
+    /// representation. A next-larger target may be absent, as TeX82 permits;
+    /// ligature and extensible-recipe character references must exist.
+    pub fn validate(&self) -> Result<(), FontMetricsValidationError> {
+        if self.characters.len() > 256 {
+            return Err(FontMetricsValidationError::TooManyCharacters {
+                len: self.characters.len(),
+            });
+        }
+
+        for (code, character) in self.characters.iter().enumerate() {
+            let Some(character) = character else {
+                continue;
+            };
+            let code = code as u8;
+            match character.tag {
+                CharTag::None | CharTag::NextLarger(_) => {}
+                CharTag::LigKern {
+                    program_index,
+                    start_index,
+                } => {
+                    for (field, index) in
+                        [("source", u16::from(program_index)), ("start", start_index)]
+                    {
+                        if usize::from(index) >= self.lig_kern_program.len() {
+                            return Err(
+                                FontMetricsValidationError::LigKernProgramIndexOutOfBounds {
+                                    character: code,
+                                    field,
+                                    index,
+                                    len: self.lig_kern_program.len(),
+                                },
+                            );
+                        }
+                    }
+                }
+                CharTag::Extensible(index) => {
+                    if usize::from(index) >= self.extensible_recipes.len() {
+                        return Err(
+                            FontMetricsValidationError::ExtensibleRecipeIndexOutOfBounds {
+                                character: code,
+                                index,
+                                len: self.extensible_recipes.len(),
+                            },
+                        );
+                    }
+                }
+            }
+        }
+
+        if let Some(index) = self.left_boundary_program
+            && usize::from(index) >= self.lig_kern_program.len()
+        {
+            return Err(FontMetricsValidationError::LeftBoundaryProgramOutOfBounds {
+                index,
+                len: self.lig_kern_program.len(),
+            });
+        }
+
+        for (index, instruction) in self.lig_kern_program.iter().enumerate() {
+            if instruction.skip_byte < 128 {
+                let target = index + usize::from(instruction.skip_byte) + 1;
+                if target >= self.lig_kern_program.len() {
+                    return Err(FontMetricsValidationError::LigKernSkipOutOfBounds {
+                        instruction: index,
+                        target,
+                        len: self.lig_kern_program.len(),
+                    });
+                }
+            }
+            if instruction.skip_byte <= 128 {
+                if Some(instruction.next_char) != self.right_boundary_char
+                    && !self.char_exists(instruction.next_char)
+                {
+                    return Err(FontMetricsValidationError::LigKernCharacterMissing {
+                        instruction: index,
+                        field: "match",
+                        character: instruction.next_char,
+                    });
+                }
+                if let Some(LigKernCommand::Ligature(command)) = instruction.command
+                    && !self.char_exists(command.replacement)
+                {
+                    return Err(FontMetricsValidationError::LigKernCharacterMissing {
+                        instruction: index,
+                        field: "replacement",
+                        character: command.replacement,
+                    });
+                }
+            }
+        }
+
+        for (index, recipe) in self.extensible_recipes.iter().enumerate() {
+            for (field, character) in [
+                ("top", recipe.top),
+                ("middle", recipe.middle),
+                ("bottom", recipe.bottom),
+                ("repeated", Some(recipe.repeated)),
+            ] {
+                if let Some(character) = character
+                    && !self.char_exists(character)
+                {
+                    return Err(
+                        FontMetricsValidationError::ExtensibleRecipeCharacterMissing {
+                            recipe: index,
+                            field,
+                            character,
+                        },
+                    );
+                }
+            }
+        }
+
+        for start in 0..self.characters.len() {
+            if self.characters[start].is_none() {
+                continue;
+            }
+            let mut seen = [false; 256];
+            let mut code = start as u8;
+            loop {
+                if seen[usize::from(code)] {
+                    return Err(FontMetricsValidationError::NextLargerCycle {
+                        character: start as u8,
+                    });
+                }
+                seen[usize::from(code)] = true;
+                let Some(next) = self.next_larger(code) else {
+                    break;
+                };
+                code = next;
+            }
+        }
+        Ok(())
     }
 
     #[must_use]

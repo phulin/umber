@@ -10,8 +10,9 @@ use crate::code_tables::{
 use crate::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use crate::env::{Env, EnvSnapshot};
 use crate::font::{
-    CharMetrics, ExtensibleRecipe, FontMetrics, FontStore, FontStoreMark, LigKernChar,
-    LigKernCommand, LigKernIter, LoadedFont, MissingCharacter, NULL_FONT,
+    CharMetrics, ExtensibleRecipe, FontMetrics, FontMetricsValidationError, FontStore,
+    FontStoreMark, LigKernChar, LigKernCommand, LigKernIter, LoadedFont, MissingCharacter,
+    NULL_FONT,
 };
 use crate::glue::{GlueSpec, GlueStore, GlueStoreMark};
 use crate::hyphenation::{ExceptionSpec, HyphenationTable, PatternSpec};
@@ -50,6 +51,8 @@ mod node_clone;
 mod state_hash;
 
 pub(crate) use format::StoreFormatError;
+#[cfg(test)]
+pub(crate) use format::{TestingFontFormatCorruption, testing_corrupt_font_format};
 
 pub use crate::env::group::{GroupKind, GroupMismatch};
 use node_clone::EpochCloneScratch;
