@@ -24,9 +24,25 @@ where
 {
     let kind = alignment_kind(primitive)?;
     let pack_spec = scan_pack_spec(input, stores, hooks, context)?;
-    let opener = next_non_space_x(input, stores, hooks)?.ok_or(ExecError::MissingToken {
-        context: "alignment group",
-    })?;
+    let opener = loop {
+        let opener = next_non_space_x(input, stores, hooks)?.ok_or(ExecError::MissingToken {
+            context: "alignment group",
+        })?;
+        let relax = match opener {
+            Token::Cs(symbol) => stores.meaning(symbol) == Meaning::Relax,
+            Token::Char {
+                ch,
+                cat: Catcode::Active,
+            } => {
+                let symbol = stores.intern_active_character(ch);
+                stores.meaning(symbol) == Meaning::Relax
+            }
+            Token::Char { .. } | Token::Param(_) | Token::Frozen(_) => false,
+        };
+        if !relax {
+            break opener;
+        }
+    };
     if !has_catcode_meaning(stores, opener, Catcode::BeginGroup) {
         stores.world_mut().write_text(
             tex_state::PrintSink::TerminalAndLog,

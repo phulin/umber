@@ -1676,3 +1676,31 @@ fn outer_macro_in_skipped_span_expansion_recovers_runaway_preamble() {
     assert!(input.summary().frames().is_empty());
     assert!(stores.env_journal_bytes_since(&before) < 100_000);
 }
+
+#[test]
+fn trip_conditional_preamble_recovery_stops_before_following_input() {
+    let mut stores = support::stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    let checkpoint = stores.snapshot();
+    let source = r#"
+        \everycr{\noalign{\penalty97}}
+        \halign\relax{\span\iffalse}\fi\cr#&\ifnum0=`{\fi\cr\cr}
+        \global\count7=777
+    "#;
+    let mut input = InputStack::new(MemoryInput::new(source));
+
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("malformed conditional preamble should recover");
+
+    assert_eq!(stores.count(7), 777, "following input must execute");
+    assert!(stats.delivered_tokens < 1_000);
+    let first_hash = stores.snapshot().state_hash();
+
+    stores.rollback(&checkpoint);
+    let mut input = InputStack::new(MemoryInput::new(source));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("malformed conditional preamble replay should recover");
+    assert_eq!(stores.snapshot().state_hash(), first_hash);
+}
