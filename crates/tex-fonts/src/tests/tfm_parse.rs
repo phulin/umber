@@ -202,14 +202,6 @@ fn malformed_files_return_specific_errors() {
             ..
         })
     ));
-
-    let mut bytes = minimal_tfm();
-    bytes[char_word] = 0;
-    bytes[char_word + 2] = 1;
-    assert!(matches!(
-        TfmFont::parse(&bytes),
-        Err(ParseError::MissingCharacterHasTag { code: b'A', tag: 1 })
-    ));
 }
 
 #[test]
@@ -237,15 +229,197 @@ fn malformed_lig_kern_and_recipe_indexes_are_rejected() {
     let bad_next_larger = tfm_with_char_info([1, 0, 2, b'B'], 0, 0, 0);
     assert!(matches!(
         TfmFont::parse(&bad_next_larger),
-        Err(ParseError::NextLargerCharacterMissing {
+        Err(ParseError::NextLargerCharacterOutOfBounds {
             code: b'A',
-            next: b'B'
+            next: b'B',
+            ..
         })
     ));
 
     let bad_extensible = tfm_with_char_info([1, 0, 3, 0], 0, 0, 1);
     assert!(matches!(
         TfmFont::parse(&bad_extensible),
+        Err(ParseError::ExtensibleRecipeCharacterOutOfBounds {
+            recipe: 0,
+            field: "repeated",
+            code: b'B',
+            ..
+        })
+    ));
+}
+
+#[test]
+fn size_fields_are_fifteen_bit_and_trailing_words_are_ignored() {
+    for (offset, field) in [
+        (0, "lf"),
+        (2, "lh"),
+        (4, "bc"),
+        (6, "ec"),
+        (8, "nw"),
+        (10, "nh"),
+        (12, "nd"),
+        (14, "ni"),
+        (16, "nl"),
+        (18, "nk"),
+        (20, "ne"),
+        (22, "np"),
+    ] {
+        let mut bytes = minimal_tfm();
+        set_u16(&mut bytes, offset, 0x8000);
+        assert_eq!(
+            TfmFont::parse(&bytes),
+            Err(ParseError::SizeFieldOutOfRange {
+                field,
+                value: 0x8000,
+            })
+        );
+    }
+
+    let mut with_trailing_words = minimal_tfm();
+    with_trailing_words.extend_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
+    let font = parse(&with_trailing_words);
+    assert!(font.character(b'A').is_some());
+}
+
+#[test]
+fn missing_width_characters_may_carry_structurally_valid_tags() {
+    let cases = [
+        ("lig/kern", [0, 0, 1, 0], vec![[255, 0, 0, 0]], Vec::new()),
+        ("next larger", [0, 0, 2, b'B'], Vec::new(), Vec::new()),
+        (
+            "extensible",
+            [0, 0, 3, 0],
+            Vec::new(),
+            vec![[0, 0, 0, b'B']],
+        ),
+    ];
+
+    for (name, missing_info, lig_kerns, extensibles) in cases {
+        let font = parse(&tfm_with_sections(Sections {
+            bc: b'A',
+            ec: b'B',
+            char_info: vec![missing_info, [1, 0, 0, 0]],
+            widths: vec![[0, 0, 0, 0], [0, 8, 0, 0]],
+            heights: vec![[0, 0, 0, 0]],
+            depths: vec![[0, 0, 0, 0]],
+            italics: vec![[0, 0, 0, 0]],
+            lig_kerns,
+            kerns: Vec::new(),
+            extensibles,
+            params: Vec::new(),
+        }));
+        assert!(font.character(b'A').is_none(), "{name}");
+        assert!(font.character(b'B').is_some(), "{name}");
+    }
+}
+
+#[test]
+fn next_larger_uses_declared_range_not_character_existence() {
+    let font = parse(&tfm_with_sections(Sections {
+        bc: b'A',
+        ec: b'B',
+        char_info: vec![[1, 0, 2, b'B'], [0, 0, 0, 0]],
+        widths: vec![[0, 0, 0, 0], [0, 8, 0, 0]],
+        heights: vec![[0, 0, 0, 0]],
+        depths: vec![[0, 0, 0, 0]],
+        italics: vec![[0, 0, 0, 0]],
+        lig_kerns: Vec::new(),
+        kerns: Vec::new(),
+        extensibles: Vec::new(),
+        params: Vec::new(),
+    }));
+    assert!(matches!(
+        char_metric(&font, b'A').tag,
+        CharacterTag::NextLarger(b'B')
+    ));
+    assert!(font.character(b'B').is_none());
+
+    let cycle = tfm_with_sections(Sections {
+        bc: b'A',
+        ec: b'B',
+        char_info: vec![[1, 0, 2, b'B'], [0, 0, 2, b'A']],
+        widths: vec![[0, 0, 0, 0], [0, 8, 0, 0]],
+        heights: vec![[0, 0, 0, 0]],
+        depths: vec![[0, 0, 0, 0]],
+        italics: vec![[0, 0, 0, 0]],
+        lig_kerns: Vec::new(),
+        kerns: Vec::new(),
+        extensibles: Vec::new(),
+        params: Vec::new(),
+    });
+    assert!(matches!(
+        TfmFont::parse(&cycle),
+        Err(ParseError::NextLargerCycle { code: b'A' })
+    ));
+}
+
+#[test]
+fn lig_kern_character_operands_require_in_range_existing_characters() {
+    let make = |step| {
+        tfm_with_sections(Sections {
+            bc: b'A',
+            ec: b'B',
+            char_info: vec![[1, 0, 1, 0], [1, 0, 0, 0]],
+            widths: vec![[0, 0, 0, 0], [0, 8, 0, 0]],
+            heights: vec![[0, 0, 0, 0]],
+            depths: vec![[0, 0, 0, 0]],
+            italics: vec![[0, 0, 0, 0]],
+            lig_kerns: vec![step],
+            kerns: vec![[0, 0, 0, 0]],
+            extensibles: Vec::new(),
+            params: Vec::new(),
+        })
+    };
+    for (field, bytes) in [
+        ("match", make([128, b'C', 128, 0])),
+        ("replacement", make([128, b'B', 0, b'C'])),
+    ] {
+        assert!(matches!(
+            TfmFont::parse(&bytes),
+            Err(ParseError::LigKernCharacterOutOfBounds { field: actual, .. }) if actual == field
+        ));
+    }
+
+    let missing = tfm_with_sections(Sections {
+        bc: b'A',
+        ec: b'B',
+        char_info: vec![[1, 0, 1, 0], [0, 0, 0, 0]],
+        widths: vec![[0, 0, 0, 0], [0, 8, 0, 0]],
+        heights: vec![[0, 0, 0, 0]],
+        depths: vec![[0, 0, 0, 0]],
+        italics: vec![[0, 0, 0, 0]],
+        lig_kerns: vec![[128, b'B', 128, 0]],
+        kerns: vec![[0, 0, 0, 0]],
+        extensibles: Vec::new(),
+        params: Vec::new(),
+    });
+    assert!(matches!(
+        TfmFont::parse(&missing),
+        Err(ParseError::LigKernCharacterMissing {
+            field: "match",
+            code: b'B',
+            ..
+        })
+    ));
+}
+
+#[test]
+fn extensible_recipe_pieces_require_in_range_existing_characters() {
+    let in_range_missing = tfm_with_sections(Sections {
+        bc: b'A',
+        ec: b'B',
+        char_info: vec![[1, 0, 3, 0], [0, 0, 0, 0]],
+        widths: vec![[0, 0, 0, 0], [0, 8, 0, 0]],
+        heights: vec![[0, 0, 0, 0]],
+        depths: vec![[0, 0, 0, 0]],
+        italics: vec![[0, 0, 0, 0]],
+        lig_kerns: Vec::new(),
+        kerns: Vec::new(),
+        extensibles: vec![[0, 0, 0, b'B']],
+        params: Vec::new(),
+    });
+    assert!(matches!(
+        TfmFont::parse(&in_range_missing),
         Err(ParseError::ExtensibleRecipeCharacterMissing {
             recipe: 0,
             field: "repeated",

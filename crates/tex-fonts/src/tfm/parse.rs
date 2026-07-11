@@ -74,7 +74,11 @@ pub(super) fn parse_tfm(bytes: &[u8], size_spec: FontSizeSpec) -> Result<TfmFont
         counts.ne,
     )?;
 
-    let lig_kern_program = parse_lig_kern_program(lig_kern_words, &kerns)?;
+    let bounds = CharacterBounds {
+        bc: counts.bc,
+        ec: counts.ec,
+    };
+    let lig_kern_program = parse_lig_kern_program(lig_kern_words, &kerns, bounds, &characters)?;
     let right_boundary_char = lig_kern_program
         .first()
         .filter(|step| step.skip_byte == u8::MAX)
@@ -89,15 +93,12 @@ pub(super) fn parse_tfm(bytes: &[u8], size_spec: FontSizeSpec) -> Result<TfmFont
     };
 
     resolve_lig_kern_starts(&mut characters, &lig_kern_program)?;
-    validate_next_larger_chains(&characters)?;
-    let extensible_recipes = parse_extensible_recipes(extensible_words, &characters)?;
+    validate_next_larger_chains(bounds, char_info_words)?;
+    let extensible_recipes = parse_extensible_recipes(extensible_words, bounds, &characters)?;
 
     Ok(TfmFont {
         header,
-        bounds: CharacterBounds {
-            bc: counts.bc,
-            ec: counts.ec,
-        },
+        bounds,
         font_size,
         characters,
         widths,
@@ -132,18 +133,18 @@ struct Counts {
 
 impl Counts {
     fn parse(bytes: &[u8]) -> Result<Self, ParseError> {
-        let lf = read_u16(bytes, 0);
-        let lh = read_u16(bytes, 2);
-        let bc = read_u16(bytes, 4);
-        let ec = read_u16(bytes, 6);
-        let nw = read_u16(bytes, 8);
-        let nh = read_u16(bytes, 10);
-        let nd = read_u16(bytes, 12);
-        let ni = read_u16(bytes, 14);
-        let nl = read_u16(bytes, 16);
-        let nk = read_u16(bytes, 18);
-        let ne = read_u16(bytes, 20);
-        let np = read_u16(bytes, 22);
+        let lf = read_size(bytes, 0, "lf")?;
+        let lh = read_size(bytes, 2, "lh")?;
+        let bc = read_size(bytes, 4, "bc")?;
+        let ec = read_size(bytes, 6, "ec")?;
+        let nw = read_size(bytes, 8, "nw")?;
+        let nh = read_size(bytes, 10, "nh")?;
+        let nd = read_size(bytes, 12, "nd")?;
+        let ni = read_size(bytes, 14, "ni")?;
+        let nl = read_size(bytes, 16, "nl")?;
+        let nk = read_size(bytes, 18, "nk")?;
+        let ne = read_size(bytes, 20, "ne")?;
+        let np = read_size(bytes, 22, "np")?;
 
         if lh < 2 {
             return Err(ParseError::MissingRequiredHeader { lh });
@@ -183,7 +184,7 @@ impl Counts {
     }
 
     fn validate(self, actual_words: usize) -> Result<(), ParseError> {
-        if usize::from(self.lf) != actual_words {
+        if usize::from(self.lf) > actual_words {
             return Err(ParseError::DeclaredLengthMismatch {
                 declared_words: self.lf,
                 actual_words,
@@ -229,6 +230,14 @@ impl Counts {
 
 fn read_u16(bytes: &[u8], offset: usize) -> u16 {
     u16::from_be_bytes([bytes[offset], bytes[offset + 1]])
+}
+
+fn read_size(bytes: &[u8], offset: usize, field: &'static str) -> Result<u16, ParseError> {
+    let value = read_u16(bytes, offset);
+    if bytes[offset] > 127 {
+        return Err(ParseError::SizeFieldOutOfRange { field, value });
+    }
+    Ok(value)
 }
 
 fn parse_words(bytes: &[u8]) -> Vec<[u8; 4]> {
@@ -354,12 +363,6 @@ fn parse_characters(
         let italic_correction =
             table_value(code, TfmTable::Italic, italic_index, italic_corrections)?;
 
-        if width_index == 0 {
-            if tag != 0 {
-                return Err(ParseError::MissingCharacterHasTag { code, tag });
-            }
-            continue;
-        }
         let tag = match tag {
             0 => CharacterTag::None,
             1 => {
@@ -375,7 +378,21 @@ fn parse_characters(
                     start_index: u16::from(remainder),
                 }
             }
-            2 => CharacterTag::NextLarger(remainder),
+            2 => {
+                let bounds = CharacterBounds {
+                    bc: counts.bc,
+                    ec: counts.ec,
+                };
+                if !bounds.contains(remainder) {
+                    return Err(ParseError::NextLargerCharacterOutOfBounds {
+                        code,
+                        next: remainder,
+                        bc: bounds.bc,
+                        ec: bounds.ec,
+                    });
+                }
+                CharacterTag::NextLarger(remainder)
+            }
             3 => {
                 if usize::from(remainder) >= ne {
                     return Err(ParseError::ExtensibleRecipeIndexOutOfBounds {
@@ -389,6 +406,9 @@ fn parse_characters(
             _ => unreachable!("tag is masked to two bits"),
         };
 
+        if width_index == 0 {
+            continue;
+        }
         characters[usize::from(code)] = Some(Character {
             code,
             width_index,
@@ -425,7 +445,13 @@ fn table_value(
 fn parse_lig_kern_program(
     words: &[[u8; 4]],
     kerns: &[Scaled],
+    bounds: CharacterBounds,
+    characters: &[Option<Character>],
 ) -> Result<Vec<LigKernStep>, ParseError> {
+    let boundary_char = words
+        .first()
+        .filter(|word| word[0] == u8::MAX)
+        .map(|word| word[1]);
     words
         .iter()
         .enumerate()
@@ -456,6 +482,10 @@ fn parse_lig_kern_program(
                 }
             }
 
+            if skip_byte <= STOP_FLAG && Some(next_char) != boundary_char {
+                require_lig_kern_character(index, "match", next_char, bounds, characters)?;
+            }
+
             let action = if skip_byte > STOP_FLAG {
                 None
             } else if op_byte >= KERN_FLAG {
@@ -469,6 +499,7 @@ fn parse_lig_kern_program(
                 )?;
                 Some(LigKernAction::Kern(Kern { kern_index, amount }))
             } else {
+                require_lig_kern_character(index, "replacement", remainder, bounds, characters)?;
                 let deletes = LigatureDeletes {
                     current: op_byte & 0b10 == 0,
                     next: op_byte & 0b01 == 0,
@@ -492,6 +523,32 @@ fn parse_lig_kern_program(
         .collect()
 }
 
+fn require_lig_kern_character(
+    instruction: usize,
+    field: &'static str,
+    code: u8,
+    bounds: CharacterBounds,
+    characters: &[Option<Character>],
+) -> Result<(), ParseError> {
+    if !bounds.contains(code) {
+        return Err(ParseError::LigKernCharacterOutOfBounds {
+            instruction,
+            field,
+            code,
+            bc: bounds.bc,
+            ec: bounds.ec,
+        });
+    }
+    if characters[usize::from(code)].is_none() {
+        return Err(ParseError::LigKernCharacterMissing {
+            instruction,
+            field,
+            code,
+        });
+    }
+    Ok(())
+}
+
 fn resolve_lig_kern_starts(
     characters: &mut [Option<Character>],
     program: &[LigKernStep],
@@ -509,31 +566,31 @@ fn resolve_lig_kern_starts(
     Ok(())
 }
 
-fn validate_next_larger_chains(characters: &[Option<Character>]) -> Result<(), ParseError> {
-    for character in characters.iter().flatten() {
-        if matches!(character.tag, CharacterTag::NextLarger(_)) {
+fn validate_next_larger_chains(
+    bounds: CharacterBounds,
+    words: &[[u8; 4]],
+) -> Result<(), ParseError> {
+    for (offset, word) in words.iter().enumerate() {
+        if word[2] & 0x03 == 2 {
             let mut seen = [false; CHARACTER_SLOTS];
-            let mut code = character.code;
+            let start = bounds.bc + offset as u8;
+            let mut code = start;
             loop {
                 if seen[usize::from(code)] {
-                    return Err(ParseError::NextLargerCycle {
-                        code: character.code,
-                    });
+                    return Err(ParseError::NextLargerCycle { code: start });
                 }
                 seen[usize::from(code)] = true;
-                let current = characters[usize::from(code)].as_ref().ok_or(
-                    ParseError::NextLargerCharacterMissing {
-                        code: character.code,
-                        next: code,
-                    },
-                )?;
-                let CharacterTag::NextLarger(next) = current.tag else {
+                let current = words[usize::from(code - bounds.bc)];
+                if current[2] & 0x03 != 2 {
                     break;
-                };
-                if characters[usize::from(next)].is_none() {
-                    return Err(ParseError::NextLargerCharacterMissing {
-                        code: current.code,
+                }
+                let next = current[3];
+                if !bounds.contains(next) {
+                    return Err(ParseError::NextLargerCharacterOutOfBounds {
+                        code,
                         next,
+                        bc: bounds.bc,
+                        ec: bounds.ec,
                     });
                 }
                 code = next;
@@ -545,6 +602,7 @@ fn validate_next_larger_chains(characters: &[Option<Character>]) -> Result<(), P
 
 fn parse_extensible_recipes(
     words: &[[u8; 4]],
+    bounds: CharacterBounds,
     characters: &[Option<Character>],
 ) -> Result<Vec<ExtensibleRecipe>, ParseError> {
     words
@@ -552,10 +610,10 @@ fn parse_extensible_recipes(
         .enumerate()
         .map(|(recipe, &word)| {
             let [top, middle, bottom, repeated] = word;
-            let top = optional_recipe_piece(recipe, "top", top, characters)?;
-            let middle = optional_recipe_piece(recipe, "middle", middle, characters)?;
-            let bottom = optional_recipe_piece(recipe, "bottom", bottom, characters)?;
-            require_recipe_piece(recipe, "repeated", repeated, characters)?;
+            let top = optional_recipe_piece(recipe, "top", top, bounds, characters)?;
+            let middle = optional_recipe_piece(recipe, "middle", middle, bounds, characters)?;
+            let bottom = optional_recipe_piece(recipe, "bottom", bottom, bounds, characters)?;
+            require_recipe_piece(recipe, "repeated", repeated, bounds, characters)?;
             Ok(ExtensibleRecipe {
                 top,
                 middle,
@@ -570,12 +628,13 @@ fn optional_recipe_piece(
     recipe: usize,
     field: &'static str,
     code: u8,
+    bounds: CharacterBounds,
     characters: &[Option<Character>],
 ) -> Result<Option<u8>, ParseError> {
     if code == 0 {
         return Ok(None);
     }
-    require_recipe_piece(recipe, field, code, characters)?;
+    require_recipe_piece(recipe, field, code, bounds, characters)?;
     Ok(Some(code))
 }
 
@@ -583,8 +642,18 @@ fn require_recipe_piece(
     recipe: usize,
     field: &'static str,
     code: u8,
+    bounds: CharacterBounds,
     characters: &[Option<Character>],
 ) -> Result<(), ParseError> {
+    if !bounds.contains(code) {
+        return Err(ParseError::ExtensibleRecipeCharacterOutOfBounds {
+            recipe,
+            field,
+            code,
+            bc: bounds.bc,
+            ec: bounds.ec,
+        });
+    }
     if characters[usize::from(code)].is_none() {
         return Err(ParseError::ExtensibleRecipeCharacterMissing {
             recipe,
