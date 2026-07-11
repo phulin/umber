@@ -2,9 +2,8 @@ use super::*;
 
 const FONT_DIMEN_BITS: u32 = 15;
 const FONT_DIMEN_MASK: u32 = (1 << FONT_DIMEN_BITS) - 1;
-const MAX_FONT_COUNT: usize = 1 << (27 - FONT_DIMEN_BITS);
+const MAX_FONT_COUNT: usize = 1 << (30 - FONT_DIMEN_BITS);
 const MAX_FONT_PARAMETERS: usize = 1 << FONT_DIMEN_BITS;
-const GLOBAL_BIT: u32 = 1 << 26;
 
 impl StoreFormat {
     pub(super) fn validate_font_state(&self) -> Result<(), StoreFormatError> {
@@ -53,12 +52,9 @@ impl StoreFormat {
         let mut dimension_slots = Vec::new();
         let mut seen_font_cells = std::collections::BTreeSet::new();
         for entry in &self.env {
-            let raw = entry.cell;
-            let bank_bits = raw >> 27;
-            if bank_bits > crate::cell::BankTag::MathFamilyFont as u32 {
-                return Err(StoreFormatError::Invalid("unknown environment bank"));
-            }
-            let bank = crate::cell::BankTag::from_bits(bank_bits);
+            let cell = crate::cell::CellId::from_raw(entry.cell)
+                .ok_or(StoreFormatError::Invalid("unknown environment cell"))?;
+            let bank = cell.bank();
             let is_font_cell = matches!(
                 bank,
                 crate::cell::BankTag::FontDimen
@@ -79,12 +75,12 @@ impl StoreFormat {
                     ));
                 }
             };
-            if raw & GLOBAL_BIT != 0 {
+            if cell.is_global() {
                 return Err(StoreFormatError::Invalid(
                     "format environment contains a global font cell",
                 ));
             }
-            let index = raw & ((1 << 26) - 1);
+            let index = cell.index();
             if !seen_font_cells.insert((bank as u8, index)) {
                 return Err(StoreFormatError::Invalid("duplicate environment font cell"));
             }

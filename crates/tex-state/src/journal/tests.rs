@@ -2,6 +2,14 @@ use super::{Entry, Journal, JournalPos, Marker, UndoRec};
 use crate::cell::{BankTag, CellId};
 use crate::env::group::GroupKind;
 use crate::ids::SnapshotId;
+use std::mem::size_of;
+
+#[test]
+fn widened_cell_ids_do_not_grow_journal_records() {
+    assert_eq!(size_of::<CellId>(), 8);
+    assert_eq!(size_of::<UndoRec>(), 24);
+    assert_eq!(size_of::<Entry>(), 32);
+}
 
 #[test]
 fn push_pos_slice_and_truncate_round_trip() {

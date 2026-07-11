@@ -1,4 +1,4 @@
-use super::{BankTag, CellId, GLOBAL_SHIFT};
+use super::{BANK_SHIFT, BankTag, CellId, GLOBAL_SHIFT, INDEX_MASK};
 
 #[test]
 fn cell_id_packs_every_bank_index_and_global_bit() {
@@ -23,15 +23,25 @@ fn cell_id_packs_every_bank_index_and_global_bit() {
     ];
 
     for bank in banks {
-        let local = CellId::new(bank, 32_767);
-        assert_eq!(local.bank(), bank);
-        assert_eq!(local.index(), 32_767);
-        assert!(!local.is_global());
+        for index in [32_767, 1 << 26, INDEX_MASK] {
+            let local = CellId::new(bank, index);
+            assert_eq!(local.bank(), bank);
+            assert_eq!(local.index(), index);
+            assert!(!local.is_global());
+            assert_eq!(CellId::from_raw(local.raw()), Some(local));
 
-        let global = CellId::new_global(bank, 32_767);
-        assert_eq!(global.bank(), bank);
-        assert_eq!(global.index(), 32_767);
-        assert!(global.is_global());
-        assert_eq!(global.raw(), local.raw() | (1 << GLOBAL_SHIFT));
+            let global = CellId::new_global(bank, index);
+            assert_eq!(global.bank(), bank);
+            assert_eq!(global.index(), index);
+            assert!(global.is_global());
+            assert_eq!(global.raw(), local.raw() | (1_u64 << GLOBAL_SHIFT));
+            assert_eq!(CellId::from_raw(global.raw()), Some(global));
+        }
     }
+}
+
+#[test]
+fn detached_cell_decode_rejects_reserved_bank_bits() {
+    assert_eq!(CellId::from_raw(17_u64 << BANK_SHIFT), None);
+    assert_eq!(CellId::from_raw(u64::MAX), None);
 }
