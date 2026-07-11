@@ -764,7 +764,9 @@ makes box-level memoization (M4) sound.
   candidate ordering rather than adjusting an already-pruned winner.
   The current `tex-exec` integration precomputes the hyphenated hlist because
   automatic hyphen insertion still freezes discretionary child lists through
-  `Universe`; the breaker only sees the hook result as ordinary nodes.
+  `Universe`; the breaker only sees the hook result as ordinary nodes. As in
+  TeX82, a word with no legal hyphenation point keeps its existing character,
+  ligature, and kern nodes byte-for-byte instead of being reconstituted.
   Post-line-break produces line node vectors with named
   `\leftskip`/`\rightskip` glue, per-line width/indent dimensions selected
   from `\parshape` first and otherwise TeX's `\hangindent`/`\hangafter`

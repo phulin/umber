@@ -107,3 +107,28 @@ fn paragraph_hyphenation_requires_a_valid_font_hyphen_character() {
             .any(|node| matches!(node, tex_state::node::Node::Disc { .. }))
     );
 }
+
+#[test]
+fn paragraph_hyphenation_preserves_existing_chars_when_no_break_is_found() {
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\font\\tenrm=cmr10 \\relax \\tenrm \\end",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("font setup executes");
+    let font = stores.current_font();
+    let word = vec![
+        tex_state::node::Node::Char { font, ch: 'f' },
+        tex_state::node::Node::Char { font, ch: 'f' },
+    ];
+
+    let unchanged = crate::assignments::test_hyphenated_hlist(&mut stores, &word);
+    assert_eq!(
+        unchanged, word,
+        "no-break hyphenation must not create an ff ligature"
+    );
+}

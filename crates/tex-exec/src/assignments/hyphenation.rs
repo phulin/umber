@@ -47,14 +47,16 @@ where
 pub(crate) fn hyphenated_hlist(stores: &mut Universe, nodes: &[Node]) -> Vec<Node> {
     let mut out = Vec::new();
     let mut word = Vec::new();
+    let mut word_nodes = Vec::new();
     for (index, node) in nodes.iter().enumerate() {
         if push_word_node(stores, node, nodes.get(index + 1), &mut word) {
+            word_nodes.push(node.clone());
             continue;
         }
-        flush_word(stores, &mut word, &mut out);
+        flush_word(stores, &mut word, &mut word_nodes, &mut out);
         out.push(node.clone());
     }
-    flush_word(stores, &mut word, &mut out);
+    flush_word(stores, &mut word, &mut word_nodes, &mut out);
     out
 }
 
@@ -218,7 +220,12 @@ fn is_word_node(stores: &Universe, node: &Node) -> bool {
     }
 }
 
-fn flush_word(stores: &mut Universe, word: &mut Vec<WordChar>, out: &mut Vec<Node>) {
+fn flush_word(
+    stores: &mut Universe,
+    word: &mut Vec<WordChar>,
+    word_nodes: &mut Vec<Node>,
+    out: &mut Vec<Node>,
+) {
     if word.is_empty() {
         return;
     }
@@ -245,19 +252,18 @@ fn flush_word(stores: &mut Universe, word: &mut Vec<WordChar>, out: &mut Vec<Nod
         })
     );
     if positions.is_empty() {
-        let pending: Vec<_> = word.iter().map(|ch| ch.pending()).collect();
-        out.extend(super::hmode::reconstitute(
-            stores,
-            &pending,
-            no_left_boundary,
-            false,
-        ));
+        // TeX's hyphenate returns before replacing ha..hb when no hyphenation
+        // point was found. Reconstituting anyway can create a ligature across
+        // an accent-produced character boundary and changes an already-built
+        // horizontal list even though no discretionary is inserted.
+        out.append(word_nodes);
         word.clear();
         return;
     }
 
     append_hyphenated_word(stores, word, &positions, no_left_boundary, out);
     word.clear();
+    word_nodes.clear();
 }
 
 fn append_hyphenated_word(
