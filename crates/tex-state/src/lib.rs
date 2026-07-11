@@ -7,6 +7,7 @@ pub mod epoch;
 pub mod font;
 pub mod glue;
 pub mod hyphenation;
+pub(crate) mod identity;
 pub mod ids;
 pub mod input;
 pub mod interner;

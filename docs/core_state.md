@@ -810,6 +810,40 @@ test-only constructor escape hatches are compiled only for crate tests or the
 explicit `testing` feature. The `shadow` feature is production-like
 verification instrumentation and must not expose raw handle minting.
 
+Timeline-owned handles additionally obey one common allocation invariant.
+A live runtime identity is the compact tuple `(namespace, generation, slot)`:
+the namespace is a fresh private nonce for an allocation branch, generation is
+a checked nonzero counter, and slot is the store's dense index. Each
+rollback-truncated store retains a parallel allocation tag per live slot.
+Validation is therefore O(1): bounds-check the slot and compare its recorded
+`(namespace, generation)` tag with the handle. It requires no hash table,
+unsafe code, interior mutability, or scan of rollback history.
+
+Rollback truncates the tag table with semantic storage, but the active
+generation is timeline metadata and is never restored from a snapshot. Before
+any discarded slot can be reused, rollback advances the generation. Generation
+overflow is an explicit exhaustion error and leaves rollback unchanged; it
+must start a fresh aggregate timeline rather than wrap. A fork copies inherited
+slot tags, so inherited handles remain valid in both descendants, then selects
+a fresh namespace for new allocations so sibling handles are foreign. Snapshot
+marks retain the tag at their live frontier; a mark from a branch already
+discarded by an older rollback is rejected instead of silently applying to a
+same-length replacement suffix. Immutable canonical prefix entries may use the
+reserved built-in namespace only when their meaning is identical in every
+store (for example, the empty token list); they are values, not foreign live
+capabilities.
+
+The runtime identity is deliberately not serializable. Format images,
+committed page artifacts, memo records, and future whole-engine checkpoint
+files use versioned DTO-local dense references or semantic content hashes.
+Loading validates those DTO graphs and mints fresh runtime identities through
+the aggregate `Stores`/`Universe` restore boundary. Aggregate in-memory
+snapshots instead include each store's O(1) identity watermark alongside its
+content watermark and restore both atomically. `tex-state::identity` implements
+this substrate; migration of existing token/glue/font/macro/provenance/source
+and node handle layouts is tracked separately so individual stores cannot
+invent incompatible generation schemes.
+
 ### 10.4 Builder-then-freeze for content
 
 ```rust
