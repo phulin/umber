@@ -108,7 +108,7 @@ fn dense_register_typed_api_round_trips_boundary_and_signed_values() {
     env.set_skip(255, GlueId::new(u32::MAX));
     env.set_muskip(255, GlueId::new(u32::MAX - 3));
     env.set_toks(255, TokenListId::new(u32::MAX - 1));
-    env.set_box_reg(255, Some(NodeListId::testing_epoch(u32::MAX - 2, 0)));
+    env.set_box_reg(255, Some(NodeListId::testing_survivor(7, 3, 0)));
 
     assert_eq!(env.count(255), i32::MIN);
     assert_eq!(env.dimen(255), Scaled::MIN);
@@ -117,7 +117,7 @@ fn dense_register_typed_api_round_trips_boundary_and_signed_values() {
     assert_eq!(env.toks(255), TokenListId::new(u32::MAX - 1));
     assert_eq!(
         env.box_reg(255),
-        Some(NodeListId::testing_epoch(u32::MAX - 2, 0))
+        Some(NodeListId::testing_survivor(7, 3, 0))
     );
 }
 
@@ -131,7 +131,7 @@ fn dense_register_journal_records_use_bank_tags_and_encoded_words() {
     env.set_skip(3, GlueId::new(33));
     env.set_muskip(4, GlueId::new(34));
     env.set_toks(5, TokenListId::new(44));
-    env.set_box_reg(6, Some(NodeListId::testing_epoch(55, 0)));
+    env.set_box_reg(6, Some(NodeListId::testing_survivor(8, 55, 0)));
 
     assert_eq!(
         env.journal_entries_since(start),
@@ -141,7 +141,12 @@ fn dense_register_journal_records_use_bank_tags_and_encoded_words() {
             undo(BankTag::Skip, 3, 0, 33),
             undo(BankTag::Muskip, 4, 0, 34),
             undo(BankTag::Toks, 5, 0, 44),
-            undo(BankTag::Box, 6, u64::MAX, 55),
+            undo(
+                BankTag::Box,
+                6,
+                u64::MAX,
+                NodeListId::encode_box_word(Some(NodeListId::testing_survivor(8, 55, 0))),
+            ),
         ]
     );
 }

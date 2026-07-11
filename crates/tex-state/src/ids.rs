@@ -97,16 +97,15 @@ pub enum ArenaRef {
     Survivor(SurvivorRootId),
 }
 
-/// A frozen node-list span.
+/// A frozen node-list handle.
 ///
-/// The packed representation is private: consumers inspect only the logical
-/// arena, start, and length. Arena constructors are the sole production minting
-/// boundary.
+/// Epoch handles contain only a generation-tagged allocation identity; their
+/// compact `(start, len)` span is resolved by the owning node arena in O(1).
+/// Survivor handles retain their self-contained packed span. Constructors are
+/// the sole production minting boundary.
 #[repr(transparent)]
-#[derive(
-    Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Deserialize, serde::Serialize,
-)]
-pub struct NodeListId(u64);
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct NodeListId(crate::identity::HandleIdentity);
 
 const NODE_LIST_SURVIVOR_BIT: u64 = 1 << 63;
 const NODE_LIST_EPOCH_LEN_MAX: u32 = (1 << 31) - 1;
@@ -114,11 +113,24 @@ const NODE_LIST_SURVIVOR_ROOT_MAX: u32 = (1 << 20) - 2;
 const NODE_LIST_SURVIVOR_START_MAX: u32 = (1 << 21) - 1;
 const NODE_LIST_SURVIVOR_LEN_MAX: u32 = (1 << 22) - 1;
 const NODE_LIST_NONE_WORD: u64 = u64::MAX;
+const NODE_LIST_SURVIVOR_NAMESPACE: u64 = 2;
+const NODE_LIST_FORMAT_EPOCH_NAMESPACE: u64 = 3;
+const NODE_LIST_FORMAT_SURVIVOR_NAMESPACE: u64 = 4;
 
-const _: [(); 8] = [(); core::mem::size_of::<NodeListId>()];
+const _: [(); 16] = [(); core::mem::size_of::<NodeListId>()];
 
 impl NodeListId {
-    pub(crate) const fn new_epoch(start: u32, len: u32) -> Self {
+    pub(crate) const fn new_epoch(identity: crate::identity::HandleIdentity) -> Self {
+        assert!(
+            identity.namespace() != NODE_LIST_SURVIVOR_NAMESPACE
+                && identity.namespace() != NODE_LIST_FORMAT_EPOCH_NAMESPACE
+                && identity.namespace() != NODE_LIST_FORMAT_SURVIVOR_NAMESPACE,
+            "epoch identity uses a reserved node-list namespace"
+        );
+        Self(identity)
+    }
+
+    const fn packed_epoch_span(start: u32, len: u32) -> u64 {
         assert!(
             len <= NODE_LIST_EPOCH_LEN_MAX,
             "epoch node-list length exceeds encoding"
@@ -127,7 +139,7 @@ impl NodeListId {
             start.checked_add(len).is_some(),
             "epoch node-list span overflows storage index"
         );
-        Self((start as u64) | ((len as u64) << 32))
+        (start as u64) | ((len as u64) << 32)
     }
 
     pub(crate) const fn new_survivor(root: SurvivorRootId, start: u32, len: u32) -> Self {
@@ -143,7 +155,8 @@ impl NodeListId {
             len <= NODE_LIST_SURVIVOR_LEN_MAX,
             "survivor span length exceeds encoding"
         );
-        Self(
+        Self::from_reserved_word(
+            NODE_LIST_SURVIVOR_NAMESPACE,
             NODE_LIST_SURVIVOR_BIT
                 | ((root.raw() as u64) << 43)
                 | ((start as u64) << 22)
@@ -151,11 +164,67 @@ impl NodeListId {
         )
     }
 
+    pub(crate) const fn format_reference(arena: ArenaRef, start: u32, len: u32) -> Self {
+        match arena {
+            ArenaRef::Epoch => {
+                let _ = Self::packed_epoch_span(start, len);
+                let incremented = match len.checked_add(1) {
+                    Some(value) => value,
+                    None => panic!("epoch node-list length exceeds DTO encoding"),
+                };
+                let encoded_len = match core::num::NonZeroU32::new(incremented) {
+                    Some(value) => value,
+                    None => panic!("epoch node-list DTO length must be nonzero"),
+                };
+                Self(crate::identity::HandleIdentity::reserved(
+                    NODE_LIST_FORMAT_EPOCH_NAMESPACE,
+                    encoded_len,
+                    start,
+                ))
+            }
+            ArenaRef::Survivor(root) => Self::from_reserved_word(
+                NODE_LIST_FORMAT_SURVIVOR_NAMESPACE,
+                Self::new_survivor(root, start, len).reserved_word(),
+            ),
+        }
+    }
+
+    const fn from_reserved_word(namespace: u64, word: u64) -> Self {
+        let upper = match core::num::NonZeroU32::new((word >> 32) as u32) {
+            Some(value) => value,
+            None => panic!("reserved node-list word has a zero upper half"),
+        };
+        Self(crate::identity::HandleIdentity::reserved(
+            namespace,
+            upper,
+            word as u32,
+        ))
+    }
+
+    const fn reserved_word(self) -> u64 {
+        ((self.0.upper() as u64) << 32) | self.0.lower() as u64
+    }
+
+    pub(crate) const fn epoch_identity(self) -> crate::identity::HandleIdentity {
+        assert!(
+            self.0.namespace() != NODE_LIST_SURVIVOR_NAMESPACE
+                && self.0.namespace() != NODE_LIST_FORMAT_EPOCH_NAMESPACE
+                && self.0.namespace() != NODE_LIST_FORMAT_SURVIVOR_NAMESPACE,
+            "node-list handle is not a live epoch identity"
+        );
+        self.0
+    }
+
+    pub(crate) const fn is_format_reference(self) -> bool {
+        self.0.namespace() == NODE_LIST_FORMAT_EPOCH_NAMESPACE
+            || self.0.namespace() == NODE_LIST_FORMAT_SURVIVOR_NAMESPACE
+    }
+
     /// Creates a test-only epoch id without going through a node arena.
     #[cfg(any(test, feature = "testing"))]
     #[must_use]
     pub const fn testing_epoch(start: u32, len: u32) -> Self {
-        Self::new_epoch(start, len)
+        Self::format_reference(ArenaRef::Epoch, start, len)
     }
 
     /// Creates a test-only survivor id without going through a survivor arena.
@@ -167,41 +236,64 @@ impl NodeListId {
 
     #[must_use]
     pub const fn arena(self) -> ArenaRef {
-        if self.0 & NODE_LIST_SURVIVOR_BIT == 0 {
+        if self.0.namespace() != NODE_LIST_SURVIVOR_NAMESPACE
+            && self.0.namespace() != NODE_LIST_FORMAT_SURVIVOR_NAMESPACE
+        {
             ArenaRef::Epoch
         } else {
             ArenaRef::Survivor(SurvivorRootId::new(
-                ((self.0 >> 43) & ((1 << 20) - 1)) as u32,
+                ((self.reserved_word() >> 43) & ((1 << 20) - 1)) as u32,
             ))
         }
     }
 
     #[must_use]
-    pub const fn start(self) -> u32 {
-        if self.0 & NODE_LIST_SURVIVOR_BIT == 0 {
-            self.0 as u32
+    pub(crate) const fn start(self) -> u32 {
+        assert!(
+            self.0.namespace() == NODE_LIST_SURVIVOR_NAMESPACE
+                || self.0.namespace() == NODE_LIST_FORMAT_EPOCH_NAMESPACE
+                || self.0.namespace() == NODE_LIST_FORMAT_SURVIVOR_NAMESPACE,
+            "live epoch node-list spans are arena-owned"
+        );
+        if self.0.namespace() == NODE_LIST_FORMAT_EPOCH_NAMESPACE {
+            return self.0.lower();
+        }
+        let word = self.reserved_word();
+        if word & NODE_LIST_SURVIVOR_BIT == 0 {
+            word as u32
         } else {
-            ((self.0 >> 22) & (NODE_LIST_SURVIVOR_START_MAX as u64)) as u32
+            ((word >> 22) & (NODE_LIST_SURVIVOR_START_MAX as u64)) as u32
         }
     }
 
     #[must_use]
-    pub const fn len(self) -> u32 {
-        if self.0 & NODE_LIST_SURVIVOR_BIT == 0 {
-            ((self.0 >> 32) & (NODE_LIST_EPOCH_LEN_MAX as u64)) as u32
-        } else {
-            (self.0 & (NODE_LIST_SURVIVOR_LEN_MAX as u64)) as u32
+    pub(crate) const fn len(self) -> u32 {
+        assert!(
+            self.0.namespace() == NODE_LIST_SURVIVOR_NAMESPACE
+                || self.0.namespace() == NODE_LIST_FORMAT_EPOCH_NAMESPACE
+                || self.0.namespace() == NODE_LIST_FORMAT_SURVIVOR_NAMESPACE,
+            "live epoch node-list spans are arena-owned"
+        );
+        if self.0.namespace() == NODE_LIST_FORMAT_EPOCH_NAMESPACE {
+            return self.0.upper() - 1;
         }
-    }
-
-    #[must_use]
-    pub const fn is_empty(self) -> bool {
-        self.len() == 0
+        let word = self.reserved_word();
+        if word & NODE_LIST_SURVIVOR_BIT == 0 {
+            ((word >> 32) & (NODE_LIST_EPOCH_LEN_MAX as u64)) as u32
+        } else {
+            (word & (NODE_LIST_SURVIVOR_LEN_MAX as u64)) as u32
+        }
     }
 
     pub(crate) const fn encode_box_word(value: Option<Self>) -> u64 {
         match value {
-            Some(id) => id.0,
+            Some(id) => {
+                assert!(
+                    id.0.namespace() == NODE_LIST_SURVIVOR_NAMESPACE,
+                    "box words require survivor node-list handles"
+                );
+                id.reserved_word()
+            }
             None => NODE_LIST_NONE_WORD,
         }
     }
@@ -211,12 +303,49 @@ impl NodeListId {
             None
         } else {
             assert!(
-                word & NODE_LIST_SURVIVOR_BIT == 0
-                    || ((word >> 43) & ((1 << 20) - 1)) <= NODE_LIST_SURVIVOR_ROOT_MAX as u64,
+                word & NODE_LIST_SURVIVOR_BIT != 0,
+                "box word is not a survivor handle"
+            );
+            assert!(
+                ((word >> 43) & ((1 << 20) - 1)) <= NODE_LIST_SURVIVOR_ROOT_MAX as u64,
                 "box word contains reserved survivor root id"
             );
-            Some(Self(word))
+            Some(Self::from_reserved_word(NODE_LIST_SURVIVOR_NAMESPACE, word))
         }
+    }
+}
+
+impl serde::Serialize for NodeListId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        if !self.is_format_reference() {
+            return Err(serde::ser::Error::custom(
+                "live node-list handles are not serializable",
+            ));
+        }
+        let (tag, root) = match self.arena() {
+            ArenaRef::Epoch => (0_u8, 0),
+            ArenaRef::Survivor(root) => (1, root.raw()),
+        };
+        (tag, root, self.start(), self.len()).serialize(serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for NodeListId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let (tag, root, start, len) =
+            <(u8, u32, u32, u32) as serde::Deserialize>::deserialize(deserializer)?;
+        let arena = match tag {
+            0 => ArenaRef::Epoch,
+            1 => ArenaRef::Survivor(SurvivorRootId::new(root)),
+            _ => return Err(serde::de::Error::custom("unknown node-list arena tag")),
+        };
+        Ok(Self::format_reference(arena, start, len))
     }
 }
 

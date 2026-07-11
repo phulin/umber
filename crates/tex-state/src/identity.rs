@@ -10,15 +10,12 @@
 //! Durable formats serialize semantic DTO references and reconstruct fresh
 //! live identities through the aggregate store facade.
 
-// TODO(umber2-dpc.10, umber2-dpc.29): remove this allowance as the individual
-// rollback-truncated stores adopt the common substrate.
-#![allow(dead_code)]
-
 use core::num::{NonZeroU32, NonZeroU64};
 use std::hash::BuildHasher;
 
 const BUILTIN_NAMESPACE: NonZeroU64 = NonZeroU64::MIN;
 const FIRST_GENERATION: NonZeroU32 = NonZeroU32::MIN;
+const RESERVED_NAMESPACE_MAX: u64 = 255;
 
 /// A compact runtime identity embedded by a typed live-store handle.
 ///
@@ -49,6 +46,38 @@ impl HandleIdentity {
         self.slot
     }
 
+    /// Creates an internal tagged payload in a reserved namespace.
+    ///
+    /// Reserved identities are for non-timeline representations such as
+    /// survivor handles and detached format DTO references. They never enter
+    /// an `IdentityAllocator` tag table.
+    pub(crate) const fn reserved(namespace: u64, upper: NonZeroU32, lower: u32) -> Self {
+        assert!(
+            namespace > BUILTIN_NAMESPACE.get() && namespace <= RESERVED_NAMESPACE_MAX,
+            "reserved identity namespace is out of range"
+        );
+        Self {
+            namespace: match NonZeroU64::new(namespace) {
+                Some(value) => value,
+                None => panic!("reserved identity namespace must be nonzero"),
+            },
+            generation: upper,
+            slot: lower,
+        }
+    }
+
+    pub(crate) const fn namespace(self) -> u64 {
+        self.namespace.get()
+    }
+
+    pub(crate) const fn upper(self) -> u32 {
+        self.generation.get()
+    }
+
+    pub(crate) const fn lower(self) -> u32 {
+        self.slot
+    }
+
     const fn tag(self) -> AllocationTag {
         AllocationTag {
             namespace: self.namespace,
@@ -62,6 +91,12 @@ impl HandleIdentity {
 pub(crate) struct IdentityMark {
     len: usize,
     frontier: Option<AllocationTag>,
+}
+
+impl IdentityMark {
+    pub(crate) const fn len(self) -> usize {
+        self.len
+    }
 }
 
 /// A bounded failure that never permits identity wrap or history revival.
@@ -198,7 +233,7 @@ fn fresh_namespace() -> NonZeroU64 {
         let state = std::collections::hash_map::RandomState::new();
         let raw = state.hash_one(0x6964_656e_7469_7479_u64);
         if let Some(namespace) = NonZeroU64::new(raw)
-            && namespace != BUILTIN_NAMESPACE
+            && namespace.get() > RESERVED_NAMESPACE_MAX
         {
             return namespace;
         }

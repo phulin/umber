@@ -479,17 +479,18 @@ impl<'a> PromotionCopy<'a> {
                 self.survivor.get(id)
             }
         };
+        let len = u32_len(nodes.len(), "promoted node list exceeds u32 entries");
         let start = u32_len(self.storage.len(), "promoted node root exceeds u32 entries");
-        let remapped = NodeListId::new_survivor(self.root, start, id.len());
+        let remapped = NodeListId::new_survivor(self.root, start, len);
         self.remapped.insert(id, remapped);
         #[cfg(feature = "node-stats")]
         let pending_before = self.pending.len();
         let appended = self.storage.append_compact(nodes, &mut self.pending);
-        assert_eq!(appended, (start, id.len()));
+        assert_eq!(appended, (start, len));
         #[cfg(feature = "node-stats")]
         {
             let child_patches = self.pending.len() - pending_before;
-            measurement::SOURCE_WORDS.fetch_add(u64::from(id.len()), Ordering::Relaxed);
+            measurement::SOURCE_WORDS.fetch_add(u64::from(len), Ordering::Relaxed);
             measurement::CHILD_BEARING_NODES.fetch_add(child_patches as u64, Ordering::Relaxed);
             measurement::REMAP_ENTRIES.fetch_add(1, Ordering::Relaxed);
             measurement::PENDING_ENTRIES.fetch_add(child_patches as u64, Ordering::Relaxed);

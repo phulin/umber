@@ -1,4 +1,5 @@
 use super::*;
+use crate::ids::ArenaRef;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug)]
@@ -287,10 +288,11 @@ impl StoreFormat {
                 && let Some(old) = NodeListId::decode_box_word(word)
             {
                 let id = node_ids
-                    .get(&FormatListKey::from_id(old))
+                    .get(&FormatListKey::from_reference(old))
                     .copied()
                     .ok_or(StoreFormatError::Invalid("missing box node list"))?;
-                word = NodeListId::encode_box_word(Some(id));
+                let promoted = stores.prepare_box_value(id);
+                word = NodeListId::encode_box_word(Some(promoted));
             }
             stores.env.restore_raw(cell, word);
         }
@@ -299,15 +301,44 @@ impl StoreFormat {
 }
 
 impl FormatListKey {
-    fn from_id(id: NodeListId) -> Self {
+    fn capture(stores: &Stores, id: NodeListId) -> Self {
+        let (start, len) = match id.arena() {
+            crate::ids::ArenaRef::Epoch => {
+                let span = stores
+                    .nodes
+                    .span(id)
+                    .expect("captured epoch node-list id must be live");
+                (span.start, span.len)
+            }
+            crate::ids::ArenaRef::Survivor(_) => (id.start(), id.len()),
+        };
         Self {
             survivor_root: match id.arena() {
                 crate::ids::ArenaRef::Epoch => None,
                 crate::ids::ArenaRef::Survivor(root) => Some(root.raw()),
             },
+            start,
+            len,
+        }
+    }
+
+    fn from_reference(id: NodeListId) -> Self {
+        assert!(id.is_format_reference() || matches!(id.arena(), ArenaRef::Survivor(_)));
+        Self {
+            survivor_root: match id.arena() {
+                ArenaRef::Epoch => None,
+                ArenaRef::Survivor(root) => Some(root.raw()),
+            },
             start: id.start(),
             len: id.len(),
         }
+    }
+
+    fn reference(self) -> NodeListId {
+        let arena = self.survivor_root.map_or(ArenaRef::Epoch, |root| {
+            ArenaRef::Survivor(crate::ids::SurvivorRootId::new(root))
+        });
+        NodeListId::format_reference(arena, self.start, self.len)
     }
 }
 
@@ -324,7 +355,7 @@ fn capture_node_list(
     if !visiting.insert(id) {
         return Err(StoreFormatError::Invalid("cyclic node-list graph"));
     }
-    let nodes = stores.nodes(id).to_vec();
+    let mut nodes = stores.nodes(id).to_vec();
     for node in &nodes {
         for child in node_child_ids(node) {
             capture_node_list(stores, child, seen, visiting, out)?;
@@ -332,8 +363,11 @@ fn capture_node_list(
     }
     visiting.remove(&id);
     seen.insert(id);
+    for node in &mut nodes {
+        detach_node_handles(stores, node);
+    }
     out.push(FormatNodeList {
-        key: FormatListKey::from_id(id),
+        key: FormatListKey::capture(stores, id),
         nodes,
     });
     Ok(())
@@ -382,13 +416,62 @@ fn math_field_child(field: &crate::math::MathField, out: &mut Vec<NodeListId>) {
     }
 }
 
+fn detach_node_handles(stores: &Stores, node: &mut Node) {
+    let detach = |id: &mut NodeListId| {
+        *id = FormatListKey::capture(stores, *id).reference();
+    };
+    match node {
+        Node::HList(box_node) | Node::VList(box_node) => detach(&mut box_node.children),
+        Node::Glue {
+            leader:
+                Some(
+                    crate::node::LeaderPayload::HList(box_node)
+                    | crate::node::LeaderPayload::VList(box_node),
+                ),
+            ..
+        } => detach(&mut box_node.children),
+        Node::Unset(unset) => detach(&mut unset.children),
+        Node::Disc {
+            pre, post, replace, ..
+        } => {
+            detach(pre);
+            detach(post);
+            detach(replace);
+        }
+        Node::Ins { content, .. } | Node::Adjust(content) => detach(content),
+        Node::MathNoad(noad) => {
+            detach_math_field(&mut noad.nucleus, &detach);
+            detach_math_field(&mut noad.subscript, &detach);
+            detach_math_field(&mut noad.superscript, &detach);
+        }
+        Node::FractionNoad(fraction) => {
+            detach(&mut fraction.numerator);
+            detach(&mut fraction.denominator);
+        }
+        Node::MathChoice(choice) => {
+            detach(&mut choice.display);
+            detach(&mut choice.text);
+            detach(&mut choice.script);
+            detach(&mut choice.script_script);
+        }
+        Node::MathList(list) => detach(&mut list.content),
+        _ => {}
+    }
+}
+
+fn detach_math_field(field: &mut crate::math::MathField, detach: &impl Fn(&mut NodeListId)) {
+    if let crate::math::MathField::SubBox(id) | crate::math::MathField::SubMlist(id) = field {
+        detach(id);
+    }
+}
+
 fn remap_node(
     mut node: Node,
     ids: &std::collections::BTreeMap<FormatListKey, NodeListId>,
 ) -> Result<Node, StoreFormatError> {
     let remap = |id: &mut NodeListId| -> Result<(), StoreFormatError> {
         *id = ids
-            .get(&FormatListKey::from_id(*id))
+            .get(&FormatListKey::from_reference(*id))
             .copied()
             .ok_or(StoreFormatError::Invalid("node child precedes dependency"))?;
         Ok(())
@@ -439,7 +522,7 @@ fn remap_math_field(
 ) -> Result<(), StoreFormatError> {
     if let crate::math::MathField::SubBox(id) | crate::math::MathField::SubMlist(id) = field {
         *id = ids
-            .get(&FormatListKey::from_id(*id))
+            .get(&FormatListKey::from_reference(*id))
             .copied()
             .ok_or(StoreFormatError::Invalid("math child precedes dependency"))?;
     }
