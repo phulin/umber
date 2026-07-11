@@ -332,6 +332,7 @@ pub(crate) fn report_dimension_diagnostic(stores: &mut Universe, diagnostic: Dim
         }
         DimensionDiagnostic::MissingNumber
         | DimensionDiagnostic::IllegalUnit { .. }
+        | DimensionDiagnostic::IncompatibleGlueUnits
         | DimensionDiagnostic::TooLarge
         | DimensionDiagnostic::IncompatibleMagnification { .. } => {
             write_diagnostic(stores, &format!("\n! {diagnostic}.\n"));

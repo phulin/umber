@@ -169,11 +169,12 @@ where
     })?;
     let token = tex_expand::semantic_token(traced);
     let Token::Cs(symbol) = token else {
-        return Err(ExecError::ExpectedControlSequence {
-            context: "font selector",
-            token,
-            origin: traced.origin(),
-        });
+        push_traced_tokens(input, stores, [traced]);
+        stores.world_mut().write_text(
+            tex_state::PrintSink::TerminalAndLog,
+            "\n! Missing font identifier.\nI was looking for a control sequence whose\ncurrent meaning has been defined by \\font.\n",
+        );
+        return Ok(tex_state::font::NULL_FONT);
     };
     match stores.meaning(symbol) {
         Meaning::Font(id) => Ok(id),

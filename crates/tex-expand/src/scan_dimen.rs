@@ -170,6 +170,7 @@ impl ScannedDimen {
 pub enum DimensionDiagnostic {
     MissingNumber,
     IllegalUnit { inserted: InsertedUnit },
+    IncompatibleGlueUnits,
     TooLarge,
     IllegalMagnification { attempted: i32 },
     IncompatibleMagnification { attempted: i32, retained: i32 },
@@ -191,6 +192,7 @@ impl fmt::Display for DimensionDiagnostic {
             Self::IllegalUnit {
                 inserted: InsertedUnit::Mu,
             } => f.write_str("Illegal unit of measure (mu inserted)"),
+            Self::IncompatibleGlueUnits => f.write_str("Incompatible glue units"),
             Self::TooLarge => f.write_str("Dimension too large"),
             Self::IllegalMagnification { .. } => {
                 f.write_str("Illegal magnification has been changed to 1000")
@@ -684,17 +686,32 @@ where
             let glue = stores.glue_param(GlueParam::new(index));
             return Ok(ScannedDimen::new(stores.glue(glue).width));
         }
-        Meaning::MuskipRegister(index) if options.require_mu_unit => {
+        Meaning::MuskipRegister(index) => {
             consume_optional_space(input, stores, recorder, hooks, expander)?;
-            return Ok(ScannedDimen::new(stores.glue(stores.muskip(index)).width));
+            let width = stores.glue(stores.muskip(index)).width;
+            return Ok(if options.require_mu_unit {
+                ScannedDimen::new(width)
+            } else {
+                ScannedDimen::with_diagnostic(
+                    width,
+                    DimensionDiagnostic::IncompatibleGlueUnits,
+                    token.origin(),
+                )
+            });
         }
-        Meaning::MuGlueParam(index) if options.require_mu_unit => {
+        Meaning::MuGlueParam(index) => {
             consume_optional_space(input, stores, recorder, hooks, expander)?;
             let glue = stores.glue_param(GlueParam::new(index));
-            return Ok(ScannedDimen::new(stores.glue(glue).width));
-        }
-        Meaning::MuskipRegister(_) | Meaning::MuGlueParam(_) => {
-            return Err(ScanDimenError::IncompatibleGlueUnits { context: token });
+            let width = stores.glue(glue).width;
+            return Ok(if options.require_mu_unit {
+                ScannedDimen::new(width)
+            } else {
+                ScannedDimen::with_diagnostic(
+                    width,
+                    DimensionDiagnostic::IncompatibleGlueUnits,
+                    token.origin(),
+                )
+            });
         }
         Meaning::PageDimension(dimension) => {
             consume_optional_space(input, stores, recorder, hooks, expander)?;
@@ -712,11 +729,17 @@ where
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Muskip) => {
             let index = scan_register_index(input, stores, recorder, hooks, expander, token)?;
-            if options.require_mu_unit {
-                consume_optional_space(input, stores, recorder, hooks, expander)?;
-                return Ok(ScannedDimen::new(stores.glue(stores.muskip(index)).width));
-            }
-            return Err(ScanDimenError::IncompatibleGlueUnits { context: token });
+            consume_optional_space(input, stores, recorder, hooks, expander)?;
+            let width = stores.glue(stores.muskip(index)).width;
+            return Ok(if options.require_mu_unit {
+                ScannedDimen::new(width)
+            } else {
+                ScannedDimen::with_diagnostic(
+                    width,
+                    DimensionDiagnostic::IncompatibleGlueUnits,
+                    token.origin(),
+                )
+            });
         }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::Wd
@@ -910,22 +933,13 @@ where
                 let index = scan_register_index(input, stores, recorder, hooks, expander, first)?;
                 Some(stores.glue(stores.skip(index)).width)
             }
-            Meaning::MuskipRegister(index) if options.require_mu_unit => {
-                Some(stores.glue(stores.muskip(index)).width)
-            }
-            Meaning::MuGlueParam(index) if options.require_mu_unit => {
+            Meaning::MuskipRegister(index) => Some(stores.glue(stores.muskip(index)).width),
+            Meaning::MuGlueParam(index) => {
                 Some(stores.glue(stores.glue_param(GlueParam::new(index))).width)
             }
-            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Muskip)
-                if options.require_mu_unit =>
-            {
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Muskip) => {
                 let index = scan_register_index(input, stores, recorder, hooks, expander, first)?;
                 Some(stores.glue(stores.muskip(index)).width)
-            }
-            Meaning::MuskipRegister(_)
-            | Meaning::MuGlueParam(_)
-            | Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Muskip) => {
-                return Err(ScanDimenError::IncompatibleGlueUnits { context: first });
             }
             _ => None,
         };

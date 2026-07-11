@@ -117,13 +117,17 @@ where
 }
 
 fn append_indent_box(nest: &mut ModeNest, stores: &mut Universe) -> Result<(), ExecError> {
+    nest.current_list_mut().push(make_indent_box(stores));
+    Ok(())
+}
+
+pub(crate) fn make_indent_box(stores: &mut Universe) -> Node {
     let empty = stores.freeze_node_list(&[]);
     let par_indent = stores.dimen_param(DimenParam::PAR_INDENT);
     let mut node = hpack_with_overfull_rule(stores, empty, PackSpec::Exactly(par_indent));
     node.height = Scaled::from_raw(0);
     node.depth = Scaled::from_raw(0);
-    nest.current_list_mut().push(Node::HList(node));
-    Ok(())
+    Node::HList(node)
 }
 
 pub(crate) fn end_paragraph(nest: &mut ModeNest, stores: &mut Universe) -> Result<(), ExecError> {
@@ -427,7 +431,13 @@ where
     skip_optional_equals_x(input, stores, hooks)?;
     let lines = scan_i32(input, stores, hooks, context)?;
     if lines < 0 {
-        return Err(ExecError::BadPrevGraf(lines));
+        // TeX.web §1247 reports the invalid value and leaves the enclosing
+        // vertical list's prev_graf unchanged.
+        stores.world_mut().write_text(
+            tex_state::PrintSink::TerminalAndLog,
+            &format!("\n! Bad \\prevgraf ({lines}).\nI allow only nonnegative values here.\n"),
+        );
+        return Ok(());
     }
     nest.set_enclosing_vertical_prev_graf(lines);
     Ok(())

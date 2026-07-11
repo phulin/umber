@@ -141,12 +141,12 @@ fn expandable_dispatch_table_covers_epic_opcode_families() {
 }
 
 #[test]
-fn invalid_conditional_relation_reports_offending_origin() {
+fn invalid_conditional_relation_assumes_equal_and_replays_offending_token() {
     let mut stores = Universe::new();
     let mut input = InputStack::new(MemoryInput::new("!"));
     let ifnum = stores.intern("ifnum");
     let context = TracedTokenWord::pack(Token::Cs(ifnum), OriginId::UNKNOWN);
-    let err = crate::conditionals::scan_conditional_relation_with_expander_and_hooks(
+    let relation = crate::conditionals::scan_conditional_relation_with_expander_and_hooks(
         &mut input,
         &mut stores,
         &mut NoopRecorder,
@@ -154,15 +154,20 @@ fn invalid_conditional_relation_reports_offending_origin() {
         &mut crate::NoInputExpandNext,
         context,
     )
-    .expect_err("relation scanner should reject non-relation token");
+    .expect("relation scanner should insert equality");
 
-    let primary = err.primary_origin();
-    let crate::ExpandError::InvalidConditionalRelation { context: token } = err else {
-        panic!("expected invalid relation error");
+    assert_eq!(relation, crate::conditionals::ConditionalRelation::Equal);
+    let token = input
+        .next_traced_token(&mut stores)
+        .expect("read replayed token")
+        .expect("replayed relation token");
+    assert_eq!(crate::semantic_token(token), char_token('!'));
+    let OriginRecord::Inserted(inserted) = stores.origin(token.origin()) else {
+        panic!("relation token should have unread provenance");
     };
-    assert_eq!(primary, Some(token.origin()));
+    assert_eq!(inserted.kind(), InsertedOriginKind::Unread);
     assert!(matches!(
-        stores.origin(token.origin()),
+        stores.origin(inserted.parent()),
         OriginRecord::Source(_) | OriginRecord::SourceSpan(_)
     ));
 }

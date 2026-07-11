@@ -155,11 +155,13 @@ fn fontdimen_growth_is_limited_to_most_recently_loaded_font() {
     let mut bad = InputStack::new(MemoryInput::new(
         "\\font\\b=cmtt10 \\fontdimen9\\a=2pt \\end",
     ));
-    let err = Executor::new()
+    Executor::new()
         .run(&mut bad, &mut stores)
-        .expect_err("older font cannot grow");
+        .expect("older font growth failure is recoverable");
 
-    assert!(err.to_string().contains("CannotGrow"));
+    let a = font_meaning(&stores, "a");
+    assert_eq!(stores.font_parameter(a, 9).raw(), 0);
+    assert!(terminal_effect_text(&stores).contains("has only"));
 }
 
 #[test]
@@ -248,7 +250,7 @@ fn math_family_font_selectors_are_grouping_aware() {
 #[test]
 fn math_family_assignment_recovers_bad_family_and_missing_font() {
     let mut stores = stores_with_fonts();
-    let mut input = InputStack::new(MemoryInput::new("\\textfont16=\\relax"));
+    let mut input = InputStack::new(MemoryInput::new("\\textfont16=\\relax \\textfont1=="));
 
     Executor::new()
         .run(&mut input, &mut stores)
@@ -256,6 +258,10 @@ fn math_family_assignment_recovers_bad_family_and_missing_font() {
 
     assert_eq!(
         stores.math_family_font(tex_state::math::MathFontSize::Text, 0),
+        tex_state::font::NULL_FONT
+    );
+    assert_eq!(
+        stores.math_family_font(tex_state::math::MathFontSize::Text, 1),
         tex_state::font::NULL_FONT
     );
     let output = terminal_effect_text(&stores);

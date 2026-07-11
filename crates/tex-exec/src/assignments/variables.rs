@@ -109,7 +109,7 @@ where
         }
         Variable::FontDimen(font, number) => {
             let value = scan_scaled(input, stores, hooks, context)?;
-            stores.set_font_dimen(font, number, value, global)?;
+            set_font_dimen_recovering(stores, font, number, value, global)?;
         }
         Variable::GlueParam(index) => {
             let value = scan_glue_id(input, stores, hooks, false, context)?;
@@ -329,7 +329,7 @@ where
                 }
                 _ => unreachable!("caller restricts primitive"),
             };
-            stores.set_font_dimen(font, number, value, global)?;
+            set_font_dimen_recovering(stores, font, number, value, global)?;
         }
         Variable::GlueRegister(index) | Variable::GlueParam(index) => {
             let old = stores.glue(read_glue_variable(stores, target));
@@ -357,6 +357,29 @@ where
         }
     }
     Ok(())
+}
+
+fn set_font_dimen_recovering(
+    stores: &mut Universe,
+    font: tex_state::ids::FontId,
+    number: u16,
+    value: Scaled,
+    global: bool,
+) -> Result<(), ExecError> {
+    match stores.set_font_dimen(font, number, value, global) {
+        Ok(()) => Ok(()),
+        Err(tex_state::FontParameterError::CannotGrow { current_len, .. }) => {
+            let name = stores.font_name(font);
+            stores.world_mut().write_text(
+                tex_state::PrintSink::TerminalAndLog,
+                &format!(
+                    "\n! Font {name} has only {current_len} fontdimen parameters.\nTo increase the number of font parameters, you must\nuse \\fontdimen immediately after the \\font is loaded.\n"
+                ),
+            );
+            Ok(())
+        }
+        Err(error) => Err(error.into()),
+    }
 }
 
 pub(super) fn execute_code_table_assignment<S, H>(

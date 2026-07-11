@@ -283,19 +283,25 @@ fn coerces_primitive_skip_register_width_to_internal_dimension() {
 }
 
 #[test]
-fn rejects_muglue_register_as_an_incompatible_dimension() {
+fn coerces_muglue_register_width_with_incompatible_units_diagnostic() {
     let mut stores = Universe::new();
     let named_muskip = stores.intern("namedmuskip");
     stores.set_meaning(named_muskip, Meaning::MuskipRegister(42));
+    let glue = stores.intern_glue(GlueSpec {
+        width: Scaled::from_raw(42_000),
+        ..GlueSpec::ZERO
+    });
+    stores.set_muskip(42, glue);
     let mut input = InputStack::new(MemoryInput::new("\\namedmuskip"));
 
-    let error =
-        scan_dimen(&mut input, &mut stores, context()).expect_err("muglue is not a dimension");
+    let scanned = scan_dimen(&mut input, &mut stores, context())
+        .expect("TeX assumes 1mu=1pt for mixed glue units");
 
-    assert!(matches!(
-        error,
-        super::ScanDimenError::IncompatibleGlueUnits { .. }
-    ));
+    assert_eq!(scanned.value().raw(), 42_000);
+    assert_eq!(
+        scanned.diagnostic(),
+        Some(super::DimensionDiagnostic::IncompatibleGlueUnits)
+    );
 }
 
 #[test]

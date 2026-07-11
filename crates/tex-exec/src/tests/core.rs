@@ -316,7 +316,7 @@ fn execution_error_capture_retains_macro_trace_after_frame_pop() {
 }
 
 #[test]
-fn extra_expandable_delivery_exposes_responsible_token_origin() {
+fn extra_endcsname_delivery_reports_and_continues() {
     let mut stores = Universe::new();
     install_expandable(&mut stores, "endcsname", ExpandablePrimitive::EndCsName);
     let endcsname = stores.symbol("endcsname").expect("endcsname");
@@ -324,17 +324,17 @@ fn extra_expandable_delivery_exposes_responsible_token_origin() {
     let mut input = InputStack::new(MemoryInput::new(""));
     let mut hooks = NoopExecHooks;
 
-    let err = dispatch_delivered_token(
+    let action = dispatch_delivered_token(
         &mut ModeNest::new(),
         TracedTokenWord::pack(Token::Cs(endcsname), origin),
         &mut input,
         &mut stores,
         &mut hooks,
     )
-    .expect_err("extra endcsname");
+    .expect("extra endcsname is recoverable");
 
-    assert_eq!(err.primary_origin(), Some(origin));
-    assert!(matches!(err, ExecError::ExtraEndCsName { origin: reported } if reported == origin));
+    assert_eq!(action, DispatchAction::Continue);
+    assert!(support::terminal_effect_text(&stores).contains("Extra \\endcsname"));
 }
 
 #[test]
@@ -429,6 +429,21 @@ fn main_control_aborts_nonlong_macro_argument_at_par_and_replays_par() {
 
     assert_eq!(stores.count(0), 7);
     assert!(support::terminal_effect_text(&stores).contains("Runaway argument"));
+}
+
+#[test]
+fn main_control_ignores_extra_conditional_terminator() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\else\\count0=7"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("extra conditional command is recoverable");
+
+    assert_eq!(stores.count(0), 7);
+    assert!(support::terminal_effect_text(&stores).contains("Extra \\else"));
 }
 
 #[test]
@@ -835,6 +850,21 @@ fn box_primitives_round_trip_through_registers() {
         panic!("current page should contain copied-out hbox");
     };
     assert_eq!(appended.width.raw(), 10 * tex_state::scaled::Scaled::UNITY);
+}
+
+#[test]
+fn box_scanner_inserts_missing_left_brace_and_replays_body_token() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\setbox0=\\hbox \\global\\count0=7}"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("box scanner inserts a missing opening brace");
+
+    assert_eq!(stores.count(0), 7);
+    assert!(stores.box_reg(0).is_some());
+    assert!(support::terminal_effect_text(&stores).contains("Missing { inserted"));
 }
 
 #[test]
@@ -1509,6 +1539,20 @@ fn vertical_infinite_skip_primitives_preserve_glue_orders() {
 }
 
 #[test]
+fn vertical_skip_in_hbox_closes_box_and_retries_in_outer_mode() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\setbox0=\\hbox{\\vfill}"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("restricted horizontal vskip uses off_save recovery");
+
+    assert!(stores.box_reg(0).is_some());
+    assert!(support::terminal_effect_text(&stores).contains("Missing } inserted"));
+}
+
+#[test]
 fn delete_last_outer_vertical_empty_matches_tex_error_asymmetry() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
@@ -1549,6 +1593,21 @@ fn new_paragraph_resets_prevgraf_before_tracking_finished_lines() {
 
     assert_eq!(macro_text(&stores, "pg"), "5");
     assert_eq!(executor.nest().enclosing_vertical_prev_graf(), 3);
+}
+
+#[test]
+fn negative_prevgraf_is_recoverable_and_leaves_value_unchanged() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\prevgraf=3\\prevgraf=-1"));
+    let mut executor = Executor::new();
+
+    executor
+        .run(&mut input, &mut stores)
+        .expect("negative prevgraf is recoverable");
+
+    assert_eq!(executor.nest().enclosing_vertical_prev_graf(), 3);
+    assert!(support::terminal_effect_text(&stores).contains("Bad \\prevgraf"));
 }
 
 #[test]
@@ -1969,6 +2028,38 @@ fn vsplit_reports_and_normalizes_infinite_shrink_glue() {
         .expect("split glue");
     assert_eq!(split_glue.shrink.raw(), tex_state::scaled::Scaled::UNITY);
     assert_eq!(split_glue.shrink_order, tex_state::glue::Order::Normal);
+}
+
+#[test]
+fn vsplit_recovers_a_missing_to_keyword() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\setbox0=\\vbox{}\\setbox1=\\vsplit0 0pt",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("vsplit inserts a missing to keyword");
+
+    assert!(support::terminal_effect_text(&stores).contains("Missing `to' inserted"));
+}
+
+#[test]
+fn vsplit_leaves_hbox_source_untouched_and_returns_void() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\setbox3=\\hbox{}\\setbox4=\\vsplit3 to 0pt",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("vsplit of hbox is recoverable");
+
+    assert!(stores.box_reg(3).is_some());
+    assert!(stores.box_reg(4).is_none());
+    assert!(support::terminal_effect_text(&stores).contains("vsplit needs a \\vbox"));
 }
 
 #[test]

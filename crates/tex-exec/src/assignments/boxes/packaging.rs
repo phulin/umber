@@ -8,7 +8,7 @@ use tex_state::{GroupKind, Universe};
 use tex_typeset::{PackDiagnostic, PackSpec};
 
 use crate::packing_params::{hpack, hpack_params, vpack, vpack_params, vtop};
-use crate::{ExecError, Mode, ModeNest, leave_group};
+use crate::{ExecError, Mode, ModeNest, leave_group, push_traced_tokens};
 
 use super::super::{
     flush_pending_hchars, has_catcode_meaning, next_non_space_traced_x, scan_optional_keyword_x,
@@ -169,9 +169,13 @@ where
         tex_expand::semantic_token(opener),
         Catcode::BeginGroup,
     ) {
-        return Err(ExecError::MissingToken {
-            context: "box group",
-        });
+        // TeX.web §403 `scan_left_brace` backs up the first body token and
+        // proceeds with an inserted opening brace.
+        push_traced_tokens(input, stores, [opener]);
+        stores.world_mut().write_text(
+            tex_state::PrintSink::TerminalAndLog,
+            "\n! Missing { inserted.\nA left brace was mandatory here, so I've put one in.\n",
+        );
     }
     stores.enter_group_with_kind(GroupKind::Simple);
     let mode = if kind == BoxKind::HBox {

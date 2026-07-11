@@ -56,7 +56,7 @@ use macros::*;
 use paragraph::*;
 pub(crate) use paragraph::{
     display_line_dimensions, end_paragraph, ensure_horizontal_for_character,
-    interrupt_paragraph_for_display, normal_paragraph,
+    interrupt_paragraph_for_display, make_indent_box, normal_paragraph,
 };
 pub use primitives::install_unexpandable_primitives;
 use scanning::*;
@@ -734,6 +734,33 @@ where
             | UnexpandablePrimitive::VSs
             | UnexpandablePrimitive::VFilNeg => {
                 reject_all_prefixes(prefixes)?;
+                if matches!(
+                    primitive,
+                    UnexpandablePrimitive::VSkip
+                        | UnexpandablePrimitive::VFil
+                        | UnexpandablePrimitive::VFill
+                        | UnexpandablePrimitive::VSs
+                        | UnexpandablePrimitive::VFilNeg
+                ) {
+                    match nest.current_mode() {
+                        crate::Mode::RestrictedHorizontal => {
+                            // TeX.web §1091 `head_for_vmode` invokes
+                            // off_save, which closes the hbox and retries the
+                            // vertical command in the enclosing mode.
+                            off_save_alignment(command.traced, input, stores);
+                            return Ok(CommandOutcome::continue_only());
+                        }
+                        crate::Mode::Math | crate::Mode::DisplayMath => {
+                            diagnostics::report_illegal_case(
+                                stores,
+                                command.token,
+                                nest.current_mode(),
+                            );
+                            return Ok(CommandOutcome::continue_only());
+                        }
+                        _ => {}
+                    }
+                }
                 if primitive == UnexpandablePrimitive::HSkip
                     && matches!(
                         nest.current_mode(),

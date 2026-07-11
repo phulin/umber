@@ -168,6 +168,26 @@ fn scans_internal_muskip_widths_as_mu_components() {
 }
 
 #[test]
+fn ordinary_glue_coerces_muskip_component_width_with_diagnostic() {
+    let mut stores = Universe::new();
+    let thin = stores.intern("thin");
+    stores.set_meaning(thin, Meaning::MuskipRegister(3));
+    let id = stores.intern_glue(GlueSpec {
+        width: Scaled::from_raw(2 * Scaled::UNITY),
+        ..GlueSpec::ZERO
+    });
+    stores.set_muskip(3, id);
+    let mut input = InputStack::new(MemoryInput::new("1pt plus \\thin"));
+
+    let scanned = scan_glue(&mut input, &mut stores, context()).expect("glue should scan");
+    assert_eq!(stores.glue(scanned.id()).stretch.raw(), 2 * Scaled::UNITY);
+    assert_eq!(
+        scanned.diagnostics().collect::<Vec<_>>(),
+        vec![crate::scan_dimen::DimensionDiagnostic::IncompatibleGlueUnits]
+    );
+}
+
+#[test]
 fn macro_expanding_to_penalty_recovers_zero_glue_and_replays_command() {
     let mut stores = Universe::new();
     let penalty = stores.intern("penalty");

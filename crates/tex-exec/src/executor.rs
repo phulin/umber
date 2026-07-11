@@ -216,6 +216,13 @@ where
                         );
                         continue;
                     }
+                    tex_expand::ExpandError::ExtraConditionalControl { name, .. } => {
+                        stores.world_mut().write_text(
+                            tex_state::PrintSink::TerminalAndLog,
+                            &format!("\n! Extra \\{name}.\nI'm ignoring this condition command.\n"),
+                        );
+                        continue;
+                    }
                     error => {
                         stores.set_input_summary(input.summary());
                         return Err(tex_expand::ExpandError::Captured {
@@ -233,6 +240,13 @@ where
                     stores.world_mut().write_text(
                         tex_state::PrintSink::TerminalAndLog,
                         &format!("\n! Undefined control sequence \\{name}.\n"),
+                    );
+                    continue;
+                }
+                Err(tex_expand::ExpandError::ExtraConditionalControl { name, .. }) => {
+                    stores.world_mut().write_text(
+                        tex_state::PrintSink::TerminalAndLog,
+                        &format!("\n! Extra \\{name}.\nI'm ignoring this condition command.\n"),
                     );
                     continue;
                 }

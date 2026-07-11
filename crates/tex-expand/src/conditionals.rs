@@ -657,7 +657,12 @@ where
         Token::Char { ch: '<', .. } => Ok(ConditionalRelation::Less),
         Token::Char { ch: '=', .. } => Ok(ConditionalRelation::Equal),
         Token::Char { ch: '>', .. } => Ok(ConditionalRelation::Greater),
-        _ => Err(ExpandError::InvalidConditionalRelation { context: token }),
+        _ => {
+            // TeX.web §500 uses `back_error`: the offending token is the
+            // first token of the right operand, and `=` is assumed.
+            push_inserted_token(input, stores, token, InsertedOriginKind::Unread);
+            Ok(ConditionalRelation::Equal)
+        }
     }
 }
 

@@ -132,6 +132,13 @@ where
             name: stores.resolve_cs_name(token),
             origin,
         }),
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::EndCsName) => {
+            stores.world_mut().write_text(
+                tex_state::PrintSink::TerminalAndLog,
+                "\n! Extra \\endcsname.\nI'm ignoring this control sequence.\n",
+            );
+            Ok(DispatchAction::Continue)
+        }
         Meaning::ExpandablePrimitive(primitive) => {
             dispatch_delivered_expandable(token, primitive, origin)
         }

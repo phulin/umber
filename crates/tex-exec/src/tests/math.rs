@@ -25,6 +25,50 @@ fn lastbox_in_math_reports_recovery_and_yields_no_node() {
 }
 
 #[test]
+fn indent_in_math_appends_an_ord_sub_box() {
+    let (stores, executor) = run_math_source(r"$\indent");
+    let nodes = math_nodes(&stores, &executor);
+
+    assert_eq!(nodes.len(), 1);
+    assert!(matches!(math_noad(&nodes[0]).nucleus, MathField::SubBox(_)));
+}
+
+#[test]
+fn text_accent_in_math_uses_mathaccent_semantics() {
+    let (stores, executor) = run_math_source(r"\chardef\x=65 $\accent\x a");
+    let nodes = math_nodes(&stores, &executor);
+
+    assert!(matches!(math_noad(&nodes[0]).kind, NoadKind::Accent { .. }));
+    assert!(terminal_effect_text(&stores).contains("Please use \\mathaccent"));
+}
+
+#[test]
+fn moveleft_in_math_is_ignored_without_consuming_lastbox() {
+    let (stores, executor) = run_math_source(r"$\moveleft\lastbox");
+
+    assert!(math_nodes(&stores, &executor).is_empty());
+    let output = terminal_effect_text(&stores);
+    assert!(output.contains("moveleft"));
+    assert!(output.contains("lastbox will be void"));
+}
+
+#[test]
+fn vertical_skip_in_math_inserts_math_shift_and_retries() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(r"$\vfill"));
+    let mut executor = Executor::new();
+
+    executor
+        .run(&mut input, &mut stores)
+        .expect("vfill exits math and retries vertically");
+
+    assert_eq!(executor.nest().current_mode(), Mode::Vertical);
+    assert!(terminal_effect_text(&stores).contains("Missing $ inserted"));
+}
+
+#[test]
 fn math_mode_builds_noads_styles_choices_and_mu_nodes() {
     let (stores, executor) = run_math_source(
         r"$a_b^c\mathbin+\mathop{x}\limits_y\overline{z}\mskip3mu\mkern2mu\nonscript\displaystyle\mathchoice{d}{t}{s}{u}",
@@ -184,13 +228,11 @@ fn semi_simple_math_aftergroup_replay_has_aftergroup_provenance() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        r"$\begingroup\aftergroup\endcsname\endgroup",
-    ));
+    let mut input = InputStack::new(MemoryInput::new(r"$\begingroup\aftergroup\input\endgroup"));
 
     let err = Executor::new()
         .run(&mut input, &mut stores)
-        .expect_err("replayed extra endcsname should fail");
+        .expect_err("replayed input without a file name should fail");
     let origin = err.primary_origin().expect("replayed token origin");
     let OriginRecord::Inserted(inserted) = stores.origin(origin) else {
         panic!("aftergroup replay should have inserted provenance");
@@ -247,7 +289,7 @@ fn math_shift_aftergroup_replay_has_inserted_provenance() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(r"$\aftergroup\endcsname$"));
+    let mut input = InputStack::new(MemoryInput::new(r"$\aftergroup\input$"));
 
     let err = Executor::new()
         .run(&mut input, &mut stores)
@@ -407,22 +449,22 @@ fn math_group_mismatch_reports_the_closing_token_origin() {
 
 #[test]
 fn inline_math_entry_lookahead_preserves_source_origin() {
-    assert_replayed_math_error_is_source_backed(r"$\endcsname");
+    assert_replayed_math_error_is_source_backed(r"$\noexpand\input");
 }
 
 #[test]
 fn mismatched_display_closer_preserves_following_source_origin() {
-    assert_replayed_math_error_is_source_backed(r"\noindent$$a$\endcsname");
+    assert_replayed_math_error_is_source_backed(r"\noindent$$a$\noexpand\input");
 }
 
 #[test]
 fn post_display_replay_preserves_following_source_origin() {
-    assert_replayed_math_error_is_source_backed(r"\noindent$$a$$\endcsname");
+    assert_replayed_math_error_is_source_backed(r"\noindent$$a$$\noexpand\input");
 }
 
 #[test]
 fn post_display_alignment_replay_preserves_following_source_origin() {
-    assert_replayed_math_error_is_source_backed(r"\noindent$$\halign{#\cr a\cr}$$\endcsname");
+    assert_replayed_math_error_is_source_backed(r"\noindent$$\halign{#\cr a\cr}$$\noexpand\input");
 }
 
 #[test]
@@ -1113,22 +1155,25 @@ fn assert_replayed_math_error_is_source_backed(source: &str) {
 
     let err = Executor::new()
         .run(&mut input, &mut stores)
-        .expect_err("replayed extra endcsname should fail");
+        .expect_err("suppressed expandable token should fail at dispatch");
     assert!(
-        matches!(&err, ExecError::ExtraEndCsName { .. }),
+        matches!(&err, ExecError::UnexpectedExpandableDelivery { .. }),
         "unexpected replay error: {err:?}"
     );
 
     let origin = err.primary_origin().expect("error should retain an origin");
+    let origin = match stores.origin(origin) {
+        OriginRecord::Inserted(inserted) if inserted.kind() == InsertedOriginKind::NoExpand => {
+            inserted.parent()
+        }
+        _ => origin,
+    };
     let OriginRecord::SourceSpan(source_span) = stores.origin(origin) else {
         panic!("expected source span, got {:?}", stores.origin(origin));
     };
-    let expected_offset = u64::try_from(
-        source
-            .find(r"\endcsname")
-            .expect("sentinel token in fixture"),
-    )
-    .expect("fixture offset should fit in u64");
+    let expected_offset =
+        u64::try_from(source.rfind(r"\input").expect("sentinel token in fixture"))
+            .expect("fixture offset should fit in u64");
     assert_eq!(
         source_span.lo(),
         stores
@@ -1137,7 +1182,7 @@ fn assert_replayed_math_error_is_source_backed(source: &str) {
     );
 
     let rendered = err.format_with_provenance(&stores);
-    assert!(rendered.contains("endcsname"));
+    assert!(rendered.contains("expandable primitive"));
     assert!(rendered.contains(&format!("{PATH}:1:")));
     assert!(rendered.contains(&format!("  1 | {source}")));
     assert!(rendered.contains("^"));

@@ -28,9 +28,13 @@ where
 {
     let index = scan_register_index(input, stores, hooks, context)?;
     if !scan_optional_keyword_x(input, stores, hooks, "to")? {
-        return Err(ExecError::MissingToken {
-            context: "\\vsplit to",
-        });
+        // TeX.web §1082 inserts the keyword conceptually; keyword scanning
+        // has already backed up the first nonmatching token, which is the
+        // dimension's first token.
+        stores.world_mut().write_text(
+            tex_state::PrintSink::TerminalAndLog,
+            "\n! Missing `to' inserted.\nI'm working on `\\vsplit<box number> to <dimen>';\nwill look for the <dimen> next.\n",
+        );
     }
     let height = scan_scaled(input, stores, hooks, context)?;
     split_vbox_register(stores, index, height)
@@ -54,7 +58,13 @@ fn split_vbox_register(
     };
     let Node::VList(source_box) = source_node else {
         clear_split_marks(stores);
-        return Err(ExecError::VSplitNeedsVBox);
+        // TeX.web §977 leaves an hbox source untouched and returns a void
+        // split result after the recoverable diagnostic.
+        stores.world_mut().write_text(
+            tex_state::PrintSink::TerminalAndLog,
+            "\n! \\vsplit needs a \\vbox.\nThe box you are trying to split is an \\hbox.\nI can't split such a box, so I'll leave it alone.\n",
+        );
+        return Ok(None);
     };
 
     let children = stores.clone_node_list_to_epoch(source_box.children);

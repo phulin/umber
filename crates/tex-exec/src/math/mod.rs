@@ -381,7 +381,13 @@ where
             ExpandablePrimitive::Fi | ExpandablePrimitive::Else | ExpandablePrimitive::Or => {
                 Err(ExecError::ExtraConditionalControl { primitive, origin })
             }
-            ExpandablePrimitive::EndCsName => Err(ExecError::ExtraEndCsName { origin }),
+            ExpandablePrimitive::EndCsName => {
+                stores.world_mut().write_text(
+                    tex_state::PrintSink::TerminalAndLog,
+                    "\n! Extra \\endcsname.\nI'm ignoring this control sequence.\n",
+                );
+                Ok(DispatchAction::Continue)
+            }
             _ => Err(ExecError::UnexpectedExpandableDelivery {
                 token,
                 primitive,
@@ -431,6 +437,35 @@ where
         }
         UnexpandablePrimitive::SpaceFactor => {
             crate::diagnostics::report_illegal_case(stores, token, nest.current_mode());
+            Ok(DispatchAction::Continue)
+        }
+        UnexpandablePrimitive::Indent | UnexpandablePrimitive::NoIndent => {
+            if primitive == UnexpandablePrimitive::Indent {
+                let box_node = assignments::make_indent_box(stores);
+                let list = stores.freeze_node_list(&[box_node]);
+                append_noad(
+                    nest,
+                    NoadKind::Normal(NoadClass::Ord),
+                    MathField::SubBox(list),
+                );
+            }
+            Ok(DispatchAction::Continue)
+        }
+        UnexpandablePrimitive::MoveLeft | UnexpandablePrimitive::MoveRight => {
+            // These shifts are vertical-list commands. TeX's illegal-case
+            // dispatch in math mode ignores the command without scanning its
+            // dimension/box operands.
+            crate::diagnostics::report_illegal_case(stores, token, nest.current_mode());
+            Ok(DispatchAction::Continue)
+        }
+        UnexpandablePrimitive::VSkip
+        | UnexpandablePrimitive::VFil
+        | UnexpandablePrimitive::VFill
+        | UnexpandablePrimitive::VSs
+        | UnexpandablePrimitive::VFilNeg => {
+            // TeX.web §1044 classifies mmode+vskip as a missing-math-shift
+            // case: close math first, then rescan the vertical command.
+            insert_dollar_sign(traced, input, stores);
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::MathChar => {
@@ -502,7 +537,13 @@ where
             append_noad(nest, NoadKind::Radical { delimiter }, field);
             Ok(DispatchAction::Continue)
         }
-        UnexpandablePrimitive::MathAccent => {
+        UnexpandablePrimitive::Accent | UnexpandablePrimitive::MathAccent => {
+            if primitive == UnexpandablePrimitive::Accent {
+                stores.world_mut().write_text(
+                    tex_state::PrintSink::TerminalAndLog,
+                    "\n! Please use \\mathaccent for accents in math mode.\nI'm treating this as \\mathaccent.\n",
+                );
+            }
             let accent =
                 math_char_from_code(scan_math_char_code(input, stores, hooks, traced)?, stores)?;
             let field = scan_math_field(nest, input, stores, recorder, hooks)?;
