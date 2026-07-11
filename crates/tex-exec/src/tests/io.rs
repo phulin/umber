@@ -745,6 +745,31 @@ fn source_special_lowers_to_anchored_dvi_xxx_payload() {
 }
 
 #[test]
+fn source_special_preserves_tex_character_bytes() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\setbox0=\\hbox{\\special{\u{80}}}\\shipout\\box0",
+    ));
+
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("shipout succeeds");
+    let bytes = stores
+        .world()
+        .read_artifact(stats.shipped_artifacts[0])
+        .expect("read artifact")
+        .expect("artifact stored");
+    let artifact = PageArtifact::from_bytes(&bytes).expect("artifact parses");
+
+    assert!(matches!(
+        artifact.effects.as_slice(),
+        [PageEffect::Special { payload, .. }] if payload == &[0x80]
+    ));
+}
+
+#[test]
 #[allow(clippy::disallowed_methods)] // host-side committed parity fixture.
 fn leader_payload_suppresses_deferred_write_but_keeps_specials() {
     let source = read_io_source("leader_payload_effects");

@@ -151,7 +151,7 @@ where
     H: ExpansionHooks<S>,
 {
     let tokens = scan_balanced_expanded_text(input, stores, hooks, context)?;
-    let payload = tokens_text(stores, &tokens).into_bytes();
+    let payload = tex_byte_text(&tokens_text(stores, &tokens));
     append_node_to_current_list(
         nest,
         stores,
@@ -160,6 +160,19 @@ where
             payload,
         }),
     )
+}
+
+fn tex_byte_text(text: &str) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(text.len());
+    for ch in text.chars() {
+        if let Ok(byte) = u8::try_from(ch as u32) {
+            bytes.push(byte);
+        } else {
+            let mut encoded = [0; 4];
+            bytes.extend_from_slice(ch.encode_utf8(&mut encoded).as_bytes());
+        }
+    }
+    bytes
 }
 
 fn expand_write_tokens<R>(
