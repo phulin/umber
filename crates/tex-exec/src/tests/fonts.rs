@@ -1,5 +1,6 @@
 use super::support::*;
 use super::*;
+use tex_state::scaled::Scaled;
 
 struct RedirectedFontHooks;
 
@@ -162,6 +163,27 @@ fn fontdimen_growth_is_limited_to_most_recently_loaded_font() {
     let a = font_meaning(&stores, "a");
     assert_eq!(stores.font_parameter(a, 9).raw(), 0);
     assert!(terminal_effect_text(&stores).contains("has only"));
+}
+
+#[test]
+fn short_tfm_keeps_fontdimen_seven_writable_after_a_later_font_load() {
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\font\\a=cmmi10 \\font\\b=cmr10 \\fontdimen7\\a=2pt \\message{p7=\\the\\fontdimen7\\a}\\end",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("guaranteed fontdimens remain assignable");
+
+    let a = font_meaning(&stores, "a");
+    assert_eq!(stores.font_parameter_count(a), 7);
+    assert_eq!(
+        stores.font_parameter(a, 7),
+        Scaled::from_raw(2 * Scaled::UNITY)
+    );
+    assert!(terminal_effect_text(&stores).contains("p7=2.0pt"));
 }
 
 #[test]
