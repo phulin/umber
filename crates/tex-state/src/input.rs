@@ -1,6 +1,7 @@
 //! Snapshot-ready input stack summary shared by the lexer and `Universe`.
 
 use crate::ids::{OriginListId, TokenListId};
+use crate::source_map::RegisteredSource;
 use crate::token::{Token, TracedTokenWord};
 use crate::world::InputRecordId;
 use std::hash::{Hash, Hasher};
@@ -562,7 +563,8 @@ fn hash_macro_arguments_semantic<H: Hasher>(arguments: MacroArguments, state: &m
 /// Snapshot summary for one source frame.
 ///
 /// `source_id` and the durable `World` input-record reopen key belong to the
-/// surrounding `InputFrameSummary`; this value stores lexer-local state only.
+/// surrounding `InputFrameSummary`; this value also retains the opaque source
+/// registration capability needed to reject a recycled `SourceId` on resume.
 #[derive(Clone, Debug)]
 pub struct SourceFrameSummary {
     buffer_offset: usize,
@@ -579,6 +581,7 @@ pub struct SourceFrameSummary {
     synthetic_endline_start: Option<usize>,
     pending: Vec<TracedTokenWord>,
     end_after_current_line: bool,
+    registration: Option<RegisteredSource>,
 }
 
 impl SourceFrameSummary {
@@ -651,7 +654,21 @@ impl SourceFrameSummary {
             synthetic_endline_start,
             pending,
             end_after_current_line,
+            registration: None,
         }
+    }
+
+    /// Attaches the live aggregate source registration used by this frame.
+    #[must_use]
+    pub const fn with_registration(mut self, registration: Option<RegisteredSource>) -> Self {
+        self.registration = registration;
+        self
+    }
+
+    /// Returns the aggregate source registration retained for resume.
+    #[must_use]
+    pub const fn registration(&self) -> Option<RegisteredSource> {
+        self.registration
     }
 
     #[must_use]

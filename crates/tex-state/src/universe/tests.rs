@@ -805,14 +805,20 @@ fn world_registration_checks_record_liveness_and_length() {
 #[test]
 fn semantic_hash_ignores_pending_source_token_origins() {
     let mut universe = Universe::new();
+    let registration = universe
+        .register_input_source(
+            crate::input::SourceId::new(1),
+            SourceDescriptor::generated(std::sync::Arc::from(&b"x"[..])),
+        )
+        .expect("pending source summary needs a live generated backing");
     let token = Token::Char {
         ch: 'x',
         cat: Catcode::Letter,
     };
     let left_origin = universe.source_origin(crate::input::SourceId::new(1), 0, 1, 1);
     let right_origin = universe.source_origin(crate::input::SourceId::new(1), 14, 3, 9);
-    let left_summary = pending_source_summary(token, left_origin);
-    let right_summary = pending_source_summary(token, right_origin);
+    let left_summary = pending_source_summary(token, left_origin, registration);
+    let right_summary = pending_source_summary(token, right_origin, registration);
     assert_eq!(left_summary, right_summary);
 
     universe.set_input_summary(left_summary);
@@ -821,6 +827,177 @@ fn semantic_hash_ignores_pending_source_token_origins() {
     let right_hash = universe.snapshot().state_hash();
 
     assert_eq!(left_hash, right_hash);
+}
+
+#[test]
+fn input_summary_validation_is_recursive_and_atomic_after_reuse() {
+    let mut universe = Universe::new();
+    let mark = universe.snapshot();
+    let stale_registration = universe
+        .register_input_source(
+            crate::SourceId::new(1),
+            SourceDescriptor::generated(Arc::from(&b"x"[..])),
+        )
+        .expect("register discarded source");
+    let stale_symbol = universe.intern("discarded");
+    let stale_origin = universe.synthetic_origin(SyntheticOriginKind::Test);
+    let stale_word = TracedTokenWord::pack(Token::Cs(stale_symbol.symbol()), stale_origin);
+    let stale_list = universe.finish_traced_token_list(&[stale_word]);
+    universe.rollback(&mark);
+
+    let registration = universe
+        .register_input_source(
+            crate::SourceId::new(1),
+            SourceDescriptor::generated(Arc::from(&b"x"[..])),
+        )
+        .expect("register replacement source");
+    let symbol = universe.intern("replacement");
+    let origin = universe.synthetic_origin(SyntheticOriginKind::Engine);
+    let word = TracedTokenWord::pack(Token::Cs(symbol.symbol()), origin);
+    let list = universe.finish_traced_token_list(&[word]);
+    assert_ne!(registration, stale_registration);
+    assert_ne!(list, stale_list);
+
+    let source = |registration, pending| {
+        SourceFrameSummary::new(
+            0,
+            1,
+            1,
+            0,
+            LexerState::MidLine,
+            "x".to_owned(),
+            0,
+            vec![pending],
+            false,
+        )
+        .with_registration(Some(registration))
+    };
+    let token_frame = |traced: TracedTokenList, arguments: MacroArguments, invocation| {
+        InputFrameSummary::TokenList {
+            token_list: traced.token_list(),
+            origin_list: traced.origin_list(),
+            replay_kind: TokenListReplayKind::MacroBody,
+            index: 0,
+            macro_arguments: arguments,
+            macro_invocation: invocation,
+            parent_macro_invocation: OriginId::UNKNOWN,
+        }
+    };
+
+    let mut stale_argument = MacroArguments::new();
+    stale_argument.set_traced(1, stale_list);
+    let mut invalid = vec![
+        InputSummary::new(
+            vec![InputFrameSummary::Source {
+                source_id: crate::SourceId::new(1),
+                input_record: None,
+                source: source(stale_registration, word),
+            }],
+            None,
+            None,
+        ),
+        InputSummary::new(
+            vec![token_frame(
+                stale_list,
+                MacroArguments::new(),
+                OriginId::UNKNOWN,
+            )],
+            None,
+            None,
+        ),
+        InputSummary::new(
+            vec![token_frame(list, stale_argument, OriginId::UNKNOWN)],
+            None,
+            None,
+        ),
+        InputSummary::new(
+            vec![token_frame(list, MacroArguments::new(), stale_origin)],
+            None,
+            None,
+        ),
+        InputSummary::new(
+            vec![InputFrameSummary::Condition {
+                token: crate::input::ConditionFrameToken::new(7),
+                condition: crate::input::ConditionFrameSummary::evaluating_if(stale_word),
+            }],
+            None,
+            None,
+        ),
+        InputSummary::new(
+            Vec::new(),
+            Some(crate::SourceId::new(1)),
+            Some(source(stale_registration, word)),
+        ),
+    ];
+
+    let mut foreign = Universe::new();
+    let foreign_registration = foreign
+        .register_input_source(
+            crate::SourceId::new(1),
+            SourceDescriptor::generated(Arc::from(&b"x"[..])),
+        )
+        .expect("register foreign source");
+    let foreign_symbol = foreign.intern("foreign");
+    let foreign_origin = foreign.synthetic_origin(SyntheticOriginKind::Test);
+    let foreign_word = TracedTokenWord::pack(Token::Cs(foreign_symbol.symbol()), foreign_origin);
+    let foreign_list = foreign.finish_traced_token_list(&[foreign_word]);
+    invalid.extend([
+        InputSummary::new(
+            vec![InputFrameSummary::Source {
+                source_id: crate::SourceId::new(1),
+                input_record: None,
+                source: source(foreign_registration, word),
+            }],
+            None,
+            None,
+        ),
+        InputSummary::new(
+            vec![token_frame(
+                foreign_list,
+                MacroArguments::new(),
+                OriginId::UNKNOWN,
+            )],
+            None,
+            None,
+        ),
+        InputSummary::new(
+            vec![InputFrameSummary::Condition {
+                token: crate::input::ConditionFrameToken::new(9),
+                condition: crate::input::ConditionFrameSummary::evaluating_if(foreign_word),
+            }],
+            None,
+            None,
+        ),
+    ]);
+    for summary in invalid {
+        assert!(catch_unwind(AssertUnwindSafe(|| universe.set_input_summary(summary))).is_err());
+        assert_eq!(universe.input_summary(), &InputSummary::default());
+    }
+
+    let mut arguments = MacroArguments::new();
+    arguments.set_traced(9, list);
+    let valid = InputSummary::new(
+        vec![
+            InputFrameSummary::Source {
+                source_id: crate::SourceId::new(1),
+                input_record: None,
+                source: source(registration, word),
+            },
+            token_frame(list, arguments, origin),
+            InputFrameSummary::Condition {
+                token: crate::input::ConditionFrameToken::new(8),
+                condition: crate::input::ConditionFrameSummary::evaluating_if(word),
+            },
+        ],
+        None,
+        None,
+    );
+    universe.set_input_summary(valid.clone());
+    assert_eq!(universe.input_summary(), &valid);
+    let checkpoint = universe.snapshot();
+    universe.set_input_summary(InputSummary::default());
+    universe.rollback(&checkpoint);
+    assert_eq!(universe.input_summary(), &valid);
 }
 
 #[test]
@@ -1944,7 +2121,11 @@ fn structured_format_font() -> crate::font::LoadedFont {
     )
 }
 
-fn pending_source_summary(token: Token, origin: OriginId) -> InputSummary {
+fn pending_source_summary(
+    token: Token,
+    origin: OriginId,
+    registration: crate::source_map::RegisteredSource,
+) -> InputSummary {
     InputSummary::new(
         vec![InputFrameSummary::Source {
             source_id: crate::input::SourceId::new(1),
@@ -1959,7 +2140,8 @@ fn pending_source_summary(token: Token, origin: OriginId) -> InputSummary {
                 0,
                 vec![TracedTokenWord::pack(token, origin)],
                 false,
-            ),
+            )
+            .with_registration(Some(registration)),
         }],
         None,
         None,

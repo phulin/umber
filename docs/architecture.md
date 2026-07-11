@@ -161,7 +161,7 @@ supply.
   *source frame* (source id + physical line/content/terminator byte ranges +
   line/column + current normalized UTF-8 line + canonical in-line byte cursor
   + synthetic-end anchor + lexer state + pending
-  traced synthetic tokens) or a *token-list frame* (`TokenListId` +
+  traced synthetic tokens + its opaque registered-source capability) or a *token-list frame* (`TokenListId` +
   `OriginListId` + index + replay kind: macro body, `\everypar`, mark, ...).
   Macro-body token-list frames additionally carry up to nine frozen argument
   token-list/origin-list pairs; replaying a
@@ -183,6 +183,10 @@ supply.
   post-fork records. The record id is not inferred from the source-frame
   ordinal: auxiliary reads such as TFM loads share the `World` input log but
   never become text input frames.
+  `Universe` recursively validates this complete aggregate before replacing
+  its published summary; failed validation is atomic. The registered-source
+  capability guards rollback reuse but does not participate in semantic
+  equality or hashing.
   `last_source_frame` is also summarized with its source id so snapshots taken
   just after a source pops still have final source coordinates for EOF/current
   input diagnostics. The summary separately retains the next-source-id

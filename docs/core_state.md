@@ -718,6 +718,14 @@ pub struct Snapshot {
   (`\if`, `\or`, or `\else`), whether condition operands are still being
   evaluated, current/previous taken bits, `\ifcase` `\or` count, and skip
   nesting depth needed to resume token-level skipping.
+  Before publication, `Universe::set_input_summary` walks the complete graph
+  and validates every source registration and World record, compact symbol,
+  token/origin-list pair (including all macro arguments), and provenance
+  origin. Validation finishes before mutation, so a stale, foreign, or
+  post-rollback-reused capability cannot publish even a valid prefix. Lexer
+  publication summaries register dormant source frames first. Registered
+  source capabilities remain runtime-only identity and are excluded from
+  semantic equality and hashing.
   Durable source reopen identity is not allocated by `tex-lex`; each frame
   carries a generation-tagged `World` input-record capability. The `World`
   snapshot retains its identity watermark and pins file/editor content by

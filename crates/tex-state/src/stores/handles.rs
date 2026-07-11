@@ -4,13 +4,160 @@ use crate::env::EnvSnapshot;
 use crate::ids::{
     ArenaRef, FontId, GlueId, MacroDefinitionId, NodeListId, OriginListId, TokenListId,
 };
+use crate::input::{InputFrameSummary, InputSummary, SourceFrameSummary, TracedTokenList};
 use crate::interner::{Symbol, SymbolId, SymbolReference};
 use crate::math::MathField;
 use crate::meaning::Meaning;
 use crate::node::{LeaderPayload, Node};
 use crate::token::{OriginId, Token};
+use crate::world::World;
 
 impl Stores {
+    pub(crate) fn assert_live_input_summary(&self, world: &World, summary: &InputSummary) {
+        let mut max_source_id = None;
+        for frame in summary.frames() {
+            match frame {
+                InputFrameSummary::Source {
+                    source_id,
+                    input_record,
+                    source,
+                } => {
+                    max_source_id = Some(
+                        max_source_id.map_or(source_id.raw(), |old: u32| old.max(source_id.raw())),
+                    );
+                    self.assert_live_source_frame(world, *source_id, *input_record, source);
+                }
+                InputFrameSummary::TokenList {
+                    token_list,
+                    origin_list,
+                    index,
+                    macro_arguments,
+                    macro_invocation,
+                    parent_macro_invocation,
+                    ..
+                } => {
+                    self.assert_live_traced_token_list(TracedTokenList::new(
+                        *token_list,
+                        *origin_list,
+                    ));
+                    assert!(
+                        *index <= self.tokens(*token_list).len(),
+                        "input token-list frame index exceeds its live token list"
+                    );
+                    for slot in 1..=crate::input::MACRO_ARGUMENT_SLOTS as u8 {
+                        if let Some(argument) = macro_arguments.get_traced(slot) {
+                            self.assert_live_traced_token_list(argument);
+                        }
+                    }
+                    self.assert_live_origin(*macro_invocation);
+                    self.assert_live_origin(*parent_macro_invocation);
+                }
+                InputFrameSummary::Condition { condition, .. } => {
+                    self.assert_live_traced_token_word(condition.context());
+                }
+            }
+        }
+
+        match (
+            summary.last_source_id(),
+            summary.last_source_record(),
+            summary.last_source_frame(),
+        ) {
+            (Some(source_id), input_record, Some(source)) => {
+                max_source_id = Some(
+                    max_source_id.map_or(source_id.raw(), |old: u32| old.max(source_id.raw())),
+                );
+                self.assert_live_source_frame(world, source_id, input_record, source);
+            }
+            (None, None, None) => {}
+            _ => panic!("last input source frame metadata is incomplete"),
+        }
+        if let Some(max_source_id) = max_source_id {
+            assert!(
+                summary.next_source_id() > max_source_id,
+                "input source id frontier would reuse a live source id"
+            );
+        }
+    }
+
+    fn assert_live_source_frame(
+        &self,
+        world: &World,
+        source_id: crate::input::SourceId,
+        input_record: Option<crate::world::InputRecordId>,
+        source: &SourceFrameSummary,
+    ) {
+        assert!(
+            source.is_resume_complete(),
+            "input source frame is not resume-complete"
+        );
+        let region = self
+            .source_map
+            .region_for_source(source_id)
+            .expect("input source id is not live in this Universe timeline");
+        let registration = source
+            .registration()
+            .expect("input source frame has no registered source capability");
+        assert!(
+            self.source_map
+                .contains_registration(source_id, registration),
+            "input source registration is not live in this Universe timeline"
+        );
+        let byte_len = usize::try_from(region.byte_len)
+            .expect("input source backing length exceeds resume address space");
+        assert!(
+            source.buffer_offset() <= byte_len && source.next_source_offset() <= byte_len,
+            "input source frame offset exceeds its live backing"
+        );
+        match region.backing {
+            crate::source_map::SourceBacking::World(expected) => {
+                assert_eq!(
+                    input_record,
+                    Some(expected),
+                    "input source frame record does not match its registered source"
+                );
+                let record = world
+                    .input_record(expected)
+                    .expect("input record is not live in this World timeline");
+                assert_eq!(
+                    record.len(),
+                    byte_len,
+                    "input source frame record length does not match its registered source"
+                );
+            }
+            crate::source_map::SourceBacking::Generated(backing) => {
+                assert!(
+                    input_record.is_none(),
+                    "generated input source frame carries a World input record"
+                );
+                assert!(
+                    self.source_map.generated(backing).is_some(),
+                    "generated input source backing is not live"
+                );
+            }
+        }
+        for &word in source.pending() {
+            self.assert_live_traced_token_word(word);
+        }
+    }
+
+    fn assert_live_traced_token_list(&self, list: TracedTokenList) {
+        self.assert_live_token_list(list.token_list());
+        self.assert_live_origin_list(list.origin_list());
+        self.assert_origin_list_len_matches(list.token_list(), list.origin_list());
+        for &origin in self.origin_list(list.origin_list()) {
+            self.assert_live_origin(origin);
+        }
+    }
+
+    fn assert_live_traced_token_word(&self, word: crate::token::TracedTokenWord) {
+        let token = word
+            .token()
+            .expect("input summary contains an invalid traced token");
+        self.assert_live_token(token);
+        self.assert_live_origin(word.origin());
+    }
+
     pub(crate) fn resolve_stored_symbol(&self, symbol: Symbol) -> SymbolId {
         self.interner
             .resolve_stored(symbol)
