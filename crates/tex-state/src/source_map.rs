@@ -1,10 +1,14 @@
 //! Rollback-coupled logical source positions and immutable source backings.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::identity::{HandleIdentity, IdentityAllocator, IdentityMark};
 use crate::input::SourceId;
 use crate::token::OriginId;
 use crate::world::{ContentHash, InputRecordId};
+
+static NEXT_LOGICAL_SOURCE_POSITION: AtomicU64 = AtomicU64::new(0);
 
 /// An opaque position in the current timeline's logical source space.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -201,6 +205,7 @@ pub(crate) struct SourceRegion {
     pub(crate) byte_len: u64,
     pub(crate) source: SourceId,
     pub(crate) backing: SourceBacking,
+    identity: HandleIdentity,
 }
 
 impl SourceRegion {
@@ -214,13 +219,40 @@ pub(crate) struct SourceMapMark {
     regions: usize,
     generated: usize,
     next_pos: u64,
+    identities: IdentityMark,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct SourceMap {
     regions: Vec<SourceRegion>,
     generated: Vec<GeneratedSource>,
     next_pos: u64,
+    forced_next_pos: bool,
+    identities: IdentityAllocator,
+}
+
+impl Default for SourceMap {
+    fn default() -> Self {
+        Self {
+            regions: Vec::new(),
+            generated: Vec::new(),
+            next_pos: 0,
+            forced_next_pos: false,
+            identities: IdentityAllocator::new(0),
+        }
+    }
+}
+
+impl Clone for SourceMap {
+    fn clone(&self) -> Self {
+        Self {
+            regions: self.regions.clone(),
+            generated: self.generated.clone(),
+            next_pos: self.next_pos,
+            forced_next_pos: self.forced_next_pos,
+            identities: self.identities.fork(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -236,6 +268,7 @@ impl SourceMap {
     pub(crate) fn set_next_position_for_test(&mut self, next_pos: u64) {
         assert!(self.regions.is_empty());
         self.next_pos = next_pos;
+        self.forced_next_pos = true;
     }
 
     pub(crate) fn register(
@@ -251,11 +284,7 @@ impl SourceMap {
         }
 
         let byte_len = descriptor.byte_len();
-        let next_pos = self
-            .next_pos
-            .checked_add(byte_len)
-            .and_then(|anchor| anchor.checked_add(1))
-            .ok_or(SourceMapError::LogicalPositionExhausted)?;
+        let (start, next_pos) = self.reserve_positions(byte_len)?;
         let backing = match descriptor {
             SourceDescriptor::World { input_record, .. } => SourceBacking::World(input_record),
             SourceDescriptor::Generated(generated) => {
@@ -265,15 +294,36 @@ impl SourceMap {
                 SourceBacking::Generated(GeneratedSourceId(raw))
             }
         };
-        let start = SourcePos(self.next_pos);
+        let identity = self
+            .identities
+            .allocate()
+            .map_err(|_| SourceMapError::LogicalPositionExhausted)?;
         self.regions.push(SourceRegion {
-            start,
+            start: SourcePos(start),
             byte_len,
             source,
             backing,
+            identity,
         });
         self.next_pos = next_pos;
-        Ok(start)
+        Ok(SourcePos(start))
+    }
+
+    fn reserve_positions(&mut self, byte_len: u64) -> Result<(u64, u64), SourceMapError> {
+        if self.forced_next_pos {
+            let start = self.next_pos;
+            let next = start
+                .checked_add(byte_len)
+                .and_then(|anchor| anchor.checked_add(1))
+                .ok_or(SourceMapError::LogicalPositionExhausted)?;
+            return Ok((start, next));
+        }
+        NEXT_LOGICAL_SOURCE_POSITION
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |start| {
+                start.checked_add(byte_len)?.checked_add(1)
+            })
+            .map(|start| (start, start + byte_len + 1))
+            .map_err(|_| SourceMapError::LogicalPositionExhausted)
     }
 
     fn descriptor_matches(&self, region: SourceRegion, descriptor: &SourceDescriptor) -> bool {
@@ -375,20 +425,26 @@ impl SourceMap {
         }
     }
 
-    pub(crate) const fn watermark(&self) -> SourceMapMark {
+    pub(crate) fn watermark(&self) -> SourceMapMark {
         SourceMapMark {
             regions: self.regions.len(),
             generated: self.generated.len(),
             next_pos: self.next_pos,
+            identities: self.identities.watermark(),
         }
     }
 
     pub(crate) fn truncate_to(&mut self, mark: SourceMapMark) {
         assert!(mark.regions <= self.regions.len());
         assert!(mark.generated <= self.generated.len());
-        assert!(mark.next_pos <= self.next_pos);
+        assert!(mark.next_pos <= self.next_pos || !self.forced_next_pos);
+        self.identities
+            .rollback(mark.identities)
+            .expect("source-map mark is not an ancestor");
         self.regions.truncate(mark.regions);
         self.generated.truncate(mark.generated);
-        self.next_pos = mark.next_pos;
+        if self.forced_next_pos {
+            self.next_pos = mark.next_pos;
+        }
     }
 }
