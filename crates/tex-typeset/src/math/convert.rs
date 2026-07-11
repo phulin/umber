@@ -114,6 +114,27 @@ fn first_pass<S: MathTypesetState>(
     let mut r_type = Some(NoadClass::Op);
     let mut index = 0;
     while index < rewritten.as_deref().unwrap_or(original).len() {
+        if matches!(
+            rewritten.as_deref().unwrap_or(original).get(index),
+            Some(Node::MathNoad(MathNoad {
+                kind: NoadKind::Normal(NoadClass::Bin),
+                ..
+            }))
+        ) && matches!(
+            r_type,
+            Some(
+                NoadClass::Bin
+                    | NoadClass::Op
+                    | NoadClass::Rel
+                    | NoadClass::Open
+                    | NoadClass::Punct
+            )
+        ) {
+            let input = rewritten.get_or_insert_with(|| original.to_vec());
+            if let Node::MathNoad(noad) = &mut input[index] {
+                noad.kind = NoadKind::Normal(NoadClass::Ord);
+            }
+        }
         let input = rewritten.as_deref().unwrap_or(original);
         if matches!(
             &input[index],

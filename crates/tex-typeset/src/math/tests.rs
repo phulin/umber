@@ -1,6 +1,8 @@
 use super::*;
 use tex_fonts::metrics::CharTag;
-use tex_fonts::{CharMetrics, FontMetrics, LigKernCommand, LigKernInstruction, LoadedFont};
+use tex_fonts::{
+    CharMetrics, FontMetrics, LigKernCommand, LigKernInstruction, LigatureCommand, LoadedFont,
+};
 use tex_state::env::banks::{GlueParam, IntParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::math::{
@@ -206,6 +208,30 @@ fn make_ord_inserts_font_kern_between_adjacent_math_chars() {
         } if *amount == sc(7)
     ));
     assert!(matches!(nodes[3], MathNode::Char { ch: 'b', .. }));
+}
+
+#[test]
+fn bin_normalization_runs_math_ligatures_before_translation() {
+    let mut universe = setup_universe();
+    let input = universe.freeze_node_list(&[
+        Node::MathNoad(noad(NoadClass::Op, 'a')),
+        Node::MathNoad(noad(NoadClass::Bin, 'a')),
+        Node::MathNoad(noad(NoadClass::Open, 'a')),
+        Node::MathNoad(noad(NoadClass::Punct, 'a')),
+    ]);
+    let params = MathParams::read(&universe);
+
+    let hlist = mlist_to_hlist(&universe, input, Style::SCRIPT_SCRIPT, false, &params);
+    let chars: Vec<_> = root_nodes(&hlist)
+        .iter()
+        .filter_map(|node| match node {
+            MathNode::Char { ch, .. } => Some(*ch),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(chars, ['a']);
+    assert!(matches!(root_nodes(&hlist)[0], MathNode::HList(_)));
 }
 
 #[test]
@@ -914,6 +940,16 @@ fn test_font(name: &str, scale: i32) -> LoadedFont {
         tag: CharTag::None,
     });
     let lig_kern_program = vec![
+        LigKernInstruction {
+            skip_byte: 0,
+            next_char: b'a',
+            command: Some(LigKernCommand::Ligature(LigatureCommand {
+                replacement: b'a',
+                delete_current: true,
+                delete_next: true,
+                pass_over: 0,
+            })),
+        },
         LigKernInstruction {
             skip_byte: 0,
             next_char: b'b',
