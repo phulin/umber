@@ -9,6 +9,11 @@ use tex_state::provenance::{InsertedOriginKind, OriginRecord};
 use tex_state::scaled::Scaled;
 
 #[test]
+fn null_math_fonts_are_insufficient_for_formula_conversion() {
+    assert!(!crate::math::testing_math_fonts_sufficient(&Universe::new()));
+}
+
+#[test]
 fn remove_item_commands_apply_to_math_lists() {
     let (stores, executor) =
         run_math_source(r"$\penalty10\unpenalty\kern1pt\unkern\hskip1pt\unskip");

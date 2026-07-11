@@ -5,7 +5,7 @@ use tex_lex::{InputSource, InputStack};
 use tex_state::Universe;
 use tex_state::env::banks::{DimenParam, TokParam};
 use tex_state::glue::GlueSpec;
-use tex_state::math::{MathField, MathListNode, NoadClass, NoadKind};
+use tex_state::math::{MathField, MathFontSize, MathListNode, NoadClass, NoadKind};
 use tex_state::meaning::{ExpandablePrimitive, Meaning, UnexpandablePrimitive};
 use tex_state::node::{GlueKind, KernKind, Node};
 use tex_state::provenance::InsertedOriginKind;
@@ -297,10 +297,21 @@ where
             None => report_math_error(stores, "Display math should end with $$"),
         }
     }
-    let content = finish_current_math_list(nest, stores);
+    let mut content = finish_current_math_list(nest, stores);
+    let fonts_sufficient = math_fonts_sufficient(stores);
+    if !fonts_sufficient {
+        content = stores.freeze_node_list(&[]);
+        stores.world_mut().write_text(
+            tex_state::PrintSink::TerminalAndLog,
+            "\n! Math formula deleted: Insufficient math fonts.\n",
+        );
+    }
     let mut level = nest.pop()?;
     if display {
-        let eq_no = level.list_mut().take_display_eq_no();
+        let mut eq_no = level.list_mut().take_display_eq_no();
+        if !fonts_sufficient && let Some(eq_no) = &mut eq_no {
+            eq_no.display = stores.freeze_node_list(&[]);
+        }
         let _interrupt = level.list_mut().take_display_interrupt().ok_or(
             ExecError::UnimplementedTypesetting {
                 mode: Mode::DisplayMath,
@@ -332,6 +343,24 @@ where
         leave_group_with_origin(input, stores, tex_state::GroupKind::MathShift, origin)?;
     }
     Ok(DispatchAction::Continue)
+}
+
+fn math_fonts_sufficient(stores: &Universe) -> bool {
+    [
+        MathFontSize::Text,
+        MathFontSize::Script,
+        MathFontSize::ScriptScript,
+    ]
+    .into_iter()
+    .all(|size| {
+        stores.font_parameter_count(stores.math_family_font(size, 2)) >= 22
+            && stores.font_parameter_count(stores.math_family_font(size, 3)) >= 13
+    })
+}
+
+#[cfg(test)]
+pub(crate) fn testing_math_fonts_sufficient(stores: &Universe) -> bool {
+    math_fonts_sufficient(stores)
 }
 
 fn dispatch_math_control<S, R, H>(
