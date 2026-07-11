@@ -268,6 +268,7 @@ fn checksum_valid_malformed_font_formats_fail_with_structured_errors() {
 
     for (corruption, expected) in [
         (Corruption::TooManyCharacters, "metrics"),
+        (Corruption::OversizedLigKernProgram, "cursor capacity"),
         (Corruption::LigKernStart, "lig/kern"),
         (Corruption::ExtensibleRecipeIndex, "extensible recipe"),
         (Corruption::FontIdentifier, "identifier"),
@@ -287,6 +288,33 @@ fn checksum_valid_malformed_font_formats_fail_with_structured_errors() {
             matches!(error, super::FormatError::InvalidState(ref message) if message.contains(expected)),
             "{corruption:?} returned unexpected structured error: {error:?}"
         );
+    }
+}
+
+#[test]
+fn checksum_valid_font_formats_accept_both_lig_kern_cursor_length_edges() {
+    use crate::stores::TestingFontFormatCorruption as Corruption;
+
+    let mut universe = Universe::new();
+    let identifier = universe.intern("structuredfont");
+    universe.intern_font_with_identifier(structured_format_font(), identifier);
+    let valid = universe.dump_format().expect("valid format encodes");
+
+    for (len, start) in [
+        (usize::from(u16::MAX), u16::MAX - 1),
+        (tex_fonts::metrics::MAX_LIG_KERN_PROGRAM_LEN, u16::MAX),
+    ] {
+        let mut bytes = valid.clone();
+        replace_store_format_payload(
+            &mut bytes,
+            crate::stores::testing_corrupt_font_format(
+                &valid[29..],
+                Corruption::LigKernProgramLength { len, start },
+            ),
+        );
+        let restored = Universe::from_format(World::memory(), &bytes)
+            .expect("addressable lig/kern program restores");
+        assert_eq!(restored.dump_format().expect("format redumps"), bytes);
     }
 }
 

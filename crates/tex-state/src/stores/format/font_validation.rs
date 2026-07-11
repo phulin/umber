@@ -172,6 +172,8 @@ impl StoreFormat {
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum TestingFontFormatCorruption {
     TooManyCharacters,
+    OversizedLigKernProgram,
+    LigKernProgramLength { len: usize, start: u16 },
     LigKernStart,
     ExtensibleRecipeIndex,
     FontIdentifier,
@@ -193,6 +195,31 @@ pub(crate) fn testing_corrupt_font_format(
         .expect("test format has a loaded font");
     match corruption {
         TestingFontFormatCorruption::TooManyCharacters => font.characters.resize(257, None),
+        TestingFontFormatCorruption::OversizedLigKernProgram => {
+            let instruction = font.lig_kern_program[0];
+            font.lig_kern_program.resize(
+                tex_fonts::metrics::MAX_LIG_KERN_PROGRAM_LEN + 1,
+                instruction,
+            );
+        }
+        TestingFontFormatCorruption::LigKernProgramLength { len, start } => {
+            let instruction = font.lig_kern_program[0];
+            font.lig_kern_program.resize(len, instruction);
+            let character = font
+                .characters
+                .iter_mut()
+                .flatten()
+                .find(|character| matches!(character.tag, tex_fonts::MetricCharTag::LigKern { .. }))
+                .expect("test font has a lig/kern character");
+            let tex_fonts::MetricCharTag::LigKern {
+                ref mut start_index,
+                ..
+            } = character.tag
+            else {
+                unreachable!()
+            };
+            *start_index = start;
+        }
         TestingFontFormatCorruption::LigKernStart => {
             let character = font
                 .characters
