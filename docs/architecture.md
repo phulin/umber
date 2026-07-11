@@ -366,6 +366,11 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   conditional without reconstructing hidden gullet state.
 - **`\csname`** interns through the same interner; **`\the`/`\showthe`**
   read `Env` and mint fresh frozen token/origin lists.
+- **`\noexpand`** preserves the suppressed control-sequence token and its
+  provenance for token-identity consumers, while its checkpointed replay kind
+  and inserted origin make that single main-control delivery behave as
+  `\relax`; alignment delimiter interception therefore cannot mistake a
+  suppressed `\cr`, `\span`, or tab for a live cell terminator.
 - **Read-set recording** hooks live here and in the stomach: when the
   incremental engine asks for it, meaning lookups record `(cell, epoch)`
   pairs (`core_state.md` §9). Off by default, zero-cost when off (the

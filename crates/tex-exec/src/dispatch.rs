@@ -1,7 +1,7 @@
 use tex_expand::{ExpansionHooks, NoopRecorder, ReadRecorder};
 use tex_lex::{InputSource, InputStack};
 use tex_state::meaning::{ExpandablePrimitive, Meaning, UnexpandablePrimitive};
-use tex_state::provenance::InsertedOriginKind;
+use tex_state::provenance::{InsertedOriginKind, OriginRecord};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{ContentHash, GroupKind, GroupMismatch, Universe};
 
@@ -55,6 +55,12 @@ where
 {
     let token = tex_expand::semantic_token(traced);
     let origin = traced.origin();
+    if matches!(
+        stores.origin(origin),
+        OriginRecord::Inserted(inserted) if inserted.kind() == InsertedOriginKind::NoExpand
+    ) {
+        return Ok(DispatchAction::Continue);
+    }
     let mode = nest.current_mode();
     if matches!(mode, Mode::Math | Mode::DisplayMath) {
         return crate::math::dispatch_math_token_with_recorder(

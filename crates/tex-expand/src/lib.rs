@@ -765,9 +765,6 @@ where
         }
 
         if read.suppress_expansion() {
-            if intercept_alignment_token(input, stores, traced) {
-                continue;
-            }
             return Ok(Some(traced));
         }
 
@@ -805,7 +802,8 @@ where
         };
         match dispatched {
             Dispatch::Continue => {}
-            Dispatch::Deliver(token) | Dispatch::DeliverNoExpand(token) => {
+            Dispatch::DeliverNoExpand(token) => return Ok(Some(token)),
+            Dispatch::Deliver(token) => {
                 if intercept_alignment_token(input, stores, token) {
                     continue;
                 }
@@ -937,9 +935,6 @@ where
         let traced = read.traced_token();
 
         if read.suppress_expansion() {
-            if intercept_alignment_token(input, stores, traced) {
-                continue;
-            }
             return Ok(Some(traced));
         }
 
@@ -977,7 +972,8 @@ where
         };
         match dispatched {
             Dispatch::Continue => {}
-            Dispatch::Deliver(token) | Dispatch::DeliverNoExpand(token) => {
+            Dispatch::DeliverNoExpand(token) => return Ok(Some(token)),
+            Dispatch::Deliver(token) => {
                 if intercept_alignment_token(input, stores, token) {
                     continue;
                 }

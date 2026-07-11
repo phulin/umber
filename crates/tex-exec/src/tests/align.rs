@@ -1531,10 +1531,34 @@ fn right_brace_before_cr_uses_missing_cr_recovery() {
 }
 
 #[test]
-fn noexpand_cr_still_terminates_alignment_cell() {
-    let stores = run_boxed_alignment_source("\\halign{#\\cr x\\noexpand\\cr}");
+fn noexpand_cr_is_relax_for_one_delivery_inside_alignment() {
+    let mut stores = support::stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    run_alignment_source_in(
+        &mut stores,
+        "\\setbox0=\\vbox{\\halign{#\\cr x\\noexpand\\cr y\\cr}}",
+    );
     let vbox = box_zero_vlist(&stores);
     assert_eq!(vlist_rows(&stores, vbox).len(), 1);
+    assert_eq!(
+        cell_text(&stores, row_cells(&stores, vlist_rows(&stores, vbox)[0])[0]),
+        "xy"
+    );
+}
+
+#[test]
+fn noexpand_alignment_delivery_replays_identically_after_rollback() {
+    let mut stores = support::stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    let checkpoint = stores.snapshot();
+    let source = "\\setbox0=\\vbox{\\halign{#\\cr x\\noexpand\\cr y\\cr}}";
+
+    run_alignment_source_in(&mut stores, source);
+    let first_hash = stores.snapshot().state_hash();
+    stores.rollback(&checkpoint);
+    run_alignment_source_in(&mut stores, source);
+
+    assert_eq!(stores.snapshot().state_hash(), first_hash);
 }
 
 #[test]
@@ -1601,7 +1625,7 @@ fn trip_show_of_aliased_tab_recovers_and_closes_alignment() {
     let source = r#"
         \font\f=cmr10 \f
         \long\def\l#1{}
-        \noindent{\halign to 1pt\expandafter{\csname#\endcsname#&#&\l{#}\cr
+        \halign to 1pt\expandafter{\csname#\endcsname#&#&\l{#}\cr
           \global\futurelet\endt\foo&\show\endt&$&&&.}
         \global\count7=321}
     "#;

@@ -1322,20 +1322,17 @@ fn assert_replayed_math_error_is_source_backed(source: &str) {
     )
     .expect("suppressed expandable tokenizes")
     .expect("suppressed expandable exists");
-    let err = crate::dispatch::dispatch_delivered_token(
+    let action = crate::dispatch::dispatch_delivered_token(
         executor.nest_mut(),
         sentinel,
         &mut input,
         &mut stores,
         &mut hooks,
     )
-    .expect_err("direct dispatch exposes the recoverable delivery error");
-    assert!(
-        matches!(&err, ExecError::UnexpectedExpandableDelivery { .. }),
-        "unexpected replay error: {err:?}"
-    );
+    .expect("noexpand presents the control sequence as relax for one delivery");
+    assert_eq!(action, crate::dispatch::DispatchAction::Continue);
 
-    let origin = err.primary_origin().expect("error should retain an origin");
+    let origin = sentinel.origin();
     let origin = match stores.origin(origin) {
         OriginRecord::Inserted(inserted) if inserted.kind() == InsertedOriginKind::NoExpand => {
             inserted.parent()
@@ -1354,12 +1351,6 @@ fn assert_replayed_math_error_is_source_backed(source: &str) {
             .source_position(tex_state::SourceId::new(0), expected_offset)
             .expect("source position")
     );
-
-    let rendered = err.format_with_provenance(&stores);
-    assert!(rendered.contains("expandable primitive"));
-    assert!(rendered.contains(&format!("{PATH}:1:")));
-    assert!(rendered.contains(&format!("  1 | {source}")));
-    assert!(rendered.contains("^"));
 }
 
 fn math_nodes<'a>(stores: &'a Universe, executor: &'a Executor) -> &'a [Node] {
