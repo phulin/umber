@@ -83,6 +83,41 @@ impl Scaled {
     }
 }
 
+const fn scaled_from_wide_saturating(value: i64) -> Scaled {
+    if value > i32::MAX as i64 {
+        Scaled::MAX
+    } else if value < i32::MIN as i64 {
+        Scaled::MIN
+    } else {
+        Scaled::from_raw(value as i32)
+    }
+}
+
+/// Adds two scaled values with a widened intermediate and saturates only at
+/// the representable `i32` boundary.
+///
+/// TeX's legal dimension range keeps ordinary semantic values away from this
+/// boundary. The saturation makes defensive layout accumulation deterministic
+/// instead of allowing a Rust debug overflow or release-mode wrap.
+#[must_use]
+pub const fn saturating_add(left: Scaled, right: Scaled) -> Scaled {
+    scaled_from_wide_saturating(left.0 as i64 + right.0 as i64)
+}
+
+/// Subtracts two scaled values with a widened intermediate and saturates only
+/// at the representable `i32` boundary.
+#[must_use]
+pub const fn saturating_sub(left: Scaled, right: Scaled) -> Scaled {
+    scaled_from_wide_saturating(left.0 as i64 - right.0 as i64)
+}
+
+/// Multiplies a scaled value by an integer with a widened intermediate and
+/// saturates only at the representable `i32` boundary.
+#[must_use]
+pub const fn saturating_mul(factor: i32, value: Scaled) -> Scaled {
+    scaled_from_wide_saturating(factor as i64 * value.0 as i64)
+}
+
 /// Errors produced by TeX scaled arithmetic.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DimensionError {
@@ -504,6 +539,46 @@ pub fn scaled_from_decimal_parts(
     }
 
     Scaled::from_raw(cur * Scaled::UNITY + frac).check_dimension()
+}
+
+/// Applies TeX82's `true`-dimension magnification scaling to decimal parts.
+///
+/// This is the arithmetic from `scan_dimen` between recognizing `true` and
+/// converting the physical unit. `mag` must already have passed TeX's
+/// `prepare_mag` validation. TeX evaluates the fraction numerator before
+/// dividing by `mag`; the widened intermediate is required because that
+/// numerator can exceed `i32::MAX` for otherwise legal inputs.
+pub fn scale_true_dimension_parts(
+    integer: i32,
+    fraction: i32,
+    mag: i32,
+) -> Result<(i32, i32), DimensionError> {
+    assert!(integer >= 0, "dimension integer part must be nonnegative");
+    assert!(
+        (0..=Scaled::UNITY).contains(&fraction),
+        "dimension fraction out of range"
+    );
+    assert!(
+        (1..=32_768).contains(&mag),
+        "magnification out of TeX range"
+    );
+
+    if mag == 1000 {
+        return Ok((integer, fraction));
+    }
+
+    let converted = xn_over_d(Scaled::from_raw(integer), 1000, mag)?;
+    let numerator =
+        i64::from(1000 * fraction) + i64::from(Scaled::UNITY) * i64::from(converted.remainder);
+    let scaled_fraction = numerator / i64::from(mag);
+    let scaled_integer =
+        i64::from(converted.quotient.raw()) + scaled_fraction / i64::from(Scaled::UNITY);
+    let fraction = scaled_fraction % i64::from(Scaled::UNITY);
+
+    Ok((
+        i32::try_from(scaled_integer).expect("true-scaled integer parts fit i32"),
+        i32::try_from(fraction).expect("true-scaled fractional parts fit i32"),
+    ))
 }
 
 /// Applies TeX's TFM font-size rule for design/default, `at`, and `scaled`.
