@@ -23,6 +23,7 @@ macro_rules! opaque_id {
 
         impl $name {
             #[allow(dead_code)]
+            #[allow(unused_comparisons)]
             pub(crate) const fn new(raw: u32) -> Self {
                 Self(raw)
             }
@@ -46,19 +47,23 @@ opaque_id!(OriginListId);
 opaque_id!(SnapshotId);
 
 macro_rules! semantic_id {
-    ($name:ident, $namespace:expr) => {
+    ($name:ident, $namespace:expr, $builtin_slots:expr) => {
         #[repr(transparent)]
         #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
         pub struct $name(crate::identity::HandleIdentity);
 
-        #[allow(dead_code)]
+        #[allow(dead_code, unused_comparisons)]
         impl $name {
             pub(crate) const fn new(raw: u32) -> Self {
-                Self(crate::identity::HandleIdentity::reserved(
-                    $namespace,
-                    core::num::NonZeroU32::MIN,
-                    raw,
-                ))
+                if raw < $builtin_slots {
+                    Self(crate::identity::HandleIdentity::builtin(raw))
+                } else {
+                    Self(crate::identity::HandleIdentity::reserved(
+                        $namespace,
+                        core::num::NonZeroU32::MIN,
+                        raw,
+                    ))
+                }
             }
 
             pub(crate) const fn from_identity(identity: crate::identity::HandleIdentity) -> Self {
@@ -113,10 +118,10 @@ macro_rules! semantic_id {
     };
 }
 
-semantic_id!(TokenListId, 10);
-semantic_id!(MacroDefinitionId, 11);
-semantic_id!(GlueId, 12);
-semantic_id!(FontId, 13);
+semantic_id!(TokenListId, 10, 1);
+semantic_id!(MacroDefinitionId, 11, 0);
+semantic_id!(GlueId, 12, 1);
+semantic_id!(FontId, 13, 1);
 
 impl GlueId {
     /// The canonical zero-glue id, pre-interned by every glue store.

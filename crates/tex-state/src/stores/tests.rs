@@ -361,6 +361,7 @@ fn rollback_restores_token_store_as_part_of_snapshot_tuple() {
     let reused = stores.intern_token_list(&[crate::token::Token::param(2)]);
 
     assert_eq!(reused.raw(), stale.raw());
+    assert_ne!(reused, stale);
     assert_eq!(stores.tokens(reused), &[crate::token::Token::param(2)]);
 }
 
@@ -627,6 +628,8 @@ fn rollback_restores_macro_store_as_part_of_snapshot_tuple() {
 
     assert_eq!(stores.macro_definition(kept).replacement_text(), kept_body);
     assert_eq!(reused.raw(), stale.raw());
+    assert_ne!(reused, stale);
+    assert!(!stores.macros.contains(stale));
     assert_eq!(
         stores.macro_definition(reused).replacement_text(),
         reused_body
@@ -643,6 +646,8 @@ fn rollback_restores_glue_store_as_part_of_snapshot_tuple() {
     let reused = stores.intern_glue(glue_spec(2));
 
     assert_eq!(reused.raw(), stale.raw());
+    assert_ne!(reused, stale);
+    assert!(!stores.glue.contains(stale));
     assert_eq!(stores.glue(reused), glue_spec(2));
     assert_eq!(stores.glue(crate::ids::GlueId::ZERO), GlueSpec::ZERO);
 }

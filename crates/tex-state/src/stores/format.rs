@@ -127,7 +127,7 @@ impl StoreFormat {
             .map(|raw| {
                 stores
                     .tokens
-                    .get(TokenListId::new(raw))
+                    .get(stores.resolve_stored_token_list(TokenListId::new(raw)))
                     .iter()
                     .copied()
                     .map(FormatToken::capture)
@@ -137,7 +137,12 @@ impl StoreFormat {
         let macro_mark = stores.macros.watermark();
         let macros = (0..macro_mark.definitions)
             .map(|raw| {
-                let meaning = stores.macros.get(MacroDefinitionId::new(raw));
+                let meaning = stores.macros.get(
+                    stores
+                        .macros
+                        .resolve_stored(MacroDefinitionId::new(raw))
+                        .expect("captured macro slot should be live"),
+                );
                 FormatMacro {
                     flags: meaning.flags().bits(),
                     parameter_text: meaning.parameter_text().raw(),
@@ -147,11 +152,19 @@ impl StoreFormat {
             .collect();
         let glue_mark = stores.glue.watermark();
         let glue = (0..glue_mark.specs)
-            .map(|raw| FormatGlue::capture(stores.glue.get(GlueId::new(raw))))
+            .map(|raw| {
+                FormatGlue::capture(
+                    stores
+                        .glue
+                        .get(stores.resolve_stored_glue(GlueId::new(raw))),
+                )
+            })
             .collect();
         let font_mark = stores.fonts.watermark();
         let fonts = (0..font_mark.len)
-            .map(|raw| FormatFont::capture(&stores.fonts, FontId::new(raw)))
+            .map(|raw| {
+                FormatFont::capture(&stores.fonts, stores.resolve_stored_font(FontId::new(raw)))
+            })
             .collect();
         let mut env = Vec::new();
         stores
@@ -237,8 +250,8 @@ impl StoreFormat {
         for (raw, definition) in self.macros.into_iter().enumerate() {
             let meaning = MacroMeaning::new(
                 crate::meaning::MeaningFlags::from_bits(definition.flags),
-                TokenListId::new(definition.parameter_text),
-                TokenListId::new(definition.replacement_text),
+                stores.resolve_stored_token_list(TokenListId::new(definition.parameter_text)),
+                stores.resolve_stored_token_list(TokenListId::new(definition.replacement_text)),
             );
             if stores.macros.intern_with_provenance(meaning, None).raw() as usize != raw {
                 return Err(StoreFormatError::Invalid("macro order"));
@@ -274,7 +287,7 @@ impl StoreFormat {
         }
         stores.hyphenation = self.hyphenation;
         stores.prepared_mag = self.prepared_mag;
-        stores.last_loaded_font = FontId::new(self.last_loaded_font);
+        stores.last_loaded_font = stores.resolve_stored_font(FontId::new(self.last_loaded_font));
         for (raw, mut word) in self.env {
             let bank_bits = raw >> 27;
             if bank_bits > crate::cell::BankTag::MathFamilyFont as u32 {

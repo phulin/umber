@@ -14,7 +14,7 @@ use proptest::prelude::*;
 
 #[test]
 fn node_layout_baseline() {
-    assert_eq!(std::mem::size_of::<Node>(), 80);
+    assert_eq!(std::mem::size_of::<Node>(), 88);
     assert_eq!(std::mem::size_of::<BoxNode>(), 48);
     assert_eq!(std::mem::size_of::<crate::node::UnsetNode>(), 48);
     assert_eq!(std::mem::size_of::<crate::node::Whatsit>(), 48);

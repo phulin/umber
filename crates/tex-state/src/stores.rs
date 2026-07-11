@@ -345,7 +345,7 @@ impl Stores {
     #[must_use]
     pub fn meaning(&self, symbol: Symbol) -> Meaning {
         self.assert_live_symbol(symbol);
-        self.env.get(symbol)
+        self.resolve_stored_meaning(self.env.get(symbol))
     }
 
     /// Sets the local meaning for a live control-sequence symbol.
@@ -1006,9 +1006,7 @@ impl Stores {
 
     #[must_use]
     pub fn current_font(&self) -> FontId {
-        let id = self.env.current_font();
-        self.assert_live_font(id);
-        id
+        self.resolve_stored_font(self.env.current_font())
     }
 
     #[must_use]
@@ -1042,9 +1040,7 @@ impl Stores {
 
     #[must_use]
     pub fn math_family_font(&self, size: MathFontSize, family: u8) -> FontId {
-        let id = self.env.math_family_font(size, family);
-        self.assert_live_font(id);
-        id
+        self.resolve_stored_font(self.env.math_family_font(size, family))
     }
 
     pub fn set_math_family_font(
@@ -1272,9 +1268,7 @@ impl Stores {
 
     #[must_use]
     pub fn skip(&self, index: u16) -> GlueId {
-        let value = self.env.skip(index);
-        self.assert_live_glue(value);
-        value
+        self.resolve_stored_glue(self.env.skip(index))
     }
 
     pub fn set_skip_global(&mut self, index: u16, value: GlueId) {
@@ -1289,9 +1283,7 @@ impl Stores {
 
     #[must_use]
     pub fn muskip(&self, index: u16) -> GlueId {
-        let value = self.env.muskip(index);
-        self.assert_live_glue(value);
-        value
+        self.resolve_stored_glue(self.env.muskip(index))
     }
 
     pub fn set_muskip_global(&mut self, index: u16, value: GlueId) {
@@ -1306,9 +1298,7 @@ impl Stores {
 
     #[must_use]
     pub fn toks(&self, index: u16) -> TokenListId {
-        let value = self.env.toks(index);
-        self.assert_live_token_list(value);
-        value
+        self.resolve_stored_token_list(self.env.toks(index))
     }
 
     pub fn set_toks_global(&mut self, index: u16, value: TokenListId) {
@@ -1463,9 +1453,7 @@ impl Stores {
 
     #[must_use]
     pub fn glue_param(&self, param: GlueParam) -> GlueId {
-        let value = self.env.glue_param(param);
-        self.assert_live_glue(value);
-        value
+        self.resolve_stored_glue(self.env.glue_param(param))
     }
 
     pub fn set_glue_param_global(&mut self, param: GlueParam, value: GlueId) {
@@ -1480,9 +1468,7 @@ impl Stores {
 
     #[must_use]
     pub fn tok_param(&self, param: TokParam) -> TokenListId {
-        let value = self.env.tok_param(param);
-        self.assert_live_token_list(value);
-        value
+        self.resolve_stored_token_list(self.env.tok_param(param))
     }
 
     pub fn set_tok_param_global(&mut self, param: TokParam, value: TokenListId) {

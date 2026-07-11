@@ -11,6 +11,38 @@ use crate::node::{LeaderPayload, Node};
 use crate::token::{OriginId, Token};
 
 impl Stores {
+    pub(super) fn resolve_stored_token_list(&self, id: TokenListId) -> TokenListId {
+        self.tokens
+            .resolve_stored(id)
+            .expect("stored token-list slot is not live")
+    }
+
+    pub(super) fn resolve_stored_glue(&self, id: GlueId) -> GlueId {
+        self.glue
+            .resolve_stored(id)
+            .expect("stored glue slot is not live")
+    }
+
+    pub(super) fn resolve_stored_font(&self, id: FontId) -> FontId {
+        self.fonts
+            .resolve_stored(id)
+            .expect("stored font slot is not live")
+    }
+
+    pub(super) fn resolve_stored_meaning(&self, meaning: Meaning) -> Meaning {
+        match meaning {
+            Meaning::Macro { definition, flags } => Meaning::Macro {
+                definition: self
+                    .macros
+                    .resolve_stored(definition)
+                    .expect("stored macro-definition slot is not live"),
+                flags,
+            },
+            Meaning::Font(id) => Meaning::Font(self.resolve_stored_font(id)),
+            other => other,
+        }
+    }
+
     pub(super) fn assert_live_symbol(&self, symbol: Symbol) {
         assert!(
             self.interner.contains(symbol),

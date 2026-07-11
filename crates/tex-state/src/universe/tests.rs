@@ -1072,6 +1072,21 @@ fn rollback_restores_font_identifier_registration() {
 }
 
 #[test]
+fn rollback_reuse_does_not_revive_stale_font_identity() {
+    let mut universe = Universe::new();
+    let snapshot = universe.snapshot();
+    let stale = universe.intern_font(test_font("stale", b"stale"));
+
+    universe.rollback(&snapshot);
+    let reused = universe.intern_font(test_font("reused", b"reused"));
+
+    assert_eq!(reused.raw(), stale.raw());
+    assert_ne!(reused, stale);
+    assert!(std::panic::catch_unwind(|| universe.font(stale)).is_err());
+    assert_eq!(universe.font(reused).name(), "reused");
+}
+
+#[test]
 fn rollback_restores_state_hash_cursor() {
     let mut universe = Universe::new();
     let base = universe.snapshot();
