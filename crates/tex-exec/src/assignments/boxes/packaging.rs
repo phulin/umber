@@ -268,12 +268,10 @@ where
                 context: "box closing brace",
             })?;
             let semantic = tex_expand::semantic_token(token);
-            let math_mode = matches!(nest.current_mode(), Mode::Math | Mode::DisplayMath);
             // TeX.web §1084 packages on the right brace for the active box
             // save-stack group. Scanners such as \message consume their own
             // balanced braces, so delivered-token brace counting is insufficient.
-            if !math_mode
-                && stores.execution_group_depth() == box_group_depth
+            if stores.execution_group_depth() == box_group_depth
                 && stores.innermost_group_kind() == Some(GroupKind::Box)
                 && has_catcode_meaning(stores, semantic, Catcode::EndGroup)
             {

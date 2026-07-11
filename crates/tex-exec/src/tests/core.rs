@@ -923,10 +923,13 @@ fn box_scanner_closes_by_execution_group_after_message_argument() {
 }
 
 #[test]
-fn malformed_math_right_brace_preserves_box_packaging_boundary_and_replays() {
+fn trip_math_mode_box_closure_preserves_ownership_and_replays() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
     let checkpoint = stores.snapshot();
+    // This is the decisive topology reduced from the malformed tail of
+    // trip.tex: Box is innermost when its brace arrives, but Math is still
+    // the current mode. The vbox corresponds to the material box9 must own.
     let source = "\\setbox0=\\hbox{\x24x}\x24\\vbox{\\hrule height2pt}}\\hrule height3pt";
     let mut first_hash = None;
 
