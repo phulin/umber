@@ -1008,6 +1008,38 @@ fn snapshot_state_hash_distinguishes_font_content_identity() {
 }
 
 #[test]
+fn short_loaded_font_parameters_seed_seven_snapshot_covered_env_values() {
+    let mut universe = Universe::new();
+    let loaded = crate::font::LoadedFont::new(
+        "short",
+        "short.tfm",
+        ContentHash::from_bytes(b"short").bytes(),
+        0,
+        Scaled::from_raw(10 * Scaled::UNITY),
+        Scaled::from_raw(10 * Scaled::UNITY),
+        vec![Scaled::from_raw(-1)],
+        crate::font::FontMetrics::default(),
+    );
+    assert_eq!(loaded.parameters().len(), 7);
+
+    let short = universe.intern_font(loaded);
+    let _later = universe.intern_font(test_font("later", b"later"));
+    assert_eq!(universe.font_parameter_count(short), 7);
+    assert_eq!(universe.font_parameter(short, 1), Scaled::from_raw(-1));
+    for number in 2..=7 {
+        assert_eq!(universe.font_parameter(short, number), Scaled::from_raw(0));
+    }
+
+    let snapshot = universe.snapshot();
+    universe
+        .set_font_dimen(short, 7, Scaled::from_raw(77), false)
+        .expect("guaranteed fontdimen remains writable after another font loads");
+    assert_eq!(universe.font_parameter(short, 7), Scaled::from_raw(77));
+    universe.rollback(&snapshot);
+    assert_eq!(universe.font_parameter(short, 7), Scaled::from_raw(0));
+}
+
+#[test]
 fn snapshot_state_hash_distinguishes_font_identifier_identity() {
     let mut first = Universe::new();
     let mut second = Universe::new();

@@ -26,6 +26,7 @@ pub(super) fn terminal_effect_text(stores: &Universe) -> String {
 
 pub(super) fn stores_with_fonts() -> Universe {
     const CMR10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
+    const CMMI10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmmi10.tfm");
     const CMTT10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmtt10.tfm");
     const CMSY10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmsy10.tfm");
     const CMEX10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmex10.tfm");
@@ -36,6 +37,10 @@ pub(super) fn stores_with_fonts() -> Universe {
         .world_mut()
         .set_memory_file("cmr10.tfm", CMR10.to_vec())
         .expect("seed cmr10");
+    stores
+        .world_mut()
+        .set_memory_file("cmmi10.tfm", CMMI10.to_vec())
+        .expect("seed cmmi10");
     stores
         .world_mut()
         .set_memory_file("cmtt10.tfm", CMTT10.to_vec())

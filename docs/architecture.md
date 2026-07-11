@@ -1072,7 +1072,10 @@ immutable tables, with mutable font state kept behind the state timeline.
 - Font parameters are intentionally separate from those immutable metrics.
   `Universe::font_parameter(font, n)` reads the Env-side `\fontdimen` bank, so
   runtime writes are visible to scanners and kernels; the original TFM
-  parameter values only seed those banks at load time.
+  parameter values only seed those banks at load time. TFM parsing and the
+  backend-neutral loaded-font boundary both enforce TeX82's guaranteed
+  `\fontdimen1` through `\fontdimen7`, padding absent values with zero before
+  the snapshot-covered Env bank is initialized.
 - Later OpenType support should lower backend data behind the same boundary:
   glyph metrics can populate the immutable metric record, while complex
   shaping can replace the TFM pair-program implementation without exposing
