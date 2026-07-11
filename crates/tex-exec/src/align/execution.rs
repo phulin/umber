@@ -67,32 +67,35 @@ where
         }
 
         let finished = finish_alignment_level(nest, stores)?;
-        for node in finished {
-            append_finished_alignment_node(nest, stores, node);
-        }
+        append_finished_alignment(nest, stores, finished);
         build_page_if_outer_vertical(nest, stores)?;
         Ok(())
     })
 }
 
-fn append_finished_alignment_node(nest: &mut ModeNest, stores: &mut Universe, node: Node) {
-    if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
-        update_prev_depth_for_finished_alignment_node(nest, &node);
-        append_vertical_contribution(nest, stores, node);
-    } else {
-        nest.current_list_mut().push(node);
-    }
+pub(crate) struct FinishedAlignment {
+    pub(crate) nodes: Vec<Node>,
+    pub(crate) aux_prev_depth: Option<tex_state::scaled::Scaled>,
 }
 
-fn update_prev_depth_for_finished_alignment_node(nest: &mut ModeNest, node: &Node) {
-    match node {
-        Node::HList(box_node) | Node::VList(box_node) => {
-            nest.current_list_mut().set_prev_depth(box_node.depth);
+pub(crate) fn append_finished_alignment(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    finished: FinishedAlignment,
+) {
+    if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical)
+        && let Some(prev_depth) = finished.aux_prev_depth
+    {
+        // TeX.web fin_align restores the alignment level's aux wholesale
+        // before splicing nodes whose dimensions may have been transformed.
+        nest.current_list_mut().set_prev_depth(prev_depth);
+    }
+    for node in finished.nodes {
+        if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
+            append_vertical_contribution(nest, stores, node);
+        } else {
+            nest.current_list_mut().push(node);
         }
-        Node::Rule { .. } => nest
-            .current_list_mut()
-            .set_prev_depth(crate::mode::IGNORE_DEPTH),
-        _ => {}
     }
 }
 
@@ -141,15 +144,16 @@ where
             replay_everycr(input, stores);
         }
 
-        finish_alignment_level(nest, stores)
+        Ok(finish_alignment_level(nest, stores)?.nodes)
     })
 }
 
 fn finish_alignment_level(
     nest: &mut ModeNest,
     stores: &mut Universe,
-) -> Result<Vec<Node>, ExecError> {
+) -> Result<FinishedAlignment, ExecError> {
     let mut level = nest.pop()?;
+    let aux_prev_depth = level.list().prev_depth();
     let state = level
         .list_mut()
         .take_align_state()
@@ -158,7 +162,10 @@ fn finish_alignment_level(
         })?;
     let nodes = level.list().nodes().to_vec();
     let finished = super::widths::finish_alignment(&state, &nodes, stores)?;
-    Ok(finished)
+    Ok(FinishedAlignment {
+        nodes: finished,
+        aux_prev_depth,
+    })
 }
 
 fn replay_everycr<S>(input: &mut InputStack<S>, stores: &Universe) {

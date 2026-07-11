@@ -1,6 +1,9 @@
 //! Alignment stomach machinery.
 
 mod execution;
+#[cfg(test)]
+pub(crate) use execution::{FinishedAlignment, append_finished_alignment};
+
 mod noalign;
 mod packaging;
 mod preamble;

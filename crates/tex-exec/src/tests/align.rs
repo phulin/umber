@@ -1316,6 +1316,34 @@ fn valign_column_extent_includes_cell_depth() {
 }
 
 #[test]
+fn fin_align_restores_saved_aux_instead_of_recomputing_it_from_set_nodes() {
+    let mut stores = Universe::new();
+    let mut nest = ModeNest::new();
+    nest.push(Mode::InternalVertical);
+    nest.current_list_mut().set_prev_depth(sp(1));
+
+    crate::align::append_finished_alignment(
+        &mut nest,
+        &mut stores,
+        crate::align::FinishedAlignment {
+            nodes: vec![Node::Rule {
+                width: Some(sp(3)),
+                height: Some(sp(2)),
+                depth: Some(Scaled::from_raw(0)),
+            }],
+            aux_prev_depth: Some(sp(7)),
+        },
+    );
+
+    assert_eq!(
+        nest.current_list().prev_depth(),
+        Some(sp(7)),
+        "fin_align must restore the alignment level's saved aux verbatim"
+    );
+    assert!(matches!(nest.current_list().nodes(), [Node::Rule { .. }]));
+}
+
+#[test]
 fn valign_in_vertical_mode_starts_a_paragraph() {
     let stores = run_alignment_source("\\setbox0=\\vbox{\\valign{#\\cr \\cr}\\par}");
     let vbox = box_zero_vlist(&stores);
