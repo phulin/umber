@@ -1184,7 +1184,7 @@ impl LexSourceContext {
 #[derive(Debug)]
 pub enum LexError {
     Input {
-        error: WorldError,
+        error: Box<WorldError>,
         context: LexSourceContext,
         site: Box<DiagnosticSite>,
     },
@@ -1230,7 +1230,7 @@ impl fmt::Display for LexError {
 impl std::error::Error for LexError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Input { error, .. } => Some(error),
+            Self::Input { error, .. } => Some(error.as_ref()),
             Self::InvalidCharacter { .. }
             | Self::InvalidUtf8 { .. }
             | Self::MissingControlSequence { .. } => None,
@@ -1945,7 +1945,7 @@ fn map_input_source_error<S>(
 ) -> LexError {
     match error {
         InputSourceError::World(error) => LexError::Input {
-            error,
+            error: Box::new(error),
             context: fallback,
             site: Box::new(DiagnosticSite::unknown()),
         },
