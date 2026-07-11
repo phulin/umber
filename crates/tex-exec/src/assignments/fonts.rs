@@ -172,6 +172,7 @@ where
     };
     match stores.meaning(symbol) {
         Meaning::Font(id) => Ok(id),
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Font) => Ok(stores.current_font()),
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::TextFont
             | UnexpandablePrimitive::ScriptFont

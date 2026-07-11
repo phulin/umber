@@ -617,6 +617,9 @@ where
         tex_state::meaning::UnexpandablePrimitive::PrevGraf => {
             Ok(ScannedInt::new(hooks.prev_graf(), token))
         }
+        tex_state::meaning::UnexpandablePrimitive::ParShape => {
+            Ok(ScannedInt::new(hooks.par_shape_len(), token))
+        }
         tex_state::meaning::UnexpandablePrimitive::LastPenalty => {
             Ok(ScannedInt::new(hooks.last_penalty(), token))
         }

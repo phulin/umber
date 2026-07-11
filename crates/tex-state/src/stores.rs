@@ -191,6 +191,10 @@ impl Stores {
     pub(crate) fn env_group_depth(&self) -> u32 {
         self.env.group_depth()
     }
+
+    pub(crate) fn innermost_group_kind(&self) -> Option<GroupKind> {
+        self.env.innermost_group_kind()
+    }
     /// Creates an empty state-store tuple.
     #[must_use]
     pub fn new() -> Self {

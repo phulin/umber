@@ -253,6 +253,9 @@ fn engine_state_snapshot(nest: &ModeNest, stores: &Universe) -> EngineStateSnaps
         space_factor: list.space_factor(),
         prev_depth: list.prev_depth().unwrap_or(IGNORE_DEPTH),
         prev_graf: nest.enclosing_vertical_prev_graf(),
+        par_shape_len: list
+            .par_shape()
+            .map_or(0, |shape| shape.lines().len().min(i32::MAX as usize) as i32),
         ..EngineStateSnapshot::default()
     };
     if is_outer_vertical(nest) {
@@ -336,6 +339,10 @@ where
         self.state.prev_graf
     }
 
+    fn par_shape_len(&self) -> i32 {
+        self.state.par_shape_len
+    }
+
     fn last_penalty(&self) -> i32 {
         self.state.last_penalty
     }
@@ -406,5 +413,12 @@ where
 
     fn prev_graf(&self) -> i32 {
         self.nest.enclosing_vertical_prev_graf()
+    }
+
+    fn par_shape_len(&self) -> i32 {
+        self.nest
+            .current_list()
+            .par_shape()
+            .map_or(0, |shape| shape.lines().len().min(i32::MAX as usize) as i32)
     }
 }

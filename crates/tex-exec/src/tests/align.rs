@@ -1215,6 +1215,18 @@ fn display_halign_exposes_enclosing_prevdepth_to_initial_everycr() {
 }
 
 #[test]
+fn display_halign_closes_semisimple_group_and_discards_prior_formula() {
+    let stores = run_alignment_source(
+        "\\count0=1 \\setbox0=\\vbox{\\hsize=50pt \\noindent$$x\\begingroup\\count0=2 \\halign{#\\cr a\\cr}$$\\par}",
+    );
+
+    assert_eq!(stores.count(0), 1);
+    let output = support::terminal_effect_text(&stores);
+    assert!(output.contains("Missing \\endgroup inserted"));
+    assert!(output.contains("Improper \\halign inside $$'s"));
+}
+
+#[test]
 fn nested_alignment_executes_inside_cell() {
     let stores = run_boxed_alignment_source("\\halign{#\\cr \\vbox{\\halign{#\\cr x\\cr}}\\cr}");
     let vbox = box_zero_vlist(&stores);

@@ -105,6 +105,37 @@ fn register_definition_target_terminates_its_own_number_scan() {
 }
 
 #[test]
+fn parshape_is_an_internal_integer_equal_to_its_line_count() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\parshape=2 1pt 2pt 3pt 4pt \\count0=\\parshape",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("parshape should scan as an internal integer");
+
+    assert_eq!(stores.count(0), 2);
+}
+
+#[test]
+fn setbox_missing_box_is_recoverable_and_replays_the_rejected_command() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\setbox0=\\count0=7 \\count1=9"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("TeX backs up a non-box command after scan_box recovery");
+
+    assert!(stores.box_reg(0).is_none());
+    assert_eq!(stores.count(0), 7);
+    assert_eq!(stores.count(1), 9);
+    assert!(terminal_effect_text(&stores).contains("A <box> was supposed to be here"));
+}
+
+#[test]
 fn mathchardef_constants_scan_for_penalty_count_ifnum_and_signed_macro_replay() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);

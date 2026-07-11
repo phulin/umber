@@ -69,7 +69,7 @@ where
         .ok_or(ExecError::MissingTracedToken { context })?;
     let token = tex_expand::semantic_token(traced);
     let Token::Cs(symbol) = token else {
-        return Err(ExecError::MissingToken { context: "box" });
+        return recover_missing_box(input, stores, traced);
     };
     match stores.meaning(symbol) {
         Meaning::UnexpandablePrimitive(primitive @ UnexpandablePrimitive::HBox)
@@ -100,8 +100,24 @@ where
             let nest = nest.ok_or(ExecError::MissingToken { context: "box" })?;
             take_last_box(nest, stores).map(|value| value.map(ScannedBoxValue::Shared))
         }
-        _ => Err(ExecError::MissingToken { context: "box" }),
+        _ => recover_missing_box(input, stores, traced),
     }
+}
+
+/// TeX82's `scan_box` backs up a non-box command after reporting the error
+/// (tex.web §1076), leaving the destination box void while normal command
+/// processing resumes with the rejected token.
+fn recover_missing_box<S: InputSource>(
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    traced: TracedTokenWord,
+) -> Result<Option<ScannedBoxValue>, ExecError> {
+    crate::push_traced_tokens(input, stores, [traced]);
+    stores.world_mut().write_text(
+        tex_state::PrintSink::TerminalAndLog,
+        "\n! A <box> was supposed to be here.\nI was expecting to see \\hbox or \\vbox or \\copy or \\box or\nsomething like that. So you might find something missing in\nyour output. But keep trying; you can fix this later.\n",
+    );
+    Ok(None)
 }
 
 pub(super) fn take_last_box(

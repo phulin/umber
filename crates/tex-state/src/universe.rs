@@ -1734,6 +1734,11 @@ impl Universe {
         self.stores.nodes(id)
     }
 
+    #[must_use]
+    pub fn innermost_group_kind(&self) -> Option<GroupKind> {
+        self.stores.innermost_group_kind()
+    }
+
     pub fn enter_group(&mut self) {
         self.stores.enter_group();
     }

@@ -193,6 +193,7 @@ pub struct EngineStateSnapshot {
     pub space_factor: i32,
     pub prev_depth: Scaled,
     pub prev_graf: i32,
+    pub par_shape_len: i32,
     pub last_penalty: i32,
     pub last_kern: Scaled,
     pub last_skip: GlueSpec,
@@ -206,6 +207,7 @@ impl Default for EngineStateSnapshot {
             space_factor: 1000,
             prev_depth: Scaled::from_raw(0),
             prev_graf: 0,
+            par_shape_len: 0,
             last_penalty: 0,
             last_kern: Scaled::from_raw(0),
             last_skip: GlueSpec::ZERO,
@@ -488,6 +490,10 @@ pub trait ExpansionHooks<S> {
     }
 
     fn prev_graf(&self) -> i32 {
+        0
+    }
+
+    fn par_shape_len(&self) -> i32 {
         0
     }
 

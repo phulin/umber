@@ -201,13 +201,18 @@ where
         } => {
             assignments::flush_pending_hchars(nest, stores)?;
             if let Err(error) = leave_group_with_origin(input, stores, GroupKind::Simple, origin) {
-                if matches!(error, ExecError::TooManyRightBraces { .. }) {
-                    stores.world_mut().write_text(
+                match error {
+                    ExecError::TooManyRightBraces { .. } => stores.world_mut().write_text(
                         tex_state::PrintSink::TerminalAndLog,
                         "\n! Too many }'s.\nYou've closed more groups than you opened.\nSuch booboos are generally harmless, so keep going.\n",
-                    );
-                } else {
-                    return Err(error);
+                    ),
+                    ExecError::ExtraRightBraceOrForgottenDollar { .. } => stores
+                        .world_mut()
+                        .write_text(
+                            tex_state::PrintSink::TerminalAndLog,
+                            "\n! Extra }, or forgotten $.\nI've deleted a group-closing symbol because it seems to be\nspurious, as in `$x}$'. But perhaps the } is legitimate and\nyou forgot something else, as in `\\hbox{$x}'.\n",
+                        ),
+                    error => return Err(error),
                 }
             }
             Ok(DispatchAction::Continue)

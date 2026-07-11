@@ -183,7 +183,18 @@ where
             cat: Catcode::EndGroup,
             ..
         } => {
-            leave_group_with_origin(input, stores, tex_state::GroupKind::Simple, origin)?;
+            if let Err(error) =
+                leave_group_with_origin(input, stores, tex_state::GroupKind::Simple, origin)
+            {
+                if matches!(error, ExecError::ExtraRightBraceOrForgottenDollar { .. }) {
+                    stores.world_mut().write_text(
+                        tex_state::PrintSink::TerminalAndLog,
+                        "\n! Extra }, or forgotten $.\nI've deleted a group-closing symbol because it seems to be\nspurious, as in `$x}$'. But perhaps the } is legitimate and\nyou forgot something else, as in `\\hbox{$x}'.\n",
+                    );
+                } else {
+                    return Err(error);
+                }
+            }
             Ok(DispatchAction::Continue)
         }
         Token::Char {
@@ -577,13 +588,25 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
+    while stores.innermost_group_kind() == Some(tex_state::GroupKind::SemiSimple) {
+        stores.world_mut().write_text(
+            tex_state::PrintSink::TerminalAndLog,
+            "\n! Missing \\endgroup inserted.\nI've inserted something that you may have forgotten.\n",
+        );
+        leave_group_with_origin(
+            input,
+            stores,
+            tex_state::GroupKind::SemiSimple,
+            context.origin(),
+        )?;
+    }
     if !nest.current_list().nodes().is_empty() || nest.current_list().display_eq_no().is_some() {
-        return Err(ExecError::UnimplementedTypesetting {
-            mode: Mode::DisplayMath,
-            token: Token::Cs(stores.intern("halign")),
-            origin: OriginId::UNKNOWN,
-            operation: "display alignment with math material",
-        });
+        stores.world_mut().write_text(
+            tex_state::PrintSink::TerminalAndLog,
+            "\n! Improper \\halign inside $$'s.\nDisplays can use special alignments (like \\eqalignno)\nonly if nothing but the alignment itself is between $$'s.\nSo I've deleted the formulas that preceded this alignment.\n",
+        );
+        let _ = nest.current_list_mut().take_nodes();
+        let _ = nest.current_list_mut().take_display_eq_no();
     }
     let mut level = nest.pop()?;
     let _interrupt =
