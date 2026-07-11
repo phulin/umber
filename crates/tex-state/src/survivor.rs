@@ -245,7 +245,7 @@ impl SurvivorArena {
             .recycled
             .iter()
             .enumerate()
-            .max_by_key(|(_, storage)| storage.len())
+            .max_by_key(|(_, storage)| storage.node_capacity())
         else {
             return (NodeStorage::default(), false);
         };
@@ -670,5 +670,35 @@ fn u32_len(value: usize, message: &str) -> u32 {
     match u32::try_from(value) {
         Ok(value) => value,
         Err(_) => panic!("{message}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SurvivorArena;
+    use crate::node::Node;
+    use crate::node_arena::NodeStorage;
+
+    #[test]
+    fn recycled_buffer_selection_prefers_largest_capacity() {
+        fn cleared_storage(len: usize) -> NodeStorage {
+            let mut storage = NodeStorage::default();
+            storage.append(&vec![Node::Penalty(0); len]);
+            storage.clear();
+            storage
+        }
+
+        let large = cleared_storage(256);
+        let large_capacity = large.node_capacity();
+        let small = cleared_storage(8);
+        assert!(large_capacity > small.node_capacity());
+
+        let mut arena = SurvivorArena::new();
+        arena.recycled = vec![large, small];
+
+        let (selected, recycled) = arena.take_recycled_buffer();
+        assert!(recycled);
+        assert_eq!(selected.node_capacity(), large_capacity);
+        assert!(selected.is_empty());
     }
 }

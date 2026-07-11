@@ -342,6 +342,9 @@ impl NodeStorage {
     pub(crate) fn len(&self) -> usize {
         self.words.len()
     }
+    pub(crate) fn node_capacity(&self) -> usize {
+        self.words.capacity()
+    }
     pub(crate) fn is_empty(&self) -> bool {
         self.words.is_empty()
     }
