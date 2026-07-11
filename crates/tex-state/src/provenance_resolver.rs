@@ -306,20 +306,24 @@ impl<'a> ProvenanceResolver<'a> {
     ) -> String {
         if let Some(region) = self.universe.source_region(source) {
             return match region.backing {
-                SourceBacking::World(record) => self
-                    .universe
-                    .world()
-                    .input_records()
-                    .get(record.raw() as usize)
-                    .map_or_else(
+                SourceBacking::World(record) => {
+                    self.universe.world().input_record(record).map_or_else(
                         || format!("<source {}>", source.raw()),
                         |record| display_path(record.path()),
-                    ),
+                    )
+                }
                 SourceBacking::Generated(_) => format!("<source {}>", source.raw()),
             };
         }
-        let index = input_record.map_or(source.raw() as usize, |record| record.raw() as usize);
-        if let Some(record) = self.universe.world().input_records().get(index) {
+        let record = match input_record {
+            Some(record) => self.universe.world().input_record(record),
+            None => self
+                .universe
+                .world()
+                .input_records()
+                .get(source.raw() as usize),
+        };
+        if let Some(record) = record {
             return display_path(record.path());
         }
         format!("<source {}>", source.raw())
@@ -331,12 +335,14 @@ impl<'a> ProvenanceResolver<'a> {
             let offset = usize::try_from(source.byte_offset()).ok()?;
             return physical_line_at(bytes, offset).map(|(_, _, line)| line);
         }
-        let index = source
-            .input_record()
-            .map_or(source.source().raw() as usize, |record| {
-                record.raw() as usize
-            });
-        let record = self.universe.world().input_records().get(index)?;
+        let record = match source.input_record() {
+            Some(record) => self.universe.world().input_record(record)?,
+            None => self
+                .universe
+                .world()
+                .input_records()
+                .get(source.source().raw() as usize)?,
+        };
         let bytes = self.universe.world().input_content(record.hash())?;
         let text = String::from_utf8_lossy(bytes);
         line_at(&text, source.line())

@@ -870,10 +870,16 @@ fn u32_len(value: usize) -> Option<u32> {
 
 fn next_packed_arena_origin() -> Option<u32> {
     NEXT_PACKED_ARENA_ORIGIN
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
-            (next < 0x7fff_ffff).then_some(next + 1)
-        })
+        .fetch_update(
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+            packed_origin_successor,
+        )
         .ok()
+}
+
+fn packed_origin_successor(next: u32) -> Option<u32> {
+    (next <= 0x7fff_ffff).then_some(next + 1)
 }
 
 fn u32_index(value: usize) -> Option<u32> {

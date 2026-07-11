@@ -34,6 +34,32 @@ fn resolver_treats_rolled_back_origin_as_unknown() {
 }
 
 #[test]
+fn resolver_does_not_revive_a_rolled_back_input_record() {
+    let mut world = World::memory();
+    world
+        .set_memory_file("old.tex", b"old".to_vec())
+        .expect("seed old input");
+    world
+        .set_memory_file("new.tex", b"new".to_vec())
+        .expect("seed replacement input");
+    let snapshot = world.snapshot();
+    let stale = world.read_file("old.tex").expect("read old input").record();
+    world.rollback(&snapshot);
+    world
+        .read_file("new.tex")
+        .expect("reuse the rolled-back input slot");
+
+    let mut stores = Universe::with_world(world);
+    let origin =
+        stores.source_origin_with_input_record(crate::SourceId::new(0), Some(stale), 0, 1, 0);
+    let rendered = ProvenanceResolver::new(&stores).render_diagnostic("boom", Some(origin));
+
+    assert!(rendered.contains("<source 0>:1:1"));
+    assert!(!rendered.contains("new.tex"));
+    assert!(!rendered.contains("  1 | new"));
+}
+
+#[test]
 fn resolver_renders_bounded_live_macro_trace() {
     let mut stores = stores_with_input("main.tex", b"\\def\\a{\\endgroup}\\a\n");
     let definition_origin = stores.source_origin(crate::SourceId::new(0), 0, 1, 0);

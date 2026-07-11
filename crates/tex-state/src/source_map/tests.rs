@@ -83,7 +83,7 @@ fn registered_source_capability_encodes_only_backed_nonempty_direct_ranges() {
 }
 
 #[test]
-fn rollback_reuses_source_ids_generated_ids_and_logical_positions_without_aliasing() {
+fn rollback_reuses_source_and_backing_slots_but_not_logical_positions() {
     let mut map = SourceMap::default();
     map.register(SourceId::new(0), generated(b"root"))
         .expect("source-map operation succeeds");

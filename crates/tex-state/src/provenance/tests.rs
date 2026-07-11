@@ -1,6 +1,7 @@
 use super::{
     InsertedOrigin, InsertedOriginKind, MacroInvocationOrigin, OriginRecord, ProvenanceStore,
     SourceOrigin, SynthesizedOrigin, SynthesizedOriginKind, SyntheticOrigin, SyntheticOriginKind,
+    packed_origin_successor,
 };
 use crate::Universe;
 use crate::ids::OriginListId;
@@ -20,6 +21,13 @@ fn unknown_origin_and_empty_list_are_preallocated() {
     assert!(store.contains_origin(OriginId::UNKNOWN));
     assert_eq!(store.stats().origin_records(), 0);
     assert!(store.contains_list(OriginListId::EMPTY));
+}
+
+#[test]
+fn packed_arena_origin_namespace_includes_its_last_payload() {
+    assert_eq!(packed_origin_successor(0x7fff_fffe), Some(0x7fff_ffff));
+    assert_eq!(packed_origin_successor(0x7fff_ffff), Some(0x8000_0000));
+    assert_eq!(packed_origin_successor(0x8000_0000), None);
 }
 
 #[test]
