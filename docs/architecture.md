@@ -640,6 +640,12 @@ assignments, box building, and dispatch into the typesetting kernels.
   box nesting in grouped constructs such as Plain TeX's `\big` family.
   The mode-list summary carries the pending incomplete fraction so snapshots
   preserve TeX's `\over`/`\atop`/`\above` state.
+  At formula exit, the stomach performs TeX82's `math_fonts` gate before
+  conversion: all three family-2 symbol fonts must expose 22 parameters before
+  all three family-3 extension fonts are checked for 13. A failure emits the
+  corresponding symbol/extension diagnostic and deletes the mlist, preserving
+  the surrounding math-on/math-off boundary without synthesizing an empty
+  hbox; mode and math-shift group teardown then proceeds normally.
   When a `math_comp` constructor such as `\mathopen` is delivered outside
   math mode, main control follows TeX82's missing-dollar recovery: it replays
   a traced math-shift token before the original traced constructor, reports
@@ -1093,7 +1099,12 @@ Responsibility: page artifacts → bytes on disk. Strictly downstream.
   all (editor preview may rasterize page artifacts directly).
 - `tex-out` owns the page artifact model and version-9 binary reader/writer.
   Exact glue-set numerator and denominator fields cross this commit boundary
-  and participate in deterministic semantic hashing. The crate has no
+  and participate in deterministic semantic hashing. `GlueSetRatio` performs
+  checked canonical reconstruction at every serde boundary, and the artifact
+  reader applies the same fallible constructor explicitly: nonpositive
+  denominators and unrepresentable magnitudes are rejected, while reducible
+  ratios and zero are normalized before they enter packing or driver code.
+  The crate has no
   dependency on `tex-state` or `Universe`; shipout code lowers live state into
   artifact bytes before asking `World` to store them.
 - The artifact record captures the effective job magnification, banner,

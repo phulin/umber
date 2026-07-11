@@ -171,10 +171,51 @@ impl std::error::Error for DimensionError {}
 pub const GLUE_SET_RATIO_SCALE: i32 = 1_000_000;
 
 /// Exact reduced glue-set ratio used by packed boxes and output drivers.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Serialize)]
 pub struct GlueSetRatio {
     numerator: i32,
     denominator: i32,
+}
+
+/// Invalid external representation of an exact glue-set ratio.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GlueSetRatioError {
+    /// Denominators must be positive so every ratio has one canonical sign.
+    NonPositiveDenominator,
+    /// The signed numerator's magnitude cannot be represented by this type.
+    UnrepresentableNumerator,
+}
+
+impl fmt::Display for GlueSetRatioError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NonPositiveDenominator => {
+                f.write_str("glue-set ratio denominator must be positive")
+            }
+            Self::UnrepresentableNumerator => {
+                f.write_str("glue-set ratio numerator magnitude is unrepresentable")
+            }
+        }
+    }
+}
+
+impl std::error::Error for GlueSetRatioError {}
+
+impl<'de> serde::Deserialize<'de> for GlueSetRatio {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(serde::Deserialize)]
+        struct WireRatio {
+            numerator: i32,
+            denominator: i32,
+        }
+
+        let wire = WireRatio::deserialize(deserializer)?;
+        Self::try_from_ratio_parts(wire.numerator, wire.denominator)
+            .map_err(serde::de::Error::custom)
+    }
 }
 
 impl Default for GlueSetRatio {
@@ -215,6 +256,31 @@ impl GlueSetRatio {
             numerator: numerator / divisor,
             denominator: denominator / divisor,
         }
+    }
+
+    /// Reconstructs a canonical ratio from externally supplied signed parts.
+    ///
+    /// A negative numerator is normalized to its magnitude because box glue
+    /// direction is represented separately. Nonpositive denominators and the
+    /// unrepresentable magnitude of `i32::MIN` are rejected.
+    pub const fn try_from_ratio_parts(
+        numerator: i32,
+        denominator: i32,
+    ) -> Result<Self, GlueSetRatioError> {
+        if denominator <= 0 {
+            return Err(GlueSetRatioError::NonPositiveDenominator);
+        }
+        if numerator == 0 {
+            return Ok(Self::ZERO);
+        }
+        let Some(numerator) = numerator.checked_abs() else {
+            return Err(GlueSetRatioError::UnrepresentableNumerator);
+        };
+        let divisor = gcd_i32(numerator, denominator);
+        Ok(Self {
+            numerator: numerator / divisor,
+            denominator: denominator / divisor,
+        })
     }
 
     /// Returns the numerator of the reduced exact ratio.

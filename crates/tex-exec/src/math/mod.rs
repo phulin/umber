@@ -314,13 +314,12 @@ where
         }
     }
     let mut content = finish_current_math_list(nest, stores);
-    let fonts_sufficient = math_fonts_sufficient(stores);
-    if !fonts_sufficient {
+    let font_failure = math_font_failure(stores);
+    if let Some(failure) = font_failure {
         content = stores.freeze_node_list(&[]);
-        stores.world_mut().write_text(
-            tex_state::PrintSink::TerminalAndLog,
-            "\n! Math formula deleted: Insufficient math fonts.\n",
-        );
+        stores
+            .world_mut()
+            .write_text(tex_state::PrintSink::TerminalAndLog, failure.diagnostic());
     }
     let mut level = nest.pop()?;
     if display {
@@ -380,20 +379,19 @@ where
     }
 
     let mut content = finish_current_math_list(nest, stores);
-    let fonts_sufficient = math_fonts_sufficient(stores);
-    if !fonts_sufficient {
+    let font_failure = math_font_failure(stores);
+    if let Some(failure) = font_failure {
         content = stores.freeze_node_list(&[]);
-        stores.world_mut().write_text(
-            tex_state::PrintSink::TerminalAndLog,
-            "\n! Math formula deleted: Insufficient math fonts.\n",
-        );
+        stores
+            .world_mut()
+            .write_text(tex_state::PrintSink::TerminalAndLog, failure.diagnostic());
     }
     let mut eq_level = nest.pop()?;
     let mut eq_no = eq_level
         .list_mut()
         .take_display_eq_no()
         .expect("equation-number mode carries its enclosing display");
-    if !fonts_sufficient {
+    if font_failure.is_some() {
         eq_no.display = stores.freeze_node_list(&[]);
     }
     let finished_eq_no = finish_eq_no(stores, eq_no.side, content);
@@ -416,22 +414,58 @@ where
     Ok(DispatchAction::Continue)
 }
 
-fn math_fonts_sufficient(stores: &Universe) -> bool {
-    [
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MathFontFailure {
+    Symbol,
+    Extension,
+}
+
+impl MathFontFailure {
+    const fn diagnostic(self) -> &'static str {
+        match self {
+            Self::Symbol => {
+                "\n! Math formula deleted: Insufficient symbol fonts.\n\
+                 Sorry, but I can't typeset math unless \\textfont 2\n\
+                 and \\scriptfont 2 and \\scriptscriptfont 2 have all\n\
+                 the \\fontdimen values needed in math symbol fonts.\n"
+            }
+            Self::Extension => {
+                "\n! Math formula deleted: Insufficient extension fonts.\n\
+                 Sorry, but I can't typeset math unless \\textfont 3\n\
+                 and \\scriptfont 3 and \\scriptscriptfont 3 have all\n\
+                 the \\fontdimen values needed in math extension fonts.\n"
+            }
+        }
+    }
+}
+
+fn math_font_failure(stores: &Universe) -> Option<MathFontFailure> {
+    const SIZES: [MathFontSize; 3] = [
         MathFontSize::Text,
         MathFontSize::Script,
         MathFontSize::ScriptScript,
-    ]
-    .into_iter()
-    .all(|size| {
-        stores.font_parameter_count(stores.math_family_font(size, 2)) >= 22
-            && stores.font_parameter_count(stores.math_family_font(size, 3)) >= 13
-    })
+    ];
+    if SIZES
+        .into_iter()
+        .any(|size| stores.font_parameter_count(stores.math_family_font(size, 2)) < 22)
+    {
+        return Some(MathFontFailure::Symbol);
+    }
+    if SIZES
+        .into_iter()
+        .any(|size| stores.font_parameter_count(stores.math_family_font(size, 3)) < 13)
+    {
+        return Some(MathFontFailure::Extension);
+    }
+    None
 }
 
 #[cfg(test)]
-pub(crate) fn testing_math_fonts_sufficient(stores: &Universe) -> bool {
-    math_fonts_sufficient(stores)
+pub(crate) fn testing_math_font_failure(stores: &Universe) -> Option<&'static str> {
+    math_font_failure(stores).map(|failure| match failure {
+        MathFontFailure::Symbol => "symbol",
+        MathFontFailure::Extension => "extension",
+    })
 }
 
 fn dispatch_math_control<S, R, H>(

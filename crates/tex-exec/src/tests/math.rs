@@ -1,4 +1,4 @@
-use super::support::terminal_effect_text;
+use super::support::{stores_with_fonts, terminal_effect_text};
 use super::*;
 use tex_state::math::{
     FractionThickness, LimitType, MathChoice, MathField, MathListNode, MathNoad, NoadClass,
@@ -11,7 +11,28 @@ use tex_state::scaled::Scaled;
 
 #[test]
 fn null_math_fonts_are_insufficient_for_formula_conversion() {
-    assert!(!crate::math::testing_math_fonts_sufficient(&Universe::new()));
+    assert_eq!(
+        crate::math::testing_math_font_failure(&Universe::new()),
+        Some("symbol")
+    );
+}
+
+#[test]
+fn missing_extension_fonts_are_distinguished_after_symbol_fonts_validate() {
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        r"\font\sym=cmsy10 \relax
+          \textfont2=\sym \scriptfont2=\sym \scriptscriptfont2=\sym \end",
+    ));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("symbol font assignments execute");
+
+    assert_eq!(
+        crate::math::testing_math_font_failure(&stores),
+        Some("extension")
+    );
 }
 
 #[test]

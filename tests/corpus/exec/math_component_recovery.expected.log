@@ -4,10 +4,14 @@
 I've inserted a begin-math/end-math symbol since I think
 you left one out. Proceed, with fingers crossed.
 
+! Math formula deleted: Insufficient symbol fonts.
+Sorry, but I can't typeset math unless \textfont 2
+and \scriptfont 2 and \scriptscriptfont 2 have all
+the \fontdimen values needed in math symbol fonts.
+
 > \box0=
 \hbox(0.0+0.0)x0.0
 .\mathon
-.\hbox(0.0+0.0)x0.0
 .\mathoff
 
 ! OK.

@@ -512,6 +512,16 @@ not compile them. A feature test proves that reading the report leaves the
 semantic state hash unchanged while stale-root, refcount, and recycled-buffer
 tests exercise the same production paths.
 
+“Largest canonical `NodeStorage`” is ordered lexicographically by logical bytes
+and then allocator-retained payload bytes. Its totals and full column vector
+are published as one mutex-protected observation; the logical atomic is only a
+fast rejection hint and is never reported independently. Consequently every
+peak column belongs to the storage that supplied both totals, and the column
+sums equal those totals. Owned whatsit strings and byte payloads participate in
+the ordering, totals, and their dedicated columns. Divergent-maximum and
+concurrent feature tests enforce this coherence without adding measurement
+state to snapshots or semantic hashes.
+
 The reproducible command was `MEASURE_CLEAN=1 MEASURE_RUNS=5
 scripts/measure-node-arena.sh` at this commit on the same aarch64 Apple host
 and Rust 1.93.0. It performs a clean release measurement build, stages the
