@@ -1,4 +1,4 @@
-use super::{ScanToksError, scan_toks};
+use super::scan_toks;
 use tex_lex::{InputStack, MemoryInput};
 use tex_state::Universe;
 use tex_state::meaning::MeaningFlags;
@@ -101,22 +101,19 @@ fn freezes_parameter_and_replacement_origin_lists_from_source_tokens() {
 }
 
 #[test]
-fn rejects_out_of_order_parameter_numbers() {
+fn out_of_order_parameter_inserts_expected_and_replays_wrong_digit() {
     let mut stores = Universe::new();
     let mut input = InputStack::new(MemoryInput::new("#2{}"));
 
     let context = TracedTokenWord::pack(Token::Cs(stores.intern("def")), OriginId::UNKNOWN);
-    let err = scan_toks(&mut input, &mut stores, MeaningFlags::EMPTY, context)
-        .expect_err("scan should reject out-of-order parameter");
+    let scanned = scan_toks(&mut input, &mut stores, MeaningFlags::EMPTY, context)
+        .expect("scan should recover an out-of-order parameter");
 
-    assert!(matches!(
-        err,
-        ScanToksError::ParameterNumberOutOfOrder {
-            expected: 1,
-            found: 2,
-            ..
-        }
-    ));
+    assert_eq!(
+        stores.tokens(scanned.parameter_text()),
+        &[Token::param(1), char_token('2', Catcode::Other)]
+    );
+    assert!(stores.tokens(scanned.replacement_text()).is_empty());
 }
 
 #[test]

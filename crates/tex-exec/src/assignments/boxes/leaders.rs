@@ -10,8 +10,8 @@ use tex_state::token::{Token, TracedTokenWord};
 use crate::{ExecError, Mode};
 
 use super::super::{
-    infinite_glue, next_non_space_traced_x, push_tokens, scan_glue_id, scan_register_index,
-    scan_rule_node,
+    infinite_glue, next_non_space_traced_x, push_tokens, push_traced_tokens, scan_glue_id,
+    scan_register_index, scan_rule_node,
 };
 use super::packaging::{first_box_node, kind_for_primitive, scan_box_node};
 use super::vsplit::scan_vsplit_node;
@@ -30,7 +30,7 @@ where
         .ok_or(ExecError::MissingLeaderPayload { context })?;
     let token = tex_expand::semantic_token(traced);
     let Token::Cs(symbol) = token else {
-        push_tokens(input, stores, [token]);
+        push_traced_tokens(input, stores, [traced]);
         return Err(ExecError::MissingLeaderPayload { context: traced });
     };
     match stores.meaning(symbol) {
@@ -121,7 +121,7 @@ where
             ),
         ) => Ok(stores.intern_glue(infinite_glue_for_skip_primitive(primitive))),
         _ => {
-            push_tokens(input, stores, [token]);
+            push_traced_tokens(input, stores, [traced]);
             Err(ExecError::LeadersNotFollowedByProperGlue { context: traced })
         }
     }

@@ -165,6 +165,24 @@ where
             );
             return Ok(DispatchAction::Continue);
         }
+        Err(ExecError::ArithmeticOverflow)
+            if matches!(
+                command.command,
+                PrefixedCommand::Primitive(
+                    UnexpandablePrimitive::Advance
+                        | UnexpandablePrimitive::Multiply
+                        | UnexpandablePrimitive::Divide
+                )
+            ) =>
+        {
+            // TeX.web's arithmetic commands consume their operands, report
+            // overflow/division by zero, and leave the target unchanged.
+            stores.world_mut().write_text(
+                tex_state::PrintSink::TerminalAndLog,
+                "\n! Arithmetic overflow.\nI can't carry out that multiplication or division,\nsince the result is out of range.\n",
+            );
+            return Ok(DispatchAction::Continue);
+        }
         Err(error) => return Err(error),
     };
     if outcome.assigned {

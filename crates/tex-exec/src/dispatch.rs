@@ -106,10 +106,17 @@ where
 
     match meaning {
         Meaning::Relax => Ok(DispatchAction::Continue),
-        Meaning::Undefined => Err(ExecError::UndefinedControlSequence {
-            name: stores.resolve_cs_name(token),
-            origin,
-        }),
+        Meaning::Undefined => {
+            // Undefined tokens can reach main control without passing through
+            // expansion (for example after \noexpand or scanner recovery).
+            // TeX diagnoses and consumes them rather than aborting the run.
+            let name = stores.resolve_cs_name(token);
+            stores.world_mut().write_text(
+                tex_state::PrintSink::TerminalAndLog,
+                &format!("\n! Undefined control sequence \\{name}.\n"),
+            );
+            Ok(DispatchAction::Continue)
+        }
         Meaning::CharGiven(ch) => {
             assignments::append_given_char(nest, input, stores, ch)?;
             Ok(DispatchAction::Continue)

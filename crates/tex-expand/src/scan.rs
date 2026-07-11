@@ -559,18 +559,32 @@ where
                     cat: Catcode::Other,
                 } => {
                     let found = token_digit(token).expect("digit token was matched");
+                    if next_parameter == 10 {
+                        // TeX.web §476 ignores both the parameter marker and
+                        // following token after nine parameters.
+                        continue;
+                    }
                     if found != next_parameter {
-                        return Err(ScanToksError::ParameterNumberOutOfOrder {
-                            expected: next_parameter,
-                            found,
-                            context: traced,
-                        });
+                        // `back_error` replays the wrong digit and inserts the
+                        // consecutive digit TeX expected at this position.
+                        unread_token(input, stores, traced);
+                        let inserted = Token::param(next_parameter);
+                        let origin = stores.inserted_origin(
+                            InsertedOriginKind::ErrorRecovery,
+                            inserted,
+                            traced.origin(),
+                        );
+                        push_scanned_token(
+                            &mut builder,
+                            &mut origins,
+                            TracedTokenWord::pack(inserted, origin),
+                            inserted,
+                        );
+                        next_parameter += 1;
+                        continue;
                     }
                     push_scanned_token(&mut builder, &mut origins, traced, Token::param(found));
-                    next_parameter = next_parameter
-                        .checked_add(1)
-                        .filter(|value| *value <= 10)
-                        .ok_or(ScanToksError::TooManyParameters { context: traced })?;
+                    next_parameter += 1;
                 }
                 Token::Char {
                     cat: Catcode::BeginGroup,

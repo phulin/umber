@@ -244,30 +244,26 @@ fn dispatch_character_hits_loud_typesetting_stub() {
 }
 
 #[test]
-fn dispatch_errors_expose_primary_origins() {
+fn dispatch_undefined_control_sequence_reports_and_continues() {
     let mut stores = Universe::new();
     let undefined = stores.intern("undefined");
     let origin = stores.source_origin(tex_state::SourceId::new(1), 12, 3, 4);
     let mut input = InputStack::new(MemoryInput::new(""));
     let mut hooks = NoopExecHooks;
 
-    let err = dispatch_delivered_token(
+    let action = dispatch_delivered_token(
         &mut ModeNest::new(),
         TracedTokenWord::pack(Token::Cs(undefined), origin),
         &mut input,
         &mut stores,
         &mut hooks,
     )
-    .expect_err("undefined control sequence");
+    .expect("undefined control sequence is recoverable");
 
-    assert_eq!(err.primary_origin(), Some(origin));
-    assert!(matches!(
-        err,
-        ExecError::UndefinedControlSequence {
-            name,
-            origin: reported
-        } if name == "undefined" && reported == origin
-    ));
+    assert_eq!(action, DispatchAction::Continue);
+    assert!(
+        support::terminal_effect_text(&stores).contains("Undefined control sequence \\undefined")
+    );
 }
 
 #[test]
@@ -414,6 +410,21 @@ fn main_control_consumes_invalid_category_character() {
 
     assert_eq!(stores.count(0), 7);
     assert!(support::terminal_effect_text(&stores).contains("invalid character"));
+}
+
+#[test]
+fn main_control_aborts_nonlong_macro_argument_at_par_and_replays_par() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\def\\b#1\\par{}\\b{x\\par\\count0=7"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("runaway macro argument is aborted recoverably");
+
+    assert_eq!(stores.count(0), 7);
+    assert!(support::terminal_effect_text(&stores).contains("Runaway argument"));
 }
 
 #[test]
@@ -1210,13 +1221,19 @@ fn leaders_report_missing_payload_and_glue_diagnostics() {
 
     let mut missing_glue = Universe::new();
     install_unexpandable_primitives(&mut missing_glue);
-    let err = Executor::new()
+    Executor::new()
         .run(
-            &mut InputStack::new(MemoryInput::new("\\setbox0=\\hbox{\\leaders\\hbox{}10pt}")),
+            &mut InputStack::new(MemoryInput::new(
+                "\\setbox0=\\hbox{\\leaders\\hbox{}\\global\\count0=7}",
+            )),
             &mut missing_glue,
         )
-        .expect_err("leader without proper glue should fail");
-    assert_eq!(err.to_string(), "Leaders not followed by proper glue.");
+        .expect("leader without proper glue should recover");
+    assert_eq!(missing_glue.count(0), 7);
+    assert!(
+        support::terminal_effect_text(&missing_glue)
+            .contains("Leaders not followed by proper glue")
+    );
 }
 
 #[test]

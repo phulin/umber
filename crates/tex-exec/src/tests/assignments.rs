@@ -253,6 +253,27 @@ fn token_register_assignments_scan_balanced_text_and_copy_variables() {
 }
 
 #[test]
+fn token_register_runaway_closes_before_outer_macro_and_replays_it() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\outer\\def\\a{}\\toks0={x\\a\\count0=7"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("outer token closes absorbing token-list scan");
+
+    assert_eq!(
+        stores.tokens(stores.toks(0)),
+        &[Token::Char {
+            ch: 'x',
+            cat: Catcode::Letter
+        }]
+    );
+    assert_eq!(stores.count(0), 7);
+}
+
+#[test]
 fn glue_arithmetic_preserves_fil_order_rules() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
@@ -345,11 +366,12 @@ fn arithmetic_overflow_reports_tex_error_text() {
         "\\count0=2147483647 \\advance\\count0 by 1",
     ));
 
-    let err = Executor::new()
+    Executor::new()
         .run(&mut input, &mut stores)
-        .expect_err("advance should overflow");
+        .expect("advance overflow is recoverable");
 
-    assert_eq!(err.to_string(), "Arithmetic overflow");
+    assert_eq!(stores.count(0), i32::MAX);
+    assert!(terminal_effect_text(&stores).contains("Arithmetic overflow"));
 }
 
 #[test]

@@ -144,6 +144,30 @@ fn scans_internal_muskip_values() {
 }
 
 #[test]
+fn scans_internal_muskip_widths_as_mu_components() {
+    let mut stores = Universe::new();
+    let muskip = stores.intern("muskip");
+    stores.set_meaning(
+        muskip,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Muskip),
+    );
+    let alias = stores.intern("alias");
+    stores.set_meaning(alias, Meaning::MuskipRegister(3));
+    let id = stores.intern_glue(GlueSpec {
+        width: Scaled::from_raw(2 * Scaled::UNITY),
+        ..GlueSpec::ZERO
+    });
+    stores.set_muskip(3, id);
+    let mut input = InputStack::new(MemoryInput::new("5mu plus \\muskip3 minus .5\\alias"));
+
+    let scanned = scan_muglue(&mut input, &mut stores, context()).expect("muglue should scan");
+    let spec = stores.glue(scanned.id());
+    assert_eq!(spec.width.raw(), 5 * Scaled::UNITY);
+    assert_eq!(spec.stretch.raw(), 2 * Scaled::UNITY);
+    assert_eq!(spec.shrink.raw(), Scaled::UNITY);
+}
+
+#[test]
 fn macro_expanding_to_penalty_recovers_zero_glue_and_replays_command() {
     let mut stores = Universe::new();
     let penalty = stores.intern("penalty");

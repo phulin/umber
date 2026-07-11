@@ -2427,7 +2427,7 @@ fn skipped_conditional_reports_incomplete_if_at_eof() {
 }
 
 #[test]
-fn skipped_conditional_rejects_outer_macro_tokens() {
+fn skipped_conditional_closes_and_replays_outer_macro_token() {
     let mut stores = Universe::new();
     let (_, iffalse, else_cs, fi) = conditional_primitives(&mut stores);
     let outer = stores.intern("outer");
@@ -2444,11 +2444,11 @@ fn skipped_conditional_rejects_outer_macro_tokens() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
-    assert!(matches!(
-        get_x_token(&mut input, &mut stores),
-        Err(crate::ExpandError::ForbiddenOuterTokenInSkippedConditional { ref name, .. })
-            if name == "\\outer"
-    ));
+    assert_eq!(
+        get_x_token(&mut input, &mut stores).expect("outer token should be replayed"),
+        Some(char_token('x'))
+    );
+    assert!(input.current_condition().is_none());
 }
 
 #[test]

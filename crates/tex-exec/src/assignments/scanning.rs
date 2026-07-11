@@ -372,7 +372,32 @@ where
 {
     let mut depth = 1usize;
     let mut builder = stores.token_list_builder();
-    while let Some(token) = input.next_token(stores)? {
+    while let Some(traced) = input.next_traced_token(stores)? {
+        let token = tex_expand::semantic_token(traced);
+        let meaning = match token {
+            Token::Cs(symbol) => stores.meaning(symbol),
+            Token::Char {
+                ch,
+                cat: Catcode::Active,
+            } => {
+                let symbol = active_character_symbol(stores, ch);
+                stores.meaning(symbol)
+            }
+            _ => Meaning::Undefined,
+        };
+        if matches!(
+            meaning,
+            Meaning::Macro { flags, .. } if flags.contains(MeaningFlags::OUTER)
+        ) {
+            // TeX.web §336's absorbing scanner inserts a right brace and
+            // backs up the forbidden outer token for ordinary expansion.
+            push_traced_tokens(input, stores, [traced]);
+            stores.world_mut().write_text(
+                tex_state::PrintSink::TerminalAndLog,
+                "\n! Forbidden control sequence found while scanning text.\nI've inserted a closing brace and will continue.\n",
+            );
+            return Ok(stores.finish_token_list(&mut builder));
+        }
         match token {
             token if is_begin_group(token) => {
                 depth += 1;

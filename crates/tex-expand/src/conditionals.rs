@@ -334,8 +334,20 @@ where
                 .context();
             return Err(ExpandError::IncompleteIf { context });
         };
-        let Some(primitive) = skipped_conditional_control(stores, token, recorder)? else {
-            continue;
+        let primitive = match skipped_conditional_control(stores, token, recorder) {
+            Ok(Some(primitive)) => primitive,
+            Ok(None) => continue,
+            Err(ExpandError::ForbiddenOuterTokenInSkippedConditional { .. }) => {
+                // TeX.web §336 backs up the outer token and inserts a
+                // frozen \fi. Skipped nested conditions are represented only
+                // by `nesting`, so this ultimately closes the one live frame.
+                push_inserted_token(input, stores, token, InsertedOriginKind::Unread);
+                input
+                    .pop_condition()
+                    .expect("conditional skipping retains its live frame");
+                return Ok(());
+            }
+            Err(error) => return Err(error),
         };
 
         match primitive {

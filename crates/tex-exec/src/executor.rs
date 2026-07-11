@@ -189,6 +189,42 @@ where
             let mut expansion = ExpansionContext::new(stores);
             match get_x_token_with_recorder_and_hooks(input, &mut expansion, recorder, hooks) {
                 Ok(token) => token,
+                Err(tex_expand::ExpandError::Captured { error, site }) => match *error {
+                    tex_expand::ExpandError::UndefinedControlSequence { name, .. } => {
+                        stores.world_mut().write_text(
+                            tex_state::PrintSink::TerminalAndLog,
+                            &format!("\n! Undefined control sequence \\{name}.\n"),
+                        );
+                        continue;
+                    }
+                    tex_expand::ExpandError::MacroCall(
+                        tex_expand::args::MacroCallError::ParagraphEndedBeforeComplete {
+                            macro_name,
+                            context,
+                        }
+                        | tex_expand::args::MacroCallError::ForbiddenOuterToken {
+                            macro_name,
+                            context,
+                        },
+                    ) => {
+                        crate::push_traced_tokens(input, stores, [context]);
+                        stores.world_mut().write_text(
+                            tex_state::PrintSink::TerminalAndLog,
+                            &format!(
+                                "\n! Runaway argument while scanning use of {macro_name}.\nThe terminating token will be read again.\n"
+                            ),
+                        );
+                        continue;
+                    }
+                    error => {
+                        stores.set_input_summary(input.summary());
+                        return Err(tex_expand::ExpandError::Captured {
+                            error: Box::new(error),
+                            site,
+                        }
+                        .into());
+                    }
+                },
                 Err(tex_expand::ExpandError::UndefinedControlSequence { name, .. }) => {
                     // In TeX.web main_control, undefined control sequences
                     // report an error and otherwise behave like a consumed
@@ -209,6 +245,29 @@ where
                     stores.world_mut().write_text(
                         tex_state::PrintSink::TerminalAndLog,
                         &format!("\n! Text line contains an invalid character ({ch}).\n"),
+                    );
+                    continue;
+                }
+                Err(tex_expand::ExpandError::MacroCall(
+                    tex_expand::args::MacroCallError::ParagraphEndedBeforeComplete {
+                        macro_name,
+                        context,
+                    }
+                    | tex_expand::args::MacroCallError::ForbiddenOuterToken {
+                        macro_name,
+                        context,
+                    },
+                )) => {
+                    // With scanner_status=matching, TeX.web §336 aborts the
+                    // partial macro call and inserts/replays the token that
+                    // terminated it (normally \par or an outer control
+                    // sequence).
+                    crate::push_traced_tokens(input, stores, [context]);
+                    stores.world_mut().write_text(
+                        tex_state::PrintSink::TerminalAndLog,
+                        &format!(
+                            "\n! Runaway argument while scanning use of {macro_name}.\nThe terminating token will be read again.\n"
+                        ),
                     );
                     continue;
                 }

@@ -299,7 +299,19 @@ where
     H: ExpansionHooks<S>,
 {
     let leader = scan_leader_payload(input, stores, hooks, context)?;
-    let spec = scan_leader_glue(input, stores, hooks, nest.current_mode(), context)?;
+    let spec = match scan_leader_glue(input, stores, hooks, nest.current_mode(), context) {
+        Ok(spec) => spec,
+        Err(ExecError::LeadersNotFollowedByProperGlue { .. }) => {
+            // TeX.web §1077 backs up the unsuitable command, discards the
+            // scanned leader payload, and resumes main control.
+            stores.world_mut().write_text(
+                tex_state::PrintSink::TerminalAndLog,
+                "\n! Leaders not followed by proper glue.\nYou should say `\\leaders <box or rule><hskip or vskip>'.\nI'm ignoring these leaders.\n",
+            );
+            return Ok(());
+        }
+        Err(error) => return Err(error),
+    };
     append_node_to_current_list(
         nest,
         stores,
