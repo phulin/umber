@@ -372,26 +372,21 @@ fn math_group_mismatch_reports_the_closing_token_origin() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
-    let err = Executor::new()
+    Executor::new()
         .run(&mut InputStack::new(MemoryInput::new(r"$}")), &mut stores)
-        .expect_err("a right brace cannot close a math-shift group");
-    assert!(matches!(
-        &err,
-        ExecError::ExtraRightBraceOrForgottenDollar { .. }
-    ));
-    assert_ne!(err.primary_origin(), Some(OriginId::UNKNOWN));
+        .expect("an extra right brace in math is reported and ignored");
+    assert!(support::terminal_effect_text(&stores).contains("Extra }, or forgotten $"));
 
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
-    let err = Executor::new()
+    Executor::new()
         .run(
             &mut InputStack::new(MemoryInput::new(r"$\begingroup$")),
             &mut stores,
         )
-        .expect_err("a dollar cannot close a semi-simple group");
-    assert!(matches!(&err, ExecError::MathShiftGroupMismatch { .. }));
-    assert_ne!(err.primary_origin(), Some(OriginId::UNKNOWN));
+        .expect("off_save inserts endgroup before retrying the dollar");
+    assert!(support::terminal_effect_text(&stores).contains("Missing \\endgroup inserted"));
 }
 
 #[test]
@@ -470,6 +465,21 @@ fn math_shift_inserts_endgroup_for_open_semisimple_group() {
 }
 
 #[test]
+fn math_shift_inserts_right_brace_for_open_simple_group() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(r"\count0=1 $x{\count0=2$\count1=3"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("off_save should close a brace group before retrying math shift");
+
+    assert_eq!(stores.count(0), 1);
+    assert_eq!(stores.count(1), 3);
+    assert!(support::terminal_effect_text(&stores).contains("Missing } inserted"));
+}
+
+#[test]
 fn vadjust_is_accepted_in_math_mode() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
@@ -513,6 +523,45 @@ fn explicit_kern_is_accepted_in_math_mode() {
     Executor::new()
         .run(&mut input, &mut stores)
         .expect("tex.web accepts an ordinary kern in a math list");
+}
+
+#[test]
+fn math_discretionary_deletes_a_nonempty_replacement_part() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        r"$\discretionary{\kern1pt}{\kern2pt}{\kern3pt}$",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("illegal third math discretionary part is recoverable");
+
+    assert!(support::terminal_effect_text(&stores).contains("Illegal math \\discretionary"));
+}
+
+#[test]
+fn vrule_is_accepted_in_math_mode() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(r"$\vrule height 9pt$"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("tex.web permits vrule nodes in math lists");
+}
+
+#[test]
+fn spacefactor_in_math_reports_illegal_case_without_scanning_an_assignment() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(r"$\spacefactor1$"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("illegal math spacefactor is ignored and its following digit remains input");
+
+    assert!(support::terminal_effect_text(&stores).contains("You can't use `\\spacefactor'"));
 }
 
 #[test]

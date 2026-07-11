@@ -136,6 +136,36 @@ fn setbox_missing_box_is_recoverable_and_replays_the_rejected_command() {
 }
 
 #[test]
+fn extra_endgroup_is_recoverable() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\endgroup \\count0=7"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("TeX reports and ignores an unmatched endgroup");
+
+    assert_eq!(stores.count(0), 7);
+    assert!(terminal_effect_text(&stores).contains("Extra \\endgroup"));
+}
+
+#[test]
+fn character_definition_substitutes_inaccessible_target_and_replays_bad_token() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\mathchardef A=7 \\count0=9"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("get_r_token recovery should complete the definition and continue");
+
+    let inaccessible = stores.intern("inaccessible");
+    assert_eq!(stores.meaning(inaccessible), Meaning::MathCharGiven(0));
+    assert_eq!(stores.count(0), 9);
+    assert!(terminal_effect_text(&stores).contains("Missing control sequence inserted"));
+}
+
+#[test]
 fn mathchardef_constants_scan_for_penalty_count_ifnum_and_signed_macro_replay() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);

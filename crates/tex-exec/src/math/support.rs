@@ -71,7 +71,9 @@ pub(super) fn math_allows_assignment_primitive(primitive: UnexpandablePrimitive)
             | UnexpandablePrimitive::SetBox
             | UnexpandablePrimitive::VAdjust
             | UnexpandablePrimitive::PrevGraf
+            | UnexpandablePrimitive::ParShape
             | UnexpandablePrimitive::Insert
+            | UnexpandablePrimitive::Discretionary
             | UnexpandablePrimitive::Wd
             | UnexpandablePrimitive::Ht
             | UnexpandablePrimitive::Dp
@@ -83,8 +85,16 @@ pub(super) fn math_allows_assignment_primitive(primitive: UnexpandablePrimitive)
             | UnexpandablePrimitive::ShowThe
             | UnexpandablePrimitive::ShowTokens
             | UnexpandablePrimitive::ShowLists
+            | UnexpandablePrimitive::ShowBox
             | UnexpandablePrimitive::Message
             | UnexpandablePrimitive::ErrMessage
+            | UnexpandablePrimitive::OpenOut
+            | UnexpandablePrimitive::Write
+            | UnexpandablePrimitive::CloseOut
+            | UnexpandablePrimitive::Special
+            | UnexpandablePrimitive::Immediate
+            | UnexpandablePrimitive::Lowercase
+            | UnexpandablePrimitive::Uppercase
     )
 }
 

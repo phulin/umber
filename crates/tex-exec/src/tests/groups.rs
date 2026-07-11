@@ -130,10 +130,10 @@ fn group_mismatch_errors_use_tex_primary_text() {
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("}"));
 
-    let err = Executor::new()
+    Executor::new()
         .run(&mut input, &mut stores)
-        .expect_err("extra right brace is an error");
-    assert_eq!(err.to_string(), "Too many }'s.");
+        .expect("extra right brace is reported and ignored");
+    assert!(support::terminal_effect_text(&stores).contains("Too many }'s"));
 
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
@@ -146,10 +146,10 @@ fn group_mismatch_errors_use_tex_primary_text() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("\\endgroup"));
-    let err = Executor::new()
+    Executor::new()
         .run(&mut input, &mut stores)
-        .expect_err("extra endgroup is an error");
-    assert_eq!(err.to_string(), "Extra \\endgroup.");
+        .expect("extra endgroup is reported and ignored");
+    assert!(support::terminal_effect_text(&stores).contains("Extra \\endgroup"));
 
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

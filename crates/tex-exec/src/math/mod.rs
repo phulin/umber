@@ -166,7 +166,28 @@ where
         Token::Char {
             cat: Catcode::MathShift,
             ..
-        } => finish_math(nest, input, stores, origin),
+        } => {
+            if stores.innermost_group_kind() == Some(tex_state::GroupKind::Simple) {
+                let right_brace = Token::Char {
+                    ch: '}',
+                    cat: Catcode::EndGroup,
+                };
+                let inserted =
+                    stores.inserted_origin(InsertedOriginKind::ErrorRecovery, right_brace, origin);
+                push_traced_tokens(
+                    input,
+                    stores,
+                    [TracedTokenWord::pack(right_brace, inserted), traced],
+                );
+                stores.world_mut().write_text(
+                    tex_state::PrintSink::TerminalAndLog,
+                    "\n! Missing } inserted.\nI've inserted something that you may have forgotten.\n",
+                );
+                Ok(DispatchAction::Continue)
+            } else {
+                finish_math(nest, input, stores, origin)
+            }
+        }
         Token::Char {
             cat: Catcode::Space,
             ..
@@ -406,6 +427,10 @@ where
             report_math_error(stores, "Missing $ inserted");
             finish_math(nest, input, stores, origin)
         }
+        UnexpandablePrimitive::SpaceFactor => {
+            crate::diagnostics::report_illegal_case(stores, token, nest.current_mode());
+            Ok(DispatchAction::Continue)
+        }
         UnexpandablePrimitive::MathChar => {
             let code = scan_math_char_code(input, stores, hooks, traced)?;
             append_math_char_code(nest, stores, code)?;
@@ -553,6 +578,11 @@ where
                 amount,
                 kind: KernKind::Explicit,
             });
+            Ok(DispatchAction::Continue)
+        }
+        UnexpandablePrimitive::VRule => {
+            let rule = assignments::scan_rule_node(input, stores, hooks, primitive, traced)?;
+            nest.current_list_mut().push(rule);
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::NonScript => {

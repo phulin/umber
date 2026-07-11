@@ -76,11 +76,16 @@ where
             ch,
             cat: Catcode::Active,
         } => Ok(active_character_symbol(stores, ch)),
-        _ => Err(ExecError::ExpectedControlSequence {
-            context,
-            token,
-            origin: traced.origin(),
-        }),
+        _ => {
+            // TeX82 `get_r_token` backs up a non-definable token and inserts
+            // its frozen inaccessible control sequence (tex.web §1215).
+            push_traced_tokens(input, stores, [traced]);
+            stores.world_mut().write_text(
+                tex_state::PrintSink::TerminalAndLog,
+                "\n! Missing control sequence inserted.\nPlease don't say `\\def cs{...}', say `\\def\\cs{...}'.\nI've inserted an inaccessible control sequence so that your\ndefinition will be completed without mixing me up too badly.\nYou can recover graciously from this error, if you're\ncareful; see exercise 27.2 in The TeXbook.\n",
+            );
+            Ok(stores.intern("inaccessible"))
+        }
     }
 }
 

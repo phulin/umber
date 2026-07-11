@@ -142,10 +142,18 @@ where
         UnexpandablePrimitive::ControlSpace => append_control_space(nest, input, stores)?,
         UnexpandablePrimitive::ItalicCorrection => append_italic_correction(nest, stores)?,
         UnexpandablePrimitive::Discretionary => {
+            let math_mode = matches!(nest.current_mode(), Mode::Math | Mode::DisplayMath);
             flush_pending_hchars(nest, stores)?;
             let pre = scan_hlist_group(input, stores, hooks, "\\discretionary pre")?;
             let post = scan_hlist_group(input, stores, hooks, "\\discretionary post")?;
-            let replace = scan_hlist_group(input, stores, hooks, "\\discretionary replace")?;
+            let mut replace = scan_hlist_group(input, stores, hooks, "\\discretionary replace")?;
+            if math_mode && !stores.nodes(replace).is_empty() {
+                stores.world_mut().write_text(
+                    tex_state::PrintSink::TerminalAndLog,
+                    "\n! Illegal math \\discretionary.\nSorry: The third part of a discretionary break must be\nempty, in math formulas. I had to delete your third part.\n",
+                );
+                replace = stores.freeze_node_list(&[]);
+            }
             nest.current_list_mut().push(Node::Disc {
                 kind: DiscKind::Discretionary,
                 pre,
@@ -830,7 +838,7 @@ fn is_accent_assignment_meaning(meaning: Meaning) -> bool {
     )
 }
 
-pub(super) fn scan_rule_node<S, H>(
+pub(crate) fn scan_rule_node<S, H>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     hooks: &mut H,

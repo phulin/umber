@@ -1094,12 +1094,10 @@ fn badness_reads_most_recent_pack_and_is_not_assignable() {
     assert_eq!(rendered, "10000");
 
     let mut bad_assignment = InputStack::new(MemoryInput::new("\\badness=0"));
-    assert!(
-        Executor::new()
-            .run(&mut bad_assignment, &mut stores)
-            .is_err(),
-        "\\badness must remain read-only"
-    );
+    Executor::new()
+        .run(&mut bad_assignment, &mut stores)
+        .expect("a bare read-only internal reports an illegal case and continues");
+    assert!(support::terminal_effect_text(&stores).contains("You can't use `\\badness'"));
 }
 
 #[test]
@@ -2209,11 +2207,14 @@ fn output_routine_reports_nonvoid_box255_after_output() {
         "\\output={\\relax}\\topskip=0pt \\setbox0=\\hbox{}\\copy0 \\penalty-10000",
     ));
 
-    let err = Executor::new()
+    Executor::new()
         .run(&mut input, &mut stores)
-        .expect_err("empty custom output leaves box255 behind");
+        .expect("TeX reports and discards box255 left by the output routine");
 
-    assert_eq!(err.to_string(), "Output routine didn't use all of \\box255");
+    assert!(
+        support::terminal_effect_text(&stores)
+            .contains("Output routine didn't use all of \\box255")
+    );
 }
 
 #[test]

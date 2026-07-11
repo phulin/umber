@@ -46,6 +46,7 @@ use boxes::*;
 pub(crate) use boxes::{scan_box_group, scan_pack_spec};
 use fonts::*;
 pub(crate) use hmode::fixed_infinite_glue;
+pub(crate) use hmode::scan_rule_node;
 use hmode::*;
 pub(crate) use hmode::{append_given_char, flush_pending_hchars, try_append_character};
 #[cfg(test)]
@@ -441,12 +442,21 @@ where
             }
             UnexpandablePrimitive::EndGroup => {
                 reject_all_prefixes(prefixes)?;
-                leave_group_with_origin(
+                if let Err(error) = leave_group_with_origin(
                     input,
                     stores,
                     GroupKind::SemiSimple,
                     command.traced.origin(),
-                )?;
+                ) {
+                    if matches!(error, ExecError::ExtraEndGroup { .. }) {
+                        stores.world_mut().write_text(
+                            tex_state::PrintSink::TerminalAndLog,
+                            "\n! Extra \\endgroup.\nThings are pretty mixed up, but I think the worst is over.\n",
+                        );
+                    } else {
+                        return Err(error);
+                    }
+                }
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::AfterGroup => {
