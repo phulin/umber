@@ -41,6 +41,7 @@ mod tokens;
 mod variables;
 
 use arithmetic::*;
+pub(crate) use boxes::hpack_with_overfull_rule;
 pub(crate) use boxes::scan_math_box;
 use boxes::*;
 pub(crate) use boxes::{scan_box_group, scan_pack_spec};

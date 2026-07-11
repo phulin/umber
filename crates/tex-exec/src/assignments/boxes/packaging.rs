@@ -210,7 +210,7 @@ where
     Ok(node)
 }
 
-pub(in crate::assignments) fn hpack_with_overfull_rule(
+pub(crate) fn hpack_with_overfull_rule(
     stores: &mut Universe,
     children: NodeListId,
     spec: PackSpec,

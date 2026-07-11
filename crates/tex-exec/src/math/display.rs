@@ -9,6 +9,7 @@ use tex_state::token::{Catcode, OriginId, Token};
 use tex_typeset::PackSpec;
 use tex_typeset::math::{MathParams, Style};
 
+use crate::assignments::hpack_with_overfull_rule;
 use crate::mode::{DisplayEqNo, EqNoSide};
 use crate::packing_params::{hpack as hpack_nodes, hpack_params};
 use crate::vertical::{
@@ -123,13 +124,7 @@ pub(super) fn finish_display_math(
         } else {
             e = Scaled::from_raw(0);
             if w > z {
-                display_box = hpack_nodes(
-                    stores,
-                    display_list,
-                    PackSpec::Exactly(z),
-                    hpack_params(stores),
-                )
-                .node;
+                display_box = hpack_with_overfull_rule(stores, display_list, PackSpec::Exactly(z));
                 display_box.display = true;
             }
         }

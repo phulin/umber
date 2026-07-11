@@ -19,11 +19,12 @@ mod packaging;
 mod vsplit;
 
 use leaders::{leader_glue_kind, scan_leader_glue, scan_leader_payload};
+pub(crate) use packaging::hpack_with_overfull_rule;
+pub(super) use packaging::scan_required_box_node;
 use packaging::{
     ScannedBoxValue, first_box_node, kind_for_primitive, scan_box_node, scan_box_value,
     take_last_box,
 };
-pub(super) use packaging::{hpack_with_overfull_rule, scan_required_box_node};
 pub(crate) use packaging::{scan_box_group, scan_pack_spec};
 use vsplit::scan_vsplit_node;
 
