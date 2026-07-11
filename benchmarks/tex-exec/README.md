@@ -20,6 +20,7 @@ then times execution and artifact commit.
 same-font runs and a 4,096-node mixed-font/interrupted list. It uses fixed
 synthetic immutable TFM metrics, prepares arena state outside the timed loop,
 and is the kernel budget for compact node-word width scans. The committed
-budget treats a regression beyond 5% as a failure; absolute timing is
+means were remeasured after generation-tagged `NodeListId` expanded to two
+words; the gate permits 10% cross-run noise above them. Absolute timing is
 machine-specific, so comparisons require the same host, toolchain, profile,
 and rebuilt revision.

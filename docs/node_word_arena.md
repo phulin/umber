@@ -38,7 +38,8 @@ reverts the representation cleanly while retaining independently useful
 
 ## 2. Measurement baseline
 
-On `aarch64-apple-darwin` with Rust 1.93.0, the current layouts are:
+On `aarch64-apple-darwin` with Rust 1.93.0, the original pre-arena layouts at
+the Phase 1 baseline were:
 
 | Type | Size |
 | --- | ---: |
@@ -46,7 +47,13 @@ On `aarch64-apple-darwin` with Rust 1.93.0, the current layouts are:
 | `BoxNode` | 44 bytes |
 | `UnsetNode` | 44 bytes |
 | `Whatsit` | 48 bytes |
-| `NodeListId` | 16 bytes |
+| `NodeListId` | 8 bytes |
+
+Generation-tagged epoch identities later changed the decoded construction
+layouts to `Node` 80 bytes, `BoxNode`/`UnsetNode` 48 bytes, and `NodeListId` 16
+bytes. Section 10.1 remeasures the adopted compact arena after that change;
+the histogram and conservative model below remain the original decision
+baseline.
 
 The measurement build used `cargo build --release -p umber --features
 node-stats` at commit `217878e1`. Relaxed process-local counters at
@@ -385,7 +392,7 @@ ownership, mutation boundary, semantic hashing, migration, width plan, and
 validation matrix are reviewed against `core_state.md`. The design must remain
 conditional on measured performance.
 
-### Phase 3 — packed list handles (complete)
+### Phase 3 — packed list handles (historical, superseded)
 
 Exit: `NodeListId` is compile-time eight bytes; all boundary/capacity and
 optional-box encodings round-trip; stale epoch/survivor handles remain
@@ -399,6 +406,11 @@ Dense and sparse Env banks use the codec's semantic default word, so void box
 registers remain allocation-free while a live all-zero epoch handle is a
 distinct `Some` value. Arena lookup, rollback, promotion, and survivor
 recycling continue to validate logical ownership rather than raw bits.
+
+The rollback-safe identity migration superseded the epoch half of this
+packing: current epoch handles are sixteen-byte generation-tagged identities
+resolved through dense identity/span tables. Survivor handles retain the
+packed reserved-namespace payload. Section 4 specifies the current invariant.
 
 ### Phase 4 — words and sidecars
 
@@ -492,27 +504,29 @@ tables cost a fixed 1,024 bytes per loaded font and are included in RSS.
 
 ### 10.1 Actual arena and survivor accounting
 
-The follow-up Phase 6 audit measures the canonical storage rather than
-inferring it from process RSS. `node-stats` now computes an on-demand report
-over the actual epoch storage, every live survivor root, and every cleared
-recycled buffer. Each vector reports logical length and allocator capacity in
-elements and bytes. Owned whatsit strings and byte payloads are separate
-rows; shared glue, token, font, and child-list storage is not charged again.
-The report excludes vector headers, allocator metadata, process code/stacks,
-and shared stores, so it is intentionally distinct from RSS. Cleared recycled
-vectors have zero logical bytes but retain capacity.
+The follow-up audit measures canonical storage rather than inferring it from
+process RSS. `node-stats` computes an on-demand report over the actual epoch
+storage, its dense generation-tag and span tables, every live survivor root,
+and every cleared recycled buffer. Each vector reports logical length and
+allocator capacity in elements and bytes. Owned whatsit strings and byte
+payloads are separate rows; shared glue, token, font, and child-list storage is
+not charged again. The report excludes vector headers, allocator metadata,
+process code/stacks, and shared stores, so it is intentionally distinct from
+RSS. Cleared recycled vectors have zero logical bytes but retain capacity.
 
 Process-local relaxed counters separately record fresh and recycled promotion
-time, release-to-recycling time, largest canonical `NodeStorage`, and peak
-promotion scratch. Scratch charges the owned `Vec<Node>`, pending-index vector,
-and hash-map key/value payload capacity; hash-map control bytes and allocator
-metadata are excluded. None of these counters or reports is a `Universe`
-field, rollback mark, snapshot, hash input, or replay input. Normal builds do
-not compile them. A feature test proves that reading the report leaves the
-semantic state hash unchanged while stale-root, refcount, and recycled-buffer
-tests exercise the same production paths.
+time, release-to-recycling time, the largest canonical storage observation,
+and peak promotion scratch. Epoch peak candidates include their identity and
+span tables after the new span is minted; survivor candidates contain only
+the storage they actually own. Scratch charges the owned `Vec<Node>`,
+pending-index vector, and hash-map key/value payload capacity; hash-map control
+bytes and allocator metadata are excluded. None of these counters or reports
+is a `Universe` field, rollback mark, snapshot, hash input, or replay input.
+Normal builds do not compile them. Feature tests prove that reading the report
+leaves the semantic state hash unchanged while stale-root, refcount, and
+recycled-buffer tests exercise the same production paths.
 
-“Largest canonical `NodeStorage`” is ordered lexicographically by logical bytes
+“Largest canonical storage” is ordered lexicographically by logical bytes
 and then allocator-retained payload bytes. Its totals and full column vector
 are published as one mutex-protected observation; the logical atomic is only a
 fast rejection hint and is never reported independently. Consequently every
@@ -522,27 +536,27 @@ the ordering, totals, and their dedicated columns. Divergent-maximum and
 concurrent feature tests enforce this coherence without adding measurement
 state to snapshots or semantic hashes.
 
-The reproducible command was `MEASURE_CLEAN=1 MEASURE_RUNS=5
-scripts/measure-node-arena.sh` at this commit on the same aarch64 Apple host
-and Rust 1.93.0. It performs a clean release measurement build, stages the
+The generation-tagged remeasurement used `MEASURE_RUNS=5
+scripts/measure-node-arena.sh` at base commit `45db0a58` on the same aarch64
+Apple host and Rust 1.93.0. It performs a release measurement build, stages the
 committed inputs and Computer Modern metrics into a fresh directory for every
 sample, verifies byte-identical DVI hashes across samples, and runs each input
-in a fresh process. The byte totals were deterministic across all five runs.
-RSS is the observed five-run range.
+in a fresh process. The byte totals and DVI hashes were deterministic across
+all five runs. RSS is the observed five-run range.
 
 | Workload | End logical | End retained payload | Largest storage logical/retained | Promotion scratch logical/retained | RSS range |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| paragraph-wide | 14,730,896 | 16,374,456 | 11,054,968 / 12,484,608 | 245,680 / 261,840 | 93,667,328–95,780,864 |
-| pages | 29,651,391 | 35,589,920 | 17,583,783 / 22,347,776 | 466,856 / 569,536 | 100,319,232–103,350,272 |
-| math | 24,058 | 40,272 | 14,453 / 25,408 | 16,232 / 20,464 | 110,673,920–113,229,824 |
-| math-nested | 42,033 | 66,960 | 25,238 / 40,064 | 24,520 / 44,800 | 74,137,600–81,379,328 |
+| paragraph-wide | 15,531,048 | 17,841,974 | 11,790,224 / 13,731,328 | 4,384 / 8,704 | 64,569,344–67,207,168 |
+| pages | 32,649,279 | 45,834,520 | 19,956,135 / 29,949,952 | 21,536 / 55,296 | 76,513,280–79,855,616 |
+| math | 32,354 | 52,032 | 21,477 / 36,800 | 2,464 / 4,864 | 71,663,616–81,461,248 |
+| math-nested | 57,929 | 105,344 | 38,694 / 74,368 | 4,960 / 9,728 | 44,777,472–49,594,368 |
 
 The math inputs overwrite one survivor root 20,000 and 10,000 times, so their
 small end state is expected rather than missing accounting: only the final
 live root and one cleared recycled buffer remain. Their peak construction
 shape is reported separately above. Against the Phase 1 append-stream model,
-paragraph-wide falls from 91,864,152 modeled bytes to 14,730,896 measured
-logical bytes (-83.96%), and pages from 115,996,536 to 29,651,391 (-74.44%).
+paragraph-wide falls from 91,864,152 modeled bytes to 15,531,048 measured
+logical bytes (-83.09%), and pages from 115,996,536 to 32,649,279 (-71.85%).
 This comparison is conservative because the measured totals also include
 survivor copies omitted by the Phase 1 stream model. It corroborates, and is
 better than, the prior conservative -55.4% estimate. The cumulative math
@@ -550,13 +564,14 @@ append model is not a live-memory comparator because rollback and survivor
 replacement deliberately discard each iteration.
 
 Five independent process samples contain many operations per sample. Fresh
-promotion averaged 82.67–84.53 us/call for paragraph-wide (112 calls/sample)
-and 37.58–38.23 us/call for pages (768 calls/sample). Recycled promotion was
-12.61–12.68 us/call for math (19,999/sample) and 21.40–22.16 us/call for
-math-nested (9,999/sample). Release to the recycle pool was 65.7–68.3 ns/call
-and 68.5–73.0 ns/call respectively. These are instrumented wall-clock costs,
-not semantic state. Together with the unchanged Phase 6 kernel/end-to-end
-results and the new budget rerun, they leave the adoption decision unchanged.
+promotion averaged 22.58–34.03 us/call for paragraph-wide (112 calls/sample)
+and 10.34–21.21 us/call for pages (768 calls/sample). Recycled promotion was
+8.14–8.31 us/call for math (19,999/sample). Math-nested ranged from 15.20 to
+41.82 us/call because two samples overlapped other compiler work; its first
+three samples were 15.20–16.46 us/call. Release-to-recycling was 65.1–66.4
+ns/call for math and 64.3–209.1 ns/call for math-nested under the same noisy
+samples. These are instrumented wall-clock costs, not semantic state. The
+memory conclusions and end-to-end adoption decision remain unchanged.
 
 The peak canonical-storage column distribution follows. Each cell is
 `logical length / retained capacity`; zero-length math rows with capacity show
@@ -565,15 +580,15 @@ real buffers retained after epoch truncation.
 | Column | Elem B | paragraph-wide | pages | math | math-nested |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | `words` | 8 | 1,275,891/1,417,216 | 1,611,063/2,162,688 | 698/1,024 | 1,034/2,048 |
-| `boxes.width` | 4 | 24,224/32,768 | 126,453/131,072 | 239/256 | 458/512 |
-| `boxes.height` | 4 | 24,224/32,768 | 126,453/131,072 | 239/256 | 458/512 |
-| `boxes.depth` | 4 | 24,224/32,768 | 126,453/131,072 | 239/256 | 458/512 |
-| `boxes.shift` | 4 | 24,224/32,768 | 126,453/131,072 | 239/256 | 458/512 |
-| `boxes.display` | 1 | 24,224/32,768 | 126,453/131,072 | 239/256 | 458/512 |
-| `boxes.glue_set` | 8 | 24,224/32,768 | 126,453/131,072 | 239/256 | 458/512 |
-| `boxes.glue_sign` | 1 | 24,224/32,768 | 126,453/131,072 | 239/256 | 458/512 |
-| `boxes.glue_order` | 1 | 24,224/32,768 | 126,453/131,072 | 239/256 | 458/512 |
-| `boxes.children` | 8 | 24,224/32,768 | 126,453/131,072 | 239/256 | 458/512 |
+| `boxes.width` | 4 | 24,224/37,376 | 126,453/245,760 | 239/256 | 458/768 |
+| `boxes.height` | 4 | 24,224/37,376 | 126,453/245,760 | 239/256 | 458/768 |
+| `boxes.depth` | 4 | 24,224/37,376 | 126,453/245,760 | 239/256 | 458/768 |
+| `boxes.shift` | 4 | 24,224/37,376 | 126,453/245,760 | 239/256 | 458/768 |
+| `boxes.display` | 1 | 24,224/37,376 | 126,453/245,760 | 239/256 | 458/768 |
+| `boxes.glue_set` | 8 | 24,224/37,376 | 126,453/245,760 | 239/256 | 458/768 |
+| `boxes.glue_sign` | 1 | 24,224/37,376 | 126,453/245,760 | 239/256 | 458/768 |
+| `boxes.glue_order` | 1 | 24,224/37,376 | 126,453/245,760 | 239/256 | 458/768 |
+| `boxes.children` | 16 | 24,224/37,376 | 126,453/245,760 | 239/256 | 458/768 |
 | `unsets.kind` | 1 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `unsets.width` | 4 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `unsets.height` | 4 | 0/0 | 0/0 | 0/0 | 0/0 |
@@ -583,28 +598,71 @@ real buffers retained after epoch truncation.
 | `unsets.stretch_order` | 1 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `unsets.shrink` | 4 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `unsets.shrink_order` | 1 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `unsets.children` | 8 | 0/0 | 0/0 | 0/0 | 0/0 |
+| `unsets.children` | 16 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `rules` | 24 | 0/0 | 8,545/16,384 | 21/32 | 39/64 |
-| `leaders` | 56 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `discs` | 32 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `marks` | 8 | 0/0 | 8,043/8,192 | 0/0 | 0/0 |
+| `leaders` | 64 | 0/0 | 0/0 | 0/0 | 0/0 |
+| `discs` | 56 | 0/0 | 0/0 | 0/0 | 0/0 |
+| `marks` | 8 | 0/0 | 8,043/14,336 | 0/0 | 0/0 |
 | `insertions.class` | 2 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `insertions.size` | 4 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `insertions.split_top_skip` | 4 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `insertions.split_max_depth` | 4 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `insertions.floating_penalty` | 4 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `insertions.content` | 8 | 0/0 | 0/0 | 0/0 | 0/0 |
+| `insertions.content` | 16 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `whatsits` | 48 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `noads.kind` | 8 | 0/0 | 0/0 | 0/128 | 0/64 |
-| `noads.nucleus` | 16 | 0/0 | 0/0 | 0/128 | 0/64 |
-| `noads.subscript` | 16 | 0/0 | 0/0 | 0/128 | 0/64 |
-| `noads.superscript` | 16 | 0/0 | 0/0 | 0/128 | 0/64 |
-| `fractions` | 40 | 0/0 | 0/0 | 0/8 | 0/16 |
-| `choices` | 32 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `math_lists` | 16 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `adjusts` | 8 | 0/0 | 0/0 | 0/0 | 0/0 |
+| `noads.kind` | 8 | 0/0 | 0/0 | 0/128 | 0/128 |
+| `noads.nucleus` | 24 | 0/0 | 0/0 | 0/128 | 0/128 |
+| `noads.subscript` | 24 | 0/0 | 0/0 | 0/128 | 0/128 |
+| `noads.superscript` | 24 | 0/0 | 0/0 | 0/128 | 0/128 |
+| `fractions` | 56 | 0/0 | 0/0 | 0/8 | 0/16 |
+| `choices` | 64 | 0/0 | 0/0 | 0/0 | 0/0 |
+| `math_lists` | 24 | 0/0 | 0/0 | 0/0 | 0/0 |
+| `adjusts` | 16 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `whatsits.owned_strings` | 1 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `whatsits.owned_payloads` | 1 | 0/0 | 0/0 | 0/0 | 0/0 |
+| `identity_tags` | 16 | 22,561/32,768 | 56,697/65,536 | 213/256 | 408/512 |
+| `spans` | 8 | 22,561/32,768 | 56,697/65,536 | 213/256 | 408/512 |
+
+The remeasurement confirms the current construction layouts: `Node` is 80
+bytes, `BoxNode` and `UnsetNode` are 48 bytes, and `NodeListId` is 16 bytes.
+Compared with the preceding packed-handle audit, end-state logical/retained
+payload grew 5.43%/8.96% for paragraph-wide, 10.11%/28.79% for pages,
+34.48%/29.20% for math, and 37.82%/57.32% for math-nested. The small math
+states make their percentages look large; the absolute increases are 8,296
+and 15,896 logical bytes. The generation and span rows account explicitly for
+the new O(1) stale-handle validation metadata rather than hiding it in RSS.
+
+The width kernel was rerun on an otherwise idle host with Criterion warmup and
+100 samples. The table uses the mean estimates consumed by the committed
+budget gate; its intervals are Criterion 95% confidence intervals. The
+generation-tagged baseline replaces the earlier packed-handle means and keeps
+the existing 10% cross-run tolerance.
+
+| hpack kernel | Generation-tagged mean | 95% interval |
+| --- | ---: | ---: |
+| same font, 64 chars | 87.431 ns | 85.621–90.465 ns |
+| same font, 4,096 chars | 4.6099 us | 4.5877–4.6355 us |
+| mixed/interrupted, 4,096 nodes | 7.0782 us | 7.0624–7.0954 us |
+
+The wider live handle and extra arena lookup do not materially change the two
+long-run kernels relative to the earlier packed-handle results; the 64-character
+case remains small in absolute terms and below its 10% noise budget. These data
+do not justify weakening identity validation: five-run end-to-end results
+remain well below the prior Phase 6 ranges, and stale-handle lookup remains one
+bounds check, one tag comparison, and one span-table load. No representation
+optimization was therefore adopted.
+
+| Current Plain TeX workload | Mean | Range |
+| --- | ---: | ---: |
+| paragraph-wide | 0.145 s | 0.144–0.146 s |
+| paragraph-narrow | 0.084 s | 0.083–0.085 s |
+| pages | 0.285 s | 0.275–0.294 s |
+| dvi | 0.510 s | 0.476–0.566 s |
+| math | 0.806 s | 0.795–0.825 s |
+| math-nested | 0.548 s | 0.532–0.567 s |
+
+All measured invocations completed successfully. The memory suite additionally
+verified one stable DVI SHA-256 per workload across all five fresh processes.
 
 Append histograms provide the representative kind distribution absent from
 the peak-after-truncation math rows: paragraph-wide has 24,000 hlists and 224

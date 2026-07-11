@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use super::{NodeStorageObservation, PeakNodeStorageRecorder};
-use crate::node::Whatsit;
-use crate::node_arena::NodeStorage;
+use crate::node::{Node, Whatsit};
+use crate::node_arena::{NodeArena, NodeStorage};
 
 #[test]
 fn divergent_logical_and_retained_maxima_keep_one_observation() {
@@ -16,8 +16,8 @@ fn divergent_logical_and_retained_maxima_keep_one_observation() {
     );
     let recorder = PeakNodeStorageRecorder::default();
 
-    recorder.observe(&logical_peak);
-    recorder.observe(&retained_peak);
+    observe_storage(&recorder, &logical_peak);
+    observe_storage(&recorder, &retained_peak);
 
     let peak = recorder.snapshot().expect("an observation was recorded");
     assert_eq!(peak, logical_observation);
@@ -80,7 +80,7 @@ fn concurrent_updates_publish_only_complete_observations() {
             let recorder = Arc::clone(&recorder);
             scope.spawn(move || {
                 for _ in 0..64 {
-                    recorder.observe(&storage);
+                    observe_storage(&recorder, &storage);
                 }
             });
         }
@@ -89,6 +89,23 @@ fn concurrent_updates_publish_only_complete_observations() {
     let peak = recorder.snapshot().expect("an observation was recorded");
     assert_eq!(peak, expected);
     assert_column_sums(&peak);
+}
+
+#[test]
+fn epoch_identity_and_span_tables_are_coherent_live_and_peak_columns() {
+    let mut arena = NodeArena::new();
+    arena.append(&[Node::Penalty(1)]);
+    let live = NodeStorageObservation::from_columns(arena.memory_columns());
+    assert_column_sums(&live);
+    assert_metadata_columns(&live, "epoch");
+
+    let recorder = PeakNodeStorageRecorder::default();
+    recorder.observe(arena.measurement_payload_bytes(), || {
+        arena.measurement_columns("peak")
+    });
+    let peak = recorder.snapshot().expect("arena observation");
+    assert_column_sums(&peak);
+    assert_metadata_columns(&peak, "peak");
 }
 
 fn storage_with_payload(len: usize, capacity: usize) -> NodeStorage {
@@ -104,6 +121,26 @@ fn storage_with_payload(len: usize, capacity: usize) -> NodeStorage {
 
 fn observation(storage: &NodeStorage) -> NodeStorageObservation {
     NodeStorageObservation::from_columns(storage.memory_columns("peak"))
+}
+
+fn observe_storage(recorder: &PeakNodeStorageRecorder, storage: &NodeStorage) {
+    recorder.observe(storage.payload_bytes(), || storage.memory_columns("peak"));
+}
+
+fn assert_metadata_columns(observation: &NodeStorageObservation, prefix: &str) {
+    let identities = observation
+        .columns
+        .iter()
+        .find(|column| column.name == format!("{prefix}.identity_tags"))
+        .expect("identity-tag column");
+    let spans = observation
+        .columns
+        .iter()
+        .find(|column| column.name == format!("{prefix}.spans"))
+        .expect("span column");
+    assert_eq!(identities.len, spans.len);
+    assert_eq!(identities.element_bytes, 16);
+    assert_eq!(spans.element_bytes, 8);
 }
 
 fn assert_column_sums(observation: &NodeStorageObservation) {
