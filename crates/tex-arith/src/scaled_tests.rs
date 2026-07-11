@@ -3,7 +3,7 @@ use crate::{
     PhysicalUnit, Scaled, TfmConversionError, XOverN, XnOverD, half, mult_and_add, nx_plus_y,
     round_decimal_fraction, saturating_add, saturating_mul, saturating_sub,
     scale_true_dimension_parts, scaled_from_decimal_parts, tfm_design_size_from_fix_word,
-    tfm_fix_word_to_scaled, tfm_font_size, x_over_n, xn_over_d,
+    tfm_fix_word_to_scaled, tfm_font_size, tfm_slant_fix_word_to_scaled_ratio, x_over_n, xn_over_d,
 };
 
 #[test]
@@ -393,5 +393,25 @@ fn tfm_fix_word_conversion_matches_trip_tfm_tables() {
     assert_eq!(
         tfm_fix_word_to_scaled([1, 0, 0, 0], ten_pt),
         Err(TfmConversionError::InvalidFixWord)
+    );
+}
+
+#[test]
+fn tfm_slant_fix_word_uses_tex_arithmetic_shift_semantics() {
+    assert_eq!(
+        tfm_slant_fix_word_to_scaled_ratio([0, 0, 0, 0x10]),
+        Scaled::from_raw(1)
+    );
+    assert_eq!(
+        tfm_slant_fix_word_to_scaled_ratio([0, 0, 0, 0x0f]),
+        Scaled::from_raw(0)
+    );
+    assert_eq!(
+        tfm_slant_fix_word_to_scaled_ratio([0xff, 0xff, 0xff, 0xff]),
+        Scaled::from_raw(-1)
+    );
+    assert_eq!(
+        tfm_slant_fix_word_to_scaled_ratio([0xff, 0xff, 0xff, 0xef]),
+        Scaled::from_raw(-2)
     );
 }

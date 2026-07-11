@@ -15,7 +15,7 @@ const LONG_JUMP: &[u8] = include_bytes!("../../tests/fixtures/edge/ptmr8g-longju
 fn parses_required_computer_modern_corpus() {
     let corpus = [
         ("cmr10", CMR10, 7usize, false),
-        ("cmmi10", CMMI10, 6usize, false),
+        ("cmmi10", CMMI10, 7usize, false),
         ("cmsy10", CMSY10, 22usize, false),
         ("cmex10", CMEX10, 13usize, true),
         ("cmtt10", CMTT10, 7usize, false),
@@ -274,6 +274,60 @@ fn slant_parameter_is_unscaled_signed_fix_word_ratio() {
         font.parameters.slant().map(Scaled::raw),
         Some(0x0100_0000 / 16)
     );
+
+    let negative = parse(&tfm_with_sections(Sections {
+        bc: b'A',
+        ec: b'A',
+        char_info: vec![[1, 0, 0, 0]],
+        widths: vec![[0, 0, 0, 0], [0, 8, 0, 0]],
+        heights: vec![[0, 0, 0, 0]],
+        depths: vec![[0, 0, 0, 0]],
+        italics: vec![[0, 0, 0, 0]],
+        lig_kerns: Vec::new(),
+        kerns: Vec::new(),
+        extensibles: Vec::new(),
+        params: vec![[0xff, 0xff, 0xff, 0xff]],
+    }));
+    assert_eq!(negative.parameters.slant().map(Scaled::raw), Some(-1));
+}
+
+#[test]
+fn short_parameter_tables_are_zero_padded_through_fontdimen_seven() {
+    for np in 0..7 {
+        let font = parse(&tfm_with_sections(Sections {
+            bc: b'A',
+            ec: b'A',
+            char_info: vec![[1, 0, 0, 0]],
+            widths: vec![[0, 0, 0, 0], [0, 8, 0, 0]],
+            heights: vec![[0, 0, 0, 0]],
+            depths: vec![[0, 0, 0, 0]],
+            italics: vec![[0, 0, 0, 0]],
+            lig_kerns: Vec::new(),
+            kerns: Vec::new(),
+            extensibles: Vec::new(),
+            params: vec![[0, 0x10, 0, 0]; np],
+        }));
+
+        assert_eq!(font.parameters.values.len(), 7, "np={np}");
+        for number in 1..=7 {
+            let parameter = font.parameters.get(number).expect("padded parameter");
+            assert_eq!(parameter.number, number, "np={np}");
+            assert_eq!(
+                parameter.value.raw() == 0,
+                usize::from(number) > np,
+                "np={np}, number={number}"
+            );
+        }
+        assert_eq!(
+            font.parameters.get(1).map(|parameter| parameter.kind),
+            Some(FontParameterKind::SlantRatio)
+        );
+        assert!(
+            font.parameters.values[1..]
+                .iter()
+                .all(|parameter| parameter.kind == FontParameterKind::Dimension)
+        );
+    }
 }
 
 #[test]

@@ -9,7 +9,8 @@ use refexec::RefTftopl;
 use test_support::pl::{
     PlCharacter, PlExtensibleRecipe, PlFont, PlLigCommand, PlLigLabel, PlNumber,
 };
-use tex_arith::{FontSizeSpec, Scaled, tfm_fix_word_to_scaled};
+use tex_arith::{FontSizeSpec, Scaled, tfm_fix_word_to_scaled, tfm_slant_fix_word_to_scaled_ratio};
+use tex_fonts::metrics::MIN_TEX_FONT_PARAMETERS;
 use tex_fonts::tfm::Character;
 use tex_fonts::{CharacterTag, FontParameterKind, LigKernAction, TfmFont};
 
@@ -179,14 +180,23 @@ fn compare_lig_kerns(name: &str, variant: &str, font: &TfmFont, pl: &PlFont) -> 
 fn compare_parameters(name: &str, variant: &str, font: &TfmFont, pl: &PlFont) -> Result<()> {
     assert_eq!(
         font.parameters.values.len(),
-        pl.parameters.len(),
+        pl.parameters.len().max(MIN_TEX_FONT_PARAMETERS),
         "{name} {variant} fontdimen count"
     );
 
-    for (actual, expected) in font.parameters.values.iter().zip(&pl.parameters) {
+    for (index, actual) in font.parameters.values.iter().enumerate() {
+        let Some(expected) = pl.parameters.get(index) else {
+            assert_eq!(
+                actual.value.raw(),
+                0,
+                "{name} {variant} padded fontdimen{}",
+                actual.number
+            );
+            continue;
+        };
         let expected_value = match actual.kind {
             FontParameterKind::SlantRatio => {
-                i32::from_be_bytes(expected.value.to_fix_word_bytes()?) / 16
+                tfm_slant_fix_word_to_scaled_ratio(expected.value.to_fix_word_bytes()?).raw()
             }
             FontParameterKind::Dimension => {
                 tfm_fix_word_to_scaled(expected.value.to_fix_word_bytes()?, font.font_size)?.raw()
