@@ -72,6 +72,9 @@ pub(super) fn math_allows_assignment_primitive(primitive: UnexpandablePrimitive)
             | UnexpandablePrimitive::VAdjust
             | UnexpandablePrimitive::PrevGraf
             | UnexpandablePrimitive::ParShape
+            | UnexpandablePrimitive::UnPenalty
+            | UnexpandablePrimitive::UnKern
+            | UnexpandablePrimitive::UnSkip
             | UnexpandablePrimitive::Insert
             | UnexpandablePrimitive::Discretionary
             | UnexpandablePrimitive::Wd

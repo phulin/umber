@@ -544,6 +544,13 @@ where
             .ok_or(ScanToksError::EndOfInputInParameterText { context })?;
         let token = traced_semantic_token(traced);
 
+        if is_outer_macro(stores, token) {
+            // TeX.web §336 backs up a forbidden outer control sequence and
+            // inserts a right brace while `scanner_status=defining`.
+            unread_token(input, stores, traced);
+            return Ok(finish_traced_list(stores, &mut builder, &mut origins));
+        }
+
         if pending_parameter {
             pending_parameter = false;
             match token {
@@ -613,6 +620,11 @@ where
             .next_traced_token(stores)?
             .ok_or(ScanToksError::EndOfInputInReplacementText { context })?;
         let token = traced_semantic_token(traced);
+
+        if is_outer_macro(stores, token) {
+            unread_token(input, stores, traced);
+            return Ok(finish_traced_list(stores, &mut builder, &mut origins));
+        }
 
         if pending_parameter {
             pending_parameter = false;
@@ -694,6 +706,12 @@ where
             .next_traced_token(stores)?
             .ok_or(ScanToksError::EndOfInputInReplacementText { context })?;
         let token = traced_semantic_token(traced);
+        if is_outer_macro(stores, token) {
+            // The absorbing scanner uses the same inserted-right-brace
+            // recovery and leaves the outer token for ordinary dispatch.
+            unread_token(input, stores, traced);
+            return Ok(finish_traced_list(stores, &mut builder, &mut origins));
+        }
         match token {
             Token::Char {
                 cat: Catcode::BeginGroup,
@@ -715,6 +733,16 @@ where
             _ => push_scanned_token(&mut builder, &mut origins, traced, token),
         }
     }
+}
+
+fn is_outer_macro(stores: &impl ExpansionState, token: Token) -> bool {
+    let Token::Cs(symbol) = token else {
+        return false;
+    };
+    matches!(
+        stores.meaning(symbol),
+        Meaning::Macro { flags, .. } if flags.contains(MeaningFlags::OUTER)
+    )
 }
 
 fn next_non_space_token<S>(

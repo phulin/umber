@@ -338,7 +338,7 @@ fn extra_expandable_delivery_exposes_responsible_token_origin() {
 }
 
 #[test]
-fn prefix_error_uses_scanned_token_origin() {
+fn illegal_prefix_replays_scanned_token_with_its_origin() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
     let global = stores.symbol("global").expect("global");
@@ -346,28 +346,30 @@ fn prefix_error_uses_scanned_token_origin() {
     let mut input = InputStack::new(MemoryInput::new("x"));
     let mut hooks = NoopExecHooks;
 
-    let err = dispatch_delivered_token(
+    let action = dispatch_delivered_token(
         &mut ModeNest::new(),
         TracedTokenWord::pack(Token::Cs(global), prefix_origin),
         &mut input,
         &mut stores,
         &mut hooks,
     )
-    .expect_err("prefix before non-assignment");
+    .expect("TeX recovers by backing up the non-assignment token");
 
-    let reported = err.primary_origin().expect("prefix error origin");
-    assert_ne!(reported, OriginId::UNKNOWN);
-    assert_ne!(reported, prefix_origin);
-    assert!(matches!(
-        err,
-        ExecError::PrefixWithNonAssignment {
-            token: Token::Char {
-                ch: 'x',
-                cat: Catcode::Letter
-            },
-            origin
-        } if origin == reported
-    ));
+    assert_eq!(action, DispatchAction::Continue);
+    let replayed = input
+        .next_traced_token(&mut stores)
+        .expect("read replayed token")
+        .expect("replayed token");
+    assert_eq!(
+        tex_expand::semantic_token(replayed),
+        Token::Char {
+            ch: 'x',
+            cat: Catcode::Letter
+        }
+    );
+    assert_ne!(replayed.origin(), OriginId::UNKNOWN);
+    assert_ne!(replayed.origin(), prefix_origin);
+    assert!(support::terminal_effect_text(&stores).contains("You can't use a prefix"));
 }
 
 #[test]
@@ -381,6 +383,37 @@ fn main_control_uses_get_x_token_and_expands_macros_before_dispatch() {
         .run(&mut input, &mut stores)
         .expect("execution succeeds");
     assert_eq!(stats.delivered_tokens, 1);
+}
+
+#[test]
+fn main_control_recovers_from_undefined_control_sequence() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\missing\\count0=7"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("undefined command is diagnosed and consumed");
+
+    assert_eq!(stores.count(0), 7);
+    assert!(
+        support::terminal_effect_text(&stores).contains("Undefined control sequence \\missing")
+    );
+}
+
+#[test]
+fn main_control_consumes_invalid_category_character() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    stores.set_catcode('@', Catcode::Invalid);
+    let mut input = InputStack::new(MemoryInput::new("@\\count0=7"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("invalid input character is diagnosed and consumed");
+
+    assert_eq!(stores.count(0), 7);
+    assert!(support::terminal_effect_text(&stores).contains("invalid character"));
 }
 
 #[test]

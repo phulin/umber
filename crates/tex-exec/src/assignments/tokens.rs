@@ -115,10 +115,24 @@ where
             cat: Catcode::Active,
         } => active_character_symbol(stores, ch),
         _ => {
-            return Err(ExecError::ExpectedControlSequence {
-                context,
-                token,
-                origin: traced.origin(),
+            // This is the provenance-preserving form of TeX.web §1215's
+            // `get_r_token` recovery used by macro definitions.
+            push_traced_tokens(input, stores, [traced]);
+            stores.world_mut().write_text(
+                tex_state::PrintSink::TerminalAndLog,
+                "\n! Missing control sequence inserted.\nPlease don't say `\\def cs{...}', say `\\def\\cs{...}'.\nI've inserted an inaccessible control sequence so that your\ndefinition will be completed without mixing me up too badly.\nYou can recover graciously from this error, if you're\ncareful; see exercise 27.2 in The TeXbook.\n",
+            );
+            let symbol = stores.intern("inaccessible");
+            let inserted_token = Token::Cs(symbol);
+            let origin = stores.inserted_origin(
+                InsertedOriginKind::ErrorRecovery,
+                inserted_token,
+                traced.origin(),
+            );
+            return Ok(TracedDefinitionTarget {
+                symbol,
+                traced: TracedTokenWord::pack(inserted_token, origin),
+                origin,
             });
         }
     };

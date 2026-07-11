@@ -44,6 +44,27 @@ fn scans_all_nine_parameters_in_order() {
 }
 
 #[test]
+fn forbidden_outer_macro_closes_replacement_and_is_replayed() {
+    let mut stores = Universe::new();
+    let outer = stores.intern("outermacro");
+    let empty = stores.intern_token_list(&[]);
+    stores.set_macro_meaning(
+        outer,
+        tex_state::macro_store::MacroMeaning::new(MeaningFlags::OUTER, empty, empty),
+    );
+    let mut input = InputStack::new(MemoryInput::new("{\\outermacro trailing}"));
+    let context = TracedTokenWord::pack(Token::Cs(stores.intern("def")), OriginId::UNKNOWN);
+
+    let scanned = scan_toks(&mut input, &mut stores, MeaningFlags::EMPTY, context)
+        .expect("outer token inserts a synthetic closing brace");
+    assert!(stores.tokens(scanned.replacement_text()).is_empty());
+    assert_eq!(
+        input.next_token(&mut stores).expect("read replayed outer"),
+        Some(Token::Cs(outer))
+    );
+}
+
+#[test]
 fn freezes_parameter_and_replacement_origin_lists_from_source_tokens() {
     let mut stores = Universe::new();
     let mut input = InputStack::new(MemoryInput::new("#1{#1x}"));

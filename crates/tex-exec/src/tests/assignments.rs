@@ -166,6 +166,24 @@ fn character_definition_substitutes_inaccessible_target_and_replays_bad_token() 
 }
 
 #[test]
+fn macro_definition_substitutes_inaccessible_target_and_replays_body_start() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\outer\\def{}"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("get_r_token recovery should complete the macro definition");
+
+    let inaccessible = stores.intern("inaccessible");
+    let meaning = stores
+        .macro_meaning(inaccessible)
+        .expect("inaccessible macro definition");
+    assert!(stores.tokens(meaning.replacement_text()).is_empty());
+    assert!(terminal_effect_text(&stores).contains("Missing control sequence inserted"));
+}
+
+#[test]
 fn mathchardef_constants_scan_for_penalty_count_ifnum_and_signed_macro_replay() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);

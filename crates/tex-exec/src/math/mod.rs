@@ -534,7 +534,10 @@ where
             }
             Ok(DispatchAction::Continue)
         }
-        UnexpandablePrimitive::Leaders
+        UnexpandablePrimitive::LastBox
+        | UnexpandablePrimitive::UnHBox
+        | UnexpandablePrimitive::UnHCopy
+        | UnexpandablePrimitive::Leaders
         | UnexpandablePrimitive::CLeaders
         | UnexpandablePrimitive::XLeaders => assignments::execute_unexpandable_with_recorder(
             primitive, traced, nest, input, stores, recorder, hooks,

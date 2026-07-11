@@ -142,10 +142,15 @@ where
 {
     let family = scan_i32(input, stores, hooks, context)?;
     if !(0..=15).contains(&family) {
-        return Err(ExecError::InvalidCode {
-            context: "math family",
-            value: family,
-        });
+        // TeX.web §435's `scan_four_bit_int` reports the bad value and
+        // substitutes family zero so assignment scanning can continue.
+        stores.world_mut().write_text(
+            tex_state::PrintSink::TerminalAndLog,
+            &format!(
+                "\n! Bad number ({family}).\nSince I expected to read a number between 0 and 15,\nI changed this one to zero.\n"
+            ),
+        );
+        return Ok(0);
     }
     Ok(family as u8)
 }
@@ -181,11 +186,17 @@ where
             let family = scan_math_family(input, stores, hooks, traced)?;
             Ok(stores.math_family_font(math_font_size_for_primitive(primitive), family))
         }
-        _ => Err(ExecError::ExpectedControlSequence {
-            context: "font selector",
-            token,
-            origin: traced.origin(),
-        }),
+        _ => {
+            // TeX.web §578's `scan_font_ident` uses `back_error` and
+            // returns `null_font`, leaving the offending token for main
+            // control.
+            push_traced_tokens(input, stores, [traced]);
+            stores.world_mut().write_text(
+                tex_state::PrintSink::TerminalAndLog,
+                "\n! Missing font identifier.\nI was looking for a control sequence whose\ncurrent meaning has been defined by \\font.\n",
+            );
+            Ok(tex_state::font::NULL_FONT)
+        }
     }
 }
 

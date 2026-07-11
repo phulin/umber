@@ -115,7 +115,7 @@ where
     H: ExpansionHooks<S>,
 {
     let mut prefixes = Prefixes::default();
-    let command = accumulate_prefixes(
+    let command = match accumulate_prefixes(
         PrefixedCommand::Primitive(primitive),
         traced,
         &mut prefixes,
@@ -123,7 +123,21 @@ where
         stores,
         recorder,
         hooks,
-    )?;
+    ) {
+        Ok(command) => command,
+        Err(ExecError::PrefixWithNonAssignment { token, origin }) => {
+            // TeX.web §§1218–1219 uses `back_error` here: the prefixes are
+            // discarded, but the offending expanded token is put back for
+            // ordinary main-control dispatch.
+            push_traced_tokens(input, stores, [TracedTokenWord::pack(token, origin)]);
+            stores.world_mut().write_text(
+                tex_state::PrintSink::TerminalAndLog,
+                "\n! You can't use a prefix with this command.\nI'll pretend you didn't say \\long or \\outer or \\global.\n",
+            );
+            return Ok(DispatchAction::Continue);
+        }
+        Err(error) => return Err(error),
+    };
     if matches!(
         command.command,
         PrefixedCommand::Primitive(UnexpandablePrimitive::End | UnexpandablePrimitive::Dump)

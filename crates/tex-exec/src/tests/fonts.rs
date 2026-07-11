@@ -244,3 +244,21 @@ fn math_family_font_selectors_are_grouping_aware() {
         tex_state::font::NULL_FONT
     );
 }
+
+#[test]
+fn math_family_assignment_recovers_bad_family_and_missing_font() {
+    let mut stores = stores_with_fonts();
+    let mut input = InputStack::new(MemoryInput::new("\\textfont16=\\relax"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("bounded family and missing font recover like TeX");
+
+    assert_eq!(
+        stores.math_family_font(tex_state::math::MathFontSize::Text, 0),
+        tex_state::font::NULL_FONT
+    );
+    let output = terminal_effect_text(&stores);
+    assert!(output.contains("Bad number (16)"));
+    assert!(output.contains("Missing font identifier"));
+}

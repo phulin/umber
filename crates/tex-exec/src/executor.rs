@@ -189,6 +189,29 @@ where
             let mut expansion = ExpansionContext::new(stores);
             match get_x_token_with_recorder_and_hooks(input, &mut expansion, recorder, hooks) {
                 Ok(token) => token,
+                Err(tex_expand::ExpandError::UndefinedControlSequence { name, .. }) => {
+                    // In TeX.web main_control, undefined control sequences
+                    // report an error and otherwise behave like a consumed
+                    // relax token. Scanner-owned expansion errors still
+                    // propagate from their scanner call sites.
+                    stores.world_mut().write_text(
+                        tex_state::PrintSink::TerminalAndLog,
+                        &format!("\n! Undefined control sequence \\{name}.\n"),
+                    );
+                    continue;
+                }
+                Err(tex_expand::ExpandError::Lex(tex_lex::LexError::InvalidCharacter {
+                    ch,
+                    ..
+                })) => {
+                    // TeX.web's `get_next` reports an invalid-category input
+                    // character and restarts tokenization after consuming it.
+                    stores.world_mut().write_text(
+                        tex_state::PrintSink::TerminalAndLog,
+                        &format!("\n! Text line contains an invalid character ({ch}).\n"),
+                    );
+                    continue;
+                }
                 Err(err) => {
                     stores.set_input_summary(input.summary());
                     return Err(err.into());

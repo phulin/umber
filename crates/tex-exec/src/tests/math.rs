@@ -9,6 +9,22 @@ use tex_state::provenance::{InsertedOriginKind, OriginRecord};
 use tex_state::scaled::Scaled;
 
 #[test]
+fn remove_item_commands_apply_to_math_lists() {
+    let (stores, executor) =
+        run_math_source(r"$\penalty10\unpenalty\kern1pt\unkern\hskip1pt\unskip");
+
+    assert!(math_nodes(&stores, &executor).is_empty());
+}
+
+#[test]
+fn lastbox_in_math_reports_recovery_and_yields_no_node() {
+    let (stores, executor) = run_math_source(r"$\lastbox");
+
+    assert!(math_nodes(&stores, &executor).is_empty());
+    assert!(terminal_effect_text(&stores).contains("lastbox will be void"));
+}
+
+#[test]
 fn math_mode_builds_noads_styles_choices_and_mu_nodes() {
     let (stores, executor) = run_math_source(
         r"$a_b^c\mathbin+\mathop{x}\limits_y\overline{z}\mskip3mu\mkern2mu\nonscript\displaystyle\mathchoice{d}{t}{s}{u}",
@@ -169,12 +185,12 @@ fn semi_simple_math_aftergroup_replay_has_aftergroup_provenance() {
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
-        r"$\begingroup\aftergroup\missing\endgroup",
+        r"$\begingroup\aftergroup\endcsname\endgroup",
     ));
 
     let err = Executor::new()
         .run(&mut input, &mut stores)
-        .expect_err("replayed undefined control sequence should fail");
+        .expect_err("replayed extra endcsname should fail");
     let origin = err.primary_origin().expect("replayed token origin");
     let OriginRecord::Inserted(inserted) = stores.origin(origin) else {
         panic!("aftergroup replay should have inserted provenance");
@@ -231,7 +247,7 @@ fn math_shift_aftergroup_replay_has_inserted_provenance() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(r"$\aftergroup\missing$"));
+    let mut input = InputStack::new(MemoryInput::new(r"$\aftergroup\endcsname$"));
 
     let err = Executor::new()
         .run(&mut input, &mut stores)
@@ -391,22 +407,22 @@ fn math_group_mismatch_reports_the_closing_token_origin() {
 
 #[test]
 fn inline_math_entry_lookahead_preserves_source_origin() {
-    assert_replayed_math_error_is_source_backed(r"$\missing");
+    assert_replayed_math_error_is_source_backed(r"$\endcsname");
 }
 
 #[test]
 fn mismatched_display_closer_preserves_following_source_origin() {
-    assert_replayed_math_error_is_source_backed(r"\noindent$$a$\missing");
+    assert_replayed_math_error_is_source_backed(r"\noindent$$a$\endcsname");
 }
 
 #[test]
 fn post_display_replay_preserves_following_source_origin() {
-    assert_replayed_math_error_is_source_backed(r"\noindent$$a$$\missing");
+    assert_replayed_math_error_is_source_backed(r"\noindent$$a$$\endcsname");
 }
 
 #[test]
 fn post_display_alignment_replay_preserves_following_source_origin() {
-    assert_replayed_math_error_is_source_backed(r"\noindent$$\halign{#\cr a\cr}$$\missing");
+    assert_replayed_math_error_is_source_backed(r"\noindent$$\halign{#\cr a\cr}$$\endcsname");
 }
 
 #[test]
@@ -1097,12 +1113,9 @@ fn assert_replayed_math_error_is_source_backed(source: &str) {
 
     let err = Executor::new()
         .run(&mut input, &mut stores)
-        .expect_err("replayed undefined control sequence should fail");
+        .expect_err("replayed extra endcsname should fail");
     assert!(
-        matches!(
-            &err,
-            ExecError::Expand(tex_expand::ExpandError::UndefinedControlSequence { .. })
-        ),
+        matches!(&err, ExecError::ExtraEndCsName { .. }),
         "unexpected replay error: {err:?}"
     );
 
@@ -1110,9 +1123,12 @@ fn assert_replayed_math_error_is_source_backed(source: &str) {
     let OriginRecord::SourceSpan(source_span) = stores.origin(origin) else {
         panic!("expected source span, got {:?}", stores.origin(origin));
     };
-    let expected_offset =
-        u64::try_from(source.find(r"\missing").expect("missing token in fixture"))
-            .expect("fixture offset should fit in u64");
+    let expected_offset = u64::try_from(
+        source
+            .find(r"\endcsname")
+            .expect("sentinel token in fixture"),
+    )
+    .expect("fixture offset should fit in u64");
     assert_eq!(
         source_span.lo(),
         stores
@@ -1121,7 +1137,7 @@ fn assert_replayed_math_error_is_source_backed(source: &str) {
     );
 
     let rendered = err.format_with_provenance(&stores);
-    assert!(rendered.contains("Undefined control sequence"));
+    assert!(rendered.contains("endcsname"));
     assert!(rendered.contains(&format!("{PATH}:1:")));
     assert!(rendered.contains(&format!("  1 | {source}")));
     assert!(rendered.contains("^"));
