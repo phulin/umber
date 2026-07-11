@@ -302,7 +302,9 @@ fn run_pass<S: TypesetState>(
                 let id = candidates.len();
                 candidates.push(Candidate {
                     position: bp.position,
-                    width_position: if bp.hyphenated {
+                    width_position: if bp.hyphenated
+                        && discretionary_post_is_nonempty(state, nodes, bp.position)
+                    {
                         bp.position
                     } else {
                         next_width_position(nodes, bp.position)
@@ -330,6 +332,17 @@ fn run_pass<S: TypesetState>(
 
     let chosen = choose_final(&candidates, &finals, params.looseness)?;
     Some(reconstruct(nodes, &candidates, chosen))
+}
+
+fn discretionary_post_is_nonempty<S: TypesetState>(
+    state: &S,
+    nodes: &[Node],
+    position: usize,
+) -> bool {
+    matches!(
+        position.checked_sub(1).and_then(|index| nodes.get(index)),
+        Some(Node::Disc { post, .. }) if !state.nodes(*post).is_empty()
+    )
 }
 
 fn next_width_position(nodes: &[Node], position: usize) -> usize {
@@ -439,13 +452,24 @@ fn legal_breakpoints<S: TypesetState>(
                 hyphenated: false,
                 add_width: Widths::zero(),
             }),
-            Node::Disc { kind, pre, .. } => out.push(Breakpoint {
-                position: i + 1,
-                width_position: i,
-                penalty: discretionary_penalty(*kind, params),
-                hyphenated: true,
-                add_width: line_widths_view(state, state.nodes(*pre), 0, state.nodes(*pre).len()),
-            }),
+            Node::Disc {
+                kind, pre, post, ..
+            } if !state.nodes(*post).is_empty()
+                || next_width_position(nodes, i + 1) < nodes.len() =>
+            {
+                out.push(Breakpoint {
+                    position: i + 1,
+                    width_position: i,
+                    penalty: discretionary_penalty(*kind, params),
+                    hyphenated: true,
+                    add_width: line_widths_view(
+                        state,
+                        state.nodes(*pre),
+                        0,
+                        state.nodes(*pre).len(),
+                    ),
+                });
+            }
             Node::MathOff(_) if matches!(nodes.get(i + 1), Some(Node::Glue { .. })) => {
                 out.push(Breakpoint {
                     position: i + 1,

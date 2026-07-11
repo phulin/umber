@@ -325,7 +325,7 @@ where
         }
         None => {}
     }
-    build_page_if_outer_vertical(nest, stores)?;
+    build_page_after_display_resume(nest, stores)?;
     Ok(())
 }
 
@@ -402,8 +402,23 @@ where
         Some(traced) => crate::push_traced_tokens(input, stores, [traced]),
         None => {}
     }
-    build_page_if_outer_vertical(nest, stores)?;
+    build_page_after_display_resume(nest, stores)?;
     Ok(())
+}
+
+fn build_page_after_display_resume(
+    nest: &ModeNest,
+    stores: &mut Universe,
+) -> Result<(), ExecError> {
+    // TeX.web resumes a display by pushing horizontal mode and then calls
+    // build_page when that new level sits directly above outer vertical mode.
+    // Looking only at the current mode would miss the just-appended display
+    // penalties and defer a forced break until unrelated later material.
+    if nest.depth() == 2 && nest.current_mode() == Mode::Horizontal {
+        crate::page_builder::build_page(stores)
+    } else {
+        build_page_if_outer_vertical(nest, stores)
+    }
 }
 
 fn display_can_shrink_with_eqno(w: Scaled, q: Scaled, z: Scaled, shrink: ShrinkTotals) -> bool {

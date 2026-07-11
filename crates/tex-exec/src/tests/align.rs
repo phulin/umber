@@ -1265,6 +1265,22 @@ fn display_halign_closes_semisimple_group_and_discards_prior_formula() {
 }
 
 #[test]
+fn display_halign_runs_assignments_before_missing_closer_recovery() {
+    let mut stores = support::stores_with_fonts();
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\font\\f=cmr10 \\f \\hsize=50pt \\noindent$$\\halign{#\\cr a\\cr} \
+         \\global\\count6=5 \\global\\postdisplaypenalty=-17 \
+         \\global\\setbox= \\eqno \\end",
+    ));
+
+    let _ = Executor::new().run(&mut input, &mut stores);
+
+    assert_eq!(stores.count(6), 5);
+    assert_eq!(stores.int_param(IntParam::POST_DISPLAY_PENALTY), -17);
+    assert!(support::terminal_effect_text(&stores).contains("Improper \\setbox"));
+}
+
+#[test]
 fn nested_alignment_executes_inside_cell() {
     let stores = run_boxed_alignment_source("\\halign{#\\cr \\vbox{\\halign{#\\cr x\\cr}}\\cr}");
     let vbox = box_zero_vlist(&stores);

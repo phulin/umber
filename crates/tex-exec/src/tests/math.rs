@@ -734,6 +734,21 @@ fn penalty_builds_ordinary_list_material_in_display_math() {
 }
 
 #[test]
+fn forced_postdisplay_penalty_builds_page_after_horizontal_resume() {
+    let mut stores = support::stores_with_fonts();
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\font\\f=cmr10 \\f \\hsize=50pt \\postdisplaypenalty=-10000 \
+         \\noindent x$$x$$",
+    ));
+
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("forced display penalty fires before end of input");
+
+    assert_eq!(stats.shipped_artifacts.len(), 1);
+}
+
+#[test]
 fn lowered_math_box_rolls_back_without_leaking_arena_handles() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

@@ -1,6 +1,6 @@
 //! Math-mode stomach front-end.
 
-use tex_expand::{ExpansionHooks, ReadRecorder};
+use tex_expand::{ExpansionHooks, ReadRecorder, get_x_token_with_recorder_and_hooks};
 use tex_lex::{InputSource, InputStack};
 use tex_state::Universe;
 use tex_state::env::banks::{DimenParam, TokParam};
@@ -748,6 +748,7 @@ where
             })?;
     let nodes =
         crate::align::execute_display_halign(context, nest, input, stores, recorder, hooks)?;
+    finish_display_alignment_assignments(input, stores, recorder, hooks)?;
     let closing_origin = consume_display_alignment_closer(input, stores, context.origin())?;
     finish_display_alignment(nest, stores, nodes)?;
     leave_group_with_origin(
@@ -757,6 +758,90 @@ where
         closing_origin,
     )?;
     resume_after_display_alignment(nest, input, stores)
+}
+
+fn finish_display_alignment_assignments<S, R, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<(), ExecError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    loop {
+        let Some(first) = get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
+        else {
+            return Ok(());
+        };
+        if matches!(
+            tex_expand::semantic_token(first),
+            Token::Char {
+                cat: Catcode::Space,
+                ..
+            }
+        ) {
+            continue;
+        }
+        let mut command = vec![first];
+        let meaning = loop {
+            let token = tex_expand::semantic_token(*command.last().expect("command token"));
+            let Token::Cs(symbol) = token else {
+                push_traced_tokens(input, stores, command);
+                return Ok(());
+            };
+            let meaning = stores.meaning(symbol);
+            if meaning == Meaning::Relax && command.len() == 1 {
+                command.clear();
+                break Meaning::Relax;
+            }
+            if matches!(
+                meaning,
+                Meaning::UnexpandablePrimitive(
+                    UnexpandablePrimitive::Global
+                        | UnexpandablePrimitive::Long
+                        | UnexpandablePrimitive::Outer
+                        | UnexpandablePrimitive::Protected
+                )
+            ) {
+                let Some(next) =
+                    get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
+                else {
+                    push_traced_tokens(input, stores, command);
+                    return Ok(());
+                };
+                command.push(next);
+                continue;
+            }
+            break meaning;
+        };
+
+        if command.is_empty() {
+            continue;
+        }
+
+        if matches!(
+            meaning,
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::SetBox)
+        ) {
+            stores.world_mut().write_text(
+                tex_state::PrintSink::TerminalAndLog,
+                "\n! Improper \\setbox.\nSorry, \\setbox is not allowed after \\halign in a display,\nor between \\accent and an accented character.\n",
+            );
+            return Ok(());
+        }
+
+        let first = command.remove(0);
+        if !command.is_empty() {
+            push_traced_tokens(input, stores, command);
+        }
+        if !assignments::try_execute_assignment(first, input, stores, hooks)? {
+            push_traced_tokens(input, stores, [first]);
+            return Ok(());
+        }
+    }
 }
 
 fn consume_display_alignment_closer<S>(

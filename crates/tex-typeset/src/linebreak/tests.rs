@@ -319,6 +319,42 @@ fn discardable_tail_does_not_create_an_empty_final_line() {
 }
 
 #[test]
+fn empty_post_discretionary_before_parfill_does_not_create_empty_final_line() {
+    let mut universe = Universe::new();
+    let empty = universe.freeze_node_list(&[]);
+    let hyphen = universe.freeze_node_list(&[rule(5)]);
+    let par_fill = universe.intern_glue(GlueSpec {
+        width: sp(0),
+        stretch: sp(1),
+        stretch_order: Order::Fil,
+        shrink: sp(0),
+        shrink_order: Order::Normal,
+    });
+    let nodes = vec![
+        rule(20),
+        Node::Disc {
+            kind: DiscKind::ExplicitHyphen,
+            pre: hyphen,
+            post: empty,
+            replace: empty,
+        },
+        Node::Penalty(10_000),
+        Node::Glue {
+            spec: par_fill,
+            kind: GlueKind::ParFillSkip,
+            leader: None,
+        },
+    ];
+    let mut p = params(20);
+    p.looseness = 1;
+    let mut hook = NoHyphenation;
+    let result = line_break(&universe, &nodes, p, &mut hook);
+
+    assert_eq!(result.breaks.len(), 1);
+    assert_eq!(result.breaks[0].position, nodes.len());
+}
+
+#[test]
 fn mathoff_breaks_only_before_following_glue_and_zeroes_break_width() {
     let mut universe = Universe::new();
     let glue = universe.intern_glue(GlueSpec {
