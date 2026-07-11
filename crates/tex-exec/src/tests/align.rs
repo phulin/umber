@@ -774,15 +774,29 @@ fn alignment_preamble_errors_match_reference_wording() {
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("{#a#b\\cr}"));
     let mut hooks = crate::executor::NoopExecHooks;
-    let err = crate::align::scan_preamble(
+    let state = crate::align::scan_preamble(
         UnexpandablePrimitive::HAlign,
         alignment_context(),
         &mut input,
         &mut stores,
         &mut hooks,
     )
-    .expect_err("extra hash should be rejected");
-    assert_eq!(err.to_string(), "Only one # is allowed per tab.");
+    .expect("extra hash should be ignored recoverably");
+    assert!(support::terminal_effect_text(&stores).contains("Only one # is allowed per tab"));
+    assert_eq!(
+        stores.tokens(state.columns()[0].v_template),
+        &[
+            Token::Char {
+                ch: 'a',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: 'b',
+                cat: Catcode::Letter,
+            },
+            Token::frozen_end_template(),
+        ]
+    );
 }
 
 #[test]
@@ -1133,6 +1147,18 @@ fn span_template_side_effects_are_local_to_alignment_entry() {
 }
 
 #[test]
+fn macro_after_span_executes_remaining_assignment_tokens() {
+    let mut stores = support::stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    run_alignment_source_in(
+        &mut stores,
+        "\\setbox0=\\vbox{\\count1=2 \\def\\xx{\\global\\gdef\\A{\\global\\count\\count1=-17\\cr\\omit\\cr\\tabskip}}\\halign{#&\\A#\\cr \\expandafter\\xx\\span A&x\\cr}}",
+    );
+
+    assert_eq!(stores.count(2), -17);
+}
+
+#[test]
 fn noalign_material_is_spliced_between_finished_rows() {
     let stores =
         run_boxed_alignment_source("\\halign{#\\cr a\\cr\\noalign{\\hrule height2pt}b\\cr}");
@@ -1337,6 +1363,22 @@ fn nested_alignment_executes_inside_cell() {
             .any(|node| matches!(node, Node::VList(_)))
     );
     assert_no_unset(&stores, stores.nodes(vbox.children).testing_decoded());
+}
+
+#[test]
+fn nested_alignment_in_template_does_not_end_outer_preamble() {
+    let (stores, state) = scan_halign_preamble("{\\vbox{\\halign{#\\cr x\\cr}}#\\cr}");
+    let template = stores.tokens(state.columns()[0].v_template);
+
+    assert_eq!(state.columns().len(), 1);
+    assert_eq!(
+        template
+            .iter()
+            .filter(|token| matches!(token, Token::Cs(symbol) if matches!(stores.meaning(*symbol), Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Cr))))
+            .count(),
+        2
+    );
+    assert_eq!(template.last(), Some(&Token::frozen_end_template()));
 }
 
 #[test]

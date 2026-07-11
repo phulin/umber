@@ -131,11 +131,17 @@ where
         }
         // TeX82 records a leading tab on an empty u-template as `cur_loop`;
         // it is a periodic-preamble marker, not a missing-parameter error.
-        if is_alignment_tab_token(token) && !has_material && loop_start.is_none() {
+        if scanner.at_template_level()
+            && is_alignment_tab_token(token)
+            && !has_material
+            && loop_start.is_none()
+        {
             *loop_start = Some(column);
             continue;
         }
-        if is_alignment_tab_token(token) || is_cr_token(scanner.stores, token) {
+        if scanner.at_template_level()
+            && (is_alignment_tab_token(token) || is_cr_token(scanner.stores, token))
+        {
             scanner.lookahead = Some(token);
             scanner.stores.world_mut().write_text(
                 tex_state::PrintSink::TerminalAndLog,
@@ -162,16 +168,20 @@ where
             context: "alignment preamble",
         })?;
         if is_parameter_token(token) {
-            return Err(ExecError::ExtraHashInAlignmentPreamble);
+            scanner.stores.world_mut().write_text(
+                tex_state::PrintSink::TerminalAndLog,
+                "\n! Only one # is allowed per tab.\nThere should be exactly one # between &'s, when an\n\\halign or \\valign is being set up. In this case you had\nmore than one, so I'm ignoring all but the first.\n",
+            );
+            continue;
         }
-        if is_alignment_tab_token(token) {
+        if scanner.at_template_level() && is_alignment_tab_token(token) {
             builder.push(end_template);
             return Ok((
                 scanner.stores.finish_token_list(&mut builder),
                 PreambleTerminator::AlignmentTab,
             ));
         }
-        if is_cr_token(scanner.stores, token) {
+        if scanner.at_template_level() && is_cr_token(scanner.stores, token) {
             builder.push(end_template);
             return Ok((
                 scanner.stores.finish_token_list(&mut builder),
@@ -200,6 +210,7 @@ struct PreambleScanner<'a, S, H> {
     hooks: &'a mut H,
     lookahead: Option<Token>,
     current_tabskip: GlueId,
+    brace_depth: i32,
 }
 
 impl<'a, S, H> PreambleScanner<'a, S, H>
@@ -215,6 +226,7 @@ where
             stores,
             hooks,
             lookahead: None,
+            brace_depth: 0,
         }
     }
 
@@ -222,11 +234,15 @@ where
         self.current_tabskip
     }
 
+    fn at_template_level(&self) -> bool {
+        self.brace_depth == 0
+    }
+
     fn next_is_alignment_tab(&mut self) -> Result<bool, ExecError> {
         let Some(token) = self.next_token()? else {
             return Ok(false);
         };
-        if is_alignment_tab_token(token) {
+        if self.at_template_level() && is_alignment_tab_token(token) {
             Ok(true)
         } else {
             self.lookahead = Some(token);
@@ -242,22 +258,20 @@ where
             // TeX82's get_preamble_token copies ordinary tokens without
             // expansion. Template macros must observe the state of each cell
             // when they are replayed; only \span requests an expansion here.
-            let Some(token) = self.next_raw()? else {
+            let Some(mut token) = self.next_raw()? else {
                 return Ok(None);
             };
-            if self.try_scan_tabskip_assignment(token)? {
-                continue;
-            }
-            if is_span_token(self.stores, token) {
-                let Some(token) = self.next_expanded()? else {
+            while is_span_token(self.stores, token) {
+                let Some(expanded) = self.next_expanded()? else {
                     return Err(ExecError::MissingToken {
                         context: "token after \\span",
                     });
                 };
-                if self.try_scan_tabskip_assignment(token)? {
-                    continue;
-                }
-                return Ok(Some(token));
+                token = expanded;
+            }
+            self.update_brace_depth(token);
+            if self.try_scan_tabskip_assignment(token)? {
+                continue;
             }
             return Ok(Some(token));
         }
@@ -278,6 +292,20 @@ where
             )?
             .map(tex_expand::semantic_token),
         )
+    }
+
+    fn update_brace_depth(&mut self, token: Token) {
+        match token {
+            Token::Char {
+                cat: Catcode::BeginGroup,
+                ..
+            } => self.brace_depth = self.brace_depth.saturating_add(1),
+            Token::Char {
+                cat: Catcode::EndGroup,
+                ..
+            } => self.brace_depth = self.brace_depth.saturating_sub(1),
+            _ => {}
+        }
     }
 
     fn try_scan_tabskip_assignment(&mut self, token: Token) -> Result<bool, ExecError> {

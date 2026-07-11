@@ -708,12 +708,13 @@ impl<S> InputStack<S> {
         })
     }
 
-    /// Suspends an outer cell while a nested alignment scans its preamble.
+    /// Suspends an outer cell while a nested alignment scans and executes.
+    ///
+    /// TeX's `push_alignment` preserves the complete alignment scanner state;
+    /// a nested alignment can begin while an outer u- or v-template is still
+    /// replaying, not only from the cell body.
     pub fn suspend_alignment_cell(&mut self) -> AlignmentCellSuspension {
         let cell = self.alignment_cells.pop();
-        if let Some(cell) = cell.as_ref() {
-            assert_eq!(cell.phase, AlignmentCellPhase::Body);
-        }
         AlignmentCellSuspension(cell)
     }
 
@@ -723,7 +724,6 @@ impl<S> InputStack<S> {
             "nested alignment cell remained active at pop_alignment"
         );
         if let Some(cell) = suspended.0 {
-            assert_eq!(cell.phase, AlignmentCellPhase::Body);
             self.alignment_cells.push(cell);
         }
     }
