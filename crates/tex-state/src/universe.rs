@@ -2054,10 +2054,12 @@ impl Universe {
     }
 
     pub fn append_page_contribution(&mut self, node: Node) {
+        self.stores.assert_live_handles_in_node(&node);
         self.page.push_contribution(node);
     }
 
     pub fn prepend_page_contribution(&mut self, node: Node) {
+        self.stores.assert_live_handles_in_node(&node);
         self.page.prepend_contribution(node);
     }
 
@@ -2113,6 +2115,7 @@ impl Universe {
     }
 
     pub fn prepend_page_contributions(&mut self, nodes: Vec<Node>) {
+        self.stores.assert_live_handles_in_nodes(&nodes);
         self.page.prepend_contributions(nodes);
     }
 
@@ -2132,6 +2135,7 @@ impl Universe {
     }
 
     pub fn push_current_page_node(&mut self, node: Node) {
+        self.stores.assert_live_handles_in_node(&node);
         self.page.push_current_page(node);
     }
 

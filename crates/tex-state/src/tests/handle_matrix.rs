@@ -3,7 +3,7 @@ use crate::glue::{GlueSpec, Order};
 use crate::ids::{NodeListId, TokenListId};
 use crate::macro_store::MacroMeaning;
 use crate::meaning::MeaningFlags;
-use crate::node::Node;
+use crate::node::{GlueKind, Node};
 use crate::provenance::SyntheticOriginKind;
 use crate::scaled::Scaled;
 use crate::source_map::SourceDescriptor;
@@ -61,6 +61,49 @@ fn cross_universe_matrix_rejects_every_foreign_handle() {
     for &class in HANDLE_CLASSES {
         exercise_cross_universe(class);
     }
+}
+
+#[test]
+fn page_ingress_validates_before_mutating() {
+    let mut owner = Universe::new();
+    let foreign = owner.intern_glue(glue(7));
+    let foreign_node = glue_node(foreign);
+    let mut universe = Universe::new();
+
+    assert_panics(HandleClass::Glue, || {
+        universe.append_page_contribution(foreign_node.clone())
+    });
+    assert_panics(HandleClass::Glue, || {
+        universe.prepend_page_contribution(foreign_node.clone())
+    });
+    assert_panics(HandleClass::Glue, || {
+        universe.push_current_page_node(foreign_node.clone())
+    });
+    assert!(universe.page_contributions().is_empty());
+    assert!(universe.current_page_nodes().is_empty());
+
+    let local = universe.intern_glue(glue(8));
+    assert_panics(HandleClass::Glue, || {
+        universe.prepend_page_contributions(vec![glue_node(local), foreign_node])
+    });
+    assert!(universe.page_contributions().is_empty());
+}
+
+#[test]
+fn page_ingress_rejects_post_rollback_reuse() {
+    let mut universe = Universe::new();
+    let snapshot = universe.snapshot();
+    let stale = universe.intern_glue(glue(9));
+    universe.rollback(&snapshot);
+    let replacement = universe.intern_glue(glue(10));
+    assert_eq!(stale.raw(), replacement.raw());
+    assert_ne!(stale, replacement);
+
+    assert_panics(HandleClass::Glue, || {
+        universe.append_page_contribution(glue_node(stale))
+    });
+    universe.append_page_contribution(glue_node(replacement));
+    assert_eq!(universe.page_contributions().len(), 1);
 }
 
 fn exercise_rollback_reallocate(class: HandleClass) {
@@ -456,6 +499,14 @@ fn glue(width: i32) -> GlueSpec {
         stretch_order: Order::Normal,
         shrink: Scaled::from_raw(0),
         shrink_order: Order::Normal,
+    }
+}
+
+fn glue_node(spec: crate::ids::GlueId) -> Node {
+    Node::Glue {
+        spec,
+        kind: GlueKind::Normal,
+        leader: None,
     }
 }
 

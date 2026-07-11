@@ -294,13 +294,13 @@ impl Stores {
         }
     }
 
-    pub(super) fn assert_live_handles_in_nodes(&self, nodes: &[Node]) {
+    pub(crate) fn assert_live_handles_in_nodes(&self, nodes: &[Node]) {
         for node in nodes {
             self.assert_live_handles_in_node(node);
         }
     }
 
-    fn assert_live_handles_in_node(&self, node: &Node) {
+    pub(crate) fn assert_live_handles_in_node(&self, node: &Node) {
         match node {
             Node::Glue { spec, leader, .. } => {
                 self.assert_live_glue(*spec);
