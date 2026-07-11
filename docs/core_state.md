@@ -585,6 +585,12 @@ Nothing in the engine touches the OS directly. A single `World` object owns:
   final job commit unless a shipout commits them earlier; non-immediate
   `\openout`, `\write`, and `\closeout` reach `World` only when their whatsit
   nodes are shipped.
+- **Handle-bearing effects** enter the log through aggregate admission.
+  In particular, `Universe::record_deferred_write` validates the unexpanded
+  `TokenListId` against its owning live token-store timeline before `World`
+  appends the record; `World` cannot publicly persist this Stores capability.
+  Stale, foreign, or reused-slot handles therefore fail before the effect
+  prefix changes.
 - **Deferred stream whatsits** model non-immediate `\openout`, `\write`, and
   `\closeout` as node-list content, so copied boxes replay them once per
   shipout. Deferred `\openout` whatsits carry the stream slot plus scanned

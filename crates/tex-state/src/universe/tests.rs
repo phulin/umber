@@ -14,7 +14,7 @@ use crate::provenance::{OriginRecord, SourceOrigin, SyntheticOriginKind};
 use crate::scaled::{GlueSetRatio, Scaled};
 use crate::source_map::{SourceDescriptor, SourceMapError};
 use crate::token::{Catcode, OriginId, Token, TracedTokenWord};
-use crate::world::{ContentHash, JobClock, PrintSink, StreamSlot, World};
+use crate::world::{ContentHash, EffectRecord, JobClock, PrintSink, StreamSlot, World};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
@@ -1675,14 +1675,80 @@ fn checkpoint_hashes_for_program() -> Vec<u64> {
     let symbol = universe.intern("foo");
     let tokens = universe.intern_token_list(&[Token::Cs(symbol.symbol())]);
     universe.set_toks(2, tokens);
-    universe
-        .world_mut()
-        .record_deferred_write(StreamSlot::new(1), tokens);
+    universe.record_deferred_write(StreamSlot::new(1), tokens);
     hashes.push(universe.snapshot().state_hash());
 
     let _ = universe.world_mut().next_random_u64();
     hashes.push(universe.snapshot().state_hash());
     hashes
+}
+
+#[test]
+fn deferred_write_admission_preserves_unexpanded_tokens_and_effect_order() {
+    let mut universe = Universe::new();
+    let escape = universe.intern("the");
+    let tokens = universe.intern_token_list(&[
+        Token::Cs(escape.symbol()),
+        Token::Char {
+            ch: 'x',
+            cat: Catcode::Letter,
+        },
+    ]);
+    let slot = StreamSlot::new(5);
+
+    universe.world_mut().write_text(PrintSink::Log, "before");
+    universe.record_deferred_write(slot, tokens);
+    universe.world_mut().write_text(PrintSink::Log, "after");
+
+    assert!(matches!(
+        universe.world().effect_records(),
+        [
+            EffectRecord::StreamWrite { text: before, .. },
+            EffectRecord::DeferredWrite { stream, tokens: recorded },
+            EffectRecord::StreamWrite { text: after, .. },
+        ] if before == "before" && *stream == slot && *recorded == tokens && after == "after"
+    ));
+}
+
+#[test]
+fn deferred_write_rejects_stale_foreign_and_reused_token_lists_before_mutation() {
+    let mut universe = Universe::new();
+    let snapshot = universe.snapshot();
+    let stale = universe.intern_token_list(&[Token::Char {
+        ch: 's',
+        cat: Catcode::Letter,
+    }]);
+    universe.rollback(&snapshot);
+    let replacement = universe.intern_token_list(&[Token::Char {
+        ch: 'r',
+        cat: Catcode::Letter,
+    }]);
+    assert_eq!(stale.raw(), replacement.raw());
+    assert_ne!(stale, replacement);
+
+    let effect_pos = universe.world().effect_pos();
+    assert!(
+        catch_unwind(AssertUnwindSafe(|| {
+            universe.record_deferred_write(StreamSlot::new(1), stale);
+        }))
+        .is_err()
+    );
+    assert_eq!(universe.world().effect_pos(), effect_pos);
+    assert!(universe.world().effect_records().is_empty());
+
+    let mut owner = Universe::new();
+    let foreign = owner.intern_token_list(&[Token::Char {
+        ch: 'f',
+        cat: Catcode::Letter,
+    }]);
+    assert!(
+        catch_unwind(AssertUnwindSafe(|| {
+            universe.record_deferred_write(StreamSlot::new(2), foreign);
+        }))
+        .is_err()
+    );
+    assert_eq!(universe.world().effect_pos(), effect_pos);
+    assert!(universe.world().effect_records().is_empty());
 }
 
 fn glue(width: i32) -> GlueSpec {
