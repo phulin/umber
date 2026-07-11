@@ -3,7 +3,7 @@ use tex_lex::{AlignmentTerminator, InputSource, InputStack, TokenListReplayKind}
 use tex_state::env::banks::TokParam;
 use tex_state::node::{GlueKind, Node};
 use tex_state::token::{Token, TracedTokenWord};
-use tex_state::{ExpansionContext, ExpansionState, PrintSink, Universe};
+use tex_state::{ExpansionContext, PrintSink, Universe};
 
 use super::support::{
     align_kind, align_state, align_state_mut, alignment_mode, cell_mode, is_alignment_tab, is_cr,
@@ -388,7 +388,7 @@ where
                 )?;
             }
         } else {
-            input.begin_alignment_cell(None, v_template, stores.execution_group_depth());
+            input.begin_alignment_cell(None, v_template);
         }
         align_state_mut(nest, align_level)?.start_cell(column, span_count);
 
@@ -560,25 +560,39 @@ where
         if is_omit(stores, semantic) {
             return Err(ExecError::MisplacedOmit);
         }
-        if is_alignment_par(stores, semantic)
-            && input.alignment_cell_at_group_depth(stores.execution_group_depth())
-        {
-            recover_outer_alignment_token(token, input, stores);
-            continue;
+        if is_alignment_par(stores, semantic) {
+            if input.alignment_cell_at_base_depth() {
+                recover_outer_alignment_token(token, input, stores);
+                continue;
+            }
+            if input.alignment_cell_below_base_depth() {
+                report_missing_cr_inserted(stores);
+                let cr = stores.symbol("cr").ok_or(ExecError::MissingToken {
+                    context: "alignment recovery cr",
+                })?;
+                let cr = TracedTokenWord::pack(Token::Cs(cr), token.origin());
+                push_traced_tokens(input, stores, [token]);
+                input.reset_alignment_cell_to_base_depth();
+                assert!(input.intercept_alignment_token(
+                    cr,
+                    tex_lex::AlignmentTokenDelivery::Other,
+                    Some(AlignmentTerminator::Cr),
+                ));
+                continue;
+            }
         }
-        if is_end_group(stores, semantic)
-            && input.alignment_cell_at_group_depth(stores.execution_group_depth())
-        {
+        if is_end_group(stores, semantic) && input.alignment_cell_below_base_depth() {
             report_missing_cr_inserted(stores);
             let cr = stores.symbol("cr").ok_or(ExecError::MissingToken {
                 context: "alignment recovery cr",
             })?;
             let cr = TracedTokenWord::pack(Token::Cs(cr), token.origin());
             push_traced_tokens(input, stores, [token]);
+            input.reset_alignment_cell_to_base_depth();
             assert!(input.intercept_alignment_token(
                 cr,
+                tex_lex::AlignmentTokenDelivery::Other,
                 Some(AlignmentTerminator::Cr),
-                stores.execution_group_depth(),
             ));
             continue;
         }

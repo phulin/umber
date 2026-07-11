@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use tex_lex::{InputSource, InputStack, LexError, TokenListReplayKind};
+use tex_lex::{InputSource, InputStack, LexError};
 use tex_state::ExpansionState;
 use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::interner::Symbol;
@@ -787,13 +787,10 @@ fn unread_token<S>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     token: TracedTokenWord,
-) {
-    let semantic = semantic_token(token);
-    let token_list = stores.intern_token_list(&[semantic]);
-    let mut origins = stores.origin_list_builder();
-    origins.push(token.origin());
-    let origin_list = stores.finish_origin_list(&mut origins);
-    input.push_token_list_with_origins(token_list, origin_list, TokenListReplayKind::Inserted);
+) where
+    S: InputSource,
+{
+    crate::back_input(input, stores, [token]);
 }
 
 fn apply_sign(scanned: ScannedInt, negative: bool) -> ScannedInt {

@@ -371,6 +371,14 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   and inserted origin make that single main-control delivery behave as
   `\relax`; alignment delimiter interception therefore cannot mistake a
   suppressed `\cr`, `\span`, or tab for a live cell terminator.
+- **Alignment delivery state** lives with the active `tex-lex` cell input,
+  not with stomach group depth. `tex-expand` classifies each delivered token
+  by effective meaning (including character-token brace aliases), while
+  noexpand-suppressed tokens classify as ordinary. Scanner back-input uses one
+  boundary that reverses only a transition recorded for an actually delivered
+  token before replay; synthetic insertion therefore cannot perturb the cell's
+  lexical brace depth. Suspending a cell for a nested alignment preserves this
+  complete delivery checkpoint.
 - **Read-set recording** hooks live here and in the stomach: when the
   incremental engine asks for it, meaning lookups record `(cell, epoch)`
   pairs (`core_state.md` §9). Off by default, zero-cost when off (the

@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use tex_lex::{InputSource, InputStack, LexError, TokenListReplayKind};
+use tex_lex::{InputSource, InputStack, LexError};
 use tex_state::ExpansionState;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::GlueId;
@@ -518,19 +518,7 @@ where
     S: InputSource,
     I: IntoIterator<Item = TracedTokenWord>,
 {
-    let traced_tokens = tokens.into_iter().collect::<Vec<_>>();
-    let tokens = traced_tokens
-        .iter()
-        .copied()
-        .map(semantic_token)
-        .collect::<Vec<_>>();
-    let token_list = stores.intern_token_list(&tokens);
-    let mut origins = stores.origin_list_builder();
-    for token in traced_tokens {
-        origins.push(token.origin());
-    }
-    let origin_list = stores.finish_origin_list(&mut origins);
-    input.push_token_list_with_origins(token_list, origin_list, TokenListReplayKind::Inserted);
+    crate::back_input(input, stores, tokens);
 }
 
 fn is_space(token: TracedTokenWord) -> bool {

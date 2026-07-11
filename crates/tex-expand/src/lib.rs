@@ -773,6 +773,7 @@ where
         }
 
         if read.suppress_expansion() {
+            input.intercept_alignment_token(traced, tex_lex::AlignmentTokenDelivery::Other, None);
             return Ok(Some(traced));
         }
 
@@ -815,7 +816,14 @@ where
         };
         match dispatched {
             Dispatch::Continue => {}
-            Dispatch::DeliverNoExpand(token) => return Ok(Some(token)),
+            Dispatch::DeliverNoExpand(token) => {
+                input.intercept_alignment_token(
+                    token,
+                    tex_lex::AlignmentTokenDelivery::Other,
+                    None,
+                );
+                return Ok(Some(token));
+            }
             Dispatch::Deliver(token) => {
                 if intercept_alignment_token(input, stores, token) {
                     continue;
@@ -843,6 +851,37 @@ pub(crate) fn intercept_alignment_token<S>(
             .map(|symbol| stores.meaning(symbol)),
         Token::Char { .. } | Token::Param(_) | Token::Frozen(_) => None,
     };
+    let delivery = if matches!(
+        token,
+        Token::Char {
+            cat: Catcode::BeginGroup,
+            ..
+        }
+    ) || matches!(
+        meaning,
+        Some(Meaning::CharToken {
+            cat: Catcode::BeginGroup,
+            ..
+        })
+    ) {
+        tex_lex::AlignmentTokenDelivery::LeftBrace
+    } else if matches!(
+        token,
+        Token::Char {
+            cat: Catcode::EndGroup,
+            ..
+        }
+    ) || matches!(
+        meaning,
+        Some(Meaning::CharToken {
+            cat: Catcode::EndGroup,
+            ..
+        })
+    ) {
+        tex_lex::AlignmentTokenDelivery::RightBrace
+    } else {
+        tex_lex::AlignmentTokenDelivery::Other
+    };
     let terminator = if matches!(
         token,
         Token::Char {
@@ -868,7 +907,33 @@ pub(crate) fn intercept_alignment_token<S>(
             _ => None,
         }
     };
-    input.intercept_alignment_token(traced, terminator, stores.execution_group_depth())
+    input.intercept_alignment_token(traced, delivery, terminator)
+}
+
+pub fn back_input<S, I>(input: &mut InputStack<S>, stores: &mut impl ExpansionState, tokens: I)
+where
+    S: InputSource,
+    I: IntoIterator<Item = TracedTokenWord>,
+{
+    let traced = tokens.into_iter().collect::<Vec<_>>();
+    if traced.is_empty() {
+        return;
+    }
+    for &token in &traced {
+        input.back_input_alignment_token(token);
+    }
+    let semantic = traced
+        .iter()
+        .copied()
+        .map(semantic_token)
+        .collect::<Vec<_>>();
+    let token_list = stores.intern_token_list(&semantic);
+    let mut origins = stores.origin_list_builder();
+    for token in traced {
+        origins.push(token.origin());
+    }
+    let origin_list = stores.finish_origin_list(&mut origins);
+    input.push_token_list_with_origins(token_list, origin_list, TokenListReplayKind::Inserted);
 }
 
 /// Implements TeX's unexpanded `get_token`, including alignment delimiter

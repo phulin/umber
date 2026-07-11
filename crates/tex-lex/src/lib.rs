@@ -513,11 +513,19 @@ pub enum AlignmentTerminator {
     Span,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AlignmentTokenDelivery {
+    Other,
+    LeftBrace,
+    RightBrace,
+}
+
+#[derive(Clone, Debug)]
 struct AlignmentCellInput {
     phase: AlignmentCellPhase,
     v_template: TokenListId,
-    group_depth: u32,
+    brace_depth: i32,
+    delivered: Vec<(TracedTokenWord, AlignmentTokenDelivery)>,
     terminator: Option<TracedTokenWord>,
 }
 
@@ -671,12 +679,12 @@ impl<S> InputStack<S> {
         &mut self,
         u_template: Option<TokenListReplayMarker>,
         v_template: TokenListId,
-        group_depth: u32,
     ) {
         self.alignment_cells.push(AlignmentCellInput {
             phase: u_template.map_or(AlignmentCellPhase::Body, AlignmentCellPhase::UTemplate),
             v_template,
-            group_depth,
+            brace_depth: 0,
+            delivered: Vec::new(),
             terminator: None,
         });
     }
@@ -702,15 +710,32 @@ impl<S> InputStack<S> {
     }
 
     #[must_use]
-    pub fn alignment_cell_at_group_depth(&self, group_depth: u32) -> bool {
-        self.alignment_cells.last().is_some_and(|cell| {
-            cell.phase == AlignmentCellPhase::Body && group_depth == cell.group_depth
-        })
+    pub fn has_active_alignment_cell(&self) -> bool {
+        !self.alignment_cells.is_empty()
     }
 
     #[must_use]
-    pub fn has_active_alignment_cell(&self) -> bool {
-        !self.alignment_cells.is_empty()
+    pub fn alignment_cell_at_base_depth(&self) -> bool {
+        self.alignment_cells
+            .last()
+            .is_some_and(|cell| cell.phase == AlignmentCellPhase::Body && cell.brace_depth == 0)
+    }
+
+    #[must_use]
+    pub fn alignment_cell_below_base_depth(&self) -> bool {
+        self.alignment_cells
+            .last()
+            .is_some_and(|cell| cell.phase == AlignmentCellPhase::Body && cell.brace_depth < 0)
+    }
+
+    /// Restores the entry baseline after the triggering token is backed up,
+    /// so an error-recovery `\\cr` is intercepted at entry depth.
+    pub fn reset_alignment_cell_to_base_depth(&mut self) {
+        if let Some(cell) = self.alignment_cells.last_mut()
+            && cell.phase == AlignmentCellPhase::Body
+        {
+            cell.brace_depth = 0;
+        }
     }
 
     /// Suspends an outer cell while a nested alignment scans and executes.
@@ -740,8 +765,8 @@ impl<S> InputStack<S> {
     pub fn intercept_alignment_token(
         &mut self,
         traced: TracedTokenWord,
+        delivery: AlignmentTokenDelivery,
         terminator: Option<AlignmentTerminator>,
-        group_depth: u32,
     ) -> bool {
         let Some(mut cell) = self.alignment_cells.pop() else {
             return false;
@@ -750,14 +775,20 @@ impl<S> InputStack<S> {
             && !self.contains_token_list_replay_marker(marker)
         {
             cell.phase = AlignmentCellPhase::Body;
-            cell.group_depth = group_depth;
+            cell.brace_depth = 0;
         }
         if cell.phase != AlignmentCellPhase::Body {
             self.alignment_cells.push(cell);
             return false;
         }
 
-        let terminates = group_depth == cell.group_depth && terminator.is_some();
+        match delivery {
+            AlignmentTokenDelivery::Other => {}
+            AlignmentTokenDelivery::LeftBrace => cell.brace_depth += 1,
+            AlignmentTokenDelivery::RightBrace => cell.brace_depth -= 1,
+        }
+        cell.delivered.push((traced, delivery));
+        let terminates = cell.brace_depth == 0 && terminator.is_some();
         if terminates {
             cell.phase = AlignmentCellPhase::VTemplate;
             cell.terminator = Some(traced);
@@ -765,6 +796,28 @@ impl<S> InputStack<S> {
         }
         self.alignment_cells.push(cell);
         terminates
+    }
+
+    pub fn back_input_alignment_token(&mut self, traced: TracedTokenWord) {
+        let Some(cell) = self.alignment_cells.last_mut() else {
+            return;
+        };
+        if cell.phase != AlignmentCellPhase::Body {
+            return;
+        }
+        let Some(index) = cell
+            .delivered
+            .iter()
+            .rposition(|(token, _)| *token == traced)
+        else {
+            return;
+        };
+        let (_, delivery) = cell.delivered.remove(index);
+        match delivery {
+            AlignmentTokenDelivery::Other => {}
+            AlignmentTokenDelivery::LeftBrace => cell.brace_depth -= 1,
+            AlignmentTokenDelivery::RightBrace => cell.brace_depth += 1,
+        }
     }
 
     pub fn push_token_list(

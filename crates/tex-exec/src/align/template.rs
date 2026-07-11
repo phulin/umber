@@ -1,7 +1,7 @@
 use tex_expand::{ExpansionHooks, ReadRecorder};
 use tex_lex::{InputSource, InputStack, TokenListReplayKind};
+use tex_state::Universe;
 use tex_state::ids::TokenListId;
-use tex_state::{ExpansionState, Universe};
 
 use crate::{ExecError, ExecutionStats, ModeNest};
 
@@ -25,11 +25,7 @@ where
         // live-frame marker gives this synchronous replay the same boundary;
         // token-list identity alone is ambiguous for hash-consed templates.
         let replay_marker = input.push_token_list(template, TokenListReplayKind::Inserted);
-        input.begin_alignment_cell(
-            Some(replay_marker),
-            cell_v_template,
-            stores.execution_group_depth(),
-        );
+        input.begin_alignment_cell(Some(replay_marker), cell_v_template);
         let mut stats = ExecutionStats::default();
         loop {
             if template_finished(input, stores, replay_marker) {
