@@ -1,4 +1,4 @@
-use tex_arith::half;
+use tex_arith::{half, saturating_add as add, saturating_sub as sub};
 use tex_state::math::MathField;
 use tex_state::node::KernKind;
 use tex_state::scaled::Scaled;
@@ -162,14 +162,6 @@ fn script_pair(
 struct ScriptShifts {
     up: Scaled,
     down: Scaled,
-}
-
-fn add(left: Scaled, right: Scaled) -> Scaled {
-    Scaled::from_raw(left.raw().saturating_add(right.raw()))
-}
-
-fn sub(left: Scaled, right: Scaled) -> Scaled {
-    Scaled::from_raw(left.raw().saturating_sub(right.raw()))
 }
 
 fn neg(value: Scaled) -> Scaled {

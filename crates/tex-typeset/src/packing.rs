@@ -1,3 +1,4 @@
+use tex_arith::{saturating_add as add, saturating_sub as sub};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::NodeListId;
 #[cfg(test)]
@@ -191,7 +192,7 @@ fn target_size(natural: Scaled, spec: PackSpec) -> Scaled {
     match spec {
         PackSpec::Natural => natural,
         PackSpec::Exactly(size) => size,
-        PackSpec::Spread(extra) => Scaled::from_raw(natural.raw().saturating_add(extra.raw())),
+        PackSpec::Spread(extra) => add(natural, extra),
     }
 }
 
@@ -224,7 +225,7 @@ fn set_glue(target: Scaled, natural: Scaled, meas: &Measurement) -> GlueSetting 
     };
     let overfull_excess =
         if sign == Sign::Shrinking && order == Order::Normal && excess.raw() > total {
-            Scaled::from_raw(excess.raw().saturating_sub(total))
+            sub(excess, Scaled::from_raw(total))
         } else {
             Scaled::from_raw(0)
         };
@@ -511,20 +512,12 @@ fn vtop_split(
         _ => None,
     });
     if let Some((height, depth)) = first {
-        let total = total_height.raw().saturating_add(total_depth.raw());
-        let new_depth = total.saturating_sub(height.raw()).max(depth.raw());
-        (height, Scaled::from_raw(new_depth))
+        let total = add(total_height, total_depth);
+        let new_depth = sub(total, height).max(depth);
+        (height, new_depth)
     } else {
         (Scaled::from_raw(0), add(total_height, total_depth))
     }
-}
-
-fn add(left: Scaled, right: Scaled) -> Scaled {
-    Scaled::from_raw(left.raw().saturating_add(right.raw()))
-}
-
-fn sub(left: Scaled, right: Scaled) -> Scaled {
-    Scaled::from_raw(left.raw().saturating_sub(right.raw()))
 }
 
 #[cfg(test)]

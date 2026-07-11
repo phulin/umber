@@ -144,6 +144,19 @@ fn true_unit_scaling_folds_xn_over_d_remainder_into_fraction() {
 }
 
 #[test]
+fn true_unit_scaling_widens_legal_maximum_mag_fraction_arithmetic() {
+    let mut stores = Universe::new();
+    stores.set_mag(32_768);
+
+    // TeX rounds the 17 retained nines to one whole fractional unit. Combined
+    // with xn_over_d's remainder, the pre-division numerator exceeds i32.
+    assert_eq!(
+        scan_with_stores("4095.99999999999999999truept x", &mut stores).0,
+        125 * Scaled::UNITY
+    );
+}
+
+#[test]
 fn true_units_prepare_and_freeze_magnification() {
     let mut stores = Universe::new();
     stores.set_mag(1200);

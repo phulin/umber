@@ -4,7 +4,10 @@ use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
 use tex_state::glue::Order;
 use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::node::{BoxNode, GlueKind, KernKind, Node, Sign};
-use tex_state::scaled::Scaled;
+use tex_state::scaled::{
+    Scaled, saturating_add as scaled_add, saturating_mul as scaled_mul,
+    saturating_sub as scaled_sub,
+};
 use tex_state::token::{Catcode, OriginId, Token};
 use tex_typeset::PackSpec;
 use tex_typeset::math::{MathParams, Style};
@@ -116,7 +119,7 @@ pub(super) fn finish_display_math(
         Scaled::from_raw(0)
     };
 
-    if w.raw().saturating_add(q.raw()) > z.raw() {
+    if scaled_add(w, q) > z {
         if e.raw() != 0 && display_can_shrink_with_eqno(w, q, z, shrink) {
             display_box = hpack_nodes(
                 stores,
@@ -136,11 +139,9 @@ pub(super) fn finish_display_math(
         w = display_box.width;
     }
 
-    let mut d = Scaled::from_raw(tex_half(z.raw().saturating_sub(w.raw())));
-    if e.raw() > 0 && d.raw() < e.raw().saturating_mul(2) {
-        d = Scaled::from_raw(tex_half(
-            z.raw().saturating_sub(w.raw()).saturating_sub(e.raw()),
-        ));
+    let mut d = Scaled::from_raw(tex_half(scaled_sub(z, w).raw()));
+    if e.raw() > 0 && d < scaled_mul(2, e) {
+        d = Scaled::from_raw(tex_half(scaled_sub(scaled_sub(z, w), e).raw()));
         if display_nodes
             .first()
             .is_some_and(|node| matches!(node, Node::Glue { .. }))
@@ -156,7 +157,7 @@ pub(super) fn finish_display_math(
     );
     let mut above = GlueParam::ABOVE_DISPLAY_SKIP;
     let mut below = Some(GlueParam::BELOW_DISPLAY_SKIP);
-    if d.raw().saturating_add(s.raw()) > pre_display_size.raw() && !left_eq_no {
+    if scaled_add(d, s) > pre_display_size && !left_eq_no {
         above = GlueParam::ABOVE_DISPLAY_SHORT_SKIP;
         below = Some(GlueParam::BELOW_DISPLAY_SHORT_SKIP);
     }
@@ -185,12 +186,7 @@ pub(super) fn finish_display_math(
         && let Some(eq_box) = eq_box.take()
     {
         let kern = Node::Kern {
-            amount: Scaled::from_raw(
-                z.raw()
-                    .saturating_sub(w.raw())
-                    .saturating_sub(e.raw())
-                    .saturating_sub(d.raw()),
-            ),
+            amount: scaled_sub(scaled_sub(scaled_sub(z, w), e), d),
             kind: KernKind::Font,
         };
         let children = if left_eq_no {
@@ -419,10 +415,7 @@ fn build_page_after_display_resume(
 }
 
 fn display_can_shrink_with_eqno(w: Scaled, q: Scaled, z: Scaled, shrink: ShrinkTotals) -> bool {
-    w.raw()
-        .saturating_sub(shrink.normal.raw())
-        .saturating_add(q.raw())
-        <= z.raw()
+    scaled_add(scaled_sub(w, shrink.normal), q) <= z
         || shrink.fil.raw() != 0
         || shrink.fill.raw() != 0
         || shrink.filll.raw() != 0

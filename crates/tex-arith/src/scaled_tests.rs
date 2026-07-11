@@ -1,7 +1,8 @@
 use crate::{
     ArithmeticError, DimensionError, FontSizeSpec, GLUE_SET_RATIO_SCALE, GlueSetRatio,
     PhysicalUnit, Scaled, TfmConversionError, XOverN, XnOverD, half, mult_and_add, nx_plus_y,
-    round_decimal_fraction, scaled_from_decimal_parts, tfm_design_size_from_fix_word,
+    round_decimal_fraction, saturating_add, saturating_mul, saturating_sub,
+    scale_true_dimension_parts, scaled_from_decimal_parts, tfm_design_size_from_fix_word,
     tfm_fix_word_to_scaled, tfm_font_size, x_over_n, xn_over_d,
 };
 
@@ -19,6 +20,42 @@ fn scaled_add_sub_neg_and_checked_variants() {
 
     assert_eq!(Scaled::MAX.checked_add(Scaled::from_raw(1)), None);
     assert_eq!(Scaled::from_raw(i32::MIN).checked_neg(), None);
+}
+
+#[test]
+fn saturating_scaled_arithmetic_uses_widened_intermediates() {
+    assert_eq!(
+        saturating_add(Scaled::MAX, Scaled::from_raw(1)),
+        Scaled::MAX
+    );
+    assert_eq!(
+        saturating_sub(Scaled::MIN, Scaled::from_raw(1)),
+        Scaled::MIN
+    );
+    assert_eq!(saturating_mul(2, Scaled::MAX), Scaled::MAX);
+    assert_eq!(saturating_mul(-2, Scaled::MAX), Scaled::MIN);
+    assert_eq!(
+        saturating_add(Scaled::MAX_DIMEN, Scaled::from_raw(-1)),
+        Scaled::from_raw(Scaled::MAX_DIMEN.raw() - 1)
+    );
+}
+
+#[test]
+fn true_dimension_scaling_handles_legal_wide_fraction_numerator() {
+    // 4095 * 1000 leaves a large remainder modulo the maximum legal mag;
+    // combining it with the largest fraction exceeds i32 before division.
+    let (integer, fraction) =
+        scale_true_dimension_parts(4095, Scaled::UNITY, 32_768).expect("legal scaling fits");
+    assert_eq!((integer, fraction), (125, 0));
+
+    assert_eq!(
+        scale_true_dimension_parts(12, 34_567, 1000),
+        Ok((12, 34_567))
+    );
+    assert_eq!(
+        scale_true_dimension_parts(0, Scaled::UNITY, 1),
+        Ok((1000, 0))
+    );
 }
 
 #[test]

@@ -1,4 +1,4 @@
-use tex_arith::{x_over_n, xn_over_d};
+use tex_arith::{nx_plus_y, x_over_n, xn_over_d};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::math::NoadClass;
 use tex_state::scaled::Scaled;
@@ -78,12 +78,10 @@ fn mu_mult(value: Scaled, mu: Scaled) -> Scaled {
         n -= 1;
         f += 0o200000;
     }
-    let base = value.raw().saturating_mul(n);
     let frac = xn_over_d(value, f, 0o200000)
         .expect("mu glue conversion stays inside TeX dimension range")
-        .quotient
-        .raw();
-    Scaled::from_raw(base.saturating_add(frac))
+        .quotient;
+    nx_plus_y(n, value, frac).expect("mu glue conversion stays inside TeX dimension range")
 }
 
 const fn class_index(class: NoadClass) -> usize {

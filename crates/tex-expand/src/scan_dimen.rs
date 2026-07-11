@@ -10,7 +10,7 @@ use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::scaled::{
     DimensionError, PhysicalUnit, Scaled, nx_plus_y, round_decimal_fraction,
-    scaled_from_decimal_parts, xn_over_d,
+    scale_true_dimension_parts, scaled_from_decimal_parts, xn_over_d,
 };
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{ExpansionState, PrepareMagDiagnostic};
@@ -1191,7 +1191,7 @@ fn convert_decimal(
         integer
     };
     let (magnitude, fraction) = if true_unit {
-        match true_scaled_decimal_parts(magnitude, fraction, mag) {
+        match scale_true_dimension_parts(magnitude, fraction, mag) {
             Ok(parts) => parts,
             Err(error) => {
                 return Ok(ScannedDimen::with_diagnostic(
@@ -1291,22 +1291,6 @@ fn convert_physical_unit(
             scanned.with_added_diagnostic(DimensionDiagnostic::from(diagnostic), OriginId::UNKNOWN);
     }
     Ok(scanned)
-}
-
-fn true_scaled_decimal_parts(
-    integer: i32,
-    fraction: i32,
-    mag: i32,
-) -> Result<(i32, i32), DimensionError> {
-    if mag == 1000 {
-        return Ok((integer, fraction));
-    }
-
-    let converted = xn_over_d(Scaled::from_raw(integer), 1000, mag)?;
-    let mut fraction = (1000 * fraction + Scaled::UNITY * converted.remainder) / mag;
-    let integer = converted.quotient.raw() + fraction / Scaled::UNITY;
-    fraction %= Scaled::UNITY;
-    Ok((integer, fraction))
 }
 
 fn coerce_or_recover_missing_unit(

@@ -1,4 +1,5 @@
 use tex_arith::x_over_n;
+pub(crate) use tex_arith::{saturating_add as add, saturating_sub as sub};
 use tex_fonts::CharMetrics;
 use tex_state::ids::{FontId, NodeListId};
 use tex_state::math::{LimitType, MathChar, MathField, MathNoad, NoadClass, NoadKind};
@@ -640,14 +641,6 @@ fn math_unit(params: &MathParams, style: Style) -> Scaled {
     x_over_n(params.for_size(style.size()).symbols.math_quad, 18)
         .expect("math quad divided by 18 has nonzero denominator")
         .quotient
-}
-
-pub(crate) fn add(left: Scaled, right: Scaled) -> Scaled {
-    Scaled::from_raw(left.raw().saturating_add(right.raw()))
-}
-
-pub(crate) fn sub(left: Scaled, right: Scaled) -> Scaled {
-    Scaled::from_raw(left.raw().saturating_sub(right.raw()))
 }
 
 pub(crate) struct Context<'a, S> {
