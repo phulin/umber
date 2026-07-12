@@ -27,13 +27,13 @@ architectural commitment inherited from the state layer:
 > mutation flows through the barriered state API; all external effects flow
 > through `World`; all content is immutable once frozen. A subsystem's
 > behavior is therefore fully determined by (input position, `Universe`
-> state) — which is what makes snapshots, memoization, speculation, and the
+> state) — which is what makes snapshots, memoization, and the
 > JIT *queries and consumers* rather than invasive rewrites.
 
 ```text
                               ┌────────────────────────────────────────────────┐
                               │              INCREMENTAL ENGINE                │
-                              │  convergence · memoization · speculation       │
+                              │  convergence · pure-kernel memoization         │
                               │  (drives everything below via snapshots)       │
                               └───────────────┬────────────────────────────────┘
                                               │ snapshot / rollback / fork
@@ -67,20 +67,16 @@ Two flows to keep distinct when reading this document:
   eyes) because TeX's semantics require it — expansion can change catcodes,
   which changes lexing of text not yet read.
 - **The state flow** (everything touching the box at the bottom): every
-  stage reads meanings/codes from `Universe` and writes through the
-  barrier. The pipeline stages hold **no hidden semantic state of their own**
-  beyond what the snapshot tuple captures (input stack summary, mode nest,
-  stream buffers — see `core_state.md` §9). In the current recursive
-  interpreter, snapshots are resume-valid only at explicit engine quiescence
-  boundaries. Checkpoints taken while a nested stomach scanner is active are
-  hash-only: they advance convergence hashing, but their metadata points
-  execution resume back to the previous resume-valid boundary until a future
-  incremental executor defines serialized continuation points.
+  stage reads meanings/codes from `Universe` and writes through the barrier.
+  Mutable state that crosses an engine checkpoint boundary is rooted in the
+  checkpoint tuple (input stack summary, mode nest, stream buffers — see
+  `core_state.md` §9). Recursive scanners may keep ordinary Rust locals during
+  their dynamic extent, but they cannot emit an engine checkpoint.
 
 The concrete ownership boundary is `EngineCheckpoint`.  It is an engine-level
-composition over an opaque `UniverseSnapshot`, the live `InputStack`/gullet
-root, the executor `ModeNest` root, explicit expansion/alignment/scanner
-continuations, and the retained effect boundary.  Pipeline crates continue to
+composition over an opaque `UniverseSnapshot`, the live `InputStack` root,
+the executor `ModeNest` root, a named safe-boundary kind, and the retained
+effect boundary. Pipeline crates continue to
 own their algorithms and compact rooted representations; `tex-state` continues
 to own all live handles, mutation, validation, `World`, and atomic store/world
 rollback.  The driver or a future `tex-engine` facade is the only layer allowed
@@ -88,18 +84,16 @@ to capture or restore that composition, and it must synchronize the live input
 cursor and mode root immediately before doing so.
 
 Checkpoint fields follow the three-bucket contract in `core_state.md` §9.1:
-TeX-semantic state, resume-critical implementation continuation, and
-discardable derived/diagnostic state.  The first two buckets determine future
-behavior and semantic hashes; the third is recomputed after restore and is
-excluded from equality, convergence, and durable formats.  A resume-valid
-checkpoint contains all continuation roots needed to restart.  A hash-only
-observation may be taken while a Rust-stack continuation remains hidden, but
-it cannot be presented as a restart point: capture returns an
-`EngineCheckpoint` enum whose `ResumeValidCheckpoint` and
-`HashOnlyObservation` payload types are distinct, and restoration accepts only
-the former. Format images are a separate
-versioned DTO for validated quiescent state, not serialized engine
-checkpoints.
+TeX-semantic state, boundary-owned execution state, and discardable
+derived/diagnostic state. The first two buckets determine future behavior and
+semantic hashes; the third is recomputed after restore and is excluded from
+equality, convergence, and durable formats. An `EngineCheckpoint` is
+restartable by construction and can be emitted only by the outer executor at
+an approved boundary. V1 boundaries are job start, eligible outer-paragraph
+completion, and outermost shipout/output completion. Display-math completion
+is an evidence-gated extension; inline-math completion is deliberately not a
+v1 boundary. Format images are a separate versioned DTO for validated
+quiescent state, not serialized engine checkpoints.
 
 ## 2. Crate map
 
@@ -132,8 +126,8 @@ crates described in the root `AGENTS.md`.
 
 Planned crates, not yet in the workspace:
 
-- `tex-incr` (P6, rides on M4): incremental engine — convergence, memo
-  store, speculation (§11).
+- `tex-incr` (P6, rides on M4): incremental engine — named-boundary
+  convergence and pure-kernel memoization (§11).
 - `tex-jit` (M5): the privileged consumer of the sealed `tex-state::layout`
   module (§12).
 - `tex-engine`: a possible interpreter-facade crate between the driver and
@@ -411,7 +405,8 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   boundary that reverses only a transition recorded for an actually delivered
   token before replay; synthetic insertion therefore cannot perturb the cell's
   lexical brace depth. Suspending a cell for a nested alignment preserves this
-  complete delivery checkpoint.
+  complete delivery state. This is local alignment state, not an engine
+  checkpoint.
 - **Read-set recording** hooks live here and in the stomach: when the
   incremental engine asks for it, meaning lookups record `(cell, epoch)`
   pairs (`core_state.md` §9). Off by default, zero-cost when off (the
@@ -775,13 +770,12 @@ assignments, box building, and dispatch into the typesetting kernels.
 - The stomach is the *only* pipeline stage holding `&mut Universe`, and it
   holds it as a plain argument — re-entrancy (e.g. `\output` routines,
   `\vsplit`-triggered mark extraction) is recursion in Rust, with the mode
-  nest making it explicit and snapshot-summarizable. Recursive stomach
-  scanners whose continuation phase is not serialized must bracket their work
-  as hash-only checkpoint scopes. The current implementation does this for
-  box-group scanning, alignment row/cell execution, `\noalign` groups, and
-  alignment template replay; snapshots inside those scopes remain rollback
-  and hash checkpoints, but drivers must resume from the previous
-  resume-valid boundary and replay forward.
+  nest making it explicit. Recursive stomach operations may open scoped
+  rollback transactions whose marks cannot escape the live call stack. They
+  do not serialize their continuation and cannot publish engine checkpoints.
+  The outer loop recognizes a boundary only after box-group scanning,
+  alignment row/cell execution, `\noalign`, template replay, math construction,
+  and output-routine recursion have completely unwound.
 - **Status:** the implemented `tex-exec` scaffold owns that explicit mode
   nest now. Its
   summary is a vector of mode levels, each carrying one of TeX's six modes
@@ -930,12 +924,11 @@ makes box-level memoization (M4) sound.
   path, and no `\eqno` material is accepted alongside it. Span-time template
   expansion remains the explicit architecture-§7 exception inside
   `tex-exec::align`; downstream page building, diagnostics, and shipout operate
-  only on set boxes. Mid-alignment `AlignState` and unset rows/cells are part
-  of the mode-list summary and rollback-covered node data, but the current
-  interpreter marks checkpoints taken inside alignment execution as hash-only.
-  Incremental drivers should use those hashes for convergence, then roll back
-  to the recorded resume-valid boundary before the alignment and replay
-  forward until resumable continuations are designed explicitly.
+  only on set boxes. Mid-alignment `AlignState` and unset rows/cells remain
+  rollback-covered implementation data, but alignment execution emits no
+  engine checkpoint. An edit inside an alignment resumes from the preceding
+  named paragraph, shipout, or job-start boundary and replays the alignment
+  normally.
 - **Vertical packing, `\vsplit`, marks**: operate on survivor-arena lists
   (they are reachable from box registers by definition); mark extraction
   reads are recorded like any state read. `\vsplit` clones the source vbox
@@ -1036,7 +1029,10 @@ Responsibility: accumulate the main vertical list, fire `\output`, commit.
   deferred-write token lists through the ordinary gullet, serializes the
   `tex-out` artifact, and commits it through `Universe::commit_shipout`, which
   stores the artifact bytes, flushes the committed effect prefix, releases
-  shipout-local epoch nodes, and takes the next checkpoint as one boundary.
+  shipout-local epoch nodes, and advances the internal state-hash baseline.
+  The outer executor publishes `ShipoutComplete` only after any output routine
+  or other recursive caller has unwound; nested shipout itself is not a yield
+  point.
   Before opening that commit boundary, shipout applies TeX's `max_dimen`
   checks to box height, depth, height-plus-depth-plus-`\voffset`, and
   width-plus-`\hoffset`; a huge page is diagnosed and discarded without an
@@ -1196,9 +1192,9 @@ is the *driver* for editor sessions and warm rebuilds; batch mode is the
 degenerate case (run once, commit every page, never look back).
 
 - **Convergence-based reuse** (`core_state.md` §9): on edit, roll back to
-  the last snapshot before the edit point, re-execute, compare
-  `state_hash` at checkpoints; on match, splice the previous run's suffix
-  of page artifacts and stop.
+  the latest retained named boundary before the edit point, re-execute, and
+  compare `state_hash` only at the same named-boundary schedule; on match,
+  splice the previous run's suffix of page artifacts and stop.
   The hash is a semantic checkpoint hash, not a store-layout checksum:
   content handles are followed to token/glue/node/macro contents, control
   sequences are keyed by name, and checkpoint hashes are combined from the
@@ -1208,23 +1204,16 @@ degenerate case (run once, commit every page, never look back).
   instead of re-walking both old and final content. Rollback clears this cache
   and reconstructs missing baselines from journal old words; it is not part of
   the snapshot or semantic state tuple.
-  A matching checkpoint is directly restartable only when its metadata says
-  it is resume-valid. A hash-only checkpoint can still prove convergence, but
-  any execution resume must fall back to the checkpoint's recorded
-  resume-valid boundary and replay the intervening nested continuation. That
-  fallback is separately marked direct-rollback-available or unavailable: a
-  nested hash-only shipout that commits effects may drop the `World` effect
-  prefix containing the fallback snapshot, in which case incremental drivers
-  must restart from an earlier retained checkpoint or replay from a larger
-  root instead of rolling directly to the fallback.
-- **Memoization**: keyed by (input span or token-list id, read-set epochs,
-  code-table generations); value = (journal redo slice, effect slice,
-  artifact ids). First target is box/paragraph-level (M4). The memo store
-  is content-addressed and shareable across runs and machines.
-- **Speculative parallelism**: fork = clone a rolled-back `Universe` onto
-  another thread (`Send`, no shared internals — `core_state.md` §10.6);
-  speculate page N+1 while N typesets; validate with read-set ∩
-  write-set; commit or discard. No pipeline stage knows this is happening.
+  Every published checkpoint is restartable. If an edit falls inside an
+  alignment, box, scanner, inline formula, or output routine, the session
+  selects the preceding published boundary and replays the whole construct.
+- **Memoization** begins at pure kernel boundaries, especially paragraph line
+  breaking keyed by immutable hlist content plus captured parameters. Generic
+  interpreter read-set memoization remains deferred until a measured consumer
+  justifies its cross-cutting instrumentation.
+- **Speculative page execution** is not part of incremental v1. It remains a
+  future research item to be reconsidered only after boundary-scoped
+  convergence and pure-kernel memoization demonstrate measurable value.
 - The engine exposes one API to the CLI/editor: `advance(to: EditPoint) ->
   impl Iterator<Item = PageArtifact>`. Everything above is strategy.
 
@@ -1247,11 +1236,12 @@ to native code that plays by the rules.
 
 ## 13. Cross-cutting invariants (the contract between subsystems)
 
-1. **No hidden state.** If a subsystem holds anything mutable across
-   tokens, it is either (a) inside `Universe`, (b) summarized in the
-   snapshot tuple (input stack, mode nest, page-builder scalars, condition
-   stack), or (c) a pure cache validated by epochs/generations (lexer fast
-   path, JIT code). There is no (d).
+1. **No hidden checkpoint state.** If a subsystem holds anything mutable
+   across an engine checkpoint boundary, it is either (a) inside `Universe`,
+   (b) rooted in the checkpoint tuple (input stack, mode nest, page-builder
+   scalars, condition stack), or (c) a pure cache validated by
+   epochs/generations. Ordinary synchronous locals may exist only while a
+   boundary is forbidden.
 2. **Demand-driven pipeline.** Downstream pulls from upstream; nothing
    buffers tokens across a state write except under a generation guard.
 3. **Kernels are pure.** Typesetting algorithms read parameters at entry
@@ -1295,7 +1285,7 @@ pipeline milestones:
 | P4 | Boxes, paragraph builder, line breaker, fonts (TFM); simple pages via DVI, byte parity | M2/M3 |
 | P5 | Page builder, output routine, marks/inserts; math; full DVI corpus parity | M3 |
 | P6 | SIMD lexer, incremental engine v1 (convergence splicing) | M4 |
-| P7 | Memoization, speculation, JIT baseline | M4/M5 |
+| P7 | Pure-kernel memoization and JIT baseline | M4/M5 |
 
 The guiding rule, as in the state plan: every guard and every piece of
 bookkeeping a later phase needs (generations, epochs, read-sets, artifact
