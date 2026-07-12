@@ -313,6 +313,7 @@ impl StoreFormat {
     }
 
     fn restore(self) -> Result<Stores, StoreFormatError> {
+        self.validate_references()?;
         self.validate_font_state()?;
         let mut stores = Stores::new();
         for (raw, name) in self.names.into_iter().enumerate() {
@@ -435,6 +436,145 @@ impl StoreFormat {
             stores.env.restore_raw(cell, word);
         }
         Ok(stores)
+    }
+
+    fn validate_references(&self) -> Result<(), StoreFormatError> {
+        if self
+            .token_lists
+            .first()
+            .is_none_or(|tokens| !tokens.is_empty())
+        {
+            return Err(StoreFormatError::Invalid(
+                "missing canonical empty token list",
+            ));
+        }
+        if self.glue.is_empty() {
+            return Err(StoreFormatError::Invalid("missing canonical zero glue"));
+        }
+        for tokens in &self.token_lists {
+            for token in tokens {
+                match token {
+                    FormatToken::Cs(raw) if *raw as usize >= self.names.len() => {
+                        return Err(StoreFormatError::Invalid("token symbol is not live"));
+                    }
+                    FormatToken::Frozen(kind) if *kind > 1 => {
+                        return Err(StoreFormatError::Invalid("unknown frozen token"));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        for definition in &self.macros {
+            if definition.parameter_text as usize >= self.token_lists.len()
+                || definition.replacement_text as usize >= self.token_lists.len()
+            {
+                return Err(StoreFormatError::Invalid("macro token-list reference"));
+            }
+        }
+
+        let mut previous_code = None;
+        for row in &self.code_tables {
+            if char::from_u32(row.code).is_none() {
+                return Err(StoreFormatError::Invalid("codepoint"));
+            }
+            if previous_code.is_some_and(|previous| previous >= row.code) {
+                return Err(StoreFormatError::Invalid("non-canonical code-table order"));
+            }
+            previous_code = Some(row.code);
+            catcode(row.catcode)?;
+        }
+
+        let mut seen_cells = std::collections::BTreeSet::new();
+        for entry in &self.env {
+            let cell = crate::cell::CellId::from_raw(entry.cell)
+                .ok_or(StoreFormatError::Invalid("unknown environment cell"))?;
+            if cell.is_global() {
+                return Err(StoreFormatError::Invalid("global environment cell"));
+            }
+            if !seen_cells.insert((cell.bank() as u8, cell.index())) {
+                return Err(StoreFormatError::Invalid("duplicate environment cell"));
+            }
+            let raw = match entry.value {
+                FormatEnvValue::Raw(raw) => raw,
+                FormatEnvValue::Box(_) if cell.bank() == crate::cell::BankTag::Box => continue,
+                FormatEnvValue::Box(_) => {
+                    return Err(StoreFormatError::Invalid("box value in non-box bank"));
+                }
+            };
+            use crate::cell::BankTag;
+            match cell.bank() {
+                BankTag::Meaning => {
+                    if cell.index() as usize >= self.names.len() {
+                        return Err(StoreFormatError::Invalid("meaning symbol is not live"));
+                    }
+                    match crate::meaning::Meaning::decode_stored(raw) {
+                        crate::meaning::Meaning::Macro { definition, .. }
+                            if definition.raw() as usize >= self.macros.len() =>
+                        {
+                            return Err(StoreFormatError::Invalid("meaning macro is not live"));
+                        }
+                        crate::meaning::Meaning::Font(font)
+                            if font.raw() as usize >= self.fonts.len() =>
+                        {
+                            return Err(StoreFormatError::Invalid("meaning font is not live"));
+                        }
+                        _ => {}
+                    }
+                }
+                BankTag::Count
+                | BankTag::Dimen
+                | BankTag::Skip
+                | BankTag::Toks
+                | BankTag::Box
+                | BankTag::Muskip => {
+                    if cell.index() >= 32_768 {
+                        return Err(StoreFormatError::Invalid("register index out of range"));
+                    }
+                    if matches!(cell.bank(), BankTag::Skip | BankTag::Muskip)
+                        && (raw > u64::from(u32::MAX) || raw as u32 as usize >= self.glue.len())
+                    {
+                        return Err(StoreFormatError::Invalid("register glue is not live"));
+                    }
+                    if cell.bank() == BankTag::Toks
+                        && (raw > u64::from(u32::MAX)
+                            || raw as u32 as usize >= self.token_lists.len())
+                    {
+                        return Err(StoreFormatError::Invalid("register token list is not live"));
+                    }
+                    if cell.bank() == BankTag::Box {
+                        return Err(StoreFormatError::Invalid("raw box environment value"));
+                    }
+                }
+                BankTag::IntParam
+                | BankTag::DimenParam
+                | BankTag::GlueParam
+                | BankTag::TokParam => {
+                    if cell.index() >= crate::env::banks::PARAMETER_COUNT as u32 {
+                        return Err(StoreFormatError::Invalid("parameter index out of range"));
+                    }
+                    if cell.bank() == BankTag::GlueParam
+                        && (raw > u64::from(u32::MAX) || raw as u32 as usize >= self.glue.len())
+                    {
+                        return Err(StoreFormatError::Invalid("parameter glue is not live"));
+                    }
+                    if cell.bank() == BankTag::TokParam
+                        && (raw > u64::from(u32::MAX)
+                            || raw as u32 as usize >= self.token_lists.len())
+                    {
+                        return Err(StoreFormatError::Invalid(
+                            "parameter token list is not live",
+                        ));
+                    }
+                }
+                BankTag::FontDimen
+                | BankTag::FontParamLen
+                | BankTag::FontHyphenChar
+                | BankTag::FontSkewChar
+                | BankTag::CurrentFont
+                | BankTag::MathFamilyFont => {}
+            }
+        }
+        Ok(())
     }
 }
 

@@ -4,6 +4,19 @@ use super::{
 use crate::cell::{BankTag, CellId};
 use crate::node::Node;
 use crate::stores::Stores;
+use std::panic::{AssertUnwindSafe, catch_unwind};
+
+fn assert_invalid_without_unwind(format: StoreFormat) {
+    let result = catch_unwind(AssertUnwindSafe(|| format.restore()));
+    assert!(
+        result.is_ok(),
+        "malformed format must return an error, not unwind"
+    );
+    assert!(matches!(
+        result.expect("checked above"),
+        Err(StoreFormatError::Invalid(_))
+    ));
+}
 
 #[test]
 fn missing_node_dto_reference_fails_before_store_publication() {
@@ -78,4 +91,58 @@ fn reserved_environment_cell_key_fails_before_store_publication() {
         format.restore(),
         Err(StoreFormatError::Invalid("unknown environment cell"))
     ));
+}
+
+#[test]
+fn every_direct_reference_class_is_validated_without_unwind() {
+    let stores = Stores::new();
+
+    let mut token = StoreFormat::capture(&stores).expect("capture valid format");
+    token
+        .token_lists
+        .push(vec![super::FormatToken::Cs(u32::MAX)]);
+    assert_invalid_without_unwind(token);
+
+    let mut macro_ref = StoreFormat::capture(&stores).expect("capture valid format");
+    macro_ref.macros.push(super::FormatMacro {
+        flags: 0,
+        parameter_text: u32::MAX,
+        replacement_text: 0,
+    });
+    assert_invalid_without_unwind(macro_ref);
+
+    let mut register = StoreFormat::capture(&stores).expect("capture valid format");
+    register.env.push(FormatEnvEntry {
+        cell: CellId::new(BankTag::Toks, 32_768).raw(),
+        value: FormatEnvValue::Raw(0),
+    });
+    assert_invalid_without_unwind(register);
+
+    let mut content = StoreFormat::capture(&stores).expect("capture valid format");
+    content.env.push(FormatEnvEntry {
+        cell: CellId::new(BankTag::GlueParam, 0).raw(),
+        value: FormatEnvValue::Raw(u64::from(u32::MAX)),
+    });
+    assert_invalid_without_unwind(content);
+
+    let mut duplicate_code = StoreFormat::capture(&stores).expect("capture valid format");
+    duplicate_code.code_tables.push(super::FormatCodeTables {
+        code: 'x' as u32,
+        catcode: 12,
+        lccode: 0,
+        uccode: 0,
+        sfcode: 1000,
+        mathcode: 0,
+        delcode: -1,
+    });
+    duplicate_code.code_tables.push(super::FormatCodeTables {
+        code: 'x' as u32,
+        catcode: 12,
+        lccode: 0,
+        uccode: 0,
+        sfcode: 1000,
+        mathcode: 0,
+        delcode: -1,
+    });
+    assert_invalid_without_unwind(duplicate_code);
 }
