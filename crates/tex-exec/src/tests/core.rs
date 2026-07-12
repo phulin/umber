@@ -138,6 +138,41 @@ fn successful_execution_publishes_the_exact_final_input_cursor() {
 }
 
 #[test]
+fn virtualized_execution_trace_is_opt_in_and_semantically_neutral() {
+    fn run(tracing: bool) -> Universe {
+        let mut stores = support::stores_with_fonts();
+        stores.world_mut().set_execution_tracing(tracing);
+        let mut input = InputStack::new(MemoryInput::new(
+            "\\font\\f=cmr10 \\f x\\par \\setbox0=\\hbox{y}",
+        ));
+        Executor::new()
+            .run(&mut input, &mut stores)
+            .expect("trace comparison source executes");
+        stores
+    }
+
+    let mut ordinary = run(false);
+    let mut traced = run(true);
+    assert!(ordinary.world().execution_trace().is_empty());
+    assert!(!traced.world().execution_trace().is_empty());
+    assert!(
+        traced
+            .world()
+            .execution_trace()
+            .iter()
+            .any(|event| event.subsystem() == "executor")
+    );
+    assert_eq!(
+        ordinary.world().effect_records(),
+        traced.world().effect_records()
+    );
+    assert_eq!(
+        ordinary.snapshot().state_hash(),
+        traced.snapshot().state_hash()
+    );
+}
+
+#[test]
 fn mode_queries_are_backed_by_current_nest_level() {
     let mut executor = Executor::new();
     assert_eq!(

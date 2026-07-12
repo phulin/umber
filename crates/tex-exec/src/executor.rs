@@ -416,6 +416,14 @@ where
             assignments::flush_pending_hchars(nest, stores)?;
             return Ok(MainControlExit::EndOfInput);
         };
+        if stores.world().execution_tracing_enabled() {
+            let message = format!(
+                "deliver {:?} in {:?}",
+                tex_expand::semantic_token(token),
+                nest.current_mode()
+            );
+            stores.world_mut().trace_execution("executor", message);
+        }
         stats.delivered_tokens += 1;
         let action = match dispatch_delivered_token_with_recorder(
             nest, token, input, stores, recorder, hooks,

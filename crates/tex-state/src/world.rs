@@ -464,6 +464,25 @@ pub enum EffectRetrySafety {
     Poisoned,
 }
 
+/// Non-semantic execution trace event captured through the host boundary.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct ExecutionTraceEvent {
+    subsystem: &'static str,
+    message: String,
+}
+
+impl ExecutionTraceEvent {
+    #[must_use]
+    pub const fn subsystem(&self) -> &'static str {
+        self.subsystem
+    }
+
+    #[must_use]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
 impl WorldError {
     fn new(operation: &'static str, path: Option<PathBuf>, message: impl Into<String>) -> Self {
         Self {
@@ -550,6 +569,8 @@ pub struct World {
     shell_escapes: Vec<ShellEscapeRecord>,
     artifact_commits: Vec<ContentHash>,
     effect_commit_poison: Option<WorldError>,
+    execution_tracing: bool,
+    execution_trace: Vec<ExecutionTraceEvent>,
     #[cfg(test)]
     effect_commit_fault: Option<EffectCommitFault>,
 }
@@ -579,6 +600,8 @@ impl Clone for World {
             shell_escapes: self.shell_escapes.clone(),
             artifact_commits: self.artifact_commits.clone(),
             effect_commit_poison: self.effect_commit_poison.clone(),
+            execution_tracing: self.execution_tracing,
+            execution_trace: self.execution_trace.clone(),
             #[cfg(test)]
             effect_commit_fault: self.effect_commit_fault,
         }
@@ -654,9 +677,35 @@ impl World {
             shell_escapes: Vec::new(),
             artifact_commits: Vec::new(),
             effect_commit_poison: None,
+            execution_tracing: false,
+            execution_trace: Vec::new(),
             #[cfg(test)]
             effect_commit_fault: None,
         }
+    }
+
+    /// Enables or disables non-semantic execution tracing.
+    pub fn set_execution_tracing(&mut self, enabled: bool) {
+        self.execution_tracing = enabled;
+    }
+
+    #[must_use]
+    pub const fn execution_tracing_enabled(&self) -> bool {
+        self.execution_tracing
+    }
+
+    pub fn trace_execution(&mut self, subsystem: &'static str, message: impl Into<String>) {
+        if self.execution_tracing {
+            self.execution_trace.push(ExecutionTraceEvent {
+                subsystem,
+                message: message.into(),
+            });
+        }
+    }
+
+    #[must_use]
+    pub fn execution_trace(&self) -> &[ExecutionTraceEvent] {
+        &self.execution_trace
     }
 
     #[cfg(test)]
