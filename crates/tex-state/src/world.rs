@@ -88,7 +88,7 @@ impl ContentHash {
 pub struct FileContent {
     record: InputRecordId,
     path: PathBuf,
-    bytes: Vec<u8>,
+    bytes: Arc<[u8]>,
     hash: ContentHash,
 }
 
@@ -99,7 +99,7 @@ impl FileContent {
         Self {
             record,
             path,
-            bytes,
+            bytes: bytes.into(),
             hash,
         }
     }
@@ -121,13 +121,18 @@ impl FileContent {
     }
 
     #[must_use]
+    pub fn shared_bytes(&self) -> Arc<[u8]> {
+        Arc::clone(&self.bytes)
+    }
+
+    #[must_use]
     pub const fn hash(&self) -> ContentHash {
         self.hash
     }
 
     #[must_use]
     pub fn into_bytes(self) -> Vec<u8> {
-        self.bytes
+        self.bytes.to_vec()
     }
 }
 
@@ -507,7 +512,7 @@ pub struct World {
     shell_escape_policy: ShellEscapePolicy,
     inputs: Vec<InputRecord>,
     input_identities: IdentityAllocator,
-    input_contents: BTreeMap<ContentHash, Vec<u8>>,
+    input_contents: BTreeMap<ContentHash, Arc<[u8]>>,
     terminal_inputs: Vec<String>,
     shell_escapes: Vec<ShellEscapeRecord>,
     artifact_commits: Vec<ContentHash>,
@@ -999,7 +1004,7 @@ impl World {
     /// Returns the content-addressed bytes for a previously-read input.
     #[must_use]
     pub fn input_content(&self, hash: ContentHash) -> Option<&[u8]> {
-        self.input_contents.get(&hash).map(Vec::as_slice)
+        self.input_contents.get(&hash).map(AsRef::as_ref)
     }
 
     #[must_use]

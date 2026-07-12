@@ -115,8 +115,8 @@ impl PhysicalLine {
 /// In-memory input source for tests, `\scantokens`, and editor buffers.
 #[derive(Debug)]
 pub struct MemoryInput {
-    lines: std::vec::IntoIter<PhysicalLine>,
     backing: Arc<[u8]>,
+    next_offset: usize,
 }
 
 impl MemoryInput {
@@ -125,15 +125,15 @@ impl MemoryInput {
         let input = input.into();
         let backing: Arc<[u8]> = Arc::from(input.as_bytes());
         Self {
-            lines: split_physical_lines(&input).into_iter(),
             backing,
+            next_offset: 0,
         }
     }
 }
 
 impl InputSource for MemoryInput {
     fn read_line(&mut self) -> Result<Option<PhysicalLine>, InputSourceError> {
-        Ok(self.lines.next())
+        Ok(next_physical_line(&self.backing, &mut self.next_offset))
     }
 
     fn source_descriptor(&self) -> Option<SourceDescriptor> {
@@ -145,8 +145,8 @@ impl InputSource for MemoryInput {
 #[derive(Debug)]
 pub struct WorldInput {
     input_record: InputRecordId,
-    byte_len: usize,
-    lines: std::vec::IntoIter<PhysicalLine>,
+    backing: Arc<[u8]>,
+    next_offset: usize,
     invalid_utf8: Option<(usize, usize, usize, usize)>,
 }
 
@@ -154,27 +154,31 @@ impl WorldInput {
     #[must_use]
     pub fn from_content(content: FileContent) -> Self {
         let input_record = content.record();
-        Self::from_bytes(input_record, content.bytes(), 0)
+        Self::from_bytes(input_record, content.shared_bytes(), 0)
     }
 
     #[must_use]
     pub fn from_content_after_lines(content: FileContent, lines_read: usize) -> Self {
         let input_record = content.record();
-        Self::from_bytes(input_record, content.bytes(), lines_read)
+        Self::from_bytes(input_record, content.shared_bytes(), lines_read)
     }
 
-    fn from_bytes(input_record: InputRecordId, bytes: &[u8], lines_read: usize) -> Self {
-        match std::str::from_utf8(bytes) {
-            Ok(input) => Self {
-                input_record,
-                byte_len: bytes.len(),
-                lines: split_physical_lines(input)
-                    .into_iter()
-                    .skip(lines_read)
-                    .collect::<Vec<_>>()
-                    .into_iter(),
-                invalid_utf8: None,
-            },
+    fn from_bytes(input_record: InputRecordId, bytes: Arc<[u8]>, lines_read: usize) -> Self {
+        match std::str::from_utf8(&bytes) {
+            Ok(_) => {
+                let mut next_offset = 0;
+                for _ in 0..lines_read {
+                    if next_physical_line(&bytes, &mut next_offset).is_none() {
+                        break;
+                    }
+                }
+                Self {
+                    input_record,
+                    backing: bytes,
+                    next_offset,
+                    invalid_utf8: None,
+                }
+            }
             Err(error) => {
                 let byte_start = error.valid_up_to();
                 let byte_end = error
@@ -191,8 +195,8 @@ impl WorldInput {
                     .count();
                 Self {
                     input_record,
-                    byte_len: bytes.len(),
-                    lines: Vec::new().into_iter(),
+                    backing: bytes,
+                    next_offset: 0,
                     invalid_utf8: Some((byte_start, byte_end, line, column)),
                 }
             }
@@ -210,7 +214,7 @@ impl InputSource for WorldInput {
                 column,
             });
         }
-        Ok(self.lines.next())
+        Ok(next_physical_line(&self.backing, &mut self.next_offset))
     }
 
     fn input_record(&self) -> Option<InputRecordId> {
@@ -220,7 +224,7 @@ impl InputSource for WorldInput {
     fn source_descriptor(&self) -> Option<SourceDescriptor> {
         Some(SourceDescriptor::world(
             self.input_record,
-            u64::try_from(self.byte_len).unwrap_or(u64::MAX),
+            u64::try_from(self.backing.len()).unwrap_or(u64::MAX),
         ))
     }
 }
@@ -2582,36 +2586,37 @@ fn normalize_line(line: &PhysicalLine, endlinechar: i32) -> NormalizedLine {
     }
 }
 
-fn split_physical_lines(input: &str) -> Vec<PhysicalLine> {
-    let mut lines = Vec::new();
-    let mut start = 0;
-    for (index, byte) in input.bytes().enumerate() {
-        if byte == b'\n' {
-            let terminator_start = if index > start && input.as_bytes()[index - 1] == b'\r' {
+fn next_physical_line(bytes: &[u8], next_offset: &mut usize) -> Option<PhysicalLine> {
+    let start = *next_offset;
+    if start >= bytes.len() {
+        return None;
+    }
+    let newline = bytes[start..]
+        .iter()
+        .position(|byte| *byte == b'\n')
+        .map(|relative| start + relative);
+    let (terminator_start, terminator_end) = match newline {
+        Some(index) => {
+            let terminator_start = if index > start && bytes[index - 1] == b'\r' {
                 index - 1
             } else {
                 index
             };
-            lines.push(PhysicalLine {
-                text: input[start..terminator_start].to_owned(),
-                start,
-                content_end: terminator_start,
-                terminator_start,
-                terminator_end: index + 1,
-            });
-            start = index + 1;
+            (terminator_start, index + 1)
         }
-    }
-    if start < input.len() {
-        lines.push(PhysicalLine {
-            text: input[start..].to_owned(),
-            start,
-            content_end: input.len(),
-            terminator_start: input.len(),
-            terminator_end: input.len(),
-        });
-    }
-    lines
+        None => (bytes.len(), bytes.len()),
+    };
+    let text = std::str::from_utf8(&bytes[start..terminator_start])
+        .expect("input backing was validated as UTF-8")
+        .to_owned();
+    *next_offset = terminator_end;
+    Some(PhysicalLine {
+        text,
+        start,
+        content_end: terminator_start,
+        terminator_start,
+        terminator_end,
+    })
 }
 
 #[cfg(test)]
