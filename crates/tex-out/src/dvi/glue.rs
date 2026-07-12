@@ -34,12 +34,15 @@ pub(super) fn adjusted_glue_width(
 }
 
 fn rounded_glue_set(glue_set: GlueSetRatio, cur_glue: Scaled) -> Scaled {
-    // tex.web stores glue_set as a binary `real`, then multiplies it by the
-    // running `real` glue total before `round`. Emulate those two binary64
-    // round-to-even operations with integers so output remains deterministic.
+    // tex.web section 109 stores glue_set in a one-word `glue_ratio`, normally
+    // a short_real, after computing the quotient as a `real`. The canonical
+    // TeX82 implementation therefore rounds the ratio to binary32 before the
+    // hlist_out/vlist_out `real` multiplication and final `round` (sections
+    // 625 and 635). Emulate both floating-point roundings with integers so DVI
+    // output remains deterministic on every host.
     let numerator = glue_set.numerator() as u128;
     let denominator = glue_set.denominator() as u128;
-    let (ratio_significand, ratio_exponent) = binary64_ratio(numerator, denominator);
+    let (ratio_significand, ratio_exponent) = binary32_ratio(numerator, denominator);
     let negative = cur_glue.raw() < 0;
     let magnitude = u128::from(cur_glue.raw().unsigned_abs());
     let (significand, exponent) =
@@ -48,19 +51,23 @@ fn rounded_glue_set(glue_set: GlueSetRatio, cur_glue: Scaled) -> Scaled {
     Scaled::from_raw(if negative { -rounded } else { rounded } as i32)
 }
 
-/// Returns `significand * 2^exponent`, the nearest binary64 value to `n / d`.
-fn binary64_ratio(n: u128, d: u128) -> (u128, i32) {
+/// Returns `significand * 2^exponent`, the nearest binary32 value to `n / d`.
+fn binary32_ratio(n: u128, d: u128) -> (u128, i32) {
     if n == 0 {
         return (0, 0);
     }
     let mut exponent = floor_log2_ratio(n, d);
-    let shift = u32::try_from(52 - exponent).expect("i32 glue ratio needs a positive shift");
-    let mut significand = round_quotient_to_even(n << shift, d);
-    if significand == 1_u128 << 53 {
+    let shift = 23 - exponent;
+    let mut significand = if shift >= 0 {
+        round_quotient_to_even(n << shift, d)
+    } else {
+        round_quotient_to_even(n, d << (-shift))
+    };
+    if significand == 1_u128 << 24 {
         significand >>= 1;
         exponent += 1;
     }
-    (significand, exponent - 52)
+    (significand, exponent - 23)
 }
 
 fn floor_log2_ratio(n: u128, d: u128) -> i32 {
@@ -146,4 +153,38 @@ pub(super) fn add_scaled(left: Scaled, right: Scaled) -> Result<Scaled, DviError
 
 pub(super) fn sub_scaled(left: Scaled, right: Scaled) -> Result<Scaled, DviError> {
     left.checked_sub(right).ok_or(DviError::PositionOverflow)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn glue_ratio_is_rounded_to_tex82_short_real_before_output() {
+        assert_eq!(
+            rounded_glue_set(
+                GlueSetRatio::from_ratio_parts(638_162_529, 65_536),
+                Scaled::from_raw(65_536),
+            ),
+            Scaled::from_raw(638_162_560)
+        );
+        assert_eq!(
+            rounded_glue_set(
+                GlueSetRatio::from_ratio_parts(50_816_599, 16_384),
+                Scaled::from_raw(65_536),
+            ),
+            Scaled::from_raw(203_266_400)
+        );
+    }
+
+    #[test]
+    fn binary32_ratio_handles_large_one_word_glue_ratios() {
+        assert_eq!(
+            rounded_glue_set(
+                GlueSetRatio::from_ratio_parts(i32::MAX, 1),
+                Scaled::from_raw(1),
+            ),
+            Scaled::from_raw(1_000_000_000)
+        );
+    }
 }

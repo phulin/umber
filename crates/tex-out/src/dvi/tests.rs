@@ -396,8 +396,9 @@ fn cumulative_glue_rounding_matches_tex82_w0_x0_sequence() {
 
     assert_eq!(rules.len(), 8);
     assert_eq!(body[rules[1] - 4], W3);
-    assert_eq!(body[rules[2] - 4], X3);
-    assert!(rules[3..=6].iter().all(|&rule| body[rule - 1] == W0));
+    assert_eq!(body[rules[2] - 1], W0);
+    assert_eq!(body[rules[3] - 4], X3);
+    assert!(rules[4..=6].iter().all(|&rule| body[rule - 1] == W0));
     assert_eq!(body[rules[7] - 1], X0);
 }
 
