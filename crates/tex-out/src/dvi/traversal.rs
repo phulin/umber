@@ -9,6 +9,17 @@ use super::{
     opcodes::{DOWN1, POP, PUSH, PUT_RULE, RIGHT1, SET_RULE, XXX1, XXX4},
 };
 
+// TeX82 map: this module ports `hlist_out`, `vlist_out`, `synch_h`,
+// `synch_v`, `dvi_pop`, and their `Output ... node` fragments in `tex.web`.
+// Child order, delayed coordinate synchronization, rule placement, recursive
+// save/restore, movement pruning before pop, and push-pop cancellation are DVI
+// semantics.  PageArtifact is Umber's detached representation, but traversal
+// must treat its children in the same order and with the same dimensions.
+// BoxNode::shift is the one sign boundary: Umber stores positive hlist shift
+// upward, inverse to TeX's positive-down `shift_amount`; vlist shift remains
+// positive rightward.  Thus hlist recursion subtracts shift and vlist
+// recursion adds it.
+
 impl<W: std::io::Write> DviWriter<W> {
     pub(super) fn hlist_out(
         &mut self,

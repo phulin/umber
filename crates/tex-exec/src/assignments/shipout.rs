@@ -27,6 +27,18 @@ use super::scan_required_box_node;
 use crate::ExecError;
 use crate::diagnostics;
 
+// TeX82 map: `ship_out` consumes a box whose list is later visited by
+// `hlist_out`/`vlist_out`.  This lowering preserves node order, box dimensions
+// and shifts, glue state, leader payloads, character metrics, and whatsit
+// positions so tex-out can run those algorithms unchanged.  Math lists are
+// converted before DVI traversal, as in TeX82's pre-output list processing.
+//
+// Umber policy lives on this side of the commit barrier: live node handles are
+// frozen into a detached PageArtifact, fonts receive artifact resource ids,
+// effects receive stable anchors, and validation/serialization happens before
+// the shipout transaction commits.  None of those policies may reorder or
+// reinterpret nodes that TeX's output procedures observe.
+
 pub(super) fn execute_shipout<S, R, H>(
     context: TracedTokenWord,
     input: &mut InputStack<S>,

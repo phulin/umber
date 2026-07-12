@@ -2,6 +2,13 @@ use tex_arith::Scaled;
 
 use crate::{BoxNode, PageNode};
 
+// TeX82 map: `ship_out`'s `Update the values of max_h and max_v` fragment.
+// For a shippable root box, the postamble maxima are exactly
+// height+depth+v_offset and width+h_offset; signs are retained rather than
+// clamped.  Umber computes the root extent from its detached PageNode before
+// framing; non-box cases are artifact-policy fallbacks and are not reachable
+// from a valid TeX82 `\shipout` box.
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(super) struct PageExtent {
     pub(super) height_depth: i32,

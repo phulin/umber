@@ -10,6 +10,15 @@ use super::{
     opcodes::{BOP, DEN, EOP, ID_BYTE, NUM, PADDING, POST, POST_POST, PRE},
 };
 
+// TeX82 map: `Initialize variables as ship_out begins`, `Ship box p out`,
+// and `Finish the DVI file` in `tex.web`.  Preamble conversion fields,
+// bop/count/backpointer before traversal, eop after traversal, postamble
+// pointer/conversion/mag/maxima/stack/page fields, descending used-font
+// definitions, post_post pointer/id, and at least four 223 bytes through a
+// four-byte boundary retain TeX's ordering.  Umber's streaming writer and
+// detached per-page font index are policy; they must not alter those bytes or
+// the previous-bop chain.
+
 impl<W: std::io::Write> DviWriter<W> {
     pub(super) fn preamble(&mut self, banner: &str, mag: i32) -> Result<(), DviError> {
         let banner = limited_bytes("comment", banner)?;

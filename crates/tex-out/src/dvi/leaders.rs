@@ -7,6 +7,15 @@ use super::{
     glue::{add_scaled, sub_scaled},
 };
 
+// TeX82 map: `Move right or output leaders`, `Output leaders in an hlist`,
+// and their vlist counterparts inside `hlist_out`/`vlist_out` in `tex.web`.
+// The +10sp/-10sp compensation, inclusive edge test, aligned ceiling on the
+// containing box's grid, centered remainder split, and expanded `(q + 1)`
+// spacing with half the division error at each end are exact TeX arithmetic.
+// Recursive leader output also follows TeX's synch/save/traverse/restore
+// order.  As in traversal.rs, Umber's positive-up hlist shift accounts for
+// the subtraction used for horizontal leader boxes; vlist shift adds right.
+
 const LEADER_ROUNDING_COMPENSATION: Scaled = Scaled::from_raw(10);
 
 pub(super) struct HLeaderContext<'a> {

@@ -8,6 +8,17 @@ use super::{
     opcodes::{FNT_DEF1, FNT_DEF2, FNT_DEF3, FNT_DEF4, FNT_NUM_0, FNT1, FNT2, FNT3, FNT4, SET1},
 };
 
+// TeX82 map: `dvi_font_def`, `Output the font name`, and `Change font dvi_f
+// to f` in `tex.web`.  A font definition must precede its first selection;
+// checksum, scaled size, design size, area length, name length, then name are
+// emitted in that order.  framing.rs mirrors TeX's final descending
+// `font_ptr` walk when it repeats used definitions in the postamble.
+//
+// Umber policy: detached artifacts carry stable u32 resource numbers and no
+// separate TeX font-area string, so the area length is zero; the shortest DVI
+// fnt/fnt_def width is selected instead of TeX82's at-most-256-font shortcut.
+// Cross-page identity checks prevent one DVI number from changing meaning.
+
 impl<W: std::io::Write> DviWriter<W> {
     pub(super) fn index_page_fonts(&mut self, page: &PageArtifact) -> Result<(), DviError> {
         self.page_fonts.clear();

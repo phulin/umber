@@ -1,5 +1,17 @@
 use tex_arith::Scaled;
 
+// TeX82 map: `tex.web`'s `movement` and `prune_movements` procedures.  The
+// newest-to-oldest search, its six `info` states, and the order in which y/z
+// (or w/x) hits restrict intervening entries are semantic: changing any of
+// them changes later opcode reuse.  `emit_explicit_movement` is the final
+// `Generate a down or right command` fragment, including TeX's exact signed
+// one/two/three/four-byte thresholds and two's-complement byte order.
+//
+// Umber policy: a page is staged in one growable byte vector, so every prior
+// opcode remains patchable; TeX's `dvi_gone` rejection for already-flushed
+// ring-buffer bytes is consequently unnecessary.  The two independent
+// MovementStack values in DviWriter are TeX's right and down stacks.
+
 const Y0_OFFSET: u8 = 161 - 157;
 const Z0_OFFSET: u8 = 166 - 157;
 const Y1_OFFSET: u8 = 162 - 157;
