@@ -18,9 +18,10 @@ use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{ExpansionState, FileContent, InputRecordId, WorldError};
 
 pub use tex_state::{
-    ConditionFrameSummary, ConditionFrameToken, ConditionKind, ConditionLimb, InputFrameSummary,
-    InputSummary, LexerState, MACRO_ARGUMENT_SLOTS, MacroArguments, SourceFrameSummary, SourceId,
-    TokenListReplayKind, TracedTokenList,
+    AlignmentCellPhaseSummary, AlignmentCellSummary, ConditionFrameSummary, ConditionFrameToken,
+    ConditionKind, ConditionLimb, InputFrameSummary, InputSummary, LexerState,
+    MACRO_ARGUMENT_SLOTS, MacroArguments, SourceFrameSummary, SourceId, TokenListReplayKind,
+    TracedTokenList,
 };
 
 /// Source of physical input lines.
@@ -629,6 +630,61 @@ struct AlignmentCellInput {
     terminator: Option<TracedTokenWord>,
 }
 
+fn summarize_alignment_cell(cell: &AlignmentCellInput) -> AlignmentCellSummary {
+    AlignmentCellSummary {
+        phase: match cell.phase {
+            AlignmentCellPhase::UTemplate(marker) => AlignmentCellPhaseSummary::UTemplate(marker.0),
+            AlignmentCellPhase::Body => AlignmentCellPhaseSummary::Body,
+            AlignmentCellPhase::VTemplate => AlignmentCellPhaseSummary::VTemplate,
+        },
+        v_template: cell.v_template,
+        brace_depth: cell.brace_depth,
+        delivered: cell
+            .delivered
+            .iter()
+            .map(|(token, delivery)| (*token, alignment_delivery_code(*delivery)))
+            .collect(),
+        terminator: cell.terminator,
+    }
+}
+
+fn restore_alignment_cell(cell: &AlignmentCellSummary) -> AlignmentCellInput {
+    AlignmentCellInput {
+        phase: match cell.phase {
+            AlignmentCellPhaseSummary::UTemplate(marker) => {
+                AlignmentCellPhase::UTemplate(TokenListReplayMarker(marker))
+            }
+            AlignmentCellPhaseSummary::Body => AlignmentCellPhase::Body,
+            AlignmentCellPhaseSummary::VTemplate => AlignmentCellPhase::VTemplate,
+        },
+        v_template: cell.v_template,
+        brace_depth: cell.brace_depth,
+        delivered: cell
+            .delivered
+            .iter()
+            .map(|(token, delivery)| (*token, alignment_delivery_from_code(*delivery)))
+            .collect(),
+        terminator: cell.terminator,
+    }
+}
+
+const fn alignment_delivery_code(delivery: AlignmentTokenDelivery) -> u8 {
+    match delivery {
+        AlignmentTokenDelivery::Other => 0,
+        AlignmentTokenDelivery::LeftBrace => 1,
+        AlignmentTokenDelivery::RightBrace => 2,
+    }
+}
+
+fn alignment_delivery_from_code(code: u8) -> AlignmentTokenDelivery {
+    match code {
+        0 => AlignmentTokenDelivery::Other,
+        1 => AlignmentTokenDelivery::LeftBrace,
+        2 => AlignmentTokenDelivery::RightBrace,
+        _ => panic!("invalid alignment delivery code in input summary: {code}"),
+    }
+}
+
 /// Saved alignment-cell interception state while a nested preamble and body run.
 ///
 /// Like TeX82's alignment-stack node, this value owns the exact outer state;
@@ -751,6 +807,7 @@ impl<S> InputStack<S> {
                     macro_arguments,
                     macro_invocation,
                     parent_macro_invocation,
+                    replay_marker,
                 } => frames.push(InputFrame::TokenList(TokenListInputFrame {
                     token_list: *token_list,
                     origin_list: *origin_list,
@@ -759,7 +816,7 @@ impl<S> InputStack<S> {
                     macro_arguments: *macro_arguments,
                     macro_invocation: *macro_invocation,
                     parent_macro_invocation: *parent_macro_invocation,
-                    replay_marker: None,
+                    replay_marker: replay_marker.map(TokenListReplayMarker),
                 })),
                 InputFrameSummary::Condition { token, condition } => {
                     frames.push(InputFrame::Condition {
@@ -812,7 +869,17 @@ impl<S> InputStack<S> {
                 frame: SourceFrame::from_summary(source),
                 next_source_offset: source.next_source_offset(),
             }),
-            next_replay_marker: 0,
+            next_replay_marker: summary
+                .frames()
+                .iter()
+                .filter_map(|frame| match frame {
+                    InputFrameSummary::TokenList { replay_marker, .. } => *replay_marker,
+                    InputFrameSummary::Source { .. } | InputFrameSummary::Condition { .. } => None,
+                })
+                .max()
+                .map_or(0, |marker| {
+                    marker.checked_add(1).expect("replay marker overflowed")
+                }),
             next_condition_token: summary
                 .frames()
                 .iter()
@@ -826,7 +893,11 @@ impl<S> InputStack<S> {
                         .checked_add(1)
                         .expect("condition frame token overflowed")
                 }),
-            alignment_cells: Vec::new(),
+            alignment_cells: summary
+                .alignment_cells()
+                .iter()
+                .map(restore_alignment_cell)
+                .collect(),
             active_macro_invocation,
             recently_popped_invocation: None,
         })
@@ -1150,7 +1221,7 @@ impl<S> InputStack<S> {
 
     #[must_use]
     pub fn summary(&self) -> InputSummary {
-        InputSummary::new_with_resume_state(
+        InputSummary::new_with_continuations(
             self.frames
                 .iter()
                 .map(|frame| match frame {
@@ -1170,6 +1241,7 @@ impl<S> InputStack<S> {
                         macro_arguments: token_list.macro_arguments,
                         macro_invocation: token_list.macro_invocation,
                         parent_macro_invocation: token_list.parent_macro_invocation,
+                        replay_marker: token_list.replay_marker.map(|marker| marker.0),
                     },
                     InputFrame::Condition { token, condition } => InputFrameSummary::Condition {
                         token: *token,
@@ -1188,6 +1260,10 @@ impl<S> InputStack<S> {
             }),
             self.next_source_id,
             self.unicode_superscript_notation,
+            self.alignment_cells
+                .iter()
+                .map(summarize_alignment_cell)
+                .collect(),
         )
     }
 

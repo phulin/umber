@@ -3444,6 +3444,7 @@ fn hash_input_summary_fields(
                 macro_arguments,
                 macro_invocation: _,
                 parent_macro_invocation: _,
+                replay_marker: _,
             } => {
                 hasher.tag(1);
                 stores.hash_token_list_semantic(*token_list, hasher);
@@ -3504,6 +3505,28 @@ fn hash_input_summary_fields(
             hasher.bool(source.end_after_current_line());
         }
         None => hasher.bool(false),
+    }
+    hasher.usize(summary.alignment_cells().len());
+    for cell in summary.alignment_cells() {
+        match cell.phase {
+            crate::AlignmentCellPhaseSummary::UTemplate(_) => hasher.tag(0),
+            crate::AlignmentCellPhaseSummary::Body => hasher.tag(1),
+            crate::AlignmentCellPhaseSummary::VTemplate => hasher.tag(2),
+        }
+        stores.hash_token_list_semantic(cell.v_template, hasher);
+        hasher.i32(cell.brace_depth);
+        hasher.usize(cell.delivered.len());
+        for (token, delivery) in cell.delivered.iter() {
+            hash_traced_token_semantic(stores, *token, hasher);
+            hasher.u8(*delivery);
+        }
+        match cell.terminator {
+            Some(token) => {
+                hasher.bool(true);
+                hash_traced_token_semantic(stores, token, hasher);
+            }
+            None => hasher.bool(false),
+        }
     }
 }
 

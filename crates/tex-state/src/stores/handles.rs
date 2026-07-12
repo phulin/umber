@@ -57,6 +57,15 @@ impl Stores {
                 }
             }
         }
+        for cell in summary.alignment_cells() {
+            self.assert_live_token_list(cell.v_template);
+            for (token, _) in cell.delivered.iter() {
+                self.assert_live_traced_token_word(*token);
+            }
+            if let Some(token) = cell.terminator {
+                self.assert_live_traced_token_word(token);
+            }
+        }
 
         match (
             summary.last_source_id(),

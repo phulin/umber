@@ -381,6 +381,7 @@ fn semantic_format_rejects_live_input_and_page_state() {
             macro_arguments: MacroArguments::new(),
             macro_invocation: OriginId::UNKNOWN,
             parent_macro_invocation: OriginId::UNKNOWN,
+            replay_marker: None,
         }],
         None,
         None,
@@ -985,6 +986,7 @@ fn input_summary_validation_is_recursive_and_atomic_after_reuse() {
             macro_arguments: arguments,
             macro_invocation: invocation,
             parent_macro_invocation: OriginId::UNKNOWN,
+            replay_marker: None,
         }
     };
 
@@ -2394,6 +2396,7 @@ fn macro_replay_summary(
             macro_arguments: arguments,
             macro_invocation: invocation,
             parent_macro_invocation: OriginId::UNKNOWN,
+            replay_marker: None,
         }],
         None,
         None,

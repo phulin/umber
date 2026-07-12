@@ -7,6 +7,22 @@ use crate::world::InputRecordId;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum AlignmentCellPhaseSummary {
+    UTemplate(u64),
+    Body,
+    VTemplate,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct AlignmentCellSummary {
+    pub phase: AlignmentCellPhaseSummary,
+    pub v_template: TokenListId,
+    pub brace_depth: i32,
+    pub delivered: Arc<[(TracedTokenWord, u8)]>,
+    pub terminator: Option<TracedTokenWord>,
+}
+
 /// Maximum number of macro arguments TeX permits in one macro body.
 pub const MACRO_ARGUMENT_SLOTS: usize = 9;
 
@@ -334,6 +350,7 @@ pub struct InputSummary {
     last_source_frame: Option<SourceFrameSummary>,
     next_source_id: u32,
     unicode_superscript_notation: bool,
+    alignment_cells: Arc<[AlignmentCellSummary]>,
 }
 
 impl PartialEq for InputSummary {
@@ -342,6 +359,7 @@ impl PartialEq for InputSummary {
             && self.last_source_record == other.last_source_record
             && self.last_source_frame == other.last_source_frame
             && self.unicode_superscript_notation == other.unicode_superscript_notation
+            && self.alignment_cells == other.alignment_cells
     }
 }
 
@@ -353,6 +371,7 @@ impl Hash for InputSummary {
         self.last_source_record.hash(state);
         self.last_source_frame.hash(state);
         self.unicode_superscript_notation.hash(state);
+        self.alignment_cells.hash(state);
     }
 }
 
@@ -403,6 +422,27 @@ impl InputSummary {
         next_source_id: u32,
         unicode_superscript_notation: bool,
     ) -> Self {
+        Self::new_with_continuations(
+            frames,
+            last_source_id,
+            last_source_record,
+            last_source_frame,
+            next_source_id,
+            unicode_superscript_notation,
+            Vec::new(),
+        )
+    }
+
+    #[must_use]
+    pub fn new_with_continuations(
+        frames: Vec<InputFrameSummary>,
+        last_source_id: Option<SourceId>,
+        last_source_record: Option<InputRecordId>,
+        last_source_frame: Option<SourceFrameSummary>,
+        next_source_id: u32,
+        unicode_superscript_notation: bool,
+        alignment_cells: Vec<AlignmentCellSummary>,
+    ) -> Self {
         Self {
             frames: frames.into(),
             last_source_id,
@@ -410,6 +450,7 @@ impl InputSummary {
             last_source_frame,
             next_source_id,
             unicode_superscript_notation,
+            alignment_cells: alignment_cells.into(),
         }
     }
 
@@ -456,6 +497,11 @@ impl InputSummary {
     pub const fn unicode_superscript_notation(&self) -> bool {
         self.unicode_superscript_notation
     }
+
+    #[must_use]
+    pub fn alignment_cells(&self) -> &[AlignmentCellSummary] {
+        &self.alignment_cells
+    }
 }
 
 /// Snapshot summary for one input frame.
@@ -474,6 +520,7 @@ pub enum InputFrameSummary {
         macro_arguments: MacroArguments,
         macro_invocation: crate::token::OriginId,
         parent_macro_invocation: crate::token::OriginId,
+        replay_marker: Option<u64>,
     },
     Condition {
         token: ConditionFrameToken,
