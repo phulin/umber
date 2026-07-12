@@ -83,6 +83,21 @@ fn registered_source_capability_encodes_only_backed_nonempty_direct_ranges() {
 }
 
 #[test]
+fn registered_source_capability_validates_spans_at_boundaries() {
+    let source = RegisteredSource::new(SourcePos(40), 4);
+    assert_eq!(
+        source.span(0, 0),
+        Ok(SourceSpan::new(SourcePos(40), SourcePos(40)))
+    );
+    assert_eq!(
+        source.span(1, 4),
+        Ok(SourceSpan::new(SourcePos(41), SourcePos(44)))
+    );
+    assert_eq!(source.span(3, 2), Err(SourceMapError::OffsetOutsideSource));
+    assert_eq!(source.span(0, 5), Err(SourceMapError::OffsetOutsideSource));
+}
+
+#[test]
 fn rollback_reuses_source_and_backing_slots_but_not_logical_positions() {
     let mut map = SourceMap::default();
     map.register(SourceId::new(0), generated(b"root"))

@@ -36,6 +36,24 @@ impl RegisteredSource {
         let raw = self.start.0.checked_add(byte_offset)?;
         OriginId::direct_source(SourcePos(raw))
     }
+
+    /// Validates a half-open byte range against this registered input.
+    pub fn span(self, byte_offset: u64, byte_end: u64) -> Result<SourceSpan, SourceMapError> {
+        if byte_offset > byte_end || byte_end > self.byte_len {
+            return Err(SourceMapError::OffsetOutsideSource);
+        }
+        let lo = self
+            .start
+            .0
+            .checked_add(byte_offset)
+            .ok_or(SourceMapError::LogicalPositionExhausted)?;
+        let hi = self
+            .start
+            .0
+            .checked_add(byte_end)
+            .ok_or(SourceMapError::LogicalPositionExhausted)?;
+        Ok(SourceSpan::new(SourcePos(lo), SourcePos(hi)))
+    }
 }
 
 impl SourcePos {

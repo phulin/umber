@@ -163,6 +163,7 @@ pub trait ExpansionState {
         byte_offset: u64,
         byte_end: u64,
     ) -> OriginId;
+    fn source_span_origin(&mut self, span: SourceSpan) -> OriginId;
     fn register_source(
         &mut self,
         source: SourceId,
@@ -1242,6 +1243,11 @@ impl Universe {
     ) -> OriginId {
         self.stores
             .source_range_origin(source, byte_offset, byte_end)
+    }
+
+    /// Allocates an origin for a range validated by `RegisteredSource`.
+    pub fn source_span_origin(&mut self, span: SourceSpan) -> OriginId {
+        self.stores.source_span_origin(span)
     }
 
     /// Allocates a macro-invocation origin.
@@ -2681,6 +2687,10 @@ impl ExpansionState for Universe {
         Self::source_range_origin(self, source, byte_offset, byte_end)
     }
 
+    fn source_span_origin(&mut self, span: SourceSpan) -> OriginId {
+        Self::source_span_origin(self, span)
+    }
+
     fn register_source(
         &mut self,
         source: SourceId,
@@ -3033,6 +3043,10 @@ impl ExpansionState for ExpansionContext<'_> {
     ) -> OriginId {
         self.universe
             .source_range_origin(source, byte_offset, byte_end)
+    }
+
+    fn source_span_origin(&mut self, span: SourceSpan) -> OriginId {
+        self.universe.source_span_origin(span)
     }
 
     fn register_source(

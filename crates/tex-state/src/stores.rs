@@ -682,6 +682,12 @@ impl Stores {
         self.provenance.allocate(OriginRecord::SourceSpan(span))
     }
 
+    /// Allocates an exact range already validated by a registered-source
+    /// capability, avoiding another source-map lookup on the hot path.
+    pub fn source_span_origin(&mut self, span: SourceSpan) -> OriginId {
+        self.provenance.allocate(OriginRecord::SourceSpan(span))
+    }
+
     /// Allocates a macro-invocation origin.
     pub fn macro_invocation_origin(
         &mut self,

@@ -34,6 +34,25 @@ fn resolver_treats_rolled_back_origin_as_unknown() {
 }
 
 #[test]
+fn resolver_treats_registered_span_from_rolled_back_source_as_unknown() {
+    let mut stores = Universe::new();
+    let snapshot = stores.snapshot();
+    let registration = stores
+        .register_input_source(
+            crate::SourceId::new(0),
+            SourceDescriptor::generated(Arc::from(&b"alpha\n"[..])),
+        )
+        .expect("source registration");
+    let span = registration.span(0, 5).expect("registered span");
+    let stale = stores.source_span_origin(span);
+
+    stores.rollback(&snapshot);
+    let rendered = ProvenanceResolver::new(&stores).render_diagnostic("boom", Some(stale));
+
+    assert!(rendered.contains("unknown origin"));
+}
+
+#[test]
 fn resolver_does_not_revive_a_rolled_back_input_record() {
     let mut world = World::memory();
     world

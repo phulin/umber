@@ -44,6 +44,25 @@ exhausted cases still use the aggregate validated fallback. Scanner range proofs
 are reconstructed only when a scanner asks for one instead of being written on
 every source delivery.
 
+### Registered-span follow-up
+
+On 2026-07-12, the control-sequence row was remeasured before and after routing
+registered input frames directly from `RegisteredSource::span` to provenance
+allocation. Both executables used the same checkout dependencies and Rust
+toolchain, and each measurement used Criterion's 100-sample default. The
+baseline executable was built from commit `e278af20` in a detached worktree;
+the updated executable was measured immediately afterward on the same host.
+
+| Workload | Before time | After time | Median delta | After throughput |
+| --- | ---: | ---: | ---: | ---: |
+| Control-sequence-heavy, 4,096 tokens | 831.45-843.65 us | 813.44-839.44 us | -1.41% | 4.97 Mtok/s |
+
+Inspection confirms that the registered-frame control-sequence path performs
+zero `SourceMap` region lookups: it validates offsets through the frame's
+`RegisteredSource` capability and appends the resulting `SourceSpan` directly.
+Unregistered or invalid ranges retain the aggregate-validated fallback. The
+remaining cost includes one exact-range arena record per control sequence.
+
 ## Incremental memory
 
 Logical bytes include live origin records, origin-list spans and entries, source

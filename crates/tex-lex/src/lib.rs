@@ -2382,11 +2382,17 @@ fn source_coordinate_from_frame(
 
 fn traced_source_token(
     stores: &mut impl ExpansionState,
+    registration: Option<RegisteredSource>,
     token: Token,
     start: LexSourceContext,
     end: LexSourceContext,
 ) -> TracedTokenWord {
-    let origin = stores.source_range_origin(start.source_id, start.byte_offset, end.byte_offset);
+    let origin = match registration
+        .and_then(|source| source.span(start.byte_offset, end.byte_offset).ok())
+    {
+        Some(span) => stores.source_span_origin(span),
+        None => stores.source_range_origin(start.source_id, start.byte_offset, end.byte_offset),
+    };
     TracedTokenWord::pack(token, origin)
 }
 
@@ -2632,7 +2638,13 @@ fn scan_control_sequence<S>(
     if source.frame.byte_offset >= source.frame.line.len() {
         source.frame.state = LexerState::SkippingBlanks;
         let token = Token::Cs(stores.intern("").symbol());
-        return traced_source_token(stores, token, start, source_coordinate(source));
+        return traced_source_token(
+            stores,
+            source.registration,
+            token,
+            start,
+            source_coordinate(source),
+        );
     }
 
     let ch = read_expanded_char(source, stores, unicode_superscript_notation);
@@ -2644,7 +2656,13 @@ fn scan_control_sequence<S>(
             LexerState::MidLine
         };
         let token = Token::Cs(stores.intern(&ch.to_string()));
-        return traced_source_token(stores, token, start, source_coordinate(source));
+        return traced_source_token(
+            stores,
+            source.registration,
+            token,
+            start,
+            source_coordinate(source),
+        );
     }
 
     let mut name = String::from(ch);
@@ -2662,7 +2680,13 @@ fn scan_control_sequence<S>(
     }
     source.frame.state = LexerState::SkippingBlanks;
     let token = Token::Cs(stores.intern(&name).symbol());
-    traced_source_token(stores, token, start, source_coordinate(source))
+    traced_source_token(
+        stores,
+        source.registration,
+        token,
+        start,
+        source_coordinate(source),
+    )
 }
 
 fn scan_control_sequence_readonly<S>(
