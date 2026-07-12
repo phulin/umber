@@ -725,30 +725,174 @@ run_self_test() {
   prepare_work
   local dir="${work_root}/self-test"
   mkdir -p "$dir"
-  # Prove that the constrained DVI rounding reconciler cannot conceal a
-  # character change. This synthetic stream is sufficient for the structural
-  # walker and keeps self-test independent of fetched TRIP materials.
-  python3 - "${dir}/expected.dvi" "${dir}/actual.dvi" <<'PY'
+  # Appendix A item 6 allows nearby output positions, but our documented
+  # policy is intentionally narrower: only an operand on the identical DVI
+  # movement opcode may differ, and then by at most 64sp. Exercise that exact
+  # boundary and representative commands from tex.web's DVI grammar so a
+  # future broadening of the production reconciler fails this self-test.
+  python3 - "$dir" <<'PY'
 import pathlib
 import sys
 
-pre = bytes([247, 2]) + (25400000).to_bytes(4, "big") + (473628672).to_bytes(4, "big") + (1000).to_bytes(4, "big") + bytes([0])
-bop = bytes([139]) + bytes(44)
-tail = bytes([140, 248]) + bytes(28) + bytes([249]) + bytes(5) + bytes([223, 223, 223, 223])
-expected = pre + bop + bytes([65]) + tail
-pathlib.Path(sys.argv[1]).write_bytes(expected)
-pathlib.Path(sys.argv[2]).write_bytes(pre + bop + bytes([66]) + tail)
+root = pathlib.Path(sys.argv[1])
+
+def signed(value, width):
+    return value.to_bytes(width, "big", signed=True)
+
+data = bytearray()
+locations = {}
+
+def command(name, op, operands=b""):
+    locations[name] = len(data)
+    data.append(op)
+    data.extend(operands)
+
+command("pre", 247, bytes([2]) + (25400000).to_bytes(4, "big")
+        + (473628672).to_bytes(4, "big") + (1000).to_bytes(4, "big")
+        + bytes([0]))
+bop_offset = len(data)
+command("bop", 139, b"".join(value.to_bytes(4, "big", signed=True)
+                               for value in [*range(10), -1]))
+command("character", 65)
+command("set_operand", 128, bytes([200]))
+command("rule", 132, signed(10, 4) + signed(20, 4))
+movement_commands = []
+for family, opcodes in (
+    ("right", range(143, 147)), ("w", range(148, 152)),
+    ("x", range(153, 157)), ("down", range(157, 161)),
+    ("y", range(162, 166)), ("z", range(167, 171)),
+):
+    for width, op in enumerate(opcodes, 1):
+        name = "movement" if op == 144 else f"{family}{width}_movement"
+        value = 1000 if op == 144 else 0
+        command(name, op, signed(value, width))
+        movement_commands.append((name, width, value))
+command("special", 239, bytes([3]) + b"abc")
+command("font_definition", 243, bytes([1]) + (1234).to_bytes(4, "big")
+        + (655360).to_bytes(4, "big") + (655360).to_bytes(4, "big")
+        + bytes([0, 3]) + b"cmr")
+command("font_selection", 235, bytes([64]))
+command("eop", 140)
+post_offset = len(data)
+command("post", 248, bop_offset.to_bytes(4, "big", signed=True)
+        + (25400000).to_bytes(4, "big") + (473628672).to_bytes(4, "big")
+        + (1000).to_bytes(4, "big") + (10000).to_bytes(4, "big")
+        + (20000).to_bytes(4, "big") + bytes([0, 1, 0, 1]))
+command("post_post", 249, post_offset.to_bytes(4, "big", signed=True)
+        + bytes([2]))
+data.extend(bytes([223, 223, 223, 223]))
+
+expected = bytes(data)
+(root / "expected.dvi").write_bytes(expected)
+
+def mutation(name, offset, replacement, replaced=None):
+    changed = bytearray(expected)
+    if replaced is None:
+        replaced = len(replacement)
+    changed[offset:offset + replaced] = replacement
+    (root / f"{name}.dvi").write_bytes(changed)
+
+operand = locations["movement"] + 1
+for name, delta in (("allow-plus-64", 64), ("allow-minus-64", -64)):
+    changed = bytearray(expected)
+    for movement_name, width, value in movement_commands:
+        start = locations[movement_name] + 1
+        changed[start:start + width] = signed(value + delta, width)
+    (root / f"{name}.dvi").write_bytes(changed)
+mutation("reject-plus-65", operand, signed(1065, 2))
+mutation("reject-movement-opcode", locations["movement"], bytes([149]))
+mutation("reject-movement-width", locations["movement"],
+         bytes([145]) + signed(1000, 3), replaced=3)
+mutation("reject-character", locations["character"], bytes([66]))
+mutation("reject-set-operand", locations["set_operand"] + 1, bytes([201]))
+mutation("reject-rule", locations["rule"] + 4, bytes([11]))
+mutation("reject-special", locations["special"] + 3, b"d")
+mutation("reject-font-definition", locations["font_definition"] + 2,
+         (1235).to_bytes(4, "big"))
+mutation("reject-font-selection", locations["font_selection"] + 1, bytes([65]))
+mutation("reject-page-structure", locations["eop"], bytes([138]))
+mutation("reject-bop-pointer", locations["bop"] + 41, signed(-2, 4))
+mutation("reject-post-pointer", locations["post"] + 1,
+         (bop_offset + 1).to_bytes(4, "big", signed=True))
+mutation("reject-post-dimension", locations["post"] + 21,
+         (20001).to_bytes(4, "big"))
+mutation("reject-post-post-pointer", locations["post_post"] + 1,
+         (post_offset + 1).to_bytes(4, "big", signed=True))
 PY
-  reconcile_dvi_rounding "${dir}/expected.dvi" "${dir}/actual.dvi" "${dir}/reconciled.dvi"
-  if compare_dvi "self-test-dvi-character-perturbation" "${dir}/expected.dvi" "${dir}/reconciled.dvi"; then
-    fail "DVI character perturbation unexpectedly passed constrained reconciliation"
-  fi
-  local dvi_diff="${diff_dir}/self-test-dvi-character-perturbation.diff"
-  [[ -s "$dvi_diff" ]] || fail "DVI perturbation did not write byte context"
-  grep -q '^first_divergent_byte_offset: ' "$dvi_diff" || fail "DVI perturbation did not identify the divergent byte"
-  grep -q '^expected_page: 1$' "$dvi_diff" || fail "DVI perturbation did not identify the divergent page"
-  grep -q '^expected_opcode: set_char_65 ' "$dvi_diff" || fail "DVI perturbation did not identify the expected opcode"
-  grep -q '^actual_opcode: set_char_66 ' "$dvi_diff" || fail "DVI perturbation did not identify the actual opcode"
+
+  local allowance
+  for allowance in allow-plus-64 allow-minus-64; do
+    reconcile_dvi_rounding "${dir}/expected.dvi" "${dir}/${allowance}.dvi" "${dir}/${allowance}.reconciled.dvi"
+    compare_dvi "self-test-dvi-${allowance}" "${dir}/expected.dvi" "${dir}/${allowance}.reconciled.dvi" \
+      || fail "DVI ${allowance} movement unexpectedly failed constrained reconciliation"
+  done
+
+  assert_dvi_self_test_rejection() {
+    local case_name="$1" expected_opcode="$2" actual_opcode="${3:-$2}"
+    local label="self-test-dvi-${case_name}"
+    local reconciled="${dir}/${case_name}.reconciled.dvi"
+    reconcile_dvi_rounding "${dir}/expected.dvi" "${dir}/${case_name}.dvi" "$reconciled"
+    if compare_dvi "$label" "${dir}/expected.dvi" "$reconciled"; then
+      fail "DVI ${case_name} perturbation unexpectedly passed constrained reconciliation"
+    fi
+    local diff_path="${diff_dir}/${label}.diff"
+    [[ -s "$diff_path" ]] || fail "DVI ${case_name} rejection did not write byte context"
+    grep -q '^first_divergent_byte_offset: ' "$diff_path" || fail "DVI ${case_name} rejection did not identify the divergent byte"
+    grep -q '^expected_page: ' "$diff_path" || fail "DVI ${case_name} rejection did not identify page context"
+    grep -q "^expected_opcode: ${expected_opcode} " "$diff_path" || fail "DVI ${case_name} rejection did not identify expected opcode ${expected_opcode}"
+    grep -q "^actual_opcode: ${actual_opcode} " "$diff_path" || fail "DVI ${case_name} rejection did not identify actual opcode ${actual_opcode}"
+    grep -q '^expected_context_hex\[' "$diff_path" || fail "DVI ${case_name} rejection omitted expected byte context"
+    grep -q '^actual_context_hex\[' "$diff_path" || fail "DVI ${case_name} rejection omitted actual byte context"
+  }
+
+  assert_dvi_self_test_rejection reject-plus-65 right2
+  assert_dvi_self_test_rejection reject-movement-opcode right2 w2
+  assert_dvi_self_test_rejection reject-movement-width right2 right3
+  assert_dvi_self_test_rejection reject-character set_char_65 set_char_66
+  assert_dvi_self_test_rejection reject-set-operand set1
+  assert_dvi_self_test_rejection reject-rule set_rule
+  assert_dvi_self_test_rejection reject-special xxx1
+  assert_dvi_self_test_rejection reject-font-definition fnt_def1
+  assert_dvi_self_test_rejection reject-font-selection fnt1
+  assert_dvi_self_test_rejection reject-page-structure eop nop
+  assert_dvi_self_test_rejection reject-bop-pointer bop
+  assert_dvi_self_test_rejection reject-post-pointer post
+  assert_dvi_self_test_rejection reject-post-dimension post
+  assert_dvi_self_test_rejection reject-post-post-pointer post_post
+
+  local dvi_diff="${diff_dir}/self-test-dvi-reject-character.diff"
+
+  cat > "${dir}/expected.typ" <<'EOF'
+100: right2 1000 h:=1000
+101: setchar65 h:=1000
+EOF
+  assert_typ_self_test_allowance() {
+    local case_name="$1" movement="$2"
+    printf '100: right2 %s h:=1000\n101: setchar65 h:=1000\n' "$movement" > "${dir}/${case_name}.typ"
+    reconcile_trip_typ_rounding "${dir}/expected.typ" "${dir}/${case_name}.typ" "${dir}/${case_name}.reconciled.typ"
+    compare_text "self-test-typ-${case_name}" "${dir}/expected.typ" "${dir}/${case_name}.reconciled.typ" \
+      || fail "DVItype ${case_name} movement unexpectedly failed constrained reconciliation"
+  }
+  assert_typ_self_test_allowance allow-plus-64 1064
+  assert_typ_self_test_allowance allow-minus-64 936
+
+  assert_typ_self_test_rejection() {
+    local case_name="$1" first_line="$2" required_context="$3"
+    printf '%s\n101: setchar65 h:=1000\n' "$first_line" > "${dir}/${case_name}.typ"
+    reconcile_trip_typ_rounding "${dir}/expected.typ" "${dir}/${case_name}.typ" "${dir}/${case_name}.reconciled.typ"
+    local label="self-test-typ-${case_name}"
+    if compare_text "$label" "${dir}/expected.typ" "${dir}/${case_name}.reconciled.typ"; then
+      fail "DVItype ${case_name} perturbation unexpectedly passed constrained reconciliation"
+    fi
+    local diff_path="${diff_dir}/${label}.diff"
+    grep -q '^@@ ' "$diff_path" || fail "DVItype ${case_name} rejection omitted line context"
+    grep -q -- "$required_context" "$diff_path" || fail "DVItype ${case_name} rejection omitted command context"
+  }
+  assert_typ_self_test_rejection reject-plus-65 '100: right2 1065 h:=1000' 'right2 1065'
+  assert_typ_self_test_rejection reject-opcode '100: w2 1000 h:=1000' 'w2 1000'
+  assert_typ_self_test_rejection reject-offset '102: right2 1000 h:=1000' '102: right2'
+  assert_typ_self_test_rejection reject-context '100: right2 1000 h:=1001' 'h:=1001'
+  assert_typ_self_test_rejection reject-non-movement '100: setchar66 h:=1000' 'setchar66'
 
   # Retained diagnostic work must not be mistaken for output from the current
   # Appendix A producers. Exercise both the intentional-error engine policy
@@ -778,7 +922,7 @@ PY
   [[ ! -e "${stale_dir}/trip.typ" ]] || fail "stale DVItype artifact survived producer staging"
   local tool_diff="${diff_dir}/self-test-stale-dvitype.diff"
   grep -q 'producer exited with status 1' "$tool_diff" || fail "DVItype exit failure was not actionable"
-  printf 'self-test passed; actionable DVI perturbation diff is %s\n' "$dvi_diff" >&2
+  printf 'self-test passed; movement boundary and rejection matrix exercised; representative actionable DVI diff is %s\n' "$dvi_diff" >&2
 }
 
 case "$mode" in

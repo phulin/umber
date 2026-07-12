@@ -19,9 +19,11 @@ TRIP phase, runs DVItype, and gates on the official DVItype and DVI artifacts.
 The generated `tripin.log`, `trip.log`, `trip.fot`, and `tripos.tex` remain in
 `target/trip/` for diagnosis, but their parity belongs to the diagnostic tier
 and does not affect this DVI milestone. The self-test does not fetch or run
-TeX; it perturbs a DVI character opcode and verifies that
-`target/trip/diffs/` identifies the divergent byte, page, and opcodes. It also
-seeds retained format, DVI, and DVItype outputs and proves that failing
+TeX. It uses deterministic synthetic DVI and DVItype streams to prove both
+signs of the exact 64sp movement allowance, reject 65sp and structural or
+semantic changes across the DVI command classes, and verify that each
+rejection reports byte, page, opcode, and surrounding context as appropriate.
+It also seeds retained format, DVI, and DVItype outputs and proves that failing
 producers cannot reuse them.
 
 `--keep-work` retains diagnostic transcripts and diffs, but never a generated
@@ -112,10 +114,13 @@ The harness applies only these normalizations:
 
 No other DVItype or DVI bytes may change. Any mismatch writes a diff or
 byte/page/opcode context under `target/trip/diffs/`. `scripts/trip.sh
-self-test` deliberately changes a DVI character opcode and requires an
-actionable failure, proving that the structured rounding allowance cannot
-conceal character output changes. Diagnostic text normalization and parity are
-owned separately and are intentionally absent from this harness.
+self-test` exercises the allowance boundary and adversarially changes movement
+encoding, characters, rules, specials, fonts, page
+structure/pointers/dimensions, and non-movement operands. Parallel DVItype
+cases prove that opcode, byte offset, and surrounding text must remain exact.
+Every rejected DVI case must retain actionable byte/page/opcode context.
+Diagnostic text normalization and parity are owned separately and are
+intentionally absent from this harness.
 
 ## Current Divergence Policy
 

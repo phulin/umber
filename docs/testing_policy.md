@@ -244,9 +244,10 @@ rendering, and DVI movement deltas no larger than 64 scaled points with
 identical structure. Characters, rules, specials, box dimensions, page/font
 structure, non-movement DVI operands, and all other DVItype text must match
 exactly. Failures write byte/page/opcode context or unified diffs under
-`target/trip/diffs/`; `scripts/trip.sh self-test` deliberately perturbs a DVI
-character opcode and verifies that this path is actionable without fetching or
-running TeX.
+`target/trip/diffs/`; `scripts/trip.sh self-test` uses synthetic DVI and
+DVItype streams to prove the exact 64sp boundary and reject representative
+opcode/width, character, rule, special, font, page/pointer/dimension, and
+non-movement changes actionably without fetching or running TeX.
 See [trip.md](trip.md) for the exact source pins and normalization policy.
 
 `tex-out` also owns the cross-crate page-output float guard. Its unit tests
