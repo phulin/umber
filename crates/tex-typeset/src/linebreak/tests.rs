@@ -636,7 +636,7 @@ fn existing_discretionary_is_available_on_the_pretolerance_pass() {
             post: empty,
             replace: empty,
         },
-        kern(20),
+        rule(20),
         Node::Penalty(10_000),
         Node::Glue {
             spec: par_fill,
@@ -664,7 +664,7 @@ fn final_hyphen_demerits_apply_to_penultimate_hyphenated_line() {
             post: empty,
             replace: empty,
         },
-        kern(20),
+        rule(20),
     ];
     let mut base = params(20);
     base.pretolerance = -1;
