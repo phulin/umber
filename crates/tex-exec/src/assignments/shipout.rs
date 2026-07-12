@@ -20,7 +20,6 @@ use tex_state::node::{
     KernKind as StateKernKind, LeaderPayload as StateLeaderPayload, Node, Sign, Whatsit,
 };
 use tex_state::node_arena::NodeRef;
-use tex_state::page::PageInteger;
 use tex_state::token::{Catcode, Token, TracedTokenWord};
 use tex_state::{ContentHash, EffectRecord, PrintSink, Universe};
 
@@ -62,7 +61,26 @@ where
         return Ok(None);
     }
     let mut transaction = stores.begin_shipout();
-    let stores = &mut *transaction;
+    let staged = stage_shipout(node, input, &mut transaction, recorder)?;
+    let hash = transaction.commit(&staged.artifact_bytes, staged.effect_pos)?;
+    Ok(Some(hash))
+}
+
+struct StagedShipout {
+    artifact_bytes: Vec<u8>,
+    effect_pos: tex_state::EffectPos,
+}
+
+fn stage_shipout<S, R>(
+    node: Node,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    recorder: &mut R,
+) -> Result<StagedShipout, ExecError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+{
     let pending_effects = pending_page_effects(stores.world().effect_records());
     let counts = page_counts(stores);
     let (mag, diagnostic) = stores.prepare_mag();
@@ -94,13 +112,14 @@ where
         root,
         effects,
     };
-    let bytes = artifact.to_bytes();
+    let artifact_bytes = artifact.to_bytes();
     let input_summary = input.publication_summary(stores);
     stores.set_input_summary(input_summary);
     let effect_pos = stores.world().effect_pos();
-    stores.set_page_integer(PageInteger::DeadCycles, 0);
-    let hash = transaction.commit(&bytes, effect_pos)?;
-    Ok(Some(hash))
+    Ok(StagedShipout {
+        artifact_bytes,
+        effect_pos,
+    })
 }
 
 fn huge_shipout_box(node: &Node, stores: &Universe) -> bool {

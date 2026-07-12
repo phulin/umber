@@ -932,6 +932,9 @@ fn mid_alignment_snapshot_rollback_restores_summary_and_unset_rows() {
 fn shipout_rejects_unset_alignment_nodes() {
     let mut stores = Universe::new();
     let unset = unset_for_test(&mut stores, UnsetKind::HBox, &[], 1);
+    let state_before = stores.testing_state_hash();
+    let nodes_before = stores.testing_epoch_node_count();
+    let effects_before = stores.world().effect_records().to_vec();
     let mut shipout_input = InputStack::new(MemoryInput::new(""));
     let err =
         crate::assignments::shipout_node(unset, &mut shipout_input, &mut stores, &mut NoopRecorder)
@@ -941,6 +944,10 @@ fn shipout_rejects_unset_alignment_nodes() {
         err.to_string(),
         "shipout artifact lowering does not support unset alignment nodes yet"
     );
+    assert_eq!(stores.testing_state_hash(), state_before);
+    assert_eq!(stores.testing_epoch_node_count(), nodes_before);
+    assert_eq!(stores.world().effect_records(), effects_before);
+    assert!(stores.world().artifact_commits().is_empty());
 }
 
 #[test]

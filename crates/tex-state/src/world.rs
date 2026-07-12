@@ -16,6 +16,7 @@ use std::fs::OpenOptions;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// TeX's 16 read/write stream slots.
@@ -862,6 +863,7 @@ impl World {
     /// deterministic artifact bytes first, then ask `World` to materialize the
     /// content-addressed object in the configured artifact store.
     pub(crate) fn store_artifact(&mut self, bytes: &[u8]) -> Result<ContentHash, WorldError> {
+        static NEXT_TEMP_ARTIFACT: AtomicU64 = AtomicU64::new(0);
         let hash = ContentHash::from_bytes(bytes);
         match &mut self.backend {
             WorldBackend::Real { artifact_dir } => {
@@ -874,9 +876,32 @@ impl World {
                 })?;
                 let path = artifact_dir.join(hash.hex());
                 if !path.exists() {
-                    std::fs::write(&path, bytes).map_err(|err| {
-                        WorldError::new("write artifact", Some(path), err.to_string())
-                    })?;
+                    let nonce = NEXT_TEMP_ARTIFACT.fetch_add(1, Ordering::Relaxed);
+                    let temporary = artifact_dir.join(format!(
+                        ".{}.{}.{}.tmp",
+                        hash.hex(),
+                        std::process::id(),
+                        nonce
+                    ));
+                    let write_result = (|| {
+                        let mut file = OpenOptions::new()
+                            .write(true)
+                            .create_new(true)
+                            .open(&temporary)?;
+                        file.write_all(bytes)?;
+                        file.sync_all()?;
+                        std::fs::rename(&temporary, &path)
+                    })();
+                    if let Err(err) = write_result {
+                        let _ = std::fs::remove_file(&temporary);
+                        if !path.exists() {
+                            return Err(WorldError::new(
+                                "write artifact",
+                                Some(path),
+                                err.to_string(),
+                            ));
+                        }
+                    }
                 }
             }
             WorldBackend::Memory(memory) => {

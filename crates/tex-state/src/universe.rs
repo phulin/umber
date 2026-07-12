@@ -266,7 +266,19 @@ pub struct Snapshot {
 pub struct ShipoutTransaction<'a> {
     universe: &'a mut Universe,
     node_mark: ShipoutNodeMark,
+    rollback: Option<ScopedRollback>,
     finished: bool,
+}
+
+#[derive(Debug)]
+struct ScopedRollback {
+    owner: SnapshotOwner,
+    store: StoreSnapshot,
+    world: WorldSnapshot,
+    input_summary: InputSummary,
+    interaction_mode: InteractionMode,
+    page: PageBuilderState,
+    state_hash_base: StateHashBase,
 }
 
 /// Opaque allocation mark for one in-progress box-register construction.
@@ -296,7 +308,11 @@ impl std::ops::DerefMut for ShipoutTransaction<'_> {
 impl Drop for ShipoutTransaction<'_> {
     fn drop(&mut self) {
         if !self.finished {
-            self.universe.stores.release_shipout_nodes(self.node_mark);
+            let rollback = self
+                .rollback
+                .take()
+                .expect("unfinished shipout transaction retains rollback roots");
+            self.universe.rollback_scoped(rollback);
         }
     }
 }
@@ -333,12 +349,18 @@ impl ShipoutTransaction<'_> {
         let hash = self.world.store_artifact(artifact_bytes)?;
         if let Err(err) = self.world.commit_effects(effect_pos) {
             self.state_hash_base = self.retarget_hash_base_after_committed_boundary(hash_base);
+            let node_mark = self.node_mark;
+            self.stores.release_shipout_nodes(node_mark);
+            self.rollback = None;
+            self.finished = true;
             return Err(err);
         }
         let node_mark = self.node_mark;
         self.stores.release_shipout_nodes(node_mark);
         self.state_hash_base = self.retarget_hash_base_after_committed_boundary(hash_base);
+        self.page.set_integer(PageInteger::DeadCycles, 0);
         self.world.record_artifact_commit(hash);
+        self.rollback = None;
         self.finished = true;
         Ok(hash)
     }
@@ -651,6 +673,33 @@ impl Universe {
         self.checkpoint_from_hash_base(self.state_hash_base.clone())
     }
 
+    fn capture_scoped_rollback(&mut self) -> ScopedRollback {
+        ScopedRollback {
+            owner: self.owner.snapshot_owner(),
+            store: self.stores.checkpoint(),
+            world: self.world.snapshot(),
+            input_summary: self.input_summary.clone(),
+            interaction_mode: self.interaction_mode,
+            page: self.page.clone(),
+            state_hash_base: self.state_hash_base.clone(),
+        }
+    }
+
+    fn rollback_scoped(&mut self, rollback: ScopedRollback) {
+        assert_eq!(
+            rollback.owner,
+            self.owner.snapshot_owner(),
+            "scoped rollback belongs to a different Universe instance"
+        );
+        self.world.assert_snapshot_retained(&rollback.world);
+        self.stores.rollback(&rollback.store);
+        self.world.rollback(&rollback.world);
+        self.input_summary = rollback.input_summary;
+        self.interaction_mode = rollback.interaction_mode;
+        self.page = rollback.page;
+        self.state_hash_base = rollback.state_hash_base;
+    }
+
     fn checkpoint_from_hash_base(&mut self, hash_base: StateHashBase) -> Snapshot {
         let world = self.world.snapshot();
         let store = self.stores.checkpoint();
@@ -851,10 +900,12 @@ impl Universe {
     /// Marks the start of node allocations owned by one in-progress shipout.
     #[must_use]
     pub fn begin_shipout(&mut self) -> ShipoutTransaction<'_> {
+        let rollback = self.capture_scoped_rollback();
         let node_mark = self.stores.shipout_node_mark();
         ShipoutTransaction {
             universe: self,
             node_mark,
+            rollback: Some(rollback),
             finished: false,
         }
     }
