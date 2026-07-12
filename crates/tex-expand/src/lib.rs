@@ -862,6 +862,10 @@ where
     H: ExpansionHooks<S>,
 {
     loop {
+        if let Some(push) = resume_gullet_continuation(input, stores, recorder, hooks)? {
+            apply_dispatch_push(input, push);
+            continue;
+        }
         let read = match input.next_traced_expansion_token(stores) {
             Ok(Some(read)) => read,
             Ok(None) => return Ok(None),
@@ -1196,6 +1200,10 @@ where
     H: ExpansionHooks<S>,
 {
     loop {
+        if let Some(push) = resume_gullet_continuation(input, stores, recorder, hooks)? {
+            apply_dispatch_push(input, push);
+            continue;
+        }
         let read = match input.next_traced_expansion_token(stores) {
             Ok(Some(read)) => read,
             Ok(None) => return Ok(None),
@@ -1259,6 +1267,59 @@ where
                 return Ok(Some(token));
             }
             push @ Dispatch::Push { .. } => apply_dispatch_push(input, push),
+        }
+    }
+}
+
+fn resume_gullet_continuation<S, R, H>(
+    input: &mut InputStack<S>,
+    stores: &mut impl ExpansionState,
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<Option<Dispatch>, ExpandError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    let Some(continuation) = input.current_gullet_continuation().cloned() else {
+        return Ok(None);
+    };
+    match continuation {
+        tex_lex::GulletContinuationSummary::CsName { context, .. } => {
+            let call_origin = context.origin();
+            let name = primitives::resume_csname(input, stores, recorder, hooks)?;
+            let symbol = stores.intern_relaxed_control_sequence(&name);
+            Ok(Some(Dispatch::Push {
+                replay_kind: ExpansionReplayKind::Inserted,
+                token_list: stores.intern_token_list(&[Token::Cs(symbol.symbol())]),
+                origin_list: synthesized_origin_list(
+                    stores,
+                    1,
+                    call_origin,
+                    SynthesizedOriginKind::Expansion,
+                ),
+                macro_arguments: MacroArguments::new(),
+                macro_invocation: OriginId::UNKNOWN,
+            }))
+        }
+        tex_lex::GulletContinuationSummary::MacroCall(_) => {
+            let completed = args::resume_macro_call(input, stores, recorder)?;
+            let meaning = stores.macro_definition(completed.definition);
+            let provenance = stores.macro_definition_provenance(completed.definition);
+            let call_origin = completed.call_context.origin();
+            Ok(Some(Dispatch::Push {
+                replay_kind: ExpansionReplayKind::MacroBody,
+                token_list: meaning.replacement_text(),
+                origin_list: provenance.replacement_origins(),
+                macro_arguments: completed.arguments.as_macro_arguments(),
+                macro_invocation: stores.macro_invocation_origin(
+                    completed.definition,
+                    call_origin,
+                    provenance.definition_origin(),
+                    input.active_macro_invocation(),
+                ),
+            }))
         }
     }
 }

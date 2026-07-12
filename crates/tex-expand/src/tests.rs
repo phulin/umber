@@ -655,6 +655,123 @@ fn csname_interns_undefined_name_and_assigns_relax() {
 }
 
 #[test]
+fn restored_csname_continuation_finishes_before_ordinary_expansion() {
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("b\\endcsname "));
+    input.push_gullet_continuation(tex_lex::GulletContinuationSummary::CsName {
+        name: "a".to_owned(),
+        context: TracedTokenWord::pack(
+            Token::Cs(stores.intern("csname").symbol()),
+            OriginId::UNKNOWN,
+        ),
+    });
+    let summary = input.summary();
+    let mut restored = InputStack::from_summary(&summary, |_, _, _| {
+        Ok::<_, ()>(MemoryInput::new("b\\endcsname "))
+    })
+    .expect("csname continuation restores");
+
+    let delivered = crate::get_x_token(&mut restored, &mut stores)
+        .expect("restored csname resumes")
+        .expect("restored csname delivers its control sequence");
+    let Token::Cs(symbol) = crate::semantic_token(delivered) else {
+        panic!("csname must deliver a control sequence");
+    };
+    assert_eq!(stores.resolve(symbol), "ab");
+    assert!(restored.current_gullet_continuation().is_none());
+}
+
+#[test]
+fn restored_macro_argument_group_continuation_finishes_invocation() {
+    let mut stores = Universe::new();
+    stores.set_int_param(tex_state::env::banks::IntParam::END_LINE_CHAR, -1);
+    let macro_cs = stores.intern("m");
+    let params = stores.intern_token_list(&[Token::Param(1)]);
+    let body = stores.intern_token_list(&[Token::Param(1)]);
+    stores.set_macro_meaning(
+        macro_cs,
+        MacroMeaning::new(MeaningFlags::EMPTY, params, body),
+    );
+    let Meaning::Macro { definition, .. } = stores.meaning(macro_cs.symbol()) else {
+        panic!("macro definition must be installed");
+    };
+    let context = TracedTokenWord::pack(Token::Cs(macro_cs.symbol()), OriginId::UNKNOWN);
+    let traced = |token| TracedTokenWord::pack(token, OriginId::UNKNOWN);
+    let mut input = InputStack::new(MemoryInput::new("b}"));
+    input.push_gullet_continuation(tex_lex::GulletContinuationSummary::MacroCall(
+        tex_state::MacroCallContinuationSummary {
+            definition,
+            call_context: context,
+            matched: Vec::new(),
+            phase: tex_state::MacroCallPhaseSummary::UndelimitedGroup {
+                spec_index: 0,
+                level: 1,
+                tokens: vec![traced(char_token('a'))],
+            },
+        },
+    ));
+    let summary = input.publication_summary(&mut stores);
+    stores.set_input_summary(summary.clone());
+    let mut restored =
+        InputStack::from_summary(&summary, |_, _, _| Ok::<_, ()>(MemoryInput::new("b}")))
+            .expect("macro argument continuation restores");
+
+    assert_eq!(next_expanded_chars(&mut restored, &mut stores), "ab");
+    assert!(restored.current_gullet_continuation().is_none());
+}
+
+#[test]
+fn restored_macro_delimiter_candidate_continuation_preserves_overlap_state() {
+    let mut stores = Universe::new();
+    stores.set_int_param(tex_state::env::banks::IntParam::END_LINE_CHAR, -1);
+    let macro_cs = stores.intern("m");
+    let params = stores.intern_token_list(&[
+        Token::Param(1),
+        char_token('a'),
+        char_token('b'),
+        char_token('a'),
+    ]);
+    let body = stores.intern_token_list(&[Token::Param(1)]);
+    stores.set_macro_meaning(
+        macro_cs,
+        MacroMeaning::new(MeaningFlags::EMPTY, params, body),
+    );
+    let Meaning::Macro { definition, .. } = stores.meaning(macro_cs.symbol()) else {
+        panic!("macro definition must be installed");
+    };
+    let context = TracedTokenWord::pack(Token::Cs(macro_cs.symbol()), OriginId::UNKNOWN);
+    let pending = |ch| tex_state::PendingMacroTokenSummary {
+        token: TracedTokenWord::pack(char_token(ch), OriginId::UNKNOWN),
+        allow_par: false,
+    };
+    let mut input = InputStack::new(MemoryInput::new("a"));
+    input.push_gullet_continuation(tex_lex::GulletContinuationSummary::MacroCall(
+        tex_state::MacroCallContinuationSummary {
+            definition,
+            call_context: context,
+            matched: Vec::new(),
+            phase: tex_state::MacroCallPhaseSummary::DelimiterCandidate {
+                spec_index: 0,
+                level: 0,
+                argument: vec![pending('x').token],
+                pending: Vec::new(),
+                candidate: vec![pending('a'), pending('b')],
+                next_delimiter_index: 2,
+            },
+        },
+    ));
+    let summary = input.publication_summary(&mut stores);
+    stores.set_input_summary(summary.clone());
+    let mut restored =
+        InputStack::from_summary(&summary, |_, _, _| Ok::<_, ()>(MemoryInput::new("a")))
+            .expect("delimiter continuation restores");
+
+    assert_eq!(next_expanded_chars(&mut restored, &mut stores), "x");
+    assert!(restored.current_gullet_continuation().is_none());
+}
+
+#[test]
 fn csname_expands_name_pieces_before_interning() {
     let mut stores = Universe::new();
     let (csname, endcsname) = csname_primitives(&mut stores);
