@@ -78,6 +78,29 @@ pub(crate) struct CodeTablesSnapshot {
     global_writes: GlobalWriteHistory,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct CodeTablesSemanticCursor {
+    catcodes: Arc<Root<Catcode>>,
+    lccodes: Arc<Root<LcCode>>,
+    uccodes: Arc<Root<UcCode>>,
+    sfcodes: Arc<Root<SfCode>>,
+    mathcodes: Arc<Root<MathCode>>,
+    delcodes: Arc<Root<DelCode>>,
+}
+
+impl PartialEq for CodeTablesSemanticCursor {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.catcodes, &other.catcodes)
+            && Arc::ptr_eq(&self.lccodes, &other.lccodes)
+            && Arc::ptr_eq(&self.uccodes, &other.uccodes)
+            && Arc::ptr_eq(&self.sfcodes, &other.sfcodes)
+            && Arc::ptr_eq(&self.mathcodes, &other.mathcodes)
+            && Arc::ptr_eq(&self.delcodes, &other.delcodes)
+    }
+}
+
+impl Eq for CodeTablesSemanticCursor {}
+
 /// Structurally shared code-table roots saved at TeX group boundaries.
 #[derive(Clone, Debug)]
 struct CodeTableRoots {
@@ -180,6 +203,30 @@ impl CodeTables {
             delcodes: self.delcodes.checkpoint(),
             group_roots: Arc::clone(&self.group_roots),
             global_writes: self.global_writes.clone(),
+        }
+    }
+
+    pub(crate) fn semantic_cursor(&self) -> CodeTablesSemanticCursor {
+        CodeTablesSemanticCursor {
+            catcodes: Arc::clone(&self.catcodes.root),
+            lccodes: Arc::clone(&self.lccodes.root),
+            uccodes: Arc::clone(&self.uccodes.root),
+            sfcodes: Arc::clone(&self.sfcodes.root),
+            mathcodes: Arc::clone(&self.mathcodes.root),
+            delcodes: Arc::clone(&self.delcodes.root),
+        }
+    }
+
+    pub(crate) fn semantic_cursor_from_snapshot(
+        snapshot: &CodeTablesSnapshot,
+    ) -> CodeTablesSemanticCursor {
+        CodeTablesSemanticCursor {
+            catcodes: Arc::clone(&snapshot.catcodes.root),
+            lccodes: Arc::clone(&snapshot.lccodes.root),
+            uccodes: Arc::clone(&snapshot.uccodes.root),
+            sfcodes: Arc::clone(&snapshot.sfcodes.root),
+            mathcodes: Arc::clone(&snapshot.mathcodes.root),
+            delcodes: Arc::clone(&snapshot.delcodes.root),
         }
     }
 

@@ -1,6 +1,7 @@
 use super::{CheckpointResumeKind, FormatError, ResumeFallback, Universe};
 use crate::font::{MAX_FONT_DIMEN, NULL_FONT};
 use crate::glue::{GlueSpec, Order};
+use crate::hyphenation::{ExceptionSpec, PatternSpec};
 use crate::ids::{ArenaRef, NodeListId};
 use crate::input::{
     InputFrameSummary, InputSummary, LexerState, MacroArguments, SourceFrameSummary,
@@ -1614,6 +1615,61 @@ fn snapshot_state_hash_changes_for_rng_only_change() {
         unchanged.snapshot().state_hash(),
         changed.snapshot().state_hash()
     );
+}
+
+#[test]
+fn nonjournal_state_is_complete_in_hash_cursors() {
+    let mut first = Universe::new();
+    let mut second = Universe::new();
+    first.set_catcode('x', Catcode::Letter);
+    second.set_catcode('x', Catcode::Active);
+    assert_ne!(
+        first.snapshot().state_hash(),
+        second.snapshot().state_hash()
+    );
+
+    let mut first = Universe::new();
+    let mut second = Universe::new();
+    first.add_hyphenation_pattern(PatternSpec {
+        letters: "alpha".chars().collect(),
+        values: vec![0, 1, 0, 0, 0, 0],
+    });
+    second.add_hyphenation_exception(ExceptionSpec {
+        word: "alpha".to_owned(),
+        positions: vec![2],
+    });
+    assert_ne!(
+        first.snapshot().state_hash(),
+        second.snapshot().state_hash()
+    );
+
+    let mut first = Universe::new();
+    let mut second = Universe::new();
+    first.set_int_param(crate::env::banks::IntParam::MAG, 1000);
+    second.set_int_param(crate::env::banks::IntParam::MAG, 1200);
+    let _ = first.prepare_mag();
+    let _ = second.prepare_mag();
+    assert_ne!(
+        first.snapshot().state_hash(),
+        second.snapshot().state_hash()
+    );
+}
+
+#[test]
+fn already_interned_last_font_selection_changes_hash_semantically() {
+    let mut universe = Universe::new();
+    let first_font = test_font("first", b"first");
+    let second_font = test_font("second", b"second");
+    universe.intern_font(first_font.clone());
+    universe.intern_font(second_font.clone());
+    let baseline = universe.snapshot();
+
+    universe.intern_font(first_font);
+    let first = universe.snapshot().state_hash();
+    universe.rollback(&baseline);
+    universe.intern_font(second_font);
+
+    assert_ne!(universe.snapshot().state_hash(), first);
 }
 
 #[test]

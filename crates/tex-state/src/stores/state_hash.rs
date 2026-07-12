@@ -73,7 +73,22 @@ struct CachedCellHash {
 pub(crate) struct StoreStateHashCursor {
     owner: SnapshotOwner,
     journal_pos: crate::journal::JournalPos,
+    code_tables: crate::code_tables::CodeTablesSemanticCursor,
+    hyphenation_root: HyphenationSemanticCursor,
+    prepared_mag: Option<i32>,
+    last_loaded_font: FontSemanticKey,
 }
+
+#[derive(Clone, Debug)]
+struct HyphenationSemanticCursor(std::sync::Arc<crate::hyphenation::HyphenationTable>);
+
+impl PartialEq for HyphenationSemanticCursor {
+    fn eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for HyphenationSemanticCursor {}
 
 impl Stores {
     #[must_use]
@@ -81,16 +96,29 @@ impl Stores {
         StoreStateHashCursor {
             owner: self.owner.snapshot_owner(),
             journal_pos: self.env.current_journal_pos(),
+            code_tables: self.code_tables.semantic_cursor(),
+            hyphenation_root: HyphenationSemanticCursor(std::sync::Arc::clone(&self.hyphenation)),
+            prepared_mag: self.prepared_mag,
+            last_loaded_font: self.font_semantic_key(self.last_loaded_font),
         }
     }
 
     #[must_use]
     pub(crate) fn state_hash_cursor_from_snapshot(
+        &self,
         snapshot: &StoreSnapshot,
     ) -> StoreStateHashCursor {
         StoreStateHashCursor {
             owner: snapshot.owner,
             journal_pos: snapshot.env_snapshot.journal_pos(),
+            code_tables: crate::code_tables::CodeTables::semantic_cursor_from_snapshot(
+                &snapshot.code_tables_snapshot,
+            ),
+            hyphenation_root: HyphenationSemanticCursor(std::sync::Arc::clone(
+                &snapshot.hyphenation,
+            )),
+            prepared_mag: snapshot.prepared_mag,
+            last_loaded_font: self.font_semantic_key(snapshot.last_loaded_font),
         }
     }
 
@@ -106,6 +134,10 @@ impl Stores {
         StoreStateHashCursor {
             owner: self.owner.snapshot_owner(),
             journal_pos: cursor.journal_pos,
+            code_tables: cursor.code_tables.clone(),
+            hyphenation_root: cursor.hyphenation_root.clone(),
+            prepared_mag: cursor.prepared_mag,
+            last_loaded_font: cursor.last_loaded_font.clone(),
         }
     }
 
@@ -118,6 +150,10 @@ impl Stores {
         StoreStateHashCursor {
             owner: self.owner.snapshot_owner(),
             journal_pos: cursor.journal_pos,
+            code_tables: cursor.code_tables.clone(),
+            hyphenation_root: cursor.hyphenation_root.clone(),
+            prepared_mag: cursor.prepared_mag,
+            last_loaded_font: cursor.last_loaded_font.clone(),
         }
     }
 
@@ -135,6 +171,10 @@ impl Stores {
         StoreStateHashCursor {
             owner: self.owner.snapshot_owner(),
             journal_pos: cursor.journal_pos.min(current_journal_pos),
+            code_tables: cursor.code_tables.clone(),
+            hyphenation_root: cursor.hyphenation_root.clone(),
+            prepared_mag: cursor.prepared_mag,
+            last_loaded_font: cursor.last_loaded_font.clone(),
         }
     }
 
@@ -163,9 +203,10 @@ impl Stores {
         let mut cache = std::mem::take(&mut self.semantic_hash_cache);
         self.hash_journal_changed_cells(start, end, &mut cache, &mut hasher);
         self.semantic_hash_cache = cache;
-        self.hash_code_generations(&mut hasher);
+        self.hash_code_tables(&mut hasher);
         self.hyphenation.hash_semantic(&mut hasher);
         hash_prepared_mag(self.prepared_mag, &mut hasher);
+        hash_font_semantic_key(&self.font_semantic_key(self.last_loaded_font), &mut hasher);
         hasher.finish()
     }
 
@@ -1038,15 +1079,17 @@ impl Stores {
         }
     }
 
-    fn hash_code_generations(&self, hasher: &mut StateHasher) {
-        let generations = self.code_tables.generations();
+    fn hash_code_tables(&self, hasher: &mut StateHasher) {
         hasher.tag(0x20);
-        hasher.u32(generations.catcode);
-        hasher.u32(generations.lccode);
-        hasher.u32(generations.uccode);
-        hasher.u32(generations.sfcode);
-        hasher.u32(generations.mathcode);
-        hasher.u32(generations.delcode);
+        self.code_tables.for_each_non_default(|ch, values| {
+            hasher.u32(ch as u32);
+            hasher.u8(values.catcode as u8);
+            hasher.u32(values.lccode);
+            hasher.u32(values.uccode);
+            hasher.u16(values.sfcode);
+            hasher.u32(values.mathcode);
+            hasher.i32(values.delcode);
+        });
     }
 
     fn hash_node_tree_from_node(&self, node: Node, hasher: &mut StateHasher) {

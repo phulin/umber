@@ -748,7 +748,7 @@ impl Universe {
     fn checkpoint_from_hash_base(&mut self, hash_base: StateHashBase) -> Snapshot {
         let world = self.world.snapshot();
         let store = self.stores.checkpoint();
-        let store_cursor = Stores::state_hash_cursor_from_snapshot(&store);
+        let store_cursor = self.stores.state_hash_cursor_from_snapshot(&store);
         let world_cursor = World::state_hash_cursor_from_snapshot(&world);
         let state_hash = if hash_base.store == store_cursor
             && hash_base.world == world_cursor
