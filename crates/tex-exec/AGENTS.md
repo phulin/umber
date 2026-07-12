@@ -60,6 +60,8 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/tests/io.rs`: tests for input/output streams, reads, writes, immediate effects, and shipout effects.
 - `src/tests/math.rs`: tests for math-mode parsing, noad construction, scripts, fractions, choices, families, and mu material.
 - `src/tests/support.rs`: shared test helpers for seeded fonts, terminal output, and meaning lookup.
+- `tests/it.rs`: external-boundary compile-fail coverage for the public checkpoint API.
+- `tests/ui/hash_only_engine_restore_forbidden.rs`: compile-fail fixture proving hash-only observations cannot be supplied to restoration.
 - `src/vertical.rs`: vertical-list appends, baseline skip insertion, prevdepth, and list contribution helpers.
 
 ## Validation

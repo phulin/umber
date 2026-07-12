@@ -59,8 +59,11 @@ fn engine_checkpoint_restores_input_modes_and_universe_atomically() {
         .current_list_mut()
         .push(Node::Penalty(99));
     stores.set_count(3, 99);
+    let resume = checkpoint
+        .as_resume_valid()
+        .expect("top-level capture is resume-valid");
     executor
-        .restore_checkpoint(&mut input, &mut stores, &checkpoint, |_, _, _| {
+        .restore_checkpoint(&mut input, &mut stores, resume, |_, _, _| {
             Ok::<_, ()>(MemoryInput::new("abc"))
         })
         .expect("resume-valid aggregate checkpoint");
@@ -72,7 +75,7 @@ fn engine_checkpoint_restores_input_modes_and_universe_atomically() {
 }
 
 #[test]
-fn engine_checkpoint_hash_covers_mode_state_and_rejects_hash_only_restore() {
+fn engine_checkpoint_hash_covers_mode_state_and_types_hash_only_separately() {
     let mut stores = Universe::new();
     let mut input = InputStack::new(MemoryInput::new(""));
     let mut executor = Executor::new();
@@ -83,12 +86,8 @@ fn engine_checkpoint_hash_covers_mode_state_and_rejects_hash_only_restore() {
 
     let hash_only =
         stores.with_hash_only_checkpoints(|stores| executor.checkpoint(&mut input, stores));
-    let error = executor
-        .restore_checkpoint(&mut input, &mut stores, &hash_only, |_, _, _| {
-            Ok::<_, ()>(MemoryInput::new(""))
-        })
-        .expect_err("hash-only observation is not restartable");
-    assert!(matches!(error, EngineRestoreError::HashOnly));
+    assert!(matches!(hash_only, EngineCheckpoint::HashOnly(_)));
+    assert!(hash_only.as_resume_valid().is_none());
 }
 
 #[test]

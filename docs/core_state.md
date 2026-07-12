@@ -723,7 +723,10 @@ versions, never best-effort decoding of a newer graph.
 quiescent boundary or represented by a validated root in the checkpoint.
 `HashOnly` is an observation of buckets 1 and 2 for convergence; it is never a
 restart capability and carries only a fallback to a prior retained
-`ResumeValid` boundary.  Hashing includes every bucket-1 field and every
+`ResumeValid` boundary. The public aggregate capture type preserves that
+distinction structurally: only its `ResumeValidCheckpoint` variant payload is
+accepted by the restore API; a `HashOnlyObservation` cannot type-check there.
+Hashing includes every bucket-1 field and every
 behaviorally relevant bucket-2 field, follows handles to semantic content,
 and excludes bucket 3.  Thus equal hashes assert equal future behavior under
 the documented checkpoint schedule, independently of allocation order,

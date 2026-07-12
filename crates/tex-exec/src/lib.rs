@@ -23,7 +23,9 @@ mod splitting;
 mod vertical;
 
 pub use assignments::{install_unexpandable_primitives, try_execute_assignment};
-pub use checkpoint::{EngineCheckpoint, EngineRestoreError};
+pub use checkpoint::{
+    EngineCheckpoint, EngineRestoreError, HashOnlyObservation, ResumeValidCheckpoint,
+};
 pub use dispatch::{DispatchAction, ExecutionStats, dispatch_delivered_token};
 pub use error::ExecError;
 pub use executor::Executor;

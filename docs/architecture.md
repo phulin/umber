@@ -94,7 +94,10 @@ behavior and semantic hashes; the third is recomputed after restore and is
 excluded from equality, convergence, and durable formats.  A resume-valid
 checkpoint contains all continuation roots needed to restart.  A hash-only
 observation may be taken while a Rust-stack continuation remains hidden, but
-it cannot be presented as a restart point.  Format images are a separate
+it cannot be presented as a restart point: capture returns an
+`EngineCheckpoint` enum whose `ResumeValidCheckpoint` and
+`HashOnlyObservation` payload types are distinct, and restoration accepts only
+the former. Format images are a separate
 versioned DTO for validated quiescent state, not serialized engine
 checkpoints.
 
