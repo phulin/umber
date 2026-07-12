@@ -654,7 +654,7 @@ fn synthetic_page_journal_bytes() -> usize {
 
 fn synthetic_page_symbols(stores: &mut Universe) -> Vec<tex_state::interner::Symbol> {
     (0..PAGE_DISTINCT_CELLS)
-        .map(|index| stores.intern(&format!("page-cell-{index}")))
+        .map(|index| stores.intern(&format!("page-cell-{index}")).symbol())
         .collect()
 }
 
@@ -857,7 +857,7 @@ fn macro_heavy_case() -> (Universe, InputStack<MemoryInput>, ProvenanceStats) {
         MacroDefinitionProvenance::new(definition_origin, OriginListId::EMPTY, body_origins),
     );
 
-    let call_tokens = vec![Token::Cs(macro_cs); MACRO_CALLS];
+    let call_tokens = vec![Token::Cs(macro_cs.symbol()); MACRO_CALLS];
     let calls = stores.intern_token_list(&call_tokens);
     let call_origin = stores.source_origin(SourceId::new(1), 80, 2, 1);
     let call_origins = stores.allocate_repeated_origin_list(call_origin, call_tokens.len());
@@ -873,7 +873,7 @@ fn scanner_heavy_case() -> (Universe, InputStack<MemoryInput>, ProvenanceStats) 
     let number = stores.symbol("number").expect("number primitive");
     let mut tokens = Vec::with_capacity(SCANNER_REPETITIONS * 7);
     for _ in 0..SCANNER_REPETITIONS {
-        tokens.push(Token::Cs(number));
+        tokens.push(Token::Cs(number.symbol()));
         for digit in ['1', '2', '3', '4', '5'] {
             tokens.push(char_token(digit));
         }
@@ -890,7 +890,7 @@ fn generated_run_case() -> (Universe, InputStack<MemoryInput>, ProvenanceStats) 
         .expect("romannumeral primitive");
     let mut tokens = Vec::with_capacity(SCANNER_REPETITIONS * 6);
     for _ in 0..SCANNER_REPETITIONS {
-        tokens.push(Token::Cs(roman));
+        tokens.push(Token::Cs(roman.symbol()));
         for digit in ['3', '8', '8', '8'] {
             tokens.push(char_token(digit));
         }
