@@ -13,7 +13,9 @@ use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::scan_dimen::{
     DimensionDiagnostic, InsertedUnit, ScanDimenOptions, scan_dimen, scan_dimen_with_options,
+    scan_dimen_with_options_and_hooks,
 };
+use crate::{NoopExpansionHooks, ReadBank, ReadDependency, ReadSetRecorder};
 
 fn scan(input_text: &str) -> (i32, Option<DimensionDiagnostic>, Option<Token>) {
     let mut stores = Universe::new();
@@ -46,6 +48,38 @@ fn scan_coerced(input_text: &str) -> (i32, Option<DimensionDiagnostic>, Option<T
         .next_token(&mut stores)
         .expect("remaining token should lex");
     (scanned.value().raw(), scanned.diagnostic(), next)
+}
+
+#[test]
+fn dimension_scanner_records_typed_value_and_magnification_dependencies() {
+    let mut stores = Universe::new();
+    let dimen = stores.intern("measured");
+    stores.set_meaning(dimen, Meaning::DimenRegister(3));
+    stores.set_dimen(3, Scaled::from_raw(77));
+    let mut input = InputStack::new(MemoryInput::new("\\measured"));
+    let mut reads = ReadSetRecorder::default();
+
+    let scanned = scan_dimen_with_options_and_hooks(
+        &mut input,
+        &mut stores,
+        &mut reads,
+        &mut NoopExpansionHooks,
+        ScanDimenOptions::STANDARD,
+        context(),
+    )
+    .expect("internal dimension scan");
+
+    assert_eq!(scanned.value(), Scaled::from_raw(77));
+    let reads = reads.dependencies().collect::<Vec<_>>();
+    assert!(reads.contains(&ReadDependency::Meaning(dimen.symbol().raw())));
+    assert!(reads.contains(&ReadDependency::Cell {
+        bank: ReadBank::Dimen,
+        index: 3,
+    }));
+    assert!(reads.contains(&ReadDependency::Cell {
+        bank: ReadBank::Magnification,
+        index: 0,
+    }));
 }
 
 fn char_token(ch: char, cat: Catcode) -> Token {

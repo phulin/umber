@@ -1301,6 +1301,46 @@ fn the_renders_assignable_registers_parameters_and_code_tables() {
 }
 
 #[test]
+fn the_records_value_and_code_generation_dependencies_that_mutations_invalidate() {
+    let mut stores = Universe::new();
+    expandable_primitive(&mut stores, "the", ExpandablePrimitive::The);
+    let catcode = stores.intern("catcode");
+    stores.set_meaning(
+        catcode,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::CatCode),
+    );
+    let value = stores.intern("value");
+    stores.set_meaning(value, Meaning::CountRegister(7));
+    stores.set_count(7, 41);
+    let mut input = InputStack::new(MemoryInput::new("\\the\\value \\the\\catcode`x"));
+    let mut reads = crate::ReadSetRecorder::default();
+    while get_x_token_with_recorder(&mut input, &mut stores, &mut reads)
+        .expect("recorded expansion")
+        .is_some()
+    {}
+
+    let dependencies = reads.dependencies().collect::<Vec<_>>();
+    assert!(dependencies.contains(&crate::ReadDependency::Cell {
+        bank: crate::ReadBank::Count,
+        index: 7,
+    }));
+    assert!(
+        dependencies.contains(&crate::ReadDependency::CodeGeneration(
+            crate::ReadCodeTable::Catcode,
+        ))
+    );
+    assert!(dependencies.contains(&crate::ReadDependency::Code {
+        table: crate::ReadCodeTable::Catcode,
+        scalar: 'x' as u32,
+    }));
+
+    stores.set_count(7, 42);
+    stores.set_catcode('x', Catcode::Active);
+    assert_eq!(stores.count(7), 42);
+    assert_eq!(stores.catcode('x'), Catcode::Active);
+}
+
+#[test]
 fn number_scanner_preserves_driver_hooks_during_nested_expansion() {
     let mut stores = Universe::new();
     let number = expandable_primitive(&mut stores, "number", ExpandablePrimitive::Number);

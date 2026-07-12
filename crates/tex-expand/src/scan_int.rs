@@ -508,6 +508,7 @@ where
 {
     let meaning = stores.meaning(symbol);
     recorder.record_meaning(symbol, meaning);
+    crate::values::record_meaning_value_dependency(recorder, meaning);
     match meaning {
         Meaning::CharGiven(ch) => Ok(ScannedInt::new(ch as i32, token)),
         Meaning::MathCharGiven(value) => Ok(ScannedInt::new(i32::from(value), token)),
@@ -711,6 +712,8 @@ where
             )?;
             let value = match primitive {
                 tex_state::meaning::UnexpandablePrimitive::CatCode => {
+                    recorder
+                        .record_dependency(ReadDependency::CodeGeneration(ReadCodeTable::Catcode));
                     recorder.record_dependency(ReadDependency::Code {
                         table: ReadCodeTable::Catcode,
                         scalar: ch as u32,
@@ -718,6 +721,8 @@ where
                     stores.catcode(ch) as i32
                 }
                 tex_state::meaning::UnexpandablePrimitive::LcCode => {
+                    recorder
+                        .record_dependency(ReadDependency::CodeGeneration(ReadCodeTable::Lccode));
                     recorder.record_dependency(ReadDependency::Code {
                         table: ReadCodeTable::Lccode,
                         scalar: ch as u32,
@@ -725,6 +730,8 @@ where
                     stores.lccode(ch) as i32
                 }
                 tex_state::meaning::UnexpandablePrimitive::UcCode => {
+                    recorder
+                        .record_dependency(ReadDependency::CodeGeneration(ReadCodeTable::Uccode));
                     recorder.record_dependency(ReadDependency::Code {
                         table: ReadCodeTable::Uccode,
                         scalar: ch as u32,
@@ -732,6 +739,8 @@ where
                     stores.uccode(ch) as i32
                 }
                 tex_state::meaning::UnexpandablePrimitive::SfCode => {
+                    recorder
+                        .record_dependency(ReadDependency::CodeGeneration(ReadCodeTable::Sfcode));
                     recorder.record_dependency(ReadDependency::Code {
                         table: ReadCodeTable::Sfcode,
                         scalar: ch as u32,
@@ -739,6 +748,8 @@ where
                     stores.sfcode(ch) as i32
                 }
                 tex_state::meaning::UnexpandablePrimitive::MathCode => {
+                    recorder
+                        .record_dependency(ReadDependency::CodeGeneration(ReadCodeTable::Mathcode));
                     recorder.record_dependency(ReadDependency::Code {
                         table: ReadCodeTable::Mathcode,
                         scalar: ch as u32,
@@ -746,6 +757,8 @@ where
                     stores.mathcode(ch) as i32
                 }
                 tex_state::meaning::UnexpandablePrimitive::DelCode => {
+                    recorder
+                        .record_dependency(ReadDependency::CodeGeneration(ReadCodeTable::Delcode));
                     recorder.record_dependency(ReadDependency::Code {
                         table: ReadCodeTable::Delcode,
                         scalar: ch as u32,

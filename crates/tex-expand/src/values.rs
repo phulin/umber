@@ -11,7 +11,8 @@ use tex_state::{BoxDimension, ExpansionState};
 
 use crate::{
     Dispatch, ExpandError, ExpandNext, ExpandableOpcode, ExpansionHooks, ExpansionReplayKind,
-    NoInputExpandNext, ReadBank, ReadDependency, ReadRecorder, scan_helpers, scan_int,
+    NoInputExpandNext, ReadBank, ReadCodeTable, ReadDependency, ReadFontField, ReadRecorder,
+    scan_helpers, scan_int,
 };
 
 #[allow(dead_code)]
@@ -149,8 +150,18 @@ where
                 })
             }
             tex_state::meaning::UnexpandablePrimitive::Font => {
+                recorder.record_dependency(ReadDependency::Cell {
+                    bank: ReadBank::CurrentFont,
+                    index: 0,
+                });
+                let font = stores.current_font();
+                recorder.record_dependency(ReadDependency::Font {
+                    field: ReadFontField::Identifier,
+                    font: font.raw(),
+                    index: 0,
+                });
                 let symbol = stores
-                    .font_identifier_symbol(stores.current_font())
+                    .font_identifier_symbol(font)
                     .ok_or(ExpandError::UnsupportedTheTarget { context: token })?;
                 Ok(Dispatch::Push {
                     replay_kind: ExpansionReplayKind::TheOutput,
@@ -169,7 +180,17 @@ where
             | tex_state::meaning::UnexpandablePrimitive::ScriptFont
             | tex_state::meaning::UnexpandablePrimitive::ScriptScriptFont) => {
                 let family = scan_math_family(input, stores, recorder, hooks, expander, token)?;
-                let font = stores.math_family_font(math_font_size(primitive), family);
+                let size = math_font_size(primitive);
+                recorder.record_dependency(ReadDependency::Cell {
+                    bank: ReadBank::MathFamilyFont,
+                    index: u32::from(family) + 16 * u32::from(math_font_size_key(size)),
+                });
+                let font = stores.math_family_font(size, family);
+                recorder.record_dependency(ReadDependency::Font {
+                    field: ReadFontField::Identifier,
+                    font: font.raw(),
+                    index: 0,
+                });
                 let symbol = stores
                     .font_identifier_symbol(font)
                     .ok_or(ExpandError::UnsupportedTheTarget { context: token })?;
@@ -186,6 +207,11 @@ where
                 )?;
                 let number = scanned.value();
                 let font = scan_font_selector(input, stores, recorder, hooks, expander, token)?;
+                recorder.record_dependency(ReadDependency::Font {
+                    field: ReadFontField::ParameterCount,
+                    font: font.raw(),
+                    index: 0,
+                });
                 let available = stores.font_parameter_count(font);
                 let number = u16::try_from(number)
                     .ok()
@@ -193,10 +219,16 @@ where
                 // TeX.web §578 diagnoses an unavailable parameter but
                 // points at its zero-valued dummy font-info cell, so \the
                 // still expands to a usable dimension.
-                let value = number.map_or_else(
-                    || tex_state::scaled::Scaled::from_raw(0),
-                    |number| stores.font_dimen(font, number),
-                );
+                let value = if let Some(number) = number {
+                    recorder.record_dependency(ReadDependency::Font {
+                        field: ReadFontField::Parameter,
+                        font: font.raw(),
+                        index: number,
+                    });
+                    stores.font_dimen(font, number)
+                } else {
+                    tex_state::scaled::Scaled::from_raw(0)
+                };
                 Ok(push_rendered_text(
                     stores,
                     ExpansionReplayKind::TheOutput,
@@ -206,6 +238,11 @@ where
             }
             tex_state::meaning::UnexpandablePrimitive::HyphenChar => {
                 let font = scan_font_selector(input, stores, recorder, hooks, expander, token)?;
+                recorder.record_dependency(ReadDependency::Font {
+                    field: ReadFontField::HyphenChar,
+                    font: font.raw(),
+                    index: 0,
+                });
                 Ok(push_rendered_text(
                     stores,
                     ExpansionReplayKind::TheOutput,
@@ -215,6 +252,11 @@ where
             }
             tex_state::meaning::UnexpandablePrimitive::SkewChar => {
                 let font = scan_font_selector(input, stores, recorder, hooks, expander, token)?;
+                recorder.record_dependency(ReadDependency::Font {
+                    field: ReadFontField::SkewChar,
+                    font: font.raw(),
+                    index: 0,
+                });
                 Ok(push_rendered_text(
                     stores,
                     ExpansionReplayKind::TheOutput,
@@ -288,6 +330,7 @@ where
             | tex_state::meaning::UnexpandablePrimitive::MathCode
             | tex_state::meaning::UnexpandablePrimitive::DelCode => {
                 let ch = scan_code_table_char(input, stores, recorder, hooks, expander, token)?;
+                crate::record_code_dependency(recorder, code_table_key(primitive), ch);
                 let value = match primitive {
                     tex_state::meaning::UnexpandablePrimitive::CatCode => stores.catcode(ch) as i32,
                     tex_state::meaning::UnexpandablePrimitive::LcCode => stores.lccode(ch) as i32,
@@ -404,6 +447,10 @@ where
                 let index = scan_helpers::scan_register_index_with_expander_and_hooks(
                     input, stores, recorder, hooks, expander, token,
                 )?;
+                recorder.record_dependency(ReadDependency::Cell {
+                    bank: ReadBank::Count,
+                    index: u32::from(index),
+                });
                 Ok(push_rendered_text(
                     stores,
                     ExpansionReplayKind::TheOutput,
@@ -415,6 +462,10 @@ where
                 let index = scan_helpers::scan_register_index_with_expander_and_hooks(
                     input, stores, recorder, hooks, expander, token,
                 )?;
+                recorder.record_dependency(ReadDependency::Cell {
+                    bank: ReadBank::Dimen,
+                    index: u32::from(index),
+                });
                 Ok(push_rendered_text(
                     stores,
                     ExpansionReplayKind::TheOutput,
@@ -426,6 +477,10 @@ where
                 let index = scan_helpers::scan_register_index_with_expander_and_hooks(
                     input, stores, recorder, hooks, expander, token,
                 )?;
+                recorder.record_dependency(ReadDependency::Cell {
+                    bank: ReadBank::Toks,
+                    index: u32::from(index),
+                });
                 Ok(Dispatch::Push {
                     replay_kind: ExpansionReplayKind::TheOutput,
                     token_list: stores.toks(index),
@@ -434,24 +489,36 @@ where
                     macro_invocation: OriginId::UNKNOWN,
                 })
             }
-            "endlinechar" => Ok(push_rendered_text(
-                stores,
-                ExpansionReplayKind::TheOutput,
-                &stores.int_param(IntParam::END_LINE_CHAR).to_string(),
-                cause_origin,
-            )),
-            "escapechar" => Ok(push_rendered_text(
-                stores,
-                ExpansionReplayKind::TheOutput,
-                &stores.int_param(IntParam::ESCAPE_CHAR).to_string(),
-                cause_origin,
-            )),
+            "endlinechar" => {
+                recorder.record_dependency(ReadDependency::Cell {
+                    bank: ReadBank::IntParam,
+                    index: u32::from(IntParam::END_LINE_CHAR.raw()),
+                });
+                Ok(push_rendered_text(
+                    stores,
+                    ExpansionReplayKind::TheOutput,
+                    &stores.int_param(IntParam::END_LINE_CHAR).to_string(),
+                    cause_origin,
+                ))
+            }
+            "escapechar" => {
+                recorder.record_dependency(ReadDependency::Cell {
+                    bank: ReadBank::IntParam,
+                    index: u32::from(IntParam::ESCAPE_CHAR.raw()),
+                });
+                Ok(push_rendered_text(
+                    stores,
+                    ExpansionReplayKind::TheOutput,
+                    &stores.int_param(IntParam::ESCAPE_CHAR).to_string(),
+                    cause_origin,
+                ))
+            }
             _ => Err(ExpandError::UnsupportedTheTarget { context: token }),
         },
     }
 }
 
-fn record_meaning_value_dependency(recorder: &mut impl ReadRecorder, meaning: Meaning) {
+pub(crate) fn record_meaning_value_dependency(recorder: &mut impl ReadRecorder, meaning: Meaning) {
     let cell = match meaning {
         Meaning::CountRegister(index) => Some((ReadBank::Count, u32::from(index))),
         Meaning::DimenRegister(index) => Some((ReadBank::Dimen, u32::from(index))),
@@ -482,6 +549,27 @@ fn record_meaning_value_dependency(recorder: &mut impl ReadRecorder, meaning: Me
     };
     if let Some((bank, index)) = cell {
         recorder.record_dependency(ReadDependency::Cell { bank, index });
+    }
+}
+
+const fn code_table_key(primitive: tex_state::meaning::UnexpandablePrimitive) -> ReadCodeTable {
+    use tex_state::meaning::UnexpandablePrimitive as P;
+    match primitive {
+        P::CatCode => ReadCodeTable::Catcode,
+        P::LcCode => ReadCodeTable::Lccode,
+        P::UcCode => ReadCodeTable::Uccode,
+        P::SfCode => ReadCodeTable::Sfcode,
+        P::MathCode => ReadCodeTable::Mathcode,
+        P::DelCode => ReadCodeTable::Delcode,
+        _ => unreachable!(),
+    }
+}
+
+const fn math_font_size_key(size: MathFontSize) -> u8 {
+    match size {
+        MathFontSize::Text => 0,
+        MathFontSize::Script => 1,
+        MathFontSize::ScriptScript => 2,
     }
 }
 
@@ -848,9 +936,15 @@ where
     let Token::Cs(symbol) = semantic else {
         return Err(ExpandError::UnsupportedTheTarget { context: token });
     };
-    match stores.meaning(symbol) {
+    let meaning = stores.meaning(symbol);
+    recorder.record_meaning(symbol, meaning);
+    match meaning {
         Meaning::Font(id) => Ok(id),
         Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::Font) => {
+            recorder.record_dependency(ReadDependency::Cell {
+                bank: ReadBank::CurrentFont,
+                index: 0,
+            });
             Ok(stores.current_font())
         }
         Meaning::UnexpandablePrimitive(
@@ -859,7 +953,12 @@ where
             | tex_state::meaning::UnexpandablePrimitive::ScriptScriptFont),
         ) => {
             let family = scan_math_family(input, stores, recorder, hooks, expander, token)?;
-            Ok(stores.math_family_font(math_font_size(primitive), family))
+            let size = math_font_size(primitive);
+            recorder.record_dependency(ReadDependency::Cell {
+                bank: ReadBank::MathFamilyFont,
+                index: u32::from(family) + 16 * u32::from(math_font_size_key(size)),
+            });
+            Ok(stores.math_family_font(size, family))
         }
         _ => Err(ExpandError::MissingFontIdentifier { context: token }),
     }

@@ -136,6 +136,7 @@ pub enum ReadDependency {
         table: ReadCodeTable,
         scalar: u32,
     },
+    CodeGeneration(ReadCodeTable),
     Font {
         field: ReadFontField,
         font: u32,
@@ -143,7 +144,10 @@ pub enum ReadDependency {
     },
     PageDimension(u8),
     PageInteger(u8),
+    PageMark(u8),
     InputLine,
+    InputStream(u8),
+    Engine(ReadEngineField),
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -153,6 +157,7 @@ pub enum ReadBank {
     Skip,
     Muskip,
     Toks,
+    Box,
     IntParam,
     DimenParam,
     GlueParam,
@@ -161,6 +166,12 @@ pub enum ReadBank {
     MathFamilyFont,
     LastBadness,
     Magnification,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum ReadEngineField {
+    Mode,
+    InnerMode,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -176,6 +187,7 @@ pub enum ReadCodeTable {
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum ReadFontField {
     Identifier,
+    Name,
     Parameter,
     ParameterCount,
     HyphenChar,
@@ -199,6 +211,18 @@ impl ReadRecorder for ReadSetRecorder {
     fn record_dependency(&mut self, dependency: ReadDependency) {
         self.dependencies.insert(dependency);
     }
+}
+
+pub(crate) fn record_code_dependency(
+    recorder: &mut impl ReadRecorder,
+    table: ReadCodeTable,
+    ch: char,
+) {
+    recorder.record_dependency(ReadDependency::CodeGeneration(table));
+    recorder.record_dependency(ReadDependency::Code {
+        table,
+        scalar: ch as u32,
+    });
 }
 
 /// Read recorder used when expansion tracing/incremental read sets are off.

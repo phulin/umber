@@ -45,6 +45,16 @@ fn page_mark_for_primitive(primitive: ExpandablePrimitive) -> PageMark {
     }
 }
 
+const fn page_mark_key(mark: PageMark) -> u8 {
+    match mark {
+        PageMark::Top => 0,
+        PageMark::First => 1,
+        PageMark::Bot => 2,
+        PageMark::SplitFirst => 3,
+        PageMark::SplitBot => 4,
+    }
+}
+
 macro_rules! dispatch_match {
     ($token:ident, $call_origin:ident, $input:ident, $stores:ident, $recorder:ident, $hooks:ident, $meaning:ident, $expander:expr, $input_arm:block) => {{
         let token = $token;
@@ -129,6 +139,12 @@ macro_rules! dispatch_match {
                         context: call_context,
                     });
                 };
+                if matches!(crate::semantic_token(target), Token::Cs(_)) {
+                    recorder.record_dependency(crate::ReadDependency::Cell {
+                        bank: crate::ReadBank::IntParam,
+                        index: u32::from(tex_state::env::banks::IntParam::ESCAPE_CHAR.raw()),
+                    });
+                }
                 Ok(push_rendered_tokens(
                     stores,
                     ExpansionReplayKind::NumberOutput,
@@ -175,6 +191,15 @@ macro_rules! dispatch_match {
                         context: call_context,
                     });
                 };
+                if let Token::Cs(symbol) = crate::semantic_token(target) {
+                    let meaning = stores.meaning(symbol);
+                    recorder.record_meaning(symbol, meaning);
+                    crate::values::record_meaning_value_dependency(recorder, meaning);
+                }
+                recorder.record_dependency(crate::ReadDependency::Cell {
+                    bank: crate::ReadBank::IntParam,
+                    index: u32::from(tex_state::env::banks::IntParam::ESCAPE_CHAR.raw()),
+                });
                 Ok(push_rendered_text(
                     stores,
                     ExpansionReplayKind::NumberOutput,
@@ -212,6 +237,11 @@ macro_rules! dispatch_match {
                     &mut expander,
                     call_context,
                 )?;
+                recorder.record_dependency(crate::ReadDependency::Font {
+                    field: crate::ReadFontField::Name,
+                    font: font.raw(),
+                    index: 0,
+                });
                 Ok(push_rendered_text(
                     stores,
                     ExpansionReplayKind::NumberOutput,
@@ -225,13 +255,17 @@ macro_rules! dispatch_match {
                 | ExpandablePrimitive::BotMark
                 | ExpandablePrimitive::SplitFirstMark
                 | ExpandablePrimitive::SplitBotMark),
-            ) => Ok(Dispatch::Push {
-                replay_kind: ExpansionReplayKind::Mark,
-                token_list: stores.page_mark(page_mark_for_primitive(primitive)),
-                origin_list: tex_state::ids::OriginListId::EMPTY,
-                macro_arguments: MacroArguments::new(),
-                macro_invocation: OriginId::UNKNOWN,
-            }),
+            ) => {
+                let mark = page_mark_for_primitive(primitive);
+                recorder.record_dependency(crate::ReadDependency::PageMark(page_mark_key(mark)));
+                Ok(Dispatch::Push {
+                    replay_kind: ExpansionReplayKind::Mark,
+                    token_list: stores.page_mark(mark),
+                    origin_list: tex_state::ids::OriginListId::EMPTY,
+                    macro_arguments: MacroArguments::new(),
+                    macro_invocation: OriginId::UNKNOWN,
+                })
+            }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfTrue) => {
                 begin_if(input, stores, recorder, hooks, true, call_context)
             }
@@ -308,6 +342,12 @@ macro_rules! dispatch_match {
                         context: call_context,
                     });
                 };
+                for operand in [left, right] {
+                    if let Token::Cs(symbol) = operand {
+                        let meaning = stores.meaning(symbol);
+                        recorder.record_meaning(symbol, meaning);
+                    }
+                }
                 complete_if_evaluation(
                     input,
                     stores,
@@ -438,38 +478,55 @@ macro_rules! dispatch_match {
                     frame_token,
                 )
             }
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::IfVMode) => begin_if(
-                input,
-                stores,
-                recorder,
-                hooks,
-                hooks.mode() == EngineMode::Vertical,
-                call_context,
-            ),
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::IfHMode) => begin_if(
-                input,
-                stores,
-                recorder,
-                hooks,
-                hooks.mode() == EngineMode::Horizontal,
-                call_context,
-            ),
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::IfMMode) => begin_if(
-                input,
-                stores,
-                recorder,
-                hooks,
-                hooks.mode() == EngineMode::Math,
-                call_context,
-            ),
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::IfInner) => begin_if(
-                input,
-                stores,
-                recorder,
-                hooks,
-                hooks.is_inner_mode(),
-                call_context,
-            ),
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::IfVMode) => {
+                recorder
+                    .record_dependency(crate::ReadDependency::Engine(crate::ReadEngineField::Mode));
+                begin_if(
+                    input,
+                    stores,
+                    recorder,
+                    hooks,
+                    hooks.mode() == EngineMode::Vertical,
+                    call_context,
+                )
+            }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::IfHMode) => {
+                recorder
+                    .record_dependency(crate::ReadDependency::Engine(crate::ReadEngineField::Mode));
+                begin_if(
+                    input,
+                    stores,
+                    recorder,
+                    hooks,
+                    hooks.mode() == EngineMode::Horizontal,
+                    call_context,
+                )
+            }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::IfMMode) => {
+                recorder
+                    .record_dependency(crate::ReadDependency::Engine(crate::ReadEngineField::Mode));
+                begin_if(
+                    input,
+                    stores,
+                    recorder,
+                    hooks,
+                    hooks.mode() == EngineMode::Math,
+                    call_context,
+                )
+            }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::IfInner) => {
+                recorder.record_dependency(crate::ReadDependency::Engine(
+                    crate::ReadEngineField::InnerMode,
+                ));
+                begin_if(
+                    input,
+                    stores,
+                    recorder,
+                    hooks,
+                    hooks.is_inner_mode(),
+                    call_context,
+                )
+            }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfVoid) => {
                 let frame_token = begin_if_evaluation(input, call_context);
                 let index = scan_register_index_with_expander_and_hooks(
@@ -480,6 +537,10 @@ macro_rules! dispatch_match {
                     &mut expander,
                     call_context,
                 )?;
+                recorder.record_dependency(crate::ReadDependency::Cell {
+                    bank: crate::ReadBank::Box,
+                    index: u32::from(index),
+                });
                 complete_if_evaluation(
                     input,
                     stores,
@@ -500,6 +561,10 @@ macro_rules! dispatch_match {
                     &mut expander,
                     call_context,
                 )?;
+                recorder.record_dependency(crate::ReadDependency::Cell {
+                    bank: crate::ReadBank::Box,
+                    index: u32::from(index),
+                });
                 complete_if_evaluation(
                     input,
                     stores,
@@ -520,6 +585,10 @@ macro_rules! dispatch_match {
                     &mut expander,
                     call_context,
                 )?;
+                recorder.record_dependency(crate::ReadDependency::Cell {
+                    bank: crate::ReadBank::Box,
+                    index: u32::from(index),
+                });
                 complete_if_evaluation(
                     input,
                     stores,
@@ -540,6 +609,7 @@ macro_rules! dispatch_match {
                     &mut expander,
                     call_context,
                 )?;
+                recorder.record_dependency(crate::ReadDependency::InputStream(stream));
                 complete_if_evaluation(
                     input,
                     stores,

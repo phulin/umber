@@ -13,7 +13,7 @@ use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use crate::scan_dimen::{self, DimensionDiagnostic, ScanDimenError, ScanDimenOptions};
 use crate::{
     ExpandError, ExpandNext, ExpansionHooks, NoInputExpandNext, NoopExpansionHooks, NoopRecorder,
-    ReadRecorder, scan_helpers, scan_int, semantic_token,
+    ReadBank, ReadDependency, ReadRecorder, scan_helpers, scan_int, semantic_token,
 };
 
 /// A successfully scanned glue specification.
@@ -214,7 +214,10 @@ where
     };
 
     if let Token::Cs(symbol) = semantic_token(first) {
-        match stores.meaning(symbol) {
+        let meaning = stores.meaning(symbol);
+        recorder.record_meaning(symbol, meaning);
+        crate::values::record_meaning_value_dependency(recorder, meaning);
+        match meaning {
             Meaning::SkipRegister(index) if !mu => {
                 consume_optional_space(input, stores, recorder, hooks, expander)?;
                 let spec = stores.glue(stores.skip(index));
@@ -239,12 +242,20 @@ where
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Skip) if !mu => {
                 let index = scan_register_index(input, stores, recorder, hooks, expander, first)?;
+                recorder.record_dependency(ReadDependency::Cell {
+                    bank: ReadBank::Skip,
+                    index: u32::from(index),
+                });
                 consume_optional_space(input, stores, recorder, hooks, expander)?;
                 let spec = stores.glue(stores.skip(index));
                 return Ok(intern_spec(stores, signed_spec(spec, negative)));
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Muskip) if mu => {
                 let index = scan_register_index(input, stores, recorder, hooks, expander, first)?;
+                recorder.record_dependency(ReadDependency::Cell {
+                    bank: ReadBank::Muskip,
+                    index: u32::from(index),
+                });
                 consume_optional_space(input, stores, recorder, hooks, expander)?;
                 let spec = stores.glue(stores.muskip(index));
                 return Ok(intern_spec(stores, signed_spec(spec, negative)));
@@ -261,6 +272,10 @@ where
                 if (!mu && name == "skip") || (mu && name == "muskip") {
                     let index =
                         scan_register_index(input, stores, recorder, hooks, expander, first)?;
+                    recorder.record_dependency(ReadDependency::Cell {
+                        bank: if mu { ReadBank::Muskip } else { ReadBank::Skip },
+                        index: u32::from(index),
+                    });
                     consume_optional_space(input, stores, recorder, hooks, expander)?;
                     let id = if mu {
                         stores.muskip(index)

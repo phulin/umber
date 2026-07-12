@@ -17,7 +17,7 @@ use tex_state::{ExpansionState, PrepareMagDiagnostic};
 
 use crate::{
     ExpandError, ExpandNext, ExpansionHooks, NoInputExpandNext, NoopExpansionHooks, NoopRecorder,
-    ReadRecorder, scan_helpers, scan_int, semantic_token,
+    ReadBank, ReadDependency, ReadFontField, ReadRecorder, scan_helpers, scan_int, semantic_token,
 };
 use scan_helpers::ExpandedKeywordMatch;
 
@@ -408,6 +408,13 @@ where
     H: ExpansionHooks<S>,
     E: ExpandNext<S, St, R, H>,
 {
+    // Physical, true, and recovery-unit paths all consult the prepared job
+    // magnification. Recording the key once per dimension scan keeps the
+    // concrete read set complete without instrumenting arithmetic helpers.
+    recorder.record_dependency(ReadDependency::Cell {
+        bank: ReadBank::Magnification,
+        index: 0,
+    });
     let (negative, token) = scan_signs(input, stores, recorder, hooks, expander)?;
     let Some(token) = token else {
         return Ok(ScannedDimen::with_diagnostic(
@@ -666,7 +673,10 @@ where
     St: ExpansionState,
     E: ExpandNext<S, St, R, H>,
 {
-    match stores.meaning(symbol) {
+    let meaning = stores.meaning(symbol);
+    recorder.record_meaning(symbol, meaning);
+    crate::values::record_meaning_value_dependency(recorder, meaning);
+    match meaning {
         Meaning::DimenRegister(index) => {
             consume_optional_space(input, stores, recorder, hooks, expander)?;
             return Ok(ScannedDimen::new(stores.dimen(index)));
@@ -719,16 +729,28 @@ where
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen) => {
             let index = scan_register_index(input, stores, recorder, hooks, expander, token)?;
+            recorder.record_dependency(ReadDependency::Cell {
+                bank: ReadBank::Dimen,
+                index: u32::from(index),
+            });
             consume_optional_space(input, stores, recorder, hooks, expander)?;
             return Ok(ScannedDimen::new(stores.dimen(index)));
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Skip) => {
             let index = scan_register_index(input, stores, recorder, hooks, expander, token)?;
+            recorder.record_dependency(ReadDependency::Cell {
+                bank: ReadBank::Skip,
+                index: u32::from(index),
+            });
             consume_optional_space(input, stores, recorder, hooks, expander)?;
             return Ok(ScannedDimen::new(stores.glue(stores.skip(index)).width));
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Muskip) => {
             let index = scan_register_index(input, stores, recorder, hooks, expander, token)?;
+            recorder.record_dependency(ReadDependency::Cell {
+                bank: ReadBank::Muskip,
+                index: u32::from(index),
+            });
             consume_optional_space(input, stores, recorder, hooks, expander)?;
             let width = stores.glue(stores.muskip(index)).width;
             return Ok(if options.require_mu_unit {
@@ -915,6 +937,7 @@ where
     if let Token::Cs(symbol) = semantic_token(first) {
         let meaning = stores.meaning(symbol);
         recorder.record_meaning(symbol, meaning);
+        crate::values::record_meaning_value_dependency(recorder, meaning);
         let internal = match meaning {
             Meaning::DimenRegister(index) => Some(stores.dimen(index)),
             Meaning::DimenParam(index) => {
@@ -1062,12 +1085,36 @@ where
         Some(ScannedUnit::Physical { unit, .. }) => {
             Ok(UnitScan::Scanned(ScannedUnit::Physical { unit, true_unit }))
         }
-        Some(ScannedUnit::Em) => Ok(UnitScan::Scanned(ScannedUnit::FontRelative {
-            unit: stores.font_parameter(stores.current_font(), 6),
-        })),
-        Some(ScannedUnit::Ex) => Ok(UnitScan::Scanned(ScannedUnit::FontRelative {
-            unit: stores.font_parameter(stores.current_font(), 5),
-        })),
+        Some(ScannedUnit::Em) => {
+            recorder.record_dependency(ReadDependency::Cell {
+                bank: ReadBank::CurrentFont,
+                index: 0,
+            });
+            let font = stores.current_font();
+            recorder.record_dependency(ReadDependency::Font {
+                field: ReadFontField::Parameter,
+                font: font.raw(),
+                index: 6,
+            });
+            Ok(UnitScan::Scanned(ScannedUnit::FontRelative {
+                unit: stores.font_parameter(font, 6),
+            }))
+        }
+        Some(ScannedUnit::Ex) => {
+            recorder.record_dependency(ReadDependency::Cell {
+                bank: ReadBank::CurrentFont,
+                index: 0,
+            });
+            let font = stores.current_font();
+            recorder.record_dependency(ReadDependency::Font {
+                field: ReadFontField::Parameter,
+                font: font.raw(),
+                index: 5,
+            });
+            Ok(UnitScan::Scanned(ScannedUnit::FontRelative {
+                unit: stores.font_parameter(font, 5),
+            }))
+        }
         Some(ScannedUnit::Infinite(_) | ScannedUnit::Internal(_)) => {
             unreachable!("unit keywords never return non-keyword units")
         }
