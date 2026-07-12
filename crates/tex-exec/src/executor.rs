@@ -7,7 +7,7 @@ use tex_state::glue::GlueSpec;
 use tex_state::node::Node;
 use tex_state::scaled::Scaled;
 use tex_state::token::TracedTokenWord;
-use tex_state::{ExpansionContext, Universe};
+use tex_state::{ExpansionContext, InputSummary, Universe};
 
 use crate::checkpoint::{CheckpointSink, EngineBoundary, EngineSession, NoopCheckpointSink};
 use crate::dispatch::{dispatch_delivered_token_with_recorder, unimplemented_typesetting};
@@ -165,7 +165,21 @@ impl Executor {
             .expect_err("unimplemented_typesetting always returns Err")
             .capture(input)),
         };
-        let summary = input.publication_summary(stores);
+        let dumped_format = result.as_ref().is_ok_and(|stats| stats.dumped_format);
+        let summary = if dumped_format {
+            // TeX's `\dump` ends INITEX immediately. The remaining source
+            // frames belong to the terminated job, while format images are a
+            // quiescent semantic-state boundary and intentionally exclude
+            // input cursors.
+            InputSummary::default()
+        } else {
+            input.publication_summary(stores)
+        };
+        if dumped_format {
+            // Page-builder bookkeeping is likewise job-local and is not part
+            // of a TeX format image.
+            stores.start_new_page();
+        }
         stores.set_input_summary(summary);
         result.map(|mut stats| {
             stats.shipped_artifacts = stores.world().artifact_commits()[artifact_start..].to_vec();

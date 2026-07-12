@@ -228,12 +228,17 @@ fn dump_marks_format_stop_and_stops_before_following_input() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
+    stores.set_page_dimension(tex_state::page::PageDimension::Goal, Scaled::from_raw(123));
     let mut input = InputStack::new(MemoryInput::new(r"\dump\dump"));
 
     let stats = Executor::new()
         .run(&mut input, &mut stores)
         .expect("dump should finish through the end cleanup path");
     assert!(stats.dumped_format);
+    assert!(stores.input_summary().is_empty());
+    stores
+        .dump_format()
+        .expect("dump should leave a quiescent serializable format boundary");
 }
 
 #[test]

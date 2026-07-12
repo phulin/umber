@@ -494,15 +494,24 @@ run_umber_phase() {
   copy_trip_inputs "$dir"
   (
     cd "$dir"
-    "${umber_bin}" run trip.tex --show-fixtures --format-out trip.fmt > tripin.log 2> tripin.stderr || true
+    rm -f trip.fmt trip.dvi
+    "${umber_bin}" run trip.tex --show-fixtures --format-out fixture-trip.fmt > tripin.log 2> tripin.stderr || true
     if [[ -s tripin.stderr ]]; then
       cat tripin.stderr >&2
     fi
+    "${umber_bin}" run trip.tex --format-out trip.fmt > /dev/null 2> tripin-artifact.stderr || true
+    if [[ -s tripin-artifact.stderr ]]; then
+      cat tripin-artifact.stderr >&2
+    fi
     if [[ -f trip.fmt ]]; then
-      "${umber_bin}" run trip.tex --format trip.fmt --show-fixtures --dvi trip.dvi > trip.log 2> trip.stderr || true
+      "${umber_bin}" run trip.tex --format trip.fmt --show-fixtures > trip.log 2> trip.stderr || true
+      "${umber_bin}" run trip.tex --format trip.fmt --dvi trip.dvi > /dev/null 2> trip-artifact.stderr || true
     fi
     if [[ -s trip.stderr ]]; then
       cat trip.stderr >&2
+    fi
+    if [[ -s trip-artifact.stderr ]]; then
+      cat trip-artifact.stderr >&2
     fi
   )
 
