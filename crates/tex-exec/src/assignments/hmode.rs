@@ -410,6 +410,7 @@ pub(crate) fn reconstitute(
             ch: entry.ch,
             orig_first: entry.ch,
             orig_last: entry.ch,
+            ligature_present: false,
         })
         .collect();
     let mut i = 0;
@@ -448,6 +449,7 @@ pub(crate) fn reconstitute(
                         ch: char::from(lig.replacement),
                         orig_first: current.orig_first,
                         orig_last: chars[i + 1].orig_last,
+                        ligature_present: true,
                     };
                     chars.remove(i + 1);
                     continue;
@@ -463,16 +465,16 @@ pub(crate) fn reconstitute(
 }
 
 fn rechar_node(current: ReChar) -> Node {
-    if current.orig_first == current.ch && current.orig_last == current.ch {
-        Node::Char {
-            font: current.font,
-            ch: current.ch,
-        }
-    } else {
+    if current.ligature_present {
         Node::Lig {
             font: current.font,
             ch: current.ch,
             orig: (current.orig_first, current.orig_last),
+        }
+    } else {
+        Node::Char {
+            font: current.font,
+            ch: current.ch,
         }
     }
 }
@@ -501,6 +503,9 @@ struct ReChar {
     ch: char,
     orig_first: char,
     orig_last: char,
+    // TeX82's explicit `ligature_present` state (tex.web §916-§918).
+    // Glyph identity cannot encode this: a ligature may replace `AA` by `A`.
+    ligature_present: bool,
 }
 
 impl ReChar {

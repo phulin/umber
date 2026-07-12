@@ -280,6 +280,7 @@ fn composite_rechar_keeps_ligature_provenance_when_emitted() {
         ch: 'A',
         orig_first: 'B',
         orig_last: 'B',
+        ligature_present: true,
     };
 
     assert!(matches!(
@@ -289,6 +290,67 @@ fn composite_rechar_keeps_ligature_provenance_when_emitted() {
             ch: 'A',
             orig: ('B', 'B'),
         } if font == current.font
+    ));
+}
+
+#[test]
+fn same_glyph_replacement_keeps_ligature_provenance() {
+    use tex_fonts::metrics::CharTag;
+    use tex_fonts::{CharMetrics, FontMetrics, LigKernInstruction, LigatureCommand, LoadedFont};
+
+    let mut characters = vec![None; 256];
+    characters[usize::from(b'A')] = Some(CharMetrics {
+        width: Scaled::from_raw(Scaled::UNITY),
+        height: Scaled::from_raw(0),
+        depth: Scaled::from_raw(0),
+        italic_correction: Scaled::from_raw(0),
+        tag: CharTag::LigKern {
+            program_index: 0,
+            start_index: 0,
+        },
+    });
+    let metrics = FontMetrics::new(
+        characters,
+        vec![LigKernInstruction {
+            skip_byte: 128,
+            next_char: b'A',
+            command: Some(LigKernCommand::Ligature(LigatureCommand {
+                replacement: b'A',
+                delete_current: true,
+                delete_next: true,
+                pass_over: 0,
+            })),
+        }],
+        None,
+        None,
+        Vec::new(),
+    );
+    metrics
+        .validate()
+        .expect("test font metrics should be valid");
+    let mut stores = Universe::new();
+    let font = stores.intern_font(LoadedFont::new(
+        "same-glyph-ligature",
+        "same-glyph-ligature.tfm",
+        [0; 32],
+        0,
+        Scaled::from_raw(10 * Scaled::UNITY),
+        Scaled::from_raw(10 * Scaled::UNITY),
+        vec![Scaled::from_raw(0); 7],
+        metrics,
+    ));
+    let pending = [
+        PendingHChar { font, ch: 'A' },
+        PendingHChar { font, ch: 'A' },
+    ];
+
+    assert!(matches!(
+        reconstitute(&mut stores, &pending, true, false).as_slice(),
+        [Node::Lig {
+            ch: 'A',
+            orig: ('A', 'A'),
+            ..
+        }]
     ));
 }
 
