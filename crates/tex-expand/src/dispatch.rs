@@ -95,7 +95,9 @@ macro_rules! dispatch_match {
                 Ok(Dispatch::Continue)
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::NoExpand) => {
-                let Some(token) = input.next_traced_token(stores)? else {
+                // Delivery is classified exactly once by the expansion loop's
+                // `DeliverNoExpand` arm below this dispatch boundary.
+                let Some(token) = crate::next_unintercepted_raw_token(input, stores)? else {
                     return Err(ExpandError::MissingTokenAfterPrimitive {
                         opcode: ExpandableOpcode::NoExpand,
                         context: call_context,
@@ -133,7 +135,7 @@ macro_rules! dispatch_match {
                 )))
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::String) => {
-                let Some(target) = input.next_traced_token(stores)? else {
+                let Some(target) = crate::next_semantic_raw_token(input, stores)? else {
                     return Err(ExpandError::MissingTokenAfterPrimitive {
                         opcode: ExpandableOpcode::String,
                         context: call_context,
@@ -185,7 +187,7 @@ macro_rules! dispatch_match {
                 ))
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Meaning) => {
-                let Some(target) = input.next_traced_token(stores)? else {
+                let Some(target) = crate::next_semantic_raw_token(input, stores)? else {
                     return Err(ExpandError::MissingTokenAfterPrimitive {
                         opcode: ExpandableOpcode::Meaning,
                         context: call_context,
@@ -330,18 +332,20 @@ macro_rules! dispatch_match {
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfX) => {
                 let frame_token = begin_if_evaluation(input, call_context);
-                let Some(left) = input.next_token(stores)? else {
+                let Some(left) = crate::next_semantic_raw_token(input, stores)? else {
                     return Err(ExpandError::MissingTokenAfterPrimitive {
                         opcode: ExpandableOpcode::If,
                         context: call_context,
                     });
                 };
-                let Some(right) = input.next_token(stores)? else {
+                let Some(right) = crate::next_semantic_raw_token(input, stores)? else {
                     return Err(ExpandError::MissingTokenAfterPrimitive {
                         opcode: ExpandableOpcode::If,
                         context: call_context,
                     });
                 };
+                let left = crate::semantic_token(left);
+                let right = crate::semantic_token(right);
                 for operand in [left, right] {
                     if let Token::Cs(symbol) = operand {
                         let meaning = stores.meaning(symbol);

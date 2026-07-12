@@ -1021,6 +1021,60 @@ pub(crate) fn intercept_alignment_token<S>(
     input.intercept_alignment_token(traced, delivery, terminator)
 }
 
+/// Canonical TeX `get_next`-style raw semantic delivery.
+///
+/// Expansion primitives and scanners must use this path whenever they consume
+/// a raw token. It applies alignment brace accounting and cell-terminator
+/// interception before the token can be observed. The lower-level
+/// `InputStack` reads remain reserved for the expansion loop and `\noexpand`,
+/// which must first classify one-shot suppression.
+pub(crate) fn next_semantic_raw_token<S>(
+    input: &mut InputStack<S>,
+    stores: &mut impl ExpansionState,
+) -> Result<Option<TracedTokenWord>, tex_lex::LexError>
+where
+    S: InputSource,
+{
+    loop {
+        let Some(traced) = input.next_traced_token(stores)? else {
+            return Ok(None);
+        };
+        if !intercept_alignment_token(input, stores, traced) {
+            return Ok(Some(traced));
+        }
+    }
+}
+
+/// Raw replay lookahead for the two TeX scanners that deliberately operate
+/// below `get_next`: a backtick character constant and optional-space
+/// consumption after an internal integer.
+pub(crate) fn next_unintercepted_raw_token<S>(
+    input: &mut InputStack<S>,
+    stores: &mut impl ExpansionState,
+) -> Result<Option<TracedTokenWord>, tex_lex::LexError>
+where
+    S: InputSource,
+{
+    input.next_traced_token(stores)
+}
+
+pub(crate) fn next_suppressed_semantic_raw_token<S>(
+    input: &mut InputStack<S>,
+    stores: &mut impl ExpansionState,
+) -> Result<Option<TracedTokenWord>, tex_lex::LexError>
+where
+    S: InputSource,
+{
+    loop {
+        let Some(traced) = input.next_traced_token(stores)? else {
+            return Ok(None);
+        };
+        if !intercept_suppressed_alignment_token(input, stores, traced) {
+            return Ok(Some(traced));
+        }
+    }
+}
+
 /// Applies TeX82's `dont_expand` command-code test to alignment delivery.
 ///
 /// An expandable meaning is delivered as the one-shot `no_expand_flag`
@@ -1091,14 +1145,7 @@ pub fn get_token<S>(
 where
     S: InputSource,
 {
-    loop {
-        let Some(token) = input.next_traced_token(stores)? else {
-            return Ok(None);
-        };
-        if !intercept_alignment_token(input, stores, token) {
-            return Ok(Some(token));
-        }
-    }
+    Ok(next_semantic_raw_token(input, stores)?)
 }
 
 /// Implements TeX82's `get_preamble_token` operation after `\span`: fetch

@@ -350,7 +350,8 @@ where
         };
         let meaning = stores.meaning(symbol);
         if meaning == Meaning::ExpandablePrimitive(ExpandablePrimitive::NoExpand) {
-            let Some(suppressed) = input.next_traced_token(stores)? else {
+            let Some(suppressed) = crate::next_suppressed_semantic_raw_token(&mut input, stores)?
+            else {
                 return Err(ExpandError::MissingTokenAfterPrimitive {
                     opcode: ExpandableOpcode::NoExpand,
                     context: traced,
@@ -534,8 +535,7 @@ where
     let mut pending_parameter = false;
 
     loop {
-        let traced = input
-            .next_traced_token(stores)?
+        let traced = crate::next_semantic_raw_token(input, stores)?
             .ok_or(ScanToksError::EndOfInputInParameterText { context })?;
         let token = traced_semantic_token(traced);
 
@@ -625,8 +625,7 @@ where
     let mut pending_parameter = false;
 
     loop {
-        let traced = input
-            .next_traced_token(stores)?
+        let traced = crate::next_semantic_raw_token(input, stores)?
             .ok_or(ScanToksError::EndOfInputInReplacementText { context })?;
         let token = traced_semantic_token(traced);
 
@@ -711,8 +710,7 @@ where
     let mut origins = stores.origin_list_builder();
     let mut brace_level = 1_u32;
     loop {
-        let traced = input
-            .next_traced_token(stores)?
+        let traced = crate::next_semantic_raw_token(input, stores)?
             .ok_or(ScanToksError::EndOfInputInReplacementText { context })?;
         let token = traced_semantic_token(traced);
         if is_outer_macro(stores, token) {
@@ -762,7 +760,7 @@ where
     S: InputSource,
 {
     loop {
-        let Some(token) = input.next_traced_token(stores)? else {
+        let Some(token) = crate::next_semantic_raw_token(input, stores)? else {
             return Ok(None);
         };
         if !matches!(

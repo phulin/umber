@@ -488,21 +488,12 @@ where
     S: InputSource,
     R: ReadRecorder,
 {
-    let token = loop {
-        let token = input
-            .next_traced_token(stores)?
-            .ok_or_else(|| MacroCallError::EndOfInput {
-                macro_name: macro_name.to_owned(),
-                context: call_context,
-            })?;
-        // Macro arguments can cross the u-template/body/v-template boundary.
-        // TeX's raw get_token path still performs alignment interception, so
-        // a cell terminator inserts the v-template before argument scanning
-        // continues.
-        if !crate::intercept_alignment_token(input, stores, token) {
-            break token;
+    let token = crate::next_semantic_raw_token(input, stores)?.ok_or_else(|| {
+        MacroCallError::EndOfInput {
+            macro_name: macro_name.to_owned(),
+            context: call_context,
         }
-    };
+    })?;
 
     if let Token::Cs(symbol) = traced_semantic_token(token) {
         let meaning = stores.meaning(symbol);

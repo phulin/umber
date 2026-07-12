@@ -473,7 +473,7 @@ where
     // TeX's `scan_int` reads the token following a backtick directly, rather
     // than through `get_x_token`. In particular, `\{` is a valid character
     // constant here even if that control symbol has no meaning.
-    let Some(token) = input.next_traced_token(stores)? else {
+    let Some(token) = crate::next_unintercepted_raw_token(input, stores)? else {
         return Ok(missing_number(prefix));
     };
     let value = match semantic_token(token) {
@@ -859,7 +859,7 @@ where
     // integer. Expanding here would execute the next command while an
     // assignment is still scanning its operand (plain.tex's
     // `\escapechar\m@ne\expandafter...` is a real instance).
-    let Some(token) = input.next_traced_token(stores)? else {
+    let Some(token) = crate::next_unintercepted_raw_token(input, stores)? else {
         return Ok(());
     };
     if is_space(token) {
