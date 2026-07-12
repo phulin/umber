@@ -240,7 +240,7 @@ fn hyphenation_inside_ff_ligature_preserves_the_unbroken_ligature() {
         .map(|ch| Node::Char { font, ch })
         .collect();
 
-    let hyphenated = super::super::hyphenation::hyphenated_hlist(&mut stores, &nodes);
+    let hyphenated = super::super::hyphenation::test_hyphenated_word(&mut stores, &nodes);
     let disc = hyphenated
         .iter()
         .find_map(|node| match node {
@@ -408,7 +408,7 @@ fn hyphenation_does_not_partially_consume_a_boundary_ligature() {
         },
     ];
 
-    let hyphenated = super::super::hyphenation::hyphenated_hlist(&mut stores, &nodes);
+    let hyphenated = super::super::hyphenation::test_hyphenated_word(&mut stores, &nodes);
     assert!(matches!(
         hyphenated.as_slice(),
         [Node::Char { ch: 'C', .. }, Node::Lig { ch: 'B', .. }]
@@ -450,7 +450,7 @@ fn hyphenation_keeps_scanning_across_font_kerns() {
         "the fixture must exercise an internal font kern: {nodes:?}"
     );
 
-    let hyphenated = super::super::hyphenation::hyphenated_hlist(&mut stores, &nodes);
+    let hyphenated = super::super::hyphenation::test_hyphenated_word(&mut stores, &nodes);
     assert_eq!(
         hyphenated
             .iter()
@@ -474,7 +474,7 @@ fn hyphenation_does_not_repeat_a_left_boundary_kern() {
         Node::Char { font, ch: 'A' },
     ];
 
-    let hyphenated = super::super::hyphenation::hyphenated_hlist(&mut stores, &nodes);
+    let hyphenated = super::super::hyphenation::test_hyphenated_word(&mut stores, &nodes);
 
     assert!(matches!(
         hyphenated.as_slice(),
@@ -513,7 +513,7 @@ fn discretionary_absorbs_font_kern_across_hyphenated_line_boundary() {
         .collect();
     let nodes = reconstitute(&mut stores, &pending, false, false);
 
-    let hyphenated = super::super::hyphenation::hyphenated_hlist(&mut stores, &nodes);
+    let hyphenated = super::super::hyphenation::test_hyphenated_word(&mut stores, &nodes);
     let disc_index = hyphenated
         .iter()
         .position(|node| matches!(node, Node::Disc { .. }))

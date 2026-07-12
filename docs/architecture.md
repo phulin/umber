@@ -841,11 +841,16 @@ makes box-level memoization (M4) sound.
   state. Terminal-break final-hyphen costs are included before the breaker
   retains the minimum route for a line/fitness class, matching TeX82's
   candidate ordering rather than adjusting an already-pruned winner.
-  The current `tex-exec` integration precomputes the hyphenated hlist because
-  automatic hyphen insertion still freezes discretionary child lists through
-  `Universe`; the breaker only sees the hook result as ordinary nodes. As in
-  TeX82, a word with no legal hyphenation point keeps its existing character,
-  ligature, and kern nodes byte-for-byte instead of being reconstituted.
+  The execution integration first calls the pure pretolerance entry point. It
+  materializes a hyphenated alternate hlist through `Universe` only when that
+  pass fails, then calls the pure tolerance/emergency entry point. Thus a
+  successful first pass neither scans words nor freezes discretionary child
+  lists. Pre-hyphenation follows TeX82 sections 894--899: candidates begin
+  only after glue, skip permitted implicit kern and whatsit nodes, retain the
+  active language/minima context, collect at most 63 same-font letters, and
+  accept only TeX's permitted terminating nodes. As in TeX82, a word with no
+  legal hyphenation point keeps its existing character, ligature, and kern
+  nodes byte-for-byte instead of being reconstituted.
   Post-line-break produces line node vectors with named
   `\leftskip`/`\rightskip` glue, per-line width/indent dimensions selected
   from `\parshape` first and otherwise TeX's `\hangindent`/`\hangafter`

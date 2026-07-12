@@ -5,8 +5,9 @@ use tex_state::scaled::Scaled;
 use tex_state::{ParagraphShapeLine, Universe};
 use tex_typeset::PackSpec;
 use tex_typeset::linebreak::{
-    HyphenationHook, LineBreakParams, LineDimensions, LineShape, LineShapeEntry,
-    ParagraphShape as TypesetParagraphShape, PostLineBreakParams, line_break, post_line_break,
+    LineBreakParams, LineBreakResult, LineDimensions, LineShape, LineShapeEntry,
+    ParagraphShape as TypesetParagraphShape, PostLineBreakParams, line_break_hyphenated,
+    post_line_break, try_line_break_without_hyphenation,
 };
 
 use super::boxes::hpack_with_overfull_rule;
@@ -206,9 +207,7 @@ fn break_current_paragraph(
     let level = nest.pop()?;
     let hlist = crate::math::finish_math_lists(stores, level.list().nodes(), true);
     let line_params = line_break_params(stores, &params);
-    let hyphenated = super::hyphenation::hyphenated_hlist(stores, &hlist);
-    let mut hook = ExecHyphenationHook { hyphenated };
-    let decisions = line_break(stores, &hlist, line_params, &mut hook);
+    let decisions = break_hlist(stores, &hlist, line_params);
     let post_params = post_line_break_params(&params, final_widow_penalty);
     let mut line_count = 0i32;
     let mut last_line = None;
@@ -238,6 +237,19 @@ fn break_current_paragraph(
     Ok(ParagraphBreakResult { last_line })
 }
 
+pub(crate) fn break_hlist(
+    stores: &mut Universe,
+    hlist: &[Node],
+    line_params: LineBreakParams,
+) -> LineBreakResult {
+    if let Some(first) = try_line_break_without_hyphenation(stores, hlist, &line_params) {
+        first
+    } else {
+        let hyphenated = super::hyphenation::hyphenated_hlist(stores, hlist);
+        line_break_hyphenated(stores, &hyphenated, &line_params)
+    }
+}
+
 fn extract_migrating_material(stores: &Universe, nodes: &mut Vec<Node>) -> Vec<Node> {
     let mut retained = Vec::with_capacity(nodes.len());
     let mut migrated = Vec::new();
@@ -252,16 +264,6 @@ fn extract_migrating_material(stores: &Universe, nodes: &mut Vec<Node>) -> Vec<N
     }
     *nodes = retained;
     migrated
-}
-
-struct ExecHyphenationHook {
-    hyphenated: Vec<Node>,
-}
-
-impl HyphenationHook<Universe> for ExecHyphenationHook {
-    fn hyphenate(&mut self, _nodes: &[Node]) -> Vec<Node> {
-        self.hyphenated.clone()
-    }
 }
 
 fn snapshot_paragraph_params(nest: &ModeNest, stores: &Universe) -> ParagraphParams {

@@ -165,18 +165,38 @@ where
     S: TypesetState,
     H: HyphenationHook<S>,
 {
-    if params.pretolerance >= 0 {
-        let first = run_pass(state, nodes, &params, params.pretolerance, false, false);
-        if let Some(result) = first {
-            return result;
-        }
+    if let Some(result) = try_line_break_without_hyphenation(state, nodes, &params) {
+        return result;
     }
 
     let hyphenated = hyphenation.hyphenate(nodes);
+    line_break_hyphenated(state, &hyphenated, &params)
+}
+
+/// Tries TeX82's pretolerance pass without requesting automatic hyphenation.
+///
+/// Returning `None` means the caller must materialize automatic
+/// discretionary nodes before running the tolerance and emergency passes.
+pub fn try_line_break_without_hyphenation<S: TypesetState>(
+    state: &S,
+    nodes: &[Node],
+    params: &LineBreakParams,
+) -> Option<LineBreakResult> {
+    (params.pretolerance >= 0)
+        .then(|| run_pass(state, nodes, params, params.pretolerance, false, false))
+        .flatten()
+}
+
+/// Runs TeX82's tolerance and emergency passes on an already-hyphenated list.
+pub fn line_break_hyphenated<S: TypesetState>(
+    state: &S,
+    nodes: &[Node],
+    params: &LineBreakParams,
+) -> LineBreakResult {
     let second = run_pass(
         state,
-        &hyphenated,
-        &params,
+        nodes,
+        params,
         params.tolerance,
         false,
         params.emergency_stretch.raw() <= 0,
@@ -185,7 +205,7 @@ where
         return result;
     }
 
-    run_pass(state, &hyphenated, &params, params.tolerance, true, true)
+    run_pass(state, nodes, params, params.tolerance, true, true)
         .expect("final line-breaking pass always permits an artificial demerits path")
 }
 

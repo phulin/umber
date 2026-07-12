@@ -45,19 +45,216 @@ where
 }
 
 pub(crate) fn hyphenated_hlist(stores: &mut Universe, nodes: &[Node]) -> Vec<Node> {
-    let mut out = Vec::new();
+    let mut out = Vec::with_capacity(nodes.len());
+    let mut index = 0;
+    let mut auto_breaking = true;
+    let mut language = 0;
+    let mut left = stores.int_param(IntParam::LEFT_HYPHEN_MIN).max(1) as usize;
+    let mut right = stores.int_param(IntParam::RIGHT_HYPHEN_MIN).max(1) as usize;
+
+    while index < nodes.len() {
+        let node = &nodes[index];
+        update_hyphenation_context(node, &mut language, &mut left, &mut right);
+        match node {
+            Node::MathOn(_) => auto_breaking = false,
+            Node::MathOff(_) => auto_breaking = true,
+            _ => {}
+        }
+        out.push(node.clone());
+        index += 1;
+
+        if auto_breaking
+            && matches!(node, Node::Glue { .. })
+            && let Some(next) =
+                hyphenate_after_glue(stores, nodes, index, language, left, right, &mut out)
+        {
+            index = next;
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+pub(crate) fn test_hyphenated_word(stores: &mut Universe, nodes: &[Node]) -> Vec<Node> {
+    let glue = stores.glue_param(tex_state::env::banks::GlueParam::PAR_SKIP);
+    let boundary = Node::Glue {
+        spec: glue,
+        kind: tex_state::node::GlueKind::Normal,
+        leader: None,
+    };
+    let mut paragraph = Vec::with_capacity(nodes.len() + 2);
+    paragraph.push(boundary.clone());
+    paragraph.extend_from_slice(nodes);
+    paragraph.push(boundary);
+    let mut hyphenated = hyphenated_hlist(stores, &paragraph);
+    hyphenated.remove(0);
+    hyphenated.pop();
+    hyphenated
+}
+
+fn update_hyphenation_context(node: &Node, language: &mut u8, left: &mut usize, right: &mut usize) {
+    if let Node::Whatsit(tex_state::node::Whatsit::Language {
+        language: new_language,
+        left_hyphen_min,
+        right_hyphen_min,
+    }) = node
+    {
+        *language = *new_language;
+        *left = usize::from((*left_hyphen_min).max(1));
+        *right = usize::from((*right_hyphen_min).max(1));
+    }
+}
+
+fn hyphenate_after_glue(
+    stores: &mut Universe,
+    nodes: &[Node],
+    start: usize,
+    mut language: u8,
+    mut left: usize,
+    mut right: usize,
+    out: &mut Vec<Node>,
+) -> Option<usize> {
+    let mut index = start;
+    let (word_start, font) = loop {
+        let node = nodes.get(index)?;
+        match first_word_char(stores, node) {
+            Some((font, ch, lower)) => {
+                if lower != ch && stores.int_param(IntParam::UC_HYPH) <= 0 {
+                    return None;
+                }
+                break (index, font);
+            }
+            None if is_pre_word_skip(node) => {
+                update_hyphenation_context(node, &mut language, &mut left, &mut right);
+                index += 1;
+            }
+            None => return None,
+        }
+    };
+
+    if language != 0 || left.saturating_add(right) > 63 {
+        return None;
+    }
+    let hyphen = stores.font_hyphen_char(font);
+    if !(0..=255).contains(&hyphen) {
+        return None;
+    }
+
     let mut word = Vec::new();
     let mut word_nodes = Vec::new();
-    for (index, node) in nodes.iter().enumerate() {
-        if push_word_node(stores, node, nodes.get(index + 1), &mut word) {
-            word_nodes.push(node.clone());
-            continue;
+    index = word_start;
+    while let Some(node) = nodes.get(index) {
+        match node {
+            Node::Char {
+                font: node_font,
+                ch,
+            } if *node_font == font && word.len() < 63 => {
+                let Some(lower) = normalized_lccode(stores, *ch) else {
+                    break;
+                };
+                word.push(WordChar {
+                    font,
+                    ch: *ch,
+                    lower,
+                });
+                word_nodes.push(node.clone());
+                index += 1;
+            }
+            Node::Lig {
+                font: node_font,
+                ch,
+                orig,
+            } if *node_font == font => {
+                let chars = ligature_original_chars(*ch, *orig);
+                if word.len().saturating_add(chars.len()) > 63 {
+                    break;
+                }
+                let Some(normalized) = chars
+                    .into_iter()
+                    .map(|ch| normalized_lccode(stores, ch).map(|lower| (ch, lower)))
+                    .collect::<Option<Vec<_>>>()
+                else {
+                    break;
+                };
+                for (ch, lower) in normalized {
+                    word.push(WordChar { font, ch, lower });
+                }
+                word_nodes.push(node.clone());
+                index += 1;
+            }
+            Node::Kern {
+                kind: KernKind::Font,
+                ..
+            } => {
+                word_nodes.push(node.clone());
+                index += 1;
+            }
+            _ => break,
         }
-        flush_word(stores, &mut word, &mut word_nodes, &mut out);
-        out.push(node.clone());
     }
-    flush_word(stores, &mut word, &mut word_nodes, &mut out);
-    out
+
+    if word.len() < left.saturating_add(right) || !permitted_word_terminator(nodes, index) {
+        return None;
+    }
+
+    let lowercase: String = word.iter().map(|ch| ch.lower).collect();
+    let positions = stores.hyphen_positions(&lowercase, left, right);
+    out.extend_from_slice(&nodes[start..word_start]);
+    if positions.is_empty() {
+        out.extend(word_nodes);
+    } else {
+        let no_left_boundary = matches!(
+            out.last(),
+            Some(Node::Kern {
+                kind: KernKind::Font,
+                ..
+            })
+        );
+        append_hyphenated_word(stores, &word, &positions, no_left_boundary, out);
+    }
+    Some(index)
+}
+
+fn first_word_char(stores: &Universe, node: &Node) -> Option<(tex_state::ids::FontId, char, char)> {
+    match node {
+        Node::Char { font, ch } => normalized_lccode(stores, *ch).map(|lower| (*font, *ch, lower)),
+        Node::Lig { font, ch, orig } => ligature_original_chars(*ch, *orig)
+            .first()
+            .and_then(|&first| normalized_lccode(stores, first).map(|lower| (*font, first, lower))),
+        _ => None,
+    }
+}
+
+fn is_pre_word_skip(node: &Node) -> bool {
+    matches!(
+        node,
+        Node::Kern {
+            kind: KernKind::Font,
+            ..
+        } | Node::Whatsit(_)
+    ) || matches!(node, Node::Char { .. } | Node::Lig { .. })
+}
+
+fn permitted_word_terminator(nodes: &[Node], mut index: usize) -> bool {
+    while let Some(node) = nodes.get(index) {
+        match node {
+            Node::Char { .. }
+            | Node::Lig { .. }
+            | Node::Kern {
+                kind: KernKind::Font,
+                ..
+            } => index += 1,
+            Node::Glue { .. }
+            | Node::Penalty(_)
+            | Node::Ins { .. }
+            | Node::Adjust(_)
+            | Node::Mark { .. }
+            | Node::Whatsit(_)
+            | Node::Kern { .. } => return true,
+            _ => return false,
+        }
+    }
+    true
 }
 
 fn scan_hyphenation_words<S, H>(
@@ -162,108 +359,6 @@ fn parse_exception_word(stores: &Universe, word: &[char]) -> Option<ExceptionSpe
 
 fn normalized_lccode(stores: &Universe, ch: char) -> Option<char> {
     char::from_u32(stores.lccode(ch)).filter(|&mapped| mapped != '\0')
-}
-
-fn push_word_node(
-    stores: &Universe,
-    node: &Node,
-    next: Option<&Node>,
-    word: &mut Vec<WordChar>,
-) -> bool {
-    match node {
-        Node::Char { font, ch } => {
-            let Some(lower) = normalized_lccode(stores, *ch) else {
-                return false;
-            };
-            word.push(WordChar {
-                font: *font,
-                ch: *ch,
-                lower,
-                uppercase: lower != *ch,
-            });
-            true
-        }
-        Node::Lig { font, ch, orig } => {
-            let chars = ligature_original_chars(*ch, *orig);
-            let normalized: Option<Vec<_>> = chars
-                .into_iter()
-                .map(|ch| normalized_lccode(stores, ch).map(|lower| (ch, lower)))
-                .collect();
-            let Some(normalized) = normalized else {
-                return false;
-            };
-            for (ch, lower) in normalized {
-                word.push(WordChar {
-                    font: *font,
-                    ch,
-                    lower,
-                    uppercase: lower != ch,
-                });
-            }
-            true
-        }
-        Node::Kern {
-            kind: KernKind::Font,
-            ..
-        } if !word.is_empty() && next.is_some_and(|node| is_word_node(stores, node)) => true,
-        _ => false,
-    }
-}
-
-fn is_word_node(stores: &Universe, node: &Node) -> bool {
-    match node {
-        Node::Char { ch, .. } => normalized_lccode(stores, *ch).is_some(),
-        Node::Lig { ch, orig, .. } => ligature_original_chars(*ch, *orig)
-            .into_iter()
-            .all(|ch| normalized_lccode(stores, ch).is_some()),
-        _ => false,
-    }
-}
-
-fn flush_word(
-    stores: &mut Universe,
-    word: &mut Vec<WordChar>,
-    word_nodes: &mut Vec<Node>,
-    out: &mut Vec<Node>,
-) {
-    if word.is_empty() {
-        return;
-    }
-    let lowercase: String = word.iter().map(|ch| ch.lower).collect();
-    let left = stores.int_param(IntParam::LEFT_HYPHEN_MIN).max(0) as usize;
-    let right = stores.int_param(IntParam::RIGHT_HYPHEN_MIN).max(0) as usize;
-    let positions = if word
-        .first()
-        .is_none_or(|ch| u8::try_from(stores.font_hyphen_char(ch.font)).is_err())
-        || word.first().is_some_and(|ch| ch.uppercase) && stores.int_param(IntParam::UC_HYPH) <= 0
-    {
-        Vec::new()
-    } else {
-        stores.hyphen_positions(&lowercase, left, right)
-    };
-    // A font kern immediately before the word is the left-boundary program's
-    // output from main control. Reconstitution must not run that program a
-    // second time while hyphenating the already-built horizontal list.
-    let no_left_boundary = matches!(
-        out.last(),
-        Some(Node::Kern {
-            kind: KernKind::Font,
-            ..
-        })
-    );
-    if positions.is_empty() {
-        // TeX's hyphenate returns before replacing ha..hb when no hyphenation
-        // point was found. Reconstituting anyway can create a ligature across
-        // an accent-produced character boundary and changes an already-built
-        // horizontal list even though no discretionary is inserted.
-        out.append(word_nodes);
-        word.clear();
-        return;
-    }
-
-    append_hyphenated_word(stores, word, &positions, no_left_boundary, out);
-    word.clear();
-    word_nodes.clear();
 }
 
 fn append_hyphenated_word(
@@ -410,7 +505,6 @@ struct WordChar {
     font: tex_state::ids::FontId,
     ch: char,
     lower: char,
-    uppercase: bool,
 }
 
 impl WordChar {

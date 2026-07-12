@@ -1,5 +1,7 @@
 use super::support::*;
 use super::*;
+use tex_state::node::{GlueKind, Node};
+use tex_state::scaled::Scaled;
 
 #[test]
 fn patterns_and_exceptions_feed_showhyphens() {
@@ -131,4 +133,94 @@ fn paragraph_hyphenation_preserves_existing_chars_when_no_break_is_found() {
         unchanged, word,
         "no-break hyphenation must not create an ff ligature"
     );
+}
+
+#[test]
+fn paragraph_hyphenation_stops_at_a_font_change() {
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\font\\a=cmr10 \\font\\b=cmmi10 \\relax \\hyphenation{ab-cdefgh} \\end",
+    ));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("mixed-font hyphenation setup executes");
+    let first = font_meaning(&stores, "a");
+    let second = font_meaning(&stores, "b");
+    stores.set_font_hyphen_char(first, i32::from(b'-'), false);
+    stores.set_font_hyphen_char(second, i32::from(b'-'), false);
+    let glue = stores.glue_param(GlueParam::PAR_SKIP);
+    let mut nodes = vec![Node::Glue {
+        spec: glue,
+        kind: GlueKind::Normal,
+        leader: None,
+    }];
+    nodes.extend("abcd".chars().map(|ch| Node::Char { font: first, ch }));
+    nodes.extend("efgh".chars().map(|ch| Node::Char { font: second, ch }));
+    nodes.push(Node::Glue {
+        spec: glue,
+        kind: GlueKind::Normal,
+        leader: None,
+    });
+
+    let hyphenated = crate::assignments::test_hyphenated_hlist(&mut stores, &nodes);
+
+    assert!(
+        !hyphenated
+            .iter()
+            .any(|node| matches!(node, Node::Disc { .. })),
+        "TeX82 sections 897 and 899 stop the word at a font change"
+    );
+}
+
+#[test]
+fn successful_pretolerance_does_not_allocate_hyphenation_nodes() {
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\font\\tenrm=cmr10 \\relax \\tenrm \\hyphenation{ab-cdefgh} \\end",
+    ));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("pretolerance allocation setup executes");
+    let font = stores.current_font();
+    stores.set_font_hyphen_char(font, i32::from(b'-'), false);
+    let par_fill = stores.glue_param(GlueParam::PAR_FILL_SKIP);
+    let mut nodes = vec![
+        Node::Char { font, ch: 'x' },
+        Node::Glue {
+            spec: stores.glue_param(GlueParam::SPACE_SKIP),
+            kind: GlueKind::Normal,
+            leader: None,
+        },
+    ];
+    nodes.extend("abcdefgh".chars().map(|ch| Node::Char { font, ch }));
+    nodes.push(Node::Penalty(10_000));
+    nodes.push(Node::Glue {
+        spec: par_fill,
+        kind: GlueKind::ParFillSkip,
+        leader: None,
+    });
+    let params = tex_typeset::linebreak::LineBreakParams {
+        pretolerance: 10_000,
+        tolerance: 10_000,
+        line_penalty: 0,
+        hyphen_penalty: 50,
+        ex_hyphen_penalty: 50,
+        adj_demerits: 0,
+        double_hyphen_demerits: 0,
+        final_hyphen_demerits: 0,
+        emergency_stretch: Scaled::from_raw(0),
+        looseness: 0,
+        left_skip: stores.glue(stores.glue_param(GlueParam::LEFT_SKIP)),
+        right_skip: stores.glue(stores.glue_param(GlueParam::RIGHT_SKIP)),
+        shape: tex_typeset::linebreak::LineShape::natural(Scaled::from_raw(400 * Scaled::UNITY)),
+    };
+    let nodes_before = stores.testing_epoch_node_count();
+
+    let _ = crate::assignments::test_break_hlist(&mut stores, &nodes, params);
+
+    assert_eq!(stores.testing_epoch_node_count(), nodes_before);
 }
