@@ -20,7 +20,7 @@ The generated `tripin.log`, `trip.log`, `trip.fot`, and `tripos.tex` remain in
 `target/trip/` for diagnosis, but their parity belongs to the diagnostic tier
 and does not affect this DVI milestone. The self-test does not fetch or run
 TeX. It uses deterministic synthetic DVI and DVItype streams to prove both
-signs of the exact 64sp movement allowance, reject 65sp and structural or
+signs of Umber's exact 64sp movement policy, reject 65sp and structural or
 semantic changes across the DVI command classes, and verify that each
 rejection reports byte, page, opcode, and surrounding context as appropriate.
 It also seeds retained format, DVI, and DVItype outputs and proves that failing
@@ -100,12 +100,20 @@ settings and the normal TeX82 capacities that Web2C permits at runtime.
 
 ## Normalization
 
+Appendix A item 6 permits slight floating-point differences, alternative
+`right`/`w`/`x` and `down`/`y`/`z` encodings, and characters, rules, and
+specials in almost the same positions. It does not specify a numeric movement
+tolerance. Umber makes that permission executable with a deliberately
+conservative project policy: corresponding movement operands may differ by at
+most 64 scaled points under the structural checks below. The numeric bound is
+Umber's policy, not a threshold quoted from Knuth.
+
 The harness applies only these normalizations:
 
 - `trip.typ`: DVItype packaging text on line 1 and the quoted rendering of the
   DVI preamble comment. Movement operands may be reconciled only when opcode,
   byte offset, and all surrounding text match and the delta is at most 64
-  scaled points, as allowed by Appendix A item 6.
+  scaled points.
 - `trip.dvi`: DVI preamble comment bytes only, preserving the original comment
   length. A structured DVI walk additionally permits at most 64 scaled points
   of variation in movement operands while requiring identical opcode/operand
@@ -127,7 +135,11 @@ intentionally absent from this harness.
 The harness must not normalize or bless semantic Umber failures. A DVI or
 DVItype mismatch should be investigated against TeX82's `ship_out`,
 `hlist_out`/`vlist_out`, and `movement` procedures in `tex.web`; linked engine
-work belongs under `umber2-i8w`, not in special cases in this script.
+work belongs under `umber2-i8w`, not in special cases in this script. The
+committed-artifact and downstream DVI boundary is documented in
+[architecture.md §10, "Output drivers (`tex-out`)"].
+
+[architecture.md §10, "Output drivers (`tex-out`)"]: architecture.md#10-output-drivers-tex-out
 
 ## Umber format images
 

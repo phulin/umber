@@ -195,7 +195,7 @@ gate into `cargo test --workspace --tests`. The TRIP harness requires the
 special INITEX build documented by `tripman.tex` Appendix A and writes
 comparison work products under `target/trip/`.
 `scripts/trip.sh self-test` stays fetch-free and uses synthetic DVI and DVItype
-streams to executable-test the exact 64sp movement allowance plus rejection of
+streams to executable-test Umber's exact 64sp movement policy plus rejection of
 representative structural and semantic differences with actionable context.
 
 ## Proptest Budgets

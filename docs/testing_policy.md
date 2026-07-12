@@ -241,9 +241,11 @@ logs, terminal photo, and `tripos.tex` remain diagnostic outputs owned by the
 separate diagnostic parity tier. Allowed normalization is executable and
 narrowly bounded: the DVI preamble comment, DVItype's packaging/comment
 rendering, and DVI movement deltas no larger than 64 scaled points with
-identical structure. Characters, rules, specials, box dimensions, page/font
-structure, non-movement DVI operands, and all other DVItype text must match
-exactly. Failures write byte/page/opcode context or unified diffs under
+identical structure. That numeric bound is Umber's conservative executable
+policy for the nonnumeric latitude in `tripman.tex` Appendix A item 6, not a
+threshold stated by Knuth. Characters, rules, specials, box dimensions,
+page/font structure, non-movement DVI operands, and all other DVItype text must
+match exactly. Failures write byte/page/opcode context or unified diffs under
 `target/trip/diffs/`; `scripts/trip.sh self-test` uses synthetic DVI and
 DVItype streams to prove the exact 64sp boundary and reject representative
 opcode/width, character, rule, special, font, page/pointer/dimension, and
