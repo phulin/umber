@@ -668,6 +668,67 @@ remain crate-private implementation details reached only through aggregate
 
 ## 9. Snapshots, rollback, commit
 
+### 9.1 Canonical semantic-state contract
+
+Checkpointing, convergence hashing, format images, restoration validation,
+and dependency recording use one field inventory.  A field belongs to exactly
+one of these buckets:
+
+1. **TeX-semantic state** can change future tokens, diagnostics, nodes,
+   effects, or committed artifacts.  This includes all live `Stores` roots and
+   selectors, code-table and hyphenation content, interaction and prepared
+   magnification state, page-builder state, virtualized `World` state, and the
+   semantic portions of the input, expansion, and mode nests.
+2. **Resume-critical continuation state** describes where the implementation
+   is inside that computation.  It includes source and token-list cursors,
+   macro arguments, conditional/alignment/scanner phases, mode-list roots,
+   pending horizontal characters, and the effect boundary from which replay
+   remains possible.  It is hashed whenever a difference can change future
+   behavior, even when it is not itself a TeX data structure.
+3. **Derived acceleration and diagnostic state** can be discarded and rebuilt
+   from buckets 1 and 2 without an observable change.  Hash scratch buffers,
+   lookup indexes, memo tables, decoded-node caches, allocation history,
+   runtime namespaces, source origins, registered-source capabilities, host
+   paths, and diagnostic provenance belong here.  They are neither hashed nor
+   serialized as semantic format content.  Runtime capabilities needed for
+   liveness validation may still be retained by an in-memory snapshot, but do
+   not participate in semantic equality.
+
+The owning boundary for buckets 1 and 2 is an **`EngineCheckpoint`**, not a
+larger `Universe`.  It atomically composes an opaque `UniverseSnapshot` with
+rooted input/gullet state, `ModeNest` state, any explicit scanner/alignment
+continuation, and effect-boundary metadata.  `Universe` remains the sole
+mutation, liveness-validation, and store/world rollback authority; the engine
+coordinator is responsible for synchronizing pipeline-owned roots immediately
+before capture and for restoring all components together.  No component may
+be restored or published after another component fails validation.
+
+An `EngineCheckpoint` has an explicit schema version.  In-memory schema
+changes are source compatibility changes for checkpoint consumers.  Durable
+formats use their own versioned, handle-free DTO and may contain only a
+validated quiescent subset: complete TeX-semantic format state, empty input
+and page/mode continuations, no pending effects, and no Rust-stack scanner
+continuation.  Format compatibility is therefore explicit conversion between
+versions, never best-effort decoding of a newer graph.
+
+`ResumeValid` means every bucket-2 continuation is either absent at a declared
+quiescent boundary or represented by a validated root in the checkpoint.
+`HashOnly` is an observation of buckets 1 and 2 for convergence; it is never a
+restart capability and carries only a fallback to a prior retained
+`ResumeValid` boundary.  Hashing includes every bucket-1 field and every
+behaviorally relevant bucket-2 field, follows handles to semantic content,
+and excludes bucket 3.  Thus equal hashes assert equal future behavior under
+the documented checkpoint schedule, independently of allocation order,
+origin recording, or host resource location.
+
+Derived-state review tests must prove the exclusion rule by clearing or
+rebuilding each cache/index and observing identical semantic hashes and
+output.  Completeness tests vary each bucket-1/2 field independently and prove
+either a different hash or exact rollback/replay, including nested input,
+macro/conditional, alignment, math, mode, and output state.
+
+### 9.2 Universe snapshot substrate
+
 ```rust
 pub struct Snapshot {
     owner: SnapshotOwner,          // rejects cross-Universe misuse

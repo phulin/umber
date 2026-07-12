@@ -77,6 +77,27 @@ Two flows to keep distinct when reading this document:
   execution resume back to the previous resume-valid boundary until a future
   incremental executor defines serialized continuation points.
 
+The concrete ownership boundary is `EngineCheckpoint`.  It is an engine-level
+composition over an opaque `UniverseSnapshot`, the live `InputStack`/gullet
+root, the executor `ModeNest` root, explicit expansion/alignment/scanner
+continuations, and the retained effect boundary.  Pipeline crates continue to
+own their algorithms and compact rooted representations; `tex-state` continues
+to own all live handles, mutation, validation, `World`, and atomic store/world
+rollback.  The driver or a future `tex-engine` facade is the only layer allowed
+to capture or restore that composition, and it must synchronize the live input
+cursor and mode root immediately before doing so.
+
+Checkpoint fields follow the three-bucket contract in `core_state.md` §9.1:
+TeX-semantic state, resume-critical implementation continuation, and
+discardable derived/diagnostic state.  The first two buckets determine future
+behavior and semantic hashes; the third is recomputed after restore and is
+excluded from equality, convergence, and durable formats.  A resume-valid
+checkpoint contains all continuation roots needed to restart.  A hash-only
+observation may be taken while a Rust-stack continuation remains hidden, but
+it cannot be presented as a restart point.  Format images are a separate
+versioned DTO for validated quiescent state, not serialized engine
+checkpoints.
+
 ## 2. Crate map
 
 The workspace as it exists today (children are dependencies; the pipeline
