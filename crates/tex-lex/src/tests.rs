@@ -4,12 +4,38 @@ use super::{
     MemoryInput, TokenListReplayKind, load_next_line,
 };
 use tex_state::env::banks::IntParam;
-use tex_state::ids::OriginListId;
+use tex_state::ids::{OriginListId, TokenListId};
 use tex_state::provenance::{InsertedOriginKind, OriginRecord};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{ExpansionState, ProvenanceResolver, Universe};
 
 mod input_lines;
+
+#[test]
+fn nested_alignment_resume_reconciles_stale_outer_brace_depth() {
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.begin_alignment_cell(None, TokenListId::EMPTY, 7);
+    let left = TracedTokenWord::pack(char_token('{', Catcode::BeginGroup), OriginId::UNKNOWN);
+    for _ in 0..2 {
+        assert!(!input.intercept_alignment_token(
+            left,
+            super::AlignmentTokenDelivery::LeftBrace,
+            None,
+            7,
+        ));
+    }
+
+    let suspended = input.suspend_alignment_cell();
+    input.resume_alignment_cell(suspended);
+    let cr = TracedTokenWord::pack(char_token('x', Catcode::Escape), OriginId::UNKNOWN);
+
+    assert!(input.intercept_alignment_token(
+        cr,
+        super::AlignmentTokenDelivery::Other,
+        Some(super::AlignmentTerminator::Cr),
+        7,
+    ));
+}
 
 fn condition_context() -> TracedTokenWord {
     TracedTokenWord::pack(char_token('i', Catcode::Escape), OriginId::UNKNOWN)

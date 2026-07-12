@@ -625,6 +625,8 @@ struct AlignmentCellInput {
     phase: AlignmentCellPhase,
     v_template: TokenListId,
     brace_depth: i32,
+    group_depth: u32,
+    resumed_from_nested_alignment: bool,
     delivered: Vec<(TracedTokenWord, AlignmentTokenDelivery)>,
     terminator: Option<TracedTokenWord>,
 }
@@ -842,11 +844,14 @@ impl<S> InputStack<S> {
         &mut self,
         u_template: Option<TokenListReplayMarker>,
         v_template: TokenListId,
+        group_depth: u32,
     ) {
         self.alignment_cells.push(AlignmentCellInput {
             phase: u_template.map_or(AlignmentCellPhase::Body, AlignmentCellPhase::UTemplate),
             v_template,
             brace_depth: 0,
+            group_depth,
+            resumed_from_nested_alignment: false,
             delivered: Vec::new(),
             terminator: None,
         });
@@ -916,7 +921,8 @@ impl<S> InputStack<S> {
             self.alignment_cells.is_empty(),
             "nested alignment cell remained active at pop_alignment"
         );
-        if let Some(cell) = suspended.0 {
+        if let Some(mut cell) = suspended.0 {
+            cell.resumed_from_nested_alignment = true;
             self.alignment_cells.push(cell);
         }
     }
@@ -939,6 +945,7 @@ impl<S> InputStack<S> {
         traced: TracedTokenWord,
         delivery: AlignmentTokenDelivery,
         terminator: Option<AlignmentTerminator>,
+        group_depth: u32,
     ) -> bool {
         let Some(mut cell) = self.alignment_cells.pop() else {
             return false;
@@ -948,6 +955,7 @@ impl<S> InputStack<S> {
         {
             cell.phase = AlignmentCellPhase::Body;
             cell.brace_depth = 0;
+            cell.group_depth = group_depth;
         }
         if cell.phase != AlignmentCellPhase::Body {
             self.alignment_cells.push(cell);
@@ -960,6 +968,11 @@ impl<S> InputStack<S> {
             AlignmentTokenDelivery::RightBrace => cell.brace_depth -= 1,
         }
         cell.delivered.push((traced, delivery));
+        if cell.resumed_from_nested_alignment && terminator.is_some() {
+            let execution_delta = i64::from(group_depth) - i64::from(cell.group_depth);
+            cell.brace_depth = i32::try_from(execution_delta)
+                .expect("execution group depth delta fits alignment brace depth");
+        }
         let terminates = cell.brace_depth == 0 && terminator.is_some();
         if terminates {
             cell.phase = AlignmentCellPhase::VTemplate;

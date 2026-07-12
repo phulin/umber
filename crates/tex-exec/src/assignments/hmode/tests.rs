@@ -425,3 +425,53 @@ fn hyphenation_does_not_repeat_a_left_boundary_kern() {
         ]
     ));
 }
+
+#[test]
+fn discretionary_absorbs_font_kern_across_hyphenated_line_boundary() {
+    const CMR10: &[u8] = include_bytes!("../../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
+    let mut stores = Universe::with_world(tex_state::World::memory());
+    crate::install_unexpandable_primitives(&mut stores);
+    stores
+        .world_mut()
+        .set_memory_file("cmr10.tfm", CMR10.to_vec())
+        .expect("seed cmr10");
+    let mut input = InputStack::new(MemoryInput::new("\\font\\f=cmr10 \\relax \\f"));
+    crate::Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("font selection should execute");
+    stores.add_hyphenation_exception(ExceptionSpec {
+        word: "sentence".to_owned(),
+        positions: vec![3],
+    });
+    let font = stores.current_font();
+    stores.set_font_hyphen_char(font, i32::from(b'-'), false);
+    let pending: Vec<_> = "sentence"
+        .chars()
+        .map(|ch| PendingHChar { font, ch })
+        .collect();
+    let nodes = reconstitute(&mut stores, &pending, false, false);
+
+    let hyphenated = super::super::hyphenation::hyphenated_hlist(&mut stores, &nodes);
+    let disc_index = hyphenated
+        .iter()
+        .position(|node| matches!(node, Node::Disc { .. }))
+        .expect("sentence exception should insert a discretionary");
+    let Node::Disc { replace, .. } = &hyphenated[disc_index] else {
+        unreachable!()
+    };
+
+    assert!(matches!(
+        stores.nodes(*replace).testing_decoded(),
+        [Node::Kern {
+            kind: KernKind::Font,
+            ..
+        }]
+    ));
+    assert!(!matches!(
+        hyphenated.get(disc_index + 1),
+        Some(Node::Kern {
+            kind: KernKind::Font,
+            ..
+        })
+    ));
+}

@@ -1018,7 +1018,7 @@ pub(crate) fn intercept_alignment_token<S>(
             _ => None,
         }
     };
-    input.intercept_alignment_token(traced, delivery, terminator)
+    input.intercept_alignment_token(traced, delivery, terminator, stores.execution_group_depth())
 }
 
 /// Canonical TeX `get_next`-style raw semantic delivery.
@@ -1092,7 +1092,12 @@ fn intercept_suppressed_alignment_token<S>(
         )
     });
     if expandable {
-        input.intercept_alignment_token(traced, tex_lex::AlignmentTokenDelivery::Other, None)
+        input.intercept_alignment_token(
+            traced,
+            tex_lex::AlignmentTokenDelivery::Other,
+            None,
+            stores.execution_group_depth(),
+        )
     } else {
         intercept_alignment_token(input, stores, traced)
     }

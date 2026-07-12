@@ -279,9 +279,24 @@ fn append_hyphenated_word(
     let mut char_start = 0;
 
     for node in nodes {
+        let boundary_kern = matches!(
+            node,
+            Node::Kern {
+                kind: KernKind::Font,
+                ..
+            }
+        ) && positions.get(position_index) == Some(&char_start);
         while positions.get(position_index) == Some(&char_start) {
-            out.push(discretionary_hyphen(stores, word[char_start - 1].font));
+            let replacement = boundary_kern.then_some(node.clone());
+            out.push(discretionary_hyphen(
+                stores,
+                word[char_start - 1].font,
+                replacement,
+            ));
             position_index += 1;
+        }
+        if boundary_kern {
+            continue;
         }
 
         let char_end = char_start + node_original_len(&node);
@@ -309,7 +324,7 @@ fn append_hyphenated_word(
 
     while let Some(&position) = positions.get(position_index) {
         debug_assert_eq!(position, char_start);
-        out.push(discretionary_hyphen(stores, word[position - 1].font));
+        out.push(discretionary_hyphen(stores, word[position - 1].font, None));
         position_index += 1;
     }
 }
@@ -357,18 +372,25 @@ fn node_original_len(node: &Node) -> usize {
     }
 }
 
-fn discretionary_hyphen(stores: &mut Universe, font: tex_state::ids::FontId) -> Node {
+fn discretionary_hyphen(
+    stores: &mut Universe,
+    font: tex_state::ids::FontId,
+    replacement: Option<Node>,
+) -> Node {
     let hyphen = u8::try_from(stores.font_hyphen_char(font))
         .ok()
         .map(char::from)
         .unwrap_or('-');
     let pre = stores.freeze_node_list(&[Node::Char { font, ch: hyphen }]);
     let empty = stores.freeze_node_list(&[]);
+    let replace = replacement.as_ref().map_or(empty, |node| {
+        stores.freeze_node_list(std::slice::from_ref(node))
+    });
     Node::Disc {
         kind: DiscKind::AutomaticHyphen,
         pre,
         post: empty,
-        replace: empty,
+        replace,
     }
 }
 

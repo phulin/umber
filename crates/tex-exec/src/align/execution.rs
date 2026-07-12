@@ -388,7 +388,7 @@ where
                 )?;
             }
         } else {
-            input.begin_alignment_cell(None, v_template);
+            input.begin_alignment_cell(None, v_template, stores.execution_group_depth());
         }
         align_state_mut(nest, align_level)?.start_cell(column, span_count);
 
@@ -577,6 +577,7 @@ where
                     cr,
                     tex_lex::AlignmentTokenDelivery::Other,
                     Some(AlignmentTerminator::Cr),
+                    stores.execution_group_depth(),
                 ));
                 continue;
             }
@@ -593,6 +594,7 @@ where
                 cr,
                 tex_lex::AlignmentTokenDelivery::Other,
                 Some(AlignmentTerminator::Cr),
+                stores.execution_group_depth(),
             ));
             continue;
         }
