@@ -6,6 +6,7 @@
 
 use std::collections::VecDeque;
 use std::fmt;
+use std::ops::{Index, IndexMut};
 use std::sync::Arc;
 
 use tex_state::ids::{OriginListId, TokenListId};
@@ -395,6 +396,98 @@ enum InputFrame<S> {
     },
 }
 
+#[derive(Debug)]
+struct StableFrames<S> {
+    slots: Vec<Option<InputFrame<S>>>,
+    active: usize,
+}
+
+impl<S> StableFrames<S> {
+    fn new() -> Self {
+        Self {
+            slots: Vec::new(),
+            active: 0,
+        }
+    }
+    fn from_vec(frames: Vec<InputFrame<S>>) -> Self {
+        let active = frames.len();
+        Self {
+            slots: frames.into_iter().map(Some).collect(),
+            active,
+        }
+    }
+    fn push(&mut self, frame: InputFrame<S>) {
+        self.slots.push(Some(frame));
+        self.active += 1;
+    }
+    fn remove(&mut self, index: usize) -> InputFrame<S> {
+        self.active -= 1;
+        let frame = self.slots[index].take().expect("input frame slot is live");
+        while self.slots.last().is_some_and(Option::is_none) {
+            self.slots.pop();
+        }
+        frame
+    }
+    fn len(&self) -> usize {
+        self.active
+    }
+    fn slot_len(&self) -> usize {
+        self.slots.len()
+    }
+    fn is_empty(&self) -> bool {
+        self.active == 0
+    }
+    fn iter(&self) -> impl DoubleEndedIterator<Item = &InputFrame<S>> {
+        self.slots.iter().filter_map(Option::as_ref)
+    }
+    fn iter_mut(&mut self) -> impl DoubleEndedIterator<Item = &mut InputFrame<S>> {
+        self.slots.iter_mut().filter_map(Option::as_mut)
+    }
+    #[cfg(test)]
+    fn last_mut(&mut self) -> Option<&mut InputFrame<S>> {
+        self.slots.iter_mut().rev().find_map(Option::as_mut)
+    }
+    fn iter_indexed(&self) -> impl DoubleEndedIterator<Item = (usize, &InputFrame<S>)> {
+        self.slots
+            .iter()
+            .enumerate()
+            .filter_map(|(index, frame)| frame.as_ref().map(|frame| (index, frame)))
+    }
+}
+
+impl<S> Index<usize> for StableFrames<S> {
+    type Output = InputFrame<S>;
+    fn index(&self, index: usize) -> &Self::Output {
+        self.slots[index]
+            .as_ref()
+            .expect("input frame slot is live")
+    }
+}
+impl<S> IndexMut<usize> for StableFrames<S> {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        self.slots[index]
+            .as_mut()
+            .expect("input frame slot is live")
+    }
+}
+impl<'a, S> IntoIterator for &'a mut StableFrames<S> {
+    type Item = &'a mut InputFrame<S>;
+    type IntoIter = std::iter::FilterMap<
+        std::slice::IterMut<'a, Option<InputFrame<S>>>,
+        fn(&'a mut Option<InputFrame<S>>) -> Option<&'a mut InputFrame<S>>,
+    >;
+    fn into_iter(self) -> Self::IntoIter {
+        self.slots.iter_mut().filter_map(Option::as_mut)
+    }
+}
+impl<S> IntoIterator for StableFrames<S> {
+    type Item = InputFrame<S>;
+    type IntoIter = std::iter::Flatten<std::vec::IntoIter<Option<InputFrame<S>>>>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.slots.into_iter().flatten()
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct LastSourceFrame {
     source_id: SourceId,
@@ -483,7 +576,7 @@ impl TracedExpansionToken {
 /// TeX input stack for source frames and frozen token-list replay.
 #[derive(Debug)]
 pub struct InputStack<S> {
-    frames: Vec<InputFrame<S>>,
+    frames: StableFrames<S>,
     token_frame_indices: Vec<usize>,
     condition_frame_indices: Vec<usize>,
     next_source_id: u32,
@@ -550,7 +643,7 @@ impl<S> InputStack<S> {
         S: InputSource,
     {
         let mut stack = Self {
-            frames: Vec::new(),
+            frames: StableFrames::new(),
             token_frame_indices: Vec::new(),
             condition_frame_indices: Vec::new(),
             next_source_id: 0,
@@ -660,7 +753,7 @@ impl<S> InputStack<S> {
             })
             .collect();
         Ok(Self {
-            frames,
+            frames: StableFrames::from_vec(frames),
             token_frame_indices,
             condition_frame_indices,
             next_source_id: summary.next_source_id(),
@@ -1824,25 +1917,40 @@ impl<S> InputStack<S> {
         marker: TokenListReplayMarker,
         stores: &impl ExpansionState,
     ) -> bool {
-        let Some(marked_index) = self.frames.iter().position(|frame| {
+        let Some(marked_index) = self.frames.iter_indexed().find_map(|(index, frame)| {
             matches!(
                 frame,
                 InputFrame::TokenList(frame) if frame.replay_marker == Some(marker)
             )
+            .then_some(index)
         }) else {
             return true;
         };
 
-        let can_finish = self.frames[marked_index..].iter().all(|frame| match frame {
-            InputFrame::TokenList(frame) => frame.index >= stores.tokens(frame.token_list).len(),
-            InputFrame::Condition { .. } => true,
-            InputFrame::Source(_) => false,
-        });
+        let can_finish = self
+            .frames
+            .iter_indexed()
+            .filter(|(index, _)| *index >= marked_index)
+            .all(|(_, frame)| match frame {
+                InputFrame::TokenList(frame) => {
+                    frame.index >= stores.tokens(frame.token_list).len()
+                }
+                InputFrame::Condition { .. } => true,
+                InputFrame::Source(_) => false,
+            });
         if !can_finish {
             return false;
         }
 
-        for index in (marked_index..self.frames.len()).rev() {
+        let retire = self
+            .frames
+            .iter_indexed()
+            .filter_map(|(index, frame)| {
+                (index >= marked_index && matches!(frame, InputFrame::TokenList(_)))
+                    .then_some(index)
+            })
+            .collect::<Vec<_>>();
+        for index in retire.into_iter().rev() {
             if matches!(self.frames[index], InputFrame::TokenList(_)) {
                 let removed = self.remove_frame(index);
                 if let InputFrame::TokenList(frame) = removed {
@@ -1858,7 +1966,7 @@ impl<S> InputStack<S> {
     }
 
     fn push_frame(&mut self, frame: InputFrame<S>) {
-        let index = self.frames.len();
+        let index = self.frames.slot_len();
         match frame {
             InputFrame::Source(_) | InputFrame::TokenList(_) => {
                 self.token_frame_indices.push(index)
@@ -1869,16 +1977,14 @@ impl<S> InputStack<S> {
     }
 
     fn remove_frame(&mut self, index: usize) -> InputFrame<S> {
-        self.token_frame_indices.retain(|entry| *entry != index);
-        self.condition_frame_indices.retain(|entry| *entry != index);
-        for entry in self
-            .token_frame_indices
-            .iter_mut()
-            .chain(self.condition_frame_indices.iter_mut())
-        {
-            if *entry > index {
-                *entry -= 1;
-            }
+        let indices = match self.frames[index] {
+            InputFrame::Source(_) | InputFrame::TokenList(_) => &mut self.token_frame_indices,
+            InputFrame::Condition { .. } => &mut self.condition_frame_indices,
+        };
+        if indices.last() == Some(&index) {
+            indices.pop();
+        } else if let Ok(position) = indices.binary_search(&index) {
+            indices.remove(position);
         }
         self.frames.remove(index)
     }
