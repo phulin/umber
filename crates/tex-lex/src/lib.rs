@@ -484,6 +484,8 @@ impl TracedExpansionToken {
 #[derive(Debug)]
 pub struct InputStack<S> {
     frames: Vec<InputFrame<S>>,
+    token_frame_indices: Vec<usize>,
+    condition_frame_indices: Vec<usize>,
     next_source_id: u32,
     unicode_superscript_notation: bool,
     last_source_frame: Option<LastSourceFrame>,
@@ -549,6 +551,8 @@ impl<S> InputStack<S> {
     {
         let mut stack = Self {
             frames: Vec::new(),
+            token_frame_indices: Vec::new(),
+            condition_frame_indices: Vec::new(),
             next_source_id: 0,
             unicode_superscript_notation: true,
             last_source_frame: None,
@@ -571,8 +575,7 @@ impl<S> InputStack<S> {
             .next_source_id
             .checked_add(1)
             .expect("source id counter overflowed");
-        self.frames
-            .push(InputFrame::Source(SourceInputFrame::new(source_id, source)));
+        self.push_frame(InputFrame::Source(SourceInputFrame::new(source_id, source)));
         source_id
     }
 
@@ -642,8 +645,24 @@ impl<S> InputStack<S> {
             })
             .unwrap_or(OriginId::UNKNOWN);
 
+        let token_frame_indices = frames
+            .iter()
+            .enumerate()
+            .filter_map(|(index, frame)| {
+                matches!(frame, InputFrame::Source(_) | InputFrame::TokenList(_)).then_some(index)
+            })
+            .collect();
+        let condition_frame_indices = frames
+            .iter()
+            .enumerate()
+            .filter_map(|(index, frame)| {
+                matches!(frame, InputFrame::Condition { .. }).then_some(index)
+            })
+            .collect();
         Ok(Self {
             frames,
+            token_frame_indices,
+            condition_frame_indices,
             next_source_id: summary.next_source_id(),
             unicode_superscript_notation: summary.unicode_superscript_notation(),
             last_source_frame: summary.last_source_frame().map(|source| LastSourceFrame {
@@ -870,7 +889,7 @@ impl<S> InputStack<S> {
             .next_replay_marker
             .checked_add(1)
             .expect("token-list replay marker overflowed");
-        self.frames.push(InputFrame::TokenList(TokenListInputFrame {
+        self.push_frame(InputFrame::TokenList(TokenListInputFrame {
             token_list,
             origin_list,
             replay_kind,
@@ -909,7 +928,7 @@ impl<S> InputStack<S> {
         macro_invocation: OriginId,
     ) {
         let parent_macro_invocation = self.active_macro_invocation;
-        self.frames.push(InputFrame::TokenList(TokenListInputFrame {
+        self.push_frame(InputFrame::TokenList(TokenListInputFrame {
             token_list,
             origin_list,
             replay_kind: TokenListReplayKind::MacroBody,
@@ -935,7 +954,7 @@ impl<S> InputStack<S> {
             .next_condition_token
             .checked_add(1)
             .expect("condition frame token overflowed");
-        self.frames.push(InputFrame::Condition { token, condition });
+        self.push_frame(InputFrame::Condition { token, condition });
         token
     }
 
@@ -944,14 +963,15 @@ impl<S> InputStack<S> {
         token: ConditionFrameToken,
         condition: ConditionFrameSummary,
     ) -> Option<ConditionFrameSummary> {
-        let frame = self.frames.iter_mut().rev().find_map(|frame| match frame {
-            InputFrame::Condition {
-                token: frame_token,
-                condition,
-            } if *frame_token == token => Some(condition),
-            InputFrame::Source(_) | InputFrame::TokenList(_) => None,
-            InputFrame::Condition { .. } => None,
+        let index = self.condition_frame_indices.iter().rev().copied().find(|index| {
+            matches!(self.frames[*index], InputFrame::Condition { token: frame_token, .. } if frame_token == token)
         })?;
+        let InputFrame::Condition {
+            condition: frame, ..
+        } = &mut self.frames[index]
+        else {
+            unreachable!("condition index names a condition frame")
+        };
         Some(std::mem::replace(frame, condition))
     }
 
@@ -966,26 +986,25 @@ impl<S> InputStack<S> {
 
     #[must_use]
     pub fn current_condition(&self) -> Option<ConditionFrameSummary> {
-        self.frames.iter().rev().find_map(|frame| match frame {
-            InputFrame::Condition { condition, .. } => Some(*condition),
-            InputFrame::Source(_) | InputFrame::TokenList(_) => None,
-        })
+        let index = *self.condition_frame_indices.last()?;
+        let InputFrame::Condition { condition, .. } = self.frames[index] else {
+            unreachable!()
+        };
+        Some(condition)
     }
 
     #[must_use]
     pub fn current_condition_token(&self) -> Option<ConditionFrameToken> {
-        self.frames.iter().rev().find_map(|frame| match frame {
-            InputFrame::Condition { token, .. } => Some(*token),
-            InputFrame::Source(_) | InputFrame::TokenList(_) => None,
-        })
+        let index = *self.condition_frame_indices.last()?;
+        let InputFrame::Condition { token, .. } = self.frames[index] else {
+            unreachable!()
+        };
+        Some(token)
     }
 
     pub fn pop_condition(&mut self) -> Option<ConditionFrameSummary> {
-        let index = self
-            .frames
-            .iter()
-            .rposition(|frame| matches!(frame, InputFrame::Condition { .. }))?;
-        match self.frames.remove(index) {
+        let index = *self.condition_frame_indices.last()?;
+        match self.remove_frame(index) {
             InputFrame::Condition { condition, .. } => Some(condition),
             InputFrame::Source(_) | InputFrame::TokenList(_) => unreachable!("rposition matched"),
         }
@@ -1444,7 +1463,7 @@ where
                 InputFrame::TokenList(token_list) => {
                     match next_traced_token_from_token_list_frame(token_list, stores) {
                         Some(TracedTokenReplay::PushArgument(argument)) => {
-                            self.frames.push(InputFrame::TokenList(TokenListInputFrame {
+                            self.push_frame(InputFrame::TokenList(TokenListInputFrame {
                                 token_list: argument.token_list(),
                                 origin_list: argument.origin_list(),
                                 replay_kind: TokenListReplayKind::MacroArgument,
@@ -1463,7 +1482,7 @@ where
                             return Ok(Some(token));
                         }
                         None => {
-                            let removed = self.frames.remove(frame_index);
+                            let removed = self.remove_frame(frame_index);
                             if let InputFrame::TokenList(frame) = removed {
                                 self.retire_token_list_frame(frame);
                             }
@@ -1478,7 +1497,7 @@ where
 
                     if source.frame.byte_offset >= source.frame.line.len() {
                         if source.frame.end_after_current_line {
-                            let popped = self.frames.remove(frame_index);
+                            let popped = self.remove_frame(frame_index);
                             if let InputFrame::Source(source) = popped {
                                 self.last_source_frame = Some(LastSourceFrame {
                                     source_id: source.source_id,
@@ -1491,7 +1510,7 @@ where
                             continue;
                         }
                         if !load_next_line(source, stores)? {
-                            let popped = self.frames.remove(frame_index);
+                            let popped = self.remove_frame(frame_index);
                             if let InputFrame::Source(source) = popped {
                                 self.last_source_frame = Some(LastSourceFrame {
                                     source_id: source.source_id,
@@ -1562,7 +1581,7 @@ where
                 InputFrame::TokenList(token_list) => {
                     match next_traced_token_from_token_list_frame(token_list, stores) {
                         Some(TracedTokenReplay::PushArgument(argument)) => {
-                            self.frames.push(InputFrame::TokenList(TokenListInputFrame {
+                            self.push_frame(InputFrame::TokenList(TokenListInputFrame {
                                 token_list: argument.token_list(),
                                 origin_list: argument.origin_list(),
                                 replay_kind: TokenListReplayKind::MacroArgument,
@@ -1581,7 +1600,7 @@ where
                             return Ok(Some(TracedExpansionToken::new(token, true)));
                         }
                         None => {
-                            let removed = self.frames.remove(frame_index);
+                            let removed = self.remove_frame(frame_index);
                             if let InputFrame::TokenList(frame) = removed {
                                 self.retire_token_list_frame(frame);
                             }
@@ -1596,7 +1615,7 @@ where
 
                     if source.frame.byte_offset >= source.frame.line.len() {
                         if source.frame.end_after_current_line {
-                            let popped = self.frames.remove(frame_index);
+                            let popped = self.remove_frame(frame_index);
                             if let InputFrame::Source(source) = popped {
                                 self.last_source_frame = Some(LastSourceFrame {
                                     source_id: source.source_id,
@@ -1609,7 +1628,7 @@ where
                             continue;
                         }
                         if !load_next_line(source, stores)? {
-                            let popped = self.frames.remove(frame_index);
+                            let popped = self.remove_frame(frame_index);
                             if let InputFrame::Source(source) = popped {
                                 self.last_source_frame = Some(LastSourceFrame {
                                     source_id: source.source_id,
@@ -1649,7 +1668,7 @@ where
                 InputFrame::TokenList(token_list) => {
                     match next_token_from_token_list_frame(token_list, stores) {
                         Some(TokenReplay::PushArgument(argument)) => {
-                            self.frames.push(InputFrame::TokenList(TokenListInputFrame {
+                            self.push_frame(InputFrame::TokenList(TokenListInputFrame {
                                 token_list: argument.token_list(),
                                 origin_list: argument.origin_list(),
                                 replay_kind: TokenListReplayKind::MacroArgument,
@@ -1668,7 +1687,7 @@ where
                             return Ok(Some(ExpansionToken::new(token, true)));
                         }
                         None => {
-                            self.frames.remove(frame_index);
+                            self.remove_frame(frame_index);
                         }
                     };
                 }
@@ -1679,7 +1698,7 @@ where
 
                     if source.frame.byte_offset >= source.frame.line.len() {
                         if source.frame.end_after_current_line {
-                            let popped = self.frames.remove(frame_index);
+                            let popped = self.remove_frame(frame_index);
                             if let InputFrame::Source(source) = popped {
                                 self.last_source_frame = Some(LastSourceFrame {
                                     source_id: source.source_id,
@@ -1692,7 +1711,7 @@ where
                             continue;
                         }
                         if !load_next_line_readonly(source, stores)? {
-                            let popped = self.frames.remove(frame_index);
+                            let popped = self.remove_frame(frame_index);
                             if let InputFrame::Source(source) = popped {
                                 self.last_source_frame = Some(LastSourceFrame {
                                     source_id: source.source_id,
@@ -1758,7 +1777,7 @@ impl<S> InputStack<S> {
                 if frame.token_list == token_list && frame.replay_kind == replay_kind
         );
         if matches {
-            let removed = self.frames.remove(frame_index);
+            let removed = self.remove_frame(frame_index);
             if let InputFrame::TokenList(frame) = removed {
                 self.retire_token_list_frame(frame);
             }
@@ -1825,7 +1844,7 @@ impl<S> InputStack<S> {
 
         for index in (marked_index..self.frames.len()).rev() {
             if matches!(self.frames[index], InputFrame::TokenList(_)) {
-                let removed = self.frames.remove(index);
+                let removed = self.remove_frame(index);
                 if let InputFrame::TokenList(frame) = removed {
                     self.retire_token_list_frame(frame);
                 }
@@ -1835,9 +1854,33 @@ impl<S> InputStack<S> {
     }
 
     fn current_token_frame_index(&self) -> Option<usize> {
-        self.frames
-            .iter()
-            .rposition(|frame| matches!(frame, InputFrame::Source(_) | InputFrame::TokenList(_)))
+        self.token_frame_indices.last().copied()
+    }
+
+    fn push_frame(&mut self, frame: InputFrame<S>) {
+        let index = self.frames.len();
+        match frame {
+            InputFrame::Source(_) | InputFrame::TokenList(_) => {
+                self.token_frame_indices.push(index)
+            }
+            InputFrame::Condition { .. } => self.condition_frame_indices.push(index),
+        }
+        self.frames.push(frame);
+    }
+
+    fn remove_frame(&mut self, index: usize) -> InputFrame<S> {
+        self.token_frame_indices.retain(|entry| *entry != index);
+        self.condition_frame_indices.retain(|entry| *entry != index);
+        for entry in self
+            .token_frame_indices
+            .iter_mut()
+            .chain(self.condition_frame_indices.iter_mut())
+        {
+            if *entry > index {
+                *entry -= 1;
+            }
+        }
+        self.frames.remove(index)
     }
 }
 
