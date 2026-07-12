@@ -57,6 +57,7 @@ use crate::world::{
 use std::hash::BuildHasher;
 #[cfg(any(test, feature = "testing", feature = "shadow"))]
 use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 
 /// State operations available to TeX's lexer and expansion engine.
 ///
@@ -1305,11 +1306,7 @@ impl Universe {
             let region = self.stores.source_region(source.source())?;
             let bytes = self.source_backing_bytes(region)?;
             let offset = usize::try_from(source.byte_offset()).ok()?;
-            let scalar_len = std::str::from_utf8(bytes.get(offset..)?)
-                .ok()?
-                .chars()
-                .next()?
-                .len_utf8();
+            let scalar_len = utf8_scalar_len_at(bytes, offset)?;
             let hi = self
                 .stores
                 .source_position(
@@ -1383,11 +1380,22 @@ impl Universe {
             if u64::try_from(record.len()).ok() != Some(byte_len) {
                 return Err(SourceMapError::WorldInputLengthMismatch);
             }
-            return self
-                .stores
-                .register_source(source, SourceDescriptor::world(input_record, byte_len));
+            let bytes = self
+                .world
+                .input_content(record.hash())
+                .ok_or(SourceMapError::MissingWorldInput)?;
+            let line_starts = source_line_starts(bytes);
+            return self.stores.register_source(
+                source,
+                SourceDescriptor::world(input_record, byte_len),
+                line_starts,
+            );
         }
-        self.stores.register_source(source, descriptor)
+        let SourceDescriptor::Generated(generated) = &descriptor else {
+            unreachable!("world source handled above")
+        };
+        let line_starts = source_line_starts(generated.bytes());
+        self.stores.register_source(source, descriptor, line_starts)
     }
 
     /// Registers a source and returns an opaque capability used by its input
@@ -1424,6 +1432,10 @@ impl Universe {
         self.stores.source_region_at_position(position)
     }
 
+    pub(crate) fn source_line_starts(&self, region: SourceRegion) -> Option<&[usize]> {
+        self.stores.source_line_starts(region)
+    }
+
     pub(crate) fn source_backing_bytes(&self, region: SourceRegion) -> Option<&[u8]> {
         match region.backing {
             SourceBacking::World(record_id) => {
@@ -1442,6 +1454,16 @@ impl Universe {
         origin: OriginId,
     ) -> Option<crate::provenance::SourceOrigin> {
         self.stores.direct_source_origin(origin)
+    }
+
+    /// Tests an inserted-origin classification without resolving source origins.
+    #[must_use]
+    pub fn origin_is_inserted_kind(&self, id: OriginId, kind: InsertedOriginKind) -> bool {
+        matches!(id.decode(), crate::token::OriginEncoding::Arena(_))
+            && matches!(
+                self.stores.origin_if_live(id),
+                Some(OriginRecord::Inserted(inserted)) if inserted.kind() == kind
+            )
     }
 
     pub(crate) fn source_origin_at_position(
@@ -3467,6 +3489,32 @@ fn format_checksum(mode: u8, payload: &[u8]) -> u64 {
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
     hash
+}
+
+fn source_line_starts(bytes: &[u8]) -> Arc<[usize]> {
+    let mut starts = Vec::with_capacity(bytes.iter().filter(|&&byte| byte == b'\n').count() + 1);
+    starts.push(0);
+    starts.extend(
+        bytes
+            .iter()
+            .enumerate()
+            .filter(|(_, byte)| **byte == b'\n')
+            .map(|(index, _)| index + 1),
+    );
+    starts.into()
+}
+
+fn utf8_scalar_len_at(bytes: &[u8], offset: usize) -> Option<usize> {
+    let width = match *bytes.get(offset)? {
+        0x00..=0x7f => 1,
+        0xc2..=0xdf => 2,
+        0xe0..=0xef => 3,
+        0xf0..=0xf4 => 4,
+        _ => return None,
+    };
+    let end = offset.checked_add(width)?;
+    let scalar = std::str::from_utf8(bytes.get(offset..end)?).ok()?;
+    (scalar.chars().count() == 1).then_some(width)
 }
 
 #[cfg(test)]

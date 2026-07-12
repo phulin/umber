@@ -836,8 +836,10 @@ impl Stores {
         &mut self,
         source: SourceId,
         descriptor: SourceDescriptor,
+        line_starts: std::sync::Arc<[usize]>,
     ) -> Result<SourcePos, SourceMapError> {
-        self.source_map.register(source, descriptor)
+        self.source_map
+            .register_with_line_starts(source, descriptor, line_starts)
     }
 
     /// Assigns one local byte offset in a live source to logical source space.
@@ -864,6 +866,10 @@ impl Stores {
 
     pub(crate) fn source_region_at_position(&self, position: SourcePos) -> Option<SourceRegion> {
         self.source_map.region_for_position(position)
+    }
+
+    pub(crate) fn source_line_starts(&self, region: SourceRegion) -> Option<&[usize]> {
+        self.source_map.line_starts(region)
     }
 
     pub(crate) fn direct_source_origin(&self, id: OriginId) -> Option<SourceOrigin> {

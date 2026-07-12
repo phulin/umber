@@ -46,6 +46,28 @@ fn regions_reserve_distinct_anchor_positions_and_validate_spans() {
 }
 
 #[test]
+fn registration_stores_line_starts_and_rollback_discards_them() {
+    let mut map = SourceMap::default();
+    map.register(SourceId::new(0), generated(b"first\nsecond\n"))
+        .expect("source registers");
+    let root = map
+        .region_for_source(SourceId::new(0))
+        .expect("root source remains live");
+    assert_eq!(map.line_starts(root), Some(&[0, 6, 13][..]));
+
+    let mark = map.watermark();
+    map.register(SourceId::new(1), generated(b"a\nb"))
+        .expect("source registers");
+    let discarded = map
+        .region_for_source(SourceId::new(1))
+        .expect("discarded source is live before rollback");
+    assert_eq!(map.line_starts(discarded), Some(&[0, 2][..]));
+
+    map.truncate_to(mark);
+    assert_eq!(map.line_starts(discarded), None);
+}
+
+#[test]
 fn registration_is_idempotent_but_rejects_conflicting_backing() {
     let mut map = SourceMap::default();
     let descriptor = generated(b"same");

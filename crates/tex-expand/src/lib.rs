@@ -1132,6 +1132,32 @@ where
     input.push_token_list_with_origins(token_list, origin_list, TokenListReplayKind::Inserted);
 }
 
+/// Inserts traced tokens that were not previously delivered by `get_next`.
+///
+/// Unlike [`back_input`], this does not reverse alignment brace accounting.
+pub fn insert_input<S, I>(input: &mut InputStack<S>, stores: &mut impl ExpansionState, tokens: I)
+where
+    S: InputSource,
+    I: IntoIterator<Item = TracedTokenWord>,
+{
+    let traced = tokens.into_iter().collect::<Vec<_>>();
+    if traced.is_empty() {
+        return;
+    }
+    let semantic = traced
+        .iter()
+        .copied()
+        .map(semantic_token)
+        .collect::<Vec<_>>();
+    let token_list = stores.intern_token_list(&semantic);
+    let mut origins = stores.origin_list_builder();
+    for token in traced {
+        origins.push(token.origin());
+    }
+    let origin_list = stores.finish_origin_list(&mut origins);
+    input.push_token_list_with_origins(token_list, origin_list, TokenListReplayKind::Inserted);
+}
+
 /// Implements TeX's unexpanded `get_token`, including alignment delimiter
 /// interception performed by `get_next` before the token reaches its caller.
 pub fn get_token<S>(

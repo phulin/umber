@@ -189,6 +189,7 @@ fn source_origin_direct_boundary_crossing_falls_back_to_one_span_arena() {
         .register_source(
             SourceId::new(0),
             SourceDescriptor::world(InputRecordId::new(0), 4),
+            [0usize].into(),
         )
         .expect("cross-boundary source registers");
     let before = stores.provenance_stats();
@@ -227,6 +228,7 @@ fn oversized_and_cumulative_sources_use_wide_fallback_without_narrowing_position
         .register_source(
             SourceId::new(0),
             SourceDescriptor::world(InputRecordId::new(0), 0x8000_0001),
+            [0usize].into(),
         )
         .expect("single oversized source registers in logical u64 space");
     let wide = oversized.source_token_origin(SourceId::new(0), 0x7fff_ffff, 0x8000_0000);
@@ -248,12 +250,14 @@ fn oversized_and_cumulative_sources_use_wide_fallback_without_narrowing_position
         .register_source(
             SourceId::new(0),
             SourceDescriptor::world(InputRecordId::new(0), 0xff),
+            [0usize].into(),
         )
         .expect("first source registers");
     cumulative
         .register_source(
             SourceId::new(1),
             SourceDescriptor::world(InputRecordId::new(1), 2),
+            [0usize].into(),
         )
         .expect("second source registers beyond direct space");
     let fallback = cumulative.source_token_origin(SourceId::new(1), 0, 1);
@@ -272,6 +276,7 @@ fn direct_and_fallback_liveness_tracks_aggregate_rollback() {
         .register_source(
             SourceId::new(4),
             SourceDescriptor::world(InputRecordId::new(0), 2),
+            [0usize].into(),
         )
         .expect("source registers");
     let direct = stores.source_token_origin(SourceId::new(4), 0, 1);

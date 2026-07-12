@@ -226,37 +226,48 @@ impl<'a> ProvenanceResolver<'a> {
         let Some(bytes) = self.universe.source_backing_bytes(region) else {
             return;
         };
-        self.render_range_lines(out, bytes, source.source.byte_offset(), source.hi);
+        let Some(line_starts) = self.universe.source_line_starts(region) else {
+            return;
+        };
+        self.render_range_lines(
+            out,
+            bytes,
+            line_starts,
+            source.source.byte_offset(),
+            source.hi,
+        );
     }
 
     fn source_scalar_len(&self, source: SourceOrigin) -> Option<u64> {
         let region = self.universe.source_region(source.source())?;
         let bytes = self.universe.source_backing_bytes(region)?;
         let offset = usize::try_from(source.byte_offset()).ok()?;
-        let ch = std::str::from_utf8(bytes.get(offset..)?)
-            .ok()?
-            .chars()
-            .next()?;
-        u64::try_from(ch.len_utf8()).ok()
+        u64::try_from(utf8_scalar_len_at(bytes, offset)?).ok()
     }
 
-    fn render_range_lines(&self, out: &mut String, bytes: &[u8], lo: u64, hi: u64) {
+    fn render_range_lines(
+        &self,
+        out: &mut String,
+        bytes: &[u8],
+        starts: &[usize],
+        lo: u64,
+        hi: u64,
+    ) {
         let (Ok(lo), Ok(hi)) = (usize::try_from(lo), usize::try_from(hi)) else {
             return;
         };
         if lo > bytes.len() || hi < lo || hi > bytes.len() {
             return;
         }
-        let starts = physical_line_starts(bytes);
-        let first = line_index_at(&starts, lo);
+        let first = line_index_at(starts, lo);
         let last_probe = if hi > lo { hi - 1 } else { lo };
-        let last = line_index_at(&starts, last_probe.min(bytes.len()));
-        self.render_one_range_line(out, bytes, &starts, first, lo..hi, true);
+        let last = line_index_at(starts, last_probe.min(bytes.len()));
+        self.render_one_range_line(out, bytes, starts, first, lo..hi, true);
         if last > first {
             if last > first + 1 {
                 out.push_str("    | ...\n");
             }
-            self.render_one_range_line(out, bytes, &starts, last, lo..hi, false);
+            self.render_one_range_line(out, bytes, starts, last, lo..hi, false);
         }
     }
 
@@ -332,8 +343,9 @@ impl<'a> ProvenanceResolver<'a> {
     fn source_line(&self, source: SourceOrigin) -> Option<String> {
         if let Some(region) = self.universe.source_region(source.source()) {
             let bytes = self.universe.source_backing_bytes(region)?;
+            let line_starts = self.universe.source_line_starts(region)?;
             let offset = usize::try_from(source.byte_offset()).ok()?;
-            return physical_line_at(bytes, offset).map(|(_, _, line)| line);
+            return physical_line_at(bytes, line_starts, offset).map(|(_, _, line)| line);
         }
         let record = match source.input_record() {
             Some(record) => self.universe.world().input_record(record)?,
@@ -353,8 +365,9 @@ impl<'a> ProvenanceResolver<'a> {
         if let Some(region) = self.universe.source_region(source.source())
             && source.byte_offset() <= region.byte_len
             && let Some(bytes) = self.universe.source_backing_bytes(region)
+            && let Some(line_starts) = self.universe.source_line_starts(region)
             && let Ok(offset) = usize::try_from(source.byte_offset())
-            && let Some((line_number, column, line)) = physical_line_at(bytes, offset)
+            && let Some((line_number, column, line)) = physical_line_at(bytes, line_starts, offset)
         {
             return DisplaySource {
                 label,
@@ -438,15 +451,9 @@ fn line_at(text: &str, line: u32) -> Option<String> {
         .map(|line| line.trim_end_matches('\r').to_owned())
 }
 
-fn physical_line_at(bytes: &[u8], offset: usize) -> Option<(u32, u32, String)> {
+fn physical_line_at(bytes: &[u8], starts: &[usize], offset: usize) -> Option<(u32, u32, String)> {
     if offset > bytes.len() {
         return None;
-    }
-    let mut starts = vec![0usize];
-    for (index, &byte) in bytes.iter().enumerate() {
-        if byte == b'\n' && index + 1 < bytes.len() {
-            starts.push(index + 1);
-        }
     }
     let line_index = starts
         .partition_point(|&start| start <= offset)
@@ -470,20 +477,23 @@ fn physical_line_at(bytes: &[u8], offset: usize) -> Option<(u32, u32, String)> {
     ))
 }
 
-fn physical_line_starts(bytes: &[u8]) -> Vec<usize> {
-    let mut starts = vec![0];
-    for (index, &byte) in bytes.iter().enumerate() {
-        if byte == b'\n' {
-            starts.push(index + 1);
-        }
-    }
-    starts
-}
-
 fn line_index_at(starts: &[usize], offset: usize) -> usize {
     starts
         .partition_point(|&start| start <= offset)
         .saturating_sub(1)
+}
+
+fn utf8_scalar_len_at(bytes: &[u8], offset: usize) -> Option<usize> {
+    let width = match *bytes.get(offset)? {
+        0x00..=0x7f => 1,
+        0xc2..=0xdf => 2,
+        0xe0..=0xef => 3,
+        0xf0..=0xf4 => 4,
+        _ => return None,
+    };
+    let end = offset.checked_add(width)?;
+    let scalar = std::str::from_utf8(bytes.get(offset..end)?).ok()?;
+    (scalar.chars().count() == 1).then_some(width)
 }
 
 fn physical_line(bytes: &[u8], starts: &[usize], index: usize) -> Option<PhysicalLine> {

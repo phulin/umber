@@ -1,4 +1,4 @@
-use super::{FormatError, Universe};
+use super::{FormatError, Universe, utf8_scalar_len_at};
 use crate::font::{MAX_FONT_DIMEN, NULL_FONT};
 use crate::glue::{GlueSpec, Order};
 use crate::hyphenation::{ExceptionSpec, PatternSpec};
@@ -11,7 +11,7 @@ use crate::macro_store::MacroMeaning;
 use crate::meaning::{Meaning, MeaningFlags, RawMeaning};
 use crate::node::{BoxNode, BoxNodeFields, GlueKind, KernKind, LeaderPayload, Node, Sign};
 use crate::page::{PageDimension, PageInteger};
-use crate::provenance::{OriginRecord, SourceOrigin, SyntheticOriginKind};
+use crate::provenance::{InsertedOriginKind, OriginRecord, SourceOrigin, SyntheticOriginKind};
 use crate::scaled::{GlueSetRatio, Scaled};
 use crate::source_map::{SourceDescriptor, SourceMapError};
 use crate::token::{Catcode, OriginId, Token, TracedTokenWord};
@@ -20,6 +20,36 @@ use crate::world::{
 };
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
+
+#[test]
+fn bounded_scalar_decode_does_not_validate_the_remaining_source_suffix() {
+    assert_eq!(utf8_scalar_len_at(&[b'x', 0xff], 0), Some(1));
+    assert_eq!(utf8_scalar_len_at(&[0xc3, 0xa9, 0xff], 0), Some(2));
+    assert_eq!(utf8_scalar_len_at(&[0xc3, 0xff], 0), None);
+}
+
+#[test]
+fn inserted_origin_classification_skips_direct_source_resolution() {
+    let mut universe = Universe::new();
+    universe
+        .register_source(
+            SourceId::new(0),
+            SourceDescriptor::generated(Arc::from(&b"x"[..])),
+        )
+        .expect("source registration");
+    let direct = universe.source_token_origin(SourceId::new(0), 0, 1);
+    let noexpand = universe.inserted_origin(
+        InsertedOriginKind::NoExpand,
+        Token::Char {
+            ch: 'x',
+            cat: Catcode::Other,
+        },
+        direct,
+    );
+
+    assert!(!universe.origin_is_inserted_kind(direct, InsertedOriginKind::NoExpand));
+    assert!(universe.origin_is_inserted_kind(noexpand, InsertedOriginKind::NoExpand));
+}
 
 #[test]
 fn unknown_meaning_flags_participate_in_semantic_hashes() {

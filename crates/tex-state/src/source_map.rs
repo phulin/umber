@@ -243,6 +243,7 @@ pub(crate) struct SourceMapMark {
 #[derive(Debug)]
 pub(crate) struct SourceMap {
     regions: Vec<SourceRegion>,
+    line_starts: Vec<Arc<[usize]>>,
     generated: Vec<GeneratedSource>,
     next_pos: u64,
     forced_next_pos: bool,
@@ -253,6 +254,7 @@ impl Default for SourceMap {
     fn default() -> Self {
         Self {
             regions: Vec::new(),
+            line_starts: Vec::new(),
             generated: Vec::new(),
             next_pos: 0,
             forced_next_pos: false,
@@ -265,6 +267,7 @@ impl Clone for SourceMap {
     fn clone(&self) -> Self {
         Self {
             regions: self.regions.clone(),
+            line_starts: self.line_starts.clone(),
             generated: self.generated.clone(),
             next_pos: self.next_pos,
             forced_next_pos: self.forced_next_pos,
@@ -289,10 +292,32 @@ impl SourceMap {
         self.forced_next_pos = true;
     }
 
+    #[cfg(test)]
     pub(crate) fn register(
         &mut self,
         source: SourceId,
         descriptor: SourceDescriptor,
+    ) -> Result<SourcePos, SourceMapError> {
+        let SourceDescriptor::Generated(generated) = &descriptor else {
+            panic!("source-map unit tests register generated sources")
+        };
+        let mut starts = vec![0];
+        starts.extend(
+            generated
+                .bytes()
+                .iter()
+                .enumerate()
+                .filter(|(_, byte)| **byte == b'\n')
+                .map(|(index, _)| index + 1),
+        );
+        self.register_with_line_starts(source, descriptor, starts.into())
+    }
+
+    pub(crate) fn register_with_line_starts(
+        &mut self,
+        source: SourceId,
+        descriptor: SourceDescriptor,
+        line_starts: Arc<[usize]>,
     ) -> Result<SourcePos, SourceMapError> {
         if let Some(region) = self.region_for_source(source) {
             return self
@@ -323,6 +348,7 @@ impl SourceMap {
             backing,
             identity,
         });
+        self.line_starts.push(line_starts);
         self.next_pos = next_pos;
         Ok(SourcePos(start))
     }
@@ -444,14 +470,33 @@ impl SourceMap {
         self.generated.get(id.0 as usize)
     }
 
+    pub(crate) fn line_starts(&self, region: SourceRegion) -> Option<&[usize]> {
+        self.identities
+            .contains(region.identity)
+            .then(|| self.line_starts.get(region.identity.slot() as usize))
+            .flatten()
+            .map(AsRef::as_ref)
+    }
+
     pub(crate) fn stats(&self) -> SourceMapStats {
         SourceMapStats {
             regions: self.regions.len(),
             generated_backings: self.generated.len(),
             live_bytes: self.regions.len() * std::mem::size_of::<SourceRegion>()
-                + self.generated.len() * std::mem::size_of::<GeneratedSource>(),
+                + self.generated.len() * std::mem::size_of::<GeneratedSource>()
+                + self
+                    .line_starts
+                    .iter()
+                    .map(|starts| starts.len() * std::mem::size_of::<usize>())
+                    .sum::<usize>(),
             retained_bytes: self.regions.capacity() * std::mem::size_of::<SourceRegion>()
-                + self.generated.capacity() * std::mem::size_of::<GeneratedSource>(),
+                + self.generated.capacity() * std::mem::size_of::<GeneratedSource>()
+                + self.line_starts.capacity() * std::mem::size_of::<Arc<[usize]>>()
+                + self
+                    .line_starts
+                    .iter()
+                    .map(|starts| starts.len() * std::mem::size_of::<usize>())
+                    .sum::<usize>(),
         }
     }
 
@@ -472,6 +517,7 @@ impl SourceMap {
             .rollback(mark.identities)
             .expect("source-map mark is not an ancestor");
         self.regions.truncate(mark.regions);
+        self.line_starts.truncate(mark.regions);
         self.generated.truncate(mark.generated);
         if self.forced_next_pos {
             self.next_pos = mark.next_pos;

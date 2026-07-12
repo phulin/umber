@@ -1,7 +1,7 @@
 use tex_expand::{ExpansionHooks, NoopRecorder, ReadRecorder};
 use tex_lex::{InputSource, InputStack};
 use tex_state::meaning::{ExpandablePrimitive, Meaning, UnexpandablePrimitive};
-use tex_state::provenance::{InsertedOriginKind, OriginRecord};
+use tex_state::provenance::InsertedOriginKind;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{ContentHash, GroupKind, GroupMismatch, Universe};
 
@@ -55,10 +55,7 @@ where
 {
     let token = tex_expand::semantic_token(traced);
     let origin = traced.origin();
-    if matches!(
-        stores.origin(origin),
-        OriginRecord::Inserted(inserted) if inserted.kind() == InsertedOriginKind::NoExpand
-    ) {
+    if stores.origin_is_inserted_kind(origin, InsertedOriginKind::NoExpand) {
         return Ok(DispatchAction::Continue);
     }
     let mode = nest.current_mode();
@@ -362,7 +359,7 @@ where
                     TracedTokenWord::pack(token, inserted)
                 })
                 .collect();
-            push_traced_tokens(input, stores, tokens);
+            insert_traced_tokens(input, stores, tokens);
             Ok(())
         }
         Err(mismatch) => Err(group_mismatch_error(expected, mismatch, origin)),
@@ -442,6 +439,17 @@ where
     I: IntoIterator<Item = TracedTokenWord>,
 {
     tex_expand::back_input(input, stores, tokens);
+}
+
+pub(crate) fn insert_traced_tokens<S, I>(
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    tokens: I,
+) where
+    S: InputSource,
+    I: IntoIterator<Item = TracedTokenWord>,
+{
+    tex_expand::insert_input(input, stores, tokens);
 }
 
 pub(crate) fn unimplemented_typesetting(
