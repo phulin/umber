@@ -31,6 +31,7 @@ const MACRO_CALLS: usize = 2_048;
 const MACRO_BODY_LEN: usize = 16;
 const SCANNER_REPETITIONS: usize = 1_024;
 const TRANSIENT_BOX_OVERWRITES: usize = 20_000;
+const DEEP_BOX_LOCALITY_JOURNAL: usize = 20_000;
 const ALLOCATION_GRAPH_DEPTH: usize = 128;
 const ALLOCATION_LIST_LEN: usize = 1_024;
 const PAGE_QUEUE_LEN: usize = 65_536;
@@ -169,6 +170,32 @@ fn allocation_graph_transfer(c: &mut Criterion) {
         );
     });
     group.finish();
+}
+
+fn deep_journal_box_locality(c: &mut Criterion) {
+    c.bench_function("box_locality/same_level_after_20000_entries", |b| {
+        b.iter_batched(
+            || {
+                let mut stores = Universe::new();
+                let value = stores.freeze_node_list(&[Node::Penalty(1)]);
+                stores.enter_group();
+                stores.set_box_reg(0, value);
+                for write in 0..DEEP_BOX_LOCALITY_JOURNAL {
+                    let symbol = stores.intern(&format!("deepbox{write}"));
+                    stores.set_meaning(symbol, Meaning::Relax);
+                }
+                stores
+            },
+            |mut stores| {
+                let value = stores.box_reg(0).expect("benchmark box remains live");
+                for _ in 0..1_000 {
+                    stores.set_box_reg_same_level(0, value);
+                }
+                black_box(stores.box_reg(0))
+            },
+            BatchSize::LargeInput,
+        );
+    });
 }
 
 fn allocation_traced_freeze(c: &mut Criterion) {
@@ -955,6 +982,7 @@ criterion_group!(
     benches,
     allocation_node_append,
     allocation_graph_transfer,
+    deep_journal_box_locality,
     allocation_traced_freeze,
     page_contribution_queue,
     meaning_lookup,
