@@ -8,6 +8,10 @@ When documenting tests or parity workflow, point fixture changes to `scripts/reg
 
 `snapshot_performance.md` defines the focused snapshot latency and retained-allocation gate, including its asymptotic budgets and measurement semantics.
 
+`retained_group_roots.md` specifies the proposed persistent/COW environment
+history needed for durable paragraph checkpoints inside ordinary open groups,
+including store ownership, reclamation, hashing, rollout, and validation.
+
 `source_spans_and_provenance.md` specifies the compact source-map, source-span, and derived-provenance design plus its phased migration plan.
 
 `math_layout_arena.md` specifies the contiguous, span-backed Appendix G math

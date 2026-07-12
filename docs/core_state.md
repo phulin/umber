@@ -778,6 +778,12 @@ pub struct Snapshot {
   depth zero or first implement a session-retained group root. It must not
   promise that every `\par` is restartable while silently publishing invalid
   snapshots.
+
+- **Retained group roots**: the planned retained-lineage extension is specified
+  in `retained_group_roots.md`. Until that design is implemented, paragraph
+  checkpoint publication must remain restricted to group depth zero; a mode
+  transition by itself does not prove that the resulting checkpoint will remain
+  restorable after group exit.
 - **Input restoration**: `InputSummary` carries the lexer-owned source-frame
   state required after a source is reopened: original physical line start,
   content-end and terminator ranges, the current normalized UTF-8 line and its

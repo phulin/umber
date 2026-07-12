@@ -95,6 +95,11 @@ is an evidence-gated extension; inline-math completion is deliberately not a
 v1 boundary. Format images are a separate versioned DTO for validated
 quiescent state, not serialized engine checkpoints.
 
+`retained_group_roots.md` defines the proposed extension for ordinary grouped
+prose. It preserves the `Env`/`Stores`/`Universe` authority boundaries and does
+not make nested scanners, boxes, insertions, alignments, or math builders
+restartable.
+
 ## 2. Crate map
 
 The workspace as it exists today (children are dependencies; the pipeline
