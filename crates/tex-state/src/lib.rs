@@ -33,10 +33,8 @@ mod universe;
 pub mod world;
 
 pub use input::{
-    AlignmentCellPhaseSummary, AlignmentCellSummary, ConditionFrameSummary, ConditionFrameToken,
-    ConditionKind, ConditionLimb, GulletContinuationSummary, InputContinuations, InputFrameSummary,
-    InputSummary, LexerState, MACRO_ARGUMENT_SLOTS, MacroArguments, MacroCallContinuationSummary,
-    MacroCallPhaseSummary, PendingMacroTokenSummary, SourceFrameSummary, SourceId,
+    ConditionFrameSummary, ConditionFrameToken, ConditionKind, ConditionLimb, InputFrameSummary,
+    InputSummary, LexerState, MACRO_ARGUMENT_SLOTS, MacroArguments, SourceFrameSummary, SourceId,
     TokenListReplayKind, TracedTokenList,
 };
 pub use page::{

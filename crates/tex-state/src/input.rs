@@ -1,89 +1,11 @@
 //! Snapshot-ready input stack summary shared by the lexer and `Universe`.
 
-use crate::ids::{MacroDefinitionId, OriginListId, TokenListId};
+use crate::ids::{OriginListId, TokenListId};
 use crate::source_map::RegisteredSource;
 use crate::token::{Token, TracedTokenWord};
 use crate::world::InputRecordId;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum AlignmentCellPhaseSummary {
-    UTemplate(u64),
-    Body,
-    VTemplate,
-}
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct AlignmentCellSummary {
-    pub phase: AlignmentCellPhaseSummary,
-    pub v_template: TokenListId,
-    pub brace_depth: i32,
-    pub delivered: Arc<[(TracedTokenWord, u8)]>,
-    pub terminator: Option<TracedTokenWord>,
-}
-
-/// Explicit gullet work that must resume before ordinary token delivery.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub enum GulletContinuationSummary {
-    CsName {
-        name: String,
-        context: TracedTokenWord,
-    },
-    MacroCall(MacroCallContinuationSummary),
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct PendingMacroTokenSummary {
-    pub token: TracedTokenWord,
-    pub allow_par: bool,
-}
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub enum MacroCallPhaseSummary {
-    Leading {
-        index: usize,
-    },
-    ArgumentStart {
-        spec_index: usize,
-    },
-    UndelimitedSkip {
-        spec_index: usize,
-    },
-    UndelimitedGroup {
-        spec_index: usize,
-        level: u32,
-        tokens: Vec<TracedTokenWord>,
-    },
-    Delimited {
-        spec_index: usize,
-        level: u32,
-        argument: Vec<TracedTokenWord>,
-        pending: Vec<PendingMacroTokenSummary>,
-    },
-    DelimiterCandidate {
-        spec_index: usize,
-        level: u32,
-        argument: Vec<TracedTokenWord>,
-        pending: Vec<PendingMacroTokenSummary>,
-        candidate: Vec<PendingMacroTokenSummary>,
-        next_delimiter_index: usize,
-    },
-}
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct MacroCallContinuationSummary {
-    pub definition: MacroDefinitionId,
-    pub call_context: TracedTokenWord,
-    pub matched: Vec<TracedTokenList>,
-    pub phase: MacroCallPhaseSummary,
-}
-
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
-pub struct InputContinuations {
-    pub alignment_cells: Vec<AlignmentCellSummary>,
-    pub gullet: Vec<GulletContinuationSummary>,
-}
 
 /// Maximum number of macro arguments TeX permits in one macro body.
 pub const MACRO_ARGUMENT_SLOTS: usize = 9;
@@ -412,8 +334,6 @@ pub struct InputSummary {
     last_source_frame: Option<SourceFrameSummary>,
     next_source_id: u32,
     unicode_superscript_notation: bool,
-    alignment_cells: Arc<[AlignmentCellSummary]>,
-    gullet_continuations: Arc<[GulletContinuationSummary]>,
 }
 
 impl PartialEq for InputSummary {
@@ -422,8 +342,6 @@ impl PartialEq for InputSummary {
             && self.last_source_record == other.last_source_record
             && self.last_source_frame == other.last_source_frame
             && self.unicode_superscript_notation == other.unicode_superscript_notation
-            && self.alignment_cells == other.alignment_cells
-            && self.gullet_continuations == other.gullet_continuations
     }
 }
 
@@ -435,8 +353,6 @@ impl Hash for InputSummary {
         self.last_source_record.hash(state);
         self.last_source_frame.hash(state);
         self.unicode_superscript_notation.hash(state);
-        self.alignment_cells.hash(state);
-        self.gullet_continuations.hash(state);
     }
 }
 
@@ -487,27 +403,6 @@ impl InputSummary {
         next_source_id: u32,
         unicode_superscript_notation: bool,
     ) -> Self {
-        Self::new_with_continuations(
-            frames,
-            last_source_id,
-            last_source_record,
-            last_source_frame,
-            next_source_id,
-            unicode_superscript_notation,
-            InputContinuations::default(),
-        )
-    }
-
-    #[must_use]
-    pub fn new_with_continuations(
-        frames: Vec<InputFrameSummary>,
-        last_source_id: Option<SourceId>,
-        last_source_record: Option<InputRecordId>,
-        last_source_frame: Option<SourceFrameSummary>,
-        next_source_id: u32,
-        unicode_superscript_notation: bool,
-        continuations: InputContinuations,
-    ) -> Self {
         Self {
             frames: frames.into(),
             last_source_id,
@@ -515,8 +410,6 @@ impl InputSummary {
             last_source_frame,
             next_source_id,
             unicode_superscript_notation,
-            alignment_cells: continuations.alignment_cells.into(),
-            gullet_continuations: continuations.gullet.into(),
         }
     }
 
@@ -563,16 +456,6 @@ impl InputSummary {
     pub const fn unicode_superscript_notation(&self) -> bool {
         self.unicode_superscript_notation
     }
-
-    #[must_use]
-    pub fn alignment_cells(&self) -> &[AlignmentCellSummary] {
-        &self.alignment_cells
-    }
-
-    #[must_use]
-    pub fn gullet_continuations(&self) -> &[GulletContinuationSummary] {
-        &self.gullet_continuations
-    }
 }
 
 /// Snapshot summary for one input frame.
@@ -591,7 +474,6 @@ pub enum InputFrameSummary {
         macro_arguments: MacroArguments,
         macro_invocation: crate::token::OriginId,
         parent_macro_invocation: crate::token::OriginId,
-        replay_marker: Option<u64>,
     },
     Condition {
         token: ConditionFrameToken,

@@ -1,8 +1,7 @@
 use super::{
-    AlignmentTerminator, AlignmentTokenDelivery, ConditionFrameSummary, ConditionKind,
-    ConditionLimb, InputFrame, InputFrameSummary, InputSource, InputStack, LexError, Lexer,
-    LexerState, LineEvent, LineReader, MacroArguments, MemoryInput, TokenListReplayKind,
-    load_next_line,
+    ConditionFrameSummary, ConditionKind, ConditionLimb, InputFrame, InputFrameSummary,
+    InputSource, InputStack, LexError, Lexer, LexerState, LineEvent, LineReader, MacroArguments,
+    MemoryInput, TokenListReplayKind, load_next_line,
 };
 use tex_state::env::banks::IntParam;
 use tex_state::ids::OriginListId;
@@ -727,60 +726,6 @@ fn input_summary_restores_source_allocator_and_unicode_superscript_mode() {
         tex_state::SourceId::new(2)
     );
     assert!(!restored.summary().unicode_superscript_notation());
-}
-
-#[test]
-fn input_summary_restores_active_alignment_cell_interceptor() {
-    let mut stores = Universe::new();
-    stores.set_int_param(IntParam::END_LINE_CHAR, -1);
-    let v_template = stores.intern_token_list(&[char_token('v', Catcode::Letter)]);
-    let mut input = InputStack::new(MemoryInput::new(""));
-    input.begin_alignment_cell(None, v_template);
-    let left = TracedTokenWord::pack(char_token('{', Catcode::BeginGroup), OriginId::UNKNOWN);
-    assert!(!input.intercept_alignment_token(left, AlignmentTokenDelivery::LeftBrace, None));
-
-    let summary = input.summary();
-    let mut restored =
-        InputStack::from_summary(&summary, |_, _, _| Ok::<_, ()>(MemoryInput::new("")))
-            .expect("alignment input summary restores");
-    assert!(restored.has_active_alignment_cell());
-    assert!(!restored.alignment_cell_at_base_depth());
-    restored.back_input_alignment_token(left);
-    assert!(restored.alignment_cell_at_base_depth());
-}
-
-#[test]
-fn input_summary_restores_alignment_u_template_marker() {
-    let mut stores = Universe::new();
-    stores.set_int_param(IntParam::END_LINE_CHAR, -1);
-    let u_template = stores.intern_token_list(&[char_token('u', Catcode::Letter)]);
-    let v_template = stores.intern_token_list(&[char_token('v', Catcode::Letter)]);
-    let mut input = InputStack::new(MemoryInput::new("&"));
-    let marker = input.push_token_list(u_template, TokenListReplayKind::Inserted);
-    input.begin_alignment_cell(Some(marker), v_template);
-
-    let summary = input.summary();
-    let mut restored =
-        InputStack::from_summary(&summary, |_, _, _| Ok::<_, ()>(MemoryInput::new("&")))
-            .expect("u-template summary restores");
-    let u = restored
-        .next_traced_token(&mut stores)
-        .expect("u-template read")
-        .expect("u-template token");
-    assert!(!restored.intercept_alignment_token(u, AlignmentTokenDelivery::Other, None));
-    let tab = restored
-        .next_traced_token(&mut stores)
-        .expect("cell body read")
-        .expect("tab token");
-    assert!(restored.intercept_alignment_token(
-        tab,
-        AlignmentTokenDelivery::Other,
-        Some(AlignmentTerminator::Tab),
-    ));
-    assert_eq!(
-        restored.next_token(&mut stores).expect("v-template read"),
-        Some(char_token('v', Catcode::Letter))
-    );
 }
 
 #[test]

@@ -4,30 +4,18 @@
 //! call-site input, freezes matched arguments through `Universe`, and leaves body
 //! replay/substitution to the expansion-frame work.
 
-#[cfg(test)]
 use std::collections::VecDeque;
 use std::fmt;
 
 use tex_lex::{InputSource, InputStack, LexError, MACRO_ARGUMENT_SLOTS, MacroArguments};
 use tex_state::ExpansionState;
 use tex_state::TracedTokenList;
-use tex_state::ids::MacroDefinitionId;
 use tex_state::ids::TokenListId;
-#[cfg(test)]
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{Meaning, MeaningFlags};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
-#[cfg(test)]
-use crate::NoopRecorder;
-use crate::ReadRecorder;
-
-#[derive(Clone, Debug)]
-pub(crate) struct ResumedMacroCall {
-    pub definition: MacroDefinitionId,
-    pub call_context: TracedTokenWord,
-    pub arguments: MatchedArguments,
-}
+use crate::{NoopRecorder, ReadRecorder};
 
 /// Frozen arguments matched for one macro call.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -71,7 +59,6 @@ impl MatchedArguments {
         arguments
     }
 
-    #[cfg(test)]
     fn push(&mut self, id: TracedTokenList) {
         self.arguments.push(id);
     }
@@ -161,7 +148,6 @@ struct ParameterPattern {
     specs: Vec<ParameterSpec>,
 }
 
-#[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct PendingArgumentToken {
     token: TracedTokenWord,
@@ -169,8 +155,7 @@ struct PendingArgumentToken {
 }
 
 /// Matches one macro call and freezes each argument token list.
-#[cfg(test)]
-pub(crate) fn match_macro_call<S>(
+pub fn match_macro_call<S>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     call_token: TracedTokenWord,
@@ -182,8 +167,7 @@ where
     match_macro_call_with_recorder(input, stores, &mut NoopRecorder, call_token, meaning)
 }
 
-#[cfg(test)]
-fn match_macro_call_with_recorder<S, R>(
+pub(crate) fn match_macro_call_with_recorder<S, R>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     recorder: &mut R,
@@ -233,365 +217,6 @@ where
     Ok(matched)
 }
 
-pub(crate) fn match_rooted_macro_call<S, R>(
-    input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
-    recorder: &mut R,
-    call_context: TracedTokenWord,
-    definition: MacroDefinitionId,
-) -> Result<ResumedMacroCall, MacroCallError>
-where
-    S: InputSource,
-    R: ReadRecorder,
-{
-    input.push_gullet_continuation(tex_lex::GulletContinuationSummary::MacroCall(
-        tex_state::MacroCallContinuationSummary {
-            definition,
-            call_context,
-            matched: Vec::new(),
-            phase: tex_state::MacroCallPhaseSummary::Leading { index: 0 },
-        },
-    ));
-    let result = resume_macro_call(input, stores, recorder);
-    if result.is_err() {
-        let _ = input.pop_gullet_continuation();
-    }
-    result
-}
-
-pub(crate) fn resume_macro_call<S, R>(
-    input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
-    recorder: &mut R,
-) -> Result<ResumedMacroCall, MacroCallError>
-where
-    S: InputSource,
-    R: ReadRecorder,
-{
-    loop {
-        let call = current_macro_call(input);
-        let meaning = stores.macro_definition(call.definition);
-        let pattern = parse_parameter_text(stores.tokens(meaning.parameter_text()));
-        let flags = meaning.flags();
-        let macro_name = macro_name(stores, traced_semantic_token(call.call_context));
-
-        match call.phase {
-            tex_state::MacroCallPhaseSummary::Leading { index } => {
-                if index == pattern.leading.len() {
-                    set_macro_call_phase(
-                        input,
-                        tex_state::MacroCallPhaseSummary::ArgumentStart { spec_index: 0 },
-                    );
-                    continue;
-                }
-                let token = next_checked_token(
-                    input,
-                    stores,
-                    recorder,
-                    flags,
-                    &macro_name,
-                    call.call_context,
-                )?;
-                if traced_semantic_token(token) != pattern.leading[index] {
-                    return Err(MacroCallError::DoesNotMatchDefinition {
-                        macro_name,
-                        context: token,
-                    });
-                }
-                set_macro_call_phase(
-                    input,
-                    tex_state::MacroCallPhaseSummary::Leading { index: index + 1 },
-                );
-            }
-            tex_state::MacroCallPhaseSummary::ArgumentStart { spec_index } => {
-                if spec_index == pattern.specs.len() {
-                    return Ok(finish_macro_call(input));
-                }
-                let phase = if pattern.specs[spec_index].delimiter.is_empty() {
-                    tex_state::MacroCallPhaseSummary::UndelimitedSkip { spec_index }
-                } else {
-                    tex_state::MacroCallPhaseSummary::Delimited {
-                        spec_index,
-                        level: 0,
-                        argument: Vec::new(),
-                        pending: Vec::new(),
-                    }
-                };
-                set_macro_call_phase(input, phase);
-            }
-            tex_state::MacroCallPhaseSummary::UndelimitedSkip { spec_index } => {
-                let token = next_checked_token(
-                    input,
-                    stores,
-                    recorder,
-                    flags,
-                    &macro_name,
-                    call.call_context,
-                )?;
-                if is_space_token(traced_semantic_token(token)) {
-                    continue;
-                }
-                if is_begin_group(traced_semantic_token(token)) {
-                    set_macro_call_phase(
-                        input,
-                        tex_state::MacroCallPhaseSummary::UndelimitedGroup {
-                            spec_index,
-                            level: 1,
-                            tokens: Vec::new(),
-                        },
-                    );
-                } else {
-                    push_rooted_argument(input, stores, &[token]);
-                    set_macro_call_phase(
-                        input,
-                        tex_state::MacroCallPhaseSummary::ArgumentStart {
-                            spec_index: spec_index + 1,
-                        },
-                    );
-                }
-            }
-            tex_state::MacroCallPhaseSummary::UndelimitedGroup {
-                spec_index,
-                mut level,
-                mut tokens,
-            } => {
-                let token = next_checked_token(
-                    input,
-                    stores,
-                    recorder,
-                    flags,
-                    &macro_name,
-                    call.call_context,
-                )?;
-                match traced_semantic_token(token) {
-                    Token::Char {
-                        cat: Catcode::BeginGroup,
-                        ..
-                    } => {
-                        level += 1;
-                        tokens.push(token);
-                    }
-                    Token::Char {
-                        cat: Catcode::EndGroup,
-                        ..
-                    } => {
-                        level -= 1;
-                        if level == 0 {
-                            push_rooted_argument(input, stores, &tokens);
-                            set_macro_call_phase(
-                                input,
-                                tex_state::MacroCallPhaseSummary::ArgumentStart {
-                                    spec_index: spec_index + 1,
-                                },
-                            );
-                            continue;
-                        }
-                        tokens.push(token);
-                    }
-                    _ => tokens.push(token),
-                }
-                set_macro_call_phase(
-                    input,
-                    tex_state::MacroCallPhaseSummary::UndelimitedGroup {
-                        spec_index,
-                        level,
-                        tokens,
-                    },
-                );
-            }
-            tex_state::MacroCallPhaseSummary::Delimited {
-                spec_index,
-                mut level,
-                mut argument,
-                mut pending,
-            } => {
-                let scanned = next_rooted_pending_or_raw(
-                    input,
-                    stores,
-                    recorder,
-                    &macro_name,
-                    call.call_context,
-                    &mut pending,
-                )?;
-                let token = traced_semantic_token(scanned.token);
-                if level == 0 && token == pattern.specs[spec_index].delimiter[0] {
-                    set_macro_call_phase(
-                        input,
-                        tex_state::MacroCallPhaseSummary::DelimiterCandidate {
-                            spec_index,
-                            level,
-                            argument,
-                            pending,
-                            candidate: vec![scanned],
-                            next_delimiter_index: 1,
-                        },
-                    );
-                    continue;
-                }
-                check_rooted_argument_par(stores, flags, &macro_name, scanned)?;
-                push_argument_token(&mut argument, &mut level, scanned.token);
-                set_macro_call_phase(
-                    input,
-                    tex_state::MacroCallPhaseSummary::Delimited {
-                        spec_index,
-                        level,
-                        argument,
-                        pending,
-                    },
-                );
-            }
-            tex_state::MacroCallPhaseSummary::DelimiterCandidate {
-                spec_index,
-                mut level,
-                mut argument,
-                mut pending,
-                mut candidate,
-                next_delimiter_index,
-            } => {
-                let delimiter = &pattern.specs[spec_index].delimiter;
-                if next_delimiter_index == delimiter.len() {
-                    push_rooted_argument(input, stores, strip_outer_group(&argument));
-                    set_macro_call_phase(
-                        input,
-                        tex_state::MacroCallPhaseSummary::ArgumentStart {
-                            spec_index: spec_index + 1,
-                        },
-                    );
-                    continue;
-                }
-                let next = next_rooted_pending_or_raw(
-                    input,
-                    stores,
-                    recorder,
-                    &macro_name,
-                    call.call_context,
-                    &mut pending,
-                )?;
-                candidate.push(next);
-                if traced_semantic_token(next.token) == delimiter[next_delimiter_index] {
-                    set_macro_call_phase(
-                        input,
-                        tex_state::MacroCallPhaseSummary::DelimiterCandidate {
-                            spec_index,
-                            level,
-                            argument,
-                            pending,
-                            candidate,
-                            next_delimiter_index: next_delimiter_index + 1,
-                        },
-                    );
-                    continue;
-                }
-
-                push_argument_token(&mut argument, &mut level, candidate[0].token);
-                let last_index = candidate.len() - 1;
-                for (index, candidate_token) in candidate[1..].iter().enumerate().rev() {
-                    let was_matched_prefix = index + 1 < last_index;
-                    pending.insert(
-                        0,
-                        tex_state::PendingMacroTokenSummary {
-                            token: candidate_token.token,
-                            allow_par: candidate_token.allow_par || was_matched_prefix,
-                        },
-                    );
-                }
-                set_macro_call_phase(
-                    input,
-                    tex_state::MacroCallPhaseSummary::Delimited {
-                        spec_index,
-                        level,
-                        argument,
-                        pending,
-                    },
-                );
-            }
-        }
-    }
-}
-
-fn current_macro_call<S>(input: &InputStack<S>) -> tex_state::MacroCallContinuationSummary {
-    match input.current_gullet_continuation() {
-        Some(tex_lex::GulletContinuationSummary::MacroCall(call)) => call.clone(),
-        _ => panic!("macro-call resume requires a rooted continuation"),
-    }
-}
-
-fn set_macro_call_phase<S>(input: &mut InputStack<S>, phase: tex_state::MacroCallPhaseSummary) {
-    let Some(tex_lex::GulletContinuationSummary::MacroCall(call)) =
-        input.current_gullet_continuation_mut()
-    else {
-        panic!("macro-call update requires a rooted continuation");
-    };
-    call.phase = phase;
-}
-
-fn push_rooted_argument<S>(
-    input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
-    tokens: &[TracedTokenWord],
-) {
-    let argument = freeze_traced_tokens(stores, tokens);
-    let Some(tex_lex::GulletContinuationSummary::MacroCall(call)) =
-        input.current_gullet_continuation_mut()
-    else {
-        panic!("macro argument requires a rooted continuation");
-    };
-    call.matched.push(argument);
-}
-
-fn finish_macro_call<S>(input: &mut InputStack<S>) -> ResumedMacroCall {
-    let Some(tex_lex::GulletContinuationSummary::MacroCall(call)) = input.pop_gullet_continuation()
-    else {
-        panic!("macro-call completion requires a rooted continuation");
-    };
-    ResumedMacroCall {
-        definition: call.definition,
-        call_context: call.call_context,
-        arguments: MatchedArguments {
-            arguments: call.matched,
-        },
-    }
-}
-
-fn next_rooted_pending_or_raw<S, R>(
-    input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
-    recorder: &mut R,
-    macro_name: &str,
-    call_context: TracedTokenWord,
-    pending: &mut Vec<tex_state::PendingMacroTokenSummary>,
-) -> Result<tex_state::PendingMacroTokenSummary, MacroCallError>
-where
-    S: InputSource,
-    R: ReadRecorder,
-{
-    if !pending.is_empty() {
-        return Ok(pending.remove(0));
-    }
-    Ok(tex_state::PendingMacroTokenSummary {
-        token: next_token_without_par_check(input, stores, recorder, macro_name, call_context)?,
-        allow_par: false,
-    })
-}
-
-fn check_rooted_argument_par(
-    stores: &impl ExpansionState,
-    flags: MeaningFlags,
-    macro_name: &str,
-    scanned: tex_state::PendingMacroTokenSummary,
-) -> Result<(), MacroCallError> {
-    if !scanned.allow_par
-        && is_par_token(stores, traced_semantic_token(scanned.token))
-        && !flags.contains(MeaningFlags::LONG)
-    {
-        return Err(MacroCallError::ParagraphEndedBeforeComplete {
-            macro_name: macro_name.to_owned(),
-            context: scanned.token,
-        });
-    }
-    Ok(())
-}
-
 fn parse_parameter_text(tokens: &[Token]) -> ParameterPattern {
     let mut leading = Vec::new();
     let mut specs = Vec::new();
@@ -624,7 +249,6 @@ fn parse_parameter_text(tokens: &[Token]) -> ParameterPattern {
     ParameterPattern { leading, specs }
 }
 
-#[cfg(test)]
 fn match_exact_tokens<S, R>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
@@ -650,7 +274,6 @@ where
     Ok(())
 }
 
-#[cfg(test)]
 fn scan_undelimited_argument<S, R>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
@@ -685,7 +308,6 @@ where
     Ok(freeze_traced_tokens(stores, &tokens))
 }
 
-#[cfg(test)]
 fn scan_balanced_group<S, R>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
@@ -725,7 +347,6 @@ where
     }
 }
 
-#[cfg(test)]
 fn scan_delimited_argument<S, R>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
@@ -792,7 +413,6 @@ where
     }
 }
 
-#[cfg(test)]
 fn next_or_pending_token<S, R>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
@@ -815,7 +435,6 @@ where
     }
 }
 
-#[cfg(test)]
 fn check_argument_par(
     stores: &impl ExpansionState,
     flags: MeaningFlags,

@@ -12,36 +12,6 @@ use crate::node::{LeaderPayload, Node};
 use crate::token::{OriginId, Token};
 use crate::world::World;
 
-fn macro_call_phase_tokens(
-    phase: &crate::MacroCallPhaseSummary,
-) -> Vec<crate::token::TracedTokenWord> {
-    use crate::MacroCallPhaseSummary::{
-        ArgumentStart, Delimited, DelimiterCandidate, Leading, UndelimitedGroup, UndelimitedSkip,
-    };
-    match phase {
-        Leading { .. } | ArgumentStart { .. } | UndelimitedSkip { .. } => Vec::new(),
-        UndelimitedGroup { tokens, .. } => tokens.clone(),
-        Delimited {
-            argument, pending, ..
-        } => argument
-            .iter()
-            .copied()
-            .chain(pending.iter().map(|token| token.token))
-            .collect(),
-        DelimiterCandidate {
-            argument,
-            pending,
-            candidate,
-            ..
-        } => argument
-            .iter()
-            .copied()
-            .chain(pending.iter().map(|token| token.token))
-            .chain(candidate.iter().map(|token| token.token))
-            .collect(),
-    }
-}
-
 impl Stores {
     pub(crate) fn assert_live_input_summary(&self, world: &World, summary: &InputSummary) {
         let mut max_source_id = None;
@@ -84,32 +54,6 @@ impl Stores {
                 }
                 InputFrameSummary::Condition { condition, .. } => {
                     self.assert_live_traced_token_word(condition.context());
-                }
-            }
-        }
-        for cell in summary.alignment_cells() {
-            self.assert_live_token_list(cell.v_template);
-            for (token, _) in cell.delivered.iter() {
-                self.assert_live_traced_token_word(*token);
-            }
-            if let Some(token) = cell.terminator {
-                self.assert_live_traced_token_word(token);
-            }
-        }
-        for continuation in summary.gullet_continuations() {
-            match continuation {
-                crate::GulletContinuationSummary::CsName { context, .. } => {
-                    self.assert_live_traced_token_word(*context);
-                }
-                crate::GulletContinuationSummary::MacroCall(call) => {
-                    self.assert_live_macro_definition(call.definition);
-                    self.assert_live_traced_token_word(call.call_context);
-                    for argument in &call.matched {
-                        self.assert_live_traced_token_list(*argument);
-                    }
-                    for token in macro_call_phase_tokens(&call.phase) {
-                        self.assert_live_traced_token_word(token);
-                    }
                 }
             }
         }

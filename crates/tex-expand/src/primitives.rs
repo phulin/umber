@@ -51,34 +51,7 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    input.push_gullet_continuation(tex_lex::GulletContinuationSummary::CsName {
-        name: String::new(),
-        context,
-    });
-    let result = resume_csname(input, stores, recorder, hooks);
-    if result.is_err() {
-        let _ = input.pop_gullet_continuation();
-    }
-    result
-}
-
-pub(crate) fn resume_csname<S, R, H>(
-    input: &mut InputStack<S>,
-    stores: &mut impl ExpansionState,
-    recorder: &mut R,
-    hooks: &mut H,
-) -> Result<String, ExpandError>
-where
-    S: InputSource,
-    R: ReadRecorder,
-    H: ExpansionHooks<S>,
-{
-    let (mut name, context) = match input.current_gullet_continuation() {
-        Some(tex_lex::GulletContinuationSummary::CsName { name, context }) => {
-            (name.clone(), *context)
-        }
-        _ => panic!("csname resume requires a rooted continuation"),
-    };
+    let mut name = String::new();
 
     loop {
         let Some(read) = input.next_traced_expansion_token(stores)? else {
@@ -90,18 +63,16 @@ where
         if read.suppress_expansion() {
             if append_csname_token(&mut name, token) == CsNameAppend::Recover {
                 push_inserted_token(input, stores, traced, InsertedOriginKind::Unread);
-                return Ok(finish_csname(input, name));
+                return Ok(name);
             }
-            update_csname(input, &name);
             continue;
         }
 
         let Token::Cs(symbol) = token else {
             if append_csname_token(&mut name, token) == CsNameAppend::Recover {
                 push_inserted_token(input, stores, traced, InsertedOriginKind::Unread);
-                return Ok(finish_csname(input, name));
+                return Ok(name);
             }
-            update_csname(input, &name);
             continue;
         };
 
@@ -109,7 +80,7 @@ where
         recorder.record_meaning(symbol, meaning);
 
         if meaning == Meaning::ExpandablePrimitive(ExpandablePrimitive::EndCsName) {
-            return Ok(finish_csname(input, name));
+            return Ok(name);
         }
 
         match crate::dispatch::dispatch_without_input_open(
@@ -127,31 +98,12 @@ where
                     == CsNameAppend::Recover
                 {
                     push_inserted_token(input, stores, token, InsertedOriginKind::Unread);
-                    return Ok(finish_csname(input, name));
+                    return Ok(name);
                 }
-                update_csname(input, &name);
             }
             push @ Dispatch::Push { .. } => apply_dispatch_push(input, push),
         }
     }
-}
-
-fn update_csname<S>(input: &mut InputStack<S>, name: &str) {
-    let Some(tex_lex::GulletContinuationSummary::CsName {
-        name: rooted_name, ..
-    }) = input.current_gullet_continuation_mut()
-    else {
-        panic!("csname update requires a rooted continuation");
-    };
-    name.clone_into(rooted_name);
-}
-
-fn finish_csname<S>(input: &mut InputStack<S>, name: String) -> String {
-    assert!(matches!(
-        input.pop_gullet_continuation(),
-        Some(tex_lex::GulletContinuationSummary::CsName { .. })
-    ));
-    name
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -502,7 +502,7 @@ impl Stores {
         }
     }
 
-    pub(crate) fn hash_macro_definition(&self, id: MacroDefinitionId, hasher: &mut StateHasher) {
+    fn hash_macro_definition(&self, id: MacroDefinitionId, hasher: &mut StateHasher) {
         self.assert_live_macro_definition(id);
         let definition = self.macros.get(id);
         hasher.u8(definition.flags().bits());
