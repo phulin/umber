@@ -262,7 +262,17 @@ where
             crate::executor::sync_engine_state::<S, _>(hooks, nest, stores);
             let token = {
                 let mut recorder = NoopRecorder;
-                get_x_token_with_recorder_and_hooks(input, stores, &mut recorder, hooks)?
+                match get_x_token_with_recorder_and_hooks(input, stores, &mut recorder, hooks) {
+                    Ok(token) => token,
+                    Err(tex_expand::ExpandError::UndefinedControlSequence { name, .. }) => {
+                        stores.world_mut().write_text(
+                            tex_state::PrintSink::TerminalAndLog,
+                            &format!("\n! Undefined control sequence \\{name}.\n"),
+                        );
+                        continue;
+                    }
+                    Err(err) => return Err(err.into()),
+                }
             }
             .ok_or(ExecError::MissingToken {
                 context: "box closing brace",
@@ -278,7 +288,57 @@ where
                 flush_pending_hchars(nest, stores)?;
                 return Ok(());
             }
-            match crate::dispatch_delivered_token(nest, token, input, stores, hooks)? {
+            let action = match crate::dispatch_delivered_token(nest, token, input, stores, hooks) {
+                Ok(action) => action,
+                Err(ExecError::Expand(tex_expand::ExpandError::UndefinedControlSequence {
+                    name,
+                    ..
+                })) => {
+                    stores.world_mut().write_text(
+                        tex_state::PrintSink::TerminalAndLog,
+                        &format!("\n! Undefined control sequence \\{name}.\n"),
+                    );
+                    continue;
+                }
+                Err(ExecError::Expand(tex_expand::ExpandError::Captured { error, .. }))
+                    if matches!(
+                        error.as_ref(),
+                        tex_expand::ExpandError::UndefinedControlSequence { .. }
+                    ) =>
+                {
+                    let tex_expand::ExpandError::UndefinedControlSequence { name, .. } = *error
+                    else {
+                        unreachable!("guard restricts captured expansion error")
+                    };
+                    stores.world_mut().write_text(
+                        tex_state::PrintSink::TerminalAndLog,
+                        &format!("\n! Undefined control sequence \\{name}.\n"),
+                    );
+                    continue;
+                }
+                // Recursive box scanning is still TeX's main-control loop. A
+                // recoverable assignment error must consume the bad command
+                // and continue inside the box, just as the outer executor
+                // does, rather than aborting the construction transaction and
+                // replaying the remaining body on the enclosing list.
+                Err(ExecError::UnsupportedAssignmentTarget) => {
+                    stores.world_mut().write_text(
+                        tex_state::PrintSink::TerminalAndLog,
+                        "\n! Improper assignment target; this assignment is ignored.\n",
+                    );
+                    continue;
+                }
+                Err(
+                    ExecError::ExtraRightBraceOrForgottenEndgroup { .. }
+                    | ExecError::ExtraRightBraceOrForgottenDollar { .. }
+                    | ExecError::TooManyRightBraces { .. }
+                    | ExecError::ExtraEndGroup { .. }
+                    | ExecError::EndGroupMismatch { .. }
+                    | ExecError::MathShiftGroupMismatch { .. },
+                ) => continue,
+                Err(err) => return Err(err),
+            };
+            match action {
                 crate::DispatchAction::Continue => {}
                 crate::DispatchAction::Shipout(_) => {}
                 crate::DispatchAction::End => {

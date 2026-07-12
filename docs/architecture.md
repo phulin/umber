@@ -793,7 +793,10 @@ assignments, box building, and dispatch into the typesetting kernels.
   (vertical/internal vertical, horizontal/restricted horizontal, math/display
   math) plus the node list under construction. Main control pulls through
   `tex-expand`'s `get_x_token` loop, and the box-group scanner re-enters the
-  same dispatch path for nested stomach work. The gullet's mode predicates
+  same dispatch path for nested stomach work. That recursive main-control
+  loop also reports and consumes recoverable expansion, assignment-target,
+  and group-closure errors in place; it must not unwind the box construction
+  transaction and expose the unread body to the enclosing list. The gullet's mode predicates
   are backed by the current nest level through `ExpansionHooks`, collapsing
   the six modes into the three `\ifvmode`/`\ifhmode`/`\ifmmode` families and
   the `\ifinner` bit. Box primitives are implemented for register

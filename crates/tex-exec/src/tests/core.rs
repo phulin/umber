@@ -1110,6 +1110,41 @@ fn trip_math_mode_box_closure_preserves_ownership_and_replays() {
 }
 
 #[test]
+fn recoverable_assignment_error_inside_box_preserves_box_ownership() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\setbox0=\\hbox{\\afterassignment\\relax\\advance\\prevdepth\\undefined\\vbox{\\hrule height2pt}}",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("improper arithmetic target recovers inside the box scanner");
+
+    let box0 = stores
+        .box_reg(0)
+        .expect("setbox must not roll back to void");
+    let [Node::HList(hbox)] = stores.nodes(box0).testing_decoded() else {
+        panic!("box0 should contain the recovered hbox");
+    };
+    assert!(
+        stores
+            .nodes(hbox.children)
+            .testing_decoded()
+            .iter()
+            .any(|node| matches!(node, Node::VList(_))),
+        "the remaining box body must stay owned by box0"
+    );
+    assert!(
+        stores
+            .current_page_nodes()
+            .iter()
+            .all(|node| !matches!(node, Node::VList(_))),
+        "the nested vbox must not leak onto the outer page"
+    );
+}
+
+#[test]
 fn last_box_assignment_replays_with_identical_state_hash() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
