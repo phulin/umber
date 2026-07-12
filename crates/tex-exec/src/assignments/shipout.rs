@@ -524,6 +524,7 @@ where
                 if self.suppress_deferred_streams {
                     return Ok(None);
                 }
+                let path = super::variables::openout_target(path);
                 let effect_index = self.effects.len();
                 self.stores.world_mut().open_out(slot, path.clone());
                 self.effects.push(PageEffect::OpenOut {

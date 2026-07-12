@@ -697,13 +697,18 @@ impl World {
             WorldBackend::Real { .. } => std::fs::read(path).map_err(|err| {
                 WorldError::new("read file", Some(path.to_owned()), err.to_string())
             })?,
-            WorldBackend::Memory(memory) => memory.files.get(path).cloned().ok_or_else(|| {
-                WorldError::new(
-                    "read file",
-                    Some(path.to_owned()),
-                    "not found in memory world",
-                )
-            })?,
+            WorldBackend::Memory(memory) => memory
+                .outputs
+                .get(path)
+                .or_else(|| memory.files.get(path))
+                .cloned()
+                .ok_or_else(|| {
+                    WorldError::new(
+                        "read file",
+                        Some(path.to_owned()),
+                        "not found in memory world",
+                    )
+                })?,
         };
         let record = self.allocate_input_record();
         let content = FileContent::new(record, path.to_owned(), bytes);

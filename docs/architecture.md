@@ -1064,7 +1064,12 @@ Responsibility: accumulate the main vertical list, fire `\output`, commit.
   Deferred `\openout` and `\closeout` whatsits append the same World stream
   records as `\immediate` stream commands, while deferred `\write` appends the
   routed stream-write record after shipout-time expansion. The same lowering
-  traversal carries TeX.web's leader context: deferred stream open, write, and
+  applies TeX82's default `.tex` extension to an extensionless `\openout`
+  target when the whatsit executes. Once shipout commits that ordered stream
+  prefix, the materialized bytes are immediately available through the normal
+  World input path later in the same job; staged or rolled-back stream effects
+  never become readable.
+  That traversal carries TeX.web's leader context: deferred stream open, write, and
   close whatsits inside leader payload boxes are ignored, while specials still
   become anchored page effects that the DVI leader loop emits for each
   repeated payload. The executor records shipped artifact ids for the

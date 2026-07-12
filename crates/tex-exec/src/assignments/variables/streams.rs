@@ -1,4 +1,6 @@
 use super::*;
+use std::path::PathBuf;
+
 use tex_expand::{NoopExpansionHooks, ReadRecorder, token_text};
 use tex_lex::{MemoryInput, TokenListReplayKind};
 use tex_state::ids::TokenListId;
@@ -64,12 +66,20 @@ where
         UnexpandablePrimitive::OpenOut => {
             skip_optional_equals_x(input, stores, hooks)?;
             let name = scan_file_name(input, stores, hooks, "\\openout")?;
-            stores.world_mut().open_out(slot, name);
+            stores.world_mut().open_out(slot, openout_target(name));
         }
         UnexpandablePrimitive::CloseOut => stores.world_mut().close_out(slot),
         _ => unreachable!("caller restricts immediate stream primitive"),
     }
     Ok(())
+}
+
+pub(in crate::assignments) fn openout_target(name: String) -> String {
+    let mut path = PathBuf::from(name);
+    if path.extension().is_none() {
+        path.set_extension("tex");
+    }
+    path.to_string_lossy().into_owned()
 }
 
 pub(in crate::assignments) fn execute_read<S, H>(

@@ -382,6 +382,57 @@ fn real_output_does_not_materialize_before_commit() {
 }
 
 #[test]
+fn committed_memory_output_is_readable_as_same_job_input() {
+    let mut world = World::memory();
+    let slot = StreamSlot::new(10);
+    let before = world.snapshot();
+
+    world.open_out(slot, "same-job.tex");
+    world.write_text(PrintSink::Stream(slot), "first\nsecond\n");
+    world.close_out(slot);
+
+    assert!(world.read_file("same-job.tex").is_err());
+    world.rollback(&before);
+    assert!(world.read_file("same-job.tex").is_err());
+
+    world.open_out(slot, "same-job.tex");
+    world.write_text(PrintSink::Stream(slot), "first\nsecond\n");
+    world.close_out(slot);
+    world
+        .commit_effects(world.effect_pos())
+        .expect("commit same-job output");
+
+    let content = world
+        .read_file("same-job.tex")
+        .expect("committed output is readable");
+    assert_eq!(content.bytes(), b"first\nsecond\n");
+}
+
+#[test]
+fn committed_memory_output_replaces_seeded_input_at_the_same_path() {
+    let mut world = World::memory();
+    let slot = StreamSlot::new(3);
+    world
+        .set_memory_file("replace.tex", b"old".to_vec())
+        .expect("seed old file");
+
+    world.open_out(slot, "replace.tex");
+    world.write_text(PrintSink::Stream(slot), "new");
+    world.close_out(slot);
+    world
+        .commit_effects(world.effect_pos())
+        .expect("commit replacement");
+
+    assert_eq!(
+        world
+            .read_file("replace.tex")
+            .expect("read replacement")
+            .bytes(),
+        b"new"
+    );
+}
+
+#[test]
 fn open_close_without_write_materializes_empty_output_only_at_commit() {
     let temp_dir = tempfile::tempdir().expect("temp dir");
     let output = temp_dir.path().join("empty.aux");

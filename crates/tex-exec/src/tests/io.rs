@@ -293,6 +293,29 @@ fn immediate_openout_write_closeout_append_world_effect_records() {
 }
 
 #[test]
+fn immediate_openout_defaults_an_extensionless_name_at_execution() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        r"\immediate\openout10=tripos \immediate\write10{line}\immediate\closeout10",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("immediate stream commands");
+
+    assert!(matches!(
+        stores.world().effect_records(),
+        [
+            EffectRecord::StreamOpen { target, .. },
+            EffectRecord::StreamWrite { .. },
+            EffectRecord::StreamClose { .. },
+        ] if target.path() == std::path::Path::new("tripos.tex")
+    ));
+}
+
+#[test]
 fn newlinechar_is_honored_by_message_and_immediate_write() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);
@@ -375,6 +398,43 @@ fn shipout_commits_deferred_openout_closeout_whatsits() {
                     PageNode::WhatsitAnchor { effect_index: 2 },
                 ]
             )
+    ));
+}
+
+#[test]
+fn shipped_extensionless_openout_is_visible_to_same_job_input() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\shipout\\hbox{\\openout10=tripos \\write10{alpha}\\closeout10}\\end",
+    ));
+
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("shipout succeeds");
+
+    assert_eq!(stats.shipped_artifacts.len(), 1);
+    assert_eq!(stores.world().memory_output("tripos"), None);
+    assert_eq!(
+        stores.world().memory_output("tripos.tex"),
+        Some(&b"alpha"[..])
+    );
+    let content = stores
+        .world_mut()
+        .read_file("tripos.tex")
+        .expect("committed shipout output is readable");
+    assert_eq!(content.bytes(), b"alpha");
+
+    let bytes = stores
+        .world()
+        .read_artifact(stats.shipped_artifacts[0])
+        .expect("read artifact")
+        .expect("artifact stored");
+    let artifact = PageArtifact::from_bytes(&bytes).expect("artifact parses");
+    assert!(matches!(
+        artifact.effects.first(),
+        Some(PageEffect::OpenOut { path, .. }) if path == "tripos.tex"
     ));
 }
 

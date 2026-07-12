@@ -6,7 +6,7 @@ mod variable_access;
 
 pub(super) use streams::{
     execute_immediate_stream_command, execute_immediate_write, execute_read, execute_special,
-    execute_stream_command, execute_write,
+    execute_stream_command, execute_write, openout_target,
 };
 use variable_access::*;
 
