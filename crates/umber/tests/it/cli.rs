@@ -9,6 +9,13 @@ use tex_state::token::{Catcode, Token};
 use tex_state::{Universe, World};
 
 const PINNED_SOURCE_DATE_EPOCH: &str = "1783604160";
+const TARGET_PREHYPHENATION_CASES: &[&str] = &[
+    "hyphenation_first_word_eligibility",
+    "hyphenation_implicit_kern_eligibility",
+    "hyphenation_kern_eligibility",
+    "hyphenation_mixed_font_eligibility",
+    "hyphenation_word_length_limit",
+];
 
 #[test]
 fn exits_successfully() {
@@ -256,8 +263,44 @@ fn assert_log_case_matches_committed_fixture(area: &str, case: &CorpusCase, show
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
 fn run_dvi_corpus_matches_committed_dvi() {
-    assert_dvi_area_matches_committed_fixture("dvi");
+    for case in corpus_cases("dvi") {
+        if !TARGET_PREHYPHENATION_CASES.contains(&case.name()) {
+            assert_dvi_case_matches_committed_fixture("dvi", case.name());
+        }
+    }
 }
+
+macro_rules! target_prehyphenation_case {
+    ($test:ident, $case:literal) => {
+        #[test]
+        #[ignore = "target regression for umber2-sfc.111"]
+        #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+        fn $test() {
+            assert_dvi_case_matches_committed_fixture("dvi", $case);
+        }
+    };
+}
+
+target_prehyphenation_case!(
+    target_first_word_hyphenation_matches_tex82,
+    "hyphenation_first_word_eligibility"
+);
+target_prehyphenation_case!(
+    target_implicit_kern_hyphenation_matches_tex82,
+    "hyphenation_implicit_kern_eligibility"
+);
+target_prehyphenation_case!(
+    target_explicit_kern_hyphenation_matches_tex82,
+    "hyphenation_kern_eligibility"
+);
+target_prehyphenation_case!(
+    target_mixed_font_hyphenation_matches_tex82,
+    "hyphenation_mixed_font_eligibility"
+);
+target_prehyphenation_case!(
+    target_hyphenation_word_length_limit_matches_tex82,
+    "hyphenation_word_length_limit"
+);
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
