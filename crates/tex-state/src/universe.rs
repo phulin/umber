@@ -958,6 +958,7 @@ impl Universe {
     fn hash_page_state(&self, hasher: &mut StateHasher) {
         self.page.hash_semantic(
             hasher,
+            |nodes, hasher| self.stores.hash_node_deque_semantic(nodes, hasher),
             |nodes, hasher| self.stores.hash_node_slice_semantic(nodes, hasher),
             |id, hasher| self.stores.hash_glue_semantic(id, hasher),
             |id, hasher| self.stores.hash_token_list_semantic(id, hasher),
@@ -2072,7 +2073,7 @@ impl Universe {
     }
 
     #[must_use]
-    pub fn page_contributions(&self) -> &[Node] {
+    pub fn page_contributions(&self) -> &std::collections::VecDeque<Node> {
         self.page.contribution()
     }
 

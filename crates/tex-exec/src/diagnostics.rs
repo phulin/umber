@@ -189,9 +189,10 @@ pub(crate) fn execute_showlists(stores: &mut Universe, nest: &ModeNest) {
             }
             if !stores.page_contributions().is_empty() {
                 text.push_str("### recent contributions:\n");
+                let contributions: Vec<_> = stores.page_contributions().iter().cloned().collect();
                 text.push_str(&dump_node_slice(
                     stores,
-                    stores.page_contributions(),
+                    &contributions,
                     DumpConfig::read(stores),
                 ));
             }

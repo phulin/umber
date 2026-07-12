@@ -569,7 +569,11 @@ mod tests {
 
         assert_eq!(penalty, INF_PENALTY);
         assert_eq!(after_break, [chosen_break]);
-        assert_eq!(stores.page_contributions(), [Node::Penalty(EJECT_PENALTY)]);
+        assert_eq!(stores.page_contributions().len(), 1);
+        assert_eq!(
+            stores.page_contributions().front(),
+            Some(&Node::Penalty(EJECT_PENALTY))
+        );
     }
 
     #[test]

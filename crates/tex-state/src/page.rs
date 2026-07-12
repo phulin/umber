@@ -5,6 +5,7 @@ use crate::ids::{GlueId, TokenListId};
 use crate::node::Node;
 use crate::scaled::Scaled;
 use crate::state_hash::StateHasher;
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 /// TeX's `awful_bad` sentinel, `2^30 - 1`.
@@ -262,7 +263,7 @@ impl PageInsertion {
 /// Snapshot-owned state for TeX.web's page builder.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct PageBuilderState {
-    contribution: Arc<Vec<Node>>,
+    contribution: Arc<VecDeque<Node>>,
     current_page: Arc<Vec<Node>>,
     page_goal: Scaled,
     page_total: Scaled,
@@ -294,7 +295,7 @@ pub(crate) struct PageBuilderState {
 impl Default for PageBuilderState {
     fn default() -> Self {
         Self {
-            contribution: Arc::new(Vec::new()),
+            contribution: Arc::new(VecDeque::new()),
             current_page: Arc::new(Vec::new()),
             page_goal: Scaled::from_raw(0),
             page_total: Scaled::from_raw(0),
@@ -494,19 +495,19 @@ impl PageBuilderState {
     }
 
     pub(crate) fn push_contribution(&mut self, node: Node) {
-        Arc::make_mut(&mut self.contribution).push(node);
+        Arc::make_mut(&mut self.contribution).push_back(node);
     }
 
     pub(crate) fn prepend_contribution(&mut self, node: Node) {
-        Arc::make_mut(&mut self.contribution).insert(0, node);
+        Arc::make_mut(&mut self.contribution).push_front(node);
     }
 
-    pub(crate) fn contribution(&self) -> &[Node] {
+    pub(crate) fn contribution(&self) -> &VecDeque<Node> {
         &self.contribution
     }
 
     pub(crate) fn contribution_front(&self) -> Option<&Node> {
-        self.contribution.first()
+        self.contribution.front()
     }
 
     pub(crate) fn contribution_second(&self) -> Option<&Node> {
@@ -514,27 +515,29 @@ impl PageBuilderState {
     }
 
     pub(crate) fn contribution_tail(&self) -> Option<&Node> {
-        self.contribution.last()
+        self.contribution.back()
     }
 
     pub(crate) fn pop_contribution_front(&mut self) -> Option<Node> {
         if self.contribution.is_empty() {
             None
         } else {
-            Some(Arc::make_mut(&mut self.contribution).remove(0))
+            Arc::make_mut(&mut self.contribution).pop_front()
         }
     }
 
     pub(crate) fn pop_contribution_tail(&mut self) -> Option<Node> {
-        Arc::make_mut(&mut self.contribution).pop()
+        Arc::make_mut(&mut self.contribution).pop_back()
     }
 
-    pub(crate) fn prepend_contributions(&mut self, mut nodes: Vec<Node>) {
+    pub(crate) fn prepend_contributions(&mut self, nodes: Vec<Node>) {
         if nodes.is_empty() {
             return;
         }
-        nodes.append(Arc::make_mut(&mut self.contribution));
-        self.contribution = Arc::new(nodes);
+        let mut queue = VecDeque::with_capacity(nodes.len() + self.contribution.len());
+        queue.extend(nodes);
+        queue.extend(self.contribution.iter().cloned());
+        self.contribution = Arc::new(queue);
     }
 
     pub(crate) fn current_page(&self) -> &[Node] {
@@ -612,6 +615,7 @@ impl PageBuilderState {
     pub(crate) fn hash_semantic(
         &self,
         hasher: &mut StateHasher,
+        mut hash_queue: impl FnMut(&VecDeque<Node>, &mut StateHasher),
         mut hash_nodes: impl FnMut(&[Node], &mut StateHasher),
         mut hash_glue: impl FnMut(GlueId, &mut StateHasher),
         mut hash_tokens: impl FnMut(TokenListId, &mut StateHasher),
@@ -697,7 +701,7 @@ impl PageBuilderState {
         ] {
             hash_tokens(mark, hasher);
         }
-        hash_nodes(&self.contribution, hasher);
+        hash_queue(&self.contribution, hasher);
         hash_nodes(&self.current_page, hasher);
     }
 }

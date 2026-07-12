@@ -1859,16 +1859,15 @@ fn vertical_hrule_uses_defaults_and_sets_prevdepth_ignore_sentinel() {
         Some(crate::mode::IGNORE_DEPTH)
     );
     assert!(executor.nest().current_list().nodes().is_empty());
-    let [
-        tex_state::node::Node::Rule {
-            width,
-            height,
-            depth,
-        },
-    ] = stores.page_contributions()
+    let Some(tex_state::node::Node::Rule {
+        width,
+        height,
+        depth,
+    }) = stores.page_contributions().front()
     else {
         panic!("recent contributions should contain one rule");
     };
+    assert_eq!(stores.page_contributions().len(), 1);
     assert_eq!(width.map(tex_state::scaled::Scaled::raw), Some(7 * 65_536));
     assert_eq!(height.map(tex_state::scaled::Scaled::raw), Some(26_214));
     assert_eq!(depth.map(tex_state::scaled::Scaled::raw), Some(0));
@@ -1917,7 +1916,11 @@ fn macro_parameter_in_vertical_mode_does_not_build_recent_rule() {
         .expect("forbidden macro parameter is diagnosed and consumed");
 
     assert!(stores.current_page_nodes().is_empty());
-    assert!(matches!(stores.page_contributions(), [Node::Rule { .. }]));
+    assert_eq!(stores.page_contributions().len(), 1);
+    assert!(matches!(
+        stores.page_contributions().front(),
+        Some(Node::Rule { .. })
+    ));
     let log = terminal_effect_text(&stores);
     assert!(log.contains("You can't use `Char { ch: '#', cat: Parameter }' in vertical mode"));
     assert!(log.contains("### recent contributions:"));

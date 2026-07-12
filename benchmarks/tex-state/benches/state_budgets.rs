@@ -33,6 +33,27 @@ const SCANNER_REPETITIONS: usize = 1_024;
 const TRANSIENT_BOX_OVERWRITES: usize = 20_000;
 const ALLOCATION_GRAPH_DEPTH: usize = 128;
 const ALLOCATION_LIST_LEN: usize = 1_024;
+const PAGE_QUEUE_LEN: usize = 65_536;
+
+fn page_contribution_queue(c: &mut Criterion) {
+    c.bench_function("page_contribution_queue/drain_65536", |b| {
+        b.iter_batched(
+            || {
+                let mut stores = Universe::new();
+                for index in 0..PAGE_QUEUE_LEN {
+                    stores.append_page_contribution(Node::Penalty(index as i32));
+                }
+                stores
+            },
+            |mut stores| {
+                while let Some(node) = stores.pop_page_contribution_front() {
+                    black_box(node);
+                }
+            },
+            BatchSize::LargeInput,
+        );
+    });
+}
 
 fn allocation_node_append(c: &mut Criterion) {
     let mut group = c.benchmark_group("allocation_node_append");
@@ -935,6 +956,7 @@ criterion_group!(
     allocation_node_append,
     allocation_graph_transfer,
     allocation_traced_freeze,
+    page_contribution_queue,
     meaning_lookup,
     barrier_write,
     snapshot_take,

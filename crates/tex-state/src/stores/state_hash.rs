@@ -11,7 +11,7 @@ use crate::node::{BoxNode, GlueKind, KernKind, LeaderPayload, Node, Sign, Whatsi
 use crate::node_arena::NodeRef;
 use crate::state_hash::StateHasher;
 use crate::token::{Catcode, Token};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
 const STORE_SLICE_DOMAIN: u64 = 0x7374_6f72_6573_6c63;
 const CELL_VALUE_DOMAIN: u64 = 0x6365_6c6c_7661_6c75;
@@ -184,8 +184,25 @@ impl Stores {
     }
 
     pub(crate) fn hash_node_slice_semantic(&self, nodes: &[Node], hasher: &mut StateHasher) {
+        self.hash_node_iter_semantic(nodes.len(), nodes.iter(), hasher);
+    }
+
+    pub(crate) fn hash_node_deque_semantic(
+        &self,
+        nodes: &VecDeque<Node>,
+        hasher: &mut StateHasher,
+    ) {
+        self.hash_node_iter_semantic(nodes.len(), nodes.iter(), hasher);
+    }
+
+    fn hash_node_iter_semantic<'a>(
+        &self,
+        len: usize,
+        nodes: impl Iterator<Item = &'a Node>,
+        hasher: &mut StateHasher,
+    ) {
         hasher.tag(0x72);
-        hasher.usize(nodes.len());
+        hasher.usize(len);
         for node in nodes {
             self.hash_node_tree_from_node(node.clone(), hasher);
         }

@@ -246,12 +246,14 @@ fn openout_closeout_append_deferred_whatsits_before_shipout() {
         stores.world().effect_records().is_empty(),
         "non-immediate openout/closeout should wait for shipout"
     );
+    let contributions = stores.page_contributions();
+    assert_eq!(contributions.len(), 2);
     assert!(matches!(
-        stores.page_contributions(),
-        [
-            tex_state::node::Node::Whatsit(tex_state::node::Whatsit::OpenOut { slot, path }),
-            tex_state::node::Node::Whatsit(tex_state::node::Whatsit::CloseOut { slot: close_slot })
-        ] if *slot == tex_state::StreamSlot::new(2)
+        (contributions.front(), contributions.back()),
+        (
+            Some(tex_state::node::Node::Whatsit(tex_state::node::Whatsit::OpenOut { slot, path })),
+            Some(tex_state::node::Node::Whatsit(tex_state::node::Whatsit::CloseOut { slot: close_slot }))
+        ) if *slot == tex_state::StreamSlot::new(2)
             && *close_slot == tex_state::StreamSlot::new(2)
             && path == "out.aux"
     ));
