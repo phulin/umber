@@ -46,6 +46,7 @@ use std::hash::BuildHasher;
 #[cfg(any(test, feature = "testing", feature = "shadow"))]
 use std::hash::{Hash, Hasher};
 use std::mem;
+use std::sync::Arc;
 
 mod format;
 mod handles;
@@ -77,7 +78,7 @@ pub(crate) struct StoreSnapshot {
     font_mark: FontStoreMark,
     node_mark: NodeArenaMark,
     code_tables_snapshot: CodeTablesSnapshot,
-    hyphenation: HyphenationTable,
+    hyphenation: Arc<HyphenationTable>,
     prepared_mag: Option<i32>,
     last_loaded_font: FontId,
 }
@@ -145,7 +146,7 @@ pub struct Stores {
     nodes: NodeArena,
     survivors: SurvivorArena,
     code_tables: CodeTables,
-    hyphenation: HyphenationTable,
+    hyphenation: Arc<HyphenationTable>,
     prepared_mag: Option<i32>,
     last_loaded_font: FontId,
     semantic_hash_cache: state_hash::SemanticHashCache,
@@ -229,7 +230,7 @@ impl Stores {
             nodes: NodeArena::new(),
             survivors: SurvivorArena::new(),
             code_tables: CodeTables::new(),
-            hyphenation: HyphenationTable::new(),
+            hyphenation: Arc::new(HyphenationTable::new()),
             prepared_mag: None,
             last_loaded_font: NULL_FONT,
             semantic_hash_cache: state_hash::SemanticHashCache::default(),
@@ -337,11 +338,11 @@ impl Stores {
     }
 
     pub fn add_hyphenation_pattern(&mut self, pattern: PatternSpec) {
-        self.hyphenation.add_pattern(pattern);
+        Arc::make_mut(&mut self.hyphenation).add_pattern(pattern);
     }
 
     pub fn add_hyphenation_exception(&mut self, exception: ExceptionSpec) {
-        self.hyphenation.add_exception(exception);
+        Arc::make_mut(&mut self.hyphenation).add_exception(exception);
     }
 
     #[must_use]

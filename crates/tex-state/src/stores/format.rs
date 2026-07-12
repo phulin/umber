@@ -309,7 +309,7 @@ impl StoreFormat {
             node_lists,
             env,
             code_tables,
-            hyphenation: stores.hyphenation.clone(),
+            hyphenation: (*stores.hyphenation).clone(),
             prepared_mag: stores.prepared_mag,
             last_loaded_font: stores.last_loaded_font.raw(),
         })
@@ -398,7 +398,7 @@ impl StoreFormat {
         for entry in self.code_tables {
             entry.restore(&mut stores.code_tables)?;
         }
-        stores.hyphenation = self.hyphenation;
+        stores.hyphenation = self.hyphenation.into();
         stores.prepared_mag = self.prepared_mag;
         stores.last_loaded_font = stores.resolve_stored_font(FontId::new(self.last_loaded_font));
         for entry in self.env {

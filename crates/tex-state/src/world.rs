@@ -15,6 +15,7 @@ use std::fmt;
 use std::fs::OpenOptions;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// TeX's 16 read/write stream slots.
@@ -472,7 +473,7 @@ impl std::error::Error for WorldError {}
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorldSnapshot {
     effect_pos: EffectPos,
-    stream_bufs: StreamBufState,
+    stream_bufs: Arc<StreamBufState>,
     rng: RngState,
     job_clock: JobClock,
     shell_escape_policy: ShellEscapePolicy,
@@ -485,7 +486,7 @@ pub struct WorldSnapshot {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct WorldStateHashCursor {
     effect_pos: EffectPos,
-    stream_bufs: StreamBufState,
+    stream_bufs: Arc<StreamBufState>,
     rng: RngState,
     job_clock: JobClock,
     shell_escape_policy: ShellEscapePolicy,
@@ -499,7 +500,7 @@ pub struct World {
     backend: WorldBackend,
     effect_base: EffectPos,
     effects: Vec<EffectRecord>,
-    stream_bufs: StreamBufState,
+    stream_bufs: Arc<StreamBufState>,
     committed_write_streams: [Option<WriteTarget>; STREAM_SLOT_COUNT],
     rng: RngState,
     job_clock: JobClock,
@@ -589,7 +590,7 @@ impl World {
             backend,
             effect_base: EffectPos::default(),
             effects: Vec::new(),
-            stream_bufs: StreamBufState::default(),
+            stream_bufs: Arc::new(StreamBufState::default()),
             committed_write_streams: Default::default(),
             rng: RngState::default(),
             job_clock,
@@ -691,7 +692,7 @@ impl World {
         path: impl AsRef<Path>,
     ) -> Result<FileContent, WorldError> {
         let content = self.read_file(path)?;
-        self.stream_bufs.read_streams[slot.index()] = Some(ReadTarget {
+        self.stream_bufs_mut().read_streams[slot.index()] = Some(ReadTarget {
             path: content.path.clone(),
             hash: content.hash,
             next_line: 0,
@@ -700,7 +701,7 @@ impl World {
     }
 
     pub fn close_in(&mut self, slot: StreamSlot) {
-        self.stream_bufs.read_streams[slot.index()] = None;
+        self.stream_bufs_mut().read_streams[slot.index()] = None;
     }
 
     #[must_use]
@@ -715,22 +716,26 @@ impl World {
     }
 
     pub fn read_stream_line(&mut self, slot: StreamSlot) -> Result<Option<String>, WorldError> {
-        let Some(target) = self.stream_bufs.read_streams[slot.index()].as_mut() else {
+        let Some(target) = self.stream_bufs.read_streams[slot.index()].as_ref() else {
             return Ok(None);
         };
-        let Some(bytes) = self.input_contents.get(&target.hash) else {
+        let (hash, path, next_line) = (target.hash, target.path.clone(), target.next_line);
+        let Some(bytes) = self.input_contents.get(&hash) else {
             return Err(WorldError::new(
                 "read input stream",
-                Some(target.path.clone()),
+                Some(path),
                 "pinned input content is missing",
             ));
         };
         let lines = split_physical_lines(&String::from_utf8_lossy(bytes));
-        let Some(line) = lines.get(target.next_line).cloned() else {
-            self.stream_bufs.read_streams[slot.index()] = None;
+        let Some(line) = lines.get(next_line).cloned() else {
+            self.stream_bufs_mut().read_streams[slot.index()] = None;
             return Ok(Some(String::new()));
         };
-        target.next_line += 1;
+        self.stream_bufs_mut().read_streams[slot.index()]
+            .as_mut()
+            .expect("read stream remained open")
+            .next_line += 1;
         Ok(Some(line))
     }
 
@@ -761,7 +766,7 @@ impl World {
                 }
             }
         };
-        self.stream_bufs.terminal_input_next += 1;
+        self.stream_bufs_mut().terminal_input_next += 1;
         let bytes = line.as_bytes().to_vec();
         let record = self.allocate_input_record();
         let content = FileContent::new(record, PathBuf::from("<terminal>"), bytes);
@@ -858,14 +863,14 @@ impl World {
             slot,
             target: target.clone(),
         });
-        self.stream_bufs.write_streams[slot.index()] = Some(target);
-        self.stream_bufs.partial_lines[slot.index()].clear();
+        self.stream_bufs_mut().write_streams[slot.index()] = Some(target);
+        self.stream_bufs_mut().partial_lines[slot.index()].clear();
     }
 
     pub fn close_out(&mut self, slot: StreamSlot) {
         self.append_effect(EffectRecord::StreamClose { slot });
-        self.stream_bufs.write_streams[slot.index()] = None;
-        self.stream_bufs.partial_lines[slot.index()].clear();
+        self.stream_bufs_mut().write_streams[slot.index()] = None;
+        self.stream_bufs_mut().partial_lines[slot.index()].clear();
     }
 
     /// Buffers routed output as a deferred effect record.
@@ -876,16 +881,19 @@ impl World {
         });
         match sink {
             PrintSink::Terminal => {
-                append_partial_line(&mut self.stream_bufs.terminal_partial_line, text)
+                append_partial_line(&mut self.stream_bufs_mut().terminal_partial_line, text)
             }
-            PrintSink::Log => append_partial_line(&mut self.stream_bufs.log_partial_line, text),
+            PrintSink::Log => {
+                append_partial_line(&mut self.stream_bufs_mut().log_partial_line, text)
+            }
             PrintSink::TerminalAndLog => {
-                append_partial_line(&mut self.stream_bufs.terminal_partial_line, text);
-                append_partial_line(&mut self.stream_bufs.log_partial_line, text);
+                append_partial_line(&mut self.stream_bufs_mut().terminal_partial_line, text);
+                append_partial_line(&mut self.stream_bufs_mut().log_partial_line, text);
             }
-            PrintSink::Stream(slot) => {
-                append_partial_line(&mut self.stream_bufs.partial_lines[slot.index()], text)
-            }
+            PrintSink::Stream(slot) => append_partial_line(
+                &mut self.stream_bufs_mut().partial_lines[slot.index()],
+                text,
+            ),
         }
     }
 
@@ -1150,8 +1158,12 @@ impl World {
     }
 
     #[must_use]
-    pub const fn stream_bufs(&self) -> &StreamBufState {
+    pub fn stream_bufs(&self) -> &StreamBufState {
         &self.stream_bufs
+    }
+
+    fn stream_bufs_mut(&mut self) -> &mut StreamBufState {
+        Arc::make_mut(&mut self.stream_bufs)
     }
 
     #[must_use]
