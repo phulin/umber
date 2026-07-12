@@ -44,9 +44,8 @@ pub use page::{
 pub use provenance_resolver::ProvenanceResolver;
 pub use stores::{FontParameterError, GroupKind, GroupMismatch, PrepareMagDiagnostic};
 pub use universe::{
-    BoxDimension, CheckpointId, CheckpointMetadata, CheckpointResumeKind, ExpansionContext,
-    ExpansionState, FormatError, InputOpenContext, InputOpenState, InputReadState, InteractionMode,
-    ParagraphShapeLine, ResumeBoundary, ResumeFallback, Snapshot, Universe,
+    BoxDimension, ExpansionContext, ExpansionState, FormatError, InputOpenContext, InputOpenState,
+    InputReadState, InteractionMode, ParagraphShapeLine, Snapshot, Universe,
 };
 pub use world::{
     ContentHash, EffectPos, EffectRecord, FileContent, InputRecord, InputRecordId, JobClock,

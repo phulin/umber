@@ -1,4 +1,4 @@
-use super::{CheckpointResumeKind, FormatError, ResumeFallback, Universe};
+use super::{FormatError, Universe};
 use crate::font::{MAX_FONT_DIMEN, NULL_FONT};
 use crate::glue::{GlueSpec, Order};
 use crate::hyphenation::{ExceptionSpec, PatternSpec};
@@ -1206,85 +1206,6 @@ fn universe_rollback_truncates_provenance_without_reviving_origin_ids() {
         OriginRecord::Source(SourceOrigin::new(crate::input::SourceId::new(7), 70, 8, 9))
     );
     assert_eq!(universe.origin_list(replayed_list), &[replayed]);
-}
-
-#[test]
-fn hash_only_checkpoint_records_previous_resume_boundary() {
-    let mut universe = Universe::new();
-    let symbol = universe.intern("x");
-    let resume = universe.snapshot();
-    let resume_fallback = resume
-        .resume_fallback()
-        .expect("resume-valid snapshot is its own resume fallback");
-    let resume_boundary = resume_fallback.boundary();
-
-    let hash_only = universe.with_hash_only_checkpoints(|universe| {
-        universe.set_meaning(symbol, Meaning::Relax);
-        universe.snapshot()
-    });
-
-    assert_eq!(resume.resume_kind(), CheckpointResumeKind::ResumeValid);
-    assert_eq!(
-        resume_fallback,
-        ResumeFallback::DirectRollback(resume_boundary)
-    );
-    assert_eq!(hash_only.resume_kind(), CheckpointResumeKind::HashOnly);
-    assert_eq!(
-        hash_only.resume_fallback(),
-        Some(ResumeFallback::DirectRollback(resume_boundary))
-    );
-    assert_eq!(
-        universe.last_checkpoint(),
-        Some(hash_only.checkpoint_metadata())
-    );
-
-    universe.rollback(&resume);
-
-    let replayed = universe.with_hash_only_checkpoints(|universe| {
-        universe.set_meaning(symbol, Meaning::Relax);
-        universe.snapshot()
-    });
-    assert_eq!(replayed.resume_kind(), CheckpointResumeKind::HashOnly);
-    assert_eq!(
-        replayed.resume_fallback(),
-        Some(ResumeFallback::DirectRollback(resume_boundary))
-    );
-    assert_eq!(replayed.state_hash(), hash_only.state_hash());
-}
-
-#[test]
-fn effectful_hash_only_commit_marks_resume_fallback_unavailable() {
-    let mut universe = Universe::new();
-    let resume = universe.snapshot();
-    let resume_boundary = resume
-        .resume_fallback()
-        .expect("resume-valid snapshot is its own resume fallback")
-        .boundary();
-
-    universe.with_hash_only_checkpoints(|universe| {
-        universe
-            .world_mut()
-            .write_text(PrintSink::TerminalAndLog, "nested shipout effect\n");
-        let effect_pos = universe.world().effect_pos();
-        universe
-            .commit_effects(effect_pos)
-            .expect("memory world commit succeeds");
-    });
-
-    let checkpoint = universe
-        .last_checkpoint()
-        .expect("hash-only commit should checkpoint");
-    assert_eq!(checkpoint.resume_kind(), CheckpointResumeKind::HashOnly);
-    assert_eq!(
-        checkpoint.resume_fallback(),
-        Some(ResumeFallback::Unavailable(resume_boundary))
-    );
-    assert!(
-        !checkpoint
-            .resume_fallback()
-            .expect("fallback should be recorded")
-            .direct_rollback_available()
-    );
 }
 
 #[test]

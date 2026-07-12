@@ -33,7 +33,7 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    stores.with_hash_only_checkpoints(|stores| {
+    {
         let alignment_kind = state.kind();
         let enclosing_prev_depth = nest.current_list().prev_depth();
         nest.push(alignment_mode(alignment_kind));
@@ -70,7 +70,7 @@ where
         append_finished_alignment(nest, stores, finished);
         build_page_if_outer_vertical(nest, stores)?;
         Ok(())
-    })
+    }
 }
 
 pub(crate) struct FinishedAlignment {
@@ -112,7 +112,7 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    stores.with_hash_only_checkpoints(|stores| {
+    {
         let alignment_kind = state.kind();
         let enclosing_prev_depth = nest.current_list().prev_depth();
         nest.push(alignment_mode(alignment_kind));
@@ -145,7 +145,7 @@ where
         }
 
         Ok(finish_alignment_level(nest, stores)?.nodes)
-    })
+    }
 }
 
 fn finish_alignment_level(

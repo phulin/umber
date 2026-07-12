@@ -19,7 +19,7 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    stores.with_hash_only_checkpoints(|stores| {
+    {
         let opener = next_non_space_x(input, stores, hooks)?.ok_or(ExecError::MissingToken {
             context: "\\noalign group",
         })?;
@@ -35,7 +35,7 @@ where
         scan_noalign_group(nest, input, stores, recorder, hooks)?;
         leave_group(input, stores, tex_state::GroupKind::Simple)?;
         Ok(())
-    })
+    }
 }
 
 fn scan_noalign_group<S, R, H>(

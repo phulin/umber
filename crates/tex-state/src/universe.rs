@@ -260,115 +260,6 @@ pub struct Snapshot {
     page: PageBuilderState,
     state_hash: u64,
     state_hash_base: StateHashBase,
-    checkpoint_id: CheckpointId,
-    resume_kind: CheckpointResumeKind,
-    resume_fallback: Option<ResumeFallback>,
-    last_resume_boundary: Option<ResumeBoundarySnapshot>,
-}
-
-/// Timeline-local identifier for one semantic checkpoint.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct CheckpointId(u64);
-
-/// Whether a checkpoint can be used as a direct execution resume point.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum CheckpointResumeKind {
-    /// The executor was at a quiescent boundary and can restart directly here.
-    ResumeValid,
-    /// The checkpoint is valid for convergence hashing, but execution must
-    /// resume from the recorded previous resume-valid boundary.
-    HashOnly,
-}
-
-/// The checkpoint a hash-only checkpoint should resume from.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct ResumeBoundary {
-    checkpoint_id: CheckpointId,
-    state_hash: u64,
-}
-
-impl ResumeBoundary {
-    /// Returns the timeline-local checkpoint id for this resume boundary.
-    #[must_use]
-    pub const fn checkpoint_id(self) -> CheckpointId {
-        self.checkpoint_id
-    }
-
-    /// Returns the checkpoint-schedule-relative semantic state hash captured
-    /// at this resume boundary (see [`Snapshot::state_hash`]).
-    #[must_use]
-    pub const fn state_hash(self) -> u64 {
-        self.state_hash
-    }
-}
-
-/// Whether execution can roll back directly to a checkpoint's resume boundary.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum ResumeFallback {
-    /// The fallback boundary's effect history is still retained, so direct
-    /// rollback to that boundary is available.
-    DirectRollback(ResumeBoundary),
-    /// The fallback boundary is known for replay/convergence, but bounded
-    /// effect history has dropped the prefix needed for direct rollback.
-    Unavailable(ResumeBoundary),
-}
-
-impl ResumeFallback {
-    /// Returns the resume-valid checkpoint identity for this fallback.
-    #[must_use]
-    pub const fn boundary(self) -> ResumeBoundary {
-        match self {
-            Self::DirectRollback(boundary) | Self::Unavailable(boundary) => boundary,
-        }
-    }
-
-    /// Returns true when callers can roll back directly to the fallback.
-    #[must_use]
-    pub const fn direct_rollback_available(self) -> bool {
-        matches!(self, Self::DirectRollback(_))
-    }
-}
-
-/// Public metadata for the most recent semantic checkpoint.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct CheckpointMetadata {
-    checkpoint_id: CheckpointId,
-    state_hash: u64,
-    resume_kind: CheckpointResumeKind,
-    resume_fallback: Option<ResumeFallback>,
-}
-
-impl CheckpointMetadata {
-    /// Returns the timeline-local checkpoint id.
-    #[must_use]
-    pub const fn checkpoint_id(self) -> CheckpointId {
-        self.checkpoint_id
-    }
-
-    /// Returns the checkpoint-schedule-relative semantic state hash captured
-    /// at this checkpoint (see [`Snapshot::state_hash`]).
-    #[must_use]
-    pub const fn state_hash(self) -> u64 {
-        self.state_hash
-    }
-
-    /// Returns whether this checkpoint can be resumed directly.
-    #[must_use]
-    pub const fn resume_kind(self) -> CheckpointResumeKind {
-        self.resume_kind
-    }
-
-    /// Returns the fallback boundary to use for execution resume.
-    ///
-    /// For a resume-valid checkpoint this is the checkpoint itself with
-    /// direct rollback available. For a hash-only checkpoint this is the
-    /// previous resume-valid boundary, when one has been established on the
-    /// current timeline. Hash-only fallbacks can be unavailable for direct
-    /// rollback when bounded effect history has already dropped their prefix.
-    #[must_use]
-    pub const fn resume_fallback(self) -> Option<ResumeFallback> {
-        self.resume_fallback
-    }
 }
 
 /// Opaque state mark for one in-progress shipout operation.
@@ -414,52 +305,6 @@ impl Snapshot {
     pub const fn state_hash(&self) -> u64 {
         self.state_hash
     }
-
-    /// Returns this checkpoint's timeline-local id.
-    #[must_use]
-    pub const fn checkpoint_id(&self) -> CheckpointId {
-        self.checkpoint_id
-    }
-
-    /// Returns whether this checkpoint can be resumed directly.
-    #[must_use]
-    pub const fn resume_kind(&self) -> CheckpointResumeKind {
-        self.resume_kind
-    }
-
-    /// Returns true when the executor can restart directly from this snapshot.
-    #[must_use]
-    pub const fn is_resume_valid(&self) -> bool {
-        matches!(self.resume_kind, CheckpointResumeKind::ResumeValid)
-    }
-
-    /// Returns the fallback boundary to use for execution resume.
-    ///
-    /// Hash-only checkpoints are still valid rollback/hash checkpoints, but
-    /// callers that need to restart execution must use this fallback. If the
-    /// fallback is unavailable, bounded effect history no longer retains
-    /// enough state for direct rollback to that boundary.
-    #[must_use]
-    pub const fn resume_fallback(&self) -> Option<ResumeFallback> {
-        self.resume_fallback
-    }
-
-    /// Returns the public metadata for this checkpoint.
-    #[must_use]
-    pub const fn checkpoint_metadata(&self) -> CheckpointMetadata {
-        CheckpointMetadata {
-            checkpoint_id: self.checkpoint_id,
-            state_hash: self.state_hash,
-            resume_kind: self.resume_kind,
-            resume_fallback: self.resume_fallback,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct ResumeBoundarySnapshot {
-    boundary: ResumeBoundary,
-    effect_pos: EffectPos,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -568,10 +413,6 @@ pub struct Universe {
     input_summary: InputSummary,
     page: PageBuilderState,
     state_hash_base: StateHashBase,
-    next_checkpoint_id: u64,
-    hash_only_checkpoint_depth: u32,
-    last_resume_boundary: Option<ResumeBoundarySnapshot>,
-    last_checkpoint: Option<CheckpointMetadata>,
 }
 
 /// One indent/width pair in TeX's current `\parshape` value.
@@ -600,10 +441,6 @@ impl Clone for Universe {
             input_summary: self.input_summary.clone(),
             page: self.page.clone(),
             state_hash_base,
-            next_checkpoint_id: self.next_checkpoint_id,
-            hash_only_checkpoint_depth: self.hash_only_checkpoint_depth,
-            last_resume_boundary: None,
-            last_checkpoint: None,
         }
     }
 }
@@ -649,10 +486,6 @@ impl Universe {
             input_summary: InputSummary::default(),
             page: PageBuilderState::default(),
             state_hash_base,
-            next_checkpoint_id: 1,
-            hash_only_checkpoint_depth: 0,
-            last_resume_boundary: None,
-            last_checkpoint: None,
         }
     }
 
@@ -732,10 +565,6 @@ impl Universe {
             input_summary,
             page,
             state_hash_base,
-            next_checkpoint_id: 1,
-            hash_only_checkpoint_depth: 0,
-            last_resume_boundary: None,
-            last_checkpoint: None,
         })
     }
 
@@ -769,40 +598,6 @@ impl Universe {
             page: self.page.clone(),
             checkpoint_hash: state_hash,
         };
-        let checkpoint_id = self.allocate_checkpoint_id();
-        let resume_kind = if self.hash_only_checkpoint_depth == 0 {
-            CheckpointResumeKind::ResumeValid
-        } else {
-            CheckpointResumeKind::HashOnly
-        };
-        let own_boundary = ResumeBoundary {
-            checkpoint_id,
-            state_hash,
-        };
-        let own_boundary_snapshot = ResumeBoundarySnapshot {
-            boundary: own_boundary,
-            effect_pos: self.world.effect_pos(),
-        };
-        let resume_fallback = match resume_kind {
-            CheckpointResumeKind::ResumeValid => Some(ResumeFallback::DirectRollback(own_boundary)),
-            CheckpointResumeKind::HashOnly => self
-                .last_resume_boundary
-                .map(|boundary| self.resume_fallback_for(boundary)),
-        };
-        let last_resume_boundary = match resume_kind {
-            CheckpointResumeKind::ResumeValid => Some(own_boundary_snapshot),
-            CheckpointResumeKind::HashOnly => self.last_resume_boundary,
-        };
-        let checkpoint = CheckpointMetadata {
-            checkpoint_id,
-            state_hash,
-            resume_kind,
-            resume_fallback,
-        };
-        if resume_kind == CheckpointResumeKind::ResumeValid {
-            self.last_resume_boundary = Some(own_boundary_snapshot);
-        }
-        self.last_checkpoint = Some(checkpoint);
         self.state_hash_base = next_hash_base.clone();
         Snapshot {
             owner: self.owner.snapshot_owner(),
@@ -814,28 +609,7 @@ impl Universe {
             page: self.page.clone(),
             state_hash,
             state_hash_base: next_hash_base,
-            checkpoint_id,
-            resume_kind,
-            resume_fallback,
-            last_resume_boundary,
         }
-    }
-
-    fn resume_fallback_for(&self, boundary: ResumeBoundarySnapshot) -> ResumeFallback {
-        if self.world.effect_pos_is_retained(boundary.effect_pos) {
-            ResumeFallback::DirectRollback(boundary.boundary)
-        } else {
-            ResumeFallback::Unavailable(boundary.boundary)
-        }
-    }
-
-    fn allocate_checkpoint_id(&mut self) -> CheckpointId {
-        let id = self.next_checkpoint_id;
-        self.next_checkpoint_id = self
-            .next_checkpoint_id
-            .checked_add(1)
-            .expect("checkpoint id overflow");
-        CheckpointId(id)
     }
 
     fn retarget_hash_base_after_committed_boundary(
@@ -856,11 +630,6 @@ impl Universe {
         }
     }
 
-    fn checkpoint_after_committed_boundary(&mut self, hash_base: StateHashBase) -> Snapshot {
-        let hash_base = self.retarget_hash_base_after_committed_boundary(hash_base);
-        self.checkpoint_from_hash_base(hash_base)
-    }
-
     fn retarget_hash_base_after_group_compaction(&mut self) {
         self.state_hash_base.store = self
             .stores
@@ -877,8 +646,6 @@ impl Universe {
         self.interaction_mode = snapshot.interaction_mode;
         self.page = snapshot.page.clone();
         self.state_hash_base = snapshot.state_hash_base.clone();
-        self.last_resume_boundary = snapshot.last_resume_boundary;
-        self.last_checkpoint = Some(snapshot.checkpoint_metadata());
     }
 
     fn state_hash_slice(&mut self, hash_base: &StateHashBase, store: &StoreSnapshot) -> u64 {
@@ -1013,8 +780,9 @@ impl Universe {
         }
     }
 
-    /// Stores a shipped page artifact, flushes its effects, releases its
-    /// shipout-local epoch nodes, and advances the checkpoint as one boundary.
+    /// Stores a shipped page artifact, flushes its effects, and releases its
+    /// shipout-local epoch nodes. The outer executor publishes the checkpoint
+    /// only after all nested output work has unwound.
     pub fn commit_shipout(
         &mut self,
         boundary: ShipoutBoundary,
@@ -1034,41 +802,20 @@ impl Universe {
             return Err(err);
         }
         self.stores.release_shipout_nodes(boundary.node_mark);
-        let _checkpoint = self.checkpoint_after_committed_boundary(hash_base);
+        self.state_hash_base = self.retarget_hash_base_after_committed_boundary(hash_base);
         self.world.record_artifact_commit(hash);
         Ok(hash)
     }
 
-    /// Commits an effect prefix and advances the checkpoint after the prefix is dropped.
+    /// Commits an effect prefix and retargets semantic hash cursors after it is dropped.
     pub fn commit_effects(&mut self, effect_pos: EffectPos) -> Result<(), WorldError> {
         let hash_base = self.state_hash_base.clone();
         if let Err(err) = self.world.commit_effects(effect_pos) {
             self.state_hash_base = self.retarget_hash_base_after_committed_boundary(hash_base);
             return Err(err);
         }
-        let _checkpoint = self.checkpoint_after_committed_boundary(hash_base);
+        self.state_hash_base = self.retarget_hash_base_after_committed_boundary(hash_base);
         Ok(())
-    }
-
-    /// Runs `f` while checkpoints are marked hash-only.
-    ///
-    /// State snapshots taken in this scope remain valid for rollback and
-    /// convergence hashing, but their metadata points execution resume back to
-    /// the latest resume-valid boundary established before the scope.
-    pub fn with_hash_only_checkpoints<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
-        self.hash_only_checkpoint_depth = self
-            .hash_only_checkpoint_depth
-            .checked_add(1)
-            .expect("hash-only checkpoint scope overflow");
-        let result = f(self);
-        self.hash_only_checkpoint_depth -= 1;
-        result
-    }
-
-    /// Returns the metadata for the latest checkpoint created on this timeline.
-    #[must_use]
-    pub const fn last_checkpoint(&self) -> Option<CheckpointMetadata> {
-        self.last_checkpoint
     }
 
     /// Records the current lexer-owned input stack state for the next snapshot.

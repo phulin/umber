@@ -19,7 +19,7 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    stores.with_hash_only_checkpoints(|stores| {
+    {
         // TeX82's end_token_list callback ends a u_template even when its
         // final token expands and pops the template below a macro frame. A
         // live-frame marker gives this synchronous replay the same boundary;
@@ -51,7 +51,7 @@ where
                 }
             }
         }
-    })
+    }
 }
 
 pub(super) fn expand_spanned_column_template_at_span_time<S, R, H>(

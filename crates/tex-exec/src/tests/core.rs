@@ -44,50 +44,86 @@ fn nest_push_pop_and_summary_cover_all_modes() {
 #[test]
 fn engine_checkpoint_restores_input_modes_and_universe_atomically() {
     let mut stores = Universe::new();
-    let mut input = InputStack::new(MemoryInput::new("abc"));
+    let mut input = InputStack::new(MemoryInput::new(""));
     let mut executor = Executor::new();
-    executor.nest_mut().push(Mode::Horizontal);
-    executor
-        .nest_mut()
-        .current_list_mut()
-        .push(Node::Penalty(17));
     stores.set_count(3, 41);
-    let checkpoint = executor.checkpoint(&mut input, &mut stores);
+    let mut checkpoints = Vec::new();
+    executor
+        .run_with_recorder_hooks_and_checkpoints(
+            &mut input,
+            &mut stores,
+            &mut NoopRecorder,
+            &mut NoopExecHooks,
+            &mut checkpoints,
+        )
+        .expect("empty job");
+    let checkpoint = &checkpoints[0];
 
-    executor
-        .nest_mut()
-        .current_list_mut()
-        .push(Node::Penalty(99));
+    executor.nest_mut().push(Mode::Horizontal);
     stores.set_count(3, 99);
-    let resume = checkpoint
-        .as_resume_valid()
-        .expect("top-level capture is resume-valid");
     executor
-        .restore_checkpoint(&mut input, &mut stores, resume, |_, _, _| {
-            Ok::<_, ()>(MemoryInput::new("abc"))
+        .restore_checkpoint(&mut input, &mut stores, checkpoint, |_, _, _| {
+            Ok::<_, ()>(MemoryInput::new(""))
         })
-        .expect("resume-valid aggregate checkpoint");
+        .expect("published aggregate checkpoint");
 
     assert_eq!(stores.count(3), 41);
-    assert_eq!(executor.nest().current_mode(), Mode::Horizontal);
-    assert_eq!(executor.nest().current_list().nodes(), &[Node::Penalty(17)]);
+    assert_eq!(executor.nest().current_mode(), Mode::Vertical);
     assert_eq!(input.summary(), *checkpoint.input_summary());
 }
 
 #[test]
-fn engine_checkpoint_hash_covers_mode_state_and_types_hash_only_separately() {
-    let mut stores = Universe::new();
-    let mut input = InputStack::new(MemoryInput::new(""));
-    let mut executor = Executor::new();
-    let vertical = executor.checkpoint(&mut input, &mut stores).state_hash();
-    executor.nest_mut().push(Mode::Horizontal);
-    let horizontal = executor.checkpoint(&mut input, &mut stores).state_hash();
-    assert_ne!(vertical, horizontal);
+fn engine_session_publishes_named_outer_paragraph_boundary() {
+    let mut stores = support::stores_with_fonts();
+    let mut input = InputStack::new(MemoryInput::new("\\font\\f=cmr10 \\f x\\par"));
+    let mut checkpoints = Vec::new();
+    Executor::new()
+        .run_with_recorder_hooks_and_checkpoints(
+            &mut input,
+            &mut stores,
+            &mut NoopRecorder,
+            &mut NoopExecHooks,
+            &mut checkpoints,
+        )
+        .expect("paragraph job");
+    assert_eq!(checkpoints[0].boundary(), EngineBoundary::JobStart);
+    assert!(
+        checkpoints
+            .iter()
+            .any(|checkpoint| checkpoint.boundary() == EngineBoundary::OuterParagraphEnd)
+    );
+}
 
-    let hash_only =
-        stores.with_hash_only_checkpoints(|stores| executor.checkpoint(&mut input, stores));
-    assert!(matches!(hash_only, EngineCheckpoint::HashOnly(_)));
-    assert!(hash_only.as_resume_valid().is_none());
+#[test]
+fn shipout_checkpoint_restores_after_nested_work_has_unwound() {
+    let source = "\\font\\f=cmr10 \\f \\setbox0=\\hbox{\\shipout\\hbox{A}B}\\end";
+    let mut stores = support::stores_with_fonts();
+    let mut input = InputStack::new(MemoryInput::new(source));
+    let mut executor = Executor::new();
+    let mut checkpoints = Vec::new();
+    executor
+        .run_with_recorder_hooks_and_checkpoints(
+            &mut input,
+            &mut stores,
+            &mut NoopRecorder,
+            &mut NoopExecHooks,
+            &mut checkpoints,
+        )
+        .expect("nested shipout job");
+    let checkpoint = checkpoints
+        .iter()
+        .find(|checkpoint| checkpoint.boundary() == EngineBoundary::ShipoutComplete)
+        .expect("outer executor publishes shipout completion");
+    assert_eq!(checkpoint.mode_summary().levels().len(), 1);
+
+    stores.set_count(7, 99);
+    executor
+        .restore_checkpoint(&mut input, &mut stores, checkpoint, |_, _, _| {
+            Ok::<_, ()>(MemoryInput::new(source))
+        })
+        .expect("shipout checkpoint restores");
+    assert_eq!(stores.count(7), 0);
+    assert_eq!(executor.nest().current_mode(), Mode::Vertical);
 }
 
 #[test]

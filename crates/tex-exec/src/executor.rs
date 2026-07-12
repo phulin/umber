@@ -9,6 +9,7 @@ use tex_state::scaled::Scaled;
 use tex_state::token::TracedTokenWord;
 use tex_state::{ExpansionContext, Universe};
 
+use crate::checkpoint::{CheckpointSink, EngineBoundary, EngineSession, NoopCheckpointSink};
 use crate::dispatch::{dispatch_delivered_token_with_recorder, unimplemented_typesetting};
 use crate::mode::IGNORE_DEPTH;
 use crate::output;
@@ -88,18 +89,45 @@ impl Executor {
         R: ReadRecorder,
         H: ExpansionHooks<S>,
     {
+        let mut checkpoints = NoopCheckpointSink;
+        self.run_with_recorder_hooks_and_checkpoints(
+            input,
+            stores,
+            recorder,
+            hooks,
+            &mut checkpoints,
+        )
+    }
+
+    /// Runs main control and publishes restartable state at named safe boundaries.
+    pub fn run_with_recorder_hooks_and_checkpoints<S, R, H, C>(
+        &mut self,
+        input: &mut InputStack<S>,
+        stores: &mut Universe,
+        recorder: &mut R,
+        hooks: &mut H,
+        checkpoints: &mut C,
+    ) -> Result<ExecutionStats, ExecError>
+    where
+        S: InputSource,
+        R: ReadRecorder,
+        H: ExpansionHooks<S>,
+        C: CheckpointSink,
+    {
         input.ensure_source_ids_at_least(stores.input_summary().next_source_id());
+        let mut session = EngineSession::new(checkpoints);
+        session.publish(EngineBoundary::JobStart, &self.nest, input, stores);
         let artifact_start = stores.world().artifact_commits().len();
         let mut exec_hooks = ExecExpansionHooks::new(hooks);
         let mut stats = ExecutionStats::default();
-        let exit = match run_main_control_until(
+        let exit = match run_outer_main_control_until(
             &mut self.nest,
             input,
             stores,
             recorder,
             &mut exec_hooks,
             &mut stats,
-            |_, _| false,
+            &mut session,
         ) {
             Ok(exit) => exit,
             Err(err) => {
@@ -146,6 +174,47 @@ impl Executor {
     }
 }
 
+fn run_outer_main_control_until<S, R, H, C>(
+    nest: &mut ModeNest,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    recorder: &mut R,
+    hooks: &mut H,
+    stats: &mut ExecutionStats,
+    session: &mut EngineSession<'_, C>,
+) -> Result<MainControlExit, ExecError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+    C: CheckpointSink,
+{
+    let result = run_main_control_until_observing(
+        nest,
+        input,
+        stores,
+        recorder,
+        hooks,
+        stats,
+        |_, _| false,
+        |nest, input, stores, event| {
+            if event.shipout_complete {
+                session.publish(EngineBoundary::ShipoutComplete, nest, input, stores);
+            }
+            if event.outer_paragraph_end {
+                session.publish(EngineBoundary::OuterParagraphEnd, nest, input, stores);
+            }
+        },
+    );
+    result.map_err(|error| error.capture(input))
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct BoundaryEvent {
+    outer_paragraph_end: bool,
+    shipout_complete: bool,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum MainControlExit {
     EndOfInput,
@@ -169,12 +238,21 @@ where
     H: ExpansionHooks<S>,
     F: FnMut(&mut InputStack<S>, &Universe) -> bool,
 {
-    let result =
-        run_main_control_until_inner(nest, input, stores, recorder, hooks, stats, should_stop);
+    let result = run_main_control_until_observing(
+        nest,
+        input,
+        stores,
+        recorder,
+        hooks,
+        stats,
+        should_stop,
+        |_, _, _, _| {},
+    );
     result.map_err(|error| error.capture(input))
 }
 
-fn run_main_control_until_inner<S, R, H, F>(
+#[allow(clippy::too_many_arguments)]
+fn run_main_control_until_observing<S, R, H, F, O>(
     nest: &mut ModeNest,
     input: &mut InputStack<S>,
     stores: &mut Universe,
@@ -182,18 +260,23 @@ fn run_main_control_until_inner<S, R, H, F>(
     hooks: &mut H,
     stats: &mut ExecutionStats,
     mut should_stop: F,
+    mut observe: O,
 ) -> Result<MainControlExit, ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
     H: ExpansionHooks<S>,
     F: FnMut(&mut InputStack<S>, &Universe) -> bool,
+    O: FnMut(&ModeNest, &mut InputStack<S>, &mut Universe, BoundaryEvent),
 {
     loop {
         if should_stop(input, stores) {
             return Ok(MainControlExit::Stopped);
         }
 
+        let before_mode = nest.current_mode();
+        let before_depth = nest.depth();
+        let before_artifacts = stores.world().artifact_commits().len();
         sync_engine_state::<S, _>(hooks, nest, stores);
         let token = {
             let mut expansion = ExpansionContext::new(stores);
@@ -413,6 +496,18 @@ where
                 return Ok(MainControlExit::NotConsumed { token });
             }
         }
+        observe(
+            nest,
+            input,
+            stores,
+            BoundaryEvent {
+                outer_paragraph_end: before_mode == crate::Mode::Horizontal
+                    && before_depth == 2
+                    && nest.current_mode() == crate::Mode::Vertical
+                    && nest.depth() == 1,
+                shipout_complete: stores.world().artifact_commits().len() != before_artifacts,
+            },
+        );
     }
 }
 

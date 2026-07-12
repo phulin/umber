@@ -1,11 +1,11 @@
 use super::*;
+use tex_state::ExpansionState;
 use tex_state::env::banks::GlueParam;
 use tex_state::glue::Order;
 use tex_state::ids::GlueId;
 use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::node::{BoxNode, GlueKind, Node, Sign, UnsetKind, UnsetNode, UnsetNodeFields};
 use tex_state::scaled::Scaled;
-use tex_state::{CheckpointMetadata, CheckpointResumeKind, ExpansionState, ResumeFallback};
 
 fn scan_halign_preamble(source: &str) -> (Universe, AlignState) {
     let mut stores = Universe::new();
@@ -102,63 +102,47 @@ fn run_boxed_alignment_source(source: &str) -> Universe {
     run_alignment_source(&format!("\\setbox0=\\vbox{{{source}}}"))
 }
 
-fn run_nested_shipout_source(stores: &mut Universe, source: &str) -> CheckpointMetadata {
+fn nested_shipout_checkpoints(source: &str) -> Vec<EngineCheckpoint> {
+    let mut stores = support::stores_with_fonts();
     let mut input = InputStack::new(MemoryInput::new(format!(
         "\\font\\f=cmr10 \\relax \\f {source}"
     )));
+    let mut checkpoints = Vec::new();
     let stats = Executor::new()
-        .run(&mut input, stores)
+        .run_with_recorder_hooks_and_checkpoints(
+            &mut input,
+            &mut stores,
+            &mut NoopRecorder,
+            &mut crate::executor::NoopExecHooks,
+            &mut checkpoints,
+        )
         .expect("nested shipout source executes");
     assert_eq!(
         stats.shipped_artifacts.len(),
         1,
         "every committed nested shipout is surfaced to the output driver"
     );
-    stores
-        .last_checkpoint()
-        .expect("nested shipout should create a checkpoint")
+    checkpoints
 }
 
-fn assert_nested_shipout_replays_from_resume_boundary(source: &str) {
-    let mut stores = support::stores_with_fonts();
-    let resume = stores.snapshot();
-    let resume_boundary = resume
-        .resume_fallback()
-        .expect("initial checkpoint should be resume-valid")
-        .boundary();
-
-    let first = run_nested_shipout_source(&mut stores, source);
-    assert_eq!(first.resume_kind(), CheckpointResumeKind::HashOnly);
+fn assert_nested_shipout_publishes_deterministic_outer_boundary(source: &str) {
+    let first = nested_shipout_checkpoints(source);
+    let second = nested_shipout_checkpoints(source);
+    let boundaries = first
+        .iter()
+        .map(EngineCheckpoint::boundary)
+        .collect::<Vec<_>>();
+    assert_eq!(boundaries.first(), Some(&EngineBoundary::JobStart));
+    assert_eq!(boundaries.last(), Some(&EngineBoundary::ShipoutComplete));
     assert_eq!(
-        first.resume_fallback(),
-        Some(ResumeFallback::DirectRollback(resume_boundary))
-    );
-
-    stores.rollback(&resume);
-
-    let second = run_nested_shipout_source(&mut stores, source);
-    assert_eq!(second.resume_kind(), CheckpointResumeKind::HashOnly);
-    assert_eq!(
-        second.resume_fallback(),
-        Some(ResumeFallback::DirectRollback(resume_boundary))
-    );
-    assert_eq!(second.state_hash(), first.state_hash());
-}
-
-fn assert_effectful_nested_shipout_fallback_unavailable(source: &str) {
-    let mut stores = support::stores_with_fonts();
-    let resume_boundary = stores
-        .snapshot()
-        .resume_fallback()
-        .expect("initial checkpoint should be resume-valid")
-        .boundary();
-
-    let checkpoint = run_nested_shipout_source(&mut stores, source);
-
-    assert_eq!(checkpoint.resume_kind(), CheckpointResumeKind::HashOnly);
-    assert_eq!(
-        checkpoint.resume_fallback(),
-        Some(ResumeFallback::Unavailable(resume_boundary))
+        first
+            .iter()
+            .map(EngineCheckpoint::state_hash)
+            .collect::<Vec<_>>(),
+        second
+            .iter()
+            .map(EngineCheckpoint::state_hash)
+            .collect::<Vec<_>>()
     );
 }
 
@@ -960,22 +944,22 @@ fn shipout_rejects_unset_alignment_nodes() {
 }
 
 #[test]
-fn box_group_shipout_checkpoint_is_hash_only_and_replays_from_boundary() {
-    assert_nested_shipout_replays_from_resume_boundary(
+fn box_group_shipout_publishes_only_after_outer_unwind() {
+    assert_nested_shipout_publishes_deterministic_outer_boundary(
         "\\setbox0=\\hbox{\\shipout\\hbox{A}B}\\end",
     );
 }
 
 #[test]
-fn alignment_shipout_checkpoint_is_hash_only_and_replays_from_boundary() {
-    assert_nested_shipout_replays_from_resume_boundary(
+fn alignment_shipout_publishes_only_after_outer_unwind() {
+    assert_nested_shipout_publishes_deterministic_outer_boundary(
         "\\setbox0=\\vbox{\\halign{#\\cr \\shipout\\hbox{A}x\\cr}}\\end",
     );
 }
 
 #[test]
-fn effectful_box_group_shipout_checkpoint_marks_fallback_unavailable() {
-    assert_effectful_nested_shipout_fallback_unavailable(
+fn effectful_box_group_shipout_publishes_restartable_boundary() {
+    assert_nested_shipout_publishes_deterministic_outer_boundary(
         "\\setbox0=\\hbox{\\shipout\\hbox{\\write16{nested}}B}\\end",
     );
 }

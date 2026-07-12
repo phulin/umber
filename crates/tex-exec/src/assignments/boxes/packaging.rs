@@ -257,7 +257,7 @@ where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    stores.with_hash_only_checkpoints(|stores| {
+    {
         loop {
             crate::executor::sync_engine_state::<S, _>(hooks, nest, stores);
             let token = {
@@ -299,7 +299,7 @@ where
                 }
             }
         }
-    })
+    }
 }
 
 pub(crate) fn scan_pack_spec<S, H>(
