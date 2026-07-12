@@ -80,6 +80,58 @@ fail() {
   exit 1
 }
 
+phase_failure() {
+  local label="$1"
+  local message="$2"
+  local diff_path="${diff_dir}/${label}.diff"
+  mkdir -p "$diff_dir"
+  printf '%s\n' "$message" > "$diff_path"
+  printf 'FAIL %s: %s; see %s\n' "$label" "$message" "$diff_path" >&2
+  return 1
+}
+
+run_required_artifact_command() {
+  local label="$1"
+  local artifact="$2"
+  local status_policy="$3"
+  shift 3
+
+  # --keep-work retains transcripts and diffs for diagnosis, but a producer
+  # must never inherit the artifact that proves its current invocation worked.
+  rm -f "$artifact"
+  local status
+  if "$@"; then
+    status=0
+  else
+    status=$?
+  fi
+
+  case "$status_policy" in
+    trip-errors)
+      # Appendix A deliberately drives both engines through errors; TeX82 and
+      # Umber therefore return 1 on successful TRIP execution.
+      if [[ "$status" -ne 0 && "$status" -ne 1 ]]; then
+        phase_failure "$label" "producer exited with status ${status} (expected 0 or 1 for the intentional TRIP errors)"
+        return 1
+      fi
+      ;;
+    strict)
+      if [[ "$status" -ne 0 ]]; then
+        phase_failure "$label" "producer exited with status ${status}"
+        return 1
+      fi
+      ;;
+    *)
+      fail "internal error: unknown status policy ${status_policy}"
+      ;;
+  esac
+
+  if [[ ! -s "$artifact" ]]; then
+    phase_failure "$label" "current invocation did not produce a nonempty ${artifact}"
+    return 1
+  fi
+}
+
 sha256_file() {
   if command -v shasum >/dev/null 2>&1; then
     shasum -a 256 "$1" | awk '{print $1}'
@@ -167,7 +219,6 @@ copy_trip_inputs() {
     "${download_dir}/trip.tex" \
     "${download_dir}/trip.pl" \
     "${download_dir}/trip.tfm" \
-    "${download_dir}/tripos.tex" \
     "$dest/"
 }
 
@@ -477,6 +528,60 @@ output_path.write_bytes(actual)
 PY
 }
 
+invoke_pltotf() {
+  local dir="$1"
+  local pltotf="$2"
+  (cd "$dir" && "$pltotf" trip.pl generated-trip.tfm)
+}
+
+invoke_tftopl() {
+  local dir="$1"
+  local tftopl="$2"
+  (cd "$dir" && "$tftopl" generated-trip.tfm generated-trip.pl)
+}
+
+invoke_reference_initex() {
+  local dir="$1"
+  local initex="$2"
+  (
+    cd "$dir"
+    printf '\n\\input trip\n' | env TEXFONTS=".:${TEXFONTS:-}" "$initex" --progname=initex --ini -interaction=nonstopmode > tripin.fot 2>&1
+  )
+}
+
+invoke_reference_trip() {
+  local dir="$1"
+  local initex="$2"
+  (
+    cd "$dir"
+    printf ' &trip  trip \n' | env TEXFORMATS=".:${TEXFORMATS:-}" TEXFONTS=".:${TEXFONTS:-}" "$initex" --progname=tex -interaction=nonstopmode > trip.fot 2>&1
+  )
+}
+
+invoke_dvitype() {
+  local dir="$1"
+  local dvitype="$2"
+  (
+    cd "$dir"
+    "$dvitype" -output-level=2 -page-start='*.*.*.*.*.*.*.*.*.*' -max-pages=1000000 -dpi=72.27 trip.dvi > trip.typ
+  )
+}
+
+invoke_umber_format() {
+  local dir="$1"
+  local format="$2"
+  local stderr="$3"
+  (cd "$dir" && "${umber_bin}" run trip.tex --format-out "$format" > /dev/null 2> "$stderr")
+}
+
+invoke_umber_dvi() {
+  local dir="$1"
+  (
+    cd "$dir"
+    "${umber_bin}" run trip.tex --format trip.fmt --dvi trip.dvi > /dev/null 2> trip-artifact.stderr
+  )
+}
+
 run_font_phase() {
   local pltotf
   local tftopl
@@ -484,12 +589,13 @@ run_font_phase() {
   tftopl="$(tool_path UMBER_REF_TFTOPL tftopl)"
   local dir="${work_root}/font"
   copy_trip_inputs "$dir"
-  (
-    cd "$dir"
-    "$pltotf" trip.pl generated-trip.tfm
-    "$tftopl" generated-trip.tfm generated-trip.pl
-  )
   local ok=0
+  run_required_artifact_command "font-pltotf" "${dir}/generated-trip.tfm" strict invoke_pltotf "$dir" "$pltotf" || ok=1
+  if [[ "$ok" -eq 0 ]]; then
+    run_required_artifact_command "font-tftopl" "${dir}/generated-trip.pl" strict invoke_tftopl "$dir" "$tftopl" || ok=1
+  else
+    rm -f "${dir}/generated-trip.pl"
+  fi
   compare_text "font-pl-roundtrip" "${download_dir}/trip.pl" "${dir}/generated-trip.pl" || ok=1
   compare_binary "font-tfm" "${download_dir}/trip.tfm" "${dir}/generated-trip.tfm" || ok=1
   return "$ok"
@@ -505,33 +611,39 @@ run_reference_phase() {
   copy_trip_inputs "$init_dir"
   copy_trip_inputs "$trip_dir"
 
-  (
-    cd "$init_dir"
-    printf '\n\\input trip\n' | env TEXFONTS=".:${TEXFONTS:-}" "$initex" --progname=initex --ini -interaction=nonstopmode > tripin.fot 2>&1 || true
-  )
-  if [[ -f "${init_dir}/trip.fmt" ]]; then
+  rm -f "${init_dir}/trip.log" "${init_dir}/tripin.fot" \
+    "${init_dir}/trip.dvi" "${init_dir}/trip.typ" \
+    "${init_dir}/tripos.tex" "${init_dir}/8terminal.tex"
+  local ok=0
+  run_required_artifact_command "reference-initex-format" "${init_dir}/trip.fmt" trip-errors invoke_reference_initex "$init_dir" "$initex" || ok=1
+  rm -f "${trip_dir}/trip.fmt" "${trip_dir}/trip.log" "${trip_dir}/trip.fot" \
+    "${trip_dir}/trip.dvi" "${trip_dir}/trip.typ" "${trip_dir}/tripos.tex" \
+    "${trip_dir}/8terminal.tex"
+  if [[ "$ok" -eq 0 ]]; then
     cp "${init_dir}/trip.fmt" "$trip_dir/"
+    run_required_artifact_command "reference-format-loaded-dvi" "${trip_dir}/trip.dvi" trip-errors invoke_reference_trip "$trip_dir" "$initex" || ok=1
   fi
-  (
-    cd "$trip_dir"
-    printf ' &trip  trip \n' | env TEXFORMATS=".:${TEXFORMATS:-}" TEXFONTS=".:${TEXFONTS:-}" "$initex" --progname=tex -interaction=nonstopmode > trip.fot 2>&1 || true
-    if [[ -f trip.dvi ]]; then
-      "$dvitype" -output-level=2 -page-start='*.*.*.*.*.*.*.*.*.*' -max-pages=1000000 -dpi=72.27 trip.dvi > trip.typ
-    fi
-  )
+  if [[ -s "${trip_dir}/trip.dvi" ]]; then
+    run_required_artifact_command "reference-dvitype" "${trip_dir}/trip.typ" strict invoke_dvitype "$trip_dir" "$dvitype" || ok=1
+  else
+    rm -f "${trip_dir}/trip.typ"
+  fi
 
   local norm="${work_root}/normalized"
   mkdir -p "$norm"
+  rm -f "${norm}/actual-trip.typ.raw" "${norm}/actual-trip.typ" \
+    "${norm}/actual-trip.dvi.raw" "${norm}/actual-trip.dvi"
   normalize_trip_typ "${download_dir}/trip.typ" "${norm}/expected-trip.typ"
-  normalize_trip_typ "${trip_dir}/trip.typ" "${norm}/actual-trip.typ.raw" || true
-  reconcile_trip_typ_rounding "${norm}/expected-trip.typ" "${norm}/actual-trip.typ.raw" "${norm}/actual-trip.typ" || true
+  if [[ -s "${trip_dir}/trip.typ" ]]; then
+    normalize_trip_typ "${trip_dir}/trip.typ" "${norm}/actual-trip.typ.raw"
+    reconcile_trip_typ_rounding "${norm}/expected-trip.typ" "${norm}/actual-trip.typ.raw" "${norm}/actual-trip.typ"
+  fi
   normalize_dvi "${download_dir}/trip.dvi" "${norm}/expected-trip.dvi"
-  if [[ -f "${trip_dir}/trip.dvi" ]]; then
+  if [[ -s "${trip_dir}/trip.dvi" ]]; then
     normalize_dvi "${trip_dir}/trip.dvi" "${norm}/actual-trip.dvi.raw"
     reconcile_dvi_rounding "${norm}/expected-trip.dvi" "${norm}/actual-trip.dvi.raw" "${norm}/actual-trip.dvi"
   fi
 
-  local ok=0
   compare_text "reference-trip-typ" "${norm}/expected-trip.typ" "${norm}/actual-trip.typ" || ok=1
   compare_dvi "reference-trip-dvi" "${norm}/expected-trip.dvi" "${norm}/actual-trip.dvi" || ok=1
   if [[ "$ok" -ne 0 ]]; then
@@ -547,36 +659,49 @@ run_umber_phase() {
   cargo build -p umber
   local dir="${work_root}/umber"
   copy_trip_inputs "$dir"
+  rm -f "${dir}/fixture-trip.fmt" "${dir}/trip.fmt" "${dir}/trip.dvi" \
+    "${dir}/trip.typ" "${dir}/tripos.tex" "${dir}/8terminal.tex" \
+    "${dir}/tripin.log" "${dir}/tripin.stderr" \
+    "${dir}/tripin-artifact.stderr" "${dir}/trip.log" \
+    "${dir}/trip.stderr" "${dir}/trip-artifact.stderr"
+  local ok=0
   (
     cd "$dir"
-    rm -f trip.fmt trip.dvi
     "${umber_bin}" run trip.tex --show-fixtures --format-out fixture-trip.fmt > tripin.log 2> tripin.stderr || true
     if [[ -s tripin.stderr ]]; then
       cat tripin.stderr >&2
     fi
-    "${umber_bin}" run trip.tex --format-out trip.fmt > /dev/null 2> tripin-artifact.stderr || true
-    if [[ -s tripin-artifact.stderr ]]; then
-      cat tripin-artifact.stderr >&2
-    fi
-    if [[ -f trip.fmt ]]; then
-      "${umber_bin}" run trip.tex --format trip.fmt --show-fixtures > trip.log 2> trip.stderr || true
-      "${umber_bin}" run trip.tex --format trip.fmt --dvi trip.dvi > /dev/null 2> trip-artifact.stderr || true
-    fi
-    if [[ -s trip.stderr ]]; then
-      cat trip.stderr >&2
-    fi
-    if [[ -s trip-artifact.stderr ]]; then
-      cat trip-artifact.stderr >&2
-    fi
-    if [[ -f trip.dvi ]]; then
-      "$dvitype" -output-level=2 -page-start='*.*.*.*.*.*.*.*.*.*' -max-pages=1000000 -dpi=72.27 trip.dvi > trip.typ
-    fi
   )
+  run_required_artifact_command "umber-initex-format" "${dir}/trip.fmt" trip-errors invoke_umber_format "$dir" trip.fmt tripin-artifact.stderr || ok=1
+  if [[ -s "${dir}/tripin-artifact.stderr" ]]; then
+    cat "${dir}/tripin-artifact.stderr" >&2
+  fi
+  if [[ "$ok" -eq 0 ]]; then
+    (
+      cd "$dir"
+      rm -f trip.log trip.stderr tripos.tex 8terminal.tex trip.dvi trip.typ
+      "${umber_bin}" run trip.tex --format trip.fmt --show-fixtures > trip.log 2> trip.stderr || true
+      if [[ -s trip.stderr ]]; then
+        cat trip.stderr >&2
+      fi
+      rm -f trip.log tripos.tex 8terminal.tex trip.dvi trip.typ trip-artifact.stderr
+    )
+    run_required_artifact_command "umber-format-loaded-dvi" "${dir}/trip.dvi" trip-errors invoke_umber_dvi "$dir" || ok=1
+  fi
+  if [[ -s "${dir}/trip-artifact.stderr" ]]; then
+    cat "${dir}/trip-artifact.stderr" >&2
+  fi
+  if [[ -s "${dir}/trip.dvi" ]]; then
+    run_required_artifact_command "umber-dvitype" "${dir}/trip.typ" strict invoke_dvitype "$dir" "$dvitype" || ok=1
+  else
+    rm -f "${dir}/trip.typ"
+  fi
 
   local norm="${work_root}/normalized"
   mkdir -p "$norm"
-  local ok=0
-  if [[ -f "${dir}/trip.dvi" ]]; then
+  rm -f "${norm}/actual-umber-trip.typ.raw" "${norm}/actual-umber-trip.typ" \
+    "${norm}/actual-umber-trip.dvi.raw" "${norm}/actual-umber-trip.dvi"
+  if [[ -s "${dir}/trip.dvi" && -s "${dir}/trip.typ" ]]; then
     normalize_trip_typ "${download_dir}/trip.typ" "${norm}/expected-umber-trip.typ"
     normalize_trip_typ "${dir}/trip.typ" "${norm}/actual-umber-trip.typ.raw" || true
     reconcile_trip_typ_rounding "${norm}/expected-umber-trip.typ" "${norm}/actual-umber-trip.typ.raw" "${norm}/actual-umber-trip.typ" || true
@@ -624,6 +749,35 @@ PY
   grep -q '^expected_page: 1$' "$dvi_diff" || fail "DVI perturbation did not identify the divergent page"
   grep -q '^expected_opcode: set_char_65 ' "$dvi_diff" || fail "DVI perturbation did not identify the expected opcode"
   grep -q '^actual_opcode: set_char_66 ' "$dvi_diff" || fail "DVI perturbation did not identify the actual opcode"
+
+  # Retained diagnostic work must not be mistaken for output from the current
+  # Appendix A producers. Exercise both the intentional-error engine policy
+  # and a strict tool status with plausible stale artifacts in place.
+  local stale_dir="${dir}/stale-artifacts"
+  mkdir -p "$stale_dir"
+  printf 'plausible stale format\n' > "${stale_dir}/trip.fmt"
+  printf 'plausible stale DVI\n' > "${stale_dir}/trip.dvi"
+  printf 'plausible stale DVItype output\n' > "${stale_dir}/trip.typ"
+  if run_required_artifact_command "self-test-stale-engine-format" "${stale_dir}/trip.fmt" trip-errors /usr/bin/false; then
+    fail "failing engine unexpectedly reused a retained format artifact"
+  fi
+  [[ ! -e "${stale_dir}/trip.fmt" ]] || fail "stale format artifact survived producer staging"
+  local engine_diff="${diff_dir}/self-test-stale-engine-format.diff"
+  grep -q 'current invocation did not produce a nonempty' "$engine_diff" || fail "stale engine failure was not actionable"
+
+  if run_required_artifact_command "self-test-stale-engine-dvi" "${stale_dir}/trip.dvi" trip-errors /usr/bin/false; then
+    fail "failing format-loaded engine unexpectedly reused a retained DVI artifact"
+  fi
+  [[ ! -e "${stale_dir}/trip.dvi" ]] || fail "stale DVI artifact survived producer staging"
+  local dvi_engine_diff="${diff_dir}/self-test-stale-engine-dvi.diff"
+  grep -q 'current invocation did not produce a nonempty' "$dvi_engine_diff" || fail "stale DVI producer failure was not actionable"
+
+  if run_required_artifact_command "self-test-stale-dvitype" "${stale_dir}/trip.typ" strict /usr/bin/false; then
+    fail "failing DVItype unexpectedly reused retained output"
+  fi
+  [[ ! -e "${stale_dir}/trip.typ" ]] || fail "stale DVItype artifact survived producer staging"
+  local tool_diff="${diff_dir}/self-test-stale-dvitype.diff"
+  grep -q 'producer exited with status 1' "$tool_diff" || fail "DVItype exit failure was not actionable"
   printf 'self-test passed; actionable DVI perturbation diff is %s\n' "$dvi_diff" >&2
 }
 

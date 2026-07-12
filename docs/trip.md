@@ -20,7 +20,17 @@ The generated `tripin.log`, `trip.log`, `trip.fot`, and `tripos.tex` remain in
 `target/trip/` for diagnosis, but their parity belongs to the diagnostic tier
 and does not affect this DVI milestone. The self-test does not fetch or run
 TeX; it perturbs a DVI character opcode and verifies that
-`target/trip/diffs/` identifies the divergent byte, page, and opcodes.
+`target/trip/diffs/` identifies the divergent byte, page, and opcodes. It also
+seeds retained format, DVI, and DVItype outputs and proves that failing
+producers cannot reuse them.
+
+`--keep-work` retains diagnostic transcripts and diffs, but never a generated
+artifact as proof of a later invocation. Each Appendix A producer starts with
+its format, DVI, or DVItype output absent, handles the intentional TRIP engine
+exit status explicitly, and must create a fresh nonempty artifact. Font tools
+and DVItype must additionally exit successfully. Thus a failed INITEX,
+format-loaded run, or DVItype conversion cannot be hidden by an earlier green
+run in the same `target/trip/` directory.
 
 ## Source Pins
 
