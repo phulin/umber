@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use tex_expand::{
     ExpansionHooks, NoopExpansionHooks, ReadRecorder, get_x_token_with_recorder_and_hooks,
-    scan_dimen::DimensionDiagnostic, token_text,
+    scan_dimen::DimensionDiagnostic,
 };
 use tex_lex::{InputSource, InputStack, MemoryInput, TokenListReplayKind};
 use tex_out::{
@@ -626,11 +626,11 @@ where
         get_x_token_with_recorder_and_hooks(&mut input, stores, recorder, &mut hooks)?
             .map(tex_expand::semantic_token)
     {
-        text.push_str(&token_text(stores, token));
+        diagnostics::append_token_show_text(stores, token, &mut text);
     }
-    Ok(crate::diagnostics::print_text_with_newlinechar(
-        stores, &text,
-    ))
+    let mut text = crate::diagnostics::print_text_with_newlinechar(stores, &text);
+    text.push('\n');
+    Ok(text)
 }
 
 fn pending_page_effects(records: &[EffectRecord]) -> Vec<PageEffect> {

@@ -288,7 +288,7 @@ fn immediate_openout_write_closeout_append_world_effect_records() {
             && *write_slot == tex_state::StreamSlot::new(2)
             && *close_slot == tex_state::StreamSlot::new(2)
             && target.path() == std::path::Path::new("imm.out")
-            && text == "p:3"
+            && text == "p:3\n"
     ));
 }
 
@@ -346,7 +346,7 @@ fn newlinechar_is_honored_by_message_and_immediate_write() {
                 text
             },
             EffectRecord::StreamClose { .. },
-        ] if *write_slot == tex_state::StreamSlot::new(2) && text == "w\nx"
+        ] if *write_slot == tex_state::StreamSlot::new(2) && text == "w\nx\n"
     ));
 }
 
@@ -364,7 +364,10 @@ fn shipout_commits_deferred_openout_closeout_whatsits() {
         .expect("shipout succeeds");
 
     assert_eq!(stats.shipped_artifacts.len(), 1);
-    assert_eq!(stores.world().memory_output("out.aux"), Some(&b"alpha"[..]));
+    assert_eq!(
+        stores.world().memory_output("out.aux"),
+        Some(&b"alpha\n"[..])
+    );
     assert!(
         stores.world().effect_records().is_empty(),
         "shipout should flush deferred open/write/close effects"
@@ -385,7 +388,7 @@ fn shipout_commits_deferred_openout_closeout_whatsits() {
                 text
             },
             PageEffect::CloseOut { stream: 2 },
-        ] if path == "out.aux" && text == "alpha"
+        ] if path == "out.aux" && text == "alpha\n"
     ));
     assert!(matches!(
         artifact.root,
@@ -407,7 +410,7 @@ fn shipped_extensionless_openout_is_visible_to_same_job_input() {
     tex_expand::install_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
-        "\\shipout\\hbox{\\openout10=tripos \\write10{alpha}\\closeout10}\\end",
+        "\\shipout\\hbox{\\openout10=tripos \\write10{} \\write10{\\uppercase{0{\\outputpenalty}}} \\write10{[\\uppercase{mmmmmmmmmm}[} \\closeout10}\\end",
     ));
 
     let stats = Executor::new()
@@ -416,15 +419,16 @@ fn shipped_extensionless_openout_is_visible_to_same_job_input() {
 
     assert_eq!(stats.shipped_artifacts.len(), 1);
     assert_eq!(stores.world().memory_output("tripos"), None);
+    let expected = b"\n\\uppercase {0{\\outputpenalty }}\n[\\uppercase {mmmmmmmmmm}[\n";
     assert_eq!(
         stores.world().memory_output("tripos.tex"),
-        Some(&b"alpha"[..])
+        Some(&expected[..])
     );
     let content = stores
         .world_mut()
         .read_file("tripos.tex")
         .expect("committed shipout output is readable");
-    assert_eq!(content.bytes(), b"alpha");
+    assert_eq!(content.bytes(), expected);
 
     let bytes = stores
         .world()
@@ -465,7 +469,10 @@ fn newlinechar_is_honored_by_deferred_shipout_write() {
         .expect("shipout write executes");
 
     assert_eq!(stats.shipped_artifacts.len(), 1);
-    assert_eq!(stores.world().memory_output("ship.out"), Some(&b"s\nt"[..]));
+    assert_eq!(
+        stores.world().memory_output("ship.out"),
+        Some(&b"s\nt\n"[..])
+    );
     let bytes = stores
         .world()
         .read_artifact(stats.shipped_artifacts[0])
@@ -481,7 +488,7 @@ fn newlinechar_is_honored_by_deferred_shipout_write() {
                 text
             },
             PageEffect::CloseOut { .. },
-        ] if text == "s\nt"
+        ] if text == "s\nt\n"
     ));
 }
 
@@ -518,7 +525,7 @@ fn top_level_deferred_openout_closeout_ship_during_final_cleanup() {
         .expect("final cleanup succeeds");
 
     assert_eq!(stats.shipped_artifacts.len(), 1);
-    assert_eq!(stores.world().memory_output("top.out"), Some(&b"top"[..]));
+    assert_eq!(stores.world().memory_output("top.out"), Some(&b"top\n"[..]));
 
     let reference = read_fixture("tex_exec_io", "top_open_close", "out");
     assert_eq!(reference.as_bytes(), b"top\n");
@@ -542,11 +549,11 @@ fn copied_box_replays_deferred_openout_closeout_per_shipout() {
     assert_eq!(stats.shipped_artifacts.len(), 2);
     assert_eq!(
         stores.world().memory_output("copy.out"),
-        Some(&b"p:2"[..]),
+        Some(&b"p:2\n"[..]),
         "second replayed openout truncates the stream like TeX"
     );
 
-    for (index, expected) in stats.shipped_artifacts.iter().zip(["p:1", "p:2"]) {
+    for (index, expected) in stats.shipped_artifacts.iter().zip(["p:1\n", "p:2\n"]) {
         let bytes = stores
             .world()
             .read_artifact(*index)
@@ -586,8 +593,8 @@ fn shipout_expands_write_against_barrier_state_and_stores_artifact() {
         .expect("final commit is idempotent");
 
     assert_eq!(stats.shipped_artifacts.len(), 1);
-    assert_eq!(memory_terminal_text(&stores), "p:9");
-    assert_eq!(memory_log_text(&stores), "p:9");
+    assert_eq!(memory_terminal_text(&stores), "p:9\n");
+    assert_eq!(memory_log_text(&stores), "p:9\n");
     assert!(
         stores.world().effect_records().is_empty(),
         "shipout should flush the committed effect prefix"
@@ -605,7 +612,7 @@ fn shipout_expands_write_against_barrier_state_and_stores_artifact() {
         [PageEffect::Write {
             sink: EffectSink::TerminalAndLog,
             text
-        }] if text == "p:9"
+        }] if text == "p:9\n"
     ));
     assert!(matches!(
         artifact.root,
@@ -747,7 +754,7 @@ fn shipout_copy_expands_deferred_write_each_time() {
 
     assert_eq!(stats.shipped_artifacts.len(), 2);
     assert_ne!(stats.shipped_artifacts[0], stats.shipped_artifacts[1]);
-    assert_eq!(memory_terminal_text(&stores), "p:1p:2");
+    assert_eq!(memory_terminal_text(&stores), "p:1\np:2\n");
 }
 
 #[test]
@@ -772,7 +779,7 @@ fn rollback_after_shipout_does_not_replay_committed_effects() {
         .commit_effects(effect_pos)
         .expect("post-rollback final commit succeeds");
 
-    assert_eq!(memory_terminal_text(&stores), "once");
+    assert_eq!(memory_terminal_text(&stores), "once\n");
 }
 
 #[test]
@@ -935,7 +942,7 @@ fn ordinary_shipped_openout_closeout_matches_reference_file_effect() {
 
     assert_eq!(
         stores.world().memory_output("ordinary.out"),
-        Some(&b"ordinary"[..])
+        Some(&b"ordinary\n"[..])
     );
 
     let reference = read_fixture("tex_exec_io", "ordinary_open_close", "out");

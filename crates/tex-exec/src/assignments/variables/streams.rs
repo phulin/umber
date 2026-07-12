@@ -201,9 +201,11 @@ where
         get_x_token_with_recorder_and_hooks(&mut input, stores, recorder, &mut hooks)?
             .map(tex_expand::semantic_token)
     {
-        text.push_str(&token_text(stores, token));
+        crate::diagnostics::append_token_show_text(stores, token, &mut text);
     }
-    Ok(print_text_with_newlinechar(stores, &text))
+    let mut text = print_text_with_newlinechar(stores, &text);
+    text.push('\n');
+    Ok(text)
 }
 
 fn scan_read_tokens(
