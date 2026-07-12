@@ -632,7 +632,6 @@ struct AlignmentCellInput {
 struct AlignmentInput {
     align_state: i32,
     cell: Option<AlignmentCellInput>,
-    delivered: Vec<(TracedTokenWord, AlignmentTokenDelivery)>,
 }
 
 /// Saved alignment-cell interception state while a nested preamble and body run.
@@ -843,7 +842,6 @@ impl<S> InputStack<S> {
         self.alignment_inputs.push(AlignmentInput {
             align_state: -1_000_000,
             cell: None,
-            delivered: Vec::new(),
         });
     }
 
@@ -1021,7 +1019,6 @@ impl<S> InputStack<S> {
             AlignmentTokenDelivery::LeftBrace => alignment.align_state += 1,
             AlignmentTokenDelivery::RightBrace => alignment.align_state -= 1,
         }
-        alignment.delivered.push((traced, delivery));
         let Some(cell) = alignment.cell.as_mut() else {
             return false;
         };
@@ -1051,18 +1048,17 @@ impl<S> InputStack<S> {
         let Some(alignment) = self.alignment_inputs.last_mut() else {
             return;
         };
-        let Some(index) = alignment
-            .delivered
-            .iter()
-            .rposition(|(token, _)| *token == traced)
-        else {
-            return;
-        };
-        let (_, delivery) = alignment.delivered.remove(index);
-        match delivery {
-            AlignmentTokenDelivery::Other => {}
-            AlignmentTokenDelivery::LeftBrace => alignment.align_state -= 1,
-            AlignmentTokenDelivery::RightBrace => alignment.align_state += 1,
+        match traced.token() {
+            Some(Token::Char {
+                cat: Catcode::BeginGroup,
+                ..
+            }) => alignment.align_state -= 1,
+            Some(Token::Char {
+                cat: Catcode::EndGroup,
+                ..
+            }) => alignment.align_state += 1,
+            Some(Token::Char { .. } | Token::Cs(_) | Token::Param(_) | Token::Frozen(_)) | None => {
+            }
         }
     }
 

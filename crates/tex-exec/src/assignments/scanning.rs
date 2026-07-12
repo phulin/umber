@@ -391,7 +391,7 @@ where
         ) {
             // TeX.web §336's absorbing scanner inserts a right brace and
             // backs up the forbidden outer token for ordinary expansion.
-            push_traced_tokens(input, stores, [traced]);
+            crate::insert_traced_tokens(input, stores, [traced]);
             stores.world_mut().write_text(
                 tex_state::PrintSink::TerminalAndLog,
                 "\n! Forbidden control sequence found while scanning text.\nI've inserted a closing brace and will continue.\n",

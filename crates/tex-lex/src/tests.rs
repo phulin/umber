@@ -39,6 +39,96 @@ fn nested_alignment_resume_preserves_outer_align_state() {
     ));
 }
 
+#[test]
+fn alignment_undo_bookkeeping_ignores_ordinary_deliveries() {
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.begin_alignment();
+    input.set_alignment_state(0);
+    input.begin_alignment_cell(None, TokenListId::EMPTY, 7);
+    let ordinary = TracedTokenWord::pack(char_token('x', Catcode::Other), OriginId::UNKNOWN);
+
+    for _ in 0..10_000 {
+        assert!(!input.intercept_alignment_token(
+            ordinary,
+            super::AlignmentTokenDelivery::Other,
+            None,
+            7,
+        ));
+    }
+
+    assert_eq!(
+        input
+            .alignment_inputs
+            .last()
+            .expect("active alignment")
+            .align_state,
+        0
+    );
+
+    let left = TracedTokenWord::pack(char_token('{', Catcode::BeginGroup), OriginId::UNKNOWN);
+    assert!(!input.intercept_alignment_token(
+        left,
+        super::AlignmentTokenDelivery::LeftBrace,
+        None,
+        7,
+    ));
+    assert_eq!(
+        input
+            .alignment_inputs
+            .last()
+            .expect("active alignment")
+            .align_state,
+        1
+    );
+    input.undo_alignment_token_delivery(left);
+    assert_eq!(
+        input
+            .alignment_inputs
+            .last()
+            .expect("active alignment")
+            .align_state,
+        0
+    );
+
+    let right = TracedTokenWord::pack(char_token('}', Catcode::EndGroup), OriginId::UNKNOWN);
+    assert!(!input.intercept_alignment_token(
+        right,
+        super::AlignmentTokenDelivery::RightBrace,
+        None,
+        7,
+    ));
+    assert_eq!(
+        input
+            .alignment_inputs
+            .last()
+            .expect("active alignment")
+            .align_state,
+        -1
+    );
+    input.undo_alignment_token_delivery(right);
+    assert_eq!(
+        input
+            .alignment_inputs
+            .last()
+            .expect("active alignment")
+            .align_state,
+        0
+    );
+
+    let mut stores = Universe::new();
+    let symbol = stores.intern("brace-alias");
+    let control_sequence = TracedTokenWord::pack(Token::Cs(symbol.symbol()), OriginId::UNKNOWN);
+    input.undo_alignment_token_delivery(control_sequence);
+    assert_eq!(
+        input
+            .alignment_inputs
+            .last()
+            .expect("active alignment")
+            .align_state,
+        0
+    );
+}
+
 fn condition_context() -> TracedTokenWord {
     TracedTokenWord::pack(char_token('i', Catcode::Escape), OriginId::UNKNOWN)
 }

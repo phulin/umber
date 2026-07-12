@@ -114,7 +114,8 @@ where
                     opener,
                     traced.origin(),
                 );
-                crate::push_traced_tokens(
+                input.back_input_alignment_token(traced);
+                crate::insert_traced_tokens(
                     input,
                     stores,
                     [TracedTokenWord::pack(opener, origin), traced],

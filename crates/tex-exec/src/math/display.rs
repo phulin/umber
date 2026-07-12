@@ -317,12 +317,12 @@ where
     };
     match next {
         Some(traced) if is_par_or_end_group(stores, tex_expand::semantic_token(traced)) => {
-            crate::push_traced_tokens(input, stores, [traced]);
+            crate::insert_traced_tokens(input, stores, [traced]);
         }
         Some(traced) => {
             nest.push(Mode::Horizontal);
             nest.current_list_mut().set_space_factor(1000);
-            crate::push_traced_tokens(input, stores, [traced]);
+            crate::insert_traced_tokens(input, stores, [traced]);
         }
         None => {}
     }
@@ -396,7 +396,7 @@ where
                     ..
                 }
             ) => {}
-        Some(traced) => crate::push_traced_tokens(input, stores, [traced]),
+        Some(traced) => crate::insert_traced_tokens(input, stores, [traced]),
         None => {}
     }
     build_page_after_display_resume(nest, stores)?;

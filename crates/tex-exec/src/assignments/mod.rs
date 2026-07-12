@@ -368,7 +368,8 @@ where
         closing_group,
         command.origin(),
     );
-    push_traced_tokens(
+    input.back_input_alignment_token(command);
+    crate::insert_traced_tokens(
         input,
         stores,
         [TracedTokenWord::pack(closing_group, origin), command],

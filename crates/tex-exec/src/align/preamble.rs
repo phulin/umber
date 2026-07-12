@@ -357,7 +357,8 @@ where
             right_brace,
             traced.origin(),
         );
-        crate::push_traced_tokens(
+        self.input.back_input_alignment_token(traced);
+        crate::insert_traced_tokens(
             self.input,
             self.stores,
             [TracedTokenWord::pack(right_brace, right_origin), traced],
@@ -380,7 +381,7 @@ where
             right_brace,
             tex_state::token::OriginId::UNKNOWN,
         );
-        crate::push_traced_tokens(
+        crate::insert_traced_tokens(
             self.input,
             self.stores,
             [TracedTokenWord::pack(right_brace, origin)],

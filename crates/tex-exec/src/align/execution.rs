@@ -10,7 +10,7 @@ use super::support::{
     is_crcr, is_end_group, is_noalign, is_omit, is_span, row_mode, set_align_brace_depth,
 };
 use crate::assignments::{flush_pending_hchars, next_non_space_traced_x};
-use crate::dispatch::dispatch_delivered_token_with_recorder;
+use crate::dispatch::{dispatch_delivered_token_with_recorder, insert_traced_tokens};
 use crate::executor::sync_engine_state;
 use crate::mode::{AlignState, AlignmentKind};
 use crate::vertical::{
@@ -587,7 +587,8 @@ where
                 context: "alignment recovery cr",
             })?;
             let cr = TracedTokenWord::pack(Token::Cs(cr.symbol()), token.origin());
-            push_traced_tokens(input, stores, [cr, token]);
+            input.back_input_alignment_token(token);
+            insert_traced_tokens(input, stores, [cr, token]);
             continue;
         }
         if input.alignment_cell_below_base_depth()
@@ -611,7 +612,8 @@ where
                 left,
                 token.origin(),
             );
-            push_traced_tokens(input, stores, [TracedTokenWord::pack(left, origin), token]);
+            input.back_input_alignment_token(token);
+            insert_traced_tokens(input, stores, [TracedTokenWord::pack(left, origin), token]);
             continue;
         }
         dispatch_and_drain(nest, token, input, stores, recorder, hooks, &mut stats)?;
@@ -793,7 +795,8 @@ fn recover_outer_alignment_token<S>(
         closing,
         context.origin(),
     );
-    push_traced_tokens(
+    input.back_input_alignment_token(context);
+    insert_traced_tokens(
         input,
         stores,
         [TracedTokenWord::pack(closing, origin), context],

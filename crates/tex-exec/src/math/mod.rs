@@ -16,8 +16,8 @@ use crate::assignments;
 use crate::executor::sync_engine_state;
 use crate::mode::DisplayInterrupt;
 use crate::{
-    DispatchAction, ExecError, Mode, ModeNest, leave_group_with_origin, push_tokens,
-    push_traced_tokens,
+    DispatchAction, ExecError, Mode, ModeNest, insert_traced_tokens, leave_group_with_origin,
+    push_tokens, push_traced_tokens,
 };
 
 mod display;
@@ -99,7 +99,7 @@ where
             true
         }
         Some(traced) => {
-            push_traced_tokens(input, stores, [traced]);
+            insert_traced_tokens(input, stores, [traced]);
             false
         }
         None => false,
@@ -183,7 +183,8 @@ where
                 };
                 let inserted =
                     stores.inserted_origin(InsertedOriginKind::ErrorRecovery, right_brace, origin);
-                push_traced_tokens(
+                input.back_input_alignment_token(traced);
+                crate::insert_traced_tokens(
                     input,
                     stores,
                     [TracedTokenWord::pack(right_brace, inserted), traced],
@@ -1010,7 +1011,7 @@ where
             traced.origin()
         }
         Some(traced) => {
-            push_traced_tokens(input, stores, [traced]);
+            insert_traced_tokens(input, stores, [traced]);
             report_math_error(stores, "Missing $$ inserted");
             return Ok(fallback_origin);
         }
@@ -1033,7 +1034,7 @@ where
             Ok(closing_origin)
         }
         Some(traced) => {
-            push_traced_tokens(input, stores, [traced]);
+            insert_traced_tokens(input, stores, [traced]);
             report_math_error(stores, "Missing $$ inserted");
             Ok(closing_origin)
         }
