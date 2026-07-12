@@ -5,6 +5,7 @@
 
 use crate::identity::{IdentityAllocator, IdentityMark};
 use crate::ids::TokenListId;
+use crate::state_hash::StateHasher;
 use crate::token::{Token, TracedTokenWord};
 use ahash::RandomState;
 use std::collections::HashMap;
@@ -51,17 +52,29 @@ pub(crate) struct TokenStoreMark {
 #[derive(Clone, Debug)]
 pub struct TokenListBuilder {
     buf: Vec<Token>,
+    semantic_stream: Option<StateHasher>,
 }
 
 impl TokenListBuilder {
     /// Creates an empty reusable token-list builder.
     #[must_use]
     pub(crate) fn new() -> Self {
-        Self { buf: Vec::new() }
+        Self {
+            buf: Vec::new(),
+            semantic_stream: Some(StateHasher::new(TOKEN_STREAM_DOMAIN)),
+        }
     }
 
     /// Appends one token to the unfinished list.
     pub fn push(&mut self, token: Token) {
+        self.buf.push(token);
+        self.semantic_stream = None;
+    }
+
+    pub(crate) fn push_semantic(&mut self, token: Token, symbol_atom: Option<u64>) {
+        if let Some(hasher) = self.semantic_stream.as_mut() {
+            hash_semantic_token(hasher, token, symbol_atom);
+        }
         self.buf.push(token);
     }
 
@@ -85,6 +98,7 @@ impl TokenListBuilder {
     /// Clears the unfinished list without interning it.
     pub fn clear(&mut self) {
         self.buf.clear();
+        self.semantic_stream = Some(StateHasher::new(TOKEN_STREAM_DOMAIN));
     }
 
     /// Borrows the unfinished semantic token sequence for aggregate validation.
@@ -93,13 +107,53 @@ impl TokenListBuilder {
         &self.buf
     }
 
+    pub(crate) fn semantic_hash(&self) -> Option<u64> {
+        let stream = self.semantic_stream.clone()?.finish();
+        Some(finish_semantic_hash(self.buf.len(), stream))
+    }
+
     /// Interns the current token list and clears the builder for reuse.
     #[cfg(test)]
     pub(crate) fn finish(&mut self, store: &mut TokenStore) -> TokenListId {
         let id = store.intern(&self.buf);
-        self.buf.clear();
+        self.clear();
         id
     }
+}
+
+pub(crate) const TOKEN_STREAM_DOMAIN: u64 = 0x746f_6b65_6e5f_7374;
+const TOKEN_ID_DOMAIN: u64 = 0x746f_6b65_6e5f_6964;
+
+pub(crate) fn hash_semantic_token(
+    hasher: &mut StateHasher,
+    token: Token,
+    symbol_atom: Option<u64>,
+) {
+    match token {
+        Token::Char { ch, cat } => {
+            hasher.tag(0);
+            hasher.u32(ch as u32);
+            hasher.u8(cat as u8);
+        }
+        Token::Cs(_) => {
+            hasher.tag(1);
+            hasher.u64(symbol_atom.expect("control-sequence token requires semantic atom"));
+        }
+        Token::Param(slot) => {
+            hasher.tag(2);
+            hasher.u8(slot);
+        }
+        Token::Frozen(crate::token::FrozenToken::END_TEMPLATE) => hasher.tag(3),
+        Token::Frozen(crate::token::FrozenToken::END_V) => hasher.tag(4),
+        Token::Frozen(_) => unreachable!("invalid frozen token payload"),
+    }
+}
+
+pub(crate) fn finish_semantic_hash(len: usize, stream: u64) -> u64 {
+    let mut hasher = StateHasher::new(TOKEN_ID_DOMAIN);
+    hasher.usize(len);
+    hasher.u64(stream);
+    hasher.finish()
 }
 
 /// Hash-consed immutable token-list arena.

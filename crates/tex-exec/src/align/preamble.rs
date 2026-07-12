@@ -172,7 +172,7 @@ where
             scanner.report_missing_parameter();
             return Ok(scanner.stores.finish_token_list(&mut builder));
         }
-        builder.push(token);
+        scanner.stores.push_token_list_token(&mut builder, token);
         has_material = true;
     }
 }
@@ -190,7 +190,9 @@ where
         let token = match scanner.next_token()? {
             Some(PreambleToken::Token(token)) => token,
             Some(PreambleToken::RecoveryCr) => {
-                builder.push(end_template);
+                scanner
+                    .stores
+                    .push_token_list_token(&mut builder, end_template);
                 return Ok((
                     scanner.stores.finish_token_list(&mut builder),
                     PreambleTerminator::Cr,
@@ -206,20 +208,24 @@ where
             continue;
         }
         if scanner.at_template_level() && is_alignment_tab_token(token) {
-            builder.push(end_template);
+            scanner
+                .stores
+                .push_token_list_token(&mut builder, end_template);
             return Ok((
                 scanner.stores.finish_token_list(&mut builder),
                 PreambleTerminator::AlignmentTab,
             ));
         }
         if scanner.at_template_level() && is_cr_token(scanner.stores, token) {
-            builder.push(end_template);
+            scanner
+                .stores
+                .push_token_list_token(&mut builder, end_template);
             return Ok((
                 scanner.stores.finish_token_list(&mut builder),
                 PreambleTerminator::Cr,
             ));
         }
-        builder.push(token);
+        scanner.stores.push_token_list_token(&mut builder, token);
     }
 }
 

@@ -396,16 +396,16 @@ where
         match token {
             token if is_begin_group(token) => {
                 depth += 1;
-                builder.push(token);
+                stores.push_token_list_token(&mut builder, token);
             }
             token if is_end_group(token) => {
                 depth -= 1;
                 if depth == 0 {
                     return Ok(stores.finish_token_list(&mut builder));
                 }
-                builder.push(token);
+                stores.push_token_list_token(&mut builder, token);
             }
-            token => builder.push(token),
+            token => stores.push_token_list_token(&mut builder, token),
         }
     }
     Err(ExecError::MissingToken {

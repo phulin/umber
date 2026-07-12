@@ -522,6 +522,20 @@ fn token_projection_freeze_cost(c: &mut Criterion) {
                     BatchSize::SmallInput,
                 );
             });
+            group.bench_with_input(BenchmarkId::new("incremental", size), &size, |b, &size| {
+                b.iter_batched(
+                    || token_projection_case(workload, size),
+                    |(mut stores, tokens)| {
+                        let mut builder = stores.token_list_builder();
+                        builder.reserve(tokens.len());
+                        for token in tokens {
+                            stores.push_token_list_token(&mut builder, token);
+                        }
+                        black_box(stores.finish_token_list(&mut builder))
+                    },
+                    BatchSize::SmallInput,
+                );
+            });
             group.bench_with_input(
                 BenchmarkId::new("plus_canonical_fingerprint", size),
                 &size,

@@ -41,7 +41,10 @@ use crate::source_map::{
 };
 use crate::survivor::SurvivorArena;
 use crate::token::{Catcode, OriginId, Token, TracedTokenWord};
-use crate::token_store::{TokenListBuilder, TokenStore, TokenStoreMark};
+use crate::token_store::{
+    TOKEN_STREAM_DOMAIN, TokenListBuilder, TokenStore, TokenStoreMark, finish_semantic_hash,
+    hash_semantic_token,
+};
 use std::hash::BuildHasher;
 #[cfg(any(test, feature = "testing", feature = "shadow"))]
 use std::hash::{Hash, Hasher};
@@ -573,6 +576,18 @@ impl Stores {
         TokenStore::builder()
     }
 
+    pub fn push_token_list_token(&self, builder: &mut TokenListBuilder, token: Token) {
+        let atom = match token {
+            Token::Cs(symbol) => Some(
+                self.interner
+                    .semantic_atom(symbol)
+                    .expect("symbol is not live in this Universe timeline"),
+            ),
+            _ => None,
+        };
+        builder.push_semantic(token, atom);
+    }
+
     /// Interns a frozen token-list value in the owned token store.
     pub fn intern_token_list(&mut self, tokens: &[Token]) -> TokenListId {
         let semantic_hash = self.token_list_semantic_identity(tokens.iter().copied());
@@ -581,7 +596,9 @@ impl Stores {
 
     /// Interns the current token-list builder value and clears it for reuse.
     pub fn finish_token_list(&mut self, builder: &mut TokenListBuilder) -> TokenListId {
-        let semantic_hash = self.token_list_semantic_identity(builder.as_slice().iter().copied());
+        let semantic_hash = builder.semantic_hash().unwrap_or_else(|| {
+            self.token_list_semantic_identity(builder.as_slice().iter().copied())
+        });
         let id = self
             .tokens
             .intern_with_semantic_hash(builder.as_slice(), semantic_hash);
@@ -622,34 +639,21 @@ impl Stores {
     }
 
     fn token_list_semantic_identity(&self, tokens: impl IntoIterator<Item = Token>) -> u64 {
-        let mut hasher = crate::state_hash::StateHasher::new(0x746f_6b65_6e5f_6964);
+        let mut hasher = crate::state_hash::StateHasher::new(TOKEN_STREAM_DOMAIN);
         let tokens = tokens.into_iter();
-        hasher.usize(tokens.size_hint().0);
+        let len = tokens.size_hint().0;
         for token in tokens {
-            match token {
-                Token::Char { ch, cat } => {
-                    hasher.tag(0);
-                    hasher.u32(ch as u32);
-                    hasher.u8(cat as u8);
-                }
-                Token::Cs(symbol) => {
-                    hasher.tag(1);
-                    hasher.u64(
-                        self.interner
-                            .semantic_atom(symbol)
-                            .expect("symbol is not live in this Universe timeline"),
-                    );
-                }
-                Token::Param(slot) => {
-                    hasher.tag(2);
-                    hasher.u8(slot);
-                }
-                Token::Frozen(crate::token::FrozenToken::END_TEMPLATE) => hasher.tag(3),
-                Token::Frozen(crate::token::FrozenToken::END_V) => hasher.tag(4),
-                Token::Frozen(_) => unreachable!("invalid frozen token payload"),
-            }
+            let atom = match token {
+                Token::Cs(symbol) => Some(
+                    self.interner
+                        .semantic_atom(symbol)
+                        .expect("symbol is not live in this Universe timeline"),
+                ),
+                _ => None,
+            };
+            hash_semantic_token(&mut hasher, token, atom);
         }
-        hasher.finish()
+        finish_semantic_hash(len, hasher.finish())
     }
 
     /// Returns the reserved unknown/bootstrap provenance origin.

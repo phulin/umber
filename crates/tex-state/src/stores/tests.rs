@@ -395,6 +395,33 @@ fn token_list_builder_finishes_through_stores_boundary() {
 }
 
 #[test]
+fn incremental_and_bulk_token_list_identities_match() {
+    let mut stores = Stores::new();
+    let symbol = stores.intern("macro");
+    let tokens = [
+        Token::Char {
+            ch: 'x',
+            cat: Catcode::Letter,
+        },
+        Token::Cs(symbol.symbol()),
+        Token::param(1),
+    ];
+
+    let bulk = stores.intern_token_list(&tokens);
+    let mut builder = stores.token_list_builder();
+    for token in tokens {
+        stores.push_token_list_token(&mut builder, token);
+    }
+    let incremental = stores.finish_token_list(&mut builder);
+
+    assert_eq!(incremental, bulk);
+    assert_eq!(
+        stores.tokens.semantic_hash(incremental),
+        stores.tokens.semantic_hash(bulk)
+    );
+}
+
+#[test]
 fn token_list_ingress_rejects_equal_slot_foreign_symbols_before_interning() {
     let mut foreign = Stores::new();
     let foreign_symbol = foreign.intern("foreign");
