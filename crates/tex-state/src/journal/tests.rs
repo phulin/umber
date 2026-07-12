@@ -1,4 +1,4 @@
-use super::{Entry, Journal, Marker, UndoRec};
+use super::{BoxUndoRec, Entry, Journal, Marker, UndoRec};
 use crate::cell::{BankTag, CellId};
 use crate::ids::SnapshotId;
 use std::mem::size_of;
@@ -8,6 +8,7 @@ fn widened_cell_ids_do_not_grow_journal_records() {
     assert_eq!(size_of::<CellId>(), 8);
     assert_eq!(size_of::<UndoRec>(), 24);
     assert_eq!(size_of::<Entry>(), 32);
+    assert!(size_of::<BoxUndoRec>() <= 56);
 }
 
 #[test]

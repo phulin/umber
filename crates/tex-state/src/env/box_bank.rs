@@ -29,18 +29,18 @@ pub(super) enum BoxOwner {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct BoxSlot {
     value: u64,
-    owner: BoxOwner,
+    owner_depth: u32,
     coalesce_epoch: Epoch,
-    coalesce_pos: Option<JournalPos>,
+    coalesce_pos: u32,
 }
 
 impl Default for BoxSlot {
     fn default() -> Self {
         Self {
             value: NodeListId::encode_box_word(None),
-            owner: BoxOwner::Root,
+            owner_depth: 0,
             coalesce_epoch: Epoch::ZERO,
-            coalesce_pos: None,
+            coalesce_pos: 0,
         }
     }
 }
@@ -51,7 +51,15 @@ impl BoxSlot {
     }
 
     pub(super) fn is_owned_by(self, depth: u32) -> bool {
-        self.owner == BoxOwner::Group(depth)
+        self.owner() == BoxOwner::Group(depth)
+    }
+
+    fn owner(self) -> BoxOwner {
+        if self.owner_depth == 0 {
+            BoxOwner::Root
+        } else {
+            BoxOwner::Group(self.owner_depth)
+        }
     }
 }
 
@@ -110,19 +118,15 @@ impl BoxBank {
             return BoxWriteOutcome::Unchanged;
         }
 
-        let owner = if ctx.global || ctx.group_depth == 0 {
-            BoxOwner::Root
-        } else {
-            BoxOwner::Group(ctx.group_depth)
-        };
+        let owner_depth = if ctx.global { 0 } else { ctx.group_depth };
         let can_coalesce = !ctx.global
             && ctx.coalesce
-            && old.owner == owner
+            && old.owner_depth == owner_depth
             && old.coalesce_epoch == ctx.epoch
-            && old.coalesce_pos.is_some();
+            && old.coalesce_epoch != Epoch::ZERO;
 
         if can_coalesce {
-            let pos = old.coalesce_pos.expect("checked above");
+            let pos = JournalPos::from_raw(old.coalesce_pos as usize);
             let mut new = old;
             new.value = value;
             ctx.journal.replace_box_new(pos, new);
@@ -134,9 +138,13 @@ impl BoxBank {
             let pos = ctx.journal.pos();
             let new = BoxSlot {
                 value,
-                owner,
-                coalesce_epoch: ctx.epoch,
-                coalesce_pos: (!ctx.global && ctx.coalesce).then_some(pos),
+                owner_depth,
+                coalesce_epoch: if !ctx.global && ctx.coalesce {
+                    ctx.epoch
+                } else {
+                    Epoch::ZERO
+                },
+                coalesce_pos: pos.raw(),
             };
             let (rec, actual_pos) = ctx
                 .journal
