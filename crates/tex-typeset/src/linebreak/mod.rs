@@ -327,8 +327,13 @@ fn run_pass<S: TypesetState>(
         if forced && bp.position >= nodes.len() {
             finals.extend(best_new.iter().copied());
         }
-        next.extend(best_new);
-        active = next;
+        // TeX.web's `try_break` keeps the active list ordered by line
+        // number. A newly created node is inserted immediately before the
+        // existing nodes for its line, so equal-line candidates occur in
+        // reverse breakpoint order. That order is observable because the
+        // `d <= minimal_demerits` tie rule lets a later visited route replace
+        // an equal one.
+        active = merge_active_candidates(next, best_new, &candidates);
     }
 
     let chosen = choose_final(&candidates, &finals, params.looseness)?;
@@ -338,6 +343,32 @@ fn run_pass<S: TypesetState>(
         return None;
     }
     Some(reconstruct(nodes, &candidates, chosen))
+}
+
+fn merge_active_candidates(
+    existing: Vec<usize>,
+    mut created: Vec<usize>,
+    candidates: &[Candidate],
+) -> Vec<usize> {
+    created.sort_by_key(|&id| {
+        (
+            candidates[id].line,
+            std::cmp::Reverse(candidates[id].fitness as u8),
+        )
+    });
+    let mut existing = existing.into_iter().peekable();
+    let mut created = created.into_iter().peekable();
+    let mut merged = Vec::with_capacity(existing.len() + created.len());
+    while let (Some(&old), Some(&new)) = (existing.peek(), created.peek()) {
+        if candidates[new].line <= candidates[old].line {
+            merged.push(created.next().expect("peeked created candidate"));
+        } else {
+            merged.push(existing.next().expect("peeked existing candidate"));
+        }
+    }
+    merged.extend(existing);
+    merged.extend(created);
+    merged
 }
 
 fn discretionary_post_is_nonempty<S: TypesetState>(

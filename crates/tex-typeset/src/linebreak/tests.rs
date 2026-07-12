@@ -356,6 +356,26 @@ fn looseness_can_select_empty_line_after_terminal_discretionary() {
 }
 
 #[test]
+fn active_candidates_follow_tex_line_and_reverse_breakpoint_order() {
+    let candidate = |line, position| Candidate {
+        position,
+        width_position: position,
+        penalty: 0,
+        line,
+        fitness: Fitness::Decent,
+        demerits: 0,
+        path_demerits: 0,
+        previous: None,
+        hyphenated: false,
+    };
+    let candidates = vec![candidate(1, 3), candidate(2, 2), candidate(1, 5)];
+
+    let active = merge_active_candidates(vec![0, 1], vec![2], &candidates);
+
+    assert_eq!(active, vec![2, 0, 1]);
+}
+
+#[test]
 fn unmet_looseness_retries_after_the_pretolerance_pass() {
     let mut universe = Universe::new();
     let break_glue = universe.intern_glue(GlueSpec {
