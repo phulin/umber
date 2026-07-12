@@ -40,7 +40,8 @@ mod tests;
 pub use binary::ParseError;
 pub use hash::ContentHash;
 pub use model::{
-    BoxNode, DEFAULT_BANNER, DiscKind, EffectSink, FontResource, GlueKind, GlueOrder, GlueSetRatio,
-    GlueSign, GlueSpec, JobInfo, KernKind, LeaderPayload, PageArtifact, PageEffect, PageNode,
-    PageToken, TokenCatcode,
+    ArtifactValidationError, ArtifactValidationLimits, BoxNode, DEFAULT_BANNER, DiscKind,
+    EffectSink, FontResource, GlueKind, GlueOrder, GlueSetRatio, GlueSign, GlueSpec, JobInfo,
+    KernKind, LeaderPayload, PageArtifact, PageArtifactBuilder, PageEffect, PageNode, PageToken,
+    TokenCatcode, UnvalidatedPageArtifact,
 };

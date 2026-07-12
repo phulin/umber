@@ -1,7 +1,7 @@
 use crate::{
-    BoxNode, ContentHash, DiscKind, EffectSink, FontResource, GlueKind, GlueOrder, GlueSetRatio,
-    GlueSign, GlueSpec, JobInfo, KernKind, LeaderPayload, PageArtifact, PageEffect, PageNode,
-    PageToken, ParseError, TokenCatcode,
+    ArtifactValidationError, ArtifactValidationLimits, BoxNode, ContentHash, DiscKind, EffectSink,
+    FontResource, GlueKind, GlueOrder, GlueSetRatio, GlueSign, GlueSpec, JobInfo, KernKind,
+    LeaderPayload, PageArtifact, PageEffect, PageNode, PageToken, ParseError, TokenCatcode,
 };
 use tex_arith::Scaled;
 
@@ -69,6 +69,95 @@ fn rejects_unknown_version() {
         PageArtifact::from_bytes(&bytes),
         Err(ParseError::UnsupportedVersion(99))
     );
+}
+
+#[test]
+fn validation_rejects_malformed_graph_references() {
+    let mut missing_font = (*sample_artifact()).clone();
+    let PageNode::VList(root) = &mut missing_font.root else {
+        unreachable!("sample root is a vlist");
+    };
+    let PageNode::HList(line) = &mut root.children[0] else {
+        unreachable!("sample first child is an hlist");
+    };
+    let PageNode::Char { font_id, .. } = &mut line.children[0] else {
+        unreachable!("sample first line child is a character");
+    };
+    *font_id = 99;
+    assert_eq!(
+        missing_font.validate(),
+        Err(ArtifactValidationError::MissingFont { font_id: 99 })
+    );
+
+    let mut missing_effect = (*sample_artifact()).clone();
+    let PageNode::VList(root) = &mut missing_effect.root else {
+        unreachable!("sample root is a vlist");
+    };
+    let PageNode::HList(line) = &mut root.children[0] else {
+        unreachable!("sample first child is an hlist");
+    };
+    let PageNode::WhatsitAnchor { effect_index } = &mut line.children[3] else {
+        unreachable!("sample fourth line child is an effect anchor");
+    };
+    *effect_index = 100;
+    assert_eq!(
+        missing_effect.validate(),
+        Err(ArtifactValidationError::MissingEffect { effect_index: 100 })
+    );
+}
+
+#[test]
+fn validation_rejects_invalid_roots_and_duplicate_resources() {
+    let mut invalid_root = (*sample_artifact()).clone();
+    invalid_root.root = PageNode::Penalty(0);
+    assert_eq!(
+        invalid_root.validate(),
+        Err(ArtifactValidationError::RootNotBox)
+    );
+
+    let mut duplicate_font = (*sample_artifact()).clone();
+    duplicate_font.fonts.push(duplicate_font.fonts[0].clone());
+    assert_eq!(
+        duplicate_font.validate(),
+        Err(ArtifactValidationError::DuplicateFont { font_id: 1 })
+    );
+}
+
+#[test]
+fn validation_enforces_traversal_budgets_iteratively() {
+    let artifact = (*sample_artifact()).clone();
+    let limits = ArtifactValidationLimits {
+        max_nodes: 2,
+        ..ArtifactValidationLimits::default()
+    };
+    assert_eq!(
+        artifact.validate_with_limits(limits),
+        Err(ArtifactValidationError::TooManyNodes { count: 3, limit: 2 })
+    );
+
+    let mut nested = (*sample_artifact()).clone();
+    nested.root = PageNode::VList(empty_box(vec![PageNode::HList(empty_box(vec![]))]));
+    let limits = ArtifactValidationLimits {
+        max_depth: 1,
+        ..ArtifactValidationLimits::default()
+    };
+    assert_eq!(
+        nested.validate_with_limits(limits),
+        Err(ArtifactValidationError::NestingTooDeep { depth: 2, limit: 1 })
+    );
+}
+
+fn empty_box(children: Vec<PageNode>) -> BoxNode {
+    BoxNode {
+        width: Scaled::from_raw(0),
+        height: Scaled::from_raw(0),
+        depth: Scaled::from_raw(0),
+        shift: Scaled::from_raw(0),
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: GlueSign::Normal,
+        glue_order: GlueOrder::Normal,
+        children,
+    }
 }
 
 #[test]
@@ -206,7 +295,7 @@ fn sample_artifact() -> PageArtifact {
         shrink: Scaled::from_raw(8_192),
         shrink_order: GlueOrder::Normal,
     };
-    PageArtifact {
+    crate::UnvalidatedPageArtifact {
         job: JobInfo {
             mag: 1200,
             banner: "This is Umber test".to_owned(),
@@ -319,6 +408,8 @@ fn sample_artifact() -> PageArtifact {
             PageEffect::CloseOut { stream: 2 },
         ],
     }
+    .validate()
+    .expect("sample artifact validates")
 }
 
 fn replace_unique_ratio(bytes: &mut [u8], old: (i32, i32), new: (i32, i32)) {

@@ -138,6 +138,7 @@ pub enum ExecError {
     UnsupportedShipoutNode {
         node: &'static str,
     },
+    InvalidShipoutArtifact(String),
     VSplitNeedsVBox,
     Box255NotVoidBeforeOutput,
     OutputRoutineBox255NotVoid,
@@ -265,6 +266,7 @@ impl fmt::Display for ExecError {
                     "shipout artifact lowering does not support {node} nodes yet"
                 )
             }
+            Self::InvalidShipoutArtifact(error) => write!(f, "{error}"),
             Self::VSplitNeedsVBox => write!(f, "\\vsplit needs a \\vbox"),
             Self::Box255NotVoidBeforeOutput => write!(f, "\\box255 is not void"),
             Self::OutputRoutineBox255NotVoid => {
@@ -330,6 +332,7 @@ impl std::error::Error for ExecError {
             | Self::FontParameter(_)
             | Self::UnimplementedTypesetting { .. }
             | Self::UnsupportedShipoutNode { .. }
+            | Self::InvalidShipoutArtifact(_)
             | Self::VSplitNeedsVBox
             | Self::Box255NotVoidBeforeOutput
             | Self::OutputRoutineBox255NotVoid
@@ -392,6 +395,7 @@ impl ExecError {
             | Self::FileEndedWithinRead
             | Self::TerminalReadEof
             | Self::UnsupportedShipoutNode { .. }
+            | Self::InvalidShipoutArtifact(_)
             | Self::VSplitNeedsVBox
             | Self::Box255NotVoidBeforeOutput
             | Self::OutputRoutineBox255NotVoid

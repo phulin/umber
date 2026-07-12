@@ -9,8 +9,8 @@ use tex_out::{
     BoxNode as PageBoxNode, ContentHash as PageContentHash, DEFAULT_BANNER,
     DiscKind as PageDiscKind, EffectSink, FontResource, GlueKind as PageGlueKind,
     GlueOrder as PageGlueOrder, GlueSign, GlueSpec as PageGlueSpec, JobInfo,
-    KernKind as PageKernKind, LeaderPayload as PageLeaderPayload, PageArtifact, PageEffect,
-    PageNode, PageToken, TokenCatcode,
+    KernKind as PageKernKind, LeaderPayload as PageLeaderPayload, PageEffect, PageNode, PageToken,
+    TokenCatcode, UnvalidatedPageArtifact,
 };
 use tex_state::env::banks::DimenParam;
 use tex_state::glue::Order;
@@ -100,7 +100,7 @@ where
         (root, lowerer.fonts, lowerer.effects)
     };
 
-    let artifact = PageArtifact {
+    let artifact = UnvalidatedPageArtifact {
         job: JobInfo {
             mag,
             banner: DEFAULT_BANNER.to_owned(),
@@ -111,7 +111,9 @@ where
         counts,
         root,
         effects,
-    };
+    }
+    .validate()
+    .map_err(|error| ExecError::InvalidShipoutArtifact(error.to_string()))?;
     let artifact_bytes = artifact.to_bytes();
     let input_summary = input.publication_summary(stores);
     stores.set_input_summary(input_summary);

@@ -976,7 +976,7 @@ fn shipout_converts_deferred_math_lists_before_artifact_lowering() {
         .expect("read artifact")
         .expect("artifact stored");
     let artifact = PageArtifact::from_bytes(&bytes).expect("artifact parses");
-    let PageNode::HList(box_node) = artifact.root else {
+    let PageNode::HList(box_node) = &artifact.root else {
         panic!("shipout root should lower to hlist");
     };
     assert!(matches!(

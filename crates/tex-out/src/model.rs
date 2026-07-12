@@ -2,15 +2,19 @@ use crate::ContentHash;
 pub use tex_arith::GlueSetRatio;
 use tex_arith::Scaled;
 
-/// A committed page artifact.
+/// Detached page data that has not yet crossed the validation boundary.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PageArtifact {
+pub struct UnvalidatedPageArtifact {
     pub job: JobInfo,
     pub fonts: Vec<FontResource>,
     pub counts: [i32; 10],
     pub root: PageNode,
     pub effects: Vec<PageEffect>,
 }
+
+/// A detached page artifact whose references and traversal budgets were validated.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PageArtifact(UnvalidatedPageArtifact);
 
 impl PageArtifact {
     #[must_use]
@@ -19,14 +23,108 @@ impl PageArtifact {
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, crate::ParseError> {
-        crate::binary::from_bytes(bytes)
+        crate::binary::from_bytes(bytes)?
+            .validate()
+            .map_err(Into::into)
     }
 
     #[must_use]
     pub fn content_hash(&self) -> ContentHash {
         ContentHash::from_bytes(&self.to_bytes())
     }
+
+    #[cfg(test)]
+    pub(crate) fn testing_mut(&mut self) -> &mut UnvalidatedPageArtifact {
+        &mut self.0
+    }
 }
+
+impl std::ops::Deref for PageArtifact {
+    type Target = UnvalidatedPageArtifact;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+#[cfg(test)]
+impl std::ops::DerefMut for PageArtifact {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl UnvalidatedPageArtifact {
+    pub fn validate(self) -> Result<PageArtifact, ArtifactValidationError> {
+        self.validate_with_limits(ArtifactValidationLimits::default())
+    }
+
+    pub fn validate_with_limits(
+        self,
+        limits: ArtifactValidationLimits,
+    ) -> Result<PageArtifact, ArtifactValidationError> {
+        validate_artifact(&self, limits)?;
+        Ok(PageArtifact(self))
+    }
+}
+
+/// Builder that cannot publish its fields without validation.
+pub struct PageArtifactBuilder(UnvalidatedPageArtifact);
+
+impl PageArtifactBuilder {
+    #[must_use]
+    pub fn new(artifact: UnvalidatedPageArtifact) -> Self {
+        Self(artifact)
+    }
+
+    pub fn build(self) -> Result<PageArtifact, ArtifactValidationError> {
+        self.0.validate()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ArtifactValidationLimits {
+    pub max_nodes: usize,
+    pub max_depth: usize,
+    pub max_fonts: usize,
+    pub max_effects: usize,
+}
+
+impl Default for ArtifactValidationLimits {
+    fn default() -> Self {
+        Self {
+            max_nodes: 1_000_000,
+            max_depth: 4096,
+            max_fonts: 65_536,
+            max_effects: 1_000_000,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ArtifactValidationError {
+    RootNotBox,
+    TooManyFonts { count: usize, limit: usize },
+    TooManyEffects { count: usize, limit: usize },
+    TooManyNodes { count: usize, limit: usize },
+    NestingTooDeep { depth: usize, limit: usize },
+    DuplicateFont { font_id: u32 },
+    EmptyFontName { font_id: u32 },
+    InvalidFontSize { font_id: u32 },
+    MissingFont { font_id: u32 },
+    MissingEffect { effect_index: u32 },
+    CharacterOutOfRange { ch: u32 },
+    InvalidTokenScalar { ch: u32 },
+    InvalidStream { stream: u8 },
+}
+
+impl std::fmt::Display for ArtifactValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "invalid page artifact: {self:?}")
+    }
+}
+
+impl std::error::Error for ArtifactValidationError {}
 
 /// Job-level data captured at shipout for downstream output drivers.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -235,4 +333,164 @@ pub enum EffectSink {
     Log,
     TerminalAndLog,
     Stream(u8),
+}
+
+fn validate_artifact(
+    artifact: &UnvalidatedPageArtifact,
+    limits: ArtifactValidationLimits,
+) -> Result<(), ArtifactValidationError> {
+    if !matches!(artifact.root, PageNode::HList(_) | PageNode::VList(_)) {
+        return Err(ArtifactValidationError::RootNotBox);
+    }
+    if artifact.fonts.len() > limits.max_fonts {
+        return Err(ArtifactValidationError::TooManyFonts {
+            count: artifact.fonts.len(),
+            limit: limits.max_fonts,
+        });
+    }
+    if artifact.effects.len() > limits.max_effects {
+        return Err(ArtifactValidationError::TooManyEffects {
+            count: artifact.effects.len(),
+            limit: limits.max_effects,
+        });
+    }
+
+    let mut font_ids = std::collections::BTreeSet::new();
+    for font in &artifact.fonts {
+        if !font_ids.insert(font.font_id) {
+            return Err(ArtifactValidationError::DuplicateFont {
+                font_id: font.font_id,
+            });
+        }
+        if font.name.is_empty() {
+            return Err(ArtifactValidationError::EmptyFontName {
+                font_id: font.font_id,
+            });
+        }
+        if font.design_size.raw() <= 0 || font.at_size.raw() <= 0 {
+            return Err(ArtifactValidationError::InvalidFontSize {
+                font_id: font.font_id,
+            });
+        }
+    }
+    for effect in &artifact.effects {
+        let stream = match effect {
+            PageEffect::OpenOut { stream, .. } | PageEffect::CloseOut { stream } => Some(*stream),
+            PageEffect::Write {
+                sink: EffectSink::Stream(stream),
+                ..
+            } => Some(*stream),
+            PageEffect::Write { .. } | PageEffect::Special { .. } => None,
+        };
+        if stream.is_some_and(|stream| stream >= 16) {
+            return Err(ArtifactValidationError::InvalidStream {
+                stream: stream.expect("checked Some"),
+            });
+        }
+    }
+
+    let mut stack = vec![(&artifact.root, 1usize)];
+    let mut count = 0usize;
+    while let Some((node, depth)) = stack.pop() {
+        count = count.saturating_add(1);
+        if count > limits.max_nodes {
+            return Err(ArtifactValidationError::TooManyNodes {
+                count,
+                limit: limits.max_nodes,
+            });
+        }
+        if depth > limits.max_depth {
+            return Err(ArtifactValidationError::NestingTooDeep {
+                depth,
+                limit: limits.max_depth,
+            });
+        }
+        match node {
+            PageNode::Char { font_id, ch, .. } => {
+                validate_font_and_char(&font_ids, *font_id, *ch)?;
+            }
+            PageNode::Lig {
+                font_id,
+                ch,
+                left,
+                right,
+                ..
+            } => {
+                validate_font_and_char(&font_ids, *font_id, *ch)?;
+                validate_character(*left)?;
+                validate_character(*right)?;
+            }
+            PageNode::HList(box_node) | PageNode::VList(box_node) => {
+                push_nodes(&mut stack, &box_node.children, depth + 1);
+            }
+            PageNode::Disc {
+                pre, post, replace, ..
+            } => {
+                push_nodes(&mut stack, pre, depth + 1);
+                push_nodes(&mut stack, post, depth + 1);
+                push_nodes(&mut stack, replace, depth + 1);
+            }
+            PageNode::Insert { content, .. } | PageNode::Adjust(content) => {
+                push_nodes(&mut stack, content, depth + 1);
+            }
+            PageNode::Glue {
+                leader: Some(LeaderPayload::HList(box_node) | LeaderPayload::VList(box_node)),
+                ..
+            } => push_nodes(&mut stack, &box_node.children, depth + 1),
+            PageNode::WhatsitAnchor { effect_index } => {
+                let index = usize::try_from(*effect_index).unwrap_or(usize::MAX);
+                if index >= artifact.effects.len() {
+                    return Err(ArtifactValidationError::MissingEffect {
+                        effect_index: *effect_index,
+                    });
+                }
+            }
+            PageNode::Mark { tokens, .. } => {
+                for token in tokens {
+                    match token {
+                        PageToken::Char { ch, .. } | PageToken::ActiveControlSequence(ch)
+                            if char::from_u32(*ch).is_none() =>
+                        {
+                            return Err(ArtifactValidationError::InvalidTokenScalar { ch: *ch });
+                        }
+                        PageToken::Param(slot) if !(1..=9).contains(slot) => {
+                            return Err(ArtifactValidationError::InvalidTokenScalar {
+                                ch: u32::from(*slot),
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            PageNode::Kern { .. }
+            | PageNode::Penalty(_)
+            | PageNode::Rule { .. }
+            | PageNode::Glue { .. }
+            | PageNode::MathOn(_)
+            | PageNode::MathOff(_) => {}
+        }
+    }
+    Ok(())
+}
+
+fn validate_font_and_char(
+    fonts: &std::collections::BTreeSet<u32>,
+    font_id: u32,
+    ch: u32,
+) -> Result<(), ArtifactValidationError> {
+    if !fonts.contains(&font_id) {
+        return Err(ArtifactValidationError::MissingFont { font_id });
+    }
+    validate_character(ch)
+}
+
+fn validate_character(ch: u32) -> Result<(), ArtifactValidationError> {
+    if ch > u8::MAX.into() {
+        return Err(ArtifactValidationError::CharacterOutOfRange { ch });
+    }
+    Ok(())
+}
+
+fn push_nodes<'a>(stack: &mut Vec<(&'a PageNode, usize)>, nodes: &'a [PageNode], depth: usize) {
+    stack.extend(nodes.iter().rev().map(|node| (node, depth)));
 }

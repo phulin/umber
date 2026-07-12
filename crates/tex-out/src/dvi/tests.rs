@@ -515,7 +515,7 @@ fn specials_emit_xxx1_and_xxx4_at_anchor_positions() {
 }
 
 fn glyph_page(count0: i32) -> PageArtifact {
-    PageArtifact {
+    crate::UnvalidatedPageArtifact {
         job: JobInfo {
             mag: 1200,
             banner: "B".to_owned(),
@@ -527,12 +527,14 @@ fn glyph_page(count0: i32) -> PageArtifact {
         root: hlist(300, 100, 30, vec![char_node(3, b'A' as u32, 50)]),
         effects: Vec::new(),
     }
+    .validate()
+    .expect("glyph page validates")
 }
 
 fn empty_page(count0: i32) -> PageArtifact {
     let mut page = glyph_page(count0);
-    page.fonts.clear();
-    page.root = hlist(0, 0, 0, Vec::new());
+    page.testing_mut().fonts.clear();
+    page.testing_mut().root = hlist(0, 0, 0, Vec::new());
     page
 }
 

@@ -1,7 +1,7 @@
 use crate::{
     BoxNode, ContentHash, DiscKind, EffectSink, FontResource, GlueKind, GlueOrder, GlueSetRatio,
     GlueSign, GlueSpec, KernKind, LeaderPayload, PageArtifact, PageEffect, PageNode, PageToken,
-    TokenCatcode,
+    TokenCatcode, UnvalidatedPageArtifact,
 };
 use std::fmt;
 use tex_arith::Scaled;
@@ -20,6 +20,7 @@ pub enum ParseError {
     LengthOverflow,
     InvalidTag { kind: &'static str, tag: u8 },
     InvalidGlueSetRatio { numerator: i32, denominator: i32 },
+    Validation(crate::ArtifactValidationError),
 }
 
 impl fmt::Display for ParseError {
@@ -43,11 +44,18 @@ impl fmt::Display for ParseError {
                 f,
                 "invalid glue-set ratio {numerator}/{denominator} in page artifact"
             ),
+            Self::Validation(error) => error.fmt(f),
         }
     }
 }
 
 impl std::error::Error for ParseError {}
+
+impl From<crate::ArtifactValidationError> for ParseError {
+    fn from(value: crate::ArtifactValidationError) -> Self {
+        Self::Validation(value)
+    }
+}
 
 #[must_use]
 pub(crate) fn to_bytes(artifact: &PageArtifact) -> Vec<u8> {
@@ -67,7 +75,7 @@ pub(crate) fn to_bytes(artifact: &PageArtifact) -> Vec<u8> {
     writer.bytes
 }
 
-pub(crate) fn from_bytes(bytes: &[u8]) -> Result<PageArtifact, ParseError> {
+pub(crate) fn from_bytes(bytes: &[u8]) -> Result<UnvalidatedPageArtifact, ParseError> {
     let mut reader = Reader { bytes, offset: 0 };
     reader.expect_magic()?;
     let version = reader.u8()?;
@@ -86,7 +94,7 @@ pub(crate) fn from_bytes(bytes: &[u8]) -> Result<PageArtifact, ParseError> {
     let root = reader.node()?;
     let effects = reader.effects()?;
     reader.finish()?;
-    Ok(PageArtifact {
+    Ok(UnvalidatedPageArtifact {
         job: crate::JobInfo {
             mag,
             banner,
