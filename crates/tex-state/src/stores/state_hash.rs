@@ -10,12 +10,11 @@ use crate::meaning::{
 use crate::node::{BoxNode, GlueKind, KernKind, LeaderPayload, Node, Sign, Whatsit};
 use crate::node_arena::NodeRef;
 use crate::state_hash::StateHasher;
-use crate::token::{Catcode, Token};
+use crate::token::Catcode;
 use std::collections::{BTreeMap, VecDeque};
 
 const STORE_SLICE_DOMAIN: u64 = 0x7374_6f72_6573_6c63;
 const CELL_VALUE_DOMAIN: u64 = 0x6365_6c6c_7661_6c75;
-const TOKEN_LIST_MAX_ITEMS: usize = 1_000_000;
 const NODE_LIST_MAX_ITEMS: usize = 1_000_000;
 const FONT_DIMEN_BITS: u32 = 15;
 const FONT_DIMEN_MASK: u32 = (1 << FONT_DIMEN_BITS) - 1;
@@ -212,16 +211,8 @@ impl Stores {
 
     pub(crate) fn hash_token_list_semantic(&self, id: TokenListId, hasher: &mut StateHasher) {
         let id = self.resolve_stored_token_list(id);
-        let tokens = self.tokens.get(id);
-        assert!(
-            tokens.len() <= TOKEN_LIST_MAX_ITEMS,
-            "state hash exceeded maximum token-list items"
-        );
         hasher.tag(0x50);
-        hasher.usize(tokens.len());
-        for token in tokens {
-            self.hash_token(*token, hasher);
-        }
+        hasher.u64(self.tokens.semantic_hash(id));
     }
 
     pub(crate) fn hash_node_slice_semantic(&self, nodes: &[Node], hasher: &mut StateHasher) {
@@ -518,29 +509,6 @@ impl Stores {
         hasher.u8(definition.flags().bits());
         self.hash_token_list_semantic(definition.parameter_text(), hasher);
         self.hash_token_list_semantic(definition.replacement_text(), hasher);
-    }
-
-    fn hash_token(&self, token: Token, hasher: &mut StateHasher) {
-        match token {
-            Token::Char { ch, cat } => {
-                hasher.tag(0);
-                hasher.u32(ch as u32);
-                hash_catcode(cat, hasher);
-            }
-            Token::Cs(symbol) => {
-                let symbol = self.resolve_stored_symbol(symbol);
-                hasher.tag(1);
-                hash_control_sequence_kind(self.interner.kind_id(symbol), hasher);
-                hasher.str(self.interner.resolve_id(symbol));
-            }
-            Token::Param(slot) => {
-                hasher.tag(2);
-                hasher.u8(slot);
-            }
-            Token::Frozen(crate::token::FrozenToken::END_TEMPLATE) => hasher.tag(3),
-            Token::Frozen(crate::token::FrozenToken::END_V) => hasher.tag(4),
-            Token::Frozen(_) => unreachable!("invalid frozen token payload"),
-        }
     }
 
     fn hash_glue(&self, id: GlueId, hasher: &mut StateHasher) {

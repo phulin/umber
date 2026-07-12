@@ -406,6 +406,71 @@ fn checkpoint_state_hash(c: &mut Criterion) {
         );
     });
 
+    group.bench_function("shared_token_list_256x1024", |b| {
+        b.iter_batched(
+            || {
+                let mut stores = Universe::new();
+                let symbols = (0..64)
+                    .map(|index| stores.intern(&format!("checkpoint-symbol-{index}")))
+                    .collect::<Vec<_>>();
+                let tokens = (0..1_024)
+                    .map(|index| {
+                        if index % 3 == 0 {
+                            Token::Cs(symbols[index % symbols.len()].symbol())
+                        } else {
+                            char_token(char::from(b'a' + (index % 26) as u8))
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                let list = stores.intern_token_list(&tokens);
+                let _ = stores.snapshot();
+                for index in 0..256 {
+                    stores.set_toks(index, list);
+                }
+                stores
+            },
+            |mut stores| black_box(stores.snapshot().state_hash()),
+            BatchSize::SmallInput,
+        );
+    });
+
+    group.bench_function("distinct_macro_bodies_256x64", |b| {
+        b.iter_batched(
+            || {
+                let mut stores = Universe::new();
+                let targets = (0..256)
+                    .map(|index| stores.intern(&format!("checkpoint-macro-{index}")))
+                    .collect::<Vec<_>>();
+                let body_symbols = (0..32)
+                    .map(|index| stores.intern(&format!("checkpoint-body-symbol-{index}")))
+                    .collect::<Vec<_>>();
+                let empty = stores.intern_token_list(&[]);
+                let _ = stores.snapshot();
+                for (index, target) in targets.into_iter().enumerate() {
+                    let body = (0..64)
+                        .map(|offset| {
+                            if offset % 4 == 0 {
+                                Token::Cs(
+                                    body_symbols[(index + offset) % body_symbols.len()].symbol(),
+                                )
+                            } else {
+                                char_token(char::from(b'a' + ((index + offset) % 26) as u8))
+                            }
+                        })
+                        .collect::<Vec<_>>();
+                    let body = stores.intern_token_list(&body);
+                    stores.set_macro_meaning(
+                        target,
+                        MacroMeaning::new(MeaningFlags::EMPTY, empty, body),
+                    );
+                }
+                stores
+            },
+            |mut stores| black_box(stores.snapshot().state_hash()),
+            BatchSize::SmallInput,
+        );
+    });
+
     group.finish();
 }
 

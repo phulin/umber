@@ -8,7 +8,9 @@ use crate::ids::TokenListId;
 use crate::token::{Token, TracedTokenWord};
 use ahash::RandomState;
 use std::collections::HashMap;
-use std::hash::{BuildHasherDefault, Hash, Hasher};
+#[cfg(test)]
+use std::hash::Hash;
+use std::hash::{BuildHasherDefault, Hasher};
 
 type TokenIndex = HashMap<u64, Vec<TokenListId>, BuildHasherDefault<PrehashedU64Hasher>>;
 
@@ -92,6 +94,7 @@ impl TokenListBuilder {
     }
 
     /// Interns the current token list and clears the builder for reuse.
+    #[cfg(test)]
     pub(crate) fn finish(&mut self, store: &mut TokenStore) -> TokenListId {
         let id = store.intern(&self.buf);
         self.buf.clear();
@@ -104,6 +107,7 @@ impl TokenListBuilder {
 pub struct TokenStore {
     arena: Vec<Token>,
     spans: Vec<(u32, u32)>,
+    semantic_hashes: Vec<u64>,
     index: TokenIndex,
     hash_state: RandomState,
     index_dirty: bool,
@@ -115,6 +119,7 @@ impl Clone for TokenStore {
         Self {
             arena: self.arena.clone(),
             spans: self.spans.clone(),
+            semantic_hashes: self.semantic_hashes.clone(),
             index: self.index.clone(),
             hash_state: self.hash_state.clone(),
             index_dirty: self.index_dirty,
@@ -131,6 +136,7 @@ impl TokenStore {
         let mut store = Self {
             arena: Vec::new(),
             spans: vec![(0, 0)],
+            semantic_hashes: vec![0],
             index: TokenIndex::default(),
             hash_state,
             index_dirty: false,
@@ -158,6 +164,16 @@ impl TokenStore {
 
     /// Interns `tokens`, returning a dense id for the live token-list content.
     pub(crate) fn intern(&mut self, tokens: &[Token]) -> TokenListId {
+        let hash = self.content_hash(tokens);
+        self.intern_with_semantic_hash(tokens, hash)
+    }
+
+    /// Interns tokens using their aggregate-computed canonical semantic hash.
+    pub(crate) fn intern_with_semantic_hash(
+        &mut self,
+        tokens: &[Token],
+        semantic_hash: u64,
+    ) -> TokenListId {
         #[cfg(feature = "node-stats")]
         let capacity_before = self.arena.capacity();
         if tokens.is_empty() {
@@ -170,7 +186,7 @@ impl TokenStore {
             self.rebuild_index();
         }
 
-        let hash = self.content_hash(tokens);
+        let hash = semantic_hash;
         if let Some(candidates) = self.index.get(&hash) {
             for &id in candidates {
                 // Hash collisions are safe because the candidate span is
@@ -189,6 +205,7 @@ impl TokenStore {
 
         self.arena.extend_from_slice(tokens);
         self.spans.push((start, len));
+        self.semantic_hashes.push(semantic_hash);
         self.index.entry(hash).or_default().push(id);
         #[cfg(feature = "node-stats")]
         crate::measurement::record_token_intern(
@@ -204,7 +221,18 @@ impl TokenStore {
     /// The caller owns aggregate token/origin liveness validation. Keeping the
     /// projection borrowed avoids materializing a second token vector on both
     /// hash-cons hits and misses.
+    #[cfg(test)]
     pub(crate) fn intern_traced(&mut self, traced: &[TracedTokenWord]) -> TokenListId {
+        let hash = self.hash_state.hash_one(TracedTokenProjection(traced));
+        self.intern_traced_with_semantic_hash(traced, hash)
+    }
+
+    /// Interns traced tokens using their aggregate-computed canonical semantic hash.
+    pub(crate) fn intern_traced_with_semantic_hash(
+        &mut self,
+        traced: &[TracedTokenWord],
+        semantic_hash: u64,
+    ) -> TokenListId {
         #[cfg(feature = "node-stats")]
         let capacity_before = self.arena.capacity();
         if traced.is_empty() {
@@ -217,7 +245,7 @@ impl TokenStore {
             self.rebuild_index();
         }
 
-        let hash = self.hash_state.hash_one(TracedTokenProjection(traced));
+        let hash = semantic_hash;
         if let Some(candidates) = self.index.get(&hash) {
             for &id in candidates {
                 let candidate = self.get(id);
@@ -245,6 +273,7 @@ impl TokenStore {
                 .expect("validated traced token became invalid during interning")
         }));
         self.spans.push((start, len));
+        self.semantic_hashes.push(semantic_hash);
         self.index.entry(hash).or_default().push(id);
         #[cfg(feature = "node-stats")]
         crate::measurement::record_token_intern(
@@ -269,6 +298,15 @@ impl TokenStore {
         let end = start + len as usize;
         assert!(end <= self.arena.len(), "token-list span exceeds arena");
         &self.arena[start..end]
+    }
+
+    /// Returns the canonical semantic hash stored with a live token list.
+    pub(crate) fn semantic_hash(&self, id: TokenListId) -> u64 {
+        assert!(
+            self.identities.contains(id.identity()),
+            "token list id is not live"
+        );
+        self.semantic_hashes[id.raw() as usize]
     }
 
     /// Returns whether `id` names a currently-live token-list slot.
@@ -325,6 +363,7 @@ impl TokenStore {
             .rollback(mark.identities)
             .expect("token identity mark must name a retained ancestor");
         self.spans.truncate(spans);
+        self.semantic_hashes.truncate(spans);
         self.arena.truncate(tokens);
         self.index_dirty = true;
     }
@@ -333,7 +372,7 @@ impl TokenStore {
         self.index.clear();
         for raw in 0..self.spans.len() {
             let id = self.id_at(u32_len(raw, "token-list spans exceed u32 entries"));
-            let hash = self.content_hash(self.get(id));
+            let hash = self.semantic_hash(id);
             self.index.entry(hash).or_default().push(id);
         }
         self.index_dirty = false;
@@ -361,8 +400,10 @@ impl TokenStore {
     }
 }
 
+#[cfg(test)]
 struct TracedTokenProjection<'a>(&'a [TracedTokenWord]);
 
+#[cfg(test)]
 impl Hash for TracedTokenProjection<'_> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.0.len().hash(state);

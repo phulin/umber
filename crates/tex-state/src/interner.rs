@@ -5,6 +5,7 @@
 //! interner rolls back only as part of the aggregate `Universe` tuple.
 
 use crate::identity::{HandleIdentity, IdentityAllocator, IdentityMark};
+use crate::state_hash::StateHasher;
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -131,6 +132,7 @@ pub struct Interner {
     arena: Vec<u8>,
     spans: Vec<(u32, u32)>,
     kinds: Vec<ControlSequenceKind>,
+    semantic_atoms: Vec<u64>,
     symbols: Vec<Symbol>,
     symbol_slots: HashMap<Symbol, u32>,
     index: HashMap<u64, Vec<SymbolId>>,
@@ -144,6 +146,7 @@ impl Clone for Interner {
             arena: self.arena.clone(),
             spans: self.spans.clone(),
             kinds: self.kinds.clone(),
+            semantic_atoms: self.semantic_atoms.clone(),
             symbols: self.symbols.clone(),
             symbol_slots: self.symbol_slots.clone(),
             index: self.index.clone(),
@@ -161,6 +164,7 @@ impl Interner {
             arena: Vec::new(),
             spans: Vec::new(),
             kinds: Vec::new(),
+            semantic_atoms: Vec::new(),
             symbols: Vec::new(),
             symbol_slots: HashMap::new(),
             index: HashMap::new(),
@@ -214,6 +218,7 @@ impl Interner {
         self.arena.extend_from_slice(name.as_bytes());
         self.spans.push((start, len));
         self.kinds.push(kind);
+        self.semantic_atoms.push(semantic_atom(kind, name));
         self.symbols.push(stored);
         let old = self.symbol_slots.insert(stored, identity.slot());
         debug_assert!(old.is_none(), "symbol already mapped in local interner");
@@ -293,6 +298,12 @@ impl Interner {
         self.kind_id(self.resolve_stored(symbol).expect("symbol is not live"))
     }
 
+    /// Returns the canonical semantic atom for a live compact symbol.
+    pub(crate) fn semantic_atom(&self, symbol: Symbol) -> Option<u64> {
+        let id = self.resolve_stored(symbol)?;
+        self.semantic_atoms.get(id.raw() as usize).copied()
+    }
+
     #[must_use]
     pub fn contains(&self, symbol: Symbol) -> bool {
         self.resolve_stored(symbol).is_some()
@@ -327,6 +338,7 @@ impl Interner {
     pub(crate) fn watermark(&self) -> InternerMark {
         debug_assert_eq!(self.symbols.len(), self.spans.len());
         debug_assert_eq!(self.kinds.len(), self.spans.len());
+        debug_assert_eq!(self.semantic_atoms.len(), self.spans.len());
         InternerMark {
             spans: u32_len(self.spans.len(), "interner spans exceed u32 entries"),
             bytes: u32_len(self.arena.len(), "interner arena exceeds u32 bytes"),
@@ -358,11 +370,13 @@ impl Interner {
             .expect("interner mark is not an ancestor");
         self.spans.truncate(spans);
         self.kinds.truncate(spans);
+        self.semantic_atoms.truncate(spans);
         for symbol in self.symbols.drain(spans..) {
             self.symbol_slots.remove(&symbol);
         }
         self.arena.truncate(bytes);
         debug_assert_eq!(self.kinds.len(), self.spans.len());
+        debug_assert_eq!(self.semantic_atoms.len(), self.spans.len());
         debug_assert_eq!(self.symbols.len(), self.spans.len());
         self.index_dirty = true;
     }
@@ -381,6 +395,16 @@ impl Interner {
         }
         self.index_dirty = false;
     }
+}
+
+fn semantic_atom(kind: ControlSequenceKind, name: &str) -> u64 {
+    let mut hasher = StateHasher::new(0x6373_5f61_746f_6d31);
+    hasher.u8(match kind {
+        ControlSequenceKind::Named => 0,
+        ControlSequenceKind::ActiveCharacter => 1,
+    });
+    hasher.str(name);
+    hasher.finish()
 }
 
 #[derive(Debug, Default)]

@@ -575,14 +575,18 @@ impl Stores {
 
     /// Interns a frozen token-list value in the owned token store.
     pub fn intern_token_list(&mut self, tokens: &[Token]) -> TokenListId {
-        self.assert_live_tokens(tokens);
-        self.tokens.intern(tokens)
+        let semantic_hash = self.token_list_semantic_identity(tokens.iter().copied());
+        self.tokens.intern_with_semantic_hash(tokens, semantic_hash)
     }
 
     /// Interns the current token-list builder value and clears it for reuse.
     pub fn finish_token_list(&mut self, builder: &mut TokenListBuilder) -> TokenListId {
-        self.assert_live_tokens(builder.as_slice());
-        builder.finish(&mut self.tokens)
+        let semantic_hash = self.token_list_semantic_identity(builder.as_slice().iter().copied());
+        let id = self
+            .tokens
+            .intern_with_semantic_hash(builder.as_slice(), semantic_hash);
+        builder.clear();
+        id
     }
 
     /// Freezes semantic tokens and per-instance origins directly from their
@@ -596,9 +600,16 @@ impl Stores {
             self.assert_live_origin(word.origin());
         }
 
+        let semantic_hash = self.token_list_semantic_identity(traced.iter().map(|word| {
+            word.token()
+                .expect("validated traced token became invalid during semantic hashing")
+        }));
+
         #[cfg(feature = "node-stats")]
         crate::measurement::record_traced_list_finish(traced.len(), 0, 0);
-        let token_list = self.tokens.intern_traced(traced);
+        let token_list = self
+            .tokens
+            .intern_traced_with_semantic_hash(traced, semantic_hash);
         let origin_list = self.provenance.allocate_traced_list(traced);
         TracedTokenList::new(token_list, origin_list)
     }
@@ -608,6 +619,37 @@ impl Stores {
     pub fn tokens(&self, id: TokenListId) -> &[Token] {
         let id = self.resolve_stored_token_list(id);
         self.tokens.get(id)
+    }
+
+    fn token_list_semantic_identity(&self, tokens: impl IntoIterator<Item = Token>) -> u64 {
+        let mut hasher = crate::state_hash::StateHasher::new(0x746f_6b65_6e5f_6964);
+        let tokens = tokens.into_iter();
+        hasher.usize(tokens.size_hint().0);
+        for token in tokens {
+            match token {
+                Token::Char { ch, cat } => {
+                    hasher.tag(0);
+                    hasher.u32(ch as u32);
+                    hasher.u8(cat as u8);
+                }
+                Token::Cs(symbol) => {
+                    hasher.tag(1);
+                    hasher.u64(
+                        self.interner
+                            .semantic_atom(symbol)
+                            .expect("symbol is not live in this Universe timeline"),
+                    );
+                }
+                Token::Param(slot) => {
+                    hasher.tag(2);
+                    hasher.u8(slot);
+                }
+                Token::Frozen(crate::token::FrozenToken::END_TEMPLATE) => hasher.tag(3),
+                Token::Frozen(crate::token::FrozenToken::END_V) => hasher.tag(4),
+                Token::Frozen(_) => unreachable!("invalid frozen token payload"),
+            }
+        }
+        hasher.finish()
     }
 
     /// Returns the reserved unknown/bootstrap provenance origin.
