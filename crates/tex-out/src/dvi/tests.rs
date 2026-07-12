@@ -2,7 +2,7 @@ use super::opcodes::{
     BOP, DEN, DOWN1, EOP, FNT_DEF1, FNT_NUM_0, FNT1, ID_BYTE, NUM, POST, POST_POST, PRE, PUSH,
     PUT_RULE, RIGHT1, SET_RULE, SET1, XXX1, XXX4,
 };
-use super::write_dvi;
+use super::{DviError, DviStreamWriter, write_dvi};
 use crate::{
     BoxNode, ContentHash, FontResource, GlueKind, GlueOrder, GlueSetRatio, GlueSign, GlueSpec,
     JobInfo, LeaderPayload, PageArtifact, PageEffect, PageNode,
@@ -16,6 +16,54 @@ const X0: u8 = 152;
 const X3: u8 = 155;
 const Y0: u8 = 161;
 const Y1: u8 = 162;
+
+#[derive(Default)]
+struct ChunkSink {
+    chunks: Vec<Vec<u8>>,
+}
+
+impl std::io::Write for ChunkSink {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.chunks.push(bytes.to_vec());
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn streaming_writer_flushes_preamble_each_page_and_postamble() {
+    let pages = [glyph_page(1), glyph_page(2)];
+    let expected = write_dvi(&pages).expect("slice compatibility writer");
+    let mut writer = DviStreamWriter::new(ChunkSink::default());
+    writer.write_page(&pages[0]).expect("write first page");
+    writer.write_page(&pages[1]).expect("write second page");
+    let sink = writer.finish().expect("finish stream");
+
+    assert_eq!(sink.chunks.len(), 4);
+    assert_eq!(sink.chunks.concat(), expected);
+    assert_eq!(sink.chunks[0][0], PRE);
+    assert_eq!(sink.chunks[1][0], BOP);
+    assert_eq!(sink.chunks[2][0], BOP);
+    assert_eq!(sink.chunks[3][0], POST);
+}
+
+#[test]
+fn streaming_writer_rejects_cross_page_font_identity_conflicts() {
+    let first = glyph_page(1);
+    let mut second = glyph_page(2);
+    second.testing_mut().fonts[0].name = "incompatible".to_owned();
+    let mut writer = DviStreamWriter::new(Vec::new());
+
+    writer.write_page(&first).expect("write first page");
+    assert_eq!(
+        writer.write_page(&second),
+        Err(DviError::InconsistentFontResource { font_id: 3 })
+    );
+    assert!(matches!(writer.finish(), Err(DviError::Poisoned)));
+}
 
 #[test]
 fn writes_preamble_bop_body_and_postamble() {

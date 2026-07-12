@@ -13,13 +13,13 @@ Use this crate for stable, driver-facing artifact structures and serialization c
 - `AGENTS.md`: Crate-local guidance, boundaries, validation expectations, and this file map.
 - `Cargo.toml`: Crate manifest declaring shared arithmetic and content-identity dependencies.
 - `src/binary.rs`: Versioned compact binary writer/reader for page artifacts plus parse error types.
-- `src/dvi.rs`: DVI writer entry point, shared writer state, error type, and submodule wiring.
+- `src/dvi.rs`: Slice-compatible and incremental output-sink DVI APIs, one-page writer state, errors, and submodule wiring.
 - `src/bin/texout-dvitype.rs`: Small host-side DVI disassembly binary for parity triage.
 - `src/dvi/disasm.rs`: Bounded backpointer-graph validator and single-pass retained DVI command index/disassembler.
 - `src/dvi/disasm/tests.rs`: Page-graph corruption, retained-index, disassembly, and command lookup tests.
 - `src/dvi/extent.rs`: Page extent accounting for DVI postamble maximum dimensions.
-- `src/dvi/fonts.rs`: DVI font selection, first-use font definitions, and postamble font definition emission.
-- `src/dvi/framing.rs`: DVI file framing, page `bop`/`eop`, preamble/postamble, and byte emission helpers.
+- `src/dvi/fonts.rs`: Indexed page/global font selection, cross-page identity checks, first-use definitions, and postamble emission.
+- `src/dvi/framing.rs`: Streaming DVI framing, page `bop`/`eop`, preamble/postamble, offsets, and one-page byte staging.
 - `src/dvi/glue.rs`: TeX.web-style cumulative glue-set arithmetic and checked scaled-position helpers.
 - `src/dvi/leaders.rs`: TeX.web hlist/vlist leader repetition loops for aligned, centered, expanded, rule, and degenerate leader cases.
 - `src/dvi/movement.rs`: TeX.web-style DVI `movement()` lookback stack and w/x/y/z command optimization.

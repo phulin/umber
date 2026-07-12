@@ -1,6 +1,6 @@
 use tex_arith::Scaled;
 
-use crate::{FontResource, PageArtifact};
+use crate::{ContentHash, FontResource, PageArtifact};
 
 use super::{
     DviError, DviWriter,
@@ -8,14 +8,32 @@ use super::{
     opcodes::{FNT_DEF1, FNT_DEF2, FNT_DEF3, FNT_DEF4, FNT_NUM_0, FNT1, FNT2, FNT3, FNT4, SET1},
 };
 
-impl<'a> DviWriter<'a> {
-    pub(super) fn change_font(
-        &mut self,
-        page: &'a PageArtifact,
-        font_id: u32,
-    ) -> Result<(), DviError> {
-        let font = page_font(page, font_id)?;
-        let number = self.ensure_font_defined(font)?;
+impl<W: std::io::Write> DviWriter<W> {
+    pub(super) fn index_page_fonts(&mut self, page: &PageArtifact) -> Result<(), DviError> {
+        self.page_fonts.clear();
+        for font in &page.fonts {
+            let key = FontKey::from(font);
+            if self
+                .fonts_by_number
+                .insert(font.font_id, key.clone())
+                .is_some_and(|existing| existing != key)
+            {
+                return Err(DviError::InconsistentFontResource {
+                    font_id: font.font_id,
+                });
+            }
+            self.page_fonts.insert(font.font_id, font.clone());
+        }
+        Ok(())
+    }
+
+    pub(super) fn change_font(&mut self, font_id: u32) -> Result<(), DviError> {
+        let font = self
+            .page_fonts
+            .get(&font_id)
+            .cloned()
+            .ok_or(DviError::MissingFont { font_id })?;
+        let number = self.ensure_font_defined(&font)?;
         if self.dvi_f == Some(number) {
             return Ok(());
         }
@@ -53,14 +71,20 @@ impl<'a> DviWriter<'a> {
         Ok(())
     }
 
-    fn ensure_font_defined(&mut self, font: &'a FontResource) -> Result<u32, DviError> {
+    fn ensure_font_defined(&mut self, font: &FontResource) -> Result<u32, DviError> {
         let key = FontKey::from(font);
-        if let Some(defined) = self.fonts.iter().find(|defined| defined.key == key) {
+        if let Some(defined) = self.fonts.get(&key) {
             return Ok(defined.number);
         }
         let number = font.font_id;
         self.fnt_def(number, font)?;
-        self.fonts.push(DefinedFont { number, key, font });
+        self.fonts.insert(
+            key.clone(),
+            DefinedFont {
+                number,
+                font: font.clone(),
+            },
+        );
         Ok(number)
     }
 
@@ -100,16 +124,16 @@ impl<'a> DviWriter<'a> {
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct DefinedFont<'a> {
+pub(super) struct DefinedFont {
     pub(super) number: u32,
-    key: FontKey,
-    pub(super) font: &'a FontResource,
+    pub(super) font: FontResource,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct FontKey {
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(super) struct FontKey {
     font_id: u32,
     name: String,
+    tfm_content_hash: ContentHash,
     tfm_checksum: u32,
     design_size: Scaled,
     at_size: Scaled,
@@ -120,16 +144,10 @@ impl From<&FontResource> for FontKey {
         Self {
             font_id: font.font_id,
             name: font.name.clone(),
+            tfm_content_hash: font.tfm_content_hash,
             tfm_checksum: font.tfm_checksum,
             design_size: font.design_size,
             at_size: font.at_size,
         }
     }
-}
-
-fn page_font(page: &PageArtifact, font_id: u32) -> Result<&FontResource, DviError> {
-    page.fonts
-        .iter()
-        .find(|font| font.font_id == font_id)
-        .ok_or(DviError::MissingFont { font_id })
 }

@@ -29,10 +29,10 @@ pub(super) struct VLeaderContext<'a> {
     pub(super) top_edge: Scaled,
 }
 
-impl<'a> DviWriter<'a> {
+impl<W: std::io::Write> DviWriter<W> {
     pub(super) fn move_right_or_output_leaders(
         &mut self,
-        context: HLeaderContext<'a>,
+        context: HLeaderContext<'_>,
     ) -> Result<(), DviError> {
         let Some(leader_kind) = leader_kind(context.kind) else {
             self.cur_h = add_scaled(self.cur_h, context.rule_wd)?;
@@ -84,7 +84,7 @@ impl<'a> DviWriter<'a> {
 
     pub(super) fn move_down_or_output_leaders(
         &mut self,
-        context: VLeaderContext<'a>,
+        context: VLeaderContext<'_>,
     ) -> Result<(), DviError> {
         let Some(leader_kind) = leader_kind(context.kind) else {
             self.cur_v = add_scaled(self.cur_v, context.rule_ht)?;
@@ -134,9 +134,9 @@ impl<'a> DviWriter<'a> {
 
     fn output_leader_box_in_hlist(
         &mut self,
-        page: &'a PageArtifact,
-        leader: &'a LeaderPayload,
-        box_node: &'a BoxNode,
+        page: &PageArtifact,
+        leader: &LeaderPayload,
+        box_node: &BoxNode,
         leader_wd: Scaled,
         lx: Scaled,
         base_line: Scaled,
@@ -160,9 +160,9 @@ impl<'a> DviWriter<'a> {
 
     fn output_leader_box_in_vlist(
         &mut self,
-        page: &'a PageArtifact,
-        leader: &'a LeaderPayload,
-        box_node: &'a BoxNode,
+        page: &PageArtifact,
+        leader: &LeaderPayload,
+        box_node: &BoxNode,
         leader_ht: Scaled,
         lx: Scaled,
         left_edge: Scaled,

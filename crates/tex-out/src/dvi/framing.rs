@@ -8,7 +8,7 @@ use super::{
     opcodes::{BOP, DEN, EOP, ID_BYTE, NUM, PADDING, POST, POST_POST, PRE},
 };
 
-impl<'a> DviWriter<'a> {
+impl<W: std::io::Write> DviWriter<W> {
     pub(super) fn preamble(&mut self, banner: &str, mag: i32) -> Result<(), DviError> {
         let banner = limited_bytes("comment", banner)?;
         self.u8(PRE);
@@ -21,7 +21,8 @@ impl<'a> DviWriter<'a> {
         Ok(())
     }
 
-    pub(super) fn page(&mut self, page: &'a PageArtifact) -> Result<(), DviError> {
+    pub(super) fn page(&mut self, page: &PageArtifact) -> Result<(), DviError> {
+        self.index_page_fonts(page)?;
         self.reset_page_state();
         let bop_location = self.current_pointer()?;
         self.u8(BOP);
@@ -58,7 +59,7 @@ impl<'a> DviWriter<'a> {
         self.cur_s = -1;
     }
 
-    fn ship_box(&mut self, page: &'a PageArtifact, node: &'a PageNode) -> Result<(), DviError> {
+    fn ship_box(&mut self, page: &PageArtifact, node: &PageNode) -> Result<(), DviError> {
         // tex.web `Initialize variables as ship_out begins` and `Ship box p out`:
         // the page reference point includes both dimension parameters before
         // hlist_out/vlist_out performs its normal traversal.
@@ -100,10 +101,8 @@ impl<'a> DviWriter<'a> {
     pub(super) fn postamble(&mut self) -> Result<(), DviError> {
         let final_bop = self.previous_bop;
         let post_location = self.current_pointer()?;
-        let mag = self.pages[0].job.mag;
-        let total_pages = u16::try_from(self.pages.len()).map_err(|_| DviError::TooManyPages {
-            pages: self.pages.len(),
-        })?;
+        let mag = self.job_mag.expect("postamble requires one page");
+        let total_pages = self.page_count;
 
         self.u8(POST);
         self.i32(final_bop);
@@ -115,10 +114,10 @@ impl<'a> DviWriter<'a> {
         self.u16(self.max_stack_depth);
         self.u16(total_pages);
 
-        let mut defined_fonts = self.fonts.clone();
+        let mut defined_fonts: Vec<_> = self.fonts.values().cloned().collect();
         defined_fonts.sort_by(|left, right| right.number.cmp(&left.number));
         for defined in defined_fonts {
-            self.fnt_def(defined.number, defined.font)?;
+            self.fnt_def(defined.number, &defined.font)?;
         }
 
         self.u8(POST_POST);
@@ -127,16 +126,21 @@ impl<'a> DviWriter<'a> {
         for _ in 0..4 {
             self.u8(PADDING);
         }
-        while !self.bytes.len().is_multiple_of(4) {
+        while !self.current_offset()?.is_multiple_of(4) {
             self.u8(PADDING);
         }
         Ok(())
     }
 
     pub(super) fn current_pointer(&self) -> Result<i32, DviError> {
-        i32::try_from(self.bytes.len()).map_err(|_| DviError::OffsetOverflow {
-            offset: self.bytes.len(),
-        })
+        let offset = self.current_offset()?;
+        i32::try_from(offset).map_err(|_| DviError::OffsetOverflow { offset })
+    }
+
+    fn current_offset(&self) -> Result<usize, DviError> {
+        self.committed_offset
+            .checked_add(self.bytes.len())
+            .ok_or(DviError::OffsetOverflow { offset: usize::MAX })
     }
 
     pub(super) fn raw(&mut self, bytes: &[u8]) {

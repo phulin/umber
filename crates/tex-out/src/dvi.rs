@@ -1,4 +1,6 @@
+use std::collections::BTreeMap;
 use std::fmt;
+use std::io::Write;
 
 use tex_arith::Scaled;
 
@@ -34,6 +36,9 @@ pub enum DviError {
     SpecialTooLong { len: usize },
     OffsetOverflow { offset: usize },
     PositionOverflow,
+    Sink { message: String },
+    InconsistentFontResource { font_id: u32 },
+    Poisoned,
 }
 
 impl fmt::Display for DviError {
@@ -72,6 +77,12 @@ impl fmt::Display for DviError {
                 )
             }
             Self::PositionOverflow => f.write_str("DVI page position arithmetic overflowed"),
+            Self::Sink { message } => write!(f, "failed to write DVI output: {message}"),
+            Self::InconsistentFontResource { font_id } => write!(
+                f,
+                "DVI pages define incompatible resources for font number {font_id}"
+            ),
+            Self::Poisoned => f.write_str("DVI stream cannot continue after an earlier failure"),
         }
     }
 }
@@ -83,13 +94,83 @@ impl std::error::Error for DviError {}
 /// The writer is intentionally downstream-only: all DVI preamble data, page
 /// counters, dimensions, and font resources come from the artifact stream.
 pub fn write_dvi(pages: &[PageArtifact]) -> Result<Vec<u8>, DviError> {
-    DviWriter::new(pages)?.finish()
+    let mut writer = DviStreamWriter::new(Vec::new());
+    for page in pages {
+        writer.write_page(page)?;
+    }
+    writer.finish()
 }
 
-struct DviWriter<'a> {
-    pages: &'a [PageArtifact],
+/// Incremental DVI emitter that retains at most one encoded page buffer.
+pub struct DviStreamWriter<W: Write> {
+    writer: DviWriter<W>,
+    failed: bool,
+}
+
+impl<W: Write> DviStreamWriter<W> {
+    #[must_use]
+    pub fn new(sink: W) -> Self {
+        Self {
+            writer: DviWriter::new(sink),
+            failed: false,
+        }
+    }
+
+    pub fn write_page(&mut self, page: &PageArtifact) -> Result<(), DviError> {
+        if self.failed {
+            return Err(DviError::Poisoned);
+        }
+        let result = self.write_page_inner(page);
+        if result.is_err() {
+            self.failed = true;
+        }
+        result
+    }
+
+    fn write_page_inner(&mut self, page: &PageArtifact) -> Result<(), DviError> {
+        if self.writer.page_count == u16::MAX {
+            return Err(DviError::TooManyPages {
+                pages: usize::from(self.writer.page_count) + 1,
+            });
+        }
+        match (&self.writer.job_banner, self.writer.job_mag) {
+            (None, None) => {
+                self.writer.preamble(&page.job.banner, page.job.mag)?;
+                self.writer.job_banner = Some(page.job.banner.clone());
+                self.writer.job_mag = Some(page.job.mag);
+                self.writer.flush_buffer()?;
+            }
+            (Some(banner), Some(mag)) if banner == &page.job.banner && mag == page.job.mag => {}
+            _ => return Err(DviError::InconsistentJobInfo),
+        }
+        self.writer.page(page)?;
+        self.writer.page_count += 1;
+        self.writer.flush_buffer()
+    }
+
+    pub fn finish(mut self) -> Result<W, DviError> {
+        if self.failed {
+            return Err(DviError::Poisoned);
+        }
+        if self.writer.page_count == 0 {
+            return Err(DviError::NoPages);
+        }
+        self.writer.postamble()?;
+        self.writer.flush_buffer()?;
+        Ok(self.writer.sink)
+    }
+}
+
+struct DviWriter<W: Write> {
+    sink: W,
     bytes: Vec<u8>,
-    fonts: Vec<DefinedFont<'a>>,
+    committed_offset: usize,
+    fonts: BTreeMap<fonts::FontKey, DefinedFont>,
+    fonts_by_number: BTreeMap<u32, fonts::FontKey>,
+    page_fonts: BTreeMap<u32, crate::FontResource>,
+    job_banner: Option<String>,
+    job_mag: Option<i32>,
+    page_count: u16,
     previous_bop: i32,
     max_height_depth: i32,
     max_width: i32,
@@ -104,22 +185,18 @@ struct DviWriter<'a> {
     cur_s: i32,
 }
 
-impl<'a> DviWriter<'a> {
-    fn new(pages: &'a [PageArtifact]) -> Result<Self, DviError> {
-        let Some(first) = pages.first() else {
-            return Err(DviError::NoPages);
-        };
-        for page in pages {
-            if page.job.mag != first.job.mag || page.job.banner != first.job.banner {
-                return Err(DviError::InconsistentJobInfo);
-            }
-        }
-        let page_count = u16::try_from(pages.len())
-            .map_err(|_| DviError::TooManyPages { pages: pages.len() })?;
-        let mut writer = Self {
-            pages,
+impl<W: Write> DviWriter<W> {
+    fn new(sink: W) -> Self {
+        Self {
+            sink,
             bytes: Vec::new(),
-            fonts: Vec::new(),
+            committed_offset: 0,
+            fonts: BTreeMap::new(),
+            fonts_by_number: BTreeMap::new(),
+            page_fonts: BTreeMap::new(),
+            job_banner: None,
+            job_mag: None,
+            page_count: 0,
             previous_bop: -1,
             max_height_depth: 0,
             max_width: 0,
@@ -132,17 +209,20 @@ impl<'a> DviWriter<'a> {
             cur_v: Scaled::from_raw(0),
             dvi_f: None,
             cur_s: -1,
-        };
-        writer.preamble(&first.job.banner, first.job.mag)?;
-        debug_assert_eq!(page_count as usize, pages.len());
-        Ok(writer)
+        }
     }
 
-    fn finish(mut self) -> Result<Vec<u8>, DviError> {
-        for page in self.pages {
-            self.page(page)?;
-        }
-        self.postamble()?;
-        Ok(self.bytes)
+    fn flush_buffer(&mut self) -> Result<(), DviError> {
+        self.sink
+            .write_all(&self.bytes)
+            .map_err(|error| DviError::Sink {
+                message: error.to_string(),
+            })?;
+        self.committed_offset = self
+            .committed_offset
+            .checked_add(self.bytes.len())
+            .ok_or(DviError::OffsetOverflow { offset: usize::MAX })?;
+        self.bytes.clear();
+        Ok(())
     }
 }

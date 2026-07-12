@@ -5,7 +5,7 @@ use tex_exec::{Executor, try_execute_assignment};
 use tex_expand::{ExpansionHooks, NoopRecorder, get_x_token_with_hooks};
 use tex_lex::{InputSource, InputStack, MemoryInput};
 use tex_out::PageArtifact;
-use tex_out::dvi::{DviError, write_dvi};
+use tex_out::dvi::{DviError, DviStreamWriter};
 use tex_state::env::banks::IntParam;
 use tex_state::token::TracedTokenWord;
 use tex_state::{
@@ -294,15 +294,25 @@ pub fn dvi_from_artifacts(
     stores: &Universe,
     artifacts: &[ContentHash],
 ) -> Result<Vec<u8>, DviBuildError> {
-    let mut pages = Vec::with_capacity(artifacts.len());
+    write_dvi_from_artifacts(stores, artifacts, Vec::new())
+}
+
+/// Decodes, validates, emits, and drops each artifact before loading the next.
+pub fn write_dvi_from_artifacts<W: std::io::Write>(
+    stores: &Universe,
+    artifacts: &[ContentHash],
+    sink: W,
+) -> Result<W, DviBuildError> {
+    let mut writer = DviStreamWriter::new(sink);
     for &hash in artifacts {
         let bytes = stores
             .world()
             .read_artifact(hash)?
             .ok_or(DviBuildError::MissingArtifact(hash))?;
-        pages.push(PageArtifact::from_bytes(&bytes)?);
+        let page = PageArtifact::from_bytes(&bytes)?;
+        writer.write_page(&page)?;
     }
-    Ok(write_dvi(&pages)?)
+    Ok(writer.finish()?)
 }
 
 /// Runs in-memory TeX through the `umber run` executor setup.

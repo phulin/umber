@@ -9,11 +9,11 @@ use super::{
     opcodes::{DOWN1, POP, PUSH, PUT_RULE, RIGHT1, SET_RULE, XXX1, XXX4},
 };
 
-impl<'a> DviWriter<'a> {
+impl<W: std::io::Write> DviWriter<W> {
     pub(super) fn hlist_out(
         &mut self,
-        page: &'a PageArtifact,
-        this_box: &'a BoxNode,
+        page: &PageArtifact,
+        this_box: &BoxNode,
     ) -> Result<(), DviError> {
         let g_order = this_box.glue_order;
         let g_sign = this_box.glue_sign;
@@ -35,7 +35,7 @@ impl<'a> DviWriter<'a> {
                 } => {
                     self.synch_h()?;
                     self.synch_v()?;
-                    self.change_font(page, *font_id)?;
+                    self.change_font(*font_id)?;
                     self.set_char(*ch)?;
                     self.cur_h = add_scaled(self.cur_h, *width)?;
                     self.dvi_h = self.cur_h;
@@ -101,8 +101,8 @@ impl<'a> DviWriter<'a> {
 
     pub(super) fn vlist_out(
         &mut self,
-        page: &'a PageArtifact,
-        this_box: &'a BoxNode,
+        page: &PageArtifact,
+        this_box: &BoxNode,
     ) -> Result<(), DviError> {
         let g_order = this_box.glue_order;
         let g_sign = this_box.glue_sign;
@@ -182,8 +182,8 @@ impl<'a> DviWriter<'a> {
 
     fn output_box_in_hlist(
         &mut self,
-        page: &'a PageArtifact,
-        box_node: &'a BoxNode,
+        page: &PageArtifact,
+        box_node: &BoxNode,
         is_vlist: bool,
     ) -> Result<(), DviError> {
         if box_node.children.is_empty() {
@@ -209,8 +209,8 @@ impl<'a> DviWriter<'a> {
 
     fn output_box_in_vlist(
         &mut self,
-        page: &'a PageArtifact,
-        box_node: &'a BoxNode,
+        page: &PageArtifact,
+        box_node: &BoxNode,
         is_vlist: bool,
     ) -> Result<(), DviError> {
         if box_node.children.is_empty() {
@@ -310,7 +310,7 @@ impl<'a> DviWriter<'a> {
         }
     }
 
-    fn out_what(&mut self, page: &'a PageArtifact, effect_index: u32) -> Result<(), DviError> {
+    fn out_what(&mut self, page: &PageArtifact, effect_index: u32) -> Result<(), DviError> {
         let effect = page
             .effects
             .get(usize::try_from(effect_index).expect("u32 fits usize"))

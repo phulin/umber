@@ -1171,7 +1171,8 @@ Responsibility: page artifacts → bytes on disk. Strictly downstream.
   the file container structure (`pre`, page `bop`/`eop`, first-use `fnt_def`, `post`,
   `post_post`, and 223 padding) from committed artifacts, and traverses the
   committed box tree with TeX.web-style `hlist_out`/`vlist_out`, `movement()`
-  w/x/y/z optimization, font switches, rules, glyphs, and DVI specials.
+  w/x/y/z optimization, font switches, rules, glyphs, DVI specials, and leader
+  placement.
   Cumulative glue setting preserves TeX82's operation order: the exact packed
   ratio is converted to binary `real`, multiplied by the running glue total,
   clamped, and rounded before each movement delta is emitted.
@@ -1179,6 +1180,9 @@ Responsibility: page artifacts → bytes on disk. Strictly downstream.
   `FontId` load order, not artifact-local dense renumbering, so INITEX parity
   cases that load several sizes/families preserve reference font selection
   bytes.
+  Its sink-oriented writer decodes, validates, emits, and drops one page
+  artifact at a time; only global postamble data, indexed font definitions,
+  movement state, and the current page buffer remain resident.
   The `umber run file.tex --dvi out.dvi` CLI path is a thin downstream
   composition over shipped artifact ids: it reads committed artifact bytes
   from `World`, parses them as `tex-out` page artifacts, and invokes the DVI
