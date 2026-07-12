@@ -1,3 +1,5 @@
+use std::cmp::Reverse;
+
 use tex_arith::Scaled;
 
 use crate::{PageArtifact, PageNode};
@@ -115,7 +117,7 @@ impl<W: std::io::Write> DviWriter<W> {
         self.u16(total_pages);
 
         let mut defined_fonts: Vec<_> = self.fonts.values().cloned().collect();
-        defined_fonts.sort_by(|left, right| right.number.cmp(&left.number));
+        defined_fonts.sort_by_key(|defined| Reverse(defined.number));
         for defined in defined_fonts {
             self.fnt_def(defined.number, &defined.font)?;
         }
