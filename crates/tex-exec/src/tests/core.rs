@@ -42,6 +42,56 @@ fn nest_push_pop_and_summary_cover_all_modes() {
 }
 
 #[test]
+fn engine_checkpoint_restores_input_modes_and_universe_atomically() {
+    let mut stores = Universe::new();
+    let mut input = InputStack::new(MemoryInput::new("abc"));
+    let mut executor = Executor::new();
+    executor.nest_mut().push(Mode::Horizontal);
+    executor
+        .nest_mut()
+        .current_list_mut()
+        .push(Node::Penalty(17));
+    stores.set_count(3, 41);
+    let checkpoint = executor.checkpoint(&mut input, &mut stores);
+
+    executor
+        .nest_mut()
+        .current_list_mut()
+        .push(Node::Penalty(99));
+    stores.set_count(3, 99);
+    executor
+        .restore_checkpoint(&mut input, &mut stores, &checkpoint, |_, _, _| {
+            Ok::<_, ()>(MemoryInput::new("abc"))
+        })
+        .expect("resume-valid aggregate checkpoint");
+
+    assert_eq!(stores.count(3), 41);
+    assert_eq!(executor.nest().current_mode(), Mode::Horizontal);
+    assert_eq!(executor.nest().current_list().nodes(), &[Node::Penalty(17)]);
+    assert_eq!(input.summary(), *checkpoint.input_summary());
+}
+
+#[test]
+fn engine_checkpoint_hash_covers_mode_state_and_rejects_hash_only_restore() {
+    let mut stores = Universe::new();
+    let mut input = InputStack::new(MemoryInput::new(""));
+    let mut executor = Executor::new();
+    let vertical = executor.checkpoint(&mut input, &mut stores).state_hash();
+    executor.nest_mut().push(Mode::Horizontal);
+    let horizontal = executor.checkpoint(&mut input, &mut stores).state_hash();
+    assert_ne!(vertical, horizontal);
+
+    let hash_only =
+        stores.with_hash_only_checkpoints(|stores| executor.checkpoint(&mut input, stores));
+    let error = executor
+        .restore_checkpoint(&mut input, &mut stores, &hash_only, |_, _, _| {
+            Ok::<_, ()>(MemoryInput::new(""))
+        })
+        .expect_err("hash-only observation is not restartable");
+    assert!(matches!(error, EngineRestoreError::HashOnly));
+}
+
+#[test]
 fn mode_queries_are_backed_by_current_nest_level() {
     let mut executor = Executor::new();
     assert_eq!(

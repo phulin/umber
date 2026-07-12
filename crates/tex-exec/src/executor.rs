@@ -18,7 +18,7 @@ use crate::{DispatchAction, ExecError, ExecutionStats, ModeNest, assignments};
 /// Stomach interpreter state.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Executor {
-    nest: ModeNest,
+    pub(crate) nest: ModeNest,
 }
 
 impl Default for Executor {
