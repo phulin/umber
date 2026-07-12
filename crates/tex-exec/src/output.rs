@@ -402,11 +402,50 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
+    let mut transaction = crate::transaction::ExecutionTransaction::begin(nest, stores);
+    let mut replay = None;
+    let result = {
+        let (nest, stores) = transaction.parts();
+        run_output_routine_inner(
+            nest,
+            input,
+            stores,
+            recorder,
+            hooks,
+            stats,
+            output,
+            &mut replay,
+        )
+    };
+    if result.is_ok() {
+        transaction.commit();
+    } else if let Some(replay) = replay {
+        let _ = input.abort_token_list_replay(replay);
+    }
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_output_routine_inner<S, R, H>(
+    nest: &mut ModeNest,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    recorder: &mut R,
+    hooks: &mut H,
+    stats: &mut ExecutionStats,
+    output: tex_state::ids::TokenListId,
+    replay: &mut Option<tex_lex::TokenListReplayMarker>,
+) -> Result<(), ExecError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
     stores.enter_group_with_kind(GroupKind::Simple);
     nest.push(Mode::InternalVertical);
     nest.current_list_mut().set_prev_depth(IGNORE_DEPTH);
     let output_frame = delimited_output_tokens(stores, output);
-    input.push_token_list(output_frame, TokenListReplayKind::OutputRoutine);
+    *replay = Some(input.push_token_list(output_frame, TokenListReplayKind::OutputRoutine));
 
     match run_main_control_until(
         nest,

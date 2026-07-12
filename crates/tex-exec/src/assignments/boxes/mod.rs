@@ -117,21 +117,24 @@ where
 {
     let index = scan_register_index(input, stores, hooks, context)?;
     skip_optional_equals_x(input, stores, hooks)?;
-    let mut transaction = stores.begin_box_build();
-    let value = match scan_box_value(Some(nest), input, &mut transaction, hooks, context) {
+    let mut execution = crate::transaction::ExecutionTransaction::begin(nest, stores);
+    let (nest, stores) = execution.parts();
+    let mut construction = stores.begin_box_build();
+    let value = match scan_box_value(Some(nest), input, &mut construction, hooks, context) {
         Ok(Some(ScannedBoxValue::Fresh(node))) => {
-            let list = transaction.freeze_node_list(&[node]);
+            let list = construction.freeze_node_list(&[node]);
             Some(list)
         }
         Ok(Some(ScannedBoxValue::Shared(node))) => {
-            let node = transaction.clone_node_to_epoch(node);
-            let list = transaction.freeze_node_list(&[node]);
+            let node = construction.clone_node_to_epoch(node);
+            let list = construction.freeze_node_list(&[node]);
             Some(list)
         }
         Ok(None) => None,
         Err(err) => return Err(err),
     };
-    transaction.finish(index, value, global);
+    construction.finish(index, value, global);
+    execution.commit();
     Ok(())
 }
 

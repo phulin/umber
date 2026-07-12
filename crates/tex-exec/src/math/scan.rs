@@ -149,6 +149,29 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
+    let mut transaction = crate::transaction::ExecutionTransaction::begin(nest, stores);
+    let result = {
+        let (nest, stores) = transaction.parts();
+        scan_math_group_after_open_inner(nest, input, stores, recorder, hooks)
+    };
+    if result.is_ok() {
+        transaction.commit();
+    }
+    result
+}
+
+fn scan_math_group_after_open_inner<S, R, H>(
+    nest: &mut ModeNest,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<tex_state::ids::NodeListId, ExecError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
     stores.enter_group_with_kind(GroupKind::Simple);
     nest.push(Mode::Math);
     loop {
@@ -539,11 +562,13 @@ where
             context: "\\vcenter",
         });
     }
+    let mut inner = ModeNest::new();
+    let mut transaction = crate::transaction::ExecutionTransaction::begin(&mut inner, stores);
+    let (inner, stores) = transaction.parts();
     stores.enter_group_with_kind(GroupKind::Box);
     let box_group_depth = stores.execution_group_depth();
-    let mut inner = ModeNest::new();
     inner.push(Mode::InternalVertical);
-    assignments::scan_box_group(&mut inner, input, stores, hooks, box_group_depth)?;
+    assignments::scan_box_group(inner, input, stores, hooks, box_group_depth)?;
     let level = inner.pop()?;
     let children = stores.freeze_node_list(level.list().nodes());
     let vbox = Node::VList(
@@ -557,6 +582,7 @@ where
     );
     let boxed = stores.freeze_node_list(&[vbox]);
     crate::leave_group(input, stores, GroupKind::Box)?;
+    transaction.commit();
     Ok(MathField::SubBox(boxed))
 }
 

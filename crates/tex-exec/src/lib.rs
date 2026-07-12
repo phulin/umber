@@ -20,6 +20,7 @@ mod output;
 mod packing_params;
 mod page_builder;
 mod splitting;
+mod transaction;
 mod vertical;
 
 pub use assignments::{install_unexpandable_primitives, try_execute_assignment};

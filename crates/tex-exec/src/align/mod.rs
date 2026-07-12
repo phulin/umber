@@ -36,16 +36,22 @@ where
     H: ExpansionHooks<S>,
 {
     let suspended = input.suspend_alignment_cell();
+    let mut transaction = crate::transaction::ExecutionTransaction::begin(nest, stores);
     let result = (|| {
+        let (nest, stores) = transaction.parts();
         let state = scan_preamble(primitive, context, input, stores, hooks)?;
         execution::execute_alignment(state, nest, input, stores, recorder, hooks)
     })();
     match result {
         Ok(()) => {
             input.resume_alignment_cell(suspended);
+            transaction.commit();
             Ok(())
         }
-        Err(error) => Err(error),
+        Err(error) => {
+            input.abort_alignment_and_resume(suspended);
+            Err(error)
+        }
     }
 }
 
@@ -63,15 +69,21 @@ where
     H: ExpansionHooks<S>,
 {
     let suspended = input.suspend_alignment_cell();
+    let mut transaction = crate::transaction::ExecutionTransaction::begin(nest, stores);
     let result = (|| {
+        let (nest, stores) = transaction.parts();
         let state = scan_preamble(UnexpandablePrimitive::HAlign, context, input, stores, hooks)?;
         execution::execute_alignment_to_nodes(state, nest, input, stores, recorder, hooks)
     })();
     match result {
         Ok(nodes) => {
             input.resume_alignment_cell(suspended);
+            transaction.commit();
             Ok(nodes)
         }
-        Err(error) => Err(error),
+        Err(error) => {
+            input.abort_alignment_and_resume(suspended);
+            Err(error)
+        }
     }
 }

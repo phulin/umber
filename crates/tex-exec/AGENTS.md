@@ -50,6 +50,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/packing_params.rs`: execution-side snapshots of packing-related integer and dimension parameters before calling pure `tex-typeset` kernels.
 - `src/page_builder.rs`: TeX.web page-builder accounting for outer vertical contributions, break costs, and pending fire-up records.
 - `src/splitting.rs`: shared vertical split helpers for insertion and `\vsplit` remainder pruning/repacking.
+- `src/transaction.rs`: lifetime-bound recursive execution transactions that restore mode and Universe roots unless explicitly committed.
 - `src/tests.rs`: crate-internal test harness module and shared imports.
 - `src/tests/assignments.rs`: tests for registers, definitions, arithmetic, token assignments, and assignments.
 - `src/tests/core.rs`: tests for mode nest behavior, executor hooks, dispatch, and core errors.
@@ -62,6 +63,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/tests/support.rs`: shared test helpers for seeded fonts, terminal output, and meaning lookup.
 - `tests/it.rs`: external-boundary compile-fail coverage for the public checkpoint API.
 - `tests/ui/engine_checkpoint_forgery_forbidden.rs`: compile-fail fixture proving callers cannot forge named engine checkpoints.
+- `tests/ui/execution_transaction_private.rs`: compile-fail fixture proving live-stack transactions cannot escape as public capabilities.
 - `src/vertical.rs`: vertical-list appends, baseline skip insertion, prevdepth, and list contribution helpers.
 
 ## Validation

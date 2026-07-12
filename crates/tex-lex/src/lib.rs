@@ -921,6 +921,15 @@ impl<S> InputStack<S> {
         }
     }
 
+    /// Unwinds nested interception state and restores a suspended outer cell.
+    #[doc(hidden)]
+    pub fn abort_alignment_and_resume(&mut self, suspended: AlignmentCellSuspension) {
+        self.alignment_cells.clear();
+        if let Some(cell) = suspended.0 {
+            self.alignment_cells.push(cell);
+        }
+    }
+
     /// Applies the alignment-sensitive part of TeX82 `get_next`.
     ///
     /// Returns `true` when the token was a cell terminator and has been
@@ -1932,6 +1941,31 @@ impl<S> InputStack<S> {
             }
         }
         matches
+    }
+
+    /// Removes a scoped replay frame and every nested frame it introduced.
+    ///
+    /// This is the input-stack half of recursive execution rollback. It does
+    /// not rewind source frames that predate the replay capability.
+    pub fn abort_token_list_replay(&mut self, marker: TokenListReplayMarker) -> bool {
+        let Some(target) = self.frames.iter_indexed().find_map(|(index, frame)| {
+            matches!(frame, InputFrame::TokenList(frame) if frame.replay_marker == Some(marker))
+                .then_some(index)
+        }) else {
+            return false;
+        };
+        let indices = self
+            .frames
+            .iter_indexed()
+            .filter_map(|(index, _)| (index >= target).then_some(index))
+            .collect::<Vec<_>>();
+        for index in indices.into_iter().rev() {
+            let removed = self.remove_frame(index);
+            if let InputFrame::TokenList(frame) = removed {
+                self.retire_token_list_frame(frame);
+            }
+        }
+        true
     }
 
     #[must_use]
