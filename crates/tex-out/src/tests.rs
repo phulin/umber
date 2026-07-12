@@ -30,7 +30,7 @@ fn artifact_bytes_and_hash_are_deterministic() {
 
     assert_eq!(first_bytes, second_bytes);
     assert_eq!(
-        ContentHash::from_bytes(&first_bytes),
+        ContentHash::for_domain(crate::ContentDomain::Artifact, &first_bytes),
         first.content_hash().expect("first artifact hashes")
     );
     assert_eq!(first.content_hash(), second.content_hash());

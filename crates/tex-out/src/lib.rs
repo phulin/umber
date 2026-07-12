@@ -31,17 +31,16 @@
 
 mod binary;
 pub mod dvi;
-mod hash;
 mod model;
 
 #[cfg(test)]
 mod tests;
 
 pub use binary::{ArtifactCodecLimits, CodecLimitKind, ParseError, SerializeError};
-pub use hash::ContentHash;
 pub use model::{
     ArtifactValidationError, ArtifactValidationLimits, BoxNode, DEFAULT_BANNER, DiscKind,
     EffectSink, FontResource, GlueKind, GlueOrder, GlueSetRatio, GlueSign, GlueSpec, JobInfo,
     KernKind, LeaderPayload, PageArtifact, PageArtifactBuilder, PageEffect, PageNode, PageToken,
     TokenCatcode, UnvalidatedPageArtifact,
 };
+pub use tex_content::{ContentDomain, ContentHash, ContentIdentity};

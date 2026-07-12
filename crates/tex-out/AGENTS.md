@@ -11,7 +11,7 @@ Use this crate for stable, driver-facing artifact structures and serialization c
 ## File Map
 
 - `AGENTS.md`: Crate-local guidance, boundaries, validation expectations, and this file map.
-- `Cargo.toml`: Crate manifest declaring the `tex-out` package, `tex-arith` dependency, and workspace lint settings.
+- `Cargo.toml`: Crate manifest declaring shared arithmetic and content-identity dependencies.
 - `src/binary.rs`: Versioned compact binary writer/reader for page artifacts plus parse error types.
 - `src/dvi.rs`: DVI writer entry point, shared writer state, error type, and submodule wiring.
 - `src/bin/texout-dvitype.rs`: Small host-side DVI disassembly binary for parity triage.
@@ -26,7 +26,6 @@ Use this crate for stable, driver-facing artifact structures and serialization c
 - `src/dvi/opcodes.rs`: Private DVI opcode and file unit constants shared by the writer modules and tests.
 - `src/dvi/tests.rs`: Byte-level DVI writer tests for file structure, traversal, movement optimization, rules, fonts, glue, and specials.
 - `src/dvi/traversal.rs`: TeX.web-style committed page traversal, hlist/vlist output, rules, specials, and movement synchronization.
-- `src/hash.rs`: Stable 32-byte content hash type and deterministic byte hashing helpers.
 - `src/lib.rs`: Crate documentation, module wiring, tests module registration, and public re-exports.
 - `src/model.rs`: Detached page artifact, font resource, node, glue, kern, and output effect data model.
 - `src/tests.rs`: Round-trip, deterministic byte/hash, and binary rejection tests for artifact serialization.

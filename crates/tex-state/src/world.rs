@@ -18,71 +18,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+pub use tex_content::{ContentDomain, ContentHash, ContentIdentity};
 
 /// TeX's 16 read/write stream slots.
 pub const STREAM_SLOT_COUNT: usize = 16;
-
-/// Stable content hash for bytes consumed through `World`.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct ContentHash([u8; 32]);
-
-impl ContentHash {
-    /// Hashes bytes with a small deterministic content-addressing hash.
-    ///
-    /// f26.2 needs stable addressing but not a cryptographic dependency.
-    #[must_use]
-    pub fn from_bytes(bytes: &[u8]) -> Self {
-        const OFFSETS: [u64; 4] = [
-            0xcbf2_9ce4_8422_2325,
-            0x8422_2325_cbf2_9ce4,
-            0x9e37_79b9_7f4a_7c15,
-            0x94d0_49bb_1331_11eb,
-        ];
-        const PRIMES: [u64; 4] = [
-            0x0000_0100_0000_01b3,
-            0x0000_0100_0000_01d3,
-            0x0000_0100_0000_01f3,
-            0x0000_0100_0000_0213,
-        ];
-
-        let mut words = OFFSETS;
-        for (index, &byte) in bytes.iter().enumerate() {
-            for lane in 0..4 {
-                words[lane] ^=
-                    u64::from(byte).wrapping_add(((index as u64) << (lane * 7)) | lane as u64);
-                words[lane] = words[lane].wrapping_mul(PRIMES[lane]);
-                words[lane] ^= words[lane].rotate_right(17 + lane as u32);
-            }
-        }
-        for word in &mut words {
-            *word ^= bytes.len() as u64;
-            *word = splitmix64(*word);
-        }
-
-        let mut out = [0; 32];
-        for (chunk, word) in out.chunks_exact_mut(8).zip(words) {
-            chunk.copy_from_slice(&word.to_le_bytes());
-        }
-        Self(out)
-    }
-
-    /// Returns the raw 32-byte hash.
-    #[must_use]
-    pub const fn bytes(self) -> [u8; 32] {
-        self.0
-    }
-
-    /// Returns a lowercase hexadecimal encoding.
-    #[must_use]
-    pub fn hex(self) -> String {
-        let mut out = String::with_capacity(64);
-        for byte in self.0 {
-            use fmt::Write as _;
-            write!(&mut out, "{byte:02x}").expect("writing to String cannot fail");
-        }
-        out
-    }
-}
 
 /// Bytes returned from a content-addressed `World` read.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -913,7 +852,7 @@ impl World {
     /// content-addressed object in the configured artifact store.
     pub(crate) fn store_artifact(&mut self, bytes: &[u8]) -> Result<ContentHash, WorldError> {
         static NEXT_TEMP_ARTIFACT: AtomicU64 = AtomicU64::new(0);
-        let hash = ContentHash::from_bytes(bytes);
+        let hash = ContentHash::for_domain(ContentDomain::Artifact, bytes);
         match &mut self.backend {
             WorldBackend::Real { artifact_dir } => {
                 std::fs::create_dir_all(&artifact_dir).map_err(|err| {
@@ -969,7 +908,10 @@ impl World {
             WorldBackend::Real { artifact_dir } => {
                 let path = artifact_dir.join(hash.hex());
                 match std::fs::read(&path) {
-                    Ok(bytes) => Ok(Some(bytes)),
+                    Ok(bytes) => {
+                        verify_artifact_identity(hash, &bytes, Some(path))?;
+                        Ok(Some(bytes))
+                    }
                     Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
                     Err(err) => Err(WorldError::new(
                         "read artifact",
@@ -978,7 +920,13 @@ impl World {
                     )),
                 }
             }
-            WorldBackend::Memory(memory) => Ok(memory.artifacts.get(&hash).cloned()),
+            WorldBackend::Memory(memory) => {
+                let Some(bytes) = memory.artifacts.get(&hash).cloned() else {
+                    return Ok(None);
+                };
+                verify_artifact_identity(hash, &bytes, None)?;
+                Ok(Some(bytes))
+            }
         }
     }
 
@@ -1514,6 +1462,26 @@ impl Default for World {
 enum WorldBackend {
     Real { artifact_dir: PathBuf },
     Memory(MemoryBackend),
+}
+
+fn verify_artifact_identity(
+    expected: ContentHash,
+    bytes: &[u8],
+    path: Option<PathBuf>,
+) -> Result<(), WorldError> {
+    if expected.matches_current_or_legacy(ContentDomain::Artifact, bytes) {
+        return Ok(());
+    }
+    let actual = ContentHash::for_domain(ContentDomain::Artifact, bytes);
+    Err(WorldError::new(
+        "verify artifact identity",
+        path,
+        format!(
+            "content identity mismatch: requested {}, actual {}",
+            expected.hex(),
+            actual.hex()
+        ),
+    ))
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

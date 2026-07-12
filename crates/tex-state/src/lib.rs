@@ -49,9 +49,10 @@ pub use universe::{
     ShipoutTransaction, Snapshot, Universe,
 };
 pub use world::{
-    ContentHash, EffectPos, EffectRecord, EffectRetrySafety, ExecutionTraceEvent, FileContent,
-    InputRecord, InputRecordId, JobClock, PrintSink, ReadTarget, RngState, ShellEscapePolicy,
-    ShellEscapeRecord, StreamBufState, StreamSlot, World, WorldError, WorldSnapshot,
+    ContentDomain, ContentHash, ContentIdentity, EffectPos, EffectRecord, EffectRetrySafety,
+    ExecutionTraceEvent, FileContent, InputRecord, InputRecordId, JobClock, PrintSink, ReadTarget,
+    RngState, ShellEscapePolicy, ShellEscapeRecord, StreamBufState, StreamSlot, World, WorldError,
+    WorldSnapshot,
 };
 
 #[cfg(test)]

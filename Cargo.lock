@@ -431,6 +431,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "tex-content"
+version = "0.1.0"
+
+[[package]]
 name = "tex-exec"
 version = "0.1.0"
 dependencies = [
@@ -473,6 +477,7 @@ name = "tex-out"
 version = "0.1.0"
 dependencies = [
  "tex-arith",
+ "tex-content",
 ]
 
 [[package]]
@@ -486,6 +491,7 @@ dependencies = [
  "tempfile",
  "test-support",
  "tex-arith",
+ "tex-content",
  "tex-fonts",
  "unicode-width",
 ]

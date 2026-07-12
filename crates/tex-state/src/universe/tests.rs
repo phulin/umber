@@ -15,7 +15,9 @@ use crate::provenance::{OriginRecord, SourceOrigin, SyntheticOriginKind};
 use crate::scaled::{GlueSetRatio, Scaled};
 use crate::source_map::{SourceDescriptor, SourceMapError};
 use crate::token::{Catcode, OriginId, Token, TracedTokenWord};
-use crate::world::{ContentHash, EffectRecord, JobClock, PrintSink, StreamSlot, World};
+use crate::world::{
+    ContentDomain, ContentHash, EffectRecord, JobClock, PrintSink, StreamSlot, World,
+};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
@@ -1366,7 +1368,10 @@ fn shipout_commit_flushes_releases_then_checkpoints() {
         .commit(b"detached page artifact", effect_pos)
         .expect("shipout commit succeeds");
 
-    assert_eq!(hash, ContentHash::from_bytes(b"detached page artifact"));
+    assert_eq!(
+        hash,
+        ContentHash::for_domain(ContentDomain::Artifact, b"detached page artifact")
+    );
     assert!(universe.world().effect_records().is_empty());
     assert_eq!(
         universe.world().memory_terminal_output(),

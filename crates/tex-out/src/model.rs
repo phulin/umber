@@ -42,7 +42,10 @@ impl PageArtifact {
     }
 
     pub fn content_hash(&self) -> Result<ContentHash, crate::SerializeError> {
-        Ok(ContentHash::from_bytes(&self.to_bytes()?))
+        Ok(ContentHash::for_domain(
+            crate::ContentDomain::Artifact,
+            &self.to_bytes()?,
+        ))
     }
 
     #[cfg(test)]

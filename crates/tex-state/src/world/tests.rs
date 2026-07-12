@@ -143,7 +143,10 @@ fn memory_world_stores_artifacts_by_content_hash() {
     let first = world.store_artifact(bytes).expect("store artifact");
     let second = world.store_artifact(bytes).expect("store same artifact");
 
-    assert_eq!(first, ContentHash::from_bytes(bytes));
+    assert_eq!(
+        first,
+        ContentHash::for_domain(ContentDomain::Artifact, bytes)
+    );
     assert_eq!(first, second);
     assert_eq!(
         world.read_artifact(first).expect("read artifact"),
@@ -164,6 +167,38 @@ fn real_world_stores_artifacts_in_configured_directory() {
     assert_eq!(std::fs::read(&path).expect("artifact file"), bytes);
     assert_eq!(
         world.read_artifact(hash).expect("read artifact"),
+        Some(bytes.to_vec())
+    );
+}
+
+#[test]
+fn artifact_reads_verify_requested_identity_before_returning_bytes() {
+    let temp_dir = tempfile::tempdir().expect("temp dir");
+    let artifact_dir = temp_dir.path().join("artifacts");
+    let mut world = World::real_with_artifact_dir(&artifact_dir);
+    let hash = world
+        .store_artifact(b"committed page")
+        .expect("store artifact");
+    std::fs::write(artifact_dir.join(hash.hex()), b"corrupt page").expect("corrupt artifact");
+
+    let error = world
+        .read_artifact(hash)
+        .expect_err("corruption is rejected");
+    assert!(error.to_string().contains("content identity mismatch"));
+}
+
+#[test]
+fn artifact_reads_accept_explicit_legacy_identity_policy() {
+    let temp_dir = tempfile::tempdir().expect("temp dir");
+    let artifact_dir = temp_dir.path().join("artifacts");
+    std::fs::create_dir_all(&artifact_dir).expect("create artifact dir");
+    let bytes = b"legacy page";
+    let legacy = ContentHash::legacy(bytes);
+    std::fs::write(artifact_dir.join(legacy.hex()), bytes).expect("write legacy artifact");
+    let world = World::real_with_artifact_dir(&artifact_dir);
+
+    assert_eq!(
+        world.read_artifact(legacy).expect("read legacy artifact"),
         Some(bytes.to_vec())
     );
 }
