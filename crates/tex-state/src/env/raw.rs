@@ -26,7 +26,7 @@ impl Env {
             BankTag::Dimen => self.restore_register(cell.index(), word, RegisterBank::Dimen),
             BankTag::Skip => self.restore_register(cell.index(), word, RegisterBank::Skip),
             BankTag::Toks => self.restore_register(cell.index(), word, RegisterBank::Toks),
-            BankTag::Box => self.restore_register(cell.index(), word, RegisterBank::Box),
+            BankTag::Box => self.boxes.restore_value(u16_index(cell.index()), word),
             BankTag::Muskip => self.restore_register(cell.index(), word, RegisterBank::Muskip),
             BankTag::IntParam => self.int_params.restore_word(u16_index(cell.index()), word),
             BankTag::DimenParam => self
@@ -149,7 +149,9 @@ impl Env {
             .for_each_non_default_word(BankTag::Dimen, &mut f);
         self.skips.for_each_non_default_word(BankTag::Skip, &mut f);
         self.toks.for_each_non_default_word(BankTag::Toks, &mut f);
-        self.boxes.for_each_non_default_word(BankTag::Box, &mut f);
+        self.boxes.for_each_non_default_word(|index, word| {
+            f(CellId::new(BankTag::Box, u32::from(index)), word)
+        });
         self.muskips
             .for_each_non_default_word(BankTag::Muskip, &mut f);
         self.overflow_counts
@@ -160,8 +162,6 @@ impl Env {
             .for_each_non_default_word(BankTag::Skip, &mut f);
         self.overflow_toks
             .for_each_non_default_word(BankTag::Toks, &mut f);
-        self.overflow_boxes
-            .for_each_non_default_word(BankTag::Box, &mut f);
         self.overflow_muskips
             .for_each_non_default_word(BankTag::Muskip, &mut f);
         self.int_params
@@ -260,7 +260,6 @@ impl Env {
                 RegisterBank::Dimen => self.dimens.restore_word(index, word),
                 RegisterBank::Skip => self.skips.restore_word(index, word),
                 RegisterBank::Toks => self.toks.restore_word(index, word),
-                RegisterBank::Box => self.boxes.restore_word(index, word),
                 RegisterBank::Muskip => self.muskips.restore_word(index, word),
             }
         } else {
@@ -269,7 +268,6 @@ impl Env {
                 RegisterBank::Dimen => self.overflow_dimens.restore_word(index, word),
                 RegisterBank::Skip => self.overflow_skips.restore_word(index, word),
                 RegisterBank::Toks => self.overflow_toks.restore_word(index, word),
-                RegisterBank::Box => self.overflow_boxes.restore_word(index, word),
                 RegisterBank::Muskip => self.overflow_muskips.restore_word(index, word),
             }
         }

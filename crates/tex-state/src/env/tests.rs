@@ -52,8 +52,9 @@ fn first_write_per_epoch_coalesces_and_keeps_first_new_value() {
     env.set(symbol, Meaning::CharGiven('x'));
 
     assert_eq!(env.get(symbol), Meaning::CharGiven('x'));
+    let entries = env.journal_entries_since(start);
     assert_eq!(
-        env.journal_entries_since(start),
+        entries,
         &[Entry::Undo(UndoRec::new(
             CellId::new(BankTag::Meaning, 3),
             Meaning::Undefined.encode(),
@@ -72,8 +73,9 @@ fn write_in_later_epoch_records_again() {
     env.bump_epoch();
     env.set(symbol, Meaning::CharGiven('y'));
 
+    let entries = env.journal_entries_since(start);
     assert_eq!(
-        env.journal_entries_since(start),
+        entries,
         &[
             Entry::Undo(UndoRec::new(
                 CellId::new(BankTag::Meaning, 8),
@@ -216,6 +218,70 @@ fn cached_group_boundaries_survive_deep_journals_clone_and_rollback() {
 }
 
 #[test]
+fn box_slots_restore_owner_and_value_across_nested_local_and_global_writes() {
+    for index in [7, 300] {
+        let root = NodeListId::testing_survivor(1, 1, 0);
+        let outer = NodeListId::testing_survivor(2, 1, 0);
+        let inner = NodeListId::testing_survivor(3, 1, 0);
+        let global = NodeListId::testing_survivor(4, 1, 0);
+        let mut env = Env::new();
+        env.set_box_reg_global(index, Some(root));
+
+        env.enter_group();
+        env.set_box_reg(index, Some(outer));
+        assert!(env.box_reg_is_local_to_current_group(index));
+        env.enter_group();
+        env.set_box_reg(index, Some(inner));
+        assert!(env.box_reg_is_local_to_current_group(index));
+        let _ = env.leave_group();
+        assert_eq!(env.box_reg(index), Some(outer));
+        assert!(env.box_reg_is_local_to_current_group(index));
+
+        env.enter_group();
+        env.set_box_reg_global(index, Some(global));
+        assert!(!env.box_reg_is_local_to_current_group(index));
+        let _ = env.leave_group();
+        assert_eq!(env.box_reg(index), Some(global));
+        let _ = env.leave_group();
+        assert_eq!(env.box_reg(index), Some(global));
+    }
+}
+
+#[test]
+fn box_checkpoint_rollback_restores_coalescing_cursor_for_same_depth_reuse() {
+    let mut env = Env::new();
+    let first = NodeListId::testing_survivor(1, 1, 0);
+    let discarded = NodeListId::testing_survivor(2, 1, 0);
+    let replacement = NodeListId::testing_survivor(3, 1, 0);
+    env.enter_group();
+    env.set_box_reg(9, Some(first));
+    let snapshot = env.checkpoint();
+    env.set_box_reg(9, Some(discarded));
+    env.rollback_to(snapshot);
+    assert_eq!(env.box_reg(9), Some(first));
+    assert!(env.box_reg_is_local_to_current_group(9));
+    env.set_box_reg(9, Some(replacement));
+    assert_eq!(env.box_reg(9), Some(replacement));
+    let _ = env.leave_group();
+    assert_eq!(env.box_reg(9), None);
+}
+
+#[test]
+fn cloned_box_slots_and_journals_diverge_without_cross_timeline_cursors() {
+    let mut env = Env::new();
+    env.enter_group();
+    env.set_box_reg(300, Some(NodeListId::testing_survivor(1, 1, 0)));
+    let mut fork = env.clone();
+    fork.set_box_reg(300, Some(NodeListId::testing_survivor(2, 1, 0)));
+    env.set_box_reg(300, Some(NodeListId::testing_survivor(3, 1, 0)));
+    assert_ne!(env.box_reg(300), fork.box_reg(300));
+    let _ = env.leave_group();
+    let _ = fork.leave_group();
+    assert_eq!(env.box_reg(300), None);
+    assert_eq!(fork.box_reg(300), None);
+}
+
+#[test]
 fn dense_register_typed_api_round_trips_boundary_and_signed_values() {
     let mut env = Env::new();
 
@@ -249,21 +315,27 @@ fn dense_register_journal_records_use_bank_tags_and_encoded_words() {
     env.set_toks(5, TokenListId::new(44));
     env.set_box_reg(6, Some(NodeListId::testing_survivor(8, 55, 0)));
 
+    let entries = env.journal_entries_since(start);
     assert_eq!(
-        env.journal_entries_since(start),
+        &entries[..5],
         &[
             undo(BankTag::Count, 1, 0, u64::from((-1_i32) as u32)),
             undo(BankTag::Dimen, 2, 0, u64::from((-2_i32) as u32)),
             undo(BankTag::Skip, 3, 0, 33),
             undo(BankTag::Muskip, 4, 0, 34),
             undo(BankTag::Toks, 5, 0, 44),
-            undo(
-                BankTag::Box,
-                6,
-                u64::MAX,
-                NodeListId::encode_box_word(Some(NodeListId::testing_survivor(8, 55, 0))),
-            ),
         ]
+    );
+    let Entry::BoxUndo(id) = entries[5] else {
+        panic!("box write must use the specialized journal arena");
+    };
+    let rec = env.box_undo(id);
+    assert_eq!(rec.index(), 6);
+    assert!(!rec.is_global());
+    assert_eq!(rec.old().value(), u64::MAX);
+    assert_eq!(
+        rec.new_value().value(),
+        NodeListId::encode_box_word(Some(NodeListId::testing_survivor(8, 55, 0)))
     );
 }
 
@@ -344,7 +416,7 @@ fn sparse_read_before_write_returns_default_without_allocating_page() {
     assert_eq!(env.count(300), 0);
     assert!(!env.overflow_counts.has_page_for(300));
     assert_eq!(env.box_reg(300), None);
-    assert!(!env.overflow_boxes.has_page_for(300));
+    assert!(!env.boxes.has_page_for(300));
 }
 
 #[test]

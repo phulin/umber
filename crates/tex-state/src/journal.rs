@@ -5,6 +5,7 @@
 //! truncation, and marker lookup.
 
 use crate::cell::CellId;
+use crate::env::box_bank::BoxSlot;
 use crate::env::group::GroupKind;
 use crate::ids::SnapshotId;
 
@@ -12,7 +13,45 @@ use crate::ids::SnapshotId;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Entry {
     Undo(UndoRec),
+    BoxUndo(BoxUndoId),
     Marker(Marker),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct BoxUndoId(u32);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct BoxUndoRec {
+    index: u16,
+    global: bool,
+    old: BoxSlot,
+    new: BoxSlot,
+}
+
+impl BoxUndoRec {
+    pub(crate) const fn new(index: u16, global: bool, old: BoxSlot, new: BoxSlot) -> Self {
+        Self {
+            index,
+            global,
+            old,
+            new,
+        }
+    }
+    pub(crate) const fn index(self) -> u16 {
+        self.index
+    }
+    pub(crate) const fn is_global(self) -> bool {
+        self.global
+    }
+    pub(crate) const fn old(self) -> BoxSlot {
+        self.old
+    }
+    pub(crate) const fn new_value(self) -> BoxSlot {
+        self.new
+    }
+    pub(crate) fn with_new_value(self, new: BoxSlot) -> Self {
+        Self { new, ..self }
+    }
 }
 
 /// A barrier undo+redo record for one environment cell.
@@ -53,11 +92,6 @@ impl UndoRec {
     pub(crate) const fn new_value(self) -> u64 {
         self.new
     }
-
-    #[must_use]
-    pub(crate) const fn with_new_value(self, new: u64) -> Self {
-        Self { new, ..self }
-    }
 }
 
 /// Structural journal markers.
@@ -93,6 +127,7 @@ impl JournalPos {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Journal {
     entries: Vec<Entry>,
+    box_undos: Vec<BoxUndoRec>,
 }
 
 impl Journal {
@@ -109,16 +144,36 @@ impl Journal {
         pos
     }
 
-    /// Replaces the forward value of an existing undo entry.
-    pub(crate) fn replace_undo_new_value(&mut self, pos: JournalPos, new: u64) {
+    pub(crate) fn push_box_undo(&mut self, rec: BoxUndoRec) -> (BoxUndoRec, JournalPos) {
+        let pos = self.pos();
+        let id = BoxUndoId(u32_len(
+            self.box_undos.len(),
+            "box undo arena exceeds u32 entries",
+        ));
+        self.box_undos.push(rec);
+        self.entries.push(Entry::BoxUndo(id));
+        (rec, pos)
+    }
+
+    pub(crate) fn box_undo(&self, id: BoxUndoId) -> BoxUndoRec {
+        self.box_undos[id.0 as usize]
+    }
+
+    pub(crate) fn replace_box_new(&mut self, pos: JournalPos, new: BoxSlot) {
         let index = checked_pos(pos, self.entries.len());
-        let Some(entry) = self.entries.get_mut(index) else {
-            panic!("journal position does not name an undo entry");
+        let Entry::BoxUndo(id) = self.entries[index] else {
+            panic!("journal position does not name a box undo entry");
         };
-        let Entry::Undo(rec) = entry else {
-            panic!("journal position does not name an undo entry");
-        };
+        let rec = &mut self.box_undos[id.0 as usize];
         *rec = rec.with_new_value(new);
+    }
+
+    pub(crate) fn box_undo_len(&self) -> u32 {
+        u32_len(self.box_undos.len(), "box undo arena exceeds u32 entries")
+    }
+
+    pub(crate) fn truncate_box_undos(&mut self, len: u32) {
+        self.box_undos.truncate(len as usize);
     }
 
     /// Appends a structural marker.

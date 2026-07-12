@@ -285,11 +285,18 @@ impl Stores {
             .iter()
             .enumerate()
         {
-            let Entry::Undo(rec) = entry else {
-                continue;
-            };
-            let cell = canonical_cell(rec.cell());
-            first_old.push((cell, position, rec.old()));
+            match entry {
+                Entry::Undo(rec) => {
+                    let cell = canonical_cell(rec.cell());
+                    first_old.push((cell, position, rec.old()));
+                }
+                Entry::BoxUndo(id) => {
+                    let rec = self.env.box_undo(*id);
+                    let cell = CellId::new(crate::cell::BankTag::Box, u32::from(rec.index()));
+                    first_old.push((cell, position, rec.old().value()));
+                }
+                Entry::Marker(_) => {}
+            }
         }
         first_old.sort_unstable_by_key(|&(cell, position, _)| (cell, position));
         first_old.dedup_by_key(|entry| entry.0);

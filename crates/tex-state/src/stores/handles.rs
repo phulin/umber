@@ -1,5 +1,4 @@
 use super::Stores;
-use crate::cell::BankTag;
 use crate::env::EnvSnapshot;
 use crate::ids::{
     ArenaRef, FontId, GlueId, MacroDefinitionId, NodeListId, OriginListId, TokenListId,
@@ -449,10 +448,10 @@ impl Stores {
         match outcome {
             crate::env::banks::BoxWriteOutcome::Unchanged => {}
             crate::env::banks::BoxWriteOutcome::Journaled { rec, .. } => {
-                if rec.old() == rec.new_value() {
-                    self.inc_survivor_ref(NodeListId::decode_box_word(rec.old()));
+                if rec.old().value() == rec.new_value().value() {
+                    self.inc_survivor_ref(NodeListId::decode_box_word(rec.old().value()));
                 }
-                if rec.old() == 0 {
+                if rec.old().value() == 0 {
                     self.dec_survivor_ref_opt(old);
                 }
             }
@@ -469,8 +468,8 @@ impl Stores {
             .iter()
             .rev()
             .filter_map(|entry| match entry {
-                crate::journal::Entry::Undo(rec) if rec.cell().bank() == BankTag::Box => {
-                    Some(rec.new_value())
+                crate::journal::Entry::BoxUndo(id) => {
+                    Some(self.env.box_undo(*id).new_value().value())
                 }
                 _ => None,
             })
@@ -490,10 +489,8 @@ impl Stores {
             .iter()
             .rev()
             .filter_map(|entry| match entry {
-                crate::journal::Entry::Undo(rec)
-                    if rec.cell().bank() == BankTag::Box && !rec.cell().is_global() =>
-                {
-                    Some(rec.new_value())
+                crate::journal::Entry::BoxUndo(id) if !self.env.box_undo(*id).is_global() => {
+                    Some(self.env.box_undo(*id).new_value().value())
                 }
                 _ => None,
             })

@@ -1,5 +1,5 @@
 use super::{Env, cell_key, checked_aftergroup_start, u32_len};
-use crate::journal::{Entry, JournalPos, Marker, UndoRec};
+use crate::journal::{BoxUndoRec, Entry, JournalPos, Marker, UndoRec};
 use crate::token::Token;
 use std::collections::{HashMap, HashSet};
 
@@ -25,6 +25,7 @@ pub enum GroupKind {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct GroupBoundary {
     marker_pos: JournalPos,
+    box_undo_len: u32,
     aftergroup_start: u32,
     kind: GroupKind,
 }
@@ -91,6 +92,7 @@ impl GroupMismatch {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct EnvSnapshot {
     journal_pos: JournalPos,
+    box_undo_len: u32,
     aftergroup_len: u32,
     afterassignment: Option<Token>,
     group_depth: u32,
@@ -122,9 +124,9 @@ impl Env {
     /// Records a checkpoint position and starts a fresh epoch for later writes.
     #[must_use]
     pub(crate) fn checkpoint(&mut self) -> EnvSnapshot {
-        self.box_journal_positions.clear();
         let snapshot = EnvSnapshot {
             journal_pos: self.journal.pos(),
+            box_undo_len: self.journal.box_undo_len(),
             aftergroup_len: u32_len(
                 self.aftergroup.len(),
                 "aftergroup payload list exceeds u32 entries",
@@ -145,6 +147,10 @@ impl Env {
     #[must_use]
     pub(crate) fn journal_entries_since(&self, pos: JournalPos) -> &[Entry] {
         self.journal.entries_since(pos)
+    }
+
+    pub(crate) fn box_undo(&self, id: crate::journal::BoxUndoId) -> BoxUndoRec {
+        self.journal.box_undo(id)
     }
 
     pub(crate) fn last_group_marker_pos(&self) -> Option<JournalPos> {
@@ -180,12 +186,14 @@ impl Env {
             "aftergroup payload list exceeds u32 entries",
         );
         let marker_pos = self.journal.pos();
+        let box_undo_len = self.journal.box_undo_len();
         self.journal.push_marker(Marker::Group {
             aftergroup_start,
             kind,
         });
         self.group_boundaries.push(GroupBoundary {
             marker_pos,
+            box_undo_len,
             aftergroup_start,
             kind,
         });
@@ -242,28 +250,32 @@ impl Env {
         };
         let marker_pos = boundary.marker_pos;
         let aftergroup_start = boundary.aftergroup_start;
-        let exiting_depth = self.group_depth;
-        self.box_journal_positions
-            .retain(|&(_, depth), _| depth != exiting_depth);
         self.group_depth = self
             .group_depth
             .checked_sub(1)
             .expect("leave_group without matching group marker");
         let marker_index = marker_pos.raw() as usize;
         let group_end = self.journal.len();
-        let has_globals = (marker_index + 1..group_end).any(
-            |index| matches!(self.journal.entry(index), Entry::Undo(rec) if rec.cell().is_global()),
-        );
+        let has_globals =
+            (marker_index + 1..group_end).any(|index| match self.journal.entry(index) {
+                Entry::Undo(rec) => rec.cell().is_global(),
+                Entry::BoxUndo(id) => self.journal.box_undo(id).is_global(),
+                Entry::Marker(_) => false,
+            });
 
         if has_globals {
-            self.leave_group_with_globals(marker_index, group_end);
+            self.leave_group_with_globals(marker_index, group_end, boundary.box_undo_len);
         } else {
             for index in (marker_index + 1..group_end).rev() {
                 if let Entry::Undo(rec) = self.journal.entry(index) {
                     self.restore_raw(rec.cell(), rec.old());
+                } else if let Entry::BoxUndo(id) = self.journal.entry(index) {
+                    let rec = self.journal.box_undo(id);
+                    self.boxes.restore(rec.index(), rec.old());
                 }
             }
             self.journal.truncate_to(marker_pos);
+            self.journal.truncate_box_undos(boundary.box_undo_len);
         }
 
         let aftergroup_start = checked_aftergroup_start(aftergroup_start, self.aftergroup.len());
@@ -276,15 +288,28 @@ impl Env {
         payloads
     }
 
-    fn leave_group_with_globals(&mut self, marker_index: usize, group_end: usize) {
+    fn leave_group_with_globals(
+        &mut self,
+        marker_index: usize,
+        group_end: usize,
+        box_undo_len: u32,
+    ) {
         let mut globals = Vec::new();
+        let mut box_globals = Vec::new();
         let mut globally_reassigned = HashSet::new();
+        let mut globally_reassigned_boxes = HashSet::new();
         let mut first_old = HashMap::new();
+        let mut first_box_old = HashMap::new();
 
         for index in marker_index + 1..group_end {
             if let Entry::Undo(rec) = self.journal.entry(index) {
                 first_old
                     .entry(cell_key(rec.cell()))
+                    .or_insert_with(|| rec.old());
+            } else if let Entry::BoxUndo(id) = self.journal.entry(index) {
+                let rec = self.journal.box_undo(id);
+                first_box_old
+                    .entry(rec.index())
                     .or_insert_with(|| rec.old());
             }
         }
@@ -297,6 +322,15 @@ impl Env {
                 }
                 Entry::Undo(rec) if globally_reassigned.contains(&cell_key(rec.cell())) => {}
                 Entry::Undo(rec) => self.restore_raw(rec.cell(), rec.old()),
+                Entry::BoxUndo(id) => {
+                    let rec = self.journal.box_undo(id);
+                    if rec.is_global() {
+                        globally_reassigned_boxes.insert(rec.index());
+                        box_globals.push(rec);
+                    } else if !globally_reassigned_boxes.contains(&rec.index()) {
+                        self.boxes.restore(rec.index(), rec.old());
+                    }
+                }
                 Entry::Marker(Marker::Checkpoint(_)) => {}
                 Entry::Marker(Marker::Group { .. }) => {
                     unreachable!("group slice starts after the marker")
@@ -305,6 +339,7 @@ impl Env {
         }
 
         self.journal.truncate_to(JournalPos::from_raw(marker_index));
+        self.journal.truncate_box_undos(box_undo_len);
         let mut refiled_globals = HashSet::new();
         for rec in globals.into_iter().rev() {
             self.restore_raw(rec.cell(), rec.new_value());
@@ -317,19 +352,33 @@ impl Env {
             self.journal
                 .push_undo(UndoRec::new(rec.cell(), old, rec.new_value()));
         }
+        let mut refiled_box_globals = HashSet::new();
+        for rec in box_globals.into_iter().rev() {
+            self.boxes.restore(rec.index(), rec.new_value());
+            let old = if refiled_box_globals.insert(rec.index()) {
+                first_box_old[&rec.index()]
+            } else {
+                rec.old()
+            };
+            self.journal
+                .push_box_undo(BoxUndoRec::new(rec.index(), true, old, rec.new_value()));
+        }
     }
 
     /// Rolls back all environment state after `snapshot`.
     pub(crate) fn rollback_to(&mut self, snapshot: EnvSnapshot) {
-        self.box_journal_positions.clear();
         let snapshot_index = snapshot.journal_pos.raw() as usize;
         let rollback_end = self.journal.len();
         for index in (snapshot_index..rollback_end).rev() {
             if let Entry::Undo(rec) = self.journal.entry(index) {
                 self.restore_raw(rec.cell(), rec.old());
+            } else if let Entry::BoxUndo(id) = self.journal.entry(index) {
+                let rec = self.journal.box_undo(id);
+                self.boxes.restore(rec.index(), rec.old());
             }
         }
         self.journal.truncate_to(snapshot.journal_pos);
+        self.journal.truncate_box_undos(snapshot.box_undo_len);
         self.group_boundaries.truncate(
             snapshot
                 .group_boundary_len

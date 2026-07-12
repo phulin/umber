@@ -3,8 +3,8 @@
 use crate::cell::{BankTag, CellId};
 use crate::env::barrier;
 use crate::epoch::Epoch;
-use crate::ids::{FontId, GlueId, NodeListId, TokenListId};
-use crate::journal::{Journal, JournalPos, UndoRec};
+use crate::ids::{FontId, GlueId, TokenListId};
+use crate::journal::{Journal, JournalPos};
 use crate::scaled::Scaled;
 use core::marker::PhantomData;
 #[cfg(feature = "shadow")]
@@ -347,21 +347,6 @@ impl BankSetContext<'_> {
     }
 }
 
-pub(crate) struct BankJournalContext<'a> {
-    pub(crate) journal: &'a mut Journal,
-    #[cfg(feature = "shadow")]
-    pub(crate) shadow: &'a mut HashMap<CellId, u64>,
-    pub(crate) bank: BankTag,
-    pub(crate) global: bool,
-    pub(crate) coalesce_pos: Option<JournalPos>,
-}
-
-impl BankJournalContext<'_> {
-    fn cell_id(&self, index: u16) -> CellId {
-        cell_id(self.bank, index, self.global)
-    }
-}
-
 #[derive(Clone, Debug)]
 pub(crate) struct FixedBank<C, const N: usize> {
     values: [u64; N],
@@ -372,8 +357,13 @@ pub(crate) struct FixedBank<C, const N: usize> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum BoxWriteOutcome {
     Unchanged,
-    Journaled { rec: UndoRec, pos: JournalPos },
-    Coalesced { displaced: u64 },
+    Journaled {
+        rec: crate::journal::BoxUndoRec,
+        pos: JournalPos,
+    },
+    Coalesced {
+        displaced: u64,
+    },
 }
 
 impl<C, const N: usize> FixedBank<C, N>
@@ -405,36 +395,6 @@ where
             cell_id,
             C::encode(value),
         );
-    }
-
-    pub(crate) fn set_always_journal(
-        &mut self,
-        index: u16,
-        value: C::Value,
-        ctx: BankJournalContext<'_>,
-    ) -> BoxWriteOutcome {
-        let offset = checked_index::<N>(index);
-        let cell_id = ctx.cell_id(index);
-        let old = self.values[offset];
-        let new = C::encode(value);
-        if old == new && !ctx.global {
-            return BoxWriteOutcome::Unchanged;
-        }
-        let rec = UndoRec::new(cell_id, old, new);
-        let outcome = if ctx.global {
-            let pos = ctx.journal.push_undo(rec);
-            BoxWriteOutcome::Journaled { rec, pos }
-        } else if let Some(pos) = ctx.coalesce_pos {
-            ctx.journal.replace_undo_new_value(pos, new);
-            BoxWriteOutcome::Coalesced { displaced: old }
-        } else {
-            let pos = ctx.journal.push_undo(rec);
-            BoxWriteOutcome::Journaled { rec, pos }
-        };
-        self.values[offset] = new;
-        #[cfg(feature = "shadow")]
-        crate::env::shadow_set(ctx.shadow, CellId::new(ctx.bank, u32::from(index)), new);
-        outcome
     }
 
     #[allow(dead_code)]
@@ -532,23 +492,6 @@ impl BankCodec for TokenListIdCodec {
 
     fn decode(word: u64) -> Self::Value {
         TokenListId::new(decode_u32(word))
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct NodeListIdCodec;
-
-impl BankCodec for NodeListIdCodec {
-    type Value = Option<NodeListId>;
-
-    const DEFAULT_WORD: u64 = NodeListId::encode_box_word(None);
-
-    fn encode(value: Self::Value) -> u64 {
-        NodeListId::encode_box_word(value)
-    }
-
-    fn decode(word: u64) -> Self::Value {
-        NodeListId::decode_box_word(word)
     }
 }
 
