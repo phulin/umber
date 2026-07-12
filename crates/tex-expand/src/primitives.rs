@@ -77,7 +77,7 @@ where
         Some(tex_lex::GulletContinuationSummary::CsName { name, context }) => {
             (name.clone(), *context)
         }
-        None => panic!("csname resume requires a rooted continuation"),
+        _ => panic!("csname resume requires a rooted continuation"),
     };
 
     loop {

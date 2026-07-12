@@ -1,6 +1,6 @@
 //! Snapshot-ready input stack summary shared by the lexer and `Universe`.
 
-use crate::ids::{OriginListId, TokenListId};
+use crate::ids::{MacroDefinitionId, OriginListId, TokenListId};
 use crate::source_map::RegisteredSource;
 use crate::token::{Token, TracedTokenWord};
 use crate::world::InputRecordId;
@@ -30,6 +30,53 @@ pub enum GulletContinuationSummary {
         name: String,
         context: TracedTokenWord,
     },
+    MacroCall(MacroCallContinuationSummary),
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct PendingMacroTokenSummary {
+    pub token: TracedTokenWord,
+    pub allow_par: bool,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum MacroCallPhaseSummary {
+    Leading {
+        index: usize,
+    },
+    ArgumentStart {
+        spec_index: usize,
+    },
+    UndelimitedSkip {
+        spec_index: usize,
+    },
+    UndelimitedGroup {
+        spec_index: usize,
+        level: u32,
+        tokens: Vec<TracedTokenWord>,
+    },
+    Delimited {
+        spec_index: usize,
+        level: u32,
+        argument: Vec<TracedTokenWord>,
+        pending: Vec<PendingMacroTokenSummary>,
+    },
+    DelimiterCandidate {
+        spec_index: usize,
+        level: u32,
+        argument: Vec<TracedTokenWord>,
+        pending: Vec<PendingMacroTokenSummary>,
+        candidate: Vec<PendingMacroTokenSummary>,
+        next_delimiter_index: usize,
+    },
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct MacroCallContinuationSummary {
+    pub definition: MacroDefinitionId,
+    pub call_context: TracedTokenWord,
+    pub matched: Vec<TracedTokenList>,
+    pub phase: MacroCallPhaseSummary,
 }
 
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]

@@ -1282,26 +1282,46 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    let Some(tex_lex::GulletContinuationSummary::CsName { context, .. }) =
-        input.current_gullet_continuation()
-    else {
+    let Some(continuation) = input.current_gullet_continuation().cloned() else {
         return Ok(None);
     };
-    let call_origin = context.origin();
-    let name = primitives::resume_csname(input, stores, recorder, hooks)?;
-    let symbol = stores.intern_relaxed_control_sequence(&name);
-    Ok(Some(Dispatch::Push {
-        replay_kind: ExpansionReplayKind::Inserted,
-        token_list: stores.intern_token_list(&[Token::Cs(symbol.symbol())]),
-        origin_list: synthesized_origin_list(
-            stores,
-            1,
-            call_origin,
-            SynthesizedOriginKind::Expansion,
-        ),
-        macro_arguments: MacroArguments::new(),
-        macro_invocation: OriginId::UNKNOWN,
-    }))
+    match continuation {
+        tex_lex::GulletContinuationSummary::CsName { context, .. } => {
+            let call_origin = context.origin();
+            let name = primitives::resume_csname(input, stores, recorder, hooks)?;
+            let symbol = stores.intern_relaxed_control_sequence(&name);
+            Ok(Some(Dispatch::Push {
+                replay_kind: ExpansionReplayKind::Inserted,
+                token_list: stores.intern_token_list(&[Token::Cs(symbol.symbol())]),
+                origin_list: synthesized_origin_list(
+                    stores,
+                    1,
+                    call_origin,
+                    SynthesizedOriginKind::Expansion,
+                ),
+                macro_arguments: MacroArguments::new(),
+                macro_invocation: OriginId::UNKNOWN,
+            }))
+        }
+        tex_lex::GulletContinuationSummary::MacroCall(_) => {
+            let completed = args::resume_macro_call(input, stores, recorder)?;
+            let meaning = stores.macro_definition(completed.definition);
+            let provenance = stores.macro_definition_provenance(completed.definition);
+            let call_origin = completed.call_context.origin();
+            Ok(Some(Dispatch::Push {
+                replay_kind: ExpansionReplayKind::MacroBody,
+                token_list: meaning.replacement_text(),
+                origin_list: provenance.replacement_origins(),
+                macro_arguments: completed.arguments.as_macro_arguments(),
+                macro_invocation: stores.macro_invocation_origin(
+                    completed.definition,
+                    call_origin,
+                    provenance.definition_origin(),
+                    input.active_macro_invocation(),
+                ),
+            }))
+        }
+    }
 }
 
 pub(crate) fn dispatch_one_raw_token_with_hooks<S, R, H>(

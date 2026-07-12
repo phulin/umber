@@ -3535,6 +3535,91 @@ fn hash_input_summary_fields(
                 hasher.tag(0);
                 hasher.str(name);
             }
+            crate::GulletContinuationSummary::MacroCall(call) => {
+                hasher.tag(1);
+                stores.hash_macro_definition(call.definition, hasher);
+                hash_traced_token_semantic(stores, call.call_context, hasher);
+                hasher.usize(call.matched.len());
+                for argument in &call.matched {
+                    stores.hash_token_list_semantic(argument.token_list(), hasher);
+                }
+                hash_macro_call_phase(stores, &call.phase, hasher);
+            }
+        }
+    }
+}
+
+fn hash_macro_call_phase(
+    stores: &Stores,
+    phase: &crate::MacroCallPhaseSummary,
+    hasher: &mut StateHasher,
+) {
+    use crate::MacroCallPhaseSummary::{
+        ArgumentStart, Delimited, DelimiterCandidate, Leading, UndelimitedGroup, UndelimitedSkip,
+    };
+    let hash_pending = |tokens: &[crate::PendingMacroTokenSummary], hasher: &mut StateHasher| {
+        hasher.usize(tokens.len());
+        for token in tokens {
+            hash_traced_token_semantic(stores, token.token, hasher);
+            hasher.bool(token.allow_par);
+        }
+    };
+    let hash_tokens = |tokens: &[crate::token::TracedTokenWord], hasher: &mut StateHasher| {
+        hasher.usize(tokens.len());
+        for token in tokens {
+            hash_traced_token_semantic(stores, *token, hasher);
+        }
+    };
+    match phase {
+        Leading { index } => {
+            hasher.tag(0);
+            hasher.usize(*index);
+        }
+        ArgumentStart { spec_index } => {
+            hasher.tag(1);
+            hasher.usize(*spec_index);
+        }
+        UndelimitedSkip { spec_index } => {
+            hasher.tag(2);
+            hasher.usize(*spec_index);
+        }
+        UndelimitedGroup {
+            spec_index,
+            level,
+            tokens,
+        } => {
+            hasher.tag(3);
+            hasher.usize(*spec_index);
+            hasher.u32(*level);
+            hash_tokens(tokens, hasher);
+        }
+        Delimited {
+            spec_index,
+            level,
+            argument,
+            pending,
+        } => {
+            hasher.tag(4);
+            hasher.usize(*spec_index);
+            hasher.u32(*level);
+            hash_tokens(argument, hasher);
+            hash_pending(pending, hasher);
+        }
+        DelimiterCandidate {
+            spec_index,
+            level,
+            argument,
+            pending,
+            candidate,
+            next_delimiter_index,
+        } => {
+            hasher.tag(5);
+            hasher.usize(*spec_index);
+            hasher.u32(*level);
+            hash_tokens(argument, hasher);
+            hash_pending(pending, hasher);
+            hash_pending(candidate, hasher);
+            hasher.usize(*next_delimiter_index);
         }
     }
 }
