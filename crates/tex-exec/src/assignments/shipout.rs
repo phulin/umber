@@ -41,15 +41,17 @@ where
     H: ExpansionHooks<S>,
 {
     let node = scan_required_box_node(input, stores, hooks, context)?;
-    shipout_node(node, stores, recorder)
+    shipout_node(node, input, stores, recorder)
 }
 
-pub(crate) fn shipout_node<R>(
+pub(crate) fn shipout_node<S, R>(
     node: Node,
+    input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
 ) -> Result<Option<ContentHash>, ExecError>
 where
+    S: InputSource,
     R: ReadRecorder,
 {
     if huge_shipout_box(&node, stores) {
@@ -92,6 +94,8 @@ where
         effects,
     };
     let bytes = artifact.to_bytes();
+    let input_summary = input.publication_summary(stores);
+    stores.set_input_summary(input_summary);
     let effect_pos = stores.world().effect_pos();
     let hash = stores.commit_shipout(boundary, &bytes, effect_pos)?;
     stores.set_page_integer(PageInteger::DeadCycles, 0);

@@ -948,8 +948,10 @@ fn mid_alignment_snapshot_rollback_restores_summary_and_unset_rows() {
 fn shipout_rejects_unset_alignment_nodes() {
     let mut stores = Universe::new();
     let unset = unset_for_test(&mut stores, UnsetKind::HBox, &[], 1);
-    let err = crate::assignments::shipout_node(unset, &mut stores, &mut NoopRecorder)
-        .expect_err("unset alignment node must not lower to shipout artifact");
+    let mut shipout_input = InputStack::new(MemoryInput::new(""));
+    let err =
+        crate::assignments::shipout_node(unset, &mut shipout_input, &mut stores, &mut NoopRecorder)
+            .expect_err("unset alignment node must not lower to shipout artifact");
 
     assert_eq!(
         err.to_string(),

@@ -92,6 +92,17 @@ fn engine_checkpoint_hash_covers_mode_state_and_rejects_hash_only_restore() {
 }
 
 #[test]
+fn successful_execution_publishes_the_exact_final_input_cursor() {
+    let mut stores = Universe::new();
+    let mut input = InputStack::new(MemoryInput::new(""));
+    let mut executor = Executor::new();
+
+    executor.run(&mut input, &mut stores).expect("empty run");
+
+    assert_eq!(stores.input_summary(), &input.summary());
+}
+
+#[test]
 fn mode_queries_are_backed_by_current_nest_level() {
     let mut executor = Executor::new();
     assert_eq!(

@@ -88,6 +88,7 @@ impl Executor {
         R: ReadRecorder,
         H: ExpansionHooks<S>,
     {
+        input.ensure_source_ids_at_least(stores.input_summary().next_source_id());
         let artifact_start = stores.world().artifact_commits().len();
         let mut exec_hooks = ExecExpansionHooks::new(hooks);
         let mut stats = ExecutionStats::default();
@@ -136,6 +137,8 @@ impl Executor {
             .expect_err("unimplemented_typesetting always returns Err")
             .capture(input)),
         };
+        let summary = input.publication_summary(stores);
+        stores.set_input_summary(summary);
         result.map(|mut stats| {
             stats.shipped_artifacts = stores.world().artifact_commits()[artifact_start..].to_vec();
             stats

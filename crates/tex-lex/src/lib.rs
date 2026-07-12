@@ -637,6 +637,51 @@ struct AlignmentCellInput {
 pub struct AlignmentCellSuspension(Option<AlignmentCellInput>);
 
 impl<S> InputStack<S> {
+    /// Rebases a fresh, not-yet-registered stack into the aggregate source-id
+    /// domain used by earlier execution runs.
+    pub fn ensure_source_ids_at_least(&mut self, minimum: u32) {
+        if minimum == 0
+            || self.frames.iter().any(|frame| {
+                matches!(frame, InputFrame::Source(source) if source.registration_attempted)
+            })
+        {
+            return;
+        }
+        let delta = minimum;
+        for frame in &mut self.frames {
+            if let InputFrame::Source(source) = frame {
+                assert!(
+                    source.registration.is_none() && !source.registration_attempted,
+                    "cannot rebase an already-registered input stack"
+                );
+                source.source_id = SourceId::new(
+                    source
+                        .source_id
+                        .raw()
+                        .checked_add(delta)
+                        .expect("source id counter overflowed"),
+                );
+            }
+        }
+        if let Some(source) = &mut self.last_source_frame {
+            assert!(
+                source.registration.is_none(),
+                "cannot rebase an already-registered last source"
+            );
+            source.source_id = SourceId::new(
+                source
+                    .source_id
+                    .raw()
+                    .checked_add(delta)
+                    .expect("source id counter overflowed"),
+            );
+        }
+        self.next_source_id = self
+            .next_source_id
+            .checked_add(delta)
+            .expect("source id counter overflowed");
+    }
+
     #[must_use]
     pub fn new(source: S) -> Self
     where
@@ -1153,6 +1198,17 @@ impl<S> InputStack<S> {
             if let InputFrame::Source(source) = frame {
                 ensure_source_registered(source, stores);
             }
+        }
+        // A degraded summary may have restored only the diagnostic coordinates
+        // of an already-popped source, without its runtime registration
+        // capability. It is not resumable input and cannot be republished as a
+        // live source graph, so discard that diagnostic-only tail.
+        if self
+            .last_source_frame
+            .as_ref()
+            .is_some_and(|source| source.registration.is_none())
+        {
+            self.last_source_frame = None;
         }
         self.summary()
     }

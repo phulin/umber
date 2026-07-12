@@ -83,7 +83,7 @@ where
     if stores.tokens(output).is_empty() {
         prepend_output_heldover(stores, Vec::new());
         let node = take_box255_node(stores)?;
-        let artifact = shipout_node(node, stores, recorder)?;
+        let artifact = shipout_node(node, input, stores, recorder)?;
         let _ = artifact;
         build_page(stores)?;
         return Ok(());
@@ -100,7 +100,7 @@ where
         );
         prepend_output_heldover(stores, Vec::new());
         let node = take_box255_node(stores)?;
-        let _artifact = shipout_node(node, stores, recorder)?;
+        let _artifact = shipout_node(node, input, stores, recorder)?;
         build_page(stores)?;
         return Ok(());
     }
