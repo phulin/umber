@@ -451,6 +451,16 @@ pub struct WorldError {
     operation: &'static str,
     path: Option<PathBuf>,
     message: String,
+    committed_effects_through: Option<EffectPos>,
+    retry_safety: EffectRetrySafety,
+}
+
+/// Whether an effect commit can be retried after a reported failure.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum EffectRetrySafety {
+    NotAnEffectCommit,
+    Safe,
+    Poisoned,
 }
 
 impl WorldError {
@@ -459,7 +469,30 @@ impl WorldError {
             operation,
             path,
             message: message.into(),
+            committed_effects_through: None,
+            retry_safety: EffectRetrySafety::NotAnEffectCommit,
         }
+    }
+
+    fn effect_commit(mut self, through: EffectPos, retry_safety: EffectRetrySafety) -> Self {
+        self.committed_effects_through = Some(through);
+        self.retry_safety = retry_safety;
+        self
+    }
+
+    fn effect_retry(mut self, retry_safety: EffectRetrySafety) -> Self {
+        self.retry_safety = retry_safety;
+        self
+    }
+
+    #[must_use]
+    pub const fn committed_effects_through(&self) -> Option<EffectPos> {
+        self.committed_effects_through
+    }
+
+    #[must_use]
+    pub const fn retry_safety(&self) -> EffectRetrySafety {
+        self.retry_safety
     }
 }
 
@@ -515,6 +548,16 @@ pub struct World {
     terminal_inputs: Vec<String>,
     shell_escapes: Vec<ShellEscapeRecord>,
     artifact_commits: Vec<ContentHash>,
+    effect_commit_poison: Option<WorldError>,
+    #[cfg(test)]
+    effect_commit_fault: Option<EffectCommitFault>,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EffectCommitFault {
+    Before(EffectPos),
+    AfterPartial(EffectPos),
 }
 
 impl Clone for World {
@@ -534,6 +577,9 @@ impl Clone for World {
             terminal_inputs: self.terminal_inputs.clone(),
             shell_escapes: self.shell_escapes.clone(),
             artifact_commits: self.artifact_commits.clone(),
+            effect_commit_poison: self.effect_commit_poison.clone(),
+            #[cfg(test)]
+            effect_commit_fault: self.effect_commit_fault,
         }
     }
 }
@@ -553,6 +599,7 @@ impl PartialEq for World {
             && self.terminal_inputs == other.terminal_inputs
             && self.shell_escapes == other.shell_escapes
             && self.artifact_commits == other.artifact_commits
+            && self.effect_commit_poison == other.effect_commit_poison
     }
 }
 
@@ -605,7 +652,20 @@ impl World {
             terminal_inputs: Vec::new(),
             shell_escapes: Vec::new(),
             artifact_commits: Vec::new(),
+            effect_commit_poison: None,
+            #[cfg(test)]
+            effect_commit_fault: None,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fail_effect_commit_before(&mut self, position: EffectPos) {
+        self.effect_commit_fault = Some(EffectCommitFault::Before(position));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fail_effect_commit_after_partial(&mut self, position: EffectPos) {
+        self.effect_commit_fault = Some(EffectCommitFault::AfterPartial(position));
     }
 
     /// Adds or replaces one file in an in-memory world.
@@ -934,6 +994,9 @@ impl World {
 
     /// Flushes all effect records up to `effect_pos`, in order, exactly once.
     pub(crate) fn commit_effects(&mut self, effect_pos: EffectPos) -> Result<(), WorldError> {
+        if let Some(error) = &self.effect_commit_poison {
+            return Err(error.clone());
+        }
         if effect_pos <= self.effect_base {
             return Ok(());
         }
@@ -946,7 +1009,8 @@ impl World {
                     effect_pos.raw(),
                     self.effect_pos().raw()
                 ),
-            ));
+            )
+            .effect_commit(self.effect_base, EffectRetrySafety::Safe));
         }
 
         let mut applied = 0usize;
@@ -956,6 +1020,16 @@ impl World {
                 if applied > 0 {
                     self.effects.drain(0..applied);
                     self.effect_base.0 += applied as u64;
+                }
+                let retry_safety = match err.retry_safety() {
+                    EffectRetrySafety::Safe => EffectRetrySafety::Safe,
+                    EffectRetrySafety::NotAnEffectCommit | EffectRetrySafety::Poisoned => {
+                        EffectRetrySafety::Poisoned
+                    }
+                };
+                let err = err.effect_commit(self.effect_base, retry_safety);
+                if retry_safety == EffectRetrySafety::Poisoned {
+                    self.effect_commit_poison = Some(err.clone());
                 }
                 return Err(err);
             }
@@ -1212,16 +1286,53 @@ impl World {
     }
 
     fn apply_effect(&mut self, index: usize) -> Result<(), WorldError> {
-        let record = self.effects[index].clone();
-        match record {
+        #[cfg(test)]
+        {
+            let position = EffectPos(self.effect_base.0 + index as u64 + 1);
+            match self.effect_commit_fault {
+                Some(EffectCommitFault::Before(target)) if target == position => {
+                    self.effect_commit_fault = None;
+                    return Err(
+                        WorldError::new("injected effect commit", None, "before apply")
+                            .effect_retry(EffectRetrySafety::Safe),
+                    );
+                }
+                Some(EffectCommitFault::AfterPartial(target)) if target == position => {
+                    self.effect_commit_fault = None;
+                    if let EffectRecord::StreamWrite { sink, text } = &self.effects[index] {
+                        let midpoint = text.len().div_ceil(2);
+                        Self::commit_write(
+                            &mut self.backend,
+                            &self.committed_write_streams,
+                            *sink,
+                            &text.as_bytes()[..midpoint],
+                        )?;
+                    }
+                    return Err(WorldError::new(
+                        "injected effect commit",
+                        None,
+                        "after partial apply",
+                    )
+                    .effect_retry(EffectRetrySafety::Poisoned));
+                }
+                _ => {}
+            }
+        }
+        match &self.effects[index] {
             EffectRecord::StreamOpen { slot, target } => {
-                self.truncate_output(target.path())?;
-                self.committed_write_streams[slot.index()] = Some(target);
+                Self::truncate_output(&mut self.backend, target.path())
+                    .map_err(|error| error.effect_retry(EffectRetrySafety::Poisoned))?;
+                self.committed_write_streams[slot.index()] = Some(target.clone());
             }
             EffectRecord::StreamClose { slot } => {
                 self.committed_write_streams[slot.index()] = None;
             }
-            EffectRecord::StreamWrite { sink, text } => self.commit_write(sink, text.as_bytes())?,
+            EffectRecord::StreamWrite { sink, text } => Self::commit_write(
+                &mut self.backend,
+                &self.committed_write_streams,
+                *sink,
+                text.as_bytes(),
+            )?,
             EffectRecord::DeferredWrite { .. }
             | EffectRecord::Special { .. }
             | EffectRecord::PdfObjectPlaceholder { .. }
@@ -1230,29 +1341,34 @@ impl World {
         Ok(())
     }
 
-    fn commit_write(&mut self, sink: PrintSink, bytes: &[u8]) -> Result<(), WorldError> {
+    fn commit_write(
+        backend: &mut WorldBackend,
+        committed_write_streams: &[Option<WriteTarget>; STREAM_SLOT_COUNT],
+        sink: PrintSink,
+        bytes: &[u8],
+    ) -> Result<(), WorldError> {
         match sink {
-            PrintSink::Terminal => self.write_terminal(bytes),
+            PrintSink::Terminal => Self::write_terminal(backend, bytes),
             PrintSink::Log => {
-                self.write_log(bytes);
+                Self::write_log(backend, bytes);
                 Ok(())
             }
             PrintSink::TerminalAndLog => {
-                self.write_terminal(bytes)?;
-                self.write_log(bytes);
+                Self::write_terminal(backend, bytes)?;
+                Self::write_log(backend, bytes);
                 Ok(())
             }
             PrintSink::Stream(slot) => {
-                let Some(target) = self.committed_write_streams[slot.index()].clone() else {
+                let Some(target) = &committed_write_streams[slot.index()] else {
                     return Ok(());
                 };
-                self.append_output(target.path(), bytes)
+                Self::append_output(backend, target.path(), bytes)
             }
         }
     }
 
-    fn truncate_output(&mut self, path: &Path) -> Result<(), WorldError> {
-        match &mut self.backend {
+    fn truncate_output(backend: &mut WorldBackend, path: &Path) -> Result<(), WorldError> {
+        match backend {
             WorldBackend::Real { .. } => std::fs::write(path, []).map_err(|err| {
                 WorldError::new("open output", Some(path.to_owned()), err.to_string())
             }),
@@ -1263,18 +1379,24 @@ impl World {
         }
     }
 
-    fn append_output(&mut self, path: &Path, bytes: &[u8]) -> Result<(), WorldError> {
-        match &mut self.backend {
+    fn append_output(
+        backend: &mut WorldBackend,
+        path: &Path,
+        bytes: &[u8],
+    ) -> Result<(), WorldError> {
+        match backend {
             WorldBackend::Real { .. } => {
                 let mut file = OpenOptions::new()
                     .create(true)
                     .append(true)
                     .open(path)
                     .map_err(|err| {
-                        WorldError::new("write output", Some(path.to_owned()), err.to_string())
+                        WorldError::new("open output", Some(path.to_owned()), err.to_string())
+                            .effect_retry(EffectRetrySafety::Safe)
                     })?;
                 file.write_all(bytes).map_err(|err| {
                     WorldError::new("write output", Some(path.to_owned()), err.to_string())
+                        .effect_retry(EffectRetrySafety::Poisoned)
                 })
             }
             WorldBackend::Memory(memory) => {
@@ -1288,11 +1410,12 @@ impl World {
         }
     }
 
-    fn write_terminal(&mut self, bytes: &[u8]) -> Result<(), WorldError> {
-        match &mut self.backend {
-            WorldBackend::Real { .. } => io::stdout()
-                .write_all(bytes)
-                .map_err(|err| WorldError::new("write terminal", None, err.to_string())),
+    fn write_terminal(backend: &mut WorldBackend, bytes: &[u8]) -> Result<(), WorldError> {
+        match backend {
+            WorldBackend::Real { .. } => io::stdout().write_all(bytes).map_err(|err| {
+                WorldError::new("write terminal", None, err.to_string())
+                    .effect_retry(EffectRetrySafety::Poisoned)
+            }),
             WorldBackend::Memory(memory) => {
                 memory.terminal_output.extend_from_slice(bytes);
                 Ok(())
@@ -1300,8 +1423,8 @@ impl World {
         }
     }
 
-    fn write_log(&mut self, bytes: &[u8]) {
-        if let WorldBackend::Memory(memory) = &mut self.backend {
+    fn write_log(backend: &mut WorldBackend, bytes: &[u8]) {
+        if let WorldBackend::Memory(memory) = backend {
             memory.log_output.extend_from_slice(bytes);
         }
     }

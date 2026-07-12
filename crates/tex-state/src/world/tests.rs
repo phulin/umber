@@ -405,6 +405,48 @@ fn commit_flushes_prefix_once_and_drops_history() {
 }
 
 #[test]
+fn failure_before_effect_reports_prefix_and_retries_without_duplication() {
+    let mut world = World::memory();
+    let slot = StreamSlot::new(2);
+    world.open_out(slot, "retry.log");
+    world.write_text(PrintSink::Stream(slot), "once");
+    let end = world.effect_pos();
+    world.fail_effect_commit_before(end);
+
+    let error = world.commit_effects(end).expect_err("injected failure");
+    assert_eq!(error.committed_effects_through(), Some(EffectPos(1)));
+    assert_eq!(error.retry_safety(), EffectRetrySafety::Safe);
+    assert_eq!(world.memory_output("retry.log"), Some(&b""[..]));
+
+    world.commit_effects(end).expect("safe retry succeeds");
+    assert_eq!(world.memory_output("retry.log"), Some(&b"once"[..]));
+    world.commit_effects(end).expect("recommit is idempotent");
+    assert_eq!(world.memory_output("retry.log"), Some(&b"once"[..]));
+}
+
+#[test]
+fn ambiguous_partial_effect_poisons_retries_without_duplicate_bytes() {
+    let mut world = World::memory();
+    world.write_text(PrintSink::Terminal, "abcdef");
+    let end = world.effect_pos();
+    world.fail_effect_commit_after_partial(end);
+
+    let error = world
+        .commit_effects(end)
+        .expect_err("injected partial failure");
+    assert_eq!(
+        error.committed_effects_through(),
+        Some(EffectPos::default())
+    );
+    assert_eq!(error.retry_safety(), EffectRetrySafety::Poisoned);
+    assert_eq!(world.memory_terminal_output(), Some(&b"abc"[..]));
+
+    let retry = world.commit_effects(end).expect_err("poison is terminal");
+    assert_eq!(retry, error);
+    assert_eq!(world.memory_terminal_output(), Some(&b"abc"[..]));
+}
+
+#[test]
 fn rollback_discards_effect_suffix_and_restores_partial_line_bytes() {
     let mut universe = Universe::new();
     let slot = StreamSlot::new(4);
