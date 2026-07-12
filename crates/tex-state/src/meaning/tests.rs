@@ -92,16 +92,35 @@ fn meaning_variants_round_trip() {
         u8::MAX,
         OPERAND_MASK,
     )));
+    round_trip(Meaning::Unknown(RawMeaning::testing_new_with_flags(
+        u8::MAX,
+        MeaningFlags::from_bits(0xa5),
+        OPERAND_MASK,
+    )));
 }
 
 #[test]
 fn unknown_meaning_exposes_raw_parts_without_public_fields() {
-    let word = Meaning::Unknown(RawMeaning::testing_new(200, 42)).encode();
+    let flags = MeaningFlags::from_bits(0xa5);
+    let word = Meaning::Unknown(RawMeaning::testing_new_with_flags(200, flags, 42)).encode();
     let Meaning::Unknown(raw) = Meaning::decode_stored(word) else {
         panic!("expected unknown meaning");
     };
 
     assert_eq!(raw.op(), 200);
+    assert_eq!(raw.flags(), flags);
     assert_eq!(raw.operand(), 42);
+    assert_eq!(Meaning::Unknown(raw).encode(), word);
+}
+
+#[test]
+fn invalid_known_meaning_preserves_reserved_flags() {
+    let flags = MeaningFlags::from_bits(0x80);
+    let word = super::pack(super::OP_CHAR_GIVEN, flags, u64::from(u32::MAX));
+    let Meaning::Unknown(raw) = Meaning::decode_stored(word) else {
+        panic!("expected invalid character meaning to remain opaque");
+    };
+
+    assert_eq!(raw.flags(), flags);
     assert_eq!(Meaning::Unknown(raw).encode(), word);
 }

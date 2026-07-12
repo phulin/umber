@@ -1229,6 +1229,7 @@ fn hash_unexpandable_primitive(primitive: UnexpandablePrimitive, hasher: &mut St
 fn hash_unknown_meaning(raw: RawMeaning, hasher: &mut StateHasher) {
     hasher.tag(16);
     hasher.u8(raw.op());
+    hasher.u8(raw.flags().bits());
     hasher.u64(raw.operand());
 }
 

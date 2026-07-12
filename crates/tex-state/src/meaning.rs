@@ -824,6 +824,7 @@ impl UnexpandablePrimitive {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RawMeaning {
     op: u8,
+    flags: MeaningFlags,
     operand: u64,
 }
 
@@ -833,13 +834,31 @@ impl RawMeaning {
     #[must_use]
     pub const fn testing_new(op: u8, operand: u64) -> Self {
         assert!(operand <= OPERAND_MASK, "meaning operand exceeds 48 bits");
-        Self { op, operand }
+        Self {
+            op,
+            flags: MeaningFlags::EMPTY,
+            operand,
+        }
+    }
+
+    /// Creates a raw meaning with explicit flags for codec tests.
+    #[cfg(any(test, feature = "testing"))]
+    #[must_use]
+    pub const fn testing_new_with_flags(op: u8, flags: MeaningFlags, operand: u64) -> Self {
+        assert!(operand <= OPERAND_MASK, "meaning operand exceeds 48 bits");
+        Self { op, flags, operand }
     }
 
     /// Returns the raw opcode.
     #[must_use]
     pub const fn op(self) -> u8 {
         self.op
+    }
+
+    /// Returns the raw flag byte.
+    #[must_use]
+    pub const fn flags(self) -> MeaningFlags {
+        self.flags
     }
 
     /// Returns the raw operand.
@@ -904,7 +923,7 @@ impl Meaning {
                 MeaningFlags::EMPTY,
                 primitive.operand(),
             ),
-            Self::Unknown(raw) => pack(raw.op, MeaningFlags::EMPTY, raw.operand),
+            Self::Unknown(raw) => pack(raw.op, raw.flags, raw.operand),
         }
     }
 
@@ -924,14 +943,14 @@ impl Meaning {
             },
             OP_CHAR_GIVEN => match char::from_u32(operand as u32) {
                 Some(ch) => Self::CharGiven(ch),
-                None => Self::Unknown(RawMeaning { op, operand }),
+                None => Self::Unknown(RawMeaning { op, flags, operand }),
             },
             OP_CHAR_TOKEN => {
                 let ch = char::from_u32((operand >> 4) as u32);
                 let cat = catcode_from_raw((operand & 0xF) as u8);
                 match (ch, cat) {
                     (Some(ch), Some(cat)) => Self::CharToken { ch, cat },
-                    _ => Self::Unknown(RawMeaning { op, operand }),
+                    _ => Self::Unknown(RawMeaning { op, flags, operand }),
                 }
             }
             OP_MATH_CHAR_GIVEN if operand <= u16::MAX as u64 => Self::MathCharGiven(operand as u16),
@@ -950,29 +969,29 @@ impl Meaning {
             OP_PAGE_DIMENSION if operand <= u8::MAX as u64 => {
                 match PageDimension::from_index(operand as u8) {
                     Some(dimension) => Self::PageDimension(dimension),
-                    None => Self::Unknown(RawMeaning { op, operand }),
+                    None => Self::Unknown(RawMeaning { op, flags, operand }),
                 }
             }
             OP_PAGE_INTEGER if operand <= u8::MAX as u64 => {
                 match PageInteger::from_index(operand as u8) {
                     Some(integer) => Self::PageInteger(integer),
-                    None => Self::Unknown(RawMeaning { op, operand }),
+                    None => Self::Unknown(RawMeaning { op, flags, operand }),
                 }
             }
             OP_INTERNAL_INTEGER => match InternalInteger::from_operand(operand) {
                 Some(integer) => Self::InternalInteger(integer),
-                None => Self::Unknown(RawMeaning { op, operand }),
+                None => Self::Unknown(RawMeaning { op, flags, operand }),
             },
             OP_FONT if operand <= u32::MAX as u64 => Self::Font(FontId::new(operand as u32)),
             OP_EXPANDABLE_PRIMITIVE => match ExpandablePrimitive::from_operand(operand) {
                 Some(primitive) => Self::ExpandablePrimitive(primitive),
-                None => Self::Unknown(RawMeaning { op, operand }),
+                None => Self::Unknown(RawMeaning { op, flags, operand }),
             },
             OP_UNEXPANDABLE_PRIMITIVE => match UnexpandablePrimitive::from_operand(operand) {
                 Some(primitive) => Self::UnexpandablePrimitive(primitive),
-                None => Self::Unknown(RawMeaning { op, operand }),
+                None => Self::Unknown(RawMeaning { op, flags, operand }),
             },
-            _ => Self::Unknown(RawMeaning { op, operand }),
+            _ => Self::Unknown(RawMeaning { op, flags, operand }),
         }
     }
 

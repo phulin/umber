@@ -7,7 +7,7 @@ use crate::input::{
     TokenListReplayKind, TracedTokenList,
 };
 use crate::macro_store::MacroMeaning;
-use crate::meaning::{Meaning, MeaningFlags};
+use crate::meaning::{Meaning, MeaningFlags, RawMeaning};
 use crate::node::{BoxNode, BoxNodeFields, GlueKind, KernKind, LeaderPayload, Node, Sign};
 use crate::page::{PageDimension, PageInteger};
 use crate::provenance::{OriginRecord, SourceOrigin, SyntheticOriginKind};
@@ -17,6 +17,35 @@ use crate::token::{Catcode, OriginId, Token, TracedTokenWord};
 use crate::world::{ContentHash, EffectRecord, JobClock, PrintSink, StreamSlot, World};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
+
+#[test]
+fn unknown_meaning_flags_participate_in_semantic_hashes() {
+    let mut universe = Universe::new();
+    let symbol = universe.intern("future-extension");
+    let baseline = universe.snapshot();
+
+    universe.set_meaning(
+        symbol,
+        Meaning::Unknown(RawMeaning::testing_new_with_flags(
+            200,
+            MeaningFlags::from_bits(0x40),
+            7,
+        )),
+    );
+    let first = universe.snapshot().state_hash();
+
+    universe.rollback(&baseline);
+    universe.set_meaning(
+        symbol,
+        Meaning::Unknown(RawMeaning::testing_new_with_flags(
+            200,
+            MeaningFlags::from_bits(0x80),
+            7,
+        )),
+    );
+
+    assert_ne!(universe.snapshot().state_hash(), first);
+}
 
 #[test]
 fn maximum_fontdimen_is_distinct_grouped_rollback_safe_and_format_stable() {
