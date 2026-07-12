@@ -948,6 +948,18 @@ where
     for &token in &traced {
         input.back_input_alignment_token(token);
     }
+    if traced.len() == 1 {
+        if let Some((list, _, index)) = input.current_token_list_frame()
+            && index > 0
+            && stores.tokens(list).get(index - 1).copied() == Some(semantic_token(traced[0]))
+            && input.rewind_current_token_list_frame()
+        {
+            return;
+        }
+        if input.push_current_source_pending(traced[0]) {
+            return;
+        }
+    }
     let semantic = traced
         .iter()
         .copied()

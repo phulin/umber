@@ -834,6 +834,31 @@ impl<S> InputStack<S> {
         self.push_token_list_with_origins(token_list, OriginListId::EMPTY, replay_kind)
     }
 
+    pub fn rewind_current_token_list_frame(&mut self) -> bool {
+        let Some(index) = self.current_token_frame_index() else {
+            return false;
+        };
+        let InputFrame::TokenList(frame) = &mut self.frames[index] else {
+            return false;
+        };
+        let Some(previous) = frame.index.checked_sub(1) else {
+            return false;
+        };
+        frame.index = previous;
+        true
+    }
+
+    pub fn push_current_source_pending(&mut self, token: TracedTokenWord) -> bool {
+        let Some(index) = self.current_token_frame_index() else {
+            return false;
+        };
+        let InputFrame::Source(source) = &mut self.frames[index] else {
+            return false;
+        };
+        source.frame.pending.push_front(token);
+        true
+    }
+
     pub fn push_token_list_with_origins(
         &mut self,
         token_list: TokenListId,
