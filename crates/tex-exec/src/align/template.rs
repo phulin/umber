@@ -24,7 +24,8 @@ where
         // final token expands and pops the template below a macro frame. A
         // live-frame marker gives this synchronous replay the same boundary;
         // token-list identity alone is ambiguous for hash-consed templates.
-        let replay_marker = input.push_token_list(template, TokenListReplayKind::Inserted);
+        let replay_marker =
+            input.push_token_list(template, TokenListReplayKind::AlignmentUTemplate);
         input.begin_alignment_cell(
             Some(replay_marker),
             cell_v_template,

@@ -1042,7 +1042,9 @@ impl<S> InputStack<S> {
         terminates
     }
 
-    pub fn back_input_alignment_token(&mut self, traced: TracedTokenWord) {
+    /// Reverses the alignment brace accounting for a token that was consumed
+    /// in a context where TeX explicitly cancels `get_next`'s adjustment.
+    pub fn undo_alignment_token_delivery(&mut self, traced: TracedTokenWord) {
         let Some(alignment) = self.alignment_inputs.last_mut() else {
             return;
         };
@@ -1059,6 +1061,10 @@ impl<S> InputStack<S> {
             AlignmentTokenDelivery::LeftBrace => alignment.align_state -= 1,
             AlignmentTokenDelivery::RightBrace => alignment.align_state += 1,
         }
+    }
+
+    pub fn back_input_alignment_token(&mut self, traced: TracedTokenWord) {
+        self.undo_alignment_token_delivery(traced);
     }
 
     pub fn push_token_list(
@@ -1377,6 +1383,12 @@ impl<S> InputStack<S> {
     }
 
     fn retire_token_list_frame(&mut self, frame: TokenListInputFrame) {
+        if frame.replay_kind == TokenListReplayKind::AlignmentUTemplate
+            && let Some(alignment) = self.alignment_inputs.last_mut()
+            && alignment.align_state > 500_000
+        {
+            alignment.align_state = 0;
+        }
         if frame.macro_invocation == OriginId::UNKNOWN {
             return;
         }

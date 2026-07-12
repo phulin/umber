@@ -401,6 +401,9 @@ where
                 span_count = span_count
                     .checked_add(1)
                     .ok_or(ExecError::ArithmeticOverflow)?;
+                // TeX82 fin_col restores the sentinel before looking for the
+                // first token of the next spanned column.
+                input.set_alignment_state(1_000_000);
                 first_token = next_non_space_traced_x(input, stores, hooks)?;
             }
             CellTerminator::AlignmentTab | CellTerminator::Cr => {

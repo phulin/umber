@@ -141,6 +141,7 @@ pub enum TokenListReplayKind {
     Mark,
     OutputRoutine,
     Inserted,
+    AlignmentUTemplate,
 }
 
 /// The family of TeX conditional represented by an open condition frame.

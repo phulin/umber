@@ -477,7 +477,14 @@ where
         return Ok(missing_number(prefix));
     };
     let value = match semantic_token(token) {
-        Token::Char { ch, .. } => ch as i32,
+        Token::Char { ch, cat } => {
+            // TeX82 scan_int explicitly cancels get_token's align_state
+            // adjustment when a brace is used as an alphabetic constant.
+            if matches!(cat, Catcode::BeginGroup | Catcode::EndGroup) {
+                input.undo_alignment_token_delivery(token);
+            }
+            ch as i32
+        }
         Token::Cs(symbol) => stores
             .resolve(symbol)
             .chars()
@@ -486,8 +493,31 @@ where
             .unwrap_or(0),
         Token::Param(_) | Token::Frozen(_) => return Ok(missing_number(token)),
     };
-    consume_optional_space(input, stores, recorder, hooks, expander)?;
+    consume_optional_expanded_space(input, stores, recorder, hooks, expander)?;
     Ok(ScannedInt::new(value, token))
+}
+
+fn consume_optional_expanded_space<S, St, R, H, E>(
+    input: &mut InputStack<S>,
+    stores: &mut St,
+    recorder: &mut R,
+    hooks: &mut H,
+    expander: &mut E,
+) -> Result<(), ScanIntError>
+where
+    S: InputSource,
+    St: ExpansionState,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
+{
+    let Some(token) = expander.next_expanded_token(input, stores, recorder, hooks)? else {
+        return Ok(());
+    };
+    if !is_space(token) {
+        unread_token(input, stores, token);
+    }
+    Ok(())
 }
 
 pub(crate) fn scan_internal_integer<S, St, R, H, E>(

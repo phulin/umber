@@ -102,6 +102,23 @@ fn scans_backtick_character_and_control_sequence_constants() {
 }
 
 #[test]
+fn backtick_brace_constant_restores_alignment_brace_depth() {
+    let mut stores = Universe::new();
+    let empty = stores.intern_token_list(&[]);
+    let mut input = InputStack::new(MemoryInput::new("`}"));
+    input.begin_alignment();
+    input.begin_alignment_cell(None, empty, stores.execution_group_depth());
+
+    let scanned = scan_int(&mut input, &mut stores, context()).expect("character constant scans");
+
+    assert_eq!(scanned.value(), i32::from(b'}'));
+    assert!(
+        input.alignment_cell_at_base_depth(),
+        "scan_int must cancel get_token's right-brace alignment adjustment"
+    );
+}
+
+#[test]
 fn consumes_at_most_one_trailing_space() {
     let (value, _diagnostic, next) = scan("12  x");
 

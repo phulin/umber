@@ -3397,6 +3397,7 @@ fn hash_token_list_replay_kind(kind: TokenListReplayKind, hasher: &mut StateHash
         TokenListReplayKind::Mark => 5,
         TokenListReplayKind::OutputRoutine => 6,
         TokenListReplayKind::Inserted => 7,
+        TokenListReplayKind::AlignmentUTemplate => 8,
     });
 }
 
