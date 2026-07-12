@@ -1,6 +1,5 @@
-use super::{Entry, Journal, JournalPos, Marker, UndoRec};
+use super::{Entry, Journal, Marker, UndoRec};
 use crate::cell::{BankTag, CellId};
-use crate::env::group::GroupKind;
 use crate::ids::SnapshotId;
 use std::mem::size_of;
 
@@ -42,40 +41,6 @@ fn push_pos_slice_and_truncate_round_trip() {
     journal.truncate_to(after_first);
     assert_eq!(journal.entries_since(start), &[Entry::Undo(first)]);
     assert!(journal.entries_since(after_first).is_empty());
-}
-
-#[test]
-fn marker_search_skips_checkpoint_markers() {
-    let mut journal = Journal::new();
-    journal.push_marker(Marker::Group {
-        aftergroup_start: 3,
-        kind: GroupKind::Simple,
-    });
-    journal.push_undo(UndoRec::new(CellId::new(BankTag::Toks, 4), 5, 6));
-    journal.push_marker(Marker::Checkpoint(SnapshotId::new(99)));
-
-    let found = journal.find_last_group_marker();
-
-    assert_eq!(found, Some((JournalPos(0), 3, GroupKind::Simple)));
-}
-
-#[test]
-fn marker_search_finds_latest_group_marker() {
-    let mut journal = Journal::new();
-    journal.push_marker(Marker::Group {
-        aftergroup_start: 1,
-        kind: GroupKind::Simple,
-    });
-    journal.push_marker(Marker::Checkpoint(SnapshotId::new(2)));
-    journal.push_marker(Marker::Group {
-        aftergroup_start: 8,
-        kind: GroupKind::SemiSimple,
-    });
-
-    assert_eq!(
-        journal.find_last_group_marker(),
-        Some((JournalPos(2), 8, GroupKind::SemiSimple))
-    );
 }
 
 #[test]

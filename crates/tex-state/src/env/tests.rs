@@ -1,4 +1,5 @@
 use super::{Env, SEGMENT_LEN, font_dimen_index};
+use crate::GroupKind;
 use crate::cell::{BankTag, CellId};
 use crate::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use crate::ids::{FontId, GlueId, NodeListId, TokenListId};
@@ -182,6 +183,36 @@ fn meaning_boundaries_above_26_bits_preserve_journal_group_and_hash_semantics() 
         env.restore_raw(cell, Meaning::Undefined.encode());
         assert_eq!(env.testing_state_hash(), initial_hash);
     }
+}
+
+#[test]
+fn cached_group_boundaries_survive_deep_journals_clone_and_rollback() {
+    let mut env = Env::new();
+    env.enter_group_with_kind(GroupKind::Simple);
+    let outer_marker = env.last_group_marker_pos();
+    for index in 0..10_000 {
+        env.set(Symbol::new(index), Meaning::Relax);
+    }
+    assert_eq!(env.innermost_group_kind(), Some(GroupKind::Simple));
+    assert_eq!(env.last_group_marker_pos(), outer_marker);
+
+    let checkpoint = env.checkpoint();
+    env.enter_group_with_kind(GroupKind::Align);
+    env.set(Symbol::new(20_000), Meaning::CharGiven('x'));
+    assert_eq!(env.innermost_group_kind(), Some(GroupKind::Align));
+
+    let mut fork = env.clone();
+    assert_eq!(fork.leave_group_with_kind(GroupKind::Align), Ok(Vec::new()));
+    assert_eq!(fork.innermost_group_kind(), Some(GroupKind::Simple));
+    assert_eq!(env.innermost_group_kind(), Some(GroupKind::Align));
+
+    env.rollback_to(checkpoint);
+    assert_eq!(env.innermost_group_kind(), Some(GroupKind::Simple));
+    assert_eq!(env.last_group_marker_pos(), outer_marker);
+    assert_eq!(env.group_boundaries.len(), env.group_depth as usize);
+    assert_eq!(env.leave_group_with_kind(GroupKind::Simple), Ok(Vec::new()));
+    assert_eq!(env.innermost_group_kind(), None);
+    assert!(env.group_boundaries.is_empty());
 }
 
 #[test]

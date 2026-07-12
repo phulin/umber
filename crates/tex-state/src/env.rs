@@ -159,6 +159,7 @@ pub struct Env {
     current_font: WordStamp,
     math_family_fonts: FixedBank<FontIdCodec, MATH_FAMILY_FONT_COUNT>,
     journal: Journal,
+    group_boundaries: Vec<group::GroupBoundary>,
     box_journal_positions: BTreeMap<(u16, u32), JournalPos>,
     aftergroup: Vec<Token>,
     afterassignment: Option<Token>,
@@ -198,6 +199,7 @@ impl Env {
             current_font: WordStamp::default(),
             math_family_fonts: FixedBank::new(),
             journal: Journal::new(),
+            group_boundaries: Vec::new(),
             box_journal_positions: BTreeMap::new(),
             aftergroup: Vec::new(),
             afterassignment: None,
@@ -451,7 +453,7 @@ impl Env {
     }
 
     fn box_reg_is_local_to_current_group(&self, index: u16) -> bool {
-        let Some((marker_pos, _, _)) = self.journal.find_last_group_marker() else {
+        let Some(marker_pos) = self.last_group_marker_pos() else {
             return false;
         };
         let key = (BankTag::Box, u32::from(index));

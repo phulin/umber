@@ -156,25 +156,6 @@ impl Journal {
         let len = checked_pos(pos, self.entries.len());
         self.entries.truncate(len);
     }
-
-    /// Finds the last group marker, skipping checkpoint markers.
-    #[must_use]
-    pub(crate) fn find_last_group_marker(&self) -> Option<(JournalPos, u32, GroupKind)> {
-        for (index, entry) in self.entries.iter().enumerate().rev() {
-            if let Entry::Marker(Marker::Group {
-                aftergroup_start,
-                kind,
-            }) = entry
-            {
-                return Some((
-                    JournalPos(u32_len(index, "journal exceeds u32 entries")),
-                    *aftergroup_start,
-                    *kind,
-                ));
-            }
-        }
-        None
-    }
 }
 
 fn checked_pos(pos: JournalPos, len: usize) -> usize {

@@ -18,6 +18,17 @@ pub enum GroupKind {
     Align,
 }
 
+/// Cached location and payload metadata for one live journal group marker.
+///
+/// This stack is rollback-coupled to the journal and makes current-group
+/// queries independent of the number of writes made inside the group.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct GroupBoundary {
+    marker_pos: JournalPos,
+    aftergroup_start: u32,
+    kind: GroupKind,
+}
+
 impl GroupKind {
     #[must_use]
     pub const fn start_text(self) -> &'static str {
@@ -83,6 +94,7 @@ pub(crate) struct EnvSnapshot {
     aftergroup_len: u32,
     afterassignment: Option<Token>,
     group_depth: u32,
+    group_boundary_len: u32,
     epoch: crate::epoch::Epoch,
 }
 
@@ -119,6 +131,10 @@ impl Env {
             ),
             afterassignment: self.afterassignment,
             group_depth: self.group_depth,
+            group_boundary_len: u32_len(
+                self.group_boundaries.len(),
+                "group boundary stack exceeds u32 entries",
+            ),
             epoch: self.epoch,
         };
         self.epoch.bump();
@@ -132,7 +148,9 @@ impl Env {
     }
 
     pub(crate) fn last_group_marker_pos(&self) -> Option<JournalPos> {
-        self.journal.find_last_group_marker().map(|(pos, _, _)| pos)
+        self.group_boundaries
+            .last()
+            .map(|boundary| boundary.marker_pos)
     }
 
     #[must_use]
@@ -147,9 +165,7 @@ impl Env {
 
     #[must_use]
     pub(crate) fn innermost_group_kind(&self) -> Option<GroupKind> {
-        self.journal
-            .find_last_group_marker()
-            .map(|(_, _, kind)| kind)
+        self.group_boundaries.last().map(|boundary| boundary.kind)
     }
 
     /// Enters a TeX group.
@@ -163,7 +179,13 @@ impl Env {
             self.aftergroup.len(),
             "aftergroup payload list exceeds u32 entries",
         );
+        let marker_pos = self.journal.pos();
         self.journal.push_marker(Marker::Group {
+            aftergroup_start,
+            kind,
+        });
+        self.group_boundaries.push(GroupBoundary {
+            marker_pos,
             aftergroup_start,
             kind,
         });
@@ -215,10 +237,11 @@ impl Env {
     }
 
     fn leave_group_unchecked(&mut self) -> Vec<Token> {
-        let Some((marker_pos, aftergroup_start, _kind)) = self.journal.find_last_group_marker()
-        else {
+        let Some(boundary) = self.group_boundaries.pop() else {
             panic!("leave_group without matching group marker");
         };
+        let marker_pos = boundary.marker_pos;
+        let aftergroup_start = boundary.aftergroup_start;
         let exiting_depth = self.group_depth;
         self.box_journal_positions
             .retain(|&(_, depth), _| depth != exiting_depth);
@@ -307,6 +330,12 @@ impl Env {
             }
         }
         self.journal.truncate_to(snapshot.journal_pos);
+        self.group_boundaries.truncate(
+            snapshot
+                .group_boundary_len
+                .try_into()
+                .expect("group boundary length fits usize"),
+        );
         self.group_depth = snapshot.group_depth;
         self.aftergroup.truncate(checked_aftergroup_start(
             snapshot.aftergroup_len,
