@@ -2804,6 +2804,47 @@ fn output_routine_replays_in_implicit_group_and_consumes_box255() {
 }
 
 #[test]
+fn output_routine_emits_one_checkpoint_only_after_teardown() {
+    let source = "\\output={\\advance\\count0 by 1 \\
+                  \\global\\advance\\count1 by 1 \\shipout\\hbox{}\\shipout\\box255}
+                  \\count0=10 \\count1=20
+                  \\topskip=0pt \\setbox0=\\hbox{}\\copy0 \\penalty-10000";
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(source));
+    let mut executor = Executor::new();
+    let mut checkpoints = Vec::new();
+    executor
+        .run_with_recorder_hooks_and_checkpoints(
+            &mut input,
+            &mut stores,
+            &mut NoopRecorder,
+            &mut NoopExecHooks,
+            &mut checkpoints,
+        )
+        .expect("custom output routine executes");
+
+    let shipouts = checkpoints
+        .iter()
+        .filter(|checkpoint| checkpoint.boundary() == EngineBoundary::ShipoutComplete)
+        .collect::<Vec<_>>();
+    assert_eq!(shipouts.len(), 1);
+    let checkpoint = shipouts[0];
+    assert_eq!(checkpoint.mode_summary().levels().len(), 1);
+    assert_eq!(stores.count(0), 10, "output local was restored");
+    assert_eq!(stores.count(1), 21, "output global survived");
+    assert!(stores.box_reg(255).is_none(), "output box was consumed");
+
+    stores.set_count(1, 99);
+    executor
+        .restore_checkpoint(&mut input, &mut stores, checkpoint, |_, _, _| {
+            Ok::<_, ()>(MemoryInput::new(source))
+        })
+        .expect("post-output checkpoint restores");
+    assert_eq!(stores.count(1), 21);
+}
+
+#[test]
 fn lastbox_reappend_runs_page_builder_before_enclosing_group_ends() {
     let mut stores = support::stores_with_fonts();
     tex_expand::install_expandable_primitives(&mut stores);
