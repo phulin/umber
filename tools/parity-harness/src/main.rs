@@ -12,7 +12,7 @@ use corpus_manifest::{Document, Manifest, parse_manifest_file};
 use refexec::{RefTex, RunOpts, normalized_dvi_for_comparison};
 use sha2::{Digest, Sha256};
 use similar::TextDiff;
-use tex_out::dvi::disasm::{DviFile, command_at_or_before, disassemble_page};
+use tex_out::dvi::disasm::DviFile;
 
 const TRACE_PREFIX: &str =
     "\\tracingoutput=1 \\tracingonline=0 \\showboxbreadth=-1 \\showboxdepth=-1\n";
@@ -570,13 +570,16 @@ fn write_page_disassembly(
     diff_offset: usize,
 ) -> Result<()> {
     let reference_file = DviFile::parse(&reference.normalized)?;
+    let umber_file = DviFile::parse(&umber.normalized)?;
     let page_index = reference_file
         .page_for_offset(diff_offset)
         .map_or(0, |page| page.index);
-    let reference_page = disassemble_page(&reference.normalized, page_index)
+    let reference_page = reference_file
+        .disassemble_page(page_index)
         .with_context(|| format!("failed to disassemble reference page {}", page_index + 1))?;
-    let umber_page = disassemble_page(&umber.normalized, page_index)
-        .or_else(|_| disassemble_page(&umber.normalized, 0))
+    let umber_page = umber_file
+        .disassemble_page(page_index)
+        .or_else(|_| umber_file.disassemble_page(0))
         .context("failed to disassemble umber page")?;
     fs::write(bundle.join("reference-page.dvitype"), &reference_page)?;
     fs::write(bundle.join("umber-page.dvitype"), &umber_page)?;
@@ -640,12 +643,15 @@ fn divergent_page_and_opcodes(
     offset: usize,
 ) -> Result<(usize, String, String)> {
     let reference_file = DviFile::parse(&reference.normalized)?;
+    let umber_file = DviFile::parse(&umber.normalized)?;
     let page_index = reference_file
         .page_for_offset(offset)
         .map_or(0, |page| page.index);
-    let reference_opcode = command_at_or_before(&reference.normalized, page_index, offset)?
+    let reference_opcode = reference_file
+        .command_at_or_before(page_index, offset)?
         .map_or_else(|| "unknown".to_string(), |command| command.name.to_string());
-    let umber_opcode = command_at_or_before(&umber.normalized, page_index, offset)
+    let umber_opcode = umber_file
+        .command_at_or_before(page_index, offset)
         .ok()
         .flatten()
         .map_or_else(|| "unknown".to_string(), |command| command.name.to_string());

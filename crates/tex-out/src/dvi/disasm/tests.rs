@@ -1,4 +1,4 @@
-use super::{DviFile, command_at_or_before, disassemble_page};
+use super::{DviDisasmError, DviFile, command_at_or_before, disassemble_page};
 
 #[test]
 fn recovers_pages_from_backpointer_chain() {
@@ -41,6 +41,87 @@ fn finds_command_owning_operand_offset() {
     let command = command.expect("operand belongs to a command");
     assert_eq!(command.name, "right4");
     assert_eq!(command.offset, right4_offset);
+}
+
+#[test]
+fn cyclic_bop_chain_returns_bounded_structured_error() {
+    let mut bytes = two_page_dvi();
+    let file = DviFile::parse(&bytes).expect("parse original DVI");
+    let second = file.pages[1].bop_offset;
+    bytes[second + 41..second + 45].copy_from_slice(
+        &i32::try_from(second)
+            .expect("small test offset")
+            .to_be_bytes(),
+    );
+
+    assert_eq!(
+        DviFile::parse(&bytes),
+        Err(DviDisasmError::BopCycle { offset: second })
+    );
+}
+
+#[test]
+fn page_count_and_backpointer_monotonicity_are_validated() {
+    let mut bytes = two_page_dvi();
+    let file = DviFile::parse(&bytes).expect("parse original DVI");
+    bytes[file.post_offset + 27..file.post_offset + 29].copy_from_slice(&1_u16.to_be_bytes());
+    assert_eq!(
+        DviFile::parse(&bytes),
+        Err(DviDisasmError::PageCountMismatch {
+            declared: 1,
+            actual: 2,
+        })
+    );
+
+    let mut bytes = two_page_dvi();
+    let file = DviFile::parse(&bytes).expect("parse original DVI");
+    let first = file.pages[0].bop_offset;
+    let forward = first + 1;
+    bytes[first + 41..first + 45].copy_from_slice(
+        &i32::try_from(forward)
+            .expect("small test offset")
+            .to_be_bytes(),
+    );
+    assert_eq!(
+        DviFile::parse(&bytes),
+        Err(DviDisasmError::NonMonotonicBop {
+            current: first,
+            previous: forward,
+        })
+    );
+}
+
+#[test]
+fn parsed_file_reuses_one_command_index_for_all_inspection() {
+    let mut bytes = two_page_dvi();
+    let file = DviFile::parse(&bytes).expect("parse DVI once");
+    bytes.fill(0);
+
+    let page = file.disassemble_page(1).expect("use retained commands");
+    let command = file
+        .command_at_or_before(1, file.pages[1].bop_offset + 48)
+        .expect("query retained commands")
+        .expect("command exists");
+
+    assert!(page.contains("right4 42"));
+    assert_eq!(command.name, "right4");
+}
+
+#[test]
+fn missing_eop_is_rejected_during_index_construction() {
+    let mut bytes = two_page_dvi();
+    let file = DviFile::parse(&bytes).expect("parse original DVI");
+    let first = &file.pages[0];
+    let eop = first.eop_end.expect("first page has eop") - 1;
+    bytes[eop] = 138;
+
+    assert_eq!(
+        DviFile::parse(&bytes),
+        Err(DviDisasmError::MissingEop {
+            page: 0,
+            bop_offset: first.bop_offset,
+        })
+    );
 }
 
 fn two_page_dvi() -> Vec<u8> {

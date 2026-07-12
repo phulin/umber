@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fmt;
 
 use super::opcodes::{
@@ -29,6 +30,7 @@ pub struct DviPage {
 pub struct DviFile {
     pub pages: Vec<DviPage>,
     pub post_offset: usize,
+    commands: Vec<Vec<DviCommand>>,
 }
 
 /// One decoded DVI command.
@@ -44,11 +46,44 @@ pub struct DviCommand {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DviDisasmError {
     MissingPostPost,
-    InvalidPostPointer { offset: usize },
-    InvalidBopPointer { offset: i32 },
-    Truncated { offset: usize, needed: usize },
-    BadOpcode { offset: usize, opcode: u8 },
-    PageOutOfRange { page: usize, pages: usize },
+    InvalidPostPointer {
+        offset: usize,
+    },
+    InvalidBopPointer {
+        offset: i32,
+    },
+    Truncated {
+        offset: usize,
+        needed: usize,
+    },
+    BadOpcode {
+        offset: usize,
+        opcode: u8,
+    },
+    PageOutOfRange {
+        page: usize,
+        pages: usize,
+    },
+    BopCycle {
+        offset: usize,
+    },
+    NonMonotonicBop {
+        current: usize,
+        previous: usize,
+    },
+    PageCountMismatch {
+        declared: usize,
+        actual: usize,
+    },
+    MissingEop {
+        page: usize,
+        bop_offset: usize,
+    },
+    CommandCrossesPageBoundary {
+        offset: usize,
+        end: usize,
+        boundary: usize,
+    },
 }
 
 impl fmt::Display for DviDisasmError {
@@ -79,6 +114,30 @@ impl fmt::Display for DviDisasmError {
             Self::PageOutOfRange { page, pages } => {
                 write!(f, "DVI page {} is out of range for {pages} pages", page + 1)
             }
+            Self::BopCycle { offset } => {
+                write!(f, "DVI bop backpointer graph cycles at byte {offset}")
+            }
+            Self::NonMonotonicBop { current, previous } => write!(
+                f,
+                "DVI bop at byte {current} points forward to byte {previous}"
+            ),
+            Self::PageCountMismatch { declared, actual } => write!(
+                f,
+                "DVI postamble declares {declared} pages but the bop chain contains {actual}"
+            ),
+            Self::MissingEop { page, bop_offset } => write!(
+                f,
+                "DVI page {} at byte {bop_offset} has no eop before its boundary",
+                page + 1
+            ),
+            Self::CommandCrossesPageBoundary {
+                offset,
+                end,
+                boundary,
+            } => write!(
+                f,
+                "DVI command at byte {offset} ends at {end}, beyond page boundary {boundary}"
+            ),
         }
     }
 }
@@ -98,11 +157,29 @@ impl DviFile {
                 offset: post_offset,
             });
         }
+        let declared_pages = usize::from(read_u16(bytes, post_offset + 27)?);
         let mut pointer = read_i32(bytes, post_offset + 1)?;
         let mut reversed = Vec::new();
+        let mut visited = BTreeSet::new();
+        let mut later_offset = post_offset;
         while pointer >= 0 {
             let offset = usize::try_from(pointer)
                 .map_err(|_| DviDisasmError::InvalidBopPointer { offset: pointer })?;
+            if !visited.insert(offset) {
+                return Err(DviDisasmError::BopCycle { offset });
+            }
+            if offset >= later_offset {
+                return Err(DviDisasmError::NonMonotonicBop {
+                    current: later_offset,
+                    previous: offset,
+                });
+            }
+            if reversed.len() == declared_pages {
+                return Err(DviDisasmError::PageCountMismatch {
+                    declared: declared_pages,
+                    actual: reversed.len() + 1,
+                });
+            }
             if bytes.get(offset) != Some(&BOP) {
                 return Err(DviDisasmError::InvalidBopPointer { offset: pointer });
             }
@@ -118,19 +195,31 @@ impl DviFile {
                 counts,
                 previous_bop,
             });
+            later_offset = offset;
             pointer = previous_bop;
+        }
+
+        if reversed.len() != declared_pages {
+            return Err(DviDisasmError::PageCountMismatch {
+                declared: declared_pages,
+                actual: reversed.len(),
+            });
         }
 
         reversed.reverse();
         let offsets: Vec<usize> = reversed.iter().map(|page| page.bop_offset).collect();
+        let mut commands = Vec::with_capacity(reversed.len());
         for (index, page) in reversed.iter_mut().enumerate() {
             page.index = index;
             let boundary = offsets.get(index + 1).copied().unwrap_or(post_offset);
-            page.eop_end = find_eop_end(bytes, page.bop_offset, boundary);
+            let page_commands = decode_page_commands(bytes, page.bop_offset, boundary, index)?;
+            page.eop_end = page_commands.last().map(|command| command.end);
+            commands.push(page_commands);
         }
         Ok(Self {
             pages: reversed,
             post_offset,
+            commands,
         })
     }
 
@@ -143,35 +232,51 @@ impl DviFile {
             page.bop_offset <= offset && offset < end
         })
     }
+
+    pub fn disassemble_page(&self, page: usize) -> Result<String, DviDisasmError> {
+        let page_meta = self.page(page)?;
+        let mut out = String::new();
+        out.push_str(&format!(
+            "page {} count0={} bop={}\n",
+            page + 1,
+            page_meta.counts[0],
+            page_meta.bop_offset
+        ));
+        for command in &self.commands[page] {
+            out.push_str(&command.text);
+            out.push('\n');
+        }
+        Ok(out)
+    }
+
+    pub fn command_at_or_before(
+        &self,
+        page: usize,
+        offset: usize,
+    ) -> Result<Option<DviCommand>, DviDisasmError> {
+        self.page(page)?;
+        let mut latest = None;
+        for command in &self.commands[page] {
+            if command.offset <= offset && offset < command.end {
+                return Ok(Some(command.clone()));
+            }
+            if command.offset <= offset {
+                latest = Some(command.clone());
+            }
+        }
+        Ok(latest)
+    }
+
+    fn page(&self, page: usize) -> Result<&DviPage, DviDisasmError> {
+        self.pages.get(page).ok_or(DviDisasmError::PageOutOfRange {
+            page,
+            pages: self.pages.len(),
+        })
+    }
 }
 
 pub fn disassemble_page(bytes: &[u8], page: usize) -> Result<String, DviDisasmError> {
-    let file = DviFile::parse(bytes)?;
-    let Some(page_meta) = file.pages.get(page) else {
-        return Err(DviDisasmError::PageOutOfRange {
-            page,
-            pages: file.pages.len(),
-        });
-    };
-    let boundary = file
-        .pages
-        .get(page + 1)
-        .map_or(file.post_offset, |next| next.bop_offset);
-    let mut out = String::new();
-    out.push_str(&format!(
-        "page {} count0={} bop={}\n",
-        page + 1,
-        page_meta.counts[0],
-        page_meta.bop_offset
-    ));
-    for command in decode_commands(bytes, page_meta.bop_offset, boundary)? {
-        out.push_str(&command.text);
-        out.push('\n');
-        if command.opcode == EOP {
-            break;
-        }
-    }
-    Ok(out)
+    DviFile::parse(bytes)?.disassemble_page(page)
 }
 
 pub fn command_at_or_before(
@@ -179,31 +284,7 @@ pub fn command_at_or_before(
     page: usize,
     offset: usize,
 ) -> Result<Option<DviCommand>, DviDisasmError> {
-    let file = DviFile::parse(bytes)?;
-    let Some(page_meta) = file.pages.get(page) else {
-        return Err(DviDisasmError::PageOutOfRange {
-            page,
-            pages: file.pages.len(),
-        });
-    };
-    let boundary = file
-        .pages
-        .get(page + 1)
-        .map_or(file.post_offset, |next| next.bop_offset);
-    let mut latest = None;
-    for command in decode_commands(bytes, page_meta.bop_offset, boundary)? {
-        let contains = command.offset <= offset && offset < command.end;
-        if contains {
-            return Ok(Some(command));
-        }
-        if command.offset <= offset {
-            latest = Some(command.clone());
-        }
-        if command.opcode == EOP {
-            break;
-        }
-    }
-    Ok(latest)
+    DviFile::parse(bytes)?.command_at_or_before(page, offset)
 }
 
 pub fn opcode_name(opcode: u8) -> &'static str {
@@ -294,20 +375,35 @@ pub fn opcode_name(opcode: u8) -> &'static str {
     }
 }
 
-fn decode_commands(
+fn decode_page_commands(
     bytes: &[u8],
     start: usize,
     boundary: usize,
+    page: usize,
 ) -> Result<Vec<DviCommand>, DviDisasmError> {
     let mut commands = Vec::new();
     let mut offset = start;
     while offset < boundary {
         let command = decode_command(bytes, offset)?;
         let end = command.end;
+        if end > boundary {
+            return Err(DviDisasmError::CommandCrossesPageBoundary {
+                offset,
+                end,
+                boundary,
+            });
+        }
+        let is_eop = command.opcode == EOP;
         commands.push(command);
         offset = end;
+        if is_eop {
+            return Ok(commands);
+        }
     }
-    Ok(commands)
+    Err(DviDisasmError::MissingEop {
+        page,
+        bop_offset: start,
+    })
 }
 
 fn decode_command(bytes: &[u8], offset: usize) -> Result<DviCommand, DviDisasmError> {
@@ -475,18 +571,6 @@ fn post_offset_from_trailer(bytes: &[u8]) -> Result<usize, DviDisasmError> {
     }
     let pointer = read_u32(bytes, index - 5)?;
     usize::try_from(pointer).map_err(|_| DviDisasmError::InvalidPostPointer { offset: usize::MAX })
-}
-
-fn find_eop_end(bytes: &[u8], start: usize, boundary: usize) -> Option<usize> {
-    let mut offset = start;
-    while offset < boundary {
-        let command = decode_command(bytes, offset).ok()?;
-        if command.opcode == EOP {
-            return Some(command.end);
-        }
-        offset = command.end;
-    }
-    None
 }
 
 fn operand_width(opcode: u8) -> usize {

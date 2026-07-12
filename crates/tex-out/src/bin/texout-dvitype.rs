@@ -4,7 +4,7 @@ use std::env;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use tex_out::dvi::disasm::{DviFile, disassemble_page};
+use tex_out::dvi::disasm::DviFile;
 
 fn main() -> ExitCode {
     match run() {
@@ -58,14 +58,14 @@ fn run() -> Result<(), String> {
         Some(page) => {
             print!(
                 "{}",
-                disassemble_page(&bytes, page).map_err(|err| err.to_string())?
+                file.disassemble_page(page).map_err(|err| err.to_string())?
             );
         }
         None => {
             for page in 0..file.pages.len() {
                 print!(
                     "{}",
-                    disassemble_page(&bytes, page).map_err(|err| err.to_string())?
+                    file.disassemble_page(page).map_err(|err| err.to_string())?
                 );
             }
         }
