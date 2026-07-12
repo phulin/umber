@@ -34,9 +34,9 @@ pub mod world;
 
 pub use input::{
     AlignmentCellPhaseSummary, AlignmentCellSummary, ConditionFrameSummary, ConditionFrameToken,
-    ConditionKind, ConditionLimb, InputFrameSummary, InputSummary, LexerState,
-    MACRO_ARGUMENT_SLOTS, MacroArguments, SourceFrameSummary, SourceId, TokenListReplayKind,
-    TracedTokenList,
+    ConditionKind, ConditionLimb, GulletContinuationSummary, InputContinuations, InputFrameSummary,
+    InputSummary, LexerState, MACRO_ARGUMENT_SLOTS, MacroArguments, SourceFrameSummary, SourceId,
+    TokenListReplayKind, TracedTokenList,
 };
 pub use page::{
     AWFUL_BAD, DEPLORABLE, EJECT_PENALTY, INF_PENALTY, PageBreak, PageContents, PageDimension,

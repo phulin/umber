@@ -655,6 +655,34 @@ fn csname_interns_undefined_name_and_assigns_relax() {
 }
 
 #[test]
+fn restored_csname_continuation_finishes_before_ordinary_expansion() {
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("b\\endcsname "));
+    input.push_gullet_continuation(tex_lex::GulletContinuationSummary::CsName {
+        name: "a".to_owned(),
+        context: TracedTokenWord::pack(
+            Token::Cs(stores.intern("csname").symbol()),
+            OriginId::UNKNOWN,
+        ),
+    });
+    let summary = input.summary();
+    let mut restored = InputStack::from_summary(&summary, |_, _, _| {
+        Ok::<_, ()>(MemoryInput::new("b\\endcsname "))
+    })
+    .expect("csname continuation restores");
+
+    let delivered = crate::get_x_token(&mut restored, &mut stores)
+        .expect("restored csname resumes")
+        .expect("restored csname delivers its control sequence");
+    let Token::Cs(symbol) = crate::semantic_token(delivered) else {
+        panic!("csname must deliver a control sequence");
+    };
+    assert_eq!(stores.resolve(symbol), "ab");
+    assert!(restored.current_gullet_continuation().is_none());
+}
+
+#[test]
 fn csname_expands_name_pieces_before_interning() {
     let mut stores = Universe::new();
     let (csname, endcsname) = csname_primitives(&mut stores);

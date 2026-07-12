@@ -3528,6 +3528,15 @@ fn hash_input_summary_fields(
             None => hasher.bool(false),
         }
     }
+    hasher.usize(summary.gullet_continuations().len());
+    for continuation in summary.gullet_continuations() {
+        match continuation {
+            crate::GulletContinuationSummary::CsName { name, .. } => {
+                hasher.tag(0);
+                hasher.str(name);
+            }
+        }
+    }
 }
 
 fn hash_input_record(

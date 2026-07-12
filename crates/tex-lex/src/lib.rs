@@ -19,9 +19,9 @@ use tex_state::{ExpansionState, FileContent, InputRecordId, WorldError};
 
 pub use tex_state::{
     AlignmentCellPhaseSummary, AlignmentCellSummary, ConditionFrameSummary, ConditionFrameToken,
-    ConditionKind, ConditionLimb, InputFrameSummary, InputSummary, LexerState,
-    MACRO_ARGUMENT_SLOTS, MacroArguments, SourceFrameSummary, SourceId, TokenListReplayKind,
-    TracedTokenList,
+    ConditionKind, ConditionLimb, GulletContinuationSummary, InputContinuations, InputFrameSummary,
+    InputSummary, LexerState, MACRO_ARGUMENT_SLOTS, MacroArguments, SourceFrameSummary, SourceId,
+    TokenListReplayKind, TracedTokenList,
 };
 
 /// Source of physical input lines.
@@ -586,6 +586,7 @@ pub struct InputStack<S> {
     next_replay_marker: u64,
     next_condition_token: u64,
     alignment_cells: Vec<AlignmentCellInput>,
+    gullet_continuations: Vec<GulletContinuationSummary>,
     active_macro_invocation: OriginId,
     recently_popped_invocation: Option<OriginId>,
 }
@@ -693,6 +694,23 @@ fn alignment_delivery_from_code(code: u8) -> AlignmentTokenDelivery {
 pub struct AlignmentCellSuspension(Option<AlignmentCellInput>);
 
 impl<S> InputStack<S> {
+    pub fn push_gullet_continuation(&mut self, continuation: GulletContinuationSummary) {
+        self.gullet_continuations.push(continuation);
+    }
+
+    #[must_use]
+    pub fn current_gullet_continuation(&self) -> Option<&GulletContinuationSummary> {
+        self.gullet_continuations.last()
+    }
+
+    pub fn current_gullet_continuation_mut(&mut self) -> Option<&mut GulletContinuationSummary> {
+        self.gullet_continuations.last_mut()
+    }
+
+    pub fn pop_gullet_continuation(&mut self) -> Option<GulletContinuationSummary> {
+        self.gullet_continuations.pop()
+    }
+
     /// Rebases a fresh, not-yet-registered stack into the aggregate source-id
     /// domain used by earlier execution runs.
     pub fn ensure_source_ids_at_least(&mut self, minimum: u32) {
@@ -753,6 +771,7 @@ impl<S> InputStack<S> {
             next_replay_marker: 0,
             next_condition_token: 0,
             alignment_cells: Vec::new(),
+            gullet_continuations: Vec::new(),
             active_macro_invocation: OriginId::UNKNOWN,
             recently_popped_invocation: None,
         };
@@ -898,6 +917,7 @@ impl<S> InputStack<S> {
                 .iter()
                 .map(restore_alignment_cell)
                 .collect(),
+            gullet_continuations: summary.gullet_continuations().to_vec(),
             active_macro_invocation,
             recently_popped_invocation: None,
         })
@@ -1260,10 +1280,14 @@ impl<S> InputStack<S> {
             }),
             self.next_source_id,
             self.unicode_superscript_notation,
-            self.alignment_cells
-                .iter()
-                .map(summarize_alignment_cell)
-                .collect(),
+            InputContinuations {
+                alignment_cells: self
+                    .alignment_cells
+                    .iter()
+                    .map(summarize_alignment_cell)
+                    .collect(),
+                gullet: self.gullet_continuations.clone(),
+            },
         )
     }
 

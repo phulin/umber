@@ -23,6 +23,21 @@ pub struct AlignmentCellSummary {
     pub terminator: Option<TracedTokenWord>,
 }
 
+/// Explicit gullet work that must resume before ordinary token delivery.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum GulletContinuationSummary {
+    CsName {
+        name: String,
+        context: TracedTokenWord,
+    },
+}
+
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+pub struct InputContinuations {
+    pub alignment_cells: Vec<AlignmentCellSummary>,
+    pub gullet: Vec<GulletContinuationSummary>,
+}
+
 /// Maximum number of macro arguments TeX permits in one macro body.
 pub const MACRO_ARGUMENT_SLOTS: usize = 9;
 
@@ -351,6 +366,7 @@ pub struct InputSummary {
     next_source_id: u32,
     unicode_superscript_notation: bool,
     alignment_cells: Arc<[AlignmentCellSummary]>,
+    gullet_continuations: Arc<[GulletContinuationSummary]>,
 }
 
 impl PartialEq for InputSummary {
@@ -360,6 +376,7 @@ impl PartialEq for InputSummary {
             && self.last_source_frame == other.last_source_frame
             && self.unicode_superscript_notation == other.unicode_superscript_notation
             && self.alignment_cells == other.alignment_cells
+            && self.gullet_continuations == other.gullet_continuations
     }
 }
 
@@ -372,6 +389,7 @@ impl Hash for InputSummary {
         self.last_source_frame.hash(state);
         self.unicode_superscript_notation.hash(state);
         self.alignment_cells.hash(state);
+        self.gullet_continuations.hash(state);
     }
 }
 
@@ -429,7 +447,7 @@ impl InputSummary {
             last_source_frame,
             next_source_id,
             unicode_superscript_notation,
-            Vec::new(),
+            InputContinuations::default(),
         )
     }
 
@@ -441,7 +459,7 @@ impl InputSummary {
         last_source_frame: Option<SourceFrameSummary>,
         next_source_id: u32,
         unicode_superscript_notation: bool,
-        alignment_cells: Vec<AlignmentCellSummary>,
+        continuations: InputContinuations,
     ) -> Self {
         Self {
             frames: frames.into(),
@@ -450,7 +468,8 @@ impl InputSummary {
             last_source_frame,
             next_source_id,
             unicode_superscript_notation,
-            alignment_cells: alignment_cells.into(),
+            alignment_cells: continuations.alignment_cells.into(),
+            gullet_continuations: continuations.gullet.into(),
         }
     }
 
@@ -501,6 +520,11 @@ impl InputSummary {
     #[must_use]
     pub fn alignment_cells(&self) -> &[AlignmentCellSummary] {
         &self.alignment_cells
+    }
+
+    #[must_use]
+    pub fn gullet_continuations(&self) -> &[GulletContinuationSummary] {
+        &self.gullet_continuations
     }
 }
 

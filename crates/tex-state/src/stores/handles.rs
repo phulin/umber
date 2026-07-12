@@ -66,6 +66,13 @@ impl Stores {
                 self.assert_live_traced_token_word(token);
             }
         }
+        for continuation in summary.gullet_continuations() {
+            match continuation {
+                crate::GulletContinuationSummary::CsName { context, .. } => {
+                    self.assert_live_traced_token_word(*context);
+                }
+            }
+        }
 
         match (
             summary.last_source_id(),

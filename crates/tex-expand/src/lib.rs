@@ -862,6 +862,10 @@ where
     H: ExpansionHooks<S>,
 {
     loop {
+        if let Some(push) = resume_gullet_continuation(input, stores, recorder, hooks)? {
+            apply_dispatch_push(input, push);
+            continue;
+        }
         let read = match input.next_traced_expansion_token(stores) {
             Ok(Some(read)) => read,
             Ok(None) => return Ok(None),
@@ -1196,6 +1200,10 @@ where
     H: ExpansionHooks<S>,
 {
     loop {
+        if let Some(push) = resume_gullet_continuation(input, stores, recorder, hooks)? {
+            apply_dispatch_push(input, push);
+            continue;
+        }
         let read = match input.next_traced_expansion_token(stores) {
             Ok(Some(read)) => read,
             Ok(None) => return Ok(None),
@@ -1261,6 +1269,39 @@ where
             push @ Dispatch::Push { .. } => apply_dispatch_push(input, push),
         }
     }
+}
+
+fn resume_gullet_continuation<S, R, H>(
+    input: &mut InputStack<S>,
+    stores: &mut impl ExpansionState,
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<Option<Dispatch>, ExpandError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    let Some(tex_lex::GulletContinuationSummary::CsName { context, .. }) =
+        input.current_gullet_continuation()
+    else {
+        return Ok(None);
+    };
+    let call_origin = context.origin();
+    let name = primitives::resume_csname(input, stores, recorder, hooks)?;
+    let symbol = stores.intern_relaxed_control_sequence(&name);
+    Ok(Some(Dispatch::Push {
+        replay_kind: ExpansionReplayKind::Inserted,
+        token_list: stores.intern_token_list(&[Token::Cs(symbol.symbol())]),
+        origin_list: synthesized_origin_list(
+            stores,
+            1,
+            call_origin,
+            SynthesizedOriginKind::Expansion,
+        ),
+        macro_arguments: MacroArguments::new(),
+        macro_invocation: OriginId::UNKNOWN,
+    }))
 }
 
 pub(crate) fn dispatch_one_raw_token_with_hooks<S, R, H>(

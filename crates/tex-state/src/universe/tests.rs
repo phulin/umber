@@ -4,8 +4,8 @@ use crate::glue::{GlueSpec, Order};
 use crate::hyphenation::{ExceptionSpec, PatternSpec};
 use crate::ids::{ArenaRef, NodeListId};
 use crate::input::{
-    InputFrameSummary, InputSummary, LexerState, MacroArguments, SourceFrameSummary, SourceId,
-    TokenListReplayKind, TracedTokenList,
+    GulletContinuationSummary, InputContinuations, InputFrameSummary, InputSummary, LexerState,
+    MacroArguments, SourceFrameSummary, SourceId, TokenListReplayKind, TracedTokenList,
 };
 use crate::macro_store::MacroMeaning;
 use crate::meaning::{Meaning, MeaningFlags, RawMeaning};
@@ -1130,6 +1130,41 @@ fn semantic_hash_distinguishes_evaluating_conditional_state() {
     ));
 
     assert_ne!(universe.snapshot().state_hash(), evaluating);
+}
+
+#[test]
+fn semantic_hash_distinguishes_csname_continuation_text() {
+    let context = TracedTokenWord::pack(
+        Token::Char {
+            ch: 'c',
+            cat: Catcode::Letter,
+        },
+        OriginId::UNKNOWN,
+    );
+    let summary = |name: &str| {
+        InputSummary::new_with_continuations(
+            Vec::new(),
+            None,
+            None,
+            None,
+            0,
+            true,
+            InputContinuations {
+                alignment_cells: Vec::new(),
+                gullet: vec![GulletContinuationSummary::CsName {
+                    name: name.to_owned(),
+                    context,
+                }],
+            },
+        )
+    };
+    let mut left = Universe::new();
+    left.set_input_summary(summary("left"));
+    let left_hash = left.snapshot().state_hash();
+    let mut right = Universe::new();
+    right.set_input_summary(summary("right"));
+    let right_hash = right.snapshot().state_hash();
+    assert_ne!(left_hash, right_hash);
 }
 
 #[test]
