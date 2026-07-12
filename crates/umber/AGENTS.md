@@ -4,7 +4,7 @@ Read the repository-level `AGENTS.md` before editing here. This crate is the com
 
 ## Crate Role
 
-`umber` wires the engine crates into user-facing commands. The binary currently provides `lex-dump`, `expand-dump`, and `run`; `run` can also write DVI by collecting shipped artifact ids and invoking `tex-out` downstream. The library exposes helpers for preparing primitive state, running in-memory sources, running an already-open input stack, collecting shipout artifact ids, and building DVI bytes from committed artifacts. It owns CLI argument handling, command-specific hooks, job-name/base-directory policy, downstream output-driver composition, and the final effect commit for real runs.
+`umber` wires the engine crates into user-facing commands. The binary currently provides `lex-dump`, `expand-dump`, and `run`; `run` can also write DVI by collecting shipped artifact ids and invoking `tex-out` downstream. The library exposes the shared engine-session orchestration boundary, file search hooks, typed finalization phases, in-memory helpers, and DVI construction from committed artifacts. It owns CLI argument handling, job-name/base-directory policy, downstream output-driver composition, and the final effect commit for real runs.
 
 Use this crate when behavior is about driving the engine, presenting CLI output, or providing integration-test harnesses over multiple lower-level crates.
 
@@ -19,10 +19,10 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 
 - `AGENTS.md`: crate-local guidance for CLI-driver ownership, boundaries, validation, and this file map.
 - `Cargo.toml`: package metadata, feature flags, workspace lint inheritance, and engine/test dependencies.
-- `src/expand_dump.rs`: implementation of the `expand-dump` CLI command, including file input hooks and dump primitive setup.
+- `src/expand_dump.rs`: implementation of the `expand-dump` CLI command through the shared engine session and dump primitive setup.
 - `src/input_search.rs`: deterministic driver-owned TeX input and TFM font path resolution through World-backed reads.
 - `src/input_search/tests.rs`: focused TeX input/font area ordering, extension, and input-record coverage.
-- `src/lib.rs`: public run harness helpers for preparing state, executing input stacks or memory sources, and collecting shipout artifact ids.
+- `src/lib.rs`: shared engine session, file hooks, typed effect-before-driver finalization, run harness helpers, and DVI construction.
 - `src/main.rs`: `umber` binary entry point, CLI argument parsing, `lex-dump`/`expand-dump`/`run` dispatch, token formatting, and real-run file hooks.
 - `tests/it.rs`: integration-test module root wiring the CLI, replay identity, and effectful replay test suites.
 - `tests/it/cli.rs`: integration tests for CLI success, usage errors, corpus dump output, and committed diagnostic/DVI fixture parity.

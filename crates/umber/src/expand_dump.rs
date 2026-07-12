@@ -1,14 +1,13 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use tex_exec::try_execute_assignment;
-use tex_expand::{ExpandError, ExpansionHooks, get_x_token_with_hooks, semantic_token};
+use tex_expand::{ExpandError, semantic_token};
 use tex_lex::{InputStack, LexError, WorldInput};
 use tex_state::env::banks::IntParam;
 use tex_state::meaning::Meaning;
-use tex_state::token::TracedTokenWord;
-use tex_state::{ExpansionContext, Universe, World, WorldError};
+use tex_state::{Universe, World, WorldError};
 
 use crate::format_token;
+use umber::{EngineSession, FileSessionHooks};
 
 pub fn expand_dump(path: &str) -> Result<(), ExpandDumpError> {
     let path = Path::new(path);
@@ -16,85 +15,28 @@ pub fn expand_dump(path: &str) -> Result<(), ExpandDumpError> {
     let content = stores.world_mut().read_file(path)?;
     install_dump_primitives(&mut stores);
 
-    let input = InputStack::new(WorldInput::from_content(content));
-    let mut driver = DumpDriver {
-        input,
-        stores,
-        hooks: FileHooks::new(path),
-    };
-    match driver.dump() {
+    let mut input = InputStack::new(WorldInput::from_content(content));
+    let mut hooks = FileSessionHooks::from_environment(path);
+    let mut session = EngineSession::new(&mut input, &mut stores, &mut hooks);
+    match dump(&mut session) {
         Ok(()) => Ok(()),
         Err(err) => {
-            let summary = driver.input.publication_summary(&mut driver.stores);
-            driver.stores.set_input_summary(summary);
-            Err(err.render_with_provenance(&driver.stores))
+            session.publish_input_summary();
+            Err(err.render_with_provenance(session.stores()))
         }
     }
 }
 
-struct DumpDriver {
-    input: InputStack<WorldInput>,
-    stores: Universe,
-    hooks: FileHooks,
-}
-
-impl DumpDriver {
-    fn dump(&mut self) -> Result<(), ExpandDumpError> {
-        while let Some(token) = self.next_delivered()? {
-            if try_execute_assignment(token, &mut self.input, &mut self.stores, &mut self.hooks)? {
-                continue;
-            }
-            println!("{}", format_token(semantic_token(token), &self.stores));
+fn dump(
+    session: &mut EngineSession<'_, WorldInput, FileSessionHooks>,
+) -> Result<(), ExpandDumpError> {
+    while let Some(token) = session.next_expanded_token()? {
+        if session.try_execute_assignment(token)? {
+            continue;
         }
-        Ok(())
+        println!("{}", format_token(semantic_token(token), session.stores()));
     }
-
-    fn next_delivered(&mut self) -> Result<Option<TracedTokenWord>, ExpandDumpError> {
-        let mut expansion = ExpansionContext::new(&mut self.stores);
-        Ok(get_x_token_with_hooks(
-            &mut self.input,
-            &mut expansion,
-            &mut self.hooks,
-        )?)
-    }
-}
-
-struct FileHooks {
-    base_dir: PathBuf,
-    job_name: String,
-}
-
-impl FileHooks {
-    fn new(path: &Path) -> Self {
-        let base_dir = path.parent().unwrap_or_else(|| Path::new(".")).to_owned();
-        let job_name = path
-            .file_stem()
-            .and_then(std::ffi::OsStr::to_str)
-            .unwrap_or("texput")
-            .to_owned();
-        Self { base_dir, job_name }
-    }
-}
-
-impl ExpansionHooks<WorldInput> for FileHooks {
-    fn open_input<C: tex_state::InputReadState>(
-        &mut self,
-        input: &mut C,
-        name: &str,
-    ) -> Result<WorldInput, String> {
-        let mut path = self.base_dir.join(name);
-        if path.extension().is_none() {
-            path.set_extension("tex");
-        }
-        input
-            .read_input_file(&path)
-            .map(WorldInput::from_content)
-            .map_err(|err| format!("{} ({err})", path.display()))
-    }
-
-    fn job_name(&self) -> &str {
-        &self.job_name
-    }
+    Ok(())
 }
 
 fn install_dump_primitives(stores: &mut Universe) {

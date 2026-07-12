@@ -1,14 +1,168 @@
-use tex_exec::Executor;
-use tex_expand::{ExpansionHooks, NoopRecorder};
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
+
+use tex_exec::{Executor, try_execute_assignment};
+use tex_expand::{ExpansionHooks, NoopRecorder, get_x_token_with_hooks};
 use tex_lex::{InputSource, InputStack, MemoryInput};
 use tex_out::PageArtifact;
 use tex_out::dvi::{DviError, write_dvi};
 use tex_state::env::banks::IntParam;
-use tex_state::{ContentHash, EffectRecord, PrintSink, Universe, WorldError};
+use tex_state::token::TracedTokenWord;
+use tex_state::{
+    ContentHash, EffectPos, EffectRecord, ExpansionContext, PrintSink, Universe, WorldError,
+};
 
 mod input_search;
 
 pub use input_search::{TexFontSearchPath, TexInputSearchPath};
+
+/// The only checkpoint policy supported by composed engine sessions.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CheckpointPolicy {
+    NamedExecutorBoundaries,
+}
+
+/// Exclusive composition boundary for input, hooks, state, diagnostics, and artifacts.
+pub struct EngineSession<'a, S, H> {
+    input: &'a mut InputStack<S>,
+    stores: &'a mut Universe,
+    hooks: &'a mut H,
+    artifact_cursor: usize,
+    checkpoint_policy: CheckpointPolicy,
+}
+
+impl<'a, S, H> EngineSession<'a, S, H>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    pub fn new(input: &'a mut InputStack<S>, stores: &'a mut Universe, hooks: &'a mut H) -> Self {
+        let artifact_cursor = stores.world().artifact_commits().len();
+        Self {
+            input,
+            stores,
+            hooks,
+            artifact_cursor,
+            checkpoint_policy: CheckpointPolicy::NamedExecutorBoundaries,
+        }
+    }
+
+    #[must_use]
+    pub const fn checkpoint_policy(&self) -> CheckpointPolicy {
+        self.checkpoint_policy
+    }
+
+    #[must_use]
+    pub fn stores(&self) -> &Universe {
+        self.stores
+    }
+
+    pub fn stores_mut(&mut self) -> &mut Universe {
+        self.stores
+    }
+
+    pub fn execute(&mut self) -> Result<RunResult, tex_exec::ExecError> {
+        let mut recorder = NoopRecorder;
+        let stats = Executor::new().run_with_recorder_and_hooks(
+            self.input,
+            self.stores,
+            &mut recorder,
+            self.hooks,
+        )?;
+        let committed = self.stores.world().artifact_commits();
+        debug_assert_eq!(
+            &committed[self.artifact_cursor..],
+            stats.shipped_artifacts.as_slice()
+        );
+        self.artifact_cursor = committed.len();
+        Ok(RunResult {
+            terminal_text: uncommitted_terminal_text(self.stores),
+            artifacts: stats.shipped_artifacts,
+            dumped_format: stats.dumped_format,
+        })
+    }
+
+    pub fn next_expanded_token(
+        &mut self,
+    ) -> Result<Option<TracedTokenWord>, tex_expand::ExpandError> {
+        let mut expansion = ExpansionContext::new(self.stores);
+        get_x_token_with_hooks(self.input, &mut expansion, self.hooks)
+    }
+
+    pub fn try_execute_assignment(
+        &mut self,
+        token: TracedTokenWord,
+    ) -> Result<bool, tex_exec::ExecError> {
+        try_execute_assignment(token, self.input, self.stores, self.hooks)
+    }
+
+    pub fn publish_input_summary(&mut self) {
+        let summary = self.input.publication_summary(self.stores);
+        self.stores.set_input_summary(summary);
+    }
+}
+
+/// Shared file search and job identity policy for run-like commands.
+pub struct FileSessionHooks {
+    input_search: TexInputSearchPath,
+    font_search: TexFontSearchPath,
+    job_name: String,
+}
+
+impl FileSessionHooks {
+    #[must_use]
+    pub fn from_environment(path: &Path) -> Self {
+        let areas = |name| {
+            std::env::var_os(name)
+                .map(|value| {
+                    std::env::split_paths(&value)
+                        .filter(|path| !path.as_os_str().is_empty())
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        Self::new(path, areas("TEXINPUTS"), areas("TEXFONTS"))
+    }
+
+    #[must_use]
+    pub fn new(path: &Path, tex_input_areas: Vec<PathBuf>, tex_font_areas: Vec<PathBuf>) -> Self {
+        let base_dir = path.parent().unwrap_or_else(|| Path::new(".")).to_owned();
+        let job_name = path
+            .file_stem()
+            .and_then(std::ffi::OsStr::to_str)
+            .unwrap_or("texput")
+            .to_owned();
+        Self {
+            input_search: TexInputSearchPath::new(&base_dir, tex_input_areas),
+            font_search: TexFontSearchPath::new(base_dir, tex_font_areas),
+            job_name,
+        }
+    }
+}
+
+impl ExpansionHooks<tex_lex::WorldInput> for FileSessionHooks {
+    fn open_input<C: tex_state::InputReadState>(
+        &mut self,
+        input: &mut C,
+        name: &str,
+    ) -> Result<tex_lex::WorldInput, String> {
+        self.input_search
+            .read(input, name)
+            .map(tex_lex::WorldInput::from_content)
+    }
+
+    fn open_font<C: tex_state::InputReadState>(
+        &mut self,
+        input: &mut C,
+        path: &Path,
+    ) -> Result<tex_state::FileContent, String> {
+        self.font_search.read(input, path)
+    }
+
+    fn job_name(&self) -> &str {
+        &self.job_name
+    }
+}
 
 /// Result of running TeX through the batch executor.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -16,6 +170,89 @@ pub struct RunResult {
     pub terminal_text: String,
     pub artifacts: Vec<ContentHash>,
     pub dumped_format: bool,
+}
+
+/// A fully prepared downstream file that has not been materialized.
+pub struct DriverFile {
+    path: PathBuf,
+    bytes: Vec<u8>,
+}
+
+impl DriverFile {
+    #[must_use]
+    pub fn new(path: PathBuf, bytes: Vec<u8>) -> Self {
+        Self { path, bytes }
+    }
+}
+
+/// Finalization state before the engine's World effects have committed.
+pub struct PlannedFinalization {
+    effect_pos: EffectPos,
+    files: Vec<DriverFile>,
+}
+
+impl PlannedFinalization {
+    pub fn new(effect_pos: EffectPos, files: Vec<DriverFile>) -> Result<Self, FinalizationError> {
+        let mut paths = BTreeSet::new();
+        for file in &files {
+            if !paths.insert(file.path.clone()) {
+                return Err(FinalizationError::ConflictingDriverPath(file.path.clone()));
+            }
+        }
+        Ok(Self { effect_pos, files })
+    }
+
+    pub fn commit_effects(
+        self,
+        stores: &mut Universe,
+    ) -> Result<CommittedFinalization, FinalizationError> {
+        stores.commit_effects(self.effect_pos)?;
+        Ok(CommittedFinalization { files: self.files })
+    }
+
+    /// Explicit fixture policy: retain effect records and materialize nothing.
+    pub fn discard_uncommitted(self) {}
+}
+
+/// Finalization state that may materialize downstream files safely.
+pub struct CommittedFinalization {
+    files: Vec<DriverFile>,
+}
+
+impl CommittedFinalization {
+    pub fn materialize(self, stores: &mut Universe) -> Result<(), FinalizationError> {
+        for file in self.files {
+            stores.world_mut().write_file(file.path, file.bytes)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub enum FinalizationError {
+    ConflictingDriverPath(PathBuf),
+    World(WorldError),
+}
+
+impl std::fmt::Display for FinalizationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ConflictingDriverPath(path) => write!(
+                f,
+                "multiple downstream outputs resolve to {}",
+                path.display()
+            ),
+            Self::World(error) => error.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for FinalizationError {}
+
+impl From<WorldError> for FinalizationError {
+    fn from(value: WorldError) -> Self {
+        Self::World(value)
+    }
 }
 
 /// Installs the primitive/state setup used by `umber run`.
@@ -49,13 +286,7 @@ where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    let mut recorder = NoopRecorder;
-    let stats = Executor::new().run_with_recorder_and_hooks(input, stores, &mut recorder, hooks)?;
-    Ok(RunResult {
-        terminal_text: uncommitted_terminal_text(stores),
-        artifacts: stats.shipped_artifacts,
-        dumped_format: stats.dumped_format,
-    })
+    EngineSession::new(input, stores, hooks).execute()
 }
 
 /// Reads committed page artifacts from `World` and writes a complete DVI file.
@@ -155,5 +386,91 @@ impl From<tex_out::ParseError> for DviBuildError {
 impl From<DviError> for DviBuildError {
     fn from(value: DviError) -> Self {
         Self::Dvi(value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DriverFile, FinalizationError, PlannedFinalization};
+    use std::path::PathBuf;
+    use tex_state::{PrintSink, StreamSlot, Universe, World};
+
+    #[test]
+    #[allow(clippy::disallowed_methods)] // Verifies real host ordering at the World boundary.
+    fn driver_materialization_follows_engine_effect_commit() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let output = temp.path().join("shared.out");
+        let mut stores = Universe::with_world(World::real());
+        let slot = StreamSlot::new(1);
+        stores.world_mut().open_out(slot, &output);
+        stores
+            .world_mut()
+            .write_text(PrintSink::Stream(slot), "engine");
+        let plan = PlannedFinalization::new(
+            stores.world().effect_pos(),
+            vec![DriverFile::new(output.clone(), b"driver".to_vec())],
+        )
+        .expect("paths are distinct");
+
+        plan.commit_effects(&mut stores)
+            .expect("effects commit")
+            .materialize(&mut stores)
+            .expect("driver materializes");
+
+        assert_eq!(std::fs::read(output).expect("read output"), b"driver");
+    }
+
+    #[test]
+    fn failed_effect_commit_cannot_materialize_driver_file() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let mut stores = Universe::with_world(World::real());
+        let slot = StreamSlot::new(1);
+        stores.world_mut().open_out(slot, temp.path());
+        stores
+            .world_mut()
+            .write_text(PrintSink::Stream(slot), "cannot write a directory");
+        let driver_path = temp.path().join("driver.dvi");
+        let plan = PlannedFinalization::new(
+            stores.world().effect_pos(),
+            vec![DriverFile::new(driver_path.clone(), b"driver".to_vec())],
+        )
+        .expect("paths are distinct");
+
+        assert!(plan.commit_effects(&mut stores).is_err());
+        assert!(!driver_path.exists());
+    }
+
+    #[test]
+    fn duplicate_driver_paths_are_rejected_before_finalization() {
+        let stores = Universe::with_world(World::memory());
+        let result = PlannedFinalization::new(
+            stores.world().effect_pos(),
+            vec![
+                DriverFile::new(PathBuf::from("same.out"), vec![1]),
+                DriverFile::new(PathBuf::from("same.out"), vec![2]),
+            ],
+        );
+        assert!(matches!(
+            result,
+            Err(FinalizationError::ConflictingDriverPath(path)) if path == std::path::Path::new("same.out")
+        ));
+    }
+
+    #[test]
+    fn fixture_policy_preserves_effects_without_materializing_files() {
+        let mut stores = Universe::with_world(World::memory());
+        stores
+            .world_mut()
+            .write_text(PrintSink::Terminal, "fixture");
+        let plan = PlannedFinalization::new(
+            stores.world().effect_pos(),
+            vec![DriverFile::new(PathBuf::from("fixture.dvi"), vec![1])],
+        )
+        .expect("path is unique");
+
+        plan.discard_uncommitted();
+
+        assert_eq!(stores.world().effect_records().len(), 1);
+        assert_eq!(stores.world().memory_output("fixture.dvi"), None);
     }
 }

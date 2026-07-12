@@ -1,13 +1,12 @@
 use std::env;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
-use tex_expand::ExpansionHooks;
 use tex_lex::{InputStack, Lexer, WorldInput};
 use tex_state::env::banks::IntParam;
 use tex_state::token::Token;
 use tex_state::{FormatError, Universe, World, WorldError};
-use umber::{TexFontSearchPath, TexInputSearchPath};
+use umber::{DriverFile, EngineSession, FileSessionHooks, PlannedFinalization};
 
 mod expand_dump;
 
@@ -85,22 +84,8 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
     let content = stores.world_mut().read_file(path)?;
 
     let mut input = InputStack::new(WorldInput::from_content(content));
-    let tex_input_areas = env::var_os("TEXINPUTS")
-        .map(|value| {
-            env::split_paths(&value)
-                .filter(|path| !path.as_os_str().is_empty())
-                .collect()
-        })
-        .unwrap_or_default();
-    let tex_font_areas = env::var_os("TEXFONTS")
-        .map(|value| {
-            env::split_paths(&value)
-                .filter(|path| !path.as_os_str().is_empty())
-                .collect()
-        })
-        .unwrap_or_default();
-    let mut hooks = RunHooks::new(path, tex_input_areas, tex_font_areas);
-    let run = match umber::run_input_collecting_artifacts(&mut input, &mut stores, &mut hooks) {
+    let mut hooks = FileSessionHooks::from_environment(path);
+    let run = match EngineSession::new(&mut input, &mut stores, &mut hooks).execute() {
         Ok(run) => run,
         Err(err) => {
             return Err(CliError::RenderedExec(
@@ -211,9 +196,10 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
             token_store.arena_capacity_bytes_grown,
         );
     }
+    let mut driver_files = Vec::new();
     if let Some(output) = &opts.dvi {
         let dvi = umber::dvi_from_artifacts(&stores, &run.artifacts)?;
-        stores.world_mut().write_file(output, dvi)?;
+        driver_files.push(DriverFile::new(output.clone(), dvi));
     }
     if run.dumped_format {
         let output = opts
@@ -221,14 +207,18 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
             .as_ref()
             .ok_or(CliError::Usage("\\dump requires --format-out <path>"))?;
         let format = stores.dump_format()?;
-        stores.world_mut().write_file(output, format)?;
-    }
-    if opts.show_fixtures {
-        print!("{}", run.terminal_text);
-        return Ok(());
+        driver_files.push(DriverFile::new(output.clone(), format));
     }
     let effect_pos = stores.world().effect_pos();
-    stores.commit_effects(effect_pos)?;
+    let finalization = PlannedFinalization::new(effect_pos, driver_files)?;
+    if opts.show_fixtures {
+        print!("{}", run.terminal_text);
+        finalization.discard_uncommitted();
+        return Ok(());
+    }
+    finalization
+        .commit_effects(&mut stores)?
+        .materialize(&mut stores)?;
     Ok(())
 }
 
@@ -296,6 +286,15 @@ impl RunCliOptions {
             }
         }
         let input = input.ok_or(CliError::Usage("missing input path for run"))?;
+        if dvi
+            .as_ref()
+            .zip(format_out.as_ref())
+            .is_some_and(|(dvi_path, format_path)| dvi_path == format_path)
+        {
+            return Err(CliError::Usage(
+                "--dvi and --format-out must use different output paths",
+            ));
+        }
         Ok(Self {
             input,
             show_fixtures,
@@ -303,52 +302,6 @@ impl RunCliOptions {
             format,
             format_out,
         })
-    }
-}
-
-struct RunHooks {
-    input_search: TexInputSearchPath,
-    font_search: TexFontSearchPath,
-    job_name: String,
-}
-
-impl RunHooks {
-    fn new(path: &Path, tex_input_areas: Vec<PathBuf>, tex_font_areas: Vec<PathBuf>) -> Self {
-        let base_dir = path.parent().unwrap_or_else(|| Path::new(".")).to_owned();
-        let job_name = path
-            .file_stem()
-            .and_then(std::ffi::OsStr::to_str)
-            .unwrap_or("texput")
-            .to_owned();
-        Self {
-            input_search: TexInputSearchPath::new(&base_dir, tex_input_areas),
-            font_search: TexFontSearchPath::new(base_dir, tex_font_areas),
-            job_name,
-        }
-    }
-}
-
-impl ExpansionHooks<WorldInput> for RunHooks {
-    fn open_input<C: tex_state::InputReadState>(
-        &mut self,
-        input: &mut C,
-        name: &str,
-    ) -> Result<WorldInput, String> {
-        self.input_search
-            .read(input, name)
-            .map(WorldInput::from_content)
-    }
-
-    fn open_font<C: tex_state::InputReadState>(
-        &mut self,
-        input: &mut C,
-        path: &Path,
-    ) -> Result<tex_state::FileContent, String> {
-        self.font_search.read(input, path)
-    }
-
-    fn job_name(&self) -> &str {
-        &self.job_name
     }
 }
 
@@ -373,6 +326,7 @@ enum CliError {
     RenderedExec(String),
     Dvi(umber::DviBuildError),
     Format(FormatError),
+    Finalization(umber::FinalizationError),
 }
 
 impl std::fmt::Display for CliError {
@@ -386,6 +340,7 @@ impl std::fmt::Display for CliError {
             Self::RenderedExec(text) => f.write_str(text),
             Self::Dvi(err) => write!(f, "{err}"),
             Self::Format(err) => write!(f, "{err}"),
+            Self::Finalization(err) => write!(f, "{err}"),
         }
     }
 }
@@ -419,5 +374,11 @@ impl From<umber::DviBuildError> for CliError {
 impl From<FormatError> for CliError {
     fn from(value: FormatError) -> Self {
         Self::Format(value)
+    }
+}
+
+impl From<umber::FinalizationError> for CliError {
+    fn from(value: umber::FinalizationError) -> Self {
+        Self::Finalization(value)
     }
 }

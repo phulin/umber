@@ -481,6 +481,24 @@ fn run_usage_errors_follow_existing_shape() {
         String::from_utf8(missing_dvi_path.stderr).expect("stderr is utf-8"),
         "umber: missing output path for --dvi\n"
     );
+
+    let conflicting_outputs = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .args([
+            "run",
+            "one.tex",
+            "--dvi",
+            "same.out",
+            "--format-out",
+            "same.out",
+        ])
+        .output()
+        .expect("run umber with conflicting output paths");
+    assert!(!conflicting_outputs.status.success());
+    assert_eq!(
+        String::from_utf8(conflicting_outputs.stderr).expect("stderr is utf-8"),
+        "umber: --dvi and --format-out must use different output paths\n"
+    );
 }
 
 #[test]
