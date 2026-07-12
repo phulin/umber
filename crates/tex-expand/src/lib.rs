@@ -117,7 +117,88 @@ pub fn install_expandable_primitives(stores: &mut Universe) {
 /// can supply a concrete recorder type and let monomorphization remove this
 /// hook from ordinary builds.
 pub trait ReadRecorder {
-    fn record_meaning(&mut self, symbol: Symbol, meaning: Meaning);
+    fn record_meaning(&mut self, symbol: Symbol, _meaning: Meaning) {
+        self.record_dependency(ReadDependency::Meaning(symbol.raw()));
+    }
+
+    fn record_dependency(&mut self, _dependency: ReadDependency) {}
+}
+
+/// Typed semantic keys read by expansion and scanners.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum ReadDependency {
+    Meaning(u32),
+    Cell {
+        bank: ReadBank,
+        index: u32,
+    },
+    Code {
+        table: ReadCodeTable,
+        scalar: u32,
+    },
+    Font {
+        field: ReadFontField,
+        font: u32,
+        index: u16,
+    },
+    PageDimension(u8),
+    PageInteger(u8),
+    InputLine,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum ReadBank {
+    Count,
+    Dimen,
+    Skip,
+    Muskip,
+    Toks,
+    IntParam,
+    DimenParam,
+    GlueParam,
+    TokParam,
+    CurrentFont,
+    MathFamilyFont,
+    LastBadness,
+    Magnification,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum ReadCodeTable {
+    Catcode,
+    Lccode,
+    Uccode,
+    Sfcode,
+    Mathcode,
+    Delcode,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum ReadFontField {
+    Identifier,
+    Parameter,
+    ParameterCount,
+    HyphenChar,
+    SkewChar,
+}
+
+/// Deterministic concrete recorder for memoization and speculation clients.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ReadSetRecorder {
+    dependencies: std::collections::BTreeSet<ReadDependency>,
+}
+
+impl ReadSetRecorder {
+    #[must_use]
+    pub fn dependencies(&self) -> impl ExactSizeIterator<Item = ReadDependency> + '_ {
+        self.dependencies.iter().copied()
+    }
+}
+
+impl ReadRecorder for ReadSetRecorder {
+    fn record_dependency(&mut self, dependency: ReadDependency) {
+        self.dependencies.insert(dependency);
+    }
 }
 
 /// Read recorder used when expansion tracing/incremental read sets are off.
@@ -127,6 +208,9 @@ pub struct NoopRecorder;
 impl ReadRecorder for NoopRecorder {
     #[inline(always)]
     fn record_meaning(&mut self, _symbol: Symbol, _meaning: Meaning) {}
+
+    #[inline(always)]
+    fn record_dependency(&mut self, _dependency: ReadDependency) {}
 }
 
 /// Why `tex-expand` is replaying a frozen token list.

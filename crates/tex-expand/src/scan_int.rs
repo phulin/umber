@@ -11,7 +11,7 @@ use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::{
     ExpandError, ExpandNext, ExpansionHooks, NoInputExpandNext, NoopExpansionHooks, NoopRecorder,
-    ReadRecorder, semantic_token,
+    ReadBank, ReadCodeTable, ReadDependency, ReadRecorder, semantic_token,
 };
 
 const INT_MAX: i64 = i32::MAX as i64;
@@ -511,34 +511,79 @@ where
     match meaning {
         Meaning::CharGiven(ch) => Ok(ScannedInt::new(ch as i32, token)),
         Meaning::MathCharGiven(value) => Ok(ScannedInt::new(i32::from(value), token)),
-        Meaning::CountRegister(index) => Ok(ScannedInt::new(stores.count(index), token)),
-        Meaning::DimenRegister(index) => Ok(ScannedInt::new(stores.dimen(index).raw(), token)),
-        Meaning::IntParam(index) => Ok(ScannedInt::new(
-            stores.int_param(IntParam::new(index)),
-            token,
-        )),
+        Meaning::CountRegister(index) => {
+            recorder.record_dependency(ReadDependency::Cell {
+                bank: ReadBank::Count,
+                index: u32::from(index),
+            });
+            Ok(ScannedInt::new(stores.count(index), token))
+        }
+        Meaning::DimenRegister(index) => {
+            recorder.record_dependency(ReadDependency::Cell {
+                bank: ReadBank::Dimen,
+                index: u32::from(index),
+            });
+            Ok(ScannedInt::new(stores.dimen(index).raw(), token))
+        }
+        Meaning::IntParam(index) => {
+            recorder.record_dependency(ReadDependency::Cell {
+                bank: ReadBank::IntParam,
+                index: u32::from(index),
+            });
+            Ok(ScannedInt::new(
+                stores.int_param(IntParam::new(index)),
+                token,
+            ))
+        }
         Meaning::InternalInteger(InternalInteger::Badness) => {
+            recorder.record_dependency(ReadDependency::Cell {
+                bank: ReadBank::LastBadness,
+                index: 0,
+            });
             Ok(ScannedInt::new(stores.last_badness(), token))
         }
         Meaning::InternalInteger(InternalInteger::InputLineNumber) => {
+            recorder.record_dependency(ReadDependency::InputLine);
             let line = input
                 .current_source_frame()
                 .map_or(0, |frame| frame.line_number().min(i32::MAX as usize) as i32);
             Ok(ScannedInt::new(line, token))
         }
-        Meaning::DimenParam(index) => Ok(ScannedInt::new(
-            stores.dimen_param(DimenParam::new(index)).raw(),
-            token,
-        )),
+        Meaning::DimenParam(index) => {
+            recorder.record_dependency(ReadDependency::Cell {
+                bank: ReadBank::DimenParam,
+                index: u32::from(index),
+            });
+            Ok(ScannedInt::new(
+                stores.dimen_param(DimenParam::new(index)).raw(),
+                token,
+            ))
+        }
         Meaning::SkipRegister(index) => Ok(ScannedInt::new(
-            stores.glue(stores.skip(index)).width.raw(),
+            {
+                recorder.record_dependency(ReadDependency::Cell {
+                    bank: ReadBank::Skip,
+                    index: u32::from(index),
+                });
+                stores.glue(stores.skip(index)).width.raw()
+            },
             token,
         )),
         Meaning::MuskipRegister(index) => Ok(ScannedInt::new(
-            stores.glue(stores.muskip(index)).width.raw(),
+            {
+                recorder.record_dependency(ReadDependency::Cell {
+                    bank: ReadBank::Muskip,
+                    index: u32::from(index),
+                });
+                stores.glue(stores.muskip(index)).width.raw()
+            },
             token,
         )),
         Meaning::GlueParam(index) | Meaning::MuGlueParam(index) => {
+            recorder.record_dependency(ReadDependency::Cell {
+                bank: ReadBank::GlueParam,
+                index: u32::from(index),
+            });
             let glue = stores.glue_param(tex_state::env::banks::GlueParam::new(index));
             Ok(ScannedInt::new(stores.glue(glue).width.raw(), token))
         }
@@ -612,11 +657,19 @@ where
     match primitive {
         tex_state::meaning::UnexpandablePrimitive::Count => {
             let index = scan_register_index(input, stores, recorder, hooks, expander, token)?;
+            recorder.record_dependency(ReadDependency::Cell {
+                bank: ReadBank::Count,
+                index: u32::from(index),
+            });
             let value = stores.count(index);
             Ok(ScannedInt::new(value, token))
         }
         tex_state::meaning::UnexpandablePrimitive::Dimen => {
             let index = scan_register_index(input, stores, recorder, hooks, expander, token)?;
+            recorder.record_dependency(ReadDependency::Cell {
+                bank: ReadBank::Dimen,
+                index: u32::from(index),
+            });
             let value = stores.dimen(index).raw();
             Ok(ScannedInt::new(value, token))
         }
@@ -657,12 +710,48 @@ where
                 },
             )?;
             let value = match primitive {
-                tex_state::meaning::UnexpandablePrimitive::CatCode => stores.catcode(ch) as i32,
-                tex_state::meaning::UnexpandablePrimitive::LcCode => stores.lccode(ch) as i32,
-                tex_state::meaning::UnexpandablePrimitive::UcCode => stores.uccode(ch) as i32,
-                tex_state::meaning::UnexpandablePrimitive::SfCode => stores.sfcode(ch) as i32,
-                tex_state::meaning::UnexpandablePrimitive::MathCode => stores.mathcode(ch) as i32,
-                tex_state::meaning::UnexpandablePrimitive::DelCode => stores.delcode(ch),
+                tex_state::meaning::UnexpandablePrimitive::CatCode => {
+                    recorder.record_dependency(ReadDependency::Code {
+                        table: ReadCodeTable::Catcode,
+                        scalar: ch as u32,
+                    });
+                    stores.catcode(ch) as i32
+                }
+                tex_state::meaning::UnexpandablePrimitive::LcCode => {
+                    recorder.record_dependency(ReadDependency::Code {
+                        table: ReadCodeTable::Lccode,
+                        scalar: ch as u32,
+                    });
+                    stores.lccode(ch) as i32
+                }
+                tex_state::meaning::UnexpandablePrimitive::UcCode => {
+                    recorder.record_dependency(ReadDependency::Code {
+                        table: ReadCodeTable::Uccode,
+                        scalar: ch as u32,
+                    });
+                    stores.uccode(ch) as i32
+                }
+                tex_state::meaning::UnexpandablePrimitive::SfCode => {
+                    recorder.record_dependency(ReadDependency::Code {
+                        table: ReadCodeTable::Sfcode,
+                        scalar: ch as u32,
+                    });
+                    stores.sfcode(ch) as i32
+                }
+                tex_state::meaning::UnexpandablePrimitive::MathCode => {
+                    recorder.record_dependency(ReadDependency::Code {
+                        table: ReadCodeTable::Mathcode,
+                        scalar: ch as u32,
+                    });
+                    stores.mathcode(ch) as i32
+                }
+                tex_state::meaning::UnexpandablePrimitive::DelCode => {
+                    recorder.record_dependency(ReadDependency::Code {
+                        table: ReadCodeTable::Delcode,
+                        scalar: ch as u32,
+                    });
+                    stores.delcode(ch)
+                }
                 _ => unreachable!("outer match restricts primitive"),
             };
             consume_optional_space(input, stores, recorder, hooks, expander)?;

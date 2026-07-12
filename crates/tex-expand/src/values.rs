@@ -11,7 +11,7 @@ use tex_state::{BoxDimension, ExpansionState};
 
 use crate::{
     Dispatch, ExpandError, ExpandNext, ExpandableOpcode, ExpansionHooks, ExpansionReplayKind,
-    NoInputExpandNext, ReadRecorder, scan_helpers, scan_int,
+    NoInputExpandNext, ReadBank, ReadDependency, ReadRecorder, scan_helpers, scan_int,
 };
 
 #[allow(dead_code)]
@@ -67,12 +67,19 @@ where
         return Err(ExpandError::UnsupportedTheTarget { context: token });
     };
 
-    match stores.meaning(symbol) {
+    let meaning = stores.meaning(symbol);
+    recorder.record_meaning(symbol, meaning);
+    record_meaning_value_dependency(recorder, meaning);
+    match meaning {
         Meaning::UnexpandablePrimitive(primitive) => match primitive {
             tex_state::meaning::UnexpandablePrimitive::Count => {
                 let index = scan_helpers::scan_register_index_with_expander_and_hooks(
                     input, stores, recorder, hooks, expander, token,
                 )?;
+                recorder.record_dependency(ReadDependency::Cell {
+                    bank: ReadBank::Count,
+                    index: u32::from(index),
+                });
                 Ok(push_rendered_text(
                     stores,
                     ExpansionReplayKind::TheOutput,
@@ -84,6 +91,10 @@ where
                 let index = scan_helpers::scan_register_index_with_expander_and_hooks(
                     input, stores, recorder, hooks, expander, token,
                 )?;
+                recorder.record_dependency(ReadDependency::Cell {
+                    bank: ReadBank::Dimen,
+                    index: u32::from(index),
+                });
                 Ok(push_rendered_text(
                     stores,
                     ExpansionReplayKind::TheOutput,
@@ -95,6 +106,10 @@ where
                 let index = scan_helpers::scan_register_index_with_expander_and_hooks(
                     input, stores, recorder, hooks, expander, token,
                 )?;
+                recorder.record_dependency(ReadDependency::Cell {
+                    bank: ReadBank::Skip,
+                    index: u32::from(index),
+                });
                 Ok(push_rendered_text(
                     stores,
                     ExpansionReplayKind::TheOutput,
@@ -106,6 +121,10 @@ where
                 let index = scan_helpers::scan_register_index_with_expander_and_hooks(
                     input, stores, recorder, hooks, expander, token,
                 )?;
+                recorder.record_dependency(ReadDependency::Cell {
+                    bank: ReadBank::Muskip,
+                    index: u32::from(index),
+                });
                 Ok(push_rendered_text(
                     stores,
                     ExpansionReplayKind::TheOutput,
@@ -117,6 +136,10 @@ where
                 let index = scan_helpers::scan_register_index_with_expander_and_hooks(
                     input, stores, recorder, hooks, expander, token,
                 )?;
+                recorder.record_dependency(ReadDependency::Cell {
+                    bank: ReadBank::Toks,
+                    index: u32::from(index),
+                });
                 Ok(Dispatch::Push {
                     replay_kind: ExpansionReplayKind::TheOutput,
                     token_list: stores.toks(index),
@@ -425,6 +448,62 @@ where
             )),
             _ => Err(ExpandError::UnsupportedTheTarget { context: token }),
         },
+    }
+}
+
+fn record_meaning_value_dependency(recorder: &mut impl ReadRecorder, meaning: Meaning) {
+    let cell = match meaning {
+        Meaning::CountRegister(index) => Some((ReadBank::Count, u32::from(index))),
+        Meaning::DimenRegister(index) => Some((ReadBank::Dimen, u32::from(index))),
+        Meaning::SkipRegister(index) => Some((ReadBank::Skip, u32::from(index))),
+        Meaning::MuskipRegister(index) => Some((ReadBank::Muskip, u32::from(index))),
+        Meaning::ToksRegister(index) => Some((ReadBank::Toks, u32::from(index))),
+        Meaning::IntParam(index) => Some((ReadBank::IntParam, u32::from(index))),
+        Meaning::DimenParam(index) => Some((ReadBank::DimenParam, u32::from(index))),
+        Meaning::GlueParam(index) | Meaning::MuGlueParam(index) => {
+            Some((ReadBank::GlueParam, u32::from(index)))
+        }
+        Meaning::TokParam(index) => Some((ReadBank::TokParam, u32::from(index))),
+        Meaning::InternalInteger(InternalInteger::Badness) => Some((ReadBank::LastBadness, 0)),
+        Meaning::InternalInteger(InternalInteger::InputLineNumber) => {
+            recorder.record_dependency(ReadDependency::InputLine);
+            None
+        }
+        Meaning::PageDimension(dimension) => {
+            recorder
+                .record_dependency(ReadDependency::PageDimension(page_dimension_key(dimension)));
+            None
+        }
+        Meaning::PageInteger(integer) => {
+            recorder.record_dependency(ReadDependency::PageInteger(page_integer_key(integer)));
+            None
+        }
+        _ => None,
+    };
+    if let Some((bank, index)) = cell {
+        recorder.record_dependency(ReadDependency::Cell { bank, index });
+    }
+}
+
+const fn page_dimension_key(dimension: tex_state::page::PageDimension) -> u8 {
+    use tex_state::page::PageDimension as D;
+    match dimension {
+        D::Goal => 0,
+        D::Total => 1,
+        D::Stretch => 2,
+        D::FilStretch => 3,
+        D::FillStretch => 4,
+        D::FilllStretch => 5,
+        D::Shrink => 6,
+        D::Depth => 7,
+    }
+}
+
+const fn page_integer_key(integer: tex_state::page::PageInteger) -> u8 {
+    use tex_state::page::PageInteger as I;
+    match integer {
+        I::DeadCycles => 0,
+        I::InsertPenalties => 1,
     }
 }
 

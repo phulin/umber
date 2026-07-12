@@ -11,7 +11,7 @@ use tex_state::{ExpansionState, Universe};
 use crate::scan_int::{
     IntegerDiagnostic, ScanIntError, scan_int, scan_int_with_recorder_and_hooks,
 };
-use crate::{NoopExpansionHooks, ReadRecorder};
+use crate::{NoopExpansionHooks, ReadBank, ReadDependency, ReadRecorder, ReadSetRecorder};
 
 fn scan(input: &str) -> (i32, Option<IntegerDiagnostic>, Option<Token>) {
     let mut stores = Universe::new();
@@ -217,6 +217,37 @@ fn mathchardef_scan_records_the_live_meaning() {
         reads
             .0
             .contains(&(math.symbol(), Meaning::MathCharGiven(10_000)))
+    );
+}
+
+#[test]
+fn typed_read_set_records_internal_register_dependencies_deterministically() {
+    let mut stores = Universe::new();
+    let count = stores.intern("answer");
+    stores.set_meaning(count, Meaning::CountRegister(7));
+    stores.set_count(7, 42);
+    let mut input = InputStack::new(MemoryInput::new("\\answer"));
+    let mut reads = ReadSetRecorder::default();
+
+    let scanned = scan_int_with_recorder_and_hooks(
+        &mut input,
+        &mut stores,
+        &mut reads,
+        &mut NoopExpansionHooks,
+        context(),
+    )
+    .expect("count-register scan");
+
+    assert_eq!(scanned.value(), 42);
+    assert_eq!(
+        reads.dependencies().collect::<Vec<_>>(),
+        vec![
+            ReadDependency::Meaning(count.symbol().raw()),
+            ReadDependency::Cell {
+                bank: ReadBank::Count,
+                index: 7,
+            },
+        ]
     );
 }
 
