@@ -19,7 +19,6 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/code_tables/tests.rs`: Unit tests for code-table defaults, writes, sparse pages, generations, and snapshots.
 - `src/env.rs`: Barriered mutable environment storage for meanings, registers, parameters, font values, grouping, and journals.
 - `src/env/banks.rs`: Dense fixed-size bank codecs, parameter ids, and typed bank access helpers.
-- `src/env/box_metadata.rs`: Dense-and-paged box assignment-level metadata with rollback-coupled undo marks.
 - `src/env/group.rs`: Group stack, aftergroup/afterassignment handling, group mismatch types, and environment snapshot logic.
 - `src/env/overflow.rs`: Sparse e-TeX overflow register banks for high register numbers.
 - `src/env/raw.rs`: Restore-only raw environment writes, semantic word iteration, shadow verification, and raw word helpers.

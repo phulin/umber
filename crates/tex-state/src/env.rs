@@ -9,7 +9,6 @@
 //! `&mut Env` and passing through the write barrier.
 
 pub mod banks;
-mod box_metadata;
 pub(crate) mod group;
 pub(crate) mod overflow;
 pub(crate) mod raw;
@@ -19,15 +18,12 @@ use self::banks::{
     FixedBank, FontIdCodec, GlueIdCodec, GlueParam, I32Codec, IntParam, NodeListIdCodec,
     PARAMETER_COUNT, ScaledCodec, TokParam, TokenListIdCodec,
 };
-use self::box_metadata::{BoxAssignmentMeta, BoxCoalesce, BoxMetadata};
 use self::overflow::{REGISTER_COUNT, SparseBank};
 use crate::cell::{BankTag, CellId};
 use crate::epoch::Epoch;
 use crate::ids::{FontId, GlueId, NodeListId, TokenListId};
 use crate::interner::Symbol;
-#[cfg(test)]
-use crate::journal::JournalPos;
-use crate::journal::{Journal, UndoRec};
+use crate::journal::{Entry, Journal, JournalPos, UndoRec};
 use crate::math::{MATH_FAMILY_COUNT, MathFontSize};
 use crate::meaning::Meaning;
 use crate::scaled::Scaled;
@@ -164,7 +160,7 @@ pub struct Env {
     math_family_fonts: FixedBank<FontIdCodec, MATH_FAMILY_FONT_COUNT>,
     journal: Journal,
     group_boundaries: Vec<group::GroupBoundary>,
-    box_metadata: BoxMetadata,
+    box_journal_positions: BTreeMap<(u16, u32), JournalPos>,
     aftergroup: Vec<Token>,
     afterassignment: Option<Token>,
     group_depth: u32,
@@ -204,7 +200,7 @@ impl Env {
             math_family_fonts: FixedBank::new(),
             journal: Journal::new(),
             group_boundaries: Vec::new(),
-            box_metadata: BoxMetadata::new(),
+            box_journal_positions: BTreeMap::new(),
             aftergroup: Vec::new(),
             afterassignment: None,
             group_depth: 0,
@@ -343,13 +339,10 @@ impl Env {
         value: Option<NodeListId>,
         coalesce: bool,
     ) -> BoxWriteOutcome {
-        let metadata = self.box_metadata.get(index);
-        let coalesce_pos = coalesce.then_some(metadata).and_then(|metadata| {
-            metadata.coalesce.and_then(|candidate| {
-                (candidate.depth == self.group_depth && candidate.epoch == self.epoch)
-                    .then_some(candidate.pos)
-            })
-        });
+        let key = (index, self.group_depth);
+        let coalesce_pos = coalesce
+            .then(|| self.box_journal_positions.get(&key).copied())
+            .flatten();
         let outcome = if is_dense_register(index) {
             self.boxes.set_always_journal(
                 index,
@@ -378,17 +371,7 @@ impl Env {
             )
         };
         if let BoxWriteOutcome::Journaled { pos, .. } = outcome {
-            self.box_metadata.set(
-                index,
-                BoxAssignmentMeta {
-                    local_depth: (self.group_depth != 0).then_some(self.group_depth),
-                    coalesce: Some(BoxCoalesce {
-                        depth: self.group_depth,
-                        epoch: self.epoch,
-                        pos,
-                    }),
-                },
-            );
+            self.box_journal_positions.insert(key, pos);
         }
         outcome
     }
@@ -399,7 +382,9 @@ impl Env {
         index: u16,
         value: Option<NodeListId>,
     ) -> BoxWriteOutcome {
-        let outcome = if is_dense_register(index) {
+        self.box_journal_positions
+            .retain(|&(box_index, _), _| box_index != index);
+        if is_dense_register(index) {
             self.boxes.set_always_journal(
                 index,
                 value,
@@ -425,11 +410,7 @@ impl Env {
                     coalesce_pos: None,
                 },
             )
-        };
-        if matches!(outcome, BoxWriteOutcome::Journaled { .. }) {
-            self.box_metadata.set(index, BoxAssignmentMeta::default());
         }
-        outcome
     }
 
     /// Sets a box register at TeX's current box level.
@@ -472,7 +453,19 @@ impl Env {
     }
 
     fn box_reg_is_local_to_current_group(&self, index: u16) -> bool {
-        self.group_depth != 0 && self.box_metadata.get(index).local_depth == Some(self.group_depth)
+        let Some(marker_pos) = self.last_group_marker_pos() else {
+            return false;
+        };
+        let key = (BankTag::Box, u32::from(index));
+        for entry_index in (marker_pos.raw() as usize + 1..self.journal.len()).rev() {
+            let Entry::Undo(rec) = self.journal.entry(entry_index) else {
+                continue;
+            };
+            if cell_key(rec.cell()) == key {
+                return !rec.cell().is_global();
+            }
+        }
+        false
     }
 
     /// Returns an integer parameter value.

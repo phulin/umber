@@ -26,7 +26,6 @@ pub enum GroupKind {
 pub(super) struct GroupBoundary {
     marker_pos: JournalPos,
     aftergroup_start: u32,
-    box_metadata_mark: u32,
     kind: GroupKind,
 }
 
@@ -96,7 +95,6 @@ pub(crate) struct EnvSnapshot {
     afterassignment: Option<Token>,
     group_depth: u32,
     group_boundary_len: u32,
-    box_metadata_mark: u32,
     epoch: crate::epoch::Epoch,
 }
 
@@ -124,6 +122,7 @@ impl Env {
     /// Records a checkpoint position and starts a fresh epoch for later writes.
     #[must_use]
     pub(crate) fn checkpoint(&mut self) -> EnvSnapshot {
+        self.box_journal_positions.clear();
         let snapshot = EnvSnapshot {
             journal_pos: self.journal.pos(),
             aftergroup_len: u32_len(
@@ -136,7 +135,6 @@ impl Env {
                 self.group_boundaries.len(),
                 "group boundary stack exceeds u32 entries",
             ),
-            box_metadata_mark: self.box_metadata.mark(),
             epoch: self.epoch,
         };
         self.epoch.bump();
@@ -189,7 +187,6 @@ impl Env {
         self.group_boundaries.push(GroupBoundary {
             marker_pos,
             aftergroup_start,
-            box_metadata_mark: self.box_metadata.mark(),
             kind,
         });
         self.group_depth = self
@@ -245,6 +242,9 @@ impl Env {
         };
         let marker_pos = boundary.marker_pos;
         let aftergroup_start = boundary.aftergroup_start;
+        let exiting_depth = self.group_depth;
+        self.box_journal_positions
+            .retain(|&(_, depth), _| depth != exiting_depth);
         self.group_depth = self
             .group_depth
             .checked_sub(1)
@@ -254,7 +254,6 @@ impl Env {
         let has_globals = (marker_index + 1..group_end).any(
             |index| matches!(self.journal.entry(index), Entry::Undo(rec) if rec.cell().is_global()),
         );
-        self.box_metadata.restore_to(boundary.box_metadata_mark);
 
         if has_globals {
             self.leave_group_with_globals(marker_index, group_end);
@@ -317,17 +316,12 @@ impl Env {
             };
             self.journal
                 .push_undo(UndoRec::new(rec.cell(), old, rec.new_value()));
-            if rec.cell().bank() == crate::cell::BankTag::Box {
-                let index =
-                    u16::try_from(rec.cell().index()).expect("box register journal index fits u16");
-                self.box_metadata
-                    .set(index, super::box_metadata::BoxAssignmentMeta::default());
-            }
         }
     }
 
     /// Rolls back all environment state after `snapshot`.
     pub(crate) fn rollback_to(&mut self, snapshot: EnvSnapshot) {
+        self.box_journal_positions.clear();
         let snapshot_index = snapshot.journal_pos.raw() as usize;
         let rollback_end = self.journal.len();
         for index in (snapshot_index..rollback_end).rev() {
@@ -336,7 +330,6 @@ impl Env {
             }
         }
         self.journal.truncate_to(snapshot.journal_pos);
-        self.box_metadata.restore_to(snapshot.box_metadata_mark);
         self.group_boundaries.truncate(
             snapshot
                 .group_boundary_len

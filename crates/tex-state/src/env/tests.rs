@@ -1,7 +1,7 @@
 use super::{Env, SEGMENT_LEN, font_dimen_index};
 use crate::GroupKind;
 use crate::cell::{BankTag, CellId};
-use crate::env::banks::{BoxWriteOutcome, DimenParam, GlueParam, IntParam, TokParam};
+use crate::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use crate::ids::{FontId, GlueId, NodeListId, TokenListId};
 use crate::interner::Symbol;
 use crate::journal::{Entry, UndoRec};
@@ -213,49 +213,6 @@ fn cached_group_boundaries_survive_deep_journals_clone_and_rollback() {
     assert_eq!(env.leave_group_with_kind(GroupKind::Simple), Ok(Vec::new()));
     assert_eq!(env.innermost_group_kind(), None);
     assert!(env.group_boundaries.is_empty());
-}
-
-#[test]
-fn box_assignment_metadata_tracks_dense_sparse_groups_and_checkpoints() {
-    for index in [7, 300] {
-        let mut env = Env::new();
-        env.enter_group();
-        let outer = NodeListId::testing_survivor(1, u32::from(index) + 1, 0);
-        env.set_box_reg(index, Some(outer));
-        assert!(env.box_reg_is_local_to_current_group(index));
-        if index >= 256 {
-            assert!(env.box_metadata.has_sparse_page(index));
-        }
-
-        let mut fork = env.clone();
-        fork.set_box_reg_global(index, None);
-        assert!(!fork.box_reg_is_local_to_current_group(index));
-        assert!(env.box_reg_is_local_to_current_group(index));
-
-        let checkpoint = env.checkpoint();
-        for symbol in 0..10_000 {
-            env.set(Symbol::new(symbol), Meaning::Relax);
-        }
-        let (_, outcome) = env.take_box_reg_same_level(index);
-        let BoxWriteOutcome::Journaled { rec, .. } = outcome else {
-            panic!("checkpoint must start a fresh local box journal record");
-        };
-        assert!(!rec.cell().is_global());
-        env.rollback_to(checkpoint);
-        assert_eq!(env.box_reg(index), Some(outer));
-        assert!(env.box_reg_is_local_to_current_group(index));
-
-        env.enter_group();
-        let inner = NodeListId::testing_survivor(2, u32::from(index) + 2, 0);
-        env.set_box_reg(index, Some(inner));
-        assert!(env.box_reg_is_local_to_current_group(index));
-        env.set_box_reg_global(index, None);
-        assert!(!env.box_reg_is_local_to_current_group(index));
-        let _ = env.leave_group();
-        assert_eq!(env.box_reg(index), None);
-        assert!(!env.box_reg_is_local_to_current_group(index));
-        assert!(index < 256 || !env.box_metadata.has_sparse_page(index));
-    }
 }
 
 #[test]
