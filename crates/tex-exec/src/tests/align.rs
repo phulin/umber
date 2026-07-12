@@ -631,6 +631,17 @@ fn extra_alignment_tab_is_changed_to_row_terminator() {
 }
 
 #[test]
+fn trip_missing_cr_recovery_does_not_start_a_third_row() {
+    let stores = run_boxed_alignment_source(
+        "\\long\\def\\l#1{}\\let\\PAR=\\par\\def\\par{\\relax\\PAR}\
+         \\halign{#&#&\\l{#}\\cr a&b&c&&&.}\n\\par\\cr}",
+    );
+    let rows = vlist_rows(&stores, box_zero_vlist(&stores));
+
+    assert_eq!(rows.len(), 2);
+}
+
+#[test]
 fn continuing_column_restores_sentinel_before_u_template_final_brace() {
     let stores = run_boxed_alignment_source("\\def\\l#1{#1}\\halign{#&\\l{#}\\cr a&x\\cr}");
     let rows = vlist_rows(&stores, box_zero_vlist(&stores));

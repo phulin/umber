@@ -1,5 +1,5 @@
 use tex_expand::{ExpansionHooks, ReadRecorder, get_x_token_with_recorder_and_hooks};
-use tex_lex::{AlignmentTerminator, InputSource, InputStack, TokenListReplayKind};
+use tex_lex::{InputSource, InputStack, TokenListReplayKind};
 use tex_state::env::banks::TokParam;
 use tex_state::node::{GlueKind, Node};
 use tex_state::token::{Token, TracedTokenWord};
@@ -566,42 +566,52 @@ where
         if is_omit(stores, semantic) {
             return Err(ExecError::MisplacedOmit);
         }
-        if is_alignment_par(stores, semantic) {
-            if input.alignment_cell_at_base_depth() {
-                recover_outer_alignment_token(token, input, stores);
-                continue;
-            }
-            if input.alignment_cell_below_base_depth() {
-                report_missing_cr_inserted(stores);
-                let cr = stores.symbol("cr").ok_or(ExecError::MissingToken {
-                    context: "alignment recovery cr",
-                })?;
-                let cr = TracedTokenWord::pack(Token::Cs(cr.symbol()), token.origin());
-                push_traced_tokens(input, stores, [token]);
-                input.reset_alignment_cell_to_base_depth();
-                assert!(input.intercept_alignment_token(
-                    cr,
-                    tex_lex::AlignmentTokenDelivery::Other,
-                    Some(AlignmentTerminator::Cr),
-                    stores.execution_group_depth(),
-                ));
-                continue;
-            }
+        if is_alignment_par(stores, semantic)
+            && (input.alignment_cell_at_base_depth() || input.alignment_cell_below_base_depth())
+        {
+            // TeX.web §1091 hmode+par_end calls off_save when the
+            // alignment brace level is negative. Backing up \par behind
+            // the inserted right brace lets ordinary group dispatch
+            // reach §1103's align_group recovery in the same order.
+            recover_outer_alignment_token(token, input, stores);
+            continue;
         }
-        if is_end_group(stores, semantic) && input.alignment_cell_below_base_depth() {
+        if is_end_group(stores, semantic)
+            && input.alignment_cell_at_entry_group_depth(stores.execution_group_depth())
+        {
+            // TeX.web §1103 does not unsave the align_group. It backs up the
+            // brace and inserts frozen \cr, which may itself need §1102's
+            // missing-left-brace recovery before get_next can start v_j.
             report_missing_cr_inserted(stores);
             let cr = stores.symbol("cr").ok_or(ExecError::MissingToken {
                 context: "alignment recovery cr",
             })?;
             let cr = TracedTokenWord::pack(Token::Cs(cr.symbol()), token.origin());
-            push_traced_tokens(input, stores, [token]);
-            input.reset_alignment_cell_to_base_depth();
-            assert!(input.intercept_alignment_token(
-                cr,
-                tex_lex::AlignmentTokenDelivery::Other,
-                Some(AlignmentTerminator::Cr),
-                stores.execution_group_depth(),
-            ));
+            push_traced_tokens(input, stores, [cr, token]);
+            continue;
+        }
+        if input.alignment_cell_below_base_depth()
+            && (is_alignment_tab(stores, semantic)
+                || is_span(stores, semantic)
+                || is_cr(stores, semantic))
+        {
+            // TeX.web §1102 align_error: back up the delimiter and put a
+            // left brace before it. Reading that inserted brace brings the
+            // scanner level back to zero; the replayed delimiter then starts
+            // v_j through the ordinary get_next interception path.
+            stores
+                .world_mut()
+                .write_text(PrintSink::TerminalAndLog, "\n! Missing { inserted.\n");
+            let left = Token::Char {
+                ch: '{',
+                cat: tex_state::token::Catcode::BeginGroup,
+            };
+            let origin = stores.inserted_origin(
+                tex_state::provenance::InsertedOriginKind::ErrorRecovery,
+                left,
+                token.origin(),
+            );
+            push_traced_tokens(input, stores, [TracedTokenWord::pack(left, origin), token]);
             continue;
         }
         dispatch_and_drain(nest, token, input, stores, recorder, hooks, &mut stats)?;

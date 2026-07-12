@@ -915,10 +915,14 @@ makes box-level memoization (M4) sound.
   `\span`, and `\cr` by meaning using an `AlignState` brace counter, buffers
   `\noalign{...}` material as ordinary internal-vertical nodes interleaved
   with the unset rows, and packages cells/rows as unset node records. An
-  alignment-cell paragraph token at the entry group depth follows TeX's
-  aligning-scanner recovery: the traced token is backed up behind an inserted
-  provenance-bearing right brace, so ordinary missing-`\cr` recovery closes
-  the cell and row before the token is replayed outside the alignment. Outer
+  alignment-cell paragraph token at a negative brace level follows TeX.web's
+  `hmode+par_end`/`off_save` recovery: the traced token is backed up behind an
+  inserted provenance-bearing right brace. Each cell records the entry
+  execution-group depth so ordinary u-template groups close normally, while
+  a right brace at the alignment group takes `handle_right_brace`'s
+  missing-`\cr` path. If that delimiter still arrives at a negative brace
+  level, `align_error` inserts the matching left brace before ordinary
+  v-template interception closes the cell and row. Outer
   macros are likewise stopped before expansion while an alignment cell is
   active, keeping the recovery input frames and origins checkpointable. An
   ordinary vertical `\halign` inherits the enclosing list's `prev_depth`,
