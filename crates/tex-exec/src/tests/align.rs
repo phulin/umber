@@ -1795,6 +1795,26 @@ fn malformed_template_row_closes_before_following_box() {
 }
 
 #[test]
+fn paragraph_at_alignment_base_depth_is_not_recovery_input() {
+    let mut stores = support::stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    let source = r#"
+        \halign{#\cr \par\cr}
+        \global\count7=789
+    "#;
+    let mut input = InputStack::new(MemoryInput::new(source));
+
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("a base-depth paragraph should not enter alignment recovery");
+
+    assert_eq!(stores.count(7), 789);
+    assert!(!support::terminal_effect_text(&stores).contains("Missing } inserted"));
+    assert!(stats.delivered_tokens < 100);
+    assert!(input.summary().frames().is_empty());
+}
+
+#[test]
 fn outer_macro_in_skipped_span_expansion_recovers_runaway_preamble() {
     let mut stores = support::stores_with_fonts();
     tex_expand::install_expandable_primitives(&mut stores);

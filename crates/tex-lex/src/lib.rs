@@ -625,7 +625,6 @@ struct AlignmentCellInput {
     phase: AlignmentCellPhase,
     v_template: TokenListId,
     terminator: Option<TracedTokenWord>,
-    group_depth: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -878,7 +877,7 @@ impl<S> InputStack<S> {
         &mut self,
         u_template: Option<TokenListReplayMarker>,
         v_template: TokenListId,
-        group_depth: u32,
+        _group_depth: u32,
     ) {
         let alignment = self
             .alignment_inputs
@@ -892,7 +891,6 @@ impl<S> InputStack<S> {
             phase: u_template.map_or(AlignmentCellPhase::Body, AlignmentCellPhase::UTemplate),
             v_template,
             terminator: None,
-            group_depth,
         });
     }
 
@@ -943,20 +941,6 @@ impl<S> InputStack<S> {
                 .as_ref()
                 .is_some_and(|cell| cell.phase == AlignmentCellPhase::Body)
                 && alignment.align_state < 0
-        })
-    }
-
-    /// Whether TeX's current save level is the alignment entry group.
-    ///
-    /// A right brace at this depth takes `handle_right_brace`'s
-    /// `align_group` recovery instead of closing an ordinary group opened by
-    /// a u-template.
-    #[must_use]
-    pub fn alignment_cell_at_entry_group_depth(&self, group_depth: u32) -> bool {
-        self.alignment_inputs.last().is_some_and(|alignment| {
-            alignment.cell.as_ref().is_some_and(|cell| {
-                cell.phase == AlignmentCellPhase::Body && cell.group_depth == group_depth
-            })
         })
     }
 

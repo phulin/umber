@@ -380,7 +380,7 @@ fn group_mismatch_error(
         (GroupKind::Simple, GroupKind::MathShift, false) => {
             ExecError::ExtraRightBraceOrForgottenDollar { origin }
         }
-        (GroupKind::Simple, GroupKind::Box, false) => {
+        (GroupKind::Simple, GroupKind::Box | GroupKind::Align, false) => {
             ExecError::ExtraRightBraceOrForgottenDollar { origin }
         }
         (GroupKind::SemiSimple, _, true) => ExecError::ExtraEndGroup { origin },
@@ -394,7 +394,7 @@ fn group_mismatch_error(
         },
         (
             GroupKind::SemiSimple,
-            GroupKind::Simple | GroupKind::Box | GroupKind::MathShift,
+            GroupKind::Simple | GroupKind::Box | GroupKind::MathShift | GroupKind::Align,
             false,
         ) => ExecError::EndGroupMismatch {
             started_by: mismatch.actual().start_text(),
@@ -406,7 +406,7 @@ fn group_mismatch_error(
         },
         (
             GroupKind::MathShift,
-            GroupKind::Simple | GroupKind::Box | GroupKind::SemiSimple,
+            GroupKind::Simple | GroupKind::Box | GroupKind::SemiSimple | GroupKind::Align,
             false,
         ) => ExecError::MathShiftGroupMismatch {
             started_by: mismatch.actual().start_text(),
@@ -417,6 +417,10 @@ fn group_mismatch_error(
         | (GroupKind::MathShift, GroupKind::MathShift, false) => {
             unreachable!("matching group kinds are returned as successful leaves, not mismatches")
         }
+        (GroupKind::Align, _, _) => ExecError::EndGroupMismatch {
+            started_by: mismatch.actual().start_text(),
+            origin,
+        },
     }
 }
 

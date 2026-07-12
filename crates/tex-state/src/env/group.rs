@@ -14,6 +14,8 @@ pub enum GroupKind {
     SemiSimple,
     /// A `$` ... `$` or `$$` ... `$$` math-shift group.
     MathShift,
+    /// TeX's per-entry `align_group`, replaced after every alignment cell.
+    Align,
 }
 
 impl GroupKind {
@@ -24,6 +26,7 @@ impl GroupKind {
             Self::Box => "{",
             Self::SemiSimple => "\\begingroup",
             Self::MathShift => "$",
+            Self::Align => "an alignment entry",
         }
     }
 
@@ -34,6 +37,7 @@ impl GroupKind {
             Self::Box => "}",
             Self::SemiSimple => "\\endgroup",
             Self::MathShift => "$",
+            Self::Align => "\\cr",
         }
     }
 }

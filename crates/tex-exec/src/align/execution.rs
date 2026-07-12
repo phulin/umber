@@ -46,7 +46,7 @@ where
         nest.current_list_mut().set_align_state(state);
         // TeX82 keeps an entry align_group above the whole-alignment group.
         // fin_col replaces this level after every completed entry.
-        stores.enter_group_with_kind(tex_state::GroupKind::Simple);
+        stores.enter_group_with_kind(tex_state::GroupKind::Align);
         replay_everycr(input, stores);
 
         while let Some(first_token) = align_peek(align_level, nest, input, stores, recorder, hooks)?
@@ -124,7 +124,7 @@ where
         let align_level = nest.depth() - 1;
         nest.current_list_mut().set_align_state(state);
         // Match init_align's entry align_group for the display path too.
-        stores.enter_group_with_kind(tex_state::GroupKind::Simple);
+        stores.enter_group_with_kind(tex_state::GroupKind::Align);
         replay_everycr(input, stores);
 
         while let Some(first_token) = align_peek(align_level, nest, input, stores, recorder, hooks)?
@@ -195,7 +195,7 @@ where
                 PrintSink::TerminalAndLog,
                 "\n! Missing } inserted while finishing alignment.\n",
             );
-            leave_group(input, stores, tex_state::GroupKind::Simple)?;
+            leave_group(input, stores, tex_state::GroupKind::Align)?;
             leave_group(input, stores, tex_state::GroupKind::Simple)?;
             return Ok(None);
         };
@@ -207,7 +207,7 @@ where
         if is_end_group(stores, semantic) {
             // fin_align unsaves the fresh entry level, then the level created
             // by scan_spec for the whole alignment.
-            leave_group(input, stores, tex_state::GroupKind::Simple)?;
+            leave_group(input, stores, tex_state::GroupKind::Align)?;
             leave_group(input, stores, tex_state::GroupKind::Simple)?;
             return Ok(None);
         }
@@ -422,10 +422,10 @@ where
                     );
                 }
                 package_cell(align_level, kind, span_count, next_column, nest, stores)?;
-                leave_group(input, stores, tex_state::GroupKind::Simple)?;
+                leave_group(input, stores, tex_state::GroupKind::Align)?;
                 // WEB fin_col immediately installs the next entry align_group,
                 // including after a row-ending \cr for fin_align to remove.
-                stores.enter_group_with_kind(tex_state::GroupKind::Simple);
+                stores.enter_group_with_kind(tex_state::GroupKind::Align);
                 align_state_mut(nest, align_level)?.finish_cell(next_column);
                 return Ok(CellResult {
                     next_column,
@@ -566,9 +566,7 @@ where
         if is_omit(stores, semantic) {
             return Err(ExecError::MisplacedOmit);
         }
-        if is_alignment_par(stores, semantic)
-            && (input.alignment_cell_at_base_depth() || input.alignment_cell_below_base_depth())
-        {
+        if is_alignment_par(stores, semantic) && input.alignment_cell_below_base_depth() {
             // TeX.web §1091 hmode+par_end calls off_save when the
             // alignment brace level is negative. Backing up \par behind
             // the inserted right brace lets ordinary group dispatch
@@ -577,7 +575,8 @@ where
             continue;
         }
         if is_end_group(stores, semantic)
-            && input.alignment_cell_at_entry_group_depth(stores.execution_group_depth())
+            && input.alignment_cell_below_base_depth()
+            && stores.innermost_group_kind() == Some(tex_state::GroupKind::Align)
         {
             // TeX.web §1103 does not unsave the align_group. It backs up the
             // brace and inserts frozen \cr, which may itself need §1102's
