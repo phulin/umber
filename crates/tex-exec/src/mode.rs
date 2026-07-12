@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use tex_expand::EngineMode;
 use tex_state::ids::FontId;
 use tex_state::ids::GlueId;
@@ -73,14 +74,14 @@ impl Mode {
 /// The list-under-construction owned by one mode level.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ModeList {
-    nodes: Vec<Node>,
+    nodes: Arc<Vec<Node>>,
     align_state: Option<AlignState>,
     incomplete_fraction: Option<IncompleteFraction>,
     display_interrupt: Option<DisplayInterrupt>,
     display_eq_no: Option<DisplayEqNo>,
     prev_depth: Option<Scaled>,
     prev_graf: i32,
-    pending_hchars: Vec<PendingHChar>,
+    pending_hchars: Arc<Vec<PendingHChar>>,
     space_factor: i32,
     no_boundary: bool,
 }
@@ -92,7 +93,7 @@ impl ModeList {
     }
 
     pub fn take_nodes(&mut self) -> Vec<Node> {
-        std::mem::take(&mut self.nodes)
+        Arc::try_unwrap(std::mem::take(&mut self.nodes)).unwrap_or_else(|shared| (*shared).clone())
     }
 
     #[must_use]
@@ -101,19 +102,20 @@ impl ModeList {
     }
 
     pub fn push(&mut self, node: Node) {
-        self.nodes.push(node);
+        Arc::make_mut(&mut self.nodes).push(node);
     }
 
     pub fn append(&mut self, nodes: impl IntoIterator<Item = Node>) {
-        self.nodes.extend(nodes);
+        Arc::make_mut(&mut self.nodes).extend(nodes);
     }
 
     pub fn push_pending_hchar(&mut self, font: FontId, ch: char) {
-        self.pending_hchars.push(PendingHChar { font, ch });
+        Arc::make_mut(&mut self.pending_hchars).push(PendingHChar { font, ch });
     }
 
     pub fn take_pending_hchars(&mut self) -> Vec<PendingHChar> {
-        std::mem::take(&mut self.pending_hchars)
+        Arc::try_unwrap(std::mem::take(&mut self.pending_hchars))
+            .unwrap_or_else(|shared| (*shared).clone())
     }
 
     #[must_use]
@@ -171,7 +173,9 @@ impl ModeList {
             Some(Node::HList(_)) | Some(Node::VList(_)) => {}
             _ => return None,
         }
-        let mut node = self.nodes.pop().expect("tail was just inspected");
+        let mut node = Arc::make_mut(&mut self.nodes)
+            .pop()
+            .expect("tail was just inspected");
         match &mut node {
             Node::HList(box_node) | Node::VList(box_node) => {
                 box_node.shift = Scaled::from_raw(0);
@@ -182,11 +186,11 @@ impl ModeList {
     }
 
     pub fn pop_last_node(&mut self) -> Option<Node> {
-        self.nodes.pop()
+        Arc::make_mut(&mut self.nodes).pop()
     }
 
     pub fn last_node_mut(&mut self) -> Option<&mut Node> {
-        self.nodes.last_mut()
+        Arc::make_mut(&mut self.nodes).last_mut()
     }
 
     #[must_use]
@@ -503,7 +507,7 @@ impl ModeLevelSummary {
 /// Snapshot-coverable summary of the whole mode nest.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ModeNestSummary {
-    levels: Vec<ModeLevelSummary>,
+    levels: Arc<Vec<ModeLevelSummary>>,
 }
 
 impl ModeNestSummary {
@@ -516,7 +520,7 @@ impl ModeNestSummary {
 /// Explicit stack of TeX mode levels.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ModeNest {
-    levels: Vec<ModeLevelSummary>,
+    levels: Arc<Vec<ModeLevelSummary>>,
 }
 
 impl Default for ModeNest {
@@ -530,7 +534,7 @@ impl ModeNest {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            levels: vec![ModeLevelSummary::new(Mode::Vertical)],
+            levels: Arc::new(vec![ModeLevelSummary::new(Mode::Vertical)]),
         }
     }
 
@@ -569,15 +573,14 @@ impl ModeNest {
         if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal) {
             level.list_mut().set_space_factor(1000);
         }
-        self.levels.push(level);
+        Arc::make_mut(&mut self.levels).push(level);
     }
 
     pub fn pop(&mut self) -> Result<ModeLevelSummary, ExecError> {
         if self.levels.len() == 1 {
             return Err(ExecError::CannotPopBaseMode);
         }
-        Ok(self
-            .levels
+        Ok(Arc::make_mut(&mut self.levels)
             .pop()
             .expect("length checked before popping mode level"))
     }
@@ -590,7 +593,7 @@ impl ModeNest {
     }
 
     pub fn current_list_mut(&mut self) -> &mut ModeList {
-        self.levels
+        Arc::make_mut(&mut self.levels)
             .last_mut()
             .expect("ModeNest always has at least one level")
             .list_mut()
@@ -601,7 +604,9 @@ impl ModeNest {
     }
 
     pub(crate) fn list_mut(&mut self, index: usize) -> Option<&mut ModeList> {
-        self.levels.get_mut(index).map(ModeLevelSummary::list_mut)
+        Arc::make_mut(&mut self.levels)
+            .get_mut(index)
+            .map(ModeLevelSummary::list_mut)
     }
 
     #[must_use]
@@ -612,7 +617,9 @@ impl ModeNest {
 
     pub fn set_enclosing_vertical_prev_graf(&mut self, lines: i32) {
         let index = self.enclosing_vertical_index();
-        self.levels[index].list_mut().set_prev_graf(lines);
+        Arc::make_mut(&mut self.levels)[index]
+            .list_mut()
+            .set_prev_graf(lines);
     }
 
     fn enclosing_vertical_index(&self) -> usize {
