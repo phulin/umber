@@ -900,13 +900,10 @@ impl Universe {
         }
 
         hasher.tag(0x81);
-        let inputs = self.world.input_records_since(cursor);
-        hasher.usize(inputs.len());
-        for input in inputs {
-            hash_path(input.path(), hasher);
-            hasher.bytes(&input.hash().bytes());
-            hasher.usize(input.len());
-        }
+        // Input records are content-addressed provenance allocations. Live
+        // input frames hash the stable record content below; unreferenced
+        // reads must not make semantic convergence allocation-sensitive.
+        hasher.usize(0);
 
         hasher.tag(0x82);
         let shell_escapes = self.world.shell_escape_records_since(cursor);
@@ -960,7 +957,7 @@ impl Universe {
 
     fn hash_input_summary(&self, hasher: &mut StateHasher) {
         hasher.tag(0x90);
-        hash_input_summary_fields(&self.stores, &self.input_summary, hasher);
+        hash_input_summary_fields(&self.stores, &self.world, &self.input_summary, hasher);
     }
 
     fn hash_page_state(&self, hasher: &mut StateHasher) {
@@ -3397,20 +3394,23 @@ fn hash_path(path: &std::path::Path, hasher: &mut StateHasher) {
     hasher.bytes(path.as_os_str().as_encoded_bytes());
 }
 
-fn hash_input_summary_fields(stores: &Stores, summary: &InputSummary, hasher: &mut StateHasher) {
-    hasher.u32(summary.next_source_id());
+fn hash_input_summary_fields(
+    stores: &Stores,
+    world: &World,
+    summary: &InputSummary,
+    hasher: &mut StateHasher,
+) {
     hasher.bool(summary.unicode_superscript_notation());
     hasher.usize(summary.frames().len());
     for frame in summary.frames() {
         match frame {
             InputFrameSummary::Source {
-                source_id,
+                source_id: _,
                 input_record,
                 source,
             } => {
                 hasher.tag(0);
-                hasher.u32(source_id.raw());
-                hash_input_record_id(*input_record, hasher);
+                hash_input_record(world, *input_record, hasher);
                 hasher.usize(source.buffer_offset());
                 hasher.usize(source.next_source_offset());
                 hasher.usize(source.line_number());
@@ -3477,13 +3477,7 @@ fn hash_input_summary_fields(stores: &Stores, summary: &InputSummary, hasher: &m
     match summary.last_source_frame() {
         Some(source) => {
             hasher.bool(true);
-            hasher.u32(
-                summary
-                    .last_source_id()
-                    .expect("last source frame must retain its source id")
-                    .raw(),
-            );
-            hash_input_record_id(summary.last_source_record(), hasher);
+            hash_input_record(world, summary.last_source_record(), hasher);
             hasher.usize(source.buffer_offset());
             hasher.usize(source.next_source_offset());
             hasher.usize(source.line_number());
@@ -3513,11 +3507,20 @@ fn hash_input_summary_fields(stores: &Stores, summary: &InputSummary, hasher: &m
     }
 }
 
-fn hash_input_record_id(record: Option<crate::InputRecordId>, hasher: &mut StateHasher) {
+fn hash_input_record(
+    world: &World,
+    record: Option<crate::InputRecordId>,
+    hasher: &mut StateHasher,
+) {
     match record {
         Some(record) => {
             hasher.bool(true);
-            hasher.u32(record.raw());
+            let record = world
+                .input_record(record)
+                .expect("published input summary record must remain live");
+            hash_path(record.path(), hasher);
+            hasher.bytes(&record.hash().bytes());
+            hasher.usize(record.len());
         }
         None => hasher.bool(false),
     }

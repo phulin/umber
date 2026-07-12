@@ -495,7 +495,6 @@ pub(crate) struct WorldStateHashCursor {
     rng: RngState,
     job_clock: JobClock,
     shell_escape_policy: ShellEscapePolicy,
-    input_len: usize,
     shell_escape_len: usize,
 }
 
@@ -1049,7 +1048,6 @@ impl World {
             rng: self.rng,
             job_clock: self.job_clock,
             shell_escape_policy: self.shell_escape_policy,
-            input_len: self.inputs.len(),
             shell_escape_len: self.shell_escapes.len(),
         }
     }
@@ -1064,7 +1062,6 @@ impl World {
             rng: snapshot.rng,
             job_clock: snapshot.job_clock,
             shell_escape_policy: snapshot.shell_escape_policy,
-            input_len: snapshot.input_len,
             shell_escape_len: snapshot.shell_escape_len,
         }
     }
@@ -1080,10 +1077,6 @@ impl World {
             "World hash cursor effect position is past effect end"
         );
         assert!(
-            cursor.input_len <= self.inputs.len(),
-            "World hash cursor input length is past input end"
-        );
-        assert!(
             cursor.shell_escape_len <= self.shell_escapes.len(),
             "World hash cursor shell-escape length is past shell-escape end"
         );
@@ -1093,7 +1086,6 @@ impl World {
             rng: cursor.rng,
             job_clock: cursor.job_clock,
             shell_escape_policy: cursor.shell_escape_policy,
-            input_len: cursor.input_len,
             shell_escape_len: cursor.shell_escape_len,
         }
     }
@@ -1115,15 +1107,6 @@ impl World {
             "World hash cursor is past effect end"
         );
         &self.effects[start..]
-    }
-
-    #[must_use]
-    pub(crate) fn input_records_since(&self, cursor: &WorldStateHashCursor) -> &[InputRecord] {
-        assert!(
-            cursor.input_len <= self.inputs.len(),
-            "World hash cursor is past input end"
-        );
-        &self.inputs[cursor.input_len..]
     }
 
     #[must_use]

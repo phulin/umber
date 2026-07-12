@@ -4,7 +4,7 @@ use crate::glue::{GlueSpec, Order};
 use crate::hyphenation::{ExceptionSpec, PatternSpec};
 use crate::ids::{ArenaRef, NodeListId};
 use crate::input::{
-    InputFrameSummary, InputSummary, LexerState, MacroArguments, SourceFrameSummary,
+    InputFrameSummary, InputSummary, LexerState, MacroArguments, SourceFrameSummary, SourceId,
     TokenListReplayKind, TracedTokenList,
 };
 use crate::macro_store::MacroMeaning;
@@ -901,6 +901,36 @@ fn semantic_hash_ignores_pending_source_token_origins() {
     let right_hash = universe.snapshot().state_hash();
 
     assert_eq!(left_hash, right_hash);
+}
+
+#[test]
+fn input_hash_ignores_source_ids_and_allocator_history() {
+    let mut universe = Universe::new();
+    let first_registration = universe
+        .register_input_source(
+            SourceId::new(1),
+            SourceDescriptor::generated(Arc::from(&b"x"[..])),
+        )
+        .expect("first generated source");
+    let second_registration = universe
+        .register_input_source(
+            SourceId::new(99),
+            SourceDescriptor::generated(Arc::from(&b"x"[..])),
+        )
+        .expect("second generated source");
+    let token = Token::Char {
+        ch: 'x',
+        cat: Catcode::Letter,
+    };
+    let first = source_summary_with_identity(token, SourceId::new(1), first_registration, 2);
+    let second =
+        source_summary_with_identity(token, SourceId::new(99), second_registration, 10_000);
+
+    universe.set_input_summary(first);
+    let first_hash = universe.snapshot().state_hash();
+    universe.set_input_summary(second);
+
+    assert_eq!(universe.snapshot().state_hash(), first_hash);
 }
 
 #[test]
@@ -2313,6 +2343,37 @@ fn pending_source_summary(
         }],
         None,
         None,
+    )
+}
+
+fn source_summary_with_identity(
+    token: Token,
+    source_id: SourceId,
+    registration: crate::source_map::RegisteredSource,
+    next_source_id: u32,
+) -> InputSummary {
+    InputSummary::new_with_resume_state(
+        vec![InputFrameSummary::Source {
+            source_id,
+            input_record: None,
+            source: SourceFrameSummary::new(
+                0,
+                1,
+                1,
+                0,
+                LexerState::MidLine,
+                "x".to_owned(),
+                0,
+                vec![TracedTokenWord::pack(token, OriginId::UNKNOWN)],
+                false,
+            )
+            .with_registration(Some(registration)),
+        }],
+        None,
+        None,
+        None,
+        next_source_id,
+        true,
     )
 }
 

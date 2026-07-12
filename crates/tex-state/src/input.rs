@@ -326,7 +326,7 @@ impl ConditionFrameSummary {
 }
 
 /// Snapshot summary for the input stack.
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Default)]
 pub struct InputSummary {
     frames: Arc<[InputFrameSummary]>,
     last_source_id: Option<SourceId>,
@@ -334,6 +334,26 @@ pub struct InputSummary {
     last_source_frame: Option<SourceFrameSummary>,
     next_source_id: u32,
     unicode_superscript_notation: bool,
+}
+
+impl PartialEq for InputSummary {
+    fn eq(&self, other: &Self) -> bool {
+        self.frames == other.frames
+            && self.last_source_record == other.last_source_record
+            && self.last_source_frame == other.last_source_frame
+            && self.unicode_superscript_notation == other.unicode_superscript_notation
+    }
+}
+
+impl Eq for InputSummary {}
+
+impl Hash for InputSummary {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.frames.hash(state);
+        self.last_source_record.hash(state);
+        self.last_source_frame.hash(state);
+        self.unicode_superscript_notation.hash(state);
+    }
 }
 
 impl InputSummary {
@@ -466,16 +486,16 @@ impl PartialEq for InputFrameSummary {
         match (self, other) {
             (
                 Self::Source {
-                    source_id: left_id,
+                    source_id: _,
                     input_record: left_record,
                     source: left,
                 },
                 Self::Source {
-                    source_id: right_id,
+                    source_id: _,
                     input_record: right_record,
                     source: right,
                 },
-            ) => left_id == right_id && left_record == right_record && left == right,
+            ) => left_record == right_record && left == right,
             (
                 Self::TokenList {
                     token_list: left_token_list,
@@ -518,12 +538,11 @@ impl Hash for InputFrameSummary {
     fn hash<H: Hasher>(&self, state: &mut H) {
         match self {
             Self::Source {
-                source_id,
+                source_id: _,
                 input_record,
                 source,
             } => {
                 0_u8.hash(state);
-                source_id.hash(state);
                 input_record.hash(state);
                 source.hash(state);
             }
