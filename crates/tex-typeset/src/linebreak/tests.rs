@@ -319,7 +319,7 @@ fn discardable_tail_does_not_create_an_empty_final_line() {
 }
 
 #[test]
-fn empty_post_discretionary_before_parfill_does_not_create_empty_final_line() {
+fn looseness_can_select_empty_line_after_terminal_discretionary() {
     let mut universe = Universe::new();
     let empty = universe.freeze_node_list(&[]);
     let hyphen = universe.freeze_node_list(&[rule(5)]);
@@ -350,8 +350,9 @@ fn empty_post_discretionary_before_parfill_does_not_create_empty_final_line() {
     let mut hook = NoHyphenation;
     let result = line_break(&universe, &nodes, p, &mut hook);
 
-    assert_eq!(result.breaks.len(), 1);
-    assert_eq!(result.breaks[0].position, nodes.len());
+    assert_eq!(result.breaks.len(), 2);
+    assert_eq!(result.breaks[0].position, 2);
+    assert_eq!(result.breaks[1].position, nodes.len());
 }
 
 #[test]

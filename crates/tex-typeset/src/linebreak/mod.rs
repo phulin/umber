@@ -458,10 +458,7 @@ fn legal_breakpoints<S: TypesetState>(
                 hyphenated: false,
                 add_width: Widths::zero(),
             }),
-            Node::Disc { pre, post, .. }
-                if !state.nodes(*post).is_empty()
-                    || next_width_position(nodes, i + 1) < nodes.len() =>
-            {
+            Node::Disc { pre, .. } => {
                 out.push(Breakpoint {
                     position: i + 1,
                     width_position: i,
