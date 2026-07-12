@@ -93,6 +93,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `tests/ui/expansion_context_forbidden.rs`: Compile-fail fixture that attempts forbidden privileged calls from `ExpansionContext`.
 - `tests/ui/expansion_state_input_forbidden.rs`: Compile-fail fixture that attempts input opening through generic `ExpansionState`.
 - `tests/ui/input_open_context_forbidden.rs`: Compile-fail fixture that attempts forbidden reads, world access, and mutations from `InputOpenContext`.
+- `tests/ui/arena_transaction_exclusive.rs`: Compile-fail fixture proving suffix-owning transactions exclusively borrow the aggregate timeline.
 
 ## Boundaries
 

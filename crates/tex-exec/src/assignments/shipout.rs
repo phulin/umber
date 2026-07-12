@@ -61,7 +61,8 @@ where
         );
         return Ok(None);
     }
-    let boundary = stores.begin_shipout();
+    let mut transaction = stores.begin_shipout();
+    let stores = &mut *transaction;
     let pending_effects = pending_page_effects(stores.world().effect_records());
     let counts = page_counts(stores);
     let (mag, diagnostic) = stores.prepare_mag();
@@ -97,8 +98,8 @@ where
     let input_summary = input.publication_summary(stores);
     stores.set_input_summary(input_summary);
     let effect_pos = stores.world().effect_pos();
-    let hash = stores.commit_shipout(boundary, &bytes, effect_pos)?;
     stores.set_page_integer(PageInteger::DeadCycles, 0);
+    let hash = transaction.commit(&bytes, effect_pos)?;
     Ok(Some(hash))
 }
 

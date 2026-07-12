@@ -1339,8 +1339,8 @@ fn rollback_restores_world_inputs_stream_buffers_and_rng() {
 fn shipout_commit_flushes_releases_then_checkpoints() {
     let mut universe = Universe::new();
     let base = universe.snapshot();
-    let boundary = universe.begin_shipout();
-    let children = universe.freeze_node_list(&[Node::Kern {
+    let mut transaction = universe.begin_shipout();
+    let children = transaction.freeze_node_list(&[Node::Kern {
         amount: Scaled::from_raw(7),
         kind: KernKind::Explicit,
     }]);
@@ -1356,14 +1356,14 @@ fn shipout_commit_flushes_releases_then_checkpoints() {
         children,
     }));
     assert!(matches!(page, Node::HList(_)));
-    assert_eq!(universe.testing_epoch_node_count(), 1);
+    assert_eq!(transaction.testing_epoch_node_count(), 1);
 
-    universe
+    transaction
         .world_mut()
         .write_text(PrintSink::TerminalAndLog, "shipout\n");
-    let effect_pos = universe.world().effect_pos();
-    let hash = universe
-        .commit_shipout(boundary, b"detached page artifact", effect_pos)
+    let effect_pos = transaction.world().effect_pos();
+    let hash = transaction
+        .commit(b"detached page artifact", effect_pos)
         .expect("shipout commit succeeds");
 
     assert_eq!(hash, ContentHash::from_bytes(b"detached page artifact"));
@@ -1381,8 +1381,8 @@ fn repeated_shipout_commits_do_not_retain_epoch_page_nodes() {
     let mut universe = Universe::new();
 
     for page in 0..32 {
-        let boundary = universe.begin_shipout();
-        let children = universe.freeze_node_list(&[Node::Kern {
+        let mut transaction = universe.begin_shipout();
+        let children = transaction.freeze_node_list(&[Node::Kern {
             amount: Scaled::from_raw(page),
             kind: KernKind::Explicit,
         }]);
@@ -1397,9 +1397,9 @@ fn repeated_shipout_commits_do_not_retain_epoch_page_nodes() {
             glue_order: Order::Normal,
             children,
         }));
-        let effect_pos = universe.world().effect_pos();
-        universe
-            .commit_shipout(boundary, format!("page {page}").as_bytes(), effect_pos)
+        let effect_pos = transaction.world().effect_pos();
+        transaction
+            .commit(format!("page {page}").as_bytes(), effect_pos)
             .expect("shipout commit succeeds");
         assert_eq!(universe.testing_epoch_node_count(), 0);
     }
@@ -2018,12 +2018,12 @@ fn finished_box_assignment_reclaims_only_its_epoch_construction_suffix() {
         font: NULL_FONT,
         ch: 'a',
     }]);
-    let boundary = universe.begin_box_build();
-    let children = universe.freeze_node_list(&[Node::Kern {
+    let mut transaction = universe.begin_box_build();
+    let children = transaction.freeze_node_list(&[Node::Kern {
         amount: Scaled::from_raw(17),
         kind: KernKind::Explicit,
     }]);
-    let root = universe.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
+    let root = transaction.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(17),
         height: Scaled::from_raw(0),
         depth: Scaled::from_raw(0),
@@ -2034,9 +2034,9 @@ fn finished_box_assignment_reclaims_only_its_epoch_construction_suffix() {
         glue_order: Order::Normal,
         children,
     }))]);
-    assert_eq!(universe.testing_epoch_node_count(), 3);
+    assert_eq!(transaction.testing_epoch_node_count(), 3);
 
-    universe.finish_box_assignment(boundary, 0, Some(root), false);
+    transaction.finish(0, Some(root), false);
 
     assert_eq!(universe.testing_epoch_node_count(), 1);
     assert_eq!(
@@ -2062,13 +2062,13 @@ fn finished_box_assignment_reclaims_only_its_epoch_construction_suffix() {
 #[test]
 fn cancelled_box_build_reclaims_its_epoch_construction_suffix() {
     let mut universe = Universe::new();
-    let boundary = universe.begin_box_build();
-    let _discarded = universe.freeze_node_list(&[Node::Char {
-        font: NULL_FONT,
-        ch: 'x',
-    }]);
-
-    universe.cancel_box_build(boundary);
+    {
+        let mut transaction = universe.begin_box_build();
+        let _discarded = transaction.freeze_node_list(&[Node::Char {
+            font: NULL_FONT,
+            ch: 'x',
+        }]);
+    }
 
     assert_eq!(universe.testing_epoch_node_count(), 0);
 }

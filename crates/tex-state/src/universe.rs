@@ -262,14 +262,11 @@ pub struct Snapshot {
     state_hash_base: StateHashBase,
 }
 
-/// Opaque state mark for one in-progress shipout operation.
-///
-/// The mark can only be consumed by [`Universe::commit_shipout`]; it does not
-/// expose raw node-arena release or rollback machinery.
 #[derive(Debug)]
-pub struct ShipoutBoundary {
-    owner: SnapshotOwner,
+pub struct ShipoutTransaction<'a> {
+    universe: &'a mut Universe,
     node_mark: ShipoutNodeMark,
+    finished: bool,
 }
 
 /// Opaque allocation mark for one in-progress box-register construction.
@@ -277,9 +274,89 @@ pub struct ShipoutBoundary {
 /// Finishing the assignment promotes its live result into rollback-safe
 /// storage, then releases every epoch node allocated during construction.
 #[derive(Debug)]
-pub struct BoxBuildBoundary {
-    owner: SnapshotOwner,
+pub struct BoxBuildTransaction<'a> {
+    universe: &'a mut Universe,
     node_mark: ShipoutNodeMark,
+    finished: bool,
+}
+
+impl std::ops::Deref for ShipoutTransaction<'_> {
+    type Target = Universe;
+    fn deref(&self) -> &Self::Target {
+        self.universe
+    }
+}
+
+impl std::ops::DerefMut for ShipoutTransaction<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.universe
+    }
+}
+
+impl Drop for ShipoutTransaction<'_> {
+    fn drop(&mut self) {
+        if !self.finished {
+            self.universe.stores.release_shipout_nodes(self.node_mark);
+        }
+    }
+}
+
+impl std::ops::Deref for BoxBuildTransaction<'_> {
+    type Target = Universe;
+    fn deref(&self) -> &Self::Target {
+        self.universe
+    }
+}
+
+impl std::ops::DerefMut for BoxBuildTransaction<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.universe
+    }
+}
+
+impl Drop for BoxBuildTransaction<'_> {
+    fn drop(&mut self) {
+        if !self.finished {
+            self.universe.stores.release_shipout_nodes(self.node_mark);
+        }
+    }
+}
+
+impl ShipoutTransaction<'_> {
+    /// Atomically finishes this transaction's artifact/effect publication.
+    pub fn commit(
+        mut self,
+        artifact_bytes: &[u8],
+        effect_pos: EffectPos,
+    ) -> Result<ContentHash, WorldError> {
+        let hash_base = self.state_hash_base.clone();
+        let hash = self.world.store_artifact(artifact_bytes)?;
+        if let Err(err) = self.world.commit_effects(effect_pos) {
+            self.state_hash_base = self.retarget_hash_base_after_committed_boundary(hash_base);
+            return Err(err);
+        }
+        let node_mark = self.node_mark;
+        self.stores.release_shipout_nodes(node_mark);
+        self.state_hash_base = self.retarget_hash_base_after_committed_boundary(hash_base);
+        self.world.record_artifact_commit(hash);
+        self.finished = true;
+        Ok(hash)
+    }
+}
+
+impl BoxBuildTransaction<'_> {
+    /// Promotes the result into the register store and commits the owned suffix.
+    pub fn finish(mut self, index: u16, value: Option<NodeListId>, global: bool) {
+        match (global, value) {
+            (false, Some(value)) => self.stores.set_box_reg(index, value),
+            (true, Some(value)) => self.stores.set_box_reg_global(index, value),
+            (false, None) => self.stores.clear_box_reg(index),
+            (true, None) => self.stores.clear_box_reg_global(index),
+        }
+        let node_mark = self.node_mark;
+        self.stores.release_shipout_nodes(node_mark);
+        self.finished = true;
+    }
 }
 
 impl Snapshot {
@@ -773,38 +850,13 @@ impl Universe {
 
     /// Marks the start of node allocations owned by one in-progress shipout.
     #[must_use]
-    pub fn begin_shipout(&self) -> ShipoutBoundary {
-        ShipoutBoundary {
-            owner: self.owner.snapshot_owner(),
-            node_mark: self.stores.shipout_node_mark(),
+    pub fn begin_shipout(&mut self) -> ShipoutTransaction<'_> {
+        let node_mark = self.stores.shipout_node_mark();
+        ShipoutTransaction {
+            universe: self,
+            node_mark,
+            finished: false,
         }
-    }
-
-    /// Stores a shipped page artifact, flushes its effects, and releases its
-    /// shipout-local epoch nodes. The outer executor publishes the checkpoint
-    /// only after all nested output work has unwound.
-    pub fn commit_shipout(
-        &mut self,
-        boundary: ShipoutBoundary,
-        artifact_bytes: &[u8],
-        effect_pos: EffectPos,
-    ) -> Result<ContentHash, WorldError> {
-        assert_eq!(
-            boundary.owner,
-            self.owner.snapshot_owner(),
-            "shipout boundary belongs to a different Universe instance"
-        );
-
-        let hash_base = self.state_hash_base.clone();
-        let hash = self.world.store_artifact(artifact_bytes)?;
-        if let Err(err) = self.world.commit_effects(effect_pos) {
-            self.state_hash_base = self.retarget_hash_base_after_committed_boundary(hash_base);
-            return Err(err);
-        }
-        self.stores.release_shipout_nodes(boundary.node_mark);
-        self.state_hash_base = self.retarget_hash_base_after_committed_boundary(hash_base);
-        self.world.record_artifact_commit(hash);
-        Ok(hash)
     }
 
     /// Commits an effect prefix and retargets semantic hash cursors after it is dropped.
@@ -1685,43 +1737,13 @@ impl Universe {
 
     /// Marks the epoch-node suffix owned by one box-register value scan.
     #[must_use]
-    pub fn begin_box_build(&self) -> BoxBuildBoundary {
-        BoxBuildBoundary {
-            owner: self.owner.snapshot_owner(),
-            node_mark: self.stores.shipout_node_mark(),
+    pub fn begin_box_build(&mut self) -> BoxBuildTransaction<'_> {
+        let node_mark = self.stores.shipout_node_mark();
+        BoxBuildTransaction {
+            universe: self,
+            node_mark,
+            finished: false,
         }
-    }
-
-    /// Completes a box-register assignment and releases its construction nodes.
-    pub fn finish_box_assignment(
-        &mut self,
-        boundary: BoxBuildBoundary,
-        index: u16,
-        value: Option<NodeListId>,
-        global: bool,
-    ) {
-        self.assert_box_build_owner(&boundary);
-        match (global, value) {
-            (false, Some(value)) => self.stores.set_box_reg(index, value),
-            (true, Some(value)) => self.stores.set_box_reg_global(index, value),
-            (false, None) => self.stores.clear_box_reg(index),
-            (true, None) => self.stores.clear_box_reg_global(index),
-        }
-        self.stores.release_shipout_nodes(boundary.node_mark);
-    }
-
-    /// Abandons a failed box-register value scan and releases its node suffix.
-    pub fn cancel_box_build(&mut self, boundary: BoxBuildBoundary) {
-        self.assert_box_build_owner(&boundary);
-        self.stores.release_shipout_nodes(boundary.node_mark);
-    }
-
-    fn assert_box_build_owner(&self, boundary: &BoxBuildBoundary) {
-        assert_eq!(
-            boundary.owner,
-            self.owner.snapshot_owner(),
-            "box-build boundary belongs to a different Universe instance"
-        );
     }
 
     #[must_use]

@@ -44,4 +44,13 @@ fn expansion_capability_rejects_privileged_apis() {
             "no method named `set_count`",
         ],
     );
+    assert_compile_fail(
+        "arena-transaction-exclusive",
+        &manifest_dir.join("tests/ui/arena_transaction_exclusive.rs"),
+        &dependencies,
+        &[
+            "E0499",
+            "cannot borrow `universe` as mutable more than once at a time",
+        ],
+    );
 }

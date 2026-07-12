@@ -117,24 +117,21 @@ where
 {
     let index = scan_register_index(input, stores, hooks, context)?;
     skip_optional_equals_x(input, stores, hooks)?;
-    let boundary = stores.begin_box_build();
-    let value = match scan_box_value(Some(nest), input, stores, hooks, context) {
+    let mut transaction = stores.begin_box_build();
+    let value = match scan_box_value(Some(nest), input, &mut transaction, hooks, context) {
         Ok(Some(ScannedBoxValue::Fresh(node))) => {
-            let list = stores.freeze_node_list(&[node]);
+            let list = transaction.freeze_node_list(&[node]);
             Some(list)
         }
         Ok(Some(ScannedBoxValue::Shared(node))) => {
-            let node = stores.clone_node_to_epoch(node);
-            let list = stores.freeze_node_list(&[node]);
+            let node = transaction.clone_node_to_epoch(node);
+            let list = transaction.freeze_node_list(&[node]);
             Some(list)
         }
         Ok(None) => None,
-        Err(err) => {
-            stores.cancel_box_build(boundary);
-            return Err(err);
-        }
+        Err(err) => return Err(err),
     };
-    stores.finish_box_assignment(boundary, index, value, global);
+    transaction.finish(index, value, global);
     Ok(())
 }
 
