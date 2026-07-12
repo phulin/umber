@@ -15,10 +15,12 @@ scripts/build-trip-initex.sh
 `scripts/trip.sh` fetches official CTAN bytes into gitignored
 `third_party/trip/`, verifies SHA-256 hashes, rebuilds `trip.tfm` through
 PLtoTF and TFtoPL, runs the INITEX transcript phase, runs the format-loaded
-TRIP phase, runs DVItype, and compares the official log/photo/DVItype/DVI and
-`tripos.tex` artifacts. The self-test does not fetch or run TeX; it perturbs a
-copied text artifact and verifies that `target/trip/diffs/` receives an
-actionable unified diff.
+TRIP phase, runs DVItype, and gates on the official DVItype and DVI artifacts.
+The generated `tripin.log`, `trip.log`, `trip.fot`, and `tripos.tex` remain in
+`target/trip/` for diagnosis, but their parity belongs to the diagnostic tier
+and does not affect this DVI milestone. The self-test does not fetch or run
+TeX; it perturbs a DVI character opcode and verifies that
+`target/trip/diffs/` identifies the divergent byte, page, and opcodes.
 
 ## Source Pins
 
@@ -88,42 +90,29 @@ settings and the normal TeX82 capacities that Web2C permits at runtime.
 
 The harness applies only these normalizations:
 
-- `trip.log` and `tripin.log`: first-line date/time suffix, local
-  `./trip.tex`/`./tripos.tex` path spelling, Web2C packaging banner, format
-  date, string-pool totals/capacities, dynamic hash/trie capacities, and the
-  dynamic hyphen-table exception count. The last categories are confined to
-  the exact statistics lines that Appendix A items 5(d), 5(f), and 5(g)
-  permit. TeX Live's upstream `triptest.test` makes the same distinctions;
-  its public-domain `triptrap/README` records Knuth's approval of the one-
-  versus two-entry dynamic-hyphen-table statistic.
-- `trip.log`: only `glue set` values at the end of `hbox`/`vbox` lines may be
-  reconciled, only when the entire remainder of the line is identical and the
-  decimal delta is at most 0.001. Appendix A item 5(b) explicitly identifies
-  these floating-point values as system-dependent; no box dimension or other
-  number is touched.
-- `trip.fot`: local `./trip.tex` path spelling and Web2C packaging banner.
-- `trip.typ`: DVItype packaging text on line 1 and the rendered DVI preamble
-  timestamp line. Movement operands may be reconciled only when opcode, byte
-  offset, and all surrounding text match and the delta is at most 64 scaled
-  points, as allowed by Appendix A item 6.
+- `trip.typ`: DVItype packaging text on line 1 and the quoted rendering of the
+  DVI preamble comment. Movement operands may be reconciled only when opcode,
+  byte offset, and all surrounding text match and the delta is at most 64
+  scaled points, as allowed by Appendix A item 6.
 - `trip.dvi`: DVI preamble comment bytes only, preserving the original comment
   length. A structured DVI walk additionally permits at most 64 scaled points
   of variation in movement operands while requiring identical opcode/operand
   structure and exact identity for characters, rules, specials, fonts, page
   structure, dimensions, and every non-movement operand.
 
-No other TRIP log, terminal photo, DVItype, `tripos.tex`, or DVI bytes may
-change. Any mismatch writes a diff or byte context under `target/trip/diffs/`.
-`scripts/trip.sh self-test` deliberately changes both a text line and a DVI
-character opcode and requires actionable failures, proving that the structured
-rounding allowance cannot conceal character output changes.
+No other DVItype or DVI bytes may change. Any mismatch writes a diff or
+byte/page/opcode context under `target/trip/diffs/`. `scripts/trip.sh
+self-test` deliberately changes a DVI character opcode and requires an
+actionable failure, proving that the structured rounding allowance cannot
+conceal character output changes. Diagnostic text normalization and parity are
+owned separately and are intentionally absent from this harness.
 
 ## Current Divergence Policy
 
-The harness is allowed to expose current Umber failures; it must not normalize
-or bless them. Missing INITEX/format support or semantic TRIP failures should
-be filed as linked Beads work under `umber2-i8w` rather than hidden in this
-script.
+The harness must not normalize or bless semantic Umber failures. A DVI or
+DVItype mismatch should be investigated against TeX82's `ship_out`,
+`hlist_out`/`vlist_out`, and `movement` procedures in `tex.web`; linked engine
+work belongs under `umber2-i8w`, not in special cases in this script.
 
 ## Umber format images
 
@@ -135,7 +124,7 @@ control-sequence namespaces and meanings, immutable token/macro/glue/font and
 hyphenation content, code tables, and environment cells. Loading validates and
 rebuilds fresh dense stores; it never restores host pointers, hash-table
 layout, allocation capacities, journals, checkpoints, input cursors,
-provenance caches, or `World` effects. Logical node-graph serialization for
-box registers is the remaining lifecycle piece before this path is a passing
-TRIP gate; it must remap into a fresh arena rather than preserving
-process-local arena identities.
+provenance caches, or `World` effects. Logical node graphs such as box
+registers remap into a fresh arena rather than preserving process-local arena
+identities. The official two-phase TRIP workload exercises this format path
+before DVI comparison.

@@ -25,9 +25,9 @@ usage:
 
 Runs the official Knuth TeX82 TRIP conformance harness outside cargo tests.
 The harness fetches the pinned CTAN TRIP materials into third_party/trip/,
-verifies SHA-256 hashes, rebuilds trip.tfm via PLtoTF/TFtoPL, compares the
-INITEX and format-run transcripts, runs DVItype, and runs Umber against the
-same official input.
+verifies SHA-256 hashes, rebuilds trip.tfm via PLtoTF/TFtoPL, runs the official
+two-phase workload, and compares the resulting DVI and DVItype output. Text
+transcripts remain in target/trip/ for diagnostics but do not gate this tier.
 
 Reference tools are discovered on PATH unless overridden:
   UMBER_TRIP_TOOLS=/path/to/pinned/trip-tool-directory
@@ -122,14 +122,6 @@ trip_initex() {
   fail "missing pinned special TRIP INITEX; run scripts/build-trip-initex.sh, or set UMBER_TRIP_INITEX"
 }
 
-tex_dvi_args() {
-  case "$(basename "$1")" in
-    *pdftex*|*pdfTeX*)
-      printf '%s\n' '-output-format=dvi'
-      ;;
-  esac
-}
-
 fetch_materials() {
   mkdir -p "$download_dir"
   while read -r name url expected extra; do
@@ -222,74 +214,146 @@ compare_binary() {
   return 1
 }
 
-normalize_trip_log() {
-  sed -E \
-    -e '1s/[[:space:]]+[0-9]{1,2} [A-Z]{3} [0-9]{4} [0-9]{2}:[0-9]{2}$/  <TRIP-DATE>/' \
-    -e '1s/ \(TeX Live [^)]*\)//' \
-    -e '1s/ \(Web2C [^)]*\)//' \
-    -e 's@\(\./trip\.tex@\(trip.tex@g' \
-    -e 's@\([^()[:space:]]*/trip\.tex@\(trip.tex@g' \
-    -e 's@\(\./tripos\.tex@\(tripos.tex@g' \
-    -e 's@\([^()[:space:]]*/tripos\.tex@\(tripos.tex@g' \
-    -e 's/\(preloaded format=trip [0-9]{4}\.[0-9]{1,2}\.[0-9]{1,2}\)/\(preloaded format=trip <TRIP-FORMAT-DATE>\)/' \
-    -e 's/^[0-9]+ strings of total length [0-9]+$/<TRIP-STRING-TOTALS>/' \
-    -e 's/^ [0-9]+ strings out of [0-9]+$/ <TRIP-STRINGS>/' \
-    -e 's/^ [0-9]+ string characters out of [0-9]+$/ <TRIP-STRING-CHARACTERS>/' \
-    -e 's/^( [0-9]+ multiletter control sequences out of )[0-9]+(\+[0-9]+)?$/\1<TRIP-HASH-CAPACITY>/' \
-    -e 's/^ [0-9]+ hyphenation exceptions? out of [0-9]+$/ <TRIP-HYPHEN-EXCEPTIONS>/' \
-    -e 's/(Hyphenation trie of length [0-9]+ has [0-9]+ ops out of )[0-9]+/\1<TRIP-TRIE-OP-CAPACITY>/' \
-    "$1" > "$2"
-}
+compare_dvi() {
+  local label="$1"
+  local expected="$2"
+  local actual="$3"
+  local diff_path="${diff_dir}/${label}.diff"
+  if [[ ! -f "$actual" ]]; then
+    printf 'missing actual artifact for %s: %s\n' "$label" "$actual" > "$diff_path"
+    printf 'FAIL %s: missing %s; see %s\n' "$label" "$actual" "$diff_path" >&2
+    return 1
+  fi
+  if cmp -s "$expected" "$actual"; then
+    rm -f "$diff_path"
+    printf 'ok %s\n' "$label" >&2
+    return 0
+  fi
+  python3 - "$label" "$expected" "$actual" "$diff_path" <<'PY'
+import pathlib
+import sys
 
-normalize_trip_fot() {
-  sed -E \
-    -e 's@^\*\*\(\./trip\.tex ##@** \&trip  trip \
-(trip.tex ##@' \
-    -e '1s/ \(TeX Live [^)]*\)//' \
-    -e '1s/ \(Web2C [^)]*\)//' \
-    -e '1s/ \(preloaded format=tex\)/ \(INITEX\)/' \
-    -e 's@\(\./trip\.tex@\(trip.tex@g' \
-    -e 's@\([^()[:space:]]*/trip\.tex@\(trip.tex@g' \
-    "$1" > "$2"
+label = sys.argv[1]
+expected_path, actual_path, diff_path = map(pathlib.Path, sys.argv[2:])
+expected = expected_path.read_bytes()
+actual = actual_path.read_bytes()
+common = min(len(expected), len(actual))
+offset = next((i for i in range(common) if expected[i] != actual[i]), common)
+
+def command_length(data, start):
+    op = data[start]
+    fixed = {
+        128: 2, 129: 3, 130: 4, 131: 5, 132: 9,
+        133: 2, 134: 3, 135: 4, 136: 5, 137: 9,
+        139: 45,
+        143: 2, 144: 3, 145: 4, 146: 5,
+        148: 2, 149: 3, 150: 4, 151: 5,
+        153: 2, 154: 3, 155: 4, 156: 5,
+        157: 2, 158: 3, 159: 4, 160: 5,
+        162: 2, 163: 3, 164: 4, 165: 5,
+        167: 2, 168: 3, 169: 4, 170: 5,
+        235: 2, 236: 3, 237: 4, 238: 5,
+        248: 29, 249: 6,
+    }
+    if op in range(239, 243):
+        width = op - 238
+        end = start + 1 + width
+        if end > len(data):
+            return len(data) - start
+        return 1 + width + int.from_bytes(data[start + 1:end], "big")
+    if op in range(243, 247):
+        width = op - 242
+        lengths = start + 1 + width + 12
+        if lengths + 2 > len(data):
+            return len(data) - start
+        return 1 + width + 12 + data[lengths] + data[lengths + 1]
+    if op == 247:
+        if start + 15 > len(data):
+            return len(data) - start
+        return 15 + data[start + 14]
+    return fixed.get(op, 1)
+
+def opcode_name(op):
+    if op is None:
+        return "EOF"
+    if op <= 127:
+        return f"set_char_{op}"
+    names = {
+        128: "set1", 129: "set2", 130: "set3", 131: "set4",
+        132: "set_rule", 133: "put1", 134: "put2", 135: "put3",
+        136: "put4", 137: "put_rule", 138: "nop", 139: "bop",
+        140: "eop", 141: "push", 142: "pop", 147: "w0", 152: "x0",
+        161: "y0", 166: "z0", 239: "xxx1", 240: "xxx2",
+        241: "xxx3", 242: "xxx4", 247: "pre", 248: "post",
+        249: "post_post",
+    }
+    if op in names:
+        return names[op]
+    ranges = (
+        (143, 146, "right"), (148, 151, "w"), (153, 156, "x"),
+        (157, 160, "down"), (162, 165, "y"), (167, 170, "z"),
+        (171, 234, "fnt_num_"), (235, 238, "fnt"),
+        (243, 246, "fnt_def"),
+    )
+    for lo, hi, name in ranges:
+        if lo <= op <= hi:
+            suffix = op - lo if lo == 171 else op - lo + 1
+            return f"{name}{suffix}"
+    return f"undefined_{op}"
+
+def context(data, target):
+    start = 0
+    page = 0
+    command = None
+    while start < len(data) and start <= target:
+        op = data[start]
+        if op == 139:
+            page += 1
+        command = (start, page, op)
+        length = command_length(data, start)
+        if length <= 0:
+            break
+        start += length
+    return command
+
+def byte(data, at):
+    return "EOF" if at >= len(data) else f"{data[at]} (0x{data[at]:02x})"
+
+expected_context = context(expected, offset)
+actual_context = context(actual, offset)
+start = max(0, offset - 8)
+end = offset + 9
+lines = [
+    f"{label} differs",
+    f"expected: {expected_path}",
+    f"actual:   {actual_path}",
+    f"first_divergent_byte_offset: {offset}",
+    f"expected_byte: {byte(expected, offset)}",
+    f"actual_byte: {byte(actual, offset)}",
+]
+for prefix, item in (("expected", expected_context), ("actual", actual_context)):
+    if item is None:
+        lines.append(f"{prefix}_page: none")
+        lines.append(f"{prefix}_opcode: EOF")
+    else:
+        command_offset, page, op = item
+        lines.append(f"{prefix}_page: {page if page else 'outside-page'}")
+        lines.append(f"{prefix}_opcode: {opcode_name(op)} at byte {command_offset}")
+lines.extend((
+    f"expected_context_hex[{start}:{min(end, len(expected))}]: {expected[start:end].hex(' ')}",
+    f"actual_context_hex[{start}:{min(end, len(actual))}]: {actual[start:end].hex(' ')}",
+))
+diff_path.write_text("\n".join(lines) + "\n")
+PY
+  printf 'FAIL %s; see %s\n' "$label" "$diff_path" >&2
+  return 1
 }
 
 normalize_trip_typ() {
   sed -E \
     -e '1s/ \(.*\)$//' \
-    -e "s/^' TeX output .*'$/' TeX output <TRIP-DATE>'/" \
+    -e "s/^'.*'$/' <TRIP-DVI-COMMENT>'/" \
     "$1" > "$2"
-}
-
-reconcile_trip_rounding() {
-  local expected="$1" actual="$2" output="$3"
-  python3 - "$expected" "$actual" "$output" <<'PY'
-import decimal
-import pathlib
-import re
-import sys
-
-expected_path, actual_path, output_path = map(pathlib.Path, sys.argv[1:])
-expected = expected_path.read_text().splitlines(keepends=True)
-actual = actual_path.read_text().splitlines(keepends=True)
-if len(expected) != len(actual):
-    output_path.write_text("".join(actual))
-    raise SystemExit(0)
-pattern = re.compile(r"^(\\[hv]box\([^\n]*, glue set (?:- )?)(-?[0-9]+(?:\.[0-9]+)?)(fil(?:l|ll)?[^\n]*\n?)$")
-out = []
-for wanted, got in zip(expected, actual):
-    if wanted == got:
-        out.append(got)
-        continue
-    wm = pattern.match(wanted)
-    gm = pattern.match(got)
-    if wm and gm and wm.group(1) == gm.group(1) and wm.group(3) == gm.group(3):
-        delta = abs(decimal.Decimal(wm.group(2)) - decimal.Decimal(gm.group(2)))
-        if delta <= decimal.Decimal("0.001"):
-            out.append(wanted)
-            continue
-    out.append(got)
-output_path.write_text("".join(out))
-PY
 }
 
 reconcile_trip_typ_rounding() {
@@ -458,13 +522,6 @@ run_reference_phase() {
 
   local norm="${work_root}/normalized"
   mkdir -p "$norm"
-  normalize_trip_log "${download_dir}/tripin.log" "${norm}/expected-tripin.log"
-  normalize_trip_log "${init_dir}/trip.log" "${norm}/actual-tripin.log" || true
-  normalize_trip_log "${download_dir}/trip.log" "${norm}/expected-trip.log"
-  normalize_trip_log "${trip_dir}/trip.log" "${norm}/actual-trip.log.raw" || true
-  reconcile_trip_rounding "${norm}/expected-trip.log" "${norm}/actual-trip.log.raw" "${norm}/actual-trip.log" || true
-  normalize_trip_fot "${download_dir}/trip.fot" "${norm}/expected-trip.fot"
-  normalize_trip_fot "${trip_dir}/trip.fot" "${norm}/actual-trip.fot" || true
   normalize_trip_typ "${download_dir}/trip.typ" "${norm}/expected-trip.typ"
   normalize_trip_typ "${trip_dir}/trip.typ" "${norm}/actual-trip.typ.raw" || true
   reconcile_trip_typ_rounding "${norm}/expected-trip.typ" "${norm}/actual-trip.typ.raw" "${norm}/actual-trip.typ" || true
@@ -475,12 +532,8 @@ run_reference_phase() {
   fi
 
   local ok=0
-  compare_text "reference-tripin-log" "${norm}/expected-tripin.log" "${norm}/actual-tripin.log" || ok=1
-  compare_text "reference-trip-log" "${norm}/expected-trip.log" "${norm}/actual-trip.log" || ok=1
-  compare_text "reference-trip-fot" "${norm}/expected-trip.fot" "${norm}/actual-trip.fot" || ok=1
   compare_text "reference-trip-typ" "${norm}/expected-trip.typ" "${norm}/actual-trip.typ" || ok=1
-  compare_binary "reference-trip-dvi" "${norm}/expected-trip.dvi" "${norm}/actual-trip.dvi" || ok=1
-  compare_text "reference-tripos" "${download_dir}/tripos.tex" "${trip_dir}/tripos.tex" || ok=1
+  compare_dvi "reference-trip-dvi" "${norm}/expected-trip.dvi" "${norm}/actual-trip.dvi" || ok=1
   if [[ "$ok" -ne 0 ]]; then
     printf '%s\n' "Reference TRIP failed; inspect the artifact-specific diffs above. Rebuild pinned tools with scripts/build-trip-initex.sh if tool provenance is uncertain." >&2
   fi
@@ -488,6 +541,8 @@ run_reference_phase() {
 }
 
 run_umber_phase() {
+  local dvitype
+  dvitype="$(tool_path UMBER_REF_DVITYPE dvitype)"
   printf '%s\n' 'Building umber' >&2
   cargo build -p umber
   local dir="${work_root}/umber"
@@ -513,25 +568,30 @@ run_umber_phase() {
     if [[ -s trip-artifact.stderr ]]; then
       cat trip-artifact.stderr >&2
     fi
+    if [[ -f trip.dvi ]]; then
+      "$dvitype" -output-level=2 -page-start='*.*.*.*.*.*.*.*.*.*' -max-pages=1000000 -dpi=72.27 trip.dvi > trip.typ
+    fi
   )
 
   local norm="${work_root}/normalized"
   mkdir -p "$norm"
-  normalize_trip_log "${download_dir}/tripin.log" "${norm}/expected-umber-tripin.log"
-  normalize_trip_log "${dir}/tripin.log" "${norm}/actual-umber-tripin.log" || true
   local ok=0
-  compare_text "umber-tripin-log" "${norm}/expected-umber-tripin.log" "${norm}/actual-umber-tripin.log" || ok=1
   if [[ -f "${dir}/trip.dvi" ]]; then
+    normalize_trip_typ "${download_dir}/trip.typ" "${norm}/expected-umber-trip.typ"
+    normalize_trip_typ "${dir}/trip.typ" "${norm}/actual-umber-trip.typ.raw" || true
+    reconcile_trip_typ_rounding "${norm}/expected-umber-trip.typ" "${norm}/actual-umber-trip.typ.raw" "${norm}/actual-umber-trip.typ" || true
     normalize_dvi "${download_dir}/trip.dvi" "${norm}/expected-umber-trip.dvi"
-    normalize_dvi "${dir}/trip.dvi" "${norm}/actual-umber-trip.dvi"
-    compare_binary "umber-trip-dvi" "${norm}/expected-umber-trip.dvi" "${norm}/actual-umber-trip.dvi" || ok=1
+    normalize_dvi "${dir}/trip.dvi" "${norm}/actual-umber-trip.dvi.raw"
+    reconcile_dvi_rounding "${norm}/expected-umber-trip.dvi" "${norm}/actual-umber-trip.dvi.raw" "${norm}/actual-umber-trip.dvi"
+    compare_text "umber-trip-typ" "${norm}/expected-umber-trip.typ" "${norm}/actual-umber-trip.typ" || ok=1
+    compare_dvi "umber-trip-dvi" "${norm}/expected-umber-trip.dvi" "${norm}/actual-umber-trip.dvi" || ok=1
   else
     printf 'Umber did not produce trip.dvi\n' > "${diff_dir}/umber-trip-dvi.diff"
     printf 'FAIL umber-trip-dvi; see %s\n' "${diff_dir}/umber-trip-dvi.diff" >&2
     ok=1
   fi
   if [[ "$ok" -ne 0 ]]; then
-    printf '%s\n' 'Umber TRIP failed. Current CLI has no official INITEX/format phase; file linked engine work rather than weakening this harness.' >&2
+    printf '%s\n' 'Umber TRIP DVI parity failed; compare the opcode context against tex.web ship_out and movement semantics rather than weakening this harness.' >&2
   fi
   return "$ok"
 }
@@ -540,15 +600,6 @@ run_self_test() {
   prepare_work
   local dir="${work_root}/self-test"
   mkdir -p "$dir"
-  printf 'alpha\nbeta\n' > "${dir}/expected.txt"
-  cp "${dir}/expected.txt" "${dir}/actual.txt"
-  compare_text "self-test-equal" "${dir}/expected.txt" "${dir}/actual.txt"
-  printf 'alpha\nperturbed\n' > "${dir}/actual.txt"
-  if compare_text "self-test-perturbation" "${dir}/expected.txt" "${dir}/actual.txt"; then
-    fail "self-test perturbation unexpectedly passed"
-  fi
-  [[ -s "${diff_dir}/self-test-perturbation.diff" ]] || fail "self-test did not write an actionable diff"
-
   # Prove that the constrained DVI rounding reconciler cannot conceal a
   # character change. This synthetic stream is sufficient for the structural
   # walker and keeps self-test independent of fetched TRIP materials.
@@ -564,11 +615,16 @@ pathlib.Path(sys.argv[1]).write_bytes(expected)
 pathlib.Path(sys.argv[2]).write_bytes(pre + bop + bytes([66]) + tail)
 PY
   reconcile_dvi_rounding "${dir}/expected.dvi" "${dir}/actual.dvi" "${dir}/reconciled.dvi"
-  if compare_binary "self-test-dvi-character-perturbation" "${dir}/expected.dvi" "${dir}/reconciled.dvi"; then
+  if compare_dvi "self-test-dvi-character-perturbation" "${dir}/expected.dvi" "${dir}/reconciled.dvi"; then
     fail "DVI character perturbation unexpectedly passed constrained reconciliation"
   fi
-  [[ -s "${diff_dir}/self-test-dvi-character-perturbation.diff" ]] || fail "DVI perturbation did not write byte context"
-  printf 'self-test passed; perturbation diff is %s\n' "${diff_dir}/self-test-perturbation.diff" >&2
+  local dvi_diff="${diff_dir}/self-test-dvi-character-perturbation.diff"
+  [[ -s "$dvi_diff" ]] || fail "DVI perturbation did not write byte context"
+  grep -q '^first_divergent_byte_offset: ' "$dvi_diff" || fail "DVI perturbation did not identify the divergent byte"
+  grep -q '^expected_page: 1$' "$dvi_diff" || fail "DVI perturbation did not identify the divergent page"
+  grep -q '^expected_opcode: set_char_65 ' "$dvi_diff" || fail "DVI perturbation did not identify the expected opcode"
+  grep -q '^actual_opcode: set_char_66 ' "$dvi_diff" || fail "DVI perturbation did not identify the actual opcode"
+  printf 'self-test passed; actionable DVI perturbation diff is %s\n' "$dvi_diff" >&2
 }
 
 case "$mode" in

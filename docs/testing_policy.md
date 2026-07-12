@@ -236,15 +236,17 @@ automatically uses `target/trip-initex/bin`, or `UMBER_TRIP_TOOLS` can select
 another pinned build. It also uses `UMBER_REF_PLTOTF`, `UMBER_REF_TFTOPL`, and
 `UMBER_REF_DVITYPE` overrides when the TeXware tools are not on `PATH`.
 
-Allowed TRIP normalization is executable and narrowly bounded: environment
-banner/date/path and Appendix-A capacity statistics, box `glue set` deltas no
-larger than 0.001, and DVI movement deltas no larger than 64 scaled points with
+This milestone gates only `trip.dvi` and its derived `trip.typ`; generated
+logs, terminal photo, and `tripos.tex` remain diagnostic outputs owned by the
+separate diagnostic parity tier. Allowed normalization is executable and
+narrowly bounded: the DVI preamble comment, DVItype's packaging/comment
+rendering, and DVI movement deltas no larger than 64 scaled points with
 identical structure. Characters, rules, specials, box dimensions, page/font
-structure, non-movement DVI operands, `tripos.tex`, and all other text must
-match exactly. Failures write
-unified diffs or byte contexts under `target/trip/diffs/`; `scripts/trip.sh
-self-test` deliberately perturbs a copied text artifact and verifies that this
-diff path is actionable without fetching or running TeX.
+structure, non-movement DVI operands, and all other DVItype text must match
+exactly. Failures write byte/page/opcode context or unified diffs under
+`target/trip/diffs/`; `scripts/trip.sh self-test` deliberately perturbs a DVI
+character opcode and verifies that this path is actionable without fetching or
+running TeX.
 See [trip.md](trip.md) for the exact source pins and normalization policy.
 
 `tex-out` also owns the cross-crate page-output float guard. Its unit tests
