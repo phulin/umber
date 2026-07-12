@@ -1,6 +1,6 @@
 use super::{
     ControlSequenceKind, Interner, InternerError, InternerMark, SYMBOL_CAPACITY,
-    next_symbol_key_from, symbol_key_successor,
+    symbol_for_global_len,
 };
 use crate::interner::{Symbol, SymbolId};
 use proptest::prelude::*;
@@ -72,8 +72,27 @@ fn rollback_rebuild_preserves_control_sequence_namespace() {
         .intern_active('~')
         .expect("reintern active symbol")
         .symbol();
-    assert_ne!(active, discarded_active);
+    assert_eq!(active, discarded_active);
     assert_ne!(active, named);
+}
+
+#[test]
+fn concurrent_interners_share_stable_global_name_identity() {
+    let threads = (0..16)
+        .map(|_| {
+            std::thread::spawn(|| {
+                let mut interner = Interner::new();
+                ["relax", "hrule", "vbox", "setbox", "looseness"]
+                    .map(|name| intern(&mut interner, name))
+            })
+        })
+        .collect::<Vec<_>>();
+    let symbols = threads
+        .into_iter()
+        .map(|thread| thread.join().expect("interner thread"))
+        .collect::<Vec<_>>();
+
+    assert!(symbols.windows(2).all(|pair| pair[0] == pair[1]));
 }
 
 #[test]
@@ -134,25 +153,16 @@ fn compact_symbol_token_and_cell_layouts_match_their_bit_domains() {
 #[test]
 fn intern_rejects_new_symbol_at_packed_token_capacity() {
     assert_eq!(
-        symbol_key_successor(SYMBOL_CAPACITY - 1),
-        Some(SYMBOL_CAPACITY)
-    );
-    assert_eq!(symbol_key_successor(SYMBOL_CAPACITY), None);
-    assert_eq!(symbol_key_successor(u32::MAX), None);
-
-    let frontier = std::sync::atomic::AtomicU32::new(SYMBOL_CAPACITY - 1);
-    assert_eq!(
-        next_symbol_key_from(&frontier).map(|symbol| symbol.raw()),
+        symbol_for_global_len(SYMBOL_CAPACITY - 1).map(Symbol::raw),
         Ok(SYMBOL_CAPACITY - 1)
     );
     assert_eq!(
-        next_symbol_key_from(&frontier),
+        symbol_for_global_len(SYMBOL_CAPACITY),
         Err(InternerError::TooManySymbols)
     );
     assert_eq!(
-        frontier.load(std::sync::atomic::Ordering::Relaxed),
-        SYMBOL_CAPACITY,
-        "exhaustion must leave the frontier unchanged"
+        symbol_for_global_len(u32::MAX),
+        Err(InternerError::TooManySymbols)
     );
 }
 
@@ -174,14 +184,14 @@ fn compact_key_never_revives_after_dense_slot_reuse() {
 }
 
 #[test]
-fn independent_interners_never_alias_compact_keys() {
+fn independent_interners_share_permanent_name_identity() {
     let mut left = Interner::new();
     let mut right = Interner::new();
     let left = intern_id(&mut left, "same");
     let right = intern_id(&mut right, "same");
 
     assert_eq!(left.raw(), right.raw());
-    assert_ne!(left.symbol(), right.symbol());
+    assert_eq!(left.symbol(), right.symbol());
 }
 
 #[derive(Clone, Debug)]

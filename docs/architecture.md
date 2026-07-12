@@ -276,7 +276,8 @@ Responsibility: characters → tokens, under mutable catcode law.
   (pre-lexing the rest of the buffer) precisely because tokens it produces
   carry the generation vector they were lexed under; consuming a stale
   token is impossible, only wasteful.
-- Control-sequence identities intern immediately to `Symbol`; named sequences
+- Control-sequence identities intern immediately through the permanent
+  process-wide name registry to `Symbol`; named sequences
   and active characters occupy distinct interner namespaces even when their
   printable spelling is identical. The semantic token
   type remains `Token = Char(char, Catcode) | Cs(Symbol) | Param(u8)` — one

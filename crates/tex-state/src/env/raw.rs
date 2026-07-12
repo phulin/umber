@@ -8,7 +8,6 @@ use crate::cell::{BankTag, CellId};
 use crate::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use crate::epoch::Epoch;
 use crate::ids::NodeListId;
-use crate::interner::Symbol;
 #[cfg(any(test, feature = "testing", feature = "shadow"))]
 use std::hash::{Hash as _, Hasher};
 
@@ -80,7 +79,7 @@ impl Env {
     pub(crate) fn semantic_word(&self, cell: CellId) -> u64 {
         let index = cell.index();
         match cell.bank() {
-            BankTag::Meaning => self.get(Symbol::new(index)).encode(),
+            BankTag::Meaning => self.get_meaning_slot(index).encode(),
             BankTag::Count => u64::from(self.count(u16_index(index)) as u32),
             BankTag::Dimen => u64::from(self.dimen(u16_index(index)).raw() as u32),
             BankTag::Skip => u64::from(self.skip(u16_index(index)).raw()),
@@ -203,8 +202,7 @@ impl Env {
             .map(|cells| cells[offset])
     }
 
-    pub(super) fn set_meaning_word(&mut self, symbol: Symbol, word: u64, global: bool) {
-        let index = symbol.raw();
+    pub(super) fn set_meaning_word(&mut self, index: u32, word: u64, global: bool) {
         self.ensure_meaning_segment(index);
         let segment = segment_index(index);
         let offset = segment_offset(index);

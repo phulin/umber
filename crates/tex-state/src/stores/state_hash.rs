@@ -349,7 +349,10 @@ impl Stores {
     fn semantic_cell_key(&self, cell: CellId) -> SemanticCellKey {
         match cell.bank() {
             BankTag::Meaning => {
-                let symbol = Symbol::new(cell.index());
+                let symbol = self
+                    .interner
+                    .symbol_at_slot(cell.index())
+                    .expect("meaning slot should name a live symbol");
                 SemanticCellKey::Meaning {
                     kind: self.interner.kind(symbol),
                     name: self.interner.resolve(symbol).to_owned(),

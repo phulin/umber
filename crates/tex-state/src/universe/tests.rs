@@ -416,7 +416,7 @@ fn semantic_format_uses_dto_local_survivor_root_keys() {
 }
 
 #[test]
-fn semantic_format_and_hash_ignore_process_unique_symbol_keys() {
+fn semantic_format_and_hash_share_permanent_symbol_keys() {
     fn symbolic_universe() -> (Universe, crate::interner::Symbol) {
         let mut universe = Universe::new();
         let symbol = universe.intern("symbolic");
@@ -429,7 +429,7 @@ fn semantic_format_and_hash_ignore_process_unique_symbol_keys() {
 
     let (mut first, first_key) = symbolic_universe();
     let (mut second, second_key) = symbolic_universe();
-    assert_ne!(first_key, second_key);
+    assert_eq!(first_key, second_key);
     assert_eq!(
         first.snapshot().state_hash(),
         second.snapshot().state_hash()

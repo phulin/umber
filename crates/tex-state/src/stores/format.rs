@@ -123,14 +123,7 @@ fn capture_env_word(
     cell: crate::cell::CellId,
     word: u64,
 ) -> (crate::cell::CellId, u64) {
-    let index = if cell.bank() == crate::cell::BankTag::Meaning {
-        stores
-            .resolve_stored_symbol(Symbol::new(cell.index()))
-            .raw()
-    } else {
-        cell.index()
-    };
-    let cell = crate::cell::CellId::new(cell.bank(), index);
+    let cell = crate::cell::CellId::new(cell.bank(), cell.index());
     let word = if cell.bank() == crate::cell::BankTag::CurrentFont {
         let symbol_plus_one = word >> 32;
         let symbol = if symbol_plus_one == 0 {
@@ -404,16 +397,7 @@ impl StoreFormat {
                 .ok_or(StoreFormatError::Invalid("unknown environment cell"))?;
             let bank = dto_cell.bank();
             let dto_index = dto_cell.index();
-            let index = if bank == crate::cell::BankTag::Meaning {
-                stores
-                    .interner
-                    .symbol_at_slot(dto_index)
-                    .ok_or(StoreFormatError::Invalid("meaning symbol is not live"))?
-                    .raw()
-            } else {
-                dto_index
-            };
-            let cell = crate::cell::CellId::new(bank, index);
+            let cell = crate::cell::CellId::new(bank, dto_index);
             let word = match (cell.bank(), entry.value) {
                 (crate::cell::BankTag::Box, FormatEnvValue::Box(key)) => {
                     let id = node_ids

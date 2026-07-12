@@ -359,7 +359,7 @@ impl Stores {
     #[must_use]
     pub fn meaning(&self, symbol: impl SymbolReference) -> Meaning {
         let symbol = self.resolve_symbol_reference(symbol);
-        self.resolve_stored_meaning(self.env.get(symbol.symbol()))
+        self.resolve_stored_meaning(self.env.get_meaning_slot(symbol.raw()))
     }
 
     /// Sets the local meaning for a live control-sequence symbol.
@@ -367,7 +367,7 @@ impl Stores {
         let symbol = self.resolve_symbol_reference(symbol);
         self.assert_live_macro_definition_in_meaning(meaning);
         self.assert_live_font_in_meaning(meaning);
-        self.env.set(symbol.symbol(), meaning);
+        self.env.set_meaning_slot(symbol.raw(), meaning, false);
     }
 
     /// Interns a control-sequence name and gives a previously undefined name
@@ -385,7 +385,7 @@ impl Stores {
         let symbol = self.resolve_symbol_reference(symbol);
         self.assert_live_macro_definition_in_meaning(meaning);
         self.assert_live_font_in_meaning(meaning);
-        self.env.set_global(symbol.symbol(), meaning);
+        self.env.set_meaning_slot(symbol.raw(), meaning, true);
     }
 
     /// Interns a frozen macro definition in the owned macro-definition store.
@@ -1656,7 +1656,11 @@ impl Stores {
             cell.bank().hash(hasher);
             match cell.bank() {
                 BankTag::Meaning => {
-                    let symbol = self.resolve_stored_symbol(Symbol::new(cell.index()));
+                    let symbol = self
+                        .interner
+                        .symbol_at_slot(cell.index())
+                        .and_then(|symbol| self.interner.resolve_stored(symbol))
+                        .expect("meaning slot should name a live symbol");
                     self.interner.kind_id(symbol).hash(hasher);
                     self.interner.resolve_id(symbol).hash(hasher);
                     word.hash(hasher);

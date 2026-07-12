@@ -230,20 +230,33 @@ impl Env {
     /// Returns the meaning for `symbol`, defaulting to `Undefined`.
     #[must_use]
     pub fn get(&self, symbol: Symbol) -> Meaning {
-        let Some(word) = self.meaning_word(symbol.raw()) else {
+        self.get_meaning_slot(symbol.raw())
+    }
+
+    /// Returns the meaning at a dense interner slot.
+    #[must_use]
+    pub(crate) fn get_meaning_slot(&self, slot: u32) -> Meaning {
+        let Some(word) = self.meaning_word(slot) else {
             return Meaning::Undefined;
         };
         Meaning::decode_stored(word)
     }
 
     /// Sets the local meaning for a symbol validated by the owning store.
+    #[cfg(any(test, feature = "testing"))]
     pub(crate) fn set(&mut self, symbol: Symbol, meaning: Meaning) {
-        self.set_meaning_word(symbol, meaning.encode(), false);
+        self.set_meaning_slot(symbol.raw(), meaning, false);
     }
 
     /// Sets the global meaning for a symbol validated by the owning store.
+    #[cfg(any(test, feature = "testing"))]
     pub(crate) fn set_global(&mut self, symbol: Symbol, meaning: Meaning) {
-        self.set_meaning_word(symbol, meaning.encode(), true);
+        self.set_meaning_slot(symbol.raw(), meaning, true);
+    }
+
+    /// Sets a meaning by dense interner slot after aggregate validation.
+    pub(crate) fn set_meaning_slot(&mut self, slot: u32, meaning: Meaning, global: bool) {
+        self.set_meaning_word(slot, meaning.encode(), global);
     }
 
     /// Test-only local meaning write for isolated `Env` barrier coverage.

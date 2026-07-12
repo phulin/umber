@@ -94,13 +94,14 @@ the executor waits for the next safe boundary.
 
 ## 3. Identity: the interner
 
-- Control-sequence live identities use `SymbolId`, while tokens and Env cells
-  retain a compact 30-bit `Symbol(u32)` key. Compact keys come from one
-  process-wide monotonic domain: rollback removes their local key-to-slot
-  mappings but never returns keys for reuse, and sibling forks inherit old
-  mappings while receiving disjoint keys for later names. Each interner keeps
-  a dense semantic slot table plus an O(1) compact-key-to-slot map, so hot token
-  and Env representations do not widen. The semantic interner key
+- Control-sequence live identities use `SymbolId`, while tokens retain a
+  compact 30-bit `Symbol(u32)` key. Symbols are assigned by one permanent,
+  process-wide name registry: every universe and fork receives the same key
+  for the same semantic name, and registry entries are never rolled back or
+  reused. Each universe interner keeps a rollback-coupled dense slot table and
+  an O(1) compact-key-to-slot map; Env meanings are indexed by those dense
+  local slots, so parallel jobs do not make meaning storage sparse. The
+  semantic global registry key
   is `(ControlSequenceKind, spelling)`, where named control sequences and
   active-character control sequences are disjoint namespaces. Thus active `~`
   and the escaped control symbol `\~` resolve to the same printable spelling
@@ -108,12 +109,12 @@ the executor waits for the next safe boundary.
   `active_base+c` and `single_base+c` ranges. Backing: bump-allocated UTF-8
   arena + namespace-aware open-addressing hash index. The packed traced-token representation
   reserves 30 payload bits for control-sequence symbols. `Interner::intern`
-  therefore reserves from a nonwrapping `2^30` process-key domain and returns
-  `InternerError::TooManySymbols` instead of creating an unrepresentable or
-  revived key.
+  therefore admits at most `2^30` distinct process-lifetime names and returns
+  `InternerError::TooManySymbols` instead of creating an unrepresentable key.
 - Semantic slots are append-only between rollbacks. Rollback truncates the
-  arena to its watermark and removes discarded compact-key mappings, while the
-  process key frontier remains monotonic. The hash index either records insertion order (rewindable) or
+  arena to its watermark and removes discarded local compact-key mappings;
+  the permanent global name remains available and reinterning it restores the
+  same semantic key. The hash index either records insertion order (rewindable) or
   is rebuilt lazily on first intern after a rollback — interning after
   rollback is rare, so lazy rebuild is acceptable v1.
 - Dense ids make every downstream lookup an array index; stable ids are what
@@ -126,10 +127,10 @@ the executor waits for the next safe boundary.
 
 ## 4. Meaning: the environment
 
-Successor to the eqtb. Struct-of-arrays keyed by `Symbol`:
+Successor to the eqtb. Struct-of-arrays keyed by dense local interner slot:
 
 ```rust
-// One 64-bit meaning word per symbol.
+// One 64-bit meaning word per locally reachable symbol.
 // opcode : 8   — dispatch case ("macro", "\relax", "chardef", "font", ...)
 // flags  : 8   — \long, \outer, \protected, frozen
 // operand: 48  — TokenListId | FontId | char+catcode | register index | ...
@@ -151,7 +152,8 @@ pub struct Env {
 
 Rules:
 
-- **Reads**: `get(&self, Symbol) -> Meaning` — one load, decode in
+- **Reads**: the owning store resolves `Symbol` to its dense local slot, then
+  performs one Env load and decodes in
   registers. Dense register banks and parameter tables follow the same
   discipline: storage is raw `u64` words, and typed accessors encode/decode
   `i32`, `Scaled`, and content ids at the API boundary. Meaning words and
@@ -991,7 +993,7 @@ The complete production handle matrix is:
 
 | Handle | Owner | Live runtime identity | Compact stored form | Durable DTO | Snapshot mark | Rollback and fork rule | Validation API |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `SymbolId` | `Interner` | generation identity plus its compact key | process-unique, nonreused `Symbol(u32)` in tokens and Env cells | DTO-local `FormatName` table index; fresh live id and compact key on load | `InternerMark` spans/bytes + identity mark | discarded slots retag and their key mappings are removed; compact keys never return to the process frontier; forks inherit old keys and allocate disjoint new keys | O(1) key-to-slot `Interner::resolve_stored` plus `contains_id`, exposed through `Stores`/`Universe` reads and writes |
+| `SymbolId` | local `Interner` plus permanent global name registry | generation-tagged local slot plus its permanent semantic key | process-wide `Symbol(u32)` in tokens; dense local slot in Env cells | DTO-local `FormatName` table index; load resolves each semantic name through the permanent registry and creates fresh local ids | `InternerMark` spans/bytes + identity mark | discarded local slots retag and mappings are removed; the global `(kind, spelling)` identity remains permanent; forks and independent universes share keys for equal names | O(1) key-to-local-slot `Interner::resolve_stored` plus `contains_id`, exposed through `Stores`/`Universe` reads and writes |
 | `TokenListId` | `TokenStore` | 16-byte generation identity; universal empty builtin | dense `u32` in Env and macros; private format DTOs carry table keys | `StoreFormat.token_lists` index; validated keys are remapped to fresh ids by `Stores` | `TokenStoreMark` spans/tokens + identity mark | discarded slots retag; inherited ids remain valid in forks, new ids are branch-local | `TokenStore::contains`/`resolve_stored`, then aggregate token/register/node ingress |
 | `MacroDefinitionId` | `MacroStore` | 16-byte generation identity | dense `u32` operand in packed `Meaning` | `FormatMacro` table index | `MacroStoreMark` definition length + identity mark | discarded slots retag; post-fork definitions are foreign to siblings | `MacroStore::contains`/`resolve_stored`, then aggregate meaning access/mutation |
 | `GlueId` | `GlueStore` | 16-byte generation identity; universal zero builtin | dense `u32` in Env and node words/sidecars | `FormatGlue` table index | `GlueStoreMark` spec length + identity mark | discarded slots retag; post-fork specs are foreign to siblings | `GlueStore::contains`/`resolve_stored`, then aggregate register/node ingress |
@@ -1004,8 +1006,8 @@ The complete production handle matrix is:
 | `InputRecordId` | `World` | 16-byte generation identity | no compact engine operand; source frames/regions retain the full capability | none; durable identity is `ContentHash` and format loading starts a fresh World | `WorldSnapshot` input length + identity mark | discarded records retag; inherited records survive clones and siblings reject new foreign records | `World::input_record`; `Universe::register_source` also checks byte length |
 
 Several opaque-looking integers are deliberately not full timeline capabilities.
-They must not be confused with the matrix above: `Symbol` is a process-unique
-nonreused compact stored key that is rehydrated through its owning interner;
+They must not be confused with the matrix above: `Symbol` is a permanent
+process-wide semantic-name key that is rehydrated through a local interner;
 it cannot authorize a read after its local mapping is removed. `CellId` uses
 the same 30-bit index domain plus bank/global tags in a validated `u64` key;
 `SourceId` and

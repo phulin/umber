@@ -9,9 +9,9 @@ use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::str;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{OnceLock, RwLock};
 
-static NEXT_SYMBOL_KEY: AtomicU32 = AtomicU32::new(0);
+static GLOBAL_SYMBOLS: OnceLock<RwLock<GlobalSymbols>> = OnceLock::new();
 
 /// The TeX82 control-sequence namespace containing an interned symbol.
 ///
@@ -25,7 +25,7 @@ pub enum ControlSequenceKind {
     ActiveCharacter,
 }
 
-/// A process-unique compact key for an interned control-sequence name.
+/// A permanent process-wide key for a semantic control-sequence name.
 ///
 /// Keys fit the 30-bit token payload, are never reused, and resolve to dense
 /// local interner slots only through the owning aggregate.
@@ -80,7 +80,7 @@ impl Symbol {
         Self(raw)
     }
 
-    /// Returns the compact process-unique symbol key.
+    /// Returns the compact permanent symbol key.
     #[must_use]
     pub const fn raw(self) -> u32 {
         self.0
@@ -203,7 +203,7 @@ impl Interner {
 
         let start = u32_len(self.arena.len(), "interner arena exceeds u32 bytes");
         let len = u32_len(name.len(), "interned string exceeds u32 bytes");
-        let stored = next_symbol_key()?;
+        let stored = global_symbol(kind, name)?;
         let identity = self
             .identities
             .allocate()
@@ -216,7 +216,7 @@ impl Interner {
         self.kinds.push(kind);
         self.symbols.push(stored);
         let old = self.symbol_slots.insert(stored, identity.slot());
-        debug_assert!(old.is_none(), "process-unique symbol key was reused");
+        debug_assert!(old.is_none(), "symbol already mapped in local interner");
         self.index.entry(hash).or_default().push(symbol);
 
         Ok(symbol)
@@ -383,19 +383,66 @@ impl Interner {
     }
 }
 
-fn next_symbol_key() -> Result<Symbol, InternerError> {
-    next_symbol_key_from(&NEXT_SYMBOL_KEY)
+#[derive(Debug, Default)]
+struct GlobalSymbols {
+    names: HashMap<u64, Vec<GlobalSymbolEntry>>,
+    len: u32,
 }
 
-fn next_symbol_key_from(next: &AtomicU32) -> Result<Symbol, InternerError> {
-    next.fetch_update(Ordering::Relaxed, Ordering::Relaxed, symbol_key_successor)
-        .map(Symbol)
-        .map_err(|_| InternerError::TooManySymbols)
+#[derive(Debug)]
+struct GlobalSymbolEntry {
+    kind: ControlSequenceKind,
+    name: String,
+    symbol: Symbol,
 }
 
-fn symbol_key_successor(next: u32) -> Option<u32> {
-    next.checked_add(1)
-        .filter(|&successor| successor <= SYMBOL_CAPACITY)
+fn global_symbol(kind: ControlSequenceKind, name: &str) -> Result<Symbol, InternerError> {
+    let symbols = GLOBAL_SYMBOLS.get_or_init(|| RwLock::new(GlobalSymbols::default()));
+    let hash = content_hash(kind, name);
+    if let Some(symbol) = symbols
+        .read()
+        .expect("global symbol registry lock poisoned")
+        .names
+        .get(&hash)
+        .and_then(|entries| {
+            entries
+                .iter()
+                .find(|entry| entry.kind == kind && entry.name == name)
+                .map(|entry| entry.symbol)
+        })
+    {
+        return Ok(symbol);
+    }
+
+    let mut symbols = symbols
+        .write()
+        .expect("global symbol registry lock poisoned");
+    if let Some(symbol) = symbols.names.get(&hash).and_then(|entries| {
+        entries
+            .iter()
+            .find(|entry| entry.kind == kind && entry.name == name)
+            .map(|entry| entry.symbol)
+    }) {
+        return Ok(symbol);
+    }
+    let symbol = symbol_for_global_len(symbols.len)?;
+    symbols.len += 1;
+    symbols
+        .names
+        .entry(hash)
+        .or_default()
+        .push(GlobalSymbolEntry {
+            kind,
+            name: name.to_owned(),
+            symbol,
+        });
+    Ok(symbol)
+}
+
+fn symbol_for_global_len(len: u32) -> Result<Symbol, InternerError> {
+    (len < SYMBOL_CAPACITY)
+        .then_some(Symbol(len))
+        .ok_or(InternerError::TooManySymbols)
 }
 
 fn content_hash(kind: ControlSequenceKind, name: &str) -> u64 {
