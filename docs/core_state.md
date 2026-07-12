@@ -631,8 +631,10 @@ Nothing in the engine touches the OS directly. A single `World` object owns:
 - **Page artifacts** are committed through `Universe::commit_shipout`, which
   stores bytes through crate-private `World` artifact storage as part of the
   aggregate commit boundary. Real worlds materialize those bytes under the
-  configured artifact directory; in-memory worlds keep the same
-  content-addressed map for hermetic tests.
+  configured artifact directory by writing a unique temporary file and
+  atomically renaming it to its content-addressed path; this guarantees atomic
+  visibility to readers but deliberately does not promise crash durability.
+  In-memory worlds keep the same content-addressed map for hermetic tests.
 - **Explicit driver output files** are materialized through `World::write_file`.
   This is for user-requested downstream files such as `umber run --dvi`; engine
   primitives still record effects and rely on the shipout commit barrier.

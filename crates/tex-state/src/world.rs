@@ -854,7 +854,11 @@ impl World {
     ///
     /// This method is intended for the shipout commit barrier: callers prepare
     /// deterministic artifact bytes first, then ask `World` to materialize the
-    /// content-addressed object in the configured artifact store.
+    /// content-addressed object in the configured artifact store. Real-world
+    /// publication is atomic for concurrent readers, but is not promised to
+    /// survive a process or machine crash: bytes are written to a unique
+    /// temporary file and renamed into place without forcing them to stable
+    /// storage.
     pub(crate) fn store_artifact(&mut self, bytes: &[u8]) -> Result<ContentHash, WorldError> {
         static NEXT_TEMP_ARTIFACT: AtomicU64 = AtomicU64::new(0);
         let hash = ContentHash::for_domain(ContentDomain::Artifact, bytes);
@@ -868,7 +872,16 @@ impl World {
                     )
                 })?;
                 let path = artifact_dir.join(hash.hex());
-                if !path.exists() {
+                if path.exists() && !path.is_file() {
+                    return Err(WorldError::new(
+                        "write artifact",
+                        Some(path),
+                        "artifact path exists but is not a regular file",
+                    ));
+                }
+                if path.is_file() {
+                    verify_stored_artifact(hash, &path, "verify stored artifact")?;
+                } else {
                     let nonce = NEXT_TEMP_ARTIFACT.fetch_add(1, Ordering::Relaxed);
                     let temporary = artifact_dir.join(format!(
                         ".{}.{}.{}.tmp",
@@ -882,12 +895,17 @@ impl World {
                             .create_new(true)
                             .open(&temporary)?;
                         file.write_all(bytes)?;
-                        file.sync_all()?;
                         std::fs::rename(&temporary, &path)
                     })();
                     if let Err(err) = write_result {
                         let _ = std::fs::remove_file(&temporary);
-                        if !path.exists() {
+                        if path.is_file() {
+                            verify_stored_artifact(
+                                hash,
+                                &path,
+                                "verify concurrently stored artifact",
+                            )?;
+                        } else {
                             return Err(WorldError::new(
                                 "write artifact",
                                 Some(path),
@@ -1467,6 +1485,16 @@ impl Default for World {
 enum WorldBackend {
     Real { artifact_dir: PathBuf },
     Memory(MemoryBackend),
+}
+
+fn verify_stored_artifact(
+    expected: ContentHash,
+    path: &Path,
+    operation: &'static str,
+) -> Result<(), WorldError> {
+    let bytes = std::fs::read(path)
+        .map_err(|err| WorldError::new(operation, Some(path.to_owned()), err.to_string()))?;
+    verify_artifact_identity(expected, &bytes, Some(path.to_owned()))
 }
 
 fn verify_artifact_identity(

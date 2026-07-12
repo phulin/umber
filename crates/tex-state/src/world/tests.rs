@@ -172,6 +172,81 @@ fn real_world_stores_artifacts_in_configured_directory() {
 }
 
 #[test]
+fn real_world_rejects_non_file_artifact_destination_without_temporary_file() {
+    let temp_dir = tempfile::tempdir().expect("temp dir");
+    let artifact_dir = temp_dir.path().join("artifacts");
+    std::fs::create_dir_all(&artifact_dir).expect("create artifact dir");
+    let bytes = b"committed page";
+    let hash = ContentHash::for_domain(ContentDomain::Artifact, bytes);
+    let final_path = artifact_dir.join(hash.hex());
+    std::fs::create_dir(&final_path).expect("block final artifact path");
+    let mut world = World::real_with_artifact_dir(&artifact_dir);
+
+    let error = world
+        .store_artifact(bytes)
+        .expect_err("invalid destination is reported");
+
+    assert_eq!(error.path.as_deref(), Some(final_path.as_path()));
+    let entries = std::fs::read_dir(&artifact_dir)
+        .expect("read artifact dir")
+        .map(|entry| entry.expect("artifact entry").file_name())
+        .collect::<Vec<_>>();
+    assert_eq!(entries, vec![final_path.file_name().expect("final name")]);
+}
+
+#[test]
+fn real_world_concurrent_identical_artifact_publication_is_idempotent() {
+    let temp_dir = tempfile::tempdir().expect("temp dir");
+    let artifact_dir = temp_dir.path().join("artifacts");
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+    let mut threads = Vec::new();
+    for _ in 0..2 {
+        let artifact_dir = artifact_dir.clone();
+        let barrier = std::sync::Arc::clone(&barrier);
+        threads.push(std::thread::spawn(move || {
+            let mut world = World::real_with_artifact_dir(artifact_dir);
+            barrier.wait();
+            world
+                .store_artifact(b"shared committed page")
+                .expect("publish shared artifact")
+        }));
+    }
+    barrier.wait();
+
+    let first = threads.remove(0).join().expect("first publisher");
+    let second = threads.remove(0).join().expect("second publisher");
+
+    assert_eq!(first, second);
+    assert_eq!(
+        std::fs::read(artifact_dir.join(first.hex())).expect("published artifact"),
+        b"shared committed page"
+    );
+    assert_eq!(
+        std::fs::read_dir(&artifact_dir)
+            .expect("read artifact directory")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn real_world_rejects_corrupt_existing_artifact_during_publication() {
+    let temp_dir = tempfile::tempdir().expect("temp dir");
+    let artifact_dir = temp_dir.path().join("artifacts");
+    std::fs::create_dir_all(&artifact_dir).expect("create artifact dir");
+    let bytes = b"committed page";
+    let hash = ContentHash::for_domain(ContentDomain::Artifact, bytes);
+    std::fs::write(artifact_dir.join(hash.hex()), b"corrupt page").expect("seed corruption");
+    let mut world = World::real_with_artifact_dir(&artifact_dir);
+
+    let error = world
+        .store_artifact(bytes)
+        .expect_err("corrupt existing artifact is rejected");
+
+    assert!(error.to_string().contains("content identity mismatch"));
+}
+
+#[test]
 fn artifact_reads_verify_requested_identity_before_returning_bytes() {
     let temp_dir = tempfile::tempdir().expect("temp dir");
     let artifact_dir = temp_dir.path().join("artifacts");

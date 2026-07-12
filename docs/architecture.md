@@ -1045,7 +1045,10 @@ Responsibility: accumulate the main vertical list, fire `\output`, commit.
   hand-written binary format over lowered, driver-facing page nodes, font
   resource identities, `\count0..\count9`, and the page effect slice. The
   format is stored by content hash through `World`; drivers receive artifact
-  bytes/ids, not live node handles.
+  bytes/ids, not live node handles. The real artifact store publishes each
+  complete object with a same-filesystem temporary-file rename, so readers
+  never observe a partial object. It does not force each page to stable storage
+  or claim recovery across a process or machine crash.
 - `tex-content` owns the fixed 32-byte content identity shared by `tex-state`
   and `tex-out`. New identities include an immutable scheme version and a
   domain tag, so identical input and artifact bytes do not alias. Artifact
