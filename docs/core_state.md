@@ -27,10 +27,12 @@ The state layer must simultaneously serve four consumers:
 2. **A future JIT.** Compiled code needs stable cell addresses for the
    lifetime of the process, and per-cell version stamps usable as inline-cache
    / deoptimization guards.
-3. **Snapshots and rollback.** Taking a checkpoint must be O(1); we take one
-   per shipped page and (while interactively editing) per paragraph. Rolling
-   back must cost proportional to what changed, not to total state size.
-4. **Memoization, convergence detection, and speculative parallelism.**
+3. **Snapshots and rollback.** Taking a state snapshot must be O(1). Durable
+   engine checkpoints are taken only at named safe boundaries selected for a
+   concrete consumer: job start, eligible outer-paragraph completion, and
+   outermost shipout/output completion in v1. Rolling back must cost
+   proportional to what changed, not to total state size.
+4. **Memoization and convergence detection.**
    These must be expressible as *queries over existing bookkeeping* (read
    sets from epoch stamps, write sets from the journal, effect replay from
    the effect log) — not as separate instrumentation.
@@ -50,10 +52,11 @@ supporting untracked mutation "for performance" anywhere, ever.
   method on a single struct that owns its own history. The journal *is* the
   write-set; epoch stamps *are* the read-set timestamps; every advanced
   feature is a query over these.
-- **Completeness over cleverness.** The lesson of prior art (SwiftLaTeX's
-  in-engine checkpointing, which "breaks certain projects"): any state not
-  captured by the snapshot machinery is a future heisenbug. Enumerate
-  everything; virtualize all effects; verify dynamically (§9).
+- **Completeness at explicit boundaries.** The lesson of prior art
+  (SwiftLaTeX's in-engine checkpointing, which "breaks certain projects") is
+  that a restart point must capture all future-relevant state. Umber enforces
+  that property at a small set of named boundaries. It does not turn every
+  recursive scanner local into durable continuation state.
 
 ---
 
@@ -79,17 +82,13 @@ supporting untracked mutation "for performance" anywhere, ever.
 A **snapshot is a tuple of positions and roots** into these stores — a few
 dozen words, O(1) to take (§7).
 
-Snapshots also carry checkpoint metadata for incremental consumers. A
-checkpoint may be **resume-valid**, meaning the executor was at a quiescent
-boundary with no hidden Rust-stack continuation, or **hash-only**, meaning
-the store/world tuple is valid for rollback and convergence hashing but not
-for direct execution restart. Hash-only checkpoints record the previous
-resume-valid checkpoint id/hash as their resume fallback. The fallback also
-records whether direct rollback is still available under bounded effect
-history. If a commit has dropped the needed `World` effect prefix, the
-checkpoint remains useful for convergence but the driver must restart from an
-earlier retained boundary or replay from a larger root rather than treating
-that fallback as rollback-ready.
+State snapshots and engine checkpoints are distinct. `Universe` may take an
+internal snapshot inside a dynamically scoped operation so that the same live
+Rust stack can roll it back on failure. Incremental consumers receive only
+restartable `EngineCheckpoint`s emitted by the outer executor at named safe
+boundaries. V1 has no public hash-only checkpoint or resume-fallback protocol:
+if execution is inside a scanner, alignment, box builder, or output routine,
+the executor waits for the next safe boundary.
 
 ---
 
@@ -642,10 +641,9 @@ Rollback discards the uncommitted suffix of the effect log. Commit accepts an
 prefix in order, and then drops the flushed prefix from memory; committing the
 same or an older position is a no-op, so each record reaches `World`'s real
 backend exactly once. Snapshots older than the dropped prefix must be discarded
-by the caller as part of the bounded-history policy. `Universe` reflects this
-in checkpoint metadata: a hash-only fallback whose snapshot predates the
-retained effect history is marked unavailable for direct rollback instead of
-being exposed as a resume-ready boundary.
+by the caller as part of the bounded-history policy. An editor session that
+needs rollback across shipouts must retain or defer the corresponding effect
+history before the executor is allowed to emit such an `EngineCheckpoint`.
 
 `World` is storage for external facts, not a public timeline-control object.
 Its authority is split conceptually into two downstream-safe capabilities plus
@@ -679,20 +677,22 @@ remain crate-private implementation details reached only through aggregate
 ### 9.1 Canonical semantic-state contract
 
 Checkpointing, convergence hashing, format images, restoration validation,
-and dependency recording use one field inventory.  A field belongs to exactly
+and dependency recording use one field inventory at declared boundaries. A
+field belongs to exactly
 one of these buckets:
 
 1. **TeX-semantic state** can change future tokens, diagnostics, nodes,
    effects, or committed artifacts.  This includes all live `Stores` roots and
    selectors, code-table and hyphenation content, interaction and prepared
    magnification state, page-builder state, virtualized `World` state, and the
-   semantic portions of the input, expansion, and mode nests.
-2. **Resume-critical continuation state** describes where the implementation
-   is inside that computation.  It includes source and token-list cursors,
-   macro arguments, conditional/alignment/scanner phases, mode-list roots,
-   pending horizontal characters, and the effect boundary from which replay
-   remains possible.  It is hashed whenever a difference can change future
-   behavior, even when it is not itself a TeX data structure.
+   semantic portions of the input and mode roots.
+2. **Boundary-owned execution state** is live state intentionally allowed to
+   cross a named engine boundary: source and token-list cursors, frozen macro
+   argument slots on replay frames, open conditional frames, mode-list roots,
+   pending horizontal characters, and the retained effect boundary.
+   Synchronous scanner, alignment, box-building, math-building, and
+   output-routine locals are absent because those routines cannot emit an
+   engine boundary.
 3. **Derived acceleration and diagnostic state** can be discarded and rebuilt
    from buckets 1 and 2 without an observable change.  Hash scratch buffers,
    lookup indexes, memo tables, decoded-node caches, allocation history,
@@ -703,9 +703,9 @@ one of these buckets:
    not participate in semantic equality.
 
 The owning boundary for buckets 1 and 2 is an **`EngineCheckpoint`**, not a
-larger `Universe`.  It atomically composes an opaque `UniverseSnapshot` with
-rooted input/gullet state, `ModeNest` state, any explicit scanner/alignment
-continuation, and effect-boundary metadata.  `Universe` remains the sole
+larger `Universe`. It atomically composes an opaque `UniverseSnapshot` with
+rooted input state, `ModeNest` state, a named boundary kind, and retained
+effect-boundary metadata. `Universe` remains the sole
 mutation, liveness-validation, and store/world rollback authority; the engine
 coordinator is responsible for synchronizing pipeline-owned roots immediately
 before capture and for restoring all components together.  No component may
@@ -715,28 +715,29 @@ An `EngineCheckpoint` has an explicit schema version.  In-memory schema
 changes are source compatibility changes for checkpoint consumers.  Durable
 formats use their own versioned, handle-free DTO and may contain only a
 validated quiescent subset: complete TeX-semantic format state, empty input
-and page/mode continuations, no pending effects, and no Rust-stack scanner
-continuation.  Format compatibility is therefore explicit conversion between
+and page/mode work, and no pending effects. Format compatibility is therefore
+explicit conversion between
 versions, never best-effort decoding of a newer graph.
 
-`ResumeValid` means every bucket-2 continuation is either absent at a declared
-quiescent boundary or represented by a validated root in the checkpoint.
-`HashOnly` is an observation of buckets 1 and 2 for convergence; it is never a
-restart capability and carries only a fallback to a prior retained
-`ResumeValid` boundary. The public aggregate capture type preserves that
-distinction structurally: only its `ResumeValidCheckpoint` variant payload is
-accepted by the restore API; a `HashOnlyObservation` cannot type-check there.
-Hashing includes every bucket-1 field and every
+An engine checkpoint is restartable by construction. The outer executor, not
+the caller, recognizes an approved boundary and emits the checkpoint; there is
+no public operation that captures one at an arbitrary instruction. V1 emits
+job-start, eligible outer-paragraph-end, and outermost shipout/output-complete
+boundaries. Display-math completion may be added only after editor metrics
+show that paragraph granularity is insufficient; inline-math completion is
+not a v1 boundary. Hashing includes every bucket-1 field and every
 behaviorally relevant bucket-2 field, follows handles to semantic content,
-and excludes bucket 3.  Thus equal hashes assert equal future behavior under
+and excludes bucket 3. Thus equal hashes assert equal future behavior under
 the documented checkpoint schedule, independently of allocation order,
 origin recording, or host resource location.
 
 Derived-state review tests must prove the exclusion rule by clearing or
 rebuilding each cache/index and observing identical semantic hashes and
-output.  Completeness tests vary each bucket-1/2 field independently and prove
-either a different hash or exact rollback/replay, including nested input,
-macro/conditional, alignment, math, mode, and output state.
+output. Completeness tests vary each bucket-1/2 field independently at every
+allowed boundary and prove either a different hash or exact rollback/replay.
+Separate tests prove that scanners, alignments, box builders, math builders,
+recursive output routines, and nested shipouts cannot publish engine
+checkpoints.
 
 ### 9.2 Universe snapshot substrate
 
@@ -756,26 +757,25 @@ pub struct Snapshot {
     page: PageBuilderState,        // current page, contributions, page scalars
     state_hash: u64,               // for convergence detection
     checkpoint_id: CheckpointId,
-    resume_kind: ResumeValid | HashOnly,
-    resume_fallback: Option<ResumeFallback>, // boundary id/hash + direct rollback availability
 }
 ```
 
-- **Take**: O(1) — record positions/roots, copy scalars. Frequency: every
-  shipout; every paragraph while an editor session is hot. A snapshot belongs
-  to the `Universe` instance that created it. Snapshots taken
+- **Take**: O(1) — record positions/roots, copy scalars. State snapshots may
+  support internal transactions, but engine checkpoints follow the named
+  schedule above. A snapshot belongs to the `Universe` instance that created
+  it. Snapshots taken
   inside a TeX group are valid only while that enclosing group is still open;
   leaving the group truncates the journal below the checkpoint position and
   invalidates those snapshots instead of permitting partial rollback.
-- **Resume validity**: `Universe` distinguishes hash checkpoints from
-  restartable execution checkpoints. Top-level/quiescent checkpoints are
-  resume-valid. Checkpoints taken while the stomach is executing a nested
-  continuation whose phase still lives on the Rust call stack are hash-only:
-  they advance the semantic checkpoint hash, but their metadata points resume
-  to the previous resume-valid boundary and says whether direct rollback to
-  that boundary is still retained. Alignment row/cell execution, `\noalign`
-  groups, template replay, and box-group scanning use this conservative
-  fallback until those continuations are serialized explicitly.
+- **Boundary eligibility**: v1 publishes paragraph checkpoints only after an
+  unrestricted outer paragraph has been fully packaged, page building and any
+  resulting output cycle have completed, the outer main-control loop owns
+  control again, and the snapshot's group lineage will remain retained.
+  Because the current journal invalidates a snapshot when its enclosing group
+  exits, v1 must either restrict published paragraph checkpoints to group
+  depth zero or first implement a session-retained group root. It must not
+  promise that every `\par` is restartable while silently publishing invalid
+  snapshots.
 - **Input restoration**: `InputSummary` carries the lexer-owned source-frame
   state required after a source is reopened: original physical line start,
   content-end and terminator ranges, the current normalized UTF-8 line and its
@@ -822,7 +822,9 @@ pub struct Snapshot {
   `Env` journal positions, journal walks, raw rollback, raw root restoration,
   and `Stores` checkpoint/rollback remain crate-private implementation details
   behind `Universe::snapshot`, `Universe::rollback`, and the liveness-checking
-  `Universe` write facades.
+  `Universe` write facades. A scoped rollback transaction may use this
+  substrate during a recursive call, but the mark cannot escape that dynamic
+  extent as an engine restart capability.
 - **Commit barrier = shipout**: page artifact serialized and stored through
   `World`, effects flushed, shipped-page epoch nodes released, and then the
   next checkpoint taken through one aggregate `Universe::commit_shipout`
@@ -835,15 +837,13 @@ pub struct Snapshot {
   uncommitted suffix and the committed backend stream state. History is
   bounded. The implemented boundary retargets hash cursors past dropped effect
   prefixes before checkpointing, so later shipout checkpoints never try to hash
-  already-committed effect records or released page-local nodes. If shipout
-  occurs while a hash-only stomach continuation scope is active, this commit
-  checkpoint is also hash-only and records the previous resume-valid boundary.
-  If the shipout committed any effects and dropped the prefix that contained
-  that boundary's `World` snapshot position, the hash-only checkpoint marks
-  the fallback unavailable for direct rollback. This is the current
-  conservative contract: editor/incremental worlds may later choose a
-  stronger retention or delayed-materialization policy, but until then callers
-  must not interpret an unavailable fallback as resume-valid.
+  already-committed effect records or released page-local nodes. A shipout
+  that occurs inside a scanner, alignment, box builder, or output routine is
+  still committed and reported as an artifact, but it does not publish an
+  engine checkpoint. The outer executor may publish one `ShipoutComplete`
+  boundary only after all recursive work has unwound. Editor/incremental worlds
+  must choose retained history or delayed materialization before claiming that
+  this boundary can roll back across the commit.
 - **Convergence detection**: after re-executing from an edit, compare
   `state_hash` at each checkpoint with the prior run's hash at the same
   input position; on match, splice the old suffix and stop. `state_hash`
@@ -857,8 +857,8 @@ pub struct Snapshot {
   **checkpoint-schedule-relative**, not a canonical fingerprint of the reached
   semantic state: two runs produce equal hashes at a boundary only when they
   applied the same semantic changes *and* took checkpoints at the same
-  positions under the same policy (hash-only checkpoints advance the fold
-  too). Incremental re-execution satisfies this by construction — the driver
+  positions under the same named-boundary policy. Incremental re-execution
+  satisfies this by construction — the driver
   replays the same checkpoint policy over the same suffix — and comparing
   hashes across different checkpoint partitions can only produce false
   non-convergence (a wasted re-execution), never a false match beyond
@@ -1202,8 +1202,9 @@ snapshot/rollback cycle, and a macro-expansion torture loop (expl3-style
 4. **M4 — Fast paths.** SIMD lexer under generation guards; read-set
    recording; first memoization consumer (box-level). Exit: budgets in §12
    met under benchmark suite.
-5. **M5 — Privileged consumers.** JIT layout contract + differential
-   replay; speculative page execution using snapshot forks.
+5. **M5 — Privileged consumers.** JIT layout contract + differential replay.
+   Speculative page execution is deferred until boundary-scoped incrementality
+   and pure-kernel memoization demonstrate a measured need.
 
 Milestone order is deliberate: every guard, version, and stable address the
 later features need already exists in the state layer by the time they land.
