@@ -14,7 +14,7 @@ use tex_state::math::{
 use tex_state::node::{
     BoxNode, GlueKind, KernKind, LeaderPayload, Node, Sign, UnsetKind, UnsetNode,
 };
-use tex_state::scaled::{GLUE_SET_RATIO_SCALE, GlueSetRatio, Scaled};
+use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::token::Token;
 
 pub(crate) struct DumpConfig {
@@ -671,20 +671,10 @@ pub(crate) fn format_scaled_for_diagnostics(value: Scaled) -> String {
 }
 
 fn format_glue_ratio(value: GlueSetRatio) -> String {
-    let raw = i64::from(value.raw()).abs();
-    let scale = i64::from(GLUE_SET_RATIO_SCALE);
-    let mut integer = raw / scale;
-    let fraction = raw % scale;
-    let mut decimal = ((fraction * 100_000) + (scale / 2)) / scale;
-    if decimal == 100_000 {
-        integer += 1;
-        decimal = 0;
-    }
-    let mut text = format!("{integer}.{decimal:05}");
-    while text.matches('.').count() == 1 && text.ends_with('0') && !text.ends_with(".0") {
-        text.pop();
-    }
-    text
+    let numerator = i64::from(value.numerator()) * i64::from(Scaled::UNITY);
+    let denominator = i64::from(value.denominator());
+    let raw = (numerator + denominator / 2) / denominator;
+    format_scaled_without_unit(Scaled::from_raw(i32::try_from(raw).unwrap_or(i32::MAX)))
 }
 
 fn order_unit(order: Order) -> &'static str {

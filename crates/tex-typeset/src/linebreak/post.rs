@@ -70,12 +70,15 @@ fn push_line_segment<S: TypesetState>(
                         .map(|node| node.to_owned()),
                 );
             }
-            Node::Disc { replace, .. } => out.extend(
-                state
-                    .nodes(*replace)
-                    .into_iter()
-                    .map(|node| node.to_owned()),
-            ),
+            Node::Disc { replace, .. } => {
+                out.push(node.clone());
+                out.extend(
+                    state
+                        .nodes(*replace)
+                        .into_iter()
+                        .map(|node| node.to_owned()),
+                );
+            }
             Node::Glue { .. } if absolute + 1 == end && end < nodes.len() => {}
             Node::MathOff(_) if absolute + 1 == end && end < nodes.len() => {
                 out.push(Node::MathOff(tex_state::scaled::Scaled::from_raw(0)));

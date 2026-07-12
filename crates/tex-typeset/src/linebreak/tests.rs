@@ -816,7 +816,7 @@ fn post_line_break_keeps_migrating_nodes_for_execution_layer() {
 }
 
 #[test]
-fn post_line_break_splices_unbroken_discretionary_replacement() {
+fn post_line_break_retains_unbroken_discretionary_and_splices_replacement() {
     let mut universe = Universe::new();
     let zero = universe.intern_glue(GlueSpec::ZERO);
     let empty = universe.freeze_node_list(&[]);
@@ -856,10 +856,11 @@ fn post_line_break_splices_unbroken_discretionary_replacement() {
         lines[0].nodes.as_slice(),
         [
             Node::Rule { width: Some(first), .. },
+            Node::Disc { replace: retained_replacement, .. },
             Node::Rule { width: Some(second), .. },
             Node::Penalty(10_000),
             Node::Glue { kind: GlueKind::RightSkip, .. },
-        ] if first.raw() == 3 && second.raw() == 7
+        ] if first.raw() == 3 && *retained_replacement == replacement && second.raw() == 7
     ));
 }
 

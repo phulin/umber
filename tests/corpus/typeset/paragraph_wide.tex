@@ -17,6 +17,13 @@
 \lineskip=1pt
 \lineskiplimit=0pt
 \overfullrule=0pt
+% The reference fixture runner loads plain; pin the plain-format values that
+% affect this otherwise primitive-only paragraph.
+\sfcode`.=3000
+\sfcode`,=1250
+\clubpenalty=150
+\widowpenalty=150
+\brokenpenalty=100
 \def\-{\discretionary{-}{}{}}
 \hyphenchar\benchmarkrm=-1
 \setbox0=\vbox{%

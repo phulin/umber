@@ -210,18 +210,7 @@ fn run_exec_corpus_matches_committed_diagnostics() {
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side corpus discovery and command execution.
 fn run_typeset_corpus_matches_committed_box_dumps() {
-    run_corpus_matches_committed_log_fixtures("typeset", true, &["paragraph_wide"]);
-}
-
-#[test]
-#[ignore = "umber2-k92: paragraph-wide post-line-break box parity"]
-#[allow(clippy::disallowed_methods)] // host-side corpus discovery and command execution.
-fn paragraph_wide_matches_committed_box_dump() {
-    let case = corpus_cases("typeset")
-        .into_iter()
-        .find(|case| case.name() == "paragraph_wide")
-        .expect("paragraph_wide typeset fixture should be committed");
-    assert_log_case_matches_committed_fixture("typeset", &case, true);
+    run_corpus_matches_committed_log_fixtures("typeset", true, &[]);
 }
 
 #[allow(clippy::disallowed_methods)] // host-side corpus discovery and command execution.
