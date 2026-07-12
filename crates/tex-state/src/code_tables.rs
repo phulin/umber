@@ -54,6 +54,17 @@ pub struct CodeTableGenerations {
     pub delcode: u32,
 }
 
+/// One complete non-default Unicode code-table row for format capture.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct CodeTableValues {
+    pub(crate) catcode: Catcode,
+    pub(crate) lccode: LcCode,
+    pub(crate) uccode: UcCode,
+    pub(crate) sfcode: SfCode,
+    pub(crate) mathcode: MathCode,
+    pub(crate) delcode: DelCode,
+}
+
 /// Root snapshot for all code tables.
 #[derive(Clone, Debug)]
 pub(crate) struct CodeTablesSnapshot {
@@ -329,6 +340,47 @@ impl CodeTables {
         self.mathcodes.hash_content(hasher);
         self.delcodes.hash_content(hasher);
     }
+
+    pub(crate) fn for_each_non_default(&self, mut visit: impl FnMut(char, CodeTableValues)) {
+        let mut pages = self.catcodes.allocated_page_indices();
+        pages.extend(self.lccodes.allocated_page_indices());
+        pages.extend(self.uccodes.allocated_page_indices());
+        pages.extend(self.sfcodes.allocated_page_indices());
+        pages.extend(self.mathcodes.allocated_page_indices());
+        pages.extend(self.delcodes.allocated_page_indices());
+        pages.sort_unstable();
+        pages.dedup();
+
+        for page_index in pages {
+            let start = (page_index * PAGE_LEN) as u32;
+            for offset in 0..PAGE_LEN as u32 {
+                let code = start + offset;
+                let Some(ch) = char::from_u32(code) else {
+                    continue;
+                };
+                let values = CodeTableValues {
+                    catcode: self.catcode(ch),
+                    lccode: self.lccode(ch),
+                    uccode: self.uccode(ch),
+                    sfcode: self.sfcode(ch),
+                    mathcode: self.mathcode(ch),
+                    delcode: self.delcode(ch),
+                };
+                if values
+                    != (CodeTableValues {
+                        catcode: CatcodeDefaults::default_for(code),
+                        lccode: LcCodeDefaults::default_for(code),
+                        uccode: UcCodeDefaults::default_for(code),
+                        sfcode: SfCodeDefaults::default_for(code),
+                        mathcode: MathCodeDefaults::default_for(code),
+                        delcode: DelCodeDefaults::default_for(code),
+                    })
+                {
+                    visit(ch, values);
+                }
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -441,6 +493,26 @@ where
         let (page_index, offset) = location(ch);
         root.page(page_index)
             .map_or_else(|| D::default_for(ch as u32), |page| page.values[offset])
+    }
+
+    fn allocated_page_indices(&self) -> Vec<usize> {
+        self.root
+            .chunks
+            .iter()
+            .enumerate()
+            .flat_map(|(chunk_index, chunk)| {
+                chunk.iter().flat_map(move |chunk| {
+                    chunk
+                        .pages
+                        .iter()
+                        .enumerate()
+                        .filter_map(move |(page_offset, page)| {
+                            page.as_ref()
+                                .map(|_| chunk_index * ROOT_CHUNK_LEN + page_offset)
+                        })
+                })
+            })
+            .collect()
     }
 
     fn write_value(root: &mut Arc<Root<T>>, page_index: usize, offset: usize, value: T) {

@@ -514,6 +514,7 @@ pub enum InteractionMode {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FormatError {
     OpenGroups(u32),
+    NonEmptyInput,
     NonEmptyPage,
     BadMagic,
     UnsupportedVersion(u32),
@@ -528,6 +529,7 @@ impl std::fmt::Display for FormatError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::OpenGroups(depth) => write!(f, "cannot dump a format with {depth} open groups"),
+            Self::NonEmptyInput => f.write_str("cannot dump a format with live input state"),
             Self::NonEmptyPage => f.write_str("cannot dump a format with page-builder material"),
             Self::BadMagic => f.write_str("not an Umber format file"),
             Self::UnsupportedVersion(version) => {
@@ -660,6 +662,12 @@ impl Universe {
     /// cursors are intentionally absent. The image is deterministic for one
     /// semantic state and carries an explicit schema version and checksum.
     pub fn dump_format(&self) -> Result<Vec<u8>, FormatError> {
+        if !self.input_summary.is_empty() {
+            return Err(FormatError::NonEmptyInput);
+        }
+        if self.page != PageBuilderState::default() {
+            return Err(FormatError::NonEmptyPage);
+        }
         let payload = self
             .stores
             .encode_format()

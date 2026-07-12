@@ -285,20 +285,18 @@ impl StoreFormat {
                 }
             })
             .collect();
-        let code_tables = (0..=255)
-            .map(|code| {
-                let ch = char::from_u32(code).expect("byte code is scalar");
-                FormatCodeTables {
-                    code,
-                    catcode: stores.code_tables.catcode(ch) as u8,
-                    lccode: stores.code_tables.lccode(ch),
-                    uccode: stores.code_tables.uccode(ch),
-                    sfcode: stores.code_tables.sfcode(ch),
-                    mathcode: stores.code_tables.mathcode(ch),
-                    delcode: stores.code_tables.delcode(ch),
-                }
-            })
-            .collect();
+        let mut code_tables = Vec::new();
+        stores.code_tables.for_each_non_default(|ch, values| {
+            code_tables.push(FormatCodeTables {
+                code: ch as u32,
+                catcode: values.catcode as u8,
+                lccode: values.lccode,
+                uccode: values.uccode,
+                sfcode: values.sfcode,
+                mathcode: values.mathcode,
+                delcode: values.delcode,
+            });
+        });
         Ok(Self {
             names,
             token_lists,

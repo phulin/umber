@@ -1,4 +1,4 @@
-use super::{CheckpointResumeKind, ResumeFallback, Universe};
+use super::{CheckpointResumeKind, FormatError, ResumeFallback, Universe};
 use crate::font::{MAX_FONT_DIMEN, NULL_FONT};
 use crate::glue::{GlueSpec, Order};
 use crate::ids::{ArenaRef, NodeListId};
@@ -345,6 +345,50 @@ fn semantic_format_is_deterministic_validated_and_world_independent() {
         Universe::from_format(World::memory(), &corrupted),
         Err(super::FormatError::Checksum)
     ));
+}
+
+#[test]
+fn semantic_format_round_trips_sparse_unicode_code_tables() {
+    let mut universe = Universe::new();
+    let ch = '\u{1f642}';
+    universe.set_catcode(ch, Catcode::Active);
+    universe.set_lccode(ch, 'a' as u32);
+    universe.set_uccode(ch, 'A' as u32);
+    universe.set_sfcode(ch, 2345);
+    universe.set_mathcode(ch, 0x12_3456);
+    universe.set_delcode(ch, 0x123_456);
+
+    let image = universe.dump_format().expect("quiescent unicode format");
+    let restored = Universe::from_format(World::memory(), &image).expect("unicode format restore");
+    assert_eq!(restored.catcode(ch), Catcode::Active);
+    assert_eq!(restored.lccode(ch), 'a' as u32);
+    assert_eq!(restored.uccode(ch), 'A' as u32);
+    assert_eq!(restored.sfcode(ch), 2345);
+    assert_eq!(restored.mathcode(ch), 0x12_3456);
+    assert_eq!(restored.delcode(ch), 0x123_456);
+}
+
+#[test]
+fn semantic_format_rejects_live_input_and_page_state() {
+    let mut with_input = Universe::new();
+    with_input.set_input_summary(InputSummary::new(
+        vec![InputFrameSummary::TokenList {
+            token_list: crate::ids::TokenListId::EMPTY,
+            origin_list: crate::ids::OriginListId::EMPTY,
+            replay_kind: TokenListReplayKind::Inserted,
+            index: 0,
+            macro_arguments: MacroArguments::new(),
+            macro_invocation: OriginId::UNKNOWN,
+            parent_macro_invocation: OriginId::UNKNOWN,
+        }],
+        None,
+        None,
+    ));
+    assert_eq!(with_input.dump_format(), Err(FormatError::NonEmptyInput));
+
+    let mut with_page = Universe::new();
+    with_page.set_page_integer(PageInteger::DeadCycles, 1);
+    assert_eq!(with_page.dump_format(), Err(FormatError::NonEmptyPage));
 }
 
 #[test]
