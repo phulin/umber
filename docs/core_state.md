@@ -181,6 +181,14 @@ Rules:
   `\showlists` labels after mlist conversion; shipout lowering treats all of
   them as normal glue so serialized page artifacts do not gain DVI-visible
   distinctions.
+- **Loaded-font identity**: the semantic identity of a loaded font is its TeX
+  selector/name, selected size, content hash, checksum, design size, immutable
+  metrics/parameters, and registered control-sequence identifier. The host
+  path used to locate those bytes is `World` input provenance: it remains
+  available for diagnostics and exact source reopen during the live session,
+  but is excluded from font interning, semantic hashes, and format images. A
+  format restore reconstructs semantic font content without claiming that the
+  original host path is meaningful or still available.
 - **Leader glue payloads**: `\leaders`, `\cleaders`, and `\xleaders`
   attach their scanned box or rule payload directly to the glue node. The
   payload is immutable node content, not a side table keyed by `GlueId` or

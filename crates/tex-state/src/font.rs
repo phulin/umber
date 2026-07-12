@@ -205,7 +205,6 @@ impl FontStore {
 
         for (font, identifier) in self.fonts.iter().zip(&self.identifiers) {
             font.name().hash(hasher);
-            font.path().hash(hasher);
             font.content_hash().hash(hasher);
             font.checksum().hash(hasher);
             font.design_size().raw().hash(hasher);

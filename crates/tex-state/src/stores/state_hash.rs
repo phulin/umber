@@ -987,7 +987,6 @@ impl Stores {
         let font = self.fonts.get(font);
         hasher.tag(0x68);
         hasher.str(font.name());
-        hasher.str(&font.path().to_string_lossy());
         hasher.bytes(&font.content_hash());
         hasher.u32(font.checksum());
         hasher.i32(font.design_size().raw());
@@ -1016,7 +1015,6 @@ impl Stores {
         let font = self.fonts.get(font);
         FontSemanticKey {
             name: font.name().to_owned(),
-            path: font.path().to_string_lossy().into_owned(),
             content_hash: font.content_hash(),
             checksum: font.checksum(),
             design_size: font.design_size().raw(),
@@ -1181,7 +1179,6 @@ fn hash_control_sequence_kind(kind: ControlSequenceKind, hasher: &mut StateHashe
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct FontSemanticKey {
     name: String,
-    path: String,
     content_hash: [u8; 32],
     checksum: u32,
     design_size: i32,
@@ -1240,7 +1237,6 @@ fn hash_catcode(cat: Catcode, hasher: &mut StateHasher) {
 fn hash_font_semantic_key(font: &FontSemanticKey, hasher: &mut StateHasher) {
     hasher.tag(0x68);
     hasher.str(&font.name);
-    hasher.str(&font.path);
     hasher.bytes(&font.content_hash);
     hasher.u32(font.checksum);
     hasher.i32(font.design_size);

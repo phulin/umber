@@ -81,7 +81,6 @@ struct FormatGlue {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 struct FormatFont {
     name: String,
-    path: std::path::PathBuf,
     content_hash: [u8; 32],
     checksum: u32,
     design_size: i32,
@@ -610,7 +609,6 @@ impl FormatFont {
         let font = fonts.get(id);
         Self {
             name: font.name().to_owned(),
-            path: font.path().to_owned(),
             content_hash: font.content_hash(),
             checksum: font.checksum(),
             design_size: font.design_size().raw(),
@@ -626,9 +624,10 @@ impl FormatFont {
     }
 
     fn restore(self) -> LoadedFont {
+        let diagnostic_path = std::path::PathBuf::from(&self.name);
         LoadedFont::new(
             self.name,
-            self.path,
+            diagnostic_path,
             self.content_hash,
             self.checksum,
             Scaled::from_raw(self.design_size),

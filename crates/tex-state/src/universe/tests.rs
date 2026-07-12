@@ -1593,6 +1593,45 @@ fn snapshot_state_hash_distinguishes_font_content_identity() {
 }
 
 #[test]
+fn font_host_path_is_provenance_not_semantic_identity() {
+    let bytes = b"identical tfm bytes";
+    let mut first = Universe::new();
+    let mut second = Universe::new();
+    let first_symbol = first.intern("font");
+    let second_symbol = second.intern("font");
+    let make_font = |path: &str| {
+        crate::font::LoadedFont::new(
+            "cmr10",
+            path,
+            ContentHash::from_bytes(bytes).bytes(),
+            0,
+            Scaled::from_raw(10 * Scaled::UNITY),
+            Scaled::from_raw(10 * Scaled::UNITY),
+            vec![Scaled::from_raw(0); 7],
+            crate::font::FontMetrics::default(),
+        )
+    };
+
+    let first_font = first.intern_font(make_font("/texlive/a/cmr10.tfm"));
+    let second_font = second.intern_font(make_font("/vendor/b/cmr10.tfm"));
+    first.set_meaning(first_symbol, Meaning::Font(first_font));
+    second.set_meaning(second_symbol, Meaning::Font(second_font));
+
+    assert_ne!(
+        first.font(first_font).path(),
+        second.font(second_font).path()
+    );
+    assert_eq!(
+        first.snapshot().state_hash(),
+        second.snapshot().state_hash()
+    );
+    assert_eq!(
+        first.dump_format().expect("first semantic format"),
+        second.dump_format().expect("second semantic format")
+    );
+}
+
+#[test]
 fn short_loaded_font_parameters_seed_seven_snapshot_covered_env_values() {
     let mut universe = Universe::new();
     let loaded = crate::font::LoadedFont::new(
