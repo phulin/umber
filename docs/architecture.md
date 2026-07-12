@@ -1173,7 +1173,7 @@ Responsibility: page artifacts → bytes on disk. Strictly downstream.
 - Drivers consume committed page artifacts only — they can run
   out-of-process, in parallel with typesetting of later pages, or not at
   all (editor preview may rasterize page artifacts directly).
-- `tex-out` owns the page artifact model and version-9 binary reader/writer.
+- `tex-out` owns the page artifact model and version-10 binary reader/writer.
   Exact glue-set numerator and denominator fields cross this commit boundary
   and participate in deterministic semantic hashing. `GlueSetRatio` performs
   checked canonical reconstruction at every serde boundary, and the artifact
@@ -1183,6 +1183,11 @@ Responsibility: page artifacts → bytes on disk. Strictly downstream.
   The crate has no
   dependency on `tex-state` or `Universe`; shipout code lowers live state into
   artifact bytes before asking `World` to store them.
+- Box shifts retain TeX.web's `shift_amount` representation across live state,
+  format images, committed artifacts, and drivers: positive is down in an
+  hlist and right in a vlist. Format-image version 4 and artifact version 10
+  reject older inverse-hlist-shift encodings rather than guessing context or
+  silently changing semantic hashes.
 - The artifact record captures the effective job magnification, banner,
   `\hoffset`, and `\voffset` at shipout, so DVI generation does not reach back
   into live state. The offsets are read through `Universe` at the commit

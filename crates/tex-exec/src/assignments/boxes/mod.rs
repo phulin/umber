@@ -592,8 +592,8 @@ fn apply_shift(
         _ => return Err(ExecError::MissingToken { context: "box" }),
     };
     let delta = match primitive {
-        UnexpandablePrimitive::Raise | UnexpandablePrimitive::MoveRight => amount,
-        UnexpandablePrimitive::Lower | UnexpandablePrimitive::MoveLeft => -amount,
+        UnexpandablePrimitive::Lower | UnexpandablePrimitive::MoveRight => amount,
+        UnexpandablePrimitive::Raise | UnexpandablePrimitive::MoveLeft => -amount,
         _ => unreachable!("caller restricts shift primitives"),
     };
     box_node.shift = box_node

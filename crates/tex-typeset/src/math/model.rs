@@ -146,6 +146,7 @@ pub struct MathBox {
     pub width: Scaled,
     pub height: Scaled,
     pub depth: Scaled,
+    /// TeX.web `shift_amount`: positive moves down in an hlist and right in a vlist.
     pub shift: Scaled,
     pub list: FrozenHList,
     pub axis: BoxAxis,
@@ -314,8 +315,8 @@ impl MathLayoutBuilder {
                 MathNode::HList(boxed) | MathNode::VList(boxed) => {
                     meas.node_count = meas.node_count.saturating_add(1);
                     meas.width = add(meas.width, boxed.width);
-                    meas.height = meas.height.max(add(boxed.height, boxed.shift));
-                    meas.depth = meas.depth.max(sub(boxed.depth, boxed.shift));
+                    meas.height = meas.height.max(sub(boxed.height, boxed.shift));
+                    meas.depth = meas.depth.max(add(boxed.depth, boxed.shift));
                 }
                 MathNode::Opaque(node) => {
                     meas.node_count = meas.node_count.saturating_add(1);
@@ -385,8 +386,8 @@ fn measure_opaque_hnode(node: &Node, meas: &mut Measurement) {
     match node {
         Node::HList(boxed) | Node::VList(boxed) => {
             meas.width = add(meas.width, boxed.width);
-            meas.height = meas.height.max(add(boxed.height, boxed.shift));
-            meas.depth = meas.depth.max(sub(boxed.depth, boxed.shift));
+            meas.height = meas.height.max(sub(boxed.height, boxed.shift));
+            meas.depth = meas.depth.max(add(boxed.depth, boxed.shift));
         }
         _ => {}
     }

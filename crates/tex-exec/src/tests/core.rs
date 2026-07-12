@@ -1651,6 +1651,53 @@ fn showbox_dumps_leader_glue_payloads_like_reference() {
 }
 
 #[test]
+fn box_motion_uses_tex_web_shift_amount_signs_and_diagnostics() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\showboxbreadth=100 \\showboxdepth=100 \
+         \\setbox0=\\hbox{\\raise2pt\\hbox{}\\lower3pt\\hbox{}} \
+         \\setbox1=\\vbox{\\moveleft4pt\\hbox{}\\moveright5pt\\hbox{}} \
+         \\showbox0 \\showbox1",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("box motions execute");
+
+    let hbox = stores.box_reg(0).expect("hbox register");
+    let [Node::HList(hbox)] = stores.nodes(hbox).testing_decoded() else {
+        panic!("register 0 should hold an hbox");
+    };
+    let [Node::HList(raised), Node::HList(lowered)] = stores.nodes(hbox.children).testing_decoded()
+    else {
+        panic!("hbox should contain raised and lowered boxes");
+    };
+    assert_eq!(raised.shift.raw(), -2 * Scaled::UNITY);
+    assert_eq!(lowered.shift.raw(), 3 * Scaled::UNITY);
+
+    let vbox = stores.box_reg(1).expect("vbox register");
+    let [Node::VList(vbox)] = stores.nodes(vbox).testing_decoded() else {
+        panic!("register 1 should hold a vbox");
+    };
+    let horizontal_shifts: Vec<_> = stores
+        .nodes(vbox.children)
+        .testing_decoded()
+        .iter()
+        .filter_map(|node| match node {
+            Node::HList(boxed) => Some(boxed.shift.raw()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(horizontal_shifts, [-4 * Scaled::UNITY, 5 * Scaled::UNITY]);
+
+    let log = terminal_effect_text(&stores);
+    for shift in ["shifted -2.0", "shifted 3.0", "shifted -4.0", "shifted 5.0"] {
+        assert!(log.contains(shift), "missing {shift:?} in {log}");
+    }
+}
+
+#[test]
 fn everypar_replays_through_input_stack_and_mutates_state() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

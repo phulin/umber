@@ -205,7 +205,7 @@ impl<W: std::io::Write> DviWriter<W> {
         let save_v = self.dvi_v;
         let edge = self.cur_h;
         let base_line = self.cur_v;
-        self.cur_v = sub_scaled(base_line, box_node.shift)?;
+        self.cur_v = add_scaled(base_line, box_node.shift)?;
         if is_vlist {
             self.vlist_out(page, box_node)?;
         } else {

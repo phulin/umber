@@ -705,11 +705,8 @@ where
     } else {
         let children = stores.freeze_node_list(&[accent_node]);
         let mut boxed = super::boxes::hpack_with_overfull_rule(stores, children, PackSpec::Natural);
-        // BoxNode stores a positive shift upward, the inverse sign of
-        // TeX82's horizontal-list shift_amount representation.
-        boxed.shift = base_metrics
-            .height
-            .checked_sub(accent_x_height)
+        boxed.shift = accent_x_height
+            .checked_sub(base_metrics.height)
             .ok_or(ExecError::ArithmeticOverflow)?;
         nest.current_list_mut().push(Node::HList(boxed));
     }

@@ -234,6 +234,7 @@ pub struct BoxNode {
     pub width: Scaled,
     pub height: Scaled,
     pub depth: Scaled,
+    /// TeX.web `shift_amount`: positive moves down in an hlist and right in a vlist.
     pub shift: Scaled,
     pub glue_set: GlueSetRatio,
     pub glue_sign: GlueSign,

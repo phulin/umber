@@ -82,6 +82,18 @@ fn rejects_unknown_version() {
 }
 
 #[test]
+fn rejects_pre_web_shift_artifact_version() {
+    let mut bytes = sample_artifact().to_bytes().expect("artifact serializes");
+    assert_eq!(bytes[4], 10);
+    bytes[4] = 9;
+
+    assert_eq!(
+        PageArtifact::from_bytes(&bytes),
+        Err(ParseError::UnsupportedVersion(9))
+    );
+}
+
+#[test]
 fn codec_rejects_limits_with_structured_errors() {
     let artifact = sample_artifact();
     let bytes = artifact.to_bytes().expect("artifact serializes");
@@ -130,7 +142,7 @@ fn codec_rejects_limits_with_structured_errors() {
 fn tiny_input_cannot_request_a_large_collection_allocation() {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(b"UMPG");
-    bytes.push(9);
+    bytes.push(10);
     bytes.extend_from_slice(&1000_i32.to_le_bytes());
     bytes.extend_from_slice(&0_u32.to_le_bytes());
     bytes.extend_from_slice(&0_i32.to_le_bytes());
@@ -159,7 +171,7 @@ fn adversarial_nesting_hits_depth_limit_without_recursive_decode() {
     let depth = ArtifactCodecLimits::default().max_depth + 100;
     let mut bytes = Vec::new();
     bytes.extend_from_slice(b"UMPG");
-    bytes.push(9);
+    bytes.push(10);
     bytes.extend_from_slice(&1000_i32.to_le_bytes());
     bytes.extend_from_slice(&0_u32.to_le_bytes());
     bytes.extend_from_slice(&0_i32.to_le_bytes());

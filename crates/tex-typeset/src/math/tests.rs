@@ -160,7 +160,7 @@ fn script_pair_uses_italic_delta_scriptspace_and_cramped_substyle() {
         panic!("expected script box");
     };
     assert_eq!(script_box.axis, BoxAxis::Vertical);
-    assert_eq!(script_box.shift, sc(-15));
+    assert_eq!(script_box.shift, sc(15));
     let script_nodes = list_nodes(&hlist, script_box.list);
     let [sup_node, kern_node, sub_node] = script_nodes.as_slice() else {
         panic!("expected sup/kern/sub script vlist");
@@ -667,7 +667,7 @@ fn nolimits_operator_centers_nucleus_on_math_axis() {
     let MathNode::HList(op_box) = op_node else {
         panic!("expected operator hbox")
     };
-    assert_eq!(op_box.shift, sc(1));
+    assert_eq!(op_box.shift, sc(-1));
 }
 
 #[test]
@@ -744,7 +744,7 @@ fn mathchar_operator_centers_inline_nucleus_and_places_side_scripts() {
     let MathNode::HList(op_box) = op_node else {
         panic!("expected operator hbox");
     };
-    assert_eq!(op_box.shift, sc(1));
+    assert_eq!(op_box.shift, sc(-1));
     assert!(matches!(scripts_node, MathNode::VList(_)));
 }
 

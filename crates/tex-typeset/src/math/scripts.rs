@@ -40,7 +40,7 @@ pub fn make_scripts(
     } else {
         let mut sup = superscript_box(ctx, superscript, style, &mut shift_up);
         if matches!(subscript, MathField::Empty) {
-            sup.shift = shift_up;
+            sup.shift = neg(shift_up);
             sup
         } else {
             let mut shifts = ScriptShifts {
@@ -77,7 +77,7 @@ fn subscript_only(
     if *shift_down < clr {
         *shift_down = clr;
     }
-    x.shift = neg(*shift_down);
+    x.shift = *shift_down;
     x
 }
 
@@ -155,7 +155,7 @@ fn script_pair(
         MathNode::HList(sub_box),
     ]);
     let mut pair = ctx.layout.vpack(list);
-    pair.shift = neg(shifts.down);
+    pair.shift = shifts.down;
     pair
 }
 

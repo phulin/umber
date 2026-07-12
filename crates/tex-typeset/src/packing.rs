@@ -343,8 +343,8 @@ fn measure_hlist(state: &impl TypesetState, nodes: NodeList<'_>) -> Measurement 
             }
             NodeRef::HList(box_node) | NodeRef::VList(box_node) => {
                 meas.width = add(meas.width, box_node.width);
-                meas.height = meas.height.max(add(box_node.height, box_node.shift));
-                meas.depth = meas.depth.max(sub(box_node.depth, box_node.shift));
+                meas.height = meas.height.max(sub(box_node.height, box_node.shift));
+                meas.depth = meas.depth.max(add(box_node.depth, box_node.shift));
             }
             NodeRef::Unset(unset) => {
                 meas.width = add(meas.width, unset.width);

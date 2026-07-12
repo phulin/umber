@@ -253,11 +253,11 @@ fn horizontal_movement_reuses_w_registers() {
 }
 
 #[test]
-fn positive_hlist_shift_moves_nested_box_up() {
+fn negative_hlist_shift_moves_nested_box_up() {
     let mut page = empty_page(0);
     page.fonts.push(font_resource(0, "cmr10"));
     let mut raised = box_node(1, 7, 0, vec![char_node(0, b'B' as u32, 1)]);
-    raised.shift = sp(5);
+    raised.shift = sp(-5);
     page.root = hlist(
         2,
         10,
@@ -270,7 +270,7 @@ fn positive_hlist_shift_moves_nested_box_up() {
 
     assert!(
         body.windows(2).any(|window| window == [DOWN1, 251]),
-        "positive hlist shift should emit an upward DVI movement"
+        "negative hlist shift should emit an upward DVI movement"
     );
 }
 

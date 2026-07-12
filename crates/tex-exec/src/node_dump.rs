@@ -491,7 +491,7 @@ fn dump_box(
     box_node: &BoxNode,
     config: &DumpConfig,
     depth: i32,
-    context: ListContext,
+    _context: ListContext,
     out: &mut String,
 ) {
     let _ = write!(
@@ -504,11 +504,11 @@ fn dump_box(
     );
     write_glue_set(box_node, out);
     if box_node.shift.raw() != 0 {
-        let shift = match context {
-            ListContext::HList => -box_node.shift,
-            ListContext::Neutral | ListContext::VList => box_node.shift,
-        };
-        let _ = write!(out, ", shifted {}", format_scaled_without_unit(shift));
+        let _ = write!(
+            out,
+            ", shifted {}",
+            format_scaled_without_unit(box_node.shift)
+        );
     }
     if box_node.display {
         out.push_str(", display");

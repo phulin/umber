@@ -150,7 +150,7 @@ impl<W: std::io::Write> DviWriter<W> {
         lx: Scaled,
         base_line: Scaled,
     ) -> Result<(), DviError> {
-        self.cur_v = sub_scaled(base_line, box_node.shift)?;
+        self.cur_v = add_scaled(base_line, box_node.shift)?;
         self.synch_v()?;
         let save_v = self.dvi_v;
         self.synch_h()?;

@@ -135,7 +135,7 @@ pub(super) fn make_radical(
     if delta.raw() > 0 {
         clearance = add(clearance, Scaled::from_raw(tex_arith::half(delta.raw())));
     }
-    delimiter.shift = add(x.height, clearance);
+    delimiter.shift = Scaled::from_raw(-add(x.height, clearance).raw());
     let bar = overbar(ctx, x, clearance, delimiter.height);
     let inner = ctx.layout.hlist([boxed_node(delimiter), boxed_node(bar)]);
     let packed = ctx.layout.hpack(inner);

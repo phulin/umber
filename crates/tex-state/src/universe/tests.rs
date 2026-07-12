@@ -610,6 +610,40 @@ fn format_with_box_glue_set(glue_set: GlueSetRatio) -> Vec<u8> {
     universe.dump_format().expect("format encodes")
 }
 
+#[test]
+fn format_v4_round_trips_tex_web_box_shift_and_rejects_v3() {
+    let mut universe = Universe::with_world(World::memory());
+    let children = universe.freeze_node_list(&[]);
+    let root = universe.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
+        width: Scaled::from_raw(1),
+        height: Scaled::from_raw(2),
+        depth: Scaled::from_raw(3),
+        shift: Scaled::from_raw(-4),
+        display: false,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children,
+    }))]);
+    universe.set_box_reg(19, root);
+
+    let bytes = universe.dump_format().expect("format encodes");
+    assert_eq!(&bytes[8..12], &4_u32.to_le_bytes());
+    let restored = Universe::from_format(World::memory(), &bytes).expect("v4 format restores");
+    let restored_root = restored.box_reg(19).expect("box register restores");
+    let [Node::HList(boxed)] = restored.nodes(restored_root).testing_decoded() else {
+        panic!("box register should contain an hlist");
+    };
+    assert_eq!(boxed.shift, Scaled::from_raw(-4));
+
+    let mut v3 = bytes;
+    v3[8..12].copy_from_slice(&3_u32.to_le_bytes());
+    assert!(matches!(
+        Universe::from_format(World::memory(), &v3),
+        Err(super::FormatError::UnsupportedVersion(3))
+    ));
+}
+
 fn replace_format_ratio(bytes: &mut [u8], old: (i32, i32), new: (i32, i32)) {
     const HEADER: usize = 29;
     let old = [old.0.to_le_bytes(), old.1.to_le_bytes()].concat();

@@ -107,8 +107,8 @@ pub(crate) fn var_delimiter(
 
     let axis = ctx.params.for_size(size).symbols.axis_height;
     boxed.shift = sub(
-        axis,
         Scaled::from_raw(tex_arith::half(sub(boxed.height, boxed.depth).raw())),
+        axis,
     );
     boxed
 }
