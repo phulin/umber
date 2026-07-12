@@ -1,0 +1,17 @@
+[package]
+name = "semantic-hash-model"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+ahash = "0.8"
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "systems"
+harness = false

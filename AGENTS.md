@@ -38,6 +38,7 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - `tools/`: Rust tooling crates. `refexec` remains in the root workspace for committed DVI fixture comparison; regeneration-only tools such as `fixturegen` and external-corpus tools such as `corpus-sync` are standalone and built explicitly by scripts.
 - `benchmarks/`: opt-in standalone benchmark crates kept outside the root workspace.
 - `benchmarks/plain-tex`: fixed end-to-end Plain TeX engine workloads and runner.
+- `benchmarks/semantic-hash-model`: standalone comparison of traversal-based and promoted semantic hashing over a realistic TeX-like workload.
 - `benchmarks/tex-exec`: focused execution-layer Criterion benchmarks, including shipout lowering.
 - `benchmarks/tex-state`: focused state-layer latency and allocation-budget benchmarks.
 - `tests/`: committed fixtures and parity test definitions.
