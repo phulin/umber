@@ -415,9 +415,10 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   boundary that reverses only a transition recorded for an actually delivered
   token before replay; synthetic insertion therefore cannot perturb the
   sentinel. The preamble starts at `-1000000`, row peeking resets to `1000000`,
-  u-template retirement resets to zero before the first body token is counted,
-  and only a delimiter delivered at zero starts the v-template. Alphabetic
-  This is local alignment state, not an engine checkpoint.
+  and `fin_col` restores that sentinel before fetching the first token of every
+  continuing column. U-template retirement then resets to zero before the first
+  body token is counted, and only a delimiter delivered at zero starts the
+  v-template. This is local alignment state, not an engine checkpoint.
 - **Read-set recording** hooks live here and in the stomach: when the
   incremental engine asks for it, meaning lookups record `(cell, epoch)`
   pairs (`core_state.md` §9). Off by default, zero-cost when off (the

@@ -278,6 +278,9 @@ where
         if result.ended_row {
             return Ok(result.extra_alignment_tab);
         }
+        // TeX82 fin_col restores the sentinel before fetching the first token
+        // of every following column, not only after a spanning column.
+        input.set_alignment_state(1_000_000);
         start_token = Some(next_non_space_traced_x(input, stores, hooks)?.ok_or(
             ExecError::MissingToken {
                 context: "alignment cell",

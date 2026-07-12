@@ -631,6 +631,16 @@ fn extra_alignment_tab_is_changed_to_row_terminator() {
 }
 
 #[test]
+fn continuing_column_restores_sentinel_before_u_template_final_brace() {
+    let stores = run_boxed_alignment_source("\\def\\l#1{#1}\\halign{#&\\l{#}\\cr a&x\\cr}");
+    let rows = vlist_rows(&stores, box_zero_vlist(&stores));
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(cell_text(&stores, row_cells(&stores, rows[0])[0]), "a");
+    assert_eq!(cell_text(&stores, row_cells(&stores, rows[0])[1]), "x");
+}
+
+#[test]
 fn u_template_macro_argument_interleaves_cell_body_and_v_template() {
     let stores =
         run_boxed_alignment_source("\\def\\wrap#1{\\hbox{#1}}\\halign{\\wrap{#}\\cr x\\cr}");
