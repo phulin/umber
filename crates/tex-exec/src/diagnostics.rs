@@ -567,15 +567,7 @@ fn tokens_text(stores: &Universe, tokens: &[Token]) -> String {
 /// Appends TeX82's printable token form, including the separator that
 /// `print_cs` emits after a control word.
 pub(crate) fn append_token_show_text(stores: &Universe, token: Token, text: &mut String) {
-    text.push_str(&token_text(stores, token));
-    if let Token::Cs(symbol) = token {
-        let name = stores.resolve(symbol);
-        if stores.control_sequence_kind(symbol) == tex_state::interner::ControlSequenceKind::Named
-            && name.chars().all(|ch| ch.is_ascii_alphabetic())
-        {
-            text.push(' ');
-        }
-    }
+    tex_expand::append_token_show_text(stores, token, text);
 }
 
 fn hyphenated_word_text(word: &str, positions: &[usize]) -> String {

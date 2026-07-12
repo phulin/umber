@@ -1193,6 +1193,34 @@ fn string_omits_invalid_escapechar() {
 }
 
 #[test]
+fn token_show_text_matches_tex_print_cs_classes() {
+    let mut stores = Universe::new();
+    let multiletter = stores.intern("foo");
+    let multiother = stores.intern("@@");
+    let single = stores.intern("@");
+    let empty = stores.intern("");
+    let active = stores.intern_active_character('~');
+
+    let render = |stores: &Universe, token| {
+        let mut text = String::new();
+        crate::append_token_show_text(stores, token, &mut text);
+        text
+    };
+
+    assert_eq!(render(&stores, Token::Cs(multiletter.symbol())), "\\foo ");
+    assert_eq!(render(&stores, Token::Cs(multiother.symbol())), "\\@@ ");
+    assert_eq!(render(&stores, Token::Cs(single.symbol())), "\\@");
+    assert_eq!(
+        render(&stores, Token::Cs(empty.symbol())),
+        "\\csname\\endcsname "
+    );
+    assert_eq!(render(&stores, Token::Cs(active.symbol())), "~");
+
+    stores.set_catcode('@', Catcode::Letter);
+    assert_eq!(render(&stores, Token::Cs(single.symbol())), "\\@ ");
+}
+
+#[test]
 fn number_and_romannumeral_scan_expanded_integer_edge_cases() {
     let mut stores = Universe::new();
     let number = expandable_primitive(&mut stores, "number", ExpandablePrimitive::Number);

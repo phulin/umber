@@ -351,6 +351,58 @@ fn newlinechar_is_honored_by_message_and_immediate_write() {
 }
 
 #[test]
+fn print_cs_spacing_is_shared_by_diagnostics_and_immediate_and_deferred_writes() {
+    const DEFINITIONS: &str = r"\let\foo=\relax
+          \let\@=\relax
+          \expandafter\def\expandafter\multiother\expandafter{\csname @@\endcsname X}
+          \def\multiletter{\foo X}
+          \def\single{\@X}
+          \catcode`\@=11
+          \catcode`\~=13 \let~=\relax \def\active{~X}
+          ";
+
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(format!(
+        "{DEFINITIONS}\\show\\multiother \\show\\single \\show\\active \\end"
+    )));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("control-sequence diagnostic fixture executes");
+    let diagnostic = terminal_effect_text(&stores);
+    assert!(diagnostic.contains("> \\multiother=macro:\n->\\@@ X."));
+    assert!(diagnostic.contains("> \\single=macro:\n->\\@ X."));
+    assert!(diagnostic.contains("> \\active=macro:\n->~X."));
+
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        [
+            DEFINITIONS,
+            r"
+          \immediate\openout2=printcs.out
+          \immediate\write2{\multiother|\multiletter|\single|\active}
+          \catcode`\@=12
+          \shipout\hbox{\write2{\multiother|\multiletter|\single|\active}}
+          \immediate\closeout2
+          \end",
+        ]
+        .concat(),
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("control-sequence rendering fixture executes");
+
+    assert_eq!(
+        stores.world().memory_output("printcs.out"),
+        Some(&b"\\@@ X|\\foo X|\\@ X|~X\n\\@@ X|\\foo X|\\@X|~X\n"[..])
+    );
+}
+
+#[test]
 fn shipout_commits_deferred_openout_closeout_whatsits() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);

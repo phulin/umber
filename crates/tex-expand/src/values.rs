@@ -2,6 +2,7 @@ use tex_lex::{InputSource, InputStack, MacroArguments};
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::{FontId, TokenListId};
+use tex_state::interner::ControlSequenceKind;
 use tex_state::math::MathFontSize;
 use tex_state::meaning::{InternalInteger, Meaning, MeaningFlags};
 use tex_state::provenance::SynthesizedOriginKind;
@@ -638,15 +639,31 @@ pub(crate) fn string_tokens(stores: &impl ExpansionState, token: Token) -> Vec<T
         Token::Char { ch, .. } => vec![rendered_char(ch)],
         Token::Cs(symbol) => {
             let mut out = Vec::new();
-            if let Some(escape) = escapechar(stores) {
-                out.push(rendered_char(escape));
+            let name = stores.resolve(symbol);
+            match stores.control_sequence_kind(symbol) {
+                ControlSequenceKind::ActiveCharacter => {
+                    out.extend(name.chars().map(rendered_char));
+                }
+                ControlSequenceKind::Named if name.is_empty() => {
+                    append_escaped_text(stores, "csname", &mut out);
+                    append_escaped_text(stores, "endcsname", &mut out);
+                }
+                ControlSequenceKind::Named => {
+                    append_escaped_text(stores, name, &mut out);
+                }
             }
-            out.extend(stores.resolve(symbol).chars().map(rendered_char));
             out
         }
         Token::Param(slot) => text_tokens(&format!("#{slot}")),
         Token::Frozen(_) => text_tokens("\\endtemplate"),
     }
+}
+
+fn append_escaped_text(stores: &impl ExpansionState, value: &str, out: &mut Vec<Token>) {
+    if let Some(escape) = escapechar(stores) {
+        out.push(rendered_char(escape));
+    }
+    out.extend(value.chars().map(rendered_char));
 }
 
 pub fn meaning_text(stores: &impl ExpansionState, token: Token) -> String {
@@ -706,15 +723,32 @@ pub fn meaning_text(stores: &impl ExpansionState, token: Token) -> String {
 fn token_list_text(stores: &impl ExpansionState, token_list: TokenListId) -> String {
     let mut text = String::new();
     for &token in stores.tokens(token_list) {
-        text.push_str(&token_text(stores, token));
-        if let Token::Cs(symbol) = token {
-            let name = stores.resolve(symbol);
-            if name.chars().all(|ch| ch.is_ascii_alphabetic()) {
-                text.push(' ');
-            }
-        }
+        append_token_show_text(stores, token, &mut text);
     }
     text
+}
+
+/// Appends the form TeX82's `show_token_list` prints for one token.
+///
+/// In `tex.web` section 262, `print_cs` always terminates hash-table control
+/// sequence names with a space. Direct-address single-character names only
+/// receive that space when the character's current catcode is `letter`, and
+/// active characters receive neither an escape nor a trailing space.
+pub fn append_token_show_text(stores: &impl ExpansionState, token: Token, text: &mut String) {
+    text.push_str(&token_text(stores, token));
+    let Token::Cs(symbol) = token else {
+        return;
+    };
+    if stores.control_sequence_kind(symbol) == ControlSequenceKind::ActiveCharacter {
+        return;
+    }
+
+    let name = stores.resolve(symbol);
+    let mut chars = name.chars();
+    match (chars.next(), chars.next()) {
+        (Some(ch), None) if stores.catcode(ch) != Catcode::Letter => {}
+        _ => text.push(' '),
+    }
 }
 
 pub fn token_text(stores: &impl ExpansionState, token: Token) -> String {
