@@ -1,7 +1,8 @@
 use crate::{
-    ArtifactValidationError, ArtifactValidationLimits, BoxNode, ContentHash, DiscKind, EffectSink,
-    FontResource, GlueKind, GlueOrder, GlueSetRatio, GlueSign, GlueSpec, JobInfo, KernKind,
-    LeaderPayload, PageArtifact, PageEffect, PageNode, PageToken, ParseError, TokenCatcode,
+    ArtifactCodecLimits, ArtifactValidationError, ArtifactValidationLimits, BoxNode,
+    CodecLimitKind, ContentHash, DiscKind, EffectSink, FontResource, GlueKind, GlueOrder,
+    GlueSetRatio, GlueSign, GlueSpec, JobInfo, KernKind, LeaderPayload, PageArtifact, PageEffect,
+    PageNode, PageToken, ParseError, SerializeError, TokenCatcode,
 };
 use tex_arith::Scaled;
 
@@ -9,11 +10,14 @@ use tex_arith::Scaled;
 fn page_artifact_round_trips() {
     let artifact = sample_artifact();
 
-    let bytes = artifact.to_bytes();
+    let bytes = artifact.to_bytes().expect("artifact serializes");
     let parsed = PageArtifact::from_bytes(&bytes).expect("artifact parses");
 
     assert_eq!(parsed, artifact);
-    assert_eq!(parsed.to_bytes(), bytes);
+    assert_eq!(
+        parsed.to_bytes().expect("parsed artifact serializes"),
+        bytes
+    );
 }
 
 #[test]
@@ -21,18 +25,21 @@ fn artifact_bytes_and_hash_are_deterministic() {
     let first = sample_artifact();
     let second = sample_artifact();
 
-    let first_bytes = first.to_bytes();
-    let second_bytes = second.to_bytes();
+    let first_bytes = first.to_bytes().expect("first artifact serializes");
+    let second_bytes = second.to_bytes().expect("second artifact serializes");
 
     assert_eq!(first_bytes, second_bytes);
-    assert_eq!(ContentHash::from_bytes(&first_bytes), first.content_hash());
+    assert_eq!(
+        ContentHash::from_bytes(&first_bytes),
+        first.content_hash().expect("first artifact hashes")
+    );
     assert_eq!(first.content_hash(), second.content_hash());
 }
 
 #[test]
 fn artifact_decode_canonicalizes_glue_set_ratios_once() {
     let artifact = sample_artifact();
-    let canonical = artifact.to_bytes();
+    let canonical = artifact.to_bytes().expect("artifact serializes");
     let mut noncanonical = canonical.clone();
     replace_unique_ratio(&mut noncanonical, (37, 101), (74, 202));
 
@@ -41,14 +48,17 @@ fn artifact_decode_canonicalizes_glue_set_ratios_once() {
         panic!("sample root is a vlist");
     };
     assert_eq!(root.glue_set, GlueSetRatio::from_ratio_parts(37, 101));
-    assert_eq!(parsed.to_bytes(), canonical);
+    assert_eq!(
+        parsed.to_bytes().expect("parsed artifact serializes"),
+        canonical
+    );
     assert_eq!(parsed.content_hash(), artifact.content_hash());
 }
 
 #[test]
 fn artifact_decode_rejects_invalid_glue_set_ratios() {
     for malformed in [(37, 0), (37, -101), (i32::MIN, 101)] {
-        let mut bytes = sample_artifact().to_bytes();
+        let mut bytes = sample_artifact().to_bytes().expect("artifact serializes");
         replace_unique_ratio(&mut bytes, (37, 101), malformed);
         assert_eq!(
             PageArtifact::from_bytes(&bytes),
@@ -62,12 +72,122 @@ fn artifact_decode_rejects_invalid_glue_set_ratios() {
 
 #[test]
 fn rejects_unknown_version() {
-    let mut bytes = sample_artifact().to_bytes();
+    let mut bytes = sample_artifact().to_bytes().expect("artifact serializes");
     bytes[4] = 99;
 
     assert_eq!(
         PageArtifact::from_bytes(&bytes),
         Err(ParseError::UnsupportedVersion(99))
+    );
+}
+
+#[test]
+fn codec_rejects_limits_with_structured_errors() {
+    let artifact = sample_artifact();
+    let bytes = artifact.to_bytes().expect("artifact serializes");
+
+    let limits = ArtifactCodecLimits {
+        max_bytes: bytes.len() - 1,
+        ..ArtifactCodecLimits::default()
+    };
+    assert_eq!(
+        PageArtifact::from_bytes_with_limits(&bytes, limits),
+        Err(ParseError::LimitExceeded {
+            kind: CodecLimitKind::Bytes,
+            actual: bytes.len(),
+            limit: bytes.len() - 1,
+        })
+    );
+
+    let limits = ArtifactCodecLimits {
+        max_depth: 1,
+        ..ArtifactCodecLimits::default()
+    };
+    assert_eq!(
+        PageArtifact::from_bytes_with_limits(&bytes, limits),
+        Err(ParseError::LimitExceeded {
+            kind: CodecLimitKind::Depth,
+            actual: 2,
+            limit: 1,
+        })
+    );
+
+    let limits = ArtifactCodecLimits {
+        max_nodes: 1,
+        ..ArtifactCodecLimits::default()
+    };
+    assert_eq!(
+        artifact.to_bytes_with_limits(limits),
+        Err(SerializeError::LimitExceeded {
+            kind: CodecLimitKind::Nodes,
+            actual: 2,
+            limit: 1,
+        })
+    );
+}
+
+#[test]
+fn tiny_input_cannot_request_a_large_collection_allocation() {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"UMPG");
+    bytes.push(9);
+    bytes.extend_from_slice(&1000_i32.to_le_bytes());
+    bytes.extend_from_slice(&0_u32.to_le_bytes());
+    bytes.extend_from_slice(&0_i32.to_le_bytes());
+    bytes.extend_from_slice(&0_i32.to_le_bytes());
+    bytes.extend_from_slice(&u32::MAX.to_le_bytes());
+
+    assert_eq!(
+        PageArtifact::from_bytes(&bytes),
+        Err(ParseError::LimitExceeded {
+            kind: CodecLimitKind::CollectionLength,
+            actual: u32::MAX as usize,
+            limit: ArtifactCodecLimits::default().max_collection_len,
+        })
+    );
+
+    let len_offset = bytes.len() - std::mem::size_of::<u32>();
+    bytes[len_offset..].copy_from_slice(&1000_u32.to_le_bytes());
+    assert_eq!(
+        PageArtifact::from_bytes(&bytes),
+        Err(ParseError::UnexpectedEof)
+    );
+}
+
+#[test]
+fn adversarial_nesting_hits_depth_limit_without_recursive_decode() {
+    let depth = ArtifactCodecLimits::default().max_depth + 100;
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"UMPG");
+    bytes.push(9);
+    bytes.extend_from_slice(&1000_i32.to_le_bytes());
+    bytes.extend_from_slice(&0_u32.to_le_bytes());
+    bytes.extend_from_slice(&0_i32.to_le_bytes());
+    bytes.extend_from_slice(&0_i32.to_le_bytes());
+    bytes.extend_from_slice(&0_u32.to_le_bytes());
+    for _ in 0..10 {
+        bytes.extend_from_slice(&0_i32.to_le_bytes());
+    }
+    for level in 0..depth {
+        bytes.push(6);
+        for _ in 0..5 {
+            bytes.extend_from_slice(&0_i32.to_le_bytes());
+        }
+        bytes.extend_from_slice(&1_i32.to_le_bytes());
+        bytes.push(0);
+        bytes.push(0);
+        bytes.extend_from_slice(&u32::from(level + 1 < depth).to_le_bytes());
+    }
+    bytes.extend_from_slice(&0_u32.to_le_bytes());
+
+    let limits = ArtifactCodecLimits::default();
+    assert_eq!(
+        PageArtifact::from_bytes_with_limits(&bytes, limits),
+        Err(ParseError::LimitExceeded {
+            kind: CodecLimitKind::Depth,
+            actual: limits.max_depth + 1,
+            limit: limits.max_depth,
+        })
     );
 }
 

@@ -9,17 +9,137 @@ use tex_arith::Scaled;
 const MAGIC: &[u8; 4] = b"UMPG";
 const VERSION: u8 = 9;
 
+mod wire {
+    pub mod node {
+        pub const CHAR: u8 = 0;
+        pub const LIG: u8 = 1;
+        pub const KERN: u8 = 2;
+        pub const GLUE: u8 = 3;
+        pub const PENALTY: u8 = 4;
+        pub const RULE: u8 = 5;
+        pub const HLIST: u8 = 6;
+        pub const VLIST: u8 = 7;
+        pub const WHATSIT_ANCHOR: u8 = 9;
+        pub const MATH_ON: u8 = 10;
+        pub const MATH_OFF: u8 = 11;
+        pub const DISC: u8 = 12;
+        pub const MARK: u8 = 13;
+        pub const INSERT: u8 = 14;
+        pub const ADJUST: u8 = 15;
+    }
+
+    pub mod leader {
+        pub const NONE: u8 = 0;
+        pub const HLIST: u8 = 1;
+        pub const VLIST: u8 = 2;
+        pub const RULE: u8 = 3;
+    }
+
+    pub mod effect {
+        pub const OPEN_OUT: u8 = 0;
+        pub const CLOSE_OUT: u8 = 1;
+        pub const WRITE: u8 = 2;
+        pub const SPECIAL: u8 = 3;
+    }
+
+    pub mod token {
+        pub const CHAR: u8 = 0;
+        pub const CONTROL_SEQUENCE: u8 = 1;
+        pub const PARAM: u8 = 2;
+        pub const ACTIVE_CONTROL_SEQUENCE: u8 = 3;
+    }
+
+    pub mod sink {
+        pub const TERMINAL: u8 = 0;
+        pub const LOG: u8 = 1;
+        pub const TERMINAL_AND_LOG: u8 = 2;
+        pub const STREAM: u8 = 3;
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ArtifactCodecLimits {
+    pub max_bytes: usize,
+    pub max_nodes: usize,
+    pub max_collection_len: usize,
+    pub max_collection_items: usize,
+    pub max_depth: usize,
+}
+
+impl Default for ArtifactCodecLimits {
+    fn default() -> Self {
+        Self {
+            max_bytes: 256 * 1024 * 1024,
+            max_nodes: 1_000_000,
+            max_collection_len: 1_000_000,
+            max_collection_items: 4_000_000,
+            max_depth: 4096,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CodecLimitKind {
+    Bytes,
+    Nodes,
+    CollectionLength,
+    CollectionItems,
+    Depth,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SerializeError {
+    LengthOverflow,
+    LimitExceeded {
+        kind: CodecLimitKind,
+        actual: usize,
+        limit: usize,
+    },
+}
+
+impl fmt::Display for SerializeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::LengthOverflow => f.write_str("page artifact length exceeds the wire format"),
+            Self::LimitExceeded {
+                kind,
+                actual,
+                limit,
+            } => write!(
+                f,
+                "page artifact {kind:?} limit exceeded: {actual} > {limit}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for SerializeError {}
+
 /// Binary parse failure.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ParseError {
     InvalidMagic,
     UnsupportedVersion(u8),
     UnexpectedEof,
-    TrailingBytes { offset: usize, len: usize },
+    TrailingBytes {
+        offset: usize,
+        len: usize,
+    },
     InvalidUtf8,
     LengthOverflow,
-    InvalidTag { kind: &'static str, tag: u8 },
-    InvalidGlueSetRatio { numerator: i32, denominator: i32 },
+    InvalidTag {
+        kind: &'static str,
+        tag: u8,
+    },
+    InvalidGlueSetRatio {
+        numerator: i32,
+        denominator: i32,
+    },
+    LimitExceeded {
+        kind: CodecLimitKind,
+        actual: usize,
+        limit: usize,
+    },
     Validation(crate::ArtifactValidationError),
 }
 
@@ -44,6 +164,14 @@ impl fmt::Display for ParseError {
                 f,
                 "invalid glue-set ratio {numerator}/{denominator} in page artifact"
             ),
+            Self::LimitExceeded {
+                kind,
+                actual,
+                limit,
+            } => write!(
+                f,
+                "page artifact {kind:?} limit exceeded: {actual} > {limit}"
+            ),
             Self::Validation(error) => error.fmt(f),
         }
     }
@@ -57,10 +185,12 @@ impl From<crate::ArtifactValidationError> for ParseError {
     }
 }
 
-#[must_use]
-pub(crate) fn to_bytes(artifact: &PageArtifact) -> Vec<u8> {
-    let mut writer = Writer { bytes: Vec::new() };
-    writer.bytes.extend_from_slice(MAGIC);
+pub(crate) fn to_bytes(
+    artifact: &PageArtifact,
+    limits: ArtifactCodecLimits,
+) -> Result<Vec<u8>, SerializeError> {
+    let mut writer = Writer::new(limits);
+    writer.raw(MAGIC);
     writer.u8(VERSION);
     writer.i32(artifact.job.mag);
     writer.str(&artifact.job.banner);
@@ -72,11 +202,27 @@ pub(crate) fn to_bytes(artifact: &PageArtifact) -> Vec<u8> {
     }
     writer.node(&artifact.root);
     writer.effects(&artifact.effects);
-    writer.bytes
+    writer.finish()
 }
 
-pub(crate) fn from_bytes(bytes: &[u8]) -> Result<UnvalidatedPageArtifact, ParseError> {
-    let mut reader = Reader { bytes, offset: 0 };
+pub(crate) fn from_bytes(
+    bytes: &[u8],
+    limits: ArtifactCodecLimits,
+) -> Result<UnvalidatedPageArtifact, ParseError> {
+    if bytes.len() > limits.max_bytes {
+        return Err(ParseError::LimitExceeded {
+            kind: CodecLimitKind::Bytes,
+            actual: bytes.len(),
+            limit: limits.max_bytes,
+        });
+    }
+    let mut reader = Reader {
+        bytes,
+        offset: 0,
+        limits,
+        nodes_seen: 0,
+        collection_items_seen: 0,
+    };
     reader.expect_magic()?;
     let version = reader.u8()?;
     if version != VERSION {
@@ -110,23 +256,63 @@ pub(crate) fn from_bytes(bytes: &[u8]) -> Result<UnvalidatedPageArtifact, ParseE
 
 struct Writer {
     bytes: Vec<u8>,
+    limits: ArtifactCodecLimits,
+    error: Option<SerializeError>,
+    nodes_seen: usize,
+    collection_items_seen: usize,
 }
 
 impl Writer {
+    fn new(limits: ArtifactCodecLimits) -> Self {
+        Self {
+            bytes: Vec::new(),
+            limits,
+            error: None,
+            nodes_seen: 0,
+            collection_items_seen: 0,
+        }
+    }
+
+    fn finish(self) -> Result<Vec<u8>, SerializeError> {
+        if let Some(error) = self.error {
+            return Err(error);
+        }
+        Ok(self.bytes)
+    }
+
+    fn raw(&mut self, bytes: &[u8]) {
+        if self.error.is_some() {
+            return;
+        }
+        let Some(actual) = self.bytes.len().checked_add(bytes.len()) else {
+            self.error = Some(SerializeError::LengthOverflow);
+            return;
+        };
+        if actual > self.limits.max_bytes {
+            self.error = Some(SerializeError::LimitExceeded {
+                kind: CodecLimitKind::Bytes,
+                actual,
+                limit: self.limits.max_bytes,
+            });
+            return;
+        }
+        self.bytes.extend_from_slice(bytes);
+    }
+
     fn u8(&mut self, value: u8) {
-        self.bytes.push(value);
+        self.raw(&[value]);
     }
 
     fn u32(&mut self, value: u32) {
-        self.bytes.extend_from_slice(&value.to_le_bytes());
+        self.raw(&value.to_le_bytes());
     }
 
     fn u16(&mut self, value: u16) {
-        self.bytes.extend_from_slice(&value.to_le_bytes());
+        self.raw(&value.to_le_bytes());
     }
 
     fn i32(&mut self, value: i32) {
-        self.bytes.extend_from_slice(&value.to_le_bytes());
+        self.raw(&value.to_le_bytes());
     }
 
     fn scaled(&mut self, value: Scaled) {
@@ -134,12 +320,48 @@ impl Writer {
     }
 
     fn len(&mut self, len: usize) {
-        self.u32(u32::try_from(len).expect("page artifact length exceeds u32"));
+        match u32::try_from(len) {
+            Ok(len) => self.u32(len),
+            Err(_) => self.error = Some(SerializeError::LengthOverflow),
+        }
+    }
+
+    fn collection_len(&mut self, len: usize) {
+        if len > self.limits.max_collection_len {
+            self.error = Some(SerializeError::LimitExceeded {
+                kind: CodecLimitKind::CollectionLength,
+                actual: len,
+                limit: self.limits.max_collection_len,
+            });
+            return;
+        }
+        let Some(actual) = self.collection_items_seen.checked_add(len) else {
+            self.error = Some(SerializeError::LengthOverflow);
+            return;
+        };
+        if actual > self.limits.max_collection_items {
+            self.error = Some(SerializeError::LimitExceeded {
+                kind: CodecLimitKind::CollectionItems,
+                actual,
+                limit: self.limits.max_collection_items,
+            });
+            return;
+        }
+        self.collection_items_seen = actual;
+        self.len(len);
     }
 
     fn bytes(&mut self, bytes: &[u8]) {
+        if bytes.len() > self.limits.max_collection_len {
+            self.error = Some(SerializeError::LimitExceeded {
+                kind: CodecLimitKind::CollectionLength,
+                actual: bytes.len(),
+                limit: self.limits.max_collection_len,
+            });
+            return;
+        }
         self.len(bytes.len());
-        self.bytes.extend_from_slice(bytes);
+        self.raw(bytes);
     }
 
     fn str(&mut self, value: &str) {
@@ -147,7 +369,7 @@ impl Writer {
     }
 
     fn hash(&mut self, value: ContentHash) {
-        self.bytes.extend_from_slice(&value.bytes());
+        self.raw(&value.bytes());
     }
 
     fn optional_scaled(&mut self, value: Option<Scaled>) {
@@ -161,8 +383,11 @@ impl Writer {
     }
 
     fn fonts(&mut self, fonts: &[FontResource]) {
-        self.len(fonts.len());
+        self.collection_len(fonts.len());
         for font in fonts {
+            if self.error.is_some() {
+                return;
+            }
             self.u32(font.font_id);
             self.str(&font.name);
             self.hash(font.tfm_content_hash);
@@ -173,25 +398,28 @@ impl Writer {
     }
 
     fn effects(&mut self, effects: &[PageEffect]) {
-        self.len(effects.len());
+        self.collection_len(effects.len());
         for effect in effects {
+            if self.error.is_some() {
+                return;
+            }
             match effect {
                 PageEffect::OpenOut { stream, path } => {
-                    self.u8(0);
+                    self.u8(wire::effect::OPEN_OUT);
                     self.u8(*stream);
                     self.str(path);
                 }
                 PageEffect::CloseOut { stream } => {
-                    self.u8(1);
+                    self.u8(wire::effect::CLOSE_OUT);
                     self.u8(*stream);
                 }
                 PageEffect::Write { sink, text } => {
-                    self.u8(2);
+                    self.u8(wire::effect::WRITE);
                     self.sink(*sink);
                     self.str(text);
                 }
                 PageEffect::Special { class, payload } => {
-                    self.u8(3);
+                    self.u8(wire::effect::SPECIAL);
                     self.str(class);
                     self.bytes(payload);
                 }
@@ -201,20 +429,58 @@ impl Writer {
 
     fn sink(&mut self, sink: EffectSink) {
         match sink {
-            EffectSink::Terminal => self.u8(0),
-            EffectSink::Log => self.u8(1),
-            EffectSink::TerminalAndLog => self.u8(2),
+            EffectSink::Terminal => self.u8(wire::sink::TERMINAL),
+            EffectSink::Log => self.u8(wire::sink::LOG),
+            EffectSink::TerminalAndLog => self.u8(wire::sink::TERMINAL_AND_LOG),
             EffectSink::Stream(stream) => {
-                self.u8(3);
+                self.u8(wire::sink::STREAM);
                 self.u8(stream);
             }
         }
     }
 
     fn node(&mut self, node: &PageNode) {
+        let mut tasks = vec![WriteTask::Node(node, 1)];
+        while let Some(task) = tasks.pop() {
+            if self.error.is_some() {
+                return;
+            }
+            match task {
+                WriteTask::Node(node, depth) => {
+                    if depth > self.limits.max_depth {
+                        self.error = Some(SerializeError::LimitExceeded {
+                            kind: CodecLimitKind::Depth,
+                            actual: depth,
+                            limit: self.limits.max_depth,
+                        });
+                        continue;
+                    }
+                    self.nodes_seen += 1;
+                    if self.nodes_seen > self.limits.max_nodes {
+                        self.error = Some(SerializeError::LimitExceeded {
+                            kind: CodecLimitKind::Nodes,
+                            actual: self.nodes_seen,
+                            limit: self.limits.max_nodes,
+                        });
+                        continue;
+                    }
+                    self.node_head(node, depth, &mut tasks);
+                }
+                WriteTask::NodeList(nodes, depth) => {
+                    self.collection_len(nodes.len());
+                    if self.error.is_some() {
+                        continue;
+                    }
+                    tasks.extend(nodes.iter().rev().map(|node| WriteTask::Node(node, depth)));
+                }
+            }
+        }
+    }
+
+    fn node_head<'a>(&mut self, node: &'a PageNode, depth: usize, tasks: &mut Vec<WriteTask<'a>>) {
         match node {
             PageNode::Char { font_id, ch, width } => {
-                self.u8(0);
+                self.u8(wire::node::CHAR);
                 self.u32(*font_id);
                 self.u32(*ch);
                 self.scaled(*width);
@@ -226,7 +492,7 @@ impl Writer {
                 right,
                 width,
             } => {
-                self.u8(1);
+                self.u8(wire::node::LIG);
                 self.u32(*font_id);
                 self.u32(*ch);
                 self.u32(*left);
@@ -234,18 +500,40 @@ impl Writer {
                 self.scaled(*width);
             }
             PageNode::Kern { amount, kind } => {
-                self.u8(2);
+                self.u8(wire::node::KERN);
                 self.scaled(*amount);
                 self.u8(kern_kind_tag(*kind));
             }
             PageNode::Glue { spec, kind, leader } => {
-                self.u8(3);
+                self.u8(wire::node::GLUE);
                 self.glue_spec(*spec);
                 self.u8(glue_kind_tag(*kind));
-                self.leader_payload(leader.as_ref());
+                match leader {
+                    None => self.u8(wire::leader::NONE),
+                    Some(LeaderPayload::HList(box_node)) => {
+                        self.u8(wire::leader::HLIST);
+                        self.box_fields(box_node);
+                        tasks.push(WriteTask::NodeList(&box_node.children, depth + 1));
+                    }
+                    Some(LeaderPayload::VList(box_node)) => {
+                        self.u8(wire::leader::VLIST);
+                        self.box_fields(box_node);
+                        tasks.push(WriteTask::NodeList(&box_node.children, depth + 1));
+                    }
+                    Some(LeaderPayload::Rule {
+                        width,
+                        height,
+                        depth,
+                    }) => {
+                        self.u8(wire::leader::RULE);
+                        self.optional_scaled(*width);
+                        self.optional_scaled(*height);
+                        self.optional_scaled(*depth);
+                    }
+                }
             }
             PageNode::Penalty(value) => {
-                self.u8(4);
+                self.u8(wire::node::PENALTY);
                 self.i32(*value);
             }
             PageNode::Rule {
@@ -253,18 +541,20 @@ impl Writer {
                 height,
                 depth,
             } => {
-                self.u8(5);
+                self.u8(wire::node::RULE);
                 self.optional_scaled(*width);
                 self.optional_scaled(*height);
                 self.optional_scaled(*depth);
             }
             PageNode::HList(box_node) => {
-                self.u8(6);
-                self.box_node(box_node);
+                self.u8(wire::node::HLIST);
+                self.box_fields(box_node);
+                tasks.push(WriteTask::NodeList(&box_node.children, depth + 1));
             }
             PageNode::VList(box_node) => {
-                self.u8(7);
-                self.box_node(box_node);
+                self.u8(wire::node::VLIST);
+                self.box_fields(box_node);
+                tasks.push(WriteTask::NodeList(&box_node.children, depth + 1));
             }
             PageNode::Disc {
                 kind,
@@ -272,98 +562,70 @@ impl Writer {
                 post,
                 replace,
             } => {
-                self.u8(12);
+                self.u8(wire::node::DISC);
                 self.u8(disc_kind_tag(*kind));
-                self.node_list(pre);
-                self.node_list(post);
-                self.node_list(replace);
+                tasks.push(WriteTask::NodeList(replace, depth + 1));
+                tasks.push(WriteTask::NodeList(post, depth + 1));
+                tasks.push(WriteTask::NodeList(pre, depth + 1));
             }
             PageNode::Mark { class, tokens } => {
-                self.u8(13);
+                self.u8(wire::node::MARK);
                 self.u16(*class);
                 self.tokens(tokens);
             }
             PageNode::Insert { class, content } => {
-                self.u8(14);
+                self.u8(wire::node::INSERT);
                 self.u16(*class);
-                self.node_list(content);
+                tasks.push(WriteTask::NodeList(content, depth + 1));
             }
             PageNode::WhatsitAnchor { effect_index } => {
-                self.u8(9);
+                self.u8(wire::node::WHATSIT_ANCHOR);
                 self.u32(*effect_index);
             }
             PageNode::MathOn(width) => {
-                self.u8(10);
+                self.u8(wire::node::MATH_ON);
                 self.scaled(*width);
             }
             PageNode::MathOff(width) => {
-                self.u8(11);
+                self.u8(wire::node::MATH_OFF);
                 self.scaled(*width);
             }
             PageNode::Adjust(content) => {
-                self.u8(15);
-                self.node_list(content);
+                self.u8(wire::node::ADJUST);
+                tasks.push(WriteTask::NodeList(content, depth + 1));
             }
-        }
-    }
-
-    fn node_list(&mut self, nodes: &[PageNode]) {
-        self.len(nodes.len());
-        for node in nodes {
-            self.node(node);
         }
     }
 
     fn tokens(&mut self, tokens: &[PageToken]) {
-        self.len(tokens.len());
+        self.collection_len(tokens.len());
         for token in tokens {
+            if self.error.is_some() {
+                return;
+            }
             match token {
                 PageToken::Char { ch, cat } => {
-                    self.u8(0);
+                    self.u8(wire::token::CHAR);
                     self.u32(*ch);
                     self.u8(token_catcode_tag(*cat));
                 }
                 PageToken::ControlSequence(name) => {
-                    self.u8(1);
+                    self.u8(wire::token::CONTROL_SEQUENCE);
                     self.str(name);
                 }
                 PageToken::Param(slot) => {
-                    self.u8(2);
+                    self.u8(wire::token::PARAM);
                     self.u8(*slot);
                 }
                 PageToken::ActiveControlSequence(ch) => {
-                    self.u8(3);
+                    self.u8(wire::token::ACTIVE_CONTROL_SEQUENCE);
                     self.u32(*ch);
                 }
             }
         }
     }
 
-    fn leader_payload(&mut self, leader: Option<&LeaderPayload>) {
-        match leader {
-            None => self.u8(0),
-            Some(LeaderPayload::HList(box_node)) => {
-                self.u8(1);
-                self.box_node(box_node);
-            }
-            Some(LeaderPayload::VList(box_node)) => {
-                self.u8(2);
-                self.box_node(box_node);
-            }
-            Some(LeaderPayload::Rule {
-                width,
-                height,
-                depth,
-            }) => {
-                self.u8(3);
-                self.optional_scaled(*width);
-                self.optional_scaled(*height);
-                self.optional_scaled(*depth);
-            }
-        }
-    }
-
-    fn box_node(&mut self, box_node: &BoxNode) {
+    fn box_fields(&mut self, box_node: &BoxNode) {
         self.scaled(box_node.width);
         self.scaled(box_node.height);
         self.scaled(box_node.depth);
@@ -372,7 +634,6 @@ impl Writer {
         self.i32(box_node.glue_set.denominator());
         self.u8(glue_sign_tag(box_node.glue_sign));
         self.u8(glue_order_tag(box_node.glue_order));
-        self.node_list(&box_node.children);
     }
 
     fn glue_spec(&mut self, spec: GlueSpec) {
@@ -384,9 +645,17 @@ impl Writer {
     }
 }
 
+enum WriteTask<'a> {
+    Node(&'a PageNode, usize),
+    NodeList(&'a [PageNode], usize),
+}
+
 struct Reader<'a> {
     bytes: &'a [u8],
     offset: usize,
+    limits: ArtifactCodecLimits,
+    nodes_seen: usize,
+    collection_items_seen: usize,
 }
 
 impl Reader<'_> {
@@ -453,8 +722,44 @@ impl Reader<'_> {
         usize::try_from(self.u32()?).map_err(|_| ParseError::LengthOverflow)
     }
 
+    fn collection_len(&mut self, min_item_bytes: usize) -> Result<usize, ParseError> {
+        let len = self.len()?;
+        if len > self.limits.max_collection_len {
+            return Err(ParseError::LimitExceeded {
+                kind: CodecLimitKind::CollectionLength,
+                actual: len,
+                limit: self.limits.max_collection_len,
+            });
+        }
+        self.collection_items_seen = self
+            .collection_items_seen
+            .checked_add(len)
+            .ok_or(ParseError::LengthOverflow)?;
+        if self.collection_items_seen > self.limits.max_collection_items {
+            return Err(ParseError::LimitExceeded {
+                kind: CodecLimitKind::CollectionItems,
+                actual: self.collection_items_seen,
+                limit: self.limits.max_collection_items,
+            });
+        }
+        let minimum_bytes = len
+            .checked_mul(min_item_bytes)
+            .ok_or(ParseError::LengthOverflow)?;
+        if minimum_bytes > self.bytes.len() - self.offset {
+            return Err(ParseError::UnexpectedEof);
+        }
+        Ok(len)
+    }
+
     fn bytes(&mut self) -> Result<Vec<u8>, ParseError> {
         let len = self.len()?;
+        if len > self.limits.max_collection_len {
+            return Err(ParseError::LimitExceeded {
+                kind: CodecLimitKind::CollectionLength,
+                actual: len,
+                limit: self.limits.max_collection_len,
+            });
+        }
         Ok(self.take(len)?.to_vec())
     }
 
@@ -480,7 +785,7 @@ impl Reader<'_> {
     }
 
     fn fonts(&mut self) -> Result<Vec<FontResource>, ParseError> {
-        let len = self.len()?;
+        let len = self.collection_len(52)?;
         let mut fonts = Vec::with_capacity(len);
         for _ in 0..len {
             fonts.push(FontResource {
@@ -496,21 +801,21 @@ impl Reader<'_> {
     }
 
     fn effects(&mut self) -> Result<Vec<PageEffect>, ParseError> {
-        let len = self.len()?;
+        let len = self.collection_len(2)?;
         let mut effects = Vec::with_capacity(len);
         for _ in 0..len {
             let tag = self.u8()?;
             effects.push(match tag {
-                0 => PageEffect::OpenOut {
+                wire::effect::OPEN_OUT => PageEffect::OpenOut {
                     stream: self.u8()?,
                     path: self.str()?,
                 },
-                1 => PageEffect::CloseOut { stream: self.u8()? },
-                2 => PageEffect::Write {
+                wire::effect::CLOSE_OUT => PageEffect::CloseOut { stream: self.u8()? },
+                wire::effect::WRITE => PageEffect::Write {
                     sink: self.sink()?,
                     text: self.str()?,
                 },
-                3 => PageEffect::Special {
+                wire::effect::SPECIAL => PageEffect::Special {
                     class: self.str()?,
                     payload: self.bytes()?,
                 },
@@ -527,91 +832,189 @@ impl Reader<'_> {
 
     fn sink(&mut self) -> Result<EffectSink, ParseError> {
         match self.u8()? {
-            0 => Ok(EffectSink::Terminal),
-            1 => Ok(EffectSink::Log),
-            2 => Ok(EffectSink::TerminalAndLog),
-            3 => Ok(EffectSink::Stream(self.u8()?)),
+            wire::sink::TERMINAL => Ok(EffectSink::Terminal),
+            wire::sink::LOG => Ok(EffectSink::Log),
+            wire::sink::TERMINAL_AND_LOG => Ok(EffectSink::TerminalAndLog),
+            wire::sink::STREAM => Ok(EffectSink::Stream(self.u8()?)),
             tag => Err(ParseError::InvalidTag { kind: "sink", tag }),
         }
     }
 
     fn node(&mut self) -> Result<PageNode, ParseError> {
+        let mut frames = Vec::new();
+        loop {
+            let depth = frames.len() + 1;
+            if depth > self.limits.max_depth {
+                return Err(ParseError::LimitExceeded {
+                    kind: CodecLimitKind::Depth,
+                    actual: depth,
+                    limit: self.limits.max_depth,
+                });
+            }
+            self.nodes_seen = self
+                .nodes_seen
+                .checked_add(1)
+                .ok_or(ParseError::LengthOverflow)?;
+            if self.nodes_seen > self.limits.max_nodes {
+                return Err(ParseError::LimitExceeded {
+                    kind: CodecLimitKind::Nodes,
+                    actual: self.nodes_seen,
+                    limit: self.limits.max_nodes,
+                });
+            }
+
+            let mut completed = match self.node_head()? {
+                ParsedNode::Complete(node) => node,
+                ParsedNode::Frame(mut frame) => match frame.advance(None, self)? {
+                    FrameProgress::NeedChild => {
+                        frames.push(frame);
+                        continue;
+                    }
+                    FrameProgress::Complete(node) => node,
+                },
+            };
+
+            loop {
+                let Some(mut frame) = frames.pop() else {
+                    return Ok(completed);
+                };
+                match frame.advance(Some(completed), self)? {
+                    FrameProgress::NeedChild => {
+                        frames.push(frame);
+                        break;
+                    }
+                    FrameProgress::Complete(node) => completed = node,
+                }
+            }
+        }
+    }
+
+    fn node_head(&mut self) -> Result<ParsedNode, ParseError> {
         let tag = self.u8()?;
         match tag {
-            0 => Ok(PageNode::Char {
+            wire::node::CHAR => Ok(ParsedNode::Complete(PageNode::Char {
                 font_id: self.u32()?,
                 ch: self.u32()?,
                 width: self.scaled()?,
-            }),
-            1 => Ok(PageNode::Lig {
+            })),
+            wire::node::LIG => Ok(ParsedNode::Complete(PageNode::Lig {
                 font_id: self.u32()?,
                 ch: self.u32()?,
                 left: self.u32()?,
                 right: self.u32()?,
                 width: self.scaled()?,
-            }),
-            2 => Ok(PageNode::Kern {
+            })),
+            wire::node::KERN => Ok(ParsedNode::Complete(PageNode::Kern {
                 amount: self.scaled()?,
                 kind: parse_kern_kind(self.u8()?)?,
-            }),
-            3 => Ok(PageNode::Glue {
-                spec: self.glue_spec()?,
-                kind: parse_glue_kind(self.u8()?)?,
-                leader: self.leader_payload()?,
-            }),
-            4 => Ok(PageNode::Penalty(self.i32()?)),
-            5 => Ok(PageNode::Rule {
+            })),
+            wire::node::GLUE => {
+                let spec = self.glue_spec()?;
+                let kind = parse_glue_kind(self.u8()?)?;
+                match self.u8()? {
+                    wire::leader::NONE => Ok(ParsedNode::Complete(PageNode::Glue {
+                        spec,
+                        kind,
+                        leader: None,
+                    })),
+                    tag @ (wire::leader::HLIST | wire::leader::VLIST) => {
+                        let fields = self.box_fields()?;
+                        let remaining = self.collection_len(5)?;
+                        Ok(ParsedNode::Frame(DecodeFrame::LeaderBox {
+                            spec,
+                            kind,
+                            vertical: tag == wire::leader::VLIST,
+                            fields,
+                            children: Vec::with_capacity(remaining),
+                            remaining,
+                        }))
+                    }
+                    wire::leader::RULE => Ok(ParsedNode::Complete(PageNode::Glue {
+                        spec,
+                        kind,
+                        leader: Some(LeaderPayload::Rule {
+                            width: self.optional_scaled()?,
+                            height: self.optional_scaled()?,
+                            depth: self.optional_scaled()?,
+                        }),
+                    })),
+                    tag => Err(ParseError::InvalidTag {
+                        kind: "leader payload",
+                        tag,
+                    }),
+                }
+            }
+            wire::node::PENALTY => Ok(ParsedNode::Complete(PageNode::Penalty(self.i32()?))),
+            wire::node::RULE => Ok(ParsedNode::Complete(PageNode::Rule {
                 width: self.optional_scaled()?,
                 height: self.optional_scaled()?,
                 depth: self.optional_scaled()?,
-            }),
-            6 => Ok(PageNode::HList(self.box_node()?)),
-            7 => Ok(PageNode::VList(self.box_node()?)),
-            9 => Ok(PageNode::WhatsitAnchor {
+            })),
+            tag @ (wire::node::HLIST | wire::node::VLIST) => {
+                let fields = self.box_fields()?;
+                let remaining = self.collection_len(5)?;
+                Ok(ParsedNode::Frame(DecodeFrame::Box {
+                    vertical: tag == wire::node::VLIST,
+                    fields,
+                    children: Vec::with_capacity(remaining),
+                    remaining,
+                }))
+            }
+            wire::node::WHATSIT_ANCHOR => Ok(ParsedNode::Complete(PageNode::WhatsitAnchor {
                 effect_index: self.u32()?,
-            }),
-            10 => Ok(PageNode::MathOn(self.scaled()?)),
-            11 => Ok(PageNode::MathOff(self.scaled()?)),
-            12 => Ok(PageNode::Disc {
-                kind: parse_disc_kind(self.u8()?)?,
-                pre: self.node_list()?,
-                post: self.node_list()?,
-                replace: self.node_list()?,
-            }),
-            13 => Ok(PageNode::Mark {
+            })),
+            wire::node::MATH_ON => Ok(ParsedNode::Complete(PageNode::MathOn(self.scaled()?))),
+            wire::node::MATH_OFF => Ok(ParsedNode::Complete(PageNode::MathOff(self.scaled()?))),
+            wire::node::DISC => {
+                let kind = parse_disc_kind(self.u8()?)?;
+                let remaining = self.collection_len(5)?;
+                Ok(ParsedNode::Frame(DecodeFrame::Disc {
+                    kind,
+                    phase: 0,
+                    pre: Vec::with_capacity(remaining),
+                    post: Vec::new(),
+                    replace: Vec::new(),
+                    remaining,
+                }))
+            }
+            wire::node::MARK => Ok(ParsedNode::Complete(PageNode::Mark {
                 class: self.u16()?,
                 tokens: self.tokens()?,
-            }),
-            14 => Ok(PageNode::Insert {
-                class: self.u16()?,
-                content: self.node_list()?,
-            }),
-            15 => Ok(PageNode::Adjust(self.node_list()?)),
+            })),
+            wire::node::INSERT => {
+                let class = self.u16()?;
+                let remaining = self.collection_len(5)?;
+                Ok(ParsedNode::Frame(DecodeFrame::Insert {
+                    class,
+                    content: Vec::with_capacity(remaining),
+                    remaining,
+                }))
+            }
+            wire::node::ADJUST => {
+                let remaining = self.collection_len(5)?;
+                Ok(ParsedNode::Frame(DecodeFrame::Adjust {
+                    content: Vec::with_capacity(remaining),
+                    remaining,
+                }))
+            }
             tag => Err(ParseError::InvalidTag { kind: "node", tag }),
         }
     }
 
-    fn node_list(&mut self) -> Result<Vec<PageNode>, ParseError> {
-        let len = self.len()?;
-        let mut nodes = Vec::with_capacity(len);
-        for _ in 0..len {
-            nodes.push(self.node()?);
-        }
-        Ok(nodes)
-    }
-
     fn tokens(&mut self) -> Result<Vec<PageToken>, ParseError> {
-        let len = self.len()?;
+        let len = self.collection_len(2)?;
         let mut tokens = Vec::with_capacity(len);
         for _ in 0..len {
             tokens.push(match self.u8()? {
-                0 => PageToken::Char {
+                wire::token::CHAR => PageToken::Char {
                     ch: self.u32()?,
                     cat: parse_token_catcode(self.u8()?)?,
                 },
-                1 => PageToken::ControlSequence(self.str()?),
-                2 => PageToken::Param(self.u8()?),
-                3 => PageToken::ActiveControlSequence(self.u32()?),
+                wire::token::CONTROL_SEQUENCE => PageToken::ControlSequence(self.str()?),
+                wire::token::PARAM => PageToken::Param(self.u8()?),
+                wire::token::ACTIVE_CONTROL_SEQUENCE => {
+                    PageToken::ActiveControlSequence(self.u32()?)
+                }
                 tag => {
                     return Err(ParseError::InvalidTag { kind: "token", tag });
                 }
@@ -620,24 +1023,7 @@ impl Reader<'_> {
         Ok(tokens)
     }
 
-    fn leader_payload(&mut self) -> Result<Option<LeaderPayload>, ParseError> {
-        match self.u8()? {
-            0 => Ok(None),
-            1 => Ok(Some(LeaderPayload::HList(self.box_node()?))),
-            2 => Ok(Some(LeaderPayload::VList(self.box_node()?))),
-            3 => Ok(Some(LeaderPayload::Rule {
-                width: self.optional_scaled()?,
-                height: self.optional_scaled()?,
-                depth: self.optional_scaled()?,
-            })),
-            tag => Err(ParseError::InvalidTag {
-                kind: "leader payload",
-                tag,
-            }),
-        }
-    }
-
-    fn box_node(&mut self) -> Result<BoxNode, ParseError> {
+    fn box_fields(&mut self) -> Result<BoxFields, ParseError> {
         let width = self.scaled()?;
         let height = self.scaled()?;
         let depth = self.scaled()?;
@@ -653,8 +1039,7 @@ impl Reader<'_> {
             })?;
         let glue_sign = parse_glue_sign(self.u8()?)?;
         let glue_order = parse_glue_order(self.u8()?)?;
-        let children = self.node_list()?;
-        Ok(BoxNode {
+        Ok(BoxFields {
             width,
             height,
             depth,
@@ -662,7 +1047,6 @@ impl Reader<'_> {
             glue_set,
             glue_sign,
             glue_order,
-            children,
         })
     }
 
@@ -674,6 +1058,208 @@ impl Reader<'_> {
             shrink: self.scaled()?,
             shrink_order: parse_glue_order(self.u8()?)?,
         })
+    }
+}
+
+struct BoxFields {
+    width: Scaled,
+    height: Scaled,
+    depth: Scaled,
+    shift: Scaled,
+    glue_set: GlueSetRatio,
+    glue_sign: GlueSign,
+    glue_order: GlueOrder,
+}
+
+impl BoxFields {
+    fn finish(self, children: Vec<PageNode>) -> BoxNode {
+        BoxNode {
+            width: self.width,
+            height: self.height,
+            depth: self.depth,
+            shift: self.shift,
+            glue_set: self.glue_set,
+            glue_sign: self.glue_sign,
+            glue_order: self.glue_order,
+            children,
+        }
+    }
+}
+
+enum ParsedNode {
+    Complete(PageNode),
+    Frame(DecodeFrame),
+}
+
+enum FrameProgress {
+    NeedChild,
+    Complete(PageNode),
+}
+
+enum DecodeFrame {
+    Box {
+        vertical: bool,
+        fields: BoxFields,
+        children: Vec<PageNode>,
+        remaining: usize,
+    },
+    LeaderBox {
+        spec: GlueSpec,
+        kind: GlueKind,
+        vertical: bool,
+        fields: BoxFields,
+        children: Vec<PageNode>,
+        remaining: usize,
+    },
+    Disc {
+        kind: DiscKind,
+        phase: u8,
+        pre: Vec<PageNode>,
+        post: Vec<PageNode>,
+        replace: Vec<PageNode>,
+        remaining: usize,
+    },
+    Insert {
+        class: u16,
+        content: Vec<PageNode>,
+        remaining: usize,
+    },
+    Adjust {
+        content: Vec<PageNode>,
+        remaining: usize,
+    },
+}
+
+impl DecodeFrame {
+    fn advance(
+        &mut self,
+        child: Option<PageNode>,
+        reader: &mut Reader<'_>,
+    ) -> Result<FrameProgress, ParseError> {
+        if let Some(child) = child {
+            match self {
+                Self::Box {
+                    children,
+                    remaining,
+                    ..
+                }
+                | Self::LeaderBox {
+                    children,
+                    remaining,
+                    ..
+                } => {
+                    children.push(child);
+                    *remaining -= 1;
+                }
+                Self::Disc {
+                    phase,
+                    pre,
+                    post,
+                    replace,
+                    remaining,
+                    ..
+                } => {
+                    match phase {
+                        0 => pre.push(child),
+                        1 => post.push(child),
+                        _ => replace.push(child),
+                    }
+                    *remaining -= 1;
+                }
+                Self::Insert {
+                    content, remaining, ..
+                }
+                | Self::Adjust { content, remaining } => {
+                    content.push(child);
+                    *remaining -= 1;
+                }
+            }
+        }
+
+        loop {
+            match self {
+                Self::Box { remaining, .. }
+                | Self::LeaderBox { remaining, .. }
+                | Self::Insert { remaining, .. }
+                | Self::Adjust { remaining, .. }
+                    if *remaining > 0 =>
+                {
+                    return Ok(FrameProgress::NeedChild);
+                }
+                Self::Disc { remaining, .. } if *remaining > 0 => {
+                    return Ok(FrameProgress::NeedChild);
+                }
+                Self::Disc {
+                    phase,
+                    post,
+                    replace,
+                    remaining,
+                    ..
+                } if *phase < 2 => {
+                    *phase += 1;
+                    *remaining = reader.collection_len(5)?;
+                    let target = if *phase == 1 { post } else { replace };
+                    target.reserve(*remaining);
+                }
+                _ => break,
+            }
+        }
+
+        let frame = std::mem::replace(
+            self,
+            Self::Adjust {
+                content: Vec::new(),
+                remaining: 0,
+            },
+        );
+        Ok(FrameProgress::Complete(match frame {
+            Self::Box {
+                vertical,
+                fields,
+                children,
+                ..
+            } => {
+                let box_node = fields.finish(children);
+                if vertical {
+                    PageNode::VList(box_node)
+                } else {
+                    PageNode::HList(box_node)
+                }
+            }
+            Self::LeaderBox {
+                spec,
+                kind,
+                vertical,
+                fields,
+                children,
+                ..
+            } => {
+                let box_node = fields.finish(children);
+                PageNode::Glue {
+                    spec,
+                    kind,
+                    leader: Some(if vertical {
+                        LeaderPayload::VList(box_node)
+                    } else {
+                        LeaderPayload::HList(box_node)
+                    }),
+                }
+            }
+            Self::Disc {
+                kind,
+                pre,
+                post,
+                replace,
+                ..
+            } => PageNode::Disc {
+                kind,
+                pre,
+                post,
+                replace,
+            },
+            Self::Insert { class, content, .. } => PageNode::Insert { class, content },
+            Self::Adjust { content, .. } => PageNode::Adjust(content),
+        }))
     }
 }
 

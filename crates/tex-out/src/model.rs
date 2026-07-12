@@ -17,20 +17,32 @@ pub struct UnvalidatedPageArtifact {
 pub struct PageArtifact(UnvalidatedPageArtifact);
 
 impl PageArtifact {
-    #[must_use]
-    pub fn to_bytes(&self) -> Vec<u8> {
-        crate::binary::to_bytes(self)
+    pub fn to_bytes(&self) -> Result<Vec<u8>, crate::SerializeError> {
+        self.to_bytes_with_limits(crate::ArtifactCodecLimits::default())
+    }
+
+    pub fn to_bytes_with_limits(
+        &self,
+        limits: crate::ArtifactCodecLimits,
+    ) -> Result<Vec<u8>, crate::SerializeError> {
+        crate::binary::to_bytes(self, limits)
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, crate::ParseError> {
-        crate::binary::from_bytes(bytes)?
+        Self::from_bytes_with_limits(bytes, crate::ArtifactCodecLimits::default())
+    }
+
+    pub fn from_bytes_with_limits(
+        bytes: &[u8],
+        limits: crate::ArtifactCodecLimits,
+    ) -> Result<Self, crate::ParseError> {
+        crate::binary::from_bytes(bytes, limits)?
             .validate()
             .map_err(Into::into)
     }
 
-    #[must_use]
-    pub fn content_hash(&self) -> ContentHash {
-        ContentHash::from_bytes(&self.to_bytes())
+    pub fn content_hash(&self) -> Result<ContentHash, crate::SerializeError> {
+        Ok(ContentHash::from_bytes(&self.to_bytes()?))
     }
 
     #[cfg(test)]

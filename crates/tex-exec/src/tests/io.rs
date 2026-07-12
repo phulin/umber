@@ -1100,7 +1100,7 @@ fn shipout_lowers_supported_whatsit_adjacent_nodes_without_reordering_effects() 
         .expect("read artifact")
         .expect("artifact stored");
     let artifact = PageArtifact::from_bytes(&bytes).expect("artifact parses");
-    assert_eq!(artifact.to_bytes(), bytes);
+    assert_eq!(artifact.to_bytes().expect("artifact serializes"), bytes);
     assert!(matches!(
         artifact.effects.as_slice(),
         [

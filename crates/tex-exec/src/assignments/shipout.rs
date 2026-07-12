@@ -114,7 +114,9 @@ where
     }
     .validate()
     .map_err(|error| ExecError::InvalidShipoutArtifact(error.to_string()))?;
-    let artifact_bytes = artifact.to_bytes();
+    let artifact_bytes = artifact
+        .to_bytes()
+        .map_err(|error| ExecError::InvalidShipoutArtifact(error.to_string()))?;
     let input_summary = input.publication_summary(stores);
     stores.set_input_summary(input_summary);
     let effect_pos = stores.world().effect_pos();

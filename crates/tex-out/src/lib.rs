@@ -11,7 +11,7 @@
 //! All integers are little-endian. Lengths are `u32`. `Scaled` values are their
 //! raw `i32` scaled-point representation. Strings and byte arrays are encoded
 //! as a `u32` byte length followed by exact bytes. The stream begins with
-//! `b"UMPG"` followed by one version byte; version `8` is the only accepted
+//! `b"UMPG"` followed by one version byte; version `9` is the only accepted
 //! version.
 //!
 //! ```text
@@ -37,7 +37,7 @@ mod model;
 #[cfg(test)]
 mod tests;
 
-pub use binary::ParseError;
+pub use binary::{ArtifactCodecLimits, CodecLimitKind, ParseError, SerializeError};
 pub use hash::ContentHash;
 pub use model::{
     ArtifactValidationError, ArtifactValidationLimits, BoxNode, DEFAULT_BANNER, DiscKind,
