@@ -5,6 +5,7 @@ use crate::ids::{GlueId, TokenListId};
 use crate::node::Node;
 use crate::scaled::Scaled;
 use crate::state_hash::StateHasher;
+use std::sync::Arc;
 
 /// TeX's `awful_bad` sentinel, `2^30 - 1`.
 pub const AWFUL_BAD: i32 = 0o7777777777;
@@ -261,8 +262,8 @@ impl PageInsertion {
 /// Snapshot-owned state for TeX.web's page builder.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct PageBuilderState {
-    contribution: Vec<Node>,
-    current_page: Vec<Node>,
+    contribution: Arc<Vec<Node>>,
+    current_page: Arc<Vec<Node>>,
     page_goal: Scaled,
     page_total: Scaled,
     page_stretch: Scaled,
@@ -282,7 +283,7 @@ pub(crate) struct PageBuilderState {
     best_page_break: Option<PageBreak>,
     best_size: Scaled,
     fire_up: Option<PageFireUp>,
-    insertions: Vec<PageInsertion>,
+    insertions: Arc<Vec<PageInsertion>>,
     top_mark: TokenListId,
     first_mark: TokenListId,
     bot_mark: TokenListId,
@@ -293,8 +294,8 @@ pub(crate) struct PageBuilderState {
 impl Default for PageBuilderState {
     fn default() -> Self {
         Self {
-            contribution: Vec::new(),
-            current_page: Vec::new(),
+            contribution: Arc::new(Vec::new()),
+            current_page: Arc::new(Vec::new()),
             page_goal: Scaled::from_raw(0),
             page_total: Scaled::from_raw(0),
             page_stretch: Scaled::from_raw(0),
@@ -314,7 +315,7 @@ impl Default for PageBuilderState {
             best_page_break: None,
             best_size: Scaled::from_raw(0),
             fire_up: None,
-            insertions: Vec::new(),
+            insertions: Arc::new(Vec::new()),
             top_mark: TokenListId::EMPTY,
             first_mark: TokenListId::EMPTY,
             bot_mark: TokenListId::EMPTY,
@@ -414,11 +415,11 @@ impl PageBuilderState {
         self.least_page_cost = AWFUL_BAD;
         self.best_page_break = None;
         self.best_size = Scaled::from_raw(0);
-        self.insertions.clear();
+        Arc::make_mut(&mut self.insertions).clear();
     }
 
     pub(crate) fn start_new_page(&mut self) {
-        self.current_page.clear();
+        Arc::make_mut(&mut self.current_page).clear();
         self.page_goal = Scaled::from_raw(0);
         self.page_total = Scaled::from_raw(0);
         self.page_stretch = Scaled::from_raw(0);
@@ -437,7 +438,7 @@ impl PageBuilderState {
         self.best_page_break = None;
         self.best_size = Scaled::from_raw(0);
         self.fire_up = None;
-        self.insertions.clear();
+        Arc::make_mut(&mut self.insertions).clear();
     }
 
     pub(crate) const fn contents(&self) -> PageContents {
@@ -472,7 +473,7 @@ impl PageBuilderState {
         self.best_page_break = Some(PageBreak::new(break_index));
         self.best_size = best_size;
         self.least_page_cost = cost;
-        for insertion in &mut self.insertions {
+        for insertion in Arc::make_mut(&mut self.insertions) {
             insertion.best_ins_index = insertion.last_ins_index;
         }
     }
@@ -493,11 +494,11 @@ impl PageBuilderState {
     }
 
     pub(crate) fn push_contribution(&mut self, node: Node) {
-        self.contribution.push(node);
+        Arc::make_mut(&mut self.contribution).push(node);
     }
 
     pub(crate) fn prepend_contribution(&mut self, node: Node) {
-        self.contribution.insert(0, node);
+        Arc::make_mut(&mut self.contribution).insert(0, node);
     }
 
     pub(crate) fn contribution(&self) -> &[Node] {
@@ -520,20 +521,20 @@ impl PageBuilderState {
         if self.contribution.is_empty() {
             None
         } else {
-            Some(self.contribution.remove(0))
+            Some(Arc::make_mut(&mut self.contribution).remove(0))
         }
     }
 
     pub(crate) fn pop_contribution_tail(&mut self) -> Option<Node> {
-        self.contribution.pop()
+        Arc::make_mut(&mut self.contribution).pop()
     }
 
     pub(crate) fn prepend_contributions(&mut self, mut nodes: Vec<Node>) {
         if nodes.is_empty() {
             return;
         }
-        nodes.append(&mut self.contribution);
-        self.contribution = nodes;
+        nodes.append(Arc::make_mut(&mut self.contribution));
+        self.contribution = Arc::new(nodes);
     }
 
     pub(crate) fn current_page(&self) -> &[Node] {
@@ -549,7 +550,7 @@ impl PageBuilderState {
     }
 
     pub(crate) fn push_current_page(&mut self, node: Node) {
-        self.current_page.push(node);
+        Arc::make_mut(&mut self.current_page).push(node);
     }
 
     pub(crate) fn page_insertions(&self) -> &[PageInsertion] {
@@ -568,8 +569,8 @@ impl PageBuilderState {
             .insertions
             .binary_search_by_key(&insertion.class(), PageInsertion::class)
         {
-            Ok(index) => self.insertions[index] = insertion,
-            Err(index) => self.insertions.insert(index, insertion),
+            Ok(index) => Arc::make_mut(&mut self.insertions)[index] = insertion,
+            Err(index) => Arc::make_mut(&mut self.insertions).insert(index, insertion),
         }
     }
 
@@ -578,8 +579,9 @@ impl PageBuilderState {
         split_index: usize,
     ) -> (Vec<Node>, Vec<Node>) {
         let split_index = split_index.min(self.current_page.len());
-        let after = self.current_page.split_off(split_index);
+        let after = Arc::make_mut(&mut self.current_page).split_off(split_index);
         let before = std::mem::take(&mut self.current_page);
+        let before = Arc::try_unwrap(before).unwrap_or_else(|shared| (*shared).clone());
         (before, after)
     }
 
@@ -663,7 +665,7 @@ impl PageBuilderState {
             None => hasher.bool(false),
         }
         hasher.usize(self.insertions.len());
-        for insertion in &self.insertions {
+        for insertion in self.insertions.iter() {
             hasher.u16(insertion.class);
             match insertion.status {
                 PageInsertionStatus::Inserting => hasher.u8(0),

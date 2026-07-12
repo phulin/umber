@@ -5,6 +5,7 @@ use crate::source_map::RegisteredSource;
 use crate::token::{Token, TracedTokenWord};
 use crate::world::InputRecordId;
 use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 
 /// Maximum number of macro arguments TeX permits in one macro body.
 pub const MACRO_ARGUMENT_SLOTS: usize = 9;
@@ -327,7 +328,7 @@ impl ConditionFrameSummary {
 /// Snapshot summary for the input stack.
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub struct InputSummary {
-    frames: Vec<InputFrameSummary>,
+    frames: Arc<[InputFrameSummary]>,
     last_source_id: Option<SourceId>,
     last_source_record: Option<InputRecordId>,
     last_source_frame: Option<SourceFrameSummary>,
@@ -383,7 +384,7 @@ impl InputSummary {
         unicode_superscript_notation: bool,
     ) -> Self {
         Self {
-            frames,
+            frames: frames.into(),
             last_source_id,
             last_source_record,
             last_source_frame,
@@ -572,14 +573,14 @@ pub struct SourceFrameSummary {
     line_number: usize,
     column: usize,
     lexer_state: LexerState,
-    normalized_line: String,
+    normalized_line: Arc<str>,
     line_byte_offset: usize,
     physical_content_end: usize,
     terminator_start: usize,
     terminator_end: usize,
     normalized_end_anchor: usize,
     synthetic_endline_start: Option<usize>,
-    pending: Vec<TracedTokenWord>,
+    pending: Arc<[TracedTokenWord]>,
     end_after_current_line: bool,
     registration: Option<RegisteredSource>,
 }
@@ -645,14 +646,14 @@ impl SourceFrameSummary {
             line_number,
             column,
             lexer_state,
-            normalized_line,
+            normalized_line: normalized_line.into(),
             line_byte_offset,
             physical_content_end,
             terminator_start,
             terminator_end,
             normalized_end_anchor,
             synthetic_endline_start,
-            pending,
+            pending: pending.into(),
             end_after_current_line,
             registration: None,
         }
@@ -802,7 +803,7 @@ impl Hash for SourceFrameSummary {
         self.normalized_end_anchor.hash(state);
         self.synthetic_endline_start.hash(state);
         self.pending.len().hash(state);
-        for token in &self.pending {
+        for token in self.pending.iter() {
             semantic_token(*token).hash(state);
         }
         self.end_after_current_line.hash(state);
