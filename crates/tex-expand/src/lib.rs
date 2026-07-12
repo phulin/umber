@@ -962,18 +962,16 @@ pub(crate) fn intercept_alignment_token<S>(
             .map(|symbol| stores.meaning(symbol)),
         Token::Char { .. } | Token::Param(_) | Token::Frozen(_) => None,
     };
+    // WEB updates align_state only in the character-token branches of
+    // get_next. A control sequence whose meaning was \let to a brace still
+    // has that command code for execution, but it does not change the input
+    // scanner's brace level merely by being delivered.
     let delivery = if matches!(
         token,
         Token::Char {
             cat: Catcode::BeginGroup,
             ..
         }
-    ) || matches!(
-        meaning,
-        Some(Meaning::CharToken {
-            cat: Catcode::BeginGroup,
-            ..
-        })
     ) {
         tex_lex::AlignmentTokenDelivery::LeftBrace
     } else if matches!(
@@ -982,12 +980,6 @@ pub(crate) fn intercept_alignment_token<S>(
             cat: Catcode::EndGroup,
             ..
         }
-    ) || matches!(
-        meaning,
-        Some(Meaning::CharToken {
-            cat: Catcode::EndGroup,
-            ..
-        })
     ) {
         tex_lex::AlignmentTokenDelivery::RightBrace
     } else {
@@ -1028,7 +1020,7 @@ pub(crate) fn intercept_alignment_token<S>(
 /// interception before the token can be observed. The lower-level
 /// `InputStack` reads remain reserved for the expansion loop and `\noexpand`,
 /// which must first classify one-shot suppression.
-pub(crate) fn next_semantic_raw_token<S>(
+pub fn next_semantic_raw_token<S>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
 ) -> Result<Option<TracedTokenWord>, tex_lex::LexError>
@@ -1045,9 +1037,8 @@ where
     }
 }
 
-/// Raw replay lookahead for the two TeX scanners that deliberately operate
-/// below `get_next`: a backtick character constant and optional-space
-/// consumption after an internal integer.
+/// Raw replay lookahead used by `\noexpand`, which must restore the next
+/// meaning before applying the alignment-sensitive part of `get_next`.
 pub(crate) fn next_unintercepted_raw_token<S>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,

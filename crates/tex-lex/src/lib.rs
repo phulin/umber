@@ -584,7 +584,7 @@ pub struct InputStack<S> {
     last_source_frame: Option<LastSourceFrame>,
     next_replay_marker: u64,
     next_condition_token: u64,
-    alignment_cells: Vec<AlignmentCellInput>,
+    alignment_inputs: Vec<AlignmentInput>,
     active_macro_invocation: OriginId,
     recently_popped_invocation: Option<OriginId>,
 }
@@ -624,11 +624,14 @@ pub enum AlignmentTokenDelivery {
 struct AlignmentCellInput {
     phase: AlignmentCellPhase,
     v_template: TokenListId,
-    brace_depth: i32,
-    group_depth: u32,
-    resumed_from_nested_alignment: bool,
-    delivered: Vec<(TracedTokenWord, AlignmentTokenDelivery)>,
     terminator: Option<TracedTokenWord>,
+}
+
+#[derive(Clone, Debug)]
+struct AlignmentInput {
+    align_state: i32,
+    cell: Option<AlignmentCellInput>,
+    delivered: Vec<(TracedTokenWord, AlignmentTokenDelivery)>,
 }
 
 /// Saved alignment-cell interception state while a nested preamble and body run.
@@ -636,7 +639,7 @@ struct AlignmentCellInput {
 /// Like TeX82's alignment-stack node, this value owns the exact outer state;
 /// nested input cannot observe or replace it before the matching restore.
 #[must_use]
-pub struct AlignmentCellSuspension(Option<AlignmentCellInput>);
+pub struct AlignmentCellSuspension(Option<AlignmentInput>);
 
 impl<S> InputStack<S> {
     /// Rebases a fresh, not-yet-registered stack into the aggregate source-id
@@ -698,7 +701,7 @@ impl<S> InputStack<S> {
             last_source_frame: None,
             next_replay_marker: 0,
             next_condition_token: 0,
-            alignment_cells: Vec::new(),
+            alignment_inputs: Vec::new(),
             active_macro_invocation: OriginId::UNKNOWN,
             recently_popped_invocation: None,
         };
@@ -828,10 +831,42 @@ impl<S> InputStack<S> {
                         .checked_add(1)
                         .expect("condition frame token overflowed")
                 }),
-            alignment_cells: Vec::new(),
+            alignment_inputs: Vec::new(),
             active_macro_invocation,
             recently_popped_invocation: None,
         })
+    }
+
+    /// Starts one TeX82 alignment-scanner level before `scan_spec`.
+    pub fn begin_alignment(&mut self) {
+        self.alignment_inputs.push(AlignmentInput {
+            align_state: -1_000_000,
+            cell: None,
+            delivered: Vec::new(),
+        });
+    }
+
+    /// Completes the active alignment-scanner level after `fin_align`.
+    pub fn finish_alignment(&mut self) {
+        let alignment = self
+            .alignment_inputs
+            .pop()
+            .expect("alignment input level must be active");
+        assert!(alignment.cell.is_none(), "alignment cell remained active");
+    }
+
+    /// Matches the sentinel assignments in TeX82's `align_peek` and preamble.
+    pub fn set_alignment_state(&mut self, state: i32) {
+        if let Some(alignment) = self.alignment_inputs.last_mut() {
+            alignment.align_state = state;
+        }
+    }
+
+    #[must_use]
+    pub fn alignment_state_is(&self, state: i32) -> bool {
+        self.alignment_inputs
+            .last()
+            .is_some_and(|alignment| alignment.align_state == state)
     }
 
     /// Starts TeX82's `get_next` alignment-cell interception.
@@ -844,22 +879,26 @@ impl<S> InputStack<S> {
         &mut self,
         u_template: Option<TokenListReplayMarker>,
         v_template: TokenListId,
-        group_depth: u32,
+        _group_depth: u32,
     ) {
-        self.alignment_cells.push(AlignmentCellInput {
+        let alignment = self
+            .alignment_inputs
+            .last_mut()
+            .expect("alignment input level must be active");
+        assert!(alignment.cell.is_none(), "alignment cell already active");
+        if u_template.is_none() {
+            alignment.align_state = 0;
+        }
+        alignment.cell = Some(AlignmentCellInput {
             phase: u_template.map_or(AlignmentCellPhase::Body, AlignmentCellPhase::UTemplate),
             v_template,
-            brace_depth: 0,
-            group_depth,
-            resumed_from_nested_alignment: false,
-            delivered: Vec::new(),
             terminator: None,
         });
     }
 
     /// Completes the active cell after its frozen end-v token is delivered.
     pub fn finish_alignment_cell(&mut self) -> Option<TracedTokenWord> {
-        let cell = self.alignment_cells.pop()?;
+        let cell = self.alignment_inputs.last_mut()?.cell.take()?;
         assert_eq!(cell.phase, AlignmentCellPhase::VTemplate);
         cell.terminator
     }
@@ -867,42 +906,56 @@ impl<S> InputStack<S> {
     /// Completes a cell whose terminator was already intercepted when later
     /// recovery consumed the synthetic end-v marker.
     pub fn finish_terminating_alignment_cell(&mut self) -> Option<TracedTokenWord> {
-        if self
-            .alignment_cells
-            .last()
-            .is_some_and(|cell| cell.phase == AlignmentCellPhase::VTemplate)
-        {
-            return self.alignment_cells.pop()?.terminator;
+        if self.alignment_inputs.last().is_some_and(|alignment| {
+            alignment
+                .cell
+                .as_ref()
+                .is_some_and(|cell| cell.phase == AlignmentCellPhase::VTemplate)
+        }) {
+            return self.alignment_inputs.last_mut()?.cell.take()?.terminator;
         }
         None
     }
 
     #[must_use]
     pub fn has_active_alignment_cell(&self) -> bool {
-        !self.alignment_cells.is_empty()
+        self.alignment_inputs
+            .last()
+            .is_some_and(|alignment| alignment.cell.is_some())
     }
 
     #[must_use]
     pub fn alignment_cell_at_base_depth(&self) -> bool {
-        self.alignment_cells
-            .last()
-            .is_some_and(|cell| cell.phase == AlignmentCellPhase::Body && cell.brace_depth == 0)
+        self.alignment_inputs.last().is_some_and(|alignment| {
+            alignment
+                .cell
+                .as_ref()
+                .is_some_and(|cell| cell.phase == AlignmentCellPhase::Body)
+                && alignment.align_state == 0
+        })
     }
 
     #[must_use]
     pub fn alignment_cell_below_base_depth(&self) -> bool {
-        self.alignment_cells
-            .last()
-            .is_some_and(|cell| cell.phase == AlignmentCellPhase::Body && cell.brace_depth < 0)
+        self.alignment_inputs.last().is_some_and(|alignment| {
+            alignment
+                .cell
+                .as_ref()
+                .is_some_and(|cell| cell.phase == AlignmentCellPhase::Body)
+                && alignment.align_state < 0
+        })
     }
 
     /// Restores the entry baseline after the triggering token is backed up,
     /// so an error-recovery `\\cr` is intercepted at entry depth.
     pub fn reset_alignment_cell_to_base_depth(&mut self) {
-        if let Some(cell) = self.alignment_cells.last_mut()
-            && cell.phase == AlignmentCellPhase::Body
+        if let Some(alignment) = self.alignment_inputs.last_mut()
+            && alignment
+                .cell
+                .as_ref()
+                .is_some_and(|cell| cell.phase == AlignmentCellPhase::Body)
         {
-            cell.brace_depth = 0;
+            alignment.align_state = 0;
         }
     }
 
@@ -912,27 +965,25 @@ impl<S> InputStack<S> {
     /// a nested alignment can begin while an outer u- or v-template is still
     /// replaying, not only from the cell body.
     pub fn suspend_alignment_cell(&mut self) -> AlignmentCellSuspension {
-        let cell = self.alignment_cells.pop();
-        AlignmentCellSuspension(cell)
+        AlignmentCellSuspension(self.alignment_inputs.pop())
     }
 
     pub fn resume_alignment_cell(&mut self, suspended: AlignmentCellSuspension) {
         assert!(
-            self.alignment_cells.is_empty(),
-            "nested alignment cell remained active at pop_alignment"
+            self.alignment_inputs.is_empty(),
+            "nested alignment input remained active at pop_alignment"
         );
-        if let Some(mut cell) = suspended.0 {
-            cell.resumed_from_nested_alignment = true;
-            self.alignment_cells.push(cell);
+        if let Some(alignment) = suspended.0 {
+            self.alignment_inputs.push(alignment);
         }
     }
 
     /// Unwinds nested interception state and restores a suspended outer cell.
     #[doc(hidden)]
     pub fn abort_alignment_and_resume(&mut self, suspended: AlignmentCellSuspension) {
-        self.alignment_cells.clear();
-        if let Some(cell) = suspended.0 {
-            self.alignment_cells.push(cell);
+        self.alignment_inputs.clear();
+        if let Some(alignment) = suspended.0 {
+            self.alignment_inputs.push(alignment);
         }
     }
 
@@ -945,63 +996,68 @@ impl<S> InputStack<S> {
         traced: TracedTokenWord,
         delivery: AlignmentTokenDelivery,
         terminator: Option<AlignmentTerminator>,
-        group_depth: u32,
+        _group_depth: u32,
     ) -> bool {
-        let Some(mut cell) = self.alignment_cells.pop() else {
+        let retired_u_template = self
+            .alignment_inputs
+            .last()
+            .and_then(|alignment| alignment.cell.as_ref())
+            .and_then(|cell| match cell.phase {
+                AlignmentCellPhase::UTemplate(marker) => Some(marker),
+                AlignmentCellPhase::Body | AlignmentCellPhase::VTemplate => None,
+            })
+            .is_some_and(|marker| !self.contains_token_list_replay_marker(marker));
+        let Some(alignment) = self.alignment_inputs.last_mut() else {
             return false;
         };
-        if let AlignmentCellPhase::UTemplate(marker) = cell.phase
-            && !self.contains_token_list_replay_marker(marker)
-        {
-            cell.phase = AlignmentCellPhase::Body;
-            cell.brace_depth = 0;
-            cell.group_depth = group_depth;
+        if retired_u_template && alignment.align_state > 500_000 {
+            alignment.align_state = 0;
         }
-        if cell.phase != AlignmentCellPhase::Body {
-            self.alignment_cells.push(cell);
-            return false;
-        }
-
         match delivery {
             AlignmentTokenDelivery::Other => {}
-            AlignmentTokenDelivery::LeftBrace => cell.brace_depth += 1,
-            AlignmentTokenDelivery::RightBrace => cell.brace_depth -= 1,
+            AlignmentTokenDelivery::LeftBrace => alignment.align_state += 1,
+            AlignmentTokenDelivery::RightBrace => alignment.align_state -= 1,
         }
-        cell.delivered.push((traced, delivery));
-        if cell.resumed_from_nested_alignment && terminator.is_some() {
-            let execution_delta = i64::from(group_depth) - i64::from(cell.group_depth);
-            cell.brace_depth = i32::try_from(execution_delta)
-                .expect("execution group depth delta fits alignment brace depth");
+        alignment.delivered.push((traced, delivery));
+        let Some(cell) = alignment.cell.as_mut() else {
+            return false;
+        };
+        if retired_u_template {
+            cell.phase = AlignmentCellPhase::Body;
         }
-        let terminates = cell.brace_depth == 0 && terminator.is_some();
-        if terminates {
+        if cell.phase != AlignmentCellPhase::Body {
+            return false;
+        }
+        let terminates = alignment.align_state == 0 && terminator.is_some();
+        let v_template = if terminates {
             cell.phase = AlignmentCellPhase::VTemplate;
             cell.terminator = Some(traced);
-            self.push_token_list(cell.v_template, TokenListReplayKind::Inserted);
+            Some(cell.v_template)
+        } else {
+            None
+        };
+        if let Some(v_template) = v_template {
+            self.push_token_list(v_template, TokenListReplayKind::Inserted);
         }
-        self.alignment_cells.push(cell);
         terminates
     }
 
     pub fn back_input_alignment_token(&mut self, traced: TracedTokenWord) {
-        let Some(cell) = self.alignment_cells.last_mut() else {
+        let Some(alignment) = self.alignment_inputs.last_mut() else {
             return;
         };
-        if cell.phase != AlignmentCellPhase::Body {
-            return;
-        }
-        let Some(index) = cell
+        let Some(index) = alignment
             .delivered
             .iter()
             .rposition(|(token, _)| *token == traced)
         else {
             return;
         };
-        let (_, delivery) = cell.delivered.remove(index);
+        let (_, delivery) = alignment.delivered.remove(index);
         match delivery {
             AlignmentTokenDelivery::Other => {}
-            AlignmentTokenDelivery::LeftBrace => cell.brace_depth -= 1,
-            AlignmentTokenDelivery::RightBrace => cell.brace_depth += 1,
+            AlignmentTokenDelivery::LeftBrace => alignment.align_state -= 1,
+            AlignmentTokenDelivery::RightBrace => alignment.align_state += 1,
         }
     }
 

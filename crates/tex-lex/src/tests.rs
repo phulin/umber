@@ -12,8 +12,10 @@ use tex_state::{ExpansionState, ProvenanceResolver, Universe};
 mod input_lines;
 
 #[test]
-fn nested_alignment_resume_reconciles_stale_outer_brace_depth() {
+fn nested_alignment_resume_preserves_outer_align_state() {
     let mut input = InputStack::new(MemoryInput::new(""));
+    input.begin_alignment();
+    input.set_alignment_state(0);
     input.begin_alignment_cell(None, TokenListId::EMPTY, 7);
     let left = TracedTokenWord::pack(char_token('{', Catcode::BeginGroup), OriginId::UNKNOWN);
     for _ in 0..2 {
@@ -29,7 +31,7 @@ fn nested_alignment_resume_reconciles_stale_outer_brace_depth() {
     input.resume_alignment_cell(suspended);
     let cr = TracedTokenWord::pack(char_token('x', Catcode::Escape), OriginId::UNKNOWN);
 
-    assert!(input.intercept_alignment_token(
+    assert!(!input.intercept_alignment_token(
         cr,
         super::AlignmentTokenDelivery::Other,
         Some(super::AlignmentTerminator::Cr),

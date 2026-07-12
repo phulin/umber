@@ -403,16 +403,21 @@ Responsibility: the token-level rewriting system — macros, conditionals,
   single main-control delivery. TeX82 leaves an already-unexpandable meaning
   unchanged, so a suppressed `\cr` or `\span` still terminates an alignment
   cell normally.
-- **Alignment delivery state** lives with the active `tex-lex` cell input,
-  not with stomach group depth. `tex-expand` classifies each delivered token
-  by effective meaning (including character-token brace aliases), while an
+- **Alignment delivery state** lives with the active `tex-lex` alignment
+  input, not with stomach group depth. It spans `scan_spec`, preamble scanning,
+  row peeking, and cell template replay just like TeX82's global `align_state`,
+  and is saved wholesale while a nested alignment runs. `tex-expand`
+  classifies literal character braces at each `get_next`-style delivery;
+  control sequences let to brace meanings retain their execution command but
+  do not take the character-token scanner branch. An
   expandable noexpand-suppressed meaning classifies as ordinary and an
   unexpandable suppressed meaning retains its brace/delimiter class. Scanner back-input uses one
   boundary that reverses only a transition recorded for an actually delivered
-  token before replay; synthetic insertion therefore cannot perturb the cell's
-  lexical brace depth. Suspending a cell for a nested alignment preserves this
-  complete delivery state. This is local alignment state, not an engine
-  checkpoint.
+  token before replay; synthetic insertion therefore cannot perturb the
+  sentinel. The preamble starts at `-1000000`, row peeking resets to `1000000`,
+  u-template retirement resets to zero before the first body token is counted,
+  and only a delimiter delivered at zero starts the v-template. Alphabetic
+  This is local alignment state, not an engine checkpoint.
 - **Read-set recording** hooks live here and in the stomach: when the
   incremental engine asks for it, meaning lookups record `(cell, epoch)`
   pairs (`core_state.md` §9). Off by default, zero-cost when off (the

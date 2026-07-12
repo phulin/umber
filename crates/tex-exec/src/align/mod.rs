@@ -41,6 +41,7 @@ where
             .trace_execution("alignment", format!("begin {primitive:?}"));
     }
     let suspended = input.suspend_alignment_cell();
+    input.begin_alignment();
     let mut transaction = crate::transaction::ExecutionTransaction::begin(nest, stores);
     let result = (|| {
         let (nest, stores) = transaction.parts();
@@ -49,6 +50,7 @@ where
     })();
     match result {
         Ok(()) => {
+            input.finish_alignment();
             input.resume_alignment_cell(suspended);
             transaction.commit();
             stores.world_mut().trace_execution("alignment", "commit");
@@ -82,6 +84,7 @@ where
             .trace_execution("alignment", "begin display halign");
     }
     let suspended = input.suspend_alignment_cell();
+    input.begin_alignment();
     let mut transaction = crate::transaction::ExecutionTransaction::begin(nest, stores);
     let result = (|| {
         let (nest, stores) = transaction.parts();
@@ -90,6 +93,7 @@ where
     })();
     match result {
         Ok(nodes) => {
+            input.finish_alignment();
             input.resume_alignment_cell(suspended);
             transaction.commit();
             stores

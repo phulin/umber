@@ -189,6 +189,7 @@ where
 {
     loop {
         set_align_brace_depth(nest, align_level, 1_000_000);
+        input.set_alignment_state(1_000_000);
         let Some(token) = next_non_space_traced_x(input, stores, hooks)? else {
             stores.world_mut().write_text(
                 PrintSink::TerminalAndLog,
@@ -198,7 +199,6 @@ where
             leave_group(input, stores, tex_state::GroupKind::Simple)?;
             return Ok(None);
         };
-        set_align_brace_depth(nest, align_level, 0);
         let semantic = tex_expand::semantic_token(token);
         if is_noalign(stores, semantic) {
             super::noalign::execute_noalign(align_level, nest, input, stores, recorder, hooks)?;

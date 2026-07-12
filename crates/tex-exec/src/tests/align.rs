@@ -11,6 +11,7 @@ fn scan_halign_preamble(source: &str) -> (Universe, AlignState) {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(source));
+    input.begin_alignment();
     let mut hooks = crate::executor::NoopExecHooks;
     let state = crate::align::scan_preamble(
         UnexpandablePrimitive::HAlign,
@@ -27,6 +28,7 @@ fn scan_valign_preamble(source: &str) -> (Universe, AlignState) {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(source));
+    input.begin_alignment();
     let mut hooks = crate::executor::NoopExecHooks;
     let state = crate::align::scan_preamble(
         UnexpandablePrimitive::VAlign,
@@ -796,6 +798,7 @@ fn alignment_preamble_errors_match_reference_wording() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("{abc\\cr}"));
+    input.begin_alignment();
     let mut hooks = crate::executor::NoopExecHooks;
     crate::align::scan_preamble(
         UnexpandablePrimitive::HAlign,
@@ -812,6 +815,7 @@ fn alignment_preamble_errors_match_reference_wording() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new("{#a#b\\cr}"));
+    input.begin_alignment();
     let mut hooks = crate::executor::NoopExecHooks;
     let state = crate::align::scan_preamble(
         UnexpandablePrimitive::HAlign,
@@ -1819,8 +1823,8 @@ fn trip_conditional_preamble_recovery_stops_before_following_input() {
             .iter()
             .filter(|node| matches!(node, Node::Penalty(97)))
             .count(),
-        3,
-        "this line-420 reduction runs everycr initially and after two rows"
+        2,
+        "official line-420 recovery runs everycr initially and after its sole row"
     );
     assert!(stats.delivered_tokens < 1_000);
     let first_hash = stores.snapshot().state_hash();

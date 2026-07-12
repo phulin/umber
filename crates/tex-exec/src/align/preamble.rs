@@ -51,6 +51,9 @@ where
         crate::push_tokens(input, stores, [opener]);
     }
     stores.enter_group_with_kind(GroupKind::Simple);
+    // TeX82 resets the global scanner sentinel after scan_spec has consumed
+    // the alignment opener and before copying the preamble.
+    input.set_alignment_state(-1_000_000);
 
     let end_template = stores.frozen_end_template_token();
     let mut scanner = PreambleScanner::new(input, stores, hooks);
@@ -238,7 +241,6 @@ struct PreambleScanner<'a, S, H> {
     hooks: &'a mut H,
     lookahead: Option<PreambleToken>,
     current_tabskip: GlueId,
-    brace_depth: i32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -261,7 +263,6 @@ where
             stores,
             hooks,
             lookahead: None,
-            brace_depth: 0,
         }
     }
 
@@ -270,7 +271,7 @@ where
     }
 
     fn at_template_level(&self) -> bool {
-        self.brace_depth == 0
+        self.input.alignment_state_is(-1_000_000)
     }
 
     fn next_is_alignment_tab(&mut self) -> Result<bool, ExecError> {
@@ -309,7 +310,6 @@ where
                 };
                 token = expanded;
             }
-            self.update_brace_depth(token);
             if self.try_scan_tabskip_assignment(token)? {
                 continue;
             }
@@ -318,7 +318,7 @@ where
     }
 
     fn next_raw(&mut self) -> Result<Option<PreambleToken>, ExecError> {
-        let Some(traced) = self.input.next_traced_token(self.stores)? else {
+        let Some(traced) = tex_expand::next_semantic_raw_token(self.input, self.stores)? else {
             return Ok(None);
         };
         Ok(Some(self.recover_outer_or_token(traced)))
@@ -401,20 +401,6 @@ where
             tex_state::PrintSink::TerminalAndLog,
             "\n! Missing # inserted in alignment preamble.\nThere should be exactly one # between &'s, when an\n\\halign or \\valign is being set up. In this case you had\nnone, so I've put one in; maybe that will work.\n",
         );
-    }
-
-    fn update_brace_depth(&mut self, token: Token) {
-        match token {
-            Token::Char {
-                cat: Catcode::BeginGroup,
-                ..
-            } => self.brace_depth = self.brace_depth.saturating_add(1),
-            Token::Char {
-                cat: Catcode::EndGroup,
-                ..
-            } => self.brace_depth = self.brace_depth.saturating_sub(1),
-            _ => {}
-        }
     }
 
     fn try_scan_tabskip_assignment(&mut self, token: Token) -> Result<bool, ExecError> {
