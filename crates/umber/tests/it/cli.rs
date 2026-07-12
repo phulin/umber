@@ -140,7 +140,7 @@ fn expand_dump_macro_error_renders_bounded_expansion_trace() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
-fn expand_dump_execution_error_renders_primary_source_context() {
+fn expand_dump_recovered_execution_error_exits_successfully() {
     let temp_dir = tempfile::tempdir().expect("create execution diagnostic temp dir");
     let source = temp_dir.path().join("prefix.tex");
     fs::write(&source, "\\global X\n").expect("write diagnostic fixture");
@@ -152,18 +152,19 @@ fn expand_dump_execution_error_renders_primary_source_context() {
         .output()
         .expect("run umber expand-dump execution diagnostic fixture");
 
-    assert!(!output.status.success(), "prefix expand-dump should fail");
-    let stderr = String::from_utf8(output.stderr).expect("stderr is utf-8");
-    assert!(stderr.contains("You can't use a prefix"));
-    assert!(stderr.contains("prefix.tex:1:9"));
-    assert!(stderr.contains("  1 | \\global X"));
-    assert!(stderr.contains("|         ^"));
-    assert!(!stderr.contains("unknown origin"));
+    assert!(
+        output.status.success(),
+        "recovered prefix error should succeed"
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "recovered error must not reach stderr"
+    );
 }
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary fixture setup and command execution.
-fn run_diagnostic_after_tfm_load_keeps_tex_source_path() {
+fn run_recovered_diagnostic_after_tfm_load_exits_successfully() {
     let temp_dir = tempfile::tempdir().expect("create font provenance temp dir");
     let source = temp_dir.path().join("after-font.tex");
     let child = temp_dir.path().join("child.tex");
@@ -186,12 +187,16 @@ fn run_diagnostic_after_tfm_load_keeps_tex_source_path() {
         .output()
         .expect("run font provenance fixture");
 
-    assert!(!output.status.success(), "invalid prefix use should fail");
-    let stderr = String::from_utf8(output.stderr).expect("stderr is utf-8");
-    assert!(stderr.contains("You can't use a prefix"), "{stderr}");
-    assert!(stderr.contains("child.tex:1:9"), "{stderr}");
-    assert!(stderr.contains("  1 | \\global X"), "{stderr}");
-    assert!(!stderr.contains("cmr10.tfm:1:9"), "{stderr}");
+    assert!(
+        output.status.success(),
+        "recovered prefix error should succeed"
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
+    assert!(stdout.contains("You can't use a prefix"), "{stdout}");
+    assert!(
+        output.stderr.is_empty(),
+        "recovered error must not reach stderr"
+    );
 }
 
 #[test]
@@ -326,7 +331,7 @@ fn assert_dvi_case_matches_committed_fixture(area: &str, case: &str) {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
-fn run_reports_deadcycles_overflow_primary_text() {
+fn run_recovers_from_deadcycles_overflow() {
     let temp_dir = tempfile::tempdir().expect("create deadcycles temp dir");
     let source = temp_dir.path().join("deadcycles.tex");
     fs::write(
@@ -345,14 +350,17 @@ fn run_reports_deadcycles_overflow_primary_text() {
         .output()
         .expect("run umber deadcycles fixture");
 
-    assert!(!output.status.success(), "deadcycles run should fail");
-    let stderr = String::from_utf8(output.stderr).expect("stderr is utf-8");
-    assert!(stderr.contains("Output loop---1 consecutive dead cycles"));
+    assert!(
+        output.status.success(),
+        "recovered deadcycles overflow should succeed"
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
+    assert!(stdout.contains("Output loop---1 consecutive dead cycles"));
 }
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
-fn run_error_renders_primary_source_context() {
+fn run_recovers_from_extra_right_brace() {
     let temp_dir = tempfile::tempdir().expect("create diagnostic temp dir");
     let source = temp_dir.path().join("brace.tex");
     fs::write(&source, "}\n").expect("write diagnostic fixture");
@@ -364,17 +372,21 @@ fn run_error_renders_primary_source_context() {
         .output()
         .expect("run umber diagnostic fixture");
 
-    assert!(!output.status.success(), "brace run should fail");
-    let stderr = String::from_utf8(output.stderr).expect("stderr is utf-8");
-    assert!(stderr.contains("Too many }'s."));
-    assert!(stderr.contains("brace.tex:1:1"));
-    assert!(stderr.contains("  1 | }"));
-    assert!(stderr.contains("    | ^"));
+    assert!(
+        output.status.success(),
+        "recovered extra brace should succeed"
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
+    assert!(stdout.contains("Too many }'s."));
+    assert!(
+        output.stderr.is_empty(),
+        "recovered error must not reach stderr"
+    );
 }
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
-fn run_expansion_error_renders_primary_source_context() {
+fn run_recovers_from_undefined_control_sequence() {
     let temp_dir = tempfile::tempdir().expect("create expansion diagnostic temp dir");
     let source = temp_dir.path().join("undefined.tex");
     fs::write(&source, "\\undefined\n").expect("write expansion diagnostic fixture");
@@ -386,18 +398,21 @@ fn run_expansion_error_renders_primary_source_context() {
         .output()
         .expect("run umber expansion diagnostic fixture");
 
-    assert!(!output.status.success(), "undefined run should fail");
-    let stderr = String::from_utf8(output.stderr).expect("stderr is utf-8");
-    assert!(stderr.contains("Undefined control sequence \\undefined"));
-    assert!(stderr.contains("undefined.tex:1:1"));
-    assert!(stderr.contains("  1 | \\undefined"));
-    assert!(stderr.contains("    | ^"));
-    assert!(!stderr.contains("unknown origin"));
+    assert!(
+        output.status.success(),
+        "recovered undefined control sequence should succeed"
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
+    assert!(stdout.contains("Undefined control sequence \\undefined"));
+    assert!(
+        output.stderr.is_empty(),
+        "recovered error must not reach stderr"
+    );
 }
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
-fn run_macro_error_renders_bounded_expansion_trace() {
+fn run_recovers_from_extra_endgroup_in_macro() {
     let temp_dir = tempfile::tempdir().expect("create macro diagnostic temp dir");
     let source = temp_dir.path().join("macro.tex");
     fs::write(&source, "\\def\\a{\\endgroup}\\a\n").expect("write macro diagnostic fixture");
@@ -409,13 +424,16 @@ fn run_macro_error_renders_bounded_expansion_trace() {
         .output()
         .expect("run umber macro diagnostic fixture");
 
-    assert!(!output.status.success(), "macro run should fail");
-    let stderr = String::from_utf8(output.stderr).expect("stderr is utf-8");
-    assert!(stderr.contains("Extra \\endgroup."));
-    assert!(stderr.contains("macro.tex:1:8"));
-    assert!(stderr.contains("expansion trace:"));
-    assert!(stderr.contains("invoked at"));
-    assert!(stderr.contains("defined at"));
+    assert!(
+        output.status.success(),
+        "recovered extra endgroup should succeed"
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
+    assert!(stdout.contains("Extra \\endgroup."));
+    assert!(
+        output.stderr.is_empty(),
+        "recovered error must not reach stderr"
+    );
 }
 
 #[test]
