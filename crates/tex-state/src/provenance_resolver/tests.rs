@@ -87,7 +87,6 @@ fn resolver_renders_bounded_live_macro_trace() {
             macro_arguments: MacroArguments::new(),
             macro_invocation: macro_origin,
             parent_macro_invocation: OriginId::UNKNOWN,
-            replay_marker: None,
         }],
         None,
         None,

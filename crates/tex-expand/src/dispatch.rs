@@ -70,18 +70,18 @@ macro_rules! dispatch_match {
             Meaning::Macro { flags, definition } if is_expandable_macro(flags) => {
                 let macro_meaning = stores.macro_definition(definition);
                 let provenance = stores.macro_definition_provenance(definition);
-                let completed = args::match_rooted_macro_call(
+                let arguments = args::match_macro_call_with_recorder(
                     input,
                     stores,
                     recorder,
                     call_context,
-                    definition,
+                    macro_meaning,
                 )?;
                 Ok(Dispatch::Push {
                     replay_kind: ExpansionReplayKind::MacroBody,
                     token_list: macro_meaning.replacement_text(),
                     origin_list: provenance.replacement_origins(),
-                    macro_arguments: completed.arguments.as_macro_arguments(),
+                    macro_arguments: arguments.as_macro_arguments(),
                     macro_invocation: stores.macro_invocation_origin(
                         definition,
                         call_origin,
