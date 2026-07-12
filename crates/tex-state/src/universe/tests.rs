@@ -2,7 +2,7 @@ use super::{FormatError, Universe};
 use crate::font::{MAX_FONT_DIMEN, NULL_FONT};
 use crate::glue::{GlueSpec, Order};
 use crate::hyphenation::{ExceptionSpec, PatternSpec};
-use crate::ids::{ArenaRef, NodeListId};
+use crate::ids::{ArenaRef, FontId, NodeListId};
 use crate::input::{
     InputFrameSummary, InputSummary, LexerState, MacroArguments, SourceFrameSummary, SourceId,
     TokenListReplayKind, TracedTokenList,
@@ -1737,6 +1737,17 @@ fn snapshot_state_hash_distinguishes_font_identifier_identity() {
         first.snapshot().state_hash(),
         second.snapshot().state_hash()
     );
+}
+
+#[test]
+fn compact_stored_font_id_resolves_its_identifier() {
+    let mut universe = Universe::new();
+    let identifier = universe.intern("tenrm");
+    let font = universe.intern_font_with_identifier(test_font("cmr10", b"same"), identifier);
+    let stored = FontId::new(font.raw());
+
+    assert_ne!(stored, font);
+    assert_eq!(universe.font_identifier_symbol(stored), Some(identifier));
 }
 
 #[test]

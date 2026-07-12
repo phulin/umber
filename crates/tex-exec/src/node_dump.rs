@@ -457,9 +457,7 @@ fn dump_mark(stores: &Universe, tokens: TokenListId, out: &mut String) {
 }
 
 fn dump_font(stores: &Universe, font: tex_state::ids::FontId) -> String {
-    if stores.current_font() == font
-        && let Some(symbol) = stores.current_font_symbol()
-    {
+    if let Some(symbol) = stores.font_identifier_symbol(font) {
         return tex_expand::token_text(stores, Token::Cs(symbol.symbol()));
     }
     format!("\\{}", stores.font_name(font))

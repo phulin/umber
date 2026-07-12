@@ -981,7 +981,7 @@ impl Stores {
 
     #[must_use]
     pub fn font_identifier_symbol(&self, id: FontId) -> Option<SymbolId> {
-        self.assert_live_font(id);
+        let id = self.resolve_stored_font(id);
         let symbol = self.fonts.identifier(id)?;
         self.assert_live_symbol(symbol);
         Some(symbol)
