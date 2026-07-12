@@ -1,6 +1,6 @@
 use tex_arith::{saturating_add as add, saturating_sub as sub_scaled};
 use tex_state::glue::GlueSpec;
-use tex_state::ids::GlueId;
+use tex_state::ids::{GlueId, NodeListId};
 use tex_state::node::{KernKind, Node};
 use tex_state::scaled::Scaled;
 
@@ -29,6 +29,7 @@ pub struct LineBreakParams {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PostLineBreakParams {
+    pub empty_list: NodeListId,
     pub left_skip: GlueId,
     pub right_skip: GlueId,
     pub interline_penalty: i32,

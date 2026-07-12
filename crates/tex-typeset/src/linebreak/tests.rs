@@ -443,6 +443,7 @@ fn mathoff_breaks_only_before_following_glue_and_zeroes_break_width() {
 
     assert_eq!(breakpoints.first().map(|br| br.position), Some(2));
     let zero = universe.intern_glue(GlueSpec::ZERO);
+    let empty = universe.freeze_node_list(&[]);
     let breaks = vec![
         BreakDecision {
             position: 2,
@@ -460,6 +461,7 @@ fn mathoff_breaks_only_before_following_glue_and_zeroes_break_width() {
         &nodes,
         &breaks,
         PostLineBreakParams {
+            empty_list: empty,
             left_skip: zero,
             right_skip: zero,
             interline_penalty: 0,
@@ -759,6 +761,7 @@ fn final_hyphen_demerits_rank_terminal_routes_before_candidate_pruning() {
 fn post_line_break_keeps_migrating_nodes_for_execution_layer() {
     let mut universe = Universe::new();
     let empty_glue = universe.intern_glue(GlueSpec::ZERO);
+    let empty = universe.freeze_node_list(&[]);
     let mark_tokens = universe.intern_token_list(&[Token::Char {
         ch: 'm',
         cat: Catcode::Letter,
@@ -792,6 +795,7 @@ fn post_line_break_keeps_migrating_nodes_for_execution_layer() {
         &nodes,
         &breaks,
         PostLineBreakParams {
+            empty_list: empty,
             left_skip: empty_glue,
             right_skip: empty_glue,
             interline_penalty: 0,
@@ -816,7 +820,7 @@ fn post_line_break_keeps_migrating_nodes_for_execution_layer() {
 }
 
 #[test]
-fn post_line_break_retains_unbroken_discretionary_and_splices_replacement() {
+fn post_line_break_clears_materialized_unbroken_discretionary_replacement() {
     let mut universe = Universe::new();
     let zero = universe.intern_glue(GlueSpec::ZERO);
     let empty = universe.freeze_node_list(&[]);
@@ -842,6 +846,7 @@ fn post_line_break_retains_unbroken_discretionary_and_splices_replacement() {
         &nodes,
         &breaks,
         PostLineBreakParams {
+            empty_list: empty,
             left_skip: zero,
             right_skip: zero,
             interline_penalty: 0,
@@ -860,7 +865,7 @@ fn post_line_break_retains_unbroken_discretionary_and_splices_replacement() {
             Node::Rule { width: Some(second), .. },
             Node::Penalty(10_000),
             Node::Glue { kind: GlueKind::RightSkip, .. },
-        ] if first.raw() == 3 && *retained_replacement == replacement && second.raw() == 7
+        ] if first.raw() == 3 && *retained_replacement == empty && second.raw() == 7
     ));
 }
 
@@ -868,6 +873,7 @@ fn post_line_break_retains_unbroken_discretionary_and_splices_replacement() {
 fn post_line_break_omits_only_zero_leftskip() {
     let mut universe = Universe::new();
     let zero = universe.intern_glue(GlueSpec::ZERO);
+    let empty = universe.freeze_node_list(&[]);
     let nonzero = universe.intern_glue(GlueSpec {
         width: sp(3),
         stretch: sp(0),
@@ -887,6 +893,7 @@ fn post_line_break_omits_only_zero_leftskip() {
         &nodes,
         &breaks,
         PostLineBreakParams {
+            empty_list: empty,
             left_skip: zero,
             right_skip: zero,
             interline_penalty: 0,
@@ -915,6 +922,7 @@ fn post_line_break_omits_only_zero_leftskip() {
         &nodes,
         &breaks,
         PostLineBreakParams {
+            empty_list: empty,
             left_skip: nonzero,
             right_skip: zero,
             interline_penalty: 0,

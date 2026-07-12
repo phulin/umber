@@ -203,6 +203,16 @@ fn hyphenate_after_glue(
     if positions.is_empty() {
         out.extend(word_nodes);
     } else {
+        let trailing_font_kern = word_nodes.last().and_then(|node| match node {
+            Node::Kern {
+                amount,
+                kind: KernKind::Font,
+            } => Some(Node::Kern {
+                amount: *amount,
+                kind: KernKind::Font,
+            }),
+            _ => None,
+        });
         let no_left_boundary = matches!(
             out.last(),
             Some(Node::Kern {
@@ -211,6 +221,9 @@ fn hyphenate_after_glue(
             })
         );
         append_hyphenated_word(stores, &word, &positions, no_left_boundary, out);
+        if let Some(kern) = trailing_font_kern {
+            out.push(kern);
+        }
     }
     Some(index)
 }

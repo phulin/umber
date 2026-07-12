@@ -208,7 +208,8 @@ fn break_current_paragraph(
     let hlist = crate::math::finish_math_lists(stores, level.list().nodes(), true);
     let line_params = line_break_params(stores, &params);
     let decisions = break_hlist(stores, &hlist, line_params);
-    let post_params = post_line_break_params(&params, final_widow_penalty);
+    let empty_list = stores.freeze_node_list(&[]);
+    let post_params = post_line_break_params(&params, final_widow_penalty, empty_list);
     let mut line_count = 0i32;
     let mut last_line = None;
     for mut broken in post_line_break(stores, &decisions.nodes, &decisions.breaks, post_params) {
@@ -314,8 +315,10 @@ fn line_break_params(stores: &Universe, params: &ParagraphParams) -> LineBreakPa
 fn post_line_break_params(
     params: &ParagraphParams,
     final_widow_penalty: i32,
+    empty_list: tex_state::ids::NodeListId,
 ) -> PostLineBreakParams {
     PostLineBreakParams {
+        empty_list,
         left_skip: params.left_skip,
         right_skip: params.right_skip,
         interline_penalty: params.interline_penalty,

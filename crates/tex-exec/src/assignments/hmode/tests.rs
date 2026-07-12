@@ -462,6 +462,39 @@ fn hyphenation_keeps_scanning_across_font_kerns() {
 }
 
 #[test]
+fn hyphenation_preserves_the_font_kern_after_a_reconstituted_word() {
+    let mut stores = Universe::new();
+    let font = stores.current_font();
+    for ch in "abcd".chars() {
+        stores.set_lccode(ch, ch as u32);
+    }
+    stores.add_hyphenation_exception(ExceptionSpec {
+        word: "abcd".to_owned(),
+        positions: vec![2],
+    });
+    stores.set_int_param(IntParam::LEFT_HYPHEN_MIN, 1);
+    stores.set_int_param(IntParam::RIGHT_HYPHEN_MIN, 1);
+    stores.set_font_hyphen_char(font, i32::from(b'-'), false);
+    let trailing = Scaled::from_raw(-54_614);
+    let nodes = [
+        Node::Char { font, ch: 'a' },
+        Node::Char { font, ch: 'b' },
+        Node::Char { font, ch: 'c' },
+        Node::Char { font, ch: 'd' },
+        Node::Kern {
+            amount: trailing,
+            kind: KernKind::Font,
+        },
+    ];
+
+    let hyphenated = super::super::hyphenation::test_hyphenated_word(&mut stores, &nodes);
+
+    assert!(
+        matches!(hyphenated.last(), Some(Node::Kern { amount, kind: KernKind::Font }) if *amount == trailing)
+    );
+}
+
+#[test]
 fn hyphenation_does_not_repeat_a_left_boundary_kern() {
     let mut stores = Universe::new();
     let font = stores.current_font();

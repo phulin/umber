@@ -25,7 +25,7 @@ pub fn post_line_break<S: TypesetState>(
             });
         }
         line.append(&mut pending_post);
-        let post = push_line_segment(state, nodes, start, decision, &mut line);
+        let post = push_line_segment(state, nodes, start, decision, params.empty_list, &mut line);
         pending_post = post;
         line.push(Node::Glue {
             spec: params.right_skip,
@@ -50,6 +50,7 @@ fn push_line_segment<S: TypesetState>(
     nodes: &[Node],
     start: usize,
     decision: &BreakDecision,
+    empty_list: tex_state::ids::NodeListId,
     out: &mut Vec<Node>,
 ) -> Vec<Node> {
     let end = decision.position.min(nodes.len());
@@ -70,8 +71,21 @@ fn push_line_segment<S: TypesetState>(
                         .map(|node| node.to_owned()),
                 );
             }
-            Node::Disc { replace, .. } => {
-                out.push(node.clone());
+            Node::Disc {
+                kind,
+                pre,
+                post,
+                replace,
+            } => {
+                // TeX's discretionary replacement nodes follow the disc in
+                // the horizontal list. Once line breaking has materialized
+                // them, the retained disc has a zero replacement count.
+                out.push(Node::Disc {
+                    kind: *kind,
+                    pre: *pre,
+                    post: *post,
+                    replace: empty_list,
+                });
                 out.extend(
                     state
                         .nodes(*replace)
