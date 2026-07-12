@@ -35,6 +35,10 @@ const DEEP_BOX_LOCALITY_JOURNAL: usize = 20_000;
 const ALLOCATION_GRAPH_DEPTH: usize = 128;
 const ALLOCATION_LIST_LEN: usize = 1_024;
 const PAGE_QUEUE_LEN: usize = 65_536;
+const TOKEN_PROJECTION_SIZES: [usize; 3] = [64, 1_024, 16_384];
+
+const HASH_MIX_INCREMENT: u64 = 0x9e37_79b9_7f4a_7c15;
+const HASH_INITIAL_STATE: u64 = 0x6a09_e667_f3bc_c909;
 
 fn page_contribution_queue(c: &mut Criterion) {
     c.bench_function("page_contribution_queue/drain_65536", |b| {
@@ -403,6 +407,168 @@ fn checkpoint_state_hash(c: &mut Criterion) {
     });
 
     group.finish();
+}
+
+fn token_semantic_projection(c: &mut Criterion) {
+    for workload in ["characters", "control_sequences"] {
+        let mut group = c.benchmark_group(format!("token_semantic_projection/{workload}"));
+        for size in TOKEN_PROJECTION_SIZES {
+            let (stores, tokens) = token_projection_case(workload, size);
+            let mut projection = Vec::new();
+            encode_token_projection(&stores, &tokens, &mut projection);
+            let fingerprint = hash_projection(&projection);
+
+            group.throughput(Throughput::Elements(size as u64));
+            group.bench_with_input(BenchmarkId::new("direct", size), &size, |b, _| {
+                b.iter(|| black_box(hash_tokens_direct(&stores, &tokens)));
+            });
+            group.bench_with_input(BenchmarkId::new("encode", size), &size, |b, _| {
+                let mut output = Vec::with_capacity(projection.len());
+                b.iter(|| {
+                    output.clear();
+                    encode_token_projection(&stores, &tokens, &mut output);
+                    black_box(&output);
+                });
+            });
+            group.bench_with_input(BenchmarkId::new("replay", size), &size, |b, _| {
+                b.iter(|| black_box(hash_projection(&projection)));
+            });
+            group.bench_with_input(BenchmarkId::new("compose", size), &size, |b, _| {
+                let mut changing_fingerprint = fingerprint;
+                b.iter(|| {
+                    changing_fingerprint = black_box(changing_fingerprint).wrapping_add(1);
+                    black_box(hash_words(0x7061_7265_6e74, [changing_fingerprint]))
+                });
+            });
+        }
+        group.finish();
+    }
+}
+
+fn token_projection_freeze_cost(c: &mut Criterion) {
+    for workload in ["characters", "control_sequences"] {
+        let mut group = c.benchmark_group(format!("token_projection_freeze/{workload}"));
+        for size in TOKEN_PROJECTION_SIZES {
+            group.throughput(Throughput::Elements(size as u64));
+            group.bench_with_input(BenchmarkId::new("current", size), &size, |b, &size| {
+                b.iter_batched(
+                    || token_projection_case(workload, size),
+                    |(mut stores, tokens)| black_box(stores.intern_token_list(&tokens)),
+                    BatchSize::SmallInput,
+                );
+            });
+            group.bench_with_input(
+                BenchmarkId::new("plus_canonical_fingerprint", size),
+                &size,
+                |b, &size| {
+                    b.iter_batched(
+                        || token_projection_case(workload, size),
+                        |(mut stores, tokens)| {
+                            let fingerprint = hash_tokens_direct(&stores, &tokens);
+                            let id = stores.intern_token_list(&tokens);
+                            black_box((id, fingerprint));
+                        },
+                        BatchSize::SmallInput,
+                    );
+                },
+            );
+        }
+        group.finish();
+    }
+}
+
+fn token_projection_case(workload: &str, size: usize) -> (Universe, Vec<Token>) {
+    let mut stores = Universe::new();
+    let tokens = match workload {
+        "characters" => (0..size)
+            .map(|index| Token::Char {
+                ch: char::from(b'a' + (index % 26) as u8),
+                cat: Catcode::Letter,
+            })
+            .collect(),
+        "control_sequences" => {
+            let symbols = (0..64)
+                .map(|index| stores.intern(&format!("projection-control-sequence-{index}")))
+                .collect::<Vec<_>>();
+            (0..size)
+                .map(|index| Token::Cs(symbols[index % symbols.len()].symbol()))
+                .collect()
+        }
+        _ => unreachable!("unknown token projection workload"),
+    };
+    (stores, tokens)
+}
+
+fn hash_tokens_direct(stores: &Universe, tokens: &[Token]) -> u64 {
+    let mut state = HASH_INITIAL_STATE ^ 0x746f_6b65_6e5f_6c73;
+    mix_hash(&mut state, 0x50);
+    mix_hash(&mut state, tokens.len() as u64);
+    for &token in tokens {
+        encode_token(stores, token, |word| mix_hash(&mut state, word));
+    }
+    splitmix64(state)
+}
+
+fn encode_token_projection(stores: &Universe, tokens: &[Token], output: &mut Vec<u64>) {
+    output.push(0x50);
+    output.push(tokens.len() as u64);
+    for &token in tokens {
+        encode_token(stores, token, |word| output.push(word));
+    }
+}
+
+fn encode_token(stores: &Universe, token: Token, mut push: impl FnMut(u64)) {
+    match token {
+        Token::Char { ch, cat } => {
+            push(0);
+            push(ch as u32 as u64);
+            push(cat as u8 as u64);
+        }
+        Token::Cs(symbol) => {
+            push(1);
+            push(match stores.control_sequence_kind(symbol) {
+                tex_state::interner::ControlSequenceKind::Named => 0,
+                tex_state::interner::ControlSequenceKind::ActiveCharacter => 1,
+            });
+            let bytes = stores.resolve(symbol).as_bytes();
+            push(bytes.len() as u64);
+            for chunk in bytes.chunks(8) {
+                let mut word = 0_u64;
+                for (offset, byte) in chunk.iter().copied().enumerate() {
+                    word |= u64::from(byte) << (offset * 8);
+                }
+                push(word);
+            }
+        }
+        Token::Param(slot) => {
+            push(2);
+            push(u64::from(slot));
+        }
+        Token::Frozen(_) => unreachable!("benchmark cannot construct frozen tokens"),
+    }
+}
+
+fn hash_projection(words: &[u64]) -> u64 {
+    hash_words(0x746f_6b65_6e5f_6c73, words.iter().copied())
+}
+
+fn hash_words(domain: u64, words: impl IntoIterator<Item = u64>) -> u64 {
+    let mut state = HASH_INITIAL_STATE ^ domain;
+    for word in words {
+        mix_hash(&mut state, word);
+    }
+    splitmix64(state)
+}
+
+fn mix_hash(state: &mut u64, value: u64) {
+    *state = splitmix64(*state ^ value.wrapping_add(HASH_MIX_INCREMENT));
+}
+
+fn splitmix64(mut value: u64) -> u64 {
+    value = value.wrapping_add(HASH_MIX_INCREMENT);
+    value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    value ^ (value >> 31)
 }
 
 fn transient_box_overwrite_checkpoint(c: &mut Criterion) {
@@ -989,6 +1155,8 @@ criterion_group!(
     barrier_write,
     snapshot_take,
     checkpoint_state_hash,
+    token_semantic_projection,
+    token_projection_freeze_cost,
     transient_box_overwrite_checkpoint,
     survivor_root_recycling,
     group_cycle,
