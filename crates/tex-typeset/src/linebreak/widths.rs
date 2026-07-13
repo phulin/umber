@@ -46,6 +46,36 @@ impl Widths {
         }
         out
     }
+
+    pub(super) fn normal_stretch(self) -> Scaled {
+        self.stretch[Order::Normal as usize]
+    }
+
+    pub(super) fn add_normal_stretch(&mut self, amount: Scaled) {
+        self.stretch[Order::Normal as usize] = add(self.stretch[Order::Normal as usize], amount);
+    }
+
+    pub(super) fn normal_shrink(self) -> Scaled {
+        self.shrink[Order::Normal as usize]
+    }
+
+    pub(super) fn infinite_stretch(self) -> [Scaled; 3] {
+        [self.stretch[1], self.stretch[2], self.stretch[3]]
+    }
+
+    pub(super) fn infinite_stretch_is_zero(self) -> bool {
+        self.infinite_stretch().iter().all(|value| value.raw() == 0)
+    }
+
+    pub(super) fn has_infinite_adjustment(self, shortfall: i32) -> bool {
+        if shortfall > 0 {
+            !self.infinite_stretch_is_zero()
+        } else if shortfall < 0 {
+            self.shrink[1..].iter().any(|value| value.raw() != 0)
+        } else {
+            false
+        }
+    }
 }
 
 pub(super) struct PrefixWidths {

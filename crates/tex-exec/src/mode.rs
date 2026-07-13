@@ -31,6 +31,7 @@ pub struct ParagraphParams {
     pub adj_demerits: i32,
     pub double_hyphen_demerits: i32,
     pub final_hyphen_demerits: i32,
+    pub last_line_fit: i32,
     pub emergency_stretch: Scaled,
     pub hsize: Scaled,
     pub interline_penalty: i32,

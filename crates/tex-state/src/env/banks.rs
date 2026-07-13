@@ -190,6 +190,8 @@ impl IntParam {
     pub const TRACING_NESTING: Self = Self::new(67);
     /// e-TeX switch retaining vertical material discarded at page tops.
     pub const SAVING_V_DISCARDS: Self = Self::new(68);
+    /// e-TeX last-line paragraph fitting ratio.
+    pub const LAST_LINE_FIT: Self = Self::new(69);
 
     /// TeX's `\showboxbreadth` integer parameter.
     pub const SHOW_BOX_BREADTH: Self = Self::new(24);

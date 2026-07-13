@@ -288,6 +288,7 @@ pub fn install_etex_unexpandable_primitives(stores: &mut Universe) {
         ("tracingifs", IntParam::TRACING_IFS),
         ("tracingnesting", IntParam::TRACING_NESTING),
         ("savingvdiscards", IntParam::SAVING_V_DISCARDS),
+        ("lastlinefit", IntParam::LAST_LINE_FIT),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::IntParam(parameter.raw()));

@@ -214,8 +214,10 @@ fn successful_pretolerance_does_not_allocate_hyphenation_nodes() {
         final_hyphen_demerits: 0,
         emergency_stretch: Scaled::from_raw(0),
         looseness: 0,
+        last_line_fit: 0,
         left_skip: stores.glue(stores.glue_param(GlueParam::LEFT_SKIP)),
         right_skip: stores.glue(stores.glue_param(GlueParam::RIGHT_SKIP)),
+        par_fill_skip: stores.glue(par_fill),
         shape: tex_typeset::linebreak::LineShape::natural(Scaled::from_raw(400 * Scaled::UNITY)),
     };
     let nodes_before = stores.testing_epoch_node_count();

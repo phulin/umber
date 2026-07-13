@@ -21,8 +21,10 @@ fn params(width: i32) -> LineBreakParams {
         final_hyphen_demerits: 5_000,
         emergency_stretch: sp(0),
         looseness: 0,
+        last_line_fit: 0,
         left_skip: GlueSpec::ZERO,
         right_skip: GlueSpec::ZERO,
+        par_fill_skip: GlueSpec::ZERO,
         shape: LineShape::natural(sp(width)),
     }
 }
@@ -97,6 +99,67 @@ fn rule(width: i32) -> Node {
         height: None,
         depth: None,
     }
+}
+
+#[test]
+fn etex_last_line_fit_uses_previous_lines_finite_glue_ratio() {
+    let mut universe = Universe::new();
+    let finite = universe.intern_glue(GlueSpec {
+        width: sp(5 * Scaled::UNITY),
+        stretch: sp(20 * Scaled::UNITY),
+        stretch_order: Order::Normal,
+        shrink: sp(4 * Scaled::UNITY),
+        shrink_order: Order::Normal,
+    });
+    let par_fill_spec = GlueSpec {
+        width: sp(0),
+        stretch: sp(Scaled::UNITY),
+        stretch_order: Order::Fill,
+        shrink: sp(0),
+        shrink_order: Order::Normal,
+    };
+    let par_fill = universe.intern_glue(par_fill_spec);
+    let mut nodes = Vec::new();
+    for index in 0..5 {
+        nodes.push(rule(30 * Scaled::UNITY));
+        if index != 4 {
+            nodes.push(Node::Glue {
+                spec: finite,
+                kind: GlueKind::Normal,
+                leader: None,
+            });
+        }
+    }
+    nodes.push(Node::Penalty(INF_PENALTY));
+    nodes.push(Node::Glue {
+        spec: par_fill,
+        kind: GlueKind::ParFillSkip,
+        leader: None,
+    });
+
+    let mut parameters = params(110 * Scaled::UNITY);
+    parameters.pretolerance = 9_000;
+    parameters.last_line_fit = 500;
+    parameters.par_fill_skip = par_fill_spec;
+    let mut hook = NoHyphenation;
+    let result = line_break(&universe, &nodes, parameters.clone(), &mut hook);
+    assert_eq!(
+        result.last_line_fill.map(|spec| spec.width),
+        Some(sp(42 * Scaled::UNITY + Scaled::UNITY / 2))
+    );
+
+    parameters.last_line_fit = 1_000;
+    let result = line_break(&universe, &nodes, parameters.clone(), &mut hook);
+    assert_eq!(
+        result.last_line_fill.map(|spec| spec.width),
+        Some(sp(40 * Scaled::UNITY))
+    );
+
+    // The e-TeX manual requires finite left/right-skip stretch. An infinite
+    // component in the background disables the extension entirely.
+    parameters.right_skip = par_fill_spec;
+    let result = line_break(&universe, &nodes, parameters, &mut hook);
+    assert_eq!(result.last_line_fill, None);
 }
 
 #[test]
@@ -245,6 +308,8 @@ fn equal_demerits_prefer_later_route_in_same_line_and_fitness_class() {
         path_demerits: 221,
         previous: Some(0),
         hyphenated: false,
+        line_shortfall: sp(0),
+        line_glue: sp(0),
     };
     let candidates = vec![
         candidate(0, Fitness::Decent),
@@ -804,6 +869,8 @@ fn final_hyphen_demerits_rank_terminal_routes_before_candidate_pruning() {
         path_demerits,
         previous: None,
         hyphenated,
+        line_shortfall: sp(0),
+        line_glue: sp(0),
     };
     let terminal = Breakpoint {
         position: 1,

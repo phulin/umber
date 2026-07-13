@@ -22,8 +22,10 @@ pub struct LineBreakParams {
     pub final_hyphen_demerits: i32,
     pub emergency_stretch: Scaled,
     pub looseness: i32,
+    pub last_line_fit: i32,
     pub left_skip: GlueSpec,
     pub right_skip: GlueSpec,
+    pub par_fill_skip: GlueSpec,
     pub shape: LineShape,
 }
 
@@ -137,6 +139,7 @@ pub struct LineBreakResult {
     pub breaks: Vec<BreakDecision>,
     pub demerits: i32,
     pub nodes: Vec<Node>,
+    pub last_line_fill: Option<GlueSpec>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -240,6 +243,8 @@ struct Candidate {
     path_demerits: i32,
     previous: Option<usize>,
     hyphenated: bool,
+    line_shortfall: Scaled,
+    line_glue: Scaled,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -268,6 +273,7 @@ fn run_pass<S: TypesetState>(
             breaks: Vec::new(),
             demerits: 0,
             nodes: nodes.to_vec(),
+            last_line_fill: None,
         });
     }
 
@@ -281,9 +287,12 @@ fn run_pass<S: TypesetState>(
         path_demerits: 0,
         previous: None,
         hyphenated: false,
+        line_shortfall: Scaled::from_raw(0),
+        line_glue: Scaled::from_raw(0),
     }];
     let mut active = vec![0usize];
     let mut finals = Vec::new();
+    let last_line_fit = LastLineFit::new(params, background);
 
     for bp in breakpoints {
         let mut next = Vec::new();
@@ -308,7 +317,24 @@ fn run_pass<S: TypesetState>(
             } else {
                 Scaled::from_raw(0)
             };
-            let b = line_badness(widths, target, extra);
+            // TeX adds emergency stretch to the finite-stretch component of
+            // the line-breaking background. This also makes it participate in
+            // e-TeX's last-line adjustment ratio.
+            widths.add_normal_stretch(extra);
+            let terminal = forced && bp.position >= nodes.len();
+            let normal_b = line_badness(widths, target, Scaled::from_raw(0));
+            let fitted = terminal
+                .then(|| last_line_fit.badness(active_candidate, widths, target))
+                .flatten();
+            let (b, fitness) = fitted
+                .map(|(bad, fitness, _)| (bad, fitness))
+                .unwrap_or_else(|| {
+                    let badness = normal_b.min(INF_BAD);
+                    (
+                        normal_b,
+                        fitness_class(badness, widths.natural.raw(), target.raw()),
+                    )
+                });
             let artificial = final_pass
                 && next.is_empty()
                 && best_new.is_empty()
@@ -318,8 +344,6 @@ fn run_pass<S: TypesetState>(
             let feasible = bp.penalty < INF_PENALTY && (artificial || b <= tolerance);
             if feasible {
                 let badness = b.min(INF_BAD);
-                let fitness = fitness_class(badness, widths.natural.raw(), target.raw());
-                let terminal = forced && bp.position >= nodes.len();
                 let dem = if artificial {
                     active_candidate.path_demerits
                 } else {
@@ -350,6 +374,15 @@ fn run_pass<S: TypesetState>(
                     path_demerits: dem,
                     previous: Some(active_id),
                     hyphenated: bp.hyphenated,
+                    line_shortfall: if terminal && fitted.is_none() {
+                        Scaled::from_raw(0)
+                    } else {
+                        Scaled::from_raw(target.raw().saturating_sub(widths.natural.raw()))
+                    },
+                    line_glue: fitted.map_or_else(
+                        || candidate_line_glue(widths, target, b),
+                        |(_, _, adjustment)| adjustment,
+                    ),
                 });
                 record_best_candidate(&mut best_new, &candidates, id);
             }
@@ -374,7 +407,138 @@ fn run_pass<S: TypesetState>(
     if !final_pass && actual_looseness != params.looseness {
         return None;
     }
-    Some(reconstruct(nodes, &candidates, chosen))
+    Some(reconstruct(nodes, &candidates, chosen, last_line_fit))
+}
+
+#[derive(Clone, Copy)]
+struct LastLineFit {
+    amount: i32,
+    par_fill: GlueSpec,
+    fill_width: [Scaled; 3],
+    enabled: bool,
+}
+
+impl LastLineFit {
+    fn new(params: &LineBreakParams, background: Widths) -> Self {
+        let mut fill_width = [Scaled::from_raw(0); 3];
+        let par_fill = params.par_fill_skip;
+        let enabled = params.last_line_fit > 0
+            && par_fill.stretch.raw() > 0
+            && par_fill.stretch_order != tex_state::glue::Order::Normal
+            && background.infinite_stretch_is_zero();
+        if enabled {
+            fill_width[par_fill.stretch_order as usize - 1] = par_fill.stretch;
+        }
+        Self {
+            amount: params.last_line_fit,
+            par_fill,
+            fill_width,
+            enabled,
+        }
+    }
+
+    fn badness(
+        self,
+        previous: &Candidate,
+        widths: Widths,
+        target: Scaled,
+    ) -> Option<(i32, Fitness, Scaled)> {
+        if !self.enabled
+            || previous.line_shortfall.raw() == 0
+            || previous.line_glue.raw() <= 0
+            || widths.infinite_stretch() != self.fill_width
+        {
+            return None;
+        }
+        let available = if previous.line_shortfall.raw() > 0 {
+            widths.normal_stretch()
+        } else {
+            widths.normal_shrink()
+        };
+        if available.raw() <= 0 {
+            return None;
+        }
+        let mut adjustment = rounded_fraction(
+            available.raw(),
+            previous.line_shortfall.raw(),
+            previous.line_glue.raw(),
+        );
+        if self.amount < 1000 {
+            adjustment = rounded_fraction(adjustment, self.amount, 1000);
+        }
+        if adjustment > 0 {
+            adjustment = adjustment.min(target.raw().saturating_sub(widths.natural.raw()));
+            let bad = crate::badness(Scaled::from_raw(adjustment), available);
+            let fitness = if bad > 99 {
+                Fitness::VeryLoose
+            } else if bad > 12 {
+                Fitness::Loose
+            } else {
+                Fitness::Decent
+            };
+            Some((bad, fitness, Scaled::from_raw(adjustment)))
+        } else if adjustment < 0 {
+            adjustment = adjustment.max(-available.raw());
+            let bad = crate::badness(Scaled::from_raw(-adjustment), available);
+            Some((
+                bad,
+                if bad > 12 {
+                    Fitness::Tight
+                } else {
+                    Fitness::Decent
+                },
+                Scaled::from_raw(adjustment),
+            ))
+        } else {
+            None
+        }
+    }
+
+    fn adjusted_fill(self, chosen: &Candidate) -> Option<GlueSpec> {
+        (self.enabled && chosen.line_shortfall.raw() != 0).then(|| GlueSpec {
+            width: Scaled::from_raw(
+                self.par_fill
+                    .width
+                    .raw()
+                    .saturating_add(chosen.line_shortfall.raw())
+                    .saturating_sub(chosen.line_glue.raw()),
+            ),
+            stretch: Scaled::from_raw(0),
+            ..self.par_fill
+        })
+    }
+}
+
+fn rounded_fraction(x: i32, n: i32, d: i32) -> i32 {
+    if d == 0 {
+        return if (i64::from(x) * i64::from(n)).is_negative() {
+            -Scaled::MAX_DIMEN.raw()
+        } else {
+            Scaled::MAX_DIMEN.raw()
+        };
+    }
+    let numerator = i128::from(x) * i128::from(n);
+    let denominator = i128::from(d);
+    let negative = numerator.is_negative() != denominator.is_negative();
+    let rounded = (numerator.abs() + denominator.abs() / 2) / denominator.abs();
+    let signed = if negative { -rounded } else { rounded };
+    signed.clamp(
+        -i128::from(Scaled::MAX_DIMEN.raw()),
+        i128::from(Scaled::MAX_DIMEN.raw()),
+    ) as i32
+}
+
+fn candidate_line_glue(widths: Widths, target: Scaled, badness: i32) -> Scaled {
+    let shortfall = target.raw().saturating_sub(widths.natural.raw());
+    if badness > INF_BAD || widths.has_infinite_adjustment(shortfall) {
+        Scaled::from_raw(0)
+    } else if shortfall > 0 {
+        widths.normal_stretch()
+    } else if shortfall < 0 {
+        widths.normal_shrink()
+    } else {
+        Scaled::from_raw(0)
+    }
 }
 
 fn discretionary_post_is_nonempty<S: TypesetState>(
@@ -581,9 +745,15 @@ fn choose_final(candidates: &[Candidate], finals: &[usize], looseness: i32) -> O
         .or(Some(first))
 }
 
-fn reconstruct(nodes: &[Node], candidates: &[Candidate], mut id: usize) -> LineBreakResult {
+fn reconstruct(
+    nodes: &[Node],
+    candidates: &[Candidate],
+    mut id: usize,
+    last_line_fit: LastLineFit,
+) -> LineBreakResult {
     let mut breaks = Vec::new();
     let demerits = candidates[id].demerits.min(AWFUL_BAD);
+    let last_line_fill = last_line_fit.adjusted_fill(&candidates[id]);
     while let Some(prev) = candidates[id].previous {
         breaks.push(BreakDecision {
             position: candidates[id].position.min(nodes.len()),
@@ -597,6 +767,7 @@ fn reconstruct(nodes: &[Node], candidates: &[Candidate], mut id: usize) -> LineB
         breaks,
         demerits,
         nodes: nodes.to_vec(),
+        last_line_fill,
     }
 }
 

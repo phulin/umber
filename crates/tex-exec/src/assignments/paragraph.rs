@@ -199,6 +199,7 @@ pub(crate) fn display_line_dimensions(nest: &ModeNest, stores: &Universe) -> Lin
         adj_demerits: stores.int_param(IntParam::ADJ_DEMERITS),
         double_hyphen_demerits: stores.int_param(IntParam::DOUBLE_HYPHEN_DEMERITS),
         final_hyphen_demerits: stores.int_param(IntParam::FINAL_HYPHEN_DEMERITS),
+        last_line_fit: stores.int_param(IntParam::LAST_LINE_FIT),
         emergency_stretch: stores.dimen_param(DimenParam::EMERGENCY_STRETCH),
         hsize: stores.dimen_param(DimenParam::H_SIZE),
         interline_penalty: stores.int_param(IntParam::INTERLINE_PENALTY),
@@ -232,7 +233,23 @@ fn break_current_paragraph(
     let level = nest.pop()?;
     let hlist = crate::math::finish_math_lists(stores, level.list().nodes(), true);
     let line_params = line_break_params(stores, &params);
-    let decisions = break_hlist(stores, &hlist, line_params);
+    let mut decisions = break_hlist(stores, &hlist, line_params);
+    if let Some(spec) = decisions.last_line_fill {
+        let spec = stores.intern_glue(spec);
+        if let Some(Node::Glue { spec: par_fill, .. }) =
+            decisions.nodes.iter_mut().rev().find(|node| {
+                matches!(
+                    node,
+                    Node::Glue {
+                        kind: GlueKind::ParFillSkip,
+                        ..
+                    }
+                )
+            })
+        {
+            *par_fill = spec;
+        }
+    }
     let empty_list = stores.freeze_node_list(&[]);
     let post_params = post_line_break_params(
         &params,
@@ -315,6 +332,7 @@ fn snapshot_paragraph_params(nest: &ModeNest, stores: &Universe) -> ParagraphPar
         adj_demerits: stores.int_param(IntParam::ADJ_DEMERITS),
         double_hyphen_demerits: stores.int_param(IntParam::DOUBLE_HYPHEN_DEMERITS),
         final_hyphen_demerits: stores.int_param(IntParam::FINAL_HYPHEN_DEMERITS),
+        last_line_fit: stores.int_param(IntParam::LAST_LINE_FIT),
         emergency_stretch: stores.dimen_param(DimenParam::EMERGENCY_STRETCH),
         hsize: stores.dimen_param(DimenParam::H_SIZE),
         interline_penalty: stores.int_param(IntParam::INTERLINE_PENALTY),
@@ -338,10 +356,12 @@ fn line_break_params(stores: &Universe, params: &ParagraphParams) -> LineBreakPa
         adj_demerits: params.adj_demerits,
         double_hyphen_demerits: params.double_hyphen_demerits,
         final_hyphen_demerits: params.final_hyphen_demerits,
+        last_line_fit: params.last_line_fit,
         emergency_stretch: params.emergency_stretch,
         looseness: params.looseness,
         left_skip: stores.glue(params.left_skip),
         right_skip: stores.glue(params.right_skip),
+        par_fill_skip: stores.glue(params.par_fill_skip),
         shape: line_shape(params),
     }
 }
