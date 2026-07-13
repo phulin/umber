@@ -1264,6 +1264,19 @@ impl<S> InputStack<S> {
         self.condition_frame_indices.len()
     }
 
+    /// Number of currently live physical source frames.
+    ///
+    /// Expanded-definition scanners use this to detect the TeX error boundary
+    /// where an `\input` or `\scantokens` source ends while defining text is
+    /// still unbalanced. Token-list and conditional frames do not count.
+    #[must_use]
+    pub fn source_depth(&self) -> usize {
+        self.frames
+            .iter()
+            .filter(|frame| matches!(frame, InputFrame::Source(_)))
+            .count()
+    }
+
     #[must_use]
     pub fn conditions(&self) -> impl DoubleEndedIterator<Item = ConditionFrameSummary> + '_ {
         self.condition_frame_indices.iter().map(|&index| {

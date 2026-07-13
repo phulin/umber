@@ -257,27 +257,105 @@ where
     St: ExpansionState + tex_state::InputOpenState,
     H: ExpansionHooks<S>,
 {
-    let scanned = scan_toks(input, stores, flags, context)?;
-    let meaning = scanned.meaning();
-    let replacement_text = expand_replacement_text(
-        stores,
-        meaning.replacement_text(),
-        scanned.provenance().replacement_origins(),
-        hooks,
-        &mut DriverExpandNext,
-    )?;
+    let parameter_text = scan_parameter_text(input, stores, context)?;
+    let replacement_text = scan_expanded_replacement_with_driver(input, stores, context, hooks)?;
     Ok(ScannedMacro {
         meaning: MacroMeaning::new(
             flags,
-            meaning.parameter_text(),
+            parameter_text.token_list(),
             replacement_text.token_list(),
         ),
         provenance: MacroDefinitionProvenance::new(
-            scanned.provenance().definition_origin(),
-            scanned.provenance().parameter_origins(),
+            tex_state::token::OriginId::UNKNOWN,
+            parameter_text.origin_list(),
             replacement_text.origin_list(),
         ),
     })
+}
+
+fn scan_expanded_replacement_with_driver<S, St, H>(
+    input: &mut InputStack<S>,
+    stores: &mut St,
+    context: TracedTokenWord,
+    hooks: &mut H,
+) -> Result<TracedTokenList, ScanToksError>
+where
+    S: InputSource,
+    St: ExpansionState + tex_state::InputOpenState,
+    H: ExpansionHooks<S>,
+{
+    let mut builder = stores.token_list_builder();
+    let mut origins = stores.origin_list_builder();
+    let mut recorder = NoopRecorder;
+    let mut brace_level = 1_u32;
+    let mut pending_parameter = false;
+
+    loop {
+        let source_depth = input.source_depth();
+        let expanded =
+            crate::get_x_or_protected_with_recorder_and_hooks(input, stores, &mut recorder, hooks)?;
+        let Some(traced) = expanded else {
+            return Err(ScanToksError::EndOfInputInReplacementText { context });
+        };
+        if input.source_depth() < source_depth {
+            // TeX's defining scanner inserts the missing right brace at the
+            // nested-file boundary and leaves the first outer-file token for
+            // ordinary input processing.
+            unread_token(input, stores, traced);
+            return Ok(finish_traced_list(stores, &mut builder, &mut origins));
+        }
+        let token = traced_semantic_token(traced);
+
+        if pending_parameter {
+            pending_parameter = false;
+            match token {
+                Token::Char {
+                    cat: Catcode::Parameter,
+                    ..
+                } => push_scanned_token(&mut builder, &mut origins, traced, token),
+                Token::Char {
+                    ch: '1'..='9',
+                    cat: Catcode::Other,
+                } => push_scanned_token(
+                    &mut builder,
+                    &mut origins,
+                    traced,
+                    Token::param(token_digit(token).expect("digit token was matched")),
+                ),
+                _ => {
+                    return Err(ScanToksError::InvalidParameterTokenInReplacementText {
+                        context: traced,
+                    });
+                }
+            }
+            continue;
+        }
+
+        match token {
+            Token::Char {
+                cat: Catcode::Parameter,
+                ..
+            } => pending_parameter = true,
+            Token::Char {
+                cat: Catcode::BeginGroup,
+                ..
+            } => {
+                brace_level = brace_level.saturating_add(1);
+                push_scanned_token(&mut builder, &mut origins, traced, token);
+            }
+            Token::Char {
+                cat: Catcode::EndGroup,
+                ..
+            } => {
+                brace_level -= 1;
+                if brace_level == 0 {
+                    return Ok(finish_traced_list(stores, &mut builder, &mut origins));
+                }
+                push_scanned_token(&mut builder, &mut origins, traced, token);
+            }
+            _ => push_scanned_token(&mut builder, &mut origins, traced, token),
+        }
+    }
 }
 
 /// Scans TeX general text as a raw balanced group, then expands it.
