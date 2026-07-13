@@ -45,7 +45,8 @@ as typesetting and the font dimension enquiries.
 `\numexpr` is implemented with manual-defined precedence, parentheses,
 rounded division, combined multiply/divide, and overflow recovery. `\dimexpr`
 implements the same grammar with dimension-first terms and exact scaled-point
-rounding. `\glueexpr`, `\muexpr`, `\gluestretch`,
+rounding. `\glueexpr` and `\muexpr` implement the same grammar componentwise,
+including dominant infinite orders and combined scaling. `\gluestretch`,
 `\glueshrink`, `\gluestretchorder`, `\glueshrinkorder`, `\gluetomu`,
 `\mutoglue` are **missing**. `\fontcharwd`, `\fontcharht`, `\fontchardp`, and
 `\fontcharic` are implemented as read-only internal dimensions.

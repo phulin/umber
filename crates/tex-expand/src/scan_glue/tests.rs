@@ -33,6 +33,111 @@ fn scan(input_text: &str) -> (GlueSpec, Option<Token>) {
     (spec, next)
 }
 
+fn install_glue_expressions(stores: &mut Universe) {
+    for (name, primitive) in [
+        ("glueexpr", UnexpandablePrimitive::GlueExpr),
+        ("muexpr", UnexpandablePrimitive::MuExpr),
+    ] {
+        let symbol = stores.intern(name);
+        stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
+    }
+    let relax = stores.intern("relax");
+    stores.set_meaning(relax, Meaning::Relax);
+}
+
+#[test]
+fn glueexpr_preserves_precedence_orders_and_relax_termination() {
+    let mut stores = Universe::new();
+    install_glue_expressions(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\glueexpr(1pt plus 2fil minus 3pt)+4pt plus 5fill\\relax X",
+    ));
+
+    let scanned = scan_glue(&mut input, &mut stores, context()).expect("glue expression scans");
+    let spec = stores.glue(scanned.id());
+
+    assert_eq!(spec.width.raw(), 5 * Scaled::UNITY);
+    assert_eq!(spec.stretch.raw(), 5 * Scaled::UNITY);
+    assert_eq!(spec.stretch_order, Order::Fill);
+    assert_eq!(spec.shrink.raw(), 3 * Scaled::UNITY);
+    assert_eq!(spec.shrink_order, Order::Normal);
+    assert_eq!(
+        input.next_token(&mut stores).expect("terminator remains"),
+        Some(char_token('X', Catcode::Letter))
+    );
+}
+
+#[test]
+fn muexpr_scales_every_component_with_etex_rounding() {
+    let mut stores = Universe::new();
+    install_glue_expressions(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\muexpr 2mu plus 3fil minus 1mu*3/2\\relax",
+    ));
+
+    let scanned = scan_muglue(&mut input, &mut stores, context()).expect("mu expression scans");
+    let spec = stores.glue(scanned.id());
+
+    assert_eq!(spec.width.raw(), 3 * Scaled::UNITY);
+    assert_eq!(spec.stretch.raw(), 294_912);
+    assert_eq!(spec.stretch_order, Order::Fil);
+    assert_eq!(spec.shrink.raw(), 98_304);
+    assert_eq!(spec.shrink_order, Order::Normal);
+}
+
+#[test]
+fn glueexpr_retains_component_order_when_scaling_to_zero() {
+    let mut stores = Universe::new();
+    install_glue_expressions(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\glueexpr 1pt plus 1fil*0\\relax"));
+
+    let scanned = scan_glue(&mut input, &mut stores, context()).expect("glue expression scans");
+    let spec = stores.glue(scanned.id());
+
+    assert_eq!(spec.width.raw(), 0);
+    assert_eq!(spec.stretch.raw(), 0);
+    assert_eq!(spec.stretch_order, Order::Fil);
+
+    let mut input = InputStack::new(MemoryInput::new("\\glueexpr 0pt plus 0fil+0pt\\relax"));
+    let scanned = scan_glue(&mut input, &mut stores, context()).expect("glue expression scans");
+    assert_eq!(stores.glue(scanned.id()).stretch_order, Order::Normal);
+}
+
+fn install_exprs(stores: &mut Universe) {
+    for (name, primitive) in [
+        ("glueexpr", UnexpandablePrimitive::GlueExpr),
+        ("muexpr", UnexpandablePrimitive::MuExpr),
+    ] {
+        let symbol = stores.intern(name);
+        stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
+    }
+    let relax = stores.intern("relax");
+    stores.set_meaning(relax, Meaning::Relax);
+}
+
+#[test]
+fn glueexpr_matches_etex_order_dominance_and_combined_scaling() {
+    let mut stores = Universe::new();
+    install_exprs(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\glueexpr(1pt plus 2fil+3pt plus 4fil)*3/2\\relax",
+    ));
+    let scanned = scan_glue(&mut input, &mut stores, context()).expect("glue expression");
+    let spec = stores.glue(scanned.id());
+    assert_eq!(spec.width.raw(), 6 * Scaled::UNITY);
+    assert_eq!(spec.stretch.raw(), 9 * Scaled::UNITY);
+    assert_eq!(spec.stretch_order, Order::Fil);
+
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\muexpr1mu plus 2fil+3mu plus 4fill\\relax",
+    ));
+    let scanned = scan_muglue(&mut input, &mut stores, context()).expect("muglue expression");
+    let spec = stores.glue(scanned.id());
+    assert_eq!(spec.width.raw(), 4 * Scaled::UNITY);
+    assert_eq!(spec.stretch.raw(), 4 * Scaled::UNITY);
+    assert_eq!(spec.stretch_order, Order::Fill);
+}
+
 #[test]
 fn scans_width_plus_and_minus_components() {
     let (spec, next) = scan("1pt plus 2pt minus .5pt x");

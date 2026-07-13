@@ -218,6 +218,26 @@ where
         recorder.record_meaning(symbol, meaning);
         crate::values::record_meaning_value_dependency(recorder, meaning);
         match meaning {
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::GlueExpr) if !mu => {
+                let scanned =
+                    scan_glue_expr(input, stores, recorder, hooks, expander, false, first)?;
+                return Ok(intern_spec_with_diagnostics(
+                    stores,
+                    signed_spec(stores.glue(scanned.id()), negative),
+                    scanned.diagnostics,
+                    scanned.diagnostic_origins,
+                ));
+            }
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::MuExpr) if mu => {
+                let scanned =
+                    scan_glue_expr(input, stores, recorder, hooks, expander, true, first)?;
+                return Ok(intern_spec_with_diagnostics(
+                    stores,
+                    signed_spec(stores.glue(scanned.id()), negative),
+                    scanned.diagnostics,
+                    scanned.diagnostic_origins,
+                ));
+            }
             Meaning::SkipRegister(index) if !mu => {
                 consume_optional_space(input, stores, recorder, hooks, expander)?;
                 let spec = stores.glue(stores.skip(index));
@@ -395,6 +415,313 @@ fn signed_spec(mut spec: GlueSpec, negative: bool) -> GlueSpec {
         spec.shrink = -spec.shrink;
     }
     spec
+}
+
+pub(crate) fn scan_glue_expr<S, St, R, H, E>(
+    input: &mut InputStack<S>,
+    stores: &mut St,
+    recorder: &mut R,
+    hooks: &mut H,
+    expander: &mut E,
+    mu: bool,
+    context: TracedTokenWord,
+) -> Result<ScannedGlue, ScanGlueError>
+where
+    S: InputSource,
+    St: ExpansionState,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
+{
+    let (spec, bad) = parse_glue_expr(input, stores, recorder, hooks, expander, mu, false)?;
+    if bad {
+        Ok(intern_spec_with_diagnostics(
+            stores,
+            GlueSpec::ZERO,
+            [
+                Some(DimensionDiagnostic::TooLarge),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ],
+            [
+                Some(context.origin()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ],
+        ))
+    } else {
+        Ok(intern_spec(stores, spec))
+    }
+}
+
+fn parse_glue_expr<S, St, R, H, E>(
+    input: &mut InputStack<S>,
+    stores: &mut St,
+    recorder: &mut R,
+    hooks: &mut H,
+    expander: &mut E,
+    mu: bool,
+    paren: bool,
+) -> Result<(GlueSpec, bool), ScanGlueError>
+where
+    S: InputSource,
+    St: ExpansionState,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
+{
+    let (mut spec, mut bad) = parse_glue_term(input, stores, recorder, hooks, expander, mu)?;
+    loop {
+        let Some(token) = expr_next(input, stores, recorder, hooks, expander)? else {
+            break;
+        };
+        let subtract = if is_other_char(token, '+') {
+            false
+        } else if is_other_char(token, '-') {
+            true
+        } else {
+            if paren && is_other_char(token, ')') {
+                break;
+            }
+            if !matches!(semantic_token(token), Token::Cs(s) if stores.meaning(s) == Meaning::Relax)
+            {
+                unread_token(input, stores, token);
+            }
+            break;
+        };
+        normalize_glue_orders(&mut spec);
+        let (rhs, rhs_bad) = parse_glue_term(input, stores, recorder, hooks, expander, mu)?;
+        bad |= rhs_bad;
+        match add_glue(spec, rhs, subtract) {
+            Some(next) => spec = next,
+            None => {
+                spec = GlueSpec::ZERO;
+                bad = true;
+            }
+        }
+    }
+    Ok((spec, bad))
+}
+
+fn parse_glue_term<S, St, R, H, E>(
+    input: &mut InputStack<S>,
+    stores: &mut St,
+    recorder: &mut R,
+    hooks: &mut H,
+    expander: &mut E,
+    mu: bool,
+) -> Result<(GlueSpec, bool), ScanGlueError>
+where
+    S: InputSource,
+    St: ExpansionState,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
+{
+    let (mut spec, mut bad) = parse_glue_factor(input, stores, recorder, hooks, expander, mu)?;
+    loop {
+        let Some(op) = expr_next(input, stores, recorder, hooks, expander)? else {
+            break;
+        };
+        if is_other_char(op, '*') {
+            normalize_glue_orders(&mut spec);
+            let (n, nbad) = parse_int_factor(input, stores, recorder, hooks, expander)?;
+            bad |= nbad;
+            let next = expr_next(input, stores, recorder, hooks, expander)?;
+            if next.is_some_and(|t| is_other_char(t, '/')) {
+                let (d, dbad) = parse_int_factor(input, stores, recorder, hooks, expander)?;
+                bad |= dbad;
+                match scale_glue(spec, n, d) {
+                    Some(v) => spec = v,
+                    None => {
+                        spec = GlueSpec::ZERO;
+                        bad = true;
+                    }
+                }
+            } else {
+                if let Some(t) = next {
+                    unread_token(input, stores, t);
+                }
+                match scale_glue(spec, n, 1) {
+                    Some(v) => spec = v,
+                    None => {
+                        spec = GlueSpec::ZERO;
+                        bad = true;
+                    }
+                }
+            }
+        } else if is_other_char(op, '/') {
+            normalize_glue_orders(&mut spec);
+            let (d, dbad) = parse_int_factor(input, stores, recorder, hooks, expander)?;
+            bad |= dbad;
+            match scale_glue(spec, 1, d) {
+                Some(v) => spec = v,
+                None => {
+                    spec = GlueSpec::ZERO;
+                    bad = true;
+                }
+            }
+        } else {
+            unread_token(input, stores, op);
+            break;
+        }
+    }
+    Ok((spec, bad))
+}
+
+fn parse_glue_factor<S, St, R, H, E>(
+    input: &mut InputStack<S>,
+    stores: &mut St,
+    recorder: &mut R,
+    hooks: &mut H,
+    expander: &mut E,
+    mu: bool,
+) -> Result<(GlueSpec, bool), ScanGlueError>
+where
+    S: InputSource,
+    St: ExpansionState,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
+{
+    let Some(token) = expr_next(input, stores, recorder, hooks, expander)? else {
+        return Ok((GlueSpec::ZERO, true));
+    };
+    if is_other_char(token, '(') {
+        return parse_glue_expr(input, stores, recorder, hooks, expander, mu, true);
+    }
+    unread_token(input, stores, token);
+    let scanned =
+        scan_glue_with_expander_and_hooks(input, stores, recorder, hooks, expander, mu, token)?;
+    Ok((
+        stores.glue(scanned.id()),
+        scanned.diagnostics().next().is_some(),
+    ))
+}
+
+fn parse_int_factor<S, St, R, H, E>(
+    input: &mut InputStack<S>,
+    stores: &mut St,
+    recorder: &mut R,
+    hooks: &mut H,
+    expander: &mut E,
+) -> Result<(i64, bool), ScanGlueError>
+where
+    S: InputSource,
+    St: ExpansionState,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
+{
+    let Some(token) = expr_next(input, stores, recorder, hooks, expander)? else {
+        return Ok((0, true));
+    };
+    if is_other_char(token, '(') {
+        return Ok(scan_int::parse_num_expression(
+            input, stores, recorder, hooks, expander, true,
+        )?);
+    }
+    unread_token(input, stores, token);
+    let scanned = scan_int::scan_int_with_expander_and_hooks(
+        input, stores, recorder, hooks, expander, token,
+    )?;
+    Ok((i64::from(scanned.value()), scanned.diagnostic().is_some()))
+}
+
+fn expr_next<S, St, R, H, E>(
+    input: &mut InputStack<S>,
+    stores: &mut St,
+    recorder: &mut R,
+    hooks: &mut H,
+    expander: &mut E,
+) -> Result<Option<TracedTokenWord>, ScanGlueError>
+where
+    S: InputSource,
+    St: ExpansionState,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
+{
+    loop {
+        let token = next_x(input, stores, recorder, hooks, expander)?;
+        if token.is_none_or(|t| !is_space(t)) {
+            return Ok(token);
+        }
+    }
+}
+
+fn add_glue(mut left: GlueSpec, mut right: GlueSpec, subtract: bool) -> Option<GlueSpec> {
+    if subtract {
+        right = signed_spec(right, true);
+    }
+    left.width = checked_component(i64::from(left.width.raw()) + i64::from(right.width.raw()))?;
+    (left.stretch, left.stretch_order) = add_ordered(
+        left.stretch,
+        left.stretch_order,
+        right.stretch,
+        right.stretch_order,
+    )?;
+    (left.shrink, left.shrink_order) = add_ordered(
+        left.shrink,
+        left.shrink_order,
+        right.shrink,
+        right.shrink_order,
+    )?;
+    Some(left)
+}
+
+fn add_ordered(a: Scaled, ao: Order, b: Scaled, bo: Order) -> Option<(Scaled, Order)> {
+    if ao == bo {
+        let v = checked_component(i64::from(a.raw()) + i64::from(b.raw()))?;
+        Some((v, if v.raw() == 0 { Order::Normal } else { ao }))
+    } else if order_rank(bo) > order_rank(ao) && b.raw() != 0 {
+        Some((b, bo))
+    } else {
+        Some((a, ao))
+    }
+}
+
+fn normalize_glue_orders(spec: &mut GlueSpec) {
+    if spec.stretch.raw() == 0 {
+        spec.stretch_order = Order::Normal;
+    }
+    if spec.shrink.raw() == 0 {
+        spec.shrink_order = Order::Normal;
+    }
+}
+
+fn scale_glue(spec: GlueSpec, n: i64, d: i64) -> Option<GlueSpec> {
+    Some(GlueSpec {
+        width: scale_component(spec.width, n, d)?,
+        stretch: scale_component(spec.stretch, n, d)?,
+        stretch_order: spec.stretch_order,
+        shrink: scale_component(spec.shrink, n, d)?,
+        shrink_order: spec.shrink_order,
+    })
+}
+fn scale_component(v: Scaled, n: i64, d: i64) -> Option<Scaled> {
+    checked_component(scan_int::rounded_fraction(i64::from(v.raw()), n, d)?)
+}
+fn checked_component(v: i64) -> Option<Scaled> {
+    (v.abs() <= i64::from(Scaled::MAX_DIMEN.raw())).then(|| Scaled::from_raw(v as i32))
+}
+fn order_rank(order: Order) -> u8 {
+    match order {
+        Order::Normal => 0,
+        Order::Fil => 1,
+        Order::Fill => 2,
+        Order::Filll => 3,
+    }
 }
 
 fn scan_signs<S, St, R, H, E>(

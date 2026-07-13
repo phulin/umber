@@ -341,6 +341,24 @@ where
                     cause_origin,
                 ))
             }
+            primitive @ (tex_state::meaning::UnexpandablePrimitive::GlueExpr
+            | tex_state::meaning::UnexpandablePrimitive::MuExpr) => {
+                let mu = primitive == tex_state::meaning::UnexpandablePrimitive::MuExpr;
+                let value = crate::scan_glue::scan_glue_expr(
+                    input, stores, recorder, hooks, expander, mu, token,
+                )?;
+                let spec = stores.glue(value.id());
+                Ok(push_rendered_text(
+                    stores,
+                    ExpansionReplayKind::TheOutput,
+                    &if mu {
+                        format_muglue(spec)
+                    } else {
+                        format_glue(spec)
+                    },
+                    cause_origin,
+                ))
+            }
             tex_state::meaning::UnexpandablePrimitive::PrevDepth => Ok(push_rendered_text(
                 stores,
                 ExpansionReplayKind::TheOutput,

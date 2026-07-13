@@ -471,6 +471,7 @@ pub enum ExpandError {
     },
     ScanInt(Box<scan_int::ScanIntError>),
     ScanDimen(Box<scan_dimen::ScanDimenError>),
+    ScanGlue(Box<scan_glue::ScanGlueError>),
     ScanGeneralText(Box<scan::ScanToksError>),
     UnsupportedTheTarget {
         context: TracedTokenWord,
@@ -536,6 +537,7 @@ impl fmt::Display for ExpandError {
             }
             Self::ScanInt(err) => write!(f, "{err}"),
             Self::ScanDimen(err) => write!(f, "{err}"),
+            Self::ScanGlue(err) => write!(f, "{err}"),
             Self::ScanGeneralText(err) => write!(f, "{err}"),
             Self::UnsupportedTheTarget { context } => {
                 write!(
@@ -590,6 +592,7 @@ impl std::error::Error for ExpandError {
             Self::MacroCall(err) => Some(err),
             Self::ScanInt(err) => Some(err),
             Self::ScanDimen(err) => Some(err),
+            Self::ScanGlue(err) => Some(err),
             Self::ScanGeneralText(err) => Some(err),
             Self::UnimplementedExpandable { .. }
             | Self::MissingTokenAfterPrimitive { .. }
@@ -636,6 +639,7 @@ impl ExpandError {
             | Self::IncompleteIf { context } => Some(context.origin()),
             Self::ScanInt(err) => err.primary_origin(),
             Self::ScanDimen(err) => err.primary_origin(),
+            Self::ScanGlue(err) => err.primary_origin(),
             Self::ScanGeneralText(err) => err.primary_origin(),
             Self::MacroCall(err) => err.primary_origin(),
             Self::Lex(err) => err.diagnostic_site().primary_origin(),
@@ -954,6 +958,12 @@ impl From<scan_int::ScanIntError> for ExpandError {
 impl From<scan_dimen::ScanDimenError> for ExpandError {
     fn from(value: scan_dimen::ScanDimenError) -> Self {
         Self::ScanDimen(Box::new(value))
+    }
+}
+
+impl From<scan_glue::ScanGlueError> for ExpandError {
+    fn from(value: scan_glue::ScanGlueError) -> Self {
+        Self::ScanGlue(Box::new(value))
     }
 }
 

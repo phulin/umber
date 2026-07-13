@@ -444,6 +444,8 @@ pub enum UnexpandablePrimitive {
     InteractionMode,
     NumExpr,
     DimExpr,
+    GlueExpr,
+    MuExpr,
     Shipout,
     BeginGroup,
     EndGroup,
@@ -697,6 +699,8 @@ impl UnexpandablePrimitive {
             Self::InteractionMode => 181,
             Self::NumExpr => 182,
             Self::DimExpr => 183,
+            Self::GlueExpr => 184,
+            Self::MuExpr => 185,
         }
     }
 
@@ -887,6 +891,8 @@ impl UnexpandablePrimitive {
             181 => Some(Self::InteractionMode),
             182 => Some(Self::NumExpr),
             183 => Some(Self::DimExpr),
+            184 => Some(Self::GlueExpr),
+            185 => Some(Self::MuExpr),
             _ => None,
         }
     }
