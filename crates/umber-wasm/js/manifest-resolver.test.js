@@ -245,6 +245,61 @@ test("validates status, byte length, and SHA-256 with actionable request errors"
 	}
 });
 
+test("cancels an oversized chunked object before buffering the full body", async () => {
+	const { manifest } = fixture();
+	manifest.files["tex:plain.tex"].dependencies = [];
+	let pulls = 0;
+	let cancelled = false;
+	const resolver = new HttpManifestResolver(manifest, {
+		async fetch() {
+			return new Response(
+				new ReadableStream({
+					pull(controller) {
+						pulls += 1;
+						controller.enqueue(new Uint8Array([1, 2, 3]));
+					},
+					cancel() {
+						cancelled = true;
+					},
+				}),
+			);
+		},
+		crypto: webcrypto,
+	});
+
+	await assert.rejects(
+		resolver.resolve([{ kind: "tex", name: "plain.tex" }]),
+		(error) => error.code === "object-length",
+	);
+	assert(cancelled, "oversized response stream was not cancelled");
+	assert(pulls < 10, `oversized response pulled ${pulls} chunks`);
+});
+
+test("bounds manifest responses and declared object sizes", async () => {
+	const { manifest } = fixture();
+	await assert.rejects(
+		HttpManifestResolver.create({
+			manifestUrl: "https://cdn.example.test/manifest.json",
+			fetch: async () =>
+				new Response("{}", {
+					headers: { "content-length": String(64 * 1024 * 1024 + 1) },
+				}),
+			crypto: webcrypto,
+		}),
+		(error) => error.code === "manifest-length",
+	);
+
+	manifest.files["tex:plain.tex"].bytes = 64 * 1024 * 1024 + 1;
+	assert.throws(
+		() =>
+			new HttpManifestResolver(manifest, {
+				fetch: () => {},
+				crypto: webcrypto,
+			}),
+		/invalid byte length/,
+	);
+});
+
 test("failed speculative hints are ignored and retried if actually requested", async () => {
 	const { manifest, bytes } = fixture();
 	const hintObject = manifest.files["tex:hint.tex"].object;

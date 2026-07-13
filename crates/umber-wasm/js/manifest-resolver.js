@@ -5,6 +5,8 @@ const DEFAULT_CONCURRENCY = 8;
 const KEY_PATTERN = /^(tex|tfm):(.+)$/;
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
 const FORMAT_NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
+const MAX_MANIFEST_BYTES = 64 * 1024 * 1024;
+const MAX_OBJECT_BYTES = 64 * 1024 * 1024;
 
 export class ManifestResolverError extends Error {
 	constructor(code, message, options) {
@@ -35,8 +37,14 @@ export class HttpManifestResolver {
 		}
 		let manifest;
 		try {
-			manifest = await response.json();
+			const bytes = await boundedResponseBytes(response, {
+				code: "manifest-length",
+				label: "manifest",
+				limit: MAX_MANIFEST_BYTES,
+			});
+			manifest = JSON.parse(new TextDecoder().decode(bytes));
 		} catch (error) {
+			if (error instanceof ManifestResolverError) throw error;
 			throw new ManifestResolverError(
 				"invalid-manifest",
 				"manifest is not valid JSON",
@@ -186,17 +194,12 @@ export class HttpManifestResolver {
 				`${entry.object} request failed with HTTP ${response.status}`,
 			);
 		}
-		const declaredLength = response.headers?.get?.("content-length");
-		if (declaredLength !== null && declaredLength !== undefined) {
-			const parsedLength = Number(declaredLength);
-			if (!Number.isSafeInteger(parsedLength) || parsedLength !== entry.bytes) {
-				throw new ManifestResolverError(
-					"object-length",
-					`${entry.object} Content-Length ${declaredLength} does not match ${entry.bytes}`,
-				);
-			}
-		}
-		const bytes = new Uint8Array(await response.arrayBuffer());
+		const bytes = await boundedResponseBytes(response, {
+			code: "object-length",
+			label: entry.object,
+			limit: entry.bytes,
+			exact: entry.bytes,
+		});
 		await this.#verify(entry, bytes);
 		try {
 			await this.persistentStore?.put(
@@ -312,7 +315,11 @@ function validateManifest(value) {
 				`invalid object name for ${key}`,
 			);
 		}
-		if (!Number.isSafeInteger(entry.bytes) || entry.bytes < 0) {
+		if (
+			!Number.isSafeInteger(entry.bytes) ||
+			entry.bytes < 0 ||
+			entry.bytes > MAX_OBJECT_BYTES
+		) {
 			throw new ManifestResolverError(
 				"invalid-manifest",
 				`invalid byte length for ${key}`,
@@ -411,7 +418,11 @@ function validateObjectEntry(entry, label, hashLengths) {
 			`invalid object name for ${label}`,
 		);
 	}
-	if (!Number.isSafeInteger(entry.bytes) || entry.bytes < 0) {
+	if (
+		!Number.isSafeInteger(entry.bytes) ||
+		entry.bytes < 0 ||
+		entry.bytes > MAX_OBJECT_BYTES
+	) {
 		throw new ManifestResolverError(
 			"invalid-manifest",
 			`invalid byte length for ${label}`,
@@ -525,6 +536,74 @@ function cacheMode(value) {
 	throw new ManifestResolverError(
 		"invalid-options",
 		"persistentCache must be 'http', 'indexeddb', or 'none'",
+	);
+}
+
+async function boundedResponseBytes(response, options) {
+	const declared = response.headers?.get?.("content-length");
+	if (declared !== null && declared !== undefined) {
+		const parsed = Number(declared);
+		if (
+			!Number.isSafeInteger(parsed) ||
+			parsed < 0 ||
+			parsed > options.limit ||
+			(options.exact !== undefined && parsed !== options.exact)
+		) {
+			throw responseLengthError(options, `Content-Length ${declared}`);
+		}
+	}
+	if (response.body === null) return new Uint8Array();
+	if (typeof response.body?.getReader !== "function") {
+		throw new ManifestResolverError(
+			"unsupported-response",
+			`${options.label} response body is not a readable byte stream`,
+		);
+	}
+
+	const reader = response.body.getReader();
+	const chunks = [];
+	let total = 0;
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			if (!(value instanceof Uint8Array)) {
+				throw new ManifestResolverError(
+					"unsupported-response",
+					`${options.label} response yielded a non-byte chunk`,
+				);
+			}
+			if (value.byteLength > options.limit - total) {
+				await reader.cancel().catch(() => {});
+				throw responseLengthError(
+					options,
+					`at least ${total + value.byteLength} streamed bytes`,
+				);
+			}
+			total += value.byteLength;
+			if (value.byteLength > 0) chunks.push(value);
+		}
+	} finally {
+		reader.releaseLock();
+	}
+
+	const bytes = new Uint8Array(total);
+	let offset = 0;
+	for (const chunk of chunks) {
+		bytes.set(chunk, offset);
+		offset += chunk.byteLength;
+	}
+	return bytes;
+}
+
+function responseLengthError(options, actual) {
+	const expected =
+		options.exact === undefined
+			? `the ${options.limit} byte ceiling`
+			: `${options.exact} bytes`;
+	return new ManifestResolverError(
+		options.code,
+		`${options.label} returned ${actual}; expected ${expected}`,
 	);
 }
 
