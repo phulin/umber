@@ -1011,13 +1011,8 @@ impl Stores {
         if let Some(symbol) = identifier {
             self.assert_live_symbol(symbol);
         }
-        let font = self.fonts.get(font);
         hasher.tag(0x68);
-        hasher.str(font.name());
-        hasher.bytes(&font.content_hash());
-        hasher.u32(font.checksum());
-        hasher.i32(font.design_size().raw());
-        hasher.i32(font.size().raw());
+        self.fonts.hash_fragment(font).apply(hasher);
         match identifier {
             Some(symbol) => {
                 hasher.bool(true);
@@ -1039,6 +1034,7 @@ impl Stores {
                 self.interner.resolve_id(symbol).to_owned(),
             )
         });
+        let immutable_hash = self.fonts.hash_fragment(font).fingerprint();
         let font = self.fonts.get(font);
         FontSemanticKey {
             name: font.name().to_owned(),
@@ -1046,6 +1042,7 @@ impl Stores {
             checksum: font.checksum(),
             design_size: font.design_size().raw(),
             size: font.size().raw(),
+            immutable_hash,
             identifier,
         }
     }
@@ -1212,6 +1209,7 @@ struct FontSemanticKey {
     checksum: u32,
     design_size: i32,
     size: i32,
+    immutable_hash: u64,
     identifier: Option<(ControlSequenceKind, String)>,
 }
 
@@ -1265,11 +1263,7 @@ fn hash_catcode(cat: Catcode, hasher: &mut StateHasher) {
 
 fn hash_font_semantic_key(font: &FontSemanticKey, hasher: &mut StateHasher) {
     hasher.tag(0x68);
-    hasher.str(&font.name);
-    hasher.bytes(&font.content_hash);
-    hasher.u32(font.checksum);
-    hasher.i32(font.design_size);
-    hasher.i32(font.size);
+    hasher.u64(font.immutable_hash);
     match &font.identifier {
         Some((kind, name)) => {
             hasher.bool(true);

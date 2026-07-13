@@ -28,6 +28,36 @@ pub(crate) struct StateHasher {
     state: u64,
 }
 
+/// Domain-separated fingerprint for semantic data that is immutable after
+/// publication.
+///
+/// A fragment is derived state rather than a durable identity. Its own domain
+/// keeps equal field sequences used for different semantic purposes distinct.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct StateHashFragment {
+    fingerprint: u64,
+}
+
+impl StateHashFragment {
+    #[must_use]
+    pub(crate) fn from_builder(domain: u64, build: impl FnOnce(&mut StateHasher)) -> Self {
+        let mut hasher = StateHasher::new(domain);
+        build(&mut hasher);
+        Self {
+            fingerprint: hasher.finish(),
+        }
+    }
+
+    pub(crate) fn apply(&self, hasher: &mut StateHasher) {
+        hasher.u64(self.fingerprint);
+    }
+
+    #[must_use]
+    pub(crate) const fn fingerprint(self) -> u64 {
+        self.fingerprint
+    }
+}
+
 impl StateHasher {
     #[must_use]
     pub(crate) const fn new(domain: u64) -> Self {

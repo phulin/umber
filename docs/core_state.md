@@ -910,9 +910,13 @@ pub struct Snapshot {
   stream-buffer state (including terminal-input cursor), RNG state, job clock,
   interaction mode, prepared magnification, and font-dependent content by
   following `FontId` handles to the loaded font's semantic identity (font name,
-  input path/content hash, checksum, design size, and selected size) rather
-  than hashing raw dense ids. Diagnostic provenance records and origin-list
-  arenas are explicitly excluded from semantic hashes.
+  content hash, checksum, design size, and selected size) rather
+  than hashing raw dense ids. The immutable part of that identity is reduced
+  once to a domain-separated fingerprint in an append-only derived table; font
+  rollback truncates only the live slot mapping, so an equivalent later load
+  reuses the fingerprint. The rollback-coupled control-sequence identifier is
+  still hashed separately by namespace and name. Diagnostic provenance records
+  and origin-list arenas are explicitly excluded from semantic hashes.
 
 Derived queries (these fall out; do not build separate instrumentation):
 
