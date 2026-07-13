@@ -12,6 +12,11 @@
 
 `tools/parity-harness` is the shared Rust library and compatibility CLI for end-to-end DVI conformance. Oracle-presence-conditional Story, Gentle, TRIP, and e-TRIP tests use it for final artifact comparison against gitignored, locally generated `tests/corpus/e2e` DVI files. Its fixture path stages manifest inputs and calls an in-process Umber runner supplied by the Cargo test; it never launches the Umber binary. The explicit `--write-reference-fixture` CLI path stages manifest-selected documents under live reference TeX for `scripts/regen-fixtures.sh`, verifies manifest-pinned reference hashes, and writes local oracles. Comparison normalizes only DVI preamble comments, requires byte-identical final DVI, and writes automatic bundles under `target/conformance-triage/` or the CLI-selected triage directory.
 
+`tools/profile-analyzer` is the read-only Samply/Firefox processed-profile CLI.
+It reconstructs columnar sample stacks, consumes Samply presymbolication
+sidecars including inline frames, and reports self/inclusive, subtree, and
+runtime-caller attribution for persistent engine profiles.
+
 `scripts/trip.sh` owns specialized official Knuth TeX82 TRIP and e-TeX V2
 e-TRIP preparation and standalone compatibility orchestration with shell plus
 ambient TeXware tools.

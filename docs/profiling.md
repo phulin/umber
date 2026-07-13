@@ -44,3 +44,41 @@ The ordinary end-to-end Gentle conformance test remains the correctness and
 host-workflow measurement. This profiling runner deliberately removes its
 repeated staging, oracle reads, artifact writes, and temporary-directory
 cleanup so those operations do not obscure engine hotspots.
+
+## Analyze a capture
+
+Use the repository analyzer for a repeatable text report instead of manually
+expanding stacks in the Samply UI:
+
+```bash
+scripts/analyze-profile.sh
+scripts/analyze-profile.sh --top 40 target/profiles/gentle.json.gz
+```
+
+The report ranks self time and recursion-deduplicated inclusive time. It also
+separates runtime self samples by library and attributes them to the nearest
+Umber frame, which makes allocator and memory-operation costs visible without
+losing their application caller. Percentages use Samply sample weights rather
+than assuming every sample has weight one.
+
+For a focused question, restrict the report to stacks beneath a function. The
+subtree report adds the function's immediate callees and shows both the share
+within the subtree and the share of the complete capture:
+
+```bash
+scripts/analyze-profile.sh \
+  --subtree drain_pending_output \
+  target/profiles/gentle.json.gz
+```
+
+Samply normally writes `gentle.json.syms.json` beside `gentle.json.gz`; the
+analyzer discovers that sidecar automatically and uses its exact address map,
+including inline frames. Pass `--symbols PATH` for a sidecar elsewhere. If no
+sidecar exists, already-symbolized profile names remain useful and unresolved
+addresses are reported explicitly rather than guessed. Use `--thread TEXT` or
+`--app TEXT` when automatic thread or application-library selection is
+ambiguous, and `--json` for machine-readable output.
+
+Compiler inlining can make broad entry-point frames such as `main` or `run`
+dominate a whole-profile inclusive ranking. Self time is unaffected; use a
+named subtree when comparing the internal costs of a subsystem.
