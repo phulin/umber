@@ -293,6 +293,7 @@ fn run_pass<S: TypesetState>(
     let mut active = vec![0usize];
     let mut finals = Vec::new();
     let last_line_fit = LastLineFit::new(params, background);
+    let easy_line = tex_easy_line(params);
 
     for bp in breakpoints {
         let mut next = Vec::new();
@@ -394,17 +395,7 @@ fn run_pass<S: TypesetState>(
             finals.extend(best_new.iter().copied());
         }
         next.extend(best_new);
-        // TeX's active list is ordered by line number. New breaks are inserted
-        // immediately before the existing nodes for their line, so positions
-        // within one line-number class occur in reverse breakpoint order.
-        // This order matters because equal demerits replace the previously
-        // recorded route while `try_break` traverses the class.
-        next.sort_by(|&left, &right| {
-            candidates[left]
-                .line
-                .cmp(&candidates[right].line)
-                .then_with(|| candidates[right].position.cmp(&candidates[left].position))
-        });
+        sort_active_candidates(&mut next, &candidates, params, easy_line);
         active = next;
     }
 
@@ -415,6 +406,48 @@ fn run_pass<S: TypesetState>(
         return None;
     }
     Some(reconstruct(nodes, &candidates, chosen, last_line_fit))
+}
+
+fn tex_easy_line(params: &LineBreakParams) -> usize {
+    if params.looseness != 0 {
+        return usize::MAX;
+    }
+    if let Some(parshape) = &params.shape.parshape {
+        return parshape.lines.len().saturating_sub(1);
+    }
+    if params.shape.hang_indent.raw() == 0 {
+        0
+    } else {
+        params.shape.hang_after.saturating_abs() as usize
+    }
+}
+
+fn sort_active_candidates(
+    active: &mut [usize],
+    candidates: &[Candidate],
+    params: &LineBreakParams,
+    easy_line: usize,
+) {
+    // TeX normally keeps active nodes ordered by line number and inserts a
+    // new break before existing nodes in the same class. Beyond `easy_line`,
+    // all equal-width lines form one deferred class and new breaks instead
+    // accumulate in source order. The visit order is observable because an
+    // equal demerit replaces the route recorded earlier in `try_break`.
+    active.sort_by(|&left, &right| {
+        let left = &candidates[left];
+        let right = &candidates[right];
+        left.line.cmp(&right.line).then_with(|| {
+            let effective_line = left
+                .line
+                .saturating_add(1)
+                .saturating_add(params.shape.line_offset);
+            if effective_line > easy_line {
+                left.position.cmp(&right.position)
+            } else {
+                right.position.cmp(&left.position)
+            }
+        })
+    });
 }
 
 #[derive(Clone, Copy)]

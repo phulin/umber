@@ -390,6 +390,30 @@ fn active_list_order_matches_tex_for_equal_demerit_discretionary_routes() {
 }
 
 #[test]
+fn easy_line_active_nodes_accumulate_in_source_order() {
+    let candidate = |position| Candidate {
+        position,
+        width_position: position,
+        penalty: 0,
+        line: 9,
+        fitness: Fitness::Decent,
+        demerits: 0,
+        path_demerits: 0,
+        previous: None,
+        hyphenated: false,
+        line_shortfall: sp(0),
+        line_glue: sp(0),
+    };
+    let candidates = vec![candidate(0), candidate(14), candidate(15)];
+    let p = params(100);
+    let mut active = vec![2, 1];
+
+    sort_active_candidates(&mut active, &candidates, &p, tex_easy_line(&p));
+
+    assert_eq!(active, vec![1, 2]);
+}
+
+#[test]
 fn parshape_repeats_last_line_and_overrides_hanging() {
     let shape = LineShape {
         hsize: sp(100),
