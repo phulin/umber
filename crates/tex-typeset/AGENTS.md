@@ -16,6 +16,7 @@ Use this crate for layout algorithms whose correctness can be tested as pure fun
 - `src/alignment.rs`: pure detached alignment column/span width planning.
 - `src/alignment/tests.rs`: unit tests for independent alignment width planning.
 - `src/math/`: pure Appendix G math-list conversion helpers, including the `convert` pass driver, style transitions, math parameter snapshots, compound fractions/operators/radicals/delimiters/accents, script placement, and inter-noad spacing over owned hlist output.
+- `src/math/arithmetic.rs`: documented shared saturating scaled-arithmetic policy for Appendix G.
 - `src/packing.rs`: hpack/vpack/vtop kernels, pack parameters, measurements, glue setting, and diagnostics.
 - `src/packing/tests.rs`: unit tests for badness, packing dimensions, glue settings, diagnostics, and vtop behavior.
 - `src/vertical_break.rs`: pure TeX.web `vert_break` page/split breakpoint costing over immutable vertical lists.

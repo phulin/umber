@@ -6,7 +6,7 @@ use tex_state::scaled::Scaled;
 use super::convert::convert_mlist;
 use super::{
     BoxAxis, Context, FrozenHList, MathBox, MathNode, MathTypesetState, add, boxed_node, char_box,
-    clean_box, fetch, sub,
+    clean_box, fetch, neg, sub,
 };
 
 pub(super) struct OperatorResult {
@@ -169,7 +169,7 @@ fn displayed_limits(
     rebox(ctx, &mut sub_box, width);
     let skew = Scaled::from_raw(tex_arith::half(delta.raw()));
     sup.shift = skew;
-    sub_box.shift = Scaled::from_raw(-skew.raw());
+    sub_box.shift = neg(skew);
 
     let mut height = op.height;
     let mut depth = op.depth;

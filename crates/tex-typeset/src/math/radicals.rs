@@ -6,7 +6,7 @@ use tex_state::scaled::Scaled;
 use super::delimiters::make_delimiter;
 use super::{
     BoxAxis, Context, FetchedChar, FrozenHList, MathBox, MathNode, MathTypesetState, add,
-    boxed_node, char_box, clean_box, fetch, make_character_nucleus, scripts, source_list, sub,
+    boxed_node, char_box, clean_box, fetch, make_character_nucleus, neg, scripts, source_list, sub,
 };
 
 pub(super) struct AccentResult {
@@ -135,7 +135,7 @@ pub(super) fn make_radical(
     if delta.raw() > 0 {
         clearance = add(clearance, Scaled::from_raw(tex_arith::half(delta.raw())));
     }
-    delimiter.shift = Scaled::from_raw(-add(x.height, clearance).raw());
+    delimiter.shift = neg(add(x.height, clearance));
     let bar = overbar(ctx, x, clearance, delimiter.height);
     let inner = ctx.layout.hlist([boxed_node(delimiter), boxed_node(bar)]);
     let packed = ctx.layout.hpack(inner);
@@ -219,7 +219,7 @@ pub(super) fn make_math_accent(
     let list = ctx.layout.hlist([
         MathNode::HList(accent_box),
         MathNode::Kern {
-            amount: Scaled::from_raw(-delta.raw()),
+            amount: neg(delta),
             kind: KernKind::Accent,
         },
         MathNode::HList(accentee),

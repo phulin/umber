@@ -1,9 +1,10 @@
-use tex_arith::{saturating_add as add, saturating_sub as sub};
 use tex_fonts::CharMetrics;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::FontId;
 use tex_state::node::{GlueKind, KernKind, LeaderPayload, Node, Sign};
 use tex_state::scaled::{GlueSetRatio, Scaled};
+
+use super::{add, sub};
 
 /// One converted math layout backed by a contiguous node arena.
 #[derive(Clone, Debug, PartialEq)]

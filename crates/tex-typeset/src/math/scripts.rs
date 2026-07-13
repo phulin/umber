@@ -1,12 +1,11 @@
-use tex_arith::{half, saturating_add as add, saturating_sub as sub};
 use tex_state::math::MathField;
 use tex_state::node::KernKind;
 use tex_state::scaled::Scaled;
 
 use super::style::Style;
 use super::{
-    Context, FrozenHList, MathBox, MathNode, MathTypesetState, boxed_node, clean_box,
-    hlist_extents, node_is_char,
+    Context, FrozenHList, MathBox, MathNode, MathTypesetState, add, boxed_node, clean_box,
+    hlist_extents, neg, node_is_char, sub,
 };
 
 pub fn make_scripts(
@@ -162,13 +161,4 @@ fn script_pair(
 struct ScriptShifts {
     up: Scaled,
     down: Scaled,
-}
-
-fn neg(value: Scaled) -> Scaled {
-    Scaled::from_raw(-value.raw())
-}
-
-#[allow(dead_code)]
-fn tex_half(value: Scaled) -> Scaled {
-    Scaled::from_raw(half(value.raw()))
 }

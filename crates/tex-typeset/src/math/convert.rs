@@ -1,5 +1,4 @@
 use tex_arith::x_over_n;
-pub(crate) use tex_arith::{saturating_add as add, saturating_sub as sub};
 use tex_fonts::CharMetrics;
 use tex_state::ids::{FontId, NodeListId};
 use tex_state::math::{LimitType, MathChar, MathField, MathNoad, NoadClass, NoadKind};
@@ -8,7 +7,7 @@ use tex_state::scaled::Scaled;
 
 use super::{
     BoxAxis, FrozenHList, MathBox, MathGlueKind, MathLayout, MathLayoutBuilder, MathLayoutSink,
-    MathNode, MathParams, MathTypesetState, SpacingKind, Style, StyleFamily, boxed_node,
+    MathNode, MathParams, MathTypesetState, SpacingKind, Style, StyleFamily, add, boxed_node,
     delimiters, fractions, left_right_delimiter_target, operators, radicals, scripts, spacing,
 };
 

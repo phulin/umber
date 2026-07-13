@@ -1,5 +1,6 @@
 //! Pure Appendix G math-list to horizontal-list conversion.
 
+mod arithmetic;
 mod convert;
 mod delimiters;
 mod fractions;
@@ -23,8 +24,9 @@ use tex_state::scaled::Scaled;
 
 use crate::TypesetState;
 
+pub(crate) use arithmetic::{add, neg, sub};
 pub(crate) use convert::{
-    Context, FetchedChar, add, char_box, clean_box, fetch, make_character_nucleus, source_list, sub,
+    Context, FetchedChar, char_box, clean_box, fetch, make_character_nucleus, source_list,
 };
 pub use convert::{mlist_to_hlist, mlist_to_hlist_with_sink};
 pub use delimiters::left_right_delimiter_target;
