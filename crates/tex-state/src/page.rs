@@ -5,7 +5,7 @@ use crate::ids::{GlueId, TokenListId};
 use crate::node::Node;
 use crate::scaled::Scaled;
 use crate::state_hash::StateHasher;
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
 
 /// TeX's `awful_bad` sentinel, `2^30 - 1`.
@@ -93,6 +93,33 @@ impl PageMark {
             Self::SplitFirst => 3,
             Self::SplitBot => 4,
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct MarkClassState {
+    marks: [TokenListId; 5],
+}
+
+impl Default for MarkClassState {
+    fn default() -> Self {
+        Self {
+            marks: [TokenListId::EMPTY; 5],
+        }
+    }
+}
+
+impl MarkClassState {
+    fn get(self, mark: PageMark) -> TokenListId {
+        self.marks[usize::from(mark.index())]
+    }
+
+    fn set(&mut self, mark: PageMark, value: TokenListId) {
+        self.marks[usize::from(mark.index())] = value;
+    }
+
+    fn is_empty(self) -> bool {
+        self.marks.iter().all(|mark| *mark == TokenListId::EMPTY)
     }
 }
 
@@ -291,6 +318,7 @@ pub(crate) struct PageBuilderState {
     bot_mark: TokenListId,
     split_first_mark: TokenListId,
     split_bot_mark: TokenListId,
+    mark_classes: Arc<BTreeMap<u16, MarkClassState>>,
 }
 
 impl Default for PageBuilderState {
@@ -324,6 +352,7 @@ impl Default for PageBuilderState {
             bot_mark: TokenListId::EMPTY,
             split_first_mark: TokenListId::EMPTY,
             split_bot_mark: TokenListId::EMPTY,
+            mark_classes: Arc::new(BTreeMap::new()),
         }
     }
 }
@@ -397,6 +426,35 @@ impl PageBuilderState {
             PageMark::SplitFirst => self.split_first_mark = value,
             PageMark::SplitBot => self.split_bot_mark = value,
         }
+    }
+
+    pub(crate) fn mark_class(&self, mark: PageMark, class: u16) -> TokenListId {
+        if class == 0 {
+            return self.mark(mark);
+        }
+        self.mark_classes
+            .get(&class)
+            .copied()
+            .map_or(TokenListId::EMPTY, |marks| marks.get(mark))
+    }
+
+    pub(crate) fn set_mark_class(&mut self, mark: PageMark, class: u16, value: TokenListId) {
+        if class == 0 {
+            self.set_mark(mark, value);
+            return;
+        }
+        let classes = Arc::make_mut(&mut self.mark_classes);
+        let mut marks = classes.get(&class).copied().unwrap_or_default();
+        marks.set(mark, value);
+        if marks.is_empty() {
+            classes.remove(&class);
+        } else {
+            classes.insert(class, marks);
+        }
+    }
+
+    pub(crate) fn mark_class_ids(&self) -> impl Iterator<Item = u16> + '_ {
+        self.mark_classes.keys().copied()
     }
 
     pub(crate) fn freeze_specs(
@@ -709,6 +767,13 @@ impl PageBuilderState {
             self.split_bot_mark,
         ] {
             hash_tokens(mark, hasher);
+        }
+        hasher.usize(self.mark_classes.len());
+        for (&class, marks) in self.mark_classes.iter() {
+            hasher.u16(class);
+            for mark in marks.marks {
+                hash_tokens(mark, hasher);
+            }
         }
         hash_queue(&self.contribution, hasher);
         hash_nodes(&self.current_page, hasher);

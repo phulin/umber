@@ -131,6 +131,8 @@ pub trait ExpansionState {
     fn page_dimension(&self, dimension: PageDimension) -> Scaled;
     fn page_integer(&self, integer: PageInteger) -> i32;
     fn page_mark(&self, mark: PageMark) -> TokenListId;
+    fn page_mark_class(&self, mark: PageMark, class: u16) -> TokenListId;
+    fn report_bad_register_code(&mut self, _value: i32, _maximum: u16) {}
     fn int_param(&self, param: IntParam) -> i32;
     /// Emits the e-TeX `\scantokens` pseudo-file boundary when tracing is enabled.
     fn trace_scantokens_boundary(&mut self, _opening: bool) {}
@@ -1872,6 +1874,29 @@ impl Universe {
         self.page.set_mark(mark, value);
     }
 
+    #[must_use]
+    pub fn page_mark_class(&self, mark: PageMark, class: u16) -> TokenListId {
+        self.page.mark_class(mark, class)
+    }
+
+    pub fn set_page_mark_class(&mut self, mark: PageMark, class: u16, value: TokenListId) {
+        let _ = self.stores.tokens(value);
+        self.page.set_mark_class(mark, class, value);
+    }
+
+    pub fn page_mark_classes(&self) -> impl Iterator<Item = u16> + '_ {
+        self.page.mark_class_ids()
+    }
+
+    pub fn report_bad_register_code(&mut self, value: i32, maximum: u16) {
+        self.world.write_text(
+            PrintSink::TerminalAndLog,
+            &format!(
+                "\n! Bad register code ({value}).\nA register number must be between 0 and {maximum}.\nI changed this one to zero.\n"
+            ),
+        );
+    }
+
     pub fn freeze_page_specs(&mut self, contents: PageContents) {
         let vsize = self.dimen_param(DimenParam::V_SIZE);
         let max_depth = self.dimen_param(DimenParam::MAX_DEPTH);
@@ -2646,6 +2671,14 @@ impl ExpansionState for Universe {
         Self::page_mark(self, mark)
     }
 
+    fn page_mark_class(&self, mark: PageMark, class: u16) -> TokenListId {
+        Self::page_mark_class(self, mark, class)
+    }
+
+    fn report_bad_register_code(&mut self, value: i32, maximum: u16) {
+        Self::report_bad_register_code(self, value, maximum);
+    }
+
     fn box_dimension(&self, index: u16, dimension: BoxDimension) -> Option<Scaled> {
         Self::box_dimension(self, index, dimension)
     }
@@ -3009,6 +3042,14 @@ impl ExpansionState for ExpansionContext<'_> {
 
     fn page_mark(&self, mark: PageMark) -> TokenListId {
         self.universe.page_mark(mark)
+    }
+
+    fn page_mark_class(&self, mark: PageMark, class: u16) -> TokenListId {
+        self.universe.page_mark_class(mark, class)
+    }
+
+    fn report_bad_register_code(&mut self, value: i32, maximum: u16) {
+        self.universe.report_bad_register_code(value, maximum);
     }
 
     fn box_dimension(&self, index: u16, dimension: BoxDimension) -> Option<Scaled> {

@@ -41,6 +41,11 @@ fn page_mark_for_primitive(primitive: ExpandablePrimitive) -> PageMark {
         ExpandablePrimitive::BotMark => PageMark::Bot,
         ExpandablePrimitive::SplitFirstMark => PageMark::SplitFirst,
         ExpandablePrimitive::SplitBotMark => PageMark::SplitBot,
+        ExpandablePrimitive::TopMarks => PageMark::Top,
+        ExpandablePrimitive::FirstMarks => PageMark::First,
+        ExpandablePrimitive::BotMarks => PageMark::Bot,
+        ExpandablePrimitive::SplitFirstMarks => PageMark::SplitFirst,
+        ExpandablePrimitive::SplitBotMarks => PageMark::SplitBot,
         _ => unreachable!("caller restricts mark-family primitives"),
     }
 }
@@ -363,6 +368,40 @@ macro_rules! dispatch_match {
                 Ok(Dispatch::Push {
                     replay_kind: ExpansionReplayKind::Mark,
                     token_list: stores.page_mark(mark),
+                    origin_list: tex_state::ids::OriginListId::EMPTY,
+                    macro_arguments: MacroArguments::new(),
+                    macro_invocation: OriginId::UNKNOWN,
+                })
+            }
+            Meaning::ExpandablePrimitive(
+                primitive @ (ExpandablePrimitive::TopMarks
+                | ExpandablePrimitive::FirstMarks
+                | ExpandablePrimitive::BotMarks
+                | ExpandablePrimitive::SplitFirstMarks
+                | ExpandablePrimitive::SplitBotMarks),
+            ) => {
+                let mark = page_mark_for_primitive(primitive);
+                let scanned = scan_int::scan_int_with_expander_and_hooks(
+                    input,
+                    stores,
+                    recorder,
+                    hooks,
+                    &mut expander,
+                    call_context,
+                )?;
+                let class = if (0..=32_767).contains(&scanned.value()) {
+                    scanned.value() as u16
+                } else {
+                    stores.report_bad_register_code(scanned.value(), 32_767);
+                    0
+                };
+                recorder.record_dependency(crate::ReadDependency::PageMarkClass {
+                    mark: page_mark_key(mark),
+                    class,
+                });
+                Ok(Dispatch::Push {
+                    replay_kind: ExpansionReplayKind::Mark,
+                    token_list: stores.page_mark_class(mark, class),
                     origin_list: tex_state::ids::OriginListId::EMPTY,
                     macro_arguments: MacroArguments::new(),
                     macro_invocation: OriginId::UNKNOWN,

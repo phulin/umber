@@ -104,6 +104,7 @@ pub(super) fn math_allows_assignment_primitive(primitive: UnexpandablePrimitive)
             | UnexpandablePrimitive::Omit
             | UnexpandablePrimitive::NoAlign
             | UnexpandablePrimitive::Mark
+            | UnexpandablePrimitive::Marks
     )
 }
 

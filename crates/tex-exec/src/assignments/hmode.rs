@@ -195,10 +195,21 @@ where
         UnexpandablePrimitive::Accent => {
             execute_accent(nest, input, stores, recorder, hooks, context)?;
         }
-        UnexpandablePrimitive::Mark => {
+        UnexpandablePrimitive::Mark | UnexpandablePrimitive::Marks => {
             flush_pending_hchars(nest, stores)?;
+            let class = if primitive == UnexpandablePrimitive::Marks {
+                let value = scan_i32(input, stores, hooks, context)?;
+                if (0..=32_767).contains(&value) {
+                    value as u16
+                } else {
+                    stores.report_bad_register_code(value, 32_767);
+                    0
+                }
+            } else {
+                0
+            };
             let tokens = scan_general_text_expanded_with_driver(input, stores, hooks, context)?;
-            append_vertical_contribution(nest, stores, Node::Mark { class: 0, tokens });
+            append_vertical_contribution(nest, stores, Node::Mark { class, tokens });
         }
         UnexpandablePrimitive::VAdjust => execute_vadjust(nest, input, stores, hooks)?,
         UnexpandablePrimitive::Insert => execute_insert(nest, input, stores, hooks, context)?,

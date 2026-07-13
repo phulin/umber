@@ -143,6 +143,26 @@ pub fn install_etex_expandable_primitives(stores: &mut Universe) {
             "iffontchar",
             tex_state::meaning::ExpandablePrimitive::IfFontChar,
         ),
+        (
+            "topmarks",
+            tex_state::meaning::ExpandablePrimitive::TopMarks,
+        ),
+        (
+            "firstmarks",
+            tex_state::meaning::ExpandablePrimitive::FirstMarks,
+        ),
+        (
+            "botmarks",
+            tex_state::meaning::ExpandablePrimitive::BotMarks,
+        ),
+        (
+            "splitfirstmarks",
+            tex_state::meaning::ExpandablePrimitive::SplitFirstMarks,
+        ),
+        (
+            "splitbotmarks",
+            tex_state::meaning::ExpandablePrimitive::SplitBotMarks,
+        ),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::ExpandablePrimitive(primitive));
@@ -216,6 +236,10 @@ pub enum ReadDependency {
     PageDimension(u8),
     PageInteger(u8),
     PageMark(u8),
+    PageMarkClass {
+        mark: u8,
+        class: u16,
+    },
     InputLine,
     InputStream(u8),
     Engine(ReadEngineField),

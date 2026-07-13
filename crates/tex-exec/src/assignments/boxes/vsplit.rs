@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use tex_expand::ExpansionHooks;
 use tex_lex::{InputSource, InputStack};
 use tex_state::Universe;
@@ -126,29 +127,47 @@ fn replace_split_source(
 }
 
 fn update_split_marks(stores: &mut Universe, nodes: &[Node]) {
-    let mut first = None;
-    let mut bot = None;
+    clear_split_marks(stores);
+    let mut classes = BTreeMap::new();
     for node in nodes {
-        if let Node::Mark { class: 0, tokens } = node {
+        if let Node::Mark { class, tokens } = node {
+            let (first, bot) = classes.entry(*class).or_insert((None, None));
             if first.is_none() {
-                first = Some(*tokens);
+                *first = Some(*tokens);
             }
-            bot = Some(*tokens);
+            *bot = Some(*tokens);
         }
     }
-    stores.set_page_mark(
-        PageMark::SplitFirst,
-        first.unwrap_or(tex_state::ids::TokenListId::EMPTY),
-    );
-    stores.set_page_mark(
-        PageMark::SplitBot,
-        bot.unwrap_or(tex_state::ids::TokenListId::EMPTY),
-    );
+    for (class, (first, bot)) in classes {
+        stores.set_page_mark_class(
+            PageMark::SplitFirst,
+            class,
+            first.unwrap_or(tex_state::ids::TokenListId::EMPTY),
+        );
+        stores.set_page_mark_class(
+            PageMark::SplitBot,
+            class,
+            bot.unwrap_or(tex_state::ids::TokenListId::EMPTY),
+        );
+    }
 }
 
 fn clear_split_marks(stores: &mut Universe) {
     stores.set_page_mark(PageMark::SplitFirst, tex_state::ids::TokenListId::EMPTY);
     stores.set_page_mark(PageMark::SplitBot, tex_state::ids::TokenListId::EMPTY);
+    let classes = stores.page_mark_classes().collect::<Vec<_>>();
+    for class in classes {
+        stores.set_page_mark_class(
+            PageMark::SplitFirst,
+            class,
+            tex_state::ids::TokenListId::EMPTY,
+        );
+        stores.set_page_mark_class(
+            PageMark::SplitBot,
+            class,
+            tex_state::ids::TokenListId::EMPTY,
+        );
+    }
 }
 
 fn vertical_break_error(error: VerticalBreakError) -> ExecError {

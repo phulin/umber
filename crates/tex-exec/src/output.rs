@@ -1,6 +1,6 @@
 //! TeX.web output routine fire-up and end-of-job cleanup.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use tex_expand::{ExpansionHooks, ReadRecorder};
 use tex_lex::{InputSource, InputStack, TokenListReplayKind};
@@ -153,28 +153,43 @@ fn prepare_box255(stores: &mut Universe, fire_up: PageFireUp) -> Result<(), Exec
 }
 
 fn update_page_marks_at_fire_up(stores: &mut Universe, page_nodes: &[Node]) {
-    let top = stores.page_mark(PageMark::Bot);
-    stores.set_page_mark(PageMark::Top, top);
-
-    let mut first = None;
-    let mut bot = None;
+    let mut classes = stores.page_mark_classes().collect::<BTreeSet<_>>();
+    classes.insert(0);
     for node in page_nodes {
-        if let Node::Mark { class: 0, tokens } = node {
-            if first.is_none() {
-                first = Some(*tokens);
-            }
-            bot = Some(*tokens);
+        if let Node::Mark { class, .. } = node {
+            classes.insert(*class);
         }
     }
 
-    match (first, bot) {
-        (Some(first), Some(bot)) => {
-            stores.set_page_mark(PageMark::First, first);
-            stores.set_page_mark(PageMark::Bot, bot);
+    for class in classes {
+        let top = stores.page_mark_class(PageMark::Bot, class);
+        stores.set_page_mark_class(PageMark::Top, class, top);
+
+        let mut first = None;
+        let mut bot = None;
+        for node in page_nodes {
+            if let Node::Mark {
+                class: node_class,
+                tokens,
+            } = node
+                && *node_class == class
+            {
+                if first.is_none() {
+                    first = Some(*tokens);
+                }
+                bot = Some(*tokens);
+            }
         }
-        _ => {
-            stores.set_page_mark(PageMark::First, top);
-            stores.set_page_mark(PageMark::Bot, top);
+
+        match (first, bot) {
+            (Some(first), Some(bot)) => {
+                stores.set_page_mark_class(PageMark::First, class, first);
+                stores.set_page_mark_class(PageMark::Bot, class, bot);
+            }
+            _ => {
+                stores.set_page_mark_class(PageMark::First, class, top);
+                stores.set_page_mark_class(PageMark::Bot, class, top);
+            }
         }
     }
 }

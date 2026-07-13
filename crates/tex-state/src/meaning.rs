@@ -174,6 +174,11 @@ pub enum ExpandablePrimitive {
     BotMark,
     SplitFirstMark,
     SplitBotMark,
+    TopMarks,
+    FirstMarks,
+    BotMarks,
+    SplitFirstMarks,
+    SplitBotMarks,
     IfTrue,
     IfFalse,
     If,
@@ -261,6 +266,11 @@ impl ExpandablePrimitive {
             Self::IfDefined => 45,
             Self::IfCsName => 46,
             Self::IfFontChar => 47,
+            Self::TopMarks => 48,
+            Self::FirstMarks => 49,
+            Self::BotMarks => 50,
+            Self::SplitFirstMarks => 51,
+            Self::SplitBotMarks => 52,
         }
     }
 
@@ -315,6 +325,11 @@ impl ExpandablePrimitive {
             45 => Some(Self::IfDefined),
             46 => Some(Self::IfCsName),
             47 => Some(Self::IfFontChar),
+            48 => Some(Self::TopMarks),
+            49 => Some(Self::FirstMarks),
+            50 => Some(Self::BotMarks),
+            51 => Some(Self::SplitFirstMarks),
+            52 => Some(Self::SplitBotMarks),
             _ => None,
         }
     }
@@ -421,6 +436,7 @@ pub enum UnexpandablePrimitive {
     SpaceFactor,
     Accent,
     Mark,
+    Marks,
     VAdjust,
     Insert,
     UnPenalty,
@@ -727,6 +743,7 @@ impl UnexpandablePrimitive {
             Self::BeginR => 196,
             Self::EndR => 197,
             Self::Middle => 198,
+            Self::Marks => 199,
         }
     }
 
@@ -932,6 +949,7 @@ impl UnexpandablePrimitive {
             196 => Some(Self::BeginR),
             197 => Some(Self::EndR),
             198 => Some(Self::Middle),
+            199 => Some(Self::Marks),
             _ => None,
         }
     }

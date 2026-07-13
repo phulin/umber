@@ -163,7 +163,7 @@ fn dump_node(
         Node::Disc {
             pre, post, replace, ..
         } => dump_disc(stores, *pre, *post, *replace, config, depth, out),
-        Node::Mark { tokens, .. } => dump_mark(stores, *tokens, out),
+        Node::Mark { class, tokens } => dump_mark(stores, *class, *tokens, out),
         Node::Adjust(list) => {
             out.push_str("\\vadjust\n");
             dump_list(stores, *list, config, depth + 1, ListContext::VList, out);
@@ -461,8 +461,12 @@ fn dump_disc(
     dump_list(stores, replace, config, depth, ListContext::Neutral, out);
 }
 
-fn dump_mark(stores: &Universe, tokens: TokenListId, out: &mut String) {
-    out.push_str("\\mark{");
+fn dump_mark(stores: &Universe, class: u16, tokens: TokenListId, out: &mut String) {
+    if class == 0 {
+        out.push_str("\\mark{");
+    } else {
+        let _ = write!(out, "\\marks{class}{{");
+    }
     for &token in stores.tokens(tokens) {
         out.push_str(&token_text(stores, token));
     }

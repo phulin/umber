@@ -898,6 +898,7 @@ where
             | UnexpandablePrimitive::SpaceFactor
             | UnexpandablePrimitive::Accent
             | UnexpandablePrimitive::Mark
+            | UnexpandablePrimitive::Marks
             | UnexpandablePrimitive::VAdjust
             | UnexpandablePrimitive::Insert => {
                 reject_all_prefixes(prefixes)?;

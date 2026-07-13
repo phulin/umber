@@ -2973,6 +2973,35 @@ fn mark_scans_raw_general_text_then_expands_payload() {
 }
 
 #[test]
+fn etex_marks_appends_the_scanned_mark_class() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    tex_expand::install_etex_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    install_etex_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(r"\marks27{classed}\marks-1{class-zero}"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("classed mark executes");
+
+    let mark = stores
+        .current_page_nodes()
+        .iter()
+        .chain(stores.page_contributions())
+        .find(|node| matches!(node, Node::Mark { class: 27, .. }));
+    assert!(mark.is_some());
+    assert!(
+        stores
+            .current_page_nodes()
+            .iter()
+            .chain(stores.page_contributions())
+            .any(|node| matches!(node, Node::Mark { class: 0, .. }))
+    );
+    assert!(terminal_effect_text(&stores).contains("Bad register code (-1)"));
+}
+
+#[test]
 fn fire_up_updates_top_first_bot_marks_across_no_mark_page() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);
@@ -3001,6 +3030,29 @@ fn fire_up_updates_top_first_bot_marks_across_no_mark_page() {
     assert_eq!(macro_text(&stores, "pagec"), "A/A/A");
     assert_eq!(macro_text(&stores, "paged"), "A/B/B");
     assert_eq!(macro_text(&stores, "pagee"), "B/B/B");
+}
+
+#[test]
+fn fire_up_tracks_etex_mark_classes_independently() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    tex_expand::install_etex_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    install_etex_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\output={\\global\\advance\\count0 by 1 \\
+         \\ifnum\\count0=1 \\xdef\\pagea{\\topmarks7/\\firstmarks7/\\botmarks7}\\else \\
+         \\xdef\\pageb{\\topmarks7/\\firstmarks7/\\botmarks7}\\fi \\shipout\\box255}\\
+         \\topskip=0pt \\vsize=1pt \\setbox0=\\hbox{}\\ht0=2pt \\
+         \\marks7{A}\\copy0\\penalty-10000",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("classed marks survive page fire-up");
+
+    assert_eq!(macro_text(&stores, "pagea"), "/A/A");
+    assert_eq!(macro_text(&stores, "pageb"), "A/A/A");
 }
 
 #[test]

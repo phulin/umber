@@ -77,6 +77,7 @@ fn page_mark_slots_roll_back_with_snapshots() {
         cat: Catcode::Letter,
     }]);
     universe.set_page_mark(PageMark::Bot, before);
+    universe.set_page_mark_class(PageMark::Bot, 27, before);
     let snapshot = universe.snapshot();
 
     let after = universe.intern_token_list(&[Token::Char {
@@ -88,6 +89,9 @@ fn page_mark_slots_roll_back_with_snapshots() {
     universe.set_page_mark(PageMark::Bot, after);
     universe.set_page_mark(PageMark::SplitFirst, after);
     universe.set_page_mark(PageMark::SplitBot, after);
+    universe.set_page_mark_class(PageMark::Top, 27, after);
+    universe.set_page_mark_class(PageMark::First, 27, after);
+    universe.set_page_mark_class(PageMark::Bot, 27, after);
 
     universe.rollback(&snapshot);
 
@@ -96,6 +100,11 @@ fn page_mark_slots_roll_back_with_snapshots() {
     assert_eq!(universe.page_mark(PageMark::Bot), before);
     assert_eq!(universe.page_mark(PageMark::SplitFirst), TokenListId::EMPTY);
     assert_eq!(universe.page_mark(PageMark::SplitBot), TokenListId::EMPTY);
+    assert_eq!(
+        universe.page_mark_class(PageMark::Top, 27),
+        TokenListId::EMPTY
+    );
+    assert_eq!(universe.page_mark_class(PageMark::Bot, 27), before);
 }
 
 #[test]
