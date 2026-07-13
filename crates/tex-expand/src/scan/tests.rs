@@ -1,9 +1,11 @@
-use super::scan_toks;
+use super::{scan_toks, scan_toks_expanded};
 use tex_lex::{InputStack, MemoryInput};
 use tex_state::Universe;
 use tex_state::meaning::MeaningFlags;
 use tex_state::provenance::OriginRecord;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
+
+use crate::NoopExpansionHooks;
 
 fn scan(input: &str) -> (Universe, Vec<Token>, Vec<Token>) {
     let mut stores = Universe::new();
@@ -19,6 +21,35 @@ fn scan(input: &str) -> (Universe, Vec<Token>, Vec<Token>) {
 
 fn char_token(ch: char, cat: Catcode) -> Token {
     Token::Char { ch, cat }
+}
+
+#[test]
+fn expanded_definition_preserves_protected_macro_tokens() {
+    let mut stores = Universe::new();
+    let protected = stores.intern("protectedmacro");
+    let empty = stores.intern_token_list(&[]);
+    let body = stores.intern_token_list(&[char_token('x', Catcode::Letter)]);
+    stores.set_macro_meaning(
+        protected,
+        tex_state::macro_store::MacroMeaning::new(MeaningFlags::PROTECTED, empty, body),
+    );
+    let mut input = InputStack::new(MemoryInput::new("{\\protectedmacro}"));
+    let context =
+        TracedTokenWord::pack(Token::Cs(stores.intern("edef").symbol()), OriginId::UNKNOWN);
+
+    let scanned = scan_toks_expanded(
+        &mut input,
+        &mut stores,
+        MeaningFlags::EMPTY,
+        context,
+        &mut NoopExpansionHooks,
+    )
+    .expect("expanded definition scan");
+
+    assert_eq!(
+        stores.tokens(scanned.replacement_text()),
+        &[Token::Cs(protected.symbol())]
+    );
 }
 
 #[test]

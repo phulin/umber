@@ -385,6 +385,24 @@ fn get_x_token_pushes_macro_body_frame_and_continues() {
 }
 
 #[test]
+fn get_x_token_expands_protected_macros_during_normal_execution() {
+    let mut stores = Universe::new();
+    let macro_cs = stores.intern("protectedmacro");
+    let params = stores.intern_token_list(&[]);
+    let body = stores.intern_token_list(&[char_token('x')]);
+    stores.set_macro_meaning(
+        macro_cs,
+        MacroMeaning::new(MeaningFlags::PROTECTED, params, body),
+    );
+    let mut input = InputStack::new(MemoryInput::new("\\protectedmacro"));
+
+    assert_eq!(
+        get_x_token(&mut input, &mut stores).expect("protected macro expansion"),
+        Some(char_token('x'))
+    );
+}
+
+#[test]
 fn expansion_error_captures_invocation_chain_before_macro_frame_pops() {
     let mut stores = Universe::new();
     let macro_cs = stores.intern("m");

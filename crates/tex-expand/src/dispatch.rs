@@ -1,5 +1,5 @@
 use tex_lex::{InputSource, InputStack, MacroArguments};
-use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
+use tex_state::meaning::{ExpandablePrimitive, Meaning};
 use tex_state::page::PageMark;
 use tex_state::provenance::{InsertedOriginKind, SynthesizedOriginKind};
 use tex_state::token::{OriginId, Token, TracedTokenWord};
@@ -67,7 +67,7 @@ macro_rules! dispatch_match {
         let meaning = $meaning;
         let mut expander = $expander;
         match meaning {
-            Meaning::Macro { flags, definition } if is_expandable_macro(flags) => {
+            Meaning::Macro { definition, .. } => {
                 let macro_meaning = stores.macro_definition(definition);
                 let provenance = stores.macro_definition_provenance(definition);
                 let arguments = args::match_macro_call_with_recorder(
@@ -652,8 +652,7 @@ macro_rules! dispatch_match {
                     context: call_context,
                 })
             }
-            Meaning::Macro { .. }
-            | Meaning::Relax
+            Meaning::Relax
             | Meaning::CharGiven(_)
             | Meaning::CharToken { .. }
             | Meaning::MathCharGiven(_)
@@ -754,10 +753,6 @@ where
             })
         }
     )
-}
-
-const fn is_expandable_macro(flags: MeaningFlags) -> bool {
-    !flags.contains(MeaningFlags::PROTECTED)
 }
 
 /// Skeleton dispatch table for all expandable opcode families in this epic.

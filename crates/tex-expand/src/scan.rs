@@ -349,6 +349,12 @@ where
             continue;
         };
         let meaning = stores.meaning(symbol);
+        if matches!(meaning, Meaning::Macro { flags, .. } if flags.contains(MeaningFlags::PROTECTED))
+        {
+            builder.push(token);
+            origins.push(read.origin());
+            continue;
+        }
         if meaning == Meaning::ExpandablePrimitive(ExpandablePrimitive::NoExpand) {
             let Some(suppressed) = crate::next_suppressed_semantic_raw_token(&mut input, stores)?
             else {
