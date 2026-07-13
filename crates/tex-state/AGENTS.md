@@ -92,11 +92,13 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `tests/it.rs`: Integration test harness that includes capability-boundary and live-boundary test modules.
 - `tests/it/capability_boundaries.rs`: Compile-fail integration tests asserting restricted expansion and input capabilities fail to compile.
 - `tests/it/handle_serialization.rs`: Downstream compile-fail probe proving serde and private constructors cannot mint live handles or handle-bearing nodes.
-- `tests/it/live_boundary.rs`: Downstream probe tests ensuring private stores and raw environment mutation stay inaccessible.
+- `tests/it/live_boundary.rs`: Downstream compile-fail assertion ensuring private stores and raw environment mutation stay inaccessible.
 - `tests/ui/expansion_context_forbidden.rs`: Compile-fail fixture that attempts forbidden privileged calls from `ExpansionContext`.
 - `tests/ui/expansion_state_input_forbidden.rs`: Compile-fail fixture that attempts input opening through generic `ExpansionState`.
 - `tests/ui/input_open_context_forbidden.rs`: Compile-fail fixture that attempts forbidden reads, world access, and mutations from `InputOpenContext`.
 - `tests/ui/arena_transaction_exclusive.rs`: Compile-fail fixture proving suffix-owning transactions exclusively borrow the aggregate timeline.
+- `tests/ui/*-boundary-forbidden.rs`: Independent compile-fail fixtures attempting to bypass private live-state stores and the `Universe` facade.
+- `tests/ui/handle_serialization_forbidden.rs`: Compile-fail fixture attempting to serialize, deserialize, or construct live handles downstream.
 
 ## Boundaries
 

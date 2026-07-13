@@ -1,17 +1,48 @@
 use std::ffi::OsString;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Path dependency exposed to a compile-fail fixture crate.
+/// Dependency exposed to a standalone compile-fail fixture crate.
 #[derive(Clone, Copy, Debug)]
 pub struct CompileFailDependency<'a> {
-    pub name: &'a str,
-    pub path: &'a Path,
+    name: &'a str,
+    source: DependencySource<'a>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum DependencySource<'a> {
+    Path(&'a Path),
+    Registry(&'a str),
+}
+
+impl<'a> CompileFailDependency<'a> {
+    /// Creates a dependency on a local crate.
+    #[must_use]
+    pub const fn path(name: &'a str, path: &'a Path) -> Self {
+        Self {
+            name,
+            source: DependencySource::Path(path),
+        }
+    }
+
+    /// Creates a dependency from the configured Cargo registry.
+    #[must_use]
+    pub const fn registry(name: &'a str, version: &'a str) -> Self {
+        Self {
+            name,
+            source: DependencySource::Registry(version),
+        }
+    }
 }
 
 /// Runs `cargo check` against a standalone fixture crate and asserts that it
 /// fails with all expected stderr substrings.
+///
+/// Every fixture gets an independent temporary crate, while all fixture crates
+/// share one workspace-local Cargo target directory. Dropping the temporary
+/// directory removes the installed fixture source and manifest after the check;
+/// Cargo retains only reusable dependency artifacts in the shared target.
 #[allow(clippy::disallowed_methods)] // host-side test harness code
 pub fn assert_compile_fail(
     test_name: &str,
@@ -24,7 +55,6 @@ pub fn assert_compile_fail(
     });
     let crate_dir = workspace.path().join(sanitize_package_name(test_name));
     let src_dir = crate_dir.join("src");
-
     fs::create_dir_all(&src_dir).unwrap_or_else(|error| {
         panic!(
             "failed to create compile-fail source directory {}: {error}",
@@ -32,14 +62,11 @@ pub fn assert_compile_fail(
         )
     });
 
-    let source = fs::read_to_string(fixture).unwrap_or_else(|error| {
+    fs::copy(fixture, src_dir.join("main.rs")).unwrap_or_else(|error| {
         panic!(
-            "failed to read compile-fail fixture {}: {error}",
+            "failed to install compile-fail fixture {} for {test_name}: {error}",
             fixture.display()
         )
-    });
-    fs::write(src_dir.join("main.rs"), source).unwrap_or_else(|error| {
-        panic!("failed to write compile-fail fixture for {test_name}: {error}")
     });
     fs::write(
         crate_dir.join("Cargo.toml"),
@@ -53,7 +80,7 @@ pub fn assert_compile_fail(
         .arg("--manifest-path")
         .arg(crate_dir.join("Cargo.toml"))
         .arg("--target-dir")
-        .arg(crate_dir.join("target"))
+        .arg(shared_target_dir())
         .output()
         .unwrap_or_else(|error| panic!("failed to run compile-fail check: {error}"));
 
@@ -63,18 +90,21 @@ pub fn assert_compile_fail(
         "compile-fail fixture {test_name} unexpectedly compiled"
     );
 
-    let mut missing = Vec::new();
-    for expected in expected_stderr {
-        if !stderr.contains(expected) {
-            missing.push(*expected);
-        }
-    }
+    let missing: Vec<_> = expected_stderr
+        .iter()
+        .copied()
+        .filter(|expected| !stderr.contains(expected))
+        .collect();
 
     assert!(
         missing.is_empty(),
         "compile-fail fixture {test_name} missed expected stderr substrings:\n{}\n\nstderr:\n{stderr}",
         missing.join("\n")
     );
+}
+
+fn shared_target_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/compile-fail")
 }
 
 fn cargo_command() -> OsString {
@@ -96,11 +126,18 @@ edition = "2024"
     );
 
     for dependency in dependencies {
-        manifest.push_str(&format!(
-            "{} = {{ path = \"{}\" }}\n",
-            dependency.name,
-            toml_string(dependency.path)
-        ));
+        match dependency.source {
+            DependencySource::Path(path) => manifest.push_str(&format!(
+                "{} = {{ path = \"{}\" }}\n",
+                dependency.name,
+                toml_string(&path.to_string_lossy())
+            )),
+            DependencySource::Registry(version) => manifest.push_str(&format!(
+                "{} = \"{}\"\n",
+                dependency.name,
+                toml_string(version)
+            )),
+        }
     }
 
     manifest
@@ -124,8 +161,6 @@ fn sanitize_package_name(name: &str) -> String {
     }
 }
 
-fn toml_string(path: &Path) -> String {
-    path.to_string_lossy()
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"")
+fn toml_string(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
 }

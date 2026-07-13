@@ -6,10 +6,7 @@ fn scanner_helpers_cannot_open_input() {
 
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let tex_state_dir = manifest_dir.join("../tex-state");
-    let dependencies = [CompileFailDependency {
-        name: "tex-state",
-        path: &tex_state_dir,
-    }];
+    let dependencies = [CompileFailDependency::path("tex-state", &tex_state_dir)];
 
     assert_compile_fail(
         "scanner-helper-input-open-forbidden",
