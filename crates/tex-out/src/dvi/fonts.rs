@@ -39,15 +39,19 @@ impl<W: std::io::Write> DviWriter<W> {
     }
 
     pub(super) fn change_font(&mut self, font_id: u32) -> Result<(), DviError> {
+        // Glyph runs overwhelmingly repeat the selected font.  The DVI font
+        // number is the artifact's stable `font_id`, so this check is both
+        // sufficient and much cheaper than cloning and re-keying the page
+        // resource for every character in the run.
+        if self.dvi_f == Some(font_id) {
+            return Ok(());
+        }
         let font = self
             .page_fonts
             .get(&font_id)
             .cloned()
             .ok_or(DviError::MissingFont { font_id })?;
         let number = self.ensure_font_defined(&font)?;
-        if self.dvi_f == Some(number) {
-            return Ok(());
-        }
         match number {
             0..=63 => self.u8(FNT_NUM_0 + number as u8),
             64..=0xff => {
