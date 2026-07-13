@@ -61,7 +61,7 @@ pub(crate) use paragraph::{
     display_line_dimensions, end_paragraph, ensure_horizontal_for_character,
     interrupt_paragraph_for_display, make_indent_box, normal_paragraph,
 };
-pub use primitives::install_unexpandable_primitives;
+pub use primitives::{install_etex_unexpandable_primitives, install_unexpandable_primitives};
 use scanning::*;
 pub(crate) use scanning::{
     next_non_space_traced_x, next_non_space_x, scan_glue_id, scan_i32, scan_optional_keyword_x,

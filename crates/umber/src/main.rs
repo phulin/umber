@@ -78,9 +78,16 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
         Universe::from_format(world, content.bytes())?
     } else {
         let mut stores = Universe::with_world(world);
-        umber::prepare_run_stores(&mut stores);
+        if opts.etex {
+            umber::prepare_etex_run_stores(&mut stores);
+        } else {
+            umber::prepare_run_stores(&mut stores);
+        }
         stores
     };
+    if opts.etex && opts.format.is_some() {
+        tex_exec::install_etex_unexpandable_primitives(&mut stores);
+    }
     let content = stores.world_mut().read_file(path)?;
 
     let mut input = InputStack::new(WorldInput::from_content(content));
@@ -228,6 +235,7 @@ struct RunCliOptions {
     dvi: Option<PathBuf>,
     format: Option<PathBuf>,
     format_out: Option<PathBuf>,
+    etex: bool,
 }
 
 impl RunCliOptions {
@@ -237,11 +245,15 @@ impl RunCliOptions {
         let mut dvi = None;
         let mut format = None;
         let mut format_out = None;
+        let mut etex = false;
         let mut args = args.peekable();
         while let Some(arg) = args.next() {
             match arg.as_str() {
                 "--show-fixtures" => {
                     show_fixtures = true;
+                }
+                "--etex" => {
+                    etex = true;
                 }
                 "--dvi" => {
                     if dvi.is_some() {
@@ -301,6 +313,7 @@ impl RunCliOptions {
             dvi,
             format,
             format_out,
+            etex,
         })
     }
 }

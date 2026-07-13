@@ -18,7 +18,6 @@ pub fn install_unexpandable_primitives(stores: &mut Universe) {
         ("afterassignment", UnexpandablePrimitive::AfterAssignment),
         ("long", UnexpandablePrimitive::Long),
         ("outer", UnexpandablePrimitive::Outer),
-        ("protected", UnexpandablePrimitive::Protected),
         ("count", UnexpandablePrimitive::Count),
         ("dimen", UnexpandablePrimitive::Dimen),
         ("skip", UnexpandablePrimitive::Skip),
@@ -225,6 +224,15 @@ fn install_parameter_meanings(stores: &mut Universe) {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::TokParam(index));
     }
+}
+
+/// Installs unexpandable primitives that exist only in e-TeX extended mode.
+pub fn install_etex_unexpandable_primitives(stores: &mut Universe) {
+    let symbol = stores.intern("protected");
+    stores.set_meaning(
+        symbol,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Protected),
+    );
 }
 
 fn install_page_meanings(stores: &mut Universe) {

@@ -263,6 +263,37 @@ pub fn prepare_run_stores(stores: &mut Universe) {
     stores.intern("par");
 }
 
+/// Installs the primitive/state setup used by `umber run --etex`.
+pub fn prepare_etex_run_stores(stores: &mut Universe) {
+    prepare_run_stores(stores);
+    tex_exec::install_etex_unexpandable_primitives(stores);
+}
+
+#[cfg(test)]
+mod primitive_mode_tests {
+    use super::*;
+    use tex_state::meaning::{Meaning, UnexpandablePrimitive};
+
+    #[test]
+    fn protected_is_hidden_in_tex82_compatibility_mode() {
+        let mut stores = Universe::default();
+        prepare_run_stores(&mut stores);
+        let protected = stores.intern("protected");
+        assert_eq!(stores.meaning(protected), Meaning::Undefined);
+    }
+
+    #[test]
+    fn protected_is_installed_in_etex_extended_mode() {
+        let mut stores = Universe::default();
+        prepare_etex_run_stores(&mut stores);
+        let protected = stores.intern("protected");
+        assert_eq!(
+            stores.meaning(protected),
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Protected)
+        );
+    }
+}
+
 /// Runs an already-open input stack through the same executor path as `umber run`.
 pub fn run_input_with_hooks<S, H>(
     input: &mut InputStack<S>,
