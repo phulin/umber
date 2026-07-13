@@ -329,6 +329,8 @@ mod primitive_mode_tests {
         let fontchardp = compatibility.intern("fontchardp");
         let fontcharic = compatibility.intern("fontcharic");
         let interactionmode = compatibility.intern("interactionmode");
+        let tracingscantokens = compatibility.intern("tracingscantokens");
+        let numexpr = compatibility.intern("numexpr");
         assert_eq!(compatibility.meaning(unexpanded), Meaning::Undefined);
         assert_eq!(compatibility.meaning(detokenize), Meaning::Undefined);
         assert_eq!(compatibility.meaning(unless), Meaning::Undefined);
@@ -350,6 +352,8 @@ mod primitive_mode_tests {
             fontchardp,
             fontcharic,
             interactionmode,
+            tracingscantokens,
+            numexpr,
         ] {
             assert_eq!(compatibility.meaning(symbol), Meaning::Undefined);
         }
@@ -427,6 +431,7 @@ mod primitive_mode_tests {
             ("fontcharht", UnexpandablePrimitive::FontCharHt),
             ("fontchardp", UnexpandablePrimitive::FontCharDp),
             ("fontcharic", UnexpandablePrimitive::FontCharIc),
+            ("numexpr", UnexpandablePrimitive::NumExpr),
             ("interactionmode", UnexpandablePrimitive::InteractionMode),
         ] {
             let symbol = extended.intern(name);

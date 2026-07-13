@@ -318,6 +318,17 @@ where
                     cause_origin,
                 ))
             }
+            tex_state::meaning::UnexpandablePrimitive::NumExpr => {
+                let value =
+                    scan_int::scan_num_expr(input, stores, recorder, hooks, expander, token)?
+                        .value();
+                Ok(push_rendered_text(
+                    stores,
+                    ExpansionReplayKind::TheOutput,
+                    &value.to_string(),
+                    cause_origin,
+                ))
+            }
             tex_state::meaning::UnexpandablePrimitive::PrevDepth => Ok(push_rendered_text(
                 stores,
                 ExpansionReplayKind::TheOutput,

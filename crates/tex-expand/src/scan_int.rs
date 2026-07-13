@@ -6,7 +6,7 @@ use tex_lex::{InputSource, InputStack, LexError};
 use tex_state::ExpansionState;
 use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::interner::Symbol;
-use tex_state::meaning::{ExpandablePrimitive, InternalInteger, Meaning};
+use tex_state::meaning::{ExpandablePrimitive, InternalInteger, Meaning, UnexpandablePrimitive};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::{
@@ -520,6 +520,223 @@ where
     Ok(())
 }
 
+pub(crate) fn scan_num_expr<S, St, R, H, E>(
+    input: &mut InputStack<S>,
+    stores: &mut St,
+    recorder: &mut R,
+    hooks: &mut H,
+    expander: &mut E,
+    context: TracedTokenWord,
+) -> Result<ScannedInt, ScanIntError>
+where
+    S: InputSource,
+    St: ExpansionState,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
+{
+    let (value, overflow) = parse_num_expression(input, stores, recorder, hooks, expander, false)?;
+    if overflow || !(-i64::from(i32::MAX)..=i64::from(i32::MAX)).contains(&value) {
+        Ok(ScannedInt::with_diagnostic(
+            0,
+            IntegerDiagnostic::NumberTooBig,
+            context,
+        ))
+    } else {
+        Ok(ScannedInt::new(value as i32, context))
+    }
+}
+
+fn parse_num_expression<S, St, R, H, E>(
+    input: &mut InputStack<S>,
+    stores: &mut St,
+    recorder: &mut R,
+    hooks: &mut H,
+    expander: &mut E,
+    parenthesized: bool,
+) -> Result<(i64, bool), ScanIntError>
+where
+    S: InputSource,
+    St: ExpansionState,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
+{
+    let (mut value, mut overflow) = parse_num_term(input, stores, recorder, hooks, expander)?;
+    loop {
+        let Some(token) = next_nonspace_x(input, stores, recorder, hooks, expander)? else {
+            break;
+        };
+        let subtract = if is_char(token, '+') {
+            false
+        } else if is_char(token, '-') {
+            true
+        } else {
+            if parenthesized && is_char(token, ')') {
+                break;
+            }
+            if !matches!(semantic_token(token), Token::Cs(symbol) if stores.meaning(symbol) == Meaning::Relax)
+            {
+                unread_token(input, stores, token);
+            }
+            break;
+        };
+        let (rhs, rhs_overflow) = parse_num_term(input, stores, recorder, hooks, expander)?;
+        overflow |= rhs_overflow;
+        let result = if subtract {
+            value.checked_sub(rhs)
+        } else {
+            value.checked_add(rhs)
+        };
+        match result {
+            Some(next) if next.abs() <= i64::from(i32::MAX) => value = next,
+            _ => {
+                value = 0;
+                overflow = true;
+            }
+        }
+    }
+    Ok((value, overflow))
+}
+
+fn parse_num_term<S, St, R, H, E>(
+    input: &mut InputStack<S>,
+    stores: &mut St,
+    recorder: &mut R,
+    hooks: &mut H,
+    expander: &mut E,
+) -> Result<(i64, bool), ScanIntError>
+where
+    S: InputSource,
+    St: ExpansionState,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
+{
+    let (mut value, mut overflow) = parse_num_factor(input, stores, recorder, hooks, expander)?;
+    loop {
+        let Some(operator) = next_nonspace_x(input, stores, recorder, hooks, expander)? else {
+            break;
+        };
+        if is_char(operator, '*') {
+            let (numerator, factor_overflow) =
+                parse_num_factor(input, stores, recorder, hooks, expander)?;
+            overflow |= factor_overflow;
+            let following = next_nonspace_x(input, stores, recorder, hooks, expander)?;
+            if following.is_some_and(|token| is_char(token, '/')) {
+                let (denominator, denominator_overflow) =
+                    parse_num_factor(input, stores, recorder, hooks, expander)?;
+                overflow |= denominator_overflow;
+                match rounded_fraction(value, numerator, denominator) {
+                    Some(next) => value = next,
+                    None => {
+                        value = 0;
+                        overflow = true;
+                    }
+                }
+            } else {
+                if let Some(token) = following {
+                    unread_token(input, stores, token);
+                }
+                match value.checked_mul(numerator) {
+                    Some(next) if next.abs() <= i64::from(i32::MAX) => value = next,
+                    _ => {
+                        value = 0;
+                        overflow = true;
+                    }
+                }
+            }
+        } else if is_char(operator, '/') {
+            let (denominator, denominator_overflow) =
+                parse_num_factor(input, stores, recorder, hooks, expander)?;
+            overflow |= denominator_overflow;
+            match rounded_quotient(value, denominator) {
+                Some(next) => value = next,
+                None => {
+                    value = 0;
+                    overflow = true;
+                }
+            }
+        } else {
+            unread_token(input, stores, operator);
+            break;
+        }
+    }
+    Ok((value, overflow))
+}
+
+fn parse_num_factor<S, St, R, H, E>(
+    input: &mut InputStack<S>,
+    stores: &mut St,
+    recorder: &mut R,
+    hooks: &mut H,
+    expander: &mut E,
+) -> Result<(i64, bool), ScanIntError>
+where
+    S: InputSource,
+    St: ExpansionState,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
+{
+    let Some(token) = next_nonspace_x(input, stores, recorder, hooks, expander)? else {
+        return Ok((0, true));
+    };
+    if is_char(token, '(') {
+        return parse_num_expression(input, stores, recorder, hooks, expander, true);
+    }
+    unread_token(input, stores, token);
+    let scanned =
+        scan_int_with_expander_and_hooks(input, stores, recorder, hooks, expander, token)?;
+    Ok((i64::from(scanned.value()), scanned.diagnostic().is_some()))
+}
+
+fn next_nonspace_x<S, St, R, H, E>(
+    input: &mut InputStack<S>,
+    stores: &mut St,
+    recorder: &mut R,
+    hooks: &mut H,
+    expander: &mut E,
+) -> Result<Option<TracedTokenWord>, ScanIntError>
+where
+    S: InputSource,
+    St: ExpansionState,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
+{
+    loop {
+        let token = next_x(input, stores, recorder, hooks, expander)?;
+        if token.is_none_or(|token| !is_space(token)) {
+            return Ok(token);
+        }
+    }
+}
+
+fn rounded_quotient(numerator: i64, denominator: i64) -> Option<i64> {
+    rounded_fraction(1, numerator, denominator)
+}
+
+fn rounded_fraction(value: i64, numerator: i64, denominator: i64) -> Option<i64> {
+    if denominator == 0 {
+        return None;
+    }
+    let product = i128::from(value) * i128::from(numerator);
+    let divisor = i128::from(denominator);
+    let negative = (product < 0) ^ (divisor < 0);
+    let product = product.abs();
+    let divisor = divisor.abs();
+    let mut quotient = product / divisor;
+    let remainder = product % divisor;
+    if remainder * 2 >= divisor {
+        quotient += 1;
+    }
+    let quotient = if negative { -quotient } else { quotient };
+    i64::try_from(quotient)
+        .ok()
+        .filter(|value| value.abs() <= i64::from(i32::MAX))
+}
+
 pub(crate) fn scan_internal_integer<S, St, R, H, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
@@ -540,6 +757,9 @@ where
     recorder.record_meaning(symbol, meaning);
     crate::values::record_meaning_value_dependency(recorder, meaning);
     match meaning {
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NumExpr) => {
+            scan_num_expr(input, stores, recorder, hooks, expander, token)
+        }
         Meaning::CharGiven(ch) => Ok(ScannedInt::new(ch as i32, token)),
         Meaning::MathCharGiven(value) => Ok(ScannedInt::new(i32::from(value), token)),
         Meaning::CountRegister(index) => {

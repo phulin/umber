@@ -1082,7 +1082,8 @@ where
             | UnexpandablePrimitive::FontCharWd
             | UnexpandablePrimitive::FontCharHt
             | UnexpandablePrimitive::FontCharDp
-            | UnexpandablePrimitive::FontCharIc => {
+            | UnexpandablePrimitive::FontCharIc
+            | UnexpandablePrimitive::NumExpr => {
                 reject_all_prefixes(prefixes)?;
                 crate::diagnostics::report_illegal_case(stores, command.token, nest.current_mode());
                 Ok(CommandOutcome::continue_only())

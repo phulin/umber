@@ -406,3 +406,52 @@ fn rejects_out_of_range_register_numbers() {
         ScanIntError::RegisterNumberOutOfRange { value: 32768, .. }
     ));
 }
+
+fn install_numexpr(stores: &mut Universe) {
+    let numexpr = stores.intern("numexpr");
+    stores.set_meaning(
+        numexpr,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NumExpr),
+    );
+    let relax = stores.intern("relax");
+    stores.set_meaning(relax, Meaning::Relax);
+}
+
+#[test]
+fn numexpr_obeys_precedence_parentheses_and_relax_termination() {
+    let mut stores = Universe::new();
+    install_numexpr(&mut stores);
+
+    let (value, next) = scan_with_stores("\\numexpr 2+3*4\\relax X", &mut stores);
+    assert_eq!(value, 14);
+    assert_eq!(next, Some(char_token('X', Catcode::Letter)));
+
+    let (value, next) = scan_with_stores("\\numexpr (2+3)*4\\relax X", &mut stores);
+    assert_eq!(value, 20);
+    assert_eq!(next, Some(char_token('X', Catcode::Letter)));
+}
+
+#[test]
+fn numexpr_rounds_division_and_combined_multiply_divide_like_etex() {
+    let mut stores = Universe::new();
+    install_numexpr(&mut stores);
+
+    assert_eq!(scan_with_stores("\\numexpr 5/2\\relax", &mut stores).0, 3);
+    assert_eq!(scan_with_stores("\\numexpr -5/2\\relax", &mut stores).0, -3);
+    assert_eq!(
+        scan_with_stores("\\numexpr 7*10/4\\relax", &mut stores).0,
+        18
+    );
+}
+
+#[test]
+fn numexpr_reports_arithmetic_overflow_as_a_recoverable_diagnostic() {
+    let mut stores = Universe::new();
+    install_numexpr(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\numexpr 2147483647+1\\relax"));
+
+    let scanned = scan_int(&mut input, &mut stores, context()).expect("expression should recover");
+
+    assert_eq!(scanned.value(), 0);
+    assert_eq!(scanned.diagnostic(), Some(IntegerDiagnostic::NumberTooBig));
+}
