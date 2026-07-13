@@ -400,6 +400,33 @@ fn newlinechar_is_honored_by_message_and_immediate_write() {
 }
 
 #[test]
+fn protected_macros_are_preserved_in_immediate_write_expansion() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    crate::install_etex_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\protected\\def\\p{expanded}\\immediate\\write2{\\p}\\end",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("protected write expansion");
+
+    let output = stores
+        .world()
+        .effect_records()
+        .iter()
+        .filter_map(|effect| match effect {
+            tex_state::EffectRecord::StreamWrite { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<String>();
+    assert!(output.contains("\\p "));
+    assert!(!output.contains("expanded"));
+}
+
+#[test]
 fn print_cs_spacing_is_shared_by_diagnostics_and_immediate_and_deferred_writes() {
     const DEFINITIONS: &str = r"\let\foo=\relax
           \let\@=\relax

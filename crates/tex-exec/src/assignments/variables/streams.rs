@@ -5,6 +5,7 @@ use tex_expand::{NoopExpansionHooks, ReadRecorder, token_text};
 use tex_lex::{MemoryInput, TokenListReplayKind};
 use tex_state::ids::TokenListId;
 use tex_state::macro_store::MacroMeaning;
+use tex_state::meaning::{Meaning, MeaningFlags};
 use tex_state::node::{Node, Whatsit};
 use tex_state::{PrintSink, StreamSlot};
 
@@ -208,15 +209,52 @@ where
     input.push_token_list(tokens, TokenListReplayKind::Inserted);
     let mut hooks = NoopExpansionHooks;
     let mut text = String::new();
-    while let Some(token) =
-        get_x_token_with_recorder_and_hooks(&mut input, stores, recorder, &mut hooks)?
-            .map(tex_expand::semantic_token)
-    {
+    while let Some(token) = next_write_expansion_token(&mut input, stores, recorder, &mut hooks)? {
         crate::diagnostics::append_token_show_text(stores, token, &mut text);
     }
     let mut text = print_text_with_newlinechar(stores, &text);
     text.push('\n');
     Ok(text)
+}
+
+fn next_write_expansion_token<R>(
+    input: &mut InputStack<MemoryInput>,
+    stores: &mut Universe,
+    recorder: &mut R,
+    hooks: &mut NoopExpansionHooks,
+) -> Result<Option<Token>, ExecError>
+where
+    R: ReadRecorder,
+{
+    let Some(read) = input.next_traced_expansion_token(stores)? else {
+        return Ok(None);
+    };
+    let traced = read.traced_token();
+    let token = read.token();
+    if read.suppress_expansion() {
+        return Ok(Some(token));
+    }
+    let symbol = match token {
+        Token::Cs(symbol) => Some(symbol),
+        Token::Char {
+            ch,
+            cat: Catcode::Active,
+        } => tex_state::ExpansionState::active_character_symbol(stores, ch),
+        Token::Char { .. } | Token::Param(_) | Token::Frozen(_) => None,
+    };
+    if let Some(symbol) = symbol {
+        let meaning = stores.meaning(symbol);
+        recorder.record_meaning(symbol, meaning);
+        if matches!(meaning, Meaning::Macro { flags, .. } if flags.contains(MeaningFlags::PROTECTED))
+        {
+            return Ok(Some(token));
+        }
+    }
+    tex_expand::back_input(input, stores, [traced]);
+    Ok(
+        get_x_token_with_recorder_and_hooks(input, stores, recorder, hooks)?
+            .map(tex_expand::semantic_token),
+    )
 }
 
 fn scan_read_tokens(
