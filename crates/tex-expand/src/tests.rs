@@ -551,8 +551,8 @@ fn everyeof_is_visible_to_raw_scanners_before_the_outer_source() {
     let mut stores = Universe::new();
     let everyeof = stores.intern_token_list(&[char_token('E')]);
     stores.set_tok_param(tex_state::env::banks::TokParam::EVERY_EOF, everyeof);
-    let mut input = InputStack::new(MemoryInput::new("O"));
-    input.push_source(MemoryInput::new("I"));
+    let mut input = InputStack::new(MemoryInput::new("O%"));
+    input.push_source(MemoryInput::new("I%"));
 
     assert_eq!(
         crate::semantic_token(

@@ -1776,6 +1776,10 @@ where
                                     next_source_offset: source.next_source_offset,
                                 });
                             }
+                            let everyeof = stores.tok_param(TokParam::EVERY_EOF);
+                            if everyeof != TokenListId::EMPTY {
+                                self.push_token_list(everyeof, TokenListReplayKind::Inserted);
+                            }
                         }
                         continue;
                     }
