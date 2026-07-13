@@ -373,6 +373,22 @@ where
             continue;
         }
 
+        if meaning == Meaning::ExpandablePrimitive(ExpandablePrimitive::ExpandAfter) {
+            // In an `\edef`, `\expandafter` performs exactly one expansion
+            // step on its target, then returns control to the protected-aware
+            // replacement scanner. Calling `get_x_token` here would continue
+            // through the saved protected macro and expand it incorrectly.
+            let dispatch = expander.dispatch_raw_token(
+                traced,
+                &mut input,
+                stores,
+                &mut recorder,
+                &mut hooks,
+            )?;
+            crate::push_dispatch_result(&mut input, stores, dispatch);
+            continue;
+        }
+
         unread_token(&mut input, stores, traced);
         if let Some(expanded) =
             expander.next_expanded_token(&mut input, stores, &mut recorder, &mut hooks)?

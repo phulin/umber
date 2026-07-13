@@ -53,6 +53,43 @@ fn expanded_definition_preserves_protected_macro_tokens() {
 }
 
 #[test]
+fn expanded_definition_expandafter_forces_only_its_protected_target() {
+    // e-TeX manual section 3.1: protected macros resist `\edef`, but an
+    // explicit `\expandafter` still expands its target by one step.
+    let mut stores = Universe::new();
+    crate::install_expandable_primitives(&mut stores);
+    let first = stores.intern("first");
+    let second = stores.intern("second");
+    let empty = stores.intern_token_list(&[]);
+    let second_body = stores.intern_token_list(&[Token::Cs(second.symbol())]);
+    stores.set_macro_meaning(
+        first,
+        tex_state::macro_store::MacroMeaning::new(MeaningFlags::PROTECTED, empty, second_body),
+    );
+    stores.set_macro_meaning(
+        second,
+        tex_state::macro_store::MacroMeaning::new(MeaningFlags::PROTECTED, empty, empty),
+    );
+    let mut input = InputStack::new(MemoryInput::new("{\\expandafter\\first\\first}"));
+    let context =
+        TracedTokenWord::pack(Token::Cs(stores.intern("edef").symbol()), OriginId::UNKNOWN);
+
+    let scanned = scan_toks_expanded(
+        &mut input,
+        &mut stores,
+        MeaningFlags::EMPTY,
+        context,
+        &mut NoopExpansionHooks,
+    )
+    .expect("expanded definition scan");
+
+    assert_eq!(
+        stores.tokens(scanned.replacement_text()),
+        &[Token::Cs(first.symbol()), Token::Cs(second.symbol())]
+    );
+}
+
+#[test]
 fn scans_delimited_and_undelimited_parameters() {
     let (_stores, params, replacement) = scan("#1a#2{#2#1}");
 
