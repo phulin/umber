@@ -1,6 +1,6 @@
 # Knuth TRIP Harness
 
-Status: fixture-presence-conditional end-to-end conformance test.
+Status: local-oracle-presence-conditional end-to-end conformance test.
 
 The original TeX82 TRIP test is pinned separately from the external document
 corpus and from any later e-TRIP work, but shares the same strict final-DVI
@@ -13,6 +13,7 @@ scripts/trip.sh self-test
 scripts/build-trip-initex.sh
 cargo test -p umber --test it e2e_conformance_trip -- --nocapture
 scripts/regen-fixtures.sh --case e2e/trip
+scripts/setup-conformance-tests.sh
 ```
 
 `scripts/trip.sh` fetches official CTAN bytes into gitignored
@@ -22,8 +23,8 @@ phase, and runs DVItype. The Cargo integration test first checks for
 `third_party/trip/trip.tex` and `trip.tfm`; when either is absent it returns
 without running TRIP. When both are present it uses
 `scripts/trip.sh umber-artifacts` for specialized preparation, then
-uses the shared Rust conformance library to compare against the committed
-`tests/corpus/e2e/trip.expected.dvi` fixture, requiring byte-identical final
+uses the shared Rust conformance library to compare against the gitignored,
+locally generated `tests/corpus/e2e/trip.expected.dvi` oracle, requiring byte-identical final
 DVI after normalizing only the preamble comment. DVItype is diagnostic for
 Umber. Fixture regeneration independently executes both TRIP phases with
 pdfTeX and installs that locally generated DVI through
@@ -69,7 +70,7 @@ The byte identity is pinned by SHA-256:
 
 The exact URLs live in `tests/trip-manifest.txt` beside the matching hashes.
 
-The committed `tests/corpus/e2e/trip.expected.dvi` is not the official
+The locally generated `tests/corpus/e2e/trip.expected.dvi` is not the official
 `trip.dvi` above. It is generated locally from the pinned `trip.tex` and
 `trip.tfm` by pdfTeX 3.141592653-2.6-1.40.27 (TeX Live 2025), using the
 two-phase INITEX/format-loaded workflow. Its raw SHA-256 is

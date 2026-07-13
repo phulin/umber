@@ -20,11 +20,14 @@ usage:
   scripts/parity.sh self-test
 
 Fetches and verifies the pinned external TeX corpus declared in
-tests/corpus-manifest.txt. The e2e mode then runs Umber against the committed
-fixed DVI fixtures and writes mismatch bundles under target/conformance-triage/.
+tests/corpus-manifest.txt. The e2e mode then runs Umber against locally
+generated DVI oracles and writes mismatch bundles under target/conformance-triage/.
 The script pins SOURCE_DATE_EPOCH and FORCE_SOURCE_DATE by default so
 date-sensitive documents have stable reference output; set them explicitly to
 override the defaults.
+
+Run scripts/setup-conformance-tests.sh first to acquire all external inputs
+and generate the Story, Gentle, and TRIP DVI oracles with pdfTeX.
 EOF
 }
 

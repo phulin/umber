@@ -77,7 +77,7 @@ including in `--offline` mode. The script pins `SOURCE_DATE_EPOCH=1783604160`
 and `FORCE_SOURCE_DATE=1` by default before running reference TeX so
 date-sensitive documents have stable DVI body bytes.
 
-Full external-document DVI parity is exposed as fixture-backed Cargo
+Full external-document DVI parity is exposed as local-oracle-backed Cargo
 integration tests, with a script retained for acquisition and selection:
 
 ```bash
@@ -87,10 +87,14 @@ scripts/parity.sh e2e
 scripts/parity.sh e2e --offline
 ```
 
+Populate the external inputs and all Story, Gentle, and TRIP DVI oracles with
+`scripts/setup-conformance-tests.sh`. The generated `.expected.dvi` files are
+gitignored licensing-sensitive derivatives and are not repository fixtures.
+
 This mode verifies acquisition, then selects `e2e_conformance_story` and
 `e2e_conformance_gentle` in Umber's single integration-test binary. The shared
 `parity-harness` library runs Umber and byte-compares its normalized DVI with
-the committed `tests/corpus/e2e` fixture. Each document names a manifest-pinned
+the local `tests/corpus/e2e` oracle. Each document names a manifest-pinned
 `format_source`; the harness stages that source, the document, hyphenation
 input, and required TFMs, then feeds Umber a wrapper that inputs the format
 source before the document through the ordinary input path.

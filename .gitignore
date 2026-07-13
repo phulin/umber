@@ -9,6 +9,12 @@ target/
 /third_party/trip/
 /third_party/texlive-source/
 
+# Locally generated end-to-end conformance oracles. These are derived from
+# third-party documents and must never be committed.
+/tests/corpus/e2e/story.expected.dvi
+/tests/corpus/e2e/gentle.expected.dvi
+/tests/corpus/e2e/trip.expected.dvi
+
 .codex
 .claude
 

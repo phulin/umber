@@ -141,8 +141,10 @@ the shared corpus tree unless it is strictly local to one crate-level
 integration test.
 
 Default cargo tests must consume committed fixtures without invoking live TeX
-tools. Regenerate fixtures only through `scripts/regen-fixtures.sh`; do not add
-independent regeneration entry points or cargo-test environment switches.
+tools. Licensing-sensitive external-document tests may conditionally consume
+gitignored local oracles. Regenerate fixtures and local oracles only through
+`scripts/regen-fixtures.sh`; setup scripts may orchestrate that path but must
+not implement an independent generator or cargo-test environment switch.
 
 Reference-derived fixtures must record enough provenance to reproduce and
 audit them. Preserve byte-identical comparison except for explicitly

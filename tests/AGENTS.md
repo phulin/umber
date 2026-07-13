@@ -83,13 +83,13 @@ the other DVI corpora; keep cases primitive-only.
 against its committed DVI fixture, and `scripts/regen-fixtures.sh` owns fixture
 regeneration for the area.
 
-`tests/corpus/e2e` contains fixed final-DVI fixtures for Story, Gentle, and
-TRIP. Their Cargo integration tests run Umber only and return cleanly when the
-corresponding gitignored external source inputs are absent. Regenerate Story
-and Gentle with live reference TeX through `scripts/regen-fixtures.sh --case
-e2e/story` and `--case e2e/gentle`. Regenerate TRIP with `--case e2e/trip`,
-which executes the two-phase workload with pdfTeX and commits the DVI produced
-by that local reference run; it never copies `third_party/trip/trip.dvi`.
+`tests/corpus/e2e` receives gitignored final-DVI oracles for Story, Gentle, and
+TRIP. Their Cargo integration tests run Umber only and return cleanly when an
+external input or local oracle is absent. Run
+`scripts/setup-conformance-tests.sh` to acquire the pinned third-party inputs
+that are not already cached and generate all three oracles with pdfTeX. The
+script delegates regeneration to `scripts/regen-fixtures.sh`; TRIP uses its
+two-phase pdfTeX workload and never copies `third_party/trip/trip.dvi`.
 
 ```text
 <case>.expected.<kind>
@@ -193,9 +193,10 @@ the `e2e_conformance_story` and `e2e_conformance_gentle` Cargo integration
 tests. For each document the shared Rust harness stages the selected real
 `format_source`, document, `third_party/hyphen/hyphen.tex`, and all TFM files
 loaded by Plain. Cargo tests run only Umber and compare its final output with
-the committed fixture. Live reference TeX is used only by
+the local oracle. Live reference TeX is used only by
 `scripts/regen-fixtures.sh`; regeneration verifies `expected_ref_dvi_sha256`
-before updating the fixture.
+before updating the oracle. The generated e2e `.expected.dvi` files are
+licensing-sensitive derivatives and must remain gitignored and uncommitted.
 Reference drift, Umber failures, and byte mismatches
 write automatic triage bundles under `target/conformance-triage/<doc-name>/`
 containing byte context, page-limited dvitype-style disassemblies and diff,

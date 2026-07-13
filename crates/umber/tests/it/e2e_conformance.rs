@@ -26,18 +26,22 @@ fn target_dir(repo_root: &Path) -> PathBuf {
         )
 }
 
-fn plain_inputs_available(root: &Path, document: &str) -> bool {
+fn plain_inputs_available(root: &Path, document: &str, fixture: &Path) -> bool {
     let corpus = root.join("third_party/corpus");
     corpus.join(document).is_file()
         && corpus.join("plain.tex").is_file()
         && root.join("third_party/hyphen/hyphen.tex").is_file()
+        && fixture.is_file()
 }
 
 fn run_plain_fixture_case(document: &str, fixture_name: &str) {
     let root = repo_root();
-    if !plain_inputs_available(&root, document) {
+    let fixture = root
+        .join("tests/corpus/e2e")
+        .join(format!("{fixture_name}.expected.dvi"));
+    if !plain_inputs_available(&root, document, &fixture) {
         eprintln!(
-            "skipping {document} end-to-end conformance: external source, plain.tex, or hyphen.tex is absent"
+            "skipping {document} end-to-end conformance: an external input or locally generated DVI oracle is absent; run scripts/setup-conformance-tests.sh"
         );
         return;
     }
@@ -45,9 +49,7 @@ fn run_plain_fixture_case(document: &str, fixture_name: &str) {
         &root,
         Path::new(env!("CARGO_BIN_EXE_umber")),
         document,
-        &root
-            .join("tests/corpus/e2e")
-            .join(format!("{fixture_name}.expected.dvi")),
+        &fixture,
     )
     .unwrap_or_else(|error| panic!("{error:#}"));
 }
@@ -67,9 +69,13 @@ fn e2e_conformance_gentle() {
 fn e2e_conformance_trip() {
     let root = repo_root();
     let trip_dir = root.join("third_party/trip");
-    if !trip_dir.join("trip.tex").is_file() || !trip_dir.join("trip.tfm").is_file() {
+    let fixture = root.join("tests/corpus/e2e/trip.expected.dvi");
+    if !trip_dir.join("trip.tex").is_file()
+        || !trip_dir.join("trip.tfm").is_file()
+        || !fixture.is_file()
+    {
         eprintln!(
-            "skipping TRIP end-to-end conformance: third_party/trip/trip.tex and trip.tfm are not both present"
+            "skipping TRIP end-to-end conformance: an external input or locally generated DVI oracle is absent; run scripts/setup-conformance-tests.sh"
         );
         return;
     }
@@ -93,7 +99,7 @@ fn e2e_conformance_trip() {
     );
 
     compare_dvi_files(
-        &root.join("tests/corpus/e2e/trip.expected.dvi"),
+        &fixture,
         &target.join("trip/umber/trip.dvi"),
         &target.join("conformance-triage"),
         "trip",

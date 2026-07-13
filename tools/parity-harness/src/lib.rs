@@ -39,7 +39,7 @@ pub fn run_cli() -> Result<bool> {
 }
 
 /// Runs one manifest-backed document through Umber and compares its final DVI
-/// with a committed fixture. Reference TeX is intentionally absent here.
+/// with a locally generated oracle. Reference TeX is intentionally absent here.
 pub fn run_named_fixture_document(
     repo_root: &Path,
     umber_bin: &Path,
@@ -62,11 +62,11 @@ pub fn run_named_fixture_document(
             )
         })?;
     let fixture_bytes = fs::read(fixture)
-        .with_context(|| format!("failed to read fixed DVI fixture {}", fixture.display()))?;
+        .with_context(|| format!("failed to read DVI oracle {}", fixture.display()))?;
     let fixture_hash = sha256_hex(&normalized_dvi_for_comparison(&fixture_bytes)?);
     if fixture_hash != doc.expected_ref_dvi_sha256 {
         bail!(
-            "fixed DVI fixture {} has normalized SHA-256 {fixture_hash}, expected {} from {}",
+            "DVI oracle {} has normalized SHA-256 {fixture_hash}, expected {} from {}",
             fixture.display(),
             doc.expected_ref_dvi_sha256,
             manifest_path.display()
