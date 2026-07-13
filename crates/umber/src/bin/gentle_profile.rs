@@ -8,6 +8,8 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use tex_expand::ExpansionHooks;
+#[cfg(feature = "expansion-stats")]
+use tex_lex::ExpansionStats;
 use tex_lex::{InputStack, WorldInput};
 use tex_state::{FileContent, InputReadState, JobClock, Universe, World};
 use umber::{EngineSession, dvi_from_page_plans, prepare_run_stores};
@@ -117,6 +119,8 @@ impl ExpansionHooks<WorldInput> for ProfileHooks {
 struct RunOutput {
     dvi: Vec<u8>,
     pages: usize,
+    #[cfg(feature = "expansion-stats")]
+    expansion_stats: ExpansionStats,
 }
 
 fn main() -> ExitCode {
@@ -251,6 +255,8 @@ fn execute_once(template: &World) -> Result<RunOutput, String> {
     Ok(RunOutput {
         dvi,
         pages: run.artifacts.len(),
+        #[cfg(feature = "expansion-stats")]
+        expansion_stats: input.expansion_stats(),
     })
 }
 
@@ -264,6 +270,21 @@ fn print_summary(options: &Options, output: &RunOutput, elapsed: Duration) {
         mean,
         output.pages,
         output.dvi.len()
+    );
+    #[cfg(feature = "expansion-stats")]
+    println!(
+        "gentle-profile expansion: token_frame_steps={} provenance_resolutions={} character_tokens={} character_fraction={:.6} meaning_lookups={} literal_spans={} literal_tokens={} mean_literal_run={:.6} segmentation_cache_hits={} segmentation_cache_misses={} builder_appends={}",
+        output.expansion_stats.token_frame_steps,
+        output.expansion_stats.provenance_resolutions,
+        output.expansion_stats.character_tokens,
+        output.expansion_stats.character_fraction(),
+        output.expansion_stats.meaning_lookups,
+        output.expansion_stats.literal_spans,
+        output.expansion_stats.literal_tokens,
+        output.expansion_stats.mean_literal_run(),
+        output.expansion_stats.segmentation_cache_hits,
+        output.expansion_stats.segmentation_cache_misses,
+        output.expansion_stats.builder_appends,
     );
 }
 

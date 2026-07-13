@@ -3,6 +3,9 @@ name = "tex-lex"
 version.workspace = true
 edition.workspace = true
 
+[features]
+expansion-stats = []
+
 [dependencies]
 tex-state = { path = "../tex-state" }
 

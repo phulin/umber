@@ -877,6 +877,7 @@ where
         let Some(symbol) = expandable_symbol(stores, token) else {
             return Ok(Dispatch::Deliver(token));
         };
+        input.record_expansion_meaning_lookup();
         let meaning = stores.meaning(symbol);
         recorder.record_meaning(symbol, meaning);
         dispatch::dispatch_without_input_open_inverted(
@@ -922,6 +923,7 @@ where
         let Some(symbol) = expandable_symbol(stores, token) else {
             return Ok(Dispatch::Deliver(token));
         };
+        input.record_expansion_meaning_lookup();
         let meaning = stores.meaning(symbol);
         recorder.record_meaning(symbol, meaning);
         dispatch::dispatch_with_hooks(
@@ -946,6 +948,7 @@ where
         let Some(symbol) = expandable_symbol(stores, token) else {
             return Ok(Dispatch::Deliver(token));
         };
+        input.record_expansion_meaning_lookup();
         let meaning = stores.meaning(symbol);
         recorder.record_meaning(symbol, meaning);
         dispatch::dispatch_with_hooks_inverted(
@@ -1184,6 +1187,7 @@ where
             }
         };
 
+        input.record_expansion_meaning_lookup();
         let meaning = stores.meaning(symbol);
         recorder.record_meaning(symbol, meaning);
         if protect_macros

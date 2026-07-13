@@ -1260,6 +1260,49 @@ fn macro_literal_spans_copy_body_and_argument_provenance_at_matching_offsets() {
     );
 }
 
+#[cfg(feature = "expansion-stats")]
+#[test]
+fn expansion_stats_measure_literal_runs_and_segmentation_reuse() {
+    let mut stores = Universe::new();
+    let body = stores.intern_token_list(&[
+        char_token('a', Catcode::Letter),
+        char_token('b', Catcode::Letter),
+        char_token('c', Catcode::Other),
+    ]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    let mut tokens = stores.token_list_builder();
+    let mut origins = stores.origin_list_builder();
+
+    input.push_macro_body(body, MacroArguments::new());
+    assert_eq!(
+        input.append_macro_literal_span(
+            &stores,
+            &mut tokens,
+            &mut origins,
+            LiteralSpanPolicy::ExpandedReplacement,
+        ),
+        3
+    );
+    input.push_macro_body(body, MacroArguments::new());
+    assert_eq!(
+        input.append_macro_literal_span(
+            &stores,
+            &mut tokens,
+            &mut origins,
+            LiteralSpanPolicy::ExpandedReplacement,
+        ),
+        3
+    );
+
+    let stats = input.expansion_stats();
+    assert_eq!(stats.literal_spans, 2);
+    assert_eq!(stats.literal_tokens, 6);
+    assert_eq!(stats.mean_literal_run(), 3.0);
+    assert_eq!(stats.segmentation_cache_misses, 1);
+    assert_eq!(stats.segmentation_cache_hits, 1);
+    assert_eq!(stats.builder_appends, 6);
+}
+
 #[test]
 fn stale_replay_origin_list_degrades_to_unknown_after_rollback() {
     let mut stores = Universe::new();

@@ -594,6 +594,43 @@ pub enum LiteralSpanPolicy {
     HorizontalText,
 }
 
+/// Feature-gated attribution counters for token-list expansion delivery.
+///
+/// With `expansion-stats` disabled the input stack contains no counter field
+/// and all snapshots returned by [`InputStack::expansion_stats`] are zero.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ExpansionStats {
+    pub token_frame_steps: u64,
+    pub provenance_resolutions: u64,
+    pub character_tokens: u64,
+    pub meaning_lookups: u64,
+    pub literal_spans: u64,
+    pub literal_tokens: u64,
+    pub segmentation_cache_hits: u64,
+    pub segmentation_cache_misses: u64,
+    pub builder_appends: u64,
+}
+
+impl ExpansionStats {
+    #[must_use]
+    pub fn character_fraction(self) -> f64 {
+        if self.token_frame_steps == 0 {
+            0.0
+        } else {
+            self.character_tokens as f64 / self.token_frame_steps as f64
+        }
+    }
+
+    #[must_use]
+    pub fn mean_literal_run(self) -> f64 {
+        if self.literal_spans == 0 {
+            0.0
+        } else {
+            self.literal_tokens as f64 / self.literal_spans as f64
+        }
+    }
+}
+
 impl LiteralSpanPolicy {
     #[inline(always)]
     fn accepts(self, token: Token) -> bool {
@@ -701,6 +738,8 @@ pub struct InputStack<S> {
     alignment_inputs: Vec<AlignmentInput>,
     /// Derived, discardable segmentation of immutable macro token lists.
     literal_span_cache: LiteralSpanCache,
+    #[cfg(feature = "expansion-stats")]
+    expansion_stats: ExpansionStats,
     active_macro_invocation: OriginId,
     recently_popped_invocation: Option<OriginId>,
 }
@@ -818,6 +857,8 @@ impl<S> InputStack<S> {
             next_condition_token: 0,
             alignment_inputs: Vec::new(),
             literal_span_cache: HashMap::new(),
+            #[cfg(feature = "expansion-stats")]
+            expansion_stats: ExpansionStats::default(),
             active_macro_invocation: OriginId::UNKNOWN,
             recently_popped_invocation: None,
         };
@@ -950,6 +991,8 @@ impl<S> InputStack<S> {
                 }),
             alignment_inputs: Vec::new(),
             literal_span_cache: HashMap::new(),
+            #[cfg(feature = "expansion-stats")]
+            expansion_stats: ExpansionStats::default(),
             active_macro_invocation,
             recently_popped_invocation: None,
         })
@@ -1051,6 +1094,28 @@ impl<S> InputStack<S> {
     #[inline(always)]
     pub fn has_active_alignment(&self) -> bool {
         !self.alignment_inputs.is_empty()
+    }
+
+    /// Returns a point-in-time copy of feature-gated expansion counters.
+    #[must_use]
+    pub fn expansion_stats(&self) -> ExpansionStats {
+        #[cfg(feature = "expansion-stats")]
+        {
+            self.expansion_stats
+        }
+        #[cfg(not(feature = "expansion-stats"))]
+        {
+            ExpansionStats::default()
+        }
+    }
+
+    /// Records a semantic meaning lookup performed by the expansion layer.
+    #[inline(always)]
+    pub fn record_expansion_meaning_lookup(&mut self) {
+        #[cfg(feature = "expansion-stats")]
+        {
+            self.expansion_stats.meaning_lookups += 1;
+        }
     }
 
     #[must_use]
@@ -1308,6 +1373,7 @@ impl<S> InputStack<S> {
         } else {
             origins_out.extend_repeated(OriginId::UNKNOWN, span.end - span.start);
         }
+        self.record_literal_span(span.end - span.start, true);
         span.end - span.start
     }
 
@@ -1329,6 +1395,7 @@ impl<S> InputStack<S> {
         };
         let stored = stores.tokens(span.token_list);
         tokens_out.extend_from_slice(&stored[span.start..span.end]);
+        self.record_literal_span(span.end - span.start, false);
         span.end - span.start
     }
 
@@ -1445,6 +1512,12 @@ impl<S> InputStack<S> {
         start: usize,
         policy: LiteralSpanPolicy,
     ) -> usize {
+        #[cfg(feature = "expansion-stats")]
+        if self.literal_span_cache.contains_key(&(token_list, policy)) {
+            self.expansion_stats.segmentation_cache_hits += 1;
+        } else {
+            self.expansion_stats.segmentation_cache_misses += 1;
+        }
         let spans = self
             .literal_span_cache
             .entry((token_list, policy))
@@ -1473,6 +1546,20 @@ impl<S> InputStack<S> {
                 if span_start <= start { span_end } else { start }
             },
         )
+    }
+
+    #[inline(always)]
+    fn record_literal_span(&mut self, len: usize, builder_append: bool) {
+        #[cfg(feature = "expansion-stats")]
+        {
+            self.expansion_stats.literal_spans += 1;
+            self.expansion_stats.literal_tokens += len as u64;
+            if builder_append {
+                self.expansion_stats.builder_appends += len as u64;
+            }
+        }
+        #[cfg(not(feature = "expansion-stats"))]
+        let _ = (len, builder_append);
     }
 
     #[must_use]
@@ -2181,6 +2268,22 @@ where
             };
             match &mut self.frames[frame_index] {
                 InputFrame::TokenList(token_list) => {
+                    #[cfg(feature = "expansion-stats")]
+                    if let Some(token) = stores.tokens(token_list.token_list).get(token_list.index)
+                    {
+                        self.expansion_stats.token_frame_steps += 1;
+                        if matches!(token, Token::Char { .. }) {
+                            self.expansion_stats.character_tokens += 1;
+                        }
+                        if !matches!(
+                            token,
+                            Token::Param(slot)
+                                if token_list.replay_kind == TokenListReplayKind::MacroBody
+                                    && token_list.macro_arguments.get_traced(*slot).is_some()
+                        ) {
+                            self.expansion_stats.provenance_resolutions += 1;
+                        }
+                    }
                     match next_traced_token_from_token_list_frame(token_list, stores) {
                         Some(TracedTokenReplay::PushArgument(argument)) => {
                             self.push_frame(InputFrame::TokenList(TokenListInputFrame {

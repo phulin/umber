@@ -5,6 +5,7 @@ edition.workspace = true
 
 [features]
 shadow = ["tex-state/shadow"]
+expansion-stats = ["tex-lex/expansion-stats"]
 
 [dependencies]
 tex-lex = { path = "../tex-lex" }

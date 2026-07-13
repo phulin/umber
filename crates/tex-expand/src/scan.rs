@@ -321,6 +321,7 @@ where
         if !prepared.suppress_expansion()
             && let Some(symbol) = crate::expandable_symbol(stores, raw)
         {
+            input.record_expansion_meaning_lookup();
             let meaning = stores.meaning(symbol);
             if matches!(meaning, Meaning::Macro { flags, .. } if !flags.contains(MeaningFlags::PROTECTED))
             {

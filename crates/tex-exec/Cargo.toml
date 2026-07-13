@@ -3,6 +3,9 @@ name = "tex-exec"
 version.workspace = true
 edition.workspace = true
 
+[features]
+expansion-stats = ["tex-expand/expansion-stats", "tex-lex/expansion-stats"]
+
 [dependencies]
 tex-expand = { path = "../tex-expand" }
 tex-fonts = { path = "../tex-fonts" }
