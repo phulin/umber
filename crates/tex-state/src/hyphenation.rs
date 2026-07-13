@@ -173,22 +173,25 @@ impl HyphenationTable {
             .map(Vec::as_slice)
     }
 
-    pub(crate) fn hash_semantic(&self, hasher: &mut crate::state_hash::StateHasher) {
+    pub(crate) fn hash_semantic(&self, hasher: &mut crate::state_hash::StateHasher) -> usize {
+        let mut visits = 0;
         hasher.tag(0x70);
         hasher.usize(self.languages.len());
         for (language, table) in &self.languages {
             hasher.u8(*language);
-            table.hash_semantic(hasher);
+            visits += table.hash_semantic(hasher);
         }
         hasher.usize(self.hyphen_codes.len());
         for (language, codes) in &self.hyphen_codes {
             hasher.u8(*language);
             hasher.usize(codes.len());
             for (from, to) in codes {
+                visits += 1;
                 hasher.u32(*from as u32);
                 hasher.u32(*to as u32);
             }
         }
+        visits
     }
 }
 
@@ -216,9 +219,11 @@ impl LanguageHyphenation {
         }
     }
 
-    fn hash_semantic(&self, hasher: &mut crate::state_hash::StateHasher) {
+    fn hash_semantic(&self, hasher: &mut crate::state_hash::StateHasher) -> usize {
+        let mut visits = 0;
         hasher.usize(self.nodes.len());
         for node in &self.nodes {
+            visits += 1;
             hasher.usize(node.edges.len());
             for (ch, target) in &node.edges {
                 hasher.u32(*ch as u32);
@@ -231,12 +236,14 @@ impl LanguageHyphenation {
         }
         hasher.usize(self.exceptions.len());
         for (word, positions) in &self.exceptions {
+            visits += 1;
             hasher.str(word);
             hasher.usize(positions.len());
             for position in positions {
                 hasher.usize(*position);
             }
         }
+        visits
     }
 }
 

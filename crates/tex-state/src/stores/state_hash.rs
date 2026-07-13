@@ -9,7 +9,7 @@ use crate::meaning::{
 };
 use crate::node::{BoxNode, GlueKind, KernKind, LeaderPayload, Node, Sign, Whatsit};
 use crate::node_arena::NodeRef;
-use crate::state_hash::{StateHashFragment, StateHasher};
+use crate::state_hash::{StateHashComponent, StateHashFragment, StateHasher};
 use crate::token::Catcode;
 use std::collections::{BTreeMap, VecDeque};
 
@@ -100,14 +100,15 @@ fn cached_projection<K: Clone + Eq>(
     cached: &mut Option<CachedProjection<K>>,
     key: &K,
     domain: u64,
-    build: impl FnOnce(&mut StateHasher),
+    component: StateHashComponent,
+    build: impl FnOnce(&mut StateHasher) -> usize,
 ) -> StateHashFragment {
     if let Some(cached) = cached
         && cached.key == *key
     {
         return cached.fragment;
     }
-    let fragment = StateHashFragment::from_builder(domain, build);
+    let fragment = StateHashFragment::from_measured_builder_counted(domain, component, build);
     *cached = Some(CachedProjection {
         key: key.clone(),
         fragment,
@@ -253,14 +254,23 @@ impl Stores {
         );
 
         let mut cache = std::mem::take(&mut self.semantic_hash_cache);
-        let journal = StateHashFragment::from_builder(JOURNAL_SLICE_DOMAIN, |projection| {
-            self.hash_journal_changed_cells(start, end, &mut cache, projection);
-        });
+        let journal_entries = end
+            .env_snapshot
+            .journal_pos()
+            .raw()
+            .saturating_sub(start.journal_pos.raw()) as usize;
+        let journal = StateHashFragment::from_measured_builder(
+            JOURNAL_SLICE_DOMAIN,
+            StateHashComponent::Journal,
+            journal_entries,
+            |projection| self.hash_journal_changed_cells(start, end, &mut cache, projection),
+        );
         let end_cursor = self.state_hash_cursor_from_snapshot(end);
         let code_tables = cached_projection(
             &mut cache.code_tables,
             &end_cursor.code_tables,
             CODE_TABLES_DOMAIN,
+            StateHashComponent::CodeTables,
             |projection| self.hash_code_tables(projection),
         );
         #[cfg(test)]
@@ -272,20 +282,28 @@ impl Stores {
             &mut cache.hyphenation,
             &end_cursor.hyphenation_root,
             HYPHENATION_DOMAIN,
+            StateHashComponent::Hyphenation,
             |projection| self.hyphenation.hash_semantic(projection),
         );
         #[cfg(test)]
         if rehash_hyphenation {
             cache.hyphenation_hash_calls += 1;
         }
-        let prepared_mag = StateHashFragment::from_builder(PREPARED_MAG_DOMAIN, |projection| {
-            hash_prepared_mag(self.prepared_mag, projection);
-        });
+        let prepared_mag = StateHashFragment::from_measured_builder(
+            PREPARED_MAG_DOMAIN,
+            StateHashComponent::PreparedMag,
+            1,
+            |projection| hash_prepared_mag(self.prepared_mag, projection),
+        );
         let last_loaded_font = cached_projection(
             &mut cache.last_loaded_font,
             &end_cursor.last_loaded_font,
             FONT_SELECTION_DOMAIN,
-            |projection| self.hash_font_fields(self.last_loaded_font, projection),
+            StateHashComponent::FontSelection,
+            |projection| {
+                self.hash_font_fields(self.last_loaded_font, projection);
+                1
+            },
         );
         self.semantic_hash_cache = cache;
         let mut hasher = StateHasher::new(STORE_SLICE_DOMAIN);
@@ -303,16 +321,20 @@ impl Stores {
         hasher.u64(self.tokens.semantic_id(id).value());
     }
 
-    pub(crate) fn hash_node_slice_semantic(&self, nodes: &[Node], hasher: &mut StateHasher) {
-        self.hash_node_iter_semantic(nodes.len(), nodes.iter(), hasher);
+    pub(crate) fn hash_node_slice_semantic(
+        &self,
+        nodes: &[Node],
+        hasher: &mut StateHasher,
+    ) -> usize {
+        self.hash_node_iter_semantic(nodes.len(), nodes.iter(), hasher)
     }
 
     pub(crate) fn hash_node_deque_semantic(
         &self,
         nodes: &VecDeque<Node>,
         hasher: &mut StateHasher,
-    ) {
-        self.hash_node_iter_semantic(nodes.len(), nodes.iter(), hasher);
+    ) -> usize {
+        self.hash_node_iter_semantic(nodes.len(), nodes.iter(), hasher)
     }
 
     fn hash_node_iter_semantic<'a>(
@@ -320,12 +342,14 @@ impl Stores {
         len: usize,
         nodes: impl Iterator<Item = &'a Node>,
         hasher: &mut StateHasher,
-    ) {
+    ) -> usize {
         hasher.tag(0x72);
         hasher.usize(len);
+        let mut visits = 0;
         for node in nodes {
-            self.hash_node_tree_from_node(node.clone(), hasher);
+            visits += self.hash_node_tree_from_node(node.clone(), hasher);
         }
+        visits
     }
 
     pub(crate) fn hash_glue_semantic(&self, id: GlueId, hasher: &mut StateHasher) {
@@ -1167,9 +1191,11 @@ impl Stores {
         }
     }
 
-    fn hash_code_tables(&self, hasher: &mut StateHasher) {
+    fn hash_code_tables(&self, hasher: &mut StateHasher) -> usize {
         hasher.tag(0x20);
+        let mut visits = 0;
         self.code_tables.for_each_non_default(|ch, values| {
+            visits += 1;
             hasher.u32(ch as u32);
             hasher.u8(values.catcode as u8);
             hasher.u32(values.lccode);
@@ -1178,9 +1204,10 @@ impl Stores {
             hasher.u32(values.mathcode);
             hasher.i32(values.delcode);
         });
+        visits
     }
 
-    fn hash_node_tree_from_node(&self, node: Node, hasher: &mut StateHasher) {
+    fn hash_node_tree_from_node(&self, node: Node, hasher: &mut StateHasher) -> usize {
         let mut stack = Vec::new();
         #[cfg(feature = "node-stats")]
         crate::measurement::record_hash_node_frame(
@@ -1222,6 +1249,7 @@ impl Stores {
                 }
             }
         }
+        seen + 1
     }
 
     #[cfg(test)]

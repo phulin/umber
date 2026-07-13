@@ -4,9 +4,9 @@ use crate::glue::GlueSpec;
 use crate::ids::{GlueId, TokenListId};
 use crate::node::Node;
 use crate::scaled::Scaled;
-use crate::state_hash::{StateHashFragment, StateHasher};
+use crate::state_hash::{StateHashComponent, StateHashFragment, StateHasher};
 use std::collections::{BTreeMap, VecDeque};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 const PAGE_PROJECTION_DOMAIN: u64 = 0x7061_6765_5f70_726a;
 const PAGE_SCALARS_DOMAIN: u64 = 0x7061_6765_5f73_6361;
@@ -24,7 +24,8 @@ pub(crate) struct PageHashCache {
     insertions: Option<CachedArcProjection<Vec<PageInsertion>>>,
     mark_classes: Option<CachedArcProjection<BTreeMap<u16, MarkClassState>>>,
     contribution: Option<CachedArcProjection<VecDeque<Node>>>,
-    current_page_chunks: Vec<Option<CachedArcProjection<Vec<Node>>>>,
+    current_page_trees: BTreeMap<usize, CachedTreeProjection>,
+    current_page_tail: Option<CachedArcProjection<Vec<Node>>>,
     page_discards: Option<CachedArcProjection<Vec<Node>>>,
     split_discards: Option<CachedArcProjection<Vec<Node>>>,
 }
@@ -41,16 +42,102 @@ struct CachedArcProjection<T> {
     fragment: StateHashFragment,
 }
 
-/// Canonically chunked persistent sequence for the growing current page.
+#[derive(Clone, Debug)]
+struct CachedTreeProjection {
+    root: Weak<PageNodeTree>,
+    fragment: StateHashFragment,
+}
+
+/// Canonical persistent sequence for the growing current page.
 ///
-/// Chunk boundaries depend only on content position. Snapshots share complete
-/// chunks, while an append copies at most the root vector and the final bounded
-/// chunk. The representation carries no mutation-maintained hash state.
+/// Full 64-node leaves form a binary forest whose shape is the binary
+/// decomposition of the full-leaf count. Appending a full leaf merges only the
+/// carry path, while snapshots share every unaffected subtree. A bounded tail
+/// holds fewer than 64 nodes. Shape depends only on content position, and the
+/// representation carries no mutation-maintained hash state.
 #[derive(Clone, Debug, Default)]
 struct PageNodeSequence {
-    chunks: Arc<Vec<Arc<Vec<Node>>>>,
+    forest: Arc<Vec<Arc<PageNodeTree>>>,
+    tail: Arc<Vec<Node>>,
     len: usize,
 }
+
+#[derive(Debug)]
+enum PageNodeTree {
+    Leaf(Vec<Node>),
+    Branch {
+        height: u8,
+        len: usize,
+        left: Arc<PageNodeTree>,
+        right: Arc<PageNodeTree>,
+    },
+}
+
+impl PageNodeTree {
+    fn height(&self) -> u8 {
+        match self {
+            Self::Leaf(_) => 0,
+            Self::Branch { height, .. } => *height,
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            Self::Leaf(nodes) => nodes.len(),
+            Self::Branch { len, .. } => *len,
+        }
+    }
+
+    fn get(&self, index: usize) -> Option<&Node> {
+        match self {
+            Self::Leaf(nodes) => nodes.get(index),
+            Self::Branch { left, right, .. } => {
+                let left_len = left.len();
+                if index < left_len {
+                    left.get(index)
+                } else {
+                    right.get(index - left_len)
+                }
+            }
+        }
+    }
+}
+
+struct PageNodeIter<'a> {
+    nodes: &'a PageNodeSequence,
+    front: usize,
+    back: usize,
+}
+
+impl<'a> Iterator for PageNodeIter<'a> {
+    type Item = &'a Node;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.front == self.back {
+            return None;
+        }
+        let node = self.nodes.get(self.front);
+        self.front += 1;
+        node
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.back - self.front;
+        (remaining, Some(remaining))
+    }
+}
+
+impl DoubleEndedIterator for PageNodeIter<'_> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        if self.front == self.back {
+            return None;
+        }
+        self.back -= 1;
+        self.nodes.get(self.back)
+    }
+}
+
+impl ExactSizeIterator for PageNodeIter<'_> {}
 
 impl PartialEq for PageNodeSequence {
     fn eq(&self, other: &Self) -> bool {
@@ -59,12 +146,16 @@ impl PartialEq for PageNodeSequence {
 }
 
 impl PageNodeSequence {
-    fn iter(&self) -> impl DoubleEndedIterator<Item = &Node> {
-        self.chunks.iter().flat_map(|chunk| chunk.iter())
+    fn iter(&self) -> PageNodeIter<'_> {
+        PageNodeIter {
+            nodes: self,
+            front: 0,
+            back: self.len,
+        }
     }
 
     fn last(&self) -> Option<&Node> {
-        self.chunks.last().and_then(|chunk| chunk.last())
+        self.get(self.len.checked_sub(1)?)
     }
 
     const fn len(&self) -> usize {
@@ -72,12 +163,29 @@ impl PageNodeSequence {
     }
 
     fn push(&mut self, node: Node) {
-        let chunks = Arc::make_mut(&mut self.chunks);
-        match chunks.last_mut() {
-            Some(chunk) if chunk.len() < PAGE_NODE_CHUNK_LEN => Arc::make_mut(chunk).push(node),
-            _ => chunks.push(Arc::new(vec![node])),
-        }
+        let tail = Arc::make_mut(&mut self.tail);
+        tail.push(node);
         self.len += 1;
+        if tail.len() != PAGE_NODE_CHUNK_LEN {
+            return;
+        }
+
+        let leaf = Arc::new(PageNodeTree::Leaf(std::mem::take(tail)));
+        let forest = Arc::make_mut(&mut self.forest);
+        let mut carry = leaf;
+        while forest
+            .last()
+            .is_some_and(|root| root.height() == carry.height())
+        {
+            let left = forest.pop().expect("equal-height forest root exists");
+            carry = Arc::new(PageNodeTree::Branch {
+                height: carry.height() + 1,
+                len: left.len() + carry.len(),
+                left,
+                right: carry,
+            });
+        }
+        forest.push(carry);
     }
 
     fn clear(&mut self) {
@@ -90,6 +198,19 @@ impl PageNodeSequence {
         let after = nodes.split_off(split_index);
         self.clear();
         (nodes, after)
+    }
+
+    fn get(&self, mut index: usize) -> Option<&Node> {
+        if index >= self.len {
+            return None;
+        }
+        for root in self.forest.iter() {
+            if index < root.len() {
+                return root.get(index);
+            }
+            index -= root.len();
+        }
+        self.tail.get(index)
     }
 }
 
@@ -408,6 +529,56 @@ pub(crate) struct PageBuilderState {
     mark_classes: Arc<BTreeMap<u16, MarkClassState>>,
 }
 
+/// Cheap semantic-root key for checkpoint hash-base reuse.
+///
+/// Scalars compare by value and collections compare by immutable root. A miss
+/// merely recomputes the canonical page projection; no pointer enters its
+/// fingerprint.
+#[derive(Clone, Debug)]
+pub(crate) struct PageStateHashCursor(PageBuilderState);
+
+impl PartialEq for PageStateHashCursor {
+    fn eq(&self, other: &Self) -> bool {
+        let left = &self.0;
+        let right = &other.0;
+        left.page_goal == right.page_goal
+            && left.page_total == right.page_total
+            && left.page_stretch == right.page_stretch
+            && left.page_fil_stretch == right.page_fil_stretch
+            && left.page_fill_stretch == right.page_fill_stretch
+            && left.page_filll_stretch == right.page_filll_stretch
+            && left.page_shrink == right.page_shrink
+            && left.page_depth == right.page_depth
+            && left.page_max_depth == right.page_max_depth
+            && left.contents == right.contents
+            && left.last_glue == right.last_glue
+            && left.last_penalty == right.last_penalty
+            && left.last_kern == right.last_kern
+            && left.last_node_type == right.last_node_type
+            && left.insert_penalties == right.insert_penalties
+            && left.dead_cycles == right.dead_cycles
+            && left.least_page_cost == right.least_page_cost
+            && left.best_page_break == right.best_page_break
+            && left.best_size == right.best_size
+            && left.fire_up == right.fire_up
+            && left.top_mark == right.top_mark
+            && left.first_mark == right.first_mark
+            && left.bot_mark == right.bot_mark
+            && left.split_first_mark == right.split_first_mark
+            && left.split_bot_mark == right.split_bot_mark
+            && left.current_page.len == right.current_page.len
+            && Arc::ptr_eq(&left.contribution, &right.contribution)
+            && Arc::ptr_eq(&left.current_page.forest, &right.current_page.forest)
+            && Arc::ptr_eq(&left.current_page.tail, &right.current_page.tail)
+            && Arc::ptr_eq(&left.page_discards, &right.page_discards)
+            && Arc::ptr_eq(&left.split_discards, &right.split_discards)
+            && Arc::ptr_eq(&left.insertions, &right.insertions)
+            && Arc::ptr_eq(&left.mark_classes, &right.mark_classes)
+    }
+}
+
+impl Eq for PageStateHashCursor {}
+
 impl Default for PageBuilderState {
     fn default() -> Self {
         Self {
@@ -447,6 +618,10 @@ impl Default for PageBuilderState {
 }
 
 impl PageBuilderState {
+    pub(crate) fn state_hash_cursor(&self) -> PageStateHashCursor {
+        PageStateHashCursor(self.clone())
+    }
+
     pub(crate) fn is_format_empty(&self) -> bool {
         let mut state = self.clone();
         state.clear_page_discards();
@@ -806,68 +981,74 @@ impl PageBuilderState {
         &self,
         hasher: &mut StateHasher,
         cache: &mut PageHashCache,
-        mut hash_queue: impl FnMut(&VecDeque<Node>, &mut StateHasher),
-        mut hash_nodes: impl FnMut(&[Node], &mut StateHasher),
+        mut hash_queue: impl FnMut(&VecDeque<Node>, &mut StateHasher) -> usize,
+        mut hash_nodes: impl FnMut(&[Node], &mut StateHasher) -> usize,
         mut hash_glue: impl FnMut(GlueId, &mut StateHasher),
         mut hash_tokens: impl FnMut(TokenListId, &mut StateHasher),
     ) {
-        let scalars = StateHashFragment::from_builder(PAGE_SCALARS_DOMAIN, |projection| {
-            projection.u8(match self.contents {
-                PageContents::Empty => 0,
-                PageContents::InsertsOnly => 1,
-                PageContents::BoxThere => 2,
-            });
-            for dimension in [
-                PageDimension::Goal,
-                PageDimension::Total,
-                PageDimension::Stretch,
-                PageDimension::FilStretch,
-                PageDimension::FillStretch,
-                PageDimension::FilllStretch,
-                PageDimension::Shrink,
-                PageDimension::Depth,
-            ] {
-                projection.i32(self.raw_dimension(dimension).raw());
-            }
-            projection.i32(self.page_max_depth.raw());
-            match self.last_glue {
-                Some(id) => {
-                    projection.bool(true);
-                    hash_glue(id, projection);
+        let scalars = StateHashFragment::from_measured_builder(
+            PAGE_SCALARS_DOMAIN,
+            StateHashComponent::PageScalars,
+            1,
+            |projection| {
+                projection.u8(match self.contents {
+                    PageContents::Empty => 0,
+                    PageContents::InsertsOnly => 1,
+                    PageContents::BoxThere => 2,
+                });
+                for dimension in [
+                    PageDimension::Goal,
+                    PageDimension::Total,
+                    PageDimension::Stretch,
+                    PageDimension::FilStretch,
+                    PageDimension::FillStretch,
+                    PageDimension::FilllStretch,
+                    PageDimension::Shrink,
+                    PageDimension::Depth,
+                ] {
+                    projection.i32(self.raw_dimension(dimension).raw());
                 }
-                None => projection.bool(false),
-            }
-            projection.i32(self.last_penalty);
-            projection.i32(self.last_kern.raw());
-            projection.i32(self.last_node_type);
-            projection.i32(self.insert_penalties);
-            projection.i32(self.dead_cycles);
-            projection.i32(self.least_page_cost);
-            hash_optional_usize(self.best_page_break.map(PageBreak::index), projection);
-            projection.i32(self.best_size.raw());
-            match self.fire_up {
-                Some(fire_up) => {
-                    projection.bool(true);
-                    projection.usize(fire_up.best_break().index());
-                    projection.i32(fire_up.best_size().raw());
-                    projection.usize(fire_up.trigger().index());
+                projection.i32(self.page_max_depth.raw());
+                match self.last_glue {
+                    Some(id) => {
+                        projection.bool(true);
+                        hash_glue(id, projection);
+                    }
+                    None => projection.bool(false),
                 }
-                None => projection.bool(false),
-            }
-            for mark in [
-                self.top_mark,
-                self.first_mark,
-                self.bot_mark,
-                self.split_first_mark,
-                self.split_bot_mark,
-            ] {
-                hash_tokens(mark, projection);
-            }
-        });
+                projection.i32(self.last_penalty);
+                projection.i32(self.last_kern.raw());
+                projection.i32(self.last_node_type);
+                projection.i32(self.insert_penalties);
+                projection.i32(self.dead_cycles);
+                projection.i32(self.least_page_cost);
+                hash_optional_usize(self.best_page_break.map(PageBreak::index), projection);
+                projection.i32(self.best_size.raw());
+                match self.fire_up {
+                    Some(fire_up) => {
+                        projection.bool(true);
+                        projection.usize(fire_up.best_break().index());
+                        projection.i32(fire_up.best_size().raw());
+                        projection.usize(fire_up.trigger().index());
+                    }
+                    None => projection.bool(false),
+                }
+                for mark in [
+                    self.top_mark,
+                    self.first_mark,
+                    self.bot_mark,
+                    self.split_first_mark,
+                    self.split_bot_mark,
+                ] {
+                    hash_tokens(mark, projection);
+                }
+            },
+        );
         let insertions = project_arc(
             &mut cache.insertions,
             &self.insertions,
             PAGE_INSERTIONS_DOMAIN,
+            StateHashComponent::PageInsertions,
             |projection| {
                 projection.usize(self.insertions.len());
                 for insertion in self.insertions.iter() {
@@ -887,12 +1068,14 @@ impl PageBuilderState {
                     hash_optional_usize(insertion.last_ins_index, projection);
                     hash_optional_usize(insertion.best_ins_index, projection);
                 }
+                self.insertions.len()
             },
         );
         let mark_classes = project_arc(
             &mut cache.mark_classes,
             &self.mark_classes,
             PAGE_MARK_CLASSES_DOMAIN,
+            StateHashComponent::PageMarks,
             |projection| {
                 projection.usize(self.mark_classes.len());
                 for (&class, marks) in self.mark_classes.iter() {
@@ -901,16 +1084,19 @@ impl PageBuilderState {
                         hash_tokens(mark, projection);
                     }
                 }
+                self.mark_classes.len()
             },
         );
         let contribution = project_arc(
             &mut cache.contribution,
             &self.contribution,
             PAGE_CONTRIBUTION_DOMAIN,
+            StateHashComponent::PageContribution,
             |projection| hash_queue(&self.contribution, projection),
         );
         let current_page = project_page_nodes(
-            &mut cache.current_page_chunks,
+            &mut cache.current_page_trees,
+            &mut cache.current_page_tail,
             &self.current_page,
             &mut hash_nodes,
         );
@@ -918,12 +1104,14 @@ impl PageBuilderState {
             &mut cache.page_discards,
             &self.page_discards,
             PAGE_DISCARDS_DOMAIN,
+            StateHashComponent::PageDiscards,
             |projection| hash_nodes(&self.page_discards, projection),
         );
         let split_discards = project_arc(
             &mut cache.split_discards,
             &self.split_discards,
             SPLIT_DISCARDS_DOMAIN,
+            StateHashComponent::PageDiscards,
             |projection| hash_nodes(&self.split_discards, projection),
         );
 
@@ -944,14 +1132,15 @@ fn project_arc<T>(
     cached: &mut Option<CachedArcProjection<T>>,
     root: &Arc<T>,
     domain: u64,
-    build: impl FnOnce(&mut StateHasher),
+    component: StateHashComponent,
+    build: impl FnOnce(&mut StateHasher) -> usize,
 ) -> StateHashFragment {
     if let Some(cached) = cached
         && Arc::ptr_eq(&cached.root, root)
     {
         return cached.fragment;
     }
-    let fragment = StateHashFragment::from_builder(domain, build);
+    let fragment = StateHashFragment::from_measured_builder_counted(domain, component, build);
     *cached = Some(CachedArcProjection {
         root: Arc::clone(root),
         fragment,
@@ -960,28 +1149,89 @@ fn project_arc<T>(
 }
 
 fn project_page_nodes(
-    cached: &mut Vec<Option<CachedArcProjection<Vec<Node>>>>,
+    cached_trees: &mut BTreeMap<usize, CachedTreeProjection>,
+    cached_tail: &mut Option<CachedArcProjection<Vec<Node>>>,
     nodes: &PageNodeSequence,
-    hash_nodes: &mut impl FnMut(&[Node], &mut StateHasher),
+    hash_nodes: &mut impl FnMut(&[Node], &mut StateHasher) -> usize,
 ) -> StateHashFragment {
-    cached.resize_with(nodes.chunks.len(), || None);
-    cached.truncate(nodes.chunks.len());
-    let mut chunks = Vec::with_capacity(nodes.chunks.len());
-    for (slot, root) in cached.iter_mut().zip(nodes.chunks.iter()) {
-        chunks.push(project_arc(
-            slot,
-            root,
-            PAGE_NODE_CHUNK_DOMAIN,
-            |projection| hash_nodes(root, projection),
-        ));
+    if nodes.len == 0 {
+        cached_trees.clear();
     }
-    StateHashFragment::from_builder(PAGE_CURRENT_DOMAIN, |projection| {
-        projection.usize(nodes.len());
-        projection.usize(chunks.len());
-        for chunk in chunks {
-            chunk.apply(projection);
+    let mut roots = Vec::with_capacity(nodes.forest.len());
+    for root in nodes.forest.iter() {
+        roots.push(project_page_tree(cached_trees, root, hash_nodes));
+    }
+    let tail = project_arc(
+        cached_tail,
+        &nodes.tail,
+        PAGE_NODE_CHUNK_DOMAIN,
+        StateHashComponent::PageCurrent,
+        |projection| hash_nodes(&nodes.tail, projection),
+    );
+    StateHashFragment::from_measured_builder(
+        PAGE_CURRENT_DOMAIN,
+        StateHashComponent::PageCurrent,
+        0,
+        |projection| {
+            projection.usize(nodes.len());
+            projection.usize(roots.len());
+            for root in roots {
+                root.apply(projection);
+            }
+            tail.apply(projection);
+        },
+    )
+}
+
+fn project_page_tree(
+    cache: &mut BTreeMap<usize, CachedTreeProjection>,
+    root: &Arc<PageNodeTree>,
+    hash_nodes: &mut impl FnMut(&[Node], &mut StateHasher) -> usize,
+) -> StateHashFragment {
+    let key = Arc::as_ptr(root) as usize;
+    if let Some(cached) = cache.get(&key)
+        && cached
+            .root
+            .upgrade()
+            .is_some_and(|cached_root| Arc::ptr_eq(&cached_root, root))
+    {
+        return cached.fragment;
+    }
+    let fragment = match root.as_ref() {
+        PageNodeTree::Leaf(nodes) => StateHashFragment::from_measured_builder_counted(
+            PAGE_NODE_CHUNK_DOMAIN,
+            StateHashComponent::PageCurrent,
+            |projection| hash_nodes(nodes, projection),
+        ),
+        PageNodeTree::Branch {
+            height,
+            len,
+            left,
+            right,
+        } => {
+            let left = project_page_tree(cache, left, hash_nodes);
+            let right = project_page_tree(cache, right, hash_nodes);
+            StateHashFragment::from_measured_builder(
+                PAGE_NODE_CHUNK_DOMAIN,
+                StateHashComponent::PageCurrent,
+                0,
+                |projection| {
+                    projection.u8(*height);
+                    projection.usize(*len);
+                    left.apply(projection);
+                    right.apply(projection);
+                },
+            )
         }
-    })
+    };
+    cache.insert(
+        key,
+        CachedTreeProjection {
+            root: Arc::downgrade(root),
+            fragment,
+        },
+    );
+    fragment
 }
 
 fn hash_optional_usize(value: Option<usize>, hasher: &mut StateHasher) {

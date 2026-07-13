@@ -185,6 +185,12 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
             hash.peak_changed_cell_scratch_bytes,
             hash.peak_node_scratch_bytes,
         );
+        for (component, measurement) in hash.named_components() {
+            eprintln!(
+                "STATE_HASH_COMPONENT {component} calls={} visits={} nanos={}",
+                measurement.calls, measurement.visits, measurement.nanos
+            );
+        }
         let traced = tex_state::measurement::traced_list_measurement();
         eprintln!(
             "ALLOC_TRACED_LIST finishes={} tokens={} token_builder_bytes={} origin_builder_bytes={}",

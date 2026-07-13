@@ -19,8 +19,8 @@ use crate::glue::GlueSpec;
 use crate::hyphenation::{ExceptionSpec, PatternSpec};
 use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, OriginListId, TokenListId};
 use crate::input::{
-    ConditionKind, ConditionLimb, InputFrameSummary, InputSummary, LexerState, SourceId,
-    TokenListReplayKind, TracedTokenList,
+    ConditionKind, ConditionLimb, InputFrameSummary, InputSummary, InputSummarySemanticCursor,
+    LexerState, SourceId, TokenListReplayKind, TracedTokenList,
 };
 use crate::interner::{ControlSequenceKind, Symbol, SymbolId};
 use crate::macro_store::{MacroDefinitionProvenance, MacroMeaning};
@@ -30,7 +30,7 @@ use crate::node::Node;
 use crate::node_arena::{NodeList, NodeListBuilder};
 use crate::page::{
     PageBreak, PageBuilderState, PageContents, PageDimension, PageFireUp, PageHashCache,
-    PageInsertion, PageInteger, PageMark,
+    PageInsertion, PageInteger, PageMark, PageStateHashCursor,
 };
 use crate::provenance::ProvenanceStats;
 use crate::provenance::{
@@ -41,7 +41,9 @@ use crate::source_map::{
     GeneratedSource, RegisteredSource, SourceBacking, SourceDescriptor, SourceMapError, SourcePos,
     SourceRegion, SourceSpan,
 };
-use crate::state_hash::{INITIAL_STATE_HASH, StateHashFragment, StateHasher, combine};
+use crate::state_hash::{
+    INITIAL_STATE_HASH, StateHashComponent, StateHashFragment, StateHasher, combine,
+};
 use crate::stores::StoreStateHashCursor;
 use crate::stores::{
     FontParameterError, GroupKind, GroupMismatch, PrepareMagDiagnostic, ShipoutNodeMark,
@@ -512,14 +514,18 @@ impl std::error::Error for FormatError {}
 struct StateHashBase {
     store: StoreStateHashCursor,
     world: WorldStateHashCursor,
-    input_summary: InputSummary,
+    input_summary: InputSummarySemanticCursor,
+    input_fragment: StateHashFragment,
     interaction_mode: InteractionMode,
-    page: PageBuilderState,
+    page: PageStateHashCursor,
     checkpoint_hash: u64,
 }
 
 const UNIVERSE_SLICE_DOMAIN: u64 = 0x756e_6976_6572_7365;
 const WORLD_SLICE_DOMAIN: u64 = 0x776f_726c_645f_736c;
+const WORLD_EFFECTS_DOMAIN: u64 = 0x776f_726c_645f_6566;
+const WORLD_SHELL_ESCAPES_DOMAIN: u64 = 0x776f_726c_645f_7368;
+const WORLD_SCALARS_DOMAIN: u64 = 0x776f_726c_645f_7363;
 const WORLD_STREAMS_DOMAIN: u64 = 0x776f_726c_645f_6275;
 const INPUT_PROJECTION_DOMAIN: u64 = 0x696e_7075_745f_7072;
 const INTERACTION_PROJECTION_DOMAIN: u64 = 0x696e_7465_7261_6374;
@@ -527,8 +533,10 @@ const INTERACTION_PROJECTION_DOMAIN: u64 = 0x696e_7465_7261_6374;
 #[derive(Clone, Debug, Default)]
 struct StateHashProjectionCache {
     world_streams: Option<(Arc<StreamBufState>, StateHashFragment)>,
-    input: Option<(InputSummary, StateHashFragment)>,
+    input: Option<(InputSummarySemanticCursor, StateHashFragment)>,
     page: PageHashCache,
+    #[cfg(test)]
+    input_hash_calls: usize,
 }
 
 impl StateHashProjectionCache {
@@ -536,6 +544,10 @@ impl StateHashProjectionCache {
         self.world_streams = None;
         self.input = None;
         self.page.clear();
+        #[cfg(test)]
+        {
+            self.input_hash_calls = 0;
+        }
     }
 }
 
@@ -559,6 +571,7 @@ pub struct Universe {
 pub struct EngineBoundaryHasher<'a> {
     stores: &'a Stores,
     hasher: StateHasher,
+    visits: usize,
 }
 
 impl EngineBoundaryHasher<'_> {
@@ -591,12 +604,14 @@ impl EngineBoundaryHasher<'_> {
     }
 
     pub fn nodes(&mut self, nodes: &[Node]) {
-        self.stores
+        self.visits += self
+            .stores
             .hash_node_slice_semantic(nodes, &mut self.hasher);
     }
 
     pub fn node_list(&mut self, id: NodeListId) {
         self.stores.hash_node_list_semantic(id, &mut self.hasher);
+        self.visits += 1;
     }
 
     pub fn token_list(&mut self, id: TokenListId) {
@@ -646,6 +661,7 @@ impl Clone for Universe {
             store: stores.retarget_state_hash_cursor(&self.state_hash_base.store),
             world: self.state_hash_base.world.clone(),
             input_summary: self.state_hash_base.input_summary.clone(),
+            input_fragment: self.state_hash_base.input_fragment,
             interaction_mode: self.state_hash_base.interaction_mode,
             page: self.state_hash_base.page.clone(),
             checkpoint_hash: self.state_hash_base.checkpoint_hash,
@@ -688,12 +704,16 @@ impl Universe {
             &mut |param, value| stores.set_int_param(param, value),
             clock,
         );
+        let input_summary = InputSummary::default();
+        let page = PageBuilderState::default();
+        let input_fragment = hash_input_summary_fragment(&stores, &world, &input_summary);
         let state_hash_base = StateHashBase {
             store: stores.state_hash_cursor(),
             world: world.state_hash_cursor(),
-            input_summary: InputSummary::default(),
+            input_summary: input_summary.semantic_cursor(),
+            input_fragment,
             interaction_mode: InteractionMode::default(),
-            page: PageBuilderState::default(),
+            page: page.state_hash_cursor(),
             checkpoint_hash: INITIAL_STATE_HASH,
         };
         Self {
@@ -701,8 +721,8 @@ impl Universe {
             stores,
             world,
             interaction_mode: InteractionMode::default(),
-            input_summary: InputSummary::default(),
-            page: PageBuilderState::default(),
+            input_summary,
+            page,
             state_hash_base,
             state_hash_projection_cache: StateHashProjectionCache::default(),
         }
@@ -719,9 +739,19 @@ impl Universe {
         let mut projection = EngineBoundaryHasher {
             stores: &self.stores,
             hasher: StateHasher::new(domain),
+            visits: 0,
         };
+        #[cfg(feature = "node-stats")]
+        let started = std::time::Instant::now();
         build(&mut projection);
-        projection.hasher.finish()
+        let fingerprint = projection.hasher.finish();
+        #[cfg(feature = "node-stats")]
+        crate::measurement::record_state_hash_component(
+            StateHashComponent::Mode,
+            projection.visits,
+            started.elapsed(),
+        );
+        fingerprint
     }
 
     /// Serializes the allocation-independent semantic engine state.
@@ -785,12 +815,14 @@ impl Universe {
         let stores = Stores::decode_format(payload).map_err(map_store_format_error)?;
         let input_summary = InputSummary::default();
         let page = PageBuilderState::default();
+        let input_fragment = hash_input_summary_fragment(&stores, &world, &input_summary);
         let state_hash_base = StateHashBase {
             store: stores.state_hash_cursor(),
             world: world.state_hash_cursor(),
-            input_summary: input_summary.clone(),
+            input_summary: input_summary.semantic_cursor(),
+            input_fragment,
             interaction_mode: mode,
-            page: page.clone(),
+            page: page.state_hash_cursor(),
             checkpoint_hash: checksum,
         };
         Ok(Self {
@@ -844,23 +876,34 @@ impl Universe {
         let store = self.stores.checkpoint();
         let store_cursor = self.stores.state_hash_cursor_from_snapshot(&store);
         let world_cursor = World::state_hash_cursor_from_snapshot(&world);
+        let input_cursor = self.input_summary.semantic_cursor();
+        let input_fragment = if hash_base.input_summary == input_cursor {
+            hash_base.input_fragment
+        } else {
+            let mut cache = std::mem::take(&mut self.state_hash_projection_cache);
+            let fragment = self.hash_input_summary(&mut cache);
+            self.state_hash_projection_cache = cache;
+            fragment
+        };
+        let page_cursor = self.page.state_hash_cursor();
         let state_hash = if hash_base.store == store_cursor
             && hash_base.world == world_cursor
-            && hash_base.input_summary == self.input_summary
+            && hash_base.input_fragment == input_fragment
             && hash_base.interaction_mode == self.interaction_mode
-            && hash_base.page == self.page
+            && hash_base.page == page_cursor
         {
             hash_base.checkpoint_hash
         } else {
-            let slice_hash = self.state_hash_slice(&hash_base, &store);
+            let slice_hash = self.state_hash_slice(&hash_base, &store, input_fragment);
             combine(hash_base.checkpoint_hash, slice_hash)
         };
         let next_hash_base = StateHashBase {
             store: store_cursor,
             world: world_cursor,
-            input_summary: self.input_summary.clone(),
+            input_summary: input_cursor,
+            input_fragment,
             interaction_mode: self.interaction_mode,
-            page: self.page.clone(),
+            page: page_cursor,
             checkpoint_hash: state_hash,
         };
         self.state_hash_base = next_hash_base.clone();
@@ -889,6 +932,7 @@ impl Universe {
                 .world
                 .retarget_state_hash_cursor_after_commit(&hash_base.world),
             input_summary: hash_base.input_summary,
+            input_fragment: hash_base.input_fragment,
             interaction_mode: hash_base.interaction_mode,
             page: hash_base.page,
             checkpoint_hash: hash_base.checkpoint_hash,
@@ -914,19 +958,28 @@ impl Universe {
         self.state_hash_projection_cache.clear();
     }
 
-    fn state_hash_slice(&mut self, hash_base: &StateHashBase, store: &StoreSnapshot) -> u64 {
+    fn state_hash_slice(
+        &mut self,
+        hash_base: &StateHashBase,
+        store: &StoreSnapshot,
+        input: StateHashFragment,
+    ) -> u64 {
         let store = self.stores.state_hash_slice(&hash_base.store, store);
         let mut cache = std::mem::take(&mut self.state_hash_projection_cache);
         let world = self.hash_world_state_slice(&hash_base.world, &mut cache);
-        let input = self.hash_input_summary(&mut cache);
-        let interaction =
-            StateHashFragment::from_builder(INTERACTION_PROJECTION_DOMAIN, |projection| {
+        let interaction = StateHashFragment::from_measured_builder(
+            INTERACTION_PROJECTION_DOMAIN,
+            StateHashComponent::Interaction,
+            1,
+            |projection| {
                 hash_interaction_mode(self.interaction_mode, projection);
-            });
+            },
+        );
         let page = self.hash_page_state(&mut cache.page);
         self.state_hash_projection_cache = cache;
 
         let mut hasher = StateHasher::new(UNIVERSE_SLICE_DOMAIN);
+        hasher.u32(crate::CHECKPOINT_STATE_HASH_SCHEMA_VERSION);
         hasher.u64(store);
         world.apply(&mut hasher);
         input.apply(&mut hasher);
@@ -944,39 +997,65 @@ impl Universe {
         let streams = match &cache.world_streams {
             Some((cached_root, fragment)) if Arc::ptr_eq(cached_root, &stream_root) => *fragment,
             _ => {
-                let fragment =
-                    StateHashFragment::from_builder(WORLD_STREAMS_DOMAIN, |projection| {
+                let fragment = StateHashFragment::from_measured_builder(
+                    WORLD_STREAMS_DOMAIN,
+                    StateHashComponent::WorldStreams,
+                    crate::world::STREAM_SLOT_COUNT,
+                    |projection| {
                         hash_stream_bufs(&stream_root, projection);
-                    });
+                    },
+                );
                 cache.world_streams = Some((stream_root, fragment));
                 fragment
             }
         };
+        let effects = self.world.effect_records_since(cursor);
+        let effects = StateHashFragment::from_measured_builder(
+            WORLD_EFFECTS_DOMAIN,
+            StateHashComponent::WorldEffects,
+            effects.len(),
+            |projection| {
+                projection.tag(0x80);
+                projection.usize(effects.len());
+                for effect in effects {
+                    self.hash_effect_record(effect, projection);
+                }
+            },
+        );
+        let shell_escapes = self.world.shell_escape_records_since(cursor);
+        let shell_escapes = StateHashFragment::from_measured_builder(
+            WORLD_SHELL_ESCAPES_DOMAIN,
+            StateHashComponent::WorldShellEscapes,
+            shell_escapes.len(),
+            |projection| {
+                projection.tag(0x82);
+                projection.usize(shell_escapes.len());
+                for record in shell_escapes {
+                    hash_shell_escape_record(record, projection);
+                }
+            },
+        );
+        let scalars = StateHashFragment::from_measured_builder(
+            WORLD_SCALARS_DOMAIN,
+            StateHashComponent::WorldScalars,
+            3,
+            |projection| {
+                hash_rng_state(self.world.rng_state(), projection);
+                hash_job_clock(self.world.job_clock(), projection);
+                hash_shell_escape_policy(self.world.shell_escape_policy(), projection);
+            },
+        );
         StateHashFragment::from_builder(WORLD_SLICE_DOMAIN, |projection| {
-            projection.tag(0x80);
-            let effects = self.world.effect_records_since(cursor);
-            projection.usize(effects.len());
-            for effect in effects {
-                self.hash_effect_record(effect, projection);
-            }
-
+            effects.apply(projection);
             projection.tag(0x81);
             // Input records are content-addressed provenance allocations. Live
             // input frames hash the stable record content below; unreferenced
             // reads must not make semantic convergence allocation-sensitive.
             projection.usize(0);
 
-            projection.tag(0x82);
-            let shell_escapes = self.world.shell_escape_records_since(cursor);
-            projection.usize(shell_escapes.len());
-            for record in shell_escapes {
-                hash_shell_escape_record(record, projection);
-            }
-
+            shell_escapes.apply(projection);
             streams.apply(projection);
-            hash_rng_state(self.world.rng_state(), projection);
-            hash_job_clock(self.world.job_clock(), projection);
-            hash_shell_escape_policy(self.world.shell_escape_policy(), projection);
+            scalars.apply(projection);
         })
     }
 
@@ -1018,15 +1097,18 @@ impl Universe {
     }
 
     fn hash_input_summary(&self, cache: &mut StateHashProjectionCache) -> StateHashFragment {
-        if let Some((summary, fragment)) = &cache.input
-            && summary == &self.input_summary
+        let cursor = self.input_summary.semantic_cursor();
+        if let Some((cached, fragment)) = &cache.input
+            && cached == &cursor
         {
             return *fragment;
         }
-        let fragment = StateHashFragment::from_builder(INPUT_PROJECTION_DOMAIN, |projection| {
-            hash_input_summary_fields(&self.stores, &self.world, &self.input_summary, projection);
-        });
-        cache.input = Some((self.input_summary.clone(), fragment));
+        let fragment = hash_input_summary_fragment(&self.stores, &self.world, &self.input_summary);
+        #[cfg(test)]
+        {
+            cache.input_hash_calls += 1;
+        }
+        cache.input = Some((cursor, fragment));
         fragment
     }
 
@@ -2740,6 +2822,11 @@ impl Universe {
         self.state_hash_projection_cache.clear();
     }
 
+    #[cfg(test)]
+    fn testing_input_projection_hash_calls(&self) -> usize {
+        self.state_hash_projection_cache.input_hash_calls
+    }
+
     #[cfg(any(test, feature = "testing"))]
     #[must_use]
     pub fn testing_live_survivor_slot_count(&self) -> usize {
@@ -3815,6 +3902,20 @@ fn hash_input_summary_fields(
         }
         None => hasher.bool(false),
     }
+}
+
+fn hash_input_summary_fragment(
+    stores: &Stores,
+    world: &World,
+    summary: &InputSummary,
+) -> StateHashFragment {
+    let visits = summary.frames().len() + usize::from(summary.last_source_frame().is_some());
+    StateHashFragment::from_measured_builder(
+        INPUT_PROJECTION_DOMAIN,
+        StateHashComponent::InputFrames,
+        visits,
+        |projection| hash_input_summary_fields(stores, world, summary, projection),
+    )
 }
 
 fn hash_input_record(

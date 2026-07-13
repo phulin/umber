@@ -1253,6 +1253,18 @@ degenerate case (run once, commit every page, never look back).
   instead of re-walking both old and final content. Rollback clears this cache
   and reconstructs missing baselines from journal old words; it is not part of
   the snapshot or semantic state tuple.
+  Checkpoint-hash schema version 2 extends that rule to non-journal state with
+  domain-separated component projections keyed by immutable roots or cheap
+  semantic cursors. Stable code tables, hyphenation, stream buffers, input
+  roots, page subroots, and mode roots reuse their canonical fingerprints.
+  A changed input root is projected once and compared by canonical fragment,
+  allowing semantically equal rebuilt roots to retarget the cursor without
+  adding a false schedule-relative state transition.
+  Current-page nodes are stored as a position-canonical binary forest of
+  immutable 64-node leaves, so append and hash publication rebuild only the
+  affected logarithmic path rather than walking or copying the prior page.
+  Projection caches remain private derived accelerators and are cleared on
+  rollback; pointer identity is never part of a hash value.
   Every published checkpoint is restartable. If an edit falls inside an
   alignment, box, scanner, inline formula, or output routine, the session
   selects the preceding published boundary and replays the whole construct.

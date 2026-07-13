@@ -925,6 +925,29 @@ pub struct Snapshot {
   a validated conservative root position. Active normalized input state and
   included-file content identities remain semantic.
 
+  **Checkpoint hash schema version 2** frames the semantic slice as ordered,
+  domain-separated component projections. Store journal cells, code tables,
+  hyphenation, prepared magnification, font selection, World effects and shell
+  escapes, stream buffers, input, interaction mode, page subroots, and the mode
+  nest each produce a canonical content fingerprint. A discardable cache may
+  reuse that fingerprint only when its immutable root or cheap semantic cursor
+  is unchanged. When an input root changes, its canonical fragment is computed
+  once and compared with the prior fragment, so rebuilt semantically equal
+  roots retarget the cheap cursor without perturbing the checkpoint hash.
+  Clearing the cache recomputes the identical version-2 hash.
+  The version is exposed by `CHECKPOINT_STATE_HASH_SCHEMA_VERSION`, and each
+  `EngineCheckpoint` carries its aggregate schema version. Hashes from different
+  versions or different named-boundary schedules are not comparable.
+
+  Page hashing treats scalar state, insertions, marks, contributions, the
+  current page, and discard lists as separate projections. The growing current
+  page uses canonical 64-node leaves in a binary forest determined by content
+  position. Completing a leaf merges only the binary carry path; checkpoints
+  share every unaffected immutable subtree, and derived subtree fingerprints
+  never become mutation-maintained semantic state. Feature-gated `node-stats`
+  builds report calls, semantic visits, and elapsed nanoseconds for every hash
+  component so optimization decisions can be tied to measured traversal.
+
 Derived queries (these fall out; do not build separate instrumentation):
 
 - **Write-set** of a region = journal slice between markers.

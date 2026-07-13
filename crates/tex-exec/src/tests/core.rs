@@ -58,6 +58,10 @@ fn engine_checkpoint_restores_input_modes_and_universe_atomically() {
         )
         .expect("empty job");
     let checkpoint = &checkpoints[0];
+    assert_eq!(
+        checkpoint.schema_version(),
+        ENGINE_CHECKPOINT_SCHEMA_VERSION
+    );
 
     executor.nest_mut().push(Mode::Horizontal);
     stores.set_count(3, 99);

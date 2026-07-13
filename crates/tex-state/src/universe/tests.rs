@@ -4,8 +4,8 @@ use crate::glue::{GlueSpec, Order};
 use crate::hyphenation::{ExceptionSpec, PatternSpec};
 use crate::ids::{ArenaRef, FontId, NodeListId};
 use crate::input::{
-    InputFrameSummary, InputSummary, LexerState, MacroArguments, SourceFrameSummary, SourceId,
-    TokenListReplayKind, TracedTokenList,
+    ConditionFrameSummary, ConditionFrameToken, InputFrameSummary, InputSummary, LexerState,
+    MacroArguments, SourceFrameSummary, SourceId, TokenListReplayKind, TracedTokenList,
 };
 use crate::macro_store::MacroMeaning;
 use crate::meaning::{Meaning, MeaningFlags, RawMeaning};
@@ -1746,6 +1746,143 @@ fn projection_cache_clearing_preserves_named_boundary_hashes() {
             "discardable projection caches changed boundary {value}"
         );
     }
+}
+
+fn condition_input_summary(value: u32) -> InputSummary {
+    InputSummary::new(
+        vec![InputFrameSummary::Condition {
+            token: ConditionFrameToken::new(u64::from(value) + 1),
+            condition: ConditionFrameSummary::new_if(
+                TracedTokenWord::pack(
+                    Token::Char {
+                        ch: char::from_u32(b'a' as u32 + value).expect("small test character"),
+                        cat: Catcode::Letter,
+                    },
+                    OriginId::UNKNOWN,
+                ),
+                value.is_multiple_of(2),
+            ),
+        }],
+        None,
+        None,
+    )
+}
+
+#[test]
+fn unchanged_input_root_reuses_its_projection_without_frame_comparison() {
+    let mut universe = Universe::new();
+    universe.set_input_summary(condition_input_summary(0));
+    let _ = universe.snapshot();
+    let calls = universe.testing_input_projection_hash_calls();
+
+    universe.set_count(0, 1);
+    let _ = universe.snapshot();
+
+    assert_eq!(universe.testing_input_projection_hash_calls(), calls);
+}
+
+#[test]
+fn rebuilt_equal_input_roots_hash_canonically_across_allocation_identities() {
+    let mut first = Universe::new();
+    let mut second = Universe::new();
+    let first_base = first.snapshot().state_hash();
+    let second_base = second.snapshot().state_hash();
+    assert_eq!(first_base, second_base);
+
+    first.set_input_summary(condition_input_summary(0));
+    second.set_input_summary(condition_input_summary(0));
+    assert_eq!(
+        first.snapshot().state_hash(),
+        second.snapshot().state_hash()
+    );
+}
+
+#[test]
+fn every_component_change_is_cache_clear_differential() {
+    fn assert_change(mut change: impl FnMut(&mut Universe)) {
+        let mut warm = Universe::new();
+        let mut cleared = Universe::new();
+        let baseline = warm.snapshot().state_hash();
+        assert_eq!(cleared.snapshot().state_hash(), baseline);
+        change(&mut warm);
+        change(&mut cleared);
+        cleared.testing_clear_state_hash_caches();
+        let warm_hash = warm.snapshot().state_hash();
+        let cleared_hash = cleared.snapshot().state_hash();
+        assert_ne!(warm_hash, baseline);
+        assert_eq!(warm_hash, cleared_hash);
+    }
+
+    assert_change(|universe| universe.set_count(0, 1));
+    assert_change(|universe| universe.set_catcode('x', Catcode::Active));
+    assert_change(|universe| {
+        universe.add_hyphenation_pattern(PatternSpec {
+            letters: "component".chars().collect(),
+            values: vec![0, 0, 1, 0, 0, 0, 0, 0, 0, 0],
+        });
+    });
+    assert_change(|universe| {
+        universe
+            .world_mut()
+            .write_text(PrintSink::TerminalAndLog, "effect\n");
+    });
+    assert_change(|universe| {
+        universe
+            .world_mut()
+            .open_out(StreamSlot::new(2), "component.aux");
+    });
+    assert_change(|universe| universe.set_input_summary(condition_input_summary(1)));
+    assert_change(|universe| {
+        universe.set_page_dimension(PageDimension::Total, Scaled::from_raw(17));
+    });
+    assert_change(|universe| {
+        universe.push_current_page_node(Node::Kern {
+            amount: Scaled::from_raw(23),
+            kind: KernKind::Explicit,
+        });
+    });
+    assert_change(|universe| universe.set_interaction_mode(super::InteractionMode::Batch));
+}
+
+#[test]
+fn two_forks_group_compaction_and_shipout_retargeting_are_cache_differential() {
+    let mut root = Universe::new();
+    root.set_catcode('~', Catcode::Active);
+    for value in 0..192 {
+        root.push_current_page_node(Node::Kern {
+            amount: Scaled::from_raw(value),
+            kind: KernKind::Explicit,
+        });
+    }
+    let _ = root.snapshot();
+    let mut warm = root.clone();
+    let mut cleared = root.clone();
+    cleared.testing_clear_state_hash_caches();
+
+    for universe in [&mut warm, &mut cleared] {
+        universe.enter_group();
+        universe.set_count(7, 77);
+        let _ = universe.leave_group();
+        universe
+            .world_mut()
+            .write_text(PrintSink::TerminalAndLog, "shipout\n");
+        let effect_pos = universe.world().effect_pos();
+        universe
+            .begin_shipout()
+            .commit(b"component projection page", effect_pos)
+            .expect("memory shipout succeeds");
+        universe.set_count(8, 88);
+    }
+    cleared.testing_clear_state_hash_caches();
+
+    assert_eq!(
+        warm.snapshot().state_hash(),
+        cleared.snapshot().state_hash()
+    );
+    assert_eq!(
+        warm.world().memory_terminal_output(),
+        cleared.world().memory_terminal_output()
+    );
 }
 
 #[test]

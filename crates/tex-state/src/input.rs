@@ -371,6 +371,69 @@ pub struct InputSummary {
     unicode_superscript_notation: bool,
 }
 
+/// Cheap key for reuse of a previously computed canonical input projection.
+///
+/// Pointer equality is only an unchanged-root accelerator. Equal summaries
+/// rebuilt under different allocation identities miss this key and recompute
+/// the same content-derived fingerprint.
+#[derive(Clone, Debug)]
+pub(crate) struct InputSummarySemanticCursor {
+    frames: Arc<[InputFrameSummary]>,
+    last_source_record: Option<InputRecordId>,
+    last_source_frame: Option<SourceFrameSemanticCursor>,
+    unicode_superscript_notation: bool,
+}
+
+impl PartialEq for InputSummarySemanticCursor {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.frames, &other.frames)
+            && self.last_source_record == other.last_source_record
+            && self.last_source_frame == other.last_source_frame
+            && self.unicode_superscript_notation == other.unicode_superscript_notation
+    }
+}
+
+impl Eq for InputSummarySemanticCursor {}
+
+#[derive(Clone, Debug)]
+struct SourceFrameSemanticCursor {
+    buffer_offset: usize,
+    next_source_offset: usize,
+    line_number: usize,
+    column: usize,
+    lexer_state: LexerState,
+    normalized_line: Arc<str>,
+    line_byte_offset: usize,
+    physical_content_end: usize,
+    terminator_start: usize,
+    terminator_end: usize,
+    normalized_end_anchor: usize,
+    synthetic_endline_start: Option<usize>,
+    pending: Arc<[TracedTokenWord]>,
+    end_after_current_line: bool,
+}
+
+impl PartialEq for SourceFrameSemanticCursor {
+    fn eq(&self, other: &Self) -> bool {
+        self.buffer_offset == other.buffer_offset
+            && self.next_source_offset == other.next_source_offset
+            && self.line_number == other.line_number
+            && self.column == other.column
+            && self.lexer_state == other.lexer_state
+            && Arc::ptr_eq(&self.normalized_line, &other.normalized_line)
+            && self.line_byte_offset == other.line_byte_offset
+            && self.physical_content_end == other.physical_content_end
+            && self.terminator_start == other.terminator_start
+            && self.terminator_end == other.terminator_end
+            && self.normalized_end_anchor == other.normalized_end_anchor
+            && self.synthetic_endline_start == other.synthetic_endline_start
+            && Arc::ptr_eq(&self.pending, &other.pending)
+            && self.end_after_current_line == other.end_after_current_line
+    }
+}
+
+impl Eq for SourceFrameSemanticCursor {}
+
 impl PartialEq for InputSummary {
     fn eq(&self, other: &Self) -> bool {
         self.frames == other.frames
@@ -392,6 +455,32 @@ impl Hash for InputSummary {
 }
 
 impl InputSummary {
+    pub(crate) fn semantic_cursor(&self) -> InputSummarySemanticCursor {
+        InputSummarySemanticCursor {
+            frames: Arc::clone(&self.frames),
+            last_source_record: self.last_source_record,
+            last_source_frame: self.last_source_frame.as_ref().map(|source| {
+                SourceFrameSemanticCursor {
+                    buffer_offset: source.buffer_offset,
+                    next_source_offset: source.next_source_offset,
+                    line_number: source.line_number,
+                    column: source.column,
+                    lexer_state: source.lexer_state,
+                    normalized_line: Arc::clone(&source.normalized_line),
+                    line_byte_offset: source.line_byte_offset,
+                    physical_content_end: source.physical_content_end,
+                    terminator_start: source.terminator_start,
+                    terminator_end: source.terminator_end,
+                    normalized_end_anchor: source.normalized_end_anchor,
+                    synthetic_endline_start: source.synthetic_endline_start,
+                    pending: Arc::clone(&source.pending),
+                    end_after_current_line: source.end_after_current_line,
+                }
+            }),
+            unicode_superscript_notation: self.unicode_superscript_notation,
+        }
+    }
+
     #[must_use]
     pub fn new(
         frames: Vec<InputFrameSummary>,

@@ -16,6 +16,44 @@ const INITIAL_STATE: u64 = 0x6a09_e667_f3bc_c909;
 /// Initial checkpoint hash before any semantic slice is combined.
 pub(crate) const INITIAL_STATE_HASH: u64 = INITIAL_STATE;
 
+/// Performance-owner categories for discardable checkpoint projections.
+///
+/// These labels are never part of semantic state. They exist so feature-gated
+/// profiling can attribute both traversal and elapsed time without changing
+/// the canonical projection bytes.
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(not(feature = "node-stats"), allow(dead_code))]
+pub(crate) enum StateHashComponent {
+    Journal,
+    CodeTables,
+    Hyphenation,
+    PreparedMag,
+    FontSelection,
+    WorldEffects,
+    WorldShellEscapes,
+    WorldStreams,
+    WorldScalars,
+    InputFrames,
+    Interaction,
+    PageScalars,
+    PageInsertions,
+    PageMarks,
+    PageContribution,
+    PageCurrent,
+    PageDiscards,
+    Mode,
+}
+
+impl StateHashComponent {
+    #[cfg_attr(not(feature = "node-stats"), allow(dead_code))]
+    pub(crate) const COUNT: usize = 18;
+
+    #[cfg_attr(not(feature = "node-stats"), allow(dead_code))]
+    pub(crate) const fn index(self) -> usize {
+        self as usize
+    }
+}
+
 /// Combines a previous checkpoint hash with the next semantic slice hash.
 #[must_use]
 pub(crate) fn combine(prev: u64, slice: u64) -> u64 {
@@ -33,7 +71,7 @@ pub(crate) struct StateHasher {
 ///
 /// A fragment is derived state rather than a durable identity. Its own domain
 /// keeps equal field sequences used for different semantic purposes distinct.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct StateHashFragment {
     fingerprint: u64,
 }
@@ -46,6 +84,39 @@ impl StateHashFragment {
         Self {
             fingerprint: hasher.finish(),
         }
+    }
+
+    #[must_use]
+    pub(crate) fn from_measured_builder(
+        domain: u64,
+        component: StateHashComponent,
+        visits: usize,
+        build: impl FnOnce(&mut StateHasher),
+    ) -> Self {
+        Self::from_measured_builder_counted(domain, component, |hasher| {
+            build(hasher);
+            visits
+        })
+    }
+
+    #[must_use]
+    pub(crate) fn from_measured_builder_counted(
+        domain: u64,
+        component: StateHashComponent,
+        build: impl FnOnce(&mut StateHasher) -> usize,
+    ) -> Self {
+        #[cfg(feature = "node-stats")]
+        let started = std::time::Instant::now();
+        let mut hasher = StateHasher::new(domain);
+        let visits = build(&mut hasher);
+        let fragment = Self {
+            fingerprint: hasher.finish(),
+        };
+        #[cfg(feature = "node-stats")]
+        crate::measurement::record_state_hash_component(component, visits, started.elapsed());
+        #[cfg(not(feature = "node-stats"))]
+        let _ = (component, visits);
+        fragment
     }
 
     pub(crate) fn apply(&self, hasher: &mut StateHasher) {

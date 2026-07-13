@@ -5,6 +5,11 @@ use tex_state::{InputRecordId, InputSummary, Snapshot, SourceId, Universe};
 
 use crate::{ExecError, ModeNest, ModeNestSummary};
 
+/// In-memory schema version for aggregate engine checkpoints.
+///
+/// Version 2 names the component-framed state-hash schema explicitly.
+pub const ENGINE_CHECKPOINT_SCHEMA_VERSION: u32 = 2;
+
 /// A safe point at which the outer executor can publish restartable state.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum EngineBoundary {
@@ -19,6 +24,7 @@ pub enum EngineBoundary {
 /// roots are intentionally private so a caller cannot forge a boundary.
 #[derive(Clone, Debug)]
 pub struct EngineCheckpoint {
+    schema_version: u32,
     boundary: EngineBoundary,
     universe: Snapshot,
     input: InputSummary,
@@ -27,6 +33,11 @@ pub struct EngineCheckpoint {
 }
 
 impl EngineCheckpoint {
+    #[must_use]
+    pub const fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+
     #[must_use]
     pub const fn boundary(&self) -> EngineBoundary {
         self.boundary
@@ -105,6 +116,7 @@ impl<'a, C: CheckpointSink> EngineSession<'a, C> {
         let universe = universe.snapshot();
         let state_hash = combine_mode_hash(universe.state_hash(), mode_hash);
         self.sink.checkpoint(EngineCheckpoint {
+            schema_version: ENGINE_CHECKPOINT_SCHEMA_VERSION,
             boundary,
             universe,
             input: input_summary,

@@ -6,6 +6,8 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::state_hash::StateHashComponent;
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct NodeAppendMeasurement {
     pub calls: u64,
@@ -32,6 +34,14 @@ pub struct StateHashMeasurement {
     pub owned_font_keys: u64,
     pub peak_changed_cell_scratch_bytes: u64,
     pub peak_node_scratch_bytes: u64,
+    pub components: [StateHashComponentMeasurement; StateHashComponent::COUNT],
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct StateHashComponentMeasurement {
+    pub calls: u64,
+    pub visits: u64,
+    pub nanos: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -70,6 +80,12 @@ static HASH_OWNED_NODE_BYTES: AtomicU64 = AtomicU64::new(0);
 static HASH_OWNED_FONT_KEYS: AtomicU64 = AtomicU64::new(0);
 static HASH_PEAK_CHANGED_SCRATCH: AtomicU64 = AtomicU64::new(0);
 static HASH_PEAK_NODE_SCRATCH: AtomicU64 = AtomicU64::new(0);
+static HASH_COMPONENT_CALLS: [AtomicU64; StateHashComponent::COUNT] =
+    [const { AtomicU64::new(0) }; StateHashComponent::COUNT];
+static HASH_COMPONENT_VISITS: [AtomicU64; StateHashComponent::COUNT] =
+    [const { AtomicU64::new(0) }; StateHashComponent::COUNT];
+static HASH_COMPONENT_NANOS: [AtomicU64; StateHashComponent::COUNT] =
+    [const { AtomicU64::new(0) }; StateHashComponent::COUNT];
 
 static TRACED_FINISHES: AtomicU64 = AtomicU64::new(0);
 static TRACED_TOKENS: AtomicU64 = AtomicU64::new(0);
@@ -132,6 +148,20 @@ pub(crate) fn record_hash_node_frame(stack_capacity: usize, frame_bytes: usize, 
 
 pub(crate) fn record_owned_font_key() {
     HASH_OWNED_FONT_KEYS.fetch_add(1, Ordering::Relaxed);
+}
+
+pub(crate) fn record_state_hash_component(
+    component: StateHashComponent,
+    visits: usize,
+    elapsed: std::time::Duration,
+) {
+    let index = component.index();
+    HASH_COMPONENT_CALLS[index].fetch_add(1, Ordering::Relaxed);
+    HASH_COMPONENT_VISITS[index].fetch_add(visits as u64, Ordering::Relaxed);
+    HASH_COMPONENT_NANOS[index].fetch_add(
+        elapsed.as_nanos().min(u128::from(u64::MAX)) as u64,
+        Ordering::Relaxed,
+    );
 }
 
 pub(crate) fn record_traced_list_finish(
@@ -204,6 +234,40 @@ pub fn state_hash_measurement() -> StateHashMeasurement {
         owned_font_keys: HASH_OWNED_FONT_KEYS.load(Ordering::Relaxed),
         peak_changed_cell_scratch_bytes: HASH_PEAK_CHANGED_SCRATCH.load(Ordering::Relaxed),
         peak_node_scratch_bytes: HASH_PEAK_NODE_SCRATCH.load(Ordering::Relaxed),
+        components: core::array::from_fn(|index| StateHashComponentMeasurement {
+            calls: HASH_COMPONENT_CALLS[index].load(Ordering::Relaxed),
+            visits: HASH_COMPONENT_VISITS[index].load(Ordering::Relaxed),
+            nanos: HASH_COMPONENT_NANOS[index].load(Ordering::Relaxed),
+        }),
+    }
+}
+
+impl StateHashMeasurement {
+    #[must_use]
+    pub fn named_components(
+        &self,
+    ) -> impl Iterator<Item = (&'static str, StateHashComponentMeasurement)> + '_ {
+        const NAMES: [&str; StateHashComponent::COUNT] = [
+            "journal",
+            "code_tables",
+            "hyphenation",
+            "prepared_mag",
+            "font_selection",
+            "world_effects",
+            "world_shell_escapes",
+            "world_streams",
+            "world_scalars",
+            "input_frames",
+            "interaction",
+            "page_scalars",
+            "page_insertions",
+            "page_marks",
+            "page_contribution",
+            "page_current",
+            "page_discards",
+            "mode",
+        ];
+        NAMES.into_iter().zip(self.components.iter().copied())
     }
 }
 
