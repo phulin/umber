@@ -597,6 +597,21 @@ where
                 token,
             ))
         }
+        Meaning::InternalInteger(InternalInteger::CurrentIfLevel) => {
+            recorder.record_dependency(ReadDependency::Engine(ReadEngineField::ConditionStack));
+            Ok(ScannedInt::new(
+                i32::try_from(input.condition_depth()).unwrap_or(i32::MAX),
+                token,
+            ))
+        }
+        Meaning::InternalInteger(InternalInteger::CurrentIfType) => {
+            recorder.record_dependency(ReadDependency::Engine(ReadEngineField::ConditionStack));
+            Ok(ScannedInt::new(current_if_type(input), token))
+        }
+        Meaning::InternalInteger(InternalInteger::CurrentIfBranch) => {
+            recorder.record_dependency(ReadDependency::Engine(ReadEngineField::ConditionStack));
+            Ok(ScannedInt::new(current_if_branch(input), token))
+        }
         Meaning::DimenParam(index) => {
             recorder.record_dependency(ReadDependency::Cell {
                 bank: ReadBank::DimenParam,
@@ -990,6 +1005,26 @@ fn scanned_unsigned(
 
 const fn missing_number(context: TracedTokenWord) -> ScannedInt {
     ScannedInt::with_diagnostic(0, IntegerDiagnostic::MissingNumber, context)
+}
+
+pub(crate) fn current_if_type<S>(input: &InputStack<S>) -> i32 {
+    let Some(condition) = input.current_condition() else {
+        return 0;
+    };
+    let code = i32::from(condition.if_type());
+    if condition.inverted() { -code } else { code }
+}
+
+pub(crate) fn current_if_branch<S>(input: &InputStack<S>) -> i32 {
+    input.current_condition().map_or(0, |condition| {
+        if condition.evaluating() {
+            0
+        } else if condition.limb() == tex_lex::ConditionLimb::Else {
+            -1
+        } else {
+            1
+        }
+    })
 }
 
 fn token_digit_for_radix(token: TracedTokenWord, radix: i64) -> Option<i64> {

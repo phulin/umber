@@ -192,6 +192,8 @@ pub struct ConditionFrameSummary {
     any_limb_taken: bool,
     ifcase_or_count: u32,
     skip_nesting: u32,
+    inverted: bool,
+    if_type: u8,
 }
 
 impl ConditionFrameSummary {
@@ -207,6 +209,8 @@ impl ConditionFrameSummary {
             any_limb_taken: current_limb_taken,
             ifcase_or_count: 0,
             skip_nesting: 0,
+            inverted: false,
+            if_type: 0,
         }
     }
 
@@ -222,6 +226,8 @@ impl ConditionFrameSummary {
             any_limb_taken: current_limb_taken,
             ifcase_or_count: 0,
             skip_nesting: 0,
+            inverted: false,
+            if_type: 0,
         }
     }
 
@@ -238,6 +244,8 @@ impl ConditionFrameSummary {
             any_limb_taken: false,
             ifcase_or_count: 0,
             skip_nesting: 0,
+            inverted: false,
+            if_type: 0,
         }
     }
 
@@ -253,6 +261,8 @@ impl ConditionFrameSummary {
             any_limb_taken: false,
             ifcase_or_count: 0,
             skip_nesting: 0,
+            inverted: false,
+            if_type: 0,
         }
     }
 
@@ -294,6 +304,28 @@ impl ConditionFrameSummary {
     #[must_use]
     pub const fn skip_nesting(self) -> u32 {
         self.skip_nesting
+    }
+
+    #[must_use]
+    pub const fn inverted(self) -> bool {
+        self.inverted
+    }
+
+    #[must_use]
+    pub const fn with_inverted(mut self, inverted: bool) -> Self {
+        self.inverted = inverted;
+        self
+    }
+
+    #[must_use]
+    pub const fn if_type(self) -> u8 {
+        self.if_type
+    }
+
+    #[must_use]
+    pub const fn with_if_type(mut self, if_type: u8) -> Self {
+        self.if_type = if_type;
+        self
     }
 
     /// Moves the frame to an `\or` limb and records how many `\or` tokens

@@ -319,6 +319,9 @@ mod primitive_mode_tests {
         let ifcsname = compatibility.intern("ifcsname");
         let currentgrouplevel = compatibility.intern("currentgrouplevel");
         let currentgrouptype = compatibility.intern("currentgrouptype");
+        let currentiflevel = compatibility.intern("currentiflevel");
+        let currentiftype = compatibility.intern("currentiftype");
+        let currentifbranch = compatibility.intern("currentifbranch");
         assert_eq!(compatibility.meaning(unexpanded), Meaning::Undefined);
         assert_eq!(compatibility.meaning(detokenize), Meaning::Undefined);
         assert_eq!(compatibility.meaning(unless), Meaning::Undefined);
@@ -330,6 +333,9 @@ mod primitive_mode_tests {
             ifcsname,
             currentgrouplevel,
             currentgrouptype,
+            currentiflevel,
+            currentiftype,
+            currentifbranch,
         ] {
             assert_eq!(compatibility.meaning(symbol), Meaning::Undefined);
         }
@@ -369,6 +375,18 @@ mod primitive_mode_tests {
             (
                 "currentgrouptype",
                 tex_state::meaning::InternalInteger::CurrentGroupType,
+            ),
+            (
+                "currentiflevel",
+                tex_state::meaning::InternalInteger::CurrentIfLevel,
+            ),
+            (
+                "currentiftype",
+                tex_state::meaning::InternalInteger::CurrentIfType,
+            ),
+            (
+                "currentifbranch",
+                tex_state::meaning::InternalInteger::CurrentIfBranch,
             ),
         ] {
             let symbol = extended.intern(name);

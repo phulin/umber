@@ -13,18 +13,38 @@ use crate::{
     ReadRecorder, expandable_symbol, push_inserted_token, scan_helpers, scan_int, semantic_token,
 };
 
+#[derive(Clone, Copy)]
+pub(crate) struct ConditionMetadata {
+    if_type: u8,
+    inverted: bool,
+}
+
+impl ConditionMetadata {
+    pub(crate) const fn new(if_type: u8, inverted: bool) -> Self {
+        Self { if_type, inverted }
+    }
+
+    const fn apply(self, frame: ConditionFrameSummary) -> ConditionFrameSummary {
+        frame
+            .with_if_type(self.if_type)
+            .with_inverted(self.inverted)
+    }
+}
+
 pub(crate) fn begin_if_evaluation<S>(
     input: &mut InputStack<S>,
     context: TracedTokenWord,
+    metadata: ConditionMetadata,
 ) -> ConditionFrameToken {
-    input.push_condition(ConditionFrameSummary::evaluating_if(context))
+    input.push_condition(metadata.apply(ConditionFrameSummary::evaluating_if(context)))
 }
 
 pub(crate) fn begin_ifcase_evaluation<S>(
     input: &mut InputStack<S>,
     context: TracedTokenWord,
+    metadata: ConditionMetadata,
 ) -> ConditionFrameToken {
-    input.push_condition(ConditionFrameSummary::evaluating_ifcase(context))
+    input.push_condition(metadata.apply(ConditionFrameSummary::evaluating_ifcase(context)))
 }
 
 pub(crate) fn begin_if<S, R, H>(
@@ -33,6 +53,7 @@ pub(crate) fn begin_if<S, R, H>(
     recorder: &mut R,
     hooks: &mut H,
     condition: bool,
+    metadata: ConditionMetadata,
     context: TracedTokenWord,
 ) -> Result<Dispatch, ExpandError>
 where
@@ -40,7 +61,8 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    let frame_token = input.push_condition(ConditionFrameSummary::new_if(context, condition));
+    let frame_token =
+        input.push_condition(metadata.apply(ConditionFrameSummary::new_if(context, condition)));
     if !condition {
         skip_false_limb(input, stores, recorder, hooks, frame_token)?;
     }
@@ -53,7 +75,6 @@ pub(crate) fn complete_if_evaluation<S, R, H>(
     recorder: &mut R,
     hooks: &mut H,
     condition: bool,
-    context: TracedTokenWord,
     frame_token: ConditionFrameToken,
 ) -> Result<Dispatch, ExpandError>
 where
@@ -61,10 +82,15 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
+    let current = input
+        .current_condition()
+        .expect("the evaluating conditional frame remains current");
+    let context = current.context();
+    let metadata = ConditionMetadata::new(current.if_type(), current.inverted());
     let previous = input
         .update_condition(
             frame_token,
-            ConditionFrameSummary::new_if(context, condition),
+            metadata.apply(ConditionFrameSummary::new_if(context, condition)),
         )
         .ok_or(ExpandError::IncompleteIf { context })?;
     debug_assert!(previous.evaluating());
@@ -80,7 +106,6 @@ pub(crate) fn complete_ifcase_evaluation<S, R, H>(
     recorder: &mut R,
     hooks: &mut H,
     selected_case: i32,
-    context: TracedTokenWord,
     frame_token: ConditionFrameToken,
 ) -> Result<Dispatch, ExpandError>
 where
@@ -88,11 +113,18 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
+    let current = input
+        .current_condition()
+        .expect("the evaluating ifcase frame remains current");
+    let context = current.context();
     let take_initial_limb = selected_case == 0;
     let previous = input
         .update_condition(
             frame_token,
-            ConditionFrameSummary::new_ifcase(context, take_initial_limb),
+            ConditionMetadata::new(17, false).apply(ConditionFrameSummary::new_ifcase(
+                context,
+                take_initial_limb,
+            )),
         )
         .ok_or(ExpandError::IncompleteIf { context })?;
     debug_assert!(previous.evaluating());

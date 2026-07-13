@@ -362,13 +362,33 @@ macro_rules! dispatch_match {
                 })
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfTrue) => {
-                begin_if(input, stores, recorder, hooks, true ^ $invert, call_context)
+                begin_if(
+                    input,
+                    stores,
+                    recorder,
+                    hooks,
+                    true ^ $invert,
+                    ConditionMetadata::new(15, $invert),
+                    call_context,
+                )
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfFalse) => {
-                begin_if(input, stores, recorder, hooks, false ^ $invert, call_context)
+                begin_if(
+                    input,
+                    stores,
+                    recorder,
+                    hooks,
+                    false ^ $invert,
+                    ConditionMetadata::new(16, $invert),
+                    call_context,
+                )
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::If) => {
-                let frame_token = begin_if_evaluation(input, call_context);
+                let frame_token = begin_if_evaluation(
+                    input,
+                    call_context,
+                    ConditionMetadata::new(1, $invert),
+                );
                 let left = scan_condition_x_token(
                     input,
                     stores,
@@ -391,12 +411,11 @@ macro_rules! dispatch_match {
                     recorder,
                     hooks,
                     if_char_equal(left, right) ^ $invert,
-                    call_context,
                     frame_token,
                 )
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfCat) => {
-                let frame_token = begin_if_evaluation(input, call_context);
+                let frame_token = begin_if_evaluation(input, call_context, ConditionMetadata::new(2, $invert));
                 let left = scan_condition_x_token(
                     input,
                     stores,
@@ -419,12 +438,11 @@ macro_rules! dispatch_match {
                     recorder,
                     hooks,
                     if_cat_equal(left, right) ^ $invert,
-                    call_context,
                     frame_token,
                 )
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfX) => {
-                let frame_token = begin_if_evaluation(input, call_context);
+                let frame_token = begin_if_evaluation(input, call_context, ConditionMetadata::new(13, $invert));
                 let Some(left) = crate::next_semantic_raw_token(input, stores)? else {
                     return Err(ExpandError::MissingTokenAfterPrimitive {
                         opcode: ExpandableOpcode::If,
@@ -451,12 +469,11 @@ macro_rules! dispatch_match {
                     recorder,
                     hooks,
                     ifx_equal(stores, left, right) ^ $invert,
-                    call_context,
                     frame_token,
                 )
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfNum) => {
-                let frame_token = begin_if_evaluation(input, call_context);
+                let frame_token = begin_if_evaluation(input, call_context, ConditionMetadata::new(3, $invert));
                 let left = scan_int::scan_int_with_expander_and_hooks(
                     input,
                     stores,
@@ -489,12 +506,11 @@ macro_rules! dispatch_match {
                     recorder,
                     hooks,
                     compare_ordered(left, relation, right) ^ $invert,
-                    call_context,
                     frame_token,
                 )
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfDim) => {
-                let frame_token = begin_if_evaluation(input, call_context);
+                let frame_token = begin_if_evaluation(input, call_context, ConditionMetadata::new(4, $invert));
                 let left = scan_dimen::scan_dimen_with_expander_and_hooks(
                     input,
                     stores,
@@ -529,12 +545,11 @@ macro_rules! dispatch_match {
                     recorder,
                     hooks,
                     compare_ordered(left, relation, right) ^ $invert,
-                    call_context,
                     frame_token,
                 )
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfOdd) => {
-                let frame_token = begin_if_evaluation(input, call_context);
+                let frame_token = begin_if_evaluation(input, call_context, ConditionMetadata::new(5, $invert));
                 let value = scan_int::scan_int_with_expander_and_hooks(
                     input,
                     stores,
@@ -550,12 +565,11 @@ macro_rules! dispatch_match {
                     recorder,
                     hooks,
                     (value % 2 != 0) ^ $invert,
-                    call_context,
                     frame_token,
                 )
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfCase) => {
-                let frame_token = begin_ifcase_evaluation(input, call_context);
+                let frame_token = begin_ifcase_evaluation(input, call_context, ConditionMetadata::new(17, false));
                 let selected_case = scan_int::scan_int_with_expander_and_hooks(
                     input,
                     stores,
@@ -571,7 +585,6 @@ macro_rules! dispatch_match {
                     recorder,
                     hooks,
                     selected_case,
-                    call_context,
                     frame_token,
                 )
             }
@@ -584,6 +597,7 @@ macro_rules! dispatch_match {
                     recorder,
                     hooks,
                     (hooks.mode() == EngineMode::Vertical) ^ $invert,
+                    ConditionMetadata::new(6, $invert),
                     call_context,
                 )
             }
@@ -596,6 +610,7 @@ macro_rules! dispatch_match {
                     recorder,
                     hooks,
                     (hooks.mode() == EngineMode::Horizontal) ^ $invert,
+                    ConditionMetadata::new(7, $invert),
                     call_context,
                 )
             }
@@ -608,6 +623,7 @@ macro_rules! dispatch_match {
                     recorder,
                     hooks,
                     (hooks.mode() == EngineMode::Math) ^ $invert,
+                    ConditionMetadata::new(8, $invert),
                     call_context,
                 )
             }
@@ -621,11 +637,12 @@ macro_rules! dispatch_match {
                     recorder,
                     hooks,
                     hooks.is_inner_mode() ^ $invert,
+                    ConditionMetadata::new(9, $invert),
                     call_context,
                 )
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfVoid) => {
-                let frame_token = begin_if_evaluation(input, call_context);
+                let frame_token = begin_if_evaluation(input, call_context, ConditionMetadata::new(10, $invert));
                 let index = scan_register_index_with_expander_and_hooks(
                     input,
                     stores,
@@ -644,12 +661,11 @@ macro_rules! dispatch_match {
                     recorder,
                     hooks,
                     stores.box_reg(index).is_none() ^ $invert,
-                    call_context,
                     frame_token,
                 )
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfHBox) => {
-                let frame_token = begin_if_evaluation(input, call_context);
+                let frame_token = begin_if_evaluation(input, call_context, ConditionMetadata::new(11, $invert));
                 let index = scan_register_index_with_expander_and_hooks(
                     input,
                     stores,
@@ -668,12 +684,11 @@ macro_rules! dispatch_match {
                     recorder,
                     hooks,
                     box_register_has_kind(stores, index, BoxKind::HBox) ^ $invert,
-                    call_context,
                     frame_token,
                 )
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfVBox) => {
-                let frame_token = begin_if_evaluation(input, call_context);
+                let frame_token = begin_if_evaluation(input, call_context, ConditionMetadata::new(12, $invert));
                 let index = scan_register_index_with_expander_and_hooks(
                     input,
                     stores,
@@ -692,12 +707,11 @@ macro_rules! dispatch_match {
                     recorder,
                     hooks,
                     box_register_has_kind(stores, index, BoxKind::VBox) ^ $invert,
-                    call_context,
                     frame_token,
                 )
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfEof) => {
-                let frame_token = begin_if_evaluation(input, call_context);
+                let frame_token = begin_if_evaluation(input, call_context, ConditionMetadata::new(14, $invert));
                 let stream = scan_stream_number_with_expander_and_hooks(
                     input,
                     stores,
@@ -713,12 +727,11 @@ macro_rules! dispatch_match {
                     recorder,
                     hooks,
                     hooks.input_stream_eof(stores, stream) ^ $invert,
-                    call_context,
                     frame_token,
                 )
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfDefined) => {
-                let frame_token = begin_if_evaluation(input, call_context);
+                let frame_token = begin_if_evaluation(input, call_context, ConditionMetadata::new(18, $invert));
                 let Some(target) = crate::next_semantic_raw_token(input, stores)? else {
                     return Err(ExpandError::MissingTokenAfterPrimitive {
                         opcode: ExpandableOpcode::IfDefined,
@@ -747,12 +760,11 @@ macro_rules! dispatch_match {
                     recorder,
                     hooks,
                     defined ^ $invert,
-                    call_context,
                     frame_token,
                 )
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfCsName) => {
-                let frame_token = begin_if_evaluation(input, call_context);
+                let frame_token = begin_if_evaluation(input, call_context, ConditionMetadata::new(19, $invert));
                 let name = scan_csname(input, stores, recorder, hooks, call_context)?;
                 let defined = stores.symbol(&name).is_some_and(|symbol| {
                     let meaning = stores.meaning(symbol);
@@ -765,7 +777,6 @@ macro_rules! dispatch_match {
                     recorder,
                     hooks,
                     defined ^ $invert,
-                    call_context,
                     frame_token,
                 )
             }

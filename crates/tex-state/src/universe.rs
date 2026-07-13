@@ -3336,6 +3336,8 @@ fn hash_input_summary_fields(
                 hasher.bool(condition.any_limb_taken());
                 hasher.u32(condition.ifcase_or_count());
                 hasher.u32(condition.skip_nesting());
+                hasher.bool(condition.inverted());
+                hasher.u8(condition.if_type());
             }
         }
     }

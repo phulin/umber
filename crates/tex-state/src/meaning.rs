@@ -114,6 +114,9 @@ pub enum InternalInteger {
     ETeXVersion,
     CurrentGroupLevel,
     CurrentGroupType,
+    CurrentIfLevel,
+    CurrentIfType,
+    CurrentIfBranch,
 }
 
 impl InternalInteger {
@@ -125,6 +128,9 @@ impl InternalInteger {
             Self::ETeXVersion => 2,
             Self::CurrentGroupLevel => 3,
             Self::CurrentGroupType => 4,
+            Self::CurrentIfLevel => 5,
+            Self::CurrentIfType => 6,
+            Self::CurrentIfBranch => 7,
         }
     }
 
@@ -136,6 +142,9 @@ impl InternalInteger {
             2 => Some(Self::ETeXVersion),
             3 => Some(Self::CurrentGroupLevel),
             4 => Some(Self::CurrentGroupType),
+            5 => Some(Self::CurrentIfLevel),
+            6 => Some(Self::CurrentIfType),
+            7 => Some(Self::CurrentIfBranch),
             _ => None,
         }
     }

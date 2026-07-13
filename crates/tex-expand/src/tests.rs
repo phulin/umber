@@ -638,6 +638,43 @@ fn current_group_enquiries_read_exact_state_markers() {
 }
 
 #[test]
+fn current_if_enquiries_report_level_type_branch_and_unless_sign() {
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    crate::install_etex_expandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\iftrue\\number\\currentiflevel,\\number\\currentiftype,\\number\\currentifbranch;\\fi\
+         \\unless\\iffalse\\number\\currentiflevel,\\number\\currentiftype,\\number\\currentifbranch;\\fi\
+         \\iffalse X\\else\\number\\currentiflevel,\\number\\currentiftype,\\number\\currentifbranch;\\fi%",
+    ));
+
+    assert_eq!(
+        next_expanded_chars(&mut input, &mut stores),
+        "1,15,1;1,-16,1;1,16,-1;"
+    );
+}
+
+#[test]
+fn current_if_enquiries_follow_manual_type_and_branch_codes() {
+    // e-TeX short reference manual section 3.3: level is conditional depth,
+    // type is negated under \unless, and branch is 1/0/-1 for an available
+    // alternative, operand evaluation, or a final branch respectively.
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    crate::install_etex_expandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\the\\currentiflevel,\\the\\currentiftype,\\the\\currentifbranch;\
+         \\iftrue\\the\\currentiflevel,\\the\\currentiftype,\\the\\currentifbranch\\fi;\
+         \\unless\\iftrue X\\else\\the\\currentiflevel,\\the\\currentiftype,\\the\\currentifbranch\\fi%",
+    ));
+
+    assert_eq!(
+        next_expanded_chars(&mut input, &mut stores),
+        "0,0,0;1,15,1;1,-15,-1"
+    );
+}
+
+#[test]
 fn ifdefined_and_ifcsname_test_without_creating_missing_names() {
     // e-TeX short reference manual section 3.3 requires \ifcsname to avoid
     // both hash-table creation and the \relax side effect of ordinary \csname.

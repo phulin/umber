@@ -156,6 +156,18 @@ pub fn install_etex_expandable_primitives(stores: &mut Universe) {
             "currentgrouptype",
             tex_state::meaning::InternalInteger::CurrentGroupType,
         ),
+        (
+            "currentiflevel",
+            tex_state::meaning::InternalInteger::CurrentIfLevel,
+        ),
+        (
+            "currentiftype",
+            tex_state::meaning::InternalInteger::CurrentIfType,
+        ),
+        (
+            "currentifbranch",
+            tex_state::meaning::InternalInteger::CurrentIfBranch,
+        ),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::InternalInteger(value));
@@ -225,6 +237,10 @@ pub enum ReadEngineField {
     InnerMode,
     GroupLevel,
     GroupType,
+    ConditionLevel,
+    ConditionType,
+    ConditionBranch,
+    ConditionStack,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]

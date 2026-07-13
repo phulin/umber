@@ -1416,6 +1416,9 @@ fn hash_internal_integer(integer: InternalInteger, hasher: &mut StateHasher) {
         InternalInteger::ETeXVersion => hasher.tag(2),
         InternalInteger::CurrentGroupLevel => hasher.tag(3),
         InternalInteger::CurrentGroupType => hasher.tag(4),
+        InternalInteger::CurrentIfLevel => hasher.tag(5),
+        InternalInteger::CurrentIfType => hasher.tag(6),
+        InternalInteger::CurrentIfBranch => hasher.tag(7),
     }
 }
 

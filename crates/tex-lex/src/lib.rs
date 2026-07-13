@@ -1233,6 +1233,11 @@ impl<S> InputStack<S> {
     }
 
     #[must_use]
+    pub fn condition_depth(&self) -> usize {
+        self.condition_frame_indices.len()
+    }
+
+    #[must_use]
     pub fn current_condition_token(&self) -> Option<ConditionFrameToken> {
         let index = *self.condition_frame_indices.last()?;
         let InputFrame::Condition { token, .. } = self.frames[index] else {

@@ -427,6 +427,24 @@ where
                 .to_string(),
             cause_origin,
         )),
+        Meaning::InternalInteger(InternalInteger::CurrentIfLevel) => Ok(push_rendered_text(
+            stores,
+            ExpansionReplayKind::TheOutput,
+            &input.condition_depth().to_string(),
+            cause_origin,
+        )),
+        Meaning::InternalInteger(InternalInteger::CurrentIfType) => Ok(push_rendered_text(
+            stores,
+            ExpansionReplayKind::TheOutput,
+            &scan_int::current_if_type(input).to_string(),
+            cause_origin,
+        )),
+        Meaning::InternalInteger(InternalInteger::CurrentIfBranch) => Ok(push_rendered_text(
+            stores,
+            ExpansionReplayKind::TheOutput,
+            &scan_int::current_if_branch(input).to_string(),
+            cause_origin,
+        )),
         Meaning::DimenParam(index) => Ok(push_rendered_text(
             stores,
             ExpansionReplayKind::TheOutput,
@@ -565,6 +583,14 @@ pub(crate) fn record_meaning_value_dependency(recorder: &mut impl ReadRecorder, 
         }
         Meaning::InternalInteger(InternalInteger::CurrentGroupType) => {
             recorder.record_dependency(ReadDependency::Engine(ReadEngineField::GroupType));
+            None
+        }
+        Meaning::InternalInteger(
+            InternalInteger::CurrentIfLevel
+            | InternalInteger::CurrentIfType
+            | InternalInteger::CurrentIfBranch,
+        ) => {
+            recorder.record_dependency(ReadDependency::Engine(ReadEngineField::ConditionStack));
             None
         }
         Meaning::PageDimension(dimension) => {
