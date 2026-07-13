@@ -84,7 +84,8 @@ against its committed DVI fixture, and `scripts/regen-fixtures.sh` owns fixture
 regeneration for the area.
 
 `tests/corpus/e2e` receives gitignored final-DVI oracles for Story, Gentle,
-TRIP, and e-TRIP. Their Cargo integration tests run Umber only and return cleanly when an
+TRIP, and e-TRIP. Their Cargo integration tests run Umber directly in process
+and return cleanly when an
 external input or local oracle is absent. Run
 `scripts/setup-conformance-tests.sh` to acquire the pinned third-party inputs
 that are not already cached and generate all four oracles with pdfTeX. The
@@ -215,9 +216,11 @@ fetched CTAN files. The Cargo test returns cleanly unless both `trip.tex` and
 standalone TRIP harness requires the
 special INITEX build documented by `tripman.tex` Appendix A and writes
 comparison work products under `target/trip/`.
-The `e2e_conformance_trip` Cargo integration test runs the specialized
-TRIP artifact producer and then applies the same preamble-comment-only,
-byte-identical final-DVI assertion used by Story and Gentle. Run it with
+The `e2e_conformance_trip` and `e2e_conformance_etrip` Cargo integration tests
+share an in-process two-phase format-create/format-load helper and then apply
+the same preamble-comment-only, byte-identical final-DVI assertion used by
+Story and Gentle. They never invoke `scripts/trip.sh` or an Umber subprocess.
+Run TRIP with
 `cargo test -p umber --test it e2e_conformance_trip -- --nocapture`.
 Run the required e-TRIP DVI gate with
 `cargo test -p umber --test it e2e_conformance_etrip -- --nocapture`.

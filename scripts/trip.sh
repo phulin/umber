@@ -12,7 +12,6 @@ if [[ "$target_dir" != /* ]]; then
 fi
 work_root="${target_dir}/trip"
 diff_dir="${work_root}/diffs"
-etrip_work_root="${target_dir}/etrip"
 umber_bin="${UMBER_BIN:-${target_dir}/debug/umber}"
 
 mode="all"
@@ -22,7 +21,7 @@ keep_work=0
 usage() {
   cat <<'EOF'
 usage:
-  scripts/trip.sh [all|fetch|reference|umber|umber-artifacts|etrip-umber-artifacts|self-test] [--offline] [--keep-work]
+  scripts/trip.sh [all|fetch|reference|umber|self-test] [--offline] [--keep-work]
 
 Runs the official Knuth TeX82 TRIP conformance harness outside cargo tests.
 The harness fetches the pinned CTAN TRIP and e-TRIP materials into third_party/trip/,
@@ -45,7 +44,7 @@ EOF
 
 if [[ "$#" -gt 0 ]]; then
   case "$1" in
-    all|fetch|reference|umber|umber-artifacts|etrip-umber-artifacts|self-test)
+    all|fetch|reference|umber|self-test)
       mode="$1"
       shift
       ;;
@@ -634,9 +633,6 @@ run_umber_phase() {
   if [[ -s "${dir}/trip-artifact.stderr" ]]; then
     cat "${dir}/trip-artifact.stderr" >&2
   fi
-  if [[ "${mode}" == "umber-artifacts" ]]; then
-    return "$ok"
-  fi
   local dvitype
   dvitype="$(tool_path UMBER_REF_DVITYPE dvitype)"
   if [[ -s "${dir}/trip.dvi" ]]; then
@@ -661,44 +657,6 @@ run_umber_phase() {
     printf '%s\n' 'Umber TRIP DVI parity failed; compare the opcode context against tex.web ship_out and movement semantics rather than weakening this harness.' >&2
   fi
   return "$ok"
-}
-
-run_umber_etrip_artifacts() {
-  [[ -f "${download_dir}/etrip.tex" ]] || \
-    fail "missing ${download_dir}/etrip.tex; run scripts/trip.sh fetch"
-  [[ -f "${download_dir}/trip.tfm" ]] || \
-    fail "missing ${download_dir}/trip.tfm; run scripts/trip.sh fetch"
-  if [[ ! -x "$umber_bin" ]]; then
-    printf '%s\n' 'Building umber' >&2
-    cargo build -p umber
-  fi
-
-  local dir="${etrip_work_root}/umber"
-  rm -rf "$dir"
-  mkdir -p "$dir"
-  {
-    printf '%s\n' \
-      '%% Local e-TeX 2.6 compatibility adaptation; the official etrip.tex remains unchanged.' \
-      '%% Renamed and modified as required by the e-TeX distribution terms.'
-    sed 's/\\def\\etripversion{2\.0}/\\def\\etripversion{2.6}/' \
-      "${download_dir}/etrip.tex"
-  } > "${dir}/etrip-local.tex"
-  cp "${download_dir}/trip.tfm" "${dir}/etrip.tfm"
-
-  (
-    cd "$dir"
-    "$umber_bin" run etrip-local.tex --etex --format-out etrip.fmt \
-      > etripin.fot 2> etripin.stderr
-  ) || fail "Umber e-TRIP e-INITEX phase failed; see ${dir}/etripin.stderr"
-  [[ -s "${dir}/etrip.fmt" ]] || \
-    fail "Umber e-TRIP e-INITEX phase did not produce etrip.fmt"
-  (
-    cd "$dir"
-    "$umber_bin" run etrip-local.tex --etex --format etrip.fmt --dvi etrip.dvi \
-      > etrip.fot 2> etrip.stderr
-  ) || fail "Umber format-loaded e-TRIP phase failed; see ${dir}/etrip.stderr"
-  [[ -s "${dir}/etrip.dvi" ]] || \
-    fail "Umber format-loaded e-TRIP phase did not produce etrip.dvi"
 }
 
 run_self_test() {
@@ -921,14 +879,6 @@ case "$mode" in
     fetch_materials
     prepare_work
     run_umber_phase
-    ;;
-  umber-artifacts)
-    prepare_work
-    run_umber_phase
-    ;;
-  etrip-umber-artifacts)
-    mkdir -p "$etrip_work_root"
-    run_umber_etrip_artifacts
     ;;
   all)
     fetch_materials

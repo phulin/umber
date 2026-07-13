@@ -93,8 +93,9 @@ gitignored licensing-sensitive derivatives and are not repository fixtures.
 
 This mode verifies acquisition, then selects `e2e_conformance_story` and
 `e2e_conformance_gentle` in Umber's single integration-test binary. The shared
-`parity-harness` library runs Umber and byte-compares its normalized DVI with
-the local `tests/corpus/e2e` oracle. Each document names a manifest-pinned
+`parity-harness` library stages inputs, calls the Cargo test's in-process Umber
+runner, and byte-compares its normalized DVI with the local `tests/corpus/e2e`
+oracle. Each document names a manifest-pinned
 `format_source`; the harness stages that source, the document, hyphenation
 input, and required TFMs, then feeds Umber a wrapper that inputs the format
 source before the document through the ordinary input path.
@@ -134,6 +135,10 @@ scripts/regen-fixtures.sh --case e2e/etrip
 and e-TRIP bytes into gitignored `third_party/trip/`, and verifies every SHA-256 before
 running. It uses the pinned canonical `trip.tfm`, then runs the documented
 INITEX and format-loaded TRIP phases.
+
+Cargo conformance tests do not invoke `scripts/trip.sh` or launch Umber as a
+subprocess. Story and Gentle call the engine directly through the staged
+fixture callback; TRIP and e-TRIP share one in-process two-phase format helper.
 
 This tier requires Knuth's special TRIP INITEX build described in
 `tripman.tex` Appendix A. Stock `pdftex -ini` or `tex -ini` is useful only as a

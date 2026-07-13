@@ -23,9 +23,9 @@ scripts/setup-conformance-tests.sh
 `trip.tfm`, runs the INITEX transcript phase, runs the format-loaded TRIP
 phase, and runs DVItype. The Cargo integration test first checks for
 `third_party/trip/trip.tex` and `trip.tfm`; when either is absent it returns
-without running TRIP. When both are present it uses
-`scripts/trip.sh umber-artifacts` for specialized preparation, then
-uses the shared Rust conformance library to compare against the gitignored,
+without running TRIP. When both are present it uses a shared in-process Rust
+helper for format creation and the format-loaded run, then uses the shared
+conformance library to compare against the gitignored,
 locally generated `tests/corpus/e2e/trip.expected.dvi` oracle, requiring byte-identical final
 DVI after normalizing only the preamble comment. DVItype is diagnostic for
 Umber. Fixture regeneration independently executes both TRIP phases with

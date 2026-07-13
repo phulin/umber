@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-fonts=(cmr10 cmmi10 cmsy10 cmex10 cmtt10)
+fonts=(
+  cmbsy10 cmbx10 cmbx5 cmbx6 cmbx7 cmbx8 cmbx9 cmcsc10 cmdunh10
+  cmex10 cmmi10 cmmi5 cmmi6 cmmi7 cmmi8 cmmi9 cmmib10
+  cmr10 cmr5 cmr6 cmr7 cmr8 cmr9
+  cmsl10 cmsl8 cmsl9 cmsltt10 cmss10 cmssbx10 cmssi10 cmssq8 cmssqi8
+  cmsy10 cmsy5 cmsy6 cmsy7 cmsy8 cmsy9
+  cmti10 cmti7 cmti8 cmti9 cmtt10 cmtt8 cmtt9 cmu10 manfnt
+)
 dest_dir="third_party/fonts"
 
 if ! command -v kpsewhich >/dev/null 2>&1; then

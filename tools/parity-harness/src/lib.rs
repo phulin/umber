@@ -42,9 +42,9 @@ pub fn run_cli() -> Result<bool> {
 /// with a locally generated oracle. Reference TeX is intentionally absent here.
 pub fn run_named_fixture_document(
     repo_root: &Path,
-    umber_bin: &Path,
     document: &str,
     fixture: &Path,
+    run_umber: impl FnOnce(&Path) -> std::result::Result<Vec<u8>, String>,
 ) -> Result<()> {
     let repo_root = repo_root
         .canonicalize()
@@ -77,17 +77,9 @@ pub fn run_named_fixture_document(
     let format_source_path = repo_root
         .join("third_party/corpus")
         .join(&doc.format_source);
-    let umber_run = run_umber_dvi(&repo_root, umber_bin, &source_path, &format_source_path)?;
-    if !umber_run.success {
-        bail!(
-            "Umber failed for {document}\nstdout:\n{}\nstderr:\n{}",
-            umber_run.stdout,
-            umber_run.stderr
-        );
-    }
-    let actual = umber_run
-        .dvi
-        .ok_or_else(|| anyhow!("Umber did not produce DVI for {document}"))?;
+    let staged = staged_source_dir(&repo_root, &source_path, &format_source_path, false, false)?;
+    let actual = run_umber(&staged.path().join(JOB_NAME))
+        .map_err(|error| anyhow!("Umber failed for {document}: {error}"))?;
     let actual_path = repo_root
         .join("target/conformance-artifacts")
         .join(document)
@@ -529,7 +521,7 @@ fn run_reference_dvi(
     source_path: &Path,
     format_source_path: &Path,
 ) -> Result<EngineDvi> {
-    let temp = staged_source_dir(repo_root, source_path, format_source_path, false)?;
+    let temp = staged_source_dir(repo_root, source_path, format_source_path, false, true)?;
     let output = ref_tex.run_in_dir(
         temp.path(),
         Path::new(JOB_NAME),
@@ -552,7 +544,7 @@ fn run_umber_dvi(
     source_path: &Path,
     format_source_path: &Path,
 ) -> Result<UmberRun> {
-    let temp = staged_source_dir(repo_root, source_path, format_source_path, false)?;
+    let temp = staged_source_dir(repo_root, source_path, format_source_path, false, true)?;
     let dvi_path = temp.path().join("umber.dvi");
     let umber_bin = runnable_umber_bin(umber_bin)?;
     let output = Command::new(&umber_bin)
@@ -615,7 +607,7 @@ fn run_reference_trace(
     source_path: &Path,
     format_source_path: &Path,
 ) -> Result<TraceRun> {
-    let temp = staged_source_dir(repo_root, source_path, format_source_path, true)?;
+    let temp = staged_source_dir(repo_root, source_path, format_source_path, true, true)?;
     let output = ref_tex.run_in_dir(
         temp.path(),
         Path::new(JOB_NAME),
@@ -638,7 +630,7 @@ fn run_umber_trace(
     source_path: &Path,
     format_source_path: &Path,
 ) -> Result<TraceRun> {
-    let temp = staged_source_dir(repo_root, source_path, format_source_path, true)?;
+    let temp = staged_source_dir(repo_root, source_path, format_source_path, true, true)?;
     let dvi_path = temp.path().join("umber-trace.dvi");
     let umber_bin = runnable_umber_bin(umber_bin)?;
     let output = Command::new(&umber_bin)
@@ -686,10 +678,10 @@ fn copy_source(source_path: &Path, dest: &Path) -> Result<()> {
     Ok(())
 }
 
-fn copy_corpus_tfms(repo_root: &Path, dest: &Path) -> Result<()> {
+fn copy_corpus_tfms(repo_root: &Path, dest: &Path, allow_system_lookup: bool) -> Result<()> {
     for name in CORPUS_TFMS {
         let target = dest.join(format!("{name}.tfm"));
-        let source = locate_tfm(repo_root, name)?
+        let source = locate_tfm(repo_root, name, allow_system_lookup)?
             .ok_or_else(|| anyhow!("could not locate required plain TeX font metric {name}.tfm"))?;
         fs::copy(&source, &target).with_context(|| {
             format!(
@@ -702,10 +694,17 @@ fn copy_corpus_tfms(repo_root: &Path, dest: &Path) -> Result<()> {
     Ok(())
 }
 
-fn locate_tfm(repo_root: &Path, name: &str) -> Result<Option<PathBuf>> {
+fn locate_tfm(repo_root: &Path, name: &str, allow_system_lookup: bool) -> Result<Option<PathBuf>> {
     let local = repo_root.join(format!("crates/tex-fonts/tests/fixtures/cm/{name}.tfm"));
     if local.exists() {
         return Ok(Some(local));
+    }
+    let cached = repo_root.join(format!("third_party/fonts/{name}.tfm"));
+    if cached.exists() {
+        return Ok(Some(cached));
+    }
+    if !allow_system_lookup {
+        return Ok(None);
     }
 
     let output = Command::new("kpsewhich")
@@ -730,6 +729,7 @@ fn staged_source_dir(
     source_path: &Path,
     format_source_path: &Path,
     tracing: bool,
+    allow_system_font_lookup: bool,
 ) -> Result<tempfile::TempDir> {
     let temp = tempfile::tempdir().context("failed to create parity job temp dir")?;
     copy_source(source_path, temp.path())?;
@@ -742,7 +742,7 @@ fn staged_source_dir(
         );
     }
     copy_source(&hyphen, temp.path())?;
-    copy_corpus_tfms(repo_root, temp.path())?;
+    copy_corpus_tfms(repo_root, temp.path(), allow_system_font_lookup)?;
     let file_name = source_path
         .file_name()
         .ok_or_else(|| anyhow!("path has no file name: {}", source_path.display()))?;

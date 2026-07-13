@@ -30,6 +30,7 @@ if [[ ! -f third_party/hyphen/hyphen.tex ]]; then
     'setup-conformance-tests: hyphen.tex is unavailable; ensure kpsewhich can locate it' >&2
   exit 2
 fi
+scripts/fetch-font-corpus.sh
 scripts/trip.sh fetch
 
 for case in story gentle trip etrip; do
