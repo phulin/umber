@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
-text_areas=(hello lexer expand lexer_dynamic exec typeset tex_exec tex_exec_io)
+text_areas=(hello lexer expand lexer_dynamic exec etex_exec typeset tex_exec tex_exec_io)
 dvi_areas=(dvi page math align leaders)
 
 target_dir="${CARGO_TARGET_DIR:-target}"
@@ -29,7 +29,7 @@ usage:
   scripts/regen-fixtures.sh --case AREA CASE
 
 Fixture areas:
-  text/native: hello lexer expand lexer_dynamic exec typeset tex_exec tex_exec_io
+  text/native: hello lexer expand lexer_dynamic exec etex_exec typeset tex_exec tex_exec_io
   DVI:         dvi page math align leaders
   live check:  fonts  (runs the tftopl cross-check; it does not rewrite fixtures)
 
@@ -95,6 +95,9 @@ test_command_for_area() {
       ;;
     exec)
       printf '%s\n' 'cargo test -p umber --test it run_exec_corpus_matches_committed_diagnostics'
+      ;;
+    etex_exec)
+      printf '%s\n' 'cargo test -p umber --test it run_etex_exec_corpus_matches_committed_diagnostics'
       ;;
     typeset)
       printf '%s\n' 'cargo test -p umber --test it run_typeset_corpus_matches_committed_box_dumps'

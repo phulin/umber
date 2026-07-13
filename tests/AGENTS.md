@@ -20,6 +20,11 @@ shared `test_support::normalize::exec_log` helper. Normal test runs read the
 committed `<case>.expected.log` files; regenerate them through
 `scripts/regen-fixtures.sh` when reference output intentionally changes.
 
+`tests/corpus/etex_exec` contains extension-mode e-TeX diagnostic parity
+cases. The `umber` runner supplies `--etex`, while fixture regeneration uses
+the live e-TeX-capable reference executable. Small `<case>.txt` sibling inputs
+are copied into the reference run directory for `\readline` coverage.
+
 `tests/corpus/typeset` contains fast box/list dump parity cases for the
 typesetting layer. These compare `umber run --show-fixtures` output with
 committed normalized reference log fixtures through the shared
@@ -105,7 +110,7 @@ Modes:
 - `--all` regenerates all committed fixture areas.
 - `--area AREA` regenerates one area, such as `hello`, `lexer`, `expand`,
   `lexer_dynamic`, `exec`, `typeset`, `dvi`, `page`, `math`, `align`,
-  `leaders`, `tex_exec`, or `tex_exec_io`.
+  `leaders`, `etex_exec`, `tex_exec`, or `tex_exec_io`.
 - `--case AREA/CASE` regenerates one case exactly for text/native and DVI
   areas.
 

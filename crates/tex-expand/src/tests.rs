@@ -589,6 +589,51 @@ fn scantokens_splits_raw_newlinechar_into_pseudo_file_records() {
 }
 
 #[test]
+fn scantokens_input_summary_and_state_hash_resume_identically() {
+    // e-TeX manual sections 3.2 and 3.7: a live pseudo-file and its pending
+    // everyeof replay must survive the aggregate resumability boundary.
+    const OUTER: &str = "\\scantokens{AB}%Z";
+    const PSEUDO: &str = "AB\n";
+
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    crate::install_etex_expandable_primitives(&mut stores);
+    let everyeof = stores.intern_token_list(&[char_token('E')]);
+    stores.set_tok_param(tex_state::env::banks::TokParam::EVERY_EOF, everyeof);
+    let mut input = InputStack::new(MemoryInput::new(OUTER));
+
+    assert_eq!(
+        get_x_token(&mut input, &mut stores).expect("first pseudo-file token"),
+        Some(char_token('A'))
+    );
+    let input_summary = input.summary();
+    let state_snapshot = stores.snapshot();
+    let first_tail = next_expanded_chars(&mut input, &mut stores);
+    let first_hash = stores.snapshot().state_hash();
+
+    stores.rollback(&state_snapshot);
+    let mut restored = InputStack::from_summary(&input_summary, |_, _, source| {
+        let full = if source.is_scantokens() {
+            PSEUDO
+        } else {
+            OUTER
+        };
+        let remaining = &full[source.next_source_offset()..];
+        Ok::<_, ()>(if source.is_scantokens() {
+            <MemoryInput as tex_lex::InputSource>::from_scantokens(remaining.to_owned())
+                .expect("memory input supports scantokens")
+        } else {
+            MemoryInput::new(remaining)
+        })
+    })
+    .expect("live scantokens input summary restores");
+    let replay_tail = next_expanded_chars(&mut restored, &mut stores);
+
+    assert_eq!(replay_tail, first_tail);
+    assert_eq!(stores.snapshot().state_hash(), first_hash);
+}
+
+#[test]
 fn tracingscantokens_records_virtual_file_boundaries() {
     let mut stores = Universe::new();
     install_expandable_primitives(&mut stores);

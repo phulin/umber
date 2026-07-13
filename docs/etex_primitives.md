@@ -17,18 +17,25 @@ Status values are **done**, **partial**, and **missing**. A family is done only
 after its focused parity fixtures and compatibility-mode visibility checks
 pass.
 
-## Expansion and virtual input (manual sections 3.1, 3.2, 3.7)
+## Expansion and virtual input (manual sections 3.1, 3.2, 3.6, 3.7)
 
 | Primitive | Status | Manual contract / remaining gate |
 | --- | --- | --- |
-| `\protected` | partial | Ordinary command demand expands the macro; `\edef`, `\write`, and analogous expansion-only contexts preserve it. e-TeX's protected-aware `align_peek`/`fin_col` fetches are implemented; committed reference fixtures remain. |
-| `\unexpanded` | partial | Yields the raw balanced text as token-list expansion does: expansion-only consumers preserve it, while later command demand expands it. Reference parity remains. |
-| `\detokenize` | partial | Produces only catcode-10 spaces and catcode-12 other characters; every control word produces a trailing space, including the last. Reference parity remains. |
-| `\readline` | partial | Reads through the virtualized `\read` path with catcode-10 codepoint 32 and catcode-12 other characters, including `\endlinechar`; normalized transcript parity remains. |
-| `\scantokens` | partial | Serializes unexpanded general text as a generated pseudo-file and reprocesses it through the input mechanism under current catcodes, including `^^` notation. `\everyeof` and manual-defined tracing are integrated; committed transcript fixtures remain. |
-| `\everyeof` | partial | Inserts its tokens once at natural EOF for real and generated virtual files, but not for `\endinput`. Cross-file conditional and snapshot parity remain. |
-| `\unless` | partial | Negates the shared boolean-conditional evaluation path without adding pending input state; focused reference-error parity remains. |
-| `\tracingscantokens` | partial | Positive values trace `( ` at pseudo-file entry and `)` after any `\everyeof` replay, as specified in section 3.6. Reference transcript fixtures remain. |
+| `\protected` | done | Ordinary command demand expands the macro; `\edef`, `\write`, alignment fetches, and analogous expansion-only contexts preserve it. |
+| `\unexpanded` | done | Yields the raw balanced text as token-list expansion does: expansion-only consumers preserve it, while later command demand expands it. |
+| `\detokenize` | done | Produces only catcode-10 spaces and catcode-12 other characters; every control word produces a trailing space, including the last. |
+| `\readline` | done | Reads through the virtualized `\read` path with catcode-10 codepoint 32 and catcode-12 other characters, including `\endlinechar`. |
+| `\scantokens` | done | Serializes unexpanded general text with TeX's `new_string` character behavior, splits `\newlinechar` into pseudo-file records, and reprocesses under current catcodes and `^^` notation. |
+| `\everyeof` | done | Inserts its tokens once at natural EOF for real and generated virtual files, but not for `\endinput`, and remains ordered before the pseudo-file closing trace. |
+| `\unless` | done | Negates every boolean conditional through the shared conditional-frame path and rejects `\ifcase` as the manual requires. |
+| `\tracingscantokens` | done | Positive values trace `( ` at pseudo-file entry and `)` only after any `\everyeof` replay, as specified in section 3.6. |
+
+The committed `etex_exec/expansion_virtual_input` reference fixture covers
+the observable family against pdfTeX/e-TeX. Focused tests additionally cover
+protected expansion contexts, invalid `\unless`, `\endinput`, and restoration
+of a live pseudo-file from its input summary with identical replay output and
+aggregate state hash. Compatibility-mode visibility is checked independently
+for every primitive and parameter in the family.
 
 ## Environmental and conditional enquiries (manual section 3.3)
 

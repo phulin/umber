@@ -1,0 +1,7 @@
+PROTECTED:[macro:->\P ]
+UNEXPANDED:[macro:->\A B]
+DETOKENIZE:[macro:->\A B]
+READLINE:[macro:->Alpha \control^^M]
+UNLESS:RIGHT
+(  SCANTOKENS:[B]  EVERYEOF
+)

@@ -22,6 +22,7 @@ const TEXT_AREAS: &[&str] = &[
     "expand",
     "lexer_dynamic",
     "exec",
+    "etex_exec",
     "typeset",
     "tex_exec",
     "tex_exec_io",
@@ -73,7 +74,7 @@ fn run() -> Result<()> {
 fn print_usage() {
     eprintln!(
         "usage: fixturegen --area AREA | --case AREA/CASE | --case AREA CASE\n\
-         areas: hello lexer expand lexer_dynamic exec typeset tex_exec tex_exec_io fonts"
+         areas: hello lexer expand lexer_dynamic exec etex_exec typeset tex_exec tex_exec_io fonts"
     );
 }
 
@@ -97,6 +98,7 @@ fn regenerate_area(area: &str) -> Result<()> {
         "exec" => regenerate_cases(area, |case| {
             regenerate_reference_log_case(area, case, false)
         }),
+        "etex_exec" => regenerate_cases(area, regenerate_etex_reference_log_case),
         "typeset" => regenerate_cases(area, |case| regenerate_reference_log_case(area, case, true)),
         "tex_exec" => regenerate_cases(area, regenerate_tex_exec_case),
         "tex_exec_io" => regenerate_cases(area, regenerate_tex_exec_io_case),
@@ -129,6 +131,7 @@ fn regenerate_case(area: &str, case: &str) -> Result<()> {
         "expand" => regenerate_umber_dump_case(area, case, "expand-dump"),
         "lexer_dynamic" => regenerate_lexer_dynamic_case(case),
         "exec" => regenerate_reference_log_case(area, case, false),
+        "etex_exec" => regenerate_etex_reference_log_case(case),
         "typeset" => regenerate_reference_log_case(area, case, true),
         "tex_exec" => regenerate_tex_exec_case(case),
         "tex_exec_io" => regenerate_tex_exec_io_case(case),
@@ -183,6 +186,20 @@ fn regenerate_reference_log_case(area: &str, case: &str, box_dump: bool) -> Resu
         normalize::exec_log(&output.log)
     };
     write_text_fixture(area, case, "log", &actual)
+}
+
+fn regenerate_etex_reference_log_case(case: &str) -> Result<()> {
+    let area = "etex_exec";
+    let support = corpus_root().join(area).join(format!("{case}.txt"));
+    let mut opts = RunOpts::default();
+    if support.exists() {
+        opts.extra_inputs.push(support);
+    }
+    let output = RefTex::locate()?.run(&source_path(area, case), &opts)?;
+    if !output.success {
+        bail!("reference e-TeX failed for {area}/{case}:\n{}", output.log);
+    }
+    write_text_fixture(area, case, "log", &normalize::exec_log(&output.log))
 }
 
 fn regenerate_tex_exec_case(case: &str) -> Result<()> {

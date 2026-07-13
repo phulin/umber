@@ -209,6 +209,14 @@ fn run_exec_corpus_matches_committed_diagnostics() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side corpus discovery and command execution.
+fn run_etex_exec_corpus_matches_committed_diagnostics() {
+    for case in corpus_cases("etex_exec") {
+        assert_log_case_matches_committed_fixture("etex_exec", &case, false, true);
+    }
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side corpus discovery and command execution.
 fn run_typeset_corpus_matches_committed_box_dumps() {
     run_corpus_matches_committed_log_fixtures("typeset", true, &[]);
 }
@@ -221,16 +229,31 @@ fn run_corpus_matches_committed_log_fixtures(
 ) {
     for case in corpus_cases(area) {
         if !ignored_cases.contains(&case.name()) {
-            assert_log_case_matches_committed_fixture(area, &case, show_fixtures);
+            assert_log_case_matches_committed_fixture(area, &case, show_fixtures, false);
         }
     }
 }
 
 #[allow(clippy::disallowed_methods)] // host-side command execution and expected-output reads.
-fn assert_log_case_matches_committed_fixture(area: &str, case: &CorpusCase, show_fixtures: bool) {
+fn assert_log_case_matches_committed_fixture(
+    area: &str,
+    case: &CorpusCase,
+    show_fixtures: bool,
+    etex: bool,
+) {
     let mut command = Command::new(env!("CARGO_BIN_EXE_umber"));
     command.env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH);
+    if etex {
+        command.current_dir(
+            case.source_path()
+                .parent()
+                .expect("corpus source has a parent directory"),
+        );
+    }
     command.arg("run");
+    if etex {
+        command.arg("--etex");
+    }
     if show_fixtures {
         command.arg("--show-fixtures");
     }

@@ -1,0 +1,19 @@
+% e-TeX manual sections 3.1, 3.2, 3.6, and 3.7.
+\newlinechar=10
+\protected\def\P{EXPANDED}
+\edef\E{\P}
+\message{PROTECTED:[\meaning\E]^^J}
+\def\A{A}
+\edef\U{\unexpanded{\A B}}
+\message{UNEXPANDED:[\meaning\U]^^J}
+\edef\D{\detokenize{\A B}}
+\message{DETOKENIZE:[\meaning\D]^^J}
+\openin1=expansion_virtual_input.txt
+\readline1 to\R
+\closein1
+\message{READLINE:[\meaning\R]^^J}
+\unless\ifnum1<2 \message{UNLESS:WRONG^^J}\else\message{UNLESS:RIGHT^^J}\fi
+\tracingscantokens=1
+\everyeof{\message{EVERYEOF^^J}}
+\scantokens{\message{SCANTOKENS:[^^42]^^J}}
+\end
