@@ -165,6 +165,57 @@ fn forbidden_outer_macro_closes_expanded_replacement_before_expansion() {
 }
 
 #[test]
+fn noexpand_suppresses_outer_validation_in_expanded_replacement() {
+    let mut stores = Universe::new();
+    crate::install_expandable_primitives(&mut stores);
+    let outer = stores.intern("outermacro");
+    let empty = stores.intern_token_list(&[]);
+    let body = stores.intern_token_list(&[char_token('x', Catcode::Letter)]);
+    stores.set_macro_meaning(
+        outer,
+        tex_state::macro_store::MacroMeaning::new(MeaningFlags::OUTER, empty, body),
+    );
+    let mut input = InputStack::new(MemoryInput::new("{\\noexpand\\outermacro}"));
+    let context =
+        TracedTokenWord::pack(Token::Cs(stores.intern("xdef").symbol()), OriginId::UNKNOWN);
+
+    let scanned = scan_toks_expanded_with_driver(
+        &mut input,
+        &mut stores,
+        MeaningFlags::EMPTY,
+        context,
+        &mut NoopExpansionHooks,
+    )
+    .expect("noexpand should hide the outer command code from get_next");
+
+    assert_eq!(
+        stores.tokens(scanned.replacement_text()),
+        &[Token::Cs(outer.symbol())]
+    );
+}
+
+#[test]
+fn ordinary_expanded_replacement_avoids_back_input() {
+    let mut stores = Universe::new();
+    let mut input = InputStack::new(MemoryInput::new("{abcdefghijklmnopqrstuvwxyz}"));
+    let context =
+        TracedTokenWord::pack(Token::Cs(stores.intern("xdef").symbol()), OriginId::UNKNOWN);
+    crate::reset_back_input_call_count();
+
+    let scanned = scan_toks_expanded_with_driver(
+        &mut input,
+        &mut stores,
+        MeaningFlags::EMPTY,
+        context,
+        &mut NoopExpansionHooks,
+    )
+    .expect("expanded definition scan");
+
+    assert_eq!(stores.tokens(scanned.replacement_text()).len(), 26);
+    assert_eq!(crate::back_input_call_count(), 0);
+}
+
+#[test]
 fn freezes_parameter_and_replacement_origin_lists_from_source_tokens() {
     let mut stores = Universe::new();
     let mut input = InputStack::new(MemoryInput::new("#1{#1x}"));

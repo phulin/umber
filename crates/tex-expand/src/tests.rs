@@ -124,6 +124,76 @@ fn noop_recorder_has_no_state() {
     assert_eq!(core::mem::size_of::<NoopRecorder>(), 0);
 }
 
+fn collect_protected_expansion(
+    source: &str,
+    prepared: bool,
+) -> (Vec<Token>, tex_state::InputSummary, usize) {
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    let macro_symbol = stores.intern("m");
+    let empty = stores.intern_token_list(&[]);
+    let body = stores.intern_token_list(&[Token::Char {
+        ch: 'M',
+        cat: Catcode::Letter,
+    }]);
+    stores.set_macro_meaning(
+        macro_symbol,
+        MacroMeaning::new(MeaningFlags::EMPTY, empty, body),
+    );
+    let protected_symbol = stores.intern("p");
+    stores.set_macro_meaning(
+        protected_symbol,
+        MacroMeaning::new(MeaningFlags::PROTECTED, empty, body),
+    );
+
+    let mut input = InputStack::new(MemoryInput::new(source));
+    let mut recorder = CountingRecorder::default();
+    let mut hooks = NoopExpansionHooks;
+    let mut expanded = Vec::new();
+    loop {
+        let token = if prepared {
+            let Some(first) = crate::next_prepared_expansion_token(&mut input, &mut stores)
+                .expect("prepared get_next")
+            else {
+                break;
+            };
+            crate::get_x_or_protected_from_prepared_with_recorder_and_hooks(
+                first,
+                &mut input,
+                &mut stores,
+                &mut recorder,
+                &mut hooks,
+            )
+            .expect("prepared x_token")
+        } else {
+            crate::get_x_or_protected_with_recorder_and_hooks(
+                &mut input,
+                &mut stores,
+                &mut recorder,
+                &mut hooks,
+            )
+            .expect("ordinary get_x_token")
+        };
+        let Some(token) = token else {
+            break;
+        };
+        expanded.push(crate::semantic_token(token));
+    }
+    (expanded, input.summary(), recorder.reads)
+}
+
+#[test]
+fn prepared_and_input_driven_expansion_share_dispatch_semantics() {
+    let source = "\\m\\p\\noexpand\\m\\iftrue T\\else F\\fi\\csname relaxed\\endcsname";
+
+    let ordinary = collect_protected_expansion(source, false);
+    let prepared = collect_protected_expansion(source, true);
+
+    assert_eq!(prepared.0, ordinary.0);
+    assert_eq!(prepared.1, ordinary.1);
+    assert_eq!(prepared.2, ordinary.2);
+}
+
 #[test]
 fn dispatch_delivers_unexpandable_tokens() {
     let mut stores = Universe::new();

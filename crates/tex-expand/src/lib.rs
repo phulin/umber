@@ -9,7 +9,9 @@
 use std::fmt;
 use std::path::Path;
 
-use tex_lex::{InputSource, InputStack, LexError, MacroArguments, TokenListReplayKind};
+use tex_lex::{
+    InputSource, InputStack, LexError, MacroArguments, TokenListReplayKind, TracedExpansionToken,
+};
 use tex_state::glue::GlueSpec;
 use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
@@ -1052,7 +1054,7 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    match get_x_token_with_recorder_and_hooks_inner(input, stores, recorder, hooks, false) {
+    match get_x_token_with_recorder_and_hooks_inner(input, stores, recorder, hooks, false, None) {
         Ok(token) => Ok(token),
         Err(error) => Err(error.capture(input)),
     }
@@ -1071,7 +1073,54 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    match get_x_token_with_recorder_and_hooks_inner(input, stores, recorder, hooks, true) {
+    match get_x_token_with_recorder_and_hooks_inner(input, stores, recorder, hooks, true, None) {
+        Ok(token) => Ok(token),
+        Err(error) => Err(error.capture(input)),
+    }
+}
+
+/// A token whose alignment-sensitive `get_next` work has already completed.
+///
+/// This is the synchronous, stack-local equivalent of TeX82's `cur_cmd`,
+/// `cur_chr`, and `cur_cs` state between `get_next` and `x_token`. It must not
+/// be stored in the input stack or any checkpoint-visible engine state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct PreparedExpansionToken(TracedExpansionToken);
+
+impl PreparedExpansionToken {
+    #[must_use]
+    pub(crate) const fn traced_token(self) -> TracedTokenWord {
+        self.0.traced_token()
+    }
+
+    #[must_use]
+    pub(crate) const fn suppress_expansion(self) -> bool {
+        self.0.suppress_expansion()
+    }
+}
+
+/// TeX82's `x_token`: expand a token already obtained under `get_next`
+/// semantics, while sharing the ordinary `get_x_token` interpreter.
+pub(crate) fn get_x_or_protected_from_prepared_with_recorder_and_hooks<S, R, H>(
+    prepared: PreparedExpansionToken,
+    input: &mut InputStack<S>,
+    stores: &mut (impl ExpansionState + InputOpenState),
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<Option<TracedTokenWord>, ExpandError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    match get_x_token_with_recorder_and_hooks_inner(
+        input,
+        stores,
+        recorder,
+        hooks,
+        true,
+        Some(prepared),
+    ) {
         Ok(token) => Ok(token),
         Err(error) => Err(error.capture(input)),
     }
@@ -1083,23 +1132,30 @@ fn get_x_token_with_recorder_and_hooks_inner<S, R, H>(
     recorder: &mut R,
     hooks: &mut H,
     protect_macros: bool,
+    first: Option<PreparedExpansionToken>,
 ) -> Result<Option<TracedTokenWord>, ExpandError>
 where
     S: InputSource,
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
+    let mut first = first;
     loop {
-        let read = match input.next_traced_expansion_token(stores) {
-            Ok(Some(read)) => read,
-            Ok(None) => return Ok(None),
-            Err(tex_lex::LexError::InvalidCharacter { .. }) => {
-                // TeX.web `get_next` reports a catcode-15 character and
-                // restarts after consuming it. Keeping recovery here prevents
-                // nested scanners (notably \read) from unwinding.
-                continue;
-            }
-            Err(error) => return Err(error.into()),
+        let (read, alignment_prepared) = if let Some(prepared) = first.take() {
+            (prepared.0, true)
+        } else {
+            let read = match input.next_traced_expansion_token(stores) {
+                Ok(Some(read)) => read,
+                Ok(None) => return Ok(None),
+                Err(tex_lex::LexError::InvalidCharacter { .. }) => {
+                    // TeX.web `get_next` reports a catcode-15 character and
+                    // restarts after consuming it. Keeping recovery here prevents
+                    // nested scanners (notably \read) from unwinding.
+                    continue;
+                }
+                Err(error) => return Err(error.into()),
+            };
+            (read, false)
         };
         let token = read.token();
         let traced = read.traced_token();
@@ -1112,7 +1168,7 @@ where
         }
 
         if read.suppress_expansion() {
-            if intercept_suppressed_alignment_token(input, stores, traced) {
+            if !alignment_prepared && intercept_suppressed_alignment_token(input, stores, traced) {
                 continue;
             }
             return Ok(Some(traced));
@@ -1121,7 +1177,7 @@ where
         let symbol = match expandable_symbol(stores, traced) {
             Some(symbol) => symbol,
             None => {
-                if intercept_alignment_token(input, stores, traced) {
+                if !alignment_prepared && intercept_alignment_token(input, stores, traced) {
                     continue;
                 }
                 return Ok(Some(traced));
@@ -1169,12 +1225,37 @@ where
                 return Ok(Some(token));
             }
             Dispatch::Deliver(token) => {
-                if intercept_alignment_token(input, stores, token) {
+                if !alignment_prepared && intercept_alignment_token(input, stores, token) {
                     continue;
                 }
                 return Ok(Some(token));
             }
             push @ Dispatch::Push { .. } => apply_dispatch_push(input, push),
+        }
+    }
+}
+
+/// Reads one token under the semantic `get_next` rules needed before TeX82's
+/// `x_token`, retaining one-shot expansion suppression for the shared loop.
+pub(crate) fn next_prepared_expansion_token<S>(
+    input: &mut InputStack<S>,
+    stores: &mut impl ExpansionState,
+) -> Result<Option<PreparedExpansionToken>, tex_lex::LexError>
+where
+    S: InputSource,
+{
+    loop {
+        let Some(read) = input.next_traced_expansion_token(stores)? else {
+            return Ok(None);
+        };
+        let traced = read.traced_token();
+        let intercepted = if read.suppress_expansion() {
+            intercept_suppressed_alignment_token(input, stores, traced)
+        } else {
+            intercept_alignment_token(input, stores, traced)
+        };
+        if !intercepted {
+            return Ok(Some(PreparedExpansionToken(read)));
         }
     }
 }
@@ -1332,6 +1413,8 @@ where
     S: InputSource,
     I: IntoIterator<Item = TracedTokenWord>,
 {
+    #[cfg(test)]
+    BACK_INPUT_CALLS.with(|calls| calls.set(calls.get() + 1));
     let traced = tokens.into_iter().collect::<Vec<_>>();
     if traced.is_empty() {
         return;
@@ -1363,6 +1446,21 @@ where
     }
     let origin_list = stores.finish_origin_list(&mut origins);
     input.push_token_list_with_origins(token_list, origin_list, TokenListReplayKind::Inserted);
+}
+
+#[cfg(test)]
+thread_local! {
+    static BACK_INPUT_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_back_input_call_count() {
+    BACK_INPUT_CALLS.with(|calls| calls.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn back_input_call_count() -> usize {
+    BACK_INPUT_CALLS.with(std::cell::Cell::get)
 }
 
 /// Inserts traced tokens that were not previously delivered by `get_next`.
