@@ -281,6 +281,8 @@ mod primitive_mode_tests {
         prepare_run_stores(&mut stores);
         let protected = stores.intern("protected");
         assert_eq!(stores.meaning(protected), Meaning::Undefined);
+        let readline = stores.intern("readline");
+        assert_eq!(stores.meaning(readline), Meaning::Undefined);
     }
 
     #[test]
@@ -291,6 +293,11 @@ mod primitive_mode_tests {
         assert_eq!(
             stores.meaning(protected),
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Protected)
+        );
+        let readline = stores.intern("readline");
+        assert_eq!(
+            stores.meaning(readline),
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ReadLine)
         );
     }
 
