@@ -42,7 +42,8 @@ use crate::source_map::{
     SourceRegion, SourceSpan,
 };
 use crate::state_hash::{
-    INITIAL_STATE_HASH, StateHashComponent, StateHashFragment, StateHasher, combine,
+    CachedProjection, INITIAL_STATE_HASH, StateHashComponent, StateHashFragment, StateHasher,
+    combine,
 };
 use crate::stores::StoreStateHashCursor;
 use crate::stores::{
@@ -532,8 +533,8 @@ const INTERACTION_PROJECTION_DOMAIN: u64 = 0x696e_7465_7261_6374;
 
 #[derive(Clone, Debug, Default)]
 struct StateHashProjectionCache {
-    world_streams: Option<(Arc<StreamBufState>, StateHashFragment)>,
-    input: Option<(InputSemanticRoot, StateHashFragment)>,
+    world_streams: Option<CachedProjection<Arc<StreamBufState>>>,
+    input: Option<CachedProjection<InputSemanticRoot>>,
     page: PageHashCache,
     #[cfg(test)]
     input_hash_calls: usize,
@@ -994,9 +995,11 @@ impl Universe {
         cache: &mut StateHashProjectionCache,
     ) -> StateHashFragment {
         let stream_root = self.world.stream_bufs_root();
-        let streams = match &cache.world_streams {
-            Some((cached_root, fragment)) if Arc::ptr_eq(cached_root, &stream_root) => *fragment,
-            _ => {
+        let streams = cache
+            .world_streams
+            .as_ref()
+            .and_then(|cached| cached.fragment_if(|root| Arc::ptr_eq(root, &stream_root)))
+            .unwrap_or_else(|| {
                 let fragment = StateHashFragment::from_measured_builder(
                     WORLD_STREAMS_DOMAIN,
                     StateHashComponent::WorldStreams,
@@ -1005,10 +1008,9 @@ impl Universe {
                         hash_stream_bufs(&stream_root, projection);
                     },
                 );
-                cache.world_streams = Some((stream_root, fragment));
+                cache.world_streams = Some(CachedProjection::new(stream_root, fragment));
                 fragment
-            }
-        };
+            });
         let effects = self.world.effect_records_since(cursor);
         let effects = StateHashFragment::from_measured_builder(
             WORLD_EFFECTS_DOMAIN,
@@ -1098,17 +1100,19 @@ impl Universe {
 
     fn hash_input_summary(&self, cache: &mut StateHashProjectionCache) -> StateHashFragment {
         let cursor = self.input_summary.semantic_root();
-        if let Some((cached, fragment)) = &cache.input
-            && cached == &cursor
+        if let Some(fragment) = cache
+            .input
+            .as_ref()
+            .and_then(|cached| cached.fragment_if(|root| root == &cursor))
         {
-            return *fragment;
+            return fragment;
         }
         let fragment = hash_input_summary_fragment(&self.stores, &self.world, &self.input_summary);
         #[cfg(test)]
         {
             cache.input_hash_calls += 1;
         }
-        cache.input = Some((cursor, fragment));
+        cache.input = Some(CachedProjection::new(cursor, fragment));
         fragment
     }
 

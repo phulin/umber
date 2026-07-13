@@ -1257,6 +1257,8 @@ degenerate case (run once, commit every page, never look back).
   domain-separated component projections keyed by immutable roots or cheap
   semantic cursors. Stable code tables, hyphenation, stream buffers, input
   roots, page subroots, and mode roots reuse their canonical fingerprints.
+  Input checkpoint semantics are published as one immutable `InputSemanticRoot`
+  rather than a mirrored field cursor.
   A changed input root is projected once and compared by canonical fragment,
   allowing semantically equal rebuilt roots to retarget the cursor without
   adding a false schedule-relative state transition.
@@ -1264,7 +1266,10 @@ degenerate case (run once, commit every page, never look back).
   immutable 64-node leaves, so append and hash publication rebuild only the
   affected logarithmic path rather than walking or copying the prior page.
   Projection caches remain private derived accelerators and are cleared on
-  rollback; pointer identity is never part of a hash value.
+  rollback; a shared private cache-entry abstraction keeps reuse keys separate
+  from canonical fragments, and pointer identity is never part of a hash
+  value. Page subtree retention is capped at 4,096 weak-root entries, with
+  overflow eviction affecting performance only.
   Every published checkpoint is restartable. If an edit falls inside an
   alignment, box, scanner, inline formula, or output routine, the session
   selects the preceding published boundary and replays the whole construct.

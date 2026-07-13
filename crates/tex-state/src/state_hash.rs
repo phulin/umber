@@ -76,6 +76,29 @@ pub(crate) struct StateHashFragment {
     fingerprint: u64,
 }
 
+/// One discardable canonical projection paired with its private reuse key.
+///
+/// The key may use allocation identity, but it is consulted only through the
+/// caller-supplied predicate and is never incorporated into the fingerprint.
+#[derive(Clone, Debug)]
+pub(crate) struct CachedProjection<K> {
+    key: K,
+    fragment: StateHashFragment,
+}
+
+impl<K> CachedProjection<K> {
+    pub(crate) const fn new(key: K, fragment: StateHashFragment) -> Self {
+        Self { key, fragment }
+    }
+
+    pub(crate) fn fragment_if(
+        &self,
+        matches: impl FnOnce(&K) -> bool,
+    ) -> Option<StateHashFragment> {
+        matches(&self.key).then_some(self.fragment)
+    }
+}
+
 impl StateHashFragment {
     #[must_use]
     pub(crate) fn from_builder(domain: u64, build: impl FnOnce(&mut StateHasher)) -> Self {

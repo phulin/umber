@@ -934,6 +934,9 @@ pub struct Snapshot {
   is unchanged. When an input root changes, its canonical fragment is computed
   once and compared with the prior fragment, so rebuilt semantically equal
   roots retarget the cheap cursor without perturbing the checkpoint hash.
+  `InputSummary` publishes one immutable semantic root containing exactly the
+  frames, retained source resume state, input record, and Unicode lexer mode;
+  allocator counters and diagnostic source ids remain outside that root.
   Clearing the cache recomputes the identical version-2 hash.
   The version is exposed by `CHECKPOINT_STATE_HASH_SCHEMA_VERSION`, and each
   `EngineCheckpoint` carries its aggregate schema version. Hashes from different
@@ -944,7 +947,10 @@ pub struct Snapshot {
   page uses canonical 64-node leaves in a binary forest determined by content
   position. Completing a leaf merges only the binary carry path; checkpoints
   share every unaffected immutable subtree, and derived subtree fingerprints
-  never become mutation-maintained semantic state. Feature-gated `node-stats`
+  never become mutation-maintained semantic state. The private subtree cache
+  retains at most 4,096 weak-root entries: crossing that ceiling prunes dead
+  roots and then evicts derived entries, which can cause only canonical
+  recomputation. Feature-gated `node-stats`
   builds report calls, semantic visits, and elapsed nanoseconds for every hash
   component so optimization decisions can be tied to measured traversal.
 

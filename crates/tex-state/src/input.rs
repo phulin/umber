@@ -379,7 +379,7 @@ pub(crate) struct InputSemanticRoot(Arc<InputSemanticState>);
 
 #[derive(Debug, Default, Eq, Hash, PartialEq)]
 struct InputSemanticState {
-    frames: Arc<[InputFrameSummary]>,
+    frames: Box<[InputFrameSummary]>,
     last_source_record: Option<InputRecordId>,
     last_source_frame: Option<SourceFrameSummary>,
     unicode_superscript_notation: bool,
@@ -460,7 +460,7 @@ impl InputSummary {
     ) -> Self {
         Self {
             semantic_root: InputSemanticRoot(Arc::new(InputSemanticState {
-                frames: frames.into(),
+                frames: frames.into_boxed_slice(),
                 last_source_record,
                 last_source_frame,
                 unicode_superscript_notation,

@@ -1886,6 +1886,126 @@ fn two_forks_group_compaction_and_shipout_retargeting_are_cache_differential() {
 }
 
 #[test]
+fn randomized_incremental_hash_matches_cold_projection_rebuilds() {
+    fn next(seed: &mut u64) -> u64 {
+        *seed = seed
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        *seed
+    }
+
+    for initial_seed in 0..8_u64 {
+        let mut seed = initial_seed + 1;
+        let mut warm = Universe::new();
+        let mut cold = Universe::new();
+        let mut retained = Vec::new();
+
+        for step in 0..256_u32 {
+            let operation = next(&mut seed) % 11;
+            let mut retain_boundary = false;
+            match operation {
+                0 => {
+                    let index = (next(&mut seed) % 32) as u16;
+                    let value = next(&mut seed) as i32;
+                    warm.set_count(index, value);
+                    cold.set_count(index, value);
+                }
+                1 => {
+                    let ch = char::from_u32(b'a' as u32 + (next(&mut seed) % 26) as u32)
+                        .expect("ASCII test character");
+                    let catcode = if next(&mut seed).is_multiple_of(2) {
+                        Catcode::Letter
+                    } else {
+                        Catcode::Other
+                    };
+                    warm.set_catcode(ch, catcode);
+                    cold.set_catcode(ch, catcode);
+                }
+                2 => {
+                    let value = Scaled::from_raw(next(&mut seed) as i32);
+                    warm.set_page_dimension(PageDimension::Total, value);
+                    cold.set_page_dimension(PageDimension::Total, value);
+                }
+                3 => {
+                    let node = Node::Kern {
+                        amount: Scaled::from_raw(next(&mut seed) as i32),
+                        kind: KernKind::Explicit,
+                    };
+                    warm.push_current_page_node(node.clone());
+                    cold.push_current_page_node(node);
+                }
+                4 => {
+                    let value = (next(&mut seed) % 20) as u32;
+                    warm.set_input_summary(condition_input_summary(value));
+                    cold.set_input_summary(condition_input_summary(value));
+                }
+                5 => {
+                    let text = format!("random effect {initial_seed}:{step}\n");
+                    warm.world_mut()
+                        .write_text(PrintSink::TerminalAndLog, &text);
+                    cold.world_mut()
+                        .write_text(PrintSink::TerminalAndLog, &text);
+                }
+                6 => {
+                    let index = (next(&mut seed) % 16) as u16;
+                    let value = next(&mut seed) as i32;
+                    for universe in [&mut warm, &mut cold] {
+                        universe.enter_group();
+                        universe.set_count(index, value);
+                        let _ = universe.leave_group();
+                    }
+                }
+                7 => retain_boundary = true,
+                8 if !retained.is_empty() => {
+                    let index = (next(&mut seed) as usize) % retained.len();
+                    let (warm_mark, cold_mark) = retained.swap_remove(index);
+                    warm.rollback(&warm_mark);
+                    cold.rollback(&cold_mark);
+                    retained.clear();
+                }
+                9 => {
+                    warm = warm.clone();
+                    cold = cold.clone();
+                    retained.clear();
+                }
+                10 => {
+                    for universe in [&mut warm, &mut cold] {
+                        universe
+                            .world_mut()
+                            .write_text(PrintSink::TerminalAndLog, "random shipout\n");
+                        let effect_pos = universe.world().effect_pos();
+                        universe
+                            .begin_shipout()
+                            .commit(b"randomized differential page", effect_pos)
+                            .expect("memory shipout succeeds");
+                    }
+                    retained.clear();
+                }
+                8 => {}
+                _ => unreachable!("operation is reduced modulo eleven"),
+            }
+
+            cold.testing_clear_state_hash_caches();
+            let warm_boundary = warm.snapshot();
+            let cold_boundary = cold.snapshot();
+            assert_eq!(
+                warm_boundary.state_hash(),
+                cold_boundary.state_hash(),
+                "seed {initial_seed}, step {step}, operation {operation}"
+            );
+            assert_eq!(
+                warm.world().memory_terminal_output(),
+                cold.world().memory_terminal_output(),
+                "effect divergence at seed {initial_seed}, step {step}"
+            );
+            if retain_boundary {
+                retained.push((warm_boundary, cold_boundary));
+            }
+        }
+    }
+}
+
+#[test]
 fn already_interned_last_font_selection_changes_hash_semantically() {
     let mut universe = Universe::new();
     let first_font = test_font("first", b"first");

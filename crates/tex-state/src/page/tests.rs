@@ -1,6 +1,9 @@
-use super::{PageBuilderState, PageNodeTree};
+use super::PageBuilderState;
+use super::sequence::PageNodeTree;
+use super::state_hash::PageHashCache;
 use crate::node::{KernKind, Node};
 use crate::scaled::Scaled;
+use crate::state_hash::StateHasher;
 use std::sync::Arc;
 
 fn kern(value: i32) -> Node {
@@ -86,4 +89,74 @@ fn current_page_binary_carry_rebuilds_only_the_affected_path() {
         page.current_page.iter().cloned().collect::<Vec<_>>().len(),
         256
     );
+}
+
+fn hash_page(page: &PageBuilderState, cache: &mut PageHashCache) -> u64 {
+    let mut hasher = StateHasher::new(0x7061_6765_5f74_6573);
+    page.hash_semantic(
+        &mut hasher,
+        cache,
+        |nodes, projection| {
+            projection.usize(nodes.len());
+            nodes.len()
+        },
+        |nodes, projection| {
+            projection.usize(nodes.len());
+            for node in nodes {
+                let Node::Kern { amount, .. } = node else {
+                    panic!("cache stress fixture contains only kerns");
+                };
+                projection.i32(amount.raw());
+            }
+            nodes.len()
+        },
+        |_, projection| projection.tag(0),
+        |_, projection| projection.tag(0),
+    );
+    hasher.finish()
+}
+
+#[test]
+fn page_projection_cache_is_bounded_across_long_pages_forks_and_rollback() {
+    const LIMIT: usize = 8;
+    let mut page = PageBuilderState::default();
+    let mut cache = PageHashCache::testing_with_tree_limit(LIMIT);
+
+    for value in 0..2_048 {
+        page.push_current_page(kern(value));
+        if value % 64 == 63 {
+            let _ = hash_page(&page, &mut cache);
+            assert!(cache.testing_tree_entries() <= LIMIT);
+        }
+    }
+
+    let rollback = page.clone();
+    let rollback_hash = hash_page(&rollback, &mut PageHashCache::default());
+    let mut fork = page.clone();
+    let mut fork_cache = cache.clone();
+    for value in 2_048..2_560 {
+        fork.push_current_page(kern(value));
+    }
+    let _ = hash_page(&fork, &mut fork_cache);
+    assert!(fork_cache.testing_tree_entries() <= LIMIT);
+
+    page.push_current_page(kern(9_999));
+    let _ = hash_page(&page, &mut cache);
+    page = rollback;
+    assert_eq!(hash_page(&page, &mut cache), rollback_hash);
+    assert!(cache.testing_tree_entries() <= LIMIT);
+
+    for page_number in 0..32 {
+        let _ = page.take_current_page_prefix(usize::MAX);
+        assert_eq!(
+            hash_page(&page, &mut cache),
+            hash_page(&page, &mut PageHashCache::default())
+        );
+        assert_eq!(cache.testing_tree_entries(), 0);
+        for value in 0..256 {
+            page.push_current_page(kern(page_number * 256 + value));
+        }
+        let _ = hash_page(&page, &mut cache);
+        assert!(cache.testing_tree_entries() <= LIMIT);
+    }
 }
