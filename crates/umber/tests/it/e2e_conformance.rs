@@ -106,3 +106,43 @@ fn e2e_conformance_trip() {
     )
     .unwrap_or_else(|error| panic!("{error:#}"));
 }
+
+#[test]
+#[allow(clippy::disallowed_methods)] // Explicit host-side conformance process.
+fn e2e_conformance_etrip() {
+    let root = repo_root();
+    let trip_dir = root.join("third_party/trip");
+    let fixture = root.join("tests/corpus/e2e/etrip.expected.dvi");
+    if !trip_dir.join("etrip.tex").is_file()
+        || !trip_dir.join("trip.tfm").is_file()
+        || !fixture.is_file()
+    {
+        eprintln!(
+            "skipping e-TRIP conformance: an external input or locally generated DVI oracle is absent; run scripts/setup-conformance-tests.sh"
+        );
+        return;
+    }
+
+    let target = target_dir(&root);
+    let output = Command::new(root.join("scripts/trip.sh"))
+        .current_dir(&root)
+        .env("CARGO_TARGET_DIR", &target)
+        .env("UMBER_BIN", env!("CARGO_BIN_EXE_umber"))
+        .arg("etrip-umber-artifacts")
+        .output()
+        .expect("run e-TRIP artifact producer");
+    assert!(
+        output.status.success(),
+        "e-TRIP artifact production failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    compare_dvi_files(
+        &fixture,
+        &target.join("etrip/umber/etrip.dvi"),
+        &target.join("conformance-triage"),
+        "etrip",
+    )
+    .unwrap_or_else(|error| panic!("{error:#}"));
+}

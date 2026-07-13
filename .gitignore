@@ -14,6 +14,7 @@ target/
 /tests/corpus/e2e/story.expected.dvi
 /tests/corpus/e2e/gentle.expected.dvi
 /tests/corpus/e2e/trip.expected.dvi
+/tests/corpus/e2e/etrip.expected.dvi
 
 .codex
 .claude

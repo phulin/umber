@@ -32,7 +32,7 @@ if [[ ! -f third_party/hyphen/hyphen.tex ]]; then
 fi
 scripts/trip.sh fetch
 
-for case in story gentle trip; do
+for case in story gentle trip etrip; do
   scripts/regen-fixtures.sh --case "e2e/${case}"
 done
 

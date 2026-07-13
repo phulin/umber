@@ -32,7 +32,7 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `src/main.rs`: `umber` binary entry point, CLI argument parsing, `lex-dump`/`expand-dump`/`run` dispatch, token formatting, and real-run file hooks.
 - `tests/it.rs`: integration-test module root wiring CLI, replay identity, effectful replay, and end-to-end conformance suites.
 - `tests/it/cli.rs`: integration tests for CLI success, usage errors, corpus dump output, and committed diagnostic/DVI fixture parity.
-- `tests/it/e2e_conformance.rs`: individually selectable Story, Gentle, and TRIP tests that exercise the complete pipeline against gitignored, locally generated `tests/corpus/e2e` DVI oracles through `parity-harness`; each runs conditionally when its external inputs and oracle exist.
+- `tests/it/e2e_conformance.rs`: individually selectable Story, Gentle, TRIP, and e-TRIP tests that exercise the complete pipeline against gitignored, locally generated `tests/corpus/e2e` DVI oracles through `parity-harness`; each runs conditionally when its external inputs and oracle exist.
 - `tests/it/effectful_replay.rs`: property tests for rollback and commit identity across terminal, log, stream, input, read, and shipout effects.
 - `tests/it/replay_identity.rs`: property and regression tests that generated primitive programs rollback to identical state.
 

@@ -87,7 +87,7 @@ scripts/parity.sh e2e
 scripts/parity.sh e2e --offline
 ```
 
-Populate the external inputs and all Story, Gentle, and TRIP DVI oracles with
+Populate the external inputs and all Story, Gentle, TRIP, and e-TRIP DVI oracles with
 `scripts/setup-conformance-tests.sh`. The generated `.expected.dvi` files are
 gitignored licensing-sensitive derivatives and are not repository fixtures.
 
@@ -115,9 +115,9 @@ rewriting either fixture.
 
 ## TRIP Corpus
 
-The original Knuth TeX82 TRIP workload is an end-to-end DVI conformance test
-that runs conditionally when its two inputs are locally present. It remains
-separate from later e-TRIP work:
+The original Knuth TeX82 TRIP and e-TeX V2 e-TRIP workloads are end-to-end DVI
+conformance tests that run conditionally when their local inputs and oracles
+are present:
 
 ```bash
 scripts/trip.sh
@@ -125,11 +125,13 @@ scripts/trip.sh --offline
 scripts/trip.sh self-test
 scripts/build-trip-initex.sh
 cargo test -p umber --test it e2e_conformance_trip -- --nocapture
+cargo test -p umber --test it e2e_conformance_etrip -- --nocapture
 scripts/regen-fixtures.sh --case e2e/trip
+scripts/regen-fixtures.sh --case e2e/etrip
 ```
 
 `scripts/trip.sh` reads `tests/trip-manifest.txt`, fetches exact official TRIP
-bytes into gitignored `third_party/trip/`, and verifies every SHA-256 before
+and e-TRIP bytes into gitignored `third_party/trip/`, and verifies every SHA-256 before
 running. It uses the pinned canonical `trip.tfm`, then runs the documented
 INITEX and format-loaded TRIP phases.
 

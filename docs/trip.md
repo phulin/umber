@@ -2,9 +2,9 @@
 
 Status: local-oracle-presence-conditional end-to-end conformance test.
 
-The original TeX82 TRIP test is pinned separately from the external document
-corpus and from any later e-TRIP work, but shares the same strict final-DVI
-oracle as Story and Gentle. Run it with:
+The TeX82 TRIP and e-TeX V2 e-TRIP tests are pinned separately from the
+external document corpus and share the same strict final-DVI oracle as Story
+and Gentle. Run them with:
 
 ```bash
 scripts/trip.sh
@@ -12,7 +12,9 @@ scripts/trip.sh --offline
 scripts/trip.sh self-test
 scripts/build-trip-initex.sh
 cargo test -p umber --test it e2e_conformance_trip -- --nocapture
+cargo test -p umber --test it e2e_conformance_etrip -- --nocapture
 scripts/regen-fixtures.sh --case e2e/trip
+scripts/regen-fixtures.sh --case e2e/etrip
 scripts/setup-conformance-tests.sh
 ```
 
@@ -79,6 +81,18 @@ after preamble-comment normalization it is
 `6420f3461dec8e5feed4b03bfc3717d00c8a36fae4fe9226f6d53a4db7592bb9`.
 Regenerate it with `scripts/regen-fixtures.sh --case e2e/trip`, setting
 `UMBER_REF_PDFTEX` when pdfTeX is not on `PATH`.
+
+## e-TRIP DVI Conformance
+
+The same pinned manifest and acquisition path also fetch the official e-TeX
+V2 e-TRIP sources and expected artifacts. The harness reuses `trip.tfm`
+directly, as the e-TRIP manual states that `etrip.pl` is a copy of `trip.pl`.
+`scripts/regen-fixtures.sh --case e2e/etrip` creates a renamed local e-TeX 2.6
+adaptation of the official 2.0 source and generates the gitignored DVI oracle
+with pdfTeX. The `e2e_conformance_etrip` Cargo test requires Umber to match
+that DVI byte-for-byte after the standard preamble-comment normalization.
+Official transcript, terminal-photo, DVItype, and output-file comparisons
+remain part of the broader e-TRIP harness task.
 
 The special reference engine comes from the TeX Live 2025 source snapshot
 `texlive-20250308-source.tar.xz`, fetched from the University of Utah historic

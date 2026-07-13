@@ -35,7 +35,7 @@ usage:
 Fixture areas:
   text/native: hello lexer expand lexer_dynamic exec etex_exec typeset tex_exec tex_exec_io
   DVI:         dvi page math align leaders
-  end-to-end:  e2e  (story, gentle, and trip local DVI oracles)
+  end-to-end:  e2e  (story, gentle, trip, and e-trip local DVI oracles)
   live check:  fonts  (runs the tftopl cross-check; it does not rewrite fixtures)
 
 Reference tools:
@@ -314,6 +314,9 @@ regen_e2e_case() {
     trip)
       regen_trip_pdftex_fixture "$fixture"
       ;;
+    etrip)
+      regen_etrip_pdftex_fixture "$fixture"
+      ;;
     *)
       die "unknown e2e fixture case: ${case}"
       ;;
@@ -377,9 +380,72 @@ regen_trip_pdftex_fixture() {
   rm -rf "$tmp_root"
 }
 
+regen_etrip_pdftex_fixture() {
+  local fixture="$1"
+  local pdftex="${UMBER_REF_PDFTEX:-}"
+  local tmp_root
+  local status
+  if [[ -z "$pdftex" ]]; then
+    pdftex="$(command -v pdftex || true)"
+  fi
+  [[ -n "$pdftex" && -x "$pdftex" ]] || \
+    die "could not locate pdftex; set UMBER_REF_PDFTEX=/absolute/path/to/pdftex"
+  [[ -f "${repo_root}/third_party/trip/etrip.tex" ]] || \
+    die "missing third_party/trip/etrip.tex; run scripts/trip.sh fetch"
+  [[ -f "${repo_root}/third_party/trip/trip.tfm" ]] || \
+    die "missing third_party/trip/trip.tfm; run scripts/trip.sh fetch"
+
+  tmp_root="$(mktemp -d)"
+  {
+    printf '%s\n' \
+      '%% Local e-TeX 2.6 compatibility adaptation; the official etrip.tex remains unchanged.' \
+      '%% Renamed and modified as required by the e-TeX distribution terms.'
+    sed 's/\\def\\etripversion{2\.0}/\\def\\etripversion{2.6}/' \
+      "${repo_root}/third_party/trip/etrip.tex"
+  } > "$tmp_root/etrip-local.tex"
+  cp "${repo_root}/third_party/trip/trip.tfm" "$tmp_root/etrip.tfm"
+
+  set +e
+  (
+    cd "$tmp_root"
+    env TEXFONTS=".:${TEXFONTS:-}" "$pdftex" -etex -ini \
+      -jobname=etrip -interaction=nonstopmode -output-format=dvi \
+      etrip-local.tex > etripin.fot 2>&1
+  )
+  status=$?
+  set -e
+  [[ "$status" -eq 0 || "$status" -eq 1 ]] || \
+    die "pdfTeX e-TRIP e-INITEX phase exited with status ${status}"
+  [[ -s "$tmp_root/etrip.fmt" ]] || \
+    die "pdfTeX e-TRIP e-INITEX phase did not produce etrip.fmt"
+
+  rm -f "$tmp_root/etrip.dvi" "$tmp_root/etrip.log" "$tmp_root/etrip.out"
+  set +e
+  (
+    cd "$tmp_root"
+    env TEXFORMATS=".:${TEXFORMATS:-}" TEXFONTS=".:${TEXFONTS:-}" \
+      "$pdftex" -fmt=etrip -jobname=etrip -interaction=nonstopmode \
+      -output-format=dvi etrip-local.tex > etrip.fot 2>&1
+  )
+  status=$?
+  set -e
+  [[ "$status" -eq 0 || "$status" -eq 1 ]] || \
+    die "pdfTeX format-loaded e-TRIP phase exited with status ${status}"
+  [[ -s "$tmp_root/etrip.dvi" ]] || \
+    die "pdfTeX format-loaded e-TRIP phase did not produce etrip.dvi"
+
+  if [[ -f "$fixture" ]] && cmp -s "$tmp_root/etrip.dvi" "$fixture"; then
+    printf 'DVI fixture unchanged: %s\n' "${fixture#"$repo_root"/}" >&2
+  else
+    cp "$tmp_root/etrip.dvi" "$fixture"
+    printf 'DVI fixture updated: %s\n' "${fixture#"$repo_root"/}" >&2
+  fi
+  rm -rf "$tmp_root"
+}
+
 regen_e2e_area() {
   local case
-  for case in story gentle trip; do
+  for case in story gentle trip etrip; do
     regen_e2e_case "$case"
   done
 }

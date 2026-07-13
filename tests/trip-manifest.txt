@@ -1,5 +1,5 @@
-# Pinned official Knuth TeX82 TRIP materials.
-# Source: CTAN systems/knuth/dist/tex, mirrored by the University of Utah.
+# Pinned official Knuth TeX82 TRIP and e-TeX V2 e-TRIP materials.
+# Sources: CTAN systems/knuth/dist/tex and obsolete/systems/e-tex/v2/etrip.
 # Format: file url sha256
 trip.tex https://ctan.math.utah.edu/ctan/tex-archive/systems/knuth/dist/tex/trip.tex 15f15c2ca1470085299056ec89dea5f51e9fe9303ef25581b2f2eaf7809ae97b
 trip.tfm https://ctan.math.utah.edu/ctan/tex-archive/systems/knuth/dist/tex/trip.tfm 2c94bdba9c769e885f357823a183aaa5d2267731075f040f2a03cf6442a26181
@@ -10,3 +10,14 @@ trip.typ https://ctan.math.utah.edu/ctan/tex-archive/systems/knuth/dist/tex/trip
 trip.dvi https://ctan.math.utah.edu/ctan/tex-archive/systems/knuth/dist/tex/trip.dvi 09802695e330d34acec9192c15debe2de65e34fcbd3f947db9c8924240b1fe0a
 tripos.tex https://ctan.math.utah.edu/ctan/tex-archive/systems/knuth/dist/tex/tripos.tex ea7447c7a8f2de278d2f84474f22c48c9d8a0059d7e16edd578d0bbe7077b47f
 tripman.tex https://ctan.math.utah.edu/ctan/tex-archive/systems/knuth/dist/tex/tripman.tex a3e47254ad87fc3fdba210d61764c93b021740f56465971f5a41103405add48b
+
+# Pinned official e-TeX V2 e-TRIP materials. etrip.pl is intentionally not
+# fetched: the e-TRIP manual says it is a copy of trip.pl, so the harness uses
+# the already pinned trip.tfm above directly.
+etrip.tex https://ctan.math.washington.edu/tex-archive/obsolete/systems/e-tex/v2/etrip/etrip.tex d26a8f6ebe0da761a30f6b9fdd14dcf879e7505731bb3c4c895cedb60082ae2f
+etripin.log https://ctan.math.washington.edu/tex-archive/obsolete/systems/e-tex/v2/etrip/etripin.log 4da194f5574a37eadf0fcfac4ec1b477474406076db570a302f4abcdafc22363
+etrip.log https://ctan.math.washington.edu/tex-archive/obsolete/systems/e-tex/v2/etrip/etrip.log 0e484529c85e21352a38cda3520f8e9b74454770952bb00d79ccd54cbae12f00
+etrip.fot https://ctan.math.washington.edu/tex-archive/obsolete/systems/e-tex/v2/etrip/etrip.fot 91d7c869f3d50d4e1cd82d7da47c605617149abc4f0f6cc4d03986e8b8b08504
+etrip.typ https://ctan.math.washington.edu/tex-archive/obsolete/systems/e-tex/v2/etrip/etrip.typ 0c8fce1dd4c9b867cc5534f06497ec8ba9e9e4effa80790de5a62d79e7a2351f
+etrip.out https://ctan.math.washington.edu/tex-archive/obsolete/systems/e-tex/v2/etrip/etrip.out 4e35f0380c9eb0c2b61e3398ad6e508632654a94c14ba760792a9ab994413aca
+etripman.tex https://ctan.math.washington.edu/tex-archive/obsolete/systems/e-tex/v2/etrip/etripman.tex 040a4f339a83441317381b5a896e400e5fb3d5b3ca98d452d90d9b1830a2b102
