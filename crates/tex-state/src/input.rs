@@ -892,3 +892,6 @@ fn semantic_token(token: TracedTokenWord) -> Token {
         .token()
         .expect("source-frame pending tokens must be valid traced tokens")
 }
+
+#[cfg(test)]
+mod tests;

@@ -45,6 +45,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/math/`: math-mode stomach front-end that builds frozen mlists, noads, fractions, choices, styles, and mu nodes; split into dispatch, display packaging, lowering, scanner, and support modules.
 - `src/math/scan/tests.rs`: focused math scanner coverage for numeric delimiter bounds and traced-token recovery.
 - `src/mode.rs`: mode nest, mode summaries, pending horizontal chars, paragraph state, and list metadata.
+- `src/mode/tests.rs`: mode-summary root sharing, restoration, and copy-on-write isolation tests.
 - `src/node_dump.rs`: TeX-style node-list dumping used by diagnostic output.
 - `src/output.rs`: output-routine fire-up, `\box255` packaging, held-over material, deadcycle handling, and final `\end` page cleanup.
 - `src/packing_params.rs`: execution-side snapshots of packing-related integer and dimension parameters before calling pure `tex-typeset` kernels.

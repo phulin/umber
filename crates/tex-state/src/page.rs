@@ -789,3 +789,6 @@ fn hash_optional_usize(value: Option<usize>, hasher: &mut StateHasher) {
         None => hasher.bool(false),
     }
 }
+
+#[cfg(test)]
+mod tests;

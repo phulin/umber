@@ -36,6 +36,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/ids.rs`: Opaque ids for token lists, origin lists, macros, glue, fonts, snapshots, survivor roots, and node-list spans.
 - `src/ids/tests.rs`: Unit tests for opaque id raw values and node/origin-list span metadata.
 - `src/input.rs`: Snapshot-ready lexer/input stack summaries, macro argument slots, source ids, and replay frame metadata.
+- `src/input/tests.rs`: Structural-sharing tests for frozen input-summary roots and source payloads.
 - `src/interner.rs`: Control-sequence name interner with dense symbols, lookup, hashing, and rollback marks.
 - `src/interner/tests.rs`: Unit tests for symbol interning, resolution, rollback, and content hashing.
 - `src/journal.rs`: Append-only journal records, markers, undo entries, and rollback/group replay support.
@@ -58,6 +59,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/node_arena/view.rs`: Zero-allocation node references, list spans, character runs, and iterators.
 - `src/node_arena/tests.rs`: Unit tests for node-list allocation, lookup, rollback, and arena liveness.
 - `src/page.rs`: Snapshot-owned page-builder state, page dimensions/integers, contribution/current-page queues, and fire-up records.
+- `src/page/tests.rs`: Page snapshot-root sharing and copy-on-write isolation tests.
 - `src/provenance.rs`: Diagnostic origin-record and origin-list arenas with rollback watermarks.
 - `src/provenance/tests.rs`: Unit tests for provenance allocation, readback, and rollback marks.
 - `src/scaled.rs`: Compatibility re-export for shared TeX scaled-point arithmetic.

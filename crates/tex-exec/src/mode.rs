@@ -633,3 +633,6 @@ impl ModeNest {
             .expect("base vertical level is always present")
     }
 }
+
+#[cfg(test)]
+mod tests;
