@@ -8,6 +8,7 @@ publish = false
 
 [dependencies]
 criterion = "0.5"
+stats_alloc = "0.1"
 tex-exec = { path = "../../crates/tex-exec" }
 tex-expand = { path = "../../crates/tex-expand" }
 tex-lex = { path = "../../crates/tex-lex" }
@@ -21,4 +22,8 @@ harness = false
 
 [[bench]]
 name = "widths"
+harness = false
+
+[[bench]]
+name = "layout"
 harness = false

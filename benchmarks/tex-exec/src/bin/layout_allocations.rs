@@ -1,0 +1,134 @@
+use std::alloc::System;
+
+use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
+use tex_state::Universe;
+use tex_state::glue::GlueSpec;
+use tex_state::math::{MathChoice, MathField, MathNoad, NoadClass, NoadKind};
+use tex_state::node::Node;
+use tex_state::scaled::Scaled;
+use tex_typeset::alignment::{AlignmentWidthRequirement, plan_alignment_widths};
+use tex_typeset::linebreak::{LineBreakParams, LineShape, try_line_break_without_hyphenation};
+use tex_typeset::math::{MathParams, Style, mlist_to_hlist};
+
+#[global_allocator]
+static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
+
+const ALIGNMENT_ALLOCATION_BUDGET: usize = 1_200;
+const LINEBREAK_ALLOCATION_BUDGET: usize = 12;
+const DEEP_MATH_ALLOCATION_BUDGET: usize = 8;
+const FLAT_MATH_ALLOCATION_BUDGET: usize = 8;
+
+fn main() {
+    let alignment = alignment_allocations();
+    let linebreak = linebreak_allocations();
+    let deep_math = deep_math_allocations();
+    let flat_math = flat_math_allocations();
+    println!("alignment_many_spans allocations={alignment}");
+    println!("linebreak_long_paragraph allocations={linebreak}");
+    println!("math_deep_choice_stack allocations={deep_math}");
+    println!("math_repeated_flat_layout allocations={flat_math}");
+    assert!(alignment <= ALIGNMENT_ALLOCATION_BUDGET);
+    assert!(linebreak <= LINEBREAK_ALLOCATION_BUDGET);
+    assert!(deep_math <= DEEP_MATH_ALLOCATION_BUDGET);
+    assert!(flat_math <= FLAT_MATH_ALLOCATION_BUDGET);
+}
+
+fn linebreak_allocations() -> usize {
+    let mut state = Universe::new();
+    let glue = state.intern_glue(GlueSpec {
+        width: Scaled::from_raw(10),
+        stretch: Scaled::from_raw(5),
+        ..GlueSpec::ZERO
+    });
+    let nodes = (0..4_096)
+        .map(|index| {
+            if index % 2 == 0 {
+                Node::Rule {
+                    width: Some(Scaled::from_raw(20)),
+                    height: Some(Scaled::from_raw(10)),
+                    depth: Some(Scaled::from_raw(0)),
+                }
+            } else {
+                Node::Glue {
+                    spec: glue,
+                    kind: tex_state::node::GlueKind::Normal,
+                    leader: None,
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+    let params = LineBreakParams {
+        pretolerance: 10_000,
+        tolerance: 10_000,
+        line_penalty: 10,
+        hyphen_penalty: 50,
+        ex_hyphen_penalty: 50,
+        adj_demerits: 10_000,
+        double_hyphen_demerits: 10_000,
+        final_hyphen_demerits: 5_000,
+        emergency_stretch: Scaled::from_raw(0),
+        looseness: 0,
+        left_skip: GlueSpec::ZERO,
+        right_skip: GlueSpec::ZERO,
+        shape: LineShape::natural(Scaled::from_raw(1_000)),
+    };
+    let region = Region::new(GLOBAL);
+    let result = try_line_break_without_hyphenation(&state, &nodes, &params);
+    std::hint::black_box(result);
+    region.change().allocations
+}
+
+fn alignment_allocations() -> usize {
+    let tabskips = vec![Scaled::from_raw(17); 513];
+    let requirements = (0..4_096)
+        .map(|index| {
+            let first_column = index % 512;
+            AlignmentWidthRequirement {
+                first_column,
+                span: (1 + index % 32).min(512 - first_column),
+                width: Scaled::from_raw(10_000 + index as i32),
+            }
+        })
+        .collect::<Vec<_>>();
+    let region = Region::new(GLOBAL);
+    let plan = plan_alignment_widths(512, &tabskips, requirements.iter().copied())
+        .expect("allocation-gate alignment plan");
+    std::hint::black_box(plan);
+    region.change().allocations
+}
+
+fn deep_math_allocations() -> usize {
+    let mut state = Universe::new();
+    let mut selected = state.freeze_node_list(&[]);
+    for _ in 0..20_000 {
+        selected = state.freeze_node_list(&[Node::MathChoice(MathChoice {
+            display: selected,
+            text: selected,
+            script: selected,
+            script_script: selected,
+        })]);
+    }
+    let params = MathParams::read(&state);
+    let region = Region::new(GLOBAL);
+    let layout = mlist_to_hlist(&state, selected, Style::TEXT, false, &params);
+    std::hint::black_box(layout);
+    region.change().allocations
+}
+
+fn flat_math_allocations() -> usize {
+    let mut state = Universe::new();
+    let nodes = (0..1_024)
+        .map(|_| {
+            Node::MathNoad(MathNoad::new(
+                NoadKind::Normal(NoadClass::Ord),
+                MathField::Empty,
+            ))
+        })
+        .collect::<Vec<_>>();
+    let list = state.freeze_node_list(&nodes);
+    let params = MathParams::read(&state);
+    let region = Region::new(GLOBAL);
+    let layout = mlist_to_hlist(&state, list, Style::TEXT, false, &params);
+    std::hint::black_box(layout);
+    region.change().allocations
+}
