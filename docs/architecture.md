@@ -1049,6 +1049,11 @@ Responsibility: accumulate the main vertical list, fire `\output`, commit.
   complete object with a same-filesystem temporary-file rename, so readers
   never observe a partial object. It does not force each page to stable storage
   or claim recovery across a process or machine crash.
+  A successful aggregate shipout also publishes a process-local commit receipt
+  pairing that authoritative id with the exact immutable canonical bytes.
+  Fresh in-process drivers use the receipt; replay and out-of-process drivers
+  continue to resolve the id through the verified artifact store. The receipt
+  is never visible before both artifact storage and effect commit succeed.
 - `tex-content` owns the fixed 32-byte content identity shared by `tex-state`
   and `tex-out`. New identities include an immutable scheme version and a
   domain tag, so identical input and artifact bytes do not alias. Artifact
@@ -1221,9 +1226,11 @@ Responsibility: page artifacts → bytes on disk. Strictly downstream.
   artifact at a time; only global postamble data, indexed font definitions,
   movement state, and the current page buffer remain resident.
   The `umber run file.tex --dvi out.dvi` CLI path is a thin downstream
-  composition over shipped artifact ids: it reads committed artifact bytes
-  from `World`, parses them as `tex-out` page artifacts, and invokes the DVI
-  writer without reaching back into live `Universe` state. The DVI parity
+  composition over shipout commit receipts: it parses their canonical bytes
+  as `tex-out` page artifacts and invokes the DVI writer without a second
+  store read, content hash, or access to live `Universe` state. The public
+  ID-only composition retains the read-and-verify path for durable replay.
+  The DVI parity
   harness runs the reference engine live and byte-compares outputs after the
   single sanctioned normalization: replacing the existing preamble comment
   payload bytes in both files so the Umber/reference banner text differs

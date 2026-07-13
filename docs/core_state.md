@@ -650,6 +650,12 @@ Nothing in the engine touches the OS directly. A single `World` object owns:
   atomically renaming it to its content-addressed path; this guarantees atomic
   visibility to readers but deliberately does not promise crash durability.
   In-memory worlds keep the same content-addressed map for hermetic tests.
+  After storage and effect commit both succeed, `World` also publishes an
+  immutable in-process receipt containing the authoritative artifact id and
+  those exact canonical bytes. Fresh downstream drivers can consume the
+  receipt without rereading or rehashing the store; ID-only replay retains the
+  verified store-read path. Receipts are committed notification history, not
+  rollback or semantic-hash state.
 - **Explicit driver output files** are materialized through `World::write_file`.
   This is for user-requested downstream files such as `umber run --dvi`; engine
   primitives still record effects and rely on the shipout commit barrier.
