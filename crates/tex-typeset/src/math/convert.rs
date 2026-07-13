@@ -420,6 +420,13 @@ fn nested_mlist_requests(
                     .next()
                     .expect("expanded style marker must retain its full style");
             }
+            Node::MathNoad(noad)
+                if matches!(
+                    noad.kind,
+                    NoadKind::LeftDelimiter { .. }
+                        | NoadKind::RightDelimiter { .. }
+                        | NoadKind::MiddleDelimiter { .. }
+                ) => {}
             Node::MathNoad(noad) => {
                 let nucleus_style = if matches!(
                     noad.kind,

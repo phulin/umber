@@ -152,6 +152,28 @@ fn structural_dependency_order_is_deterministic() {
 }
 
 #[test]
+fn delimiter_noad_ignores_structural_fields_during_planning() {
+    let mut universe = setup_universe();
+    let unused = universe.freeze_node_list(&[Node::MathNoad(noad(NoadClass::Ord, 'b'))]);
+    let plain = universe.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+        NoadKind::LeftDelimiter { delimiter: 0 },
+        MathField::Empty,
+    ))]);
+    let malformed = universe.freeze_node_list(&[Node::MathNoad(MathNoad {
+        kind: NoadKind::LeftDelimiter { delimiter: 0 },
+        nucleus: MathField::SubMlist(unused),
+        subscript: MathField::SubMlist(unused),
+        superscript: MathField::SubMlist(unused),
+    })]);
+    let params = MathParams::read(&universe);
+
+    assert_eq!(
+        mlist_to_hlist(&universe, malformed, Style::TEXT, false, &params),
+        mlist_to_hlist(&universe, plain, Style::TEXT, false, &params)
+    );
+}
+
+#[test]
 fn math_glue_converts_mu_dimensions_with_current_math_quad() {
     let mu = sc(60);
     let glue = GlueSpec {
