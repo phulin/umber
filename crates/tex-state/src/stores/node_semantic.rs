@@ -25,7 +25,7 @@ impl Stores {
         self.nodes.semantic_id(id, &self.survivors)
     }
 
-    fn hash_node_semantic_identity(&self, node: &Node, hasher: &mut StateHasher) {
+    pub(super) fn hash_node_semantic_identity(&self, node: &Node, hasher: &mut StateHasher) {
         match node {
             Node::Char { font, ch } => {
                 hasher.tag(0);
@@ -177,8 +177,13 @@ impl Stores {
     }
 
     fn hash_child_identity(&self, child: NodeListId, hasher: &mut StateHasher) {
+        self.hash_node_list_identity(child, hasher);
+    }
+
+    pub(super) fn hash_node_list_identity(&self, id: NodeListId, hasher: &mut StateHasher) {
+        let semantic_id = self.node_semantic_id(id);
         hasher.tag(0x70);
-        hasher.u64(self.node_semantic_id(child).value());
+        hasher.u64(semantic_id.value());
     }
 
     fn hash_box_identity(&self, tag: u8, box_node: &BoxNode, hasher: &mut StateHasher) {

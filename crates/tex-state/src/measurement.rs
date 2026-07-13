@@ -135,17 +135,6 @@ pub(crate) fn record_hash_changed_cells(changed: usize, scratch_bytes: usize) {
     HASH_PEAK_CHANGED_SCRATCH.fetch_max(scratch_bytes as u64, Ordering::Relaxed);
 }
 
-pub(crate) fn record_hash_node_frame(stack_capacity: usize, frame_bytes: usize, owns_node: bool) {
-    HASH_NODE_FRAMES.fetch_add(1, Ordering::Relaxed);
-    if owns_node {
-        HASH_OWNED_NODE_BYTES.fetch_add(
-            core::mem::size_of::<crate::node::Node>() as u64,
-            Ordering::Relaxed,
-        );
-    }
-    HASH_PEAK_NODE_SCRATCH.fetch_max((stack_capacity * frame_bytes) as u64, Ordering::Relaxed);
-}
-
 pub(crate) fn record_owned_font_key() {
     HASH_OWNED_FONT_KEYS.fetch_add(1, Ordering::Relaxed);
 }

@@ -5,7 +5,7 @@
 /// Version 2 introduced domain-separated component projections. Hashes are
 /// comparable only when both this version and the named-boundary schedule
 /// match.
-pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 2;
+pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 3;
 
 pub mod cell;
 pub mod code_tables;

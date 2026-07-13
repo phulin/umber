@@ -17,6 +17,7 @@ use crate::node::{
 };
 use crate::scaled::{GlueSetRatio, Scaled};
 use crate::source_map::SourceDescriptor;
+use crate::state_hash::StateHasher;
 use crate::token::{Catcode, OriginId, Token, TracedTokenWord};
 use crate::world::InputRecordId;
 use crate::{
@@ -260,6 +261,33 @@ fn node_semantic_ids_exclude_token_provenance() {
 }
 
 #[test]
+fn semantic_projection_visits_only_outer_nodes() {
+    let mut stores = Stores::new();
+    let mut nested = stores.freeze_node_list(&[Node::Penalty(1)]);
+    for _ in 0..512 {
+        nested = stores.freeze_node_list(&[Node::Adjust(nested)]);
+    }
+
+    let outer = [Node::Adjust(nested), Node::Penalty(2)];
+    let mut hasher = StateHasher::new(0x6f75_7465_725f_6e64);
+    let visits = stores.hash_node_slice_semantic(&outer, &mut hasher);
+    assert_eq!(visits, outer.len());
+
+    let mut equivalent = Stores::new();
+    let mut equivalent_nested = equivalent.freeze_node_list(&[Node::Penalty(1)]);
+    for _ in 0..512 {
+        equivalent_nested = equivalent.freeze_node_list(&[Node::Adjust(equivalent_nested)]);
+    }
+    let mut equivalent_hasher = StateHasher::new(0x6f75_7465_725f_6e64);
+    let equivalent_visits = equivalent.hash_node_slice_semantic(
+        &[Node::Adjust(equivalent_nested), Node::Penalty(2)],
+        &mut equivalent_hasher,
+    );
+    assert_eq!(equivalent_visits, outer.len());
+    assert_eq!(hasher.finish(), equivalent_hasher.finish());
+}
+
+#[test]
 fn semantic_hash_scratch_reuses_capacity_but_store_clone_does_not_copy_it() {
     let mut stores = Stores::new();
     let symbols = (0..64)
@@ -281,7 +309,7 @@ fn semantic_hash_scratch_reuses_capacity_but_store_clone_does_not_copy_it() {
     let cloned = stores.clone();
     assert_eq!(
         cloned.semantic_hash_cache.testing_scratch_capacities(),
-        (0, 0, 0)
+        (0, 0)
     );
 }
 

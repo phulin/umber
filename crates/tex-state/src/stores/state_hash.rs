@@ -7,7 +7,10 @@ use crate::journal::Entry;
 use crate::meaning::{
     ExpandablePrimitive, InternalInteger, Meaning, RawMeaning, UnexpandablePrimitive,
 };
-use crate::node::{BoxNode, GlueKind, KernKind, LeaderPayload, Node, Sign, Whatsit};
+#[cfg(test)]
+use crate::node::{BoxNode, LeaderPayload, Whatsit};
+use crate::node::{GlueKind, KernKind, Node, Sign};
+#[cfg(test)]
 use crate::node_arena::NodeRef;
 use crate::state_hash::{StateHashComponent, StateHashFragment, StateHasher};
 use crate::token::Catcode;
@@ -20,6 +23,7 @@ const HYPHENATION_DOMAIN: u64 = 0x6879_7068_656e_6174;
 const PREPARED_MAG_DOMAIN: u64 = 0x7072_6570_5f6d_6167;
 const FONT_SELECTION_DOMAIN: u64 = 0x666f_6e74_5f73_656c;
 const CELL_VALUE_DOMAIN: u64 = 0x6365_6c6c_7661_6c75;
+#[cfg(test)]
 const NODE_LIST_MAX_ITEMS: usize = 1_000_000;
 const FONT_DIMEN_BITS: u32 = 15;
 const FONT_DIMEN_MASK: u32 = (1 << FONT_DIMEN_BITS) - 1;
@@ -37,7 +41,6 @@ pub(super) struct SemanticHashCache {
     last_loaded_font: Option<CachedProjection<FontSelectionCursor>>,
     first_old: Vec<(CellId, usize, u64)>,
     changed_cells: Vec<CellId>,
-    node_frames: Vec<NodeFrame>,
     #[cfg(test)]
     hyphenation_hash_calls: usize,
 }
@@ -51,7 +54,6 @@ impl Clone for SemanticHashCache {
             last_loaded_font: self.last_loaded_font.clone(),
             first_old: Vec::new(),
             changed_cells: Vec::new(),
-            node_frames: Vec::new(),
             #[cfg(test)]
             hyphenation_hash_calls: 0,
         }
@@ -66,16 +68,11 @@ impl SemanticHashCache {
         self.last_loaded_font = None;
         self.first_old.clear();
         self.changed_cells.clear();
-        self.node_frames.clear();
     }
 
     #[cfg(test)]
-    pub(super) fn testing_scratch_capacities(&self) -> (usize, usize, usize) {
-        (
-            self.first_old.capacity(),
-            self.changed_cells.capacity(),
-            self.node_frames.capacity(),
-        )
+    pub(super) fn testing_scratch_capacities(&self) -> (usize, usize) {
+        (self.first_old.capacity(), self.changed_cells.capacity())
     }
 
     #[cfg(test)]
@@ -345,11 +342,10 @@ impl Stores {
     ) -> usize {
         hasher.tag(0x72);
         hasher.usize(len);
-        let mut visits = 0;
         for node in nodes {
-            visits += self.hash_node_tree_from_node(node.clone(), hasher);
+            self.hash_node_semantic_identity(node, hasher);
         }
-        visits
+        len
     }
 
     pub(crate) fn hash_glue_semantic(&self, id: GlueId, hasher: &mut StateHasher) {
@@ -357,7 +353,7 @@ impl Stores {
     }
 
     pub(crate) fn hash_node_list_semantic(&self, id: NodeListId, hasher: &mut StateHasher) {
-        self.hash_node_list(id, hasher, &mut Vec::new());
+        self.hash_node_list_identity(id, hasher);
     }
 
     pub(crate) fn hash_font_semantic(&self, id: FontId, hasher: &mut StateHasher) {
@@ -387,10 +383,8 @@ impl Stores {
         let end_index = end.env_snapshot.journal_pos().raw() as usize;
         let mut first_old = std::mem::take(&mut cache.first_old);
         let mut changed_cells = std::mem::take(&mut cache.changed_cells);
-        let mut node_frames = std::mem::take(&mut cache.node_frames);
         debug_assert!(first_old.is_empty());
         debug_assert!(changed_cells.is_empty());
-        debug_assert!(node_frames.is_empty());
         for (position, entry) in self.env.journal_entries_since(start.journal_pos)
             [..end_index.saturating_sub(start_index)]
             .iter()
@@ -414,9 +408,9 @@ impl Stores {
 
         for &(cell, _, old_word) in &first_old {
             let new_word = self.env.semantic_word(cell);
-            let current_hash = self.cell_value_hash(cell, new_word, &mut node_frames);
+            let current_hash = self.cell_value_hash(cell, new_word);
             let baseline_hash = cache.cells.get(&cell).map_or_else(
-                || self.cell_value_hash(cell, old_word, &mut node_frames),
+                || self.cell_value_hash(cell, old_word),
                 |cached| cached.value_hash,
             );
 
@@ -458,10 +452,8 @@ impl Stores {
 
         first_old.clear();
         changed_cells.clear();
-        debug_assert!(node_frames.is_empty());
         cache.first_old = first_old;
         cache.changed_cells = changed_cells;
-        cache.node_frames = node_frames;
     }
 
     fn semantic_cell_key(&self, cell: CellId) -> SemanticCellKey {
@@ -520,19 +512,13 @@ impl Stores {
         }
     }
 
-    fn cell_value_hash(&self, cell: CellId, word: u64, node_frames: &mut Vec<NodeFrame>) -> u64 {
+    fn cell_value_hash(&self, cell: CellId, word: u64) -> u64 {
         let mut hasher = StateHasher::new(CELL_VALUE_DOMAIN);
-        self.hash_cell_value(cell, word, &mut hasher, node_frames);
+        self.hash_cell_value(cell, word, &mut hasher);
         hasher.finish()
     }
 
-    fn hash_cell_value(
-        &self,
-        cell: CellId,
-        word: u64,
-        hasher: &mut StateHasher,
-        node_frames: &mut Vec<NodeFrame>,
-    ) {
+    fn hash_cell_value(&self, cell: CellId, word: u64, hasher: &mut StateHasher) {
         match cell.bank() {
             BankTag::Meaning => self.hash_meaning(
                 self.resolve_stored_meaning(Meaning::decode_stored(word)),
@@ -553,7 +539,7 @@ impl Stores {
                 );
             }
             BankTag::Box => match NodeListId::decode_box_word(word) {
-                Some(id) => self.hash_node_list(id, hasher, node_frames),
+                Some(id) => self.hash_node_list_identity(id, hasher),
                 None => hasher.tag(0),
             },
             BankTag::FontDimen => hasher.i32(word as u32 as i32),
@@ -648,46 +634,7 @@ impl Stores {
         hasher.u8(shrink_order as u8);
     }
 
-    fn hash_node_list(&self, id: NodeListId, hasher: &mut StateHasher, stack: &mut Vec<NodeFrame>) {
-        self.assert_live_node_list(id);
-        debug_assert!(stack.is_empty());
-        stack.push(NodeFrame::List(id));
-        let mut seen = 0_usize;
-        while let Some(frame) = stack.pop() {
-            #[cfg(feature = "node-stats")]
-            crate::measurement::record_hash_node_frame(
-                stack.capacity(),
-                core::mem::size_of::<NodeFrame>(),
-                false,
-            );
-            seen += 1;
-            assert!(
-                seen <= NODE_LIST_MAX_ITEMS,
-                "state hash exceeded maximum node traversal items"
-            );
-            match frame {
-                NodeFrame::List(id) => {
-                    let nodes = self.nodes(id);
-                    hasher.tag(0x70);
-                    hasher.usize(nodes.len());
-                    stack.push(NodeFrame::ListEnd);
-                    for index in (0..nodes.len()).rev() {
-                        stack.push(NodeFrame::NodeAt(id, index));
-                    }
-                }
-                NodeFrame::ListEnd => hasher.tag(0x71),
-                NodeFrame::NodeAt(id, index) => {
-                    let node = self
-                        .nodes(id)
-                        .get(index)
-                        .expect("state-hash node frame is live");
-                    self.hash_node_ref(node, hasher, stack);
-                }
-            }
-        }
-        debug_assert!(stack.is_empty());
-    }
-
+    #[cfg(test)]
     fn hash_node_ref(
         &self,
         node: NodeRef<'_>,
@@ -844,6 +791,7 @@ impl Stores {
         }
     }
 
+    #[cfg(test)]
     fn hash_node(&self, node: Node, hasher: &mut StateHasher, stack: &mut Vec<NodeFrame>) {
         match node {
             Node::Char { font, ch } => {
@@ -995,6 +943,7 @@ impl Stores {
         }
     }
 
+    #[cfg(test)]
     fn hash_math_field(
         &self,
         field: crate::math::MathField,
@@ -1022,6 +971,7 @@ impl Stores {
         }
     }
 
+    #[cfg(test)]
     fn hash_box_node(
         &self,
         tag: u8,
@@ -1041,6 +991,7 @@ impl Stores {
         stack.push(NodeFrame::List(box_node.children));
     }
 
+    #[cfg(test)]
     fn hash_leader_payload(
         &self,
         payload: Option<LeaderPayload>,
@@ -1064,6 +1015,7 @@ impl Stores {
         }
     }
 
+    #[cfg(test)]
     fn hash_leader_payload_ref(
         &self,
         payload: Option<&LeaderPayload>,
@@ -1087,6 +1039,7 @@ impl Stores {
         }
     }
 
+    #[cfg(test)]
     fn hash_whatsit_ref(&self, whatsit: &Whatsit, hasher: &mut StateHasher) {
         match whatsit {
             Whatsit::OpenOut { slot, path } => {
@@ -1207,23 +1160,12 @@ impl Stores {
         visits
     }
 
+    #[cfg(test)]
     fn hash_node_tree_from_node(&self, node: Node, hasher: &mut StateHasher) -> usize {
         let mut stack = Vec::new();
-        #[cfg(feature = "node-stats")]
-        crate::measurement::record_hash_node_frame(
-            stack.capacity(),
-            core::mem::size_of::<NodeFrame>(),
-            true,
-        );
         self.hash_node(node, hasher, &mut stack);
         let mut seen = 0_usize;
         while let Some(frame) = stack.pop() {
-            #[cfg(feature = "node-stats")]
-            crate::measurement::record_hash_node_frame(
-                stack.capacity(),
-                core::mem::size_of::<NodeFrame>(),
-                false,
-            );
             seen += 1;
             assert!(
                 seen <= NODE_LIST_MAX_ITEMS,
@@ -1346,6 +1288,7 @@ struct FontSemanticKey {
     identifier: Option<(ControlSequenceKind, String)>,
 }
 
+#[cfg(test)]
 #[derive(Clone, Debug)]
 enum NodeFrame {
     List(NodeListId),
