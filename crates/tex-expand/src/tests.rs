@@ -403,6 +403,57 @@ fn get_x_token_expands_protected_macros_during_normal_execution() {
 }
 
 #[test]
+fn unexpanded_delivers_general_text_without_expanding_macros() {
+    let mut stores = Universe::new();
+    crate::install_etex_expandable_primitives(&mut stores);
+    let macro_cs = stores.intern("m");
+    let empty = stores.intern_token_list(&[]);
+    let body = stores.intern_token_list(&[char_token('x')]);
+    stores.set_macro_meaning(
+        macro_cs,
+        MacroMeaning::new(MeaningFlags::EMPTY, empty, body),
+    );
+    let mut input = InputStack::new(MemoryInput::new("\\unexpanded{\\m}"));
+
+    assert_eq!(
+        get_x_token(&mut input, &mut stores).expect("unexpanded expansion"),
+        Some(Token::Cs(macro_cs.symbol()))
+    );
+}
+
+#[test]
+fn detokenize_outputs_space_and_other_character_tokens() {
+    let mut stores = Universe::new();
+    crate::install_etex_expandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\detokenize{a \\word!}%"));
+    let mut output = Vec::new();
+    while let Some(token) = get_x_token(&mut input, &mut stores).expect("detokenize expansion") {
+        output.push(token);
+    }
+
+    let rendered: String = output
+        .iter()
+        .filter_map(|token| match token {
+            Token::Char { ch, .. } => Some(*ch),
+            _ => None,
+        })
+        .collect();
+    // e-TeX short reference manual section 3.1 requires a separating space
+    // after each control word, including the final control word.
+    assert_eq!(rendered, "a \\word !");
+    assert!(output.iter().all(|token| matches!(
+        token,
+        Token::Char {
+            cat: Catcode::Space,
+            ch: ' '
+        } | Token::Char {
+            cat: Catcode::Other,
+            ..
+        }
+    )));
+}
+
+#[test]
 fn expansion_error_captures_invocation_chain_before_macro_frame_pops() {
     let mut stores = Universe::new();
     let macro_cs = stores.intern("m");

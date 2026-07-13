@@ -266,13 +266,14 @@ pub fn prepare_run_stores(stores: &mut Universe) {
 /// Installs the primitive/state setup used by `umber run --etex`.
 pub fn prepare_etex_run_stores(stores: &mut Universe) {
     prepare_run_stores(stores);
+    tex_expand::install_etex_expandable_primitives(stores);
     tex_exec::install_etex_unexpandable_primitives(stores);
 }
 
 #[cfg(test)]
 mod primitive_mode_tests {
     use super::*;
-    use tex_state::meaning::{Meaning, UnexpandablePrimitive};
+    use tex_state::meaning::{ExpandablePrimitive, Meaning, UnexpandablePrimitive};
 
     #[test]
     fn protected_is_hidden_in_tex82_compatibility_mode() {
@@ -290,6 +291,29 @@ mod primitive_mode_tests {
         assert_eq!(
             stores.meaning(protected),
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Protected)
+        );
+    }
+
+    #[test]
+    fn etex_expandable_primitives_follow_driver_mode() {
+        let mut compatibility = Universe::default();
+        prepare_run_stores(&mut compatibility);
+        let unexpanded = compatibility.intern("unexpanded");
+        let detokenize = compatibility.intern("detokenize");
+        assert_eq!(compatibility.meaning(unexpanded), Meaning::Undefined);
+        assert_eq!(compatibility.meaning(detokenize), Meaning::Undefined);
+
+        let mut extended = Universe::default();
+        prepare_etex_run_stores(&mut extended);
+        let unexpanded = extended.intern("unexpanded");
+        let detokenize = extended.intern("detokenize");
+        assert_eq!(
+            extended.meaning(unexpanded),
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Unexpanded)
+        );
+        assert_eq!(
+            extended.meaning(detokenize),
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Detokenize)
         );
     }
 }

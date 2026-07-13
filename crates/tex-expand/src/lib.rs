@@ -111,6 +111,23 @@ pub fn install_expandable_primitives(stores: &mut Universe) {
     }
 }
 
+/// Installs expandable primitives that exist only in e-TeX extended mode.
+pub fn install_etex_expandable_primitives(stores: &mut Universe) {
+    for (name, primitive) in [
+        (
+            "unexpanded",
+            tex_state::meaning::ExpandablePrimitive::Unexpanded,
+        ),
+        (
+            "detokenize",
+            tex_state::meaning::ExpandablePrimitive::Detokenize,
+        ),
+    ] {
+        let symbol = stores.intern(name);
+        stores.set_meaning(symbol, Meaning::ExpandablePrimitive(primitive));
+    }
+}
+
 /// Records state reads performed by expansion.
 ///
 /// The default implementation is `NoopRecorder`. Callers that need read sets
@@ -245,6 +262,7 @@ pub enum ExpansionReplayKind {
     NumberOutput,
     JobName,
     Mark,
+    Unexpanded,
     Inserted,
 }
 
@@ -255,6 +273,7 @@ impl ExpansionReplayKind {
             Self::MacroBody => TokenListReplayKind::MacroBody,
             Self::TheOutput | Self::NumberOutput | Self::JobName => TokenListReplayKind::Inserted,
             Self::Mark => TokenListReplayKind::Mark,
+            Self::Unexpanded => TokenListReplayKind::NoExpand,
             Self::Inserted => TokenListReplayKind::Inserted,
         }
     }
@@ -273,6 +292,8 @@ pub enum ExpandableOpcode {
     RomanNumeral,
     Meaning,
     The,
+    Unexpanded,
+    Detokenize,
     Input,
     EndInput,
     JobName,
@@ -378,6 +399,7 @@ pub enum ExpandError {
     },
     ScanInt(Box<scan_int::ScanIntError>),
     ScanDimen(Box<scan_dimen::ScanDimenError>),
+    ScanGeneralText(Box<scan::ScanToksError>),
     UnsupportedTheTarget {
         context: TracedTokenWord,
     },
@@ -442,6 +464,7 @@ impl fmt::Display for ExpandError {
             }
             Self::ScanInt(err) => write!(f, "{err}"),
             Self::ScanDimen(err) => write!(f, "{err}"),
+            Self::ScanGeneralText(err) => write!(f, "{err}"),
             Self::UnsupportedTheTarget { context } => {
                 write!(
                     f,
@@ -495,6 +518,7 @@ impl std::error::Error for ExpandError {
             Self::MacroCall(err) => Some(err),
             Self::ScanInt(err) => Some(err),
             Self::ScanDimen(err) => Some(err),
+            Self::ScanGeneralText(err) => Some(err),
             Self::UnimplementedExpandable { .. }
             | Self::MissingTokenAfterPrimitive { .. }
             | Self::MissingEndCsName { .. }
@@ -540,6 +564,7 @@ impl ExpandError {
             | Self::IncompleteIf { context } => Some(context.origin()),
             Self::ScanInt(err) => err.primary_origin(),
             Self::ScanDimen(err) => err.primary_origin(),
+            Self::ScanGeneralText(err) => err.primary_origin(),
             Self::MacroCall(err) => err.primary_origin(),
             Self::Lex(err) => err.diagnostic_site().primary_origin(),
         }
@@ -792,6 +817,12 @@ impl From<scan_int::ScanIntError> for ExpandError {
 impl From<scan_dimen::ScanDimenError> for ExpandError {
     fn from(value: scan_dimen::ScanDimenError) -> Self {
         Self::ScanDimen(Box::new(value))
+    }
+}
+
+impl From<scan::ScanToksError> for ExpandError {
+    fn from(value: scan::ScanToksError) -> Self {
+        Self::ScanGeneralText(Box::new(value))
     }
 }
 

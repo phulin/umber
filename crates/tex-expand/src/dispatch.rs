@@ -219,6 +219,47 @@ macro_rules! dispatch_match {
                     call_context,
                 )
             }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Unexpanded) => {
+                let raw = crate::scan::scan_general_text(input, stores, call_context).map_err(
+                    |error| match error {
+                        crate::scan::ScanToksError::Lex(error) => ExpandError::Lex(error),
+                        crate::scan::ScanToksError::Expand(error) => error,
+                        _ => ExpandError::MissingTokenAfterPrimitive {
+                            opcode: ExpandableOpcode::Unexpanded,
+                            context: call_context,
+                        },
+                    },
+                )?;
+                Ok(Dispatch::Push {
+                    replay_kind: ExpansionReplayKind::Unexpanded,
+                    token_list: raw.token_list(),
+                    origin_list: raw.origin_list(),
+                    macro_arguments: MacroArguments::new(),
+                    macro_invocation: OriginId::UNKNOWN,
+                })
+            }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Detokenize) => {
+                let raw = crate::scan::scan_general_text(input, stores, call_context).map_err(
+                    |error| match error {
+                        crate::scan::ScanToksError::Lex(error) => ExpandError::Lex(error),
+                        crate::scan::ScanToksError::Expand(error) => error,
+                        _ => ExpandError::MissingTokenAfterPrimitive {
+                            opcode: ExpandableOpcode::Detokenize,
+                            context: call_context,
+                        },
+                    },
+                )?;
+                let mut rendered = String::new();
+                for &token in stores.tokens(raw.token_list()) {
+                    append_token_show_text(stores, token, &mut rendered);
+                }
+                Ok(push_rendered_text(
+                    stores,
+                    ExpansionReplayKind::NumberOutput,
+                    &rendered,
+                    call_origin,
+                ))
+            }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Input) => $input_arm,
             Meaning::ExpandablePrimitive(ExpandablePrimitive::EndInput) => {
                 input.end_current_source_after_current_line();
@@ -768,6 +809,8 @@ pub fn dispatch_expandable_opcode(opcode: ExpandableOpcode) -> Result<(), Expand
         | ExpandableOpcode::RomanNumeral
         | ExpandableOpcode::Meaning
         | ExpandableOpcode::The
+        | ExpandableOpcode::Unexpanded
+        | ExpandableOpcode::Detokenize
         | ExpandableOpcode::Input
         | ExpandableOpcode::EndInput
         | ExpandableOpcode::JobName

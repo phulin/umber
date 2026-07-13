@@ -174,6 +174,10 @@ pub enum ExpandablePrimitive {
     Fi,
     /// TeX's inaccessible outer end-template command, aliasable via `\let`.
     EndTemplate,
+    /// e-TeX's expansion-suppressing general-text primitive.
+    Unexpanded,
+    /// e-TeX's token-to-character general-text primitive.
+    Detokenize,
 }
 
 impl ExpandablePrimitive {
@@ -219,6 +223,8 @@ impl ExpandablePrimitive {
             Self::Or => 36,
             Self::Fi => 37,
             Self::EndTemplate => 38,
+            Self::Unexpanded => 39,
+            Self::Detokenize => 40,
         }
     }
 
@@ -264,6 +270,8 @@ impl ExpandablePrimitive {
             36 => Some(Self::Or),
             37 => Some(Self::Fi),
             38 => Some(Self::EndTemplate),
+            39 => Some(Self::Unexpanded),
+            40 => Some(Self::Detokenize),
             _ => None,
         }
     }

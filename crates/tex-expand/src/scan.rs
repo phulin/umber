@@ -692,7 +692,7 @@ where
     }
 }
 
-fn scan_general_text<S>(
+pub(crate) fn scan_general_text<S>(
     input: &mut InputStack<S>,
     stores: &mut impl ExpansionState,
     context: TracedTokenWord,
