@@ -16,5 +16,6 @@ Run authored tests with `node --test crates/umber-wasm/js/*.test.js`.
 - `worker-controller.test.js`: transfer fidelity and teardown tests.
 - `worker-entry.js`: dedicated module-worker compile entry and transfer response.
 - `manifest-resolver.js`: validated immutable-manifest HTTP resolver.
+- `manifest-schema.js`: immutable manifest, lookup-key, path, and compatibility validation.
 - `manifest-resolver.d.ts`: public resolver declarations.
 - `manifest-resolver.test.js`: resolver integrity, concurrency, hint, and cache tests.
