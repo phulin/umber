@@ -85,6 +85,7 @@ where
         let node = take_box255_node(stores)?;
         let artifact = shipout_node(node, input, stores, recorder)?;
         let _ = artifact;
+        stores.clear_page_discards();
         build_page(stores)?;
         return Ok(());
     }
@@ -101,11 +102,13 @@ where
         prepend_output_heldover(stores, Vec::new());
         let node = take_box255_node(stores)?;
         let _artifact = shipout_node(node, input, stores, recorder)?;
+        stores.clear_page_discards();
         build_page(stores)?;
         return Ok(());
     }
     stores.set_page_integer(PageInteger::DeadCycles, dead_cycles.saturating_add(1));
     run_output_routine(nest, input, stores, recorder, hooks, stats, output)?;
+    stores.clear_page_discards();
     build_page(stores)?;
     Ok(())
 }

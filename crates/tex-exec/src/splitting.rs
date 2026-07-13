@@ -14,7 +14,16 @@ pub(crate) fn prune_page_top(
     nodes: Vec<Node>,
     split_top_skip: GlueId,
 ) -> Vec<Node> {
+    prune_page_top_with_discards(stores, nodes, split_top_skip).0
+}
+
+pub(crate) fn prune_page_top_with_discards(
+    stores: &mut Universe,
+    nodes: Vec<Node>,
+    split_top_skip: GlueId,
+) -> (Vec<Node>, Vec<Node>) {
     let mut out = Vec::new();
+    let mut discarded = Vec::new();
     let mut inserted_top_skip = false;
     for node in nodes {
         match &node {
@@ -40,11 +49,13 @@ pub(crate) fn prune_page_top(
                 out.push(node);
                 inserted_top_skip = true;
             }
-            Node::Glue { .. } | Node::Kern { .. } | Node::Penalty(_) if !inserted_top_skip => {}
+            Node::Glue { .. } | Node::Kern { .. } | Node::Penalty(_) if !inserted_top_skip => {
+                discarded.push(node);
+            }
             _ => out.push(node),
         }
     }
-    out
+    (out, discarded)
 }
 
 pub(crate) fn natural_vlist_size(

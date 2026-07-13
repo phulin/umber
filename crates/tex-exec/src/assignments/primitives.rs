@@ -267,6 +267,8 @@ pub fn install_etex_unexpandable_primitives(stores: &mut Universe) {
         ("endR", UnexpandablePrimitive::EndR),
         ("middle", UnexpandablePrimitive::Middle),
         ("marks", UnexpandablePrimitive::Marks),
+        ("pagediscards", UnexpandablePrimitive::PageDiscards),
+        ("splitdiscards", UnexpandablePrimitive::SplitDiscards),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
@@ -285,6 +287,7 @@ pub fn install_etex_unexpandable_primitives(stores: &mut Universe) {
         ("tracinggroups", IntParam::TRACING_GROUPS),
         ("tracingifs", IntParam::TRACING_IFS),
         ("tracingnesting", IntParam::TRACING_NESTING),
+        ("savingvdiscards", IntParam::SAVING_V_DISCARDS),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::IntParam(parameter.raw()));

@@ -13,7 +13,7 @@ use tex_typeset::{PackSpec, VerticalBreakError, vert_break};
 use crate::ExecError;
 use crate::diagnostics;
 use crate::packing_params::{vpack, vpack_params};
-use crate::splitting::{prune_page_top, vpack_natural};
+use crate::splitting::{prune_page_top_with_discards, vpack_natural};
 
 use super::super::{scan_optional_keyword_x, scan_register_index, scan_scaled};
 
@@ -27,6 +27,7 @@ where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
+    stores.clear_split_discards();
     let index = scan_register_index(input, stores, hooks, context)?;
     if !scan_optional_keyword_x(input, stores, hooks, "to")? {
         // TeX.web §1082 inserts the keyword conceptually; keyword scanning
@@ -114,7 +115,10 @@ fn replace_split_source(
     remainder: Vec<Node>,
     split_top_skip: tex_state::ids::GlueId,
 ) {
-    let pruned = prune_page_top(stores, remainder, split_top_skip);
+    let (pruned, discarded) = prune_page_top_with_discards(stores, remainder, split_top_skip);
+    if stores.int_param(tex_state::env::banks::IntParam::SAVING_V_DISCARDS) > 0 {
+        stores.set_split_discards(discarded);
+    }
     if pruned.is_empty() {
         stores.clear_box_reg_same_level(index);
         return;

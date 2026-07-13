@@ -464,6 +464,8 @@ pub enum UnexpandablePrimitive {
     ClubPenalties,
     WidowPenalties,
     DisplayWidowPenalties,
+    PageDiscards,
+    SplitDiscards,
     InteractionMode,
     NumExpr,
     DimExpr,
@@ -758,6 +760,8 @@ impl UnexpandablePrimitive {
             Self::ClubPenalties => 204,
             Self::WidowPenalties => 205,
             Self::DisplayWidowPenalties => 206,
+            Self::PageDiscards => 207,
+            Self::SplitDiscards => 208,
         }
     }
 
@@ -971,6 +975,8 @@ impl UnexpandablePrimitive {
             204 => Some(Self::ClubPenalties),
             205 => Some(Self::WidowPenalties),
             206 => Some(Self::DisplayWidowPenalties),
+            207 => Some(Self::PageDiscards),
+            208 => Some(Self::SplitDiscards),
             _ => None,
         }
     }

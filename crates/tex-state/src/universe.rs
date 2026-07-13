@@ -633,7 +633,8 @@ impl Universe {
         if !self.input_summary.is_empty() {
             return Err(FormatError::NonEmptyInput);
         }
-        if self.page != PageBuilderState::default() {
+        // e-TeX deliberately does not dump its saved vertical-discard lists.
+        if !self.page.is_format_empty() {
             return Err(FormatError::NonEmptyPage);
         }
         let payload = self
@@ -1935,6 +1936,44 @@ impl Universe {
 
     pub fn start_new_page(&mut self) {
         self.page.start_new_page();
+    }
+
+    #[must_use]
+    pub fn page_discards(&self) -> &[Node] {
+        self.page.page_discards()
+    }
+
+    pub fn push_page_discard(&mut self, node: Node) {
+        self.stores.assert_live_handles_in_node(&node);
+        self.page.push_page_discard(node);
+    }
+
+    pub fn take_page_discards(&mut self) -> Vec<Node> {
+        self.page.take_page_discards()
+    }
+
+    pub fn clear_page_discards(&mut self) {
+        self.page.clear_page_discards();
+    }
+
+    #[must_use]
+    pub fn split_discards(&self) -> &[Node] {
+        self.page.split_discards()
+    }
+
+    pub fn set_split_discards(&mut self, nodes: Vec<Node>) {
+        for node in &nodes {
+            self.stores.assert_live_handles_in_node(node);
+        }
+        self.page.set_split_discards(nodes);
+    }
+
+    pub fn take_split_discards(&mut self) -> Vec<Node> {
+        self.page.take_split_discards()
+    }
+
+    pub fn clear_split_discards(&mut self) {
+        self.page.clear_split_discards();
     }
 
     #[must_use]

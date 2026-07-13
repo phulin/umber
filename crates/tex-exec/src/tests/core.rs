@@ -2377,6 +2377,49 @@ fn page_builder_discards_glue_before_first_box() {
 }
 
 #[test]
+fn etex_page_discards_save_splice_and_clear_discarded_material() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    install_etex_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\savingvdiscards=1 \\vskip5pt \
+         \\setbox0=\\hbox{}\\copy0 \
+         \\setbox1=\\vbox{\\pagediscards} \
+         \\setbox2=\\vbox{\\pagediscards}",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("saved page discards execute");
+
+    let first = stores.box_reg(1).expect("first discard box");
+    let Node::VList(first) = stores
+        .nodes(first)
+        .first()
+        .expect("first discard vbox")
+        .to_owned()
+    else {
+        panic!("expected vbox");
+    };
+    assert!(stores.nodes(first.children).into_iter().any(|node| {
+        matches!(node.to_owned(), Node::Glue { spec, .. }
+            if stores.glue(spec).width.raw() == 5 * Scaled::UNITY)
+    }));
+
+    let second = stores.box_reg(2).expect("second discard box");
+    let Node::VList(second) = stores
+        .nodes(second)
+        .first()
+        .expect("second discard vbox")
+        .to_owned()
+    else {
+        panic!("expected vbox");
+    };
+    assert!(stores.nodes(second.children).is_empty());
+    assert!(stores.page_discards().is_empty());
+}
+
+#[test]
 fn page_builder_reports_and_normalizes_infinite_shrink_glue() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

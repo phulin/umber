@@ -292,6 +292,8 @@ impl PageInsertion {
 pub(crate) struct PageBuilderState {
     contribution: Arc<VecDeque<Node>>,
     current_page: Arc<Vec<Node>>,
+    page_discards: Arc<Vec<Node>>,
+    split_discards: Arc<Vec<Node>>,
     page_goal: Scaled,
     page_total: Scaled,
     page_stretch: Scaled,
@@ -326,6 +328,8 @@ impl Default for PageBuilderState {
         Self {
             contribution: Arc::new(VecDeque::new()),
             current_page: Arc::new(Vec::new()),
+            page_discards: Arc::new(Vec::new()),
+            split_discards: Arc::new(Vec::new()),
             page_goal: Scaled::from_raw(0),
             page_total: Scaled::from_raw(0),
             page_stretch: Scaled::from_raw(0),
@@ -358,6 +362,13 @@ impl Default for PageBuilderState {
 }
 
 impl PageBuilderState {
+    pub(crate) fn is_format_empty(&self) -> bool {
+        let mut state = self.clone();
+        state.clear_page_discards();
+        state.clear_split_discards();
+        state == Self::default()
+    }
+
     pub(crate) fn dimension(&self, dimension: PageDimension) -> Scaled {
         if self.contents.is_empty() && self.fire_up.is_none() {
             return match dimension {
@@ -605,6 +616,38 @@ impl PageBuilderState {
         &self.current_page
     }
 
+    pub(crate) fn page_discards(&self) -> &[Node] {
+        &self.page_discards
+    }
+
+    pub(crate) fn push_page_discard(&mut self, node: Node) {
+        Arc::make_mut(&mut self.page_discards).push(node);
+    }
+
+    pub(crate) fn take_page_discards(&mut self) -> Vec<Node> {
+        std::mem::take(Arc::make_mut(&mut self.page_discards))
+    }
+
+    pub(crate) fn clear_page_discards(&mut self) {
+        Arc::make_mut(&mut self.page_discards).clear();
+    }
+
+    pub(crate) fn split_discards(&self) -> &[Node] {
+        &self.split_discards
+    }
+
+    pub(crate) fn set_split_discards(&mut self, nodes: Vec<Node>) {
+        self.split_discards = Arc::new(nodes);
+    }
+
+    pub(crate) fn take_split_discards(&mut self) -> Vec<Node> {
+        std::mem::take(Arc::make_mut(&mut self.split_discards))
+    }
+
+    pub(crate) fn clear_split_discards(&mut self) {
+        Arc::make_mut(&mut self.split_discards).clear();
+    }
+
     pub(crate) fn current_page_tail(&self) -> Option<&Node> {
         self.current_page.last()
     }
@@ -777,6 +820,8 @@ impl PageBuilderState {
         }
         hash_queue(&self.contribution, hasher);
         hash_nodes(&self.current_page, hasher);
+        hash_nodes(&self.page_discards, hasher);
+        hash_nodes(&self.split_discards, hasher);
     }
 }
 

@@ -188,6 +188,8 @@ impl IntParam {
     pub const TRACING_IFS: Self = Self::new(66);
     /// e-TeX semantic-nesting tracing switch.
     pub const TRACING_NESTING: Self = Self::new(67);
+    /// e-TeX switch retaining vertical material discarded at page tops.
+    pub const SAVING_V_DISCARDS: Self = Self::new(68);
 
     /// TeX's `\showboxbreadth` integer parameter.
     pub const SHOW_BOX_BREADTH: Self = Self::new(24);

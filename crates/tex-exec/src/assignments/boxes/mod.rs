@@ -212,6 +212,21 @@ where
             };
             append_unboxed(nest, stores, id, primitive)?;
         }
+        UnexpandablePrimitive::PageDiscards | UnexpandablePrimitive::SplitDiscards => {
+            let nodes = if primitive == UnexpandablePrimitive::PageDiscards {
+                stores.take_page_discards()
+            } else {
+                stores.take_split_discards()
+            };
+            flush_pending_hchars(nest, stores)?;
+            for node in nodes {
+                if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
+                    append_vertical_contribution(nest, stores, node);
+                } else {
+                    nest.current_list_mut().push(node);
+                }
+            }
+        }
         UnexpandablePrimitive::LastBox => {
             if let Some(node) = take_last_box(nest, stores)? {
                 append_box_node_to_current_list(nest, stores, node)?;
@@ -237,6 +252,8 @@ where
             | UnexpandablePrimitive::UnHCopy
             | UnexpandablePrimitive::UnVBox
             | UnexpandablePrimitive::UnVCopy
+            | UnexpandablePrimitive::PageDiscards
+            | UnexpandablePrimitive::SplitDiscards
     ) {
         build_page_if_outer_vertical(nest, stores)?;
     }

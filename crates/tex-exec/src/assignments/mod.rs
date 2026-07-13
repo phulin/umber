@@ -786,6 +786,8 @@ where
             | UnexpandablePrimitive::UnHCopy
             | UnexpandablePrimitive::UnVBox
             | UnexpandablePrimitive::UnVCopy
+            | UnexpandablePrimitive::PageDiscards
+            | UnexpandablePrimitive::SplitDiscards
             | UnexpandablePrimitive::LastBox
             | UnexpandablePrimitive::Raise
             | UnexpandablePrimitive::Lower

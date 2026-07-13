@@ -79,6 +79,8 @@ pub(super) fn math_allows_assignment_primitive(primitive: UnexpandablePrimitive)
             | UnexpandablePrimitive::UnPenalty
             | UnexpandablePrimitive::UnKern
             | UnexpandablePrimitive::UnSkip
+            | UnexpandablePrimitive::PageDiscards
+            | UnexpandablePrimitive::SplitDiscards
             | UnexpandablePrimitive::Insert
             | UnexpandablePrimitive::Discretionary
             | UnexpandablePrimitive::Wd

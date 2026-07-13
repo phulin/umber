@@ -507,7 +507,11 @@ fn contribute_front_as(stores: &mut Universe, node: Node) -> Result<(), ExecErro
 }
 
 fn discard_front(stores: &mut Universe) {
-    let _ = stores.pop_page_contribution_front();
+    if let Some(node) = stores.pop_page_contribution_front()
+        && stores.int_param(tex_state::env::banks::IntParam::SAVING_V_DISCARDS) > 0
+    {
+        stores.push_page_discard(node);
+    }
 }
 
 fn ensure_max_depth(stores: &mut Universe) -> Result<(), ExecError> {

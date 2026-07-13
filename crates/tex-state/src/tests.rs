@@ -79,6 +79,30 @@ fn penalty_arrays_are_grouped_checkpointed_and_repeat_their_last_value() {
 }
 
 #[test]
+fn etex_vertical_discards_rollback_but_are_omitted_from_formats() {
+    let mut universe = Universe::new();
+    universe.push_page_discard(crate::node::Node::Penalty(17));
+    universe.set_split_discards(vec![crate::node::Node::Penalty(23)]);
+    let snapshot = universe.snapshot();
+
+    assert_eq!(
+        universe.take_page_discards(),
+        vec![crate::node::Node::Penalty(17)]
+    );
+    universe.clear_split_discards();
+    universe.rollback(&snapshot);
+    assert_eq!(universe.page_discards(), &[crate::node::Node::Penalty(17)]);
+    assert_eq!(universe.split_discards(), &[crate::node::Node::Penalty(23)]);
+
+    let format = universe
+        .dump_format()
+        .expect("discard lists are not dumped");
+    let loaded = Universe::from_format(World::default(), &format).expect("load discard format");
+    assert!(loaded.page_discards().is_empty());
+    assert!(loaded.split_discards().is_empty());
+}
+
+#[test]
 fn hyphenation_state_rolls_back_with_snapshots() {
     let mut universe = Universe::new();
     universe.add_hyphenation_exception(ExceptionSpec {
