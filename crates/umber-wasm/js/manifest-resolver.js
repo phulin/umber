@@ -16,7 +16,7 @@ export class ManifestResolverError extends Error {
 
 export class HttpManifestResolver {
 	static async create(options) {
-		const fetchImplementation = options.fetch ?? globalThis.fetch;
+		const fetchImplementation = options.fetch ?? platformFetch();
 		if (typeof fetchImplementation !== "function") {
 			throw new ManifestResolverError(
 				"invalid-options",
@@ -57,7 +57,7 @@ export class HttpManifestResolver {
 
 	constructor(manifest, options = {}) {
 		this.manifest = validateManifest(manifest);
-		this.fetch = options.fetch ?? globalThis.fetch;
+		this.fetch = options.fetch ?? platformFetch();
 		this.crypto = options.crypto ?? globalThis.crypto;
 		this.concurrency = validateConcurrency(
 			options.concurrency ?? DEFAULT_CONCURRENCY,
@@ -523,6 +523,12 @@ function cacheMode(value) {
 		"invalid-options",
 		"persistentCache must be 'http', 'indexeddb', or 'none'",
 	);
+}
+
+function platformFetch() {
+	return typeof globalThis.fetch === "function"
+		? globalThis.fetch.bind(globalThis)
+		: undefined;
 }
 
 function actionableError(key, error) {

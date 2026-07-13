@@ -2,6 +2,9 @@
 name = "umber-wasm"
 version.workspace = true
 edition.workspace = true
+description = "Browser WebAssembly build of the Umber TeX engine"
+repository = "https://github.com/phulin/umber"
+publish = false
 
 [lib]
 crate-type = ["cdylib", "rlib"]

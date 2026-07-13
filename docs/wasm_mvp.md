@@ -552,6 +552,21 @@ rustup target add wasm32-unknown-unknown
 wasm-pack build crates/umber-wasm --target web --release
 ```
 
+The distributable package and its complete local browser gate are produced by:
+
+```sh
+scripts/build-wasm-package.sh
+scripts/check-wasm.sh
+```
+
+The package is written to `target/umber-wasm-package`. It has explicit exports
+for the asynchronous facade, standard worker controller, low-level generated
+bindings, resolver, cache, and Plain assets. The repository currently has no
+project license, so npm metadata deliberately says `UNLICENSED` and prevents
+publication; `THIRD_PARTY_NOTICES.md` records the provenance and redistribution
+conditions of the generated Plain asset. Selecting an Umber project license is
+an owner decision outside this MVP.
+
 The packaged directory contains the optimized `.wasm`, generated low-level ES
 module, authored asynchronous facade, TypeScript declarations, manifest
 resolver, package metadata, and licenses. The package exposes the authored
@@ -602,6 +617,14 @@ starts with only `main.tex`, then demonstrates at least:
 3. SHA-256 verification;
 4. a final DVI byte stream and terminal output; and
 5. a warm-cache second compilation with no HTTP object requests.
+
+`scripts/test-wasm-browser.sh` builds the optimized package and drives an
+installed headless Chrome through its debugging protocol without a browser-test
+framework dependency. It additionally covers IndexedDB reuse across terminated
+workers, concurrent TFM downloads, auxiliary output, Plain-format loading,
+digest and unresolved-key failures, traversal rejection, byte limits, and an
+owner-enforced timeout. The WASM CI workflow runs this fixture plus the
+wasm-bindgen Firefox suite and fast Node tests from a clean checkout.
 
 Implementation work runs the relevant crate tests explicitly, then
 `scripts/check.sh`. The full correctness gate remains

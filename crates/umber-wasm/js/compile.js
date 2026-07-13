@@ -161,6 +161,7 @@ export async function compile(options, userFiles, resolver, signal, bindings) {
 
 async function compilerClass(bindings) {
 	const module = bindings ?? (await import("./umber_wasm.js"));
+	if (bindings === undefined) await module.default();
 	if (typeof module?.CompilerSession !== "function") {
 		throw new CompileFacadeError(
 			"invalid-binding",

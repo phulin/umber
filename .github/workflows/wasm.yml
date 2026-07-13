@@ -1,0 +1,39 @@
+name: WASM
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/wasm.yml"
+      - "crates/umber-wasm/**"
+      - "crates/umber/**"
+      - "crates/tex-*/**"
+      - "scripts/*wasm*"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/wasm.yml"
+      - "crates/umber-wasm/**"
+      - "crates/umber/**"
+      - "crates/tex-*/**"
+      - "scripts/*wasm*"
+
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --version 0.14.0 --locked
+      - name: Native quality gate
+        run: scripts/check-and-test.sh
+      - name: Test optimized package in Firefox and Chrome
+        env:
+          CHROME: /usr/bin/google-chrome
+        run: scripts/check-wasm.sh

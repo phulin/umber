@@ -23,6 +23,7 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 
 - `.cargo/`: target-specific Cargo configuration; browser randomness selection must remain scoped to `wasm32-unknown-unknown`.
 - `.agents/`: project-local agent skills and coordination workflow guidance.
+- `.github/workflows/wasm.yml`: browser-package CI gate for authored JavaScript, Firefox bindings, and the optimized Chrome integration fixture.
 - `crates/`: Rust workspace crates.
 - `crates/tex-arith`: shared TeX scaled-point and TFM arithmetic.
 - `crates/tex-content`: shared versioned, domain-separated content identity.
@@ -48,6 +49,9 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - `docs/`: architecture, phase, and design documents.
 - `scripts/`: local development scripts and versioned git hook templates.
 - `scripts/build-wasm-plain-format.sh`: reproducible pinned TeX Live 2025 to Umber-native Plain format build and equivalence gate.
+- `scripts/build-wasm-package.sh`: optimized npm-shaped WASM package assembler.
+- `scripts/check-wasm.sh`: complete Firefox, Chrome, Node, and package-content WASM gate.
+- `scripts/test-wasm-browser.sh`: optimized-package local HTTP integration runner.
 - `third_party/`: ignored reference downloads and external source archives.
 
 ## Development

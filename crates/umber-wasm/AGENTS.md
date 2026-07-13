@@ -21,3 +21,7 @@ the manifest's validated content-addressed object name.
 - `assets/plain.fmt`: reproducible Umber-native Plain format image.
 - `assets/plain-format.json`: published digest and compatibility metadata.
 - `js/`: authored ES modules and Node acceptance tests.
+- `browser-tests/`: dependency-free local HTTP and headless-Chrome package integration fixture.
+- `examples/`: minimal module-worker browser example shipped in the package.
+- `package.json`: authored npm exports, package inventory, and distribution policy.
+- `THIRD_PARTY_NOTICES.md`: Plain-format source provenance and redistribution notices.
