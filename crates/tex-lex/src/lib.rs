@@ -456,6 +456,7 @@ type LiteralSpanBounds = (usize, usize);
 type LiteralSpanCache = HashMap<(TokenListId, LiteralSpanPolicy), Arc<[LiteralSpanBounds]>>;
 
 const MEANING_SITE_CACHE_LEN: usize = 64;
+const LITERAL_SPAN_CACHE_MAX_ENTRIES: usize = 4096;
 
 #[derive(Clone, Copy, Debug)]
 struct MeaningSiteCacheEntry {
@@ -1472,6 +1473,12 @@ impl<S> InputStack<S> {
         stores: &impl ExpansionState,
         policy: LiteralSpanPolicy,
     ) -> Option<MacroLiteralSpan> {
+        // Alignment interception observes character-token delivery (not only
+        // control sequences). Any active scanner level therefore forces the
+        // existing per-token path, including while no cell is active yet.
+        if self.has_active_alignment() {
+            return None;
+        }
         loop {
             let frame_index = self.current_token_frame_index()?;
             let exhausted = match &self.frames[frame_index] {
@@ -1580,33 +1587,38 @@ impl<S> InputStack<S> {
         start: usize,
         policy: LiteralSpanPolicy,
     ) -> usize {
+        let key = (token_list, policy);
+        let cache_hit = self.literal_span_cache.contains_key(&key);
         #[cfg(feature = "expansion-stats")]
-        if self.literal_span_cache.contains_key(&(token_list, policy)) {
+        if cache_hit {
             self.expansion_stats.segmentation_cache_hits += 1;
         } else {
             self.expansion_stats.segmentation_cache_misses += 1;
         }
-        let spans = self
-            .literal_span_cache
-            .entry((token_list, policy))
-            .or_insert_with(|| {
-                let tokens = stores.tokens(token_list);
-                let mut spans = Vec::new();
-                let mut cursor = 0;
-                while cursor < tokens.len() {
-                    if !policy.accepts(tokens[cursor]) {
-                        cursor += 1;
-                        continue;
-                    }
-                    let span_start = cursor;
+        if !cache_hit && self.literal_span_cache.len() >= LITERAL_SPAN_CACHE_MAX_ENTRIES {
+            // Body plans are derived and cheap to rebuild. Bound retention for
+            // long-lived interactive stacks and discard stale timeline keys
+            // in one allocation-free operation.
+            self.literal_span_cache.clear();
+        }
+        let spans = self.literal_span_cache.entry(key).or_insert_with(|| {
+            let tokens = stores.tokens(token_list);
+            let mut spans = Vec::new();
+            let mut cursor = 0;
+            while cursor < tokens.len() {
+                if !policy.accepts(tokens[cursor]) {
                     cursor += 1;
-                    while cursor < tokens.len() && policy.accepts(tokens[cursor]) {
-                        cursor += 1;
-                    }
-                    spans.push((span_start, cursor));
+                    continue;
                 }
-                Arc::from(spans)
-            });
+                let span_start = cursor;
+                cursor += 1;
+                while cursor < tokens.len() && policy.accepts(tokens[cursor]) {
+                    cursor += 1;
+                }
+                spans.push((span_start, cursor));
+            }
+            Arc::from(spans)
+        });
         let index = spans.partition_point(|&(_, span_end)| span_end <= start);
         spans.get(index).map_or(
             start,

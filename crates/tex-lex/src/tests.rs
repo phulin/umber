@@ -1262,6 +1262,38 @@ fn macro_literal_spans_copy_body_and_argument_provenance_at_matching_offsets() {
     );
 }
 
+#[test]
+fn macro_literal_span_deopts_for_any_active_alignment_scanner() {
+    let mut stores = Universe::new();
+    let body = stores.intern_token_list(&[
+        char_token('x', Catcode::Letter),
+        char_token('&', Catcode::AlignmentTab),
+    ]);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_macro_body(body, MacroArguments::new());
+    input.begin_alignment();
+    let mut tokens = stores.token_list_builder();
+    let mut origins = stores.origin_list_builder();
+
+    assert_eq!(
+        input.append_macro_literal_span(
+            &stores,
+            &mut tokens,
+            &mut origins,
+            LiteralSpanPolicy::ExpandedReplacement,
+        ),
+        0
+    );
+    assert_eq!(
+        input
+            .next_traced_expansion_token(&mut stores)
+            .expect("ordinary replay")
+            .expect("first token")
+            .token(),
+        char_token('x', Catcode::Letter)
+    );
+}
+
 #[cfg(feature = "expansion-stats")]
 #[test]
 fn expansion_stats_measure_literal_runs_and_segmentation_reuse() {
