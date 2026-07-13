@@ -492,20 +492,27 @@ fn sort_active_candidates(
     // all equal-width lines form one deferred class and new breaks instead
     // accumulate in source order. The visit order is observable because an
     // equal demerit replaces the route recorded earlier in `try_break`.
-    active.sort_by(|&left, &right| {
-        let left = &candidates[left];
-        let right = &candidates[right];
-        left.line.cmp(&right.line).then_with(|| {
-            let effective_line = left
-                .line
-                .saturating_add(1)
-                .saturating_add(params.shape.line_offset);
-            if effective_line > easy_line {
-                left.position.cmp(&right.position)
-            } else {
-                right.position.cmp(&left.position)
-            }
-        })
+    active.sort_unstable_by(|&left_id, &right_id| {
+        let left = &candidates[left_id];
+        let right = &candidates[right_id];
+        left.line
+            .cmp(&right.line)
+            .then_with(|| {
+                let effective_line = left
+                    .line
+                    .saturating_add(1)
+                    .saturating_add(params.shape.line_offset);
+                if effective_line > easy_line {
+                    left.position.cmp(&right.position)
+                } else {
+                    right.position.cmp(&left.position)
+                }
+            })
+            // Candidate ids encode insertion/visit order. This makes the
+            // comparator total while preserving stable-sort behavior for
+            // routes with the same TeX active-list key, without allocating a
+            // temporary merge buffer at every breakpoint.
+            .then_with(|| left_id.cmp(&right_id))
     });
 }
 

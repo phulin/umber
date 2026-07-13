@@ -27,10 +27,10 @@ words; the gate permits 10% cross-run noise above them. Absolute timing is
 machine-specific, so comparisons require the same host, toolchain, profile,
 and rebuilt revision.
 
-`layout` covers a 4,096-cell alignment with adversarial spans, a 4,096-node
+`layout` covers a 4,096-cell alignment with adversarial spans, a 1,024-node
 paragraph, 20,000 nested math choices, 20,000 structural sub-mlists (both also
-act as stack-safety gates), and repeated 1,024-noad conversion.
-`layout_allocations` measures the
-same pure alignment/math kernels outside workload setup and enforces committed
+act as stack-safety gates), and repeated 1,024-noad conversion. The allocation
+gate retains the larger 4,096-node paragraph workload. `layout_allocations`
+measures the same pure kernels outside workload setup and enforces committed
 ceilings for allocation count and total allocated bytes; it remains outside
 the ordinary unit-test tier.

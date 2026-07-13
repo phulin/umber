@@ -10,7 +10,7 @@ use tex_typeset::math::{MathParams, Style, mlist_to_hlist};
 
 const ALIGN_COLUMNS: usize = 512;
 const ALIGN_CELLS: usize = 4_096;
-const PARAGRAPH_NODES: usize = 4_096;
+const PARAGRAPH_NODES: usize = 1_024;
 const DEEP_MATH_LEVELS: usize = 20_000;
 const REPEATED_MATH_NOADS: usize = 1_024;
 
@@ -183,8 +183,10 @@ fn line_params() -> LineBreakParams {
         final_hyphen_demerits: 5_000,
         emergency_stretch: Scaled::from_raw(0),
         looseness: 0,
+        last_line_fit: 0,
         left_skip: GlueSpec::ZERO,
         right_skip: GlueSpec::ZERO,
+        par_fill_skip: GlueSpec::ZERO,
         shape: LineShape::natural(Scaled::from_raw(1_000)),
     }
 }

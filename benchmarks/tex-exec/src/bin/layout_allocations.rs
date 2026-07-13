@@ -18,7 +18,7 @@ const LINEBREAK_ALLOCATION_BUDGET: usize = 12;
 const DEEP_MATH_ALLOCATION_BUDGET: usize = 28;
 const FLAT_MATH_ALLOCATION_BUDGET: usize = 14;
 const ALIGNMENT_BYTE_BUDGET: usize = 220_000;
-const LINEBREAK_BYTE_BUDGET: usize = 16_000_000_000;
+const LINEBREAK_BYTE_BUDGET: usize = 19_000_000_000;
 const DEEP_MATH_BYTE_BUDGET: usize = 14_000_000;
 const FLAT_MATH_BYTE_BUDGET: usize = 560_000;
 const DEEP_SUBMLIST_ALLOCATION_BUDGET: usize = 180_000;
@@ -89,8 +89,10 @@ fn linebreak_allocations() -> Stats {
         final_hyphen_demerits: 5_000,
         emergency_stretch: Scaled::from_raw(0),
         looseness: 0,
+        last_line_fit: 0,
         left_skip: GlueSpec::ZERO,
         right_skip: GlueSpec::ZERO,
+        par_fill_skip: GlueSpec::ZERO,
         shape: LineShape::natural(Scaled::from_raw(1_000)),
     };
     let region = Region::new(GLOBAL);
