@@ -10,12 +10,12 @@
 
 `tools/texlive-wasm-publish` is a standalone release tool for browser TeX Live assets. It verifies every configured TEXMF root against a pinned tree digest, flattens lookup precedence deterministically, and writes an immutable manifest plus content-addressed objects. Build and test it explicitly with `cargo test --manifest-path tools/texlive-wasm-publish/Cargo.toml`; it must not join the root workspace or make ordinary tests scan a TeX Live installation.
 
-`tools/parity-harness` is the shared Rust library and compatibility CLI for end-to-end DVI conformance. The ignored Umber integration tests use it for Story and Gentle execution and for TRIP's final artifact comparison. It stages manifest-selected external documents, verifies manifest-pinned reference hashes, normalizes only DVI preamble comments, requires byte-identical final DVI, and writes automatic bundles under `target/conformance-triage/` or the CLI-selected triage directory. Keep external runs ignored; the library's synthetic tests validate strict comparison and bundle diagnostics in the default gate.
+`tools/parity-harness` is the shared Rust library and compatibility CLI for end-to-end DVI conformance. The ignored Story and Gentle tests and fixture-presence-conditional TRIP test use it for final artifact comparison. It stages manifest-selected external documents, verifies manifest-pinned reference hashes, normalizes only DVI preamble comments, requires byte-identical final DVI, and writes automatic bundles under `target/conformance-triage/` or the CLI-selected triage directory. The library's synthetic tests validate strict comparison and bundle diagnostics in the default gate.
 
 `scripts/trip.sh` owns specialized official Knuth TeX82 TRIP preparation and
 standalone compatibility orchestration with shell plus ambient TeXware tools.
-Its `umber-artifacts` mode is used by the ignored Cargo integration test,
+Its `umber-artifacts` mode is used by the conditional Cargo integration test,
 which applies `parity-harness`'s shared strict final-DVI oracle. It fetches the
-pinned CTAN files in `tests/trip-manifest.txt`, requires PLtoTF/TFtoPL/DVItype,
-and requires `UMBER_TRIP_INITEX` to point at Knuth's special TRIP INITEX build
-for a passing reference phase.
+pinned CTAN files in `tests/trip-manifest.txt`, requires DVItype only for the
+standalone reference phase, and requires `UMBER_TRIP_INITEX` to point at
+Knuth's special TRIP INITEX build for a passing reference phase.

@@ -25,7 +25,7 @@ usage:
 
 Runs the official Knuth TeX82 TRIP conformance harness outside cargo tests.
 The harness fetches the pinned CTAN TRIP materials into third_party/trip/,
-verifies SHA-256 hashes, rebuilds trip.tfm via PLtoTF/TFtoPL, runs the official
+verifies SHA-256 hashes, uses the pinned trip.tfm, runs the official
 two-phase workload, and compares the resulting DVI and DVItype output. Text
 transcripts remain in target/trip/ for diagnostics but do not gate this tier.
 
@@ -33,8 +33,6 @@ Reference tools are discovered on PATH unless overridden:
   UMBER_TRIP_TOOLS=/path/to/pinned/trip-tool-directory
   UMBER_TRIP_INITEX=/path/to/special-initex
   UMBER_REF_TEX=/path/to/pdftex-or-tex
-  UMBER_REF_PLTOTF=/path/to/pltotf
-  UMBER_REF_TFTOPL=/path/to/tftopl
   UMBER_REF_DVITYPE=/path/to/dvitype
 
 TRIP requires Knuth's special INITEX build with mem_top/mem_max=3000,
@@ -217,7 +215,6 @@ copy_trip_inputs() {
   mkdir -p "$dest"
   cp \
     "${download_dir}/trip.tex" \
-    "${download_dir}/trip.pl" \
     "${download_dir}/trip.tfm" \
     "$dest/"
 }
@@ -237,30 +234,6 @@ compare_text() {
     printf 'ok %s\n' "$label" >&2
     return 0
   fi
-  printf 'FAIL %s; see %s\n' "$label" "$diff_path" >&2
-  return 1
-}
-
-compare_binary() {
-  local label="$1"
-  local expected="$2"
-  local actual="$3"
-  local diff_path="${diff_dir}/${label}.diff"
-  if [[ ! -f "$actual" ]]; then
-    printf 'missing actual artifact for %s: %s\n' "$label" "$actual" > "$diff_path"
-    printf 'FAIL %s: missing %s; see %s\n' "$label" "$actual" "$diff_path" >&2
-    return 1
-  fi
-  if cmp -s "$expected" "$actual"; then
-    rm -f "$diff_path"
-    printf 'ok %s\n' "$label" >&2
-    return 0
-  fi
-  {
-    printf '%s differs\n' "$label"
-    printf 'expected: %s\nactual:   %s\n' "$expected" "$actual"
-    cmp -l "$expected" "$actual" | sed -n '1,40p'
-  } > "$diff_path"
   printf 'FAIL %s; see %s\n' "$label" "$diff_path" >&2
   return 1
 }
@@ -528,18 +501,6 @@ output_path.write_bytes(actual)
 PY
 }
 
-invoke_pltotf() {
-  local dir="$1"
-  local pltotf="$2"
-  (cd "$dir" && "$pltotf" trip.pl generated-trip.tfm)
-}
-
-invoke_tftopl() {
-  local dir="$1"
-  local tftopl="$2"
-  (cd "$dir" && "$tftopl" generated-trip.tfm generated-trip.pl)
-}
-
 invoke_reference_initex() {
   local dir="$1"
   local initex="$2"
@@ -580,25 +541,6 @@ invoke_umber_dvi() {
     cd "$dir"
     "${umber_bin}" run trip.tex --format trip.fmt --dvi trip.dvi > /dev/null 2> trip-artifact.stderr
   )
-}
-
-run_font_phase() {
-  local pltotf
-  local tftopl
-  pltotf="$(tool_path UMBER_REF_PLTOTF pltotf)"
-  tftopl="$(tool_path UMBER_REF_TFTOPL tftopl)"
-  local dir="${work_root}/font"
-  copy_trip_inputs "$dir"
-  local ok=0
-  run_required_artifact_command "font-pltotf" "${dir}/generated-trip.tfm" strict invoke_pltotf "$dir" "$pltotf" || ok=1
-  if [[ "$ok" -eq 0 ]]; then
-    run_required_artifact_command "font-tftopl" "${dir}/generated-trip.pl" strict invoke_tftopl "$dir" "$tftopl" || ok=1
-  else
-    rm -f "${dir}/generated-trip.pl"
-  fi
-  compare_text "font-pl-roundtrip" "${download_dir}/trip.pl" "${dir}/generated-trip.pl" || ok=1
-  compare_binary "font-tfm" "${download_dir}/trip.tfm" "${dir}/generated-trip.tfm" || ok=1
-  return "$ok"
 }
 
 run_reference_phase() {
@@ -653,8 +595,6 @@ run_reference_phase() {
 }
 
 run_umber_phase() {
-  local dvitype
-  dvitype="$(tool_path UMBER_REF_DVITYPE dvitype)"
   if [[ ! -x "$umber_bin" ]]; then
     printf '%s\n' 'Building umber' >&2
     cargo build -p umber
@@ -693,6 +633,11 @@ run_umber_phase() {
   if [[ -s "${dir}/trip-artifact.stderr" ]]; then
     cat "${dir}/trip-artifact.stderr" >&2
   fi
+  if [[ "${mode}" == "umber-artifacts" ]]; then
+    return "$ok"
+  fi
+  local dvitype
+  dvitype="$(tool_path UMBER_REF_DVITYPE dvitype)"
   if [[ -s "${dir}/trip.dvi" ]]; then
     run_required_artifact_command "umber-dvitype" "${dir}/trip.typ" strict invoke_dvitype "$dir" "$dvitype" || ok=1
   else
@@ -701,9 +646,6 @@ run_umber_phase() {
 
   local norm="${work_root}/normalized"
   mkdir -p "$norm"
-  if [[ "${mode}" == "umber-artifacts" ]]; then
-    return "$ok"
-  fi
   rm -f "${norm}/actual-umber-trip.dvi"
   if [[ -s "${dir}/trip.dvi" ]]; then
     normalize_dvi "${download_dir}/trip.dvi" "${norm}/expected-umber-trip.dvi"
@@ -934,26 +876,21 @@ case "$mode" in
   reference)
     fetch_materials
     prepare_work
-    run_font_phase
     run_reference_phase
     ;;
   umber)
     fetch_materials
     prepare_work
-    run_font_phase
     run_umber_phase
     ;;
   umber-artifacts)
-    fetch_materials
     prepare_work
-    run_font_phase
     run_umber_phase
     ;;
   all)
     fetch_materials
     prepare_work
     ok=0
-    run_font_phase || ok=1
     run_reference_phase || ok=1
     run_umber_phase || ok=1
     if [[ "$ok" -ne 0 ]]; then

@@ -197,14 +197,15 @@ pinpoints page/opcode; it does not run the external corpus.
 
 The official Knuth TeX82 TRIP conformance materials are pinned separately in
 `tests/trip-manifest.txt`. They are fetched into gitignored `third_party/trip/`
-only by `scripts/trip.sh`; do not commit the fetched CTAN files or fold this
-gate into `cargo test --workspace --tests`. The TRIP harness requires the
+only by `scripts/trip.sh`; do not commit the fetched CTAN files. The Cargo test
+returns cleanly unless both `trip.tex` and `trip.tfm` are present. The full
+standalone TRIP harness requires the
 special INITEX build documented by `tripman.tex` Appendix A and writes
 comparison work products under `target/trip/`.
-The ignored `e2e_conformance_trip` Cargo integration test runs the specialized
+The `e2e_conformance_trip` Cargo integration test runs the specialized
 TRIP artifact producer and then applies the same preamble-comment-only,
 byte-identical final-DVI assertion used by Story and Gentle. Run it with
-`cargo test -p umber --test it e2e_conformance_trip -- --ignored --nocapture`.
+`cargo test -p umber --test it e2e_conformance_trip -- --nocapture`.
 `scripts/trip.sh self-test` stays fetch-free and uses synthetic DVI and DVItype
 streams to exercise the special-reference phase's exact 64sp reconciliation
 boundary plus rejection of representative structural and semantic differences

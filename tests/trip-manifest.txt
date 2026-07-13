@@ -2,7 +2,6 @@
 # Source: CTAN systems/knuth/dist/tex, mirrored by the University of Utah.
 # Format: file url sha256
 trip.tex https://ctan.math.utah.edu/ctan/tex-archive/systems/knuth/dist/tex/trip.tex 15f15c2ca1470085299056ec89dea5f51e9fe9303ef25581b2f2eaf7809ae97b
-trip.pl https://ctan.math.utah.edu/ctan/tex-archive/systems/knuth/dist/tex/trip.pl 93b38cc794f0c4a462667e25ef34a83552cbcdd62a42b10f739a431166525a79
 trip.tfm https://ctan.math.utah.edu/ctan/tex-archive/systems/knuth/dist/tex/trip.tfm 2c94bdba9c769e885f357823a183aaa5d2267731075f040f2a03cf6442a26181
 tripin.log https://ctan.math.utah.edu/ctan/tex-archive/systems/knuth/dist/tex/tripin.log ba01328756a8901d7c38162c9012014e9540322bf0963e105286f2a6ccb494cc
 trip.log https://ctan.math.utah.edu/ctan/tex-archive/systems/knuth/dist/tex/trip.log 61a653523bdccab9fd3f9aa61d170d0198c322c951938327b7daef9b70f26d8b

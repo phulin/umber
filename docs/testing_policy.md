@@ -214,33 +214,32 @@ bundle writer with synthetic DVI and remains fast enough for local tooling
 checks, but the external corpus itself must stay outside
 `cargo test --workspace --tests`.
 
-The original Knuth TeX82 TRIP workload is part of the same ignored end-to-end
-DVI conformance suite, while remaining separate from the default Rust test
-tier and from later e-TRIP work:
+The original Knuth TeX82 TRIP workload is an end-to-end DVI conformance test
+that runs conditionally when its two inputs are locally present. It remains
+separate from later e-TRIP work:
 
 ```bash
 scripts/trip.sh
 scripts/trip.sh --offline
 scripts/trip.sh self-test
 scripts/build-trip-initex.sh
-cargo test -p umber --test it e2e_conformance_trip -- --ignored --nocapture
+cargo test -p umber --test it e2e_conformance_trip -- --nocapture
 ```
 
 `scripts/trip.sh` reads `tests/trip-manifest.txt`, fetches exact official
 TRIP bytes into gitignored `third_party/trip/`, and verifies every SHA-256
-before running. It rebuilds `trip.tfm` from `trip.pl` with PLtoTF, converts it
-back with TFtoPL, compares the generated TFM to the canonical CTAN TFM, then
-runs the documented INITEX and format-loaded TRIP phases. This tier requires
+before running. It uses the pinned canonical `trip.tfm`, then runs the
+documented INITEX and format-loaded TRIP phases. This tier requires
 Knuth's special TRIP INITEX build described in `tripman.tex` Appendix A; stock
 `pdftex -ini` or `tex -ini` is useful only as a failing sanity check because
 the official log line widths, memory limits, and capacity statistics depend on
 that special build. Set `UMBER_TRIP_INITEX=/absolute/path/to/initex` to select
 it. `scripts/build-trip-initex.sh` builds the hash-pinned TeX Live Web2C
-classic TeX plus DVItype, PLtoTF, and TFtoPL tools; once its source archive is
+classic TeX plus DVItype; once its source archive is
 cached, both the build and reference phase run offline. The harness
 automatically uses `target/trip-initex/bin`, or `UMBER_TRIP_TOOLS` can select
-another pinned build. It also uses `UMBER_REF_PLTOTF`, `UMBER_REF_TFTOPL`, and
-`UMBER_REF_DVITYPE` overrides when the TeXware tools are not on `PATH`.
+another pinned build. It uses the `UMBER_REF_DVITYPE` override when DVItype is
+not on `PATH`.
 
 The Umber integration test gates only `trip.dvi`; generated
 logs, terminal photo, and `tripos.tex` remain diagnostic outputs owned by the

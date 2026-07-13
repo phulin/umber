@@ -109,13 +109,13 @@ build_tools() {
     )
   fi
   # The top-level target configures the selected Web2C subtree and its small
-  # dependency set; the second target names the only four programs retained.
+  # dependency set; the second target names the only two programs retained.
   if [[ ! -f "${build_dir}/texk/web2c/Makefile" ]]; then
     make -C "$build_dir"
   fi
-  make -C "${build_dir}/texk/web2c" tex dvitype pltotf tftopl
+  make -C "${build_dir}/texk/web2c" tex dvitype
   local tool
-  for tool in tex dvitype pltotf tftopl; do
+  for tool in tex dvitype; do
     [[ -x "${build_dir}/texk/web2c/${tool}" ]] || fail "expected $tool was not built"
   done
 }
@@ -123,7 +123,7 @@ build_tools() {
 write_wrappers() {
   mkdir -p "$bin_dir"
   local tool wrapper real
-  for tool in tex dvitype pltotf tftopl; do
+  for tool in tex dvitype; do
     wrapper="${bin_dir}/umber-trip-${tool}"
     real="${repo_root}/${build_dir}/texk/web2c/${tool}"
     {
@@ -142,10 +142,10 @@ write_build_record() {
   {
     printf 'archive-url %s\narchive-sha512 %s\n' "$archive_url" "$archive_sha512"
     printf 'configure ../src/configure --without-x --disable-shared --disable-all-pkgs --enable-tex --disable-synctex --disable-xetex --enable-missing -C CFLAGS=%q CXXFLAGS=%q\n' "$trip_cflags" "$trip_cxxflags"
-    printf 'make make -C third_party/texlive-source/build && make -C third_party/texlive-source/build/texk/web2c tex dvitype pltotf tftopl\n'
+    printf 'make make -C third_party/texlive-source/build && make -C third_party/texlive-source/build/texk/web2c tex dvitype\n'
     while read -r tool _; do
       [[ -n "${tool:-}" ]] && printf 'tool-sha256 %s %s\n' "$tool" "$(sha_digest 256 "${build_dir}/texk/web2c/${tool}")"
-    done < <(printf '%s\n' 'tex x' 'dvitype x' 'pltotf x' 'tftopl x')
+    done < <(printf '%s\n' 'tex x' 'dvitype x')
   } > "$record"
 }
 

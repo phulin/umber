@@ -1,7 +1,6 @@
 # Knuth TRIP Harness
 
-Status: ignored end-to-end conformance test, outside the default
-`cargo test --workspace --tests` gate.
+Status: fixture-presence-conditional end-to-end conformance test.
 
 The original TeX82 TRIP test is pinned separately from the external document
 corpus and from any later e-TRIP work, but shares the same strict final-DVI
@@ -12,14 +11,16 @@ scripts/trip.sh
 scripts/trip.sh --offline
 scripts/trip.sh self-test
 scripts/build-trip-initex.sh
-cargo test -p umber --test it e2e_conformance_trip -- --ignored --nocapture
+cargo test -p umber --test it e2e_conformance_trip -- --nocapture
 ```
 
 `scripts/trip.sh` fetches official CTAN bytes into gitignored
-`third_party/trip/`, verifies SHA-256 hashes, rebuilds `trip.tfm` through
-PLtoTF and TFtoPL, runs the INITEX transcript phase, runs the format-loaded
-TRIP phase and runs DVItype. The ignored Cargo integration test uses
-`scripts/trip.sh umber-artifacts --offline` for specialized preparation, then
+`third_party/trip/`, verifies SHA-256 hashes, uses the pinned official
+`trip.tfm`, runs the INITEX transcript phase, runs the format-loaded TRIP
+phase, and runs DVItype. The Cargo integration test first checks for
+`third_party/trip/trip.tex` and `trip.tfm`; when either is absent it returns
+without running TRIP. When both are present it uses
+`scripts/trip.sh umber-artifacts` for specialized preparation, then
 uses the shared Rust conformance library to gate on byte-identical final DVI
 after normalizing only the preamble comment. DVItype is diagnostic for Umber.
 The generated `tripin.log`, `trip.log`, `trip.fot`, and `tripos.tex` remain in
@@ -36,8 +37,9 @@ producers cannot reuse them.
 `--keep-work` retains diagnostic transcripts and diffs, but never a generated
 artifact as proof of a later invocation. Each Appendix A producer starts with
 its format, DVI, or DVItype output absent, handles the intentional TRIP engine
-exit status explicitly, and must create a fresh nonempty artifact. Font tools
-and DVItype must additionally exit successfully. Thus a failed INITEX,
+exit status explicitly, and must create a fresh nonempty artifact. DVItype
+must additionally exit successfully in the standalone reference workflow.
+Thus a failed INITEX,
 format-loaded run, or DVItype conversion cannot be hidden by an earlier green
 run in the same `target/trip/` directory.
 
@@ -51,7 +53,6 @@ The byte identity is pinned by SHA-256:
 | File | SHA-256 |
 | --- | --- |
 | `trip.tex` | `15f15c2ca1470085299056ec89dea5f51e9fe9303ef25581b2f2eaf7809ae97b` |
-| `trip.pl` | `93b38cc794f0c4a462667e25ef34a83552cbcdd62a42b10f739a431166525a79` |
 | `trip.tfm` | `2c94bdba9c769e885f357823a183aaa5d2267731075f040f2a03cf6442a26181` |
 | `tripin.log` | `ba01328756a8901d7c38162c9012014e9540322bf0963e105286f2a6ccb494cc` |
 | `trip.log` | `61a653523bdccab9fd3f9aa61d170d0198c322c951938327b7daef9b70f26d8b` |
@@ -74,9 +75,8 @@ hashes in `target/trip-initex/build-record.txt`.
 
 ## Required Tools
 
-The font phase requires `pltotf` and `tftopl`, overridable with
-`UMBER_REF_PLTOTF` and `UMBER_REF_TFTOPL`. The DVItype phase requires
-`dvitype`, overridable with `UMBER_REF_DVITYPE`.
+The standalone DVItype phase requires `dvitype`, overridable with
+`UMBER_REF_DVITYPE`. The Cargo integration test does not require TeXware.
 
 The reference execution phase requires Knuth's special TRIP INITEX build from
 `tripman.tex` Appendix A. In particular, that build sets
