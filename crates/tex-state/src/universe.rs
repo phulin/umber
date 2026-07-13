@@ -132,6 +132,7 @@ pub trait ExpansionState {
     fn page_integer(&self, integer: PageInteger) -> i32;
     fn page_mark(&self, mark: PageMark) -> TokenListId;
     fn page_mark_class(&self, mark: PageMark, class: u16) -> TokenListId;
+    fn paragraph_shape_dimension(&self, line: i32, width: bool) -> Scaled;
     fn report_bad_register_code(&mut self, _value: i32, _maximum: u16) {}
     fn report_missing_font_identifier(&mut self) {}
     fn int_param(&self, param: IntParam) -> i32;
@@ -2362,6 +2363,30 @@ impl Universe {
             .collect()
     }
 
+    /// Returns one current `\parshape` component, repeating the final line
+    /// for positive indexes beyond the explicitly assigned shape.
+    #[must_use]
+    pub fn paragraph_shape_dimension(&self, line: i32, width: bool) -> Scaled {
+        if line <= 0 {
+            return Scaled::from_raw(0);
+        }
+        let tokens = self.tokens(self.tok_param(TokParam::PAR_SHAPE_INTERNAL));
+        let line_count = tokens.len() / 8;
+        if line_count == 0 {
+            return Scaled::from_raw(0);
+        }
+        let line = (line as usize).min(line_count) - 1;
+        let start = line * 8 + usize::from(width) * 4;
+        let mut raw = [0_u8; 4];
+        for (byte, token) in raw.iter_mut().zip(&tokens[start..start + 4]) {
+            let Token::Param(value) = token else {
+                panic!("internal parshape payload has a non-byte token");
+            };
+            *byte = *value;
+        }
+        Scaled::from_raw(i32::from_le_bytes(raw))
+    }
+
     /// Assigns TeX's `\parshape` through the ordinary group write barrier.
     pub fn set_paragraph_shape(&mut self, lines: &[ParagraphShapeLine], global: bool) {
         let mut tokens = Vec::with_capacity(lines.len().saturating_mul(8));
@@ -2681,6 +2706,10 @@ impl ExpansionState for Universe {
 
     fn page_mark_class(&self, mark: PageMark, class: u16) -> TokenListId {
         Self::page_mark_class(self, mark, class)
+    }
+
+    fn paragraph_shape_dimension(&self, line: i32, width: bool) -> Scaled {
+        Self::paragraph_shape_dimension(self, line, width)
     }
 
     fn report_bad_register_code(&mut self, value: i32, maximum: u16) {
@@ -3058,6 +3087,10 @@ impl ExpansionState for ExpansionContext<'_> {
 
     fn page_mark_class(&self, mark: PageMark, class: u16) -> TokenListId {
         self.universe.page_mark_class(mark, class)
+    }
+
+    fn paragraph_shape_dimension(&self, line: i32, width: bool) -> Scaled {
+        self.universe.paragraph_shape_dimension(line, width)
     }
 
     fn report_bad_register_code(&mut self, value: i32, maximum: u16) {

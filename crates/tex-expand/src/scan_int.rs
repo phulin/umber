@@ -996,6 +996,7 @@ where
             Ok(ScannedInt::new(hooks.prev_graf(), token))
         }
         tex_state::meaning::UnexpandablePrimitive::ParShape => {
+            recorder.record_dependency(ReadDependency::Engine(crate::ReadEngineField::ParShape));
             Ok(ScannedInt::new(hooks.par_shape_len(), token))
         }
         tex_state::meaning::UnexpandablePrimitive::LastPenalty => {

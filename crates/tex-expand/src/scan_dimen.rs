@@ -1061,6 +1061,16 @@ where
             consume_optional_space(input, stores, recorder, hooks, expander)?;
             return Ok(ScannedDimen::new(value));
         }
+        Meaning::UnexpandablePrimitive(
+            primitive @ (UnexpandablePrimitive::ParShapeLength
+            | UnexpandablePrimitive::ParShapeIndent
+            | UnexpandablePrimitive::ParShapeDimen),
+        ) => {
+            let value = crate::values::scan_parshape_dimension(
+                input, stores, recorder, hooks, expander, token, primitive,
+            )?;
+            return Ok(ScannedDimen::new(value));
+        }
         _ => {}
     }
 

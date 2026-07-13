@@ -457,6 +457,9 @@ pub enum UnexpandablePrimitive {
     FontCharHt,
     FontCharDp,
     FontCharIc,
+    ParShapeLength,
+    ParShapeIndent,
+    ParShapeDimen,
     InteractionMode,
     NumExpr,
     DimExpr,
@@ -744,6 +747,9 @@ impl UnexpandablePrimitive {
             Self::EndR => 197,
             Self::Middle => 198,
             Self::Marks => 199,
+            Self::ParShapeLength => 200,
+            Self::ParShapeIndent => 201,
+            Self::ParShapeDimen => 202,
         }
     }
 
@@ -950,6 +956,9 @@ impl UnexpandablePrimitive {
             197 => Some(Self::EndR),
             198 => Some(Self::Middle),
             199 => Some(Self::Marks),
+            200 => Some(Self::ParShapeLength),
+            201 => Some(Self::ParShapeIndent),
+            202 => Some(Self::ParShapeDimen),
             _ => None,
         }
     }

@@ -3307,6 +3307,29 @@ fn parshape_assignment_obeys_local_and_global_grouping() {
     assert_eq!(global_stores.paragraph_shape()[0].indent.raw(), 7 * 65_536);
 }
 
+#[test]
+fn etex_parshape_enquiries_return_explicit_and_repeated_components() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    tex_expand::install_etex_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    install_etex_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\parshape=2 1pt 2pt 3pt 4pt \
+         \\edef\\result{\\the\\parshapeindent1/\\the\\parshapelength1/\
+         \\the\\parshapedimen3/\\the\\parshapedimen4/\
+         \\the\\parshapeindent8/\\the\\parshapelength8/\\the\\parshapeindent0}\\end",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("parshape enquiries execute");
+    assert_eq!(
+        macro_text(&stores, "result"),
+        "1.0pt/2.0pt/3.0pt/4.0pt/3.0pt/4.0pt/0.0pt"
+    );
+}
+
 fn macro_text(stores: &Universe, name: &str) -> String {
     let symbol = stores.symbol(name).expect("macro control sequence");
     let meaning = stores.macro_meaning(symbol).expect("macro meaning");

@@ -1185,6 +1185,9 @@ where
             | UnexpandablePrimitive::FontCharHt
             | UnexpandablePrimitive::FontCharDp
             | UnexpandablePrimitive::FontCharIc
+            | UnexpandablePrimitive::ParShapeLength
+            | UnexpandablePrimitive::ParShapeIndent
+            | UnexpandablePrimitive::ParShapeDimen
             | UnexpandablePrimitive::NumExpr
             | UnexpandablePrimitive::DimExpr
             | UnexpandablePrimitive::GlueExpr

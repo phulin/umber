@@ -251,6 +251,19 @@ where
                     cause_origin,
                 ))
             }
+            primitive @ (tex_state::meaning::UnexpandablePrimitive::ParShapeLength
+            | tex_state::meaning::UnexpandablePrimitive::ParShapeIndent
+            | tex_state::meaning::UnexpandablePrimitive::ParShapeDimen) => {
+                let value = scan_parshape_dimension(
+                    input, stores, recorder, hooks, expander, token, primitive,
+                )?;
+                Ok(push_rendered_text(
+                    stores,
+                    ExpansionReplayKind::TheOutput,
+                    &format_scaled(value),
+                    cause_origin,
+                ))
+            }
             tex_state::meaning::UnexpandablePrimitive::HyphenChar => {
                 let font = scan_font_selector(input, stores, recorder, hooks, expander, token)?;
                 recorder.record_dependency(ReadDependency::Font {
@@ -1236,6 +1249,39 @@ where
         tex_state::meaning::UnexpandablePrimitive::FontCharIc => metrics.italic_correction,
         _ => unreachable!("caller restricts font character dimension primitive"),
     })
+}
+
+pub(crate) fn scan_parshape_dimension<S, St, R, H, E>(
+    input: &mut InputStack<S>,
+    stores: &mut St,
+    recorder: &mut R,
+    hooks: &mut H,
+    expander: &mut E,
+    context: TracedTokenWord,
+    primitive: tex_state::meaning::UnexpandablePrimitive,
+) -> Result<Scaled, ExpandError>
+where
+    S: InputSource,
+    St: ExpansionState,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
+{
+    let number = scan_int::scan_int_with_expander_and_hooks(
+        input, stores, recorder, hooks, expander, context,
+    )?
+    .value();
+    recorder.record_dependency(ReadDependency::Engine(ReadEngineField::ParShape));
+    let (line, width) = match primitive {
+        tex_state::meaning::UnexpandablePrimitive::ParShapeLength => (number, true),
+        tex_state::meaning::UnexpandablePrimitive::ParShapeIndent => (number, false),
+        tex_state::meaning::UnexpandablePrimitive::ParShapeDimen if number > 0 => {
+            ((number + 1) / 2, number % 2 == 0)
+        }
+        tex_state::meaning::UnexpandablePrimitive::ParShapeDimen => (0, false),
+        _ => unreachable!("caller restricts primitive"),
+    };
+    Ok(stores.paragraph_shape_dimension(line, width))
 }
 
 fn scan_math_family<S, St, R, H, E>(
