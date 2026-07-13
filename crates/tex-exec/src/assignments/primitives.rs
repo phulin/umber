@@ -228,11 +228,13 @@ fn install_parameter_meanings(stores: &mut Universe) {
 
 /// Installs unexpandable primitives that exist only in e-TeX extended mode.
 pub fn install_etex_unexpandable_primitives(stores: &mut Universe) {
-    let symbol = stores.intern("protected");
-    stores.set_meaning(
-        symbol,
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Protected),
-    );
+    for (name, primitive) in [
+        ("protected", UnexpandablePrimitive::Protected),
+        ("readline", UnexpandablePrimitive::ReadLine),
+    ] {
+        let symbol = stores.intern(name);
+        stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
+    }
 }
 
 fn install_page_meanings(stores: &mut Universe) {

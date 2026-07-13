@@ -22,7 +22,7 @@ pass.
 | `\protected` | partial | Ordinary command demand expands the macro; `\edef`, `\write`, and analogous expansion-only contexts preserve it. Alignment-specific protected fetching and reference parity remain. |
 | `\unexpanded` | partial | Yields the raw balanced text as token-list expansion does: expansion-only consumers preserve it, while later command demand expands it. Reference parity remains. |
 | `\detokenize` | partial | Produces only catcode-10 spaces and catcode-12 other characters; every control word produces a trailing space, including the last. Reference parity remains. |
-| `\readline` | missing | Reads like `\read`, assigning space/other catcodes independent of the current regime. |
+| `\readline` | partial | Reads through the virtualized `\read` path with catcode-10 codepoint 32 and catcode-12 other characters, including `\endlinechar`; normalized transcript parity remains. |
 | `\scantokens` | missing | Serializes unexpanded general text as a pseudo-file, then reprocesses it through the input mechanism under current catcodes, including `^^` notation. |
 | `\everyeof` | missing | Inserts its tokens once at natural EOF for real and virtual files, but not for `\endinput`. |
 | `\unless` | partial | Negates the shared boolean-conditional evaluation path without adding pending input state; focused reference-error parity remains. |

@@ -83,6 +83,7 @@ pub(in crate::assignments) fn openout_target(name: String) -> String {
 }
 
 pub(in crate::assignments) fn execute_read<S, H>(
+    primitive: UnexpandablePrimitive,
     context: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
@@ -96,8 +97,18 @@ where
     if !scan_optional_keyword_x(input, stores, hooks, "to")? {
         return Err(ExecError::ReadNeedsTo);
     }
-    let target = scan_definition_target(input, stores, "\\read")?;
-    let tokens = scan_read_tokens(slot, target, stores)?;
+    let primitive_name = if primitive == UnexpandablePrimitive::ReadLine {
+        "\\readline"
+    } else {
+        "\\read"
+    };
+    let target = scan_definition_target(input, stores, primitive_name)?;
+    let tokens = scan_read_tokens(
+        slot,
+        target,
+        stores,
+        primitive == UnexpandablePrimitive::ReadLine,
+    )?;
     let replacement_text = stores.intern_token_list(&tokens);
     let parameter_text = stores.intern_token_list(&[]);
     stores.set_macro_meaning(
@@ -212,6 +223,7 @@ fn scan_read_tokens(
     slot: StreamSlot,
     target: Symbol,
     stores: &mut Universe,
+    raw_catcodes: bool,
 ) -> Result<Vec<Token>, ExecError> {
     let mut tokens = Vec::new();
     let mut depth = 0usize;
@@ -230,6 +242,10 @@ fn scan_read_tokens(
         let Some(line) = line else {
             return Err(ExecError::ReadNotImplemented);
         };
+        if raw_catcodes {
+            tokens.extend(tokenize_readline(&line, stores));
+            return Ok(tokens);
+        }
         if scan_read_line_tokens(&line, stores, &mut tokens, &mut depth)? {
             return Ok(tokens);
         }
@@ -246,6 +262,33 @@ fn scan_read_tokens(
             return Err(ExecError::FileEndedWithinRead);
         }
     }
+}
+
+fn tokenize_readline(line: &str, stores: &Universe) -> Vec<Token> {
+    let mut tokens = line
+        .chars()
+        .map(|ch| Token::Char {
+            ch,
+            cat: if ch == ' ' {
+                Catcode::Space
+            } else {
+                Catcode::Other
+            },
+        })
+        .collect::<Vec<_>>();
+    if let Ok(endline) = u32::try_from(stores.int_param(IntParam::END_LINE_CHAR))
+        && let Some(ch) = char::from_u32(endline)
+    {
+        tokens.push(Token::Char {
+            ch,
+            cat: if ch == ' ' {
+                Catcode::Space
+            } else {
+                Catcode::Other
+            },
+        });
+    }
+    tokens
 }
 
 fn read_terminal_read_line(

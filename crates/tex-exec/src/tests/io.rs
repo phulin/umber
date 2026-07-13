@@ -36,6 +36,55 @@ fn openin_read_defines_control_sequence_from_world_stream() {
 }
 
 #[test]
+fn readline_uses_only_space_and_other_catcodes() {
+    // e-TeX short reference manual section 3.2: unlike \read, \readline
+    // assigns catcode 10 to spaces and catcode 12 to every other character.
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    crate::install_etex_unexpandable_primitives(&mut stores);
+    stores.set_int_param(IntParam::END_LINE_CHAR, 13);
+    stores
+        .world_mut()
+        .set_memory_file("stream.tex", b"a {\\x".to_vec())
+        .expect("seed stream");
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\openin1=stream.tex \\readline1 to \\foo \\end",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("readline from opened stream");
+
+    let foo = stores.symbol("foo").expect("readline target was defined");
+    let replacement = stores
+        .macro_meaning(foo)
+        .expect("readline target is a macro")
+        .replacement_text();
+    let tokens = stores.tokens(replacement);
+    assert_eq!(
+        tokens
+            .iter()
+            .filter_map(|token| match token {
+                Token::Char { ch, .. } => Some(*ch),
+                _ => None,
+            })
+            .collect::<String>(),
+        "a {\\x\r"
+    );
+    assert!(tokens.iter().all(|token| matches!(
+        token,
+        Token::Char {
+            ch: ' ',
+            cat: Catcode::Space
+        } | Token::Char {
+            cat: Catcode::Other,
+            ..
+        }
+    )));
+}
+
+#[test]
 fn read_consumes_invalid_category_characters_without_unwinding() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);

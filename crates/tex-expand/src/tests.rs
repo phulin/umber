@@ -455,6 +455,8 @@ fn detokenize_outputs_space_and_other_character_tokens() {
 
 #[test]
 fn unless_inverts_boolean_conditionals_but_not_ifcase() {
+    // e-TeX short reference manual section 3.7 restricts \unless to boolean
+    // conditionals; \ifcase is deliberately excluded.
     let mut stores = Universe::new();
     install_expandable_primitives(&mut stores);
     crate::install_etex_expandable_primitives(&mut stores);

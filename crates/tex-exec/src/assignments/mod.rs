@@ -900,8 +900,8 @@ where
                 )?;
                 Ok(CommandOutcome::assigned())
             }
-            UnexpandablePrimitive::Read => {
-                execute_read(command.traced, input, stores, hooks)?;
+            UnexpandablePrimitive::Read | UnexpandablePrimitive::ReadLine => {
+                execute_read(primitive, command.traced, input, stores, hooks)?;
                 Ok(CommandOutcome::assigned())
             }
             UnexpandablePrimitive::Write => {
