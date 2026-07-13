@@ -455,3 +455,28 @@ fn numexpr_reports_arithmetic_overflow_as_a_recoverable_diagnostic() {
     assert_eq!(scanned.value(), 0);
     assert_eq!(scanned.diagnostic(), Some(IntegerDiagnostic::NumberTooBig));
 }
+
+#[test]
+fn glue_order_enquiries_report_exact_etex_order_codes() {
+    let mut stores = Universe::new();
+    for (name, primitive) in [
+        ("gluestretchorder", UnexpandablePrimitive::GlueStretchOrder),
+        ("glueshrinkorder", UnexpandablePrimitive::GlueShrinkOrder),
+    ] {
+        let symbol = stores.intern(name);
+        stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
+    }
+
+    assert_eq!(
+        scan_with_stores("\\gluestretchorder 0pt plus 2fill", &mut stores).0,
+        2
+    );
+    assert_eq!(
+        scan_with_stores("\\glueshrinkorder 0pt minus 3filll", &mut stores).0,
+        3
+    );
+    assert_eq!(
+        scan_with_stores("\\gluestretchorder 0pt plus 2pt", &mut stores).0,
+        0
+    );
+}

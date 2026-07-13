@@ -103,6 +103,39 @@ fn glueexpr_retains_component_order_when_scaling_to_zero() {
     assert_eq!(stores.glue(scanned.id()).stretch_order, Order::Normal);
 }
 
+#[test]
+fn glue_unit_conversions_preserve_all_components_and_orders() {
+    let mut stores = Universe::new();
+    for (name, primitive) in [
+        ("gluetomu", UnexpandablePrimitive::GlueToMu),
+        ("mutoglue", UnexpandablePrimitive::MuToGlue),
+    ] {
+        let symbol = stores.intern(name);
+        stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
+    }
+
+    let mut input = InputStack::new(MemoryInput::new("\\gluetomu 2pt plus 3fill minus 4fil"));
+    let converted = scan_muglue(&mut input, &mut stores, context()).expect("glue converts to mu");
+    assert_eq!(
+        stores.glue(converted.id()),
+        GlueSpec {
+            width: Scaled::from_raw(2 * Scaled::UNITY),
+            stretch: Scaled::from_raw(3 * Scaled::UNITY),
+            stretch_order: Order::Fill,
+            shrink: Scaled::from_raw(4 * Scaled::UNITY),
+            shrink_order: Order::Fil,
+        }
+    );
+
+    let mut input = InputStack::new(MemoryInput::new("\\mutoglue 5mu plus 6fil minus 7mu"));
+    let converted = scan_glue(&mut input, &mut stores, context()).expect("mu converts to glue");
+    let spec = stores.glue(converted.id());
+    assert_eq!(spec.width.raw(), 5 * Scaled::UNITY);
+    assert_eq!(spec.stretch.raw(), 6 * Scaled::UNITY);
+    assert_eq!(spec.stretch_order, Order::Fil);
+    assert_eq!(spec.shrink.raw(), 7 * Scaled::UNITY);
+}
+
 fn install_exprs(stores: &mut Universe) {
     for (name, primitive) in [
         ("glueexpr", UnexpandablePrimitive::GlueExpr),

@@ -146,6 +146,27 @@ fn dimexpr_recovers_to_zero_after_intermediate_overflow() {
 }
 
 #[test]
+fn glue_component_enquiries_return_raw_scaled_dimensions() {
+    let mut stores = Universe::new();
+    for (name, primitive) in [
+        ("gluestretch", UnexpandablePrimitive::GlueStretch),
+        ("glueshrink", UnexpandablePrimitive::GlueShrink),
+    ] {
+        let symbol = stores.intern(name);
+        stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
+    }
+
+    assert_eq!(
+        scan_with_stores("\\gluestretch 0pt plus 2fill", &mut stores).0,
+        2 * Scaled::UNITY
+    );
+    assert_eq!(
+        scan_with_stores("\\glueshrink 0pt minus 1.5fil", &mut stores).0,
+        98_304
+    );
+}
+
+#[test]
 fn scans_fractional_decimal_constants_with_dot_and_comma() {
     assert_eq!(scan("1.5pt x").0, 98_304);
     assert_eq!(scan("1,25pt x").0, 81_920);
