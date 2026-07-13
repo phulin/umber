@@ -372,7 +372,7 @@ where
 {
     let mut depth = 1usize;
     let mut builder = stores.token_list_builder();
-    while let Some(traced) = input.next_traced_token(stores)? {
+    while let Some(traced) = tex_expand::next_semantic_raw_token(input, stores)? {
         let token = tex_expand::semantic_token(traced);
         let meaning = match token {
             Token::Cs(symbol) => stores.meaning(symbol),

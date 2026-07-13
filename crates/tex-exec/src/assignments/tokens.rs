@@ -32,28 +32,26 @@ where
     H: ExpansionHooks<S>,
 {
     let mut recorder = NoopRecorder;
-    let token = loop {
+    let traced = loop {
         let Some(token) = get_x_token_with_recorder_and_hooks(input, stores, &mut recorder, hooks)?
-            .map(tex_expand::semantic_token)
         else {
             return Err(ExecError::MissingToken {
                 context: "assignment value",
             });
         };
-        if !is_space(token) {
+        if !is_space(tex_expand::semantic_token(token)) {
             break token;
         }
     };
-    if !is_other_equals(token) {
-        push_tokens(input, stores, [token]);
+    if !is_other_equals(tex_expand::semantic_token(traced)) {
+        tex_expand::back_input(input, stores, [traced]);
     } else {
         let Some(next) = get_x_token_with_recorder_and_hooks(input, stores, &mut recorder, hooks)?
-            .map(tex_expand::semantic_token)
         else {
             return Ok(());
         };
-        if !is_space(next) {
-            push_tokens(input, stores, [next]);
+        if !is_space(tex_expand::semantic_token(next)) {
+            tex_expand::back_input(input, stores, [next]);
         }
     }
     Ok(())

@@ -1498,6 +1498,19 @@ fn nested_alignment_executes_inside_cell() {
 }
 
 #[test]
+fn token_parameter_assignment_before_nested_alignment_preserves_outer_brace_depth() {
+    let stores = run_boxed_alignment_source(
+        "\\def\\ialign{\\everycr{}\\tabskip=0pt \\halign}\\def\\inner{{\\vtop{\\ialign{##\\cr x\\cr}}}}\\halign{#\\cr \\inner\\cr y\\cr}",
+    );
+    let vbox = box_zero_vlist(&stores);
+    let rows = vlist_rows(&stores, vbox);
+
+    assert_eq!(rows.len(), 2);
+    assert_eq!(cell_text(&stores, row_cells(&stores, rows[1])[0]), "y");
+    assert_no_unset(&stores, stores.nodes(vbox.children).testing_decoded());
+}
+
+#[test]
 fn nested_alignment_in_template_does_not_end_outer_preamble() {
     let (stores, state) = scan_halign_preamble("{\\vbox{\\halign{#\\cr x\\cr}}#\\cr}");
     let template = stores.tokens(state.columns()[0].v_template);
