@@ -2,6 +2,7 @@ use super::{PrepareMagDiagnostic, Stores};
 use crate::env::banks::{DimenParam, GlueParam, IntParam};
 use crate::font::NULL_FONT;
 use crate::glue::{GlueSpec, Order};
+use crate::hyphenation::{ExceptionSpec, PatternSpec};
 use crate::ids::{ArenaRef, GlueId, NodeListId, OriginListId};
 use crate::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use crate::math::{
@@ -178,6 +179,63 @@ fn semantic_hash_scratch_reuses_capacity_but_store_clone_does_not_copy_it() {
     assert_eq!(
         cloned.semantic_hash_cache.testing_scratch_capacities(),
         (0, 0, 0)
+    );
+}
+
+#[test]
+fn semantic_hash_only_walks_hyphenation_after_root_changes() {
+    let mut stores = Stores::new();
+    let initial_cursor = stores.state_hash_cursor();
+    let initial = stores.checkpoint();
+    let _ = stores.state_hash_slice(&initial_cursor, &initial);
+    assert_eq!(
+        stores.semantic_hash_cache.testing_hyphenation_hash_calls(),
+        0
+    );
+
+    stores.add_hyphenation_pattern(PatternSpec {
+        letters: "alpha".chars().collect(),
+        values: vec![0, 1, 0, 0, 0, 0],
+    });
+    let with_pattern = stores.checkpoint();
+    let _ = stores.state_hash_slice(&initial_cursor, &with_pattern);
+    assert_eq!(
+        stores.semantic_hash_cache.testing_hyphenation_hash_calls(),
+        1
+    );
+
+    let pattern_cursor = stores.state_hash_cursor_from_snapshot(&with_pattern);
+    stores.set_count(0, 1);
+    let unrelated_change = stores.checkpoint();
+    let _ = stores.state_hash_slice(&pattern_cursor, &unrelated_change);
+    assert_eq!(
+        stores.semantic_hash_cache.testing_hyphenation_hash_calls(),
+        1,
+        "an unrelated state change must not rehash the retained hyphenation root"
+    );
+
+    stores.add_hyphenation_exception(ExceptionSpec {
+        word: "hyphenation".to_owned(),
+        positions: vec![2, 6],
+    });
+    let with_exception = stores.checkpoint();
+    let _ = stores.state_hash_slice(
+        &stores.state_hash_cursor_from_snapshot(&unrelated_change),
+        &with_exception,
+    );
+    assert_eq!(
+        stores.semantic_hash_cache.testing_hyphenation_hash_calls(),
+        2
+    );
+
+    stores.rollback(&with_pattern);
+    stores.set_count(0, 2);
+    let after_rollback = stores.checkpoint();
+    let _ = stores.state_hash_slice(&pattern_cursor, &after_rollback);
+    assert_eq!(
+        stores.semantic_hash_cache.testing_hyphenation_hash_calls(),
+        2,
+        "rollback must restore the retained root identity used by the cursor"
     );
 }
 

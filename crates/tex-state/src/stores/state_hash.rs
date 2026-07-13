@@ -30,6 +30,8 @@ pub(super) struct SemanticHashCache {
     first_old: Vec<(CellId, usize, u64)>,
     changed_cells: Vec<CellId>,
     node_frames: Vec<NodeFrame>,
+    #[cfg(test)]
+    hyphenation_hash_calls: usize,
 }
 
 impl Clone for SemanticHashCache {
@@ -39,6 +41,8 @@ impl Clone for SemanticHashCache {
             first_old: Vec::new(),
             changed_cells: Vec::new(),
             node_frames: Vec::new(),
+            #[cfg(test)]
+            hyphenation_hash_calls: 0,
         }
     }
 }
@@ -58,6 +62,11 @@ impl SemanticHashCache {
             self.changed_cells.capacity(),
             self.node_frames.capacity(),
         )
+    }
+
+    #[cfg(test)]
+    pub(super) const fn testing_hyphenation_hash_calls(&self) -> usize {
+        self.hyphenation_hash_calls
     }
 }
 
@@ -203,10 +212,23 @@ impl Stores {
         self.hash_journal_changed_cells(start, end, &mut cache, &mut hasher);
         self.semantic_hash_cache = cache;
         self.hash_code_tables(&mut hasher);
-        self.hyphenation.hash_semantic(&mut hasher);
+        self.hash_hyphenation_slice(start, &mut hasher);
         hash_prepared_mag(self.prepared_mag, &mut hasher);
         hash_font_semantic_key(&self.font_semantic_key(self.last_loaded_font), &mut hasher);
         hasher.finish()
+    }
+
+    fn hash_hyphenation_slice(&mut self, start: &StoreStateHashCursor, hasher: &mut StateHasher) {
+        hasher.tag(0x21);
+        let changed = !std::sync::Arc::ptr_eq(&start.hyphenation_root.0, &self.hyphenation);
+        hasher.bool(changed);
+        if changed {
+            #[cfg(test)]
+            {
+                self.semantic_hash_cache.hyphenation_hash_calls += 1;
+            }
+            self.hyphenation.hash_semantic(hasher);
+        }
     }
 
     pub(crate) fn hash_token_list_semantic(&self, id: TokenListId, hasher: &mut StateHasher) {
