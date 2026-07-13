@@ -111,6 +111,33 @@ fn restricted_character_definitions_report_and_substitute_zero() {
 }
 
 #[test]
+fn the_renders_chardef_and_mathchardef_as_internal_integers() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\chardef\\A=65 \\mathchardef\\M=32767 \
+         \\edef\\result{\\the\\A/\\the\\M}",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("the renders character definitions");
+
+    let result = stores.symbol("result").expect("result macro");
+    let result = stores.macro_meaning(result).expect("result meaning");
+    let text = stores
+        .tokens(result.replacement_text())
+        .iter()
+        .filter_map(|token| match token {
+            Token::Char { ch, .. } => Some(*ch),
+            _ => None,
+        })
+        .collect::<String>();
+    assert_eq!(text, "65/32767");
+}
+
+#[test]
 fn register_definition_target_terminates_its_own_number_scan() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

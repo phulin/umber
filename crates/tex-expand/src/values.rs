@@ -590,6 +590,18 @@ where
             &hooks.last_node_type().to_string(),
             cause_origin,
         )),
+        Meaning::CharGiven(ch) => Ok(push_rendered_text(
+            stores,
+            ExpansionReplayKind::TheOutput,
+            &(ch as u32).to_string(),
+            cause_origin,
+        )),
+        Meaning::MathCharGiven(value) => Ok(push_rendered_text(
+            stores,
+            ExpansionReplayKind::TheOutput,
+            &value.to_string(),
+            cause_origin,
+        )),
         Meaning::DimenParam(index) => Ok(push_rendered_text(
             stores,
             ExpansionReplayKind::TheOutput,
