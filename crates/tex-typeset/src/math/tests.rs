@@ -76,6 +76,35 @@ fn deeply_nested_sub_mlists_use_an_explicit_work_stack() {
 }
 
 #[test]
+fn deeply_nested_sub_boxes_use_an_explicit_work_stack() {
+    let mut universe = Universe::new();
+    let mut children = universe.freeze_node_list(&[]);
+    for _ in 0..20_000 {
+        let boxed = Node::HList(BoxNode::new(BoxNodeFields {
+            width: sc(1),
+            height: sc(1),
+            depth: sc(0),
+            shift: sc(0),
+            display: false,
+            glue_set: GlueSetRatio::from_raw(0),
+            glue_sign: Sign::Normal,
+            glue_order: Order::Normal,
+            children,
+        }));
+        children = universe.freeze_node_list(&[boxed]);
+    }
+    let input = universe.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+        NoadKind::Normal(NoadClass::Ord),
+        MathField::SubBox(children),
+    ))]);
+    let params = MathParams::read(&universe);
+
+    let layout = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
+
+    assert!(!layout.root().is_empty());
+}
+
+#[test]
 fn math_choice_preserves_the_full_cramped_style() {
     let mut universe = setup_universe();
     let mut scripted = noad(NoadClass::Ord, 'b');
@@ -94,6 +123,32 @@ fn math_choice_preserves_the_full_cramped_style() {
     let through_choice = mlist_to_hlist(&universe, choice, cramped, false, &params);
 
     assert_eq!(through_choice, direct);
+}
+
+#[test]
+fn structural_dependency_order_is_deterministic() {
+    let mut universe = setup_universe();
+    let left = universe.freeze_node_list(&[Node::MathNoad(noad(NoadClass::Ord, 'b'))]);
+    let right = universe.freeze_node_list(&[Node::MathNoad(noad(NoadClass::Ord, 'c'))]);
+    let input = universe.freeze_node_list(&[
+        Node::MathNoad(MathNoad::new(
+            NoadKind::Normal(NoadClass::Ord),
+            MathField::SubMlist(left),
+        )),
+        Node::MathNoad(MathNoad::new(
+            NoadKind::Normal(NoadClass::Ord),
+            MathField::SubMlist(right),
+        )),
+    ]);
+    let params = MathParams::read(&universe);
+    let expected = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
+
+    for _ in 0..32 {
+        assert_eq!(
+            mlist_to_hlist(&universe, input, Style::TEXT, false, &params),
+            expected
+        );
+    }
 }
 
 #[test]

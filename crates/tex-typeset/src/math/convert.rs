@@ -58,8 +58,9 @@ fn build_math_layout(
         mu: math_unit(params, style),
         layout: MathLayoutBuilder::new(),
         converted: HashMap::new(),
+        source_lists: HashMap::new(),
     };
-    prepare_nested_mlists(&mut ctx, input);
+    prepare_nested_mlists(&mut ctx, input, style);
     let root = convert_mlist_uncached(&mut ctx, input, style, penalties);
     ctx.layout.finish(root)
 }
@@ -348,21 +349,15 @@ fn expand_math_choices(
     }
 }
 
-const ALL_STYLES: [Style; 8] = [
-    Style::DISPLAY,
-    Style::new(StyleFamily::Display, true),
-    Style::TEXT,
-    Style::new(StyleFamily::Text, true),
-    Style::SCRIPT,
-    Style::new(StyleFamily::Script, true),
-    Style::SCRIPT_SCRIPT,
-    Style::new(StyleFamily::ScriptScript, true),
-];
-
 /// Converts structural sub-mlists bottom-up so Appendix G conversion never
 /// follows a source-list edge on the Rust call stack. Math-choice branches are
 /// scanned as inline views, matching rule 4, rather than converted separately.
-fn prepare_nested_mlists<S: MathTypesetState>(ctx: &mut Context<'_, S>, root: NodeListId) {
+fn prepare_nested_mlists<S: MathTypesetState>(
+    ctx: &mut Context<'_, S>,
+    root: NodeListId,
+    root_style: Style,
+) {
+    let root = (root, root_style);
     let mut visiting = HashSet::new();
     let mut completed = HashSet::new();
     let mut stack = vec![(root, false)];
@@ -382,55 +377,80 @@ fn prepare_nested_mlists<S: MathTypesetState>(ctx: &mut Context<'_, S>, root: No
             "math source lists must not contain structural cycles"
         );
         stack.push((list, true));
-        for dependency in direct_submlists(ctx.state, list) {
+        let dependencies = nested_mlist_requests(ctx.state, list.0, list.1);
+        for dependency in dependencies.into_iter().rev() {
             stack.push((dependency, false));
         }
     }
 
-    for list in postorder.into_iter().filter(|list| *list != root) {
-        for style in ALL_STYLES {
-            let converted = convert_mlist_uncached(ctx, list, style, false);
-            ctx.converted.insert((list, style), converted);
-        }
+    for (list, style) in postorder.into_iter().filter(|key| *key != root) {
+        let converted = convert_mlist_uncached(ctx, list, style, false);
+        ctx.converted.insert((list, style), converted);
     }
 }
 
-fn direct_submlists(state: &impl MathTypesetState, root: NodeListId) -> Vec<NodeListId> {
-    fn add_field(field: &MathField, out: &mut HashSet<NodeListId>) {
+fn nested_mlist_requests(
+    state: &impl MathTypesetState,
+    root: NodeListId,
+    starting_style: Style,
+) -> Vec<(NodeListId, Style)> {
+    fn add_field(
+        field: &MathField,
+        style: Style,
+        out: &mut Vec<(NodeListId, Style)>,
+        seen: &mut HashSet<(NodeListId, Style)>,
+    ) {
         if let MathField::SubMlist(list) = field {
-            out.insert(*list);
-        }
-    }
-
-    let mut out = HashSet::new();
-    let mut choice_lists = vec![root];
-    let mut visited = HashSet::new();
-    while let Some(list) = choice_lists.pop() {
-        if !visited.insert(list) {
-            continue;
-        }
-        for node in state.nodes(list) {
-            match node.to_owned() {
-                Node::MathNoad(noad) => {
-                    add_field(&noad.nucleus, &mut out);
-                    add_field(&noad.subscript, &mut out);
-                    add_field(&noad.superscript, &mut out);
-                }
-                Node::FractionNoad(fraction) => {
-                    out.insert(fraction.numerator);
-                    out.insert(fraction.denominator);
-                }
-                Node::MathChoice(choice) => choice_lists.extend([
-                    choice.display,
-                    choice.text,
-                    choice.script,
-                    choice.script_script,
-                ]),
-                _ => {}
+            let request = (*list, style);
+            if seen.insert(request) {
+                out.push(request);
             }
         }
     }
-    out.into_iter().collect()
+
+    let view = expand_math_choices(state, root, starting_style);
+    let mut style = starting_style;
+    let mut markers = view.marker_styles.into_iter();
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    for node in view.nodes {
+        match node {
+            Node::MathStyle(_) => {
+                style = markers
+                    .next()
+                    .expect("expanded style marker must retain its full style");
+            }
+            Node::MathNoad(noad) => {
+                let nucleus_style = if matches!(
+                    noad.kind,
+                    NoadKind::Radical { .. } | NoadKind::Accent { .. } | NoadKind::Overline
+                ) {
+                    style.cramped_style()
+                } else {
+                    style
+                };
+                add_field(&noad.nucleus, nucleus_style, &mut out, &mut seen);
+                add_field(&noad.subscript, style.sub_style(), &mut out, &mut seen);
+                add_field(&noad.superscript, style.sup_style(), &mut out, &mut seen);
+            }
+            Node::FractionNoad(fraction) => {
+                add_field(
+                    &MathField::SubMlist(fraction.numerator),
+                    style.num_style(),
+                    &mut out,
+                    &mut seen,
+                );
+                add_field(
+                    &MathField::SubMlist(fraction.denominator),
+                    style.denom_style(),
+                    &mut out,
+                    &mut seen,
+                );
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 fn translate_noad<S: MathTypesetState>(
@@ -701,12 +721,48 @@ pub(crate) fn source_list(
     ctx: &mut Context<'_, impl MathTypesetState>,
     list: NodeListId,
 ) -> FrozenHList {
-    let source = ctx.state.nodes(list).to_vec();
-    let nodes = source
-        .iter()
-        .map(|node| source_node(ctx, node))
-        .collect::<Vec<_>>();
-    ctx.layout.hlist(nodes)
+    if let Some(converted) = ctx.source_lists.get(&list) {
+        return *converted;
+    }
+
+    let mut stack = vec![(list, false)];
+    let mut visiting = HashSet::new();
+    while let Some((current, expanded)) = stack.pop() {
+        if ctx.source_lists.contains_key(&current) {
+            continue;
+        }
+        if expanded {
+            visiting.remove(&current);
+            let source = ctx.state.nodes(current).to_vec();
+            let nodes = source
+                .iter()
+                .map(|node| source_node(ctx, node))
+                .collect::<Vec<_>>();
+            let converted = ctx.layout.hlist(nodes);
+            ctx.source_lists.insert(current, converted);
+            continue;
+        }
+        assert!(
+            visiting.insert(current),
+            "source box lists must not contain structural cycles"
+        );
+        stack.push((current, true));
+        let mut children = ctx
+            .state
+            .nodes(current)
+            .iter()
+            .filter_map(|node| match node {
+                tex_state::node_arena::NodeRef::HList(boxed)
+                | tex_state::node_arena::NodeRef::VList(boxed) => Some(boxed.children),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        children.reverse();
+        stack.extend(children.into_iter().map(|child| (child, false)));
+    }
+    *ctx.source_lists
+        .get(&list)
+        .expect("source-list postorder conversion must produce its root")
 }
 
 pub(crate) fn source_node(ctx: &mut Context<'_, impl MathTypesetState>, node: &Node) -> MathNode {
@@ -815,6 +871,7 @@ pub(crate) struct Context<'a, S> {
     pub(crate) mu: Scaled,
     pub(crate) layout: MathLayoutBuilder,
     pub(crate) converted: HashMap<(NodeListId, Style), FrozenHList>,
+    pub(crate) source_lists: HashMap<NodeListId, FrozenHList>,
 }
 
 impl<S> Context<'_, S> {

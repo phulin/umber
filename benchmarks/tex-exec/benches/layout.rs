@@ -105,6 +105,20 @@ fn math(c: &mut Criterion) {
         })
     });
 
+    let (nested_state, nested) = deep_math_submlists(DEEP_MATH_LEVELS);
+    let nested_params = MathParams::read(&nested_state);
+    group.bench_function("deep_submlist_stack", |b| {
+        b.iter(|| {
+            black_box(mlist_to_hlist(
+                black_box(&nested_state),
+                nested,
+                Style::TEXT,
+                false,
+                black_box(&nested_params),
+            ))
+        })
+    });
+
     let mut repeated_state = Universe::new();
     let noads = (0..REPEATED_MATH_NOADS)
         .map(|_| {
@@ -143,6 +157,18 @@ fn deep_math_choices(levels: usize) -> (Universe, tex_state::ids::NodeListId) {
         })]);
     }
     (state, selected)
+}
+
+fn deep_math_submlists(levels: usize) -> (Universe, tex_state::ids::NodeListId) {
+    let mut state = Universe::new();
+    let mut nested = state.freeze_node_list(&[]);
+    for _ in 0..levels {
+        nested = state.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+            NoadKind::Normal(NoadClass::Ord),
+            MathField::SubMlist(nested),
+        ))]);
+    }
+    (state, nested)
 }
 
 fn line_params() -> LineBreakParams {

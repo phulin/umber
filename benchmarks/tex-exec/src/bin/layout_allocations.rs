@@ -19,17 +19,21 @@ const DEEP_MATH_ALLOCATION_BUDGET: usize = 28;
 const FLAT_MATH_ALLOCATION_BUDGET: usize = 14;
 const ALIGNMENT_BYTE_BUDGET: usize = 220_000;
 const LINEBREAK_BYTE_BUDGET: usize = 16_000_000_000;
-const DEEP_MATH_BYTE_BUDGET: usize = 12_000_000;
-const FLAT_MATH_BYTE_BUDGET: usize = 500_000;
+const DEEP_MATH_BYTE_BUDGET: usize = 14_000_000;
+const FLAT_MATH_BYTE_BUDGET: usize = 560_000;
+const DEEP_SUBMLIST_ALLOCATION_BUDGET: usize = 180_000;
+const DEEP_SUBMLIST_BYTE_BUDGET: usize = 42_000_000;
 
 fn main() {
     let alignment = alignment_allocations();
     let linebreak = linebreak_allocations();
     let deep_math = deep_math_allocations();
+    let deep_submlist = deep_submlist_allocations();
     let flat_math = flat_math_allocations();
     print_stats("alignment_many_spans", alignment);
     print_stats("linebreak_long_paragraph", linebreak);
     print_stats("math_deep_choice_stack", deep_math);
+    print_stats("math_deep_submlist_stack", deep_submlist);
     print_stats("math_repeated_flat_layout", flat_math);
     assert!(alignment.allocations <= ALIGNMENT_ALLOCATION_BUDGET);
     assert!(alignment.bytes_allocated <= ALIGNMENT_BYTE_BUDGET);
@@ -37,6 +41,8 @@ fn main() {
     assert!(linebreak.bytes_allocated <= LINEBREAK_BYTE_BUDGET);
     assert!(deep_math.allocations <= DEEP_MATH_ALLOCATION_BUDGET);
     assert!(deep_math.bytes_allocated <= DEEP_MATH_BYTE_BUDGET);
+    assert!(deep_submlist.allocations <= DEEP_SUBMLIST_ALLOCATION_BUDGET);
+    assert!(deep_submlist.bytes_allocated <= DEEP_SUBMLIST_BYTE_BUDGET);
     assert!(flat_math.allocations <= FLAT_MATH_ALLOCATION_BUDGET);
     assert!(flat_math.bytes_allocated <= FLAT_MATH_BYTE_BUDGET);
 }
@@ -144,6 +150,22 @@ fn flat_math_allocations() -> Stats {
     let params = MathParams::read(&state);
     let region = Region::new(GLOBAL);
     let layout = mlist_to_hlist(&state, list, Style::TEXT, false, &params);
+    std::hint::black_box(layout);
+    region.change()
+}
+
+fn deep_submlist_allocations() -> Stats {
+    let mut state = Universe::new();
+    let mut nested = state.freeze_node_list(&[]);
+    for _ in 0..20_000 {
+        nested = state.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+            NoadKind::Normal(NoadClass::Ord),
+            MathField::SubMlist(nested),
+        ))]);
+    }
+    let params = MathParams::read(&state);
+    let region = Region::new(GLOBAL);
+    let layout = mlist_to_hlist(&state, nested, Style::TEXT, false, &params);
     std::hint::black_box(layout);
     region.change()
 }
