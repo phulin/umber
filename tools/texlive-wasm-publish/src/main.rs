@@ -28,6 +28,14 @@ fn main() -> Result<()> {
             root.path = parent.join(&root.path);
         }
     }
+    for format in &mut config.formats {
+        if format.path.is_relative() {
+            format.path = parent.join(&format.path);
+        }
+        if format.metadata.is_relative() {
+            format.metadata = parent.join(&format.metadata);
+        }
+    }
     publish(&config, Path::new(&output_path))?;
     Ok(())
 }

@@ -149,6 +149,21 @@ function prepareMessage(options, userFiles, resolver, wasmUrl) {
 			"resolver.manifestUrl is required",
 		);
 	}
+	if (options.format !== undefined && resolver.format !== undefined) {
+		throw new WorkerCompileError(
+			"invalid-options",
+			"options.format and resolver.format cannot both be provided",
+		);
+	}
+	if (
+		resolver.format !== undefined &&
+		(typeof resolver.format !== "string" || resolver.format.length === 0)
+	) {
+		throw new WorkerCompileError(
+			"invalid-options",
+			"resolver.format must be a nonempty string",
+		);
+	}
 	const transfer = [];
 	const clonedOptions = { ...options };
 	if (options.format !== undefined) {
@@ -178,6 +193,7 @@ function prepareMessage(options, userFiles, resolver, wasmUrl) {
 				manifestUrl: resolver.manifestUrl,
 				persistentCache: resolver.persistentCache,
 				concurrency: resolver.concurrency,
+				format: resolver.format,
 			},
 			wasmUrl,
 		},

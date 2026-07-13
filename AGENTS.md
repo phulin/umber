@@ -47,6 +47,7 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - `tests/`: committed fixtures and parity test definitions.
 - `docs/`: architecture, phase, and design documents.
 - `scripts/`: local development scripts and versioned git hook templates.
+- `scripts/build-wasm-plain-format.sh`: reproducible pinned TeX Live 2025 to Umber-native Plain format build and equivalence gate.
 - `third_party/`: ignored reference downloads and external source archives.
 
 ## Development

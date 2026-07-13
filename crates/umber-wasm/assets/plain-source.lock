@@ -1,0 +1,54 @@
+# Exact TeX Live 2025 texmf-dist inputs for the Umber Plain format.
+# Fields are: source <staged-name> <texmf-dist-relative-path> <sha256>.
+distribution texlive-2025
+format_schema 4
+source_date_epoch 0
+source plain.tex tex/plain/base/plain.tex 7c1223b880fa513542a616b86c4fa02d5ee703839427951982d7e311fd9049b2
+source hyphen.tex tex/generic/hyphen/hyphen.tex 2c18acdc04c1a066aeb1759905e7ca449f0616c314b5ed6aebe55b9d4a89b8d4
+source cmbsy10.tfm fonts/tfm/public/cm/cmbsy10.tfm b5a0bf8a30db124f56f4e48237b510be6b1a78886da1540f2394ddfaf3186c25
+source cmbx10.tfm fonts/tfm/public/cm/cmbx10.tfm ae296e8e41b2b0f73e9a17fdc42c743b9ddcc58d23c30acaa3411206f7824780
+source cmbx5.tfm fonts/tfm/public/cm/cmbx5.tfm a746151d8e3a521965bbfae2666e1528374a514375daa7d620e9b89ebbbfb0ae
+source cmbx6.tfm fonts/tfm/public/cm/cmbx6.tfm 38ded79d7cce07fa28921f37f6b88e67bd86951a3e5af709c219d63454786ce1
+source cmbx7.tfm fonts/tfm/public/cm/cmbx7.tfm e7b284f0ee98b7773be9b57ca652b4bb14391370509a424b5b62b06b5cae86e4
+source cmbx8.tfm fonts/tfm/public/cm/cmbx8.tfm 6dab44c885b7cbf567771d9cfa565f3df34d0e8124132b9b6f9fdc496a1c2eda
+source cmbx9.tfm fonts/tfm/public/cm/cmbx9.tfm 9fb9cbe254c828bc6bdcc0ca66f81b6cb9b713edf0ef1b7fa67e231920112499
+source cmcsc10.tfm fonts/tfm/public/cm/cmcsc10.tfm 0d691f70f365e55b83096764fe0c65338842d704bd5b979ed0c6882f9e17ce0d
+source cmdunh10.tfm fonts/tfm/public/cm/cmdunh10.tfm a94093bba5082a6e63fc95dd9bf4d10a8152a2a5f9e3913ab04dd6f60974d843
+source cmex10.tfm fonts/tfm/public/cm/cmex10.tfm 0890bccea1dd4d27f001ac30e86c63af35bc803e0557c35aafb1903c8d208e92
+source cmmi10.tfm fonts/tfm/public/cm/cmmi10.tfm e442c5487f84df70218ff37f775c87060856f5b6e04c011b6cadbbadfcf46645
+source cmmi5.tfm fonts/tfm/public/cm/cmmi5.tfm 8839e40838381a0a3c976bdd5becf72afd60bde5a965c3d9b985c3479c6cf75e
+source cmmi6.tfm fonts/tfm/public/cm/cmmi6.tfm ab6ecb4aaba9ca1b4259b1d1f64309a785bbaeb09183fd79a066b7764a448a28
+source cmmi7.tfm fonts/tfm/public/cm/cmmi7.tfm ce55681703aae565f17286d800ea9780223132589bdbaeda1751b869aba26a38
+source cmmi8.tfm fonts/tfm/public/cm/cmmi8.tfm 65af8c1e162a952cab8e93c834fcf43ce09b508e6c16e512ebb673cd850b0d41
+source cmmi9.tfm fonts/tfm/public/cm/cmmi9.tfm 20672649a2f07eef8fe07ccb42eeb731023e48f2e0797ecef57c0887da46c032
+source cmmib10.tfm fonts/tfm/public/cm/cmmib10.tfm 4465d20955917959c68d0254647e5caba1f38c4516a1fd212eab2da9b8645874
+source cmr10.tfm fonts/tfm/public/cm/cmr10.tfm 87f2d8981927644cbecaf3d639e96e348ea4e7be49d8804468bd8ba9ff3f5244
+source cmr5.tfm fonts/tfm/public/cm/cmr5.tfm 581be818f67bd11a1792d05e129abe3ea30c5cbdfce3bed8da7c5fb50f5ba95b
+source cmr6.tfm fonts/tfm/public/cm/cmr6.tfm 106afa9172f0c00e58b9f5cbc72b302a18aaeeaddf50caca145af9cc0b81afd2
+source cmr7.tfm fonts/tfm/public/cm/cmr7.tfm 28f9f4d237bdae4babef4a59d90f17686a09d6f9df0b2c3c23b2ba15f20eee82
+source cmr8.tfm fonts/tfm/public/cm/cmr8.tfm 4c5ae243ac0aa254e7ec7f0602cc2a4351e5011ff0cb6dc150a5f6de19585de6
+source cmr9.tfm fonts/tfm/public/cm/cmr9.tfm 2ffa73e8446c1d46c3509a0f65ff97d4d09de46f48e1ce578a1004498b67dba9
+source cmsl10.tfm fonts/tfm/public/cm/cmsl10.tfm dcbfc25c5aac16dc2b820e089a00aedef20a1af6d8d3c2efa54f6f17a985d33f
+source cmsl8.tfm fonts/tfm/public/cm/cmsl8.tfm 581080f4ebd96f58b4b6f774ea2882f5e83fef7c932647a7c957f7e8db1f7823
+source cmsl9.tfm fonts/tfm/public/cm/cmsl9.tfm bb0f9deb6852caed902cb04bfc8e8333345a37946bd0b6bd56d11848e729d3ca
+source cmsltt10.tfm fonts/tfm/public/cm/cmsltt10.tfm c093023e8958e30678808a843f4f4248f5ab609f8994182fded845590fe19cc3
+source cmss10.tfm fonts/tfm/public/cm/cmss10.tfm 431472f34665b6243a32936215f2e17d1f124cdf8513e86e2bedc4c3de3f980b
+source cmssbx10.tfm fonts/tfm/public/cm/cmssbx10.tfm 59fcefaa9436cb00b1579a549b4a16b38606bb1b6138743d05ea35a74f168f54
+source cmssi10.tfm fonts/tfm/public/cm/cmssi10.tfm 9faee1d46e86de1eb7a8f7a53522d15fa8f06e75d292d8e6989dfcd252b322c7
+source cmssq8.tfm fonts/tfm/public/cm/cmssq8.tfm a813de9f318949969010f4a363b2c3076e5cefa4436e779404453b2c34435504
+source cmssqi8.tfm fonts/tfm/public/cm/cmssqi8.tfm 78673efe5657b8a293e160c0ac88834778cf9a5ed1922a0bfcca3f5562c17f88
+source cmsy10.tfm fonts/tfm/public/cm/cmsy10.tfm 0ca13d421ac7133271aed7c935099ecf3d1d08ac9e15f81acb34a16564ab8a46
+source cmsy5.tfm fonts/tfm/public/cm/cmsy5.tfm 6b7dc18cba9ca8996d7b146f1ed78d9227577b26248083310fec227692198ca5
+source cmsy6.tfm fonts/tfm/public/cm/cmsy6.tfm 137eb9f38f661c66309614066a7b5d63d8969d33aba0c9efee9f844a4ce65b50
+source cmsy7.tfm fonts/tfm/public/cm/cmsy7.tfm 4f59bbf683e947c807158641621982dc83f55fec042fea7963d8ce9f9da98256
+source cmsy8.tfm fonts/tfm/public/cm/cmsy8.tfm 84c37f07ca360c41ad0a0fba7387d279d72457c69bdae03653208c683d8de6bc
+source cmsy9.tfm fonts/tfm/public/cm/cmsy9.tfm b57c5c42a7991a004ee1b40b340d7bd12cc75ab0a6f7daf7a207827504f91712
+source cmti10.tfm fonts/tfm/public/cm/cmti10.tfm 46a66e937f809c4fbe317947b583a14b408aca41ecb835eca3be46391190432a
+source cmti7.tfm fonts/tfm/public/cm/cmti7.tfm 78921699d46fd39b25e2e3ea08b96d9c3ad9c858a6ad2cc1aa60204a36ce88f0
+source cmti8.tfm fonts/tfm/public/cm/cmti8.tfm 7a212edaa5bbb6898b6196e32a5753811dc3295a18b9bcd9c727c23ce0c21a4e
+source cmti9.tfm fonts/tfm/public/cm/cmti9.tfm bae91797b96e40fbeb97e2ea3184070e7cf707b72422c7c107edf1d1d5a10abb
+source cmtt10.tfm fonts/tfm/public/cm/cmtt10.tfm 11f3331c958b696fd484fe45c28285622617a2593d7a34511a1d6b279e1578a2
+source cmtt8.tfm fonts/tfm/public/cm/cmtt8.tfm 62f6142387fe8d4be3ba2d46034e76fd6c3fc1d22ab44663a4eaa3f42b97039e
+source cmtt9.tfm fonts/tfm/public/cm/cmtt9.tfm 2989dbdeed1533cdeba5dcd0edee59c4509b5c934b3db8847de78d8c94a9966d
+source cmu10.tfm fonts/tfm/public/cm/cmu10.tfm 7896645187499d599c330a8cbebc4ba1e21fa88b4ad46a86ef3db53cfa39b6f7
+source manfnt.tfm fonts/tfm/public/knuth-lib/manfnt.tfm 74b8999aada95b6c45d8a8846c3e210050383a852322518a109e98a54ac5a4ad

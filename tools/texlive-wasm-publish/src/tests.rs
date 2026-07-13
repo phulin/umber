@@ -5,7 +5,7 @@ use std::path::Path;
 use anyhow::Result;
 use tempfile::TempDir;
 
-use super::{PublishConfig, RootConfig, publish, tree_sha256};
+use super::{FormatConfig, PublishConfig, RootConfig, publish, tree_sha256};
 
 fn write(root: &Path, relative: &str, bytes: &[u8]) -> Result<()> {
     let path = root.join(relative);
@@ -32,6 +32,7 @@ fn config(roots: Vec<RootConfig>) -> PublishConfig {
             "tex:plain.tex".to_owned(),
             vec!["tfm:cmr10.tfm".to_owned()],
         )]),
+        formats: Vec::new(),
     }
 }
 
@@ -47,7 +48,12 @@ fn fixture_publication_is_byte_stable_and_content_addressed() -> Result<()> {
     write(&second, "other/plain.tex", b"shadowed plain\n")?;
     write(&second, "tex/extra.tex", b"extra\n")?;
 
-    let config = config(vec![root("first", &first)?, root("second", &second)?]);
+    let mut config = config(vec![root("first", &first)?, root("second", &second)?]);
+    let assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../crates/umber-wasm/assets");
+    config.formats.push(FormatConfig {
+        path: assets.join("plain.fmt"),
+        metadata: assets.join("plain-format.json"),
+    });
     let output_a = fixture.path().join("out-a");
     let output_b = fixture.path().join("out-b");
     let manifest = publish(&config, &output_a)?;
@@ -68,6 +74,13 @@ fn fixture_publication_is_byte_stable_and_content_addressed() -> Result<()> {
     );
     assert!(manifest.files.contains_key("tex:other/plain.tex"));
     assert_eq!(plain.dependencies, ["tfm:cmr10.tfm"]);
+    let format = manifest.formats.get("plain").expect("plain format");
+    assert_eq!(format.engine, "umber");
+    assert_eq!(format.format_schema, 4);
+    assert_eq!(
+        objects_a.get(&format.object).map(Vec::len),
+        Some(format.bytes as usize)
+    );
     Ok(())
 }
 

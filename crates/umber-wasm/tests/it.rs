@@ -1,7 +1,9 @@
 #![cfg(target_arch = "wasm32")]
 
 use js_sys::{Array, Object, Reflect, Uint8Array};
-use umber_wasm::{CompilerSession, JsFileRequestKey, JsSessionOptions};
+use umber_wasm::{
+    CompilerSession, JsFileRequestKey, JsSessionOptions, format_schema_version, package_version,
+};
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_test::*;
 
@@ -101,6 +103,36 @@ fn errors_are_typed_and_invalid_boundary_values_throw() {
 }
 
 #[wasm_bindgen_test]
+fn committed_plain_format_loads_and_rejects_incompatible_bytes() {
+    assert_eq!(package_version(), env!("CARGO_PKG_VERSION"));
+    assert_eq!(format_schema_version(), 4);
+    let format = include_bytes!("../assets/plain.fmt");
+    let mut plain = session_with_format("main.tex", format);
+    plain
+        .add_user_file("main.tex", &bytes(b"\\shipout\\hbox{}\\end"))
+        .expect("add plain source");
+    assert_eq!(
+        string_field(
+            plain.compile_attempt().expect("plain attempt").as_ref(),
+            "kind",
+        ),
+        "complete",
+    );
+
+    let native_tex = b"\\catcode`\\{=1 \\catcode`\\}=2 \\endinput";
+    assert_format_error(native_tex, "not an Umber format file");
+
+    let mut wrong_schema = format.to_vec();
+    wrong_schema[8..12].copy_from_slice(&5_u32.to_le_bytes());
+    assert_format_error(&wrong_schema, "unsupported Umber format version 5");
+
+    let mut corrupt = format.to_vec();
+    let last = corrupt.last_mut().expect("format payload");
+    *last ^= 1;
+    assert_format_error(&corrupt, "Umber format checksum mismatch");
+}
+
+#[wasm_bindgen_test]
 fn explicit_disposal_releases_session_and_rejects_later_calls() {
     let mut session = session("main.tex");
     assert!(!session.disposed());
@@ -113,6 +145,26 @@ fn explicit_disposal_releases_session_and_rejects_later_calls() {
 fn session(main_path: &str) -> CompilerSession {
     let options = options(main_path);
     CompilerSession::new(options.unchecked_ref::<JsSessionOptions>()).expect("construct session")
+}
+
+fn session_with_format(main_path: &str, format: &[u8]) -> CompilerSession {
+    let options = options(main_path);
+    set(&options, "format", bytes(format).as_ref());
+    CompilerSession::new(options.unchecked_ref::<JsSessionOptions>()).expect("construct session")
+}
+
+fn assert_format_error(format: &[u8], expected: &str) {
+    let mut session = session_with_format("main.tex", format);
+    session
+        .add_user_file("main.tex", &bytes(b"\\end"))
+        .expect("add main source");
+    let attempt = session.compile_attempt().expect("format error attempt");
+    assert_eq!(string_field(attempt.as_ref(), "kind"), "error");
+    let diagnostic = field(attempt.as_ref(), "diagnostic");
+    assert!(
+        string_field(&diagnostic, "message").contains(expected),
+        "expected format diagnostic containing {expected}",
+    );
 }
 
 fn options(main_path: &str) -> Object {

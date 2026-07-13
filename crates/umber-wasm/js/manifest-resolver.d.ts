@@ -36,11 +36,29 @@ export interface ManifestFile {
 	dependencies?: readonly string[];
 }
 
+export interface ManifestFormat {
+	object: string;
+	sha256: string;
+	bytes: number;
+	engine: "umber";
+	engineVersion: string;
+	formatSchema: number;
+	sourceDistribution: string;
+	sourceManifestSha256: string;
+	sourceDateEpoch: number;
+}
+
+export interface FormatCompatibility {
+	engineVersion?: string;
+	formatSchema?: number;
+}
+
 export interface TexLiveManifest {
 	schema: 1;
 	distribution: string;
 	objectsBaseUrl: string;
 	files: Readonly<Record<string, ManifestFile>>;
+	formats?: Readonly<Record<string, ManifestFormat>>;
 }
 
 export class ManifestResolverError extends Error {
@@ -60,4 +78,10 @@ export class HttpManifestResolver {
 		requests: readonly FileRequest[],
 		signal?: AbortSignal,
 	): Promise<readonly ResolvedDownload[]>;
+	resolveFormat(
+		name: string,
+		compatibility?: FormatCompatibility,
+		signal?: AbortSignal,
+	): Promise<Uint8Array>;
+	formatMetadata(name: string): ManifestFormat;
 }

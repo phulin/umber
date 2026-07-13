@@ -158,6 +158,106 @@ test("aborted owners do not start workers", async () => {
 	assert.equal(Worker.instances.length, 0);
 });
 
+test("rejects ambiguous inline and manifest-selected formats", async () => {
+	const Worker = fakeWorker();
+	await assert.rejects(
+		compileInWorker(
+			{ mainPath: "main.tex", format: new Uint8Array([1]) },
+			new Map(),
+			{
+				manifestUrl: "https://cdn.example.test/manifest.json",
+				format: "plain",
+			},
+			{ Worker },
+		),
+		/both be provided/,
+	);
+	assert.equal(Worker.instances.length, 0);
+});
+
+test("controller forwards a named manifest format without transferring bytes", async () => {
+	const output = {
+		terminal: "done",
+		log: new Uint8Array(),
+		dvi: new Uint8Array(),
+		files: [],
+	};
+	const Worker = fakeWorker((worker) => {
+		queueMicrotask(() =>
+			worker.emit("message", { data: { kind: "complete", output } }),
+		);
+	});
+	await compileInWorker(
+		{ mainPath: "main.tex" },
+		new Map([["main.tex", new Uint8Array([1])]]),
+		{
+			manifestUrl: "https://cdn.example.test/manifest.json",
+			format: "plain",
+		},
+		{ Worker, timeoutMs: 100 },
+	);
+	const worker = Worker.instances[0];
+	assert.equal(worker.message.resolver.format, "plain");
+	assert.equal(worker.message.options.format, undefined);
+	assert.equal(worker.transfer.length, 1);
+});
+
+test("worker runtime selects a compatible manifest format", async () => {
+	const format = new Uint8Array([9, 0, 8]);
+	let receivedOptions;
+	class Session {
+		constructor(options) {
+			receivedOptions = options;
+		}
+		addUserFile() {}
+		compileAttempt() {
+			return {
+				kind: "complete",
+				output: {
+					terminal: "ok",
+					log: new Uint8Array(),
+					dvi: new Uint8Array(),
+					files: [],
+				},
+			};
+		}
+		dispose() {}
+	}
+	const compatibility = [];
+	await runCompileMessage(
+		{
+			kind: "compile",
+			options: { mainPath: "main.tex" },
+			userFiles: [["main.tex", new Uint8Array()]],
+			resolver: { manifestUrl: "unused", format: "plain" },
+		},
+		{
+			bindings: {
+				CompilerSession: Session,
+				packageVersion: () => "0.1.0",
+				formatSchemaVersion: () => 4,
+			},
+			resolver: {
+				async resolve() {
+					return [];
+				},
+				async resolveFormat(name, expected) {
+					compatibility.push({ name, expected });
+					return format;
+				},
+			},
+		},
+	);
+
+	assert.equal(receivedOptions.format, format);
+	assert.deepEqual(compatibility, [
+		{
+			name: "plain",
+			expected: { engineVersion: "0.1.0", formatSchema: 4 },
+		},
+	]);
+});
+
 test("worker runtime uses injected bindings and returns unique output transfers", async () => {
 	class Session {
 		constructor() {

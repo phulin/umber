@@ -23,12 +23,28 @@ function entry(path, bytes, dependencies = []) {
 	};
 }
 
+function formatEntry(bytes) {
+	const sha256 = digest(bytes);
+	return {
+		object: `sha256-${sha256}`,
+		sha256,
+		bytes: bytes.byteLength,
+		engine: "umber",
+		engineVersion: "0.1.0",
+		formatSchema: 4,
+		sourceDistribution: "texlive-2025",
+		sourceManifestSha256: "1".repeat(64),
+		sourceDateEpoch: 0,
+	};
+}
+
 function fixture() {
 	const bytes = {
 		plain: new TextEncoder().encode("plain"),
 		cmr: new TextEncoder().encode("cmr"),
 		alias: new TextEncoder().encode("plain"),
 		badHint: new TextEncoder().encode("hint"),
+		format: new Uint8Array([0, 1, 0, 2]),
 	};
 	const files = {
 		"tex:plain.tex": entry("tex/plain.tex", bytes.plain, [
@@ -45,6 +61,7 @@ function fixture() {
 			distribution: "texlive-fixture",
 			objectsBaseUrl: "https://cdn.example.test/objects/",
 			files,
+			formats: { plain: formatEntry(bytes.format) },
 		},
 		bytes,
 	};
@@ -100,6 +117,73 @@ test("fetches concurrently, deduplicates hashes, and binds every lookup key", as
 		],
 	);
 	assert.equal(downloads[0].bytes, downloads[1].bytes);
+});
+
+test("downloads a compatible named format through the verified object cache", async () => {
+	const { manifest, bytes } = fixture();
+	let fetches = 0;
+	const resolver = new HttpManifestResolver(manifest, {
+		async fetch() {
+			fetches += 1;
+			return response(bytes.format);
+		},
+		crypto: webcrypto,
+	});
+
+	assert.deepEqual(
+		await resolver.resolveFormat("plain", {
+			engineVersion: "0.1.0",
+			formatSchema: 4,
+		}),
+		bytes.format,
+	);
+	assert.equal(
+		resolver.formatMetadata("plain").sourceDistribution,
+		"texlive-2025",
+	);
+	await resolver.resolveFormat("plain");
+	assert.equal(fetches, 1);
+});
+
+test("rejects missing or incompatible formats before downloading", async (t) => {
+	const { manifest } = fixture();
+	let fetches = 0;
+	const resolver = new HttpManifestResolver(manifest, {
+		fetch() {
+			fetches += 1;
+		},
+		crypto: webcrypto,
+	});
+	const cases = [
+		["missing-format", () => resolver.resolveFormat("latex")],
+		[
+			"incompatible-format",
+			() => resolver.resolveFormat("plain", { engineVersion: "0.2.0" }),
+		],
+		[
+			"incompatible-format",
+			() => resolver.resolveFormat("plain", { formatSchema: 5 }),
+		],
+	];
+	for (const [code, operation] of cases) {
+		await t.test(code, async () => {
+			await assert.rejects(operation(), (error) => error.code === code);
+		});
+	}
+	assert.equal(fetches, 0);
+});
+
+test("rejects malformed format compatibility metadata", () => {
+	const { manifest } = fixture();
+	manifest.formats.plain.formatSchema = 0;
+	assert.throws(
+		() =>
+			new HttpManifestResolver(manifest, {
+				fetch: () => {},
+				crypto: webcrypto,
+			}),
+		/invalid compatibility metadata/,
+	);
 });
 
 test("validates status, byte length, and SHA-256 with actionable request errors", async (t) => {

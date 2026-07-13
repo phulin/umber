@@ -4,6 +4,7 @@ const MAX_CONCURRENCY = 32;
 const DEFAULT_CONCURRENCY = 8;
 const KEY_PATTERN = /^(tex|tfm):(.+)$/;
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
+const FORMAT_NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
 
 export class ManifestResolverError extends Error {
 	constructor(code, message, options) {
@@ -112,6 +113,51 @@ export class HttpManifestResolver {
 		return jobs.flatMap((job) =>
 			results.has(job.key) ? [results.get(job.key)] : [],
 		);
+	}
+
+	async resolveFormat(name, compatibility = {}, signal) {
+		throwIfAborted(signal);
+		const entry = this.formatMetadata(name);
+		if (
+			compatibility.engineVersion !== undefined &&
+			compatibility.engineVersion !== entry.engineVersion
+		) {
+			throw new ManifestResolverError(
+				"incompatible-format",
+				`format ${name} requires Umber ${entry.engineVersion}; this runtime is ${compatibility.engineVersion}`,
+			);
+		}
+		if (
+			compatibility.formatSchema !== undefined &&
+			compatibility.formatSchema !== entry.formatSchema
+		) {
+			throw new ManifestResolverError(
+				"incompatible-format",
+				`format ${name} uses schema ${entry.formatSchema}; this runtime requires schema ${compatibility.formatSchema}`,
+			);
+		}
+		try {
+			return await this.#object(entry, signal);
+		} catch (error) {
+			throw actionableError(`format:${name}`, error);
+		}
+	}
+
+	formatMetadata(name) {
+		if (typeof name !== "string" || !FORMAT_NAME_PATTERN.test(name)) {
+			throw new ManifestResolverError(
+				"invalid-format",
+				`invalid format name ${String(name)}`,
+			);
+		}
+		const entry = this.manifest.formats[name];
+		if (entry === undefined) {
+			throw new ManifestResolverError(
+				"missing-format",
+				`manifest has no format named ${name}`,
+			);
+		}
+		return entry;
 	}
 
 	#object(entry, signal) {
@@ -250,6 +296,7 @@ function validateManifest(value) {
 		);
 	}
 	const files = Object.create(null);
+	const formats = Object.create(null);
 	const hashLengths = new Map();
 	for (const [key, entry] of Object.entries(value.files)) {
 		validateKey(key);
@@ -295,6 +342,40 @@ function validateManifest(value) {
 		hashLengths.set(entry.sha256, entry.bytes);
 		files[key] = { ...entry, dependencies: [...dependencies] };
 	}
+	const manifestFormats = value.formats ?? {};
+	if (!isRecord(manifestFormats)) {
+		throw new ManifestResolverError(
+			"invalid-manifest",
+			"formats must be an object",
+		);
+	}
+	for (const [name, entry] of Object.entries(manifestFormats)) {
+		if (!FORMAT_NAME_PATTERN.test(name) || !isRecord(entry)) {
+			throw new ManifestResolverError(
+				"invalid-manifest",
+				`invalid format entry for ${name}`,
+			);
+		}
+		validateObjectEntry(entry, `format ${name}`, hashLengths);
+		if (
+			entry.engine !== "umber" ||
+			typeof entry.engineVersion !== "string" ||
+			entry.engineVersion.length === 0 ||
+			!Number.isSafeInteger(entry.formatSchema) ||
+			entry.formatSchema < 1 ||
+			typeof entry.sourceDistribution !== "string" ||
+			entry.sourceDistribution.length === 0 ||
+			!DIGEST_PATTERN.test(entry.sourceManifestSha256) ||
+			!Number.isSafeInteger(entry.sourceDateEpoch) ||
+			entry.sourceDateEpoch < 0
+		) {
+			throw new ManifestResolverError(
+				"invalid-manifest",
+				`invalid compatibility metadata for format ${name}`,
+			);
+		}
+		formats[name] = { ...entry };
+	}
 	for (const [key, entry] of Object.entries(files)) {
 		for (const dependency of entry.dependencies) {
 			if (files[dependency] === undefined) {
@@ -305,7 +386,42 @@ function validateManifest(value) {
 			}
 		}
 	}
-	return { schema: 1, distribution: value.distribution, objectsBaseUrl, files };
+	return {
+		schema: 1,
+		distribution: value.distribution,
+		objectsBaseUrl,
+		files,
+		formats,
+	};
+}
+
+function validateObjectEntry(entry, label, hashLengths) {
+	if (!DIGEST_PATTERN.test(entry.sha256)) {
+		throw new ManifestResolverError(
+			"invalid-manifest",
+			`invalid digest for ${label}`,
+		);
+	}
+	if (entry.object !== `sha256-${entry.sha256}`) {
+		throw new ManifestResolverError(
+			"invalid-manifest",
+			`invalid object name for ${label}`,
+		);
+	}
+	if (!Number.isSafeInteger(entry.bytes) || entry.bytes < 0) {
+		throw new ManifestResolverError(
+			"invalid-manifest",
+			`invalid byte length for ${label}`,
+		);
+	}
+	const previousLength = hashLengths.get(entry.sha256);
+	if (previousLength !== undefined && previousLength !== entry.bytes) {
+		throw new ManifestResolverError(
+			"invalid-manifest",
+			`inconsistent byte lengths for digest ${entry.sha256}`,
+		);
+	}
+	hashLengths.set(entry.sha256, entry.bytes);
 }
 
 function collectJobs(manifest, requests) {

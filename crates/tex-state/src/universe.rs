@@ -588,7 +588,7 @@ impl Default for Universe {
 
 impl Universe {
     const FORMAT_MAGIC: [u8; 8] = *b"UMBRFMT\0";
-    const FORMAT_VERSION: u32 = 4;
+    pub const FORMAT_SCHEMA_VERSION: u32 = 4;
 
     /// Creates an isolated TeX state timeline.
     #[must_use]
@@ -645,7 +645,7 @@ impl Universe {
         let checksum = format_checksum(mode, &payload);
         let mut bytes = Vec::with_capacity(29 + payload.len());
         bytes.extend_from_slice(&Self::FORMAT_MAGIC);
-        bytes.extend_from_slice(&Self::FORMAT_VERSION.to_le_bytes());
+        bytes.extend_from_slice(&Self::FORMAT_SCHEMA_VERSION.to_le_bytes());
         bytes.push(mode);
         bytes.extend_from_slice(&(payload.len() as u64).to_le_bytes());
         bytes.extend_from_slice(&checksum.to_le_bytes());
@@ -663,7 +663,7 @@ impl Universe {
             return Err(FormatError::BadMagic);
         }
         let version = u32::from_le_bytes(bytes[8..12].try_into().expect("fixed header slice"));
-        if version != Self::FORMAT_VERSION {
+        if version != Self::FORMAT_SCHEMA_VERSION {
             return Err(FormatError::UnsupportedVersion(version));
         }
         let mode_byte = bytes[12];

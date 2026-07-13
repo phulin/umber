@@ -17,4 +17,7 @@ the manifest's validated content-addressed object name.
 - `src/options.rs`: strict conversion of JavaScript options and request keys.
 - `src/result.rs`: binary-safe conversion of native attempts to discriminated JS results.
 - `tests/it.rs`: wasm-bindgen boundary and lifecycle tests.
+- `assets/plain-source.lock`: exact TeX Live 2025 Plain, hyphenation, and TFM source identities.
+- `assets/plain.fmt`: reproducible Umber-native Plain format image.
+- `assets/plain-format.json`: published digest and compatibility metadata.
 - `js/`: authored ES modules and Node acceptance tests.

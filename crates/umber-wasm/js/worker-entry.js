@@ -17,8 +17,16 @@ export async function runCompileMessage(message, dependencies = {}) {
 	const resolver =
 		dependencies.resolver ??
 		(await HttpManifestResolver.create(message.resolver));
+	let options = message.options;
+	if (message.resolver.format !== undefined) {
+		const format = await resolver.resolveFormat(message.resolver.format, {
+			engineVersion: bindings.packageVersion(),
+			formatSchema: bindings.formatSchemaVersion(),
+		});
+		options = { ...options, format };
+	}
 	return compile(
-		message.options,
+		options,
 		new Map(message.userFiles),
 		resolver,
 		undefined,

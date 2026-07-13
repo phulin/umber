@@ -20,6 +20,6 @@ export function compileInWorker(
 	resolver: Pick<
 		HttpManifestResolverOptions,
 		"manifestUrl" | "persistentCache" | "concurrency"
-	>,
+	> & { format?: string },
 	control?: WorkerCompileControl,
 ): Promise<CompileOutput>;

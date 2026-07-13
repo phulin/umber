@@ -341,6 +341,7 @@ export interface HttpManifestResolverOptions {
   manifestUrl: string;
   persistentCache?: "http" | "indexeddb" | "none";
   concurrency?: number;
+  format?: string;
 }
 
 export function compileInWorker(
@@ -383,6 +384,19 @@ manifest is:
       "bytes": 1296,
       "dependencies": []
     }
+  },
+  "formats": {
+    "plain": {
+      "object": "sha256-<hex>",
+      "sha256": "<hex>",
+      "bytes": 476238,
+      "engine": "umber",
+      "engineVersion": "0.1.0",
+      "formatSchema": 4,
+      "sourceDistribution": "texlive-2025",
+      "sourceManifestSha256": "<hex>",
+      "sourceDateEpoch": 0
+    }
   }
 }
 ```
@@ -399,6 +413,27 @@ The resolver checks response status, declared byte length, and SHA-256 before
 calling `provideResolvedFile`. HTTPS protects transport; the digest detects
 corruption and manifest/object mismatches. Authenticity still depends on how
 the application trusts the manifest origin.
+
+The optional `formats` map publishes Umber-native images through the same
+verified object path. Passing `format: "plain"` to the standard worker resolver
+selects that image. Before downloading it, the worker compares `engineVersion`
+and `formatSchema` against values exported by its loaded WASM module; the engine
+then validates the format header, schema, payload length, and semantic checksum.
+TeX Live-native format files are never accepted or translated.
+
+The committed Plain image is regenerated and checked with:
+
+```sh
+scripts/build-wasm-plain-format.sh
+scripts/build-wasm-plain-format.sh --check
+```
+
+The command verifies every source in `plain-source.lock`, runs two clean builds
+with `SOURCE_DATE_EPOCH=0`, requires byte-identical images, and compares DVI from
+source-initialized and format-loaded Plain runs. Publisher configurations add a
+`formats` entry containing paths to `plain.fmt` and `plain-format.json`; the
+publisher verifies the object digest, length, Umber magic, and schema before
+copying it into the immutable object directory.
 
 `dependencies` is an optional performance hint. The standard resolver may
 expand the closure and fetch those objects concurrently, but it must bind each
@@ -553,6 +588,8 @@ Use `wasm-bindgen-test` in a headless browser for:
 - discriminated attempt results and TypeScript-facing field names;
 - repeated attempts without unbounded retained allocations; and
 - JavaScript exception conversion for invalid boundary inputs;
+- compatible Plain-format loading and rejection of TeX source, wrong-schema,
+  and checksum-corrupt format bytes; and
 - owner-enforced worker timeout for a deliberately nonterminating TeX input.
 
 ### Browser integration fixture
