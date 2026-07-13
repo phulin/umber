@@ -5,6 +5,7 @@ use super::*;
 fn register_assignments_cover_sparse_aliases_and_arithmetic() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
+    install_etex_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\count300 = 7 \\countdef\\foo=300 \\advance\\foo by 5 \\multiply\\foo 3 \\divide\\foo by 2",
     ));
@@ -14,6 +15,23 @@ fn register_assignments_cover_sparse_aliases_and_arithmetic() {
         .expect("register assignments execute");
 
     assert_eq!(stores.count(300), 18);
+}
+
+#[test]
+fn tex82_compatibility_rejects_sparse_register_numbers() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\count300=7"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("bad compatibility register recovers to register zero");
+
+    assert_eq!(stores.count(0), 7);
+    assert_eq!(stores.count(300), 0);
+    let output = terminal_effect_text(&stores);
+    assert!(output.contains("Bad register code (300)"));
+    assert!(output.contains("between 0 and 255"));
 }
 
 #[test]

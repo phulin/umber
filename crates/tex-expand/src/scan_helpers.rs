@@ -1,5 +1,6 @@
 use tex_lex::{InputSource, InputStack};
 use tex_state::ExpansionState;
+use tex_state::env::banks::IntParam;
 use tex_state::token::{Catcode, Token, TracedTokenWord};
 
 use crate::{
@@ -99,11 +100,20 @@ where
         input, stores, recorder, hooks, expander, context,
     )?;
     let value = scanned.value();
-    if !(0..=32_767).contains(&value) {
-        stores.report_bad_register_code(value, 32_767);
+    let maximum = maximum_register_index(stores);
+    if !(0..=i32::from(maximum)).contains(&value) {
+        stores.report_bad_register_code(value, maximum);
         return Ok(0);
     }
     Ok(value as u16)
+}
+
+pub(crate) fn maximum_register_index(stores: &impl ExpansionState) -> u16 {
+    if stores.int_param(IntParam::ETEX_EXTENDED_MODE) > 0 {
+        32_767
+    } else {
+        255
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

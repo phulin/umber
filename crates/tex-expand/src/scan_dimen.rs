@@ -21,8 +21,6 @@ use crate::{
 };
 use scan_helpers::ExpandedKeywordMatch;
 
-const MAX_REGISTER: i32 = 32_767;
-
 /// Dimension scanner context switches for TeX callers with special coercions.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ScanDimenOptions {
@@ -1181,8 +1179,9 @@ where
         input, stores, recorder, hooks, expander, context,
     )?;
     let value = scanned.value();
-    if !(0..=MAX_REGISTER).contains(&value) {
-        stores.report_bad_register_code(value, MAX_REGISTER as u16);
+    let maximum = crate::scan_helpers::maximum_register_index(stores);
+    if !(0..=i32::from(maximum)).contains(&value) {
+        stores.report_bad_register_code(value, maximum);
         return Ok(0);
     }
     Ok(value as u16)

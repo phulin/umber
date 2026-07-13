@@ -224,8 +224,13 @@ where
         diagnostics::report_integer_diagnostic(stores, diagnostic);
     }
     let value = scanned.value();
-    if !(0..=32_767).contains(&value) {
-        stores.report_bad_register_code(value, 32_767);
+    let maximum: u16 = if stores.int_param(IntParam::ETEX_EXTENDED_MODE) > 0 {
+        32_767
+    } else {
+        255
+    };
+    if !(0..=i32::from(maximum)).contains(&value) {
+        stores.report_bad_register_code(value, maximum);
         return Ok(0);
     }
     Ok(value as u16)

@@ -15,7 +15,6 @@ use crate::{
 };
 
 const INT_MAX: i64 = i32::MAX as i64;
-const MAX_REGISTER: i32 = 32_767;
 
 /// A successfully scanned TeX integer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1179,8 +1178,9 @@ where
     let scanned =
         scan_int_with_expander_and_hooks(input, stores, recorder, hooks, expander, context)?;
     let value = scanned.value();
-    if !(0..=MAX_REGISTER).contains(&value) {
-        stores.report_bad_register_code(value, MAX_REGISTER as u16);
+    let maximum = crate::scan_helpers::maximum_register_index(stores);
+    if !(0..=i32::from(maximum)).contains(&value) {
+        stores.report_bad_register_code(value, maximum);
         return Ok(0);
     }
     Ok(value as u16)

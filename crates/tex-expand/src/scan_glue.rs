@@ -815,8 +815,9 @@ where
         input, stores, recorder, hooks, expander, context,
     )?;
     let value = scanned.value();
-    if !(0..=32_767).contains(&value) {
-        stores.report_bad_register_code(value, 32_767);
+    let maximum = crate::scan_helpers::maximum_register_index(stores);
+    if !(0..=i32::from(maximum)).contains(&value) {
+        stores.report_bad_register_code(value, maximum);
         return Ok(0);
     }
     Ok(value as u16)

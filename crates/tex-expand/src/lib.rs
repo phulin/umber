@@ -113,6 +113,7 @@ pub fn install_expandable_primitives(stores: &mut Universe) {
 
 /// Installs expandable primitives that exist only in e-TeX extended mode.
 pub fn install_etex_expandable_primitives(stores: &mut Universe) {
+    stores.set_int_param_global(tex_state::env::banks::IntParam::ETEX_EXTENDED_MODE, 1);
     for (name, primitive) in [
         (
             "unexpanded",

@@ -385,9 +385,37 @@ mod primitive_mode_tests {
         ] {
             assert_eq!(compatibility.meaning(symbol), Meaning::Undefined);
         }
+        let wvo_primitives = [
+            "marks",
+            "topmarks",
+            "firstmarks",
+            "botmarks",
+            "splitfirstmarks",
+            "splitbotmarks",
+            "pagediscards",
+            "splitdiscards",
+            "clubpenalties",
+            "widowpenalties",
+            "displaywidowpenalties",
+            "interlinepenalties",
+            "parshapelength",
+            "parshapeindent",
+            "parshapedimen",
+            "lastlinefit",
+            "savinghyphcodes",
+            "savingvdiscards",
+        ];
+        for name in wvo_primitives {
+            let symbol = compatibility.intern(name);
+            assert_eq!(compatibility.meaning(symbol), Meaning::Undefined, "{name}");
+        }
 
         let mut extended = Universe::default();
         prepare_etex_run_stores(&mut extended);
+        for name in wvo_primitives {
+            let symbol = extended.intern(name);
+            assert_ne!(extended.meaning(symbol), Meaning::Undefined, "{name}");
+        }
         let unexpanded = extended.intern("unexpanded");
         let detokenize = extended.intern("detokenize");
         let unless = extended.intern("unless");

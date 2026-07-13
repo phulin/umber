@@ -227,6 +227,7 @@ fn install_parameter_meanings(stores: &mut Universe) {
 
 /// Installs unexpandable primitives that exist only in e-TeX extended mode.
 pub fn install_etex_unexpandable_primitives(stores: &mut Universe) {
+    stores.set_int_param_global(IntParam::ETEX_EXTENDED_MODE, 1);
     for (name, primitive) in [
         ("protected", UnexpandablePrimitive::Protected),
         ("readline", UnexpandablePrimitive::ReadLine),

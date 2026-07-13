@@ -1670,6 +1670,7 @@ fn the_renders_assignable_registers_parameters_and_code_tables() {
     let foo = stores.intern("foo");
     stores.set_meaning(foo, Meaning::CountRegister(300));
     stores.set_count(300, 42);
+    stores.set_int_param_global(tex_state::env::banks::IntParam::ETEX_EXTENDED_MODE, 1);
     let parskip = stores.intern("parskip");
     stores.set_meaning(parskip, Meaning::GlueParam(2));
     let thinmuskip = stores.intern("thinmuskip");

@@ -194,6 +194,8 @@ impl IntParam {
     pub const LAST_LINE_FIT: Self = Self::new(69);
     /// e-TeX switch saving language-specific hyphenation codes at `\patterns`.
     pub const SAVING_HYPH_CODES: Self = Self::new(70);
+    /// Hidden e-TeX extended-mode flag controlling compatibility-sensitive limits.
+    pub const ETEX_EXTENDED_MODE: Self = Self::new(71);
 
     /// Current hyphenation language.
     pub const LANGUAGE: Self = Self::new(50);
