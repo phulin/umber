@@ -4,7 +4,7 @@
 //! physical input lines before the semantic lexer state machine assigns
 //! catcodes and produces tokens.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::ops::{Index, IndexMut};
 use std::sync::Arc;
@@ -450,6 +450,9 @@ struct MacroLiteralSpan {
     end: usize,
 }
 
+type LiteralSpanBounds = (usize, usize);
+type LiteralSpanCache = HashMap<(TokenListId, LiteralSpanPolicy), Arc<[LiteralSpanBounds]>>;
+
 /// Identifies one live token-list replay frame independently of its content.
 ///
 /// The marker is intentionally absent from resumable input summaries: callers
@@ -581,7 +584,7 @@ enum TracedTokenReplay {
 }
 
 /// Which immutable macro-replay characters a direct span consumer accepts.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum LiteralSpanPolicy {
     /// Characters that are inert to an expanded replacement scanner.
     /// Group and parameter catcodes remain seams because that scanner must
@@ -696,6 +699,8 @@ pub struct InputStack<S> {
     next_replay_marker: u64,
     next_condition_token: u64,
     alignment_inputs: Vec<AlignmentInput>,
+    /// Derived, discardable segmentation of immutable macro token lists.
+    literal_span_cache: LiteralSpanCache,
     active_macro_invocation: OriginId,
     recently_popped_invocation: Option<OriginId>,
 }
@@ -812,6 +817,7 @@ impl<S> InputStack<S> {
             next_replay_marker: 0,
             next_condition_token: 0,
             alignment_inputs: Vec::new(),
+            literal_span_cache: HashMap::new(),
             active_macro_invocation: OriginId::UNKNOWN,
             recently_popped_invocation: None,
         };
@@ -943,6 +949,7 @@ impl<S> InputStack<S> {
                         .expect("condition frame token overflowed")
                 }),
             alignment_inputs: Vec::new(),
+            literal_span_cache: HashMap::new(),
             active_macro_invocation,
             recently_popped_invocation: None,
         })
@@ -1352,22 +1359,28 @@ impl<S> InputStack<S> {
                 }
                 continue;
             }
-            let InputFrame::TokenList(frame) = &mut self.frames[frame_index] else {
-                return None;
+            let argument = match &mut self.frames[frame_index] {
+                InputFrame::TokenList(frame)
+                    if frame.replay_kind == TokenListReplayKind::MacroBody
+                        && matches!(
+                            stores.tokens(frame.token_list).get(frame.index),
+                            Some(Token::Param(_))
+                        ) =>
+                {
+                    let Token::Param(slot) = stores.tokens(frame.token_list)[frame.index] else {
+                        unreachable!("guard restricts the token kind")
+                    };
+                    let argument = frame.macro_arguments.get_traced(slot);
+                    if argument.is_some() {
+                        frame.index += 1;
+                    }
+                    argument
+                }
+                InputFrame::Source(_) | InputFrame::TokenList(_) | InputFrame::Condition { .. } => {
+                    None
+                }
             };
-            if !matches!(
-                frame.replay_kind,
-                TokenListReplayKind::MacroBody | TokenListReplayKind::MacroArgument
-            ) {
-                return None;
-            }
-
-            let stored = stores.tokens(frame.token_list);
-            if frame.replay_kind == TokenListReplayKind::MacroBody
-                && let Some(Token::Param(slot)) = stored.get(frame.index).copied()
-                && let Some(argument) = frame.macro_arguments.get_traced(slot)
-            {
-                frame.index += 1;
+            if let Some(argument) = argument {
                 self.push_frame(InputFrame::TokenList(TokenListInputFrame {
                     token_list: argument.token_list(),
                     origin_list: argument.origin_list(),
@@ -1381,31 +1394,85 @@ impl<S> InputStack<S> {
                 continue;
             }
 
-            let start = frame.index;
-            let end = stored[start..]
-                .iter()
-                .position(|&token| !policy.accepts(token))
-                .map_or(stored.len(), |offset| start + offset);
+            let (token_list, origin_list, replay_kind, start) = match &self.frames[frame_index] {
+                InputFrame::TokenList(frame)
+                    if matches!(
+                        frame.replay_kind,
+                        TokenListReplayKind::MacroBody | TokenListReplayKind::MacroArgument
+                    ) =>
+                {
+                    (
+                        frame.token_list,
+                        frame.origin_list,
+                        frame.replay_kind,
+                        frame.index,
+                    )
+                }
+                InputFrame::Source(_) | InputFrame::TokenList(_) | InputFrame::Condition { .. } => {
+                    return None;
+                }
+            };
+            let end = self.cached_literal_span_end(stores, token_list, start, policy);
             if end == start {
                 return None;
             }
-            if frame.replay_kind == TokenListReplayKind::MacroArgument
-                && frame.origin_list == OriginListId::EMPTY
+            if replay_kind == TokenListReplayKind::MacroArgument
+                && origin_list == OriginListId::EMPTY
             {
                 // Ordinary replay synthesizes a distinct inserted origin for
                 // this degraded case, so it cannot be represented as a span.
                 return None;
             }
 
+            let InputFrame::TokenList(frame) = &mut self.frames[frame_index] else {
+                unreachable!("frame identity is stable during span selection")
+            };
             frame.index = end;
             return Some(MacroLiteralSpan {
-                token_list: frame.token_list,
-                origin_list: frame.origin_list,
-                replay_kind: frame.replay_kind,
+                token_list,
+                origin_list,
+                replay_kind,
                 start,
                 end,
             });
         }
+    }
+
+    fn cached_literal_span_end(
+        &mut self,
+        stores: &impl ExpansionState,
+        token_list: TokenListId,
+        start: usize,
+        policy: LiteralSpanPolicy,
+    ) -> usize {
+        let spans = self
+            .literal_span_cache
+            .entry((token_list, policy))
+            .or_insert_with(|| {
+                let tokens = stores.tokens(token_list);
+                let mut spans = Vec::new();
+                let mut cursor = 0;
+                while cursor < tokens.len() {
+                    if !policy.accepts(tokens[cursor]) {
+                        cursor += 1;
+                        continue;
+                    }
+                    let span_start = cursor;
+                    cursor += 1;
+                    while cursor < tokens.len() && policy.accepts(tokens[cursor]) {
+                        cursor += 1;
+                    }
+                    spans.push((span_start, cursor));
+                }
+                Arc::from(spans)
+            });
+        let index = spans.partition_point(|&(_, span_end)| span_end <= start);
+        spans.get(index).map_or(
+            start,
+            |&(span_start, span_end)| {
+                if span_start <= start { span_end } else { start }
+            },
+        )
     }
 
     #[must_use]
