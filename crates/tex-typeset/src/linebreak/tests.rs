@@ -327,6 +327,69 @@ fn equal_demerits_prefer_later_route_in_same_line_and_fitness_class() {
 }
 
 #[test]
+fn active_list_order_matches_tex_for_equal_demerit_discretionary_routes() {
+    let mut universe = Universe::new();
+    let empty = universe.freeze_node_list(&[]);
+    let nonempty = universe.freeze_node_list(&[kern(0)]);
+    let right_skip = GlueSpec {
+        stretch: sp(1),
+        stretch_order: Order::Fil,
+        ..GlueSpec::ZERO
+    };
+    let par_fill = universe.intern_glue(GlueSpec::ZERO);
+    let disc = |pre| Node::Disc {
+        kind: DiscKind::ExplicitHyphen,
+        pre,
+        post: empty,
+        replace: empty,
+    };
+    // This is the equal-demerit shape used by TRIP's line-breaking test.
+    // TeX keeps active nodes ordered by line number and reverse breakpoint
+    // position, selecting the early (2, 6) route rather than (6, 13).
+    let nodes = vec![
+        kern(0),
+        disc(nonempty),
+        kern(0),
+        rule(0),
+        disc(empty),
+        disc(nonempty),
+        kern(0),
+        rule(0),
+        rule(0),
+        disc(empty),
+        kern(0),
+        rule(0),
+        disc(nonempty),
+        Node::Penalty(10_000),
+        Node::Glue {
+            spec: par_fill,
+            kind: GlueKind::ParFillSkip,
+            leader: None,
+        },
+    ];
+    let mut p = params(20);
+    p.line_penalty = 1;
+    p.hyphen_penalty = 88;
+    p.ex_hyphen_penalty = 89;
+    p.double_hyphen_demerits = 1_000;
+    p.final_hyphen_demerits = 100_000;
+    p.looseness = 2;
+    p.right_skip = right_skip;
+    let mut hook = NoHyphenation;
+
+    let result = line_break(&universe, &nodes, p, &mut hook);
+
+    assert_eq!(
+        result
+            .breaks
+            .iter()
+            .map(|decision| decision.position)
+            .collect::<Vec<_>>(),
+        vec![2, 6, 15]
+    );
+}
+
+#[test]
 fn parshape_repeats_last_line_and_overrides_hanging() {
     let shape = LineShape {
         hsize: sp(100),

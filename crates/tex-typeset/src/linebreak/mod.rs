@@ -393,11 +393,18 @@ fn run_pass<S: TypesetState>(
         if forced && bp.position >= nodes.len() {
             finals.extend(best_new.iter().copied());
         }
-        // This flattened candidate vector is not TeX's linked active list:
-        // `record_best_candidate` has already collapsed each line/fitness
-        // class. Preserve visit order here so equal-demerit replacement follows
-        // the same route order as TeX's active-list traversal.
         next.extend(best_new);
+        // TeX's active list is ordered by line number. New breaks are inserted
+        // immediately before the existing nodes for their line, so positions
+        // within one line-number class occur in reverse breakpoint order.
+        // This order matters because equal demerits replace the previously
+        // recorded route while `try_break` traverses the class.
+        next.sort_by(|&left, &right| {
+            candidates[left]
+                .line
+                .cmp(&candidates[right].line)
+                .then_with(|| candidates[right].position.cmp(&candidates[left].position))
+        });
         active = next;
     }
 
