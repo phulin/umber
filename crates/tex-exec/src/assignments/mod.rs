@@ -356,13 +356,37 @@ where
     push_traced_tokens(input, stores, [TracedTokenWord::pack(par, origin), command]);
 }
 
-fn off_save_alignment<S>(command: TracedTokenWord, input: &mut InputStack<S>, stores: &mut Universe)
+fn off_save_alignment<S>(
+    command: TracedTokenWord,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+) -> Result<(), ExecError>
 where
     S: InputSource,
 {
-    let closing_group = Token::Char {
-        ch: '}',
-        cat: Catcode::EndGroup,
+    // TeX.web's `off_save` chooses a recovery token that can actually close
+    // the current group.  In particular, a semisimple group must be closed by
+    // the inaccessible equivalent of `\endgroup`, not by a right brace.
+    if stores.innermost_group_kind() == Some(GroupKind::SemiSimple) {
+        push_traced_tokens(input, stores, [command]);
+        leave_group_with_origin(input, stores, GroupKind::SemiSimple, command.origin())?;
+        stores.world_mut().write_text(
+            tex_state::PrintSink::TerminalAndLog,
+            "\n! Missing \\endgroup inserted.\n",
+        );
+        return Ok(());
+    }
+
+    let closing_group = if stores.innermost_group_kind() == Some(GroupKind::MathShift) {
+        Token::Char {
+            ch: '$',
+            cat: Catcode::MathShift,
+        }
+    } else {
+        Token::Char {
+            ch: '}',
+            cat: Catcode::EndGroup,
+        }
     };
     let origin = stores.inserted_origin(
         InsertedOriginKind::ErrorRecovery,
@@ -377,8 +401,19 @@ where
     );
     stores.world_mut().write_text(
         tex_state::PrintSink::TerminalAndLog,
-        "\n! Missing } inserted.\n",
+        if matches!(
+            closing_group,
+            Token::Char {
+                cat: Catcode::MathShift,
+                ..
+            }
+        ) {
+            "\n! Missing $ inserted.\n"
+        } else {
+            "\n! Missing } inserted.\n"
+        },
     );
+    Ok(())
 }
 
 fn accumulate_prefixes<S, R, H>(
@@ -686,7 +721,7 @@ where
                             return Ok(CommandOutcome::continue_only());
                         }
                         crate::Mode::RestrictedHorizontal => {
-                            off_save_alignment(command.traced, input, stores);
+                            off_save_alignment(command.traced, input, stores)?;
                             return Ok(CommandOutcome::continue_only());
                         }
                         _ => {}
@@ -785,7 +820,7 @@ where
                             // TeX.web §1091 `head_for_vmode` invokes
                             // off_save, which closes the hbox and retries the
                             // vertical command in the enclosing mode.
-                            off_save_alignment(command.traced, input, stores);
+                            off_save_alignment(command.traced, input, stores)?;
                             return Ok(CommandOutcome::continue_only());
                         }
                         crate::Mode::Math | crate::Mode::DisplayMath => {
