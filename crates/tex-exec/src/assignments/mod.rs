@@ -435,6 +435,21 @@ where
             {
                 continue;
             }
+            if let Token::Cs(symbol) = token
+                && matches!(
+                    stores.meaning(symbol),
+                    Meaning::Macro { flags, .. }
+                        if prefixes.flags.contains(MeaningFlags::PROTECTED)
+                            && flags.contains(MeaningFlags::PROTECTED)
+                )
+            {
+                // `\unexpanded` suppresses expansion only while its result is
+                // being returned. Once a prefixed-command scan asks for the
+                // next command, a protected macro in that result is ordinary
+                // command-demand input and expands (e-TeX manual §3.1).
+                crate::push_tokens(input, stores, [token]);
+                continue;
+            }
             break traced;
         };
         token = tex_expand::semantic_token(traced);

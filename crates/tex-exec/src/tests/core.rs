@@ -3320,3 +3320,32 @@ fn etex_showgroups_and_showifs_render_live_nested_stacks() {
     assert!(output.contains("### bottom level"));
     assert!(output.contains("### level 1: \\iftrue"));
 }
+
+#[test]
+fn protected_prefix_resumes_command_demand_after_unexpanded_tokens() {
+    // e-TeX manual section 3.1 / e-TRIP's protected-macro check: tokens
+    // returned by `\unexpanded` are suppressed for that expansion step, but
+    // protected macros encountered while the prefix scanner continues are
+    // expanded before the eventual definition command.
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    tex_expand::install_etex_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    crate::install_etex_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        r"\let\bgroup={\protected\def\two{}\let\three=\two\protected\unexpanded\bgroup\two\protected\three\protected\def\one{\two}}",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("protected prefix chain executes");
+
+    let one = stores.intern("one");
+    let Meaning::Macro { definition, flags } = stores.meaning(one) else {
+        panic!("one is defined")
+    };
+    assert!(flags.contains(tex_state::meaning::MeaningFlags::PROTECTED));
+    let replacement = stores.macro_definition(definition).replacement_text();
+    assert_eq!(stores.tokens(replacement).len(), 1);
+    assert!(!terminal_effect_text(&stores).contains("You can't use a prefix"));
+}
