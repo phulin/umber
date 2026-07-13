@@ -25,3 +25,6 @@ validation, and conditional adoption design. Do not create a separate
 `wasm_mvp.md` specifies the proposed browser WebAssembly package, including
 the restart-on-fetch driver protocol, hosted TeX Live manifest, cache and
 resource limits, binding API, and MVP verification boundary.
+
+`etex_primitives.md` is the extension-only e-TeX V2 primitive checklist and
+maps each family to its short-reference-manual contract and conformance gate.
