@@ -321,6 +321,9 @@ impl TokParam {
 
     /// TeX's `\everycr` token-list parameter.
     pub const EVERY_CR: Self = Self::new(7);
+
+    /// e-TeX's token list inserted at natural real or virtual EOF.
+    pub const EVERY_EOF: Self = Self::new(8);
 }
 
 pub(crate) trait BankCodec {

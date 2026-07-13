@@ -502,6 +502,85 @@ fn scantokens_relexes_text_with_current_catcodes_and_superscript_notation() {
 }
 
 #[test]
+fn everyeof_is_inserted_at_natural_virtual_eof_but_not_endinput() {
+    // e-TeX short reference manual section 3.7 requires natural real and
+    // virtual EOF insertion, explicitly excluding EOF forced by \endinput.
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    crate::install_etex_expandable_primitives(&mut stores);
+    let everyeof = stores.intern_token_list(&[char_token('E')]);
+    stores.set_tok_param(tex_state::env::banks::TokParam::EVERY_EOF, everyeof);
+
+    let mut virtual_input = InputStack::new(MemoryInput::new("Z"));
+    assert_eq!(
+        get_x_token(&mut virtual_input, &mut stores).expect("source token"),
+        Some(char_token('Z'))
+    );
+    assert_eq!(
+        get_x_token(&mut virtual_input, &mut stores).expect("source endline"),
+        Some(Token::Char {
+            ch: ' ',
+            cat: Catcode::Space,
+        })
+    );
+    assert_eq!(
+        get_x_token(&mut virtual_input, &mut stores).expect("everyeof token"),
+        Some(char_token('E'))
+    );
+
+    let mut forced = InputStack::new(MemoryInput::new("\\endinput Z"));
+    assert_eq!(
+        get_x_token(&mut forced, &mut stores).expect("endinput line token"),
+        Some(char_token('Z'))
+    );
+    assert_eq!(
+        get_x_token(&mut forced, &mut stores).expect("forced source endline"),
+        Some(Token::Char {
+            ch: ' ',
+            cat: Catcode::Space,
+        })
+    );
+    assert_eq!(
+        get_x_token(&mut forced, &mut stores).expect("forced eof"),
+        None
+    );
+}
+
+#[test]
+fn everyeof_is_visible_to_raw_scanners_before_the_outer_source() {
+    let mut stores = Universe::new();
+    let everyeof = stores.intern_token_list(&[char_token('E')]);
+    stores.set_tok_param(tex_state::env::banks::TokParam::EVERY_EOF, everyeof);
+    let mut input = InputStack::new(MemoryInput::new("O"));
+    input.push_source(MemoryInput::new("I"));
+
+    assert_eq!(
+        crate::semantic_token(
+            crate::next_semantic_raw_token(&mut input, &mut stores)
+                .expect("nested token")
+                .expect("nested token present")
+        ),
+        char_token('I')
+    );
+    assert_eq!(
+        crate::semantic_token(
+            crate::next_semantic_raw_token(&mut input, &mut stores)
+                .expect("everyeof token")
+                .expect("everyeof token present")
+        ),
+        char_token('E')
+    );
+    assert_eq!(
+        crate::semantic_token(
+            crate::next_semantic_raw_token(&mut input, &mut stores)
+                .expect("outer token")
+                .expect("outer token present")
+        ),
+        char_token('O')
+    );
+}
+
+#[test]
 fn expansion_error_captures_invocation_chain_before_macro_frame_pops() {
     let mut stores = Universe::new();
     let macro_cs = stores.intern("m");

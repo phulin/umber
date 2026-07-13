@@ -9,6 +9,7 @@ use std::fmt;
 use std::ops::{Index, IndexMut};
 use std::sync::Arc;
 
+use tex_state::env::banks::TokParam;
 use tex_state::ids::{OriginListId, TokenListId};
 use tex_state::provenance::{
     DiagnosticSite, InsertedOriginKind, RelatedLocation, SyntheticOriginKind,
@@ -620,7 +621,6 @@ pub struct InputStack<S> {
     alignment_inputs: Vec<AlignmentInput>,
     active_macro_invocation: OriginId,
     recently_popped_invocation: Option<OriginId>,
-    natural_source_eof: bool,
 }
 
 /// Proof that one token was delivered directly from a physical source frame.
@@ -737,7 +737,6 @@ impl<S> InputStack<S> {
             alignment_inputs: Vec::new(),
             active_macro_invocation: OriginId::UNKNOWN,
             recently_popped_invocation: None,
-            natural_source_eof: false,
         };
         stack.push_source(source);
         stack
@@ -868,14 +867,7 @@ impl<S> InputStack<S> {
             alignment_inputs: Vec::new(),
             active_macro_invocation,
             recently_popped_invocation: None,
-            natural_source_eof: false,
         })
-    }
-
-    /// Reports and clears whether the most recent token fetch naturally
-    /// exhausted a source. Forced `\endinput` closure does not set this flag.
-    pub fn take_natural_source_eof(&mut self) -> bool {
-        std::mem::take(&mut self.natural_source_eof)
     }
 
     /// Starts one TeX82 alignment-scanner level before `scan_spec`.
@@ -1837,7 +1829,6 @@ where
         stores: &mut impl ExpansionState,
     ) -> Result<Option<TracedExpansionToken>, LexError> {
         self.recently_popped_invocation = None;
-        self.natural_source_eof = false;
         loop {
             let Some(frame_index) = self.current_token_frame_index() else {
                 return Ok(None);
@@ -1893,7 +1884,6 @@ where
                             continue;
                         }
                         if !load_next_line(source, stores)? {
-                            self.natural_source_eof = true;
                             let popped = self.remove_frame(frame_index);
                             if let InputFrame::Source(source) = popped {
                                 self.last_source_frame = Some(LastSourceFrame {
@@ -1903,6 +1893,10 @@ where
                                     frame: source.frame,
                                     next_source_offset: source.next_source_offset,
                                 });
+                            }
+                            let everyeof = stores.tok_param(TokParam::EVERY_EOF);
+                            if everyeof != TokenListId::EMPTY {
+                                self.push_token_list(everyeof, TokenListReplayKind::Inserted);
                             }
                         }
                         continue;

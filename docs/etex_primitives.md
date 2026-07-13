@@ -24,7 +24,7 @@ pass.
 | `\detokenize` | partial | Produces only catcode-10 spaces and catcode-12 other characters; every control word produces a trailing space, including the last. Reference parity remains. |
 | `\readline` | partial | Reads through the virtualized `\read` path with catcode-10 codepoint 32 and catcode-12 other characters, including `\endlinechar`; normalized transcript parity remains. |
 | `\scantokens` | partial | Serializes unexpanded general text as a generated pseudo-file and reprocesses it through the input mechanism under current catcodes, including `^^` notation. `\everyeof` and tracing integration remain. |
-| `\everyeof` | missing | Inserts its tokens once at natural EOF for real and virtual files, but not for `\endinput`. |
+| `\everyeof` | partial | Inserts its tokens once at natural EOF for real and generated virtual files, but not for `\endinput`. Cross-file conditional and snapshot parity remain. |
 | `\unless` | partial | Negates the shared boolean-conditional evaluation path without adding pending input state; focused reference-error parity remains. |
 | `\tracingscantokens` | missing | Positive values trace pseudo-file open and close as specified in section 3.6. |
 
