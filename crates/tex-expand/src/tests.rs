@@ -475,6 +475,26 @@ fn unexpanded_expands_while_scanning_for_the_opening_brace() {
 }
 
 #[test]
+fn unexpanded_accepts_a_control_sequence_with_begin_group_meaning() {
+    // e-TeX manual section 3.1 uses TeX's general-text scanner, whose
+    // compulsory brace test is by command meaning (for example `\bgroup`).
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    crate::install_etex_expandable_primitives(&mut stores);
+    let bgroup = stores.intern("bgroup");
+    stores.set_meaning(
+        bgroup,
+        Meaning::CharToken {
+            ch: '{',
+            cat: Catcode::BeginGroup,
+        },
+    );
+    let mut input = InputStack::new(MemoryInput::new("\\unexpanded\\bgroup X}"));
+
+    assert_eq!(next_expanded_chars(&mut input, &mut stores), "X ");
+}
+
+#[test]
 fn detokenize_outputs_space_and_other_character_tokens() {
     let mut stores = Universe::new();
     crate::install_etex_expandable_primitives(&mut stores);

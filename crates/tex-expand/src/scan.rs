@@ -706,16 +706,21 @@ where
 {
     let open = next_non_space_token(input, stores)?
         .ok_or(ScanToksError::EndOfInputInReplacementText { context })?;
-    if !matches!(
-        traced_semantic_token(open),
-        Token::Char {
-            cat: Catcode::BeginGroup,
-            ..
-        }
-    ) {
+    if !has_begin_group_meaning(stores, traced_semantic_token(open)) {
         return Err(ScanToksError::MissingGeneralTextBeginGroup { context: open });
     }
 
+    scan_general_text_body(input, stores, context)
+}
+
+fn scan_general_text_body<S>(
+    input: &mut InputStack<S>,
+    stores: &mut impl ExpansionState,
+    context: TracedTokenWord,
+) -> Result<TracedTokenList, ScanToksError>
+where
+    S: InputSource,
+{
     let mut builder = stores.token_list_builder();
     let mut origins = stores.origin_list_builder();
     let mut brace_level = 1_u32;
@@ -783,17 +788,27 @@ where
             break token;
         }
     };
-    if !matches!(
-        traced_semantic_token(open),
+    if !has_begin_group_meaning(stores, traced_semantic_token(open)) {
+        return Err(ScanToksError::MissingGeneralTextBeginGroup { context: open });
+    }
+    scan_general_text_body(input, stores, context)
+}
+
+fn has_begin_group_meaning(stores: &impl ExpansionState, token: Token) -> bool {
+    match token {
         Token::Char {
             cat: Catcode::BeginGroup,
             ..
-        }
-    ) {
-        return Err(ScanToksError::MissingGeneralTextBeginGroup { context: open });
+        } => true,
+        Token::Cs(symbol) => matches!(
+            stores.meaning(symbol),
+            Meaning::CharToken {
+                cat: Catcode::BeginGroup,
+                ..
+            }
+        ),
+        Token::Char { .. } | Token::Param(_) | Token::Frozen(_) => false,
     }
-    crate::back_input(input, stores, [open]);
-    scan_general_text(input, stores, context)
 }
 
 fn is_outer_macro(stores: &impl ExpansionState, token: Token) -> bool {
