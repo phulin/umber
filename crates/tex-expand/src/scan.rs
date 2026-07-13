@@ -18,7 +18,7 @@ use tex_state::{ExpansionState, InputReadState, TracedTokenList};
 
 use crate::{
     DriverExpandNext, ExpandError, ExpandNext, ExpandableOpcode, ExpansionHooks, NoInputExpandNext,
-    NoopRecorder,
+    NoopRecorder, ReadRecorder,
 };
 
 /// Result of scanning a macro definition without assigning it.
@@ -750,6 +750,50 @@ where
             _ => push_scanned_token(&mut builder, &mut origins, traced, token),
         }
     }
+}
+
+/// Scans e-TeX general text after expanding only while looking for its
+/// compulsory opening brace; the balanced contents themselves remain raw.
+pub(crate) fn scan_general_text_with_expanded_open<S, St, R, H, E>(
+    input: &mut InputStack<S>,
+    stores: &mut St,
+    recorder: &mut R,
+    hooks: &mut H,
+    expander: &mut E,
+    context: TracedTokenWord,
+) -> Result<TracedTokenList, ScanToksError>
+where
+    S: InputSource,
+    St: ExpansionState,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
+{
+    let open = loop {
+        let token = expander
+            .next_expanded_token(input, stores, recorder, hooks)?
+            .ok_or(ScanToksError::EndOfInputInReplacementText { context })?;
+        if !matches!(
+            traced_semantic_token(token),
+            Token::Char {
+                cat: Catcode::Space,
+                ..
+            }
+        ) {
+            break token;
+        }
+    };
+    if !matches!(
+        traced_semantic_token(open),
+        Token::Char {
+            cat: Catcode::BeginGroup,
+            ..
+        }
+    ) {
+        return Err(ScanToksError::MissingGeneralTextBeginGroup { context: open });
+    }
+    crate::back_input(input, stores, [open]);
+    scan_general_text(input, stores, context)
 }
 
 fn is_outer_macro(stores: &impl ExpansionState, token: Token) -> bool {

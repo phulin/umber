@@ -220,7 +220,9 @@ macro_rules! dispatch_match {
                 )
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Unexpanded) => {
-                let raw = crate::scan::scan_general_text(input, stores, call_context).map_err(
+                let raw = crate::scan::scan_general_text_with_expanded_open(
+                    input, stores, recorder, hooks, &mut expander, call_context,
+                ).map_err(
                     |error| match error {
                         crate::scan::ScanToksError::Lex(error) => ExpandError::Lex(error),
                         crate::scan::ScanToksError::Expand(error) => error,
@@ -239,7 +241,9 @@ macro_rules! dispatch_match {
                 })
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Detokenize) => {
-                let raw = crate::scan::scan_general_text(input, stores, call_context).map_err(
+                let raw = crate::scan::scan_general_text_with_expanded_open(
+                    input, stores, recorder, hooks, &mut expander, call_context,
+                ).map_err(
                     |error| match error {
                         crate::scan::ScanToksError::Lex(error) => ExpandError::Lex(error),
                         crate::scan::ScanToksError::Expand(error) => error,
@@ -282,7 +286,9 @@ macro_rules! dispatch_match {
                 expander.dispatch_inverted_raw_token(target, input, stores, recorder, hooks)
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Scantokens) => {
-                let raw = crate::scan::scan_general_text(input, stores, call_context)?;
+                let raw = crate::scan::scan_general_text_with_expanded_open(
+                    input, stores, recorder, hooks, &mut expander, call_context,
+                )?;
                 let mut text = String::new();
                 for &token in stores.tokens(raw.token_list()) {
                     append_token_show_text(stores, token, &mut text);
