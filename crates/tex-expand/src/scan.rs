@@ -292,6 +292,21 @@ where
 
     loop {
         let source_depth = input.source_depth();
+        let raw = crate::next_semantic_raw_token(input, stores)?
+            .ok_or(ScanToksError::EndOfInputInReplacementText { context })?;
+        if input.source_depth() < source_depth {
+            unread_token(input, stores, raw);
+            return Ok(finish_traced_list(stores, &mut builder, &mut origins));
+        }
+        if is_outer_macro(stores, traced_semantic_token(raw)) {
+            // TeX.web §336 checks outer validity in get_next while the
+            // defining scanner is active, before get_x expands the token.
+            // Back up the outer token and finish the partial definition as if
+            // the error recovery had inserted its missing right brace.
+            unread_token(input, stores, raw);
+            return Ok(finish_traced_list(stores, &mut builder, &mut origins));
+        }
+        unread_token(input, stores, raw);
         let expanded =
             crate::get_x_or_protected_with_recorder_and_hooks(input, stores, &mut recorder, hooks)?;
         let Some(traced) = expanded else {

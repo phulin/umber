@@ -1,4 +1,4 @@
-use super::{scan_toks, scan_toks_expanded};
+use super::{scan_toks, scan_toks_expanded, scan_toks_expanded_with_driver};
 use tex_lex::{InputStack, MemoryInput};
 use tex_state::Universe;
 use tex_state::meaning::MeaningFlags;
@@ -127,6 +127,36 @@ fn forbidden_outer_macro_closes_replacement_and_is_replayed() {
 
     let scanned = scan_toks(&mut input, &mut stores, MeaningFlags::EMPTY, context)
         .expect("outer token inserts a synthetic closing brace");
+    assert!(stores.tokens(scanned.replacement_text()).is_empty());
+    assert_eq!(
+        input.next_token(&mut stores).expect("read replayed outer"),
+        Some(Token::Cs(outer.symbol()))
+    );
+}
+
+#[test]
+fn forbidden_outer_macro_closes_expanded_replacement_before_expansion() {
+    let mut stores = Universe::new();
+    let outer = stores.intern("outermacro");
+    let empty = stores.intern_token_list(&[]);
+    let body = stores.intern_token_list(&[char_token('x', Catcode::Letter)]);
+    stores.set_macro_meaning(
+        outer,
+        tex_state::macro_store::MacroMeaning::new(MeaningFlags::OUTER, empty, body),
+    );
+    let mut input = InputStack::new(MemoryInput::new("{\\outermacro trailing}"));
+    let context =
+        TracedTokenWord::pack(Token::Cs(stores.intern("xdef").symbol()), OriginId::UNKNOWN);
+
+    let scanned = scan_toks_expanded_with_driver(
+        &mut input,
+        &mut stores,
+        MeaningFlags::EMPTY,
+        context,
+        &mut NoopExpansionHooks,
+    )
+    .expect("outer token inserts a synthetic closing brace");
+
     assert!(stores.tokens(scanned.replacement_text()).is_empty());
     assert_eq!(
         input.next_token(&mut stores).expect("read replayed outer"),
