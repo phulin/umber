@@ -59,7 +59,7 @@ impl<W: std::io::Write> DviWriter<W> {
         Ok(())
     }
 
-    fn reset_page_state(&mut self) {
+    pub(super) fn reset_page_state(&mut self) {
         self.right_stack.clear();
         self.down_stack.clear();
         self.dvi_h = Scaled::from_raw(0);
@@ -70,7 +70,11 @@ impl<W: std::io::Write> DviWriter<W> {
         self.cur_s = -1;
     }
 
-    fn ship_box(&mut self, page: &PageArtifact, node: &PageNode) -> Result<(), DviError> {
+    pub(super) fn ship_box(
+        &mut self,
+        page: &PageArtifact,
+        node: &PageNode,
+    ) -> Result<(), DviError> {
         // tex.web `Initialize variables as ship_out begins` and `Ship box p out`:
         // the page reference point includes both dimension parameters before
         // hlist_out/vlist_out performs its normal traversal.
@@ -82,7 +86,7 @@ impl<W: std::io::Write> DviWriter<W> {
                     .height
                     .checked_add(page.job.v_offset)
                     .ok_or(DviError::PositionOverflow)?;
-                self.hlist_out(page, box_node)?;
+                self.hlist_out(&page.effects, box_node)?;
             }
             PageNode::VList(box_node) => {
                 // tex.web ship_out: cur_v := height(p) + v_offset.
@@ -90,7 +94,7 @@ impl<W: std::io::Write> DviWriter<W> {
                     .height
                     .checked_add(page.job.v_offset)
                     .ok_or(DviError::PositionOverflow)?;
-                self.vlist_out(page, box_node)?;
+                self.vlist_out(&page.effects, box_node)?;
             }
             PageNode::Char { .. }
             | PageNode::Lig { .. }

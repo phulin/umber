@@ -21,6 +21,25 @@ fn page_artifact_round_trips() {
 }
 
 #[test]
+fn streamed_v10_builder_is_byte_identical_to_owned_encoding() {
+    let page = sample_artifact();
+    let (root, vertical) = match &page.root {
+        PageNode::HList(root) => (root, false),
+        PageNode::VList(root) => (root, true),
+        _ => unreachable!("validated sample root is a box"),
+    };
+    let mut builder = crate::V10ArtifactBuilder::new(page.job.clone(), page.counts, root, vertical);
+    for child in &root.children {
+        builder.push_node(child).expect("stream child");
+    }
+    let streamed = builder
+        .finish(&page.fonts, &page.effects)
+        .expect("finish stream");
+
+    assert_eq!(streamed, page.to_bytes().expect("owned encoding"));
+}
+
+#[test]
 fn artifact_bytes_and_hash_are_deterministic() {
     let first = sample_artifact();
     let second = sample_artifact();

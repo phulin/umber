@@ -20,7 +20,10 @@ mod glue;
 mod leaders;
 mod movement;
 mod opcodes;
+mod plan;
 mod traversal;
+
+pub use plan::{DviPagePlan, DviPagePlanBuilder};
 
 /// DVI emission failure.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -38,6 +41,7 @@ pub enum DviError {
     PositionOverflow,
     Sink { message: String },
     InconsistentFontResource { font_id: u32 },
+    Artifact { message: String },
     Poisoned,
 }
 
@@ -82,12 +86,21 @@ impl fmt::Display for DviError {
                 f,
                 "DVI pages define incompatible resources for font number {font_id}"
             ),
+            Self::Artifact { message } => write!(f, "invalid page artifact: {message}"),
             Self::Poisoned => f.write_str("DVI stream cannot continue after an earlier failure"),
         }
     }
 }
 
 impl std::error::Error for DviError {}
+
+impl From<crate::ParseError> for DviError {
+    fn from(value: crate::ParseError) -> Self {
+        Self::Artifact {
+            message: value.to_string(),
+        }
+    }
+}
 
 /// Writes a complete DVI file from committed page artifacts.
 ///
@@ -127,6 +140,19 @@ impl<W: Write> DviStreamWriter<W> {
         result
     }
 
+    /// Appends a page whose traversal has already been compiled into DVI body
+    /// bytes before the shipout commit boundary.
+    pub fn write_page_plan(&mut self, plan: &DviPagePlan) -> Result<(), DviError> {
+        if self.failed {
+            return Err(DviError::Poisoned);
+        }
+        let result = self.write_page_plan_inner(plan);
+        if result.is_err() {
+            self.failed = true;
+        }
+        result
+    }
+
     fn write_page_inner(&mut self, page: &PageArtifact) -> Result<(), DviError> {
         if self.writer.page_count == u16::MAX {
             return Err(DviError::TooManyPages {
@@ -144,6 +170,27 @@ impl<W: Write> DviStreamWriter<W> {
             _ => return Err(DviError::InconsistentJobInfo),
         }
         self.writer.page(page)?;
+        self.writer.page_count += 1;
+        self.writer.flush_buffer()
+    }
+
+    fn write_page_plan_inner(&mut self, plan: &DviPagePlan) -> Result<(), DviError> {
+        if self.writer.page_count == u16::MAX {
+            return Err(DviError::TooManyPages {
+                pages: usize::from(self.writer.page_count) + 1,
+            });
+        }
+        match (&self.writer.job_banner, self.writer.job_mag) {
+            (None, None) => {
+                self.writer.preamble(plan.banner(), plan.mag())?;
+                self.writer.job_banner = Some(plan.banner().to_owned());
+                self.writer.job_mag = Some(plan.mag());
+                self.writer.flush_buffer()?;
+            }
+            (Some(banner), Some(mag)) if banner == plan.banner() && mag == plan.mag() => {}
+            _ => return Err(DviError::InconsistentJobInfo),
+        }
+        self.writer.page_plan(plan)?;
         self.writer.page_count += 1;
         self.writer.flush_buffer()
     }
@@ -183,6 +230,7 @@ struct DviWriter<W: Write> {
     cur_v: Scaled,
     dvi_f: Option<u32>,
     cur_s: i32,
+    font_definition_sites: Option<Vec<plan::FontDefinitionSite>>,
 }
 
 impl<W: Write> DviWriter<W> {
@@ -209,6 +257,7 @@ impl<W: Write> DviWriter<W> {
             cur_v: Scaled::from_raw(0),
             dvi_f: None,
             cur_s: -1,
+            font_definition_sites: None,
         }
     }
 

@@ -63,3 +63,62 @@ TRIP, and e-TRIP corpora remain byte-identical. Reprofile Gentle after the
 commit-receipt and indexed-view stages. A new flat artifact version is justified
 only if indexed v10 parsing or indexing becomes a material hotspot; the July
 2026 Gentle result retained v10 and the owned decoder.
+
+## Precompiled page-plan architecture
+
+The `umber2-xp0` implementation keeps canonical v10 as the only durable page
+format. Fresh shipout lowers one direct root child at a time into a typed event
+stream consumed simultaneously by the canonical v10 encoder and incremental
+DVI compiler. Each temporary child is released immediately; production no
+longer constructs, serializes, or retraverses an owned whole-page
+`PageArtifact`, and it does not decode the v10 bytes it just made. The
+ephemeral `DviPagePlan` is complete before commit. It contains job identity,
+page counts and extents, page-local
+maximum stack depth, detached font resources, an encoded DVI body, and the
+byte ranges occupied by first-use font definitions.
+
+The body excludes `bop`, `eop`, and job framing. Movement-register selection,
+glue rounding, leaders, rules, characters, and specials are final page-local
+bytes. Font definitions are the sole relocations: final assembly copies a
+definition at its recorded first-use position only when an earlier page has
+not already defined the same resource. This preserves TeX's exact first-use
+ordering while allowing plans to compile independently of prior-page byte
+offsets. The assembler owns preamble, `bop` backpointers, global font identity,
+postamble maxima, page count, and final padding.
+
+Plan construction happens before commit, but publication happens only after
+`ShipoutTransaction::commit` succeeds. The execution result carries plans in
+artifact-commit order; no plan contains a live `Universe`, store handle, node
+id, or borrowed input. Paths that commit from a nested scanner and cannot yet
+propagate their prepared plan reconstruct it from that commit's validated v10
+receipt as an explicit compatibility fallback. Failed transactions publish
+neither an artifact receipt nor a plan.
+
+Durable ID replay uses the same v10 decoder. It retains metadata and effects,
+then decodes, validates, emits, and drops one direct root child at a time rather
+than allocating the recursive page tree. Nested material is bounded by the
+current child, preserving exact leader repetition and TeX traversal semantics.
+
+Artifact bytes cross the commit boundary as a `VerifiedArtifact`: its private
+identity/payload pair computes the artifact-domain content id once. Storage,
+commit receipts, and prepared-plan alignment reuse that identity. A real
+`World` remembers immutable objects it has already verified, avoiding repeated
+file reads and hashes on warm publication while other worlds and durable reads
+continue to verify independently. Derived plans never participate in content
+identity, snapshots, rollback, or durable artifact equivalence.
+
+## Matched result
+
+The final gate compared this branch with v10 commit `49d8bb3` using 50
+alternating Gentle runs on the same host. Total elapsed time fell from 16.35 s
+to 15.15 s; mean time fell from 327 ms to 303 ms and median time from 235 ms
+to 220 ms. This is a 7.3% mean and 6.4% median whole-run improvement, including
+the complete engine and parity harness rather than an isolated DVI kernel.
+
+Matched 50-iteration symbolized Samply profiles retained 12,753 baseline and
+11,741 new samples. The baseline profile includes durable artifact read,
+identity verification, owned `validate_artifact`, and `DviStreamWriter::write_page`.
+Those frames disappear from the fresh path; its corresponding frames are the
+root-child v10 builder, incremental `DviPagePlanBuilder`, verified store, and
+`write_page_plan`. Snapshot allocation budgets and all exact Story, Gentle,
+TRIP, and e-TRIP DVI comparisons pass.

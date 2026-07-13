@@ -7,7 +7,7 @@ use tex_expand::ExpansionHooks;
 use tex_lex::{InputStack, WorldInput};
 use tex_state::{FileContent, InputReadState, JobClock, Universe, World};
 
-use umber::{EngineSession, dvi_from_artifacts, prepare_etex_run_stores, prepare_run_stores};
+use umber::{EngineSession, dvi_from_page_plans, prepare_etex_run_stores, prepare_run_stores};
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -151,7 +151,7 @@ fn run_file_in_process(
     let dvi = if run.artifacts.is_empty() {
         None
     } else {
-        Some(dvi_from_artifacts(&stores, &run.artifacts).map_err(|error| error.to_string())?)
+        Some(dvi_from_page_plans(&run.dvi_pages).map_err(|error| error.to_string())?)
     };
     let format = if run.dumped_format {
         Some(stores.dump_format().map_err(|error| error.to_string())?)

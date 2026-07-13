@@ -1,5 +1,6 @@
 use tex_expand::{ExpansionHooks, NoopRecorder, ReadRecorder};
 use tex_lex::{InputSource, InputStack};
+use tex_out::dvi::DviPagePlan;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, UnexpandablePrimitive};
 use tex_state::provenance::InsertedOriginKind;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
@@ -13,15 +14,24 @@ use crate::{ExecError, Mode, ModeNest, assignments};
 pub struct ExecutionStats {
     pub delivered_tokens: usize,
     pub shipped_artifacts: Vec<ContentHash>,
+    /// Precompiled DVI pages aligned with `shipped_artifacts`.
+    pub dvi_pages: Vec<DviPagePlan>,
+    pub(crate) prepared_dvi_pages: Vec<PreparedDviPage>,
     pub dumped_format: bool,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DispatchAction {
     Continue,
     End,
     NotConsumed,
-    Shipout(ContentHash),
+    Shipout(PreparedDviPage),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PreparedDviPage {
+    pub(crate) hash: ContentHash,
+    pub(crate) plan: DviPagePlan,
 }
 
 /// Dispatches one gullet-delivered token in the current mode.

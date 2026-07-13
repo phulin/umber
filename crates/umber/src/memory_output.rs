@@ -1,8 +1,24 @@
 use std::path::PathBuf;
 
+use tex_out::dvi::DviPagePlan;
 use tex_state::{CommittedArtifact, ContentHash, Universe, WorldError};
 
-use crate::{DviBuildError, dvi_from_artifacts, dvi_from_committed_artifacts};
+use crate::{DviBuildError, dvi_from_artifacts, dvi_from_committed_artifacts, dvi_from_page_plans};
+
+/// Fast-path variant for page bodies compiled before successful shipout.
+pub fn collect_final_memory_output_from_plans(
+    stores: &mut Universe,
+    plans: &[DviPagePlan],
+    output_byte_limit: usize,
+) -> Result<MemoryRunOutput, MemoryOutputCollectionError> {
+    collect_final_memory_output_with_dvi(stores, output_byte_limit, |_| {
+        if plans.is_empty() {
+            Ok(Vec::new())
+        } else {
+            dvi_from_page_plans(plans)
+        }
+    })
+}
 
 /// One committed auxiliary output returned by a memory-backed run.
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -8,7 +8,7 @@ use tex_state::{JobClock, Universe, World};
 
 use crate::{
     EngineSession, MemoryOutputCollectionError, MemoryRunOutput,
-    collect_final_memory_output_from_commits, prepare_run_stores,
+    collect_final_memory_output_from_plans, prepare_run_stores,
 };
 
 mod hooks;
@@ -532,9 +532,9 @@ impl VirtualCompileSession {
                 column: None,
             })
         })?;
-        let output = collect_final_memory_output_from_commits(
+        let output = collect_final_memory_output_from_plans(
             &mut stores,
-            &run.committed_artifacts,
+            &run.dvi_pages,
             self.limits.output_bytes,
         )
         .map_err(map_output_error)?;

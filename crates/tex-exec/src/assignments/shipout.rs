@@ -5,12 +5,13 @@ use tex_expand::{
     scan_dimen::DimensionDiagnostic,
 };
 use tex_lex::{InputSource, InputStack, MemoryInput, TokenListReplayKind};
+use tex_out::dvi::{DviPagePlan, DviPagePlanBuilder};
 use tex_out::{
     BoxNode as PageBoxNode, ContentHash as PageContentHash, DEFAULT_BANNER,
     DiscKind as PageDiscKind, EffectSink, FontResource, GlueKind as PageGlueKind,
     GlueOrder as PageGlueOrder, GlueSign, GlueSpec as PageGlueSpec, JobInfo,
     KernKind as PageKernKind, LeaderPayload as PageLeaderPayload, PageEffect, PageNode, PageToken,
-    TokenCatcode, UnvalidatedPageArtifact,
+    TokenCatcode, V10ArtifactBuilder,
 };
 use tex_state::env::banks::DimenParam;
 use tex_state::glue::Order;
@@ -21,11 +22,12 @@ use tex_state::node::{
 };
 use tex_state::node_arena::NodeRef;
 use tex_state::token::{Catcode, Token, TracedTokenWord};
-use tex_state::{ContentHash, EffectRecord, PrintSink, Universe};
+use tex_state::{EffectRecord, PrintSink, Universe, VerifiedArtifact};
 
 use super::scan_required_box_node;
 use crate::ExecError;
 use crate::diagnostics;
+use crate::dispatch::PreparedDviPage;
 
 // TeX82 map: `ship_out` consumes a box whose list is later visited by
 // `hlist_out`/`vlist_out`.  This lowering preserves node order, box dimensions
@@ -45,7 +47,7 @@ pub(super) fn execute_shipout<S, R, H>(
     stores: &mut Universe,
     recorder: &mut R,
     hooks: &mut H,
-) -> Result<Option<ContentHash>, ExecError>
+) -> Result<Option<PreparedDviPage>, ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
@@ -60,7 +62,7 @@ pub(crate) fn shipout_node<S, R>(
     input: &mut InputStack<S>,
     stores: &mut Universe,
     recorder: &mut R,
-) -> Result<Option<ContentHash>, ExecError>
+) -> Result<Option<PreparedDviPage>, ExecError>
 where
     S: InputSource,
     R: ReadRecorder,
@@ -74,12 +76,16 @@ where
     }
     let mut transaction = stores.begin_shipout();
     let staged = stage_shipout(node, input, &mut transaction, recorder)?;
-    let hash = transaction.commit(staged.artifact_bytes, staged.effect_pos)?;
-    Ok(Some(hash))
+    let hash = transaction.commit(staged.artifact, staged.effect_pos)?;
+    Ok(Some(PreparedDviPage {
+        hash,
+        plan: staged.dvi_plan,
+    }))
 }
 
 struct StagedShipout {
-    artifact_bytes: Vec<u8>,
+    artifact: VerifiedArtifact,
+    dvi_plan: DviPagePlan,
     effect_pos: tex_state::EffectPos,
 }
 
@@ -99,7 +105,13 @@ where
     if let Some(diagnostic) = diagnostic {
         diagnostics::report_dimension_diagnostic(stores, DimensionDiagnostic::from(diagnostic));
     }
-    let (root, fonts, effects) = {
+    let job = JobInfo {
+        mag,
+        banner: DEFAULT_BANNER.to_owned(),
+        h_offset: stores.dimen_param(DimenParam::H_OFFSET),
+        v_offset: stores.dimen_param(DimenParam::V_OFFSET),
+    };
+    let (encoder, dvi_plan, fonts, effects) = {
         let mut lowerer = ShipoutLowerer {
             stores,
             recorder,
@@ -108,32 +120,44 @@ where
             effects: pending_effects,
             suppress_deferred_streams: false,
         };
-        let root = lowerer.lower_root_node(node)?;
-        (root, lowerer.fonts, lowerer.effects)
+        let (root, children, vertical) = match node {
+            Node::HList(box_node) => {
+                let root = lowerer.lower_box_header(&box_node);
+                (root, box_node.children, false)
+            }
+            Node::VList(box_node) => {
+                let root = lowerer.lower_box_header(&box_node);
+                (root, box_node.children, true)
+            }
+            Node::Unset(_) => {
+                return Err(ExecError::UnsupportedShipoutNode {
+                    node: "unset alignment",
+                });
+            }
+            _ => {
+                return Err(ExecError::UnsupportedShipoutNode {
+                    node: "non-box shipout root",
+                });
+            }
+        };
+        let mut dvi = DviPagePlanBuilder::new(job.clone(), counts, &root, vertical)
+            .map_err(|error| ExecError::InvalidShipoutArtifact(error.to_string()))?;
+        let mut encoder = V10ArtifactBuilder::new(job, counts, &root, vertical);
+        lowerer.encode_root_list(children, &mut encoder, &mut dvi)?;
+        let dvi_plan = dvi
+            .finish(&lowerer.fonts)
+            .map_err(|error| ExecError::InvalidShipoutArtifact(error.to_string()))?;
+        (encoder, dvi_plan, lowerer.fonts, lowerer.effects)
     };
-
-    let artifact = UnvalidatedPageArtifact {
-        job: JobInfo {
-            mag,
-            banner: DEFAULT_BANNER.to_owned(),
-            h_offset: stores.dimen_param(DimenParam::H_OFFSET),
-            v_offset: stores.dimen_param(DimenParam::V_OFFSET),
-        },
-        fonts,
-        counts,
-        root,
-        effects,
-    }
-    .validate()
-    .map_err(|error| ExecError::InvalidShipoutArtifact(error.to_string()))?;
-    let artifact_bytes = artifact
-        .to_bytes()
+    let artifact_bytes = encoder
+        .finish(&fonts, &effects)
         .map_err(|error| ExecError::InvalidShipoutArtifact(error.to_string()))?;
     let input_summary = input.publication_summary(stores);
     stores.set_input_summary(input_summary);
     let effect_pos = stores.world().effect_pos();
     Ok(StagedShipout {
-        artifact_bytes,
+        artifact: VerifiedArtifact::new(artifact_bytes),
+        dvi_plan,
         effect_pos,
     })
 }
@@ -272,13 +296,6 @@ impl<R> ShipoutLowerer<'_, R>
 where
     R: ReadRecorder,
 {
-    fn lower_root_node(&mut self, node: Node) -> Result<PageNode, ExecError> {
-        self.lower_node(node)?
-            .ok_or(ExecError::UnsupportedShipoutNode {
-                node: "suppressed shipout root",
-            })
-    }
-
     fn lower_node(&mut self, node: Node) -> Result<Option<PageNode>, ExecError> {
         Ok(Some(match node {
             Node::Char { font, ch } => PageNode::Char {
@@ -365,6 +382,53 @@ where
             glue_order: lower_order(box_node.glue_order),
             children: self.lower_node_list(box_node.children)?,
         })
+    }
+
+    fn lower_box_header(&self, box_node: &StateBoxNode) -> PageBoxNode {
+        PageBoxNode {
+            width: box_node.width,
+            height: box_node.height,
+            depth: box_node.depth,
+            shift: box_node.shift,
+            glue_set: box_node.glue_set,
+            glue_sign: lower_glue_sign(box_node.glue_sign),
+            glue_order: lower_order(box_node.glue_order),
+            children: Vec::new(),
+        }
+    }
+
+    fn encode_root_list(
+        &mut self,
+        list: NodeListId,
+        encoder: &mut V10ArtifactBuilder,
+        dvi: &mut DviPagePlanBuilder,
+    ) -> Result<(), ExecError> {
+        let len = self.stores.nodes(list).len();
+        for index in 0..len {
+            let node = FrozenShipoutNode::from_ref(
+                self.stores
+                    .nodes(list)
+                    .get(index)
+                    .expect("frozen node index is live"),
+            );
+            if let FrozenShipoutNode::MathList(list) = node {
+                let math_nodes = crate::math::finish_math_list_node(self.stores, list, false);
+                for node in self.lower_nodes(math_nodes)? {
+                    encoder
+                        .push_node(&node)
+                        .map_err(|error| ExecError::InvalidShipoutArtifact(error.to_string()))?;
+                    dvi.push_node(&node, &self.fonts, &self.effects)
+                        .map_err(|error| ExecError::InvalidShipoutArtifact(error.to_string()))?;
+                }
+            } else if let Some(node) = self.lower_frozen_node(node)? {
+                encoder
+                    .push_node(&node)
+                    .map_err(|error| ExecError::InvalidShipoutArtifact(error.to_string()))?;
+                dvi.push_node(&node, &self.fonts, &self.effects)
+                    .map_err(|error| ExecError::InvalidShipoutArtifact(error.to_string()))?;
+            }
+        }
+        Ok(())
     }
 
     fn lower_leader_payload(

@@ -21,8 +21,16 @@ use super::{
 
 impl<W: std::io::Write> DviWriter<W> {
     pub(super) fn index_page_fonts(&mut self, page: &PageArtifact) -> Result<(), DviError> {
+        self.index_fonts(&page.fonts)
+    }
+
+    pub(super) fn index_fonts(&mut self, fonts: &[FontResource]) -> Result<(), DviError> {
         self.page_fonts.clear();
-        for font in &page.fonts {
+        self.add_page_fonts(fonts)
+    }
+
+    pub(super) fn add_page_fonts(&mut self, fonts: &[FontResource]) -> Result<(), DviError> {
+        for font in fonts {
             let key = FontKey::from(font);
             if self
                 .fonts_by_number
@@ -92,7 +100,15 @@ impl<W: std::io::Write> DviWriter<W> {
             return Ok(defined.number);
         }
         let number = font.font_id;
+        let definition_start = self.bytes.len();
         self.fnt_def(number, font)?;
+        if let Some(sites) = &mut self.font_definition_sites {
+            sites.push(super::plan::FontDefinitionSite {
+                font_id: number,
+                start: definition_start,
+                end: self.bytes.len(),
+            });
+        }
         self.fonts.insert(
             key.clone(),
             DefinedFont {

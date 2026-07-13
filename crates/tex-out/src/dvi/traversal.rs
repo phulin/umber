@@ -1,6 +1,6 @@
 use tex_arith::Scaled;
 
-use crate::{BoxNode, PageArtifact, PageEffect, PageNode};
+use crate::{BoxNode, PageArtifact, PageEffect, PageNode, binary::V10PageDecoder};
 
 use super::{
     DviError, DviWriter,
@@ -20,10 +20,259 @@ use super::{
 // positive rightward.  Thus hlist recursion subtracts shift and vlist
 // recursion adds it.
 
+pub(super) enum RootStreamState {
+    H {
+        save_loc: usize,
+        base_line: Scaled,
+        left_edge: Scaled,
+        cur_g: Scaled,
+        cur_glue: Scaled,
+    },
+    V {
+        save_loc: usize,
+        left_edge: Scaled,
+        top_edge: Scaled,
+        cur_g: Scaled,
+        cur_glue: Scaled,
+    },
+}
+
 impl<W: std::io::Write> DviWriter<W> {
-    pub(super) fn hlist_out(
+    pub(super) fn begin_root_stream(
+        &mut self,
+        h_offset: Scaled,
+        v_offset: Scaled,
+        root: &BoxNode,
+        vertical: bool,
+    ) -> Result<RootStreamState, DviError> {
+        self.cur_h = h_offset;
+        self.cur_v = root
+            .height
+            .checked_add(v_offset)
+            .ok_or(DviError::PositionOverflow)?;
+        self.enter_box();
+        if self.cur_s > 0 {
+            self.u8(PUSH);
+        }
+        let save_loc = self.bytes.len();
+        if vertical {
+            let left_edge = self.cur_h;
+            self.cur_v = sub_scaled(self.cur_v, root.height)?;
+            Ok(RootStreamState::V {
+                save_loc,
+                left_edge,
+                top_edge: self.cur_v,
+                cur_g: Scaled::from_raw(0),
+                cur_glue: Scaled::from_raw(0),
+            })
+        } else {
+            Ok(RootStreamState::H {
+                save_loc,
+                base_line: self.cur_v,
+                left_edge: self.cur_h,
+                cur_g: Scaled::from_raw(0),
+                cur_glue: Scaled::from_raw(0),
+            })
+        }
+    }
+
+    pub(super) fn push_root_stream_child(
+        &mut self,
+        effects: &[PageEffect],
+        root: &BoxNode,
+        state: &mut RootStreamState,
+        child: &PageNode,
+    ) -> Result<(), DviError> {
+        match state {
+            RootStreamState::H {
+                base_line,
+                left_edge,
+                cur_g,
+                cur_glue,
+                ..
+            } => {
+                self.output_hlist_child(
+                    effects, root, child, *base_line, *left_edge, cur_g, cur_glue,
+                )?;
+                self.cur_v = *base_line;
+            }
+            RootStreamState::V {
+                left_edge,
+                top_edge,
+                cur_g,
+                cur_glue,
+                ..
+            } => self
+                .output_vlist_child(effects, root, child, *left_edge, *top_edge, cur_g, cur_glue)?,
+        }
+        Ok(())
+    }
+
+    pub(super) fn finish_root_stream(&mut self, state: RootStreamState) -> Result<(), DviError> {
+        let save_loc = match state {
+            RootStreamState::H { save_loc, .. } | RootStreamState::V { save_loc, .. } => save_loc,
+        };
+        self.prune_movements(save_loc);
+        if self.cur_s > 0 {
+            self.dvi_pop(save_loc);
+        }
+        self.cur_s -= 1;
+        Ok(())
+    }
+
+    pub(super) fn ship_streamed_box(
         &mut self,
         page: &PageArtifact,
+        root: &BoxNode,
+        vertical: bool,
+        decoder: &mut V10PageDecoder<'_>,
+    ) -> Result<(), DviError> {
+        let mut state =
+            self.begin_root_stream(page.job.h_offset, page.job.v_offset, root, vertical)?;
+        while let Some(child) = decoder.next_child()? {
+            self.push_root_stream_child(&page.effects, root, &mut state, &child)?;
+        }
+        self.finish_root_stream(state)
+    }
+
+    #[allow(clippy::too_many_arguments)] // Explicit TeX hlist traversal registers.
+    fn output_hlist_child(
+        &mut self,
+        effects: &[PageEffect],
+        this_box: &BoxNode,
+        child: &PageNode,
+        base_line: Scaled,
+        left_edge: Scaled,
+        cur_g: &mut Scaled,
+        cur_glue: &mut Scaled,
+    ) -> Result<(), DviError> {
+        match child {
+            PageNode::Char { font_id, ch, width }
+            | PageNode::Lig {
+                font_id, ch, width, ..
+            } => {
+                self.synch_h()?;
+                self.synch_v()?;
+                self.change_font(*font_id)?;
+                self.set_char(*ch)?;
+                self.cur_h = add_scaled(self.cur_h, *width)?;
+                self.dvi_h = self.cur_h;
+            }
+            PageNode::HList(box_node) | PageNode::VList(box_node) => {
+                self.output_box_in_hlist(effects, box_node, matches!(child, PageNode::VList(_)))?;
+            }
+            PageNode::Rule {
+                width,
+                height,
+                depth,
+            } => {
+                let rule_ht = height.unwrap_or(this_box.height);
+                let rule_dp = depth.unwrap_or(this_box.depth);
+                let rule_wd = width.unwrap_or(Scaled::from_raw(0));
+                self.output_rule_in_hlist(rule_ht, rule_dp, rule_wd, base_line)?;
+                self.cur_h = add_scaled(self.cur_h, rule_wd)?;
+            }
+            PageNode::Glue { spec, kind, leader } => {
+                let rule_wd = adjusted_glue_width(
+                    *spec,
+                    this_box.glue_sign,
+                    this_box.glue_order,
+                    this_box.glue_set,
+                    cur_glue,
+                    cur_g,
+                )?;
+                self.move_right_or_output_leaders(leaders::HLeaderContext {
+                    effects,
+                    this_box,
+                    kind: *kind,
+                    leader,
+                    rule_wd,
+                    left_edge,
+                    base_line,
+                })?;
+            }
+            PageNode::Kern { amount, .. } => self.cur_h = add_scaled(self.cur_h, *amount)?,
+            PageNode::MathOn(width) | PageNode::MathOff(width) => {
+                self.cur_h = add_scaled(self.cur_h, *width)?;
+            }
+            PageNode::WhatsitAnchor { effect_index } => {
+                self.out_what(effects, *effect_index)?;
+            }
+            PageNode::Penalty(_)
+            | PageNode::Disc { .. }
+            | PageNode::Mark { .. }
+            | PageNode::Insert { .. }
+            | PageNode::Adjust(_) => {}
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)] // Explicit TeX vlist traversal registers.
+    fn output_vlist_child(
+        &mut self,
+        effects: &[PageEffect],
+        this_box: &BoxNode,
+        child: &PageNode,
+        left_edge: Scaled,
+        top_edge: Scaled,
+        cur_g: &mut Scaled,
+        cur_glue: &mut Scaled,
+    ) -> Result<(), DviError> {
+        match child {
+            PageNode::HList(box_node) | PageNode::VList(box_node) => {
+                self.output_box_in_vlist(effects, box_node, matches!(child, PageNode::VList(_)))?;
+                self.cur_h = left_edge;
+            }
+            PageNode::Rule {
+                width,
+                height,
+                depth,
+            } => {
+                let rule_ht = add_scaled(
+                    height.unwrap_or(Scaled::from_raw(0)),
+                    depth.unwrap_or(Scaled::from_raw(0)),
+                )?;
+                self.output_rule_in_vlist(rule_ht, width.unwrap_or(this_box.width))?;
+            }
+            PageNode::Glue { spec, kind, leader } => {
+                let rule_ht = adjusted_glue_width(
+                    *spec,
+                    this_box.glue_sign,
+                    this_box.glue_order,
+                    this_box.glue_set,
+                    cur_glue,
+                    cur_g,
+                )?;
+                self.move_down_or_output_leaders(leaders::VLeaderContext {
+                    effects,
+                    this_box,
+                    kind: *kind,
+                    leader,
+                    rule_ht,
+                    left_edge,
+                    top_edge,
+                })?;
+            }
+            PageNode::Kern { amount, .. } => self.cur_v = add_scaled(self.cur_v, *amount)?,
+            PageNode::WhatsitAnchor { effect_index } => {
+                self.out_what(effects, *effect_index)?;
+            }
+            PageNode::Char { .. }
+            | PageNode::Lig { .. }
+            | PageNode::Penalty(_)
+            | PageNode::Disc { .. }
+            | PageNode::Mark { .. }
+            | PageNode::Insert { .. }
+            | PageNode::MathOn(_)
+            | PageNode::MathOff(_)
+            | PageNode::Adjust(_) => {}
+        }
+        Ok(())
+    }
+
+    pub(super) fn hlist_out(
+        &mut self,
+        effects: &[PageEffect],
         this_box: &BoxNode,
     ) -> Result<(), DviError> {
         let g_order = this_box.glue_order;
@@ -52,7 +301,11 @@ impl<W: std::io::Write> DviWriter<W> {
                     self.dvi_h = self.cur_h;
                 }
                 PageNode::HList(box_node) | PageNode::VList(box_node) => {
-                    self.output_box_in_hlist(page, box_node, matches!(child, PageNode::VList(_)))?;
+                    self.output_box_in_hlist(
+                        effects,
+                        box_node,
+                        matches!(child, PageNode::VList(_)),
+                    )?;
                 }
                 PageNode::Rule {
                     width,
@@ -75,7 +328,7 @@ impl<W: std::io::Write> DviWriter<W> {
                         &mut cur_g,
                     )?;
                     self.move_right_or_output_leaders(leaders::HLeaderContext {
-                        page,
+                        effects,
                         this_box,
                         kind: *kind,
                         leader,
@@ -91,7 +344,7 @@ impl<W: std::io::Write> DviWriter<W> {
                     self.cur_h = add_scaled(self.cur_h, *width)?;
                 }
                 PageNode::WhatsitAnchor { effect_index } => {
-                    self.out_what(page, *effect_index)?;
+                    self.out_what(effects, *effect_index)?;
                 }
                 PageNode::Penalty(_)
                 | PageNode::Disc { .. }
@@ -112,7 +365,7 @@ impl<W: std::io::Write> DviWriter<W> {
 
     pub(super) fn vlist_out(
         &mut self,
-        page: &PageArtifact,
+        effects: &[PageEffect],
         this_box: &BoxNode,
     ) -> Result<(), DviError> {
         let g_order = this_box.glue_order;
@@ -131,7 +384,11 @@ impl<W: std::io::Write> DviWriter<W> {
         for child in &this_box.children {
             match child {
                 PageNode::HList(box_node) | PageNode::VList(box_node) => {
-                    self.output_box_in_vlist(page, box_node, matches!(child, PageNode::VList(_)))?;
+                    self.output_box_in_vlist(
+                        effects,
+                        box_node,
+                        matches!(child, PageNode::VList(_)),
+                    )?;
                     self.cur_h = left_edge;
                 }
                 PageNode::Rule {
@@ -156,7 +413,7 @@ impl<W: std::io::Write> DviWriter<W> {
                         &mut cur_g,
                     )?;
                     self.move_down_or_output_leaders(leaders::VLeaderContext {
-                        page,
+                        effects,
                         this_box,
                         kind: *kind,
                         leader,
@@ -169,7 +426,7 @@ impl<W: std::io::Write> DviWriter<W> {
                     self.cur_v = add_scaled(self.cur_v, *amount)?;
                 }
                 PageNode::WhatsitAnchor { effect_index } => {
-                    self.out_what(page, *effect_index)?;
+                    self.out_what(effects, *effect_index)?;
                 }
                 PageNode::Char { .. }
                 | PageNode::Lig { .. }
@@ -193,7 +450,7 @@ impl<W: std::io::Write> DviWriter<W> {
 
     fn output_box_in_hlist(
         &mut self,
-        page: &PageArtifact,
+        effects: &[PageEffect],
         box_node: &BoxNode,
         is_vlist: bool,
     ) -> Result<(), DviError> {
@@ -207,9 +464,9 @@ impl<W: std::io::Write> DviWriter<W> {
         let base_line = self.cur_v;
         self.cur_v = add_scaled(base_line, box_node.shift)?;
         if is_vlist {
-            self.vlist_out(page, box_node)?;
+            self.vlist_out(effects, box_node)?;
         } else {
-            self.hlist_out(page, box_node)?;
+            self.hlist_out(effects, box_node)?;
         }
         self.dvi_h = save_h;
         self.dvi_v = save_v;
@@ -220,7 +477,7 @@ impl<W: std::io::Write> DviWriter<W> {
 
     fn output_box_in_vlist(
         &mut self,
-        page: &PageArtifact,
+        effects: &[PageEffect],
         box_node: &BoxNode,
         is_vlist: bool,
     ) -> Result<(), DviError> {
@@ -235,9 +492,9 @@ impl<W: std::io::Write> DviWriter<W> {
         let left_edge = self.cur_h;
         self.cur_h = add_scaled(left_edge, box_node.shift)?;
         if is_vlist {
-            self.vlist_out(page, box_node)?;
+            self.vlist_out(effects, box_node)?;
         } else {
-            self.hlist_out(page, box_node)?;
+            self.hlist_out(effects, box_node)?;
         }
         self.dvi_h = save_h;
         self.dvi_v = save_v;
@@ -321,9 +578,8 @@ impl<W: std::io::Write> DviWriter<W> {
         }
     }
 
-    fn out_what(&mut self, page: &PageArtifact, effect_index: u32) -> Result<(), DviError> {
-        let effect = page
-            .effects
+    fn out_what(&mut self, effects: &[PageEffect], effect_index: u32) -> Result<(), DviError> {
+        let effect = effects
             .get(usize::try_from(effect_index).expect("u32 fits usize"))
             .ok_or(DviError::MissingEffect { effect_index })?;
         if let PageEffect::Special { payload, .. } = effect {

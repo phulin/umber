@@ -775,8 +775,8 @@ where
             crate::output::drain_pending_output(nest, input, stores, recorder, hooks, stats)?;
             Ok(())
         }
-        DispatchAction::Shipout(artifact) => {
-            let _ = artifact;
+        DispatchAction::Shipout(page) => {
+            stats.prepared_dvi_pages.push(page);
             crate::output::drain_pending_output(nest, input, stores, recorder, hooks, stats)?;
             Ok(())
         }

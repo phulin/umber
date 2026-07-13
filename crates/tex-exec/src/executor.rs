@@ -1,8 +1,11 @@
+use std::collections::{BTreeMap, VecDeque};
+
 use tex_expand::{
     EngineMode, EngineStateSnapshot, ExpansionHooks, NoopRecorder, ReadRecorder,
     get_x_token_with_recorder_and_hooks,
 };
 use tex_lex::{InputSource, InputStack};
+use tex_out::dvi::DviPagePlan;
 use tex_state::glue::GlueSpec;
 use tex_state::node::Node;
 use tex_state::scaled::Scaled;
@@ -181,9 +184,26 @@ impl Executor {
             stores.start_new_page();
         }
         stores.set_input_summary(summary);
-        result.map(|mut stats| {
+        result.and_then(|mut stats| {
             stats.shipped_artifacts = stores.world().artifact_commits()[artifact_start..].to_vec();
-            stats
+            let mut prepared = BTreeMap::<_, VecDeque<_>>::new();
+            for page in std::mem::take(&mut stats.prepared_dvi_pages) {
+                prepared.entry(page.hash).or_default().push_back(page.plan);
+            }
+            stats.dvi_pages = stores.world().committed_artifacts()[artifact_start..]
+                .iter()
+                .map(|committed| {
+                    if let Some(plan) = prepared
+                        .get_mut(&committed.hash())
+                        .and_then(VecDeque::pop_front)
+                    {
+                        return Ok(plan);
+                    }
+                    DviPagePlan::compile_v10(committed.bytes())
+                        .map_err(|error| ExecError::InvalidShipoutArtifact(error.to_string()))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(stats)
         })
     }
 }
@@ -501,8 +521,8 @@ where
             DispatchAction::Continue => {
                 output::drain_pending_output(nest, input, stores, recorder, hooks, stats)?;
             }
-            DispatchAction::Shipout(artifact) => {
-                let _ = artifact;
+            DispatchAction::Shipout(page) => {
+                stats.prepared_dvi_pages.push(page);
                 output::drain_pending_output(nest, input, stores, recorder, hooks, stats)?;
             }
             DispatchAction::End => {

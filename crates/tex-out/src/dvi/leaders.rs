@@ -1,6 +1,6 @@
 use tex_arith::Scaled;
 
-use crate::{BoxNode, GlueKind, LeaderPayload, PageArtifact};
+use crate::{BoxNode, GlueKind, LeaderPayload, PageEffect};
 
 use super::{
     DviError, DviWriter,
@@ -19,7 +19,7 @@ use super::{
 const LEADER_ROUNDING_COMPENSATION: Scaled = Scaled::from_raw(10);
 
 pub(super) struct HLeaderContext<'a> {
-    pub(super) page: &'a PageArtifact,
+    pub(super) effects: &'a [PageEffect],
     pub(super) this_box: &'a BoxNode,
     pub(super) kind: GlueKind,
     pub(super) leader: &'a Option<LeaderPayload>,
@@ -29,7 +29,7 @@ pub(super) struct HLeaderContext<'a> {
 }
 
 pub(super) struct VLeaderContext<'a> {
-    pub(super) page: &'a PageArtifact,
+    pub(super) effects: &'a [PageEffect],
     pub(super) this_box: &'a BoxNode,
     pub(super) kind: GlueKind,
     pub(super) leader: &'a Option<LeaderPayload>,
@@ -74,7 +74,7 @@ impl<W: std::io::Write> DviWriter<W> {
                     self.cur_h = start;
                     while add_scaled(self.cur_h, leader_wd)?.raw() <= edge.raw() {
                         self.output_leader_box_in_hlist(
-                            context.page,
+                            context.effects,
                             leader,
                             box_node,
                             leader_wd,
@@ -124,7 +124,7 @@ impl<W: std::io::Write> DviWriter<W> {
                     self.cur_v = start;
                     while add_scaled(self.cur_v, leader_ht)?.raw() <= edge.raw() {
                         self.output_leader_box_in_vlist(
-                            context.page,
+                            context.effects,
                             leader,
                             box_node,
                             leader_ht,
@@ -143,7 +143,7 @@ impl<W: std::io::Write> DviWriter<W> {
 
     fn output_leader_box_in_hlist(
         &mut self,
-        page: &PageArtifact,
+        effects: &[PageEffect],
         leader: &LeaderPayload,
         box_node: &BoxNode,
         leader_wd: Scaled,
@@ -156,8 +156,8 @@ impl<W: std::io::Write> DviWriter<W> {
         self.synch_h()?;
         let save_h = self.dvi_h;
         match leader {
-            LeaderPayload::HList(_) => self.hlist_out(page, box_node)?,
-            LeaderPayload::VList(_) => self.vlist_out(page, box_node)?,
+            LeaderPayload::HList(_) => self.hlist_out(effects, box_node)?,
+            LeaderPayload::VList(_) => self.vlist_out(effects, box_node)?,
             LeaderPayload::Rule { .. } => unreachable!("caller handles rule leaders"),
         }
         self.dvi_v = save_v;
@@ -169,7 +169,7 @@ impl<W: std::io::Write> DviWriter<W> {
 
     fn output_leader_box_in_vlist(
         &mut self,
-        page: &PageArtifact,
+        effects: &[PageEffect],
         leader: &LeaderPayload,
         box_node: &BoxNode,
         leader_ht: Scaled,
@@ -183,8 +183,8 @@ impl<W: std::io::Write> DviWriter<W> {
         self.synch_v()?;
         let save_v = self.dvi_v;
         match leader {
-            LeaderPayload::HList(_) => self.hlist_out(page, box_node)?,
-            LeaderPayload::VList(_) => self.vlist_out(page, box_node)?,
+            LeaderPayload::HList(_) => self.hlist_out(effects, box_node)?,
+            LeaderPayload::VList(_) => self.vlist_out(effects, box_node)?,
             LeaderPayload::Rule { .. } => unreachable!("caller handles rule leaders"),
         }
         self.dvi_v = save_v;

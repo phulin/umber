@@ -2,7 +2,7 @@ use super::opcodes::{
     BOP, DEN, DOWN1, EOP, FNT_DEF1, FNT_NUM_0, FNT1, ID_BYTE, NUM, POST, POST_POST, PRE, PUSH,
     PUT_RULE, RIGHT1, SET_RULE, SET1, XXX1, XXX4,
 };
-use super::{DviError, DviStreamWriter, write_dvi};
+use super::{DviError, DviPagePlan, DviPagePlanBuilder, DviStreamWriter, write_dvi};
 use crate::{
     BoxNode, ContentHash, FontResource, GlueKind, GlueOrder, GlueSetRatio, GlueSign, GlueSpec,
     JobInfo, LeaderPayload, PageArtifact, PageEffect, PageNode,
@@ -48,6 +48,76 @@ fn streaming_writer_flushes_preamble_each_page_and_postamble() {
     assert_eq!(sink.chunks[1][0], BOP);
     assert_eq!(sink.chunks[2][0], BOP);
     assert_eq!(sink.chunks[3][0], POST);
+}
+
+#[test]
+fn precompiled_page_plans_match_owned_multi_page_output() {
+    let pages = [glyph_page(1), glyph_page(2)];
+    let expected = write_dvi(&pages).expect("owned pages write");
+    let plans = pages
+        .iter()
+        .map(DviPagePlan::compile)
+        .collect::<Result<Vec<_>, _>>()
+        .expect("plans compile");
+    let mut writer = DviStreamWriter::new(Vec::new());
+    for plan in &plans {
+        writer.write_page_plan(plan).expect("plan writes");
+    }
+
+    assert_eq!(writer.finish().expect("planned DVI finishes"), expected);
+}
+
+#[test]
+fn streamed_v10_plans_match_owned_compilation() {
+    let pages = [glyph_page(11), glyph_page(12)];
+    let owned = pages
+        .iter()
+        .map(DviPagePlan::compile)
+        .collect::<Result<Vec<_>, _>>()
+        .expect("compile owned plans");
+    let streamed = pages
+        .iter()
+        .map(|page| {
+            let bytes = page.to_bytes().expect("serialize v10 page");
+            DviPagePlan::compile_v10(&bytes)
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .expect("compile streamed plans");
+
+    assert_eq!(streamed, owned);
+    let mut writer = DviStreamWriter::new(Vec::new());
+    for plan in &streamed {
+        writer.write_page_plan(plan).expect("write streamed plan");
+    }
+    assert_eq!(
+        writer.finish().expect("finish streamed DVI"),
+        write_dvi(&pages).expect("write owned DVI")
+    );
+}
+
+#[test]
+fn incremental_event_plan_matches_owned_compilation() {
+    let page = glyph_page(17);
+    let (root, vertical) = match &page.root {
+        PageNode::HList(root) => (root, false),
+        PageNode::VList(root) => (root, true),
+        _ => unreachable!("validated page root is a box"),
+    };
+    let mut builder = DviPagePlanBuilder::new(page.job.clone(), page.counts, root, vertical)
+        .expect("start incremental plan");
+    for child in &root.children {
+        builder
+            .push_node(child, &page.fonts, &page.effects)
+            .expect("compile incremental child");
+    }
+    let incremental = builder
+        .finish(&page.fonts)
+        .expect("finish incremental plan");
+
+    assert_eq!(
+        incremental,
+        DviPagePlan::compile(&page).expect("compile owned plan")
+    );
 }
 
 #[test]

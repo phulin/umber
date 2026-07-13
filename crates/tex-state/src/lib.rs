@@ -59,7 +59,7 @@ pub use world::{
     CommittedArtifact, ContentDomain, ContentHash, ContentIdentity, EffectPos, EffectRecord,
     EffectRetrySafety, ExecutionTraceEvent, FileContent, InputRecord, InputRecordId, JobClock,
     MemoryOutput, PrintSink, ReadTarget, RngState, ShellEscapePolicy, ShellEscapeRecord,
-    StreamBufState, StreamSlot, World, WorldError, WorldSnapshot,
+    StreamBufState, StreamSlot, VerifiedArtifact, World, WorldError, WorldSnapshot,
 };
 
 #[cfg(test)]

@@ -254,6 +254,175 @@ pub(crate) fn from_bytes(
     })
 }
 
+/// Incremental decoder for a canonical v10 page artifact.
+///
+/// Metadata and effects are retained, but the root list is decoded one direct
+/// child at a time so replay never constructs an owned whole-page node tree.
+pub(crate) struct V10PageDecoder<'a> {
+    pub(crate) page: PageArtifact,
+    pub(crate) root_vertical: bool,
+    reader: Reader<'a>,
+    remaining: usize,
+    root_end: usize,
+    font_ids: std::collections::BTreeSet<u32>,
+    validated_nodes: usize,
+}
+
+/// Canonical v10 encoder fed one detached root child at a time.
+///
+/// This is the fresh-shipout counterpart of [`V10PageDecoder`]: callers may
+/// lower, encode, and release each direct page child without retaining a
+/// recursive whole-page `PageArtifact`.
+pub struct V10ArtifactBuilder {
+    job: crate::JobInfo,
+    counts: [i32; 10],
+    root: Writer,
+    child_count_offset: usize,
+    child_count: u32,
+    limits: ArtifactCodecLimits,
+}
+
+impl V10ArtifactBuilder {
+    #[must_use]
+    pub fn new(job: crate::JobInfo, counts: [i32; 10], root: &BoxNode, vertical: bool) -> Self {
+        let limits = ArtifactCodecLimits::default();
+        let mut writer = Writer::new(limits);
+        writer.nodes_seen = 1;
+        writer.u8(if vertical {
+            wire::node::VLIST
+        } else {
+            wire::node::HLIST
+        });
+        writer.box_fields(root);
+        let child_count_offset = writer.bytes.len();
+        writer.u32(0);
+        Self {
+            job,
+            counts,
+            root: writer,
+            child_count_offset,
+            child_count: 0,
+            limits,
+        }
+    }
+
+    pub fn push_node(&mut self, node: &PageNode) -> Result<(), SerializeError> {
+        self.child_count = self
+            .child_count
+            .checked_add(1)
+            .ok_or(SerializeError::LengthOverflow)?;
+        self.root.node(node);
+        if let Some(error) = self.root.error.clone() {
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub fn finish(
+        mut self,
+        fonts: &[FontResource],
+        effects: &[PageEffect],
+    ) -> Result<Vec<u8>, SerializeError> {
+        let end = self.child_count_offset + 4;
+        self.root.bytes[self.child_count_offset..end]
+            .copy_from_slice(&self.child_count.to_le_bytes());
+        let root = self.root.finish()?;
+
+        let mut writer = Writer::new(self.limits);
+        writer.raw(MAGIC);
+        writer.u8(VERSION);
+        writer.i32(self.job.mag);
+        writer.str(&self.job.banner);
+        writer.scaled(self.job.h_offset);
+        writer.scaled(self.job.v_offset);
+        writer.fonts(fonts);
+        for value in self.counts {
+            writer.i32(value);
+        }
+        writer.raw(&root);
+        writer.effects(effects);
+        writer.finish()
+    }
+}
+
+impl<'a> V10PageDecoder<'a> {
+    pub(crate) fn new(bytes: &'a [u8], limits: ArtifactCodecLimits) -> Result<Self, ParseError> {
+        if bytes.len() > limits.max_bytes {
+            return Err(ParseError::LimitExceeded {
+                kind: CodecLimitKind::Bytes,
+                actual: bytes.len(),
+                limit: limits.max_bytes,
+            });
+        }
+        let mut scan = Reader::new(bytes, limits);
+        let (job, fonts, counts) = scan.header()?;
+        let root_start = scan.offset;
+        scan.skip_node()?;
+        let root_end = scan.offset;
+        let effects = scan.effects()?;
+        scan.finish()?;
+
+        let mut reader = Reader::new_at(bytes, limits, root_start);
+        let tag = reader.u8()?;
+        let root_vertical = match tag {
+            wire::node::HLIST => false,
+            wire::node::VLIST => true,
+            _ => {
+                return Err(ParseError::Validation(
+                    crate::ArtifactValidationError::RootNotBox,
+                ));
+            }
+        };
+        let fields = reader.box_fields()?;
+        let remaining = reader.collection_len(5)?;
+        let root = if root_vertical {
+            PageNode::VList(fields.finish(Vec::new()))
+        } else {
+            PageNode::HList(fields.finish(Vec::new()))
+        };
+        let page = UnvalidatedPageArtifact {
+            job,
+            fonts,
+            counts,
+            root,
+            effects,
+        }
+        .validate()?;
+        let font_ids = page.fonts.iter().map(|font| font.font_id).collect();
+        Ok(Self {
+            page,
+            root_vertical,
+            reader,
+            remaining,
+            root_end,
+            font_ids,
+            validated_nodes: 1,
+        })
+    }
+
+    pub(crate) fn next_child(&mut self) -> Result<Option<PageNode>, ParseError> {
+        if self.remaining == 0 {
+            if self.reader.offset != self.root_end {
+                return Err(ParseError::TrailingBytes {
+                    offset: self.reader.offset,
+                    len: self.root_end,
+                });
+            }
+            return Ok(None);
+        }
+        let child = self.reader.node()?;
+        self.remaining -= 1;
+        validate_streamed_node(
+            &child,
+            &self.font_ids,
+            self.page.effects.len(),
+            self.reader.limits,
+            &mut self.validated_nodes,
+        )?;
+        Ok(Some(child))
+    }
+}
+
 struct Writer {
     bytes: Vec<u8>,
     limits: ArtifactCodecLimits,
@@ -659,6 +828,40 @@ struct Reader<'a> {
 }
 
 impl Reader<'_> {
+    fn new(bytes: &[u8], limits: ArtifactCodecLimits) -> Reader<'_> {
+        Self::new_at(bytes, limits, 0)
+    }
+
+    fn new_at(bytes: &[u8], limits: ArtifactCodecLimits, offset: usize) -> Reader<'_> {
+        Reader {
+            bytes,
+            offset,
+            limits,
+            nodes_seen: 0,
+            collection_items_seen: 0,
+        }
+    }
+
+    fn header(&mut self) -> Result<(crate::JobInfo, Vec<FontResource>, [i32; 10]), ParseError> {
+        self.expect_magic()?;
+        let version = self.u8()?;
+        if version != VERSION {
+            return Err(ParseError::UnsupportedVersion(version));
+        }
+        let job = crate::JobInfo {
+            mag: self.i32()?,
+            banner: self.str()?,
+            h_offset: self.scaled()?,
+            v_offset: self.scaled()?,
+        };
+        let fonts = self.fonts()?;
+        let mut counts = [0; 10];
+        for value in &mut counts {
+            *value = self.i32()?;
+        }
+        Ok((job, fonts, counts))
+    }
+
     fn expect_magic(&mut self) -> Result<(), ParseError> {
         let magic = self.take(MAGIC.len())?;
         if magic == MAGIC {
@@ -889,6 +1092,143 @@ impl Reader<'_> {
         }
     }
 
+    fn skip_node(&mut self) -> Result<(), ParseError> {
+        let mut frames = Vec::new();
+        loop {
+            let depth = frames.len() + 1;
+            self.begin_node(depth)?;
+            if let Some(frame) = self.skip_node_head()? {
+                frames.push(frame);
+                continue;
+            }
+            loop {
+                let Some(frame) = frames.last_mut() else {
+                    return Ok(());
+                };
+                if frame.child_finished(self)? {
+                    break;
+                }
+                frames.pop();
+            }
+        }
+    }
+
+    fn begin_node(&mut self, depth: usize) -> Result<(), ParseError> {
+        if depth > self.limits.max_depth {
+            return Err(ParseError::LimitExceeded {
+                kind: CodecLimitKind::Depth,
+                actual: depth,
+                limit: self.limits.max_depth,
+            });
+        }
+        self.nodes_seen = self
+            .nodes_seen
+            .checked_add(1)
+            .ok_or(ParseError::LengthOverflow)?;
+        if self.nodes_seen > self.limits.max_nodes {
+            return Err(ParseError::LimitExceeded {
+                kind: CodecLimitKind::Nodes,
+                actual: self.nodes_seen,
+                limit: self.limits.max_nodes,
+            });
+        }
+        Ok(())
+    }
+
+    fn skip_node_head(&mut self) -> Result<Option<SkipFrame>, ParseError> {
+        let tag = self.u8()?;
+        let children = match tag {
+            wire::node::CHAR => {
+                self.u32()?;
+                self.u32()?;
+                self.scaled()?;
+                None
+            }
+            wire::node::LIG => {
+                self.u32()?;
+                self.u32()?;
+                self.u32()?;
+                self.u32()?;
+                self.scaled()?;
+                None
+            }
+            wire::node::KERN => {
+                self.scaled()?;
+                parse_kern_kind(self.u8()?)?;
+                None
+            }
+            wire::node::GLUE => {
+                self.glue_spec()?;
+                parse_glue_kind(self.u8()?)?;
+                match self.u8()? {
+                    wire::leader::NONE => None,
+                    wire::leader::HLIST | wire::leader::VLIST => {
+                        self.box_fields()?;
+                        Some(SkipFrame::List(self.collection_len(5)?))
+                    }
+                    wire::leader::RULE => {
+                        self.optional_scaled()?;
+                        self.optional_scaled()?;
+                        self.optional_scaled()?;
+                        None
+                    }
+                    tag => {
+                        return Err(ParseError::InvalidTag {
+                            kind: "leader payload",
+                            tag,
+                        });
+                    }
+                }
+            }
+            wire::node::PENALTY => {
+                self.i32()?;
+                None
+            }
+            wire::node::RULE => {
+                self.optional_scaled()?;
+                self.optional_scaled()?;
+                self.optional_scaled()?;
+                None
+            }
+            wire::node::HLIST | wire::node::VLIST => {
+                self.box_fields()?;
+                Some(SkipFrame::List(self.collection_len(5)?))
+            }
+            wire::node::WHATSIT_ANCHOR => {
+                self.u32()?;
+                None
+            }
+            wire::node::MATH_ON | wire::node::MATH_OFF => {
+                self.scaled()?;
+                None
+            }
+            wire::node::DISC => {
+                parse_disc_kind(self.u8()?)?;
+                Some(SkipFrame::Disc {
+                    phase: 0,
+                    remaining: self.collection_len(5)?,
+                })
+            }
+            wire::node::MARK => {
+                self.u16()?;
+                self.tokens()?;
+                None
+            }
+            wire::node::INSERT => {
+                self.u16()?;
+                Some(SkipFrame::List(self.collection_len(5)?))
+            }
+            wire::node::ADJUST => Some(SkipFrame::List(self.collection_len(5)?)),
+            tag => return Err(ParseError::InvalidTag { kind: "node", tag }),
+        };
+        if let Some(mut frame) = children
+            && frame.ready(self)?
+        {
+            return Ok(Some(frame));
+        }
+        Ok(None)
+    }
+
     fn node_head(&mut self) -> Result<ParsedNode, ParseError> {
         let tag = self.u8()?;
         match tag {
@@ -1096,6 +1436,40 @@ enum FrameProgress {
     Complete(PageNode),
 }
 
+enum SkipFrame {
+    List(usize),
+    Disc { phase: u8, remaining: usize },
+}
+
+impl SkipFrame {
+    fn ready(&mut self, reader: &mut Reader<'_>) -> Result<bool, ParseError> {
+        loop {
+            match self {
+                Self::List(remaining) => return Ok(*remaining > 0),
+                Self::Disc { remaining, .. } if *remaining > 0 => return Ok(true),
+                Self::Disc {
+                    phase, remaining, ..
+                } if *phase < 2 => {
+                    *phase += 1;
+                    *remaining = reader.collection_len(5)?;
+                }
+                Self::Disc { .. } => return Ok(false),
+            }
+        }
+    }
+
+    /// Records one completed child and reports whether another is required.
+    fn child_finished(&mut self, reader: &mut Reader<'_>) -> Result<bool, ParseError> {
+        match self {
+            Self::List(remaining) | Self::Disc { remaining, .. } => {
+                debug_assert!(*remaining > 0);
+                *remaining -= 1;
+            }
+        }
+        self.ready(reader)
+    }
+}
+
 enum DecodeFrame {
     Box {
         vertical: bool,
@@ -1261,6 +1635,127 @@ impl DecodeFrame {
             Self::Adjust { content, .. } => PageNode::Adjust(content),
         }))
     }
+}
+
+fn validate_streamed_node(
+    root: &PageNode,
+    fonts: &std::collections::BTreeSet<u32>,
+    effects_len: usize,
+    limits: ArtifactCodecLimits,
+    count: &mut usize,
+) -> Result<(), ParseError> {
+    let mut stack = vec![(root, 2usize)];
+    while let Some((node, depth)) = stack.pop() {
+        *count = count.checked_add(1).ok_or(ParseError::LengthOverflow)?;
+        if *count > limits.max_nodes {
+            return Err(ParseError::Validation(
+                crate::ArtifactValidationError::TooManyNodes {
+                    count: *count,
+                    limit: limits.max_nodes,
+                },
+            ));
+        }
+        if depth > limits.max_depth {
+            return Err(ParseError::Validation(
+                crate::ArtifactValidationError::NestingTooDeep {
+                    depth,
+                    limit: limits.max_depth,
+                },
+            ));
+        }
+        match node {
+            PageNode::Char { font_id, ch, .. } => {
+                validate_streamed_char(fonts, *font_id, *ch)?;
+            }
+            PageNode::Lig {
+                font_id,
+                ch,
+                left,
+                right,
+                ..
+            } => {
+                validate_streamed_char(fonts, *font_id, *ch)?;
+                validate_streamed_scalar(*left)?;
+                validate_streamed_scalar(*right)?;
+            }
+            PageNode::HList(box_node) | PageNode::VList(box_node) => {
+                stack.extend(box_node.children.iter().rev().map(|node| (node, depth + 1)));
+            }
+            PageNode::Disc {
+                pre, post, replace, ..
+            } => {
+                stack.extend(replace.iter().rev().map(|node| (node, depth + 1)));
+                stack.extend(post.iter().rev().map(|node| (node, depth + 1)));
+                stack.extend(pre.iter().rev().map(|node| (node, depth + 1)));
+            }
+            PageNode::Insert { content, .. } | PageNode::Adjust(content) => {
+                stack.extend(content.iter().rev().map(|node| (node, depth + 1)));
+            }
+            PageNode::Glue {
+                leader: Some(LeaderPayload::HList(box_node) | LeaderPayload::VList(box_node)),
+                ..
+            } => stack.extend(box_node.children.iter().rev().map(|node| (node, depth + 1))),
+            PageNode::WhatsitAnchor { effect_index } => {
+                if usize::try_from(*effect_index).unwrap_or(usize::MAX) >= effects_len {
+                    return Err(ParseError::Validation(
+                        crate::ArtifactValidationError::MissingEffect {
+                            effect_index: *effect_index,
+                        },
+                    ));
+                }
+            }
+            PageNode::Mark { tokens, .. } => {
+                for token in tokens {
+                    match token {
+                        PageToken::Char { ch, .. } | PageToken::ActiveControlSequence(ch)
+                            if char::from_u32(*ch).is_none() =>
+                        {
+                            return Err(ParseError::Validation(
+                                crate::ArtifactValidationError::InvalidTokenScalar { ch: *ch },
+                            ));
+                        }
+                        PageToken::Param(slot) if !(1..=9).contains(slot) => {
+                            return Err(ParseError::Validation(
+                                crate::ArtifactValidationError::InvalidTokenScalar {
+                                    ch: u32::from(*slot),
+                                },
+                            ));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            PageNode::Kern { .. }
+            | PageNode::Penalty(_)
+            | PageNode::Rule { .. }
+            | PageNode::Glue { .. }
+            | PageNode::MathOn(_)
+            | PageNode::MathOff(_) => {}
+        }
+    }
+    Ok(())
+}
+
+fn validate_streamed_char(
+    fonts: &std::collections::BTreeSet<u32>,
+    font_id: u32,
+    ch: u32,
+) -> Result<(), ParseError> {
+    if !fonts.contains(&font_id) {
+        return Err(ParseError::Validation(
+            crate::ArtifactValidationError::MissingFont { font_id },
+        ));
+    }
+    validate_streamed_scalar(ch)
+}
+
+fn validate_streamed_scalar(ch: u32) -> Result<(), ParseError> {
+    if ch > u32::from(u8::MAX) {
+        return Err(ParseError::Validation(
+            crate::ArtifactValidationError::CharacterOutOfRange { ch },
+        ));
+    }
+    Ok(())
 }
 
 fn glue_order_tag(order: GlueOrder) -> u8 {

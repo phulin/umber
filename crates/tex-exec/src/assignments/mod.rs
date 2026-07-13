@@ -314,7 +314,7 @@ impl Default for Prefixes {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct CommandOutcome {
     assigned: bool,
     action: DispatchAction,
@@ -342,10 +342,10 @@ impl CommandOutcome {
         }
     }
 
-    const fn shipout(hash: tex_state::ContentHash) -> Self {
+    fn shipout(page: crate::dispatch::PreparedDviPage) -> Self {
         Self {
             assigned: false,
-            action: DispatchAction::Shipout(hash),
+            action: DispatchAction::Shipout(page),
         }
     }
 }
@@ -1015,7 +1015,7 @@ where
             UnexpandablePrimitive::Shipout => {
                 reject_all_prefixes(prefixes)?;
                 match execute_shipout(command.traced, input, stores, recorder, hooks)? {
-                    Some(hash) => Ok(CommandOutcome::shipout(hash)),
+                    Some(page) => Ok(CommandOutcome::shipout(page)),
                     None => Ok(CommandOutcome::continue_only()),
                 }
             }

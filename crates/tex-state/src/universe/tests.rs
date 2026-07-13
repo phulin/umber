@@ -1465,7 +1465,10 @@ fn shipout_commit_flushes_releases_then_checkpoints() {
         .write_text(PrintSink::TerminalAndLog, "shipout\n");
     let effect_pos = transaction.world().effect_pos();
     let hash = transaction
-        .commit(b"detached page artifact".to_vec(), effect_pos)
+        .commit(
+            crate::VerifiedArtifact::new(b"detached page artifact".to_vec()),
+            effect_pos,
+        )
         .expect("shipout commit succeeds");
 
     assert_eq!(
@@ -1508,7 +1511,10 @@ fn repeated_shipout_commits_do_not_retain_epoch_page_nodes() {
         }));
         let effect_pos = transaction.world().effect_pos();
         transaction
-            .commit(format!("page {page}").into_bytes(), effect_pos)
+            .commit(
+                crate::VerifiedArtifact::new(format!("page {page}").into_bytes()),
+                effect_pos,
+            )
             .expect("shipout commit succeeds");
         assert_eq!(universe.testing_epoch_node_count(), 0);
     }

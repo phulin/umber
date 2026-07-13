@@ -9,7 +9,7 @@
 use crate::env::banks::IntParam;
 use crate::identity::{HandleIdentity, IdentityAllocator, IdentityMark};
 use crate::ids::TokenListId;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fmt;
 use std::fs::OpenOptions;
@@ -33,6 +33,38 @@ pub const STREAM_SLOT_COUNT: usize = 16;
 pub struct CommittedArtifact {
     hash: ContentHash,
     bytes: Arc<[u8]>,
+}
+
+/// Artifact bytes paired with their already-computed content identity.
+///
+/// Construction hashes the bytes exactly once. Private fields keep identity
+/// and payload inseparable across the shipout commit boundary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VerifiedArtifact {
+    hash: ContentHash,
+    bytes: Vec<u8>,
+}
+
+impl VerifiedArtifact {
+    #[must_use]
+    pub fn new(bytes: Vec<u8>) -> Self {
+        let hash = ContentHash::for_domain(ContentDomain::Artifact, &bytes);
+        Self { hash, bytes }
+    }
+
+    #[must_use]
+    pub const fn hash(&self) -> ContentHash {
+        self.hash
+    }
+
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    pub(crate) fn into_bytes(self) -> Vec<u8> {
+        self.bytes
+    }
 }
 
 impl CommittedArtifact {
@@ -561,6 +593,7 @@ pub struct World {
     shell_escapes: Vec<ShellEscapeRecord>,
     artifact_commits: Vec<ContentHash>,
     committed_artifacts: Vec<CommittedArtifact>,
+    verified_artifacts: BTreeSet<ContentHash>,
     effect_commit_poison: Option<WorldError>,
     execution_tracing: bool,
     execution_trace: Vec<ExecutionTraceEvent>,
@@ -593,6 +626,7 @@ impl Clone for World {
             shell_escapes: self.shell_escapes.clone(),
             artifact_commits: self.artifact_commits.clone(),
             committed_artifacts: self.committed_artifacts.clone(),
+            verified_artifacts: self.verified_artifacts.clone(),
             effect_commit_poison: self.effect_commit_poison.clone(),
             execution_tracing: self.execution_tracing,
             execution_trace: self.execution_trace.clone(),
@@ -672,6 +706,7 @@ impl World {
             shell_escapes: Vec::new(),
             artifact_commits: Vec::new(),
             committed_artifacts: Vec::new(),
+            verified_artifacts: BTreeSet::new(),
             effect_commit_poison: None,
             execution_tracing: false,
             execution_trace: Vec::new(),
@@ -916,9 +951,18 @@ impl World {
     /// survive a process or machine crash: bytes are written to a unique
     /// temporary file and renamed into place without forcing them to stable
     /// storage.
+    #[allow(dead_code)]
     pub(crate) fn store_artifact(&mut self, bytes: &[u8]) -> Result<ContentHash, WorldError> {
+        self.store_verified_artifact(&VerifiedArtifact::new(bytes.to_vec()))
+    }
+
+    pub(crate) fn store_verified_artifact(
+        &mut self,
+        artifact: &VerifiedArtifact,
+    ) -> Result<ContentHash, WorldError> {
         static NEXT_TEMP_ARTIFACT: AtomicU64 = AtomicU64::new(0);
-        let hash = ContentHash::for_domain(ContentDomain::Artifact, bytes);
+        let hash = artifact.hash();
+        let bytes = artifact.bytes();
         match &mut self.backend {
             WorldBackend::Real { artifact_dir } => {
                 std::fs::create_dir_all(&artifact_dir).map_err(|err| {
@@ -937,7 +981,9 @@ impl World {
                     ));
                 }
                 if path.is_file() {
-                    verify_stored_artifact(hash, &path, "verify stored artifact")?;
+                    if !self.verified_artifacts.contains(&hash) {
+                        verify_stored_artifact(hash, &path, "verify stored artifact")?;
+                    }
                 } else {
                     let nonce = NEXT_TEMP_ARTIFACT.fetch_add(1, Ordering::Relaxed);
                     let temporary = artifact_dir.join(format!(
@@ -971,6 +1017,7 @@ impl World {
                         }
                     }
                 }
+                self.verified_artifacts.insert(hash);
             }
             WorldBackend::Memory(memory) => {
                 memory

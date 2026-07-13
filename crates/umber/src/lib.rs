@@ -4,8 +4,7 @@ use std::path::{Path, PathBuf};
 use tex_exec::{Executor, try_execute_assignment};
 use tex_expand::{ExpansionHooks, NoopRecorder, get_x_token_with_hooks};
 use tex_lex::{InputSource, InputStack, MemoryInput};
-use tex_out::PageArtifact;
-use tex_out::dvi::{DviError, DviStreamWriter};
+use tex_out::dvi::{DviError, DviPagePlan, DviStreamWriter};
 use tex_state::env::banks::IntParam;
 use tex_state::token::TracedTokenWord;
 use tex_state::{
@@ -22,7 +21,7 @@ pub const PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub use input_search::{TexFontSearchPath, TexInputSearchPath};
 pub use memory_output::{
     MemoryOutputCollectionError, MemoryOutputFile, MemoryRunOutput, collect_final_memory_output,
-    collect_final_memory_output_from_commits,
+    collect_final_memory_output_from_commits, collect_final_memory_output_from_plans,
 };
 pub use virtual_compile::{
     CompileAttemptResult, CompileDiagnostic, CompileError, FileKind, FileRequest, FileRequestKey,
@@ -92,6 +91,7 @@ where
         Ok(RunResult {
             terminal_text: uncommitted_terminal_text(self.stores),
             artifacts: stats.shipped_artifacts,
+            dvi_pages: stats.dvi_pages,
             committed_artifacts: self.stores.world().committed_artifacts()
                 [artifact_start..self.artifact_cursor]
                 .to_vec(),
@@ -186,6 +186,8 @@ impl ExpansionHooks<tex_lex::WorldInput> for FileSessionHooks {
 pub struct RunResult {
     pub terminal_text: String,
     pub artifacts: Vec<ContentHash>,
+    /// Precompiled page-local DVI bodies aligned with `artifacts`.
+    pub dvi_pages: Vec<DviPagePlan>,
     /// Exact canonical bytes from this execution's successful shipout commits.
     pub committed_artifacts: Vec<CommittedArtifact>,
     pub dumped_format: bool,
@@ -610,14 +612,30 @@ pub fn dvi_from_committed_artifacts(
     write_dvi_from_committed_artifacts(artifacts, Vec::new())
 }
 
+/// Assembles DVI from page-local bodies compiled before shipout commit.
+pub fn dvi_from_page_plans(plans: &[DviPagePlan]) -> Result<Vec<u8>, DviBuildError> {
+    write_dvi_from_page_plans(plans, Vec::new())
+}
+
+pub fn write_dvi_from_page_plans<W: std::io::Write>(
+    plans: &[DviPagePlan],
+    sink: W,
+) -> Result<W, DviBuildError> {
+    let mut writer = DviStreamWriter::new(sink);
+    for plan in plans {
+        writer.write_page_plan(plan)?;
+    }
+    Ok(writer.finish()?)
+}
+
 pub fn write_dvi_from_committed_artifacts<W: std::io::Write>(
     artifacts: &[CommittedArtifact],
     sink: W,
 ) -> Result<W, DviBuildError> {
     let mut writer = DviStreamWriter::new(sink);
     for committed in artifacts {
-        let page = PageArtifact::from_bytes(committed.bytes())?;
-        writer.write_page(&page)?;
+        let plan = DviPagePlan::compile_v10(committed.bytes())?;
+        writer.write_page_plan(&plan)?;
     }
     Ok(writer.finish()?)
 }
@@ -634,8 +652,8 @@ pub fn write_dvi_from_artifacts<W: std::io::Write>(
             .world()
             .read_artifact(hash)?
             .ok_or(DviBuildError::MissingArtifact(hash))?;
-        let page = PageArtifact::from_bytes(&bytes)?;
-        writer.write_page(&page)?;
+        let plan = DviPagePlan::compile_v10(&bytes)?;
+        writer.write_page_plan(&plan)?;
     }
     Ok(writer.finish()?)
 }

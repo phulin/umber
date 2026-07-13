@@ -1418,6 +1418,7 @@ fn shipout_nested_in_box_scan_is_reported_to_driver() {
         .expect("nested shipout succeeds");
 
     assert_eq!(stats.shipped_artifacts.len(), 1);
+    assert_eq!(stats.dvi_pages.len(), 1);
     assert_eq!(stores.world().artifact_commits(), stats.shipped_artifacts);
 }
 
