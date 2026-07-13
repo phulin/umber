@@ -1,13 +1,13 @@
 use super::{
     ConditionFrameSummary, ConditionKind, ConditionLimb, InputFrame, InputFrameSummary,
-    InputSource, InputStack, LexError, Lexer, LexerState, LineEvent, LineReader, MacroArguments,
-    MemoryInput, TokenListReplayKind, load_next_line,
+    InputSource, InputStack, LexError, Lexer, LexerState, LineEvent, LineReader, LiteralSpanPolicy,
+    MacroArguments, MemoryInput, TokenListReplayKind, load_next_line,
 };
 use tex_state::env::banks::IntParam;
 use tex_state::ids::{OriginListId, TokenListId};
 use tex_state::provenance::{InsertedOriginKind, OriginRecord};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
-use tex_state::{ExpansionState, ProvenanceResolver, Universe};
+use tex_state::{ExpansionState, ProvenanceResolver, TracedTokenList, Universe};
 
 mod input_lines;
 
@@ -1168,6 +1168,96 @@ fn macro_body_replay_without_origin_list_delivers_unknown_origin() {
 
     assert_eq!(replayed.token(), Some(token));
     assert_eq!(replayed.origin(), tex_state::token::OriginId::UNKNOWN);
+}
+
+#[test]
+fn macro_literal_spans_copy_body_and_argument_provenance_at_matching_offsets() {
+    let mut stores = Universe::new();
+    let stop = stores.intern("stop");
+    let body_tokens = [
+        char_token('a', Catcode::Letter),
+        char_token('b', Catcode::Other),
+        Token::param(1),
+        char_token('c', Catcode::Letter),
+        Token::Cs(stop.symbol()),
+    ];
+    let argument_tokens = [
+        char_token('x', Catcode::Letter),
+        char_token('y', Catcode::Other),
+    ];
+    let body = stores.intern_token_list(&body_tokens);
+    let argument = stores.intern_token_list(&argument_tokens);
+    let body_origin = stores.source_origin(tex_state::SourceId::new(1), 10, 1, 1);
+    let argument_origin = stores.source_origin(tex_state::SourceId::new(2), 20, 2, 1);
+    let body_origins = stores.allocate_origin_list(&[body_origin; 5]);
+    let argument_origins = stores.allocate_origin_list(&[argument_origin; 2]);
+    let mut arguments = MacroArguments::new();
+    arguments.set_traced(1, TracedTokenList::new(argument, argument_origins));
+
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_macro_body_with_origins(body, body_origins, arguments);
+    let mut tokens = stores.token_list_builder();
+    let mut origins = stores.origin_list_builder();
+
+    assert_eq!(
+        input.append_macro_literal_span(
+            &stores,
+            &mut tokens,
+            &mut origins,
+            LiteralSpanPolicy::ExpandedReplacement,
+        ),
+        2
+    );
+    assert_eq!(
+        input.append_macro_literal_span(
+            &stores,
+            &mut tokens,
+            &mut origins,
+            LiteralSpanPolicy::ExpandedReplacement,
+        ),
+        2
+    );
+    assert_eq!(
+        input.append_macro_literal_span(
+            &stores,
+            &mut tokens,
+            &mut origins,
+            LiteralSpanPolicy::ExpandedReplacement,
+        ),
+        1
+    );
+    assert_eq!(
+        input.append_macro_literal_span(
+            &stores,
+            &mut tokens,
+            &mut origins,
+            LiteralSpanPolicy::ExpandedReplacement,
+        ),
+        0
+    );
+
+    let token_list = stores.finish_token_list(&mut tokens);
+    let origin_list = stores.finish_origin_list(&mut origins);
+    assert_eq!(
+        stores.tokens(token_list),
+        [
+            body_tokens[0],
+            body_tokens[1],
+            argument_tokens[0],
+            argument_tokens[1],
+            body_tokens[3],
+        ]
+    );
+    assert_eq!(
+        stores.origin_list(origin_list),
+        [
+            body_origin,
+            body_origin,
+            argument_origin,
+            argument_origin,
+            body_origin,
+        ]
+    );
 }
 
 #[test]

@@ -137,6 +137,11 @@ impl TokenListBuilder {
         self.buf.push(token);
     }
 
+    /// Appends a contiguous immutable token span.
+    pub fn extend_from_slice(&mut self, tokens: &[Token]) {
+        self.buf.extend_from_slice(tokens);
+    }
+
     /// Reserves capacity when the caller already knows the remaining size.
     pub fn reserve(&mut self, additional: usize) {
         self.buf.reserve(additional);

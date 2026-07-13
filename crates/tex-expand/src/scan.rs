@@ -7,7 +7,9 @@
 
 use std::{fmt, marker::PhantomData};
 
-use tex_lex::{InputSource, InputStack, LexError, MemoryInput, TokenListReplayKind};
+use tex_lex::{
+    InputSource, InputStack, LexError, LiteralSpanPolicy, MemoryInput, TokenListReplayKind,
+};
 use tex_state::ids::{OriginListId, TokenListId};
 use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
@@ -291,6 +293,15 @@ where
     let mut pending_parameter = false;
 
     loop {
+        if input.append_macro_literal_span(
+            stores,
+            &mut builder,
+            &mut origins,
+            LiteralSpanPolicy::ExpandedReplacement,
+        ) > 0
+        {
+            continue;
+        }
         let source_depth = input.source_depth();
         let prepared = crate::next_prepared_expansion_token(input, stores)?
             .ok_or(ScanToksError::EndOfInputInReplacementText { context })?;
@@ -306,6 +317,53 @@ where
             // the error recovery had inserted its missing right brace.
             unread_token(input, stores, raw);
             return Ok(finish_traced_list(stores, &mut builder, &mut origins));
+        }
+        if !prepared.suppress_expansion()
+            && let Some(symbol) = crate::expandable_symbol(stores, raw)
+        {
+            let meaning = stores.meaning(symbol);
+            if matches!(meaning, Meaning::Macro { flags, .. } if !flags.contains(MeaningFlags::PROTECTED))
+            {
+                recorder.record_meaning(symbol, meaning);
+                let dispatched = crate::dispatch::dispatch_with_hooks(
+                    traced_semantic_token(raw),
+                    raw.origin(),
+                    input,
+                    stores,
+                    &mut recorder,
+                    hooks,
+                    meaning,
+                );
+                match dispatched {
+                    Ok(dispatch) => crate::push_dispatch_result(input, stores, dispatch),
+                    Err(ExpandError::MacroCall(
+                        crate::args::MacroCallError::DoesNotMatchDefinition { .. },
+                    )) => continue,
+                    Err(ExpandError::MacroCall(crate::args::MacroCallError::EndOfInput {
+                        ..
+                    })) => {
+                        return Err(ScanToksError::EndOfInputInReplacementText { context });
+                    }
+                    Err(error) => return Err(error.into()),
+                }
+                if input.source_depth() < source_depth {
+                    // Preserve the defining scanner's nested-source seam: the
+                    // first expanded token remains available below the
+                    // recovery-inserted closing brace.
+                    let Some(traced) = crate::get_x_or_protected_with_recorder_and_hooks(
+                        input,
+                        stores,
+                        &mut recorder,
+                        hooks,
+                    )?
+                    else {
+                        return Err(ScanToksError::EndOfInputInReplacementText { context });
+                    };
+                    unread_token(input, stores, traced);
+                    return Ok(finish_traced_list(stores, &mut builder, &mut origins));
+                }
+                continue;
+            }
         }
         let expanded = crate::get_x_or_protected_from_prepared_with_recorder_and_hooks(
             prepared,
@@ -457,6 +515,15 @@ where
     let mut hooks = ReplacementHooks::new(hooks);
 
     loop {
+        if input.append_macro_literal_span(
+            stores,
+            &mut builder,
+            &mut origins,
+            LiteralSpanPolicy::ExpandedReplacement,
+        ) > 0
+        {
+            continue;
+        }
         let Some(read) = input.next_traced_expansion_token(stores)? else {
             break;
         };
@@ -503,6 +570,22 @@ where
             // step on its target, then returns control to the protected-aware
             // replacement scanner. Calling `get_x_token` here would continue
             // through the saved protected macro and expand it incorrectly.
+            let dispatch = expander.dispatch_raw_token(
+                traced,
+                &mut input,
+                stores,
+                &mut recorder,
+                &mut hooks,
+            )?;
+            crate::push_dispatch_result(&mut input, stores, dispatch);
+            continue;
+        }
+
+        if matches!(meaning, Meaning::Macro { .. }) {
+            // Keep macro replacement replay in this collection loop. The next
+            // iteration can copy its inert character runs directly; any
+            // parameter, cs/active site, or semantic edge naturally re-enters
+            // the existing interpreter below.
             let dispatch = expander.dispatch_raw_token(
                 traced,
                 &mut input,

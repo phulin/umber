@@ -11,11 +11,13 @@ use std::sync::Arc;
 
 use tex_state::env::banks::TokParam;
 use tex_state::ids::{OriginListId, TokenListId};
+use tex_state::provenance::OriginListBuilder;
 use tex_state::provenance::{
     DiagnosticSite, InsertedOriginKind, RelatedLocation, SyntheticOriginKind,
 };
 use tex_state::source_map::{RegisteredSource, SourceDescriptor};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
+use tex_state::token_store::TokenListBuilder;
 use tex_state::{ExpansionState, FileContent, InputRecordId, WorldError};
 
 pub use tex_state::{
@@ -567,6 +569,46 @@ enum TracedTokenReplay {
     Deliver(TracedTokenWord),
     DeliverNoExpand(TracedTokenWord),
     PushArgument(TracedTokenList),
+}
+
+/// Which immutable macro-replay characters a direct span consumer accepts.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LiteralSpanPolicy {
+    /// Characters that are inert to an expanded replacement scanner.
+    /// Group and parameter catcodes remain seams because that scanner must
+    /// update its own brace/parameter state for them.
+    ExpandedReplacement,
+    /// Ordinary text characters accepted by horizontal main control.
+    HorizontalText,
+}
+
+impl LiteralSpanPolicy {
+    #[inline(always)]
+    fn accepts(self, token: Token) -> bool {
+        match (self, token) {
+            (
+                Self::ExpandedReplacement,
+                Token::Char {
+                    cat:
+                        Catcode::BeginGroup | Catcode::EndGroup | Catcode::Parameter | Catcode::Active,
+                    ..
+                },
+            ) => false,
+            (Self::ExpandedReplacement, Token::Char { .. }) => true,
+            (
+                Self::HorizontalText,
+                Token::Char {
+                    cat: Catcode::Letter | Catcode::Other,
+                    ..
+                },
+            ) => true,
+            (
+                Self::ExpandedReplacement | Self::HorizontalText,
+                Token::Cs(_) | Token::Param(_) | Token::Frozen(_),
+            )
+            | (Self::HorizontalText, Token::Char { .. }) => false,
+        }
+    }
 }
 
 /// A token read from the input stack with expansion-control metadata.
@@ -1218,6 +1260,105 @@ impl<S> InputStack<S> {
         }));
         if macro_invocation != OriginId::UNKNOWN {
             self.active_macro_invocation = macro_invocation;
+        }
+    }
+
+    /// Copies the next maximal literal span from macro-body/argument replay.
+    ///
+    /// This is deliberately a builder-oriented API: it advances the live
+    /// replay frame and copies semantic tokens and provenance side by side,
+    /// without manufacturing a second traced-token buffer. Parameter slots
+    /// still push their frozen argument frame, while control sequences,
+    /// active characters, scanner-sensitive characters, and stale/absent
+    /// argument provenance deopt to ordinary per-token replay.
+    pub fn append_macro_literal_span(
+        &mut self,
+        stores: &impl ExpansionState,
+        tokens_out: &mut TokenListBuilder,
+        origins_out: &mut OriginListBuilder,
+        policy: LiteralSpanPolicy,
+    ) -> usize {
+        loop {
+            let Some(frame_index) = self.current_token_frame_index() else {
+                return 0;
+            };
+            let exhausted = match &self.frames[frame_index] {
+                InputFrame::TokenList(frame)
+                    if matches!(
+                        frame.replay_kind,
+                        TokenListReplayKind::MacroBody | TokenListReplayKind::MacroArgument
+                    ) =>
+                {
+                    frame.index >= stores.tokens(frame.token_list).len()
+                }
+                InputFrame::Source(_) | InputFrame::TokenList(_) | InputFrame::Condition { .. } => {
+                    false
+                }
+            };
+            if exhausted {
+                let removed = self.remove_frame(frame_index);
+                if let InputFrame::TokenList(frame) = removed {
+                    self.retire_token_list_frame(frame);
+                }
+                continue;
+            }
+            let InputFrame::TokenList(frame) = &mut self.frames[frame_index] else {
+                return 0;
+            };
+            if !matches!(
+                frame.replay_kind,
+                TokenListReplayKind::MacroBody | TokenListReplayKind::MacroArgument
+            ) {
+                return 0;
+            }
+
+            let stored = stores.tokens(frame.token_list);
+            if frame.replay_kind == TokenListReplayKind::MacroBody
+                && let Some(Token::Param(slot)) = stored.get(frame.index).copied()
+                && let Some(argument) = frame.macro_arguments.get_traced(slot)
+            {
+                frame.index += 1;
+                self.push_frame(InputFrame::TokenList(TokenListInputFrame {
+                    token_list: argument.token_list(),
+                    origin_list: argument.origin_list(),
+                    replay_kind: TokenListReplayKind::MacroArgument,
+                    index: 0,
+                    macro_arguments: MacroArguments::new(),
+                    macro_invocation: OriginId::UNKNOWN,
+                    parent_macro_invocation: OriginId::UNKNOWN,
+                    replay_marker: None,
+                }));
+                continue;
+            }
+
+            let start = frame.index;
+            let end = stored[start..]
+                .iter()
+                .position(|&token| !policy.accepts(token))
+                .map_or(stored.len(), |offset| start + offset);
+            if end == start {
+                return 0;
+            }
+            if frame.replay_kind == TokenListReplayKind::MacroArgument
+                && frame.origin_list == OriginListId::EMPTY
+            {
+                // Ordinary replay synthesizes a distinct inserted origin for
+                // this degraded case, so it cannot be represented as a span.
+                return 0;
+            }
+
+            frame.index = end;
+            tokens_out.extend_from_slice(&stored[start..end]);
+            if frame.origin_list == OriginListId::EMPTY {
+                debug_assert_eq!(frame.replay_kind, TokenListReplayKind::MacroBody);
+                origins_out.extend_repeated(OriginId::UNKNOWN, end - start);
+            } else if let Some(origins) = stores.origin_list_if_live(frame.origin_list) {
+                assert_eq!(origins.len(), stored.len());
+                origins_out.extend_from_slice(&origins[start..end]);
+            } else {
+                origins_out.extend_repeated(OriginId::UNKNOWN, end - start);
+            }
+            return end - start;
         }
     }
 

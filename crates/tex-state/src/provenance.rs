@@ -223,6 +223,16 @@ impl OriginListBuilder {
         self.buf.push(origin);
     }
 
+    /// Appends a contiguous immutable origin span.
+    pub fn extend_from_slice(&mut self, origins: &[OriginId]) {
+        self.buf.extend_from_slice(origins);
+    }
+
+    /// Appends one origin for a complete literal token span.
+    pub fn extend_repeated(&mut self, origin: OriginId, len: usize) {
+        self.buf.extend(std::iter::repeat_n(origin, len));
+    }
+
     /// Reserves capacity when the caller already knows the remaining size.
     pub fn reserve(&mut self, additional: usize) {
         self.buf.reserve(additional);
