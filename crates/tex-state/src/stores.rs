@@ -214,6 +214,10 @@ impl Stores {
     pub(crate) fn innermost_group_kind(&self) -> Option<GroupKind> {
         self.env.innermost_group_kind()
     }
+
+    pub(crate) fn group_kinds(&self) -> impl DoubleEndedIterator<Item = GroupKind> + '_ {
+        self.env.group_kinds()
+    }
     /// Creates an empty state-store tuple.
     #[must_use]
     pub fn new() -> Self {

@@ -340,6 +340,9 @@ mod primitive_mode_tests {
         let glueshrinkorder = compatibility.intern("glueshrinkorder");
         let gluetomu = compatibility.intern("gluetomu");
         let mutoglue = compatibility.intern("mutoglue");
+        let showtokens = compatibility.intern("showtokens");
+        let showgroups = compatibility.intern("showgroups");
+        let showifs = compatibility.intern("showifs");
         assert_eq!(compatibility.meaning(unexpanded), Meaning::Undefined);
         assert_eq!(compatibility.meaning(detokenize), Meaning::Undefined);
         assert_eq!(compatibility.meaning(unless), Meaning::Undefined);
@@ -372,6 +375,9 @@ mod primitive_mode_tests {
             glueshrinkorder,
             gluetomu,
             mutoglue,
+            showtokens,
+            showgroups,
+            showifs,
         ] {
             assert_eq!(compatibility.meaning(symbol), Meaning::Undefined);
         }
@@ -459,6 +465,9 @@ mod primitive_mode_tests {
             ("glueshrinkorder", UnexpandablePrimitive::GlueShrinkOrder),
             ("gluetomu", UnexpandablePrimitive::GlueToMu),
             ("mutoglue", UnexpandablePrimitive::MuToGlue),
+            ("showtokens", UnexpandablePrimitive::ShowTokens),
+            ("showgroups", UnexpandablePrimitive::ShowGroups),
+            ("showifs", UnexpandablePrimitive::ShowIfs),
             ("interactionmode", UnexpandablePrimitive::InteractionMode),
         ] {
             let symbol = extended.intern(name);

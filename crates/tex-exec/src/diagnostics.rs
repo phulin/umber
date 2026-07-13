@@ -128,6 +128,92 @@ where
     Ok(())
 }
 
+pub(crate) fn execute_showgroups(stores: &mut Universe) {
+    let kinds = stores.group_kinds().collect::<Vec<_>>();
+    let mut text = String::new();
+    text.push('\n');
+    for (index, kind) in kinds.iter().enumerate().rev() {
+        let level = index + 1;
+        text.push_str("### ");
+        text.push_str(group_kind_text(*kind));
+        text.push_str(" (level ");
+        text.push_str(&level.to_string());
+        text.push_str(") (");
+        text.push_str(kind.start_text());
+        text.push_str(")\n");
+    }
+    text.push_str("### bottom level\n\n! OK.\n");
+    write_diagnostic(stores, &text);
+}
+
+pub(crate) fn execute_showifs<S>(input: &InputStack<S>, stores: &mut Universe)
+where
+    S: InputSource,
+{
+    let conditions = input.conditions().collect::<Vec<_>>();
+    let mut text = String::new();
+    text.push('\n');
+    for (index, condition) in conditions.iter().enumerate().rev() {
+        text.push_str("### level ");
+        text.push_str(&(index + 1).to_string());
+        text.push_str(": ");
+        if condition.inverted() {
+            text.push_str("\\unless");
+        }
+        text.push_str(if_type_text(condition.if_type()));
+        text.push('\n');
+    }
+    text.push_str("\n! OK.\n");
+    write_diagnostic(stores, &text);
+}
+
+fn group_kind_text(kind: tex_state::GroupKind) -> &'static str {
+    match kind {
+        tex_state::GroupKind::Simple => "simple group",
+        tex_state::GroupKind::HBox => "hbox group",
+        tex_state::GroupKind::AdjustedHBox => "adjusted hbox group",
+        tex_state::GroupKind::VBox => "vbox group",
+        tex_state::GroupKind::VTop => "vtop group",
+        tex_state::GroupKind::Align => "align group",
+        tex_state::GroupKind::NoAlign => "no align group",
+        tex_state::GroupKind::Output => "output group",
+        tex_state::GroupKind::Math => "math group",
+        tex_state::GroupKind::Disc => "disc group",
+        tex_state::GroupKind::Insert => "insert group",
+        tex_state::GroupKind::VCenter => "vcenter group",
+        tex_state::GroupKind::MathChoice => "math choice group",
+        tex_state::GroupKind::SemiSimple => "semi simple group",
+        tex_state::GroupKind::MathShift => "math shift group",
+        tex_state::GroupKind::MathLeft => "math left group",
+    }
+}
+
+fn if_type_text(if_type: u8) -> &'static str {
+    match if_type {
+        1 => "\\if",
+        2 => "\\ifcat",
+        3 => "\\ifnum",
+        4 => "\\ifdim",
+        5 => "\\ifodd",
+        6 => "\\ifvmode",
+        7 => "\\ifhmode",
+        8 => "\\ifmmode",
+        9 => "\\ifinner",
+        10 => "\\ifvoid",
+        11 => "\\ifhbox",
+        12 => "\\ifvbox",
+        13 => "\\ifx",
+        14 => "\\ifeof",
+        15 => "\\iftrue",
+        16 => "\\iffalse",
+        17 => "\\ifcase",
+        18 => "\\ifdefined",
+        19 => "\\ifcsname",
+        20 => "\\iffontchar",
+        _ => "\\if",
+    }
+}
+
 pub(crate) fn execute_showbox(stores: &mut Universe, index: u16) {
     let mut text = format!("\n> \\box{index}=\n");
     if let Some(id) = stores.box_reg(index) {

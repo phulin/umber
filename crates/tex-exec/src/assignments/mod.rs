@@ -977,6 +977,16 @@ where
                 diagnostics::execute_showtokens(input, stores)?;
                 Ok(CommandOutcome::continue_only())
             }
+            UnexpandablePrimitive::ShowGroups => {
+                reject_all_prefixes(prefixes)?;
+                diagnostics::execute_showgroups(stores);
+                Ok(CommandOutcome::continue_only())
+            }
+            UnexpandablePrimitive::ShowIfs => {
+                reject_all_prefixes(prefixes)?;
+                diagnostics::execute_showifs(input, stores);
+                Ok(CommandOutcome::continue_only())
+            }
             UnexpandablePrimitive::Message => {
                 reject_all_prefixes(prefixes)?;
                 diagnostics::execute_message(input, stores, hooks, false)?;

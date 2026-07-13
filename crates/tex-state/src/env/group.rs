@@ -228,6 +228,11 @@ impl Env {
         self.group_boundaries.last().map(|boundary| boundary.kind)
     }
 
+    #[must_use]
+    pub(crate) fn group_kinds(&self) -> impl DoubleEndedIterator<Item = GroupKind> + '_ {
+        self.group_boundaries.iter().map(|boundary| boundary.kind)
+    }
+
     /// Enters a TeX group.
     pub(crate) fn enter_group(&mut self) {
         self.enter_group_with_kind(GroupKind::Simple);

@@ -55,8 +55,10 @@ components while changing the unit type. `\fontcharwd`, `\fontcharht`, `\fontcha
 ## Diagnostics and mutable state (manual sections 3.4, 3.6)
 
 `\interactionmode` is implemented as a globally assigned read/write view of
-the checkpointed interaction state. `\showgroups`, `\showifs`, `\showtokens`,
-`\tracingassigns`, `\tracinggroups`, `\tracingifs`, and `\tracingnesting`
+the checkpointed interaction state. `\showtokens` displays the manual-defined
+decomposition of unexpanded balanced text. `\showgroups` and `\showifs` walk
+the live checkpointed group and conditional stacks. `\tracingassigns`,
+`\tracinggroups`, `\tracingifs`, and `\tracingnesting`
 are **missing**.
 
 ## Marks, lists, paragraph extensions, and math (manual sections 3.4, 3.7)

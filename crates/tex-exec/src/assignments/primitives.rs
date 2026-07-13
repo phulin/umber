@@ -126,7 +126,6 @@ pub fn install_unexpandable_primitives(stores: &mut Universe) {
         ("show", UnexpandablePrimitive::Show),
         ("showbox", UnexpandablePrimitive::ShowBox),
         ("showthe", UnexpandablePrimitive::ShowThe),
-        ("showtokens", UnexpandablePrimitive::ShowTokens),
         ("message", UnexpandablePrimitive::Message),
         ("errmessage", UnexpandablePrimitive::ErrMessage),
         ("showlists", UnexpandablePrimitive::ShowLists),
@@ -246,6 +245,9 @@ pub fn install_etex_unexpandable_primitives(stores: &mut Universe) {
         ("glueshrinkorder", UnexpandablePrimitive::GlueShrinkOrder),
         ("gluetomu", UnexpandablePrimitive::GlueToMu),
         ("mutoglue", UnexpandablePrimitive::MuToGlue),
+        ("showgroups", UnexpandablePrimitive::ShowGroups),
+        ("showifs", UnexpandablePrimitive::ShowIfs),
+        ("showtokens", UnexpandablePrimitive::ShowTokens),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));

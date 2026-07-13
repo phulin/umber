@@ -1714,6 +1714,11 @@ impl Universe {
         self.stores.innermost_group_kind()
     }
 
+    #[must_use]
+    pub fn group_kinds(&self) -> impl DoubleEndedIterator<Item = GroupKind> + '_ {
+        self.stores.group_kinds()
+    }
+
     pub fn enter_group(&mut self) {
         self.stores.enter_group();
     }

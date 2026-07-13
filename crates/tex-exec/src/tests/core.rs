@@ -1578,6 +1578,46 @@ fn etex_glue_component_and_conversion_enquiries_match_manual_types() {
 }
 
 #[test]
+fn etex_showtokens_decomposes_unexpanded_balanced_text() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    tex_expand::install_etex_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    crate::install_etex_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\def\\foo#1{X#1}\\showtokens{a \\foo{b}}\\end",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("showtokens");
+    assert!(terminal_effect_text(&stores).contains("> a \\foo {b}."));
+}
+
+#[test]
+fn etex_showgroups_and_showifs_report_live_checkpointed_stacks() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    tex_expand::install_etex_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    crate::install_etex_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\begingroup\\iftrue\\showgroups\\showifs\\fi\\endgroup\\end",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("stack displays");
+    let output = terminal_effect_text(&stores);
+    assert!(
+        output.contains("### semi simple group (level 1)"),
+        "{output:?}"
+    );
+    assert!(output.contains("### bottom level"), "{output:?}");
+    assert!(output.contains("### level 1: \\iftrue"), "{output:?}");
+}
+
+#[test]
 fn leaders_parse_box_and_rule_payloads_on_glue_nodes() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
@@ -3239,4 +3279,25 @@ fn interactionmode_reads_and_assigns_globally() {
         stores.interaction_mode(),
         tex_state::InteractionMode::Nonstop
     );
+}
+
+#[test]
+fn etex_showgroups_and_showifs_render_live_nested_stacks() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    tex_expand::install_etex_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    crate::install_etex_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\begingroup\\iftrue\\showgroups\\showifs\\fi\\endgroup",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("stack diagnostics execute");
+
+    let output = support::terminal_effect_text(&stores);
+    assert!(output.contains("### semi simple group (level 1) (\\begingroup)"));
+    assert!(output.contains("### bottom level"));
+    assert!(output.contains("### level 1: \\iftrue"));
 }

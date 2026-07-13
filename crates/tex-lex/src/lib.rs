@@ -1265,6 +1265,16 @@ impl<S> InputStack<S> {
     }
 
     #[must_use]
+    pub fn conditions(&self) -> impl DoubleEndedIterator<Item = ConditionFrameSummary> + '_ {
+        self.condition_frame_indices.iter().map(|&index| {
+            let InputFrame::Condition { condition, .. } = self.frames[index] else {
+                unreachable!("condition index must address a condition frame")
+            };
+            condition
+        })
+    }
+
+    #[must_use]
     pub fn current_condition_token(&self) -> Option<ConditionFrameToken> {
         let index = *self.condition_frame_indices.last()?;
         let InputFrame::Condition { token, .. } = self.frames[index] else {

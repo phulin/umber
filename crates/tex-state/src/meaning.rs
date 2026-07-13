@@ -452,6 +452,8 @@ pub enum UnexpandablePrimitive {
     GlueShrinkOrder,
     GlueToMu,
     MuToGlue,
+    ShowGroups,
+    ShowIfs,
     Shipout,
     BeginGroup,
     EndGroup,
@@ -713,6 +715,8 @@ impl UnexpandablePrimitive {
             Self::GlueShrinkOrder => 189,
             Self::GlueToMu => 190,
             Self::MuToGlue => 191,
+            Self::ShowGroups => 192,
+            Self::ShowIfs => 193,
         }
     }
 
@@ -911,6 +915,8 @@ impl UnexpandablePrimitive {
             189 => Some(Self::GlueShrinkOrder),
             190 => Some(Self::GlueToMu),
             191 => Some(Self::MuToGlue),
+            192 => Some(Self::ShowGroups),
+            193 => Some(Self::ShowIfs),
             _ => None,
         }
     }
