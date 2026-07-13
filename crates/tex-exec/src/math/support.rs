@@ -87,6 +87,8 @@ pub(super) fn math_allows_assignment_primitive(primitive: UnexpandablePrimitive)
             | UnexpandablePrimitive::Show
             | UnexpandablePrimitive::ShowThe
             | UnexpandablePrimitive::ShowTokens
+            | UnexpandablePrimitive::ShowGroups
+            | UnexpandablePrimitive::ShowIfs
             | UnexpandablePrimitive::ShowLists
             | UnexpandablePrimitive::ShowBox
             | UnexpandablePrimitive::Message

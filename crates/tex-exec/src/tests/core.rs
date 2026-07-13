@@ -1635,6 +1635,21 @@ fn etex_showgroups_and_showifs_report_live_checkpointed_stacks() {
 }
 
 #[test]
+fn etex_showifs_is_available_inside_math_mode() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    tex_expand::install_etex_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    crate::install_etex_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\iftrue$\\showifs$\\fi\\end"));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("showifs in math mode");
+    assert!(terminal_effect_text(&stores).contains("\\iftrue"));
+}
+
+#[test]
 fn leaders_parse_box_and_rule_payloads_on_glue_nodes() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
