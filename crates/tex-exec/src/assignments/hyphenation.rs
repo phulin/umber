@@ -478,16 +478,13 @@ fn discretionary_through_node(
     replacement: Node,
 ) -> Node {
     let font = word[position - 1].font;
-    let hyphen = u8::try_from(stores.font_hyphen_char(font))
-        .ok()
-        .map(char::from)
-        .unwrap_or('-');
-
     let mut pre_pending: Vec<_> = word[start..position]
         .iter()
         .map(WordChar::pending)
         .collect();
-    pre_pending.push(PendingHChar { font, ch: hyphen });
+    if let Some(ch) = usable_hyphen_char(stores, font) {
+        pre_pending.push(PendingHChar { font, ch });
+    }
     let pre = super::hmode::reconstitute(stores, &pre_pending, true, false);
     let post_pending: Vec<_> = word[position..end].iter().map(WordChar::pending).collect();
     let post = super::hmode::reconstitute(stores, &post_pending, false, false);
@@ -517,12 +514,10 @@ fn discretionary_hyphen(
     font: tex_state::ids::FontId,
     replacement: Option<Node>,
 ) -> Node {
-    let hyphen = u8::try_from(stores.font_hyphen_char(font))
-        .ok()
-        .map(char::from)
-        .unwrap_or('-');
-    let pre = stores.freeze_node_list(&[Node::Char { font, ch: hyphen }]);
     let empty = stores.freeze_node_list(&[]);
+    let pre = usable_hyphen_char(stores, font).map_or(empty, |ch| {
+        stores.freeze_node_list(&[Node::Char { font, ch }])
+    });
     let replace = replacement.as_ref().map_or(empty, |node| {
         stores.freeze_node_list(std::slice::from_ref(node))
     });
@@ -532,6 +527,13 @@ fn discretionary_hyphen(
         post: empty,
         replace,
     }
+}
+
+fn usable_hyphen_char(stores: &Universe, font: tex_state::ids::FontId) -> Option<char> {
+    let code = u8::try_from(stores.font_hyphen_char(font)).ok()?;
+    stores
+        .font_char_exists(font, code)
+        .then(|| char::from(code))
 }
 
 pub(super) fn ligature_original_chars(ch: char, orig: (char, char)) -> Vec<char> {

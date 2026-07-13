@@ -100,7 +100,7 @@ fn paragraph_hyphenation_honors_uchyph_for_uppercase_start() {
 }
 
 #[test]
-fn paragraph_hyphenation_requires_a_valid_font_hyphen_character() {
+fn paragraph_hyphenation_requires_an_in_range_hyphen_and_omits_a_missing_glyph() {
     let mut stores = stores_with_fonts();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
@@ -119,6 +119,11 @@ fn paragraph_hyphenation_requires_a_valid_font_hyphen_character() {
 
     stores.set_font_hyphen_char(font, -1, false);
     let disabled = crate::assignments::test_hyphenated_hlist(&mut stores, &word);
+    let missing_code = (0u8..=u8::MAX)
+        .find(|&code| !stores.font_char_exists(font, code))
+        .expect("test font has an in-range missing character");
+    stores.set_font_hyphen_char(font, i32::from(missing_code), false);
+    let missing_glyph = crate::assignments::test_hyphenated_hlist(&mut stores, &word);
     stores.set_font_hyphen_char(font, i32::from(b'-'), false);
     let enabled = crate::assignments::test_hyphenated_hlist(&mut stores, &word);
 
@@ -126,6 +131,12 @@ fn paragraph_hyphenation_requires_a_valid_font_hyphen_character() {
         !disabled
             .iter()
             .any(|node| matches!(node, tex_state::node::Node::Disc { .. }))
+    );
+    assert!(
+        missing_glyph.iter().any(|node| {
+            matches!(node, Node::Disc { pre, .. } if stores.nodes(*pre).is_empty())
+        }),
+        "TeX retains the discretionary but new_character returns null"
     );
     assert!(
         enabled
