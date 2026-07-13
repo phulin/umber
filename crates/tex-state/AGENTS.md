@@ -54,6 +54,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/node_arena/measurement.rs`: Feature-gated compact-column and peak-storage accounting.
 - `src/node_arena/measurement/tests.rs`: Coherence, divergent-maximum, nested-payload, and concurrent peak-measurement tests.
 - `src/node_arena/mutation.rs`: Private shape-preserving compact-row replacement operations.
+- `src/node_arena/semantic.rs`: Versioned, allocation-independent semantic identity for immutable node-list aggregates.
 - `src/node_arena/storage.rs`: Canonical node words, sidecar coordination, encoding, aggregate watermarks, and rollback.
 - `src/node_arena/tables.rs`: Typed structure-of-arrays sidecar tables for boxes, unsets, insertions, and noads.
 - `src/node_arena/view.rs`: Zero-allocation node references, list spans, character runs, and iterators.
@@ -71,6 +72,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/stores.rs`: Internal aggregate store tuple that coordinates interner, env, token, provenance, glue, node, font, survivor, input, and rollback state.
 - `src/stores/handles.rs`: Store-boundary liveness checks for symbols, token lists, origins, glue, fonts, macros, and node handles.
 - `src/stores/node_clone.rs`: Iterative child-first cloning of mixed node graphs into epoch storage.
+- `src/stores/node_semantic.rs`: Canonical node encoding and bottom-up semantic-identity composition at aggregate freeze.
 - `src/stores/format.rs`: Deterministic versioned format-image DTO capture/validation and fresh-store reconstruction.
 - `src/stores/format/node.rs`: Handle-free serialized node/math DTO graph and validated conversion to and from live nodes.
 - `src/stores/format/tests.rs`: Malformed format DTO validation tests that reject references before live-store publication.

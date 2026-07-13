@@ -531,9 +531,9 @@ cells[i] = new
   covering word-span reuse cannot revive a discarded `NodeListId`. Survivor
   handles retain their root-relative packed representation and ownership rules.
 - The epoch arena is one compact eight-byte `NodeWord` stream plus aggregate
-  per-kind sidecars. Immutable packed `NodeListId` spans are minted only by
-  `NodeListBuilder::finish(&mut NodeArena)`. Builders are owned scratch
-  buffers; finishing encodes and clears them. Consumers traverse `NodeList`,
+  per-kind sidecars. Immutable packed `NodeListId` spans are minted only by the
+  aggregate `Stores` freeze boundary. Builders are owned scratch buffers;
+  finishing computes identity, encodes, and clears them. Consumers traverse `NodeList`,
   `NodeIter`, and `NodeRef` logical views; neither epoch nor survivor storage
   retains a decoded `Node` mirror, and raw words/sidecars never cross the state
   boundary. Child lists inside newly-frozen
@@ -545,6 +545,14 @@ cells[i] = new
   its old survivor value, and truncating a walked journal slice releases the
   corresponding owner, so survivor liveness follows the same O(changed-slice)
   boundary as rollback and group exit.
+- Every frozen span carries a versioned one-word `NodeSemanticId`, computed
+  once from canonical node tags and scalar payloads, token/glue/font semantic
+  dependencies, and the already-frozen identities of its child lists. Runtime
+  handles, arena layout, generations, and diagnostic provenance are excluded.
+  Rollback truncates epoch identities with the span table; promotion and epoch
+  cloning copy them; format restoration recomputes them through the aggregate
+  freeze path. Identities are checkpoint fingerprints, not authority to alias
+  storage: future content reuse must verify canonical content on a collision.
 - **Promotion on escape**: storing a node list into a box register, mark,
   or insertion is a barriered write, so the engine sees it and copies the
   list into a **survivor arena** with per-box refcounts. The promoted root is

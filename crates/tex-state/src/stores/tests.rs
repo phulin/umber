@@ -17,7 +17,7 @@ use crate::node::{
 };
 use crate::scaled::{GlueSetRatio, Scaled};
 use crate::source_map::SourceDescriptor;
-use crate::token::{Catcode, OriginId, Token};
+use crate::token::{Catcode, OriginId, Token, TracedTokenWord};
 use crate::world::InputRecordId;
 use crate::{
     input::SourceId,
@@ -154,6 +154,109 @@ fn owned_and_borrowed_semantic_hash_paths_match_every_node_variant() {
     ];
     let id = stores.freeze_node_list(&nodes);
     stores.testing_assert_owned_borrowed_node_hashes_equal(id);
+}
+
+#[test]
+fn node_semantic_ids_are_canonical_and_compose_from_children() {
+    fn nested(stores: &mut Stores, penalty: i32) -> (NodeListId, NodeListId) {
+        let child = stores.freeze_node_list(&[Node::Penalty(penalty)]);
+        let root = stores.freeze_node_list(&[Node::Adjust(child)]);
+        (child, root)
+    }
+
+    let mut direct = Stores::new();
+    let (direct_child, direct_root) = nested(&mut direct, 10);
+
+    let mut shifted = Stores::new();
+    let _unrelated = shifted.freeze_node_list(&[Node::Penalty(999)]);
+    let (shifted_child, shifted_root) = nested(&mut shifted, 10);
+    let (_, different_root) = nested(&mut shifted, 11);
+
+    assert_ne!(direct_child, shifted_child, "runtime allocation differs");
+    assert_eq!(
+        direct.node_semantic_id(direct_child),
+        shifted.node_semantic_id(shifted_child)
+    );
+    assert_eq!(
+        direct.node_semantic_id(direct_root),
+        shifted.node_semantic_id(shifted_root)
+    );
+    assert_ne!(
+        shifted.node_semantic_id(shifted_root),
+        shifted.node_semantic_id(different_root)
+    );
+
+    let mut builder = shifted.node_list_builder();
+    builder.push(Node::Adjust(shifted_child));
+    let built_root = shifted.finish_node_list(&mut builder);
+    assert_eq!(
+        shifted.node_semantic_id(built_root),
+        shifted.node_semantic_id(shifted_root)
+    );
+
+    let mut fork = direct.clone();
+    assert_eq!(
+        fork.node_semantic_id(direct_root),
+        direct.node_semantic_id(direct_root)
+    );
+    let (_, fork_root) = nested(&mut fork, 10);
+    assert_eq!(
+        fork.node_semantic_id(fork_root),
+        direct.node_semantic_id(direct_root)
+    );
+}
+
+#[test]
+fn node_semantic_ids_follow_rollback_promotion_and_epoch_clone() {
+    let mut stores = Stores::new();
+    let snapshot = stores.checkpoint();
+    let stale = stores.freeze_node_list(&[Node::Penalty(1)]);
+    let stale_semantic_id = stores.node_semantic_id(stale);
+    stores.rollback(&snapshot);
+
+    let replacement = stores.freeze_node_list(&[Node::Penalty(2)]);
+    assert_ne!(stale, replacement);
+    assert_ne!(stale_semantic_id, stores.node_semantic_id(replacement));
+    assert!(std::panic::catch_unwind(|| stores.node_semantic_id(stale)).is_err());
+
+    let root = stores.freeze_node_list(&[Node::Adjust(replacement)]);
+    let semantic_id = stores.node_semantic_id(root);
+    stores.set_box_reg(0, root);
+    let survivor = stores.box_reg(0).expect("box assignment promotes the list");
+    assert_eq!(stores.node_semantic_id(survivor), semantic_id);
+
+    let epoch_clone = stores.clone_node_list_to_epoch(survivor);
+    assert_eq!(stores.node_semantic_id(epoch_clone), semantic_id);
+}
+
+#[test]
+fn node_semantic_ids_exclude_token_provenance() {
+    let mut stores = Stores::new();
+    let token = Token::Char {
+        ch: 'x',
+        cat: Catcode::Other,
+    };
+    let first_origin = stores.synthetic_origin(SyntheticOriginKind::Test);
+    let second_origin = stores.synthetic_origin(SyntheticOriginKind::Engine);
+    let first_tokens =
+        stores.finish_traced_token_list(&[TracedTokenWord::pack(token, first_origin)]);
+    let second_tokens =
+        stores.finish_traced_token_list(&[TracedTokenWord::pack(token, second_origin)]);
+    assert_ne!(first_tokens.origin_list(), second_tokens.origin_list());
+
+    let first = stores.freeze_node_list(&[Node::Mark {
+        class: 0,
+        tokens: first_tokens.token_list(),
+    }]);
+    let second = stores.freeze_node_list(&[Node::Mark {
+        class: 0,
+        tokens: second_tokens.token_list(),
+    }]);
+    assert_ne!(first, second);
+    assert_eq!(
+        stores.node_semantic_id(first),
+        stores.node_semantic_id(second)
+    );
 }
 
 #[test]

@@ -6,7 +6,7 @@
 use crate::ids::{ArenaRef, NodeListId, SurvivorRootId};
 #[cfg(debug_assertions)]
 use crate::node::Node;
-use crate::node_arena::{ChildPatch, NodeArena, NodeList, NodeStorage};
+use crate::node_arena::{ChildPatch, NodeArena, NodeList, NodeSemanticId, NodeStorage};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
@@ -110,7 +110,15 @@ pub struct SurvivorArena {
 #[derive(Clone, Debug)]
 struct SurvivorRoot {
     storage: NodeStorage,
+    semantic_spans: Vec<SurvivorSemanticSpan>,
     refcount: u32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SurvivorSemanticSpan {
+    start: u32,
+    len: u32,
+    semantic_id: NodeSemanticId,
 }
 
 impl SurvivorArena {
@@ -153,7 +161,7 @@ impl SurvivorArena {
         }
         self.promotion_remap = copied.remapped;
         self.promotion_pending = copied.pending;
-        self.allocate_root(root, copied.storage);
+        self.allocate_root(root, copied.storage, copied.semantic_spans);
         self.debug_assert_no_epoch_ids(copied.promoted);
         #[cfg(feature = "node-stats")]
         {
@@ -183,6 +191,24 @@ impl SurvivorArena {
             "survivor node-list id is not live"
         );
         root.storage.view(id.start(), id.len())
+    }
+
+    #[must_use]
+    pub(crate) fn semantic_id(&self, id: NodeListId) -> NodeSemanticId {
+        let ArenaRef::Survivor(root) = id.arena() else {
+            panic!("survivor arena can only resolve survivor semantic ids");
+        };
+        if id.len() == 0 {
+            return NodeSemanticId::empty();
+        }
+        let root = self.root(root);
+        let index = root
+            .semantic_spans
+            .binary_search_by_key(&id.start(), |span| span.start)
+            .expect("survivor node-list semantic id is not live");
+        let span = root.semantic_spans[index];
+        assert_eq!(span.len, id.len(), "survivor semantic span length mismatch");
+        span.semantic_id
     }
 
     /// Increments the root refcount for a survivor list.
@@ -335,12 +361,35 @@ impl SurvivorArena {
             logical_bytes: self.root_slots.len() * element_bytes,
             retained_payload_bytes: self.root_slots.capacity() * element_bytes,
         });
+        let (len, capacity) = self
+            .slots
+            .iter()
+            .flatten()
+            .map(|root| (root.semantic_spans.len(), root.semantic_spans.capacity()))
+            .fold((0, 0), |(len, capacity), current| {
+                (len + current.0, capacity + current.1)
+            });
+        let element_bytes = core::mem::size_of::<SurvivorSemanticSpan>();
+        columns.push(crate::node_arena::NodeMemoryColumn {
+            name: "survivor.live.semantic_spans".to_owned(),
+            len,
+            capacity,
+            element_bytes,
+            logical_bytes: len * element_bytes,
+            retained_payload_bytes: capacity * element_bytes,
+        });
         columns
     }
 
-    fn allocate_root(&mut self, root: SurvivorRootId, storage: NodeStorage) {
+    fn allocate_root(
+        &mut self,
+        root: SurvivorRootId,
+        storage: NodeStorage,
+        semantic_spans: Vec<SurvivorSemanticSpan>,
+    ) {
         let slot = SurvivorRoot {
             storage,
+            semantic_spans,
             refcount: 1,
         };
         let index = self.slots.len();
@@ -402,6 +451,7 @@ fn survivor_root_successor(next: u32) -> Option<u32> {
 struct PromotionResult {
     storage: NodeStorage,
     promoted: NodeListId,
+    semantic_spans: Vec<SurvivorSemanticSpan>,
     remapped: HashMap<NodeListId, NodeListId>,
     pending: Vec<ChildPatch>,
     #[cfg(feature = "node-stats")]
@@ -436,6 +486,7 @@ fn copy_list_iterative(
     PromotionResult {
         storage: copy.storage,
         promoted,
+        semantic_spans: copy.semantic_spans,
         remapped: copy.remapped,
         pending: copy.pending,
         #[cfg(feature = "node-stats")]
@@ -455,6 +506,7 @@ struct PromotionCopy<'a> {
     root: SurvivorRootId,
     remapped: HashMap<NodeListId, NodeListId>,
     pending: Vec<ChildPatch>,
+    semantic_spans: Vec<SurvivorSemanticSpan>,
     #[cfg(feature = "node-stats")]
     peak_scratch_logical: usize,
     #[cfg(feature = "node-stats")]
@@ -480,6 +532,7 @@ impl<'a> PromotionCopy<'a> {
             root,
             remapped,
             pending,
+            semantic_spans: Vec::new(),
             #[cfg(feature = "node-stats")]
             peak_scratch_logical: 0,
             #[cfg(feature = "node-stats")]
@@ -504,6 +557,10 @@ impl<'a> PromotionCopy<'a> {
             return remapped;
         }
 
+        let semantic_id = match id.arena() {
+            ArenaRef::Epoch => self.epoch.epoch_semantic_id(id),
+            ArenaRef::Survivor(_) => self.survivor.semantic_id(id),
+        };
         let nodes = match id.arena() {
             ArenaRef::Epoch => self.epoch.get_epoch(id),
             ArenaRef::Survivor(_) => {
@@ -518,6 +575,13 @@ impl<'a> PromotionCopy<'a> {
         let start = u32_len(self.storage.len(), "promoted node root exceeds u32 entries");
         let remapped = NodeListId::new_survivor(self.root, start, len);
         self.remapped.insert(id, remapped);
+        if len != 0 {
+            self.semantic_spans.push(SurvivorSemanticSpan {
+                start,
+                len,
+                semantic_id,
+            });
+        }
         #[cfg(feature = "node-stats")]
         let pending_before = self.pending.len();
         let appended = self.storage.append_compact(nodes, &mut self.pending);

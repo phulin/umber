@@ -1,4 +1,4 @@
-use super::{NodeArena, NodeListBuilder, NodeRef, preflight_capacity};
+use super::{NodeArena, NodeListBuilder, NodeRef, NodeSemanticId, preflight_capacity};
 use crate::glue::Order;
 use crate::ids::{FontId, GlueId, NodeListId, TokenListId};
 use crate::math::{
@@ -19,6 +19,20 @@ fn node_layout_baseline() {
     assert_eq!(std::mem::size_of::<crate::node::UnsetNode>(), 48);
     assert_eq!(std::mem::size_of::<crate::node::Whatsit>(), 48);
     assert_eq!(std::mem::size_of::<NodeListId>(), 16);
+}
+
+#[test]
+fn semantic_id_collisions_do_not_alias_node_storage() {
+    let mut arena = NodeArena::new();
+    let collision = NodeSemanticId::testing(42);
+    let first = arena.append_with_semantic_id(&[Node::Penalty(1)], collision);
+    let second = arena.append_with_semantic_id(&[Node::Penalty(2)], collision);
+
+    assert_ne!(first, second);
+    assert_eq!(arena.get_epoch(first).to_vec(), [Node::Penalty(1)]);
+    assert_eq!(arena.get_epoch(second).to_vec(), [Node::Penalty(2)]);
+    assert_eq!(arena.epoch_semantic_id(first), collision);
+    assert_eq!(arena.epoch_semantic_id(second), collision);
 }
 
 #[test]

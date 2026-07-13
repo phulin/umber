@@ -1299,7 +1299,7 @@ impl Stores {
     }
 }
 
-fn hash_print_sink(sink: crate::world::PrintSink, hasher: &mut StateHasher) {
+pub(super) fn hash_print_sink(sink: crate::world::PrintSink, hasher: &mut StateHasher) {
     match sink {
         crate::world::PrintSink::Terminal => hasher.tag(0),
         crate::world::PrintSink::Log => hasher.tag(1),
@@ -1407,7 +1407,7 @@ fn hash_font_semantic_key(font: &FontSemanticKey, hasher: &mut StateHasher) {
     }
 }
 
-fn hash_kern_kind(kind: KernKind, hasher: &mut StateHasher) {
+pub(super) fn hash_kern_kind(kind: KernKind, hasher: &mut StateHasher) {
     hasher.u8(match kind {
         KernKind::Explicit => 0,
         KernKind::Font => 1,
@@ -1416,7 +1416,7 @@ fn hash_kern_kind(kind: KernKind, hasher: &mut StateHasher) {
     });
 }
 
-fn hash_glue_kind(kind: GlueKind, hasher: &mut StateHasher) {
+pub(super) fn hash_glue_kind(kind: GlueKind, hasher: &mut StateHasher) {
     hasher.u8(match kind {
         GlueKind::Normal => 0,
         GlueKind::BaselineSkip => 1,
@@ -1442,12 +1442,12 @@ fn hash_glue_kind(kind: GlueKind, hasher: &mut StateHasher) {
     });
 }
 
-fn hash_math_char(ch: crate::math::MathChar, hasher: &mut StateHasher) {
+pub(super) fn hash_math_char(ch: crate::math::MathChar, hasher: &mut StateHasher) {
     hasher.u8(ch.family);
     hasher.u32(ch.character as u32);
 }
 
-fn hash_noad_kind(kind: &crate::math::NoadKind, hasher: &mut StateHasher) {
+pub(super) fn hash_noad_kind(kind: &crate::math::NoadKind, hasher: &mut StateHasher) {
     match kind {
         crate::math::NoadKind::Normal(class) => {
             hasher.tag(0);
@@ -1496,7 +1496,10 @@ fn hash_noad_kind(kind: &crate::math::NoadKind, hasher: &mut StateHasher) {
     }
 }
 
-fn hash_fraction_thickness(thickness: crate::math::FractionThickness, hasher: &mut StateHasher) {
+pub(super) fn hash_fraction_thickness(
+    thickness: crate::math::FractionThickness,
+    hasher: &mut StateHasher,
+) {
     match thickness {
         crate::math::FractionThickness::Default => hasher.tag(0),
         crate::math::FractionThickness::Explicit(value) => {
@@ -1506,7 +1509,7 @@ fn hash_fraction_thickness(thickness: crate::math::FractionThickness, hasher: &m
     }
 }
 
-fn hash_optional_delimiter(delimiter: Option<u32>, hasher: &mut StateHasher) {
+pub(super) fn hash_optional_delimiter(delimiter: Option<u32>, hasher: &mut StateHasher) {
     match delimiter {
         Some(delimiter) => {
             hasher.bool(true);
@@ -1530,7 +1533,7 @@ fn hash_internal_integer(integer: InternalInteger, hasher: &mut StateHasher) {
     }
 }
 
-fn hash_sign(sign: Sign, hasher: &mut StateHasher) {
+pub(super) fn hash_sign(sign: Sign, hasher: &mut StateHasher) {
     hasher.u8(match sign {
         Sign::Normal => 0,
         Sign::Stretching => 1,
@@ -1538,7 +1541,7 @@ fn hash_sign(sign: Sign, hasher: &mut StateHasher) {
     });
 }
 
-fn hash_optional_scaled(value: Option<crate::scaled::Scaled>, hasher: &mut StateHasher) {
+pub(super) fn hash_optional_scaled(value: Option<crate::scaled::Scaled>, hasher: &mut StateHasher) {
     match value {
         Some(value) => {
             hasher.bool(true);

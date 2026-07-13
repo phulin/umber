@@ -73,12 +73,14 @@ impl Stores {
                         scratch.states.get(&id),
                         Some(CloneState::Visiting)
                     ));
+                    let semantic_id = self.node_semantic_id(id);
                     let mapped = match id.arena() {
                         ArenaRef::Survivor(_) => {
                             let source = self.survivors.get(id);
                             let states = &scratch.states;
                             self.nodes.append_compact_remapped(
                                 source,
+                                semantic_id,
                                 &mut scratch.patches,
                                 |child| mapped_child(states, child),
                             )
@@ -92,7 +94,7 @@ impl Stores {
                             for node in &mut nodes {
                                 remap_owned_node(node, &scratch.states);
                             }
-                            self.nodes.append(&nodes)
+                            self.nodes.append_with_semantic_id(&nodes, semantic_id)
                         }
                     };
                     scratch.states.insert(id, CloneState::Mapped(mapped));

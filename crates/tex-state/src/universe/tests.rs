@@ -345,6 +345,9 @@ fn semantic_format_is_deterministic_validated_and_world_independent() {
         children: child,
     }))]);
     universe.set_box_reg(7, root);
+    let semantic_id = universe
+        .stores
+        .node_semantic_id(universe.box_reg(7).expect("promoted box register"));
 
     let first = universe.dump_format().expect("format encode");
     let second = universe.dump_format().expect("deterministic format encode");
@@ -360,6 +363,7 @@ fn semantic_format_is_deterministic_validated_and_world_independent() {
         Meaning::Macro { .. }
     ));
     let restored_root = restored.box_reg(7).expect("restored box register");
+    assert_eq!(restored.stores.node_semantic_id(restored_root), semantic_id);
     let restored_nodes = restored.nodes(restored_root).to_vec();
     let Node::HList(restored_box) = restored_nodes[0] else {
         panic!("restored box node kind");
@@ -750,6 +754,10 @@ fn node_memory_measurement_is_nonsemantic_and_covers_recycled_storage() {
             .any(|column| column.name == "epoch.identity_tags")
     );
     assert!(empty.iter().any(|column| column.name == "epoch.spans"));
+    assert!(empty.iter().any(|column| {
+        column.name == "epoch.semantic_ids"
+            && column.element_bytes == core::mem::size_of::<crate::node_arena::NodeSemanticId>()
+    }));
     assert_eq!(before, universe.snapshot().state_hash());
 
     for amount in 0..32 {

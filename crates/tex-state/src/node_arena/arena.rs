@@ -2,6 +2,7 @@ use super::checked_len;
 use super::copy::ChildPatch;
 #[cfg(feature = "node-stats")]
 use super::measurement::NodeMemoryColumn;
+use super::semantic::{NodeSemanticId, NodeSemanticIdBuilder};
 use super::storage::{NodeArenaMark, NodeStorage};
 use super::view::NodeList;
 use crate::identity::{HandleIdentity, IdentityAllocator};
@@ -37,10 +38,19 @@ impl NodeListBuilder {
     pub fn clear(&mut self) {
         self.buf.clear()
     }
-    pub(crate) fn finish(&mut self, arena: &mut NodeArena) -> NodeListId {
-        let id = arena.append(&self.buf);
-        self.buf.clear();
-        id
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) fn finish(&mut self, arena: &mut NodeArena) -> NodeListId {
+        #[cfg(test)]
+        {
+            let id = arena.append(&self.buf);
+            self.buf.clear();
+            id
+        }
+        #[cfg(not(test))]
+        {
+            let _ = arena;
+            panic!("node lists must be finished through Stores to compute semantic identity")
+        }
     }
 }
 
@@ -55,6 +65,7 @@ pub struct NodeArena {
     pub(super) storage: NodeStorage,
     identities: IdentityAllocator,
     spans: Vec<EpochSpan>,
+    semantic_ids: Vec<NodeSemanticId>,
 }
 
 impl Clone for NodeArena {
@@ -63,6 +74,7 @@ impl Clone for NodeArena {
             storage: self.storage.clone(),
             identities: self.identities.fork(),
             spans: self.spans.clone(),
+            semantic_ids: self.semantic_ids.clone(),
         }
     }
 }
@@ -73,6 +85,7 @@ impl Default for NodeArena {
             storage: NodeStorage::default(),
             identities: IdentityAllocator::new(1),
             spans: vec![EpochSpan { start: 0, len: 0 }],
+            semantic_ids: vec![NodeSemanticIdBuilder::new().finish()],
         }
     }
 }
@@ -111,6 +124,7 @@ impl NodeArena {
             .rollback(mark.identities)
             .expect("node identity rollback mark must name a retained ancestor");
         self.spans.truncate(mark.identities.len());
+        self.semantic_ids.truncate(mark.identities.len());
         self.storage.truncate(mark.storage)
     }
     #[cfg(feature = "node-stats")]
@@ -128,8 +142,13 @@ impl NodeArena {
             checked_len(self.storage.len(), "node arena exceeds u32 entries"),
         )
     }
-    pub(crate) fn append(&mut self, nodes: &[Node]) -> NodeListId {
+    pub(crate) fn append_with_semantic_id(
+        &mut self,
+        nodes: &[Node],
+        semantic_id: NodeSemanticId,
+    ) -> NodeListId {
         if nodes.is_empty() {
+            debug_assert_eq!(semantic_id, self.semantic_ids[0]);
             return NodeListId::new_epoch(HandleIdentity::builtin(0));
         }
         let start = checked_len(self.storage.len(), "node arena exceeds u32 entries");
@@ -139,11 +158,23 @@ impl NodeArena {
             crate::node::record_node_append(n);
         }
         let (start, len) = self.storage.append(nodes);
-        self.mint_span(start, len)
+        self.mint_span(start, len, semantic_id)
     }
+
+    #[cfg(test)]
+    pub(crate) fn append(&mut self, nodes: &[Node]) -> NodeListId {
+        let semantic_id = if nodes.is_empty() {
+            self.semantic_ids[0]
+        } else {
+            NodeSemanticId::testing(self.spans.len() as u64)
+        };
+        self.append_with_semantic_id(nodes, semantic_id)
+    }
+
     pub(crate) fn append_compact_remapped(
         &mut self,
         source: NodeList<'_>,
+        semantic_id: NodeSemanticId,
         patches: &mut Vec<ChildPatch>,
         mut remap: impl FnMut(NodeListId) -> NodeListId,
     ) -> NodeListId {
@@ -168,9 +199,10 @@ impl NodeArena {
             self.storage.apply_child_patch(patch);
         }
         if len == 0 {
+            debug_assert_eq!(semantic_id, self.semantic_ids[0]);
             NodeListId::new_epoch(HandleIdentity::builtin(0))
         } else {
-            self.mint_span(start, len)
+            self.mint_span(start, len, semantic_id)
         }
     }
     #[cfg(debug_assertions)]
@@ -207,7 +239,19 @@ impl NodeArena {
         self.spans.get(id.epoch_identity().slot() as usize).copied()
     }
 
-    fn mint_span(&mut self, start: u32, len: u32) -> NodeListId {
+    pub(crate) fn semantic_id(&self, id: NodeListId, survivors: &SurvivorArena) -> NodeSemanticId {
+        match id.arena() {
+            ArenaRef::Epoch => self.epoch_semantic_id(id),
+            ArenaRef::Survivor(_) => survivors.semantic_id(id),
+        }
+    }
+
+    pub(crate) fn epoch_semantic_id(&self, id: NodeListId) -> NodeSemanticId {
+        assert!(self.contains(id), "epoch node-list id is not live: {id:?}");
+        self.semantic_ids[id.epoch_identity().slot() as usize]
+    }
+
+    fn mint_span(&mut self, start: u32, len: u32, semantic_id: NodeSemanticId) -> NodeListId {
         let identity = self
             .identities
             .allocate()
@@ -218,6 +262,7 @@ impl NodeArena {
             "node-list identity and span tables diverged"
         );
         self.spans.push(EpochSpan { start, len });
+        self.semantic_ids.push(semantic_id);
         let id = NodeListId::new_epoch(identity);
         #[cfg(feature = "node-stats")]
         self.record_peak();
@@ -245,6 +290,15 @@ impl NodeArena {
             logical_bytes: self.spans.len() * element_bytes,
             retained_payload_bytes: self.spans.capacity() * element_bytes,
         });
+        let element_bytes = core::mem::size_of::<NodeSemanticId>();
+        columns.push(NodeMemoryColumn {
+            name: format!("{prefix}.semantic_ids"),
+            len: self.semantic_ids.len(),
+            capacity: self.semantic_ids.capacity(),
+            element_bytes,
+            logical_bytes: self.semantic_ids.len() * element_bytes,
+            retained_payload_bytes: self.semantic_ids.capacity() * element_bytes,
+        });
         columns
     }
 
@@ -257,6 +311,9 @@ impl NodeArena {
         let element_bytes = core::mem::size_of::<EpochSpan>();
         logical += (self.spans.len() * element_bytes) as u64;
         retained += (self.spans.capacity() * element_bytes) as u64;
+        let element_bytes = core::mem::size_of::<NodeSemanticId>();
+        logical += (self.semantic_ids.len() * element_bytes) as u64;
+        retained += (self.semantic_ids.capacity() * element_bytes) as u64;
         (logical, retained)
     }
 
@@ -279,7 +336,7 @@ impl NodeArena {
         if len == 0 {
             NodeListId::new_epoch(HandleIdentity::builtin(0))
         } else {
-            self.mint_span(start, len)
+            self.mint_span(start, len, NodeSemanticId::testing(self.spans.len() as u64))
         }
     }
 }

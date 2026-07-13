@@ -53,6 +53,7 @@ use std::sync::Arc;
 mod format;
 mod handles;
 mod node_clone;
+mod node_semantic;
 mod state_hash;
 
 pub(crate) use format::StoreFormatError;
@@ -1308,13 +1309,19 @@ impl Stores {
     /// Appends and freezes a node list in the owned epoch arena.
     pub fn freeze_node_list(&mut self, nodes: &[Node]) -> NodeListId {
         self.assert_live_handles_in_nodes(nodes);
-        self.nodes.append(nodes)
+        let semantic_id = self.compute_node_semantic_id(nodes);
+        self.nodes.append_with_semantic_id(nodes, semantic_id)
     }
 
     /// Freezes the current node-list builder value and clears it for reuse.
     pub fn finish_node_list(&mut self, builder: &mut NodeListBuilder) -> NodeListId {
         self.assert_live_handles_in_nodes(builder.as_slice());
-        builder.finish(&mut self.nodes)
+        let semantic_id = self.compute_node_semantic_id(builder.as_slice());
+        let id = self
+            .nodes
+            .append_with_semantic_id(builder.as_slice(), semantic_id);
+        builder.clear();
+        id
     }
 
     /// Reads a live frozen node list.
