@@ -176,7 +176,7 @@ where
             cat: Catcode::MathShift,
             ..
         } => {
-            if stores.innermost_group_kind() == Some(tex_state::GroupKind::Simple) {
+            if stores.innermost_group_kind() == Some(tex_state::GroupKind::Math) {
                 let right_brace = Token::Char {
                     ch: '}',
                     cat: Catcode::EndGroup,
