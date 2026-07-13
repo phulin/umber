@@ -816,10 +816,8 @@ where
     )?;
     let value = scanned.value();
     if !(0..=32_767).contains(&value) {
-        return Err(ScanGlueError::RegisterNumberOutOfRange {
-            value,
-            context: scanned.context(),
-        });
+        stores.report_bad_register_code(value, 32_767);
+        return Ok(0);
     }
     Ok(value as u16)
 }

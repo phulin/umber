@@ -17,6 +17,25 @@ fn register_assignments_cover_sparse_aliases_and_arithmetic() {
 }
 
 #[test]
+fn etex_register_definitions_recover_bad_codes_to_register_zero() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    install_etex_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\countdef\\negative=-1 \\negative=7 \\countdef\\large=32768 \\large=8",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("bad register definitions recover");
+
+    assert_eq!(stores.count(0), 8);
+    let output = terminal_effect_text(&stores);
+    assert!(output.contains("Bad register code (-1)"));
+    assert!(output.contains("Bad register code (32768)"));
+}
+
+#[test]
 fn dimension_assignment_reports_recoverable_scanner_diagnostic() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

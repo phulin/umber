@@ -8,9 +8,7 @@ use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{ExpansionState, Universe};
 
-use crate::scan_int::{
-    IntegerDiagnostic, ScanIntError, scan_int, scan_int_with_recorder_and_hooks,
-};
+use crate::scan_int::{IntegerDiagnostic, scan_int, scan_int_with_recorder_and_hooks};
 use crate::{NoopExpansionHooks, ReadBank, ReadDependency, ReadRecorder, ReadSetRecorder};
 
 fn scan(input: &str) -> (i32, Option<IntegerDiagnostic>, Option<Token>) {
@@ -390,7 +388,7 @@ fn ordinary_unexpandable_command_recovers_zero_and_preserves_origin() {
 }
 
 #[test]
-fn rejects_out_of_range_register_numbers() {
+fn out_of_range_register_numbers_report_and_recover_to_zero() {
     let mut stores = Universe::new();
     let count = stores.intern("count");
     stores.set_meaning(
@@ -398,13 +396,16 @@ fn rejects_out_of_range_register_numbers() {
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Count),
     );
     let mut input = InputStack::new(MemoryInput::new("\\count32768"));
-    let err =
-        scan_int(&mut input, &mut stores, context()).expect_err("register should be rejected");
+    let scanned = scan_int(&mut input, &mut stores, context()).expect("register should recover");
 
-    assert!(matches!(
-        err,
-        ScanIntError::RegisterNumberOutOfRange { value: 32768, .. }
-    ));
+    assert_eq!(scanned.value(), 0);
+    assert!(stores.world().effect_records().iter().any(|record| {
+        matches!(
+            record,
+            tex_state::EffectRecord::StreamWrite { text, .. }
+                if text.contains("Bad register code (32768)")
+        )
+    }));
 }
 
 fn install_numexpr(stores: &mut Universe) {

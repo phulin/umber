@@ -1182,10 +1182,8 @@ where
     )?;
     let value = scanned.value();
     if !(0..=MAX_REGISTER).contains(&value) {
-        return Err(ScanDimenError::RegisterNumberOutOfRange {
-            value,
-            context: scanned.context(),
-        });
+        stores.report_bad_register_code(value, MAX_REGISTER as u16);
+        return Ok(0);
     }
     Ok(value as u16)
 }
