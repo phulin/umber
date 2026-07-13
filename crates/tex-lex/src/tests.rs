@@ -1349,10 +1349,16 @@ fn macro_site_meaning_cache_is_guarded_across_writes_groups_and_rollback() {
         Meaning::Relax
     );
 
+    let fork = stores.clone();
+    assert_eq!(
+        input.resolve_expansion_meaning(&fork, symbol.symbol()),
+        Meaning::Relax
+    );
+
     let stats = input.expansion_stats();
     assert_eq!(stats.meaning_cache_hits, 1);
-    assert_eq!(stats.meaning_cache_misses, 4);
-    assert_eq!(stats.meaning_lookups, 4);
+    assert_eq!(stats.meaning_cache_misses, 5);
+    assert_eq!(stats.meaning_lookups, 5);
 }
 
 #[test]
