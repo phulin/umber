@@ -441,6 +441,15 @@ struct TokenListInputFrame {
     replay_marker: Option<TokenListReplayMarker>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct MacroLiteralSpan {
+    token_list: TokenListId,
+    origin_list: OriginListId,
+    replay_kind: TokenListReplayKind,
+    start: usize,
+    end: usize,
+}
+
 /// Identifies one live token-list replay frame independently of its content.
 ///
 /// The marker is intentionally absent from resumable input summaries: callers
@@ -1278,10 +1287,51 @@ impl<S> InputStack<S> {
         origins_out: &mut OriginListBuilder,
         policy: LiteralSpanPolicy,
     ) -> usize {
+        let Some(span) = self.take_macro_literal_span(stores, policy) else {
+            return 0;
+        };
+        let stored = stores.tokens(span.token_list);
+        tokens_out.extend_from_slice(&stored[span.start..span.end]);
+        if span.origin_list == OriginListId::EMPTY {
+            debug_assert_eq!(span.replay_kind, TokenListReplayKind::MacroBody);
+            origins_out.extend_repeated(OriginId::UNKNOWN, span.end - span.start);
+        } else if let Some(origins) = stores.origin_list_if_live(span.origin_list) {
+            assert_eq!(origins.len(), stored.len());
+            origins_out.extend_from_slice(&origins[span.start..span.end]);
+        } else {
+            origins_out.extend_repeated(OriginId::UNKNOWN, span.end - span.start);
+        }
+        span.end - span.start
+    }
+
+    /// Appends the next maximal ordinary horizontal-text span.
+    ///
+    /// Execution does not retain character origins in nodes, but this still
+    /// refuses degraded argument frames whose ordinary replay would allocate
+    /// inserted provenance records. Skipping those allocations would perturb
+    /// later provenance identities even if the glyph nodes themselves do not
+    /// store origins.
+    pub fn append_macro_text_span(
+        &mut self,
+        stores: &impl ExpansionState,
+        tokens_out: &mut Vec<Token>,
+    ) -> usize {
+        let Some(span) = self.take_macro_literal_span(stores, LiteralSpanPolicy::HorizontalText)
+        else {
+            return 0;
+        };
+        let stored = stores.tokens(span.token_list);
+        tokens_out.extend_from_slice(&stored[span.start..span.end]);
+        span.end - span.start
+    }
+
+    fn take_macro_literal_span(
+        &mut self,
+        stores: &impl ExpansionState,
+        policy: LiteralSpanPolicy,
+    ) -> Option<MacroLiteralSpan> {
         loop {
-            let Some(frame_index) = self.current_token_frame_index() else {
-                return 0;
-            };
+            let frame_index = self.current_token_frame_index()?;
             let exhausted = match &self.frames[frame_index] {
                 InputFrame::TokenList(frame)
                     if matches!(
@@ -1303,13 +1353,13 @@ impl<S> InputStack<S> {
                 continue;
             }
             let InputFrame::TokenList(frame) = &mut self.frames[frame_index] else {
-                return 0;
+                return None;
             };
             if !matches!(
                 frame.replay_kind,
                 TokenListReplayKind::MacroBody | TokenListReplayKind::MacroArgument
             ) {
-                return 0;
+                return None;
             }
 
             let stored = stores.tokens(frame.token_list);
@@ -1337,28 +1387,24 @@ impl<S> InputStack<S> {
                 .position(|&token| !policy.accepts(token))
                 .map_or(stored.len(), |offset| start + offset);
             if end == start {
-                return 0;
+                return None;
             }
             if frame.replay_kind == TokenListReplayKind::MacroArgument
                 && frame.origin_list == OriginListId::EMPTY
             {
                 // Ordinary replay synthesizes a distinct inserted origin for
                 // this degraded case, so it cannot be represented as a span.
-                return 0;
+                return None;
             }
 
             frame.index = end;
-            tokens_out.extend_from_slice(&stored[start..end]);
-            if frame.origin_list == OriginListId::EMPTY {
-                debug_assert_eq!(frame.replay_kind, TokenListReplayKind::MacroBody);
-                origins_out.extend_repeated(OriginId::UNKNOWN, end - start);
-            } else if let Some(origins) = stores.origin_list_if_live(frame.origin_list) {
-                assert_eq!(origins.len(), stored.len());
-                origins_out.extend_from_slice(&origins[start..end]);
-            } else {
-                origins_out.extend_repeated(OriginId::UNKNOWN, end - start);
-            }
-            return end - start;
+            return Some(MacroLiteralSpan {
+                token_list: frame.token_list,
+                origin_list: frame.origin_list,
+                replay_kind: frame.replay_kind,
+                start,
+                end,
+            });
         }
     }
 

@@ -544,6 +544,20 @@ fn main_control_uses_get_x_token_and_expands_macros_before_dispatch() {
 }
 
 #[test]
+fn horizontal_main_control_batches_inactive_alignment_macro_text() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\def\\x{abcdefgh}\\x"));
+
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("macro text executes");
+
+    assert_eq!(stats.macro_text_span_tokens, 8);
+    assert!(stats.delivered_tokens >= stats.macro_text_span_tokens);
+}
+
+#[test]
 fn main_control_recovers_from_undefined_control_sequence() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

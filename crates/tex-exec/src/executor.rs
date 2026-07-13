@@ -230,6 +230,7 @@ where
         recorder,
         hooks,
         stats,
+        true,
         |_, _| false,
         |nest, input, stores, event| {
             if event.shipout_complete {
@@ -279,6 +280,7 @@ where
         recorder,
         hooks,
         stats,
+        false,
         should_stop,
         |_, _, _, _| {},
     );
@@ -293,6 +295,7 @@ fn run_main_control_until_observing<S, R, H, F, O>(
     recorder: &mut R,
     hooks: &mut H,
     stats: &mut ExecutionStats,
+    allow_text_spans: bool,
     mut should_stop: F,
     mut observe: O,
 ) -> Result<MainControlExit, ExecError>
@@ -303,9 +306,29 @@ where
     F: FnMut(&mut InputStack<S>, &Universe) -> bool,
     O: FnMut(&ModeNest, &mut InputStack<S>, &mut Universe, BoundaryEvent),
 {
+    let mut macro_text = Vec::new();
     loop {
         if should_stop(input, stores) {
             return Ok(MainControlExit::Stopped);
+        }
+
+        if allow_text_spans
+            && matches!(
+                nest.current_mode(),
+                crate::Mode::Horizontal | crate::Mode::RestrictedHorizontal
+            )
+            && !input.has_active_alignment()
+            && !stores.world().execution_tracing_enabled()
+        {
+            macro_text.clear();
+            if input.append_macro_text_span(stores, &mut macro_text) > 0 {
+                stats.delivered_tokens += macro_text.len();
+                stats.macro_text_span_tokens += macro_text.len();
+                for token in macro_text.drain(..) {
+                    debug_assert!(assignments::try_append_character(nest, token, stores)?);
+                }
+                continue;
+            }
         }
 
         let before_mode = nest.current_mode();
