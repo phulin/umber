@@ -360,6 +360,12 @@ impl Stores {
         self.hash_font(id, hasher);
     }
 
+    #[cfg(test)]
+    pub(crate) fn testing_font_semantic_fingerprint(&self, id: FontId) -> u64 {
+        let id = self.resolve_stored_font(id);
+        self.fonts.complete_hash_fragment(id).fingerprint()
+    }
+
     fn assert_valid_hash_cursor(&self, cursor: &StoreStateHashCursor) {
         assert_eq!(
             cursor.owner,
@@ -1080,20 +1086,8 @@ impl Stores {
 
     fn hash_font_fields(&self, font: FontId, hasher: &mut StateHasher) {
         self.assert_live_font(font);
-        let identifier = self.fonts.identifier(font);
-        if let Some(symbol) = identifier {
-            self.assert_live_symbol(symbol);
-        }
         hasher.tag(0x68);
-        self.fonts.hash_fragment(font).apply(hasher);
-        match identifier {
-            Some(symbol) => {
-                hasher.bool(true);
-                hash_control_sequence_kind(self.interner.kind_id(symbol), hasher);
-                hasher.str(self.interner.resolve_id(symbol));
-            }
-            None => hasher.bool(false),
-        }
+        self.fonts.complete_hash_fragment(font).apply(hasher);
     }
 
     fn font_semantic_key(&self, font: FontId) -> FontSemanticKey {
@@ -1107,7 +1101,7 @@ impl Stores {
                 self.interner.resolve_id(symbol).to_owned(),
             )
         });
-        let immutable_hash = self.fonts.hash_fragment(font).fingerprint();
+        let complete_hash = self.fonts.complete_hash_fragment(font).fingerprint();
         let font = self.fonts.get(font);
         FontSemanticKey {
             name: font.name().to_owned(),
@@ -1115,7 +1109,7 @@ impl Stores {
             checksum: font.checksum(),
             design_size: font.design_size().raw(),
             size: font.size().raw(),
-            immutable_hash,
+            complete_hash,
             identifier,
         }
     }
@@ -1284,7 +1278,7 @@ struct FontSemanticKey {
     checksum: u32,
     design_size: i32,
     size: i32,
-    immutable_hash: u64,
+    complete_hash: u64,
     identifier: Option<(ControlSequenceKind, String)>,
 }
 
@@ -1339,15 +1333,7 @@ fn hash_catcode(cat: Catcode, hasher: &mut StateHasher) {
 
 fn hash_font_semantic_key(font: &FontSemanticKey, hasher: &mut StateHasher) {
     hasher.tag(0x68);
-    hasher.u64(font.immutable_hash);
-    match &font.identifier {
-        Some((kind, name)) => {
-            hasher.bool(true);
-            hash_control_sequence_kind(*kind, hasher);
-            hasher.str(name);
-        }
-        None => hasher.bool(false),
-    }
+    hasher.u64(font.complete_hash);
 }
 
 pub(super) fn hash_kern_kind(kind: KernKind, hasher: &mut StateHasher) {

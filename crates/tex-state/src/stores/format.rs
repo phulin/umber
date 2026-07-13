@@ -366,14 +366,12 @@ impl StoreFormat {
                 id
             };
             if let Some(symbol) = identifier {
-                stores.fonts.set_identifier(
-                    id,
-                    stores
-                        .interner
-                        .symbol_at_slot(symbol)
-                        .and_then(|symbol| stores.interner.resolve_stored(symbol))
-                        .ok_or(StoreFormatError::Invalid("font identifier symbol"))?,
-                );
+                let symbol = stores
+                    .interner
+                    .symbol_at_slot(symbol)
+                    .and_then(|symbol| stores.interner.resolve_stored(symbol))
+                    .ok_or(StoreFormatError::Invalid("font identifier symbol"))?;
+                stores.set_resolved_font_identifier(id, symbol);
             }
         }
         let mut node_ids = std::collections::BTreeMap::new();

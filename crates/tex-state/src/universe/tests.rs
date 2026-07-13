@@ -522,12 +522,19 @@ fn semantic_format_restores_validated_fonts_banks_hashes_and_rollback_exactly() 
     universe
         .set_font_dimen(font, 7, Scaled::from_raw(777), true)
         .expect("guaranteed parameter is writable");
+    let font_fragment = universe.stores.testing_font_semantic_fingerprint(font);
 
     let bytes = universe.dump_format().expect("valid format encodes");
     let mut restored =
         Universe::from_format(World::memory(), &bytes).expect("valid format restores");
     assert_eq!(restored.dump_format().expect("format redumps"), bytes);
     let restored_font = restored.current_font();
+    assert_eq!(
+        restored
+            .stores
+            .testing_font_semantic_fingerprint(restored_font),
+        font_fragment
+    );
     assert_eq!(
         restored
             .font_identifier_symbol(NULL_FONT)
@@ -2160,6 +2167,30 @@ fn snapshot_state_hash_distinguishes_font_identifier_identity() {
 }
 
 #[test]
+fn complete_font_fragments_include_identifier_namespace_and_survive_fork() {
+    let mut named = Universe::new();
+    let mut active = Universe::new();
+    let named_identifier = named.intern("x");
+    let active_identifier = active.intern_active_character('x');
+    let named_font =
+        named.intern_font_with_identifier(test_font("cmr10", b"same"), named_identifier);
+    let active_font =
+        active.intern_font_with_identifier(test_font("cmr10", b"same"), active_identifier);
+
+    let named_fragment = named.stores.testing_font_semantic_fingerprint(named_font);
+    assert_ne!(
+        named_fragment,
+        active.stores.testing_font_semantic_fingerprint(active_font)
+    );
+
+    let fork = named.clone();
+    assert_eq!(
+        fork.stores.testing_font_semantic_fingerprint(named_font),
+        named_fragment
+    );
+}
+
+#[test]
 fn compact_stored_font_id_resolves_its_identifier() {
     let mut universe = Universe::new();
     let identifier = universe.intern("tenrm");
@@ -2174,12 +2205,21 @@ fn compact_stored_font_id_resolves_its_identifier() {
 fn rollback_restores_font_identifier_registration() {
     let mut universe = Universe::new();
     let snapshot = universe.snapshot();
+    let unnamed_fragment = universe.stores.testing_font_semantic_fingerprint(NULL_FONT);
     let nullfont = universe.intern("nullfont");
     universe.set_font_identifier_symbol(NULL_FONT, nullfont);
     assert_eq!(universe.font_identifier_symbol(NULL_FONT), Some(nullfont));
+    assert_ne!(
+        universe.stores.testing_font_semantic_fingerprint(NULL_FONT),
+        unnamed_fragment
+    );
 
     universe.rollback(&snapshot);
     assert_eq!(universe.font_identifier_symbol(NULL_FONT), None);
+    assert_eq!(
+        universe.stores.testing_font_semantic_fingerprint(NULL_FONT),
+        unnamed_fragment
+    );
 }
 
 #[test]
@@ -2187,6 +2227,7 @@ fn rollback_reuse_does_not_revive_stale_font_identity() {
     let mut universe = Universe::new();
     let snapshot = universe.snapshot();
     let stale = universe.intern_font(test_font("stale", b"stale"));
+    let stale_fragment = universe.stores.testing_font_semantic_fingerprint(stale);
 
     universe.rollback(&snapshot);
     let reused = universe.intern_font(test_font("reused", b"reused"));
@@ -2195,6 +2236,10 @@ fn rollback_reuse_does_not_revive_stale_font_identity() {
     assert_ne!(reused, stale);
     assert!(std::panic::catch_unwind(|| universe.font(stale)).is_err());
     assert_eq!(universe.font(reused).name(), "reused");
+    assert_ne!(
+        universe.stores.testing_font_semantic_fingerprint(reused),
+        stale_fragment
+    );
 }
 
 #[test]

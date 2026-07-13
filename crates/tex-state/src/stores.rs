@@ -12,7 +12,7 @@ use crate::env::{Env, EnvSnapshot};
 use crate::font::{
     CharMetrics, ExtensibleRecipe, FontMetrics, FontMetricsValidationError, FontStore,
     FontStoreMark, LigKernChar, LigKernCommand, LigKernIter, LoadedFont, MissingCharacter,
-    NULL_FONT,
+    NULL_FONT, complete_font_hash_fragment,
 };
 use crate::glue::{GlueSpec, GlueStore, GlueStoreMark};
 use crate::hyphenation::{ExceptionSpec, HyphenationTable, PatternSpec};
@@ -1043,7 +1043,7 @@ impl Stores {
     ) -> Result<FontId, FontParameterError> {
         let symbol = self.resolve_symbol_reference(symbol);
         let id = self.try_intern_font(font)?;
-        self.fonts.set_identifier(id, symbol);
+        self.set_resolved_font_identifier(id, symbol);
         Ok(id)
     }
 
@@ -1079,7 +1079,21 @@ impl Stores {
     pub fn set_font_identifier_symbol(&mut self, id: FontId, symbol: impl SymbolReference) {
         self.assert_live_font(id);
         let symbol = self.resolve_symbol_reference(symbol);
-        self.fonts.set_identifier(id, symbol);
+        self.set_resolved_font_identifier(id, symbol);
+    }
+
+    fn set_resolved_font_identifier(&mut self, id: FontId, symbol: SymbolId) {
+        self.assert_live_font(id);
+        self.assert_live_symbol(symbol);
+        let immutable = *self.fonts.hash_fragment(id);
+        let complete = complete_font_hash_fragment(
+            immutable,
+            Some((
+                self.interner.kind_id(symbol),
+                self.interner.resolve_id(symbol),
+            )),
+        );
+        self.fonts.set_identifier(id, symbol, complete);
     }
 
     #[must_use]

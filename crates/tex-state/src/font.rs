@@ -2,7 +2,7 @@
 
 use crate::identity::{IdentityAllocator, IdentityMark};
 use crate::ids::FontId;
-use crate::interner::SymbolId;
+use crate::interner::{ControlSequenceKind, SymbolId};
 use crate::scaled::Scaled;
 use crate::state_hash::StateHashFragment;
 use crate::world::ContentHash;
@@ -26,6 +26,7 @@ pub const MAX_FONT_DIMEN_FONT_ID: u32 = (1 << 15) - 1;
 /// Maximum number of loaded fonts, including `nullfont`.
 pub(crate) const MAX_FONT_COUNT: usize = 1 << 15;
 const IMMUTABLE_FONT_HASH_DOMAIN: u64 = 0x666f_6e74_5f69_6d6d;
+const COMPLETE_FONT_HASH_DOMAIN: u64 = 0x666f_6e74_5f63_6d70;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct FontStoreCapacityError;
@@ -78,6 +79,7 @@ pub(crate) struct FontStore {
     hash_fragments: Vec<StateHashFragment>,
     hash_fragments_by_key: BTreeMap<FontHashFragmentKey, usize>,
     font_hash_fragments: Vec<usize>,
+    complete_hash_fragments: Vec<StateHashFragment>,
     identities: IdentityAllocator,
 }
 
@@ -91,6 +93,7 @@ impl Clone for FontStore {
             hash_fragments: self.hash_fragments.clone(),
             hash_fragments_by_key: self.hash_fragments_by_key.clone(),
             font_hash_fragments: self.font_hash_fragments.clone(),
+            complete_hash_fragments: self.complete_hash_fragments.clone(),
             identities: self.identities.fork(),
         }
     }
@@ -111,6 +114,7 @@ impl FontStore {
         );
         let hash_fragment_key = FontHashFragmentKey::from(&null);
         let hash_fragment = font_hash_fragment(&null);
+        let complete_hash_fragment = complete_font_hash_fragment(hash_fragment, None);
         Self {
             fonts: vec![null],
             identifiers: vec![None],
@@ -119,6 +123,7 @@ impl FontStore {
             hash_fragments: vec![hash_fragment],
             hash_fragments_by_key: BTreeMap::from([(hash_fragment_key, 0)]),
             font_hash_fragments: vec![0],
+            complete_hash_fragments: vec![complete_hash_fragment],
             identities: IdentityAllocator::new(1),
         }
     }
@@ -154,11 +159,21 @@ impl FontStore {
         self.fonts.push(font);
         self.identifiers.push(None);
         self.font_hash_fragments.push(hash_fragment);
+        self.complete_hash_fragments
+            .push(complete_font_hash_fragment(
+                self.hash_fragments[hash_fragment],
+                None,
+            ));
         self.by_key.insert(key, id);
         Ok(id)
     }
 
-    pub(crate) fn set_identifier(&mut self, id: FontId, symbol: SymbolId) {
+    pub(crate) fn set_identifier(
+        &mut self,
+        id: FontId,
+        symbol: SymbolId,
+        complete_hash_fragment: StateHashFragment,
+    ) {
         assert!(
             self.contains(id),
             "font id is not live in this Universe timeline"
@@ -169,6 +184,7 @@ impl FontStore {
             .expect("font id is not live in this Universe timeline");
         if identifier.is_none() {
             *identifier = Some(symbol);
+            self.complete_hash_fragments[id.raw() as usize] = complete_hash_fragment;
             self.identifier_writes.push(id);
         }
     }
@@ -200,6 +216,14 @@ impl FontStore {
         );
         let fragment = self.font_hash_fragments[id.raw() as usize];
         &self.hash_fragments[fragment]
+    }
+
+    pub(crate) fn complete_hash_fragment(&self, id: FontId) -> &StateHashFragment {
+        assert!(
+            self.contains(id),
+            "font id is not live in this Universe timeline"
+        );
+        &self.complete_hash_fragments[id.raw() as usize]
     }
 
     #[must_use]
@@ -240,6 +264,9 @@ impl FontStore {
         {
             if id.raw() < mark.len {
                 self.identifiers[id.raw() as usize] = None;
+                let immutable = self.hash_fragments[self.font_hash_fragments[id.raw() as usize]];
+                self.complete_hash_fragments[id.raw() as usize] =
+                    complete_font_hash_fragment(immutable, None);
             }
         }
         self.identifier_writes
@@ -247,12 +274,17 @@ impl FontStore {
         self.fonts.truncate(mark.len as usize);
         self.identifiers.truncate(mark.len as usize);
         self.font_hash_fragments.truncate(mark.len as usize);
+        self.complete_hash_fragments.truncate(mark.len as usize);
         self.by_key.retain(|_, id| id.raw() < mark.len);
     }
 
     #[cfg(test)]
-    pub(crate) fn testing_hash_fragment_counts(&self) -> (usize, usize) {
-        (self.hash_fragments.len(), self.font_hash_fragments.len())
+    pub(crate) fn testing_hash_fragment_counts(&self) -> (usize, usize, usize) {
+        (
+            self.hash_fragments.len(),
+            self.font_hash_fragments.len(),
+            self.complete_hash_fragments.len(),
+        )
     }
 
     #[cfg(any(test, feature = "testing", feature = "shadow"))]
@@ -296,6 +328,26 @@ fn font_hash_fragment(font: &LoadedFont) -> StateHashFragment {
     })
 }
 
+pub(crate) fn complete_font_hash_fragment(
+    immutable: StateHashFragment,
+    identifier: Option<(ControlSequenceKind, &str)>,
+) -> StateHashFragment {
+    StateHashFragment::from_builder(COMPLETE_FONT_HASH_DOMAIN, |fragment| {
+        immutable.apply(fragment);
+        match identifier {
+            Some((kind, name)) => {
+                fragment.bool(true);
+                fragment.u8(match kind {
+                    ControlSequenceKind::Named => 0,
+                    ControlSequenceKind::ActiveCharacter => 1,
+                });
+                fragment.str(name);
+            }
+            None => fragment.bool(false),
+        }
+    })
+}
+
 impl Default for FontStore {
     fn default() -> Self {
         Self::new()
@@ -330,7 +382,7 @@ mod tests {
         let mark = store.watermark();
         let font = test_font();
         let first = store.intern(font.clone()).expect("test font fits");
-        assert_eq!(store.testing_hash_fragment_counts(), (2, 2));
+        assert_eq!(store.testing_hash_fragment_counts(), (2, 2, 2));
         let first_fragment = {
             let mut hasher = StateHasher::new(TEST_DOMAIN);
             store.hash_fragment(first).apply(&mut hasher);
@@ -338,18 +390,18 @@ mod tests {
         };
 
         store.truncate_to(mark);
-        assert_eq!(store.testing_hash_fragment_counts(), (2, 1));
+        assert_eq!(store.testing_hash_fragment_counts(), (2, 1, 1));
 
         let replacement = store.intern(font).expect("test font fits");
         assert_eq!(replacement.raw(), first.raw());
         assert_ne!(replacement, first);
-        assert_eq!(store.testing_hash_fragment_counts(), (2, 2));
+        assert_eq!(store.testing_hash_fragment_counts(), (2, 2, 2));
         let mut hasher = StateHasher::new(TEST_DOMAIN);
         store.hash_fragment(replacement).apply(&mut hasher);
         assert_eq!(hasher.finish(), first_fragment);
 
         let clone = store.clone();
-        assert_eq!(clone.testing_hash_fragment_counts(), (2, 2));
+        assert_eq!(clone.testing_hash_fragment_counts(), (2, 2, 2));
     }
 
     fn test_font() -> LoadedFont {

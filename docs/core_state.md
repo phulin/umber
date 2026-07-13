@@ -919,8 +919,8 @@ pub struct Snapshot {
   cells are keyed by resolved control-sequence name rather than `Symbol`
   number; token, glue, macro-definition, node-list, and deferred-write
   handles are followed to the content they name rather than hashing handle
-  words. Node-list content is walked with an explicit worklist, so deep box
-  trees do not depend on the Rust call stack. The hash also includes code
+  words. Frozen node-list roots apply their `NodeSemanticId`, so deep boxes are
+  not reopened during checkpoint publication. The hash also includes code
   table generation counters, nodes appended to the epoch arena since the
   previous cursor, the uncommitted World effect/input/shell-escape slices,
   stream-buffer state (including terminal-input cursor), RNG state, job clock,
@@ -928,10 +928,14 @@ pub struct Snapshot {
   following `FontId` handles to the loaded font's semantic identity (font name,
   content hash, checksum, design size, and selected size) rather
   than hashing raw dense ids. The immutable part of that identity is reduced
-  once to a domain-separated fingerprint in an append-only derived table; font
-  rollback truncates only the live slot mapping, so an equivalent later load
-  reuses the fingerprint. The rollback-coupled control-sequence identifier is
-  still hashed separately by namespace and name. Diagnostic provenance records
+  once to a domain-separated fingerprint in an append-only derived table. A
+  complete per-live-font fragment combines it with the optional identifier's
+  namespace and permanent spelling when that one-time assignment crosses the
+  aggregate boundary. Repeated node hashing applies this complete fragment
+  without resolving the identifier again. Rollback truncates new live mappings
+  and restores identifier assignments to the canonical unnamed fragment; forks
+  copy the generation-safe live table and format loading rebuilds it through the
+  same aggregate assignment path. Diagnostic provenance records
   and origin-list arenas are explicitly excluded from semantic hashes. In an
   editor session, the root revision id and unread whole-buffer hash are likewise
   driver metadata rather than semantic input: the aggregate revision-rebind
