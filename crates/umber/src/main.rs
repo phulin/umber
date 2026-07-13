@@ -104,12 +104,14 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
     {
         let stats = input.expansion_stats();
         eprintln!(
-            "EXPANSION_STATS token_frame_steps={} provenance_resolutions={} character_tokens={} character_fraction={:.6} meaning_lookups={} literal_spans={} literal_tokens={} mean_literal_run={:.6} segmentation_cache_hits={} segmentation_cache_misses={} builder_appends={}",
+            "EXPANSION_STATS token_frame_steps={} provenance_resolutions={} character_tokens={} character_fraction={:.6} meaning_lookups={} meaning_cache_hits={} meaning_cache_misses={} literal_spans={} literal_tokens={} mean_literal_run={:.6} segmentation_cache_hits={} segmentation_cache_misses={} builder_appends={}",
             stats.token_frame_steps,
             stats.provenance_resolutions,
             stats.character_tokens,
             stats.character_fraction(),
             stats.meaning_lookups,
+            stats.meaning_cache_hits,
+            stats.meaning_cache_misses,
             stats.literal_spans,
             stats.literal_tokens,
             stats.mean_literal_run(),

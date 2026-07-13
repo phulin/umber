@@ -53,8 +53,8 @@ pub use stores::{FontParameterError, GroupKind, GroupMismatch, PrepareMagDiagnos
 pub use universe::{
     BoxBuildTransaction, BoxDimension, EngineBoundaryHasher, ExpansionContext, ExpansionState,
     FormatError, InputOpenContext, InputOpenState, InputReadState, InteractionMode,
-    ParagraphShapeLine, PenaltyArrayKind, ShipoutTransaction, Snapshot, TakeUnboxResult, UnboxKind,
-    Universe,
+    MeaningCacheGuard, ParagraphShapeLine, PenaltyArrayKind, ShipoutTransaction, Snapshot,
+    TakeUnboxResult, UnboxKind, Universe,
 };
 pub use world::{
     CommittedArtifact, ContentDomain, ContentHash, ContentIdentity, EffectPos, EffectRecord,

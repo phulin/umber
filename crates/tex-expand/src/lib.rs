@@ -877,8 +877,7 @@ where
         let Some(symbol) = expandable_symbol(stores, token) else {
             return Ok(Dispatch::Deliver(token));
         };
-        input.record_expansion_meaning_lookup();
-        let meaning = stores.meaning(symbol);
+        let meaning = input.resolve_expansion_meaning(stores, symbol);
         recorder.record_meaning(symbol, meaning);
         dispatch::dispatch_without_input_open_inverted(
             semantic_token(token),
@@ -923,8 +922,7 @@ where
         let Some(symbol) = expandable_symbol(stores, token) else {
             return Ok(Dispatch::Deliver(token));
         };
-        input.record_expansion_meaning_lookup();
-        let meaning = stores.meaning(symbol);
+        let meaning = input.resolve_expansion_meaning(stores, symbol);
         recorder.record_meaning(symbol, meaning);
         dispatch::dispatch_with_hooks(
             semantic_token(token),
@@ -948,8 +946,7 @@ where
         let Some(symbol) = expandable_symbol(stores, token) else {
             return Ok(Dispatch::Deliver(token));
         };
-        input.record_expansion_meaning_lookup();
-        let meaning = stores.meaning(symbol);
+        let meaning = input.resolve_expansion_meaning(stores, symbol);
         recorder.record_meaning(symbol, meaning);
         dispatch::dispatch_with_hooks_inverted(
             semantic_token(token),
@@ -1187,8 +1184,7 @@ where
             }
         };
 
-        input.record_expansion_meaning_lookup();
-        let meaning = stores.meaning(symbol);
+        let meaning = input.resolve_expansion_meaning(stores, symbol);
         recorder.record_meaning(symbol, meaning);
         if protect_macros
             && matches!(meaning, Meaning::Macro { flags, .. } if flags.contains(MeaningFlags::PROTECTED))
@@ -1532,7 +1528,7 @@ where
     let Some(symbol) = expandable_symbol(stores, target) else {
         return Ok(Some(target));
     };
-    let meaning = stores.meaning(symbol);
+    let meaning = input.resolve_expansion_meaning(stores, symbol);
     recorder.record_meaning(symbol, meaning);
     let dispatch = dispatch_with_hooks(
         semantic_token(target),
@@ -1585,7 +1581,7 @@ where
             }
         };
 
-        let meaning = stores.meaning(symbol);
+        let meaning = input.resolve_expansion_meaning(stores, symbol);
         recorder.record_meaning(symbol, meaning);
 
         let dispatched = dispatch::dispatch_without_input_open(
@@ -1644,7 +1640,7 @@ where
         None => return Ok(Dispatch::Deliver(token)),
     };
 
-    let meaning = stores.meaning(symbol);
+    let meaning = input.resolve_expansion_meaning(stores, symbol);
     recorder.record_meaning(symbol, meaning);
     dispatch::dispatch_without_input_open(
         semantic,

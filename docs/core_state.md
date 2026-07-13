@@ -199,9 +199,18 @@ Rules:
   aggregate, but they cannot construct or mutate a standalone `Env`; raw Env
   construction, group control, epoch advancement, and typed setters are
   crate-private or test-only.
-- **The epoch stamp is the workhorse**: journal coalescing filter, JIT
-  inline-cache guard, and memoizer read-set timestamp. One counter, three
-  consumers. Do not add a second versioning scheme for any of these.
+- **The epoch stamp is the workhorse** for journal coalescing and bounded
+  speculative regions whose writes explicitly invalidate compiled execution.
+  It is not a sufficient guard for a cache that survives arbitrary
+  assignments: repeated writes to one cell in the same epoch deliberately
+  retain the original coalescing stamp. `Stores` therefore also owns one
+  runtime-only, nonzero meaning-write generation for discardable
+  control-sequence caches. Every meaning assignment advances it, and group
+  restoration and snapshot rollback advance it without rewinding. The guard
+  also carries the owning `Stores` identity so equal counters on sibling forks
+  cannot validate one another. It is excluded from snapshots, formats, and
+  semantic hashes; it does not mint content identities or participate in
+  journal semantics.
 - Macro bodies are **not** stored here. A macro meaning word stores opcode
   `macro`, the public flag byte (`\long`, `\outer`, `\protected`, plus the
   reserved frozen bit), and a 48-bit operand naming an immutable

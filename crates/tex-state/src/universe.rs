@@ -69,6 +69,23 @@ use std::sync::Arc;
 /// semantically allowed to perform, but it does not expose Env, register, box,
 /// code-table, font-parameter, grouping, snapshot, input-file reads, or World
 /// mutation APIs.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MeaningCacheGuard {
+    owner_address: usize,
+    owner_nonce: u64,
+    generation: u64,
+}
+
+impl MeaningCacheGuard {
+    pub(crate) const fn new(owner_address: usize, owner_nonce: u64, generation: u64) -> Self {
+        Self {
+            owner_address,
+            owner_nonce,
+            generation,
+        }
+    }
+}
+
 pub trait ExpansionState {
     #[doc(hidden)]
     fn frozen_end_template_token(&self) -> Token {
@@ -94,6 +111,11 @@ pub trait ExpansionState {
     fn sfcode(&self, ch: char) -> SfCode;
     fn mathcode(&self, ch: char) -> MathCode;
     fn delcode(&self, ch: char) -> DelCode;
+    /// Monotonic guard for derived caches of control-sequence meanings.
+    /// Implementations without a mutation-aware guard disable such caches.
+    fn meaning_cache_guard(&self) -> Option<MeaningCacheGuard> {
+        None
+    }
     fn meaning(&self, symbol: Symbol) -> Meaning;
     fn macro_definition(&self, id: MacroDefinitionId) -> MacroMeaning;
     fn macro_definition_provenance(&self, id: MacroDefinitionId) -> MacroDefinitionProvenance;
@@ -3004,6 +3026,10 @@ impl ExpansionState for Universe {
         Self::delcode(self, ch)
     }
 
+    fn meaning_cache_guard(&self) -> Option<MeaningCacheGuard> {
+        Some(self.stores.meaning_cache_guard())
+    }
+
     fn meaning(&self, symbol: Symbol) -> Meaning {
         Self::meaning(self, self.stores.resolve_stored_symbol(symbol))
     }
@@ -3379,6 +3405,10 @@ impl ExpansionState for ExpansionContext<'_> {
 
     fn delcode(&self, ch: char) -> DelCode {
         self.universe.delcode(ch)
+    }
+
+    fn meaning_cache_guard(&self) -> Option<MeaningCacheGuard> {
+        Some(self.universe.stores.meaning_cache_guard())
     }
 
     fn meaning(&self, symbol: Symbol) -> Meaning {

@@ -152,6 +152,9 @@ pub struct Stores {
     hyphenation: Arc<HyphenationTable>,
     prepared_mag: Option<i32>,
     last_loaded_font: FontId,
+    /// Runtime-only guard for derived control-sequence meaning caches.
+    /// This never rewinds across group restoration or snapshot rollback.
+    meaning_generation: u64,
     semantic_hash_cache: state_hash::SemanticHashCache,
     epoch_clone_scratch: EpochCloneScratch,
 }
@@ -203,6 +206,7 @@ impl Clone for Stores {
             hyphenation: self.hyphenation.clone(),
             prepared_mag: self.prepared_mag,
             last_loaded_font: self.last_loaded_font,
+            meaning_generation: self.meaning_generation,
             semantic_hash_cache: self.semantic_hash_cache.clone(),
             epoch_clone_scratch: EpochCloneScratch::default(),
         }
@@ -240,6 +244,7 @@ impl Stores {
             hyphenation: Arc::new(HyphenationTable::new()),
             prepared_mag: None,
             last_loaded_font: NULL_FONT,
+            meaning_generation: 1,
             semantic_hash_cache: state_hash::SemanticHashCache::default(),
             epoch_clone_scratch: EpochCloneScratch::default(),
         };
@@ -406,12 +411,27 @@ impl Stores {
         self.resolve_stored_meaning(self.env.get_meaning_slot(symbol.raw()))
     }
 
+    /// Returns the nonzero, monotonically increasing meaning-write guard.
+    #[must_use]
+    pub(crate) fn meaning_cache_guard(&self) -> crate::universe::MeaningCacheGuard {
+        let owner = self.owner.snapshot_owner();
+        crate::universe::MeaningCacheGuard::new(owner.address, owner.nonce, self.meaning_generation)
+    }
+
+    fn bump_meaning_generation(&mut self) {
+        self.meaning_generation = self
+            .meaning_generation
+            .checked_add(1)
+            .expect("meaning generation exhausted");
+    }
+
     /// Sets the local meaning for a live control-sequence symbol.
     pub fn set_meaning(&mut self, symbol: impl SymbolReference, meaning: Meaning) {
         let symbol = self.resolve_symbol_reference(symbol);
         self.assert_live_macro_definition_in_meaning(meaning);
         self.assert_live_font_in_meaning(meaning);
         self.env.set_meaning_slot(symbol.raw(), meaning, false);
+        self.bump_meaning_generation();
     }
 
     /// Interns a control-sequence name and gives a previously undefined name
@@ -430,6 +450,7 @@ impl Stores {
         self.assert_live_macro_definition_in_meaning(meaning);
         self.assert_live_font_in_meaning(meaning);
         self.env.set_meaning_slot(symbol.raw(), meaning, true);
+        self.bump_meaning_generation();
     }
 
     /// Interns a frozen macro definition in the owned macro-definition store.
@@ -1369,6 +1390,9 @@ impl Stores {
         self.account_current_group_box_refs();
         let payloads = self.env.leave_group();
         self.code_tables.leave_group();
+        // A group may restore meanings through Env's journal. Conservatively
+        // invalidate even when this particular group changed only other banks.
+        self.bump_meaning_generation();
         payloads
     }
 
@@ -1386,6 +1410,7 @@ impl Stores {
         self.account_current_group_box_refs();
         let payloads = self.env.leave_group_with_kind(expected)?;
         self.code_tables.leave_group();
+        self.bump_meaning_generation();
         Ok(payloads)
     }
 
@@ -1703,6 +1728,7 @@ impl Stores {
         self.hyphenation = snapshot.hyphenation.clone();
         self.prepared_mag = snapshot.prepared_mag;
         self.last_loaded_font = snapshot.last_loaded_font;
+        self.bump_meaning_generation();
         // The cache is derived from the checkpoint timeline rather than part
         // of semantic state. Rebuild baselines lazily from the restored
         // journal slice instead of adding it to the O(1) snapshot tuple.

@@ -11,6 +11,8 @@ use std::sync::Arc;
 
 use tex_state::env::banks::TokParam;
 use tex_state::ids::{OriginListId, TokenListId};
+use tex_state::interner::Symbol;
+use tex_state::meaning::Meaning;
 use tex_state::provenance::OriginListBuilder;
 use tex_state::provenance::{
     DiagnosticSite, InsertedOriginKind, RelatedLocation, SyntheticOriginKind,
@@ -18,7 +20,7 @@ use tex_state::provenance::{
 use tex_state::source_map::{RegisteredSource, SourceDescriptor};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::token_store::TokenListBuilder;
-use tex_state::{ExpansionState, FileContent, InputRecordId, WorldError};
+use tex_state::{ExpansionState, FileContent, InputRecordId, MeaningCacheGuard, WorldError};
 
 pub use tex_state::{
     ConditionFrameSummary, ConditionFrameToken, ConditionKind, ConditionLimb, InputFrameSummary,
@@ -453,6 +455,17 @@ struct MacroLiteralSpan {
 type LiteralSpanBounds = (usize, usize);
 type LiteralSpanCache = HashMap<(TokenListId, LiteralSpanPolicy), Arc<[LiteralSpanBounds]>>;
 
+const MEANING_SITE_CACHE_LEN: usize = 64;
+
+#[derive(Clone, Copy, Debug)]
+struct MeaningSiteCacheEntry {
+    token_list: TokenListId,
+    token_index: usize,
+    symbol: Symbol,
+    guard: MeaningCacheGuard,
+    meaning: Meaning,
+}
+
 /// Identifies one live token-list replay frame independently of its content.
 ///
 /// The marker is intentionally absent from resumable input summaries: callers
@@ -609,6 +622,8 @@ pub struct ExpansionStats {
     pub segmentation_cache_hits: u64,
     pub segmentation_cache_misses: u64,
     pub builder_appends: u64,
+    pub meaning_cache_hits: u64,
+    pub meaning_cache_misses: u64,
 }
 
 impl ExpansionStats {
@@ -738,6 +753,9 @@ pub struct InputStack<S> {
     alignment_inputs: Vec<AlignmentInput>,
     /// Derived, discardable segmentation of immutable macro token lists.
     literal_span_cache: LiteralSpanCache,
+    /// Direct-mapped, generation-guarded meanings for macro-body cs sites.
+    meaning_site_cache: Box<[Option<MeaningSiteCacheEntry>; MEANING_SITE_CACHE_LEN]>,
+    last_expansion_site: Option<(TokenListId, usize)>,
     #[cfg(feature = "expansion-stats")]
     expansion_stats: ExpansionStats,
     active_macro_invocation: OriginId,
@@ -857,6 +875,8 @@ impl<S> InputStack<S> {
             next_condition_token: 0,
             alignment_inputs: Vec::new(),
             literal_span_cache: HashMap::new(),
+            meaning_site_cache: Box::new([None; MEANING_SITE_CACHE_LEN]),
+            last_expansion_site: None,
             #[cfg(feature = "expansion-stats")]
             expansion_stats: ExpansionStats::default(),
             active_macro_invocation: OriginId::UNKNOWN,
@@ -991,6 +1011,8 @@ impl<S> InputStack<S> {
                 }),
             alignment_inputs: Vec::new(),
             literal_span_cache: HashMap::new(),
+            meaning_site_cache: Box::new([None; MEANING_SITE_CACHE_LEN]),
+            last_expansion_site: None,
             #[cfg(feature = "expansion-stats")]
             expansion_stats: ExpansionStats::default(),
             active_macro_invocation,
@@ -1116,6 +1138,52 @@ impl<S> InputStack<S> {
         {
             self.expansion_stats.meaning_lookups += 1;
         }
+    }
+
+    /// Resolves a meaning, reusing a macro-body cs-site value only while the
+    /// aggregate state generation still proves it current.
+    #[inline(always)]
+    pub fn resolve_expansion_meaning(
+        &mut self,
+        stores: &impl ExpansionState,
+        symbol: Symbol,
+    ) -> Meaning {
+        let Some((token_list, token_index)) = self.last_expansion_site else {
+            self.record_expansion_meaning_lookup();
+            return stores.meaning(symbol);
+        };
+        let Some(guard) = stores.meaning_cache_guard() else {
+            self.record_expansion_meaning_lookup();
+            return stores.meaning(symbol);
+        };
+        let slot = ((token_list.raw() as usize).wrapping_mul(0x9e37_79b1) ^ token_index)
+            & (MEANING_SITE_CACHE_LEN - 1);
+        if let Some(entry) = self.meaning_site_cache[slot]
+            && entry.token_list == token_list
+            && entry.token_index == token_index
+            && entry.symbol == symbol
+            && entry.guard == guard
+        {
+            #[cfg(feature = "expansion-stats")]
+            {
+                self.expansion_stats.meaning_cache_hits += 1;
+            }
+            return entry.meaning;
+        }
+        #[cfg(feature = "expansion-stats")]
+        {
+            self.expansion_stats.meaning_cache_misses += 1;
+        }
+        self.record_expansion_meaning_lookup();
+        let meaning = stores.meaning(symbol);
+        self.meaning_site_cache[slot] = Some(MeaningSiteCacheEntry {
+            token_list,
+            token_index,
+            symbol,
+            guard,
+            meaning,
+        });
+        meaning
     }
 
     #[must_use]
@@ -2262,12 +2330,27 @@ where
         stores: &mut impl ExpansionState,
     ) -> Result<Option<TracedExpansionToken>, LexError> {
         self.recently_popped_invocation = None;
+        self.last_expansion_site = None;
         loop {
             let Some(frame_index) = self.current_token_frame_index() else {
                 return Ok(None);
             };
             match &mut self.frames[frame_index] {
                 InputFrame::TokenList(token_list) => {
+                    if token_list.replay_kind == TokenListReplayKind::MacroBody
+                        && matches!(
+                            stores.tokens(token_list.token_list).get(token_list.index),
+                            Some(
+                                Token::Cs(_)
+                                    | Token::Char {
+                                        cat: Catcode::Active,
+                                        ..
+                                    }
+                            )
+                        )
+                    {
+                        self.last_expansion_site = Some((token_list.token_list, token_list.index));
+                    }
                     #[cfg(feature = "expansion-stats")]
                     if let Some(token) = stores.tokens(token_list.token_list).get(token_list.index)
                     {

@@ -273,12 +273,14 @@ fn print_summary(options: &Options, output: &RunOutput, elapsed: Duration) {
     );
     #[cfg(feature = "expansion-stats")]
     println!(
-        "gentle-profile expansion: token_frame_steps={} provenance_resolutions={} character_tokens={} character_fraction={:.6} meaning_lookups={} literal_spans={} literal_tokens={} mean_literal_run={:.6} segmentation_cache_hits={} segmentation_cache_misses={} builder_appends={}",
+        "gentle-profile expansion: token_frame_steps={} provenance_resolutions={} character_tokens={} character_fraction={:.6} meaning_lookups={} meaning_cache_hits={} meaning_cache_misses={} literal_spans={} literal_tokens={} mean_literal_run={:.6} segmentation_cache_hits={} segmentation_cache_misses={} builder_appends={}",
         output.expansion_stats.token_frame_steps,
         output.expansion_stats.provenance_resolutions,
         output.expansion_stats.character_tokens,
         output.expansion_stats.character_fraction(),
         output.expansion_stats.meaning_lookups,
+        output.expansion_stats.meaning_cache_hits,
+        output.expansion_stats.meaning_cache_misses,
         output.expansion_stats.literal_spans,
         output.expansion_stats.literal_tokens,
         output.expansion_stats.mean_literal_run(),
