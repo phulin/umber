@@ -100,6 +100,16 @@ fn errors_are_typed_and_invalid_boundary_values_throw() {
             .provide_resolved_file(request.unchecked_ref(), "/texlive/x.tex", &bytes(b"x"),)
             .is_err()
     );
+
+    let limited_options = options("main.tex");
+    let limits = Object::new();
+    set(&limits, "userFiles", &JsValue::from_f64(1.0));
+    set(&limited_options, "limits", limits.as_ref());
+    let mut limited = CompilerSession::new(limited_options.unchecked_ref()).expect("limited");
+    limited
+        .add_user_file("main.tex", &bytes(b"\\end"))
+        .expect("first user file");
+    assert!(limited.add_user_file("extra.tex", &bytes(b"")).is_err());
 }
 
 #[wasm_bindgen_test]

@@ -24,6 +24,7 @@ export interface FileRequest extends FileRequestKey {
 
 export interface SessionLimits {
   attempts: number;
+  userFiles: number;
   resolvedFiles: number;
   oneFileBytes: number;
   cachedFileBytes: number;

@@ -39,6 +39,9 @@ fn parse_limits(value: &JsValue) -> Result<SessionLimits, JsValue> {
     if has_value(value, "attempts")? {
         limits.attempts = integer::<u32>(value, "attempts")?;
     }
+    if has_value(value, "userFiles")? {
+        limits.user_files = integer::<usize>(value, "userFiles")?;
+    }
     if has_value(value, "resolvedFiles")? {
         limits.resolved_files = integer::<usize>(value, "resolvedFiles")?;
     }

@@ -2,6 +2,7 @@ import type {
 	CompileOutput,
 	FileRequest,
 	FileRequestKey,
+	SessionLimits,
 	SessionOptions,
 } from "./umber_wasm.js";
 
@@ -37,6 +38,11 @@ export class CompileFacadeError extends Error {
 	readonly code: string;
 	readonly diagnostic?: import("./umber_wasm.js").Diagnostic;
 }
+
+/** Validates and fills the limits shared by local and worker compilation. */
+export function validateSessionLimits(
+	limits?: Partial<SessionLimits>,
+): SessionLimits;
 
 export function compile(
 	options: SessionOptions,

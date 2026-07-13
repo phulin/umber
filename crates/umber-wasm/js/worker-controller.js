@@ -1,3 +1,5 @@
+import { validateSessionLimits } from "./compile.js";
+
 const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_TIMEOUT_MS = 60_000;
 
@@ -137,6 +139,7 @@ function prepareMessage(options, userFiles, resolver, wasmUrl) {
 			"session options are required",
 		);
 	}
+	const clonedOptions = { ...options };
 	if (!userFiles || typeof userFiles[Symbol.iterator] !== "function") {
 		throw new WorkerCompileError(
 			"invalid-options",
@@ -149,7 +152,7 @@ function prepareMessage(options, userFiles, resolver, wasmUrl) {
 			"resolver.manifestUrl is required",
 		);
 	}
-	if (options.format !== undefined && resolver.format !== undefined) {
+	if (clonedOptions.format !== undefined && resolver.format !== undefined) {
 		throw new WorkerCompileError(
 			"invalid-options",
 			"options.format and resolver.format cannot both be provided",
@@ -165,13 +168,31 @@ function prepareMessage(options, userFiles, resolver, wasmUrl) {
 		);
 	}
 	const transfer = [];
-	const clonedOptions = { ...options };
-	if (options.format !== undefined) {
-		requireBytes(options.format, "format");
-		clonedOptions.format = options.format.slice();
+	let limits;
+	try {
+		limits = validateSessionLimits(clonedOptions.limits);
+	} catch (error) {
+		throw new WorkerCompileError(
+			error?.code ?? "invalid-options",
+			error instanceof Error ? error.message : String(error),
+			{ cause: error },
+		);
+	}
+	clonedOptions.limits = limits;
+	if (clonedOptions.format !== undefined) {
+		requireBytes(clonedOptions.format, "format");
+		if (clonedOptions.format.byteLength > limits.oneFileBytes) {
+			throw workerLimitError(
+				"format image bytes",
+				limits.oneFileBytes,
+				clonedOptions.format.byteLength,
+			);
+		}
+		clonedOptions.format = clonedOptions.format.slice();
 		transfer.push(clonedOptions.format.buffer);
 	}
-	const files = [];
+	const sourceFiles = [];
+	let sourceBytes = 0;
 	for (const [path, bytes] of userFiles) {
 		if (typeof path !== "string") {
 			throw new WorkerCompileError(
@@ -180,10 +201,35 @@ function prepareMessage(options, userFiles, resolver, wasmUrl) {
 			);
 		}
 		requireBytes(bytes, `user file ${path}`);
-		const copy = bytes.slice();
-		files.push([path, copy]);
-		transfer.push(copy.buffer);
+		if (sourceFiles.length + 1 > limits.userFiles) {
+			throw workerLimitError(
+				"user files",
+				limits.userFiles,
+				sourceFiles.length + 1,
+			);
+		}
+		if (bytes.byteLength > limits.oneFileBytes) {
+			throw workerLimitError(
+				"one user file bytes",
+				limits.oneFileBytes,
+				bytes.byteLength,
+			);
+		}
+		sourceBytes += bytes.byteLength;
+		if (sourceBytes > limits.userSourceBytes) {
+			throw workerLimitError(
+				"user source bytes",
+				limits.userSourceBytes,
+				sourceBytes,
+			);
+		}
+		sourceFiles.push([path, bytes]);
 	}
+	const files = sourceFiles.map(([path, bytes]) => {
+		const copy = bytes.slice();
+		transfer.push(copy.buffer);
+		return [path, copy];
+	});
 	return {
 		message: {
 			kind: "compile",
@@ -199,6 +245,13 @@ function prepareMessage(options, userFiles, resolver, wasmUrl) {
 		},
 		transfer,
 	};
+}
+
+function workerLimitError(resource, limit, attempted) {
+	return new WorkerCompileError(
+		"limit",
+		`${resource} requires ${attempted}, exceeding limit ${limit}`,
+	);
 }
 
 function validateTimeout(value) {

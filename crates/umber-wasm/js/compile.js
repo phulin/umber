@@ -1,5 +1,6 @@
 const DEFAULT_LIMITS = Object.freeze({
 	attempts: 32,
+	userFiles: 512,
 	resolvedFiles: 512,
 	oneFileBytes: 16 * 1024 * 1024,
 	cachedFileBytes: 64 * 1024 * 1024,
@@ -9,6 +10,7 @@ const DEFAULT_LIMITS = Object.freeze({
 
 const HARD_LIMITS = Object.freeze({
 	attempts: 128,
+	userFiles: 4096,
 	resolvedFiles: 4096,
 	oneFileBytes: 64 * 1024 * 1024,
 	cachedFileBytes: 256 * 1024 * 1024,
@@ -27,7 +29,7 @@ export class CompileFacadeError extends Error {
 
 export async function compile(options, userFiles, resolver, signal, bindings) {
 	validateResolver(resolver);
-	const limits = validateLimits(options?.limits);
+	const limits = validateSessionLimits(options?.limits);
 	throwIfAborted(signal);
 	const CompilerSession = await compilerClass(bindings);
 	throwIfAborted(signal);
@@ -179,6 +181,7 @@ function addUserFiles(session, userFiles, limits) {
 		);
 	}
 	let total = 0;
+	let count = 0;
 	for (const item of userFiles) {
 		if (
 			!Array.isArray(item) ||
@@ -191,6 +194,10 @@ function addUserFiles(session, userFiles, limits) {
 			);
 		}
 		const [path, bytes] = item;
+		count += 1;
+		if (count > limits.userFiles) {
+			throw limitError("user files", limits.userFiles, count);
+		}
 		requireBytes(bytes, `user file ${path}`);
 		if (bytes.byteLength > limits.oneFileBytes) {
 			throw limitError(
@@ -256,7 +263,7 @@ function validateResolver(resolver) {
 	}
 }
 
-function validateLimits(partial = {}) {
+export function validateSessionLimits(partial = {}) {
 	const limits = { ...DEFAULT_LIMITS, ...(partial ?? {}) };
 	for (const [name, hard] of Object.entries(HARD_LIMITS)) {
 		const value = limits[name];

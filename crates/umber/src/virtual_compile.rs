@@ -95,6 +95,7 @@ impl FileRequest {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SessionLimits {
     pub attempts: u32,
+    pub user_files: usize,
     pub resolved_files: usize,
     pub one_file_bytes: usize,
     pub cached_file_bytes: usize,
@@ -105,6 +106,7 @@ pub struct SessionLimits {
 impl SessionLimits {
     pub const HARD_MAX: Self = Self {
         attempts: 128,
+        user_files: 4096,
         resolved_files: 4096,
         one_file_bytes: 64 * 1024 * 1024,
         cached_file_bytes: 256 * 1024 * 1024,
@@ -119,6 +121,7 @@ impl SessionLimits {
                 self.attempts as usize,
                 Self::HARD_MAX.attempts as usize,
             ),
+            ("user files", self.user_files, Self::HARD_MAX.user_files),
             (
                 "resolved files",
                 self.resolved_files,
@@ -161,6 +164,7 @@ impl Default for SessionLimits {
     fn default() -> Self {
         Self {
             attempts: 32,
+            user_files: 512,
             resolved_files: 512,
             one_file_bytes: 16 * 1024 * 1024,
             cached_file_bytes: 64 * 1024 * 1024,
@@ -358,7 +362,13 @@ impl VirtualCompileSession {
             bytes.len(),
             self.limits.one_file_bytes,
         )?;
-        let replaced = self.user_files.get(&path).map_or(0, Vec::len);
+        let replaced = self.user_files.get(&path);
+        let file_count = self
+            .user_files
+            .len()
+            .saturating_add(usize::from(replaced.is_none()));
+        check_limit("user files", file_count, self.limits.user_files)?;
+        let replaced = replaced.map_or(0, Vec::len);
         let attempted = self
             .user_bytes
             .checked_sub(replaced)

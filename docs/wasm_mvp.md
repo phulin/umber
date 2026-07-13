@@ -256,6 +256,7 @@ export interface SessionOptions {
 
 export interface SessionLimits {
   attempts: number;
+  userFiles: number;
   resolvedFiles: number;
   oneFileBytes: number;
   cachedFileBytes: number;
@@ -473,6 +474,7 @@ the following hard ceilings:
 | Limit | Default | Hard ceiling | Purpose |
 |---|---:|---:|---|
 | Compile attempts | 32 | 128 | Bound dynamic dependency rounds |
+| User files | 512 | 4096 | Bound initial file-map metadata and setup work |
 | Resolved files | 512 | 4096 | Bound manifest/cache fan-out |
 | Concurrent downloads | 8 | 32 | Bound browser/network pressure |
 | One file | 16 MiB | 64 MiB | Reject accidental large objects |

@@ -240,6 +240,7 @@ fn valid_tfm_produces_a_nonempty_dvi() {
 #[test]
 fn user_and_distribution_limits_fail_atomically() {
     let limits = SessionLimits {
+        user_files: 1,
         one_file_bytes: 4,
         user_source_bytes: 4,
         resolved_files: 1,
@@ -255,6 +256,20 @@ fn user_and_distribution_limits_fail_atomically() {
         session.add_user_file("large.tex", vec![0; 5]),
         Err(CompileError::LimitExceeded { .. })
     ));
+    session
+        .add_user_file("first.tex", vec![0; 4])
+        .expect("first user file at limit");
+    assert!(matches!(
+        session.add_user_file("second.tex", Vec::new()),
+        Err(CompileError::LimitExceeded {
+            resource: "user files",
+            limit: 1,
+            attempted: 2,
+        })
+    ));
+    session
+        .add_user_file("first.tex", vec![1; 4])
+        .expect("replacing a user file does not increase count");
     let first = FileRequestKey::new(FileKind::TexInput, "one").expect("key");
     assert!(matches!(
         session.provide_resolved_file(first.clone(), "/texlive/one.tex", vec![0; 5]),

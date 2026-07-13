@@ -226,6 +226,27 @@ test("enforces attempt, file, and byte ceilings outside custom resolvers", async
 		);
 	});
 
+	await t.test("user files", async () => {
+		const wasm = bindings([]);
+		await assert.rejects(
+			compile(
+				{ mainPath: "main.tex", limits: { userFiles: 1 } },
+				new Map([
+					["main.tex", new Uint8Array()],
+					["extra.tex", new Uint8Array()],
+				]),
+				{
+					async resolve() {
+						return [];
+					},
+				},
+				undefined,
+				wasm,
+			),
+			(error) => error.code === "limit" && /user files/.test(error.message),
+		);
+	});
+
 	await t.test("resolved files", async () => {
 		const wasm = bindings([need("tex", "a.tex")]);
 		await assert.rejects(

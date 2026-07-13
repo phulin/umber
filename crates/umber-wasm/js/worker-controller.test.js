@@ -158,6 +158,64 @@ test("aborted owners do not start workers", async () => {
 	assert.equal(Worker.instances.length, 0);
 });
 
+test("preflights all worker input limits before copying or construction", async (t) => {
+	const cases = [
+		{
+			name: "format bytes",
+			options: {
+				mainPath: "main.tex",
+				format: new Uint8Array([1, 2]),
+				limits: { oneFileBytes: 1 },
+			},
+			files: new Map(),
+		},
+		{
+			name: "one user file",
+			options: { mainPath: "main.tex", limits: { oneFileBytes: 1 } },
+			files: new Map([["main.tex", new Uint8Array([1, 2])]]),
+		},
+		{
+			name: "total user bytes",
+			options: { mainPath: "main.tex", limits: { userSourceBytes: 1 } },
+			files: new Map([
+				["main.tex", new Uint8Array([1])],
+				["extra.tex", new Uint8Array([2])],
+			]),
+		},
+		{
+			name: "user file count",
+			options: { mainPath: "main.tex", limits: { userFiles: 1 } },
+			files: new Map([
+				["main.tex", new Uint8Array()],
+				["extra.tex", new Uint8Array()],
+			]),
+		},
+	];
+	for (const fixture of cases) {
+		await t.test(fixture.name, async () => {
+			const Worker = fakeWorker();
+			const originalLengths = [...fixture.files.values()].map(
+				(bytes) => bytes.byteLength,
+			);
+			await assert.rejects(
+				compileInWorker(
+					fixture.options,
+					fixture.files,
+					{ manifestUrl: "https://cdn.example.test/manifest.json" },
+					{ Worker },
+				),
+				(error) =>
+					error instanceof WorkerCompileError && error.code === "limit",
+			);
+			assert.equal(Worker.instances.length, 0);
+			assert.deepEqual(
+				[...fixture.files.values()].map((bytes) => bytes.byteLength),
+				originalLengths,
+			);
+		});
+	}
+});
+
 test("rejects ambiguous inline and manifest-selected formats", async () => {
 	const Worker = fakeWorker();
 	await assert.rejects(
