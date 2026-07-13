@@ -571,6 +571,23 @@ fn engine_state_snapshot(nest: &ModeNest, stores: &Universe) -> EngineStateSnaps
             _ => {}
         }
     }
+    let effective_tail = if is_outer_vertical(nest) {
+        stores
+            .page_contribution_tail()
+            .or_else(|| stores.current_page_tail())
+    } else {
+        list.nodes().last()
+    };
+    state.last_node_type = effective_tail.map_or_else(
+        || {
+            if is_outer_vertical(nest) {
+                stores.page_last_node_type()
+            } else {
+                -1
+            }
+        },
+        Node::etex_type,
+    );
     state
 }
 
@@ -647,6 +664,10 @@ where
 
     fn last_skip(&self) -> GlueSpec {
         self.state.last_skip
+    }
+
+    fn last_node_type(&self) -> i32 {
+        self.state.last_node_type
     }
 
     fn input_stream_eof(&self, stores: &impl tex_state::ExpansionState, stream: u8) -> bool {

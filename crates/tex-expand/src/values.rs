@@ -237,6 +237,20 @@ where
                     cause_origin,
                 ))
             }
+            primitive @ (tex_state::meaning::UnexpandablePrimitive::FontCharWd
+            | tex_state::meaning::UnexpandablePrimitive::FontCharHt
+            | tex_state::meaning::UnexpandablePrimitive::FontCharDp
+            | tex_state::meaning::UnexpandablePrimitive::FontCharIc) => {
+                let value = scan_font_char_dimension(
+                    input, stores, recorder, hooks, expander, token, primitive,
+                )?;
+                Ok(push_rendered_text(
+                    stores,
+                    ExpansionReplayKind::TheOutput,
+                    &format_scaled(value),
+                    cause_origin,
+                ))
+            }
             tex_state::meaning::UnexpandablePrimitive::HyphenChar => {
                 let font = scan_font_selector(input, stores, recorder, hooks, expander, token)?;
                 recorder.record_dependency(ReadDependency::Font {
@@ -445,6 +459,12 @@ where
             &scan_int::current_if_branch(input).to_string(),
             cause_origin,
         )),
+        Meaning::InternalInteger(InternalInteger::LastNodeType) => Ok(push_rendered_text(
+            stores,
+            ExpansionReplayKind::TheOutput,
+            &hooks.last_node_type().to_string(),
+            cause_origin,
+        )),
         Meaning::DimenParam(index) => Ok(push_rendered_text(
             stores,
             ExpansionReplayKind::TheOutput,
@@ -591,6 +611,10 @@ pub(crate) fn record_meaning_value_dependency(recorder: &mut impl ReadRecorder, 
             | InternalInteger::CurrentIfBranch,
         ) => {
             recorder.record_dependency(ReadDependency::Engine(ReadEngineField::ConditionStack));
+            None
+        }
+        Meaning::InternalInteger(InternalInteger::LastNodeType) => {
+            recorder.record_dependency(ReadDependency::Engine(ReadEngineField::LastNodeType));
             None
         }
         Meaning::PageDimension(dimension) => {
@@ -1052,6 +1076,47 @@ where
         }
         _ => Err(ExpandError::MissingFontIdentifier { context: token }),
     }
+}
+
+pub(crate) fn scan_font_char_dimension<S, St, R, H, E>(
+    input: &mut InputStack<S>,
+    stores: &mut St,
+    recorder: &mut R,
+    hooks: &mut H,
+    expander: &mut E,
+    context: TracedTokenWord,
+    primitive: tex_state::meaning::UnexpandablePrimitive,
+) -> Result<Scaled, ExpandError>
+where
+    S: InputSource,
+    St: ExpansionState,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
+{
+    let font = scan_font_selector(input, stores, recorder, hooks, expander, context)?;
+    let code = scan_int::scan_int_with_expander_and_hooks(
+        input, stores, recorder, hooks, expander, context,
+    )?
+    .value();
+    recorder.record_dependency(ReadDependency::Font {
+        field: ReadFontField::Metrics,
+        font: font.raw(),
+        index: u16::try_from(code).unwrap_or(u16::MAX),
+    });
+    let Some(metrics) = u8::try_from(code)
+        .ok()
+        .and_then(|code| stores.font_char_metrics(font, code))
+    else {
+        return Ok(Scaled::from_raw(0));
+    };
+    Ok(match primitive {
+        tex_state::meaning::UnexpandablePrimitive::FontCharWd => metrics.width,
+        tex_state::meaning::UnexpandablePrimitive::FontCharHt => metrics.height,
+        tex_state::meaning::UnexpandablePrimitive::FontCharDp => metrics.depth,
+        tex_state::meaning::UnexpandablePrimitive::FontCharIc => metrics.italic_correction,
+        _ => unreachable!("caller restricts font character dimension primitive"),
+    })
 }
 
 fn scan_math_family<S, St, R, H, E>(

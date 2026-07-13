@@ -278,6 +278,7 @@ pub(crate) struct PageBuilderState {
     last_glue: Option<GlueId>,
     last_penalty: i32,
     last_kern: Scaled,
+    last_node_type: i32,
     insert_penalties: i32,
     dead_cycles: i32,
     least_page_cost: i32,
@@ -310,6 +311,7 @@ impl Default for PageBuilderState {
             last_glue: None,
             last_penalty: 0,
             last_kern: Scaled::from_raw(0),
+            last_node_type: -1,
             insert_penalties: 0,
             dead_cycles: 0,
             least_page_cost: AWFUL_BAD,
@@ -432,6 +434,7 @@ impl PageBuilderState {
         self.last_glue = None;
         self.last_penalty = 0;
         self.last_kern = Scaled::from_raw(0);
+        self.last_node_type = -1;
         self.page_depth = Scaled::from_raw(0);
         self.page_max_depth = Scaled::from_raw(0);
         self.insert_penalties = 0;
@@ -592,6 +595,7 @@ impl PageBuilderState {
         self.last_glue = None;
         self.last_penalty = 0;
         self.last_kern = Scaled::from_raw(0);
+        self.last_node_type = node.etex_type();
         match node {
             Node::Glue { spec, .. } => self.last_glue = Some(*spec),
             Node::Penalty(value) => self.last_penalty = *value,
@@ -610,6 +614,10 @@ impl PageBuilderState {
 
     pub(crate) const fn last_kern(&self) -> Scaled {
         self.last_kern
+    }
+
+    pub(crate) const fn last_node_type(&self) -> i32 {
+        self.last_node_type
     }
 
     pub(crate) fn hash_semantic(
@@ -648,6 +656,7 @@ impl PageBuilderState {
         }
         hasher.i32(self.last_penalty);
         hasher.i32(self.last_kern.raw());
+        hasher.i32(self.last_node_type);
         hasher.i32(self.insert_penalties);
         hasher.i32(self.dead_cycles);
         hasher.i32(self.least_page_cost);

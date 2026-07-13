@@ -117,6 +117,7 @@ pub enum InternalInteger {
     CurrentIfLevel,
     CurrentIfType,
     CurrentIfBranch,
+    LastNodeType,
 }
 
 impl InternalInteger {
@@ -131,6 +132,7 @@ impl InternalInteger {
             Self::CurrentIfLevel => 5,
             Self::CurrentIfType => 6,
             Self::CurrentIfBranch => 7,
+            Self::LastNodeType => 8,
         }
     }
 
@@ -145,6 +147,7 @@ impl InternalInteger {
             5 => Some(Self::CurrentIfLevel),
             6 => Some(Self::CurrentIfType),
             7 => Some(Self::CurrentIfBranch),
+            8 => Some(Self::LastNodeType),
             _ => None,
         }
     }
@@ -203,6 +206,7 @@ pub enum ExpandablePrimitive {
     ETeXRevision,
     IfDefined,
     IfCsName,
+    IfFontChar,
 }
 
 impl ExpandablePrimitive {
@@ -256,6 +260,7 @@ impl ExpandablePrimitive {
             Self::ETeXRevision => 44,
             Self::IfDefined => 45,
             Self::IfCsName => 46,
+            Self::IfFontChar => 47,
         }
     }
 
@@ -309,6 +314,7 @@ impl ExpandablePrimitive {
             44 => Some(Self::ETeXRevision),
             45 => Some(Self::IfDefined),
             46 => Some(Self::IfCsName),
+            47 => Some(Self::IfFontChar),
             _ => None,
         }
     }
@@ -431,6 +437,10 @@ pub enum UnexpandablePrimitive {
     Write,
     Read,
     ReadLine,
+    FontCharWd,
+    FontCharHt,
+    FontCharDp,
+    FontCharIc,
     Shipout,
     BeginGroup,
     EndGroup,
@@ -677,6 +687,10 @@ impl UnexpandablePrimitive {
             Self::ScrollMode => 174,
             Self::ErrorStopMode => 175,
             Self::ReadLine => 176,
+            Self::FontCharWd => 177,
+            Self::FontCharHt => 178,
+            Self::FontCharDp => 179,
+            Self::FontCharIc => 180,
         }
     }
 
@@ -860,6 +874,10 @@ impl UnexpandablePrimitive {
             174 => Some(Self::ScrollMode),
             175 => Some(Self::ErrorStopMode),
             176 => Some(Self::ReadLine),
+            177 => Some(Self::FontCharWd),
+            178 => Some(Self::FontCharHt),
+            179 => Some(Self::FontCharDp),
+            180 => Some(Self::FontCharIc),
             _ => None,
         }
     }

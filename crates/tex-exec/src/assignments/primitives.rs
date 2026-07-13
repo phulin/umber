@@ -231,6 +231,10 @@ pub fn install_etex_unexpandable_primitives(stores: &mut Universe) {
     for (name, primitive) in [
         ("protected", UnexpandablePrimitive::Protected),
         ("readline", UnexpandablePrimitive::ReadLine),
+        ("fontcharwd", UnexpandablePrimitive::FontCharWd),
+        ("fontcharht", UnexpandablePrimitive::FontCharHt),
+        ("fontchardp", UnexpandablePrimitive::FontCharDp),
+        ("fontcharic", UnexpandablePrimitive::FontCharIc),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));

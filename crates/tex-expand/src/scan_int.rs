@@ -612,6 +612,10 @@ where
             recorder.record_dependency(ReadDependency::Engine(ReadEngineField::ConditionStack));
             Ok(ScannedInt::new(current_if_branch(input), token))
         }
+        Meaning::InternalInteger(InternalInteger::LastNodeType) => {
+            recorder.record_dependency(ReadDependency::Engine(ReadEngineField::LastNodeType));
+            Ok(ScannedInt::new(hooks.last_node_type(), token))
+        }
         Meaning::DimenParam(index) => {
             recorder.record_dependency(ReadDependency::Cell {
                 bank: ReadBank::DimenParam,

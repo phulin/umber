@@ -794,6 +794,18 @@ where
             consume_optional_space(input, stores, recorder, hooks, expander)?;
             return Ok(ScannedDimen::new(hooks.last_skip().width));
         }
+        Meaning::UnexpandablePrimitive(
+            primitive @ (UnexpandablePrimitive::FontCharWd
+            | UnexpandablePrimitive::FontCharHt
+            | UnexpandablePrimitive::FontCharDp
+            | UnexpandablePrimitive::FontCharIc),
+        ) => {
+            let value = crate::values::scan_font_char_dimension(
+                input, stores, recorder, hooks, expander, token, primitive,
+            )?;
+            consume_optional_space(input, stores, recorder, hooks, expander)?;
+            return Ok(ScannedDimen::new(value));
+        }
         _ => {}
     }
 

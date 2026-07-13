@@ -346,6 +346,32 @@ pub enum Whatsit {
 }
 
 impl Node {
+    /// e-TeX `\lastnodetype` code for this node.
+    #[must_use]
+    pub const fn etex_type(&self) -> i32 {
+        match self {
+            Self::Char { .. } => 0,
+            Self::HList(_) => 1,
+            Self::VList(_) => 2,
+            Self::Rule { .. } => 3,
+            Self::Ins { .. } => 4,
+            Self::Mark { .. } => 5,
+            Self::Adjust(_) => 6,
+            Self::Lig { .. } => 7,
+            Self::Disc { .. } => 8,
+            Self::Whatsit(_) => 9,
+            Self::MathOn(_) | Self::MathOff(_) => 10,
+            Self::Glue { .. } | Self::Nonscript => 11,
+            Self::Kern { .. } => 12,
+            Self::Penalty(_) => 13,
+            Self::Unset(_) => 14,
+            Self::MathNoad(_)
+            | Self::FractionNoad(_)
+            | Self::MathStyle(_)
+            | Self::MathChoice(_)
+            | Self::MathList(_) => 15,
+        }
+    }
     #[cfg(debug_assertions)]
     pub(crate) fn child_lists(&self, out: &mut Vec<NodeListId>) {
         match self {

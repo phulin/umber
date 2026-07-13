@@ -111,6 +111,7 @@ pub trait ExpansionState {
     fn font_parameter(&self, font: FontId, number: u16) -> Scaled;
     fn font_dimen(&self, font: FontId, number: u16) -> Scaled;
     fn font_parameter_count(&self, font: FontId) -> u16;
+    fn font_char_metrics(&self, font: FontId, code: u8) -> Option<crate::font::CharMetrics>;
     fn font_hyphen_char(&self, font: FontId) -> i32;
     fn font_skew_char(&self, font: FontId) -> i32;
     fn current_font(&self) -> FontId;
@@ -2041,6 +2042,11 @@ impl Universe {
         self.page.last_kern()
     }
 
+    #[must_use]
+    pub fn page_last_node_type(&self) -> i32 {
+        self.page.last_node_type()
+    }
+
     pub fn take_box_reg(&mut self, index: u16) -> Option<NodeListId> {
         let value = self
             .stores
@@ -2563,6 +2569,9 @@ impl ExpansionState for Universe {
     fn font_parameter_count(&self, font: FontId) -> u16 {
         Self::font_parameter_count(self, font)
     }
+    fn font_char_metrics(&self, font: FontId, code: u8) -> Option<crate::font::CharMetrics> {
+        Self::font_char_metrics(self, font, code)
+    }
 
     fn font_hyphen_char(&self, font: FontId) -> i32 {
         Self::font_hyphen_char(self, font)
@@ -2914,6 +2923,9 @@ impl ExpansionState for ExpansionContext<'_> {
 
     fn font_parameter_count(&self, font: FontId) -> u16 {
         self.universe.font_parameter_count(font)
+    }
+    fn font_char_metrics(&self, font: FontId, code: u8) -> Option<crate::font::CharMetrics> {
+        self.universe.font_char_metrics(font, code)
     }
 
     fn font_hyphen_char(&self, font: FontId) -> i32 {

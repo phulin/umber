@@ -1419,6 +1419,7 @@ fn hash_internal_integer(integer: InternalInteger, hasher: &mut StateHasher) {
         InternalInteger::CurrentIfLevel => hasher.tag(5),
         InternalInteger::CurrentIfType => hasher.tag(6),
         InternalInteger::CurrentIfBranch => hasher.tag(7),
+        InternalInteger::LastNodeType => hasher.tag(8),
     }
 }
 

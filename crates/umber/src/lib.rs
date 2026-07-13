@@ -322,6 +322,12 @@ mod primitive_mode_tests {
         let currentiflevel = compatibility.intern("currentiflevel");
         let currentiftype = compatibility.intern("currentiftype");
         let currentifbranch = compatibility.intern("currentifbranch");
+        let lastnodetype = compatibility.intern("lastnodetype");
+        let iffontchar = compatibility.intern("iffontchar");
+        let fontcharwd = compatibility.intern("fontcharwd");
+        let fontcharht = compatibility.intern("fontcharht");
+        let fontchardp = compatibility.intern("fontchardp");
+        let fontcharic = compatibility.intern("fontcharic");
         assert_eq!(compatibility.meaning(unexpanded), Meaning::Undefined);
         assert_eq!(compatibility.meaning(detokenize), Meaning::Undefined);
         assert_eq!(compatibility.meaning(unless), Meaning::Undefined);
@@ -336,6 +342,12 @@ mod primitive_mode_tests {
             currentiflevel,
             currentiftype,
             currentifbranch,
+            lastnodetype,
+            iffontchar,
+            fontcharwd,
+            fontcharht,
+            fontchardp,
+            fontcharic,
         ] {
             assert_eq!(compatibility.meaning(symbol), Meaning::Undefined);
         }
@@ -388,6 +400,10 @@ mod primitive_mode_tests {
                 "currentifbranch",
                 tex_state::meaning::InternalInteger::CurrentIfBranch,
             ),
+            (
+                "lastnodetype",
+                tex_state::meaning::InternalInteger::LastNodeType,
+            ),
         ] {
             let symbol = extended.intern(name);
             assert_eq!(extended.meaning(symbol), Meaning::InternalInteger(value));
@@ -396,11 +412,24 @@ mod primitive_mode_tests {
             ("eTeXrevision", ExpandablePrimitive::ETeXRevision),
             ("ifdefined", ExpandablePrimitive::IfDefined),
             ("ifcsname", ExpandablePrimitive::IfCsName),
+            ("iffontchar", ExpandablePrimitive::IfFontChar),
         ] {
             let symbol = extended.intern(name);
             assert_eq!(
                 extended.meaning(symbol),
                 Meaning::ExpandablePrimitive(primitive)
+            );
+        }
+        for (name, primitive) in [
+            ("fontcharwd", UnexpandablePrimitive::FontCharWd),
+            ("fontcharht", UnexpandablePrimitive::FontCharHt),
+            ("fontchardp", UnexpandablePrimitive::FontCharDp),
+            ("fontcharic", UnexpandablePrimitive::FontCharIc),
+        ] {
+            let symbol = extended.intern(name);
+            assert_eq!(
+                extended.meaning(symbol),
+                Meaning::UnexpandablePrimitive(primitive)
             );
         }
     }

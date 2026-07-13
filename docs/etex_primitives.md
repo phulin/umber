@@ -4,8 +4,10 @@ This checklist is deliberately separate from the TeX82 primitive inventory.
 Compatibility mode installs only TeX82 meanings; `umber run --etex` selects
 the extended primitive layer.
 
-The behavioral contract is the [e-TeX short reference
-manual](https://mirror.gutenberg-asso.fr/tex.loria.fr/moteurs/etex_ref.html).
+The behavioral contract is the [e-TeX
+manual](https://tex.org.uk/systems/doc/etex/etex_man.pdf), with the [short
+reference manual](https://mirror.gutenberg-asso.fr/tex.loria.fr/moteurs/etex_ref.html)
+as its introductory companion.
 The official `etex.ch` change file supplies implementation-level algorithms
 where the manual does not specify them. Focused tests must cite the relevant
 manual section and compare observable behavior with e-TeX/pdfTeX. The final
@@ -34,14 +36,16 @@ pass.
 are implemented with focused V2 tests. `\currentgrouplevel`,
 `\currentgrouptype`, `\currentiflevel`, `\currentiftype`, and
 `\currentifbranch` read exact resumable group/conditional state.
-`\iffontchar` and `\lastnodetype` remain **missing**.
+`\lastnodetype` is implemented from the effective current-list/page tail with
+the manual/e-TRIP node codes. `\iffontchar` reads the same immutable metrics
+as typesetting and the font dimension enquiries.
 
 ## Expressions and value enquiries (manual section 3.5)
 
 `\numexpr`, `\dimexpr`, `\glueexpr`, `\muexpr`, `\gluestretch`,
 `\glueshrink`, `\gluestretchorder`, `\glueshrinkorder`, `\gluetomu`,
-`\mutoglue`, `\fontcharwd`, `\fontcharht`, `\fontchardp`, and
-`\fontcharic` are **missing**.
+`\mutoglue` are **missing**. `\fontcharwd`, `\fontcharht`, `\fontchardp`, and
+`\fontcharic` are implemented as read-only internal dimensions.
 
 ## Diagnostics and mutable state (manual sections 3.4, 3.6)
 

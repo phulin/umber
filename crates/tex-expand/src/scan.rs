@@ -518,6 +518,10 @@ where
         self.inner.last_skip()
     }
 
+    fn last_node_type(&self) -> i32 {
+        self.inner.last_node_type()
+    }
+
     fn input_stream_eof(&self, stores: &impl ExpansionState, stream: u8) -> bool {
         self.inner.input_stream_eof(stores, stream)
     }

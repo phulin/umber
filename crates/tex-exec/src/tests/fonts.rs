@@ -41,6 +41,29 @@ fn font_definition_loads_tfm_via_world_and_reuses_identity() {
 }
 
 #[test]
+fn etex_font_character_enquiries_share_loaded_metrics() {
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    tex_expand::install_etex_expandable_primitives(&mut stores);
+    crate::install_etex_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\font\\f=cmr10 \
+         \\message{\\iffontchar\\f65Y\\else N\\fi/\\iffontchar\\f255Y\\else N\\fi}\
+         \\message{\\the\\fontcharwd\\f65/\\the\\fontcharht\\f65/\\the\\fontchardp\\f65/\\the\\fontcharic\\f65/\\the\\fontcharwd\\f255}\
+         \\end",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("font character enquiries");
+
+    let output = terminal_effect_text(&stores);
+    assert!(output.contains("Y/N"), "{output:?}");
+    assert!(output.contains("/0.0pt"));
+    assert!(!output.contains("0.0pt/0.0pt/0.0pt/0.0pt/0.0pt"));
+}
+
+#[test]
 fn font_file_name_backs_up_the_first_non_character_token() {
     let mut stores = stores_with_fonts();
     tex_expand::install_expandable_primitives(&mut stores);

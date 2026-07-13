@@ -780,6 +780,46 @@ macro_rules! dispatch_match {
                     frame_token,
                 )
             }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::IfFontChar) => {
+                let frame_token = begin_if_evaluation(
+                    input,
+                    call_context,
+                    ConditionMetadata::new(20, $invert),
+                );
+                let font = scan_font_selector(
+                    input,
+                    stores,
+                    recorder,
+                    hooks,
+                    &mut expander,
+                    call_context,
+                )?;
+                let code = scan_int::scan_int_with_expander_and_hooks(
+                    input,
+                    stores,
+                    recorder,
+                    hooks,
+                    &mut expander,
+                    call_context,
+                )?
+                .value();
+                recorder.record_dependency(crate::ReadDependency::Font {
+                    field: crate::ReadFontField::Metrics,
+                    font: font.raw(),
+                    index: u16::try_from(code).unwrap_or(u16::MAX),
+                });
+                let exists = u8::try_from(code)
+                    .ok()
+                    .is_some_and(|code| stores.font_char_metrics(font, code).is_some());
+                complete_if_evaluation(
+                    input,
+                    stores,
+                    recorder,
+                    hooks,
+                    exists ^ $invert,
+                    frame_token,
+                )
+            }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Else) => {
                 handle_else(token, call_origin, input, stores, recorder, hooks)
             }
@@ -990,6 +1030,7 @@ fn is_boolean_conditional(primitive: ExpandablePrimitive) -> bool {
             | ExpandablePrimitive::IfEof
             | ExpandablePrimitive::IfDefined
             | ExpandablePrimitive::IfCsName
+            | ExpandablePrimitive::IfFontChar
     )
 }
 
@@ -1014,6 +1055,7 @@ pub fn dispatch_expandable_opcode(opcode: ExpandableOpcode) -> Result<(), Expand
         | ExpandableOpcode::ETeXRevision
         | ExpandableOpcode::IfDefined
         | ExpandableOpcode::IfCsName
+        | ExpandableOpcode::IfFontChar
         | ExpandableOpcode::Input
         | ExpandableOpcode::EndInput
         | ExpandableOpcode::JobName

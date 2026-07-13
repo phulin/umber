@@ -1058,7 +1058,12 @@ where
                 crate::math::insert_dollar_sign(command.traced, input, stores);
                 Ok(CommandOutcome::continue_only())
             }
-            UnexpandablePrimitive::EqNo | UnexpandablePrimitive::LeftEqNo => {
+            UnexpandablePrimitive::EqNo
+            | UnexpandablePrimitive::LeftEqNo
+            | UnexpandablePrimitive::FontCharWd
+            | UnexpandablePrimitive::FontCharHt
+            | UnexpandablePrimitive::FontCharDp
+            | UnexpandablePrimitive::FontCharIc => {
                 reject_all_prefixes(prefixes)?;
                 crate::diagnostics::report_illegal_case(stores, command.token, nest.current_mode());
                 Ok(CommandOutcome::continue_only())

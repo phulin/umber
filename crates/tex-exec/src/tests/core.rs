@@ -1508,6 +1508,28 @@ fn badness_reads_most_recent_pack_and_is_not_assignable() {
 }
 
 #[test]
+fn etex_lastnodetype_tracks_effective_outer_vertical_tail() {
+    // e-TeX short reference manual section 3.3 assigns -1 to an empty list
+    // and the e-TRIP node codes 1, 12, and 13 to hlist, kern, and penalty.
+    for (material, expected) in [("\\hbox{}", "1"), ("\\kern1pt", "12"), ("\\penalty7", "13")] {
+        let mut stores = Universe::new();
+        tex_expand::install_expandable_primitives(&mut stores);
+        tex_expand::install_etex_expandable_primitives(&mut stores);
+        crate::install_unexpandable_primitives(&mut stores);
+        crate::install_etex_unexpandable_primitives(&mut stores);
+        let mut input = InputStack::new(MemoryInput::new(format!(
+            "\\relax{material}\\edef\\result{{\\the\\lastnodetype}}"
+        )));
+
+        Executor::new()
+            .run(&mut input, &mut stores)
+            .expect("lastnodetype program");
+
+        assert_eq!(macro_text(&stores, "result"), expected);
+    }
+}
+
+#[test]
 fn leaders_parse_box_and_rule_payloads_on_glue_nodes() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

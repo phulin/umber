@@ -139,6 +139,10 @@ pub fn install_etex_expandable_primitives(stores: &mut Universe) {
             "ifcsname",
             tex_state::meaning::ExpandablePrimitive::IfCsName,
         ),
+        (
+            "iffontchar",
+            tex_state::meaning::ExpandablePrimitive::IfFontChar,
+        ),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::ExpandablePrimitive(primitive));
@@ -167,6 +171,10 @@ pub fn install_etex_expandable_primitives(stores: &mut Universe) {
         (
             "currentifbranch",
             tex_state::meaning::InternalInteger::CurrentIfBranch,
+        ),
+        (
+            "lastnodetype",
+            tex_state::meaning::InternalInteger::LastNodeType,
         ),
     ] {
         let symbol = stores.intern(name);
@@ -241,6 +249,7 @@ pub enum ReadEngineField {
     ConditionType,
     ConditionBranch,
     ConditionStack,
+    LastNodeType,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -261,6 +270,7 @@ pub enum ReadFontField {
     ParameterCount,
     HyphenChar,
     SkewChar,
+    Metrics,
 }
 
 /// Deterministic concrete recorder for memoization and speculation clients.
@@ -352,6 +362,7 @@ pub enum ExpandableOpcode {
     ETeXRevision,
     IfDefined,
     IfCsName,
+    IfFontChar,
     Input,
     EndInput,
     JobName,
@@ -384,6 +395,7 @@ pub struct EngineStateSnapshot {
     pub last_penalty: i32,
     pub last_kern: Scaled,
     pub last_skip: GlueSpec,
+    pub last_node_type: i32,
 }
 
 impl Default for EngineStateSnapshot {
@@ -398,6 +410,7 @@ impl Default for EngineStateSnapshot {
             last_penalty: 0,
             last_kern: Scaled::from_raw(0),
             last_skip: GlueSpec::ZERO,
+            last_node_type: -1,
         }
     }
 }
@@ -709,6 +722,10 @@ pub trait ExpansionHooks<S> {
 
     fn last_skip(&self) -> GlueSpec {
         GlueSpec::ZERO
+    }
+
+    fn last_node_type(&self) -> i32 {
+        -1
     }
 
     fn input_stream_eof(&self, stores: &impl ExpansionState, stream: u8) -> bool {
