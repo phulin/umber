@@ -11,7 +11,7 @@ use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::{
     ExpandError, ExpandNext, ExpansionHooks, NoInputExpandNext, NoopExpansionHooks, NoopRecorder,
-    ReadBank, ReadCodeTable, ReadDependency, ReadRecorder, semantic_token,
+    ReadBank, ReadCodeTable, ReadDependency, ReadEngineField, ReadRecorder, semantic_token,
 };
 
 const INT_MAX: i64 = i32::MAX as i64;
@@ -579,6 +579,23 @@ where
                 .current_source_frame()
                 .map_or(0, |frame| frame.line_number().min(i32::MAX as usize) as i32);
             Ok(ScannedInt::new(line, token))
+        }
+        Meaning::InternalInteger(InternalInteger::ETeXVersion) => Ok(ScannedInt::new(2, token)),
+        Meaning::InternalInteger(InternalInteger::CurrentGroupLevel) => {
+            recorder.record_dependency(ReadDependency::Engine(ReadEngineField::GroupLevel));
+            Ok(ScannedInt::new(
+                i32::try_from(stores.execution_group_depth()).unwrap_or(i32::MAX),
+                token,
+            ))
+        }
+        Meaning::InternalInteger(InternalInteger::CurrentGroupType) => {
+            recorder.record_dependency(ReadDependency::Engine(ReadEngineField::GroupType));
+            Ok(ScannedInt::new(
+                stores
+                    .current_group_kind()
+                    .map_or(0, tex_state::GroupKind::etex_code),
+                token,
+            ))
         }
         Meaning::DimenParam(index) => {
             recorder.record_dependency(ReadDependency::Cell {

@@ -27,13 +27,13 @@ where
             report_missing_left_brace_inserted(stores);
             push_tokens(input, stores, [opener]);
         }
-        stores.enter_group_with_kind(tex_state::GroupKind::Simple);
+        stores.enter_group_with_kind(tex_state::GroupKind::NoAlign);
         // TeX scans \noalign in the alignment's own outer list. In
         // particular, \nointerlineskip must update the prev_depth that the
         // next row's append_to_vlist observes.
         crate::assignments::normal_paragraph(nest, stores);
         scan_noalign_group(nest, input, stores, recorder, hooks)?;
-        leave_group(input, stores, tex_state::GroupKind::Simple)?;
+        leave_group(input, stores, tex_state::GroupKind::NoAlign)?;
         Ok(())
     }
 }

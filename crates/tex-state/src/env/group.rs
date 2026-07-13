@@ -8,14 +8,24 @@ use std::collections::{HashMap, HashSet};
 pub enum GroupKind {
     /// A `{` ... `}` group.
     Simple,
-    /// A box-packaging group whose closing brace is owned by its scanner.
-    Box,
+    HBox,
+    AdjustedHBox,
+    VBox,
+    VTop,
     /// A `\begingroup` ... `\endgroup` group.
     SemiSimple,
     /// A `$` ... `$` or `$$` ... `$$` math-shift group.
     MathShift,
     /// TeX's per-entry `align_group`, replaced after every alignment cell.
     Align,
+    NoAlign,
+    Output,
+    Math,
+    Disc,
+    Insert,
+    VCenter,
+    MathChoice,
+    MathLeft,
 }
 
 /// Cached location and payload metadata for one live journal group marker.
@@ -35,7 +45,18 @@ impl GroupKind {
     pub const fn start_text(self) -> &'static str {
         match self {
             Self::Simple => "{",
-            Self::Box => "{",
+            Self::HBox
+            | Self::AdjustedHBox
+            | Self::VBox
+            | Self::VTop
+            | Self::NoAlign
+            | Self::Output
+            | Self::Math
+            | Self::Disc
+            | Self::Insert
+            | Self::VCenter
+            | Self::MathChoice
+            | Self::MathLeft => "{",
             Self::SemiSimple => "\\begingroup",
             Self::MathShift => "$",
             Self::Align => "an alignment entry",
@@ -46,10 +67,43 @@ impl GroupKind {
     pub const fn end_text(self) -> &'static str {
         match self {
             Self::Simple => "}",
-            Self::Box => "}",
+            Self::HBox
+            | Self::AdjustedHBox
+            | Self::VBox
+            | Self::VTop
+            | Self::NoAlign
+            | Self::Output
+            | Self::Math
+            | Self::Disc
+            | Self::Insert
+            | Self::VCenter
+            | Self::MathChoice
+            | Self::MathLeft => "}",
             Self::SemiSimple => "\\endgroup",
             Self::MathShift => "$",
             Self::Align => "\\cr",
+        }
+    }
+
+    #[must_use]
+    pub const fn etex_code(self) -> i32 {
+        match self {
+            Self::Simple => 1,
+            Self::HBox => 2,
+            Self::AdjustedHBox => 3,
+            Self::VBox => 4,
+            Self::VTop => 5,
+            Self::Align => 6,
+            Self::NoAlign => 7,
+            Self::Output => 8,
+            Self::Math => 9,
+            Self::Disc => 10,
+            Self::Insert => 11,
+            Self::VCenter => 12,
+            Self::MathChoice => 13,
+            Self::SemiSimple => 14,
+            Self::MathShift => 15,
+            Self::MathLeft => 16,
         }
     }
 }

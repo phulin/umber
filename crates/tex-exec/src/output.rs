@@ -441,7 +441,7 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    stores.enter_group_with_kind(GroupKind::Simple);
+    stores.enter_group_with_kind(GroupKind::Output);
     nest.push(Mode::InternalVertical);
     nest.current_list_mut().set_prev_depth(IGNORE_DEPTH);
     let output_frame = delimited_output_tokens(stores, output);
@@ -486,7 +486,7 @@ where
 
     assignments::flush_pending_hchars(nest, stores)?;
     let output_level = nest.pop()?;
-    leave_group(input, stores, GroupKind::Simple)?;
+    leave_group(input, stores, GroupKind::Output)?;
     if stores.box_reg(255).is_some() {
         let _ = stores.take_box_reg_same_level(255);
         stores.world_mut().write_text(

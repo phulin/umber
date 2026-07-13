@@ -433,6 +433,7 @@ fn get_x_or_protected_stops_before_protected_macro_expansion() {
 #[test]
 fn unexpanded_delivers_general_text_without_expanding_macros() {
     let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
     crate::install_etex_expandable_primitives(&mut stores);
     let macro_cs = stores.intern("m");
     let empty = stores.intern_token_list(&[]);
@@ -610,15 +611,36 @@ fn everyeof_is_visible_to_raw_scanners_before_the_outer_source() {
 
 #[test]
 fn etex_version_and_revision_match_the_v2_reference() {
+    // e-TeX short reference manual section 3.3 defines eTeXversion as an
+    // internal read-only integer and eTeXrevision as catcode-12 text.
     let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
     crate::install_etex_expandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new("\\eTeXversion\\eTeXrevision%"));
+    let mut input = InputStack::new(MemoryInput::new("\\the\\eTeXversion\\eTeXrevision%"));
 
-    assert_eq!(next_expanded_chars(&mut input, &mut stores), "2.0");
+    assert_eq!(next_expanded_chars(&mut input, &mut stores), "2.6");
+}
+
+#[test]
+fn current_group_enquiries_read_exact_state_markers() {
+    // e-TeX short reference manual section 3.3 defines level as the live
+    // nesting depth and type as the documented 0..16 group classification.
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    crate::install_etex_expandable_primitives(&mut stores);
+    stores.enter_group_with_kind(tex_state::GroupKind::HBox);
+    stores.enter_group_with_kind(tex_state::GroupKind::SemiSimple);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\number\\currentgrouplevel,\\number\\currentgrouptype%",
+    ));
+
+    assert_eq!(next_expanded_chars(&mut input, &mut stores), "2,14");
 }
 
 #[test]
 fn ifdefined_and_ifcsname_test_without_creating_missing_names() {
+    // e-TeX short reference manual section 3.3 requires \ifcsname to avoid
+    // both hash-table creation and the \relax side effect of ordinary \csname.
     let mut stores = Universe::new();
     install_expandable_primitives(&mut stores);
     crate::install_etex_expandable_primitives(&mut stores);

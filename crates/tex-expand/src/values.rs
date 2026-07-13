@@ -12,8 +12,8 @@ use tex_state::{BoxDimension, ExpansionState};
 
 use crate::{
     Dispatch, ExpandError, ExpandNext, ExpandableOpcode, ExpansionHooks, ExpansionReplayKind,
-    NoInputExpandNext, ReadBank, ReadCodeTable, ReadDependency, ReadFontField, ReadRecorder,
-    scan_helpers, scan_int,
+    NoInputExpandNext, ReadBank, ReadCodeTable, ReadDependency, ReadEngineField, ReadFontField,
+    ReadRecorder, scan_helpers, scan_int,
 };
 
 #[allow(dead_code)]
@@ -406,6 +406,27 @@ where
                 cause_origin,
             ))
         }
+        Meaning::InternalInteger(InternalInteger::ETeXVersion) => Ok(push_rendered_text(
+            stores,
+            ExpansionReplayKind::TheOutput,
+            "2",
+            cause_origin,
+        )),
+        Meaning::InternalInteger(InternalInteger::CurrentGroupLevel) => Ok(push_rendered_text(
+            stores,
+            ExpansionReplayKind::TheOutput,
+            &stores.execution_group_depth().to_string(),
+            cause_origin,
+        )),
+        Meaning::InternalInteger(InternalInteger::CurrentGroupType) => Ok(push_rendered_text(
+            stores,
+            ExpansionReplayKind::TheOutput,
+            &stores
+                .current_group_kind()
+                .map_or(0, tex_state::GroupKind::etex_code)
+                .to_string(),
+            cause_origin,
+        )),
         Meaning::DimenParam(index) => Ok(push_rendered_text(
             stores,
             ExpansionReplayKind::TheOutput,
@@ -535,6 +556,15 @@ pub(crate) fn record_meaning_value_dependency(recorder: &mut impl ReadRecorder, 
         Meaning::InternalInteger(InternalInteger::Badness) => Some((ReadBank::LastBadness, 0)),
         Meaning::InternalInteger(InternalInteger::InputLineNumber) => {
             recorder.record_dependency(ReadDependency::InputLine);
+            None
+        }
+        Meaning::InternalInteger(InternalInteger::ETeXVersion) => None,
+        Meaning::InternalInteger(InternalInteger::CurrentGroupLevel) => {
+            recorder.record_dependency(ReadDependency::Engine(ReadEngineField::GroupLevel));
+            None
+        }
+        Meaning::InternalInteger(InternalInteger::CurrentGroupType) => {
+            recorder.record_dependency(ReadDependency::Engine(ReadEngineField::GroupType));
             None
         }
         Meaning::PageDimension(dimension) => {

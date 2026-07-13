@@ -128,10 +128,6 @@ pub fn install_etex_expandable_primitives(stores: &mut Universe) {
             tex_state::meaning::ExpandablePrimitive::Scantokens,
         ),
         (
-            "eTeXversion",
-            tex_state::meaning::ExpandablePrimitive::ETeXVersion,
-        ),
-        (
             "eTeXrevision",
             tex_state::meaning::ExpandablePrimitive::ETeXRevision,
         ),
@@ -146,6 +142,23 @@ pub fn install_etex_expandable_primitives(stores: &mut Universe) {
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::ExpandablePrimitive(primitive));
+    }
+    for (name, value) in [
+        (
+            "eTeXversion",
+            tex_state::meaning::InternalInteger::ETeXVersion,
+        ),
+        (
+            "currentgrouplevel",
+            tex_state::meaning::InternalInteger::CurrentGroupLevel,
+        ),
+        (
+            "currentgrouptype",
+            tex_state::meaning::InternalInteger::CurrentGroupType,
+        ),
+    ] {
+        let symbol = stores.intern(name);
+        stores.set_meaning(symbol, Meaning::InternalInteger(value));
     }
 }
 
@@ -210,6 +223,8 @@ pub enum ReadBank {
 pub enum ReadEngineField {
     Mode,
     InnerMode,
+    GroupLevel,
+    GroupType,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]

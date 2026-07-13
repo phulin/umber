@@ -177,7 +177,12 @@ where
             "\n! Missing { inserted.\nA left brace was mandatory here, so I've put one in.\n",
         );
     }
-    stores.enter_group_with_kind(GroupKind::Box);
+    let group_kind = match kind {
+        BoxKind::HBox => GroupKind::HBox,
+        BoxKind::VBox => GroupKind::VBox,
+        BoxKind::VTop => GroupKind::VTop,
+    };
+    stores.enter_group_with_kind(group_kind);
     let box_group_depth = stores.execution_group_depth();
     let mode = if kind == BoxKind::HBox {
         Mode::RestrictedHorizontal
@@ -214,7 +219,7 @@ where
         BoxKind::VBox => Node::VList(vpack(stores, children, spec, vpack_params(stores)).node),
         BoxKind::VTop => Node::VList(vtop(stores, children, spec, vpack_params(stores)).node),
     };
-    leave_group(input, stores, GroupKind::Box)?;
+    leave_group(input, stores, group_kind)?;
     Ok(node)
 }
 
@@ -282,7 +287,6 @@ where
             // save-stack group. Scanners such as \message consume their own
             // balanced braces, so delivered-token brace counting is insufficient.
             if stores.execution_group_depth() == box_group_depth
-                && stores.innermost_group_kind() == Some(GroupKind::Box)
                 && has_catcode_meaning(stores, semantic, Catcode::EndGroup)
             {
                 flush_pending_hchars(nest, stores)?;

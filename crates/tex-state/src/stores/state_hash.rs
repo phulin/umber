@@ -1413,6 +1413,9 @@ fn hash_internal_integer(integer: InternalInteger, hasher: &mut StateHasher) {
     match integer {
         InternalInteger::Badness => hasher.tag(0),
         InternalInteger::InputLineNumber => hasher.tag(1),
+        InternalInteger::ETeXVersion => hasher.tag(2),
+        InternalInteger::CurrentGroupLevel => hasher.tag(3),
+        InternalInteger::CurrentGroupType => hasher.tag(4),
     }
 }
 

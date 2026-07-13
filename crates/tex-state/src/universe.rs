@@ -79,6 +79,9 @@ pub trait ExpansionState {
     fn execution_group_depth(&self) -> u32 {
         0
     }
+    fn current_group_kind(&self) -> Option<GroupKind> {
+        None
+    }
     fn catcode(&self, ch: char) -> Catcode;
     fn lccode(&self, ch: char) -> LcCode;
     fn uccode(&self, ch: char) -> UcCode;
@@ -2442,6 +2445,9 @@ impl ExpansionState for Universe {
     fn execution_group_depth(&self) -> u32 {
         self.stores.env_group_depth()
     }
+    fn current_group_kind(&self) -> Option<GroupKind> {
+        self.innermost_group_kind()
+    }
     fn catcode(&self, ch: char) -> Catcode {
         Self::catcode(self, ch)
     }
@@ -2782,6 +2788,9 @@ impl ExpansionState for Universe {
 impl ExpansionState for ExpansionContext<'_> {
     fn execution_group_depth(&self) -> u32 {
         self.universe.execution_group_depth()
+    }
+    fn current_group_kind(&self) -> Option<GroupKind> {
+        self.universe.innermost_group_kind()
     }
     fn catcode(&self, ch: char) -> Catcode {
         self.universe.catcode(ch)

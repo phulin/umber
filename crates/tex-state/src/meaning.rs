@@ -110,6 +110,10 @@ pub enum InternalInteger {
     Badness,
     /// Current physical input line number.
     InputLineNumber,
+    /// e-TeX major version number.
+    ETeXVersion,
+    CurrentGroupLevel,
+    CurrentGroupType,
 }
 
 impl InternalInteger {
@@ -118,6 +122,9 @@ impl InternalInteger {
         match self {
             Self::Badness => 0,
             Self::InputLineNumber => 1,
+            Self::ETeXVersion => 2,
+            Self::CurrentGroupLevel => 3,
+            Self::CurrentGroupType => 4,
         }
     }
 
@@ -126,6 +133,9 @@ impl InternalInteger {
         match operand {
             0 => Some(Self::Badness),
             1 => Some(Self::InputLineNumber),
+            2 => Some(Self::ETeXVersion),
+            3 => Some(Self::CurrentGroupLevel),
+            4 => Some(Self::CurrentGroupType),
             _ => None,
         }
     }

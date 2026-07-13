@@ -173,7 +173,7 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    stores.enter_group_with_kind(GroupKind::Simple);
+    stores.enter_group_with_kind(GroupKind::Math);
     nest.push(Mode::Math);
     loop {
         sync_engine_state::<S, _>(hooks, nest, stores);
@@ -184,7 +184,7 @@ where
         )?;
         let semantic = tex_expand::semantic_token(token);
         if assignments::has_catcode_meaning(stores, semantic, Catcode::EndGroup) {
-            crate::leave_group_with_origin(input, stores, GroupKind::Simple, token.origin())?;
+            crate::leave_group_with_origin(input, stores, GroupKind::Math, token.origin())?;
             let list = finish_current_math_list(nest, stores);
             let _ = nest.pop()?;
             return Ok(list);
@@ -566,7 +566,7 @@ where
     let mut inner = ModeNest::new();
     let mut transaction = crate::transaction::ExecutionTransaction::begin(&mut inner, stores);
     let (inner, stores) = transaction.parts();
-    stores.enter_group_with_kind(GroupKind::Box);
+    stores.enter_group_with_kind(GroupKind::VCenter);
     let box_group_depth = stores.execution_group_depth();
     inner.push(Mode::InternalVertical);
     assignments::scan_box_group(inner, input, stores, hooks, box_group_depth)?;
@@ -582,7 +582,7 @@ where
         .node,
     );
     let boxed = stores.freeze_node_list(&[vbox]);
-    crate::leave_group(input, stores, GroupKind::Box)?;
+    crate::leave_group(input, stores, GroupKind::VCenter)?;
     transaction.commit();
     Ok(MathField::SubBox(boxed))
 }

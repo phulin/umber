@@ -246,7 +246,7 @@ where
         });
     }
 
-    stores.enter_group_with_kind(tex_state::GroupKind::Box);
+    stores.enter_group_with_kind(tex_state::GroupKind::Insert);
     let box_group_depth = stores.execution_group_depth();
     let mut inner = ModeNest::new();
     inner.push(Mode::InternalVertical);
@@ -276,7 +276,7 @@ where
     let split_max_depth = stores.dimen_param(DimenParam::SPLIT_MAX_DEPTH);
     let floating_penalty = stores.int_param(IntParam::FLOATING_PENALTY);
 
-    crate::leave_group(input, stores, tex_state::GroupKind::Box)?;
+    crate::leave_group(input, stores, tex_state::GroupKind::Insert)?;
 
     append_vertical_contribution(
         nest,
@@ -329,7 +329,7 @@ where
             context: "\\vadjust group",
         });
     }
-    stores.enter_group_with_kind(tex_state::GroupKind::Box);
+    stores.enter_group_with_kind(tex_state::GroupKind::AdjustedHBox);
     let box_group_depth = stores.execution_group_depth();
     let mut inner = ModeNest::new();
     inner.push(Mode::InternalVertical);
@@ -340,7 +340,7 @@ where
     }
     let level = inner.pop()?;
     let content = stores.freeze_node_list(level.list().nodes());
-    crate::leave_group(input, stores, tex_state::GroupKind::Box)?;
+    crate::leave_group(input, stores, tex_state::GroupKind::AdjustedHBox)?;
     nest.current_list_mut().push(Node::Adjust(content));
     Ok(())
 }
@@ -881,14 +881,14 @@ where
     if !is_begin_group(opener) {
         return Err(ExecError::MissingToken { context });
     }
-    stores.enter_group_with_kind(tex_state::GroupKind::Box);
+    stores.enter_group_with_kind(tex_state::GroupKind::Disc);
     let mut inner = ModeNest::new();
     inner.push(Mode::RestrictedHorizontal);
     let box_group_depth = stores.execution_group_depth();
     scan_box_group(&mut inner, input, stores, hooks, box_group_depth)?;
     let level = inner.pop()?;
     let nodes = stores.freeze_node_list(level.list().nodes());
-    crate::leave_group(input, stores, tex_state::GroupKind::Box)?;
+    crate::leave_group(input, stores, tex_state::GroupKind::Disc)?;
     Ok(nodes)
 }
 

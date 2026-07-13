@@ -347,8 +347,12 @@ mod primitive_mode_tests {
             extended.meaning(scantokens),
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Scantokens)
         );
+        let version = extended.intern("eTeXversion");
+        assert_eq!(
+            extended.meaning(version),
+            Meaning::InternalInteger(tex_state::meaning::InternalInteger::ETeXVersion)
+        );
         for (name, primitive) in [
-            ("eTeXversion", ExpandablePrimitive::ETeXVersion),
             ("eTeXrevision", ExpandablePrimitive::ETeXRevision),
             ("ifdefined", ExpandablePrimitive::IfDefined),
             ("ifcsname", ExpandablePrimitive::IfCsName),

@@ -380,23 +380,19 @@ fn group_mismatch_error(
         (GroupKind::Simple, GroupKind::MathShift, false) => {
             ExecError::ExtraRightBraceOrForgottenDollar { origin }
         }
-        (GroupKind::Simple, GroupKind::Box | GroupKind::Align, false) => {
+        (GroupKind::Simple, actual, false) if is_scanner_owned_group(actual) => {
             ExecError::ExtraRightBraceOrForgottenDollar { origin }
         }
         (GroupKind::SemiSimple, _, true) => ExecError::ExtraEndGroup { origin },
-        (GroupKind::Box, _, true) => ExecError::EndGroupMismatch {
+        (expected, _, true) if is_scanner_owned_group(expected) => ExecError::EndGroupMismatch {
             started_by: "the outer level",
             origin,
         },
-        (GroupKind::Box, _, false) => ExecError::EndGroupMismatch {
+        (expected, _, false) if is_scanner_owned_group(expected) => ExecError::EndGroupMismatch {
             started_by: mismatch.actual().start_text(),
             origin,
         },
-        (
-            GroupKind::SemiSimple,
-            GroupKind::Simple | GroupKind::Box | GroupKind::MathShift | GroupKind::Align,
-            false,
-        ) => ExecError::EndGroupMismatch {
+        (GroupKind::SemiSimple, _, false) => ExecError::EndGroupMismatch {
             started_by: mismatch.actual().start_text(),
             origin,
         },
@@ -404,24 +400,29 @@ fn group_mismatch_error(
             started_by: "the outer level",
             origin,
         },
-        (
-            GroupKind::MathShift,
-            GroupKind::Simple | GroupKind::Box | GroupKind::SemiSimple | GroupKind::Align,
-            false,
-        ) => ExecError::MathShiftGroupMismatch {
+        (GroupKind::MathShift, _, false) => ExecError::MathShiftGroupMismatch {
             started_by: mismatch.actual().start_text(),
             origin,
         },
-        (GroupKind::Simple, GroupKind::Simple, false)
-        | (GroupKind::SemiSimple, GroupKind::SemiSimple, false)
-        | (GroupKind::MathShift, GroupKind::MathShift, false) => {
+        (GroupKind::Simple, GroupKind::Simple, false) => {
             unreachable!("matching group kinds are returned as successful leaves, not mismatches")
         }
         (GroupKind::Align, _, _) => ExecError::EndGroupMismatch {
             started_by: mismatch.actual().start_text(),
             origin,
         },
+        _ => ExecError::EndGroupMismatch {
+            started_by: mismatch.actual().start_text(),
+            origin,
+        },
     }
+}
+
+fn is_scanner_owned_group(kind: GroupKind) -> bool {
+    !matches!(
+        kind,
+        GroupKind::Simple | GroupKind::SemiSimple | GroupKind::MathShift | GroupKind::Align
+    )
 }
 
 pub(crate) fn push_tokens<S, I>(input: &mut InputStack<S>, stores: &mut Universe, tokens: I)
