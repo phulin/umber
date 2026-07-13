@@ -286,11 +286,12 @@ pub(crate) fn execute_showlists(stores: &mut Universe, nest: &ModeNest) {
         text.push_str(mode_text(level.mode()));
         text.push_str(" mode entered at line 0\n");
         if index == 0 && level.mode() == Mode::Vertical {
-            if !stores.current_page_nodes().is_empty() {
+            if stores.current_page_len() != 0 {
+                let current_page = stores.current_page_nodes();
                 text.push_str("### current page:\n");
                 text.push_str(&dump_node_slice(
                     stores,
-                    stores.current_page_nodes(),
+                    &current_page,
                     DumpConfig::read(stores),
                 ));
                 if stores.page_contents() != PageContents::Empty {

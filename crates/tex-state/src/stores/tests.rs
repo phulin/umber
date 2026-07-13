@@ -190,7 +190,8 @@ fn semantic_hash_only_walks_hyphenation_after_root_changes() {
     let _ = stores.state_hash_slice(&initial_cursor, &initial);
     assert_eq!(
         stores.semantic_hash_cache.testing_hyphenation_hash_calls(),
-        0
+        1,
+        "the first framed projection computes its discardable fingerprint"
     );
 
     stores.add_hyphenation_pattern(PatternSpec {
@@ -201,7 +202,7 @@ fn semantic_hash_only_walks_hyphenation_after_root_changes() {
     let _ = stores.state_hash_slice(&initial_cursor, &with_pattern);
     assert_eq!(
         stores.semantic_hash_cache.testing_hyphenation_hash_calls(),
-        1
+        2
     );
 
     let pattern_cursor = stores.state_hash_cursor_from_snapshot(&with_pattern);
@@ -210,7 +211,7 @@ fn semantic_hash_only_walks_hyphenation_after_root_changes() {
     let _ = stores.state_hash_slice(&pattern_cursor, &unrelated_change);
     assert_eq!(
         stores.semantic_hash_cache.testing_hyphenation_hash_calls(),
-        1,
+        2,
         "an unrelated state change must not rehash the retained hyphenation root"
     );
 
@@ -225,7 +226,7 @@ fn semantic_hash_only_walks_hyphenation_after_root_changes() {
     );
     assert_eq!(
         stores.semantic_hash_cache.testing_hyphenation_hash_calls(),
-        2
+        3
     );
 
     stores.rollback(&with_pattern);
@@ -234,8 +235,8 @@ fn semantic_hash_only_walks_hyphenation_after_root_changes() {
     let _ = stores.state_hash_slice(&pattern_cursor, &after_rollback);
     assert_eq!(
         stores.semantic_hash_cache.testing_hyphenation_hash_calls(),
-        2,
-        "rollback must restore the retained root identity used by the cursor"
+        4,
+        "rollback clears derived projections and rebuilds the restored root canonically"
     );
 }
 

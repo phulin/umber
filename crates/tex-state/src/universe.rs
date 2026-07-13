@@ -2272,8 +2272,8 @@ impl Universe {
     }
 
     #[must_use]
-    pub fn current_page_nodes(&self) -> &[Node] {
-        self.page.current_page()
+    pub fn current_page_nodes(&self) -> Vec<Node> {
+        self.page.current_page().cloned().collect()
     }
 
     #[must_use]

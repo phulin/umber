@@ -583,7 +583,7 @@ fn append_end_cleanup_contributions(stores: &mut Universe) {
 }
 
 fn job_is_quiescent(stores: &Universe) -> bool {
-    stores.current_page_nodes().is_empty()
+    stores.current_page_len() == 0
         && stores.page_contributions().is_empty()
         && stores.page_fire_up().is_none()
         && stores.page_dimension(PageDimension::Total).raw() == 0

@@ -16,13 +16,15 @@ const PAGE_CONTRIBUTION_DOMAIN: u64 = 0x7061_6765_5f63_6f6e;
 const PAGE_CURRENT_DOMAIN: u64 = 0x7061_6765_5f63_7572;
 const PAGE_DISCARDS_DOMAIN: u64 = 0x7061_6765_5f64_6973;
 const SPLIT_DISCARDS_DOMAIN: u64 = 0x7370_6c69_745f_6469;
+const PAGE_NODE_CHUNK_DOMAIN: u64 = 0x7061_6765_5f63_686b;
+const PAGE_NODE_CHUNK_LEN: usize = 64;
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct PageHashCache {
     insertions: Option<CachedArcProjection<Vec<PageInsertion>>>,
     mark_classes: Option<CachedArcProjection<BTreeMap<u16, MarkClassState>>>,
     contribution: Option<CachedArcProjection<VecDeque<Node>>>,
-    current_page: Option<CachedArcProjection<Vec<Node>>>,
+    current_page_chunks: Vec<Option<CachedArcProjection<Vec<Node>>>>,
     page_discards: Option<CachedArcProjection<Vec<Node>>>,
     split_discards: Option<CachedArcProjection<Vec<Node>>>,
 }
@@ -37,6 +39,58 @@ impl PageHashCache {
 struct CachedArcProjection<T> {
     root: Arc<T>,
     fragment: StateHashFragment,
+}
+
+/// Canonically chunked persistent sequence for the growing current page.
+///
+/// Chunk boundaries depend only on content position. Snapshots share complete
+/// chunks, while an append copies at most the root vector and the final bounded
+/// chunk. The representation carries no mutation-maintained hash state.
+#[derive(Clone, Debug, Default)]
+struct PageNodeSequence {
+    chunks: Arc<Vec<Arc<Vec<Node>>>>,
+    len: usize,
+}
+
+impl PartialEq for PageNodeSequence {
+    fn eq(&self, other: &Self) -> bool {
+        self.len == other.len && self.iter().eq(other.iter())
+    }
+}
+
+impl PageNodeSequence {
+    fn iter(&self) -> impl DoubleEndedIterator<Item = &Node> {
+        self.chunks.iter().flat_map(|chunk| chunk.iter())
+    }
+
+    fn last(&self) -> Option<&Node> {
+        self.chunks.last().and_then(|chunk| chunk.last())
+    }
+
+    const fn len(&self) -> usize {
+        self.len
+    }
+
+    fn push(&mut self, node: Node) {
+        let chunks = Arc::make_mut(&mut self.chunks);
+        match chunks.last_mut() {
+            Some(chunk) if chunk.len() < PAGE_NODE_CHUNK_LEN => Arc::make_mut(chunk).push(node),
+            _ => chunks.push(Arc::new(vec![node])),
+        }
+        self.len += 1;
+    }
+
+    fn clear(&mut self) {
+        *self = Self::default();
+    }
+
+    fn take_prefix(&mut self, split_index: usize) -> (Vec<Node>, Vec<Node>) {
+        let split_index = split_index.min(self.len);
+        let mut nodes = self.iter().cloned().collect::<Vec<_>>();
+        let after = nodes.split_off(split_index);
+        self.clear();
+        (nodes, after)
+    }
 }
 
 /// TeX's `awful_bad` sentinel, `2^30 - 1`.
@@ -322,7 +376,7 @@ impl PageInsertion {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct PageBuilderState {
     contribution: Arc<VecDeque<Node>>,
-    current_page: Arc<Vec<Node>>,
+    current_page: PageNodeSequence,
     page_discards: Arc<Vec<Node>>,
     split_discards: Arc<Vec<Node>>,
     page_goal: Scaled,
@@ -358,7 +412,7 @@ impl Default for PageBuilderState {
     fn default() -> Self {
         Self {
             contribution: Arc::new(VecDeque::new()),
-            current_page: Arc::new(Vec::new()),
+            current_page: PageNodeSequence::default(),
             page_discards: Arc::new(Vec::new()),
             split_discards: Arc::new(Vec::new()),
             page_goal: Scaled::from_raw(0),
@@ -522,7 +576,7 @@ impl PageBuilderState {
     }
 
     pub(crate) fn start_new_page(&mut self) {
-        Arc::make_mut(&mut self.current_page).clear();
+        self.current_page.clear();
         self.page_goal = Scaled::from_raw(0);
         self.page_total = Scaled::from_raw(0);
         self.page_stretch = Scaled::from_raw(0);
@@ -643,8 +697,8 @@ impl PageBuilderState {
         self.contribution = Arc::new(queue);
     }
 
-    pub(crate) fn current_page(&self) -> &[Node] {
-        &self.current_page
+    pub(crate) fn current_page(&self) -> impl DoubleEndedIterator<Item = &Node> {
+        self.current_page.iter()
     }
 
     pub(crate) fn page_discards(&self) -> &[Node] {
@@ -688,7 +742,7 @@ impl PageBuilderState {
     }
 
     pub(crate) fn push_current_page(&mut self, node: Node) {
-        Arc::make_mut(&mut self.current_page).push(node);
+        self.current_page.push(node);
     }
 
     pub(crate) fn page_insertions(&self) -> &[PageInsertion] {
@@ -716,11 +770,7 @@ impl PageBuilderState {
         &mut self,
         split_index: usize,
     ) -> (Vec<Node>, Vec<Node>) {
-        let split_index = split_index.min(self.current_page.len());
-        let after = Arc::make_mut(&mut self.current_page).split_off(split_index);
-        let before = std::mem::take(&mut self.current_page);
-        let before = Arc::try_unwrap(before).unwrap_or_else(|shared| (*shared).clone());
-        (before, after)
+        self.current_page.take_prefix(split_index)
     }
 
     pub(crate) fn update_last_from_node(&mut self, node: &Node) {
@@ -859,11 +909,10 @@ impl PageBuilderState {
             PAGE_CONTRIBUTION_DOMAIN,
             |projection| hash_queue(&self.contribution, projection),
         );
-        let current_page = project_arc(
-            &mut cache.current_page,
+        let current_page = project_page_nodes(
+            &mut cache.current_page_chunks,
             &self.current_page,
-            PAGE_CURRENT_DOMAIN,
-            |projection| hash_nodes(&self.current_page, projection),
+            &mut hash_nodes,
         );
         let page_discards = project_arc(
             &mut cache.page_discards,
@@ -908,6 +957,31 @@ fn project_arc<T>(
         fragment,
     });
     fragment
+}
+
+fn project_page_nodes(
+    cached: &mut Vec<Option<CachedArcProjection<Vec<Node>>>>,
+    nodes: &PageNodeSequence,
+    hash_nodes: &mut impl FnMut(&[Node], &mut StateHasher),
+) -> StateHashFragment {
+    cached.resize_with(nodes.chunks.len(), || None);
+    cached.truncate(nodes.chunks.len());
+    let mut chunks = Vec::with_capacity(nodes.chunks.len());
+    for (slot, root) in cached.iter_mut().zip(nodes.chunks.iter()) {
+        chunks.push(project_arc(
+            slot,
+            root,
+            PAGE_NODE_CHUNK_DOMAIN,
+            |projection| hash_nodes(root, projection),
+        ));
+    }
+    StateHashFragment::from_builder(PAGE_CURRENT_DOMAIN, |projection| {
+        projection.usize(nodes.len());
+        projection.usize(chunks.len());
+        for chunk in chunks {
+            chunk.apply(projection);
+        }
+    })
 }
 
 fn hash_optional_usize(value: Option<usize>, hasher: &mut StateHasher) {

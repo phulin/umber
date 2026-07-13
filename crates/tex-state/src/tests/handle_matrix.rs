@@ -80,7 +80,7 @@ fn page_ingress_validates_before_mutating() {
         universe.push_current_page_node(foreign_node.clone())
     });
     assert!(universe.page_contributions().is_empty());
-    assert!(universe.current_page_nodes().is_empty());
+    assert_eq!(universe.current_page_len(), 0);
 
     let local = universe.intern_glue(glue(8));
     assert_panics(HandleClass::Glue, || {

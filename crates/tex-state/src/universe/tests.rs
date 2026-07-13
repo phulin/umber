@@ -1364,7 +1364,7 @@ fn rollback_restores_page_builder_state_and_hash() {
 
     assert_eq!(universe.testing_state_hash(), base_hash);
     assert!(universe.page_contributions().is_empty());
-    assert!(universe.current_page_nodes().is_empty());
+    assert_eq!(universe.current_page_len(), 0);
     assert_eq!(
         universe.page_dimension(PageDimension::Goal),
         Scaled::MAX_DIMEN
@@ -1722,10 +1722,12 @@ fn projection_cache_clearing_preserves_named_boundary_hashes() {
         universe
             .world_mut()
             .open_out(StreamSlot::new(3), "cache.aux");
-        universe.push_current_page_node(Node::Kern {
-            amount: Scaled::from_raw(19),
-            kind: KernKind::Explicit,
-        });
+        for value in 0..130 {
+            universe.push_current_page_node(Node::Kern {
+                amount: Scaled::from_raw(19 + value),
+                kind: KernKind::Explicit,
+            });
+        }
         universe.push_page_discard(Node::Penalty(27));
     }
 

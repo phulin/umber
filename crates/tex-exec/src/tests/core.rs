@@ -1012,8 +1012,8 @@ fn box_primitives_round_trip_through_registers() {
         panic!("register 1 should hold an hbox");
     };
     assert_eq!(box_node.width.raw(), 10 * tex_state::scaled::Scaled::UNITY);
-    let Some(tex_state::node::Node::HList(appended)) = stores
-        .current_page_nodes()
+    let current_page = stores.current_page_nodes();
+    let Some(tex_state::node::Node::HList(appended)) = current_page
         .iter()
         .find(|node| matches!(node, tex_state::node::Node::HList(_)))
     else {
@@ -3090,8 +3090,8 @@ fn mark_scans_raw_general_text_then_expands_payload() {
         .run(&mut input, &mut stores)
         .expect("\\mark executes");
 
-    let mark = stores
-        .current_page_nodes()
+    let current_page = stores.current_page_nodes();
+    let mark = current_page
         .iter()
         .chain(stores.page_contributions())
         .find_map(|node| match node {
@@ -3127,8 +3127,8 @@ fn etex_marks_appends_the_scanned_mark_class() {
         .run(&mut input, &mut stores)
         .expect("classed mark executes");
 
-    let mark = stores
-        .current_page_nodes()
+    let current_page = stores.current_page_nodes();
+    let mark = current_page
         .iter()
         .chain(stores.page_contributions())
         .find(|node| matches!(node, Node::Mark { class: 27, .. }));
