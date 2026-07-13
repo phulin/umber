@@ -1,4 +1,7 @@
-use tex_expand::{ExpansionHooks, ReadRecorder, get_x_token_with_recorder_and_hooks};
+use tex_expand::{
+    ExpansionHooks, ReadRecorder, get_x_or_protected_with_recorder_and_hooks,
+    get_x_token_with_recorder_and_hooks,
+};
 use tex_lex::{InputSource, InputStack, TokenListReplayKind};
 use tex_state::env::banks::TokParam;
 use tex_state::node::{GlueKind, Node};
@@ -9,7 +12,7 @@ use super::support::{
     align_kind, align_state, align_state_mut, alignment_mode, cell_mode, is_alignment_tab, is_cr,
     is_crcr, is_end_group, is_noalign, is_omit, is_span, row_mode, set_align_brace_depth,
 };
-use crate::assignments::{flush_pending_hchars, next_non_space_traced_x};
+use crate::assignments::flush_pending_hchars;
 use crate::dispatch::{dispatch_delivered_token_with_recorder, insert_traced_tokens};
 use crate::executor::sync_engine_state;
 use crate::mode::{AlignState, AlignmentKind};
@@ -190,7 +193,7 @@ where
     loop {
         set_align_brace_depth(nest, align_level, 1_000_000);
         input.set_alignment_state(1_000_000);
-        let Some(token) = next_non_space_traced_x(input, stores, hooks)? else {
+        let Some(token) = next_non_space_protected(input, stores, recorder, hooks)? else {
             stores.world_mut().write_text(
                 PrintSink::TerminalAndLog,
                 "\n! Missing } inserted while finishing alignment.\n",
@@ -281,11 +284,13 @@ where
         // TeX82 fin_col restores the sentinel before fetching the first token
         // of every following column, not only after a spanning column.
         input.set_alignment_state(1_000_000);
-        start_token = Some(next_non_space_traced_x(input, stores, hooks)?.ok_or(
-            ExecError::MissingToken {
-                context: "alignment cell",
-            },
-        )?);
+        start_token = Some(
+            next_non_space_protected(input, stores, recorder, hooks)?.ok_or(
+                ExecError::MissingToken {
+                    context: "alignment cell",
+                },
+            )?,
+        );
     }
 }
 
@@ -407,7 +412,7 @@ where
                 // TeX82 fin_col restores the sentinel before looking for the
                 // first token of the next spanned column.
                 input.set_alignment_state(1_000_000);
-                first_token = next_non_space_traced_x(input, stores, hooks)?;
+                first_token = next_non_space_protected(input, stores, recorder, hooks)?;
             }
             CellTerminator::AlignmentTab | CellTerminator::Cr => {
                 let next_column = column + 1;
@@ -433,6 +438,36 @@ where
                     extra_alignment_tab,
                 });
             }
+        }
+    }
+}
+
+fn next_non_space_protected<S, R, H>(
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<Option<TracedTokenWord>, ExecError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    loop {
+        let token = {
+            let mut expansion = ExpansionContext::new(stores);
+            get_x_or_protected_with_recorder_and_hooks(input, &mut expansion, recorder, hooks)?
+        };
+        match token {
+            Some(token)
+                if matches!(
+                    tex_expand::semantic_token(token),
+                    Token::Char {
+                        cat: tex_state::token::Catcode::Space,
+                        ..
+                    }
+                ) => {}
+            token => return Ok(token),
         }
     }
 }
