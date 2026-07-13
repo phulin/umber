@@ -454,6 +454,28 @@ fn detokenize_outputs_space_and_other_character_tokens() {
 }
 
 #[test]
+fn unless_inverts_boolean_conditionals_but_not_ifcase() {
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    crate::install_etex_expandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\unless\\iftrue n\\else y\\fi\\unless\\iffalse y\\else n\\fi",
+    ));
+
+    assert_eq!(next_expanded_chars(&mut input, &mut stores), "yy");
+
+    let mut invalid = InputStack::new(MemoryInput::new("\\unless\\ifcase0\\fi"));
+    assert!(matches!(
+        crate::get_x_token(&mut invalid, &mut stores),
+        Err(crate::ExpandError::Captured { .. })
+            | Err(crate::ExpandError::MissingTokenAfterPrimitive {
+                opcode: ExpandableOpcode::Unless,
+                ..
+            })
+    ));
+}
+
+#[test]
 fn expansion_error_captures_invocation_chain_before_macro_frame_pops() {
     let mut stores = Universe::new();
     let macro_cs = stores.intern("m");
@@ -2026,6 +2048,29 @@ fn iftrue_and_iffalse_select_expected_two_limb_branches() {
     input.push_token_list(list, TokenListReplayKind::Inserted);
 
     assert_eq!(next_expanded_chars(&mut input, &mut stores), "tt");
+}
+
+#[test]
+fn unless_inverts_boolean_conditionals_without_leaking_frames() {
+    let mut stores = Universe::new();
+    crate::install_expandable_primitives(&mut stores);
+    crate::install_etex_expandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\unless\\iftrue f\\else t\\fi\\unless\\iffalse t\\else f\\fi%",
+    ));
+
+    assert_eq!(next_expanded_chars(&mut input, &mut stores), "tt");
+    assert!(input.current_condition().is_none());
+}
+
+#[test]
+fn unless_inverts_scanned_numeric_condition() {
+    let mut stores = Universe::new();
+    crate::install_expandable_primitives(&mut stores);
+    crate::install_etex_expandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\unless\\ifnum1<2 f\\else t\\fi%"));
+
+    assert_eq!(next_expanded_chars(&mut input, &mut stores), "t");
 }
 
 #[test]

@@ -178,6 +178,7 @@ pub enum ExpandablePrimitive {
     Unexpanded,
     /// e-TeX's token-to-character general-text primitive.
     Detokenize,
+    Unless,
 }
 
 impl ExpandablePrimitive {
@@ -225,6 +226,7 @@ impl ExpandablePrimitive {
             Self::EndTemplate => 38,
             Self::Unexpanded => 39,
             Self::Detokenize => 40,
+            Self::Unless => 41,
         }
     }
 
@@ -272,6 +274,7 @@ impl ExpandablePrimitive {
             38 => Some(Self::EndTemplate),
             39 => Some(Self::Unexpanded),
             40 => Some(Self::Detokenize),
+            41 => Some(Self::Unless),
             _ => None,
         }
     }
@@ -393,6 +396,7 @@ pub enum UnexpandablePrimitive {
     Immediate,
     Write,
     Read,
+    ReadLine,
     Shipout,
     BeginGroup,
     EndGroup,
@@ -638,6 +642,7 @@ impl UnexpandablePrimitive {
             Self::NonstopMode => 173,
             Self::ScrollMode => 174,
             Self::ErrorStopMode => 175,
+            Self::ReadLine => 176,
         }
     }
 
@@ -820,6 +825,7 @@ impl UnexpandablePrimitive {
             173 => Some(Self::NonstopMode),
             174 => Some(Self::ScrollMode),
             175 => Some(Self::ErrorStopMode),
+            176 => Some(Self::ReadLine),
             _ => None,
         }
     }

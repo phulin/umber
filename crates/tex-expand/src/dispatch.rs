@@ -6,8 +6,8 @@ use tex_state::token::{OriginId, Token, TracedTokenWord};
 use tex_state::{ExpansionState, InputOpenState};
 
 use crate::{
-    Dispatch, DriverExpandNext, EngineMode, ExpandError, ExpandableOpcode, ExpansionHooks,
-    ExpansionReplayKind, NoInputExpandNext, NoopExpansionHooks, ReadRecorder, args,
+    Dispatch, DriverExpandNext, EngineMode, ExpandError, ExpandNext, ExpandableOpcode,
+    ExpansionHooks, ExpansionReplayKind, NoInputExpandNext, NoopExpansionHooks, ReadRecorder, args,
     conditionals::*, primitives::*, scan_dimen, scan_helpers::*, scan_int, values::*,
 };
 
@@ -56,7 +56,7 @@ const fn page_mark_key(mark: PageMark) -> u8 {
 }
 
 macro_rules! dispatch_match {
-    ($token:ident, $call_origin:ident, $input:ident, $stores:ident, $recorder:ident, $hooks:ident, $meaning:ident, $expander:expr, $input_arm:block) => {{
+    ($token:ident, $call_origin:ident, $input:ident, $stores:ident, $recorder:ident, $hooks:ident, $meaning:ident, $invert:expr, $expander:expr, $input_arm:block) => {{
         let token = $token;
         let call_origin = $call_origin;
         let call_context = TracedTokenWord::pack(token, call_origin);
@@ -260,6 +260,27 @@ macro_rules! dispatch_match {
                     call_origin,
                 ))
             }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Unless) => {
+                let Some(target) = crate::next_semantic_raw_token(input, stores)? else {
+                    return Err(ExpandError::MissingTokenAfterPrimitive {
+                        opcode: ExpandableOpcode::Unless,
+                        context: call_context,
+                    });
+                };
+                let target_meaning = crate::expandable_symbol(stores, target)
+                    .map(|symbol| stores.meaning(symbol));
+                if !matches!(
+                    target_meaning,
+                    Some(Meaning::ExpandablePrimitive(primitive))
+                        if is_boolean_conditional(primitive)
+                ) {
+                    return Err(ExpandError::MissingTokenAfterPrimitive {
+                        opcode: ExpandableOpcode::Unless,
+                        context: target,
+                    });
+                }
+                expander.dispatch_inverted_raw_token(target, input, stores, recorder, hooks)
+            }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Input) => $input_arm,
             Meaning::ExpandablePrimitive(ExpandablePrimitive::EndInput) => {
                 input.end_current_source_after_current_line();
@@ -310,10 +331,10 @@ macro_rules! dispatch_match {
                 })
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfTrue) => {
-                begin_if(input, stores, recorder, hooks, true, call_context)
+                begin_if(input, stores, recorder, hooks, true ^ $invert, call_context)
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfFalse) => {
-                begin_if(input, stores, recorder, hooks, false, call_context)
+                begin_if(input, stores, recorder, hooks, false ^ $invert, call_context)
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::If) => {
                 let frame_token = begin_if_evaluation(input, call_context);
@@ -338,7 +359,7 @@ macro_rules! dispatch_match {
                     stores,
                     recorder,
                     hooks,
-                    if_char_equal(left, right),
+                    if_char_equal(left, right) ^ $invert,
                     call_context,
                     frame_token,
                 )
@@ -366,7 +387,7 @@ macro_rules! dispatch_match {
                     stores,
                     recorder,
                     hooks,
-                    if_cat_equal(left, right),
+                    if_cat_equal(left, right) ^ $invert,
                     call_context,
                     frame_token,
                 )
@@ -398,7 +419,7 @@ macro_rules! dispatch_match {
                     stores,
                     recorder,
                     hooks,
-                    ifx_equal(stores, left, right),
+                    ifx_equal(stores, left, right) ^ $invert,
                     call_context,
                     frame_token,
                 )
@@ -436,7 +457,7 @@ macro_rules! dispatch_match {
                     stores,
                     recorder,
                     hooks,
-                    compare_ordered(left, relation, right),
+                    compare_ordered(left, relation, right) ^ $invert,
                     call_context,
                     frame_token,
                 )
@@ -476,7 +497,7 @@ macro_rules! dispatch_match {
                     stores,
                     recorder,
                     hooks,
-                    compare_ordered(left, relation, right),
+                    compare_ordered(left, relation, right) ^ $invert,
                     call_context,
                     frame_token,
                 )
@@ -497,7 +518,7 @@ macro_rules! dispatch_match {
                     stores,
                     recorder,
                     hooks,
-                    value % 2 != 0,
+                    (value % 2 != 0) ^ $invert,
                     call_context,
                     frame_token,
                 )
@@ -531,7 +552,7 @@ macro_rules! dispatch_match {
                     stores,
                     recorder,
                     hooks,
-                    hooks.mode() == EngineMode::Vertical,
+                    (hooks.mode() == EngineMode::Vertical) ^ $invert,
                     call_context,
                 )
             }
@@ -543,7 +564,7 @@ macro_rules! dispatch_match {
                     stores,
                     recorder,
                     hooks,
-                    hooks.mode() == EngineMode::Horizontal,
+                    (hooks.mode() == EngineMode::Horizontal) ^ $invert,
                     call_context,
                 )
             }
@@ -555,7 +576,7 @@ macro_rules! dispatch_match {
                     stores,
                     recorder,
                     hooks,
-                    hooks.mode() == EngineMode::Math,
+                    (hooks.mode() == EngineMode::Math) ^ $invert,
                     call_context,
                 )
             }
@@ -568,7 +589,7 @@ macro_rules! dispatch_match {
                     stores,
                     recorder,
                     hooks,
-                    hooks.is_inner_mode(),
+                    hooks.is_inner_mode() ^ $invert,
                     call_context,
                 )
             }
@@ -591,7 +612,7 @@ macro_rules! dispatch_match {
                     stores,
                     recorder,
                     hooks,
-                    stores.box_reg(index).is_none(),
+                    stores.box_reg(index).is_none() ^ $invert,
                     call_context,
                     frame_token,
                 )
@@ -615,7 +636,7 @@ macro_rules! dispatch_match {
                     stores,
                     recorder,
                     hooks,
-                    box_register_has_kind(stores, index, BoxKind::HBox),
+                    box_register_has_kind(stores, index, BoxKind::HBox) ^ $invert,
                     call_context,
                     frame_token,
                 )
@@ -639,7 +660,7 @@ macro_rules! dispatch_match {
                     stores,
                     recorder,
                     hooks,
-                    box_register_has_kind(stores, index, BoxKind::VBox),
+                    box_register_has_kind(stores, index, BoxKind::VBox) ^ $invert,
                     call_context,
                     frame_token,
                 )
@@ -660,7 +681,7 @@ macro_rules! dispatch_match {
                     stores,
                     recorder,
                     hooks,
-                    hooks.input_stream_eof(stores, stream),
+                    hooks.input_stream_eof(stores, stream) ^ $invert,
                     call_context,
                     frame_token,
                 )
@@ -741,6 +762,7 @@ where
         recorder,
         hooks,
         meaning,
+        false,
         DriverExpandNext,
         {
             let context = TracedTokenWord::pack(token, call_origin);
@@ -759,6 +781,34 @@ where
             }
             Ok(Dispatch::Continue)
         }
+    )
+}
+
+pub(crate) fn dispatch_with_hooks_inverted<S, R, H>(
+    token: Token,
+    call_origin: OriginId,
+    input: &mut InputStack<S>,
+    stores: &mut (impl ExpansionState + InputOpenState),
+    recorder: &mut R,
+    hooks: &mut H,
+    meaning: Meaning,
+) -> Result<Dispatch, ExpandError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    dispatch_match!(
+        token,
+        call_origin,
+        input,
+        stores,
+        recorder,
+        hooks,
+        meaning,
+        true,
+        DriverExpandNext,
+        { unreachable!("boolean conditionals cannot open input") }
     )
 }
 
@@ -784,6 +834,7 @@ where
         recorder,
         hooks,
         meaning,
+        false,
         NoInputExpandNext,
         {
             let context = TracedTokenWord::pack(token, call_origin);
@@ -793,6 +844,56 @@ where
                 context,
             })
         }
+    )
+}
+
+pub(crate) fn dispatch_without_input_open_inverted<S, R, H>(
+    token: Token,
+    call_origin: OriginId,
+    input: &mut InputStack<S>,
+    stores: &mut impl ExpansionState,
+    recorder: &mut R,
+    hooks: &mut H,
+    meaning: Meaning,
+) -> Result<Dispatch, ExpandError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    dispatch_match!(
+        token,
+        call_origin,
+        input,
+        stores,
+        recorder,
+        hooks,
+        meaning,
+        true,
+        NoInputExpandNext,
+        { unreachable!("boolean conditionals cannot open input") }
+    )
+}
+
+fn is_boolean_conditional(primitive: ExpandablePrimitive) -> bool {
+    matches!(
+        primitive,
+        ExpandablePrimitive::IfTrue
+            | ExpandablePrimitive::IfFalse
+            | ExpandablePrimitive::If
+            | ExpandablePrimitive::IfCat
+            | ExpandablePrimitive::IfX
+            | ExpandablePrimitive::IfNum
+            | ExpandablePrimitive::IfDim
+            | ExpandablePrimitive::IfOdd
+            | ExpandablePrimitive::IfVMode
+            | ExpandablePrimitive::IfHMode
+            | ExpandablePrimitive::IfMMode
+            | ExpandablePrimitive::IfInner
+            | ExpandablePrimitive::IfVoid
+            | ExpandablePrimitive::IfHBox
+            | ExpandablePrimitive::IfVBox
+            | ExpandablePrimitive::IfEof
     )
 }
 
@@ -811,6 +912,7 @@ pub fn dispatch_expandable_opcode(opcode: ExpandableOpcode) -> Result<(), Expand
         | ExpandableOpcode::The
         | ExpandableOpcode::Unexpanded
         | ExpandableOpcode::Detokenize
+        | ExpandableOpcode::Unless
         | ExpandableOpcode::Input
         | ExpandableOpcode::EndInput
         | ExpandableOpcode::JobName

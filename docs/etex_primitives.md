@@ -25,7 +25,7 @@ pass.
 | `\readline` | missing | Reads like `\read`, assigning space/other catcodes independent of the current regime. |
 | `\scantokens` | missing | Serializes unexpanded general text as a pseudo-file, then reprocesses it through the input mechanism under current catcodes, including `^^` notation. |
 | `\everyeof` | missing | Inserts its tokens once at natural EOF for real and virtual files, but not for `\endinput`. |
-| `\unless` | missing | Negates boolean conditionals and is invalid before `\ifcase` or a non-conditional. |
+| `\unless` | partial | Negates the shared boolean-conditional evaluation path without adding pending input state; focused reference-error parity remains. |
 | `\tracingscantokens` | missing | Positive values trace pseudo-file open and close as specified in section 3.6. |
 
 ## Environmental and conditional enquiries (manual section 3.3)

@@ -122,6 +122,7 @@ pub fn install_etex_expandable_primitives(stores: &mut Universe) {
             "detokenize",
             tex_state::meaning::ExpandablePrimitive::Detokenize,
         ),
+        ("unless", tex_state::meaning::ExpandablePrimitive::Unless),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::ExpandablePrimitive(primitive));
@@ -294,6 +295,7 @@ pub enum ExpandableOpcode {
     The,
     Unexpanded,
     Detokenize,
+    Unless,
     Input,
     EndInput,
     JobName,
@@ -689,6 +691,19 @@ pub trait ExpandNext<S, St: ExpansionState, R, H> {
         R: ReadRecorder,
         H: ExpansionHooks<S>;
 
+    fn dispatch_inverted_raw_token(
+        &mut self,
+        token: TracedTokenWord,
+        input: &mut InputStack<S>,
+        stores: &mut St,
+        recorder: &mut R,
+        hooks: &mut H,
+    ) -> Result<Dispatch, ExpandError>
+    where
+        S: InputSource,
+        R: ReadRecorder,
+        H: ExpansionHooks<S>;
+
     fn dispatch_raw_token_after(
         &mut self,
         saved: TracedTokenWord,
@@ -740,6 +755,30 @@ where
     ) -> Result<Dispatch, ExpandError> {
         dispatch_one_raw_token_with_hooks(token, input, stores, recorder, hooks)
     }
+
+    fn dispatch_inverted_raw_token(
+        &mut self,
+        token: TracedTokenWord,
+        input: &mut InputStack<S>,
+        stores: &mut St,
+        recorder: &mut R,
+        hooks: &mut H,
+    ) -> Result<Dispatch, ExpandError> {
+        let Some(symbol) = expandable_symbol(stores, token) else {
+            return Ok(Dispatch::Deliver(token));
+        };
+        let meaning = stores.meaning(symbol);
+        recorder.record_meaning(symbol, meaning);
+        dispatch::dispatch_without_input_open_inverted(
+            semantic_token(token),
+            token.origin(),
+            input,
+            stores,
+            recorder,
+            hooks,
+            meaning,
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -776,6 +815,30 @@ where
         let meaning = stores.meaning(symbol);
         recorder.record_meaning(symbol, meaning);
         dispatch::dispatch_with_hooks(
+            semantic_token(token),
+            token.origin(),
+            input,
+            stores,
+            recorder,
+            hooks,
+            meaning,
+        )
+    }
+
+    fn dispatch_inverted_raw_token(
+        &mut self,
+        token: TracedTokenWord,
+        input: &mut InputStack<S>,
+        stores: &mut St,
+        recorder: &mut R,
+        hooks: &mut H,
+    ) -> Result<Dispatch, ExpandError> {
+        let Some(symbol) = expandable_symbol(stores, token) else {
+            return Ok(Dispatch::Deliver(token));
+        };
+        let meaning = stores.meaning(symbol);
+        recorder.record_meaning(symbol, meaning);
+        dispatch::dispatch_with_hooks_inverted(
             semantic_token(token),
             token.origin(),
             input,
