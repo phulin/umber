@@ -1595,6 +1595,23 @@ fn etex_showtokens_decomposes_unexpanded_balanced_text() {
 }
 
 #[test]
+fn etex_showtokens_expands_only_to_find_its_opening_brace() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    tex_expand::install_etex_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    crate::install_etex_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\def\\payload{kept}\\showtokens\\expandafter{\\payload}\\end",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("showtokens with expanded opening brace");
+    assert!(terminal_effect_text(&stores).contains("> kept."));
+}
+
+#[test]
 fn etex_showgroups_and_showifs_report_live_checkpointed_stacks() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);

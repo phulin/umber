@@ -385,6 +385,33 @@ where
     .token_list())
 }
 
+/// Scans e-TeX general text while expanding only the tokens that precede its
+/// compulsory opening brace.
+///
+/// This is the `scan_toks(false, false)` entry behavior used by commands such
+/// as `\showtokens`: expansion can expose the opening brace, but the balanced
+/// contents themselves are retained without expansion.
+pub fn scan_general_text_with_expanded_open_with_driver<S, St, H>(
+    input: &mut InputStack<S>,
+    stores: &mut St,
+    hooks: &mut H,
+    context: TracedTokenWord,
+) -> Result<TracedTokenList, ScanToksError>
+where
+    S: InputSource,
+    St: ExpansionState + tex_state::InputOpenState,
+    H: ExpansionHooks<S>,
+{
+    scan_general_text_with_expanded_open(
+        input,
+        stores,
+        &mut NoopRecorder,
+        hooks,
+        &mut DriverExpandNext,
+        context,
+    )
+}
+
 fn expand_replacement_text<'a, S, St, H, E>(
     stores: &mut St,
     replacement_text: TokenListId,

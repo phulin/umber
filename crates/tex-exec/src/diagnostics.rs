@@ -127,15 +127,26 @@ fn catcode_name(cat: Catcode) -> &'static str {
     }
 }
 
-pub(crate) fn execute_showtokens<S>(
+pub(crate) fn execute_showtokens<S, H>(
+    context: TracedTokenWord,
     input: &mut InputStack<S>,
     stores: &mut Universe,
+    hooks: &mut H,
 ) -> Result<(), ExecError>
 where
     S: InputSource,
+    H: ExpansionHooks<S>,
 {
-    let tokens = scan_balanced_raw_text(input, stores, "\\showtokens")?;
-    write_diagnostic(stores, &format!("\n> {}.\n", tokens_text(stores, &tokens)));
+    let tokens = tex_expand::scan::scan_general_text_with_expanded_open_with_driver(
+        input, stores, hooks, context,
+    )?;
+    write_diagnostic(
+        stores,
+        &format!(
+            "\n> {}.\n",
+            tokens_text(stores, stores.tokens(tokens.token_list()))
+        ),
+    );
     Ok(())
 }
 

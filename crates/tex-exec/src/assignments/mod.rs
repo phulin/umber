@@ -1026,7 +1026,7 @@ where
             }
             UnexpandablePrimitive::ShowTokens => {
                 reject_all_prefixes(prefixes)?;
-                diagnostics::execute_showtokens(input, stores)?;
+                diagnostics::execute_showtokens(command.traced, input, stores, hooks)?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::ShowGroups => {
