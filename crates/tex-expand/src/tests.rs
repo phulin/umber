@@ -575,6 +575,20 @@ fn scantokens_relexes_text_with_current_catcodes_and_superscript_notation() {
 }
 
 #[test]
+fn scantokens_splits_raw_newlinechar_into_pseudo_file_records() {
+    // e-TeX manual section 3.2 and etex.ch's pseudo_start: token_show uses
+    // selector=new_string, then new_line_char splits the resulting records.
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    crate::install_etex_expandable_primitives(&mut stores);
+    stores.set_int_param(tex_state::env::banks::IntParam::NEWLINE_CHAR, 10);
+    stores.set_catcode('\n', Catcode::Other);
+    let mut input = InputStack::new(MemoryInput::new("\\scantokens{A^^JB}%"));
+
+    assert_eq!(next_expanded_chars(&mut input, &mut stores), "A B ");
+}
+
+#[test]
 fn tracingscantokens_records_virtual_file_boundaries() {
     let mut stores = Universe::new();
     install_expandable_primitives(&mut stores);
@@ -1809,6 +1823,38 @@ fn meaning_renders_macro_text_and_output_catcodes() {
             ..
         }
     )));
+}
+
+#[test]
+fn meaning_uses_tex_printable_forms_for_nonprinting_macro_tokens() {
+    // tex.web sections 49 and 262: show_token_list uses the preloaded
+    // single-character strings, which make control bytes visible.
+    let mut stores = Universe::new();
+    let macro_cs = stores.intern("m");
+    let params = stores.intern_token_list(&[]);
+    let body = stores.intern_token_list(&[
+        Token::Char {
+            ch: '\r',
+            cat: Catcode::Other,
+        },
+        Token::Char {
+            ch: '\u{7f}',
+            cat: Catcode::Other,
+        },
+        Token::Char {
+            ch: '\u{80}',
+            cat: Catcode::Other,
+        },
+    ]);
+    stores.set_macro_meaning(
+        macro_cs,
+        MacroMeaning::new(MeaningFlags::EMPTY, params, body),
+    );
+
+    assert_eq!(
+        crate::meaning_text(&stores, Token::Cs(macro_cs.symbol())),
+        "macro:->^^M^^?^^80"
+    );
 }
 
 #[test]

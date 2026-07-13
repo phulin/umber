@@ -9,7 +9,7 @@ use tex_lex::{InputSource, InputStack};
 use tex_state::env::banks::IntParam;
 use tex_state::page::{PageContents, PageDimension};
 use tex_state::token::{Catcode, Token, TracedTokenWord};
-use tex_state::{PrintSink, Universe};
+use tex_state::{EffectRecord, PrintSink, Universe};
 
 use crate::mode::IGNORE_DEPTH;
 use crate::node_dump::{DumpConfig, dump_node_list, dump_node_slice};
@@ -258,12 +258,20 @@ where
     H: ExpansionHooks<S>,
 {
     let tokens = scan_balanced_expanded_text(input, stores, hooks, "\\message")?;
-    let text = print_text_with_newlinechar(stores, &tokens_text(stores, &tokens));
+    let text = print_text_with_newlinechar(stores, &message_tokens_text(stores, &tokens));
     if error {
         write_diagnostic(stores, &format!("\n! {text}.\n"));
     } else {
-        let mut output = write_wrapped_message(&text);
-        output.push(' ');
+        let mut column = diagnostic_print_column(stores);
+        let mut output = String::new();
+        if column + text.chars().count() > 77 {
+            output.push('\n');
+            column = 0;
+        } else if column > 0 {
+            output.push(' ');
+            column += 1;
+        }
+        output.push_str(&write_wrapped_message(&text, column));
         write_diagnostic(stores, &output);
     }
     Ok(())
@@ -676,6 +684,18 @@ fn tokens_text(stores: &Universe, tokens: &[Token]) -> String {
     text
 }
 
+fn message_tokens_text(stores: &Universe, tokens: &[Token]) -> String {
+    let mut text = String::new();
+    for &token in tokens {
+        if let Token::Char { ch, .. } = token {
+            text.push(ch);
+        } else {
+            tex_expand::append_token_string_text(stores, token, &mut text);
+        }
+    }
+    text
+}
+
 /// Appends TeX82's printable token form, including the separator that
 /// `print_cs` emits after a control word.
 pub(crate) fn append_token_show_text(stores: &Universe, token: Token, text: &mut String) {
@@ -696,10 +716,35 @@ fn hyphenated_word_text(word: &str, positions: &[usize]) -> String {
     out
 }
 
-fn write_wrapped_message(text: &str) -> String {
+fn diagnostic_print_column(stores: &Universe) -> usize {
+    stores
+        .world()
+        .effect_records()
+        .iter()
+        .filter_map(|record| match record {
+            EffectRecord::StreamWrite {
+                sink: PrintSink::Terminal | PrintSink::TerminalAndLog | PrintSink::Log,
+                text,
+            } => Some(text.as_str()),
+            _ => None,
+        })
+        .fold(0, |column, text| {
+            text.rsplit_once('\n')
+                .map_or(column + text.chars().count(), |(_, tail)| {
+                    tail.chars().count()
+                })
+        })
+}
+
+fn write_wrapped_message(text: &str, initial_column: usize) -> String {
     let mut output = String::new();
-    let mut column = 0usize;
+    let mut column = initial_column;
     for ch in text.chars() {
+        if ch == '\n' {
+            output.push(ch);
+            column = 0;
+            continue;
+        }
         if column == 79 {
             output.push('\n');
             column = 0;

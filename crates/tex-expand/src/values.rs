@@ -983,7 +983,11 @@ fn token_list_text(stores: &impl ExpansionState, token_list: TokenListId) -> Str
 /// receive that space when the character's current catcode is `letter`, and
 /// active characters receive neither an escape nor a trailing space.
 pub fn append_token_show_text(stores: &impl ExpansionState, token: Token, text: &mut String) {
-    text.push_str(&token_text(stores, token));
+    if let Token::Char { ch, .. } = token {
+        append_tex_print_char(ch, text);
+    } else {
+        text.push_str(&token_text(stores, token));
+    }
     let Token::Cs(symbol) = token else {
         return;
     };
@@ -996,6 +1000,40 @@ pub fn append_token_show_text(stores: &impl ExpansionState, token: Token, text: 
     match (chars.next(), chars.next()) {
         (Some(ch), None) if stores.catcode(ch) != Catcode::Letter => {}
         _ => text.push(' '),
+    }
+}
+
+/// Appends the token text TeX builds with `selector = new_string`.
+///
+/// Unlike ordinary diagnostic display, character tokens remain raw; control
+/// sequence spelling and its separator still follow `show_token_list`.
+pub fn append_token_string_text(stores: &impl ExpansionState, token: Token, text: &mut String) {
+    if let Token::Char { ch, .. } = token {
+        text.push(ch);
+    } else {
+        append_token_show_text(stores, token, text);
+    }
+}
+
+/// Appends TeX82's printable string for a character code.
+///
+/// `show_token_list` calls `print(c)`, not `print_char(c)`. The first 256
+/// TeX strings therefore render non-printable bytes as `^^A`, `^^?`, or
+/// lowercase hexadecimal `^^80` forms (tex.web sections 49 and 262).
+fn append_tex_print_char(ch: char, text: &mut String) {
+    let code = ch as u32;
+    match code {
+        0..=31 => {
+            text.push_str("^^");
+            text.push(char::from_u32(code + 64).expect("ASCII control marker"));
+        }
+        32..=126 => text.push(ch),
+        127 => text.push_str("^^?"),
+        128..=255 => {
+            use std::fmt::Write as _;
+            let _ = write!(text, "^^{code:02x}");
+        }
+        _ => text.push(ch),
     }
 }
 

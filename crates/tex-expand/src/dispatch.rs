@@ -260,7 +260,7 @@ macro_rules! dispatch_match {
                 )?;
                 let mut rendered = String::new();
                 for &token in stores.tokens(raw.token_list()) {
-                    append_token_show_text(stores, token, &mut rendered);
+                    crate::append_token_string_text(stores, token, &mut rendered);
                 }
                 Ok(push_rendered_text(
                     stores,
@@ -296,7 +296,7 @@ macro_rules! dispatch_match {
                 )?;
                 let mut text = String::new();
                 for &token in stores.tokens(raw.token_list()) {
-                    append_token_show_text(stores, token, &mut text);
+                    crate::append_token_string_text(stores, token, &mut text);
                 }
                 text.push('\n');
                 let source = S::from_scantokens(text).ok_or_else(|| ExpandError::InputOpen {

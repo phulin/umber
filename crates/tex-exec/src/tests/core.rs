@@ -275,6 +275,24 @@ fn interaction_mode_primitives_update_checkpointed_engine_state() {
 }
 
 #[test]
+fn message_applies_newlinechar_to_raw_expanded_character_tokens() {
+    // tex.web's issue_message builds a string with selector=new_string, so
+    // character tokens remain raw until newlinechar is applied.
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\newlinechar=10\\message{LEFT^^JRIGHT}\\end",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("message with explicit newline");
+
+    assert!(terminal_effect_text(&stores).contains("LEFT\nRIGHT"));
+}
+
+#[test]
 fn bare_internal_quantity_reports_illegal_mode_and_continues() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);
