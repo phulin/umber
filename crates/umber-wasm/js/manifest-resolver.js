@@ -340,7 +340,10 @@ function validateManifest(value) {
 			);
 		}
 		hashLengths.set(entry.sha256, entry.bytes);
-		files[key] = { ...entry, dependencies: [...dependencies] };
+		files[key] = Object.freeze({
+			...entry,
+			dependencies: Object.freeze([...dependencies]),
+		});
 	}
 	const manifestFormats = value.formats ?? {};
 	if (!isRecord(manifestFormats)) {
@@ -374,7 +377,7 @@ function validateManifest(value) {
 				`invalid compatibility metadata for format ${name}`,
 			);
 		}
-		formats[name] = { ...entry };
+		formats[name] = Object.freeze({ ...entry });
 	}
 	for (const [key, entry] of Object.entries(files)) {
 		for (const dependency of entry.dependencies) {
@@ -386,13 +389,13 @@ function validateManifest(value) {
 			}
 		}
 	}
-	return {
+	return Object.freeze({
 		schema: 1,
 		distribution: value.distribution,
 		objectsBaseUrl,
-		files,
-		formats,
-	};
+		files: Object.freeze(files),
+		formats: Object.freeze(formats),
+	});
 }
 
 function validateObjectEntry(entry, label, hashLengths) {

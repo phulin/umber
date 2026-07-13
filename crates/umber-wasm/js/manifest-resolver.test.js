@@ -186,6 +186,40 @@ test("rejects malformed format compatibility metadata", () => {
 	);
 });
 
+test("freezes validated metadata so it cannot redirect later fetches", async () => {
+	const { manifest, bytes } = fixture();
+	manifest.files["tex:plain.tex"].dependencies = [];
+	const calls = [];
+	const resolver = new HttpManifestResolver(manifest, {
+		async fetch(url) {
+			calls.push(url);
+			return response(bytes.plain);
+		},
+		crypto: webcrypto,
+	});
+
+	assert.throws(() => {
+		resolver.manifest.objectsBaseUrl = "https://attacker.invalid/";
+	}, TypeError);
+	assert.throws(() => {
+		resolver.manifest.files["tex:plain.tex"].object =
+			"https://attacker.invalid/object";
+	}, TypeError);
+	assert.throws(() => {
+		resolver.manifest.files["tex:plain.tex"].dependencies.push(
+			"tex:attacker.tex",
+		);
+	}, TypeError);
+	assert.throws(() => {
+		resolver.formatMetadata("plain").formatSchema = 99;
+	}, TypeError);
+
+	await resolver.resolve([{ kind: "tex", name: "plain.tex" }]);
+	assert.deepEqual(calls, [
+		`${manifest.objectsBaseUrl}${manifest.files["tex:plain.tex"].object}`,
+	]);
+});
+
 test("validates status, byte length, and SHA-256 with actionable request errors", async (t) => {
 	const { manifest, bytes } = fixture();
 	manifest.files["tex:plain.tex"].dependencies = [];
