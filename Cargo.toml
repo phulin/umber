@@ -29,6 +29,9 @@ unicode-width = "0.2"
 [profile.test]
 opt-level = 3
 
+[profile.release.package.umber-wasm]
+opt-level = "s"
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 

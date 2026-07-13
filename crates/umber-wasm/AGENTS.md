@@ -13,5 +13,8 @@ the manifest's validated content-addressed object name.
 
 ## Directory map
 
-- `src/lib.rs`: Rust WASM adapter crate root (implemented by `umber2-3ct.5`).
+- `src/lib.rs`: exported `CompilerSession` and TypeScript surface.
+- `src/options.rs`: strict conversion of JavaScript options and request keys.
+- `src/result.rs`: binary-safe conversion of native attempts to discriminated JS results.
+- `tests/it.rs`: wasm-bindgen boundary and lifecycle tests.
 - `js/`: authored ES modules and Node acceptance tests.
