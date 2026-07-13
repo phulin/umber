@@ -50,9 +50,9 @@ pub use universe::{
 };
 pub use world::{
     ContentDomain, ContentHash, ContentIdentity, EffectPos, EffectRecord, EffectRetrySafety,
-    ExecutionTraceEvent, FileContent, InputRecord, InputRecordId, JobClock, PrintSink, ReadTarget,
-    RngState, ShellEscapePolicy, ShellEscapeRecord, StreamBufState, StreamSlot, World, WorldError,
-    WorldSnapshot,
+    ExecutionTraceEvent, FileContent, InputRecord, InputRecordId, JobClock, MemoryOutput,
+    PrintSink, ReadTarget, RngState, ShellEscapePolicy, ShellEscapeRecord, StreamBufState,
+    StreamSlot, World, WorldError, WorldSnapshot,
 };
 
 #[cfg(test)]

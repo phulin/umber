@@ -23,6 +23,8 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `src/input_search.rs`: deterministic driver-owned TeX input and TFM font path resolution through World-backed reads.
 - `src/input_search/tests.rs`: focused TeX input/font area ordering, extension, and input-record coverage.
 - `src/lib.rs`: shared engine session, file hooks, typed effect-before-driver finalization, run helpers, and one-artifact-at-a-time DVI construction.
+- `src/memory_output.rs`: exact committed terminal/log/DVI/aux collection for successful memory-backed runs with aggregate output limits.
+- `src/memory_output/tests.rs`: final-commit idempotence, output accounting, and memory-boundary tests.
 - `src/main.rs`: `umber` binary entry point, CLI argument parsing, `lex-dump`/`expand-dump`/`run` dispatch, token formatting, and real-run file hooks.
 - `tests/it.rs`: integration-test module root wiring the CLI, replay identity, and effectful replay test suites.
 - `tests/it/cli.rs`: integration tests for CLI success, usage errors, corpus dump output, and committed diagnostic/DVI fixture parity.

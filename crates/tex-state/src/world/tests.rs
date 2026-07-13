@@ -541,6 +541,43 @@ fn memory_open_close_without_write_materializes_empty_output() {
 }
 
 #[test]
+fn memory_outputs_enumerate_only_materialized_outputs_in_path_order() {
+    let mut world = World::memory();
+    world
+        .set_memory_file("seed.tex", b"input".to_vec())
+        .expect("seed input");
+    let slot = StreamSlot::new(1);
+
+    world.open_out(slot, "zeta.aux");
+    world.write_text(PrintSink::Stream(slot), "z");
+    world.close_out(slot);
+    world.open_out(slot, "alpha.aux");
+    world.write_text(PrintSink::Stream(slot), "a");
+    world.close_out(slot);
+    world
+        .commit_effects(world.effect_pos())
+        .expect("commit outputs");
+
+    let outputs = world
+        .memory_outputs()
+        .expect("memory output iterator")
+        .map(|output| (output.path().to_owned(), output.bytes().to_vec()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        outputs,
+        vec![
+            (PathBuf::from("alpha.aux"), b"a".to_vec()),
+            (PathBuf::from("zeta.aux"), b"z".to_vec()),
+        ]
+    );
+}
+
+#[test]
+fn real_world_has_no_memory_output_view() {
+    assert!(World::real().memory_outputs().is_none());
+}
+
+#[test]
 fn commit_flushes_prefix_once_and_drops_history() {
     let mut world = World::memory();
     let slot = StreamSlot::new(2);

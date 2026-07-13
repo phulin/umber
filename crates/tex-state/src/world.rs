@@ -175,6 +175,28 @@ impl WriteTarget {
     }
 }
 
+/// One materialized output borrowed from a memory-backed [`World`].
+///
+/// This deliberately exposes only the immutable path and bytes. Backend
+/// storage and effect-timeline control remain private to `World`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MemoryOutput<'a> {
+    path: &'a Path,
+    bytes: &'a [u8],
+}
+
+impl<'a> MemoryOutput<'a> {
+    #[must_use]
+    pub const fn path(self) -> &'a Path {
+        self.path
+    }
+
+    #[must_use]
+    pub const fn bytes(self) -> &'a [u8] {
+        self.bytes
+    }
+}
+
 /// Buffered read-stream target pinned to content read through `World`.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct ReadTarget {
@@ -1246,6 +1268,21 @@ impl World {
             return None;
         };
         memory.outputs.get(path.as_ref()).map(Vec::as_slice)
+    }
+
+    /// Enumerates every materialized memory output in deterministic path order.
+    ///
+    /// Seeded input files are not outputs and are therefore absent. The
+    /// iterator borrows immutable entries and offers no access to the backing
+    /// map or to effect commit/rollback operations.
+    pub fn memory_outputs(&self) -> Option<impl ExactSizeIterator<Item = MemoryOutput<'_>> + '_> {
+        let WorldBackend::Memory(memory) = &self.backend else {
+            return None;
+        };
+        Some(memory.outputs.iter().map(|(path, bytes)| MemoryOutput {
+            path,
+            bytes: bytes.as_slice(),
+        }))
     }
 
     #[must_use]

@@ -13,8 +13,12 @@ use tex_state::{
 };
 
 mod input_search;
+mod memory_output;
 
 pub use input_search::{TexFontSearchPath, TexInputSearchPath};
+pub use memory_output::{
+    MemoryOutputCollectionError, MemoryOutputFile, MemoryRunOutput, collect_final_memory_output,
+};
 
 /// The only checkpoint policy supported by composed engine sessions.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
