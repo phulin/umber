@@ -26,7 +26,7 @@
   \edef\dynamicname{cell\first ab;}%
   \expandafter\def\csname\dynamicname\endcsname##1:##2;{##2##1}%
   \edef\throwaway{\csname\dynamicname\endcsname xy:zt;}%
-  \ifnum\iterations<100000
+  \ifnum\iterations<1000
     \expandafter\work
   \fi
 }

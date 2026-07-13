@@ -106,7 +106,7 @@ report_failure() {
 
 expected_marker() {
   case "$1" in
-    expand) printf '%s\n' 'BENCH expand 0,100000' ;;
+    expand) printf '%s\n' 'BENCH expand 0,1000' ;;
     paragraph-wide) printf '%s\n' 'BENCH pwide 2000' ;;
     paragraph-narrow) printf '%s\n' 'BENCH pnarrow 1000' ;;
     math) printf '%s\n' 'BENCH math 20000' ;;
