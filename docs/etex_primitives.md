@@ -31,8 +31,8 @@ pass.
 ## Environmental and conditional enquiries (manual section 3.3)
 
 `\eTeXversion`, `\eTeXrevision`, `\ifdefined`, and non-creating `\ifcsname`
-are implemented with focused V2 tests. `\currentgrouplevel`,
-`\currentgrouptype`, `\currentiflevel`, `\currentiftype`,
+are implemented with focused V2 tests. `\currentgrouplevel` and
+`\currentgrouptype` now read exact state-layer group markers. `\currentiflevel`, `\currentiftype`,
 `\currentifbranch`, `\iffontchar`, and `\lastnodetype` remain **missing**.
 
 ## Expressions and value enquiries (manual section 3.5)

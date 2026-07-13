@@ -317,11 +317,20 @@ mod primitive_mode_tests {
         let etex_revision = compatibility.intern("eTeXrevision");
         let ifdefined = compatibility.intern("ifdefined");
         let ifcsname = compatibility.intern("ifcsname");
+        let currentgrouplevel = compatibility.intern("currentgrouplevel");
+        let currentgrouptype = compatibility.intern("currentgrouptype");
         assert_eq!(compatibility.meaning(unexpanded), Meaning::Undefined);
         assert_eq!(compatibility.meaning(detokenize), Meaning::Undefined);
         assert_eq!(compatibility.meaning(unless), Meaning::Undefined);
         assert_eq!(compatibility.meaning(scantokens), Meaning::Undefined);
-        for symbol in [etex_version, etex_revision, ifdefined, ifcsname] {
+        for symbol in [
+            etex_version,
+            etex_revision,
+            ifdefined,
+            ifcsname,
+            currentgrouplevel,
+            currentgrouptype,
+        ] {
             assert_eq!(compatibility.meaning(symbol), Meaning::Undefined);
         }
 
@@ -352,6 +361,19 @@ mod primitive_mode_tests {
             extended.meaning(version),
             Meaning::InternalInteger(tex_state::meaning::InternalInteger::ETeXVersion)
         );
+        for (name, value) in [
+            (
+                "currentgrouplevel",
+                tex_state::meaning::InternalInteger::CurrentGroupLevel,
+            ),
+            (
+                "currentgrouptype",
+                tex_state::meaning::InternalInteger::CurrentGroupType,
+            ),
+        ] {
+            let symbol = extended.intern(name);
+            assert_eq!(extended.meaning(symbol), Meaning::InternalInteger(value));
+        }
         for (name, primitive) in [
             ("eTeXrevision", ExpandablePrimitive::ETeXRevision),
             ("ifdefined", ExpandablePrimitive::IfDefined),
