@@ -11,6 +11,7 @@ use std::path::Path;
 
 use tex_lex::{InputSource, InputStack, LexError, MacroArguments, TokenListReplayKind};
 use tex_state::glue::GlueSpec;
+use tex_state::env::banks::TokParam;
 use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::provenance::{DiagnosticSite, InsertedOriginKind, SynthesizedOriginKind};
@@ -123,6 +124,10 @@ pub fn install_etex_expandable_primitives(stores: &mut Universe) {
             tex_state::meaning::ExpandablePrimitive::Detokenize,
         ),
         ("unless", tex_state::meaning::ExpandablePrimitive::Unless),
+        (
+            "scantokens",
+            tex_state::meaning::ExpandablePrimitive::Scantokens,
+        ),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::ExpandablePrimitive(primitive));
@@ -296,6 +301,7 @@ pub enum ExpandableOpcode {
     Unexpanded,
     Detokenize,
     Unless,
+    Scantokens,
     Input,
     EndInput,
     JobName,
@@ -957,8 +963,7 @@ where
 {
     loop {
         let read = match input.next_traced_expansion_token(stores) {
-            Ok(Some(read)) => read,
-            Ok(None) => return Ok(None),
+            Ok(read) => read,
             Err(tex_lex::LexError::InvalidCharacter { .. }) => {
                 // TeX.web `get_next` reports a catcode-15 character and
                 // restarts after consuming it. Keeping recovery here prevents
@@ -966,6 +971,23 @@ where
                 continue;
             }
             Err(error) => return Err(error.into()),
+        };
+        if input.take_natural_source_eof() {
+            let everyeof = stores.tok_param(TokParam::EVERY_EOF);
+            if everyeof != tex_state::ids::TokenListId::EMPTY {
+                if let Some(read) = read {
+                    if read.suppress_expansion() {
+                        push_noexpand_token(input, stores, read.traced_token());
+                    } else {
+                        back_input(input, stores, [read.traced_token()]);
+                    }
+                }
+                input.push_token_list(everyeof, TokenListReplayKind::Inserted);
+                continue;
+            }
+        }
+        let Some(read) = read else {
+            return Ok(None);
         };
         let token = read.token();
         let traced = read.traced_token();

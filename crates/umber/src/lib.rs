@@ -308,15 +308,18 @@ mod primitive_mode_tests {
         let unexpanded = compatibility.intern("unexpanded");
         let detokenize = compatibility.intern("detokenize");
         let unless = compatibility.intern("unless");
+        let scantokens = compatibility.intern("scantokens");
         assert_eq!(compatibility.meaning(unexpanded), Meaning::Undefined);
         assert_eq!(compatibility.meaning(detokenize), Meaning::Undefined);
         assert_eq!(compatibility.meaning(unless), Meaning::Undefined);
+        assert_eq!(compatibility.meaning(scantokens), Meaning::Undefined);
 
         let mut extended = Universe::default();
         prepare_etex_run_stores(&mut extended);
         let unexpanded = extended.intern("unexpanded");
         let detokenize = extended.intern("detokenize");
         let unless = extended.intern("unless");
+        let scantokens = extended.intern("scantokens");
         assert_eq!(
             extended.meaning(unexpanded),
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Unexpanded)
@@ -328,6 +331,10 @@ mod primitive_mode_tests {
         assert_eq!(
             extended.meaning(unless),
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Unless)
+        );
+        assert_eq!(
+            extended.meaning(scantokens),
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Scantokens)
         );
     }
 }

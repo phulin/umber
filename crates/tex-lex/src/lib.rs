@@ -40,6 +40,15 @@ pub trait InputSource {
     fn source_descriptor(&self) -> Option<SourceDescriptor> {
         None
     }
+
+    /// Constructs the virtual input source required by e-TeX `\scantokens`.
+    /// Sources that cannot represent generated text may return `None`.
+    fn from_scantokens(_text: String) -> Option<Self>
+    where
+        Self: Sized,
+    {
+        None
+    }
 }
 
 #[derive(Debug)]
@@ -140,12 +149,16 @@ impl InputSource for MemoryInput {
     fn source_descriptor(&self) -> Option<SourceDescriptor> {
         Some(SourceDescriptor::generated(Arc::clone(&self.backing)))
     }
+
+    fn from_scantokens(text: String) -> Option<Self> {
+        Some(Self::new(text))
+    }
 }
 
 /// Content-addressed input source created from `World` file content.
 #[derive(Debug)]
 pub struct WorldInput {
-    input_record: InputRecordId,
+    input_record: Option<InputRecordId>,
     backing: Arc<[u8]>,
     next_offset: usize,
     invalid_utf8: Option<(usize, usize, usize, usize)>,
@@ -156,6 +169,17 @@ impl WorldInput {
     pub fn from_content(content: FileContent) -> Self {
         let input_record = content.record();
         Self::from_bytes(input_record, content.shared_bytes(), 0)
+    }
+
+    #[must_use]
+    pub fn generated(input: impl Into<String>) -> Self {
+        let input = input.into();
+        Self {
+            input_record: None,
+            backing: Arc::from(input.as_bytes()),
+            next_offset: 0,
+            invalid_utf8: None,
+        }
     }
 
     #[must_use]
@@ -174,7 +198,7 @@ impl WorldInput {
                     }
                 }
                 Self {
-                    input_record,
+                    input_record: Some(input_record),
                     backing: bytes,
                     next_offset,
                     invalid_utf8: None,
@@ -195,7 +219,7 @@ impl WorldInput {
                     .chars()
                     .count();
                 Self {
-                    input_record,
+                    input_record: Some(input_record),
                     backing: bytes,
                     next_offset: 0,
                     invalid_utf8: Some((byte_start, byte_end, line, column)),
@@ -219,14 +243,23 @@ impl InputSource for WorldInput {
     }
 
     fn input_record(&self) -> Option<InputRecordId> {
-        Some(self.input_record)
+        self.input_record
     }
 
     fn source_descriptor(&self) -> Option<SourceDescriptor> {
-        Some(SourceDescriptor::world(
-            self.input_record,
-            u64::try_from(self.backing.len()).unwrap_or(u64::MAX),
+        Some(self.input_record.map_or_else(
+            || SourceDescriptor::generated(Arc::clone(&self.backing)),
+            |record| {
+                SourceDescriptor::world(
+                    record,
+                    u64::try_from(self.backing.len()).unwrap_or(u64::MAX),
+                )
+            },
         ))
+    }
+
+    fn from_scantokens(text: String) -> Option<Self> {
+        Some(Self::generated(text))
     }
 }
 
@@ -587,6 +620,7 @@ pub struct InputStack<S> {
     alignment_inputs: Vec<AlignmentInput>,
     active_macro_invocation: OriginId,
     recently_popped_invocation: Option<OriginId>,
+    natural_source_eof: bool,
 }
 
 /// Proof that one token was delivered directly from a physical source frame.
@@ -703,6 +737,7 @@ impl<S> InputStack<S> {
             alignment_inputs: Vec::new(),
             active_macro_invocation: OriginId::UNKNOWN,
             recently_popped_invocation: None,
+            natural_source_eof: false,
         };
         stack.push_source(source);
         stack
@@ -833,7 +868,14 @@ impl<S> InputStack<S> {
             alignment_inputs: Vec::new(),
             active_macro_invocation,
             recently_popped_invocation: None,
+            natural_source_eof: false,
         })
+    }
+
+    /// Reports and clears whether the most recent token fetch naturally
+    /// exhausted a source. Forced `\endinput` closure does not set this flag.
+    pub fn take_natural_source_eof(&mut self) -> bool {
+        std::mem::take(&mut self.natural_source_eof)
     }
 
     /// Starts one TeX82 alignment-scanner level before `scan_spec`.
@@ -1795,6 +1837,7 @@ where
         stores: &mut impl ExpansionState,
     ) -> Result<Option<TracedExpansionToken>, LexError> {
         self.recently_popped_invocation = None;
+        self.natural_source_eof = false;
         loop {
             let Some(frame_index) = self.current_token_frame_index() else {
                 return Ok(None);
@@ -1850,6 +1893,7 @@ where
                             continue;
                         }
                         if !load_next_line(source, stores)? {
+                            self.natural_source_eof = true;
                             let popped = self.remove_frame(frame_index);
                             if let InputFrame::Source(source) = popped {
                                 self.last_source_frame = Some(LastSourceFrame {

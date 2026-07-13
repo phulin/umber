@@ -478,6 +478,30 @@ fn unless_inverts_boolean_conditionals_but_not_ifcase() {
 }
 
 #[test]
+fn scantokens_relexes_text_with_current_catcodes_and_superscript_notation() {
+    // e-TeX short reference manual section 3.2 requires reprocessing through
+    // the input mechanism, so both current catcodes and ^^ notation apply.
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    crate::install_etex_expandable_primitives(&mut stores);
+    stores.set_catcode('@', Catcode::Active);
+    let active = stores.intern_active_character('@');
+    let empty = stores.intern_token_list(&[]);
+    let body = stores.intern_token_list(&[char_token('A')]);
+    stores.set_macro_meaning(active, MacroMeaning::new(MeaningFlags::EMPTY, empty, body));
+    let mut input = InputStack::new(MemoryInput::new("\\scantokens{@^^42}"));
+
+    assert_eq!(
+        get_x_token(&mut input, &mut stores).expect("active character from pseudo-file"),
+        Some(char_token('A'))
+    );
+    assert_eq!(
+        get_x_token(&mut input, &mut stores).expect("superscript notation from pseudo-file"),
+        Some(char_token('B'))
+    );
+}
+
+#[test]
 fn expansion_error_captures_invocation_chain_before_macro_frame_pops() {
     let mut stores = Universe::new();
     let macro_cs = stores.intern("m");

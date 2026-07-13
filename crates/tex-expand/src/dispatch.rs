@@ -281,6 +281,21 @@ macro_rules! dispatch_match {
                 }
                 expander.dispatch_inverted_raw_token(target, input, stores, recorder, hooks)
             }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Scantokens) => {
+                let raw = crate::scan::scan_general_text(input, stores, call_context)?;
+                let mut text = String::new();
+                for &token in stores.tokens(raw.token_list()) {
+                    append_token_show_text(stores, token, &mut text);
+                }
+                text.push('\n');
+                let source = S::from_scantokens(text).ok_or_else(|| ExpandError::InputOpen {
+                    name: "\\scantokens".to_owned(),
+                    message: "this input source cannot represent a virtual file".to_owned(),
+                    context: call_context,
+                })?;
+                input.push_source(source);
+                Ok(Dispatch::Continue)
+            }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Input) => $input_arm,
             Meaning::ExpandablePrimitive(ExpandablePrimitive::EndInput) => {
                 input.end_current_source_after_current_line();
@@ -913,6 +928,7 @@ pub fn dispatch_expandable_opcode(opcode: ExpandableOpcode) -> Result<(), Expand
         | ExpandableOpcode::Unexpanded
         | ExpandableOpcode::Detokenize
         | ExpandableOpcode::Unless
+        | ExpandableOpcode::Scantokens
         | ExpandableOpcode::Input
         | ExpandableOpcode::EndInput
         | ExpandableOpcode::JobName

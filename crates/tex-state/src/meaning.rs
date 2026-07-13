@@ -179,6 +179,7 @@ pub enum ExpandablePrimitive {
     /// e-TeX's token-to-character general-text primitive.
     Detokenize,
     Unless,
+    Scantokens,
 }
 
 impl ExpandablePrimitive {
@@ -227,6 +228,7 @@ impl ExpandablePrimitive {
             Self::Unexpanded => 39,
             Self::Detokenize => 40,
             Self::Unless => 41,
+            Self::Scantokens => 42,
         }
     }
 
@@ -275,6 +277,7 @@ impl ExpandablePrimitive {
             39 => Some(Self::Unexpanded),
             40 => Some(Self::Detokenize),
             41 => Some(Self::Unless),
+            42 => Some(Self::Scantokens),
             _ => None,
         }
     }
