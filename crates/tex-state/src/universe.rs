@@ -19,8 +19,8 @@ use crate::glue::GlueSpec;
 use crate::hyphenation::{ExceptionSpec, PatternSpec};
 use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, OriginListId, TokenListId};
 use crate::input::{
-    ConditionKind, ConditionLimb, InputFrameSummary, InputSummary, InputSummarySemanticCursor,
-    LexerState, SourceId, TokenListReplayKind, TracedTokenList,
+    ConditionKind, ConditionLimb, InputFrameSummary, InputSemanticRoot, InputSummary, LexerState,
+    SourceId, TokenListReplayKind, TracedTokenList,
 };
 use crate::interner::{ControlSequenceKind, Symbol, SymbolId};
 use crate::macro_store::{MacroDefinitionProvenance, MacroMeaning};
@@ -514,7 +514,7 @@ impl std::error::Error for FormatError {}
 struct StateHashBase {
     store: StoreStateHashCursor,
     world: WorldStateHashCursor,
-    input_summary: InputSummarySemanticCursor,
+    input_summary: InputSemanticRoot,
     input_fragment: StateHashFragment,
     interaction_mode: InteractionMode,
     page: PageStateHashCursor,
@@ -533,7 +533,7 @@ const INTERACTION_PROJECTION_DOMAIN: u64 = 0x696e_7465_7261_6374;
 #[derive(Clone, Debug, Default)]
 struct StateHashProjectionCache {
     world_streams: Option<(Arc<StreamBufState>, StateHashFragment)>,
-    input: Option<(InputSummarySemanticCursor, StateHashFragment)>,
+    input: Option<(InputSemanticRoot, StateHashFragment)>,
     page: PageHashCache,
     #[cfg(test)]
     input_hash_calls: usize,
@@ -710,7 +710,7 @@ impl Universe {
         let state_hash_base = StateHashBase {
             store: stores.state_hash_cursor(),
             world: world.state_hash_cursor(),
-            input_summary: input_summary.semantic_cursor(),
+            input_summary: input_summary.semantic_root(),
             input_fragment,
             interaction_mode: InteractionMode::default(),
             page: page.state_hash_cursor(),
@@ -819,7 +819,7 @@ impl Universe {
         let state_hash_base = StateHashBase {
             store: stores.state_hash_cursor(),
             world: world.state_hash_cursor(),
-            input_summary: input_summary.semantic_cursor(),
+            input_summary: input_summary.semantic_root(),
             input_fragment,
             interaction_mode: mode,
             page: page.state_hash_cursor(),
@@ -876,7 +876,7 @@ impl Universe {
         let store = self.stores.checkpoint();
         let store_cursor = self.stores.state_hash_cursor_from_snapshot(&store);
         let world_cursor = World::state_hash_cursor_from_snapshot(&world);
-        let input_cursor = self.input_summary.semantic_cursor();
+        let input_cursor = self.input_summary.semantic_root();
         let input_fragment = if hash_base.input_summary == input_cursor {
             hash_base.input_fragment
         } else {
@@ -1097,7 +1097,7 @@ impl Universe {
     }
 
     fn hash_input_summary(&self, cache: &mut StateHashProjectionCache) -> StateHashFragment {
-        let cursor = self.input_summary.semantic_cursor();
+        let cursor = self.input_summary.semantic_root();
         if let Some((cached, fragment)) = &cache.input
             && cached == &cursor
         {

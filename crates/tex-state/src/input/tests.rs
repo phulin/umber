@@ -39,19 +39,19 @@ fn input_summary_clone_shares_every_payload_root() {
 
     let cloned = summary.clone();
 
-    assert!(Arc::ptr_eq(&summary.frames, &cloned.frames));
+    assert_eq!(summary.semantic_root, cloned.semantic_root);
     let (
         InputFrameSummary::Source { source: left, .. },
         InputFrameSummary::Source { source: right, .. },
-    ) = (&summary.frames[0], &cloned.frames[0])
+    ) = (&summary.frames()[0], &cloned.frames()[0])
     else {
         panic!("expected source frames");
     };
     assert!(Arc::ptr_eq(&left.normalized_line, &right.normalized_line));
     assert!(Arc::ptr_eq(&left.pending, &right.pending));
 
-    let left = summary.last_source_frame.as_ref().expect("last source");
-    let right = cloned.last_source_frame.as_ref().expect("last source");
+    let left = summary.last_source_frame().expect("last source");
+    let right = cloned.last_source_frame().expect("last source");
     assert!(Arc::ptr_eq(&left.normalized_line, &right.normalized_line));
     assert!(Arc::ptr_eq(&left.pending, &right.pending));
 }
