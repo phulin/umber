@@ -75,7 +75,7 @@ mod stats {
 
     use super::Node;
 
-    pub const NAMES: [&str; 22] = [
+    pub const NAMES: [&str; 23] = [
         "char",
         "lig",
         "kern",
@@ -91,6 +91,7 @@ mod stats {
         "whatsit",
         "math_on",
         "math_off",
+        "direction",
         "math_noad",
         "fraction_noad",
         "math_style",
@@ -118,13 +119,14 @@ mod stats {
             Node::Whatsit(_) => 12,
             Node::MathOn(_) => 13,
             Node::MathOff(_) => 14,
-            Node::MathNoad(_) => 15,
-            Node::FractionNoad(_) => 16,
-            Node::MathStyle(_) => 17,
-            Node::MathChoice(_) => 18,
-            Node::MathList(_) => 19,
-            Node::Nonscript => 20,
-            Node::Adjust(_) => 21,
+            Node::Direction(_) => 15,
+            Node::MathNoad(_) => 16,
+            Node::FractionNoad(_) => 17,
+            Node::MathStyle(_) => 18,
+            Node::MathChoice(_) => 19,
+            Node::MathList(_) => 20,
+            Node::Nonscript => 21,
+            Node::Adjust(_) => 22,
         };
         COUNTS[index].fetch_add(1, Ordering::Relaxed);
     }
