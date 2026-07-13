@@ -208,6 +208,35 @@ fn node_semantic_ids_are_canonical_and_compose_from_children() {
 }
 
 #[test]
+fn frozen_font_semantics_prohibit_late_naming_and_rollback_unseals() {
+    let mut stores = Stores::new();
+    let snapshot = stores.checkpoint();
+    let list = stores.freeze_node_list(&[Node::Char {
+        font: NULL_FONT,
+        ch: 'x',
+    }]);
+    let semantic_id = stores.node_semantic_id(list);
+    let late = stores.intern("late-font-name");
+
+    let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        stores.set_font_identifier_symbol(NULL_FONT, late);
+    }));
+    assert!(rejected.is_err());
+    assert_eq!(stores.node_semantic_id(list), semantic_id);
+
+    let mut fork = stores.clone();
+    let rejected_in_fork = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        fork.set_font_identifier_symbol(NULL_FONT, late);
+    }));
+    assert!(rejected_in_fork.is_err());
+
+    stores.rollback(&snapshot);
+    let late = stores.intern("late-font-name");
+    stores.set_font_identifier_symbol(NULL_FONT, late);
+    assert_eq!(stores.font_identifier_symbol(NULL_FONT), Some(late));
+}
+
+#[test]
 fn node_semantic_ids_follow_rollback_promotion_and_epoch_clone() {
     let mut stores = Stores::new();
     let snapshot = stores.checkpoint();

@@ -2,9 +2,9 @@
 
 /// Version of the schedule-relative checkpoint hash framing.
 ///
-/// Version 2 introduced domain-separated component projections. Hashes are
-/// comparable only when both this version and the named-boundary schedule
-/// match.
+/// Version 3 introduced canonical frozen node-list identities and shallow
+/// node-root composition. Hashes are comparable only when both this version
+/// and the named-boundary schedule match.
 pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 3;
 
 pub mod cell;

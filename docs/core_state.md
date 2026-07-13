@@ -932,7 +932,10 @@ pub struct Snapshot {
   complete per-live-font fragment combines it with the optional identifier's
   namespace and permanent spelling when that one-time assignment crosses the
   aggregate boundary. Repeated node hashing applies this complete fragment
-  without resolving the identifier again. Rollback truncates new live mappings
+  without resolving the identifier again. Freezing the first character or
+  ligature node seals that font's complete identity, so its identifier must be
+  assigned first and an already-published node identity can never become stale.
+  Rollback truncates new live mappings
   and restores identifier assignments to the canonical unnamed fragment; forks
   copy the generation-safe live table and format loading rebuilds it through the
   same aggregate assignment path. Diagnostic provenance records

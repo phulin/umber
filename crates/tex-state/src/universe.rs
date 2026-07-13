@@ -1825,6 +1825,13 @@ impl Universe {
         self.stores.font_identifier_symbol(id)
     }
 
+    /// Assigns the font's one-time control-sequence identifier.
+    ///
+    /// # Panics
+    ///
+    /// Panics when an unnamed font has already entered a frozen character or
+    /// ligature node, because that node's published semantic identity includes
+    /// the font's complete identity.
     pub fn set_font_identifier_symbol(
         &mut self,
         id: FontId,

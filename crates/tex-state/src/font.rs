@@ -43,6 +43,7 @@ pub struct MissingCharacter {
 pub(crate) struct FontStoreMark {
     pub(crate) len: u32,
     identifier_writes_len: u32,
+    semantic_seal_writes_len: u32,
     identities: IdentityMark,
 }
 
@@ -72,6 +73,8 @@ pub(crate) struct FontStore {
     fonts: Vec<LoadedFont>,
     identifiers: Vec<Option<SymbolId>>,
     identifier_writes: Vec<FontId>,
+    semantic_sealed: Vec<bool>,
+    semantic_seal_writes: Vec<FontId>,
     by_key: BTreeMap<FontKey, FontId>,
     /// Append-only derived fragments keyed by semantic content. Rollback only
     /// truncates the live slot-to-fragment mapping, so a later equivalent load
@@ -89,6 +92,8 @@ impl Clone for FontStore {
             fonts: self.fonts.clone(),
             identifiers: self.identifiers.clone(),
             identifier_writes: self.identifier_writes.clone(),
+            semantic_sealed: self.semantic_sealed.clone(),
+            semantic_seal_writes: self.semantic_seal_writes.clone(),
             by_key: self.by_key.clone(),
             hash_fragments: self.hash_fragments.clone(),
             hash_fragments_by_key: self.hash_fragments_by_key.clone(),
@@ -119,6 +124,8 @@ impl FontStore {
             fonts: vec![null],
             identifiers: vec![None],
             identifier_writes: Vec::new(),
+            semantic_sealed: vec![false],
+            semantic_seal_writes: Vec::new(),
             by_key: BTreeMap::new(),
             hash_fragments: vec![hash_fragment],
             hash_fragments_by_key: BTreeMap::from([(hash_fragment_key, 0)]),
@@ -158,6 +165,7 @@ impl FontStore {
         );
         self.fonts.push(font);
         self.identifiers.push(None);
+        self.semantic_sealed.push(false);
         self.font_hash_fragments.push(hash_fragment);
         self.complete_hash_fragments
             .push(complete_font_hash_fragment(
@@ -183,10 +191,41 @@ impl FontStore {
             .get_mut(id.raw() as usize)
             .expect("font id is not live in this Universe timeline");
         if identifier.is_none() {
+            assert!(
+                !self.semantic_sealed[id.raw() as usize],
+                "font identifier must be assigned before the font enters a frozen node list"
+            );
             *identifier = Some(symbol);
             self.complete_hash_fragments[id.raw() as usize] = complete_hash_fragment;
             self.identifier_writes.push(id);
         }
+    }
+
+    /// Prevents the rollback-coupled identifier from changing after its
+    /// complete semantics have been captured by a frozen node-list identity.
+    pub(crate) fn seal_semantic_identity(&mut self, id: FontId) {
+        assert!(
+            self.contains(id),
+            "font id is not live in this Universe timeline"
+        );
+        let sealed = &mut self.semantic_sealed[id.raw() as usize];
+        if !*sealed {
+            *sealed = true;
+            self.semantic_seal_writes.push(id);
+        }
+    }
+
+    pub(crate) fn truncate_semantic_seals_to(&mut self, mark: usize) {
+        assert!(
+            mark <= self.semantic_seal_writes.len(),
+            "font semantic-seal mark is not an ancestor"
+        );
+        for id in self.semantic_seal_writes[mark..].iter().copied() {
+            if self.contains(id) {
+                self.semantic_sealed[id.raw() as usize] = false;
+            }
+        }
+        self.semantic_seal_writes.truncate(mark);
     }
 
     #[must_use]
@@ -250,6 +289,8 @@ impl FontStore {
             len: u32::try_from(self.fonts.len()).expect("font store exceeds u32 ids"),
             identifier_writes_len: u32::try_from(self.identifier_writes.len())
                 .expect("font identifier write log exceeds u32 entries"),
+            semantic_seal_writes_len: u32::try_from(self.semantic_seal_writes.len())
+                .expect("font semantic-seal write log exceeds u32 entries"),
             identities: self.identities.watermark(),
         }
     }
@@ -271,8 +312,10 @@ impl FontStore {
         }
         self.identifier_writes
             .truncate(mark.identifier_writes_len as usize);
+        self.truncate_semantic_seals_to(mark.semantic_seal_writes_len as usize);
         self.fonts.truncate(mark.len as usize);
         self.identifiers.truncate(mark.len as usize);
+        self.semantic_sealed.truncate(mark.len as usize);
         self.font_hash_fragments.truncate(mark.len as usize);
         self.complete_hash_fragments.truncate(mark.len as usize);
         self.by_key.retain(|_, id| id.raw() < mark.len);

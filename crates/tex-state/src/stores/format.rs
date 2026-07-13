@@ -381,7 +381,7 @@ impl StoreFormat {
                 .into_iter()
                 .map(|node| node.restore(&stores, &node_ids))
                 .collect::<Result<Vec<_>, _>>()?;
-            let semantic_id = stores.compute_node_semantic_id(&nodes);
+            let semantic_id = stores.compute_and_seal_node_semantic_id(&nodes);
             let id = stores.nodes.append_with_semantic_id(&nodes, semantic_id);
             node_ids.insert(list.key, id);
         }
