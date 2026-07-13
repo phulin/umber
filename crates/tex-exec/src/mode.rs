@@ -7,6 +7,7 @@ use tex_state::ids::TokenListId;
 use tex_state::math::FractionThickness;
 use tex_state::node::Node;
 use tex_state::scaled::Scaled;
+use tex_state::{EngineBoundaryHasher, Universe};
 
 use crate::ExecError;
 
@@ -529,6 +530,136 @@ impl ModeNestSummary {
     #[must_use]
     pub fn levels(&self) -> &[ModeLevelSummary] {
         &self.levels
+    }
+
+    pub(crate) fn shares_root_with(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.levels, &other.levels)
+    }
+
+    pub(crate) fn semantic_fingerprint(&self, universe: &Universe) -> u64 {
+        universe.engine_boundary_hash(0x6d6f_6465_5f6e_6573, |projection| {
+            projection.usize(self.levels.len());
+            for level in self.levels.iter() {
+                hash_mode(level.mode, projection);
+                hash_mode_list(&level.list, projection);
+            }
+        })
+    }
+}
+
+fn hash_mode(mode: Mode, projection: &mut EngineBoundaryHasher<'_>) {
+    projection.u8(match mode {
+        Mode::Vertical => 0,
+        Mode::InternalVertical => 1,
+        Mode::Horizontal => 2,
+        Mode::RestrictedHorizontal => 3,
+        Mode::Math => 4,
+        Mode::DisplayMath => 5,
+    });
+}
+
+fn hash_mode_list(list: &ModeList, projection: &mut EngineBoundaryHasher<'_>) {
+    projection.nodes(&list.nodes);
+    match &list.align_state {
+        Some(align) => {
+            projection.bool(true);
+            projection.u8(match align.kind {
+                AlignmentKind::HAlign => 0,
+                AlignmentKind::VAlign => 1,
+            });
+            match align.pack_spec {
+                AlignmentPackSpec::Natural => projection.u8(0),
+                AlignmentPackSpec::Exactly(size) => {
+                    projection.u8(1);
+                    projection.i32(size.raw());
+                }
+                AlignmentPackSpec::Spread(size) => {
+                    projection.u8(2);
+                    projection.i32(size.raw());
+                }
+            }
+            projection.usize(align.columns.len());
+            for column in &align.columns {
+                projection.token_list(column.u_template);
+                projection.token_list(column.v_template);
+            }
+            projection.usize(align.tabskips.len());
+            for &tabskip in &align.tabskips {
+                projection.glue(tabskip);
+            }
+            projection.glue(align.default_tabskip);
+            hash_optional_usize(align.loop_start, projection);
+            projection.usize(align.current_row);
+            projection.usize(align.current_col);
+            projection.u16(align.current_span);
+            projection.i32(align.brace_depth);
+            projection.bool(align.suppress_redundant_cr);
+        }
+        None => projection.bool(false),
+    }
+    match &list.incomplete_fraction {
+        Some(fraction) => {
+            projection.bool(true);
+            projection.node_list(fraction.numerator);
+            match fraction.thickness {
+                FractionThickness::Default => projection.u8(0),
+                FractionThickness::Explicit(size) => {
+                    projection.u8(1);
+                    projection.i32(size.raw());
+                }
+            }
+            hash_optional_u32(fraction.left_delimiter, projection);
+            hash_optional_u32(fraction.right_delimiter, projection);
+        }
+        None => projection.bool(false),
+    }
+    projection.bool(list.display_interrupt.is_some());
+    match list.display_eq_no {
+        Some(eq_no) => {
+            projection.bool(true);
+            projection.u8(match eq_no.side {
+                EqNoSide::Left => 0,
+                EqNoSide::Right => 1,
+            });
+            projection.node_list(eq_no.display);
+        }
+        None => projection.bool(false),
+    }
+    match list.prev_depth {
+        Some(depth) => {
+            projection.bool(true);
+            projection.i32(depth.raw());
+        }
+        None => projection.bool(false),
+    }
+    projection.i32(list.prev_graf);
+    projection.usize(list.pending_hchars.len());
+    for pending in list.pending_hchars.iter() {
+        projection.font(pending.font);
+        projection.u32(pending.ch as u32);
+    }
+    projection.i32(list.space_factor);
+    projection.bool(list.no_boundary);
+    projection.u8(list.hyphen_language);
+}
+
+fn hash_optional_usize(value: Option<usize>, projection: &mut EngineBoundaryHasher<'_>) {
+    match value {
+        Some(value) => {
+            projection.bool(true);
+            projection.usize(value);
+        }
+        None => projection.bool(false),
+    }
+}
+
+fn hash_optional_u32(value: Option<u32>, projection: &mut EngineBoundaryHasher<'_>) {
+    match value {
+        Some(value) => {
+            projection.bool(true);
+            projection.u32(value);
+        }
+        None => projection.bool(false),
     }
 }
 

@@ -2,18 +2,23 @@ use super::{SnapshotOwner, StoreSnapshot, Stores};
 use crate::cell::{BankTag, CellId};
 use crate::glue::GlueSpec;
 use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, TokenListId};
-use crate::interner::{ControlSequenceKind, Symbol};
+use crate::interner::{ControlSequenceKind, Symbol, SymbolId};
 use crate::journal::Entry;
 use crate::meaning::{
     ExpandablePrimitive, InternalInteger, Meaning, RawMeaning, UnexpandablePrimitive,
 };
 use crate::node::{BoxNode, GlueKind, KernKind, LeaderPayload, Node, Sign, Whatsit};
 use crate::node_arena::NodeRef;
-use crate::state_hash::StateHasher;
+use crate::state_hash::{StateHashFragment, StateHasher};
 use crate::token::Catcode;
 use std::collections::{BTreeMap, VecDeque};
 
 const STORE_SLICE_DOMAIN: u64 = 0x7374_6f72_6573_6c63;
+const JOURNAL_SLICE_DOMAIN: u64 = 0x6a6f_7572_6e61_6c73;
+const CODE_TABLES_DOMAIN: u64 = 0x636f_6465_7461_626c;
+const HYPHENATION_DOMAIN: u64 = 0x6879_7068_656e_6174;
+const PREPARED_MAG_DOMAIN: u64 = 0x7072_6570_5f6d_6167;
+const FONT_SELECTION_DOMAIN: u64 = 0x666f_6e74_5f73_656c;
 const CELL_VALUE_DOMAIN: u64 = 0x6365_6c6c_7661_6c75;
 const NODE_LIST_MAX_ITEMS: usize = 1_000_000;
 const FONT_DIMEN_BITS: u32 = 15;
@@ -27,6 +32,9 @@ const FONT_DIMEN_MASK: u32 = (1 << FONT_DIMEN_BITS) - 1;
 #[derive(Debug, Default)]
 pub(super) struct SemanticHashCache {
     cells: BTreeMap<CellId, CachedCellHash>,
+    code_tables: Option<CachedProjection<crate::code_tables::CodeTablesSemanticCursor>>,
+    hyphenation: Option<CachedProjection<HyphenationSemanticCursor>>,
+    last_loaded_font: Option<CachedProjection<FontSelectionCursor>>,
     first_old: Vec<(CellId, usize, u64)>,
     changed_cells: Vec<CellId>,
     node_frames: Vec<NodeFrame>,
@@ -38,6 +46,9 @@ impl Clone for SemanticHashCache {
     fn clone(&self) -> Self {
         Self {
             cells: self.cells.clone(),
+            code_tables: self.code_tables.clone(),
+            hyphenation: self.hyphenation.clone(),
+            last_loaded_font: self.last_loaded_font.clone(),
             first_old: Vec::new(),
             changed_cells: Vec::new(),
             node_frames: Vec::new(),
@@ -50,6 +61,9 @@ impl Clone for SemanticHashCache {
 impl SemanticHashCache {
     pub(super) fn clear(&mut self) {
         self.cells.clear();
+        self.code_tables = None;
+        self.hyphenation = None;
+        self.last_loaded_font = None;
         self.first_old.clear();
         self.changed_cells.clear();
         self.node_frames.clear();
@@ -76,6 +90,31 @@ struct CachedCellHash {
     value_hash: u64,
 }
 
+#[derive(Clone, Debug)]
+struct CachedProjection<K> {
+    key: K,
+    fragment: StateHashFragment,
+}
+
+fn cached_projection<K: Clone + Eq>(
+    cached: &mut Option<CachedProjection<K>>,
+    key: &K,
+    domain: u64,
+    build: impl FnOnce(&mut StateHasher),
+) -> StateHashFragment {
+    if let Some(cached) = cached
+        && cached.key == *key
+    {
+        return cached.fragment;
+    }
+    let fragment = StateHashFragment::from_builder(domain, build);
+    *cached = Some(CachedProjection {
+        key: key.clone(),
+        fragment,
+    });
+    fragment
+}
+
 /// Cursor into store-owned state for semantic convergence hashing.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct StoreStateHashCursor {
@@ -84,7 +123,7 @@ pub(crate) struct StoreStateHashCursor {
     code_tables: crate::code_tables::CodeTablesSemanticCursor,
     hyphenation_root: HyphenationSemanticCursor,
     prepared_mag: Option<i32>,
-    last_loaded_font: FontSemanticKey,
+    last_loaded_font: FontSelectionCursor,
 }
 
 #[derive(Clone, Debug)]
@@ -98,6 +137,12 @@ impl PartialEq for HyphenationSemanticCursor {
 
 impl Eq for HyphenationSemanticCursor {}
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct FontSelectionCursor {
+    font: FontId,
+    identifier: Option<SymbolId>,
+}
+
 impl Stores {
     #[must_use]
     pub(crate) fn state_hash_cursor(&self) -> StoreStateHashCursor {
@@ -107,7 +152,7 @@ impl Stores {
             code_tables: self.code_tables.semantic_cursor(),
             hyphenation_root: HyphenationSemanticCursor(std::sync::Arc::clone(&self.hyphenation)),
             prepared_mag: self.prepared_mag,
-            last_loaded_font: self.font_semantic_key(self.last_loaded_font),
+            last_loaded_font: self.font_selection_cursor(self.last_loaded_font),
         }
     }
 
@@ -126,7 +171,7 @@ impl Stores {
                 &snapshot.hyphenation,
             )),
             prepared_mag: snapshot.prepared_mag,
-            last_loaded_font: self.font_semantic_key(snapshot.last_loaded_font),
+            last_loaded_font: self.font_selection_cursor(snapshot.last_loaded_font),
         }
     }
 
@@ -145,7 +190,7 @@ impl Stores {
             code_tables: cursor.code_tables.clone(),
             hyphenation_root: cursor.hyphenation_root.clone(),
             prepared_mag: cursor.prepared_mag,
-            last_loaded_font: cursor.last_loaded_font.clone(),
+            last_loaded_font: cursor.last_loaded_font,
         }
     }
 
@@ -161,7 +206,7 @@ impl Stores {
             code_tables: cursor.code_tables.clone(),
             hyphenation_root: cursor.hyphenation_root.clone(),
             prepared_mag: cursor.prepared_mag,
-            last_loaded_font: cursor.last_loaded_font.clone(),
+            last_loaded_font: cursor.last_loaded_font,
         }
     }
 
@@ -182,7 +227,7 @@ impl Stores {
             code_tables: cursor.code_tables.clone(),
             hyphenation_root: cursor.hyphenation_root.clone(),
             prepared_mag: cursor.prepared_mag,
-            last_loaded_font: cursor.last_loaded_font.clone(),
+            last_loaded_font: cursor.last_loaded_font,
         }
     }
 
@@ -207,28 +252,49 @@ impl Stores {
                 .saturating_sub(start.journal_pos.raw()) as usize,
         );
 
-        let mut hasher = StateHasher::new(STORE_SLICE_DOMAIN);
         let mut cache = std::mem::take(&mut self.semantic_hash_cache);
-        self.hash_journal_changed_cells(start, end, &mut cache, &mut hasher);
-        self.semantic_hash_cache = cache;
-        self.hash_code_tables(&mut hasher);
-        self.hash_hyphenation_slice(start, &mut hasher);
-        hash_prepared_mag(self.prepared_mag, &mut hasher);
-        hash_font_semantic_key(&self.font_semantic_key(self.last_loaded_font), &mut hasher);
-        hasher.finish()
-    }
-
-    fn hash_hyphenation_slice(&mut self, start: &StoreStateHashCursor, hasher: &mut StateHasher) {
-        hasher.tag(0x21);
-        let changed = !std::sync::Arc::ptr_eq(&start.hyphenation_root.0, &self.hyphenation);
-        hasher.bool(changed);
-        if changed {
-            #[cfg(test)]
-            {
-                self.semantic_hash_cache.hyphenation_hash_calls += 1;
-            }
-            self.hyphenation.hash_semantic(hasher);
+        let journal = StateHashFragment::from_builder(JOURNAL_SLICE_DOMAIN, |projection| {
+            self.hash_journal_changed_cells(start, end, &mut cache, projection);
+        });
+        let end_cursor = self.state_hash_cursor_from_snapshot(end);
+        let code_tables = cached_projection(
+            &mut cache.code_tables,
+            &end_cursor.code_tables,
+            CODE_TABLES_DOMAIN,
+            |projection| self.hash_code_tables(projection),
+        );
+        #[cfg(test)]
+        let rehash_hyphenation = cache
+            .hyphenation
+            .as_ref()
+            .is_none_or(|cached| cached.key != end_cursor.hyphenation_root);
+        let hyphenation = cached_projection(
+            &mut cache.hyphenation,
+            &end_cursor.hyphenation_root,
+            HYPHENATION_DOMAIN,
+            |projection| self.hyphenation.hash_semantic(projection),
+        );
+        #[cfg(test)]
+        if rehash_hyphenation {
+            cache.hyphenation_hash_calls += 1;
         }
+        let prepared_mag = StateHashFragment::from_builder(PREPARED_MAG_DOMAIN, |projection| {
+            hash_prepared_mag(self.prepared_mag, projection);
+        });
+        let last_loaded_font = cached_projection(
+            &mut cache.last_loaded_font,
+            &end_cursor.last_loaded_font,
+            FONT_SELECTION_DOMAIN,
+            |projection| self.hash_font_fields(self.last_loaded_font, projection),
+        );
+        self.semantic_hash_cache = cache;
+        let mut hasher = StateHasher::new(STORE_SLICE_DOMAIN);
+        journal.apply(&mut hasher);
+        code_tables.apply(&mut hasher);
+        hyphenation.apply(&mut hasher);
+        prepared_mag.apply(&mut hasher);
+        last_loaded_font.apply(&mut hasher);
+        hasher.finish()
     }
 
     pub(crate) fn hash_token_list_semantic(&self, id: TokenListId, hasher: &mut StateHasher) {
@@ -264,6 +330,14 @@ impl Stores {
 
     pub(crate) fn hash_glue_semantic(&self, id: GlueId, hasher: &mut StateHasher) {
         self.hash_glue(id, hasher);
+    }
+
+    pub(crate) fn hash_node_list_semantic(&self, id: NodeListId, hasher: &mut StateHasher) {
+        self.hash_node_list(id, hasher, &mut Vec::new());
+    }
+
+    pub(crate) fn hash_font_semantic(&self, id: FontId, hasher: &mut StateHasher) {
+        self.hash_font(id, hasher);
     }
 
     fn assert_valid_hash_cursor(&self, cursor: &StoreStateHashCursor) {
@@ -1067,6 +1141,15 @@ impl Stores {
             immutable_hash,
             identifier,
         }
+    }
+
+    fn font_selection_cursor(&self, font: FontId) -> FontSelectionCursor {
+        self.assert_live_font(font);
+        let identifier = self.fonts.identifier(font);
+        if let Some(symbol) = identifier {
+            self.assert_live_symbol(symbol);
+        }
+        FontSelectionCursor { font, identifier }
     }
 
     fn hash_current_font_word(&self, word: u64, hasher: &mut StateHasher) {

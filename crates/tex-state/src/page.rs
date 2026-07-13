@@ -4,9 +4,40 @@ use crate::glue::GlueSpec;
 use crate::ids::{GlueId, TokenListId};
 use crate::node::Node;
 use crate::scaled::Scaled;
-use crate::state_hash::StateHasher;
+use crate::state_hash::{StateHashFragment, StateHasher};
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
+
+const PAGE_PROJECTION_DOMAIN: u64 = 0x7061_6765_5f70_726a;
+const PAGE_SCALARS_DOMAIN: u64 = 0x7061_6765_5f73_6361;
+const PAGE_INSERTIONS_DOMAIN: u64 = 0x7061_6765_5f69_6e73;
+const PAGE_MARK_CLASSES_DOMAIN: u64 = 0x7061_6765_5f6d_6172;
+const PAGE_CONTRIBUTION_DOMAIN: u64 = 0x7061_6765_5f63_6f6e;
+const PAGE_CURRENT_DOMAIN: u64 = 0x7061_6765_5f63_7572;
+const PAGE_DISCARDS_DOMAIN: u64 = 0x7061_6765_5f64_6973;
+const SPLIT_DISCARDS_DOMAIN: u64 = 0x7370_6c69_745f_6469;
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct PageHashCache {
+    insertions: Option<CachedArcProjection<Vec<PageInsertion>>>,
+    mark_classes: Option<CachedArcProjection<BTreeMap<u16, MarkClassState>>>,
+    contribution: Option<CachedArcProjection<VecDeque<Node>>>,
+    current_page: Option<CachedArcProjection<Vec<Node>>>,
+    page_discards: Option<CachedArcProjection<Vec<Node>>>,
+    split_discards: Option<CachedArcProjection<Vec<Node>>>,
+}
+
+impl PageHashCache {
+    pub(crate) fn clear(&mut self) {
+        *self = Self::default();
+    }
+}
+
+#[derive(Clone, Debug)]
+struct CachedArcProjection<T> {
+    root: Arc<T>,
+    fragment: StateHashFragment,
+}
 
 /// TeX's `awful_bad` sentinel, `2^30 - 1`.
 pub const AWFUL_BAD: i32 = 0o7777777777;
@@ -724,105 +755,159 @@ impl PageBuilderState {
     pub(crate) fn hash_semantic(
         &self,
         hasher: &mut StateHasher,
+        cache: &mut PageHashCache,
         mut hash_queue: impl FnMut(&VecDeque<Node>, &mut StateHasher),
         mut hash_nodes: impl FnMut(&[Node], &mut StateHasher),
         mut hash_glue: impl FnMut(GlueId, &mut StateHasher),
         mut hash_tokens: impl FnMut(TokenListId, &mut StateHasher),
     ) {
-        hasher.tag(0xa0);
-        hasher.u8(match self.contents {
-            PageContents::Empty => 0,
-            PageContents::InsertsOnly => 1,
-            PageContents::BoxThere => 2,
+        let scalars = StateHashFragment::from_builder(PAGE_SCALARS_DOMAIN, |projection| {
+            projection.u8(match self.contents {
+                PageContents::Empty => 0,
+                PageContents::InsertsOnly => 1,
+                PageContents::BoxThere => 2,
+            });
+            for dimension in [
+                PageDimension::Goal,
+                PageDimension::Total,
+                PageDimension::Stretch,
+                PageDimension::FilStretch,
+                PageDimension::FillStretch,
+                PageDimension::FilllStretch,
+                PageDimension::Shrink,
+                PageDimension::Depth,
+            ] {
+                projection.i32(self.raw_dimension(dimension).raw());
+            }
+            projection.i32(self.page_max_depth.raw());
+            match self.last_glue {
+                Some(id) => {
+                    projection.bool(true);
+                    hash_glue(id, projection);
+                }
+                None => projection.bool(false),
+            }
+            projection.i32(self.last_penalty);
+            projection.i32(self.last_kern.raw());
+            projection.i32(self.last_node_type);
+            projection.i32(self.insert_penalties);
+            projection.i32(self.dead_cycles);
+            projection.i32(self.least_page_cost);
+            hash_optional_usize(self.best_page_break.map(PageBreak::index), projection);
+            projection.i32(self.best_size.raw());
+            match self.fire_up {
+                Some(fire_up) => {
+                    projection.bool(true);
+                    projection.usize(fire_up.best_break().index());
+                    projection.i32(fire_up.best_size().raw());
+                    projection.usize(fire_up.trigger().index());
+                }
+                None => projection.bool(false),
+            }
+            for mark in [
+                self.top_mark,
+                self.first_mark,
+                self.bot_mark,
+                self.split_first_mark,
+                self.split_bot_mark,
+            ] {
+                hash_tokens(mark, projection);
+            }
         });
-        for dimension in [
-            PageDimension::Goal,
-            PageDimension::Total,
-            PageDimension::Stretch,
-            PageDimension::FilStretch,
-            PageDimension::FillStretch,
-            PageDimension::FilllStretch,
-            PageDimension::Shrink,
-            PageDimension::Depth,
-        ] {
-            hasher.i32(self.raw_dimension(dimension).raw());
-        }
-        hasher.i32(self.page_max_depth.raw());
-        match self.last_glue {
-            Some(id) => {
-                hasher.bool(true);
-                hash_glue(id, hasher);
-            }
-            None => hasher.bool(false),
-        }
-        hasher.i32(self.last_penalty);
-        hasher.i32(self.last_kern.raw());
-        hasher.i32(self.last_node_type);
-        hasher.i32(self.insert_penalties);
-        hasher.i32(self.dead_cycles);
-        hasher.i32(self.least_page_cost);
-        match self.best_page_break {
-            Some(page_break) => {
-                hasher.bool(true);
-                hasher.usize(page_break.index());
-            }
-            None => hasher.bool(false),
-        }
-        hasher.i32(self.best_size.raw());
-        match self.fire_up {
-            Some(fire_up) => {
-                hasher.bool(true);
-                hasher.usize(fire_up.best_break().index());
-                hasher.i32(fire_up.best_size().raw());
-                hasher.usize(fire_up.trigger().index());
-            }
-            None => hasher.bool(false),
-        }
-        hasher.usize(self.insertions.len());
-        for insertion in self.insertions.iter() {
-            hasher.u16(insertion.class);
-            match insertion.status {
-                PageInsertionStatus::Inserting => hasher.u8(0),
-                PageInsertionStatus::SplitUp {
-                    broken_ins_index,
-                    broken_at,
-                } => {
-                    hasher.u8(1);
-                    hasher.usize(broken_ins_index);
-                    match broken_at {
-                        Some(index) => {
-                            hasher.bool(true);
-                            hasher.usize(index);
+        let insertions = project_arc(
+            &mut cache.insertions,
+            &self.insertions,
+            PAGE_INSERTIONS_DOMAIN,
+            |projection| {
+                projection.usize(self.insertions.len());
+                for insertion in self.insertions.iter() {
+                    projection.u16(insertion.class);
+                    match insertion.status {
+                        PageInsertionStatus::Inserting => projection.u8(0),
+                        PageInsertionStatus::SplitUp {
+                            broken_ins_index,
+                            broken_at,
+                        } => {
+                            projection.u8(1);
+                            projection.usize(broken_ins_index);
+                            hash_optional_usize(broken_at, projection);
                         }
-                        None => hasher.bool(false),
+                    }
+                    projection.i32(insertion.height.raw());
+                    hash_optional_usize(insertion.last_ins_index, projection);
+                    hash_optional_usize(insertion.best_ins_index, projection);
+                }
+            },
+        );
+        let mark_classes = project_arc(
+            &mut cache.mark_classes,
+            &self.mark_classes,
+            PAGE_MARK_CLASSES_DOMAIN,
+            |projection| {
+                projection.usize(self.mark_classes.len());
+                for (&class, marks) in self.mark_classes.iter() {
+                    projection.u16(class);
+                    for mark in marks.marks {
+                        hash_tokens(mark, projection);
                     }
                 }
-            }
-            hasher.i32(insertion.height.raw());
-            hash_optional_usize(insertion.last_ins_index, hasher);
-            hash_optional_usize(insertion.best_ins_index, hasher);
-        }
-        for mark in [
-            self.top_mark,
-            self.first_mark,
-            self.bot_mark,
-            self.split_first_mark,
-            self.split_bot_mark,
-        ] {
-            hash_tokens(mark, hasher);
-        }
-        hasher.usize(self.mark_classes.len());
-        for (&class, marks) in self.mark_classes.iter() {
-            hasher.u16(class);
-            for mark in marks.marks {
-                hash_tokens(mark, hasher);
-            }
-        }
-        hash_queue(&self.contribution, hasher);
-        hash_nodes(&self.current_page, hasher);
-        hash_nodes(&self.page_discards, hasher);
-        hash_nodes(&self.split_discards, hasher);
+            },
+        );
+        let contribution = project_arc(
+            &mut cache.contribution,
+            &self.contribution,
+            PAGE_CONTRIBUTION_DOMAIN,
+            |projection| hash_queue(&self.contribution, projection),
+        );
+        let current_page = project_arc(
+            &mut cache.current_page,
+            &self.current_page,
+            PAGE_CURRENT_DOMAIN,
+            |projection| hash_nodes(&self.current_page, projection),
+        );
+        let page_discards = project_arc(
+            &mut cache.page_discards,
+            &self.page_discards,
+            PAGE_DISCARDS_DOMAIN,
+            |projection| hash_nodes(&self.page_discards, projection),
+        );
+        let split_discards = project_arc(
+            &mut cache.split_discards,
+            &self.split_discards,
+            SPLIT_DISCARDS_DOMAIN,
+            |projection| hash_nodes(&self.split_discards, projection),
+        );
+
+        StateHashFragment::from_builder(PAGE_PROJECTION_DOMAIN, |projection| {
+            scalars.apply(projection);
+            insertions.apply(projection);
+            mark_classes.apply(projection);
+            contribution.apply(projection);
+            current_page.apply(projection);
+            page_discards.apply(projection);
+            split_discards.apply(projection);
+        })
+        .apply(hasher);
     }
+}
+
+fn project_arc<T>(
+    cached: &mut Option<CachedArcProjection<T>>,
+    root: &Arc<T>,
+    domain: u64,
+    build: impl FnOnce(&mut StateHasher),
+) -> StateHashFragment {
+    if let Some(cached) = cached
+        && Arc::ptr_eq(&cached.root, root)
+    {
+        return cached.fragment;
+    }
+    let fragment = StateHashFragment::from_builder(domain, build);
+    *cached = Some(CachedArcProjection {
+        root: Arc::clone(root),
+        fragment,
+    });
+    fragment
 }
 
 fn hash_optional_usize(value: Option<usize>, hasher: &mut StateHasher) {

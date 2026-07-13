@@ -1712,6 +1712,41 @@ fn nonjournal_state_is_complete_in_hash_cursors() {
 }
 
 #[test]
+fn projection_cache_clearing_preserves_named_boundary_hashes() {
+    fn prepare(universe: &mut Universe) {
+        universe.set_catcode('~', Catcode::Active);
+        universe.add_hyphenation_pattern(PatternSpec {
+            letters: "cache".chars().collect(),
+            values: vec![0, 0, 1, 0, 0, 0],
+        });
+        universe
+            .world_mut()
+            .open_out(StreamSlot::new(3), "cache.aux");
+        universe.push_current_page_node(Node::Kern {
+            amount: Scaled::from_raw(19),
+            kind: KernKind::Explicit,
+        });
+        universe.push_page_discard(Node::Penalty(27));
+    }
+
+    let mut warm = Universe::new();
+    let mut cleared = Universe::new();
+    prepare(&mut warm);
+    prepare(&mut cleared);
+
+    for value in 1..=4 {
+        warm.set_count(0, value);
+        cleared.set_count(0, value);
+        cleared.testing_clear_state_hash_caches();
+        assert_eq!(
+            warm.snapshot().state_hash(),
+            cleared.snapshot().state_hash(),
+            "discardable projection caches changed boundary {value}"
+        );
+    }
+}
+
+#[test]
 fn already_interned_last_font_selection_changes_hash_semantically() {
     let mut universe = Universe::new();
     let first_font = test_font("first", b"first");

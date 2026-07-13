@@ -1306,6 +1306,10 @@ impl World {
         &self.stream_bufs
     }
 
+    pub(crate) fn stream_bufs_root(&self) -> Arc<StreamBufState> {
+        Arc::clone(&self.stream_bufs)
+    }
+
     fn stream_bufs_mut(&mut self) -> &mut StreamBufState {
         Arc::make_mut(&mut self.stream_bufs)
     }

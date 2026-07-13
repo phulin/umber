@@ -5,9 +5,6 @@ use tex_state::{InputRecordId, InputSummary, Snapshot, SourceId, Universe};
 
 use crate::{ExecError, ModeNest, ModeNestSummary};
 
-const MODE_HASH_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
-const MODE_HASH_PRIME: u64 = 0x0000_0100_0000_01b3;
-
 /// A safe point at which the outer executor can publish restartable state.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum EngineBoundary {
@@ -76,11 +73,15 @@ impl CheckpointSink for NoopCheckpointSink {
 /// publish durable continuation state.
 pub(crate) struct EngineSession<'a, C> {
     sink: &'a mut C,
+    mode_projection: Option<(ModeNestSummary, u64)>,
 }
 
 impl<'a, C: CheckpointSink> EngineSession<'a, C> {
     pub(crate) fn new(sink: &'a mut C) -> Self {
-        Self { sink }
+        Self {
+            sink,
+            mode_projection: None,
+        }
     }
 
     pub(crate) fn publish<S: InputSource>(
@@ -93,8 +94,16 @@ impl<'a, C: CheckpointSink> EngineSession<'a, C> {
         let input_summary = input.publication_summary(universe);
         universe.set_input_summary(input_summary.clone());
         let modes = nest.summary();
+        let mode_hash = match &self.mode_projection {
+            Some((cached, fingerprint)) if cached.shares_root_with(&modes) => *fingerprint,
+            _ => {
+                let fingerprint = modes.semantic_fingerprint(universe);
+                self.mode_projection = Some((modes.clone(), fingerprint));
+                fingerprint
+            }
+        };
         let universe = universe.snapshot();
-        let state_hash = combine_mode_hash(universe.state_hash(), &modes);
+        let state_hash = combine_mode_hash(universe.state_hash(), mode_hash);
         self.sink.checkpoint(EngineCheckpoint {
             boundary,
             universe,
@@ -147,11 +156,6 @@ impl crate::Executor {
     }
 }
 
-fn combine_mode_hash(universe_hash: u64, modes: &ModeNestSummary) -> u64 {
-    let mut hash = MODE_HASH_OFFSET;
-    for byte in format!("{modes:?}").bytes() {
-        hash ^= u64::from(byte);
-        hash = hash.wrapping_mul(MODE_HASH_PRIME);
-    }
-    universe_hash.rotate_left(17) ^ hash
+fn combine_mode_hash(universe_hash: u64, mode_hash: u64) -> u64 {
+    universe_hash.rotate_left(17) ^ mode_hash
 }

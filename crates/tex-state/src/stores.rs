@@ -1688,6 +1688,11 @@ impl Stores {
         self.semantic_hash_cache.clear();
     }
 
+    #[cfg(any(test, feature = "testing"))]
+    pub(crate) fn testing_clear_semantic_hash_cache(&mut self) {
+        self.semantic_hash_cache.clear();
+    }
+
     /// Returns the number of journal bytes appended since `snapshot`.
     #[must_use]
     pub(crate) fn env_journal_bytes_since(&self, snapshot: &StoreSnapshot) -> usize {
