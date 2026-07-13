@@ -74,7 +74,7 @@ where
     }
     let mut transaction = stores.begin_shipout();
     let staged = stage_shipout(node, input, &mut transaction, recorder)?;
-    let hash = transaction.commit(&staged.artifact_bytes, staged.effect_pos)?;
+    let hash = transaction.commit(staged.artifact_bytes, staged.effect_pos)?;
     Ok(Some(hash))
 }
 

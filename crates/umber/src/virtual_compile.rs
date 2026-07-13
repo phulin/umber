@@ -7,8 +7,8 @@ use tex_lex::{InputStack, WorldInput};
 use tex_state::{JobClock, Universe, World};
 
 use crate::{
-    EngineSession, MemoryOutputCollectionError, MemoryRunOutput, collect_final_memory_output,
-    prepare_run_stores,
+    EngineSession, MemoryOutputCollectionError, MemoryRunOutput,
+    collect_final_memory_output_from_commits, prepare_run_stores,
 };
 
 mod hooks;
@@ -532,9 +532,12 @@ impl VirtualCompileSession {
                 column: None,
             })
         })?;
-        let output =
-            collect_final_memory_output(&mut stores, &run.artifacts, self.limits.output_bytes)
-                .map_err(map_output_error)?;
+        let output = collect_final_memory_output_from_commits(
+            &mut stores,
+            &run.committed_artifacts,
+            self.limits.output_bytes,
+        )
+        .map_err(map_output_error)?;
         Ok(CompileAttemptResult::Complete(output))
     }
 

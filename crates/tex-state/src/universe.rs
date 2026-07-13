@@ -361,11 +361,11 @@ impl ShipoutTransaction<'_> {
     /// Atomically finishes this transaction's artifact/effect publication.
     pub fn commit(
         mut self,
-        artifact_bytes: &[u8],
+        artifact_bytes: Vec<u8>,
         effect_pos: EffectPos,
     ) -> Result<ContentHash, WorldError> {
         let hash_base = self.state_hash_base.clone();
-        let hash = self.world.store_artifact(artifact_bytes)?;
+        let hash = self.world.store_artifact(&artifact_bytes)?;
         if let Err(err) = self.world.commit_effects(effect_pos) {
             self.state_hash_base = self.retarget_hash_base_after_committed_boundary(hash_base);
             let node_mark = self.node_mark;
@@ -378,7 +378,7 @@ impl ShipoutTransaction<'_> {
         self.stores.release_shipout_nodes(node_mark);
         self.state_hash_base = self.retarget_hash_base_after_committed_boundary(hash_base);
         self.page.set_integer(PageInteger::DeadCycles, 0);
-        self.world.record_artifact_commit(hash);
+        self.world.record_artifact_commit(hash, artifact_bytes);
         self.rollback = None;
         self.finished = true;
         Ok(hash)

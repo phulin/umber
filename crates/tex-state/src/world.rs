@@ -23,6 +23,37 @@ pub use tex_content::{ContentDomain, ContentHash, ContentIdentity};
 /// TeX's 16 read/write stream slots.
 pub const STREAM_SLOT_COUNT: usize = 16;
 
+/// Exact bytes published by one successful page-artifact commit.
+///
+/// Construction stays inside the aggregate shipout boundary, so downstream
+/// code can consume these bytes without rereading and reverifying the
+/// content-addressed store.  The content id remains the authoritative durable
+/// reference for replay and out-of-process drivers.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CommittedArtifact {
+    hash: ContentHash,
+    bytes: Arc<[u8]>,
+}
+
+impl CommittedArtifact {
+    #[must_use]
+    pub const fn hash(&self) -> ContentHash {
+        self.hash
+    }
+
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    fn new(hash: ContentHash, bytes: Vec<u8>) -> Self {
+        Self {
+            hash,
+            bytes: bytes.into(),
+        }
+    }
+}
+
 /// Bytes returned from a content-addressed `World` read.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FileContent {
@@ -529,6 +560,7 @@ pub struct World {
     terminal_inputs: Vec<String>,
     shell_escapes: Vec<ShellEscapeRecord>,
     artifact_commits: Vec<ContentHash>,
+    committed_artifacts: Vec<CommittedArtifact>,
     effect_commit_poison: Option<WorldError>,
     execution_tracing: bool,
     execution_trace: Vec<ExecutionTraceEvent>,
@@ -560,6 +592,7 @@ impl Clone for World {
             terminal_inputs: self.terminal_inputs.clone(),
             shell_escapes: self.shell_escapes.clone(),
             artifact_commits: self.artifact_commits.clone(),
+            committed_artifacts: self.committed_artifacts.clone(),
             effect_commit_poison: self.effect_commit_poison.clone(),
             execution_tracing: self.execution_tracing,
             execution_trace: self.execution_trace.clone(),
@@ -584,6 +617,7 @@ impl PartialEq for World {
             && self.terminal_inputs == other.terminal_inputs
             && self.shell_escapes == other.shell_escapes
             && self.artifact_commits == other.artifact_commits
+            && self.committed_artifacts == other.committed_artifacts
             && self.effect_commit_poison == other.effect_commit_poison
     }
 }
@@ -637,6 +671,7 @@ impl World {
             terminal_inputs: Vec::new(),
             shell_escapes: Vec::new(),
             artifact_commits: Vec::new(),
+            committed_artifacts: Vec::new(),
             effect_commit_poison: None,
             execution_tracing: false,
             execution_trace: Vec::new(),
@@ -984,8 +1019,21 @@ impl World {
         &self.artifact_commits
     }
 
-    pub(crate) fn record_artifact_commit(&mut self, hash: ContentHash) {
+    /// Returns the in-process commit receipts aligned with
+    /// [`Self::artifact_commits`].
+    ///
+    /// These are downstream notification state, not rollback or semantic
+    /// state. Durable consumers should retain the content id and use
+    /// [`Self::read_artifact`] in a later process.
+    #[must_use]
+    pub fn committed_artifacts(&self) -> &[CommittedArtifact] {
+        &self.committed_artifacts
+    }
+
+    pub(crate) fn record_artifact_commit(&mut self, hash: ContentHash, bytes: Vec<u8>) {
         self.artifact_commits.push(hash);
+        self.committed_artifacts
+            .push(CommittedArtifact::new(hash, bytes));
     }
 
     pub fn open_out(&mut self, slot: StreamSlot, path: impl Into<PathBuf>) {

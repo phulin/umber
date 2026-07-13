@@ -1,14 +1,29 @@
 use std::path::PathBuf;
 
-use tex_state::{ContentHash, Universe, WorldError};
+use tex_state::{CommittedArtifact, ContentHash, Universe, WorldError};
 
-use crate::{DviBuildError, dvi_from_artifacts};
+use crate::{DviBuildError, dvi_from_artifacts, dvi_from_committed_artifacts};
 
 /// One committed auxiliary output returned by a memory-backed run.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MemoryOutputFile {
     pub path: PathBuf,
     pub bytes: Vec<u8>,
+}
+
+/// Fast-path variant for artifacts committed by the current in-process run.
+pub fn collect_final_memory_output_from_commits(
+    stores: &mut Universe,
+    artifacts: &[CommittedArtifact],
+    output_byte_limit: usize,
+) -> Result<MemoryRunOutput, MemoryOutputCollectionError> {
+    collect_final_memory_output_with_dvi(stores, output_byte_limit, |_| {
+        if artifacts.is_empty() {
+            Ok(Vec::new())
+        } else {
+            dvi_from_committed_artifacts(artifacts)
+        }
+    })
 }
 
 /// Exact observable outputs of one successful memory-backed run.
@@ -30,6 +45,23 @@ pub fn collect_final_memory_output(
     artifacts: &[ContentHash],
     output_byte_limit: usize,
 ) -> Result<MemoryRunOutput, MemoryOutputCollectionError> {
+    collect_final_memory_output_with_dvi(stores, output_byte_limit, |stores| {
+        if artifacts.is_empty() {
+            Ok(Vec::new())
+        } else {
+            dvi_from_artifacts(stores, artifacts)
+        }
+    })
+}
+
+fn collect_final_memory_output_with_dvi<F>(
+    stores: &mut Universe,
+    output_byte_limit: usize,
+    build_dvi: F,
+) -> Result<MemoryRunOutput, MemoryOutputCollectionError>
+where
+    F: FnOnce(&Universe) -> Result<Vec<u8>, DviBuildError>,
+{
     let effect_pos = stores.world().effect_pos();
     stores.commit_effects(effect_pos)?;
 
@@ -62,11 +94,7 @@ pub fn collect_final_memory_output(
     // The downstream DVI writer requires at least one page. A successful TeX
     // job may legitimately ship none, which the browser API represents as an
     // empty binary output rather than converting into an engine failure.
-    let dvi = if artifacts.is_empty() {
-        Vec::new()
-    } else {
-        dvi_from_artifacts(stores, artifacts)?
-    };
+    let dvi = build_dvi(stores)?;
     account(&mut total, dvi.len(), output_byte_limit)?;
 
     Ok(MemoryRunOutput {

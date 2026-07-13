@@ -211,7 +211,7 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
     }
     let mut driver_files = Vec::new();
     if let Some(output) = &opts.dvi {
-        let dvi = umber::dvi_from_artifacts(&stores, &run.artifacts)?;
+        let dvi = umber::dvi_from_committed_artifacts(&run.committed_artifacts)?;
         driver_files.push(DriverFile::new(output.clone(), dvi));
     }
     if run.dumped_format {

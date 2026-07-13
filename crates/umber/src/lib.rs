@@ -9,7 +9,8 @@ use tex_out::dvi::{DviError, DviStreamWriter};
 use tex_state::env::banks::IntParam;
 use tex_state::token::TracedTokenWord;
 use tex_state::{
-    ContentHash, EffectPos, EffectRecord, ExpansionContext, PrintSink, Universe, WorldError,
+    CommittedArtifact, ContentHash, EffectPos, EffectRecord, ExpansionContext, PrintSink, Universe,
+    WorldError,
 };
 
 mod input_search;
@@ -21,6 +22,7 @@ pub const PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub use input_search::{TexFontSearchPath, TexInputSearchPath};
 pub use memory_output::{
     MemoryOutputCollectionError, MemoryOutputFile, MemoryRunOutput, collect_final_memory_output,
+    collect_final_memory_output_from_commits,
 };
 pub use virtual_compile::{
     CompileAttemptResult, CompileDiagnostic, CompileError, FileKind, FileRequest, FileRequestKey,
@@ -73,6 +75,7 @@ where
     }
 
     pub fn execute(&mut self) -> Result<RunResult, tex_exec::ExecError> {
+        let artifact_start = self.artifact_cursor;
         let mut recorder = NoopRecorder;
         let stats = Executor::new().run_with_recorder_and_hooks(
             self.input,
@@ -89,6 +92,9 @@ where
         Ok(RunResult {
             terminal_text: uncommitted_terminal_text(self.stores),
             artifacts: stats.shipped_artifacts,
+            committed_artifacts: self.stores.world().committed_artifacts()
+                [artifact_start..self.artifact_cursor]
+                .to_vec(),
             dumped_format: stats.dumped_format,
         })
     }
@@ -180,6 +186,8 @@ impl ExpansionHooks<tex_lex::WorldInput> for FileSessionHooks {
 pub struct RunResult {
     pub terminal_text: String,
     pub artifacts: Vec<ContentHash>,
+    /// Exact canonical bytes from this execution's successful shipout commits.
+    pub committed_artifacts: Vec<CommittedArtifact>,
     pub dumped_format: bool,
 }
 
@@ -590,6 +598,28 @@ pub fn dvi_from_artifacts(
     artifacts: &[ContentHash],
 ) -> Result<Vec<u8>, DviBuildError> {
     write_dvi_from_artifacts(stores, artifacts, Vec::new())
+}
+
+/// Writes a complete DVI file directly from in-process shipout commit receipts.
+///
+/// Unlike [`dvi_from_artifacts`], this does not reread or rehash the durable
+/// content-addressed store. Parsing and validation remain identical.
+pub fn dvi_from_committed_artifacts(
+    artifacts: &[CommittedArtifact],
+) -> Result<Vec<u8>, DviBuildError> {
+    write_dvi_from_committed_artifacts(artifacts, Vec::new())
+}
+
+pub fn write_dvi_from_committed_artifacts<W: std::io::Write>(
+    artifacts: &[CommittedArtifact],
+    sink: W,
+) -> Result<W, DviBuildError> {
+    let mut writer = DviStreamWriter::new(sink);
+    for committed in artifacts {
+        let page = PageArtifact::from_bytes(committed.bytes())?;
+        writer.write_page(&page)?;
+    }
+    Ok(writer.finish()?)
 }
 
 /// Decodes, validates, emits, and drops each artifact before loading the next.

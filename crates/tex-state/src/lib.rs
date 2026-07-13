@@ -56,10 +56,10 @@ pub use universe::{
     ParagraphShapeLine, PenaltyArrayKind, ShipoutTransaction, Snapshot, Universe,
 };
 pub use world::{
-    ContentDomain, ContentHash, ContentIdentity, EffectPos, EffectRecord, EffectRetrySafety,
-    ExecutionTraceEvent, FileContent, InputRecord, InputRecordId, JobClock, MemoryOutput,
-    PrintSink, ReadTarget, RngState, ShellEscapePolicy, ShellEscapeRecord, StreamBufState,
-    StreamSlot, World, WorldError, WorldSnapshot,
+    CommittedArtifact, ContentDomain, ContentHash, ContentIdentity, EffectPos, EffectRecord,
+    EffectRetrySafety, ExecutionTraceEvent, FileContent, InputRecord, InputRecordId, JobClock,
+    MemoryOutput, PrintSink, ReadTarget, RngState, ShellEscapePolicy, ShellEscapeRecord,
+    StreamBufState, StreamSlot, World, WorldError, WorldSnapshot,
 };
 
 #[cfg(test)]
