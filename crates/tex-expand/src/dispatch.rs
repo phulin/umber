@@ -296,6 +296,22 @@ macro_rules! dispatch_match {
                 input.push_source(source);
                 Ok(Dispatch::Continue)
             }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::ETeXVersion) => {
+                Ok(push_rendered_text(
+                    stores,
+                    ExpansionReplayKind::NumberOutput,
+                    "2",
+                    call_origin,
+                ))
+            }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::ETeXRevision) => {
+                Ok(push_rendered_text(
+                    stores,
+                    ExpansionReplayKind::NumberOutput,
+                    ".0",
+                    call_origin,
+                ))
+            }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Input) => $input_arm,
             Meaning::ExpandablePrimitive(ExpandablePrimitive::EndInput) => {
                 input.end_current_source_after_current_line();
@@ -701,6 +717,58 @@ macro_rules! dispatch_match {
                     frame_token,
                 )
             }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::IfDefined) => {
+                let frame_token = begin_if_evaluation(input, call_context);
+                let Some(target) = crate::next_semantic_raw_token(input, stores)? else {
+                    return Err(ExpandError::MissingTokenAfterPrimitive {
+                        opcode: ExpandableOpcode::IfDefined,
+                        context: call_context,
+                    });
+                };
+                let defined = match crate::semantic_token(target) {
+                    Token::Cs(symbol) => {
+                        let meaning = stores.meaning(symbol);
+                        recorder.record_meaning(symbol, meaning);
+                        meaning != Meaning::Undefined
+                    }
+                    Token::Char {
+                        ch,
+                        cat: tex_state::token::Catcode::Active,
+                    } => stores.active_character_symbol(ch).is_some_and(|symbol| {
+                        let meaning = stores.meaning(symbol);
+                        recorder.record_meaning(symbol, meaning);
+                        meaning != Meaning::Undefined
+                    }),
+                    Token::Char { .. } | Token::Param(_) | Token::Frozen(_) => true,
+                };
+                complete_if_evaluation(
+                    input,
+                    stores,
+                    recorder,
+                    hooks,
+                    defined ^ $invert,
+                    call_context,
+                    frame_token,
+                )
+            }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::IfCsName) => {
+                let frame_token = begin_if_evaluation(input, call_context);
+                let name = scan_csname(input, stores, recorder, hooks, call_context)?;
+                let defined = stores.symbol(&name).is_some_and(|symbol| {
+                    let meaning = stores.meaning(symbol);
+                    recorder.record_meaning(symbol, meaning);
+                    meaning != Meaning::Undefined
+                });
+                complete_if_evaluation(
+                    input,
+                    stores,
+                    recorder,
+                    hooks,
+                    defined ^ $invert,
+                    call_context,
+                    frame_token,
+                )
+            }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Else) => {
                 handle_else(token, call_origin, input, stores, recorder, hooks)
             }
@@ -909,6 +977,8 @@ fn is_boolean_conditional(primitive: ExpandablePrimitive) -> bool {
             | ExpandablePrimitive::IfHBox
             | ExpandablePrimitive::IfVBox
             | ExpandablePrimitive::IfEof
+            | ExpandablePrimitive::IfDefined
+            | ExpandablePrimitive::IfCsName
     )
 }
 
@@ -929,6 +999,10 @@ pub fn dispatch_expandable_opcode(opcode: ExpandableOpcode) -> Result<(), Expand
         | ExpandableOpcode::Detokenize
         | ExpandableOpcode::Unless
         | ExpandableOpcode::Scantokens
+        | ExpandableOpcode::ETeXVersion
+        | ExpandableOpcode::ETeXRevision
+        | ExpandableOpcode::IfDefined
+        | ExpandableOpcode::IfCsName
         | ExpandableOpcode::Input
         | ExpandableOpcode::EndInput
         | ExpandableOpcode::JobName

@@ -403,6 +403,34 @@ fn get_x_token_expands_protected_macros_during_normal_execution() {
 }
 
 #[test]
+fn get_x_or_protected_stops_before_protected_macro_expansion() {
+    // e-TeX's alignment changes use get_x_or_protected at align_peek and
+    // fin_col, while ordinary command demand still expands the same macro.
+    let mut stores = Universe::new();
+    let macro_cs = stores.intern("protectedmacro");
+    let params = stores.intern_token_list(&[]);
+    let body = stores.intern_token_list(&[char_token('x')]);
+    stores.set_macro_meaning(
+        macro_cs,
+        MacroMeaning::new(MeaningFlags::PROTECTED, params, body),
+    );
+    let mut input = InputStack::new(MemoryInput::new("\\protectedmacro"));
+
+    let delivered = crate::get_x_or_protected_with_recorder_and_hooks(
+        &mut input,
+        &mut stores,
+        &mut NoopRecorder,
+        &mut NoopExpansionHooks,
+    )
+    .expect("protected-aware expansion")
+    .expect("protected macro token");
+    assert_eq!(
+        crate::semantic_token(delivered),
+        Token::Cs(macro_cs.symbol())
+    );
+}
+
+#[test]
 fn unexpanded_delivers_general_text_without_expanding_macros() {
     let mut stores = Universe::new();
     crate::install_etex_expandable_primitives(&mut stores);
@@ -578,6 +606,34 @@ fn everyeof_is_visible_to_raw_scanners_before_the_outer_source() {
         ),
         char_token('O')
     );
+}
+
+#[test]
+fn etex_version_and_revision_match_the_v2_reference() {
+    let mut stores = Universe::new();
+    crate::install_etex_expandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\eTeXversion\\eTeXrevision%"));
+
+    assert_eq!(next_expanded_chars(&mut input, &mut stores), "2.0");
+}
+
+#[test]
+fn ifdefined_and_ifcsname_test_without_creating_missing_names() {
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    crate::install_etex_expandable_primitives(&mut stores);
+    let known = stores.intern("known");
+    stores.set_meaning(known, Meaning::Relax);
+    assert!(stores.symbol("nevercreated").is_none());
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\ifdefined\\known T\\else F\\fi\
+         \\unless\\ifdefined\\missing T\\else F\\fi\
+         \\ifcsname known\\endcsname T\\else F\\fi\
+         \\unless\\ifcsname nevercreated\\endcsname T\\else F\\fi%",
+    ));
+
+    assert_eq!(next_expanded_chars(&mut input, &mut stores), "TTTT");
+    assert!(stores.symbol("nevercreated").is_none());
 }
 
 #[test]

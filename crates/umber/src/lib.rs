@@ -313,10 +313,17 @@ mod primitive_mode_tests {
         let detokenize = compatibility.intern("detokenize");
         let unless = compatibility.intern("unless");
         let scantokens = compatibility.intern("scantokens");
+        let etex_version = compatibility.intern("eTeXversion");
+        let etex_revision = compatibility.intern("eTeXrevision");
+        let ifdefined = compatibility.intern("ifdefined");
+        let ifcsname = compatibility.intern("ifcsname");
         assert_eq!(compatibility.meaning(unexpanded), Meaning::Undefined);
         assert_eq!(compatibility.meaning(detokenize), Meaning::Undefined);
         assert_eq!(compatibility.meaning(unless), Meaning::Undefined);
         assert_eq!(compatibility.meaning(scantokens), Meaning::Undefined);
+        for symbol in [etex_version, etex_revision, ifdefined, ifcsname] {
+            assert_eq!(compatibility.meaning(symbol), Meaning::Undefined);
+        }
 
         let mut extended = Universe::default();
         prepare_etex_run_stores(&mut extended);
@@ -340,6 +347,18 @@ mod primitive_mode_tests {
             extended.meaning(scantokens),
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Scantokens)
         );
+        for (name, primitive) in [
+            ("eTeXversion", ExpandablePrimitive::ETeXVersion),
+            ("eTeXrevision", ExpandablePrimitive::ETeXRevision),
+            ("ifdefined", ExpandablePrimitive::IfDefined),
+            ("ifcsname", ExpandablePrimitive::IfCsName),
+        ] {
+            let symbol = extended.intern(name);
+            assert_eq!(
+                extended.meaning(symbol),
+                Meaning::ExpandablePrimitive(primitive)
+            );
+        }
     }
 }
 

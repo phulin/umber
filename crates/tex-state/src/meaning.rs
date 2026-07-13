@@ -180,6 +180,10 @@ pub enum ExpandablePrimitive {
     Detokenize,
     Unless,
     Scantokens,
+    ETeXVersion,
+    ETeXRevision,
+    IfDefined,
+    IfCsName,
 }
 
 impl ExpandablePrimitive {
@@ -229,6 +233,10 @@ impl ExpandablePrimitive {
             Self::Detokenize => 40,
             Self::Unless => 41,
             Self::Scantokens => 42,
+            Self::ETeXVersion => 43,
+            Self::ETeXRevision => 44,
+            Self::IfDefined => 45,
+            Self::IfCsName => 46,
         }
     }
 
@@ -278,6 +286,10 @@ impl ExpandablePrimitive {
             40 => Some(Self::Detokenize),
             41 => Some(Self::Unless),
             42 => Some(Self::Scantokens),
+            43 => Some(Self::ETeXVersion),
+            44 => Some(Self::ETeXRevision),
+            45 => Some(Self::IfDefined),
+            46 => Some(Self::IfCsName),
             _ => None,
         }
     }

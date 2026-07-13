@@ -19,7 +19,7 @@ pass.
 
 | Primitive | Status | Manual contract / remaining gate |
 | --- | --- | --- |
-| `\protected` | partial | Ordinary command demand expands the macro; `\edef`, `\write`, and analogous expansion-only contexts preserve it. Alignment-specific protected fetching and reference parity remain. |
+| `\protected` | partial | Ordinary command demand expands the macro; `\edef`, `\write`, and analogous expansion-only contexts preserve it. e-TeX's protected-aware `align_peek`/`fin_col` fetches are implemented; committed reference fixtures remain. |
 | `\unexpanded` | partial | Yields the raw balanced text as token-list expansion does: expansion-only consumers preserve it, while later command demand expands it. Reference parity remains. |
 | `\detokenize` | partial | Produces only catcode-10 spaces and catcode-12 other characters; every control word produces a trailing space, including the last. Reference parity remains. |
 | `\readline` | partial | Reads through the virtualized `\read` path with catcode-10 codepoint 32 and catcode-12 other characters, including `\endlinechar`; normalized transcript parity remains. |
@@ -30,11 +30,10 @@ pass.
 
 ## Environmental and conditional enquiries (manual section 3.3)
 
-`\eTeXversion`, `\eTeXrevision`, `\currentgrouplevel`,
+`\eTeXversion`, `\eTeXrevision`, `\ifdefined`, and non-creating `\ifcsname`
+are implemented with focused V2 tests. `\currentgrouplevel`,
 `\currentgrouptype`, `\currentiflevel`, `\currentiftype`,
-`\currentifbranch`, `\ifdefined`, `\ifcsname`, `\iffontchar`, and
-`\lastnodetype` are **missing**. In particular, `\ifcsname` must neither
-create a hash-table entry nor assign `\relax` to a missing name.
+`\currentifbranch`, `\iffontchar`, and `\lastnodetype` remain **missing**.
 
 ## Expressions and value enquiries (manual section 3.5)
 

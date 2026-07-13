@@ -127,6 +127,22 @@ pub fn install_etex_expandable_primitives(stores: &mut Universe) {
             "scantokens",
             tex_state::meaning::ExpandablePrimitive::Scantokens,
         ),
+        (
+            "eTeXversion",
+            tex_state::meaning::ExpandablePrimitive::ETeXVersion,
+        ),
+        (
+            "eTeXrevision",
+            tex_state::meaning::ExpandablePrimitive::ETeXRevision,
+        ),
+        (
+            "ifdefined",
+            tex_state::meaning::ExpandablePrimitive::IfDefined,
+        ),
+        (
+            "ifcsname",
+            tex_state::meaning::ExpandablePrimitive::IfCsName,
+        ),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::ExpandablePrimitive(primitive));
@@ -301,6 +317,10 @@ pub enum ExpandableOpcode {
     Detokenize,
     Unless,
     Scantokens,
+    ETeXVersion,
+    ETeXRevision,
+    IfDefined,
+    IfCsName,
     Input,
     EndInput,
     JobName,
@@ -943,7 +963,26 @@ where
     R: ReadRecorder,
     H: ExpansionHooks<S>,
 {
-    match get_x_token_with_recorder_and_hooks_inner(input, stores, recorder, hooks) {
+    match get_x_token_with_recorder_and_hooks_inner(input, stores, recorder, hooks, false) {
+        Ok(token) => Ok(token),
+        Err(error) => Err(error.capture(input)),
+    }
+}
+
+/// Pulls the next expanded token while leaving e-TeX protected macros
+/// unexpanded. This is the `get_x_or_protected` operation used by alignments.
+pub fn get_x_or_protected_with_recorder_and_hooks<S, R, H>(
+    input: &mut InputStack<S>,
+    stores: &mut (impl ExpansionState + InputOpenState),
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<Option<TracedTokenWord>, ExpandError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    match get_x_token_with_recorder_and_hooks_inner(input, stores, recorder, hooks, true) {
         Ok(token) => Ok(token),
         Err(error) => Err(error.capture(input)),
     }
@@ -954,6 +993,7 @@ fn get_x_token_with_recorder_and_hooks_inner<S, R, H>(
     stores: &mut (impl ExpansionState + InputOpenState),
     recorder: &mut R,
     hooks: &mut H,
+    protect_macros: bool,
 ) -> Result<Option<TracedTokenWord>, ExpandError>
 where
     S: InputSource,
@@ -1001,6 +1041,11 @@ where
 
         let meaning = stores.meaning(symbol);
         recorder.record_meaning(symbol, meaning);
+        if protect_macros
+            && matches!(meaning, Meaning::Macro { flags, .. } if flags.contains(MeaningFlags::PROTECTED))
+        {
+            return Ok(Some(traced));
+        }
         if input.has_active_alignment_cell()
             && matches!(meaning, Meaning::Macro { flags, .. } if flags.contains(MeaningFlags::OUTER))
         {
