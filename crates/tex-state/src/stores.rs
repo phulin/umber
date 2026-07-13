@@ -42,8 +42,7 @@ use crate::source_map::{
 use crate::survivor::SurvivorArena;
 use crate::token::{Catcode, OriginId, Token, TracedTokenWord};
 use crate::token_store::{
-    TOKEN_STREAM_DOMAIN, TokenListBuilder, TokenStore, TokenStoreMark, finish_semantic_hash,
-    hash_semantic_token,
+    TokenListBuilder, TokenSemanticId, TokenSemanticIdBuilder, TokenStore, TokenStoreMark,
 };
 use std::hash::BuildHasher;
 #[cfg(any(test, feature = "testing", feature = "shadow"))]
@@ -576,32 +575,18 @@ impl Stores {
         TokenStore::builder()
     }
 
-    pub fn push_token_list_token(&self, builder: &mut TokenListBuilder, token: Token) {
-        let atom = match token {
-            Token::Cs(symbol) => Some(
-                self.interner
-                    .semantic_atom(symbol)
-                    .expect("symbol is not live in this Universe timeline"),
-            ),
-            _ => None,
-        };
-        builder.push_semantic(token, atom);
-    }
-
     /// Interns a frozen token-list value in the owned token store.
     pub fn intern_token_list(&mut self, tokens: &[Token]) -> TokenListId {
-        let semantic_hash = self.token_list_semantic_identity(tokens.iter().copied());
-        self.tokens.intern_with_semantic_hash(tokens, semantic_hash)
+        let semantic_id = self.token_list_semantic_id(tokens.iter().copied());
+        self.tokens.intern_with_semantic_id(tokens, semantic_id)
     }
 
     /// Interns the current token-list builder value and clears it for reuse.
     pub fn finish_token_list(&mut self, builder: &mut TokenListBuilder) -> TokenListId {
-        let semantic_hash = builder.semantic_hash().unwrap_or_else(|| {
-            self.token_list_semantic_identity(builder.as_slice().iter().copied())
-        });
+        let semantic_id = self.token_list_semantic_id(builder.as_slice().iter().copied());
         let id = self
             .tokens
-            .intern_with_semantic_hash(builder.as_slice(), semantic_hash);
+            .intern_with_semantic_id(builder.as_slice(), semantic_id);
         builder.clear();
         id
     }
@@ -617,7 +602,7 @@ impl Stores {
             self.assert_live_origin(word.origin());
         }
 
-        let semantic_hash = self.token_list_semantic_identity(traced.iter().map(|word| {
+        let semantic_id = self.token_list_semantic_id(traced.iter().map(|word| {
             word.token()
                 .expect("validated traced token became invalid during semantic hashing")
         }));
@@ -626,7 +611,7 @@ impl Stores {
         crate::measurement::record_traced_list_finish(traced.len(), 0, 0);
         let token_list = self
             .tokens
-            .intern_traced_with_semantic_hash(traced, semantic_hash);
+            .intern_traced_with_semantic_id(traced, semantic_id);
         let origin_list = self.provenance.allocate_traced_list(traced);
         TracedTokenList::new(token_list, origin_list)
     }
@@ -638,10 +623,14 @@ impl Stores {
         self.tokens.get(id)
     }
 
-    fn token_list_semantic_identity(&self, tokens: impl IntoIterator<Item = Token>) -> u64 {
-        let mut hasher = crate::state_hash::StateHasher::new(TOKEN_STREAM_DOMAIN);
-        let tokens = tokens.into_iter();
-        let len = tokens.size_hint().0;
+    #[cfg(test)]
+    pub(crate) fn testing_token_semantic_id(&self, id: TokenListId) -> TokenSemanticId {
+        let id = self.resolve_stored_token_list(id);
+        self.tokens.semantic_id(id)
+    }
+
+    fn token_list_semantic_id(&self, tokens: impl IntoIterator<Item = Token>) -> TokenSemanticId {
+        let mut identity = TokenSemanticIdBuilder::new();
         for token in tokens {
             let atom = match token {
                 Token::Cs(symbol) => Some(
@@ -651,9 +640,9 @@ impl Stores {
                 ),
                 _ => None,
             };
-            hash_semantic_token(&mut hasher, token, atom);
+            identity.push(token, atom);
         }
-        finish_semantic_hash(len, hasher.finish())
+        identity.finish()
     }
 
     /// Returns the reserved unknown/bootstrap provenance origin.

@@ -103,7 +103,6 @@ pub trait ExpansionState {
     fn resolve(&self, symbol: Symbol) -> &str;
     fn control_sequence_kind(&self, symbol: Symbol) -> ControlSequenceKind;
     fn token_list_builder(&self) -> TokenListBuilder;
-    fn push_token_list_token(&self, builder: &mut TokenListBuilder, token: Token);
     fn intern_token_list(&mut self, tokens: &[Token]) -> TokenListId;
     fn finish_token_list(&mut self, builder: &mut TokenListBuilder) -> TokenListId;
     fn finish_traced_token_list(&mut self, tokens: &[TracedTokenWord]) -> TracedTokenList;
@@ -1187,10 +1186,6 @@ impl Universe {
     #[must_use]
     pub fn token_list_builder(&self) -> TokenListBuilder {
         self.stores.token_list_builder()
-    }
-
-    pub fn push_token_list_token(&self, builder: &mut TokenListBuilder, token: Token) {
-        self.stores.push_token_list_token(builder, token);
     }
 
     pub fn intern_token_list(&mut self, tokens: &[Token]) -> TokenListId {
@@ -2602,10 +2597,6 @@ impl ExpansionState for Universe {
         Self::token_list_builder(self)
     }
 
-    fn push_token_list_token(&self, builder: &mut TokenListBuilder, token: Token) {
-        Self::push_token_list_token(self, builder, token);
-    }
-
     fn intern_token_list(&mut self, tokens: &[Token]) -> TokenListId {
         Self::intern_token_list(self, tokens)
     }
@@ -2983,10 +2974,6 @@ impl ExpansionState for ExpansionContext<'_> {
 
     fn token_list_builder(&self) -> TokenListBuilder {
         self.universe.token_list_builder()
-    }
-
-    fn push_token_list_token(&self, builder: &mut TokenListBuilder, token: Token) {
-        self.universe.push_token_list_token(builder, token);
     }
 
     fn intern_token_list(&mut self, tokens: &[Token]) -> TokenListId {

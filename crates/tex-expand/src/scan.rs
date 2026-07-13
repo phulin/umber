@@ -443,13 +443,13 @@ where
         let token = read.token();
         let traced = read.traced_token();
         if read.suppress_expansion() {
-            stores.push_token_list_token(&mut builder, token);
+            builder.push(token);
             origins.push(read.origin());
             continue;
         }
 
         let Some(symbol) = crate::expandable_symbol(stores, traced) else {
-            stores.push_token_list_token(&mut builder, token);
+            builder.push(token);
             origins.push(read.origin());
             continue;
         };
@@ -469,7 +469,7 @@ where
                 }
                 .into());
             };
-            stores.push_token_list_token(&mut builder, traced_semantic_token(suppressed));
+            builder.push(traced_semantic_token(suppressed));
             origins.push(stores.inserted_origin(
                 InsertedOriginKind::NoExpand,
                 traced_semantic_token(suppressed),
@@ -498,7 +498,7 @@ where
         if let Some(expanded) =
             expander.next_expanded_token(&mut input, stores, &mut recorder, &mut hooks)?
         {
-            stores.push_token_list_token(&mut builder, crate::semantic_token(expanded));
+            builder.push(crate::semantic_token(expanded));
             origins.push(expanded.origin());
         }
     }
@@ -518,13 +518,12 @@ fn unread_token<S>(
 }
 
 fn push_scanned_token(
-    stores: &impl ExpansionState,
     builder: &mut TokenListBuilder,
     origins: &mut OriginListBuilder,
     traced: TracedTokenWord,
     token: Token,
 ) {
-    stores.push_token_list_token(builder, token);
+    builder.push(token);
     origins.push(traced.origin());
 }
 
@@ -702,7 +701,6 @@ where
                             traced.origin(),
                         );
                         push_scanned_token(
-                            stores,
                             &mut builder,
                             &mut origins,
                             TracedTokenWord::pack(inserted, origin),
@@ -711,20 +709,14 @@ where
                         next_parameter += 1;
                         continue;
                     }
-                    push_scanned_token(
-                        stores,
-                        &mut builder,
-                        &mut origins,
-                        traced,
-                        Token::param(found),
-                    );
+                    push_scanned_token(&mut builder, &mut origins, traced, Token::param(found));
                     next_parameter += 1;
                 }
                 Token::Char {
                     cat: Catcode::BeginGroup,
                     ..
                 } => {
-                    push_scanned_token(stores, &mut builder, &mut origins, traced, token);
+                    push_scanned_token(&mut builder, &mut origins, traced, token);
                     return Ok(finish_traced_list(stores, &mut builder, &mut origins));
                 }
                 _ => {
@@ -745,7 +737,7 @@ where
                 cat: Catcode::Parameter,
                 ..
             } => pending_parameter = true,
-            _ => push_scanned_token(stores, &mut builder, &mut origins, traced, token),
+            _ => push_scanned_token(&mut builder, &mut origins, traced, token),
         }
     }
 }
@@ -779,12 +771,11 @@ where
                 Token::Char {
                     cat: Catcode::Parameter,
                     ..
-                } => push_scanned_token(stores, &mut builder, &mut origins, traced, token),
+                } => push_scanned_token(&mut builder, &mut origins, traced, token),
                 Token::Char {
                     ch: '1'..='9',
                     cat: Catcode::Other,
                 } => push_scanned_token(
-                    stores,
                     &mut builder,
                     &mut origins,
                     traced,
@@ -809,7 +800,7 @@ where
                 ..
             } => {
                 brace_level += 1;
-                push_scanned_token(stores, &mut builder, &mut origins, traced, token);
+                push_scanned_token(&mut builder, &mut origins, traced, token);
             }
             Token::Char {
                 cat: Catcode::EndGroup,
@@ -819,9 +810,9 @@ where
                 if brace_level == 0 {
                     return Ok(finish_traced_list(stores, &mut builder, &mut origins));
                 }
-                push_scanned_token(stores, &mut builder, &mut origins, traced, token);
+                push_scanned_token(&mut builder, &mut origins, traced, token);
             }
-            _ => push_scanned_token(stores, &mut builder, &mut origins, traced, token),
+            _ => push_scanned_token(&mut builder, &mut origins, traced, token),
         }
     }
 }
@@ -870,7 +861,7 @@ where
                 ..
             } => {
                 brace_level += 1;
-                push_scanned_token(stores, &mut builder, &mut origins, traced, token);
+                push_scanned_token(&mut builder, &mut origins, traced, token);
             }
             Token::Char {
                 cat: Catcode::EndGroup,
@@ -880,9 +871,9 @@ where
                 if brace_level == 0 {
                     return Ok(finish_traced_list(stores, &mut builder, &mut origins));
                 }
-                push_scanned_token(stores, &mut builder, &mut origins, traced, token);
+                push_scanned_token(&mut builder, &mut origins, traced, token);
             }
-            _ => push_scanned_token(stores, &mut builder, &mut origins, traced, token),
+            _ => push_scanned_token(&mut builder, &mut origins, traced, token),
         }
     }
 }

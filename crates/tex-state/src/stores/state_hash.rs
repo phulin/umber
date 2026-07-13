@@ -212,7 +212,7 @@ impl Stores {
     pub(crate) fn hash_token_list_semantic(&self, id: TokenListId, hasher: &mut StateHasher) {
         let id = self.resolve_stored_token_list(id);
         hasher.tag(0x50);
-        hasher.u64(self.tokens.semantic_hash(id));
+        hasher.u64(self.tokens.semantic_id(id).value());
     }
 
     pub(crate) fn hash_node_slice_semantic(&self, nodes: &[Node], hasher: &mut StateHasher) {

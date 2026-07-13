@@ -7,13 +7,84 @@ use crate::identity::{IdentityAllocator, IdentityMark};
 use crate::ids::TokenListId;
 use crate::state_hash::StateHasher;
 use crate::token::{Token, TracedTokenWord};
+#[cfg(test)]
 use ahash::RandomState;
 use std::collections::HashMap;
 #[cfg(test)]
 use std::hash::Hash;
 use std::hash::{BuildHasherDefault, Hasher};
 
-type TokenIndex = HashMap<u64, Vec<TokenListId>, BuildHasherDefault<PrehashedU64Hasher>>;
+type TokenIndex =
+    HashMap<TokenSemanticId, Vec<TokenListId>, BuildHasherDefault<PrehashedU64Hasher>>;
+
+/// Versioned, allocation-independent identity of one immutable token sequence.
+///
+/// Control sequences contribute their namespace and spelling through the
+/// interner's semantic atom; compact runtime symbol keys never participate.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[repr(transparent)]
+pub(crate) struct TokenSemanticId(u64);
+
+impl TokenSemanticId {
+    #[must_use]
+    pub(crate) const fn value(self) -> u64 {
+        self.0
+    }
+}
+
+/// Current token semantic-identity scheme. Changing token tags, symbol-atom
+/// semantics, or the hash framing requires a new version and checkpoint-hash
+/// migration notes.
+pub(crate) const TOKEN_SEMANTIC_ID_VERSION: u8 = 1;
+const TOKEN_STREAM_V1_DOMAIN: u64 = 0x746f_6b31_5f73_7472;
+const TOKEN_ID_V1_DOMAIN: u64 = 0x746f_6b31_5f69_6465;
+
+pub(crate) struct TokenSemanticIdBuilder {
+    stream: StateHasher,
+    len: usize,
+}
+
+impl TokenSemanticIdBuilder {
+    #[must_use]
+    pub(crate) fn new() -> Self {
+        Self {
+            stream: StateHasher::new(TOKEN_STREAM_V1_DOMAIN),
+            len: 0,
+        }
+    }
+
+    pub(crate) fn push(&mut self, token: Token, symbol_atom: Option<u64>) {
+        match token {
+            Token::Char { ch, cat } => {
+                self.stream.tag(0);
+                self.stream.u32(ch as u32);
+                self.stream.u8(cat as u8);
+            }
+            Token::Cs(_) => {
+                self.stream.tag(1);
+                self.stream
+                    .u64(symbol_atom.expect("control-sequence token requires semantic atom"));
+            }
+            Token::Param(slot) => {
+                self.stream.tag(2);
+                self.stream.u8(slot);
+            }
+            Token::Frozen(crate::token::FrozenToken::END_TEMPLATE) => self.stream.tag(3),
+            Token::Frozen(crate::token::FrozenToken::END_V) => self.stream.tag(4),
+            Token::Frozen(_) => unreachable!("invalid frozen token payload"),
+        }
+        self.len += 1;
+    }
+
+    #[must_use]
+    pub(crate) fn finish(self) -> TokenSemanticId {
+        let mut hasher = StateHasher::new(TOKEN_ID_V1_DOMAIN);
+        hasher.u8(TOKEN_SEMANTIC_ID_VERSION);
+        hasher.usize(self.len);
+        hasher.u64(self.stream.finish());
+        TokenSemanticId(hasher.finish())
+    }
+}
 
 /// Identity hasher for an index key that is already a keyed content hash.
 #[derive(Default)]
@@ -52,29 +123,17 @@ pub(crate) struct TokenStoreMark {
 #[derive(Clone, Debug)]
 pub struct TokenListBuilder {
     buf: Vec<Token>,
-    semantic_stream: Option<StateHasher>,
 }
 
 impl TokenListBuilder {
     /// Creates an empty reusable token-list builder.
     #[must_use]
     pub(crate) fn new() -> Self {
-        Self {
-            buf: Vec::new(),
-            semantic_stream: Some(StateHasher::new(TOKEN_STREAM_DOMAIN)),
-        }
+        Self { buf: Vec::new() }
     }
 
     /// Appends one token to the unfinished list.
     pub fn push(&mut self, token: Token) {
-        self.buf.push(token);
-        self.semantic_stream = None;
-    }
-
-    pub(crate) fn push_semantic(&mut self, token: Token, symbol_atom: Option<u64>) {
-        if let Some(hasher) = self.semantic_stream.as_mut() {
-            hash_semantic_token(hasher, token, symbol_atom);
-        }
         self.buf.push(token);
     }
 
@@ -98,18 +157,12 @@ impl TokenListBuilder {
     /// Clears the unfinished list without interning it.
     pub fn clear(&mut self) {
         self.buf.clear();
-        self.semantic_stream = Some(StateHasher::new(TOKEN_STREAM_DOMAIN));
     }
 
     /// Borrows the unfinished semantic token sequence for aggregate validation.
     #[must_use]
     pub(crate) fn as_slice(&self) -> &[Token] {
         &self.buf
-    }
-
-    pub(crate) fn semantic_hash(&self) -> Option<u64> {
-        let stream = self.semantic_stream.clone()?.finish();
-        Some(finish_semantic_hash(self.buf.len(), stream))
     }
 
     /// Interns the current token list and clears the builder for reuse.
@@ -121,48 +174,14 @@ impl TokenListBuilder {
     }
 }
 
-pub(crate) const TOKEN_STREAM_DOMAIN: u64 = 0x746f_6b65_6e5f_7374;
-const TOKEN_ID_DOMAIN: u64 = 0x746f_6b65_6e5f_6964;
-
-pub(crate) fn hash_semantic_token(
-    hasher: &mut StateHasher,
-    token: Token,
-    symbol_atom: Option<u64>,
-) {
-    match token {
-        Token::Char { ch, cat } => {
-            hasher.tag(0);
-            hasher.u32(ch as u32);
-            hasher.u8(cat as u8);
-        }
-        Token::Cs(_) => {
-            hasher.tag(1);
-            hasher.u64(symbol_atom.expect("control-sequence token requires semantic atom"));
-        }
-        Token::Param(slot) => {
-            hasher.tag(2);
-            hasher.u8(slot);
-        }
-        Token::Frozen(crate::token::FrozenToken::END_TEMPLATE) => hasher.tag(3),
-        Token::Frozen(crate::token::FrozenToken::END_V) => hasher.tag(4),
-        Token::Frozen(_) => unreachable!("invalid frozen token payload"),
-    }
-}
-
-pub(crate) fn finish_semantic_hash(len: usize, stream: u64) -> u64 {
-    let mut hasher = StateHasher::new(TOKEN_ID_DOMAIN);
-    hasher.usize(len);
-    hasher.u64(stream);
-    hasher.finish()
-}
-
 /// Hash-consed immutable token-list arena.
 #[derive(Debug)]
 pub struct TokenStore {
     arena: Vec<Token>,
     spans: Vec<(u32, u32)>,
-    semantic_hashes: Vec<u64>,
+    semantic_ids: Vec<TokenSemanticId>,
     index: TokenIndex,
+    #[cfg(test)]
     hash_state: RandomState,
     index_dirty: bool,
     identities: IdentityAllocator,
@@ -173,8 +192,9 @@ impl Clone for TokenStore {
         Self {
             arena: self.arena.clone(),
             spans: self.spans.clone(),
-            semantic_hashes: self.semantic_hashes.clone(),
+            semantic_ids: self.semantic_ids.clone(),
             index: self.index.clone(),
+            #[cfg(test)]
             hash_state: self.hash_state.clone(),
             index_dirty: self.index_dirty,
             identities: self.identities.fork(),
@@ -186,19 +206,19 @@ impl TokenStore {
     /// Creates a token store containing the canonical empty list.
     #[must_use]
     pub(crate) fn new() -> Self {
-        let hash_state = RandomState::new();
         let mut store = Self {
             arena: Vec::new(),
             spans: vec![(0, 0)],
-            semantic_hashes: vec![0],
+            semantic_ids: vec![TokenSemanticIdBuilder::new().finish()],
             index: TokenIndex::default(),
-            hash_state,
+            #[cfg(test)]
+            hash_state: RandomState::new(),
             index_dirty: false,
             identities: IdentityAllocator::new(1),
         };
         store
             .index
-            .entry(store.content_hash(&[]))
+            .entry(store.semantic_id(TokenStore::empty_id()))
             .or_default()
             .push(Self::empty_id());
         store
@@ -217,22 +237,25 @@ impl TokenStore {
     }
 
     /// Interns `tokens`, returning a dense id for the live token-list content.
+    #[cfg(test)]
     pub(crate) fn intern(&mut self, tokens: &[Token]) -> TokenListId {
         let hash = self.content_hash(tokens);
-        self.intern_with_semantic_hash(tokens, hash)
+        self.intern_with_semantic_id(tokens, TokenSemanticId(hash))
     }
 
-    /// Interns tokens using their aggregate-computed canonical semantic hash.
-    pub(crate) fn intern_with_semantic_hash(
+    /// Interns tokens using their aggregate-computed canonical semantic identity.
+    pub(crate) fn intern_with_semantic_id(
         &mut self,
         tokens: &[Token],
-        semantic_hash: u64,
+        semantic_id: TokenSemanticId,
     ) -> TokenListId {
         #[cfg(feature = "node-stats")]
         let capacity_before = self.arena.capacity();
+        #[cfg(feature = "node-stats")]
+        let semantic_capacity_before = self.semantic_ids.capacity();
         if tokens.is_empty() {
             #[cfg(feature = "node-stats")]
-            crate::measurement::record_token_intern(tokens.len(), true, 0);
+            crate::measurement::record_token_intern(tokens.len(), true, 0, 0);
             return Self::empty_id();
         }
 
@@ -240,14 +263,13 @@ impl TokenStore {
             self.rebuild_index();
         }
 
-        let hash = semantic_hash;
-        if let Some(candidates) = self.index.get(&hash) {
+        if let Some(candidates) = self.index.get(&semantic_id) {
             for &id in candidates {
                 // Hash collisions are safe because the candidate span is
                 // compared by content before the id is reused.
                 if self.get(id) == tokens {
                     #[cfg(feature = "node-stats")]
-                    crate::measurement::record_token_intern(tokens.len(), true, 0);
+                    crate::measurement::record_token_intern(tokens.len(), true, 0, 0);
                     return id;
                 }
             }
@@ -259,13 +281,17 @@ impl TokenStore {
 
         self.arena.extend_from_slice(tokens);
         self.spans.push((start, len));
-        self.semantic_hashes.push(semantic_hash);
-        self.index.entry(hash).or_default().push(id);
+        self.semantic_ids.push(semantic_id);
+        self.index.entry(semantic_id).or_default().push(id);
         #[cfg(feature = "node-stats")]
         crate::measurement::record_token_intern(
             tokens.len(),
             false,
             self.arena.capacity().saturating_sub(capacity_before) * core::mem::size_of::<Token>(),
+            self.semantic_ids
+                .capacity()
+                .saturating_sub(semantic_capacity_before)
+                * core::mem::size_of::<TokenSemanticId>(),
         );
         id
     }
@@ -278,20 +304,22 @@ impl TokenStore {
     #[cfg(test)]
     pub(crate) fn intern_traced(&mut self, traced: &[TracedTokenWord]) -> TokenListId {
         let hash = self.hash_state.hash_one(TracedTokenProjection(traced));
-        self.intern_traced_with_semantic_hash(traced, hash)
+        self.intern_traced_with_semantic_id(traced, TokenSemanticId(hash))
     }
 
-    /// Interns traced tokens using their aggregate-computed canonical semantic hash.
-    pub(crate) fn intern_traced_with_semantic_hash(
+    /// Interns traced tokens using their aggregate-computed canonical semantic identity.
+    pub(crate) fn intern_traced_with_semantic_id(
         &mut self,
         traced: &[TracedTokenWord],
-        semantic_hash: u64,
+        semantic_id: TokenSemanticId,
     ) -> TokenListId {
         #[cfg(feature = "node-stats")]
         let capacity_before = self.arena.capacity();
+        #[cfg(feature = "node-stats")]
+        let semantic_capacity_before = self.semantic_ids.capacity();
         if traced.is_empty() {
             #[cfg(feature = "node-stats")]
-            crate::measurement::record_token_intern(0, true, 0);
+            crate::measurement::record_token_intern(0, true, 0, 0);
             return Self::empty_id();
         }
 
@@ -299,8 +327,7 @@ impl TokenStore {
             self.rebuild_index();
         }
 
-        let hash = semantic_hash;
-        if let Some(candidates) = self.index.get(&hash) {
+        if let Some(candidates) = self.index.get(&semantic_id) {
             for &id in candidates {
                 let candidate = self.get(id);
                 if candidate.len() == traced.len()
@@ -310,7 +337,7 @@ impl TokenStore {
                         .all(|(&token, &word)| word.token() == Some(token))
                 {
                     #[cfg(feature = "node-stats")]
-                    crate::measurement::record_token_intern(traced.len(), true, 0);
+                    crate::measurement::record_token_intern(traced.len(), true, 0, 0);
                     return id;
                 }
             }
@@ -327,13 +354,17 @@ impl TokenStore {
                 .expect("validated traced token became invalid during interning")
         }));
         self.spans.push((start, len));
-        self.semantic_hashes.push(semantic_hash);
-        self.index.entry(hash).or_default().push(id);
+        self.semantic_ids.push(semantic_id);
+        self.index.entry(semantic_id).or_default().push(id);
         #[cfg(feature = "node-stats")]
         crate::measurement::record_token_intern(
             traced.len(),
             false,
             self.arena.capacity().saturating_sub(capacity_before) * core::mem::size_of::<Token>(),
+            self.semantic_ids
+                .capacity()
+                .saturating_sub(semantic_capacity_before)
+                * core::mem::size_of::<TokenSemanticId>(),
         );
         id
     }
@@ -354,13 +385,13 @@ impl TokenStore {
         &self.arena[start..end]
     }
 
-    /// Returns the canonical semantic hash stored with a live token list.
-    pub(crate) fn semantic_hash(&self, id: TokenListId) -> u64 {
+    /// Returns the canonical semantic identity stored with a live token list.
+    pub(crate) fn semantic_id(&self, id: TokenListId) -> TokenSemanticId {
         assert!(
             self.identities.contains(id.identity()),
             "token list id is not live"
         );
-        self.semantic_hashes[id.raw() as usize]
+        self.semantic_ids[id.raw() as usize]
     }
 
     /// Returns whether `id` names a currently-live token-list slot.
@@ -417,7 +448,7 @@ impl TokenStore {
             .rollback(mark.identities)
             .expect("token identity mark must name a retained ancestor");
         self.spans.truncate(spans);
-        self.semantic_hashes.truncate(spans);
+        self.semantic_ids.truncate(spans);
         self.arena.truncate(tokens);
         self.index_dirty = true;
     }
@@ -426,12 +457,13 @@ impl TokenStore {
         self.index.clear();
         for raw in 0..self.spans.len() {
             let id = self.id_at(u32_len(raw, "token-list spans exceed u32 entries"));
-            let hash = self.semantic_hash(id);
-            self.index.entry(hash).or_default().push(id);
+            let semantic_id = self.semantic_id(id);
+            self.index.entry(semantic_id).or_default().push(id);
         }
         self.index_dirty = false;
     }
 
+    #[cfg(test)]
     fn content_hash(&self, tokens: &[Token]) -> u64 {
         self.hash_state.hash_one(tokens)
     }

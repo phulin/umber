@@ -49,6 +49,7 @@ pub struct TokenStoreMeasurement {
     pub misses: u64,
     pub requested_tokens: u64,
     pub arena_capacity_bytes_grown: u64,
+    pub semantic_identity_capacity_bytes_grown: u64,
 }
 
 static NODE_APPEND_CALLS: AtomicU64 = AtomicU64::new(0);
@@ -80,6 +81,7 @@ static TOKEN_HITS: AtomicU64 = AtomicU64::new(0);
 static TOKEN_MISSES: AtomicU64 = AtomicU64::new(0);
 static TOKEN_REQUESTED: AtomicU64 = AtomicU64::new(0);
 static TOKEN_ARENA_GROWN_BYTES: AtomicU64 = AtomicU64::new(0);
+static TOKEN_SEMANTIC_ID_GROWN_BYTES: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) fn record_node_append(
     words: usize,
@@ -149,7 +151,12 @@ pub(crate) fn record_traced_list_finish(
     );
 }
 
-pub(crate) fn record_token_intern(tokens: usize, hit: bool, arena_capacity_bytes_grown: usize) {
+pub(crate) fn record_token_intern(
+    tokens: usize,
+    hit: bool,
+    arena_capacity_bytes_grown: usize,
+    semantic_identity_capacity_bytes_grown: usize,
+) {
     TOKEN_INTERN_CALLS.fetch_add(1, Ordering::Relaxed);
     TOKEN_REQUESTED.fetch_add(tokens as u64, Ordering::Relaxed);
     if hit {
@@ -158,6 +165,10 @@ pub(crate) fn record_token_intern(tokens: usize, hit: bool, arena_capacity_bytes
         TOKEN_MISSES.fetch_add(1, Ordering::Relaxed);
     }
     TOKEN_ARENA_GROWN_BYTES.fetch_add(arena_capacity_bytes_grown as u64, Ordering::Relaxed);
+    TOKEN_SEMANTIC_ID_GROWN_BYTES.fetch_add(
+        semantic_identity_capacity_bytes_grown as u64,
+        Ordering::Relaxed,
+    );
 }
 
 #[must_use]
@@ -214,5 +225,7 @@ pub fn token_store_measurement() -> TokenStoreMeasurement {
         misses: TOKEN_MISSES.load(Ordering::Relaxed),
         requested_tokens: TOKEN_REQUESTED.load(Ordering::Relaxed),
         arena_capacity_bytes_grown: TOKEN_ARENA_GROWN_BYTES.load(Ordering::Relaxed),
+        semantic_identity_capacity_bytes_grown: TOKEN_SEMANTIC_ID_GROWN_BYTES
+            .load(Ordering::Relaxed),
     }
 }

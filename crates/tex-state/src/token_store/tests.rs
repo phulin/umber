@@ -1,9 +1,16 @@
-use super::{TokenListBuilder, TokenStore, TokenStoreMark};
+use super::{TokenListBuilder, TokenSemanticId, TokenStore, TokenStoreMark};
 use crate::ids::TokenListId;
 use crate::interner::Symbol;
 use crate::token::{Catcode, OriginId, Token, TracedTokenWord};
 use proptest::prelude::*;
 use std::collections::HashMap;
+
+#[test]
+fn semantic_identity_is_one_word_per_token_list() {
+    assert_eq!(core::mem::size_of::<TokenSemanticId>(), 8);
+    let store = TokenStore::new();
+    assert_eq!(store.semantic_ids.len(), store.spans.len());
+}
 
 #[test]
 fn empty_list_is_canonical_and_allocates_no_tokens() {
@@ -187,7 +194,7 @@ fn same_hash_bucket_still_compares_token_list_content() {
 
     store
         .index
-        .entry(distinct_hash)
+        .entry(TokenSemanticId(distinct_hash))
         .or_default()
         .push(existing_id);
 

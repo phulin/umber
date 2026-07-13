@@ -374,6 +374,21 @@ cells[i] = new
   `OriginListId` spans and never participates in this token-list identity;
   memo keys are hashes and identical expansions share storage across snapshots
   automatically.
+- Freeze also computes the allocation-independent `TokenSemanticId` in one
+  pass. Version 1 hashes token kind and character/category payload directly;
+  control sequences contribute the interner-owned semantic atom for
+  `(namespace, spelling)`, never the compact runtime symbol key. The identity
+  is stored beside the immutable span and is rebuilt through the same
+  aggregate path when a format is restored. Checkpoint hashing composes this
+  ready identity without reopening the token list, so token-list contribution
+  to checkpoint capture is O(1). Changing token tags, semantic-atom meaning,
+  or hash framing is a token semantic-identity scheme migration.
+- The retained identity column costs exactly one 64-bit word per token-list
+  slot (including the canonical empty slot), plus ordinary `Vec` spare
+  capacity. `node-stats` reports identity-column capacity growth separately
+  from token-arena growth. Builders retain no hash state, and bulk, traced,
+  builder, cold, restored, and forked paths all converge through the same
+  freeze-time identity operation.
 - Backing: bump arena + hash index; rollback = watermark truncation + lazy
   index repair (same policy as interner).
 

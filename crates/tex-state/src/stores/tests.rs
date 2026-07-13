@@ -395,7 +395,7 @@ fn token_list_builder_finishes_through_stores_boundary() {
 }
 
 #[test]
-fn incremental_and_bulk_token_list_identities_match() {
+fn builder_and_bulk_token_list_identities_match() {
     let mut stores = Stores::new();
     let symbol = stores.intern("macro");
     let tokens = [
@@ -410,14 +410,14 @@ fn incremental_and_bulk_token_list_identities_match() {
     let bulk = stores.intern_token_list(&tokens);
     let mut builder = stores.token_list_builder();
     for token in tokens {
-        stores.push_token_list_token(&mut builder, token);
+        builder.push(token);
     }
-    let incremental = stores.finish_token_list(&mut builder);
+    let built = stores.finish_token_list(&mut builder);
 
-    assert_eq!(incremental, bulk);
+    assert_eq!(built, bulk);
     assert_eq!(
-        stores.tokens.semantic_hash(incremental),
-        stores.tokens.semantic_hash(bulk)
+        stores.tokens.semantic_id(built),
+        stores.tokens.semantic_id(bulk)
     );
 }
 

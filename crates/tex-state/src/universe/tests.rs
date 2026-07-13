@@ -228,10 +228,12 @@ fn traced_list_finish_reuses_semantics_but_preserves_each_origin_instance() {
         .map(|token| TracedTokenWord::pack(token, second_origin))
         .collect();
 
+    let bulk = universe.intern_token_list(&tokens);
     let first_list = universe.finish_traced_token_list(&first);
     let second_list = universe.finish_traced_token_list(&second);
 
-    assert_eq!(first_list.token_list(), second_list.token_list());
+    assert_eq!(first_list.token_list(), bulk);
+    assert_eq!(second_list.token_list(), bulk);
     assert_ne!(first_list.origin_list(), second_list.origin_list());
     assert_eq!(universe.tokens(first_list.token_list()), tokens);
     assert_eq!(
@@ -468,6 +470,40 @@ fn semantic_format_and_hash_share_permanent_symbol_keys() {
         first.dump_format().expect("first symbolic format"),
         second.dump_format().expect("second symbolic format")
     );
+}
+
+#[test]
+fn token_semantic_id_converges_across_cold_restore_and_fork() {
+    let mut cold = Universe::new();
+    let target = cold.intern("target");
+    let body = cold.intern_token_list(&[
+        Token::Cs(target.symbol()),
+        Token::Char {
+            ch: 'x',
+            cat: Catcode::Letter,
+        },
+        Token::param(1),
+    ]);
+    cold.set_toks(7, body);
+
+    let bytes = cold.dump_format().expect("token format encodes");
+    let fork = cold.clone();
+    let restored = Universe::from_format(World::memory(), &bytes).expect("token format restores");
+
+    let fork_body = fork.toks(7);
+    let restored_body = restored.toks(7);
+    let semantic_id = cold.stores.testing_token_semantic_id(body);
+    assert_eq!(
+        fork.stores.testing_token_semantic_id(fork_body),
+        semantic_id
+    );
+    assert_eq!(
+        restored.stores.testing_token_semantic_id(restored_body),
+        semantic_id
+    );
+    assert_eq!(fork.testing_state_hash(), cold.testing_state_hash());
+    assert_eq!(restored.testing_state_hash(), cold.testing_state_hash());
+    assert_eq!(restored.dump_format().expect("token format redumps"), bytes);
 }
 
 #[test]

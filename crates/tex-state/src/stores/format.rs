@@ -332,7 +332,7 @@ impl StoreFormat {
                 .into_iter()
                 .map(|token| token.restore(&stores.interner))
                 .collect::<Result<Vec<_>, _>>()?;
-            if stores.tokens.intern(&tokens).raw() as usize != raw {
+            if stores.intern_token_list(&tokens).raw() as usize != raw {
                 return Err(StoreFormatError::Invalid("non-canonical token-list order"));
             }
         }
