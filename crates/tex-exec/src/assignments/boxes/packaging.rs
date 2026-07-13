@@ -276,6 +276,10 @@ where
                         );
                         continue;
                     }
+                    Err(tex_expand::ExpandError::ExtraConditionalControl { name, .. }) => {
+                        crate::diagnostics::report_extra_conditional(stores, name);
+                        continue;
+                    }
                     Err(err) => return Err(err.into()),
                 }
             }
@@ -330,6 +334,16 @@ where
                         tex_state::PrintSink::TerminalAndLog,
                         "\n! Improper assignment target; this assignment is ignored.\n",
                     );
+                    continue;
+                }
+                Err(ExecError::ExtraConditionalControl { primitive, .. }) => {
+                    let name = match primitive {
+                        tex_state::meaning::ExpandablePrimitive::Else => "else",
+                        tex_state::meaning::ExpandablePrimitive::Fi => "fi",
+                        tex_state::meaning::ExpandablePrimitive::Or => "or",
+                        _ => unreachable!("error variant is restricted to conditional controls"),
+                    };
+                    crate::diagnostics::report_extra_conditional(stores, name);
                     continue;
                 }
                 Err(

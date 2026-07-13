@@ -13,6 +13,14 @@ use tex_state::{PrintSink, Universe};
 
 use crate::mode::IGNORE_DEPTH;
 use crate::node_dump::{DumpConfig, dump_node_list, dump_node_slice};
+
+pub(crate) fn report_extra_conditional(stores: &mut Universe, name: &str) {
+    write_diagnostic(
+        stores,
+        &format!("\n! Extra \\{name}.\nI'm ignoring this condition command.\n"),
+    );
+}
+
 pub(crate) fn report_bad_interaction_mode(stores: &mut Universe, value: i32) {
     write_diagnostic(stores, &format!("\n! Bad interaction mode ({value}).\n"));
 }

@@ -337,10 +337,7 @@ where
                         continue;
                     }
                     tex_expand::ExpandError::ExtraConditionalControl { name, .. } => {
-                        stores.world_mut().write_text(
-                            tex_state::PrintSink::TerminalAndLog,
-                            &format!("\n! Extra \\{name}.\nI'm ignoring this condition command.\n"),
-                        );
+                        crate::diagnostics::report_extra_conditional(stores, name);
                         continue;
                     }
                     error => {
@@ -365,10 +362,7 @@ where
                     continue;
                 }
                 Err(tex_expand::ExpandError::ExtraConditionalControl { name, .. }) => {
-                    stores.world_mut().write_text(
-                        tex_state::PrintSink::TerminalAndLog,
-                        &format!("\n! Extra \\{name}.\nI'm ignoring this condition command.\n"),
-                    );
+                    crate::diagnostics::report_extra_conditional(stores, name);
                     continue;
                 }
                 Err(tex_expand::ExpandError::Lex(tex_lex::LexError::InvalidCharacter {
@@ -479,6 +473,16 @@ where
                 ExecError::UnexpectedMacroDelivery { .. }
                 | ExecError::UnexpectedExpandableDelivery { .. },
             ) => continue,
+            Err(ExecError::ExtraConditionalControl { primitive, .. }) => {
+                let name = match primitive {
+                    tex_state::meaning::ExpandablePrimitive::Else => "else",
+                    tex_state::meaning::ExpandablePrimitive::Fi => "fi",
+                    tex_state::meaning::ExpandablePrimitive::Or => "or",
+                    _ => unreachable!("error variant is restricted to conditional controls"),
+                };
+                crate::diagnostics::report_extra_conditional(stores, name);
+                continue;
+            }
             Err(
                 ExecError::ExtraRightBraceOrForgottenEndgroup { .. }
                 | ExecError::ExtraRightBraceOrForgottenDollar { .. }
