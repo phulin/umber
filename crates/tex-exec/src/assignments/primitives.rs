@@ -259,6 +259,13 @@ pub fn install_etex_unexpandable_primitives(stores: &mut Universe) {
         tracing_scantokens,
         Meaning::IntParam(IntParam::TRACING_SCAN_TOKENS.raw()),
     );
+    for (name, parameter) in [
+        ("TeXXeTstate", IntParam::TEX_XET_STATE),
+        ("predisplaydirection", IntParam::PRE_DISPLAY_DIRECTION),
+    ] {
+        let symbol = stores.intern(name);
+        stores.set_meaning(symbol, Meaning::IntParam(parameter.raw()));
+    }
 }
 
 fn install_page_meanings(stores: &mut Universe) {

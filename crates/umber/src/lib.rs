@@ -343,6 +343,8 @@ mod primitive_mode_tests {
         let showtokens = compatibility.intern("showtokens");
         let showgroups = compatibility.intern("showgroups");
         let showifs = compatibility.intern("showifs");
+        let tex_xet_state = compatibility.intern("TeXXeTstate");
+        let predisplaydirection = compatibility.intern("predisplaydirection");
         assert_eq!(compatibility.meaning(unexpanded), Meaning::Undefined);
         assert_eq!(compatibility.meaning(detokenize), Meaning::Undefined);
         assert_eq!(compatibility.meaning(unless), Meaning::Undefined);
@@ -378,6 +380,8 @@ mod primitive_mode_tests {
             showtokens,
             showgroups,
             showifs,
+            tex_xet_state,
+            predisplaydirection,
         ] {
             assert_eq!(compatibility.meaning(symbol), Meaning::Undefined);
         }
@@ -481,6 +485,19 @@ mod primitive_mode_tests {
             extended.meaning(tracingscantokens),
             Meaning::IntParam(tex_state::env::banks::IntParam::TRACING_SCAN_TOKENS.raw())
         );
+        for (name, parameter) in [
+            (
+                "TeXXeTstate",
+                tex_state::env::banks::IntParam::TEX_XET_STATE,
+            ),
+            (
+                "predisplaydirection",
+                tex_state::env::banks::IntParam::PRE_DISPLAY_DIRECTION,
+            ),
+        ] {
+            let symbol = extended.intern(name);
+            assert_eq!(extended.meaning(symbol), Meaning::IntParam(parameter.raw()));
+        }
     }
 }
 

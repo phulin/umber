@@ -176,6 +176,10 @@ impl IntParam {
 
     /// e-TeX pseudo-file tracing switch.
     pub const TRACING_SCAN_TOKENS: Self = Self::new(61);
+    /// e-TeX bidirectional typesetting enhancement switch.
+    pub const TEX_XET_STATE: Self = Self::new(62);
+    /// Direction preceding an e-TeX display.
+    pub const PRE_DISPLAY_DIRECTION: Self = Self::new(63);
 
     /// TeX's `\showboxbreadth` integer parameter.
     pub const SHOW_BOX_BREADTH: Self = Self::new(24);
