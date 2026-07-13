@@ -25,6 +25,10 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `src/lib.rs`: shared engine session, file hooks, typed effect-before-driver finalization, run helpers, and one-artifact-at-a-time DVI construction.
 - `src/memory_output.rs`: exact committed terminal/log/DVI/aux collection for successful memory-backed runs with aggregate output limits.
 - `src/memory_output/tests.rs`: final-commit idempotence, output accounting, and memory-boundary tests.
+- `src/virtual_compile.rs`: host-neutral restart-on-fetch session, typed request/result API, deterministic cache, and resource accounting.
+- `src/virtual_compile/path.rs`: POSIX-like `/job` and `/texlive` path validation plus logical TeX/TFM request normalization.
+- `src/virtual_compile/hooks.rs`: World-backed execution hooks with ordered typed missing-file side state.
+- `src/virtual_compile/tests.rs`: native retry, path, precedence, limits, format, effect-isolation, font batching, and DVI coverage.
 - `src/main.rs`: `umber` binary entry point, CLI argument parsing, `lex-dump`/`expand-dump`/`run` dispatch, token formatting, and real-run file hooks.
 - `tests/it.rs`: integration-test module root wiring the CLI, replay identity, and effectful replay test suites.
 - `tests/it/cli.rs`: integration tests for CLI success, usage errors, corpus dump output, and committed diagnostic/DVI fixture parity.

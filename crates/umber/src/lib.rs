@@ -14,10 +14,15 @@ use tex_state::{
 
 mod input_search;
 mod memory_output;
+mod virtual_compile;
 
 pub use input_search::{TexFontSearchPath, TexInputSearchPath};
 pub use memory_output::{
     MemoryOutputCollectionError, MemoryOutputFile, MemoryRunOutput, collect_final_memory_output,
+};
+pub use virtual_compile::{
+    CompileAttemptResult, CompileDiagnostic, CompileError, FileKind, FileRequest, FileRequestKey,
+    SessionLimits, SessionOptions, VirtualCompileSession, VirtualPath, VirtualPathError,
 };
 
 /// The only checkpoint policy supported by composed engine sessions.
