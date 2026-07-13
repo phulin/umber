@@ -8,6 +8,9 @@ When documenting tests or parity workflow, point fixture changes to `scripts/reg
 
 `snapshot_performance.md` defines the focused snapshot latency and retained-allocation gate, including its asymptotic budgets and measurement semantics.
 
+`profiling.md` documents the persistent in-process Gentle profiler, its
+Samply wrapper, prerequisites, and measured boundary.
+
 `dvi_artifact_fast_path.md` defines committed-byte receipts, the validated
 borrowed/indexed version-10 artifact view, replay invariants, and the measured
 gate for considering a flat artifact version.

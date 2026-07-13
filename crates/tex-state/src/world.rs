@@ -98,11 +98,16 @@ pub struct FileContent {
 impl FileContent {
     #[must_use]
     pub(crate) fn new(record: InputRecordId, path: PathBuf, bytes: Vec<u8>) -> Self {
+        Self::from_shared(record, path, bytes.into())
+    }
+
+    #[must_use]
+    fn from_shared(record: InputRecordId, path: PathBuf, bytes: Arc<[u8]>) -> Self {
         let hash = ContentHash::from_bytes(&bytes);
         Self {
             record,
             path,
-            bytes: bytes.into(),
+            bytes,
             hash,
         }
     }
@@ -762,7 +767,7 @@ impl World {
                 "world is not memory-backed",
             ));
         };
-        memory.files.insert(path.into(), bytes.into());
+        memory.files.insert(path.into(), Arc::from(bytes.into()));
         Ok(())
     }
 
@@ -785,15 +790,15 @@ impl World {
     /// Reads a file as bytes, records the hash, and returns both together.
     pub fn read_file(&mut self, path: impl AsRef<Path>) -> Result<FileContent, WorldError> {
         let path = path.as_ref();
-        let bytes = match &self.backend {
-            WorldBackend::Real { .. } => std::fs::read(path).map_err(|err| {
+        let bytes: Arc<[u8]> = match &self.backend {
+            WorldBackend::Real { .. } => Arc::from(std::fs::read(path).map_err(|err| {
                 WorldError::new("read file", Some(path.to_owned()), err.to_string())
-            })?,
+            })?),
             WorldBackend::Memory(memory) => memory
                 .outputs
                 .get(path)
-                .or_else(|| memory.files.get(path))
-                .cloned()
+                .map(|bytes| Arc::from(bytes.as_slice()))
+                .or_else(|| memory.files.get(path).cloned())
                 .ok_or_else(|| {
                     WorldError::new(
                         "read file",
@@ -803,7 +808,7 @@ impl World {
                 })?,
         };
         let record = self.allocate_input_record();
-        let content = FileContent::new(record, path.to_owned(), bytes);
+        let content = FileContent::from_shared(record, path.to_owned(), bytes);
         self.input_contents
             .entry(content.hash)
             .or_insert_with(|| content.bytes.clone());
@@ -829,7 +834,7 @@ impl World {
             WorldBackend::Memory(memory) => {
                 memory
                     .files
-                    .insert(path.to_owned(), bytes.as_ref().to_vec());
+                    .insert(path.to_owned(), Arc::from(bytes.as_ref()));
                 Ok(())
             }
         }
@@ -1655,7 +1660,7 @@ fn verify_artifact_identity(
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct MemoryBackend {
-    files: BTreeMap<PathBuf, Vec<u8>>,
+    files: BTreeMap<PathBuf, Arc<[u8]>>,
     outputs: BTreeMap<PathBuf, Vec<u8>>,
     artifacts: BTreeMap<ContentHash, Vec<u8>>,
     terminal_output: Vec<u8>,

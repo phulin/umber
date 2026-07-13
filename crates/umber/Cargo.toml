@@ -3,6 +3,10 @@ name = "umber"
 version.workspace = true
 edition.workspace = true
 
+[[bin]]
+name = "gentle-profile"
+path = "src/bin/gentle_profile.rs"
+
 [features]
 default = []
 shadow = ["tex-state/shadow"]

@@ -29,6 +29,11 @@ unicode-width = "0.2"
 [profile.test]
 opt-level = 3
 
+[profile.profiling]
+inherits = "release"
+debug = 2
+strip = false
+
 [profile.release.package.umber-wasm]
 opt-level = "s"
 

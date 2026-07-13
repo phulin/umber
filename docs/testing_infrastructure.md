@@ -40,6 +40,19 @@ default cargo-test tier because its workload deliberately materializes large
 input, page, mode, stream, hyphenation, provenance, and Unicode code-table
 state.
 
+Whole-engine Gentle profiling has a separate persistent in-process runner:
+
+```bash
+scripts/profile-gentle.sh
+```
+
+It preloads external corpus and font inputs into a structurally shared memory
+World, performs a warm-up, then repeats fresh engine sessions without
+per-iteration temporary-directory or host-file staging. The script builds an
+optimized symbolized binary and saves the Samply profile under
+`target/profiles/`. See [Profiling Umber with Gentle](profiling.md) for its
+controls and measured boundary.
+
 ## Fixture Regeneration
 
 `scripts/regen-fixtures.sh` is the sole live-reference rewrite path. It builds

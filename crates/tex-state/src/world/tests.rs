@@ -1,4 +1,28 @@
 use super::*;
+
+#[test]
+fn cloned_memory_world_shares_seeded_input_bytes() {
+    let mut world = World::memory();
+    world
+        .set_memory_file("gentle.tex", vec![b'x'; 1024])
+        .expect("seed memory input");
+
+    let cloned = world.clone();
+    let (WorldBackend::Memory(original), WorldBackend::Memory(cloned)) =
+        (&world.backend, &cloned.backend)
+    else {
+        panic!("worlds should remain memory backed");
+    };
+    let original = original
+        .files
+        .get(Path::new("gentle.tex"))
+        .expect("original input");
+    let cloned = cloned
+        .files
+        .get(Path::new("gentle.tex"))
+        .expect("cloned input");
+    assert!(Arc::ptr_eq(original, cloned));
+}
 use crate::Universe;
 
 #[test]
