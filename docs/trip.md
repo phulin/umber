@@ -12,6 +12,7 @@ scripts/trip.sh --offline
 scripts/trip.sh self-test
 scripts/build-trip-initex.sh
 cargo test -p umber --test it e2e_conformance_trip -- --nocapture
+scripts/regen-fixtures.sh --case e2e/trip
 ```
 
 `scripts/trip.sh` fetches official CTAN bytes into gitignored
@@ -21,8 +22,12 @@ phase, and runs DVItype. The Cargo integration test first checks for
 `third_party/trip/trip.tex` and `trip.tfm`; when either is absent it returns
 without running TRIP. When both are present it uses
 `scripts/trip.sh umber-artifacts` for specialized preparation, then
-uses the shared Rust conformance library to gate on byte-identical final DVI
-after normalizing only the preamble comment. DVItype is diagnostic for Umber.
+uses the shared Rust conformance library to compare against the committed
+`tests/corpus/e2e/trip.expected.dvi` fixture, requiring byte-identical final
+DVI after normalizing only the preamble comment. DVItype is diagnostic for
+Umber. Fixture regeneration independently executes both TRIP phases with
+pdfTeX and installs that locally generated DVI through
+`scripts/regen-fixtures.sh`; it never copies the official third-party DVI.
 The generated `tripin.log`, `trip.log`, `trip.fot`, and `tripos.tex` remain in
 `target/trip/` for diagnosis, but their parity belongs to the diagnostic tier
 and does not affect this DVI milestone. The self-test does not fetch or run
@@ -63,6 +68,16 @@ The byte identity is pinned by SHA-256:
 | `tripman.tex` | `a3e47254ad87fc3fdba210d61764c93b021740f56465971f5a41103405add48b` |
 
 The exact URLs live in `tests/trip-manifest.txt` beside the matching hashes.
+
+The committed `tests/corpus/e2e/trip.expected.dvi` is not the official
+`trip.dvi` above. It is generated locally from the pinned `trip.tex` and
+`trip.tfm` by pdfTeX 3.141592653-2.6-1.40.27 (TeX Live 2025), using the
+two-phase INITEX/format-loaded workflow. Its raw SHA-256 is
+`a48cec413b485403e11d35e24122aa747b3e3863a151c257fcec026580a78bf9`;
+after preamble-comment normalization it is
+`6420f3461dec8e5feed4b03bfc3717d00c8a36fae4fe9226f6d53a4db7592bb9`.
+Regenerate it with `scripts/regen-fixtures.sh --case e2e/trip`, setting
+`UMBER_REF_PDFTEX` when pdfTeX is not on `PATH`.
 
 The special reference engine comes from the TeX Live 2025 source snapshot
 `texlive-20250308-source.tar.xz`, fetched from the University of Utah historic

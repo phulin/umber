@@ -2,7 +2,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use parity_harness::{compare_dvi_files, run_named_external_document};
+use parity_harness::{compare_dvi_files, run_named_fixture_document};
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -26,26 +26,40 @@ fn target_dir(repo_root: &Path) -> PathBuf {
         )
 }
 
-#[test]
-#[ignore = "requires the fetched external corpus and a live reference TeX"]
-fn e2e_conformance_story() {
-    run_named_external_document(
-        &repo_root(),
+fn plain_inputs_available(root: &Path, document: &str) -> bool {
+    let corpus = root.join("third_party/corpus");
+    corpus.join(document).is_file()
+        && corpus.join("plain.tex").is_file()
+        && root.join("third_party/hyphen/hyphen.tex").is_file()
+}
+
+fn run_plain_fixture_case(document: &str, fixture_name: &str) {
+    let root = repo_root();
+    if !plain_inputs_available(&root, document) {
+        eprintln!(
+            "skipping {document} end-to-end conformance: external source, plain.tex, or hyphen.tex is absent"
+        );
+        return;
+    }
+    run_named_fixture_document(
+        &root,
         Path::new(env!("CARGO_BIN_EXE_umber")),
-        "story.tex",
+        document,
+        &root
+            .join("tests/corpus/e2e")
+            .join(format!("{fixture_name}.expected.dvi")),
     )
     .unwrap_or_else(|error| panic!("{error:#}"));
 }
 
 #[test]
-#[ignore = "requires the fetched external corpus and a live reference TeX"]
+fn e2e_conformance_story() {
+    run_plain_fixture_case("story.tex", "story");
+}
+
+#[test]
 fn e2e_conformance_gentle() {
-    run_named_external_document(
-        &repo_root(),
-        Path::new(env!("CARGO_BIN_EXE_umber")),
-        "gentle.tex",
-    )
-    .unwrap_or_else(|error| panic!("{error:#}"));
+    run_plain_fixture_case("gentle.tex", "gentle");
 }
 
 #[test]
@@ -79,7 +93,7 @@ fn e2e_conformance_trip() {
     );
 
     compare_dvi_files(
-        &trip_dir.join("trip.dvi"),
+        &root.join("tests/corpus/e2e/trip.expected.dvi"),
         &target.join("trip/umber/trip.dvi"),
         &target.join("conformance-triage"),
         "trip",

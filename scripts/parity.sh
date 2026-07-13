@@ -20,8 +20,8 @@ usage:
   scripts/parity.sh self-test
 
 Fetches and verifies the pinned external TeX corpus declared in
-tests/corpus-manifest.txt. The e2e mode then runs reference TeX and Umber on
-each manifest entry and writes mismatch bundles under target/parity-triage/.
+tests/corpus-manifest.txt. The e2e mode then runs Umber against the committed
+fixed DVI fixtures and writes mismatch bundles under target/conformance-triage/.
 The script pins SOURCE_DATE_EPOCH and FORCE_SOURCE_DATE by default so
 date-sensitive documents have stable reference output; set them explicitly to
 override the defaults.
@@ -104,6 +104,6 @@ if [[ "$mode" == "e2e" ]]; then
     esac
   fi
   for test_name in "${test_names[@]}"; do
-    cargo test -p umber --test it "$test_name" -- --ignored --nocapture
+    cargo test -p umber --test it "$test_name" -- --nocapture
   done
 fi

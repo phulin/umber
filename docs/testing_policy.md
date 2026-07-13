@@ -180,39 +180,39 @@ date-sensitive documents have stable DVI body bytes. Do not commit fetched
 corpus documents unless a later issue explicitly changes the redistribution
 policy.
 
-Full external-document DVI parity is exposed as ignored Cargo integration
-tests, with a script retained for acquisition and convenient selection:
+Full external-document DVI parity is exposed as fixture-backed Cargo
+integration tests, with a script retained for acquisition and selection:
 
 ```bash
-cargo test -p umber --test it e2e_conformance_story -- --ignored --nocapture
-cargo test -p umber --test it e2e_conformance_gentle -- --ignored --nocapture
+cargo test -p umber --test it e2e_conformance_story -- --nocapture
+cargo test -p umber --test it e2e_conformance_gentle -- --nocapture
 scripts/parity.sh e2e
 scripts/parity.sh e2e --offline
 ```
 
 This mode verifies acquisition, then selects `e2e_conformance_story` and
 `e2e_conformance_gentle` in Umber's single integration-test binary. The shared
-`parity-harness` library runs reference TeX through `tools/refexec`,
-checks the manifest-pinned normalized reference DVI hash for environment
-drift under the script-pinned job clock, and byte-compares the normalized DVI
-files. Each document names a manifest-pinned `format_source`; the harness
+`parity-harness` library runs Umber and byte-compares its normalized DVI with
+the committed `tests/corpus/e2e` fixture. Each document names a
+manifest-pinned `format_source`; the harness
 stages that exact source, the document, hyphenation input, and required TFMs,
-then feeds both engines the same wrapper that inputs the format source before
-the document. Reference TeX uses INITEX mode and Umber executes the wrapper
-through its ordinary input path. This follows TeX82's ordinary
+then feeds Umber the wrapper that inputs the format source before the document.
+Umber executes the wrapper through its ordinary input path. This follows
+TeX82's ordinary
 `start_input` stack behavior (sections 23 and 29); format dumping remains a
 terminal INITEX cleanup operation (sections 46, 50, and 51), not a way to
 continue into the document. The pinned modern `plain.tex` source contains no
-`\\dump`, so the unmodified file can be loaded directly. On reference drift,
-Umber failure, or mismatch it writes a
+`\\dump`, so the unmodified file can be loaded directly. On fixture-hash
+drift, Umber failure, or mismatch it writes a
 triage bundle under
 `target/conformance-triage/<doc-name>/` with byte context, page-limited
 dvitype-style disassemblies, a unified disassembly diff, tracing-output logs,
 and a summary that names the divergent page and opcode when a page can be
 recovered from DVI backpointers. `scripts/parity.sh self-test` exercises the
 bundle writer with synthetic DVI and remains fast enough for local tooling
-checks, but the external corpus itself must stay outside
-`cargo test --workspace --tests`.
+checks. Live reference TeX appears only in explicit fixture regeneration.
+`scripts/regen-fixtures.sh --case e2e/story` and `--case e2e/gentle` verify the
+manifest-pinned normalized reference hash before rewriting either fixture.
 
 The original Knuth TeX82 TRIP workload is an end-to-end DVI conformance test
 that runs conditionally when its two inputs are locally present. It remains
@@ -224,6 +224,7 @@ scripts/trip.sh --offline
 scripts/trip.sh self-test
 scripts/build-trip-initex.sh
 cargo test -p umber --test it e2e_conformance_trip -- --nocapture
+scripts/regen-fixtures.sh --case e2e/trip
 ```
 
 `scripts/trip.sh` reads `tests/trip-manifest.txt`, fetches exact official
@@ -241,11 +242,13 @@ automatically uses `target/trip-initex/bin`, or `UMBER_TRIP_TOOLS` can select
 another pinned build. It uses the `UMBER_REF_DVITYPE` override when DVItype is
 not on `PATH`.
 
-The Umber integration test gates only `trip.dvi`; generated
+The Umber integration test gates only the final DVI; generated
 logs, terminal photo, and `tripos.tex` remain diagnostic outputs owned by the
 separate diagnostic parity tier. Its oracle normalizes only the DVI preamble
-comment and otherwise requires byte identity with the pinned official
-`trip.dvi`, exactly like Story and Gentle. DVItype remains diagnostic. The
+comment and otherwise requires byte identity with the committed, locally
+pdfTeX-generated fixture, exactly like Story and Gentle. Fixture regeneration
+executes the two-phase workload from `trip.tex` and `trip.tfm` and never copies
+the official `third_party/trip/trip.dvi`. DVItype remains diagnostic. The
 standalone reference-engine validation retains the narrowly bounded Appendix A
 movement reconciliation needed to validate the special reference toolchain;
 that allowance is never applied to Umber's final DVI. Failures write

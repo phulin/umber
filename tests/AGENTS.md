@@ -83,6 +83,14 @@ the other DVI corpora; keep cases primitive-only.
 against its committed DVI fixture, and `scripts/regen-fixtures.sh` owns fixture
 regeneration for the area.
 
+`tests/corpus/e2e` contains fixed final-DVI fixtures for Story, Gentle, and
+TRIP. Their Cargo integration tests run Umber only and return cleanly when the
+corresponding gitignored external source inputs are absent. Regenerate Story
+and Gentle with live reference TeX through `scripts/regen-fixtures.sh --case
+e2e/story` and `--case e2e/gentle`. Regenerate TRIP with `--case e2e/trip`,
+which executes the two-phase workload with pdfTeX and commits the DVI produced
+by that local reference run; it never copies `third_party/trip/trip.dvi`.
+
 ```text
 <case>.expected.<kind>
 ```
@@ -110,7 +118,7 @@ Modes:
 - `--all` regenerates all committed fixture areas.
 - `--area AREA` regenerates one area, such as `hello`, `lexer`, `expand`,
   `lexer_dynamic`, `exec`, `typeset`, `dvi`, `page`, `math`, `align`,
-  `leaders`, `etex_exec`, `tex_exec`, or `tex_exec_io`.
+  `leaders`, `e2e`, `etex_exec`, `tex_exec`, or `tex_exec_io`.
 - `--case AREA/CASE` regenerates one case exactly for text/native and DVI
   areas.
 
@@ -166,27 +174,28 @@ entries use `key value` lines. Support entries record provenance and licensing;
 document entries additionally select a `format_source` and record the reference
 DVI SHA-256 after the same banner-only normalization used by `tools/refexec`.
 `scripts/parity.sh` pins `SOURCE_DATE_EPOCH=1783604160` and
-`FORCE_SOURCE_DATE=1` by default before running the reference engine because
-external documents may write date primitives into the DVI body.
+`FORCE_SOURCE_DATE=1` by default before running Umber because external
+documents may write date primitives into the DVI body. Fixture regeneration
+uses the same clock for reference TeX.
 
-Run the ignored end-to-end DVI conformance tests explicitly with:
+Run the fixture-backed end-to-end DVI conformance tests explicitly with:
 
 ```bash
-cargo test -p umber --test it e2e_conformance -- --ignored --nocapture
+cargo test -p umber --test it e2e_conformance_story -- --nocapture
+cargo test -p umber --test it e2e_conformance_gentle -- --nocapture
 scripts/parity.sh e2e
 scripts/parity.sh e2e --offline
 scripts/parity.sh e2e --doc story.tex
 ```
 
 The e2e mode first performs the same acquisition verification, then selects
-the ignored `e2e_conformance_story` and `e2e_conformance_gentle` Cargo
-integration tests. For each document the shared Rust harness stages the selected
-real `format_source`, document, `third_party/hyphen/hyphen.tex`, and all TFM
-files loaded by Plain. Both engines receive the same wrapper that inputs the
-format source before the document; reference TeX runs in INITEX mode, while
-Umber runs the wrapper directly through its ordinary input path. The harness
-verifies `expected_ref_dvi_sha256` against the normalized reference DVI
-produced with the script-pinned job clock and byte-compares normalized output.
+the `e2e_conformance_story` and `e2e_conformance_gentle` Cargo integration
+tests. For each document the shared Rust harness stages the selected real
+`format_source`, document, `third_party/hyphen/hyphen.tex`, and all TFM files
+loaded by Plain. Cargo tests run only Umber and compare its final output with
+the committed fixture. Live reference TeX is used only by
+`scripts/regen-fixtures.sh`; regeneration verifies `expected_ref_dvi_sha256`
+before updating the fixture.
 Reference drift, Umber failures, and byte mismatches
 write automatic triage bundles under `target/conformance-triage/<doc-name>/`
 containing byte context, page-limited dvitype-style disassemblies and diff,

@@ -31,7 +31,77 @@ pub fn run_cli() -> Result<bool> {
         run_self_test(&options.triage_dir)?;
         return Ok(true);
     }
+    if let Some(path) = &options.write_reference_fixture {
+        write_reference_fixture(&options, path)?;
+        return Ok(true);
+    }
     run_e2e(&options)
+}
+
+/// Runs one manifest-backed document through Umber and compares its final DVI
+/// with a committed fixture. Reference TeX is intentionally absent here.
+pub fn run_named_fixture_document(
+    repo_root: &Path,
+    umber_bin: &Path,
+    document: &str,
+    fixture: &Path,
+) -> Result<()> {
+    let repo_root = repo_root
+        .canonicalize()
+        .with_context(|| format!("failed to resolve repository root {}", repo_root.display()))?;
+    let manifest_path = repo_root.join("tests/corpus-manifest.txt");
+    let manifest = read_manifest(&manifest_path)?;
+    let doc = manifest
+        .doc
+        .iter()
+        .find(|doc| doc.name == document)
+        .ok_or_else(|| {
+            anyhow!(
+                "document {document} is not declared in {}",
+                manifest_path.display()
+            )
+        })?;
+    let fixture_bytes = fs::read(fixture)
+        .with_context(|| format!("failed to read fixed DVI fixture {}", fixture.display()))?;
+    let fixture_hash = sha256_hex(&normalized_dvi_for_comparison(&fixture_bytes)?);
+    if fixture_hash != doc.expected_ref_dvi_sha256 {
+        bail!(
+            "fixed DVI fixture {} has normalized SHA-256 {fixture_hash}, expected {} from {}",
+            fixture.display(),
+            doc.expected_ref_dvi_sha256,
+            manifest_path.display()
+        );
+    }
+
+    let source_path = repo_root.join("third_party/corpus").join(document);
+    let format_source_path = repo_root
+        .join("third_party/corpus")
+        .join(&doc.format_source);
+    let umber_run = run_umber_dvi(&repo_root, umber_bin, &source_path, &format_source_path)?;
+    if !umber_run.success {
+        bail!(
+            "Umber failed for {document}\nstdout:\n{}\nstderr:\n{}",
+            umber_run.stdout,
+            umber_run.stderr
+        );
+    }
+    let actual = umber_run
+        .dvi
+        .ok_or_else(|| anyhow!("Umber did not produce DVI for {document}"))?;
+    let actual_path = repo_root
+        .join("target/conformance-artifacts")
+        .join(document)
+        .with_extension("dvi");
+    if let Some(parent) = actual_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&actual_path, actual)?;
+    compare_dvi_files(
+        fixture,
+        &actual_path,
+        &repo_root.join("target/conformance-triage"),
+        document,
+    )
 }
 
 /// Runs one manifest-backed document through reference TeX and Umber, then
@@ -68,6 +138,7 @@ pub fn run_named_external_document(
         doc_filter: Some(document.to_string()),
         keep_triage: true,
         self_test: false,
+        write_reference_fixture: None,
         repo_root,
     };
     if run_e2e(&options)? {
@@ -141,6 +212,7 @@ struct Options {
     doc_filter: Option<String>,
     keep_triage: bool,
     self_test: bool,
+    write_reference_fixture: Option<PathBuf>,
 }
 
 impl Options {
@@ -154,6 +226,7 @@ impl Options {
             doc_filter: None,
             keep_triage: false,
             self_test: false,
+            write_reference_fixture: None,
         };
 
         let mut args = args.peekable();
@@ -179,6 +252,10 @@ impl Options {
                 }
                 Some("--keep-triage") => options.keep_triage = true,
                 Some("--self-test") => options.self_test = true,
+                Some("--write-reference-fixture") => {
+                    options.write_reference_fixture =
+                        Some(next_path(&mut args, "--write-reference-fixture")?);
+                }
                 Some("--help") | Some("-h") => {
                     print_usage();
                     std::process::exit(0);
@@ -189,6 +266,49 @@ impl Options {
         }
         Ok(options)
     }
+}
+
+fn write_reference_fixture(options: &Options, path: &Path) -> Result<()> {
+    let document = options
+        .doc_filter
+        .as_deref()
+        .ok_or_else(|| anyhow!("--write-reference-fixture requires --doc NAME"))?;
+    let manifest = read_manifest(&options.manifest_path)?;
+    let doc = manifest
+        .doc
+        .iter()
+        .find(|doc| doc.name == document)
+        .ok_or_else(|| anyhow!("document {document} is not declared in the manifest"))?;
+    let source_path = options.corpus_dir.join(&doc.name);
+    let format_source_path = options.corpus_dir.join(&doc.format_source);
+    let reference = run_reference_dvi(
+        &options.repo_root,
+        &RefTex::locate()?,
+        &source_path,
+        &format_source_path,
+    )?;
+    let hash = sha256_hex(&reference.normalized);
+    if hash != doc.expected_ref_dvi_sha256 {
+        bail!(
+            "reference DVI hash drift for {}: expected {}, got {hash}",
+            doc.name,
+            doc.expected_ref_dvi_sha256
+        );
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    if path.is_file() {
+        let existing = fs::read(path)?;
+        if normalized_dvi_for_comparison(&existing)? == reference.normalized {
+            println!("fixture unchanged: {}", path.display());
+            return Ok(());
+        }
+    }
+    fs::write(path, reference.bytes)
+        .with_context(|| format!("failed to write fixed DVI fixture {}", path.display()))?;
+    println!("wrote {}", path.display());
+    Ok(())
 }
 
 fn next_path(args: &mut impl Iterator<Item = OsString>, flag: &str) -> Result<PathBuf> {
@@ -965,7 +1085,7 @@ fn synthetic_page(bytes: &mut Vec<u8>, count0: i32, previous: i32, body: &[u8]) 
 
 fn print_usage() {
     eprintln!(
-        "usage: parity-harness [--manifest path] [--corpus-dir dir] [--triage-dir dir] [--umber-bin path] [--doc name] [--keep-triage] [--self-test]"
+        "usage: parity-harness [--manifest path] [--corpus-dir dir] [--triage-dir dir] [--umber-bin path] [--doc name] [--keep-triage] [--self-test] [--write-reference-fixture path]"
     );
 }
 
