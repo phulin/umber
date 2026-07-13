@@ -287,6 +287,14 @@ fn run_pass<S: TypesetState>(
         let forced = bp.penalty <= EJECT_PENALTY;
         for (active_index, &active_id) in active.iter().enumerate() {
             let active_candidate = &candidates[active_id];
+            // Material discarded after the active break can extend beyond a
+            // later syntactic breakpoint (for example, through consecutive
+            // penalties). Such a breakpoint is no longer reachable from this
+            // active node and must not create a backwards break chain.
+            if active_candidate.width_position > bp.width_position {
+                next.push(active_id);
+                continue;
+            }
             let mut widths = prefix.between(active_candidate.width_position, bp.width_position);
             widths.add_assign(background);
             widths.add_assign(bp.add_width);

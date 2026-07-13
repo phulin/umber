@@ -110,6 +110,42 @@ fn final_pass_keeps_last_active_route_when_every_route_is_overfull() {
 }
 
 #[test]
+fn consecutive_discardable_breakpoints_do_not_form_a_backwards_chain() {
+    let mut universe = Universe::new();
+    let zero = universe.intern_glue(GlueSpec::ZERO);
+    let empty = universe.freeze_node_list(&[]);
+    let nodes = vec![rule(1), Node::Penalty(0), Node::Penalty(0), rule(1)];
+    let mut break_params = params(100);
+    break_params.looseness = 2;
+    let mut hook = NoHyphenation;
+
+    let result = line_break(&universe, &nodes, break_params, &mut hook);
+    let lines = post_line_break(
+        &universe,
+        &nodes,
+        &result.breaks,
+        PostLineBreakParams {
+            empty_list: empty,
+            left_skip: zero,
+            right_skip: zero,
+            interline_penalty: 0,
+            club_penalty: 0,
+            widow_penalty: 0,
+            broken_penalty: 0,
+            shape: LineShape::natural(sp(100)),
+        },
+    );
+
+    assert!(!lines.is_empty());
+    assert!(
+        result
+            .breaks
+            .windows(2)
+            .all(|pair| pair[0].position < pair[1].position)
+    );
+}
+
+#[test]
 fn line_break_includes_left_and_right_skip_in_background_widths() {
     let mut universe = Universe::new();
     let break_glue = universe.intern_glue(GlueSpec::ZERO);
