@@ -283,6 +283,8 @@ mod primitive_mode_tests {
         assert_eq!(stores.meaning(protected), Meaning::Undefined);
         let readline = stores.intern("readline");
         assert_eq!(stores.meaning(readline), Meaning::Undefined);
+        let everyeof = stores.intern("everyeof");
+        assert_eq!(stores.meaning(everyeof), Meaning::Undefined);
     }
 
     #[test]
@@ -299,6 +301,8 @@ mod primitive_mode_tests {
             stores.meaning(readline),
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ReadLine)
         );
+        let everyeof = stores.intern("everyeof");
+        assert!(matches!(stores.meaning(everyeof), Meaning::TokParam(_)));
     }
 
     #[test]
