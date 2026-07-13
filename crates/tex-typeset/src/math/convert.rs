@@ -203,12 +203,15 @@ fn first_pass<S: MathTypesetState>(
             Node::MathNoad(noad)
                 if matches!(
                     noad.kind,
-                    NoadKind::LeftDelimiter { .. } | NoadKind::RightDelimiter { .. }
+                    NoadKind::LeftDelimiter { .. }
+                        | NoadKind::RightDelimiter { .. }
+                        | NoadKind::MiddleDelimiter { .. }
                 ) =>
             {
                 let (class, delimiter) = match noad.kind {
                     NoadKind::LeftDelimiter { delimiter } => (NoadClass::Open, delimiter),
                     NoadKind::RightDelimiter { delimiter } => (NoadClass::Close, delimiter),
+                    NoadKind::MiddleDelimiter { delimiter } => (NoadClass::Rel, delimiter),
                     _ => unreachable!("guard restricts delimiter noads"),
                 };
                 if matches!(class, NoadClass::Close) {
@@ -614,6 +617,7 @@ fn noad_class(noad: &MathNoad) -> NoadClass {
         | NoadKind::Accent { .. }
         | NoadKind::LeftDelimiter { .. }
         | NoadKind::RightDelimiter { .. }
+        | NoadKind::MiddleDelimiter { .. }
         | NoadKind::Underline
         | NoadKind::Overline
         | NoadKind::VCenter => {

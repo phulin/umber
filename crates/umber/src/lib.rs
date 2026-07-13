@@ -477,6 +477,7 @@ mod primitive_mode_tests {
             ("endL", UnexpandablePrimitive::EndL),
             ("beginR", UnexpandablePrimitive::BeginR),
             ("endR", UnexpandablePrimitive::EndR),
+            ("middle", UnexpandablePrimitive::Middle),
         ] {
             let symbol = extended.intern(name);
             assert_eq!(

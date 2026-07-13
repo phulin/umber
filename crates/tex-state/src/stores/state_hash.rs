@@ -1391,6 +1391,10 @@ fn hash_noad_kind(kind: &crate::math::NoadKind, hasher: &mut StateHasher) {
             hasher.tag(5);
             hasher.u32(*delimiter);
         }
+        crate::math::NoadKind::MiddleDelimiter { delimiter } => {
+            hasher.tag(9);
+            hasher.u32(*delimiter);
+        }
         crate::math::NoadKind::Underline => hasher.tag(6),
         crate::math::NoadKind::Overline => hasher.tag(7),
         crate::math::NoadKind::VCenter => hasher.tag(8),

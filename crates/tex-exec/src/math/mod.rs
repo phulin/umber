@@ -815,6 +815,10 @@ where
             finish_left_group(nest, input, stores, recorder, hooks)?;
             Ok(DispatchAction::Continue)
         }
+        UnexpandablePrimitive::Middle => {
+            append_middle_delimiter(nest, input, stores, recorder, hooks)?;
+            Ok(DispatchAction::Continue)
+        }
         UnexpandablePrimitive::DisplayStyle
         | UnexpandablePrimitive::TextStyle
         | UnexpandablePrimitive::ScriptStyle

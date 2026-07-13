@@ -1116,6 +1116,7 @@ where
             | UnexpandablePrimitive::MathChoice
             | UnexpandablePrimitive::Left
             | UnexpandablePrimitive::Right
+            | UnexpandablePrimitive::Middle
             | UnexpandablePrimitive::DisplayStyle
             | UnexpandablePrimitive::TextStyle
             | UnexpandablePrimitive::ScriptStyle

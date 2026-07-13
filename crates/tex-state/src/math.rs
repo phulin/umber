@@ -77,10 +77,22 @@ pub enum LimitType {
 pub enum NoadKind {
     Normal(NoadClass),
     Operator(LimitType),
-    Radical { delimiter: u32 },
-    Accent { accent: MathChar },
-    LeftDelimiter { delimiter: u32 },
-    RightDelimiter { delimiter: u32 },
+    Radical {
+        delimiter: u32,
+    },
+    Accent {
+        accent: MathChar,
+    },
+    LeftDelimiter {
+        delimiter: u32,
+    },
+    RightDelimiter {
+        delimiter: u32,
+    },
+    /// e-TeX `\middle`: sized with its surrounding `\left...\right` group.
+    MiddleDelimiter {
+        delimiter: u32,
+    },
     Underline,
     Overline,
     VCenter,

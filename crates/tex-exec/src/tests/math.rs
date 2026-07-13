@@ -1033,6 +1033,37 @@ fn left_right_scans_nested_list_as_inner_noad() {
 }
 
 #[test]
+fn etex_middle_stays_inside_left_right_and_has_its_own_noad_kind() {
+    // e-TeX manual section 3.5: `\middle` is valid only in a matching
+    // `\left...\right` group and is sized with those delimiters.
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    tex_expand::install_etex_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    crate::install_etex_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(r"$\left(a\middle|b\right)"));
+    let mut executor = Executor::new();
+    executor
+        .run(&mut input, &mut stores)
+        .expect("middle executes");
+
+    let root = math_nodes(&stores, &executor);
+    let inner = math_noad(&root[0]);
+    let MathField::SubMlist(content) = inner.nucleus else {
+        panic!("left/right inner noad")
+    };
+    assert!(stores.nodes(content).testing_decoded().iter().any(|node| {
+        matches!(
+            node,
+            Node::MathNoad(MathNoad {
+                kind: NoadKind::MiddleDelimiter { .. },
+                ..
+            })
+        )
+    }));
+}
+
+#[test]
 fn right_closes_left_group_whose_numerator_was_captured_by_fraction() {
     let (stores, executor) = run_math_source(r"$\left.A\over A\abovewithdelims.?\right(+A");
 

@@ -313,6 +313,30 @@ where
     Ok(())
 }
 
+pub(super) fn append_middle_delimiter<S, R, H>(
+    nest: &mut ModeNest,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    recorder: &mut R,
+    hooks: &mut H,
+) -> Result<(), ExecError>
+where
+    S: InputSource,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+{
+    let delimiter = scan_delimiter_token(input, stores, recorder, hooks)?;
+    if !current_list_is_left_group(nest, stores) {
+        report_math_error(stores, "Extra \\middle");
+        return Ok(());
+    }
+    nest.current_list_mut().push(Node::MathNoad(MathNoad::new(
+        NoadKind::MiddleDelimiter { delimiter },
+        MathField::Empty,
+    )));
+    Ok(())
+}
+
 pub(super) fn close_missing_left_group(
     nest: &mut ModeNest,
     stores: &mut Universe,

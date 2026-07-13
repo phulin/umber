@@ -458,6 +458,7 @@ pub enum UnexpandablePrimitive {
     EndL,
     BeginR,
     EndR,
+    Middle,
     Shipout,
     BeginGroup,
     EndGroup,
@@ -725,6 +726,7 @@ impl UnexpandablePrimitive {
             Self::EndL => 195,
             Self::BeginR => 196,
             Self::EndR => 197,
+            Self::Middle => 198,
         }
     }
 
@@ -929,6 +931,7 @@ impl UnexpandablePrimitive {
             195 => Some(Self::EndL),
             196 => Some(Self::BeginR),
             197 => Some(Self::EndR),
+            198 => Some(Self::Middle),
             _ => None,
         }
     }

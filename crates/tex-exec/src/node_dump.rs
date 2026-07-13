@@ -216,6 +216,9 @@ fn dump_math_noad(
         NoadKind::RightDelimiter { delimiter } => {
             let _ = write!(out, "\\right\"{delimiter:X}");
         }
+        NoadKind::MiddleDelimiter { delimiter } => {
+            let _ = write!(out, "\\middle\"{delimiter:X}");
+        }
         _ => out.push_str(noad_name(&noad.kind)),
     }
     match &noad.kind {
@@ -287,6 +290,7 @@ fn noad_name(kind: &NoadKind) -> &'static str {
         NoadKind::Accent { .. } => "\\accent",
         NoadKind::LeftDelimiter { .. } => "\\left",
         NoadKind::RightDelimiter { .. } => "\\right",
+        NoadKind::MiddleDelimiter { .. } => "\\middle",
         NoadKind::Underline => "\\underline",
         NoadKind::Overline => "\\overline",
         NoadKind::VCenter => "\\vcenter",
