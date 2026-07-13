@@ -328,6 +328,7 @@ mod primitive_mode_tests {
         let fontcharht = compatibility.intern("fontcharht");
         let fontchardp = compatibility.intern("fontchardp");
         let fontcharic = compatibility.intern("fontcharic");
+        let interactionmode = compatibility.intern("interactionmode");
         assert_eq!(compatibility.meaning(unexpanded), Meaning::Undefined);
         assert_eq!(compatibility.meaning(detokenize), Meaning::Undefined);
         assert_eq!(compatibility.meaning(unless), Meaning::Undefined);
@@ -348,6 +349,7 @@ mod primitive_mode_tests {
             fontcharht,
             fontchardp,
             fontcharic,
+            interactionmode,
         ] {
             assert_eq!(compatibility.meaning(symbol), Meaning::Undefined);
         }
@@ -425,6 +427,7 @@ mod primitive_mode_tests {
             ("fontcharht", UnexpandablePrimitive::FontCharHt),
             ("fontchardp", UnexpandablePrimitive::FontCharDp),
             ("fontcharic", UnexpandablePrimitive::FontCharIc),
+            ("interactionmode", UnexpandablePrimitive::InteractionMode),
         ] {
             let symbol = extended.intern(name);
             assert_eq!(
@@ -432,6 +435,11 @@ mod primitive_mode_tests {
                 Meaning::UnexpandablePrimitive(primitive)
             );
         }
+        let tracingscantokens = extended.intern("tracingscantokens");
+        assert_eq!(
+            extended.meaning(tracingscantokens),
+            Meaning::IntParam(tex_state::env::banks::IntParam::TRACING_SCAN_TOKENS.raw())
+        );
     }
 }
 

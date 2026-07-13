@@ -1012,6 +1012,25 @@ where
                 diagnostics::execute_ignorespaces(input, stores)?;
                 Ok(CommandOutcome::continue_only())
             }
+            UnexpandablePrimitive::InteractionMode => {
+                reject_macro_prefixes(prefixes)?;
+                skip_optional_equals_x(input, stores, hooks)?;
+                let value = scan_i32(input, stores, hooks, command.traced)?;
+                let mode = match value {
+                    0 => InteractionMode::Batch,
+                    1 => InteractionMode::Nonstop,
+                    2 => InteractionMode::Scroll,
+                    3 => InteractionMode::ErrorStop,
+                    value => {
+                        return Err(ExecError::InvalidCode {
+                            context: "\\interactionmode",
+                            value,
+                        });
+                    }
+                };
+                stores.set_interaction_mode(mode);
+                Ok(CommandOutcome::assigned())
+            }
             UnexpandablePrimitive::BatchMode
             | UnexpandablePrimitive::NonstopMode
             | UnexpandablePrimitive::ScrollMode

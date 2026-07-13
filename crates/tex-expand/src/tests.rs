@@ -531,6 +531,27 @@ fn scantokens_relexes_text_with_current_catcodes_and_superscript_notation() {
 }
 
 #[test]
+fn tracingscantokens_records_virtual_file_boundaries() {
+    let mut stores = Universe::new();
+    install_expandable_primitives(&mut stores);
+    crate::install_etex_expandable_primitives(&mut stores);
+    stores.set_int_param(tex_state::env::banks::IntParam::TRACING_SCAN_TOKENS, 1);
+    let mut input = InputStack::new(MemoryInput::new("\\scantokens{X}%"));
+
+    assert_eq!(next_expanded_chars(&mut input, &mut stores), "X ");
+    let trace = stores
+        .world()
+        .effect_records()
+        .iter()
+        .filter_map(|effect| match effect {
+            tex_state::EffectRecord::StreamWrite { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<String>();
+    assert_eq!(trace, "( )");
+}
+
+#[test]
 fn everyeof_is_inserted_at_natural_virtual_eof_but_not_endinput() {
     // e-TeX short reference manual section 3.7 requires natural real and
     // virtual EOF insertion, explicitly excluding EOF forced by \endinput.

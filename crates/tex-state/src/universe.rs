@@ -82,6 +82,9 @@ pub trait ExpansionState {
     fn current_group_kind(&self) -> Option<GroupKind> {
         None
     }
+    fn interaction_mode_value(&self) -> i32 {
+        3
+    }
     fn catcode(&self, ch: char) -> Catcode;
     fn lccode(&self, ch: char) -> LcCode;
     fn uccode(&self, ch: char) -> UcCode;
@@ -129,6 +132,8 @@ pub trait ExpansionState {
     fn page_integer(&self, integer: PageInteger) -> i32;
     fn page_mark(&self, mark: PageMark) -> TokenListId;
     fn int_param(&self, param: IntParam) -> i32;
+    /// Emits the e-TeX `\scantokens` pseudo-file boundary when tracing is enabled.
+    fn trace_scantokens_boundary(&mut self, _opening: bool) {}
     fn last_badness(&self) -> i32;
     fn mag(&self) -> i32;
     fn prepared_mag(&self) -> Option<i32>;
@@ -2454,6 +2459,9 @@ impl ExpansionState for Universe {
     fn current_group_kind(&self) -> Option<GroupKind> {
         self.innermost_group_kind()
     }
+    fn interaction_mode_value(&self) -> i32 {
+        encode_interaction_mode(self.interaction_mode()).into()
+    }
     fn catcode(&self, ch: char) -> Catcode {
         Self::catcode(self, ch)
     }
@@ -2641,6 +2649,13 @@ impl ExpansionState for Universe {
         Self::int_param(self, param)
     }
 
+    fn trace_scantokens_boundary(&mut self, opening: bool) {
+        if Self::int_param(self, IntParam::TRACING_SCAN_TOKENS) > 0 {
+            self.world_mut()
+                .write_text(PrintSink::TerminalAndLog, if opening { "( " } else { ")" });
+        }
+    }
+
     fn last_badness(&self) -> i32 {
         Self::last_badness(self)
     }
@@ -2800,6 +2815,9 @@ impl ExpansionState for ExpansionContext<'_> {
     }
     fn current_group_kind(&self) -> Option<GroupKind> {
         self.universe.innermost_group_kind()
+    }
+    fn interaction_mode_value(&self) -> i32 {
+        self.universe.interaction_mode_value()
     }
     fn catcode(&self, ch: char) -> Catcode {
         self.universe.catcode(ch)
@@ -2994,6 +3012,14 @@ impl ExpansionState for ExpansionContext<'_> {
 
     fn int_param(&self, param: IntParam) -> i32 {
         self.universe.int_param(param)
+    }
+
+    fn trace_scantokens_boundary(&mut self, opening: bool) {
+        if self.universe.int_param(IntParam::TRACING_SCAN_TOKENS) > 0 {
+            self.universe
+                .world_mut()
+                .write_text(PrintSink::TerminalAndLog, if opening { "( " } else { ")" });
+        }
     }
 
     fn last_badness(&self) -> i32 {
@@ -3457,6 +3483,7 @@ fn hash_token_list_replay_kind(kind: TokenListReplayKind, hasher: &mut StateHash
         TokenListReplayKind::OutputRoutine => 6,
         TokenListReplayKind::Inserted => 7,
         TokenListReplayKind::AlignmentUTemplate => 8,
+        TokenListReplayKind::ScantokensEveryEof => 9,
     });
 }
 

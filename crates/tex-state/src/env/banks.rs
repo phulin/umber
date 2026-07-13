@@ -174,6 +174,9 @@ impl IntParam {
     /// Hidden backing cell for TeX's read-only `\badness` internal integer.
     pub const LAST_BADNESS: Self = Self::new(60);
 
+    /// e-TeX pseudo-file tracing switch.
+    pub const TRACING_SCAN_TOKENS: Self = Self::new(61);
+
     /// TeX's `\showboxbreadth` integer parameter.
     pub const SHOW_BOX_BREADTH: Self = Self::new(24);
 

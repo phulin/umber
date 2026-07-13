@@ -722,6 +722,10 @@ where
     E: ExpandNext<S, St, R, H>,
 {
     match primitive {
+        tex_state::meaning::UnexpandablePrimitive::InteractionMode => {
+            recorder.record_dependency(ReadDependency::Engine(ReadEngineField::InteractionMode));
+            Ok(ScannedInt::new(stores.interaction_mode_value(), token))
+        }
         tex_state::meaning::UnexpandablePrimitive::Count => {
             let index = scan_register_index(input, stores, recorder, hooks, expander, token)?;
             recorder.record_dependency(ReadDependency::Cell {

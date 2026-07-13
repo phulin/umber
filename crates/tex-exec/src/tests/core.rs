@@ -1530,6 +1530,31 @@ fn etex_lastnodetype_tracks_effective_outer_vertical_tail() {
 }
 
 #[test]
+fn etex_tracingscantokens_closes_after_everyeof() {
+    // The e-TeX manual sections 3.2 and 3.6 require `( ` on pseudo-file
+    // entry and the matching `)` only when scanning, including everyeof, ends.
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    tex_expand::install_etex_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    crate::install_etex_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\tracingscantokens=1\\everyeof{\\message{EOF}}\\scantokens{\\message{BODY}}\\end",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("traced scantokens program");
+
+    let output = terminal_effect_text(&stores);
+    let open = output.find('(').expect("pseudo-file opening trace");
+    let body = output.find("BODY").expect("pseudo-file body");
+    let eof = output.find("EOF").expect("everyeof body");
+    let close = output.find(')').expect("pseudo-file closing trace");
+    assert!(open < body && body < eof && eof < close, "{output:?}");
+}
+
+#[test]
 fn leaders_parse_box_and_rule_payloads_on_glue_nodes() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
@@ -3165,5 +3190,30 @@ fn long_prefix_on_let_reports_tex_prefix_error() {
             ch: 'b',
             cat: Catcode::Letter
         }
+    );
+}
+
+#[test]
+fn interactionmode_reads_and_assigns_globally() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    tex_expand::install_etex_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    crate::install_etex_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\edef\\before{\\the\\interactionmode}\
+         \\begingroup\\interactionmode=1\\endgroup\
+         \\edef\\after{\\the\\interactionmode}",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("interaction mode assignment");
+
+    assert_eq!(macro_text(&stores, "before"), "3");
+    assert_eq!(macro_text(&stores, "after"), "1");
+    assert_eq!(
+        stores.interaction_mode(),
+        tex_state::InteractionMode::Nonstop
     );
 }

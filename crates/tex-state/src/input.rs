@@ -141,6 +141,8 @@ pub enum TokenListReplayKind {
     Mark,
     OutputRoutine,
     Inserted,
+    /// `\everyeof` replay whose retirement closes a traced `\scantokens` file.
+    ScantokensEveryEof,
     AlignmentUTemplate,
 }
 
@@ -635,6 +637,7 @@ pub struct SourceFrameSummary {
     pending: Arc<[TracedTokenWord]>,
     end_after_current_line: bool,
     registration: Option<RegisteredSource>,
+    scantokens: bool,
 }
 
 impl SourceFrameSummary {
@@ -708,7 +711,19 @@ impl SourceFrameSummary {
             pending: pending.into(),
             end_after_current_line,
             registration: None,
+            scantokens: false,
         }
+    }
+
+    #[must_use]
+    pub const fn is_scantokens(&self) -> bool {
+        self.scantokens
+    }
+
+    #[must_use]
+    pub const fn with_scantokens(mut self, scantokens: bool) -> Self {
+        self.scantokens = scantokens;
+        self
     }
 
     /// Attaches the live aggregate source registration used by this frame.
@@ -834,6 +849,7 @@ impl PartialEq for SourceFrameSummary {
             && self.normalized_end_anchor == other.normalized_end_anchor
             && self.synthetic_endline_start == other.synthetic_endline_start
             && self.end_after_current_line == other.end_after_current_line
+            && self.scantokens == other.scantokens
             && traced_pending_tokens_eq(&self.pending, &other.pending)
     }
 }
@@ -859,6 +875,7 @@ impl Hash for SourceFrameSummary {
             semantic_token(*token).hash(state);
         }
         self.end_after_current_line.hash(state);
+        self.scantokens.hash(state);
     }
 }
 

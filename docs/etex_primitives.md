@@ -25,10 +25,10 @@ pass.
 | `\unexpanded` | partial | Yields the raw balanced text as token-list expansion does: expansion-only consumers preserve it, while later command demand expands it. Reference parity remains. |
 | `\detokenize` | partial | Produces only catcode-10 spaces and catcode-12 other characters; every control word produces a trailing space, including the last. Reference parity remains. |
 | `\readline` | partial | Reads through the virtualized `\read` path with catcode-10 codepoint 32 and catcode-12 other characters, including `\endlinechar`; normalized transcript parity remains. |
-| `\scantokens` | partial | Serializes unexpanded general text as a generated pseudo-file and reprocesses it through the input mechanism under current catcodes, including `^^` notation. `\everyeof` and tracing integration remain. |
+| `\scantokens` | partial | Serializes unexpanded general text as a generated pseudo-file and reprocesses it through the input mechanism under current catcodes, including `^^` notation. `\everyeof` and manual-defined tracing are integrated; committed transcript fixtures remain. |
 | `\everyeof` | partial | Inserts its tokens once at natural EOF for real and generated virtual files, but not for `\endinput`. Cross-file conditional and snapshot parity remain. |
 | `\unless` | partial | Negates the shared boolean-conditional evaluation path without adding pending input state; focused reference-error parity remains. |
-| `\tracingscantokens` | missing | Positive values trace pseudo-file open and close as specified in section 3.6. |
+| `\tracingscantokens` | partial | Positive values trace `( ` at pseudo-file entry and `)` after any `\everyeof` replay, as specified in section 3.6. Reference transcript fixtures remain. |
 
 ## Environmental and conditional enquiries (manual section 3.3)
 
@@ -49,7 +49,8 @@ as typesetting and the font dimension enquiries.
 
 ## Diagnostics and mutable state (manual sections 3.4, 3.6)
 
-`\interactionmode`, `\showgroups`, `\showifs`, `\showtokens`,
+`\interactionmode` is implemented as a globally assigned read/write view of
+the checkpointed interaction state. `\showgroups`, `\showifs`, `\showtokens`,
 `\tracingassigns`, `\tracinggroups`, `\tracingifs`, and `\tracingnesting`
 are **missing**.
 

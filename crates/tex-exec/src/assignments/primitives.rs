@@ -235,12 +235,18 @@ pub fn install_etex_unexpandable_primitives(stores: &mut Universe) {
         ("fontcharht", UnexpandablePrimitive::FontCharHt),
         ("fontchardp", UnexpandablePrimitive::FontCharDp),
         ("fontcharic", UnexpandablePrimitive::FontCharIc),
+        ("interactionmode", UnexpandablePrimitive::InteractionMode),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
     }
     let everyeof = stores.intern("everyeof");
     stores.set_meaning(everyeof, Meaning::TokParam(TokParam::EVERY_EOF.raw()));
+    let tracing_scantokens = stores.intern("tracingscantokens");
+    stores.set_meaning(
+        tracing_scantokens,
+        Meaning::IntParam(IntParam::TRACING_SCAN_TOKENS.raw()),
+    );
 }
 
 fn install_page_meanings(stores: &mut Universe) {

@@ -293,6 +293,7 @@ macro_rules! dispatch_match {
                     message: "this input source cannot represent a virtual file".to_owned(),
                     context: call_context,
                 })?;
+                stores.trace_scantokens_boundary(true);
                 input.push_source(source);
                 Ok(Dispatch::Continue)
             }

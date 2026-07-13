@@ -308,6 +308,16 @@ where
                 &hooks.space_factor().to_string(),
                 cause_origin,
             )),
+            tex_state::meaning::UnexpandablePrimitive::InteractionMode => {
+                recorder
+                    .record_dependency(ReadDependency::Engine(ReadEngineField::InteractionMode));
+                Ok(push_rendered_text(
+                    stores,
+                    ExpansionReplayKind::TheOutput,
+                    &stores.interaction_mode_value().to_string(),
+                    cause_origin,
+                ))
+            }
             tex_state::meaning::UnexpandablePrimitive::PrevDepth => Ok(push_rendered_text(
                 stores,
                 ExpansionReplayKind::TheOutput,

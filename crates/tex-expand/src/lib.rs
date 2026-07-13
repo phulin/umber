@@ -250,6 +250,7 @@ pub enum ReadEngineField {
     ConditionBranch,
     ConditionStack,
     LastNodeType,
+    InteractionMode,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]

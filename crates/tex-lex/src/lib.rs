@@ -42,6 +42,11 @@ pub trait InputSource {
         None
     }
 
+    /// Whether this is the pseudo-file created by e-TeX `\scantokens`.
+    fn is_scantokens(&self) -> bool {
+        false
+    }
+
     /// Constructs the virtual input source required by e-TeX `\scantokens`.
     /// Sources that cannot represent generated text may return `None`.
     fn from_scantokens(_text: String) -> Option<Self>
@@ -128,6 +133,7 @@ impl PhysicalLine {
 pub struct MemoryInput {
     backing: Arc<[u8]>,
     next_offset: usize,
+    scantokens: bool,
 }
 
 impl MemoryInput {
@@ -138,6 +144,7 @@ impl MemoryInput {
         Self {
             backing,
             next_offset: 0,
+            scantokens: false,
         }
     }
 }
@@ -152,7 +159,13 @@ impl InputSource for MemoryInput {
     }
 
     fn from_scantokens(text: String) -> Option<Self> {
-        Some(Self::new(text))
+        let mut source = Self::new(text);
+        source.scantokens = true;
+        Some(source)
+    }
+
+    fn is_scantokens(&self) -> bool {
+        self.scantokens
     }
 }
 
@@ -163,6 +176,7 @@ pub struct WorldInput {
     backing: Arc<[u8]>,
     next_offset: usize,
     invalid_utf8: Option<(usize, usize, usize, usize)>,
+    scantokens: bool,
 }
 
 impl WorldInput {
@@ -180,6 +194,7 @@ impl WorldInput {
             backing: Arc::from(input.as_bytes()),
             next_offset: 0,
             invalid_utf8: None,
+            scantokens: false,
         }
     }
 
@@ -203,6 +218,7 @@ impl WorldInput {
                     backing: bytes,
                     next_offset,
                     invalid_utf8: None,
+                    scantokens: false,
                 }
             }
             Err(error) => {
@@ -224,6 +240,7 @@ impl WorldInput {
                     backing: bytes,
                     next_offset: 0,
                     invalid_utf8: Some((byte_start, byte_end, line, column)),
+                    scantokens: false,
                 }
             }
         }
@@ -260,7 +277,13 @@ impl InputSource for WorldInput {
     }
 
     fn from_scantokens(text: String) -> Option<Self> {
-        Some(Self::generated(text))
+        let mut source = Self::generated(text);
+        source.scantokens = true;
+        Some(source)
+    }
+
+    fn is_scantokens(&self) -> bool {
+        self.scantokens
     }
 }
 
@@ -379,6 +402,7 @@ struct SourceInputFrame<S> {
     descriptor: Option<SourceDescriptor>,
     registration_attempted: bool,
     registration: Option<RegisteredSource>,
+    scantokens: bool,
 }
 
 impl<S> SourceInputFrame<S> {
@@ -388,6 +412,7 @@ impl<S> SourceInputFrame<S> {
     {
         let input_record = source.input_record();
         let descriptor = source.source_descriptor();
+        let scantokens = source.is_scantokens();
         Self {
             source_id,
             input_record,
@@ -397,6 +422,7 @@ impl<S> SourceInputFrame<S> {
             descriptor,
             registration_attempted: false,
             registration: None,
+            scantokens,
         }
     }
 }
@@ -779,6 +805,7 @@ impl<S> InputStack<S> {
                         descriptor,
                         registration_attempted: source.registration().is_some(),
                         registration: source.registration(),
+                        scantokens: source.is_scantokens(),
                     }));
                 }
                 InputFrameSummary::TokenList {
@@ -1266,7 +1293,8 @@ impl<S> InputStack<S> {
                         source: source
                             .frame
                             .summary(source.next_source_offset)
-                            .with_registration(source.registration),
+                            .with_registration(source.registration)
+                            .with_scantokens(source.scantokens),
                     },
                     InputFrame::TokenList(token_list) => InputFrameSummary::TokenList {
                         token_list: token_list.token_list,
@@ -1745,7 +1773,12 @@ where
                         None => {
                             let removed = self.remove_frame(frame_index);
                             if let InputFrame::TokenList(frame) = removed {
+                                let closes_scantokens =
+                                    frame.replay_kind == TokenListReplayKind::ScantokensEveryEof;
                                 self.retire_token_list_frame(frame);
+                                if closes_scantokens {
+                                    stores.trace_scantokens_boundary(false);
+                                }
                             }
                         }
                     };
@@ -1760,6 +1793,7 @@ where
                         if source.frame.end_after_current_line {
                             let popped = self.remove_frame(frame_index);
                             if let InputFrame::Source(source) = popped {
+                                let scantokens = source.scantokens;
                                 self.last_source_frame = Some(LastSourceFrame {
                                     source_id: source.source_id,
                                     input_record: source.input_record,
@@ -1767,12 +1801,17 @@ where
                                     frame: source.frame,
                                     next_source_offset: source.next_source_offset,
                                 });
+                                if scantokens {
+                                    stores.trace_scantokens_boundary(false);
+                                }
                             }
                             continue;
                         }
                         if !load_next_line(source, stores)? {
                             let popped = self.remove_frame(frame_index);
+                            let mut scantokens = false;
                             if let InputFrame::Source(source) = popped {
+                                scantokens = source.scantokens;
                                 self.last_source_frame = Some(LastSourceFrame {
                                     source_id: source.source_id,
                                     input_record: source.input_record,
@@ -1783,7 +1822,16 @@ where
                             }
                             let everyeof = stores.tok_param(TokParam::EVERY_EOF);
                             if everyeof != TokenListId::EMPTY {
-                                self.push_token_list(everyeof, TokenListReplayKind::Inserted);
+                                self.push_token_list(
+                                    everyeof,
+                                    if scantokens {
+                                        TokenListReplayKind::ScantokensEveryEof
+                                    } else {
+                                        TokenListReplayKind::Inserted
+                                    },
+                                );
+                            } else if scantokens {
+                                stores.trace_scantokens_boundary(false);
                             }
                         }
                         continue;
@@ -1867,7 +1915,12 @@ where
                         None => {
                             let removed = self.remove_frame(frame_index);
                             if let InputFrame::TokenList(frame) = removed {
+                                let closes_scantokens =
+                                    frame.replay_kind == TokenListReplayKind::ScantokensEveryEof;
                                 self.retire_token_list_frame(frame);
+                                if closes_scantokens {
+                                    stores.trace_scantokens_boundary(false);
+                                }
                             }
                         }
                     };
@@ -1882,6 +1935,7 @@ where
                         if source.frame.end_after_current_line {
                             let popped = self.remove_frame(frame_index);
                             if let InputFrame::Source(source) = popped {
+                                let scantokens = source.scantokens;
                                 self.last_source_frame = Some(LastSourceFrame {
                                     source_id: source.source_id,
                                     input_record: source.input_record,
@@ -1889,12 +1943,17 @@ where
                                     frame: source.frame,
                                     next_source_offset: source.next_source_offset,
                                 });
+                                if scantokens {
+                                    stores.trace_scantokens_boundary(false);
+                                }
                             }
                             continue;
                         }
                         if !load_next_line(source, stores)? {
                             let popped = self.remove_frame(frame_index);
+                            let mut scantokens = false;
                             if let InputFrame::Source(source) = popped {
+                                scantokens = source.scantokens;
                                 self.last_source_frame = Some(LastSourceFrame {
                                     source_id: source.source_id,
                                     input_record: source.input_record,
@@ -1905,7 +1964,16 @@ where
                             }
                             let everyeof = stores.tok_param(TokParam::EVERY_EOF);
                             if everyeof != TokenListId::EMPTY {
-                                self.push_token_list(everyeof, TokenListReplayKind::Inserted);
+                                self.push_token_list(
+                                    everyeof,
+                                    if scantokens {
+                                        TokenListReplayKind::ScantokensEveryEof
+                                    } else {
+                                        TokenListReplayKind::Inserted
+                                    },
+                                );
+                            } else if scantokens {
+                                stores.trace_scantokens_boundary(false);
                             }
                         }
                         continue;
