@@ -40,6 +40,19 @@ fn nested_alignment_resume_preserves_outer_align_state() {
 }
 
 #[test]
+fn active_alignment_predicate_tracks_scanner_levels_not_only_cells() {
+    let mut input = InputStack::new(MemoryInput::new(""));
+    assert!(!input.has_active_alignment());
+
+    input.begin_alignment();
+    assert!(input.has_active_alignment());
+    assert!(!input.has_active_alignment_cell());
+
+    input.finish_alignment();
+    assert!(!input.has_active_alignment());
+}
+
+#[test]
 fn alignment_undo_bookkeeping_ignores_ordinary_deliveries() {
     let mut input = InputStack::new(MemoryInput::new(""));
     input.begin_alignment();

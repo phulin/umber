@@ -983,6 +983,18 @@ impl<S> InputStack<S> {
             .is_some_and(|alignment| alignment.cell.is_some())
     }
 
+    /// Whether any alignment scanner level can observe token delivery.
+    ///
+    /// Callers use this coarse predicate before classifying a token or
+    /// resolving its meaning for alignment interception. The overwhelmingly
+    /// common non-alignment path therefore pays one empty-vector test and no
+    /// alignment-specific semantic work.
+    #[must_use]
+    #[inline(always)]
+    pub fn has_active_alignment(&self) -> bool {
+        !self.alignment_inputs.is_empty()
+    }
+
     #[must_use]
     pub fn alignment_cell_at_base_depth(&self) -> bool {
         self.alignment_inputs.last().is_some_and(|alignment| {

@@ -1265,6 +1265,9 @@ pub(crate) fn intercept_alignment_token<S>(
     stores: &impl ExpansionState,
     traced: TracedTokenWord,
 ) -> bool {
+    if !input.has_active_alignment() {
+        return false;
+    }
     let token = semantic_token(traced);
     let meaning = match token {
         Token::Cs(symbol) => Some(stores.meaning(symbol)),
@@ -1390,6 +1393,9 @@ fn intercept_suppressed_alignment_token<S>(
     stores: &mut impl ExpansionState,
     traced: TracedTokenWord,
 ) -> bool {
+    if !input.has_active_alignment() {
+        return false;
+    }
     let expandable = expandable_symbol(stores, traced).is_some_and(|symbol| {
         matches!(
             stores.meaning(symbol),
