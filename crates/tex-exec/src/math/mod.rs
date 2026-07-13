@@ -84,6 +84,13 @@ where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
+    // TeX's main-control table first starts a paragraph and retries a math
+    // shift seen in vertical mode. In internal vertical mode that produces
+    // restricted horizontal mode, where a doubled `$` is two ordinary math
+    // shifts rather than a display opener (tex.web §§1090, 1138).
+    if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
+        assignments::ensure_horizontal_for_character(nest, input, stores)?;
+    }
     let opening_mode = nest.current_mode();
     let can_display = !matches!(opening_mode, Mode::RestrictedHorizontal);
     let display = match input.next_traced_token(stores)? {
@@ -104,9 +111,6 @@ where
         }
         None => false,
     };
-    if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
-        assignments::ensure_horizontal_for_character(nest, input, stores)?;
-    }
     if matches!(
         nest.current_mode(),
         Mode::Horizontal | Mode::RestrictedHorizontal

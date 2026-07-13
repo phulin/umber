@@ -1064,6 +1064,27 @@ fn etex_middle_stays_inside_left_right_and_has_its_own_noad_kind() {
 }
 
 #[test]
+fn doubled_math_shift_in_internal_vertical_mode_is_not_a_display() {
+    // tex.web §§1090 and 1138: vertical main control starts a paragraph
+    // before retrying `$`; an internal vlist therefore reaches restricted
+    // horizontal mode, where `$$` is an empty inline formula and `\ifinner`
+    // remains true.
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        r"\setbox0=\vbox{$$\ifinner\message{INNER}\else\message{OUTER}\fi$$}",
+    ));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("internal doubled shift executes");
+
+    let output = terminal_effect_text(&stores);
+    assert!(output.contains("INNER"));
+    assert!(!output.contains("OUTER"));
+}
+
+#[test]
 fn right_closes_left_group_whose_numerator_was_captured_by_fraction() {
     let (stores, executor) = run_math_source(r"$\left.A\over A\abovewithdelims.?\right(+A");
 

@@ -72,6 +72,11 @@ where
 {
     match nest.current_mode() {
         Mode::Vertical | Mode::InternalVertical => {
+            let paragraph_mode = if nest.current_mode() == Mode::Vertical {
+                Mode::Horizontal
+            } else {
+                Mode::RestrictedHorizontal
+            };
             // TeX82 new_graf starts every fresh paragraph at line zero. The
             // enclosing prev_graf is only a continuation offset while a
             // paragraph is interrupted by display math.
@@ -89,7 +94,7 @@ where
                 );
                 build_page_if_outer_vertical(nest, stores)?;
             }
-            nest.push(Mode::Horizontal);
+            nest.push(paragraph_mode);
             if indent {
                 append_indent_box(nest, stores)?;
             }
