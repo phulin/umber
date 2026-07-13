@@ -534,7 +534,7 @@ where
             name: stores.resolve(symbol).to_owned(),
             origin,
         }),
-        meaning if math_allows_assignment_meaning(meaning) => {
+        meaning if assignments::is_assignment_target_meaning(meaning) => {
             assignments::execute_assignment_meaning(meaning, traced, input, stores, hooks)
         }
         Meaning::Font(id) => {
@@ -828,7 +828,7 @@ where
                 .push(Node::MathStyle(style_for_primitive(primitive)));
             Ok(DispatchAction::Continue)
         }
-        primitive if math_allows_assignment_primitive(primitive) => {
+        primitive if assignments::math_allows_mode_independent_primitive(primitive) => {
             assignments::execute_unexpandable_with_recorder(
                 primitive, traced, nest, input, stores, recorder, hooks,
             )

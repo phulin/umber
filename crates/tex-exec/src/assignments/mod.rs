@@ -28,6 +28,7 @@ use crate::{
     push_traced_tokens,
 };
 
+mod admissibility;
 mod arithmetic;
 mod boxes;
 mod fonts;
@@ -41,6 +42,8 @@ mod shipout;
 mod tokens;
 mod variables;
 
+use admissibility::is_assignment_primitive;
+pub(crate) use admissibility::math_allows_mode_independent_primitive;
 use arithmetic::*;
 pub(crate) use boxes::hpack_with_overfull_rule;
 pub(crate) use boxes::scan_math_box;
@@ -65,8 +68,8 @@ pub(crate) use paragraph::{
 pub use primitives::{install_etex_unexpandable_primitives, install_unexpandable_primitives};
 use scanning::*;
 pub(crate) use scanning::{
-    next_non_space_traced_x, next_non_space_x, scan_glue_id, scan_i32, scan_optional_keyword_x,
-    scan_scaled,
+    is_assignment_target_meaning, next_non_space_traced_x, next_non_space_x, scan_glue_id,
+    scan_i32, scan_optional_keyword_x, scan_scaled,
 };
 pub(crate) use shipout::shipout_node;
 use shipout::*;

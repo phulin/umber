@@ -2,77 +2,12 @@ use super::*;
 
 pub(super) fn is_assignment_meaning(meaning: Meaning) -> bool {
     match meaning {
-        Meaning::UnexpandablePrimitive(primitive) => matches!(
-            primitive,
-            UnexpandablePrimitive::Def
-                | UnexpandablePrimitive::Edef
-                | UnexpandablePrimitive::Gdef
-                | UnexpandablePrimitive::Xdef
-                | UnexpandablePrimitive::Let
-                | UnexpandablePrimitive::FutureLet
-                | UnexpandablePrimitive::GlobalDefs
-                | UnexpandablePrimitive::Global
-                | UnexpandablePrimitive::BeginGroup
-                | UnexpandablePrimitive::EndGroup
-                | UnexpandablePrimitive::AfterGroup
-                | UnexpandablePrimitive::AfterAssignment
-                | UnexpandablePrimitive::Long
-                | UnexpandablePrimitive::Outer
-                | UnexpandablePrimitive::Protected
-                | UnexpandablePrimitive::Count
-                | UnexpandablePrimitive::Dimen
-                | UnexpandablePrimitive::Skip
-                | UnexpandablePrimitive::Muskip
-                | UnexpandablePrimitive::Toks
-                | UnexpandablePrimitive::CountDef
-                | UnexpandablePrimitive::DimenDef
-                | UnexpandablePrimitive::SkipDef
-                | UnexpandablePrimitive::MuskipDef
-                | UnexpandablePrimitive::ToksDef
-                | UnexpandablePrimitive::CharDef
-                | UnexpandablePrimitive::MathCharDef
-                | UnexpandablePrimitive::Advance
-                | UnexpandablePrimitive::Multiply
-                | UnexpandablePrimitive::Divide
-                | UnexpandablePrimitive::CatCode
-                | UnexpandablePrimitive::LcCode
-                | UnexpandablePrimitive::UcCode
-                | UnexpandablePrimitive::SfCode
-                | UnexpandablePrimitive::MathCode
-                | UnexpandablePrimitive::DelCode
-                | UnexpandablePrimitive::Font
-                | UnexpandablePrimitive::TextFont
-                | UnexpandablePrimitive::ScriptFont
-                | UnexpandablePrimitive::ScriptScriptFont
-                | UnexpandablePrimitive::FontDimen
-                | UnexpandablePrimitive::HyphenChar
-                | UnexpandablePrimitive::SkewChar
-                | UnexpandablePrimitive::Patterns
-                | UnexpandablePrimitive::Hyphenation
-                | UnexpandablePrimitive::SpaceFactor
-                | UnexpandablePrimitive::PrevDepth
-                | UnexpandablePrimitive::PrevGraf
-                | UnexpandablePrimitive::SetBox
-                | UnexpandablePrimitive::Wd
-                | UnexpandablePrimitive::Ht
-                | UnexpandablePrimitive::Dp
-                | UnexpandablePrimitive::OpenIn
-                | UnexpandablePrimitive::CloseIn
-                | UnexpandablePrimitive::OpenOut
-                | UnexpandablePrimitive::CloseOut
-                | UnexpandablePrimitive::Immediate
-                | UnexpandablePrimitive::Write
-                | UnexpandablePrimitive::Read
-                | UnexpandablePrimitive::BatchMode
-                | UnexpandablePrimitive::NonstopMode
-                | UnexpandablePrimitive::ScrollMode
-                | UnexpandablePrimitive::ErrorStopMode
-        ),
+        Meaning::UnexpandablePrimitive(primitive) => super::is_assignment_primitive(primitive),
         meaning => is_assignment_target_meaning(meaning),
     }
 }
 
-pub(super) fn is_assignment_target_meaning(meaning: Meaning) -> bool {
+pub(crate) fn is_assignment_target_meaning(meaning: Meaning) -> bool {
     matches!(
         meaning,
         Meaning::CountRegister(_)
