@@ -13,6 +13,9 @@ use tex_state::{PrintSink, Universe};
 
 use crate::mode::IGNORE_DEPTH;
 use crate::node_dump::{DumpConfig, dump_node_list, dump_node_slice};
+pub(crate) fn report_bad_interaction_mode(stores: &mut Universe, value: i32) {
+    write_diagnostic(stores, &format!("\n! Bad interaction mode ({value}).\n"));
+}
 pub(crate) fn report_illegal_case(stores: &mut Universe, token: Token, mode: Mode) {
     let command = match token {
         Token::Cs(symbol) => format!("\\{}", stores.resolve(symbol)),

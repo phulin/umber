@@ -1032,10 +1032,8 @@ where
                     2 => InteractionMode::Scroll,
                     3 => InteractionMode::ErrorStop,
                     value => {
-                        return Err(ExecError::InvalidCode {
-                            context: "\\interactionmode",
-                            value,
-                        });
+                        diagnostics::report_bad_interaction_mode(stores, value);
+                        return Ok(CommandOutcome::continue_only());
                     }
                 };
                 stores.set_interaction_mode(mode);

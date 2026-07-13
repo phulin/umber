@@ -3282,6 +3282,25 @@ fn interactionmode_reads_and_assigns_globally() {
 }
 
 #[test]
+fn interactionmode_rejects_out_of_range_values_without_changing_mode() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    tex_expand::install_etex_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    crate::install_etex_unexpandable_primitives(&mut stores);
+    stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\interactionmode=-1\\edef\\result{\\the\\interactionmode}",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("bad mode recovers");
+    assert_eq!(macro_text(&stores, "result"), "1");
+    assert!(terminal_effect_text(&stores).contains("Bad interaction mode (-1)"));
+}
+
+#[test]
 fn etex_showgroups_and_showifs_render_live_nested_stacks() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);
