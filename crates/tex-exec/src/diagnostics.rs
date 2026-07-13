@@ -9,7 +9,7 @@ use tex_lex::{InputSource, InputStack};
 use tex_state::env::banks::IntParam;
 use tex_state::page::{PageContents, PageDimension};
 use tex_state::token::{Catcode, Token, TracedTokenWord};
-use tex_state::{EffectRecord, PrintSink, Universe};
+use tex_state::{PrintSink, Universe};
 
 use crate::mode::IGNORE_DEPTH;
 use crate::node_dump::{DumpConfig, dump_node_list, dump_node_slice};
@@ -719,21 +719,10 @@ fn hyphenated_word_text(word: &str, positions: &[usize]) -> String {
 fn diagnostic_print_column(stores: &Universe) -> usize {
     stores
         .world()
-        .effect_records()
-        .iter()
-        .filter_map(|record| match record {
-            EffectRecord::StreamWrite {
-                sink: PrintSink::Terminal | PrintSink::TerminalAndLog | PrintSink::Log,
-                text,
-            } => Some(text.as_str()),
-            _ => None,
-        })
-        .fold(0, |column, text| {
-            text.rsplit_once('\n')
-                .map_or(column + text.chars().count(), |(_, tail)| {
-                    tail.chars().count()
-                })
-        })
+        .stream_bufs()
+        .terminal_partial_line()
+        .chars()
+        .count()
 }
 
 fn write_wrapped_message(text: &str, initial_column: usize) -> String {
