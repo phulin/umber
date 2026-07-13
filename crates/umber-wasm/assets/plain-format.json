@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "name": "plain",
-  "object": "sha256-d04158bdb0b7180683b18ac6493a7c35a42fd06bd17751e5b22e9eef645c8de2",
-  "sha256": "d04158bdb0b7180683b18ac6493a7c35a42fd06bd17751e5b22e9eef645c8de2",
-  "bytes": 476238,
+  "object": "sha256-d767c4615529e36dd5352a4a6cc43ea802dedffc364c480b5e540986bdd4157b",
+  "sha256": "d767c4615529e36dd5352a4a6cc43ea802dedffc364c480b5e540986bdd4157b",
+  "bytes": 476255,
   "engine": "umber",
   "engineVersion": "0.1.0",
   "formatSchema": 4,
