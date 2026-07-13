@@ -128,11 +128,11 @@ Use `[ ]` for not implemented, `[x]` for implemented, and add local notes after 
 - [x] `\-` - Inserts a discretionary hyphen.
 - [x] `\defaulthyphenchar` - Default `\hyphenchar` value for newly loaded fonts; implemented as an integer parameter used when initializing font banks.
 - [x] `\discretionary` - Adds an explicit discretionary break with pre, post, and replacement text.
-- [x] `\hyphenation` - Adds lccode-normalized hyphenation exceptions for language 0; exceptions override pattern-derived positions.
+- [x] `\hyphenation` - Adds lccode-normalized hyphenation exceptions for the current `\language`; exceptions override pattern-derived positions for that language.
 - [x] `\hyphenchar` - Reads or assigns the Env-backed hyphenation character for a font selector.
-- [x] `\language` - Selects the current hyphenation language. Implemented as an assignable integer parameter; patterns and exceptions exist for language 0 only, and language switching is deferred.
+- [x] `\language` - Selects the current hyphenation language for patterns, exceptions, and automatic paragraph hyphenation; changes in horizontal mode insert language whatsits with the current hyphen minima.
 - [x] `\lefthyphenmin` - Minimum characters before the first automatic hyphen; consumed by hlist hyphenation and `\showhyphens`.
-- [x] `\patterns` - Adds lccode-normalized INITEX-style Liang patterns for language 0 into the snapshot-covered hyphenation trie.
+- [x] `\patterns` - Adds lccode-normalized INITEX-style Liang patterns for the current `\language` into the snapshot-covered per-language hyphenation tables.
 - [x] `\righthyphenmin` - Minimum characters after the last automatic hyphen; consumed by hlist hyphenation and `\showhyphens`.
 - [x] `\setlanguage` - Scans a TeX82 language number in horizontal mode and inserts a language whatsit carrying normalized language and hyphen minima.
 - [x] `\uchyph` - Enables hyphenation of words beginning with uppercase letters when positive.
