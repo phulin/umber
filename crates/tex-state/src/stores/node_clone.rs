@@ -28,6 +28,10 @@ pub(super) struct EpochCloneScratch {
     tasks: Vec<CloneTask>,
     children: Vec<NodeListId>,
     patches: Vec<ChildPatch>,
+    #[cfg(any(test, feature = "testing"))]
+    root_calls: u64,
+    #[cfg(any(test, feature = "testing"))]
+    epoch_source_lists: u64,
 }
 
 impl Stores {
@@ -37,6 +41,10 @@ impl Stores {
         debug_assert!(scratch.tasks.is_empty());
         debug_assert!(scratch.children.is_empty());
         debug_assert!(scratch.patches.is_empty());
+        #[cfg(any(test, feature = "testing"))]
+        {
+            scratch.root_calls += 1;
+        }
         if matches!(root.arena(), ArenaRef::Survivor(_)) {
             let graph_words = self
                 .survivors
@@ -55,6 +63,10 @@ impl Stores {
                     Some(CloneState::Visiting) => panic!("node-list graph contains a cycle"),
                     None => {
                         scratch.states.insert(id, CloneState::Visiting);
+                        #[cfg(any(test, feature = "testing"))]
+                        if matches!(id.arena(), ArenaRef::Epoch) {
+                            scratch.epoch_source_lists += 1;
+                        }
                         scratch.children.clear();
                         self.nodes(id).child_lists(&mut scratch.children);
                         scratch.tasks.push(CloneTask::Exit(id));
@@ -115,6 +127,14 @@ impl Stores {
         }
         self.epoch_clone_scratch = scratch;
         result
+    }
+
+    #[cfg(any(test, feature = "testing"))]
+    pub(crate) fn testing_epoch_clone_counts(&self) -> (u64, u64) {
+        (
+            self.epoch_clone_scratch.root_calls,
+            self.epoch_clone_scratch.epoch_source_lists,
+        )
     }
 }
 

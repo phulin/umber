@@ -1442,6 +1442,34 @@ fn uncopy_primitives_unbox_without_clearing_registers() {
 }
 
 #[test]
+fn destructive_unbox_clones_nested_children_once_without_epoch_self_clone() {
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    let mut setup = InputStack::new(MemoryInput::new(
+        "\\setbox0=\\hbox{\\hbox{\\kern1pt}}\\setbox1=\\vbox{\\vbox{\\kern2pt}}",
+    ));
+    Executor::new()
+        .run(&mut setup, &mut stores)
+        .expect("nested source boxes build");
+    let before = stores.testing_epoch_clone_counts();
+
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\setbox2=\\hbox{\\unhbox0}\\setbox3=\\vbox{\\unvbox1}",
+    ));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("destructive nested unboxes execute");
+
+    let after = stores.testing_epoch_clone_counts();
+    assert_eq!(after.0 - before.0, 2, "one transfer per destructive unbox");
+    assert_eq!(after.1 - before.1, 0, "append performs no epoch self-clone");
+    assert!(stores.box_reg(0).is_none());
+    assert!(stores.box_reg(1).is_none());
+    assert!(stores.box_reg(2).is_some());
+    assert!(stores.box_reg(3).is_some());
+}
+
+#[test]
 fn incompatible_unbox_commands_preserve_registers_and_replay_state() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

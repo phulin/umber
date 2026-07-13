@@ -2445,6 +2445,37 @@ impl Universe {
         value
     }
 
+    /// Transfers compatible box children into the current epoch, then clears
+    /// the register with same-level TeX assignment semantics.
+    ///
+    /// Compatibility is checked before mutation, and the children are cloned
+    /// while the survivor-backed register owner is still live. The outer
+    /// one-node box wrapper is deliberately not copied.
+    pub fn take_unbox_children_same_level(
+        &mut self,
+        index: u16,
+        expected: UnboxKind,
+    ) -> TakeUnboxResult {
+        let Some(value) = self.stores.box_reg(index) else {
+            return TakeUnboxResult::Void;
+        };
+        let nodes = self.nodes(value);
+        if nodes.len() != 1 {
+            return TakeUnboxResult::Incompatible;
+        }
+        let children = match (expected, nodes.first()) {
+            (UnboxKind::Horizontal, Some(crate::node_arena::NodeRef::HList(box_node)))
+            | (UnboxKind::Vertical, Some(crate::node_arena::NodeRef::VList(box_node))) => {
+                box_node.children
+            }
+            _ => return TakeUnboxResult::Incompatible,
+        };
+        let children = self.clone_node_list_to_epoch(children);
+        let taken = self.stores.take_box_reg_same_level(index);
+        debug_assert_eq!(taken, Some(value));
+        TakeUnboxResult::Children(children)
+    }
+
     pub fn set_box_reg_same_level(&mut self, index: u16, value: NodeListId) {
         self.stores.set_box_reg_same_level(index, value);
     }
@@ -2869,6 +2900,14 @@ impl Universe {
         self.stores.testing_survivor_root_slot_count()
     }
 
+    /// Returns `(clone operations, epoch-owned source lists visited)` for
+    /// focused ownership-transfer tests.
+    #[cfg(any(test, feature = "testing"))]
+    #[must_use]
+    pub fn testing_epoch_clone_counts(&self) -> (u64, u64) {
+        self.stores.testing_epoch_clone_counts()
+    }
+
     /// Computes allocator-payload accounting for all compact node storage.
     /// The returned diagnostic value is not semantic engine state.
     #[cfg(feature = "node-stats")]
@@ -2884,6 +2923,21 @@ pub enum BoxDimension {
     Width,
     Height,
     Depth,
+}
+
+/// Box-list kind expected by a destructive unbox operation.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum UnboxKind {
+    Horizontal,
+    Vertical,
+}
+
+/// Outcome of a destructive unbox transfer.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TakeUnboxResult {
+    Void,
+    Incompatible,
+    Children(NodeListId),
 }
 
 fn box_dimension_from_nodes(nodes: NodeList<'_>, dimension: BoxDimension) -> Option<Scaled> {

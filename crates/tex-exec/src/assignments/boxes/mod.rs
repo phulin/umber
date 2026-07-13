@@ -5,7 +5,7 @@ use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::node::{GlueKind, KernKind, Node};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Token, TracedTokenWord};
-use tex_state::{BoxDimension, Universe};
+use tex_state::{BoxDimension, TakeUnboxResult, UnboxKind, Universe};
 
 use super::*;
 use crate::vertical::{
@@ -195,22 +195,39 @@ where
         | UnexpandablePrimitive::UnVBox
         | UnexpandablePrimitive::UnVCopy => {
             let index = scan_register_index(input, stores, hooks, context)?;
-            let id = stores.box_reg(index);
-            if let Some(node) = first_box_node(stores, id)
-                && !unbox_kind_matches(primitive, &node)
-            {
-                report_incompatible_unbox(stores);
-                return Ok(());
-            }
-            let id = if matches!(
+            let source = if matches!(
                 primitive,
                 UnexpandablePrimitive::UnHBox | UnexpandablePrimitive::UnVBox
             ) {
-                stores.take_box_reg_same_level(index)
+                let expected = if primitive == UnexpandablePrimitive::UnHBox {
+                    UnboxKind::Horizontal
+                } else {
+                    UnboxKind::Vertical
+                };
+                match stores.take_unbox_children_same_level(index, expected) {
+                    TakeUnboxResult::Void => None,
+                    TakeUnboxResult::Incompatible => {
+                        report_incompatible_unbox(stores);
+                        return Ok(());
+                    }
+                    TakeUnboxResult::Children(children) => Some(UnboxSource::OwnedEpoch(children)),
+                }
             } else {
-                id
+                let id = stores.box_reg(index);
+                let Some(node) = first_box_node(stores, id) else {
+                    return Ok(());
+                };
+                if !unbox_kind_matches(primitive, &node) {
+                    report_incompatible_unbox(stores);
+                    return Ok(());
+                }
+                let children = match node {
+                    Node::HList(box_node) | Node::VList(box_node) => box_node.children,
+                    _ => unreachable!("copy unbox compatibility requires a box node"),
+                };
+                Some(UnboxSource::Shared(children))
             };
-            append_unboxed(nest, stores, id, primitive)?;
+            append_unboxed(nest, stores, source)?;
         }
         UnexpandablePrimitive::PageDiscards | UnexpandablePrimitive::SplitDiscards => {
             let nodes = if primitive == UnexpandablePrimitive::PageDiscards {
@@ -551,32 +568,32 @@ fn extract_box_migrations(stores: &mut Universe, node: &mut Node) -> Vec<Node> {
     migrated
 }
 
+enum UnboxSource {
+    OwnedEpoch(tex_state::ids::NodeListId),
+    Shared(tex_state::ids::NodeListId),
+}
+
 fn append_unboxed(
     nest: &mut ModeNest,
     stores: &mut Universe,
-    id: Option<tex_state::ids::NodeListId>,
-    primitive: UnexpandablePrimitive,
+    source: Option<UnboxSource>,
 ) -> Result<(), ExecError> {
-    let Some(node) = first_box_node(stores, id) else {
+    let Some(source) = source else {
         return Ok(());
     };
-    match (primitive, node) {
-        (UnexpandablePrimitive::UnHBox | UnexpandablePrimitive::UnHCopy, Node::HList(box_node))
-        | (UnexpandablePrimitive::UnVBox | UnexpandablePrimitive::UnVCopy, Node::VList(box_node)) =>
-        {
-            let children = stores.clone_node_list_to_epoch(box_node.children);
-            flush_pending_hchars(nest, stores)?;
-            for node in stores.nodes(children).to_vec() {
-                if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
-                    append_vertical_contribution(nest, stores, node);
-                } else {
-                    nest.current_list_mut().push(node);
-                }
-            }
-            Ok(())
+    let children = match source {
+        UnboxSource::OwnedEpoch(children) => children,
+        UnboxSource::Shared(children) => stores.clone_node_list_to_epoch(children),
+    };
+    flush_pending_hchars(nest, stores)?;
+    for node in stores.nodes(children).to_vec() {
+        if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
+            append_vertical_contribution(nest, stores, node);
+        } else {
+            nest.current_list_mut().push(node);
         }
-        _ => unreachable!("unbox compatibility is validated before register mutation"),
     }
+    Ok(())
 }
 
 fn unbox_kind_matches(primitive: UnexpandablePrimitive, node: &Node) -> bool {

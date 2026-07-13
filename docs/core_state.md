@@ -1154,7 +1154,10 @@ Box-register replacement paths that preserve TeX's current visible box level
 (`\box`/`\vsplit`-style same-level writes and clears) are still aggregate
 `Universe` facades; downstream crates do not infer or mutate raw environment
 ownership directly. A destructive `\box` read recursively copies the visible
-survivor DAG into the current epoch before clearing the register. This
+survivor DAG into the current epoch before clearing the register. Destructive
+unboxing instead validates the live outer box, copies only its children into
+the current epoch, and then clears the register; the discarded outer wrapper
+is never copied. This
 Rust-only transfer step is required because a coalesced group-journal write can
 release the register's last survivor reference immediately; page and mode lists
 therefore never receive an opaque child handle whose former owner has already

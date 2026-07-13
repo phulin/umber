@@ -1,4 +1,4 @@
-use super::{FormatError, Universe, utf8_scalar_len_at};
+use super::{FormatError, TakeUnboxResult, UnboxKind, Universe, utf8_scalar_len_at};
 use crate::font::{MAX_FONT_DIMEN, NULL_FONT};
 use crate::glue::{GlueSpec, Order};
 use crate::hyphenation::{ExceptionSpec, PatternSpec};
@@ -2381,6 +2381,100 @@ fn grouped_box_take_copies_nested_survivor_children_before_coalesced_release() {
         }]
     );
     let _ = universe.leave_group();
+}
+
+#[test]
+fn destructive_unbox_transfers_only_children_before_same_level_clear() {
+    let mut universe = Universe::new();
+    let baseline = universe.freeze_node_list(&[Node::Char {
+        font: NULL_FONT,
+        ch: 'b',
+    }]);
+    universe.set_box_reg(0, baseline);
+    let baseline = universe.box_reg(0).expect("baseline box");
+
+    universe.enter_group();
+    let leaf = universe.freeze_node_list(&[Node::Char {
+        font: NULL_FONT,
+        ch: 'x',
+    }]);
+    let nested = universe.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
+        width: Scaled::from_raw(10),
+        height: Scaled::from_raw(7),
+        depth: Scaled::from_raw(3),
+        shift: Scaled::from_raw(0),
+        display: false,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children: leaf,
+    }))]);
+    let wrapper = universe.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
+        width: Scaled::from_raw(10),
+        height: Scaled::from_raw(7),
+        depth: Scaled::from_raw(3),
+        shift: Scaled::from_raw(0),
+        display: false,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children: nested,
+    }))]);
+    universe.set_box_reg(0, wrapper);
+    let before = universe.testing_epoch_clone_counts();
+
+    let TakeUnboxResult::Children(children) =
+        universe.take_unbox_children_same_level(0, UnboxKind::Horizontal)
+    else {
+        panic!("compatible hbox should transfer its children")
+    };
+
+    assert!(universe.box_reg(0).is_none());
+    assert!(matches!(children.arena(), ArenaRef::Epoch));
+    let Some(crate::node_arena::NodeRef::HList(nested)) = universe.nodes(children).first() else {
+        panic!("nested hbox should survive the transfer")
+    };
+    assert!(matches!(nested.children.arena(), ArenaRef::Epoch));
+    assert!(matches!(
+        universe.nodes(nested.children).first(),
+        Some(crate::node_arena::NodeRef::Char { ch: 'x', .. })
+    ));
+    let after = universe.testing_epoch_clone_counts();
+    assert_eq!(after.0 - before.0, 1, "one survivor transfer");
+    assert_eq!(after.1 - before.1, 0, "no epoch self-clone");
+
+    let _ = universe.leave_group();
+    assert_eq!(universe.box_reg(0), Some(baseline));
+}
+
+#[test]
+fn destructive_unbox_rejects_incompatible_kind_without_mutation() {
+    let mut universe = Universe::new();
+    let children = universe.freeze_node_list(&[Node::Kern {
+        amount: Scaled::from_raw(1),
+        kind: KernKind::Explicit,
+    }]);
+    let wrapper = universe.freeze_node_list(&[Node::VList(BoxNode::new(BoxNodeFields {
+        width: Scaled::from_raw(0),
+        height: Scaled::from_raw(0),
+        depth: Scaled::from_raw(0),
+        shift: Scaled::from_raw(0),
+        display: false,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children,
+    }))]);
+    universe.set_box_reg(4, wrapper);
+    let survivor = universe.box_reg(4);
+    let before = universe.testing_epoch_clone_counts();
+
+    assert_eq!(
+        universe.take_unbox_children_same_level(4, UnboxKind::Horizontal),
+        TakeUnboxResult::Incompatible
+    );
+    assert_eq!(universe.box_reg(4), survivor);
+    assert_eq!(universe.testing_epoch_clone_counts(), before);
 }
 
 fn assert_promoted_wrapper_is_resolvable(universe: &Universe, wrapper: NodeListId) {
