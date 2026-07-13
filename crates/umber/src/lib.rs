@@ -334,6 +334,12 @@ mod primitive_mode_tests {
         let dimexpr = compatibility.intern("dimexpr");
         let glueexpr = compatibility.intern("glueexpr");
         let muexpr = compatibility.intern("muexpr");
+        let gluestretch = compatibility.intern("gluestretch");
+        let glueshrink = compatibility.intern("glueshrink");
+        let gluestretchorder = compatibility.intern("gluestretchorder");
+        let glueshrinkorder = compatibility.intern("glueshrinkorder");
+        let gluetomu = compatibility.intern("gluetomu");
+        let mutoglue = compatibility.intern("mutoglue");
         assert_eq!(compatibility.meaning(unexpanded), Meaning::Undefined);
         assert_eq!(compatibility.meaning(detokenize), Meaning::Undefined);
         assert_eq!(compatibility.meaning(unless), Meaning::Undefined);
@@ -360,6 +366,12 @@ mod primitive_mode_tests {
             dimexpr,
             glueexpr,
             muexpr,
+            gluestretch,
+            glueshrink,
+            gluestretchorder,
+            glueshrinkorder,
+            gluetomu,
+            mutoglue,
         ] {
             assert_eq!(compatibility.meaning(symbol), Meaning::Undefined);
         }
@@ -441,6 +453,12 @@ mod primitive_mode_tests {
             ("dimexpr", UnexpandablePrimitive::DimExpr),
             ("glueexpr", UnexpandablePrimitive::GlueExpr),
             ("muexpr", UnexpandablePrimitive::MuExpr),
+            ("gluestretch", UnexpandablePrimitive::GlueStretch),
+            ("glueshrink", UnexpandablePrimitive::GlueShrink),
+            ("gluestretchorder", UnexpandablePrimitive::GlueStretchOrder),
+            ("glueshrinkorder", UnexpandablePrimitive::GlueShrinkOrder),
+            ("gluetomu", UnexpandablePrimitive::GlueToMu),
+            ("mutoglue", UnexpandablePrimitive::MuToGlue),
             ("interactionmode", UnexpandablePrimitive::InteractionMode),
         ] {
             let symbol = extended.intern(name);

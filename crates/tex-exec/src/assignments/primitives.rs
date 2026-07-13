@@ -240,6 +240,12 @@ pub fn install_etex_unexpandable_primitives(stores: &mut Universe) {
         ("dimexpr", UnexpandablePrimitive::DimExpr),
         ("glueexpr", UnexpandablePrimitive::GlueExpr),
         ("muexpr", UnexpandablePrimitive::MuExpr),
+        ("gluestretch", UnexpandablePrimitive::GlueStretch),
+        ("glueshrink", UnexpandablePrimitive::GlueShrink),
+        ("gluestretchorder", UnexpandablePrimitive::GlueStretchOrder),
+        ("glueshrinkorder", UnexpandablePrimitive::GlueShrinkOrder),
+        ("gluetomu", UnexpandablePrimitive::GlueToMu),
+        ("mutoglue", UnexpandablePrimitive::MuToGlue),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));

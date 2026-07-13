@@ -1555,6 +1555,29 @@ fn etex_tracingscantokens_closes_after_everyeof() {
 }
 
 #[test]
+fn etex_glue_component_and_conversion_enquiries_match_manual_types() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    tex_expand::install_etex_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    crate::install_etex_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\skip0=1pt plus 2fill minus 3fil\\muskip0=4mu plus 5fil\
+         \\edef\\result{\\the\\gluestretch\\skip0/\\the\\glueshrink\\skip0/\
+         \\the\\gluestretchorder\\skip0,\\the\\glueshrinkorder\\skip0/\
+         \\the\\gluetomu\\skip0/\\the\\mutoglue\\muskip0}",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("glue enquiries");
+    assert_eq!(
+        macro_text(&stores, "result"),
+        "2.0pt/3.0pt/2,1/1.0mu plus 2.0fill minus 3.0fil/4.0pt plus 5.0fil"
+    );
+}
+
+#[test]
 fn leaders_parse_box_and_rule_payloads_on_glue_nodes() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);

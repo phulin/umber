@@ -446,6 +446,12 @@ pub enum UnexpandablePrimitive {
     DimExpr,
     GlueExpr,
     MuExpr,
+    GlueStretch,
+    GlueShrink,
+    GlueStretchOrder,
+    GlueShrinkOrder,
+    GlueToMu,
+    MuToGlue,
     Shipout,
     BeginGroup,
     EndGroup,
@@ -701,6 +707,12 @@ impl UnexpandablePrimitive {
             Self::DimExpr => 183,
             Self::GlueExpr => 184,
             Self::MuExpr => 185,
+            Self::GlueStretch => 186,
+            Self::GlueShrink => 187,
+            Self::GlueStretchOrder => 188,
+            Self::GlueShrinkOrder => 189,
+            Self::GlueToMu => 190,
+            Self::MuToGlue => 191,
         }
     }
 
@@ -893,6 +905,12 @@ impl UnexpandablePrimitive {
             183 => Some(Self::DimExpr),
             184 => Some(Self::GlueExpr),
             185 => Some(Self::MuExpr),
+            186 => Some(Self::GlueStretch),
+            187 => Some(Self::GlueShrink),
+            188 => Some(Self::GlueStretchOrder),
+            189 => Some(Self::GlueShrinkOrder),
+            190 => Some(Self::GlueToMu),
+            191 => Some(Self::MuToGlue),
             _ => None,
         }
     }

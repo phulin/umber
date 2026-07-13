@@ -916,6 +916,22 @@ where
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::DimExpr) => {
             return scan_dim_expr(input, stores, recorder, hooks, expander, token);
         }
+        Meaning::UnexpandablePrimitive(
+            primitive @ (UnexpandablePrimitive::GlueStretch | UnexpandablePrimitive::GlueShrink),
+        ) => {
+            let scanned = crate::scan_glue::scan_glue_with_expander_and_hooks(
+                input, stores, recorder, hooks, expander, false, token,
+            )
+            .map_err(|error| ScanDimenError::Expand(error.into()))?;
+            let spec = stores.glue(scanned.id());
+            return Ok(ScannedDimen::new(
+                if primitive == UnexpandablePrimitive::GlueStretch {
+                    spec.stretch
+                } else {
+                    spec.shrink
+                },
+            ));
+        }
         Meaning::DimenRegister(index) => {
             consume_optional_space(input, stores, recorder, hooks, expander)?;
             return Ok(ScannedDimen::new(stores.dimen(index)));

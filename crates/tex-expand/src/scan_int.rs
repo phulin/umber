@@ -760,6 +760,28 @@ where
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NumExpr) => {
             scan_num_expr(input, stores, recorder, hooks, expander, token)
         }
+        Meaning::UnexpandablePrimitive(
+            primitive @ (UnexpandablePrimitive::GlueStretchOrder
+            | UnexpandablePrimitive::GlueShrinkOrder),
+        ) => {
+            let scanned = crate::scan_glue::scan_glue_with_expander_and_hooks(
+                input, stores, recorder, hooks, expander, false, token,
+            )
+            .map_err(|error| ScanIntError::Expand(error.into()))?;
+            let spec = stores.glue(scanned.id());
+            let order = if primitive == UnexpandablePrimitive::GlueStretchOrder {
+                spec.stretch_order
+            } else {
+                spec.shrink_order
+            };
+            let value = match order {
+                tex_state::glue::Order::Normal => 0,
+                tex_state::glue::Order::Fil => 1,
+                tex_state::glue::Order::Fill => 2,
+                tex_state::glue::Order::Filll => 3,
+            };
+            Ok(ScannedInt::new(value, token))
+        }
         Meaning::CharGiven(ch) => Ok(ScannedInt::new(ch as i32, token)),
         Meaning::MathCharGiven(value) => Ok(ScannedInt::new(i32::from(value), token)),
         Meaning::CountRegister(index) => {

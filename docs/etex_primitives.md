@@ -47,8 +47,9 @@ rounded division, combined multiply/divide, and overflow recovery. `\dimexpr`
 implements the same grammar with dimension-first terms and exact scaled-point
 rounding. `\glueexpr` and `\muexpr` implement the same grammar componentwise,
 including dominant infinite orders and combined scaling. `\gluestretch`,
-`\glueshrink`, `\gluestretchorder`, `\glueshrinkorder`, `\gluetomu`,
-`\mutoglue` are **missing**. `\fontcharwd`, `\fontcharht`, `\fontchardp`, and
+`\glueshrink`, `\gluestretchorder`, and `\glueshrinkorder` expose the manual's
+component values and order codes; `\gluetomu` and `\mutoglue` preserve all
+components while changing the unit type. `\fontcharwd`, `\fontcharht`, `\fontchardp`, and
 `\fontcharic` are implemented as read-only internal dimensions.
 
 ## Diagnostics and mutable state (manual sections 3.4, 3.6)

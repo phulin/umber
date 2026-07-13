@@ -1086,7 +1086,13 @@ where
             | UnexpandablePrimitive::NumExpr
             | UnexpandablePrimitive::DimExpr
             | UnexpandablePrimitive::GlueExpr
-            | UnexpandablePrimitive::MuExpr => {
+            | UnexpandablePrimitive::MuExpr
+            | UnexpandablePrimitive::GlueStretch
+            | UnexpandablePrimitive::GlueShrink
+            | UnexpandablePrimitive::GlueStretchOrder
+            | UnexpandablePrimitive::GlueShrinkOrder
+            | UnexpandablePrimitive::GlueToMu
+            | UnexpandablePrimitive::MuToGlue => {
                 reject_all_prefixes(prefixes)?;
                 crate::diagnostics::report_illegal_case(stores, command.token, nest.current_mode());
                 Ok(CommandOutcome::continue_only())

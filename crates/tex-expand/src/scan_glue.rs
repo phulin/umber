@@ -238,6 +238,28 @@ where
                     scanned.diagnostic_origins,
                 ));
             }
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::GlueToMu) if mu => {
+                let scanned = scan_glue_with_expander_and_hooks(
+                    input, stores, recorder, hooks, expander, false, first,
+                )?;
+                return Ok(intern_spec_with_diagnostics(
+                    stores,
+                    signed_spec(stores.glue(scanned.id()), negative),
+                    scanned.diagnostics,
+                    scanned.diagnostic_origins,
+                ));
+            }
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::MuToGlue) if !mu => {
+                let scanned = scan_glue_with_expander_and_hooks(
+                    input, stores, recorder, hooks, expander, true, first,
+                )?;
+                return Ok(intern_spec_with_diagnostics(
+                    stores,
+                    signed_spec(stores.glue(scanned.id()), negative),
+                    scanned.diagnostics,
+                    scanned.diagnostic_origins,
+                ));
+            }
             Meaning::SkipRegister(index) if !mu => {
                 consume_optional_space(input, stores, recorder, hooks, expander)?;
                 let spec = stores.glue(stores.skip(index));

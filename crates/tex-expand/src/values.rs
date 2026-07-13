@@ -359,6 +359,67 @@ where
                     cause_origin,
                 ))
             }
+            primitive @ (tex_state::meaning::UnexpandablePrimitive::GlueStretch
+            | tex_state::meaning::UnexpandablePrimitive::GlueShrink) => {
+                let scanned = crate::scan_glue::scan_glue_with_expander_and_hooks(
+                    input, stores, recorder, hooks, expander, false, token,
+                )?;
+                let spec = stores.glue(scanned.id());
+                let value = if primitive == tex_state::meaning::UnexpandablePrimitive::GlueStretch {
+                    spec.stretch
+                } else {
+                    spec.shrink
+                };
+                Ok(push_rendered_text(
+                    stores,
+                    ExpansionReplayKind::TheOutput,
+                    &format_scaled(value),
+                    cause_origin,
+                ))
+            }
+            primitive @ (tex_state::meaning::UnexpandablePrimitive::GlueStretchOrder
+            | tex_state::meaning::UnexpandablePrimitive::GlueShrinkOrder) => {
+                let scanned = crate::scan_glue::scan_glue_with_expander_and_hooks(
+                    input, stores, recorder, hooks, expander, false, token,
+                )?;
+                let spec = stores.glue(scanned.id());
+                let order =
+                    if primitive == tex_state::meaning::UnexpandablePrimitive::GlueStretchOrder {
+                        spec.stretch_order
+                    } else {
+                        spec.shrink_order
+                    };
+                let value = match order {
+                    tex_state::glue::Order::Normal => 0,
+                    tex_state::glue::Order::Fil => 1,
+                    tex_state::glue::Order::Fill => 2,
+                    tex_state::glue::Order::Filll => 3,
+                };
+                Ok(push_rendered_text(
+                    stores,
+                    ExpansionReplayKind::TheOutput,
+                    &value.to_string(),
+                    cause_origin,
+                ))
+            }
+            primitive @ (tex_state::meaning::UnexpandablePrimitive::GlueToMu
+            | tex_state::meaning::UnexpandablePrimitive::MuToGlue) => {
+                let to_mu = primitive == tex_state::meaning::UnexpandablePrimitive::GlueToMu;
+                let scanned = crate::scan_glue::scan_glue_with_expander_and_hooks(
+                    input, stores, recorder, hooks, expander, !to_mu, token,
+                )?;
+                let spec = stores.glue(scanned.id());
+                Ok(push_rendered_text(
+                    stores,
+                    ExpansionReplayKind::TheOutput,
+                    &if to_mu {
+                        format_muglue(spec)
+                    } else {
+                        format_glue(spec)
+                    },
+                    cause_origin,
+                ))
+            }
             tex_state::meaning::UnexpandablePrimitive::PrevDepth => Ok(push_rendered_text(
                 stores,
                 ExpansionReplayKind::TheOutput,
