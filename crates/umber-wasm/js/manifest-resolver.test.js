@@ -334,6 +334,54 @@ test("failed speculative hints are ignored and retried if actually requested", a
 	assert.equal(hintCalls, 2);
 });
 
+test("rejects over-budget dependency closures before object fetches", async (t) => {
+	const { manifest } = fixture();
+	const cases = [
+		["files", { maxFiles: 2, maxBytes: 64 * 1024 * 1024 }],
+		["bytes", { maxFiles: 512, maxBytes: 4 }],
+	];
+	for (const [name, limits] of cases) {
+		await t.test(name, async () => {
+			let fetches = 0;
+			const resolver = new HttpManifestResolver(manifest, {
+				fetch() {
+					fetches += 1;
+				},
+				crypto: webcrypto,
+				...limits,
+			});
+			await assert.rejects(
+				resolver.resolve([{ kind: "tex", name: "plain.tex" }]),
+				(error) => error.code === "resource-limit",
+			);
+			assert.equal(fetches, 0);
+		});
+	}
+});
+
+test("budget accounting counts aliases by logical file and unique path bytes", async () => {
+	const { manifest, bytes } = fixture();
+	manifest.files["tex:plain.tex"].dependencies = [];
+	manifest.files["tex:alias.tex"].virtualPath =
+		manifest.files["tex:plain.tex"].virtualPath;
+	let fetches = 0;
+	const resolver = new HttpManifestResolver(manifest, {
+		async fetch() {
+			fetches += 1;
+			return response(bytes.plain);
+		},
+		crypto: webcrypto,
+		maxFiles: 2,
+		maxBytes: bytes.plain.byteLength,
+	});
+	const downloads = await resolver.resolve([
+		{ kind: "tex", name: "plain.tex" },
+		{ kind: "tex", name: "alias.tex" },
+	]);
+	assert.equal(downloads.length, 2);
+	assert.equal(fetches, 1);
+});
+
 test("warm resolver cache performs no object downloads and requests HTTP caching", async () => {
 	const { manifest, bytes } = fixture();
 	manifest.files["tex:plain.tex"].dependencies = [];

@@ -336,23 +336,32 @@ test("worker runtime uses injected bindings and returns unique output transfers"
 		}
 		dispose() {}
 	}
+	let resolverOptions;
 	const output = await runCompileMessage(
 		{
 			kind: "compile",
-			options: { mainPath: "main.tex" },
+			options: {
+				mainPath: "main.tex",
+				limits: { resolvedFiles: 7, cachedFileBytes: 11 },
+			},
 			userFiles: [["main.tex", new Uint8Array([0])]],
 			resolver: { manifestUrl: "unused" },
 		},
 		{
 			bindings: { CompilerSession: Session },
-			resolver: {
-				async resolve() {
-					return [];
-				},
+			async createResolver(options) {
+				resolverOptions = options;
+				return {
+					async resolve() {
+						return [];
+					},
+				};
 			},
 		},
 	);
 	assert.equal(output.terminal, "ok");
+	assert.equal(resolverOptions.maxFiles, 7);
+	assert.equal(resolverOptions.maxBytes, 11);
 	assert.equal(outputTransfers(output).length, 2);
 
 	const shared = new Uint8Array([1, 0]);

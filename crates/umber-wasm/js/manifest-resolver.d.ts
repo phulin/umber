@@ -21,6 +21,8 @@ export interface HttpManifestResolverOptions {
 	manifestUrl: string;
 	persistentCache?: "http" | "indexeddb" | "none";
 	concurrency?: number;
+	maxFiles?: number;
+	maxBytes?: number;
 	signal?: AbortSignal;
 	fetch?: typeof globalThis.fetch;
 	crypto?: Crypto;

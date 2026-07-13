@@ -465,6 +465,10 @@ The standard resolver downloads a bounded number of objects concurrently
 It may fetch dependency hints in the same round, but requested files have
 priority. Failed speculative dependency downloads do not fail the job unless
 the engine later requests that file; failed requested downloads do.
+Before starting a batch, the standard worker applies the session's resolved-file
+and cached-byte ceilings to the complete hint closure. Logical aliases count as
+files, while byte accounting follows unique canonical virtual paths, matching
+the native session cache.
 
 ## 9. Limits and failure model
 

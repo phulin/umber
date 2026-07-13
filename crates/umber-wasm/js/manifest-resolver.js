@@ -7,6 +7,10 @@ const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
 const FORMAT_NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
 const MAX_MANIFEST_BYTES = 64 * 1024 * 1024;
 const MAX_OBJECT_BYTES = 64 * 1024 * 1024;
+const DEFAULT_RESOLVED_FILES = 512;
+const MAX_RESOLVED_FILES = 4096;
+const DEFAULT_CACHED_BYTES = 64 * 1024 * 1024;
+const MAX_CACHED_BYTES = 256 * 1024 * 1024;
 
 export class ManifestResolverError extends Error {
 	constructor(code, message, options) {
@@ -60,6 +64,8 @@ export class HttpManifestResolver {
 			persistentCache: options.persistentCache,
 			cacheStore: options.cacheStore,
 			indexedDB: options.indexedDB,
+			maxFiles: options.maxFiles,
+			maxBytes: options.maxBytes,
 		});
 	}
 
@@ -69,6 +75,16 @@ export class HttpManifestResolver {
 		this.crypto = options.crypto ?? globalThis.crypto;
 		this.concurrency = validateConcurrency(
 			options.concurrency ?? DEFAULT_CONCURRENCY,
+		);
+		this.maxFiles = validateResourceLimit(
+			options.maxFiles ?? DEFAULT_RESOLVED_FILES,
+			MAX_RESOLVED_FILES,
+			"maxFiles",
+		);
+		this.maxBytes = validateResourceLimit(
+			options.maxBytes ?? DEFAULT_CACHED_BYTES,
+			MAX_CACHED_BYTES,
+			"maxBytes",
 		);
 		const persistentMode = options.persistentCache ?? "http";
 		this.fetchCache = cacheMode(persistentMode);
@@ -89,6 +105,7 @@ export class HttpManifestResolver {
 	async resolve(requests, signal) {
 		throwIfAborted(signal);
 		const jobs = collectJobs(this.manifest, requests);
+		validateJobBudget(jobs, this.maxFiles, this.maxBytes);
 		const groups = groupByObject(jobs);
 		const results = new Map();
 		let next = 0;
@@ -301,6 +318,7 @@ function validateManifest(value) {
 	const files = Object.create(null);
 	const formats = Object.create(null);
 	const hashLengths = new Map();
+	const pathObjects = new Map();
 	for (const [key, entry] of Object.entries(value.files)) {
 		validateKey(key);
 		if (!isRecord(entry) || !DIGEST_PATTERN.test(entry.sha256)) {
@@ -347,6 +365,14 @@ function validateManifest(value) {
 			);
 		}
 		hashLengths.set(entry.sha256, entry.bytes);
+		const previousObject = pathObjects.get(entry.virtualPath);
+		if (previousObject !== undefined && previousObject !== entry.sha256) {
+			throw new ManifestResolverError(
+				"invalid-manifest",
+				`virtual path ${entry.virtualPath} has conflicting objects`,
+			);
+		}
+		pathObjects.set(entry.virtualPath, entry.sha256);
 		files[key] = Object.freeze({
 			...entry,
 			dependencies: Object.freeze([...dependencies]),
@@ -484,6 +510,28 @@ function groupByObject(jobs) {
 	return groups;
 }
 
+function validateJobBudget(jobs, maxFiles, maxBytes) {
+	if (jobs.length > maxFiles) {
+		throw new ManifestResolverError(
+			"resource-limit",
+			`resolution requires ${jobs.length} files; limit is ${maxFiles}`,
+		);
+	}
+	const paths = new Map();
+	let bytes = 0;
+	for (const job of jobs) {
+		if (paths.has(job.entry.virtualPath)) continue;
+		paths.set(job.entry.virtualPath, true);
+		bytes += job.entry.bytes;
+		if (bytes > maxBytes) {
+			throw new ManifestResolverError(
+				"resource-limit",
+				`resolution requires ${bytes} cached bytes; limit is ${maxBytes}`,
+			);
+		}
+	}
+}
+
 function encodeRequest(request) {
 	if (
 		!isRecord(request) ||
@@ -525,6 +573,16 @@ function validateConcurrency(value) {
 		throw new ManifestResolverError(
 			"invalid-options",
 			`concurrency must be an integer from 1 through ${MAX_CONCURRENCY}`,
+		);
+	}
+	return value;
+}
+
+function validateResourceLimit(value, hard, name) {
+	if (!Number.isSafeInteger(value) || value < 0 || value > hard) {
+		throw new ManifestResolverError(
+			"invalid-options",
+			`${name} must be an integer from 0 through ${hard}`,
 		);
 	}
 	return value;

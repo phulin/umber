@@ -16,7 +16,11 @@ export async function runCompileMessage(message, dependencies = {}) {
 	}
 	const resolver =
 		dependencies.resolver ??
-		(await HttpManifestResolver.create(message.resolver));
+		(await (dependencies.createResolver ?? HttpManifestResolver.create)({
+			...message.resolver,
+			maxFiles: message.options?.limits?.resolvedFiles,
+			maxBytes: message.options?.limits?.cachedFileBytes,
+		}));
 	let options = message.options;
 	if (message.resolver.format !== undefined) {
 		const format = await resolver.resolveFormat(message.resolver.format, {
