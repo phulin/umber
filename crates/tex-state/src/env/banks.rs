@@ -180,6 +180,14 @@ impl IntParam {
     pub const TEX_XET_STATE: Self = Self::new(62);
     /// Direction preceding an e-TeX display.
     pub const PRE_DISPLAY_DIRECTION: Self = Self::new(63);
+    /// e-TeX assignment tracing switch.
+    pub const TRACING_ASSIGNS: Self = Self::new(64);
+    /// e-TeX group entry/exit tracing switch.
+    pub const TRACING_GROUPS: Self = Self::new(65);
+    /// e-TeX conditional-branch tracing switch.
+    pub const TRACING_IFS: Self = Self::new(66);
+    /// e-TeX semantic-nesting tracing switch.
+    pub const TRACING_NESTING: Self = Self::new(67);
 
     /// TeX's `\showboxbreadth` integer parameter.
     pub const SHOW_BOX_BREADTH: Self = Self::new(24);

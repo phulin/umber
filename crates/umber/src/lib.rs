@@ -498,6 +498,19 @@ mod primitive_mode_tests {
                 "predisplaydirection",
                 tex_state::env::banks::IntParam::PRE_DISPLAY_DIRECTION,
             ),
+            (
+                "tracingassigns",
+                tex_state::env::banks::IntParam::TRACING_ASSIGNS,
+            ),
+            (
+                "tracinggroups",
+                tex_state::env::banks::IntParam::TRACING_GROUPS,
+            ),
+            ("tracingifs", tex_state::env::banks::IntParam::TRACING_IFS),
+            (
+                "tracingnesting",
+                tex_state::env::banks::IntParam::TRACING_NESTING,
+            ),
         ] {
             let symbol = extended.intern(name);
             assert_eq!(extended.meaning(symbol), Meaning::IntParam(parameter.raw()));

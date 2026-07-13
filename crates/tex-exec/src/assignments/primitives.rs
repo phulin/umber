@@ -266,6 +266,10 @@ pub fn install_etex_unexpandable_primitives(stores: &mut Universe) {
     for (name, parameter) in [
         ("TeXXeTstate", IntParam::TEX_XET_STATE),
         ("predisplaydirection", IntParam::PRE_DISPLAY_DIRECTION),
+        ("tracingassigns", IntParam::TRACING_ASSIGNS),
+        ("tracinggroups", IntParam::TRACING_GROUPS),
+        ("tracingifs", IntParam::TRACING_IFS),
+        ("tracingnesting", IntParam::TRACING_NESTING),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::IntParam(parameter.raw()));
