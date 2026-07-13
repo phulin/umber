@@ -1879,7 +1879,10 @@ fn two_forks_group_compaction_and_shipout_retargeting_are_cache_differential() {
         let effect_pos = universe.world().effect_pos();
         universe
             .begin_shipout()
-            .commit(b"component projection page", effect_pos)
+            .commit(
+                crate::VerifiedArtifact::new(b"component projection page".to_vec()),
+                effect_pos,
+            )
             .expect("memory shipout succeeds");
         universe.set_count(8, 88);
     }
@@ -1986,7 +1989,12 @@ fn randomized_incremental_hash_matches_cold_projection_rebuilds() {
                         let effect_pos = universe.world().effect_pos();
                         universe
                             .begin_shipout()
-                            .commit(b"randomized differential page", effect_pos)
+                            .commit(
+                                crate::VerifiedArtifact::new(
+                                    b"randomized differential page".to_vec(),
+                                ),
+                                effect_pos,
+                            )
                             .expect("memory shipout succeeds");
                     }
                     retained.clear();
