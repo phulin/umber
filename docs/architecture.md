@@ -1241,6 +1241,9 @@ degenerate case (run once, commit every page, never look back).
   the latest retained named boundary before the edit point, re-execute, and
   compare `state_hash` only at the same named-boundary schedule; on match,
   splice the previous run's suffix of page artifacts and stop.
+  `incremental_v1.md` fixes the exact boundary schedule, editor-revision
+  mapping, retained logical-shipout policy, pruning order, and suffix-splice
+  contract.
   The hash is a semantic checkpoint hash, not a store-layout checksum:
   content handles are followed to token/glue/node/macro contents, control
   sequences are keyed by name, and checkpoint hashes are combined from the

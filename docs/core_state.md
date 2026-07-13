@@ -868,7 +868,9 @@ pub struct Snapshot {
   engine checkpoint. The outer executor may publish one `ShipoutComplete`
   boundary only after all recursive work has unwound. Editor/incremental worlds
   must choose retained history or delayed materialization before claiming that
-  this boundary can roll back across the commit.
+  this boundary can roll back across the commit. The v1 choice—retained logical
+  commit with deferred host materialization—is specified in
+  `incremental_v1.md`.
 - **Convergence detection**: after re-executing from an edit, compare
   `state_hash` at each checkpoint with the prior run's hash at the same
   input position; on match, splice the old suffix and stop. `state_hash`
@@ -916,7 +918,12 @@ pub struct Snapshot {
   rollback truncates only the live slot mapping, so an equivalent later load
   reuses the fingerprint. The rollback-coupled control-sequence identifier is
   still hashed separately by namespace and name. Diagnostic provenance records
-  and origin-list arenas are explicitly excluded from semantic hashes.
+  and origin-list arenas are explicitly excluded from semantic hashes. In an
+  editor session, the root revision id and unread whole-buffer hash are likewise
+  driver metadata rather than semantic input: the aggregate revision-rebind
+  operation described in `incremental_v1.md` retargets the input hash cursor at
+  a validated conservative root position. Active normalized input state and
+  included-file content identities remain semantic.
 
 Derived queries (these fall out; do not build separate instrumentation):
 

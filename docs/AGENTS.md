@@ -13,6 +13,10 @@ When documenting tests or parity workflow, point fixture changes to `scripts/reg
 fixtures, corpora, and harnesses; update it when those implementation facts
 change.
 
+`incremental_v1.md` fixes the named-boundary schedule, editor-session
+retention, edit mapping, pruning, and schedule-relative convergence contract
+for the first incremental engine.
+
 `retained_group_roots.md` specifies the proposed persistent/COW environment
 history needed for durable paragraph checkpoints inside ordinary open groups,
 including store ownership, reclamation, hashing, rollout, and validation.
