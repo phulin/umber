@@ -141,8 +141,8 @@ cross-check. It requires `tftopl` on `PATH` or
 `cargo test --workspace --tests` is the correctness gate. It reads committed
 fixtures and must run without TeX tools on `PATH`; keep warmed
 `cargo test --tests` under the documented 10-second target in
-`docs/testing_policy.md`. `scripts/check.sh` is the broader local quality gate
-that includes formatting and clippy.
+`docs/testing_infrastructure.md`. `scripts/check.sh` is the broader local
+quality gate that includes formatting and clippy.
 
 Font metric parity tests use an optional local TFM corpus under
 `third_party/fonts/`, which is gitignored. Populate it from an ambient TeX

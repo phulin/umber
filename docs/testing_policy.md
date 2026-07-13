@@ -1,7 +1,11 @@
 # Rust Testing Policy
 
 Status: repository policy
-Scope: where Rust test code and fixtures should live in this workspace.
+Scope: forward-looking guidance for how agents should design, place, and run
+Rust tests and fixtures in this workspace.
+
+For the current test commands, corpus layout, harnesses, and measured budgets,
+see [Testing Infrastructure](testing_infrastructure.md).
 
 ---
 
@@ -20,7 +24,7 @@ Test placement should optimize for three things:
    boundary tests under crate-level `tests`, and shared fixture data under the
    workspace `tests/corpus` tree.
 
-## 2. Test Tiers And Budgets
+## 2. Test Tiers
 
 The correctness tier is fixture-only and hermetic:
 
@@ -31,30 +35,12 @@ scripts/check-and-test.sh
 ```
 
 These commands must not require `pdftex`, `tex`, `tftopl`, or other TeX tools
-on `PATH`. The warmed `cargo test --tests` target is under 10 seconds on the
-current macOS development workspace; investigate a sustained run above 15
-seconds or any default test that invokes live TeX. The broader
-`scripts/check.sh` quality gate runs format and clippy without rerunning tests
-and should stay under a warmed two-minute local budget. Use
-`scripts/check-and-test.sh` for the full workspace test suite followed by that
-quality gate.
+on `PATH`. Keep the default correctness tier fast enough to run routinely.
+Move expensive scaling and live-reference checks into explicit performance or
+regeneration tiers instead of weakening coverage in the default tier.
 
-Snapshot scaling has a separate explicit performance tier:
-
-```bash
-cargo bench --manifest-path benchmarks/tex-state/Cargo.toml --bench snapshot_budgets
-scripts/check-snapshot-budgets.sh
-```
-
-The Criterion command records the small/large latency rows. The script enforces
-the low-noise latency ratio and requested-allocation retention budgets described
-in `snapshot_performance.md`. Neither belongs in `cargo test --tests`: workload
-construction deliberately materializes large input, page, mode, stream,
-hyphenation, provenance, and Unicode code-table state.
-
-Regenerate committed fixtures only through `scripts/regen-fixtures.sh`, which
-is the blessed live-reference rewrite path. Its `--area fonts` mode owns the
-explicit live `tftopl` cross-check and does not rewrite fixtures.
+Regenerate committed fixtures only through `scripts/regen-fixtures.sh`, the
+blessed live-reference rewrite path.
 
 ## 3. Default Rule
 
@@ -146,125 +132,27 @@ crates/foo/tests/it/
 This improves compile time, simplifies shared helpers, and keeps test output
 easier to scan.
 
-## 7. Fixtures
+## 7. Fixture Policy
 
 Committed corpus fixtures belong under the workspace-level `tests/corpus`
-tree. Keep small area-local support files beside the fixture input. See
-`tests/AGENTS.md` for fixture layout and the `scripts/regen-fixtures.sh`
-regeneration modes.
+tree. Keep small area-local support files beside the fixture input. Test code
+should live near the crate that owns the behavior; fixture data should live in
+the shared corpus tree unless it is strictly local to one crate-level
+integration test.
 
-The DVI corpora under `tests/corpus/dvi`, `tests/corpus/page`,
-`tests/corpus/math`, `tests/corpus/align`, and `tests/corpus/leaders` commit
-TeX source files plus `.expected.dvi` reference fixtures. The default `umber`
-cargo tests run every `.tex` case in those areas against the committed DVI
-fixtures and do not invoke live reference tools. `scripts/regen-fixtures.sh`
-owns DVI fixture regeneration: it runs the live reference engine through
-`tools/refexec`, copies the pinned local CM TFMs plus area support files, uses
-INITEX for the math corpus, and rewrites raw reference DVI only when the
-existing preamble-comment-only DVI comparison detects a change.
+Default cargo tests must consume committed fixtures without invoking live TeX
+tools. Regenerate fixtures only through `scripts/regen-fixtures.sh`; do not add
+independent regeneration entry points or cargo-test environment switches.
 
-Default cargo tests must not invoke live TeX tools. Fixture regeneration uses
-`scripts/regen-fixtures.sh`, which also builds `tools/fixturegen` for
-text/native fixture updates and the live `tftopl` font cross-check.
+Reference-derived fixtures must record enough provenance to reproduce and
+audit them. Preserve byte-identical comparison except for explicitly
+documented normalization. External inputs must be content-pinned and remain
+uncommitted unless their redistribution policy explicitly permits committing
+them.
 
-External document corpus inputs for long-running parity live outside committed
-fixtures. The line-oriented `tests/corpus-manifest.txt` file pins support files
-and documents by URL, fetched-byte SHA-256, license determination, and
-redistributability flag. Runnable documents also select a format source and pin
-the reference DVI SHA-256 after DVI preamble banner normalization. `scripts/parity.sh` runs
-`tools/corpus-sync` first to fetch or verify those inputs under gitignored
-`third_party/corpus/`; cached hash matches are a no-op, including in
-`--offline` mode. It also pins `SOURCE_DATE_EPOCH=1783604160` and
-`FORCE_SOURCE_DATE=1` by default before running reference TeX so
-date-sensitive documents have stable DVI body bytes. Do not commit fetched
-corpus documents unless a later issue explicitly changes the redistribution
-policy.
-
-Full external-document DVI parity is exposed as fixture-backed Cargo
-integration tests, with a script retained for acquisition and selection:
-
-```bash
-cargo test -p umber --test it e2e_conformance_story -- --nocapture
-cargo test -p umber --test it e2e_conformance_gentle -- --nocapture
-scripts/parity.sh e2e
-scripts/parity.sh e2e --offline
-```
-
-This mode verifies acquisition, then selects `e2e_conformance_story` and
-`e2e_conformance_gentle` in Umber's single integration-test binary. The shared
-`parity-harness` library runs Umber and byte-compares its normalized DVI with
-the committed `tests/corpus/e2e` fixture. Each document names a
-manifest-pinned `format_source`; the harness
-stages that exact source, the document, hyphenation input, and required TFMs,
-then feeds Umber the wrapper that inputs the format source before the document.
-Umber executes the wrapper through its ordinary input path. This follows
-TeX82's ordinary
-`start_input` stack behavior (sections 23 and 29); format dumping remains a
-terminal INITEX cleanup operation (sections 46, 50, and 51), not a way to
-continue into the document. The pinned modern `plain.tex` source contains no
-`\\dump`, so the unmodified file can be loaded directly. On fixture-hash
-drift, Umber failure, or mismatch it writes a
-triage bundle under
-`target/conformance-triage/<doc-name>/` with byte context, page-limited
-dvitype-style disassemblies, a unified disassembly diff, tracing-output logs,
-and a summary that names the divergent page and opcode when a page can be
-recovered from DVI backpointers. `scripts/parity.sh self-test` exercises the
-bundle writer with synthetic DVI and remains fast enough for local tooling
-checks. Live reference TeX appears only in explicit fixture regeneration.
-`scripts/regen-fixtures.sh --case e2e/story` and `--case e2e/gentle` verify the
-manifest-pinned normalized reference hash before rewriting either fixture.
-
-The original Knuth TeX82 TRIP workload is an end-to-end DVI conformance test
-that runs conditionally when its two inputs are locally present. It remains
-separate from later e-TRIP work:
-
-```bash
-scripts/trip.sh
-scripts/trip.sh --offline
-scripts/trip.sh self-test
-scripts/build-trip-initex.sh
-cargo test -p umber --test it e2e_conformance_trip -- --nocapture
-scripts/regen-fixtures.sh --case e2e/trip
-```
-
-`scripts/trip.sh` reads `tests/trip-manifest.txt`, fetches exact official
-TRIP bytes into gitignored `third_party/trip/`, and verifies every SHA-256
-before running. It uses the pinned canonical `trip.tfm`, then runs the
-documented INITEX and format-loaded TRIP phases. This tier requires
-Knuth's special TRIP INITEX build described in `tripman.tex` Appendix A; stock
-`pdftex -ini` or `tex -ini` is useful only as a failing sanity check because
-the official log line widths, memory limits, and capacity statistics depend on
-that special build. Set `UMBER_TRIP_INITEX=/absolute/path/to/initex` to select
-it. `scripts/build-trip-initex.sh` builds the hash-pinned TeX Live Web2C
-classic TeX plus DVItype; once its source archive is
-cached, both the build and reference phase run offline. The harness
-automatically uses `target/trip-initex/bin`, or `UMBER_TRIP_TOOLS` can select
-another pinned build. It uses the `UMBER_REF_DVITYPE` override when DVItype is
-not on `PATH`.
-
-The Umber integration test gates only the final DVI; generated
-logs, terminal photo, and `tripos.tex` remain diagnostic outputs owned by the
-separate diagnostic parity tier. Its oracle normalizes only the DVI preamble
-comment and otherwise requires byte identity with the committed, locally
-pdfTeX-generated fixture, exactly like Story and Gentle. Fixture regeneration
-executes the two-phase workload from `trip.tex` and `trip.tfm` and never copies
-the official `third_party/trip/trip.dvi`. DVItype remains diagnostic. The
-standalone reference-engine validation retains the narrowly bounded Appendix A
-movement reconciliation needed to validate the special reference toolchain;
-that allowance is never applied to Umber's final DVI. Failures write
-byte/page/opcode context and disassembly diffs under
-`target/conformance-triage/trip/`.
-See [trip.md](trip.md) for the exact source pins and normalization policy.
-
-`tex-out` also owns the cross-crate page-output float guard. Its unit tests
-scan the page node, packing, shipout lowering, artifact, DVI, and CLI DVI
-composition sources and fail if float types or float rounding APIs enter that
-fixed-point path. Keep the guard allowlist limited to documented
-non-arithmetic fixture or formatting false positives.
-
-Test code should live near the crate that owns the behavior. Fixture data
-should live in the shared corpus tree unless it is strictly local to one
-crate-level integration test.
+See `tests/AGENTS.md` for fixture layout and regeneration instructions, and
+[Testing Infrastructure](testing_infrastructure.md) for the current corpora
+and harness inventory.
 
 ## 8. Documentation Tests
 

@@ -8,6 +8,11 @@ When documenting tests or parity workflow, point fixture changes to `scripts/reg
 
 `snapshot_performance.md` defines the focused snapshot latency and retained-allocation gate, including its asymptotic budgets and measurement semantics.
 
+`testing_policy.md` is forward-looking guidance for test design and placement.
+`testing_infrastructure.md` inventories the current test commands, budgets,
+fixtures, corpora, and harnesses; update it when those implementation facts
+change.
+
 `retained_group_roots.md` specifies the proposed persistent/COW environment
 history needed for durable paragraph checkpoints inside ordinary open groups,
 including store ownership, reclamation, hashing, rollout, and validation.
