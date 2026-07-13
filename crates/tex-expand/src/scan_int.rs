@@ -547,7 +547,7 @@ where
     }
 }
 
-fn parse_num_expression<S, St, R, H, E>(
+pub(crate) fn parse_num_expression<S, St, R, H, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
     recorder: &mut R,
@@ -713,11 +713,11 @@ where
     }
 }
 
-fn rounded_quotient(numerator: i64, denominator: i64) -> Option<i64> {
+pub(crate) fn rounded_quotient(numerator: i64, denominator: i64) -> Option<i64> {
     rounded_fraction(1, numerator, denominator)
 }
 
-fn rounded_fraction(value: i64, numerator: i64, denominator: i64) -> Option<i64> {
+pub(crate) fn rounded_fraction(value: i64, numerator: i64, denominator: i64) -> Option<i64> {
     if denominator == 0 {
         return None;
     }

@@ -329,6 +329,18 @@ where
                     cause_origin,
                 ))
             }
+            tex_state::meaning::UnexpandablePrimitive::DimExpr => {
+                let value = crate::scan_dimen::scan_dim_expr(
+                    input, stores, recorder, hooks, expander, token,
+                )?
+                .value();
+                Ok(push_rendered_text(
+                    stores,
+                    ExpansionReplayKind::TheOutput,
+                    &format_scaled(value),
+                    cause_origin,
+                ))
+            }
             tex_state::meaning::UnexpandablePrimitive::PrevDepth => Ok(push_rendered_text(
                 stores,
                 ExpansionReplayKind::TheOutput,

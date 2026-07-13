@@ -443,6 +443,7 @@ pub enum UnexpandablePrimitive {
     FontCharIc,
     InteractionMode,
     NumExpr,
+    DimExpr,
     Shipout,
     BeginGroup,
     EndGroup,
@@ -695,6 +696,7 @@ impl UnexpandablePrimitive {
             Self::FontCharIc => 180,
             Self::InteractionMode => 181,
             Self::NumExpr => 182,
+            Self::DimExpr => 183,
         }
     }
 
@@ -884,6 +886,7 @@ impl UnexpandablePrimitive {
             180 => Some(Self::FontCharIc),
             181 => Some(Self::InteractionMode),
             182 => Some(Self::NumExpr),
+            183 => Some(Self::DimExpr),
             _ => None,
         }
     }

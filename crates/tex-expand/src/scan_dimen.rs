@@ -480,6 +480,242 @@ where
     Ok(expander.next_expanded_token(input, stores, recorder, hooks)?)
 }
 
+pub(crate) fn scan_dim_expr<S, St, R, H, E>(
+    input: &mut InputStack<S>,
+    stores: &mut St,
+    recorder: &mut R,
+    hooks: &mut H,
+    expander: &mut E,
+    context: TracedTokenWord,
+) -> Result<ScannedDimen, ScanDimenError>
+where
+    S: InputSource,
+    St: ExpansionState,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
+{
+    let (value, bad) = parse_dim_expr(input, stores, recorder, hooks, expander, false)?;
+    if bad || value.abs() > i64::from(Scaled::MAX_DIMEN.raw()) {
+        Ok(ScannedDimen::with_diagnostic(
+            Scaled::from_raw(0),
+            DimensionDiagnostic::TooLarge,
+            context.origin(),
+        ))
+    } else {
+        Ok(ScannedDimen::new(Scaled::from_raw(value as i32)))
+    }
+}
+
+fn parse_dim_expr<S, St, R, H, E>(
+    input: &mut InputStack<S>,
+    stores: &mut St,
+    recorder: &mut R,
+    hooks: &mut H,
+    expander: &mut E,
+    parenthesized: bool,
+) -> Result<(i64, bool), ScanDimenError>
+where
+    S: InputSource,
+    St: ExpansionState,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
+{
+    let (mut value, mut bad) = parse_dim_term(input, stores, recorder, hooks, expander)?;
+    loop {
+        let Some(token) = expr_next(input, stores, recorder, hooks, expander)? else {
+            break;
+        };
+        let subtract = if expr_is(token, '+') {
+            false
+        } else if expr_is(token, '-') {
+            true
+        } else {
+            if parenthesized && expr_is(token, ')') {
+                break;
+            }
+            if !matches!(semantic_token(token), Token::Cs(s) if stores.meaning(s) == Meaning::Relax)
+            {
+                unread_token(input, stores, token);
+            }
+            break;
+        };
+        let (rhs, rhs_bad) = parse_dim_term(input, stores, recorder, hooks, expander)?;
+        bad |= rhs_bad;
+        let result = if subtract {
+            value.checked_sub(rhs)
+        } else {
+            value.checked_add(rhs)
+        };
+        match result {
+            Some(next) if next.abs() <= i64::from(Scaled::MAX_DIMEN.raw()) => value = next,
+            _ => {
+                value = 0;
+                bad = true;
+            }
+        }
+    }
+    Ok((value, bad))
+}
+
+fn parse_dim_term<S, St, R, H, E>(
+    input: &mut InputStack<S>,
+    stores: &mut St,
+    recorder: &mut R,
+    hooks: &mut H,
+    expander: &mut E,
+) -> Result<(i64, bool), ScanDimenError>
+where
+    S: InputSource,
+    St: ExpansionState,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
+{
+    let (mut value, mut bad) = parse_dim_factor(input, stores, recorder, hooks, expander)?;
+    loop {
+        let Some(operator) = expr_next(input, stores, recorder, hooks, expander)? else {
+            break;
+        };
+        if expr_is(operator, '*') {
+            let (numerator, numerator_bad) =
+                parse_expr_int(input, stores, recorder, hooks, expander)?;
+            bad |= numerator_bad;
+            let following = expr_next(input, stores, recorder, hooks, expander)?;
+            if following.is_some_and(|token| expr_is(token, '/')) {
+                let (denominator, denominator_bad) =
+                    parse_expr_int(input, stores, recorder, hooks, expander)?;
+                bad |= denominator_bad;
+                match scan_int::rounded_fraction(value, numerator, denominator) {
+                    Some(next) if next.abs() <= i64::from(Scaled::MAX_DIMEN.raw()) => value = next,
+                    _ => {
+                        value = 0;
+                        bad = true;
+                    }
+                }
+            } else {
+                if let Some(token) = following {
+                    unread_token(input, stores, token);
+                }
+                match value.checked_mul(numerator) {
+                    Some(next) if next.abs() <= i64::from(Scaled::MAX_DIMEN.raw()) => value = next,
+                    _ => {
+                        value = 0;
+                        bad = true;
+                    }
+                }
+            }
+        } else if expr_is(operator, '/') {
+            let (denominator, denominator_bad) =
+                parse_expr_int(input, stores, recorder, hooks, expander)?;
+            bad |= denominator_bad;
+            match scan_int::rounded_quotient(value, denominator) {
+                Some(next) => value = next,
+                None => {
+                    value = 0;
+                    bad = true;
+                }
+            }
+        } else {
+            unread_token(input, stores, operator);
+            break;
+        }
+    }
+    Ok((value, bad))
+}
+
+fn parse_dim_factor<S, St, R, H, E>(
+    input: &mut InputStack<S>,
+    stores: &mut St,
+    recorder: &mut R,
+    hooks: &mut H,
+    expander: &mut E,
+) -> Result<(i64, bool), ScanDimenError>
+where
+    S: InputSource,
+    St: ExpansionState,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
+{
+    let Some(token) = expr_next(input, stores, recorder, hooks, expander)? else {
+        return Ok((0, true));
+    };
+    if expr_is(token, '(') {
+        return parse_dim_expr(input, stores, recorder, hooks, expander, true);
+    }
+    unread_token(input, stores, token);
+    let scanned = scan_dimen_with_expander_and_hooks(
+        input,
+        stores,
+        recorder,
+        hooks,
+        expander,
+        ScanDimenOptions::STANDARD,
+        token,
+    )?;
+    Ok((
+        i64::from(scanned.value().raw()),
+        scanned.diagnostic().is_some(),
+    ))
+}
+
+fn parse_expr_int<S, St, R, H, E>(
+    input: &mut InputStack<S>,
+    stores: &mut St,
+    recorder: &mut R,
+    hooks: &mut H,
+    expander: &mut E,
+) -> Result<(i64, bool), ScanDimenError>
+where
+    S: InputSource,
+    St: ExpansionState,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
+{
+    let Some(token) = expr_next(input, stores, recorder, hooks, expander)? else {
+        return Ok((0, true));
+    };
+    if expr_is(token, '(') {
+        return Ok(scan_int::parse_num_expression(
+            input, stores, recorder, hooks, expander, true,
+        )?);
+    }
+    unread_token(input, stores, token);
+    let scanned = scan_int::scan_int_with_expander_and_hooks(
+        input, stores, recorder, hooks, expander, token,
+    )?;
+    Ok((i64::from(scanned.value()), scanned.diagnostic().is_some()))
+}
+
+fn expr_next<S, St, R, H, E>(
+    input: &mut InputStack<S>,
+    stores: &mut St,
+    recorder: &mut R,
+    hooks: &mut H,
+    expander: &mut E,
+) -> Result<Option<TracedTokenWord>, ScanDimenError>
+where
+    S: InputSource,
+    St: ExpansionState,
+    R: ReadRecorder,
+    H: ExpansionHooks<S>,
+    E: ExpandNext<S, St, R, H>,
+{
+    loop {
+        let token = next_x(input, stores, recorder, hooks, expander)?;
+        if token.is_none_or(|token| !is_space(token)) {
+            return Ok(token);
+        }
+    }
+}
+
+fn expr_is(token: TracedTokenWord, wanted: char) -> bool {
+    matches!(semantic_token(token), Token::Char { ch, cat: Catcode::Other } if ch == wanted)
+}
+
 fn scan_unsigned_after_first_token<S, St, R, H, E>(
     input: &mut InputStack<S>,
     stores: &mut St,
@@ -677,6 +913,9 @@ where
     recorder.record_meaning(symbol, meaning);
     crate::values::record_meaning_value_dependency(recorder, meaning);
     match meaning {
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::DimExpr) => {
+            return scan_dim_expr(input, stores, recorder, hooks, expander, token);
+        }
         Meaning::DimenRegister(index) => {
             consume_optional_space(input, stores, recorder, hooks, expander)?;
             return Ok(ScannedDimen::new(stores.dimen(index)));

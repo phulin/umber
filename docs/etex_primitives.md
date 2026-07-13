@@ -43,8 +43,9 @@ as typesetting and the font dimension enquiries.
 ## Expressions and value enquiries (manual section 3.5)
 
 `\numexpr` is implemented with manual-defined precedence, parentheses,
-rounded division, combined multiply/divide, and overflow recovery. `\dimexpr`,
-`\glueexpr`, `\muexpr`, `\gluestretch`,
+rounded division, combined multiply/divide, and overflow recovery. `\dimexpr`
+implements the same grammar with dimension-first terms and exact scaled-point
+rounding. `\glueexpr`, `\muexpr`, `\gluestretch`,
 `\glueshrink`, `\gluestretchorder`, `\glueshrinkorder`, `\gluetomu`,
 `\mutoglue` are **missing**. `\fontcharwd`, `\fontcharht`, `\fontchardp`, and
 `\fontcharic` are implemented as read-only internal dimensions.

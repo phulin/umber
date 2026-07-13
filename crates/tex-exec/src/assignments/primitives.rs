@@ -237,6 +237,7 @@ pub fn install_etex_unexpandable_primitives(stores: &mut Universe) {
         ("fontcharic", UnexpandablePrimitive::FontCharIc),
         ("interactionmode", UnexpandablePrimitive::InteractionMode),
         ("numexpr", UnexpandablePrimitive::NumExpr),
+        ("dimexpr", UnexpandablePrimitive::DimExpr),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));

@@ -96,6 +96,55 @@ fn context() -> TracedTokenWord {
     )
 }
 
+fn install_dimexpr(stores: &mut Universe) {
+    let dimexpr = stores.intern("dimexpr");
+    stores.set_meaning(
+        dimexpr,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::DimExpr),
+    );
+    let relax = stores.intern("relax");
+    stores.set_meaning(relax, Meaning::Relax);
+}
+
+#[test]
+fn dimexpr_obeys_precedence_parentheses_and_relax_termination() {
+    let mut stores = Universe::new();
+    install_dimexpr(&mut stores);
+
+    let (value, diagnostic, next) = scan_with_stores("\\dimexpr 1pt+2pt*3\\relax X", &mut stores);
+    assert_eq!(value, 7 * Scaled::UNITY);
+    assert_eq!(diagnostic, None);
+    assert_eq!(next, Some(char_token('X', Catcode::Letter)));
+
+    let (value, _, _) = scan_with_stores("\\dimexpr (1pt+2pt)*3\\relax", &mut stores);
+    assert_eq!(value, 9 * Scaled::UNITY);
+}
+
+#[test]
+fn dimexpr_uses_etex_rounded_division_and_combined_scaling() {
+    let mut stores = Universe::new();
+    install_dimexpr(&mut stores);
+
+    assert_eq!(
+        scan_with_stores("\\dimexpr 1pt/3\\relax", &mut stores).0,
+        21_845
+    );
+    assert_eq!(
+        scan_with_stores("\\dimexpr 1pt*10/3\\relax", &mut stores).0,
+        218_453
+    );
+}
+
+#[test]
+fn dimexpr_recovers_to_zero_after_intermediate_overflow() {
+    let mut stores = Universe::new();
+    install_dimexpr(&mut stores);
+
+    let (value, diagnostic, _) = scan_with_stores("\\dimexpr 16383pt+1pt\\relax", &mut stores);
+    assert_eq!(value, 0);
+    assert_eq!(diagnostic, Some(DimensionDiagnostic::TooLarge));
+}
+
 #[test]
 fn scans_fractional_decimal_constants_with_dot_and_comma() {
     assert_eq!(scan("1.5pt x").0, 98_304);
@@ -702,4 +751,33 @@ fn fractional_sp_truncates_to_integer_scaled_points() {
         .raw();
 
     assert_eq!(scan("1.5sp x").0, expected);
+}
+
+#[test]
+fn dimexpr_matches_etex_precedence_parentheses_and_rounding() {
+    let mut stores = Universe::new();
+    for (name, meaning) in [
+        (
+            "dimexpr",
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::DimExpr),
+        ),
+        ("relax", Meaning::Relax),
+    ] {
+        let symbol = stores.intern(name);
+        stores.set_meaning(symbol, meaning);
+    }
+
+    assert_eq!(
+        scan_with_stores("\\dimexpr1pt+2pt*3\\relax", &mut stores).0,
+        7 * 65_536
+    );
+    assert_eq!(
+        scan_with_stores("\\dimexpr(1pt+2pt)*3\\relax", &mut stores).0,
+        9 * 65_536
+    );
+    assert_eq!(scan_with_stores("\\dimexpr5sp/2\\relax", &mut stores).0, 3);
+    assert_eq!(
+        scan_with_stores("\\dimexpr-5sp/2\\relax", &mut stores).0,
+        -3
+    );
 }
