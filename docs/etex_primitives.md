@@ -63,11 +63,30 @@ are **missing**.
 
 ## Marks, lists, paragraph extensions, and math (manual sections 3.4, 3.7)
 
-The mark-class family, discard-list enquiries, penalty arrays, parshape
-enquiries, `\lastlinefit`, `\savinghyphcodes`, `\savingvdiscards`, TeX--XeT
-direction family, and `\middle` are **missing**. Sparse register support for
-indexes 256 through 32767 and enhanced `\parshape` parsing still require an
-explicit e-TeX audit even where the state substrate already supports them.
+The `umber2-wvo.4` state and paragraph family is **done** against the manual
+contract and the official e-TRIP workload:
+
+- Section 3.4's 16-bit register range is covered for `\count`, `\dimen`,
+  `\skip`, `\muskip`, and `\toks`, including local restoration at indexes 256
+  and 32767. As required by `etex.ch`, compatibility mode retains TeX82's
+  0..255 register limit and leaves the extension-only control sequences
+  undefined.
+- The mark-class family tracks independent top/first/bottom values through
+  page fire-up and independent split-first/split-bottom values through
+  `\vsplit`. `\pagediscards` and `\splitdiscards` destructively splice the
+  lists retained when `\savingvdiscards` is positive.
+- All four penalty arrays implement manual-defined assignment, repeated final
+  entries, grouping, and forward/reverse line indexing. The interline array is
+  reset at paragraph completion as specified.
+- `\parshapelength`, `\parshapeindent`, and `\parshapedimen` expose explicit
+  and repeated shape components. `\lastlinefit` follows the `etex.ch`
+  line-adjustment algorithm and all fifteen official e-TRIP outcomes.
+  `\savinghyphcodes` snapshots per-language lowercase mappings for later
+  pattern and exception use.
+
+TeX--XeT directions and `\middle` are implemented with focused tests but remain
+outside this completed state-family audit. Their final status belongs with the
+direction and math conformance work rather than `umber2-wvo.4`.
 
 ## Conformance gates
 

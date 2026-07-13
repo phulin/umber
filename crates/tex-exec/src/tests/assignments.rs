@@ -1,5 +1,6 @@
 use super::support::terminal_effect_text;
 use super::*;
+use tex_state::scaled::Scaled;
 
 #[test]
 fn register_assignments_cover_sparse_aliases_and_arithmetic() {
@@ -32,6 +33,50 @@ fn tex82_compatibility_rejects_sparse_register_numbers() {
     let output = terminal_effect_text(&stores);
     assert!(output.contains("Bad register code (300)"));
     assert!(output.contains("between 0 and 255"));
+}
+
+#[test]
+fn etex_sparse_register_families_restore_through_32767() {
+    // e-TeX manual section 3.4 extends all five ordinary register families
+    // from 0..255 to 0..32767; their grouping rules remain TeX's rules.
+    let mut stores = Universe::new();
+    install_unexpandable_primitives(&mut stores);
+    install_etex_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(concat!(
+        "\\count256=1 ",
+        "\\dimen32767=2pt ",
+        "\\skip300=3pt plus4pt ",
+        "\\muskip301=5mu plus6mu ",
+        "\\toks302={hi} ",
+        "{\\count256=9 \\dimen32767=9pt \\skip300=9pt ",
+        "\\muskip301=9mu \\toks302={no}}\\end",
+    )));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("sparse e-TeX register assignments execute");
+
+    assert_eq!(stores.count(256), 1);
+    assert_eq!(stores.dimen(32_767).raw(), 2 * Scaled::UNITY);
+    let skip = stores.glue(stores.skip(300));
+    assert_eq!(skip.width.raw(), 3 * Scaled::UNITY);
+    assert_eq!(skip.stretch.raw(), 4 * Scaled::UNITY);
+    let muskip = stores.glue(stores.muskip(301));
+    assert_eq!(muskip.width.raw(), 5 * Scaled::UNITY);
+    assert_eq!(muskip.stretch.raw(), 6 * Scaled::UNITY);
+    assert_eq!(
+        stores.tokens(stores.toks(302)),
+        &[
+            Token::Char {
+                ch: 'h',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: 'i',
+                cat: Catcode::Letter,
+            },
+        ]
+    );
 }
 
 #[test]

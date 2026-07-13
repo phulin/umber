@@ -2420,6 +2420,55 @@ fn etex_page_discards_save_splice_and_clear_discarded_material() {
 }
 
 #[test]
+fn etex_vsplit_updates_mark_classes_and_consumes_saved_discards() {
+    // e-TeX manual sections 3.4 and 3.7 require classed split marks and make
+    // \splitdiscards a destructive splice when \savingvdiscards is positive.
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    tex_expand::install_etex_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    install_etex_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(concat!(
+        "\\savingvdiscards=1 ",
+        "\\setbox0=\\vbox{\\marks7{A}\\hbox{}\\marks7{B}\\hbox{}\\vskip5pt\\hbox{}} ",
+        "\\setbox1=\\vsplit0 to0pt ",
+        "\\edef\\splitresult{\\splitfirstmarks7/\\splitbotmarks7} ",
+        "\\setbox2=\\vbox{\\splitdiscards} ",
+        "\\setbox3=\\vbox{\\splitdiscards}",
+    )));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("classed split marks and saved split discards execute");
+
+    assert_eq!(macro_text(&stores, "splitresult"), "A/B");
+    let first = stores.box_reg(2).expect("first split-discard box");
+    let Node::VList(first) = stores
+        .nodes(first)
+        .first()
+        .expect("first split-discard vbox")
+        .to_owned()
+    else {
+        panic!("expected vbox");
+    };
+    assert!(stores.nodes(first.children).into_iter().any(|node| {
+        matches!(node.to_owned(), Node::Glue { spec, .. }
+            if stores.glue(spec).width.raw() == 5 * Scaled::UNITY)
+    }));
+    let second = stores.box_reg(3).expect("second split-discard box");
+    let Node::VList(second) = stores
+        .nodes(second)
+        .first()
+        .expect("second split-discard vbox")
+        .to_owned()
+    else {
+        panic!("expected vbox");
+    };
+    assert!(stores.nodes(second.children).is_empty());
+    assert!(stores.split_discards().is_empty());
+}
+
+#[test]
 fn page_builder_reports_and_normalizes_infinite_shrink_glue() {
     let mut stores = Universe::new();
     install_unexpandable_primitives(&mut stores);
@@ -3382,9 +3431,13 @@ fn etex_penalty_arrays_assign_query_restore_and_reset_interline_at_par() {
     install_etex_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\clubpenalties=2 200 100 \
+         \\widowpenalties=2 300 400 \
+         \\displaywidowpenalties=1 500 \
          {\\clubpenalties=1 7} \
          \\interlinepenalties=2 8 7 \
-         \\edef\\before{\\number\\clubpenalties0/\\the\\clubpenalties1/\\the\\clubpenalties8/\\the\\interlinepenalties0} \
+         \\edef\\before{\\number\\clubpenalties0/\\the\\clubpenalties1/\\the\\clubpenalties8/\
+         \\the\\widowpenalties1/\\the\\widowpenalties8/\
+         \\the\\displaywidowpenalties0/\\the\\displaywidowpenalties8/\\the\\interlinepenalties0} \
          \\noindent\\par \
          \\edef\\after{\\the\\interlinepenalties0}\\end",
     ));
@@ -3392,7 +3445,7 @@ fn etex_penalty_arrays_assign_query_restore_and_reset_interline_at_par() {
     Executor::new()
         .run(&mut input, &mut stores)
         .expect("penalty array assignments and enquiries execute");
-    assert_eq!(macro_text(&stores, "before"), "2/200/100/2");
+    assert_eq!(macro_text(&stores, "before"), "2/200/100/300/400/1/500/2");
     assert_eq!(macro_text(&stores, "after"), "0");
 }
 
