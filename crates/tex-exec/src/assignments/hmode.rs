@@ -396,6 +396,29 @@ where
 }
 
 fn append_hchar(nest: &mut ModeNest, stores: &mut Universe, ch: char) {
+    if nest.current_mode() == Mode::Horizontal {
+        let language = u8::try_from(stores.int_param(IntParam::LANGUAGE)).unwrap_or(0);
+        if language != nest.current_list().hyphen_language() {
+            // tex.web's fix_language flushes the current ligature word before
+            // recording the new language and its current hyphen minima.
+            let no_boundary = nest.current_list().no_boundary();
+            let pending = nest.current_list_mut().take_pending_hchars();
+            if !pending.is_empty() {
+                nest.current_list_mut().set_no_boundary(false);
+                let nodes = reconstitute(stores, &pending, no_boundary, true);
+                nest.current_list_mut().append(nodes);
+            }
+            let left_hyphen_min = stores.int_param(IntParam::LEFT_HYPHEN_MIN).clamp(1, 63) as u8;
+            let right_hyphen_min = stores.int_param(IntParam::RIGHT_HYPHEN_MIN).clamp(1, 63) as u8;
+            nest.current_list_mut()
+                .push(Node::Whatsit(tex_state::node::Whatsit::Language {
+                    language,
+                    left_hyphen_min,
+                    right_hyphen_min,
+                }));
+            nest.current_list_mut().set_hyphen_language(language);
+        }
+    }
     let font = stores.current_font();
     if let Ok(code) = u8::try_from(ch as u32)
         && stores.font_char_exists(font, code)

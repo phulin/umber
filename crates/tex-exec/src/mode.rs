@@ -89,6 +89,7 @@ pub struct ModeList {
     pending_hchars: Arc<Vec<PendingHChar>>,
     space_factor: i32,
     no_boundary: bool,
+    hyphen_language: u8,
 }
 
 impl ModeList {
@@ -148,6 +149,15 @@ impl ModeList {
 
     pub fn set_no_boundary(&mut self, value: bool) {
         self.no_boundary = value;
+    }
+
+    #[must_use]
+    pub const fn hyphen_language(&self) -> u8 {
+        self.hyphen_language
+    }
+
+    pub fn set_hyphen_language(&mut self, language: u8) {
+        self.hyphen_language = language;
     }
 
     #[must_use]

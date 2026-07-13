@@ -344,16 +344,53 @@ impl Stores {
     }
 
     pub fn add_hyphenation_pattern(&mut self, pattern: PatternSpec) {
-        Arc::make_mut(&mut self.hyphenation).add_pattern(pattern);
+        self.add_hyphenation_pattern_for_language(0, pattern);
+    }
+
+    pub fn add_hyphenation_pattern_for_language(&mut self, language: u8, pattern: PatternSpec) {
+        Arc::make_mut(&mut self.hyphenation).add_pattern_for_language(language, pattern);
     }
 
     pub fn add_hyphenation_exception(&mut self, exception: ExceptionSpec) {
-        Arc::make_mut(&mut self.hyphenation).add_exception(exception);
+        self.add_hyphenation_exception_for_language(0, exception);
+    }
+
+    pub fn add_hyphenation_exception_for_language(
+        &mut self,
+        language: u8,
+        exception: ExceptionSpec,
+    ) {
+        Arc::make_mut(&mut self.hyphenation).add_exception_for_language(language, exception);
+    }
+
+    pub fn save_hyphenation_codes(
+        &mut self,
+        language: u8,
+        codes: impl IntoIterator<Item = (char, char)>,
+    ) {
+        Arc::make_mut(&mut self.hyphenation).save_hyphen_codes(language, codes);
+    }
+
+    #[must_use]
+    pub fn saved_hyphenation_code(&self, language: u8, ch: char) -> Option<Option<char>> {
+        self.hyphenation.saved_hyphen_code(language, ch)
     }
 
     #[must_use]
     pub fn hyphen_positions(&self, word: &str, left_min: usize, right_min: usize) -> Vec<usize> {
-        self.hyphenation.hyphen_positions(word, left_min, right_min)
+        self.hyphen_positions_for_language(0, word, left_min, right_min)
+    }
+
+    #[must_use]
+    pub fn hyphen_positions_for_language(
+        &self,
+        language: u8,
+        word: &str,
+        left_min: usize,
+        right_min: usize,
+    ) -> Vec<usize> {
+        self.hyphenation
+            .hyphen_positions_for_language(language, word, left_min, right_min)
     }
 
     #[must_use]

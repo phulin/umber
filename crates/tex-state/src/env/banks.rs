@@ -192,6 +192,11 @@ impl IntParam {
     pub const SAVING_V_DISCARDS: Self = Self::new(68);
     /// e-TeX last-line paragraph fitting ratio.
     pub const LAST_LINE_FIT: Self = Self::new(69);
+    /// e-TeX switch saving language-specific hyphenation codes at `\patterns`.
+    pub const SAVING_HYPH_CODES: Self = Self::new(70);
+
+    /// Current hyphenation language.
+    pub const LANGUAGE: Self = Self::new(50);
 
     /// TeX's `\showboxbreadth` integer parameter.
     pub const SHOW_BOX_BREADTH: Self = Self::new(24);

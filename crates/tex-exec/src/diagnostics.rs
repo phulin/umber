@@ -390,6 +390,7 @@ where
     H: ExpansionHooks<S>,
 {
     let tokens = scan_balanced_expanded_text(input, stores, hooks, "\\showhyphens")?;
+    let language = u8::try_from(stores.int_param(IntParam::LANGUAGE)).unwrap_or(0);
     let mut words = Vec::new();
     let mut current = String::new();
     for token in tokens {
@@ -403,7 +404,10 @@ where
                 }
             }
             Token::Char { ch, .. } => {
-                if let Some(lower) = char::from_u32(stores.lccode(ch)).filter(|&ch| ch != '\0') {
+                let lower = stores
+                    .saved_hyphenation_code(language, ch)
+                    .unwrap_or_else(|| char::from_u32(stores.lccode(ch)).filter(|&ch| ch != '\0'));
+                if let Some(lower) = lower {
                     current.push(lower);
                 } else if !current.is_empty() {
                     words.push(std::mem::take(&mut current));
@@ -425,7 +429,7 @@ where
     let mut lines = String::new();
     lines.push('\n');
     for word in words {
-        let positions = stores.hyphen_positions(&word, left, right);
+        let positions = stores.hyphen_positions_for_language(language, &word, left, right);
         lines.push_str(&hyphenated_word_text(&word, &positions));
         lines.push('\n');
     }

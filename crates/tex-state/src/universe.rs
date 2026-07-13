@@ -1069,13 +1069,52 @@ impl Universe {
         self.stores.add_hyphenation_pattern(pattern);
     }
 
+    pub fn add_hyphenation_pattern_for_language(&mut self, language: u8, pattern: PatternSpec) {
+        self.stores
+            .add_hyphenation_pattern_for_language(language, pattern);
+    }
+
     pub fn add_hyphenation_exception(&mut self, exception: ExceptionSpec) {
         self.stores.add_hyphenation_exception(exception);
+    }
+
+    pub fn add_hyphenation_exception_for_language(
+        &mut self,
+        language: u8,
+        exception: ExceptionSpec,
+    ) {
+        self.stores
+            .add_hyphenation_exception_for_language(language, exception);
+    }
+
+    pub fn save_hyphenation_codes(
+        &mut self,
+        language: u8,
+        codes: impl IntoIterator<Item = (char, char)>,
+    ) {
+        self.stores.save_hyphenation_codes(language, codes);
+    }
+
+    #[must_use]
+    pub fn saved_hyphenation_code(&self, language: u8, ch: char) -> Option<Option<char>> {
+        self.stores.saved_hyphenation_code(language, ch)
     }
 
     #[must_use]
     pub fn hyphen_positions(&self, word: &str, left_min: usize, right_min: usize) -> Vec<usize> {
         self.stores.hyphen_positions(word, left_min, right_min)
+    }
+
+    #[must_use]
+    pub fn hyphen_positions_for_language(
+        &self,
+        language: u8,
+        word: &str,
+        left_min: usize,
+        right_min: usize,
+    ) -> Vec<usize> {
+        self.stores
+            .hyphen_positions_for_language(language, word, left_min, right_min)
     }
 
     #[must_use]

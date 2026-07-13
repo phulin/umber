@@ -23,6 +23,30 @@ fn patterns_and_exceptions_feed_showhyphens() {
 }
 
 #[test]
+fn etex_saved_hyphen_codes_are_language_specific_and_survive_lccode_changes() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    install_etex_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\savinghyphcodes=1 \\language=1 \\lccode`A=`a \\patterns{a1ba} \
+         \\lccode`A=`z \\lefthyphenmin=1 \\righthyphenmin=1 \
+         \\showhyphens{Aba} \
+         \\language=2 \\lccode`A=`x \\patterns{x1ba} \\lccode`A=`z \
+         \\hyphenation{Ab-a} \\showhyphens{Aba} \
+         \\language=1 \\showhyphens{Aba} \\end",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("saved hyphenation codes execute");
+
+    let output = terminal_effect_text(&stores);
+    assert_eq!(output.matches("a-ba").count(), 2, "{output}");
+    assert!(output.contains("xb-a"), "{output}");
+}
+
+#[test]
 fn showhyphens_honors_hyphen_minima() {
     let mut stores = Universe::new();
     tex_expand::install_expandable_primitives(&mut stores);

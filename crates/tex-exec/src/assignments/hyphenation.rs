@@ -19,10 +19,20 @@ where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
+    let language = current_language(stores);
     for word in scan_hyphenation_words(input, stores, hooks, "\\patterns")? {
         if let Some(pattern) = parse_pattern_word(stores, &word) {
-            stores.add_hyphenation_pattern(pattern);
+            stores.add_hyphenation_pattern_for_language(language, pattern);
         }
+    }
+    if stores.int_param(IntParam::SAVING_HYPH_CODES) > 0 {
+        let codes = (0u8..=u8::MAX).filter_map(|code| {
+            let ch = char::from(code);
+            char::from_u32(stores.lccode(ch))
+                .filter(|&mapped| mapped != '\0')
+                .map(|mapped| (ch, mapped))
+        });
+        stores.save_hyphenation_codes(language, codes.collect::<Vec<_>>());
     }
     Ok(())
 }
@@ -36,9 +46,10 @@ where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
+    let language = current_language(stores);
     for word in scan_hyphenation_words(input, stores, hooks, "\\hyphenation")? {
-        if let Some(exception) = parse_exception_word(stores, &word) {
-            stores.add_hyphenation_exception(exception);
+        if let Some(exception) = parse_exception_word(stores, language, &word) {
+            stores.add_hyphenation_exception_for_language(language, exception);
         }
     }
     Ok(())
@@ -117,7 +128,7 @@ fn hyphenate_after_glue(
     let mut index = start;
     let (word_start, font) = loop {
         let node = nodes.get(index)?;
-        match first_word_char(stores, node) {
+        match first_word_char(stores, language, node) {
             Some((font, ch, lower)) => {
                 if lower != ch && stores.int_param(IntParam::UC_HYPH) <= 0 {
                     return None;
@@ -132,7 +143,7 @@ fn hyphenate_after_glue(
         }
     };
 
-    if language != 0 || left.saturating_add(right) > 63 {
+    if left.saturating_add(right) > 63 {
         return None;
     }
     let hyphen = stores.font_hyphen_char(font);
@@ -149,7 +160,7 @@ fn hyphenate_after_glue(
                 font: node_font,
                 ch,
             } if *node_font == font && word.len() < 63 => {
-                let Some(lower) = normalized_lccode(stores, *ch) else {
+                let Some(lower) = normalized_hyphen_code(stores, language, *ch) else {
                     break;
                 };
                 word.push(WordChar {
@@ -171,7 +182,7 @@ fn hyphenate_after_glue(
                 }
                 let Some(normalized) = chars
                     .into_iter()
-                    .map(|ch| normalized_lccode(stores, ch).map(|lower| (ch, lower)))
+                    .map(|ch| normalized_hyphen_code(stores, language, ch).map(|lower| (ch, lower)))
                     .collect::<Option<Vec<_>>>()
                 else {
                     break;
@@ -198,7 +209,7 @@ fn hyphenate_after_glue(
     }
 
     let lowercase: String = word.iter().map(|ch| ch.lower).collect();
-    let positions = stores.hyphen_positions(&lowercase, left, right);
+    let positions = stores.hyphen_positions_for_language(language, &lowercase, left, right);
     out.extend_from_slice(&nodes[start..word_start]);
     if positions.is_empty() {
         out.extend(word_nodes);
@@ -228,12 +239,23 @@ fn hyphenate_after_glue(
     Some(index)
 }
 
-fn first_word_char(stores: &Universe, node: &Node) -> Option<(tex_state::ids::FontId, char, char)> {
+fn first_word_char(
+    stores: &Universe,
+    language: u8,
+    node: &Node,
+) -> Option<(tex_state::ids::FontId, char, char)> {
     match node {
-        Node::Char { font, ch } => normalized_lccode(stores, *ch).map(|lower| (*font, *ch, lower)),
-        Node::Lig { font, ch, orig } => ligature_original_chars(*ch, *orig)
-            .first()
-            .and_then(|&first| normalized_lccode(stores, first).map(|lower| (*font, first, lower))),
+        Node::Char { font, ch } => {
+            normalized_hyphen_code(stores, language, *ch).map(|lower| (*font, *ch, lower))
+        }
+        Node::Lig { font, ch, orig } => {
+            ligature_original_chars(*ch, *orig)
+                .first()
+                .and_then(|&first| {
+                    normalized_hyphen_code(stores, language, first)
+                        .map(|lower| (*font, first, lower))
+                })
+        }
         _ => None,
     }
 }
@@ -354,14 +376,14 @@ fn parse_pattern_word(stores: &Universe, word: &[char]) -> Option<PatternSpec> {
     Some(PatternSpec { letters, values })
 }
 
-fn parse_exception_word(stores: &Universe, word: &[char]) -> Option<ExceptionSpec> {
+fn parse_exception_word(stores: &Universe, language: u8, word: &[char]) -> Option<ExceptionSpec> {
     let mut normalized = String::new();
     let mut positions = Vec::new();
     for &ch in word {
         if ch == '-' {
             positions.push(normalized.chars().count());
         } else {
-            normalized.push(normalized_lccode(stores, ch)?);
+            normalized.push(normalized_hyphen_code(stores, language, ch)?);
         }
     }
     Some(ExceptionSpec {
@@ -372,6 +394,16 @@ fn parse_exception_word(stores: &Universe, word: &[char]) -> Option<ExceptionSpe
 
 fn normalized_lccode(stores: &Universe, ch: char) -> Option<char> {
     char::from_u32(stores.lccode(ch)).filter(|&mapped| mapped != '\0')
+}
+
+fn normalized_hyphen_code(stores: &Universe, language: u8, ch: char) -> Option<char> {
+    stores
+        .saved_hyphenation_code(language, ch)
+        .unwrap_or_else(|| normalized_lccode(stores, ch))
+}
+
+fn current_language(stores: &Universe) -> u8 {
+    u8::try_from(stores.int_param(IntParam::LANGUAGE)).unwrap_or(0)
 }
 
 fn append_hyphenated_word(

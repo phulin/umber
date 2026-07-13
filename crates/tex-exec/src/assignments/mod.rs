@@ -993,6 +993,7 @@ where
                 }
                 let language = scan_i32(input, stores, hooks, command.traced)?;
                 let language = u8::try_from(language).unwrap_or(0);
+                hmode::flush_pending_hchars(nest, stores)?;
                 let normalize_min = |value: i32| u8::try_from(value.clamp(1, 63)).unwrap_or(1);
                 let left_hyphen_min = normalize_min(stores.int_param(IntParam::LEFT_HYPHEN_MIN));
                 let right_hyphen_min = normalize_min(stores.int_param(IntParam::RIGHT_HYPHEN_MIN));
@@ -1005,6 +1006,7 @@ where
                         right_hyphen_min,
                     }),
                 )?;
+                nest.current_list_mut().set_hyphen_language(language);
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::Shipout => {

@@ -8,8 +8,23 @@ use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct HyphenationTable {
+    languages: BTreeMap<u8, LanguageHyphenation>,
+    hyphen_codes: BTreeMap<u8, BTreeMap<char, char>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+struct LanguageHyphenation {
     nodes: Vec<TrieNode>,
     exceptions: BTreeMap<String, Vec<usize>>,
+}
+
+impl Default for LanguageHyphenation {
+    fn default() -> Self {
+        Self {
+            nodes: vec![TrieNode::default()],
+            exceptions: BTreeMap::new(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
@@ -34,36 +49,79 @@ impl HyphenationTable {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            nodes: vec![TrieNode::default()],
-            exceptions: BTreeMap::new(),
+            languages: BTreeMap::new(),
+            hyphen_codes: BTreeMap::new(),
         }
     }
 
     pub fn add_pattern(&mut self, pattern: PatternSpec) {
+        self.add_pattern_for_language(0, pattern);
+    }
+
+    pub fn add_pattern_for_language(&mut self, language: u8, pattern: PatternSpec) {
         if pattern.letters.is_empty() {
             return;
         }
+        let table = self.languages.entry(language).or_default();
         let mut node = 0usize;
         for ch in pattern.letters {
-            node = self.edge_or_insert(node, ch);
+            node = table.edge_or_insert(node, ch);
         }
-        self.nodes[node].values = pattern.values;
+        table.nodes[node].values = pattern.values;
     }
 
     pub fn add_exception(&mut self, exception: ExceptionSpec) {
+        self.add_exception_for_language(0, exception);
+    }
+
+    pub fn add_exception_for_language(&mut self, language: u8, exception: ExceptionSpec) {
         if exception.word.is_empty() {
             return;
         }
-        self.exceptions.insert(exception.word, exception.positions);
+        self.languages
+            .entry(language)
+            .or_default()
+            .exceptions
+            .insert(exception.word, exception.positions);
+    }
+
+    pub fn save_hyphen_codes(
+        &mut self,
+        language: u8,
+        codes: impl IntoIterator<Item = (char, char)>,
+    ) {
+        self.hyphen_codes
+            .insert(language, codes.into_iter().collect());
+    }
+
+    #[must_use]
+    pub fn saved_hyphen_code(&self, language: u8, ch: char) -> Option<Option<char>> {
+        self.hyphen_codes
+            .get(&language)
+            .map(|codes| codes.get(&ch).copied())
     }
 
     #[must_use]
     pub fn hyphen_positions(&self, word: &str, left_min: usize, right_min: usize) -> Vec<usize> {
+        self.hyphen_positions_for_language(0, word, left_min, right_min)
+    }
+
+    #[must_use]
+    pub fn hyphen_positions_for_language(
+        &self,
+        language: u8,
+        word: &str,
+        left_min: usize,
+        right_min: usize,
+    ) -> Vec<usize> {
         let chars: Vec<char> = word.chars().collect();
         if chars.len() < left_min.saturating_add(right_min) {
             return Vec::new();
         }
-        if let Some(positions) = self.exceptions.get(word) {
+        let Some(table) = self.languages.get(&language) else {
+            return Vec::new();
+        };
+        if let Some(positions) = table.exceptions.get(word) {
             return filter_bounds(positions.iter().copied(), chars.len(), left_min, right_min);
         }
 
@@ -75,11 +133,11 @@ impl HyphenationTable {
         for start in 0..decorated.len() {
             let mut node = 0usize;
             for ch in decorated[start..].iter().copied() {
-                let Some(next) = self.edge(node, ch) else {
+                let Some(next) = table.edge(node, ch) else {
                     break;
                 };
                 node = next;
-                for (i, value) in self.nodes[node].values.iter().copied().enumerate() {
+                for (i, value) in table.nodes[node].values.iter().copied().enumerate() {
                     let pos = start + i;
                     if pos < values.len() && value > values[pos] {
                         values[pos] = value;
@@ -103,9 +161,38 @@ impl HyphenationTable {
 
     #[must_use]
     pub fn exception(&self, word: &str) -> Option<&[usize]> {
-        self.exceptions.get(word).map(Vec::as_slice)
+        self.exception_for_language(0, word)
     }
 
+    #[must_use]
+    pub fn exception_for_language(&self, language: u8, word: &str) -> Option<&[usize]> {
+        self.languages
+            .get(&language)?
+            .exceptions
+            .get(word)
+            .map(Vec::as_slice)
+    }
+
+    pub(crate) fn hash_semantic(&self, hasher: &mut crate::state_hash::StateHasher) {
+        hasher.tag(0x70);
+        hasher.usize(self.languages.len());
+        for (language, table) in &self.languages {
+            hasher.u8(*language);
+            table.hash_semantic(hasher);
+        }
+        hasher.usize(self.hyphen_codes.len());
+        for (language, codes) in &self.hyphen_codes {
+            hasher.u8(*language);
+            hasher.usize(codes.len());
+            for (from, to) in codes {
+                hasher.u32(*from as u32);
+                hasher.u32(*to as u32);
+            }
+        }
+    }
+}
+
+impl LanguageHyphenation {
     fn edge(&self, node: usize, ch: char) -> Option<usize> {
         self.nodes[node]
             .edges
@@ -129,8 +216,7 @@ impl HyphenationTable {
         }
     }
 
-    pub(crate) fn hash_semantic(&self, hasher: &mut crate::state_hash::StateHasher) {
-        hasher.tag(0x70);
+    fn hash_semantic(&self, hasher: &mut crate::state_hash::StateHasher) {
         hasher.usize(self.nodes.len());
         for node in &self.nodes {
             hasher.usize(node.edges.len());
