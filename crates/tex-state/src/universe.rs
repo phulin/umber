@@ -133,6 +133,7 @@ pub trait ExpansionState {
     fn page_mark(&self, mark: PageMark) -> TokenListId;
     fn page_mark_class(&self, mark: PageMark, class: u16) -> TokenListId;
     fn report_bad_register_code(&mut self, _value: i32, _maximum: u16) {}
+    fn report_missing_font_identifier(&mut self) {}
     fn int_param(&self, param: IntParam) -> i32;
     /// Emits the e-TeX `\scantokens` pseudo-file boundary when tracing is enabled.
     fn trace_scantokens_boundary(&mut self, _opening: bool) {}
@@ -1897,6 +1898,13 @@ impl Universe {
         );
     }
 
+    pub fn report_missing_font_identifier(&mut self) {
+        self.world.write_text(
+            PrintSink::TerminalAndLog,
+            "\n! Missing font identifier.\nI was looking for a control sequence whose\ncurrent meaning has been defined by \\font.\n",
+        );
+    }
+
     pub fn freeze_page_specs(&mut self, contents: PageContents) {
         let vsize = self.dimen_param(DimenParam::V_SIZE);
         let max_depth = self.dimen_param(DimenParam::MAX_DEPTH);
@@ -2679,6 +2687,10 @@ impl ExpansionState for Universe {
         Self::report_bad_register_code(self, value, maximum);
     }
 
+    fn report_missing_font_identifier(&mut self) {
+        Self::report_missing_font_identifier(self);
+    }
+
     fn box_dimension(&self, index: u16, dimension: BoxDimension) -> Option<Scaled> {
         Self::box_dimension(self, index, dimension)
     }
@@ -3050,6 +3062,10 @@ impl ExpansionState for ExpansionContext<'_> {
 
     fn report_bad_register_code(&mut self, value: i32, maximum: u16) {
         self.universe.report_bad_register_code(value, maximum);
+    }
+
+    fn report_missing_font_identifier(&mut self) {
+        self.universe.report_missing_font_identifier();
     }
 
     fn box_dimension(&self, index: u16, dimension: BoxDimension) -> Option<Scaled> {

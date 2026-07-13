@@ -2331,6 +2331,23 @@ fn mark_family_primitives_expand_stored_page_marks() {
 }
 
 #[test]
+fn iffontchar_recovers_a_missing_font_identifier_as_nullfont() {
+    let mut stores = Universe::new();
+    crate::install_expandable_primitives(&mut stores);
+    crate::install_etex_expandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(r"\iffontchar\else\fi"));
+
+    assert_eq!(next_expanded_chars(&mut input, &mut stores), "");
+    assert!(stores.world().effect_records().iter().any(|record| {
+        matches!(
+            record,
+            tex_state::EffectRecord::StreamWrite { text, .. }
+                if text.contains("Missing font identifier")
+        )
+    }));
+}
+
+#[test]
 fn etex_mark_class_primitives_scan_class_and_expand_its_marks() {
     let mut stores = Universe::new();
     crate::install_etex_expandable_primitives(&mut stores);

@@ -1186,7 +1186,14 @@ where
             });
             Ok(stores.math_family_font(size, family))
         }
-        _ => Err(ExpandError::MissingFontIdentifier { context: token }),
+        _ => {
+            // TeX.web's `scan_font_ident` uses `back_error`: the offending
+            // token remains available to the following scanner, and the null
+            // font supplies the recovered value.
+            crate::back_input(input, stores, [token]);
+            stores.report_missing_font_identifier();
+            Ok(tex_state::font::NULL_FONT)
+        }
     }
 }
 
