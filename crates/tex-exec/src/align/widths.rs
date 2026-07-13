@@ -143,10 +143,6 @@ fn add_scaled(left: Scaled, right: Scaled) -> Result<Scaled, ExecError> {
     left.checked_add(right).ok_or(ExecError::ArithmeticOverflow)
 }
 
-fn sub_scaled(left: Scaled, right: Scaled) -> Result<Scaled, ExecError> {
-    left.checked_sub(right).ok_or(ExecError::ArithmeticOverflow)
-}
-
 fn scaled_from_i64(value: i64) -> Result<Scaled, ExecError> {
     let raw = i32::try_from(value).map_err(|_| ExecError::ArithmeticOverflow)?;
     Ok(Scaled::from_raw(raw))

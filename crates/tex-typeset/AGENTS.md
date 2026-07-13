@@ -13,6 +13,8 @@ Use this crate for layout algorithms whose correctness can be tested as pure fun
 - `AGENTS.md`: local guidance for future agents working in this crate.
 - `Cargo.toml`: crate manifest, local dependencies, and workspace lint configuration.
 - `src/lib.rs`: public crate surface, `TypesetState`, `badness`, and packing exports.
+- `src/alignment.rs`: pure detached alignment column/span width planning.
+- `src/alignment/tests.rs`: unit tests for independent alignment width planning.
 - `src/math/`: pure Appendix G math-list conversion helpers, including the `convert` pass driver, style transitions, math parameter snapshots, compound fractions/operators/radicals/delimiters/accents, script placement, and inter-noad spacing over owned hlist output.
 - `src/packing.rs`: hpack/vpack/vtop kernels, pack parameters, measurements, glue setting, and diagnostics.
 - `src/packing/tests.rs`: unit tests for badness, packing dimensions, glue settings, diagnostics, and vtop behavior.
