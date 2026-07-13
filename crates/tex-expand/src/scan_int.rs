@@ -986,6 +986,20 @@ where
             let value = stores.dimen(index).raw();
             Ok(ScannedInt::new(value, token))
         }
+        primitive @ (tex_state::meaning::UnexpandablePrimitive::Skip
+        | tex_state::meaning::UnexpandablePrimitive::Muskip) => {
+            let index = scan_register_index(input, stores, recorder, hooks, expander, token)?;
+            let (bank, glue) = if primitive == tex_state::meaning::UnexpandablePrimitive::Skip {
+                (ReadBank::Skip, stores.skip(index))
+            } else {
+                (ReadBank::Muskip, stores.muskip(index))
+            };
+            recorder.record_dependency(ReadDependency::Cell {
+                bank,
+                index: u32::from(index),
+            });
+            Ok(ScannedInt::new(stores.glue(glue).width.raw(), token))
+        }
         tex_state::meaning::UnexpandablePrimitive::SpaceFactor => {
             Ok(ScannedInt::new(hooks.space_factor(), token))
         }

@@ -802,3 +802,32 @@ fn dimexpr_matches_etex_precedence_parentheses_and_rounding() {
         -3
     );
 }
+
+#[test]
+fn dimexpr_coerces_a_primitive_skip_width_used_as_a_numeric_factor() {
+    let mut stores = Universe::new();
+    for (name, meaning) in [
+        (
+            "dimexpr",
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::DimExpr),
+        ),
+        (
+            "skip",
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Skip),
+        ),
+        ("relax", Meaning::Relax),
+    ] {
+        let symbol = stores.intern(name);
+        stores.set_meaning(symbol, meaning);
+    }
+    let glue = stores.intern_glue(GlueSpec {
+        width: Scaled::from_raw(3 * 65_536),
+        ..GlueSpec::ZERO
+    });
+    stores.set_skip(44, glue);
+
+    assert_eq!(
+        scan_with_stores("\\dimexpr1sp*\\skip44\\relax", &mut stores).0,
+        3 * 65_536
+    );
+}
