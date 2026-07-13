@@ -33,9 +33,11 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - `crates/tex-typeset`: pure packing, line-breaking, and list transformation kernels.
 - `crates/tex-out`: committed page artifact model, hashing, and binary serialization.
 - `crates/umber`: CLI driver.
+- `crates/umber-wasm`: WebAssembly binding and authored JavaScript browser package.
 - `crates/test-support`: shared fixture and parity-test helpers.
 - `crates/corpus-manifest`: dependency-free parser for the external corpus manifest used by host-side parity tooling.
 - `tools/`: Rust tooling crates. `refexec` remains in the root workspace for committed DVI fixture comparison; regeneration-only tools such as `fixturegen` and external-corpus tools such as `corpus-sync` are standalone and built explicitly by scripts.
+- `tools/texlive-wasm-publish`: standalone deterministic publisher for pinned browser TeX Live manifests and content-addressed objects.
 - `benchmarks/`: opt-in standalone benchmark crates kept outside the root workspace.
 - `benchmarks/plain-tex`: fixed end-to-end Plain TeX engine workloads and runner.
 - `benchmarks/semantic-hash-model`: standalone comparison of traversal-based and promoted semantic hashing over a realistic TeX-like workload.
