@@ -36,10 +36,15 @@ impl MathLayout {
 
     #[cfg(test)]
     fn collect_logical_nodes<'a>(&'a self, list: FrozenHList, out: &mut Vec<&'a MathNode>) {
-        for node in self.nodes(list) {
-            match node {
-                MathNode::Sequence(child) => self.collect_logical_nodes(*child, out),
-                node => out.push(node),
+        let mut stack = vec![(list, 0usize)];
+        while let Some((list, index)) = stack.pop() {
+            let nodes = self.nodes(list);
+            if let Some(node) = nodes.get(index) {
+                stack.push((list, index + 1));
+                match node {
+                    MathNode::Sequence(child) => stack.push((*child, 0)),
+                    node => out.push(node),
+                }
             }
         }
     }
@@ -247,14 +252,15 @@ impl MathLayoutBuilder {
     }
 
     pub(crate) fn first_node(&self, list: FrozenHList) -> Option<&MathNode> {
-        for node in self.nodes(list) {
-            match node {
-                MathNode::Sequence(child) => {
-                    if let Some(node) = self.first_node(*child) {
-                        return Some(node);
-                    }
+        let mut stack = vec![(list, 0usize)];
+        while let Some((list, index)) = stack.pop() {
+            let nodes = self.nodes(list);
+            if let Some(node) = nodes.get(index) {
+                stack.push((list, index + 1));
+                match node {
+                    MathNode::Sequence(child) => stack.push((*child, 0)),
+                    node => return Some(node),
                 }
-                node => return Some(node),
             }
         }
         None
@@ -328,9 +334,15 @@ impl MathLayoutBuilder {
     }
 
     fn measure_vnodes(&self, list: FrozenHList, meas: &mut Measurement) {
-        for node in self.nodes(list) {
+        let mut stack = vec![(list, 0usize)];
+        while let Some((list, index)) = stack.pop() {
+            let nodes = self.nodes(list);
+            let Some(node) = nodes.get(index) else {
+                continue;
+            };
+            stack.push((list, index + 1));
             match node {
-                MathNode::Sequence(child) => self.measure_vnodes(*child, meas),
+                MathNode::Sequence(child) => stack.push((*child, 0)),
                 MathNode::HList(boxed) | MathNode::VList(boxed) => {
                     meas.height = add(add(meas.height, meas.depth), boxed.height);
                     meas.depth = boxed.depth;

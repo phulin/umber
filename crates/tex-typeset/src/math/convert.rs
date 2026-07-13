@@ -70,7 +70,7 @@ pub(super) fn convert_mlist<S: MathTypesetState>(
 ) -> FrozenHList {
     let saved_style = ctx.style;
     ctx.set_style(style);
-    let input = ctx.state.nodes(input).to_vec();
+    let input = expand_math_choices(ctx.state, input, style);
     let mut work = Vec::with_capacity(input.len());
     let mut max_height = Scaled::from_raw(0);
     let mut max_depth = Scaled::from_raw(0);
@@ -151,18 +151,7 @@ fn first_pass<S: MathTypesetState>(
                 ctx.set_style(Style::from_math_style(*style));
                 out.push(WorkItem::Style(ctx.style));
             }
-            Node::MathChoice(choice) => {
-                // AppG rule 4
-                out.push(WorkItem::Style(ctx.style));
-                let selected = match ctx.style.family() {
-                    StyleFamily::Display => choice.display,
-                    StyleFamily::Text => choice.text,
-                    StyleFamily::Script => choice.script,
-                    StyleFamily::ScriptScript => choice.script_script,
-                };
-                let selected = ctx.state.nodes(selected).to_vec();
-                first_pass(ctx, &selected, out, max_height, max_depth);
-            }
+            Node::MathChoice(_) => unreachable!("math choices are expanded by the iterative view"),
             Node::Glue { spec, kind, leader } => {
                 // AppG rule 2
                 if matches!(kind, GlueKind::NonScript)
@@ -269,6 +258,63 @@ fn first_pass<S: MathTypesetState>(
         }
         index += 1;
     }
+}
+
+/// Builds the immutable node view selected by Appendix G rule 4 without
+/// recursively descending through nested `\mathchoice` lists.
+fn expand_math_choices(
+    state: &impl MathTypesetState,
+    root: NodeListId,
+    starting_style: Style,
+) -> Vec<Node> {
+    #[derive(Clone, Copy)]
+    struct Frame {
+        list: NodeListId,
+        index: usize,
+    }
+
+    let mut style = starting_style;
+    let mut out = Vec::new();
+    let mut stack = vec![Frame {
+        list: root,
+        index: 0,
+    }];
+    while let Some(frame) = stack.last_mut() {
+        let nodes = state.nodes(frame.list);
+        let Some(node) = nodes.get(frame.index).map(|node| node.to_owned()) else {
+            stack.pop();
+            continue;
+        };
+        frame.index += 1;
+        match node {
+            Node::MathStyle(next) => {
+                style = Style::from_math_style(next);
+                out.push(Node::MathStyle(next));
+            }
+            Node::MathChoice(choice) => {
+                // The style marker is semantically observable by the first
+                // pass even though the choice itself disappears.
+                out.push(Node::MathStyle(match style.family() {
+                    StyleFamily::Display => tex_state::math::MathStyle::Display,
+                    StyleFamily::Text => tex_state::math::MathStyle::Text,
+                    StyleFamily::Script => tex_state::math::MathStyle::Script,
+                    StyleFamily::ScriptScript => tex_state::math::MathStyle::ScriptScript,
+                }));
+                let selected = match style.family() {
+                    StyleFamily::Display => choice.display,
+                    StyleFamily::Text => choice.text,
+                    StyleFamily::Script => choice.script,
+                    StyleFamily::ScriptScript => choice.script_script,
+                };
+                stack.push(Frame {
+                    list: selected,
+                    index: 0,
+                });
+            }
+            node => out.push(node),
+        }
+    }
+    out
 }
 
 fn translate_noad<S: MathTypesetState>(

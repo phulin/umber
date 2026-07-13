@@ -6,8 +6,8 @@ use tex_fonts::{
 use tex_state::env::banks::{GlueParam, IntParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::math::{
-    FractionThickness, LimitType, MathChar, MathField, MathFontSize, MathFraction, MathNoad,
-    NoadClass, NoadKind,
+    FractionThickness, LimitType, MathChar, MathChoice, MathField, MathFontSize, MathFraction,
+    MathNoad, NoadClass, NoadKind,
 };
 use tex_state::node::{BoxNode, BoxNodeFields, Sign};
 use tex_state::scaled::GlueSetRatio;
@@ -37,6 +37,25 @@ fn style_transitions_follow_tex_style_codes() {
         Style::SCRIPT_SCRIPT.denom_style(),
         Style::new(StyleFamily::ScriptScript, true)
     );
+}
+
+#[test]
+fn deeply_nested_math_choices_use_an_explicit_work_stack() {
+    let mut universe = Universe::new();
+    let mut selected = universe.freeze_node_list(&[]);
+    for _ in 0..20_000 {
+        selected = universe.freeze_node_list(&[Node::MathChoice(MathChoice {
+            display: selected,
+            text: selected,
+            script: selected,
+            script_script: selected,
+        })]);
+    }
+    let params = MathParams::read(&universe);
+
+    let layout = mlist_to_hlist(&universe, selected, Style::TEXT, false, &params);
+
+    assert!(layout.root().is_empty());
 }
 
 #[test]

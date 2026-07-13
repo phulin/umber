@@ -79,20 +79,50 @@ impl<'a> LoweredMathSink<'a> {
         layout: &dyn MathLayoutReader,
         scratch: &mut Vec<Node>,
     ) {
-        for node in layout.math_nodes(list) {
+        enum Task {
+            Span(FrozenHList, usize),
+            FinishBox {
+                boxed: MathBox,
+                vertical: bool,
+                start: usize,
+            },
+        }
+
+        let mut tasks = vec![Task::Span(list, 0)];
+        while let Some(task) = tasks.pop() {
+            let Task::Span(list, index) = task else {
+                let Task::FinishBox {
+                    boxed,
+                    vertical,
+                    start,
+                } = task
+                else {
+                    unreachable!()
+                };
+                let children = self.stores.freeze_node_list(&scratch[start..]);
+                scratch.truncate(start);
+                let boxed_node = lower_math_box(&boxed, children);
+                scratch.push(if vertical {
+                    Node::VList(boxed_node)
+                } else {
+                    Node::HList(boxed_node)
+                });
+                continue;
+            };
+            let Some(node) = layout.math_nodes(list).get(index) else {
+                continue;
+            };
+            tasks.push(Task::Span(list, index + 1));
             match node {
-                MathNode::Sequence(child) => self.append_span(*child, layout, scratch),
+                MathNode::Sequence(child) => tasks.push(Task::Span(*child, 0)),
                 MathNode::HList(boxed) | MathNode::VList(boxed) => {
                     let start = scratch.len();
-                    self.append_span(boxed.list, layout, scratch);
-                    let children = self.stores.freeze_node_list(&scratch[start..]);
-                    scratch.truncate(start);
-                    let boxed_node = lower_math_box(boxed, children);
-                    scratch.push(if matches!(node, MathNode::VList(_)) {
-                        Node::VList(boxed_node)
-                    } else {
-                        Node::HList(boxed_node)
+                    tasks.push(Task::FinishBox {
+                        boxed: boxed.clone(),
+                        vertical: matches!(node, MathNode::VList(_)),
+                        start,
                     });
+                    tasks.push(Task::Span(boxed.list, 0));
                 }
                 MathNode::Char { font, ch, .. } => scratch.push(Node::Char {
                     font: *font,
