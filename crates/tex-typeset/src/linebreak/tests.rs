@@ -317,13 +317,13 @@ fn equal_demerits_prefer_later_route_in_same_line_and_fitness_class() {
         candidate(6, Fitness::Decent),
         candidate(6, Fitness::Loose),
     ];
-    let mut best = Vec::new();
+    let mut best = BestRoutes::default();
 
-    record_best_candidate(&mut best, &candidates, 1);
-    record_best_candidate(&mut best, &candidates, 2);
-    record_best_candidate(&mut best, &candidates, 3);
+    best.record(&candidates, 1);
+    best.record(&candidates, 2);
+    best.record(&candidates, 3);
 
-    assert_eq!(best, vec![2, 3]);
+    assert_eq!(best.iter().collect::<Vec<_>>(), vec![2, 3]);
 }
 
 #[test]

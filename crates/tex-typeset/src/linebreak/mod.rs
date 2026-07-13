@@ -232,6 +232,14 @@ enum Fitness {
     VeryLoose = 3,
 }
 
+impl Fitness {
+    const COUNT: usize = 4;
+
+    const fn index(self) -> usize {
+        self as usize
+    }
+}
+
 #[derive(Clone, Debug)]
 struct Candidate {
     position: usize,
@@ -254,6 +262,52 @@ struct Breakpoint {
     penalty: i32,
     hyphenated: bool,
     add_width: Widths,
+}
+
+#[derive(Default)]
+struct BestRoutes {
+    slots: Vec<Option<usize>>,
+    touched: Vec<usize>,
+}
+
+impl BestRoutes {
+    fn clear(&mut self) {
+        for &slot in &self.touched {
+            self.slots[slot] = None;
+        }
+        self.touched.clear();
+    }
+
+    fn is_empty(&self) -> bool {
+        self.touched.is_empty()
+    }
+
+    fn record(&mut self, candidates: &[Candidate], candidate_id: usize) {
+        let candidate = &candidates[candidate_id];
+        let slot = candidate.line * Fitness::COUNT + candidate.fitness.index();
+        if self.slots.len() <= slot {
+            self.slots.resize(slot + 1, None);
+        }
+        match self.slots[slot] {
+            Some(current) if candidate.path_demerits <= candidates[current].path_demerits => {
+                // TeX82 uses `d <= minimal_demerits[fit_class]`, so an equal
+                // later route replaces the earlier route without changing
+                // this class's active-list visit order.
+                self.slots[slot] = Some(candidate_id);
+            }
+            None => {
+                self.slots[slot] = Some(candidate_id);
+                self.touched.push(slot);
+            }
+            Some(_) => {}
+        }
+    }
+
+    fn iter(&self) -> impl Iterator<Item = usize> + '_ {
+        self.touched
+            .iter()
+            .map(|&slot| self.slots[slot].expect("touched route slot is populated"))
+    }
 }
 
 fn run_pass<S: TypesetState>(
@@ -291,13 +345,15 @@ fn run_pass<S: TypesetState>(
         line_glue: Scaled::from_raw(0),
     }];
     let mut active = vec![0usize];
+    let mut next = Vec::new();
+    let mut best_new = BestRoutes::default();
     let mut finals = Vec::new();
     let last_line_fit = LastLineFit::new(params, background);
     let easy_line = tex_easy_line(params);
 
     for bp in breakpoints {
-        let mut next = Vec::new();
-        let mut best_new = Vec::new();
+        next.clear();
+        best_new.clear();
         let forced = bp.penalty <= EJECT_PENALTY;
         for (active_index, &active_id) in active.iter().enumerate() {
             let active_candidate = &candidates[active_id];
@@ -385,18 +441,21 @@ fn run_pass<S: TypesetState>(
                         |(_, _, adjustment)| adjustment,
                     ),
                 });
-                record_best_candidate(&mut best_new, &candidates, id);
+                best_new.record(&candidates, id);
             }
             if !deactivates {
                 next.push(active_id);
             }
         }
         if forced && bp.position >= nodes.len() {
-            finals.extend(best_new.iter().copied());
+            finals.extend(best_new.iter());
         }
-        next.extend(best_new);
+        // BestRoutes preserves the first visit position for each class while
+        // replacing equal-demerit routes in place. Re-establish TeX's active
+        // list order after extending the reusable frontier buffer.
+        next.extend(best_new.iter());
         sort_active_candidates(&mut next, &candidates, params, easy_line);
-        active = next;
+        std::mem::swap(&mut active, &mut next);
     }
 
     let chosen = choose_final(&candidates, &finals, params.looseness)?;
@@ -598,24 +657,6 @@ fn next_width_position(nodes: &[Node], position: usize) -> usize {
         position += 1;
     }
     position
-}
-
-fn record_best_candidate(best: &mut Vec<usize>, candidates: &[Candidate], candidate_id: usize) {
-    let candidate = &candidates[candidate_id];
-    let same_class = best.iter().position(|&id| {
-        let current = &candidates[id];
-        current.line == candidate.line && current.fitness == candidate.fitness
-    });
-    match same_class {
-        Some(index) if candidate.path_demerits <= candidates[best[index]].path_demerits => {
-            // TeX82's line_break uses `d <= minimal_demerits[fit_class]`,
-            // so an equal route through a later active node replaces the
-            // earlier route in the same line-number and fitness class.
-            best[index] = candidate_id;
-        }
-        None => best.push(candidate_id),
-        Some(_) => {}
-    }
 }
 
 fn compute_demerits(
