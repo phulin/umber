@@ -111,7 +111,7 @@ fn next_start(nodes: &[Node], position: usize) -> usize {
     start
 }
 
-fn line_penalty_after(
+pub(super) fn line_penalty_after(
     line_no: usize,
     breaks: &[BreakDecision],
     hyphenated: bool,
@@ -120,17 +120,34 @@ fn line_penalty_after(
     if line_no + 1 >= breaks.len() {
         return None;
     }
-    let mut penalty = params.interline_penalty;
-    if line_no == 0 {
-        penalty = penalty.saturating_add(params.club_penalty);
-    }
-    if line_no + 2 == breaks.len() {
-        penalty = penalty.saturating_add(params.widow_penalty);
-    }
+    let current_line = params.prev_graf.max(0) as usize + line_no + 1;
+    let mut penalty = penalty_array_value(&params.interline_penalties, current_line)
+        .unwrap_or(params.interline_penalty);
+    penalty = penalty.saturating_add(
+        penalty_array_value(&params.club_penalties, line_no + 1).unwrap_or(if line_no == 0 {
+            params.club_penalty
+        } else {
+            0
+        }),
+    );
+    let lines_from_end = breaks.len() - line_no - 1;
+    penalty = penalty.saturating_add(
+        penalty_array_value(&params.widow_penalties, lines_from_end).unwrap_or(
+            if line_no + 2 == breaks.len() {
+                params.widow_penalty
+            } else {
+                0
+            },
+        ),
+    );
     if hyphenated {
         penalty = penalty.saturating_add(params.broken_penalty);
     }
     (penalty != 0).then_some(penalty)
+}
+
+fn penalty_array_value(values: &[i32], one_based_index: usize) -> Option<i32> {
+    (!values.is_empty()).then(|| values[one_based_index.min(values.len()) - 1])
 }
 
 fn is_discardable(node: &Node) -> bool {

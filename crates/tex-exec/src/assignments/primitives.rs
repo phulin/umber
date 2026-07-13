@@ -237,6 +237,16 @@ pub fn install_etex_unexpandable_primitives(stores: &mut Universe) {
         ("parshapelength", UnexpandablePrimitive::ParShapeLength),
         ("parshapeindent", UnexpandablePrimitive::ParShapeIndent),
         ("parshapedimen", UnexpandablePrimitive::ParShapeDimen),
+        (
+            "interlinepenalties",
+            UnexpandablePrimitive::InterLinePenalties,
+        ),
+        ("clubpenalties", UnexpandablePrimitive::ClubPenalties),
+        ("widowpenalties", UnexpandablePrimitive::WidowPenalties),
+        (
+            "displaywidowpenalties",
+            UnexpandablePrimitive::DisplayWidowPenalties,
+        ),
         ("interactionmode", UnexpandablePrimitive::InteractionMode),
         ("numexpr", UnexpandablePrimitive::NumExpr),
         ("dimexpr", UnexpandablePrimitive::DimExpr),

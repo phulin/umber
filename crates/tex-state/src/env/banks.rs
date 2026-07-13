@@ -318,6 +318,13 @@ impl GlueParam {
 }
 
 impl TokParam {
+    /// Internal immutable payloads backing e-TeX's scoped penalty arrays.
+    /// These are not user-visible token-list parameters.
+    pub(crate) const INTER_LINE_PENALTIES_INTERNAL: Self = Self::new(123);
+    pub(crate) const CLUB_PENALTIES_INTERNAL: Self = Self::new(124);
+    pub(crate) const WIDOW_PENALTIES_INTERNAL: Self = Self::new(125);
+    pub(crate) const DISPLAY_WIDOW_PENALTIES_INTERNAL: Self = Self::new(126);
+
     /// Internal immutable payload backing TeX's scoped `\parshape` value.
     /// This is not a user-visible token-list parameter.
     pub(crate) const PAR_SHAPE_INTERNAL: Self = Self::new(127);

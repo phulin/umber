@@ -27,6 +27,63 @@ fn params(width: i32) -> LineBreakParams {
     }
 }
 
+#[test]
+fn etex_penalty_arrays_repeat_and_use_forward_and_reverse_indexes() {
+    let mut universe = Universe::new();
+    let empty = universe.freeze_node_list(&[]);
+    let breaks = vec![
+        BreakDecision {
+            position: 1,
+            penalty: 0,
+            hyphenated: false,
+        },
+        BreakDecision {
+            position: 2,
+            penalty: 0,
+            hyphenated: false,
+        },
+        BreakDecision {
+            position: 3,
+            penalty: 0,
+            hyphenated: false,
+        },
+        BreakDecision {
+            position: 4,
+            penalty: -10_000,
+            hyphenated: false,
+        },
+    ];
+    let post = PostLineBreakParams {
+        empty_list: empty,
+        left_skip: tex_state::ids::GlueId::ZERO,
+        right_skip: tex_state::ids::GlueId::ZERO,
+        interline_penalty: 99,
+        club_penalty: 999,
+        widow_penalty: 9999,
+        broken_penalty: 0,
+        prev_graf: 2,
+        interline_penalties: vec![8, 7, 6],
+        club_penalties: vec![200, 100],
+        widow_penalties: vec![2000, 1000],
+        shape: LineShape::natural(sp(100)),
+    };
+
+    // Interline indexes include prev_graf (and hence repeat 6 here); club
+    // indexes run forward, while widow indexes run backward from the end.
+    assert_eq!(
+        post::line_penalty_after(0, &breaks, false, &post),
+        Some(1206)
+    );
+    assert_eq!(
+        post::line_penalty_after(1, &breaks, false, &post),
+        Some(1106)
+    );
+    assert_eq!(
+        post::line_penalty_after(2, &breaks, false, &post),
+        Some(2106)
+    );
+}
+
 fn kern(width: i32) -> Node {
     Node::Kern {
         amount: sp(width),
@@ -132,6 +189,10 @@ fn consecutive_discardable_breakpoints_do_not_form_a_backwards_chain() {
             club_penalty: 0,
             widow_penalty: 0,
             broken_penalty: 0,
+            prev_graf: 0,
+            interline_penalties: Vec::new(),
+            club_penalties: Vec::new(),
+            widow_penalties: Vec::new(),
             shape: LineShape::natural(sp(100)),
         },
     );
@@ -484,6 +545,10 @@ fn mathoff_breaks_only_before_following_glue_and_zeroes_break_width() {
             club_penalty: 0,
             widow_penalty: 0,
             broken_penalty: 0,
+            prev_graf: 0,
+            interline_penalties: Vec::new(),
+            club_penalties: Vec::new(),
+            widow_penalties: Vec::new(),
             shape: LineShape::natural(sp(15)),
         },
     );
@@ -818,6 +883,10 @@ fn post_line_break_keeps_migrating_nodes_for_execution_layer() {
             club_penalty: 0,
             widow_penalty: 0,
             broken_penalty: 0,
+            prev_graf: 0,
+            interline_penalties: Vec::new(),
+            club_penalties: Vec::new(),
+            widow_penalties: Vec::new(),
             shape: LineShape::natural(sp(100)),
         },
     );
@@ -869,6 +938,10 @@ fn post_line_break_clears_materialized_unbroken_discretionary_replacement() {
             club_penalty: 0,
             widow_penalty: 0,
             broken_penalty: 0,
+            prev_graf: 0,
+            interline_penalties: Vec::new(),
+            club_penalties: Vec::new(),
+            widow_penalties: Vec::new(),
             shape: LineShape::natural(sp(100)),
         },
     );
@@ -916,6 +989,10 @@ fn post_line_break_omits_only_zero_leftskip() {
             club_penalty: 0,
             widow_penalty: 0,
             broken_penalty: 0,
+            prev_graf: 0,
+            interline_penalties: Vec::new(),
+            club_penalties: Vec::new(),
+            widow_penalties: Vec::new(),
             shape: LineShape::natural(sp(100)),
         },
     );
@@ -945,6 +1022,10 @@ fn post_line_break_omits_only_zero_leftskip() {
             club_penalty: 0,
             widow_penalty: 0,
             broken_penalty: 0,
+            prev_graf: 0,
+            interline_penalties: Vec::new(),
+            club_penalties: Vec::new(),
+            widow_penalties: Vec::new(),
             shape: LineShape::natural(sp(100)),
         },
     );

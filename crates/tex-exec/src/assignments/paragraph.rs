@@ -2,7 +2,7 @@ use tex_lex::{InputSource, InputStack, TokenListReplayKind};
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::node::{BoxNode, GlueKind, Node};
 use tex_state::scaled::Scaled;
-use tex_state::{ParagraphShapeLine, Universe};
+use tex_state::{ParagraphShapeLine, PenaltyArrayKind, Universe};
 use tex_typeset::PackSpec;
 use tex_typeset::linebreak::{
     LineBreakParams, LineBreakResult, LineDimensions, LineShape, LineShapeEntry,
@@ -37,6 +37,12 @@ where
         UnexpandablePrimitive::Indent => start_paragraph(nest, input, stores, true),
         UnexpandablePrimitive::NoIndent => start_paragraph(nest, input, stores, false),
         UnexpandablePrimitive::ParShape => assign_parshape(input, stores, hooks, context, global),
+        primitive @ (UnexpandablePrimitive::InterLinePenalties
+        | UnexpandablePrimitive::ClubPenalties
+        | UnexpandablePrimitive::WidowPenalties
+        | UnexpandablePrimitive::DisplayWidowPenalties) => {
+            assign_penalty_array(primitive, input, stores, hooks, context, global)
+        }
         UnexpandablePrimitive::PrevDepth => assign_prevdepth(nest, input, stores, hooks, context),
         UnexpandablePrimitive::PrevGraf => assign_prevgraf(nest, input, stores, hooks, context),
         UnexpandablePrimitive::NoInterlineSkip => {
@@ -140,7 +146,14 @@ pub(crate) fn end_paragraph(nest: &mut ModeNest, stores: &mut Universe) -> Resul
         return Ok(());
     }
     let final_widow_penalty = stores.int_param(IntParam::WIDOW_PENALTY);
-    let _ = break_current_paragraph(nest, stores, final_widow_penalty, true)?;
+    let final_widow_penalties = stores.penalty_array(PenaltyArrayKind::Widow);
+    let _ = break_current_paragraph(
+        nest,
+        stores,
+        final_widow_penalty,
+        final_widow_penalties,
+        true,
+    )?;
     Ok(())
 }
 
@@ -158,7 +171,14 @@ pub(crate) fn interrupt_paragraph_for_display(
         return Ok(ParagraphBreakResult { last_line: None });
     }
     let final_widow_penalty = stores.int_param(IntParam::DISPLAY_WIDOW_PENALTY);
-    break_current_paragraph(nest, stores, final_widow_penalty, false)
+    let final_widow_penalties = stores.penalty_array(PenaltyArrayKind::DisplayWidow);
+    break_current_paragraph(
+        nest,
+        stores,
+        final_widow_penalty,
+        final_widow_penalties,
+        false,
+    )
 }
 
 pub(crate) fn display_line_dimensions(nest: &ModeNest, stores: &Universe) -> LineDimensions {
@@ -185,6 +205,10 @@ pub(crate) fn display_line_dimensions(nest: &ModeNest, stores: &Universe) -> Lin
         club_penalty: stores.int_param(IntParam::CLUB_PENALTY),
         widow_penalty: stores.int_param(IntParam::WIDOW_PENALTY),
         broken_penalty: stores.int_param(IntParam::BROKEN_PENALTY),
+        interline_penalties: stores.penalty_array(PenaltyArrayKind::InterLine),
+        club_penalties: stores.penalty_array(PenaltyArrayKind::Club),
+        widow_penalties: stores.penalty_array(PenaltyArrayKind::Widow),
+        display_widow_penalties: stores.penalty_array(PenaltyArrayKind::DisplayWidow),
     };
     line_shape(&params).dimensions(2)
 }
@@ -193,6 +217,7 @@ fn break_current_paragraph(
     nest: &mut ModeNest,
     stores: &mut Universe,
     final_widow_penalty: i32,
+    final_widow_penalties: Vec<i32>,
     reset_paragraph: bool,
 ) -> Result<ParagraphBreakResult, ExecError> {
     flush_pending_hchars(nest, stores)?;
@@ -209,7 +234,12 @@ fn break_current_paragraph(
     let line_params = line_break_params(stores, &params);
     let decisions = break_hlist(stores, &hlist, line_params);
     let empty_list = stores.freeze_node_list(&[]);
-    let post_params = post_line_break_params(&params, final_widow_penalty, empty_list);
+    let post_params = post_line_break_params(
+        &params,
+        final_widow_penalty,
+        final_widow_penalties,
+        empty_list,
+    );
     let mut line_count = 0i32;
     let mut last_line = None;
     for mut broken in post_line_break(stores, &decisions.nodes, &decisions.breaks, post_params) {
@@ -291,6 +321,10 @@ fn snapshot_paragraph_params(nest: &ModeNest, stores: &Universe) -> ParagraphPar
         club_penalty: stores.int_param(IntParam::CLUB_PENALTY),
         widow_penalty: stores.int_param(IntParam::WIDOW_PENALTY),
         broken_penalty: stores.int_param(IntParam::BROKEN_PENALTY),
+        interline_penalties: stores.penalty_array(PenaltyArrayKind::InterLine),
+        club_penalties: stores.penalty_array(PenaltyArrayKind::Club),
+        widow_penalties: stores.penalty_array(PenaltyArrayKind::Widow),
+        display_widow_penalties: stores.penalty_array(PenaltyArrayKind::DisplayWidow),
     }
 }
 
@@ -315,6 +349,7 @@ fn line_break_params(stores: &Universe, params: &ParagraphParams) -> LineBreakPa
 fn post_line_break_params(
     params: &ParagraphParams,
     final_widow_penalty: i32,
+    final_widow_penalties: Vec<i32>,
     empty_list: tex_state::ids::NodeListId,
 ) -> PostLineBreakParams {
     PostLineBreakParams {
@@ -325,6 +360,10 @@ fn post_line_break_params(
         club_penalty: params.club_penalty,
         widow_penalty: final_widow_penalty,
         broken_penalty: params.broken_penalty,
+        prev_graf: params.prev_graf,
+        interline_penalties: params.interline_penalties.clone(),
+        club_penalties: params.club_penalties.clone(),
+        widow_penalties: final_widow_penalties,
         shape: line_shape(params),
     }
 }
@@ -350,6 +389,9 @@ fn line_shape(params: &ParagraphParams) -> LineShape {
 
 pub(crate) fn normal_paragraph(_nest: &mut ModeNest, stores: &mut Universe) {
     stores.set_paragraph_shape(&[], false);
+    // e-TeX resets only the interline array at every normal paragraph; the
+    // club and widow arrays retain their scoped assignments (manual §3.4).
+    stores.set_penalty_array(PenaltyArrayKind::InterLine, &[], false);
     if stores.int_param(IntParam::LOOSENESS) != 0 {
         stores.set_int_param(IntParam::LOOSENESS, 0);
     }
@@ -392,6 +434,43 @@ where
         });
     }
     stores.set_paragraph_shape(&lines, global);
+    Ok(())
+}
+
+fn assign_penalty_array<S, H>(
+    primitive: UnexpandablePrimitive,
+    input: &mut InputStack<S>,
+    stores: &mut Universe,
+    hooks: &mut H,
+    context: TracedTokenWord,
+    global: bool,
+) -> Result<(), ExecError>
+where
+    S: InputSource,
+    H: ExpansionHooks<S>,
+{
+    skip_optional_equals_x(input, stores, hooks)?;
+    let count = scan_i32(input, stores, hooks, context)?;
+    let kind = match primitive {
+        UnexpandablePrimitive::InterLinePenalties => PenaltyArrayKind::InterLine,
+        UnexpandablePrimitive::ClubPenalties => PenaltyArrayKind::Club,
+        UnexpandablePrimitive::WidowPenalties => PenaltyArrayKind::Widow,
+        UnexpandablePrimitive::DisplayWidowPenalties => PenaltyArrayKind::DisplayWidow,
+        _ => unreachable!("caller restricts primitive"),
+    };
+    if count <= 0 {
+        stores.set_penalty_array(kind, &[], global);
+        return Ok(());
+    }
+    let count = count as usize;
+    let mut values = Vec::new();
+    values
+        .try_reserve_exact(count)
+        .map_err(|_| ExecError::ArithmeticOverflow)?;
+    for _ in 0..count {
+        values.push(scan_i32(input, stores, hooks, context)?);
+    }
+    stores.set_penalty_array(kind, &values, global);
     Ok(())
 }
 

@@ -132,6 +132,7 @@ pub trait ExpansionState {
     fn page_integer(&self, integer: PageInteger) -> i32;
     fn page_mark(&self, mark: PageMark) -> TokenListId;
     fn page_mark_class(&self, mark: PageMark, class: u16) -> TokenListId;
+    fn penalty_array_value(&self, kind: PenaltyArrayKind, index: i32) -> i32;
     fn paragraph_shape_dimension(&self, line: i32, width: bool) -> Scaled;
     fn report_bad_register_code(&mut self, _value: i32, _maximum: u16) {}
     fn report_missing_font_identifier(&mut self) {}
@@ -534,6 +535,26 @@ pub struct Universe {
 pub struct ParagraphShapeLine {
     pub indent: Scaled,
     pub width: Scaled,
+}
+
+/// One of e-TeX's four group-scoped line-breaking penalty arrays.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum PenaltyArrayKind {
+    InterLine,
+    Club,
+    Widow,
+    DisplayWidow,
+}
+
+impl PenaltyArrayKind {
+    const fn storage(self) -> TokParam {
+        match self {
+            Self::InterLine => TokParam::INTER_LINE_PENALTIES_INTERNAL,
+            Self::Club => TokParam::CLUB_PENALTIES_INTERNAL,
+            Self::Widow => TokParam::WIDOW_PENALTIES_INTERNAL,
+            Self::DisplayWidow => TokParam::DISPLAY_WIDOW_PENALTIES_INTERNAL,
+        }
+    }
 }
 
 impl Clone for Universe {
@@ -2408,6 +2429,60 @@ impl Universe {
         }
     }
 
+    /// Returns a current e-TeX penalty array through the state facade.
+    #[must_use]
+    pub fn penalty_array(&self, kind: PenaltyArrayKind) -> Vec<i32> {
+        let tokens = self.tokens(self.tok_param(kind.storage()));
+        assert_eq!(tokens.len() % 4, 0, "internal penalty array is truncated");
+        tokens
+            .chunks_exact(4)
+            .map(|chunk| {
+                let mut raw = [0_u8; 4];
+                for (byte, token) in raw.iter_mut().zip(chunk) {
+                    let Token::Param(value) = token else {
+                        panic!("internal penalty array has a non-byte token");
+                    };
+                    *byte = *value;
+                }
+                i32::from_le_bytes(raw)
+            })
+            .collect()
+    }
+
+    /// Implements e-TeX's numeric penalty-array enquiry: zero returns the
+    /// length and positive indexes repeat the last explicitly assigned value.
+    #[must_use]
+    pub fn penalty_array_value(&self, kind: PenaltyArrayKind, index: i32) -> i32 {
+        let tokens = self.tokens(self.tok_param(kind.storage()));
+        let len = tokens.len() / 4;
+        if index <= 0 || len == 0 {
+            return if index == 0 { len as i32 } else { 0 };
+        }
+        let index = (index as usize).min(len) - 1;
+        let mut raw = [0_u8; 4];
+        for (byte, token) in raw.iter_mut().zip(&tokens[index * 4..index * 4 + 4]) {
+            let Token::Param(value) = token else {
+                panic!("internal penalty array has a non-byte token");
+            };
+            *byte = *value;
+        }
+        i32::from_le_bytes(raw)
+    }
+
+    /// Assigns an e-TeX penalty array through the ordinary group barrier.
+    pub fn set_penalty_array(&mut self, kind: PenaltyArrayKind, values: &[i32], global: bool) {
+        let mut tokens = Vec::with_capacity(values.len().saturating_mul(4));
+        for value in values {
+            tokens.extend(value.to_le_bytes().into_iter().map(Token::Param));
+        }
+        let id = self.intern_token_list(&tokens);
+        if global {
+            self.set_tok_param_global(kind.storage(), id);
+        } else {
+            self.set_tok_param(kind.storage(), id);
+        }
+    }
+
     #[must_use]
     pub fn env_journal_bytes_since(&self, snapshot: &Snapshot) -> usize {
         self.assert_valid_snapshot(snapshot);
@@ -2706,6 +2781,10 @@ impl ExpansionState for Universe {
 
     fn page_mark_class(&self, mark: PageMark, class: u16) -> TokenListId {
         Self::page_mark_class(self, mark, class)
+    }
+
+    fn penalty_array_value(&self, kind: PenaltyArrayKind, index: i32) -> i32 {
+        Self::penalty_array_value(self, kind, index)
     }
 
     fn paragraph_shape_dimension(&self, line: i32, width: bool) -> Scaled {
@@ -3087,6 +3166,10 @@ impl ExpansionState for ExpansionContext<'_> {
 
     fn page_mark_class(&self, mark: PageMark, class: u16) -> TokenListId {
         self.universe.page_mark_class(mark, class)
+    }
+
+    fn penalty_array_value(&self, kind: PenaltyArrayKind, index: i32) -> i32 {
+        self.universe.penalty_array_value(kind, index)
     }
 
     fn paragraph_shape_dimension(&self, line: i32, width: bool) -> Scaled {

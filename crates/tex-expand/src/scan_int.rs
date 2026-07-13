@@ -3,11 +3,11 @@
 use std::fmt;
 
 use tex_lex::{InputSource, InputStack, LexError};
-use tex_state::ExpansionState;
 use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::interner::Symbol;
 use tex_state::meaning::{ExpandablePrimitive, InternalInteger, Meaning, UnexpandablePrimitive};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
+use tex_state::{ExpansionState, PenaltyArrayKind};
 
 use crate::{
     ExpandError, ExpandNext, ExpansionHooks, NoInputExpandNext, NoopExpansionHooks, NoopRecorder,
@@ -1012,6 +1012,26 @@ where
         tex_state::meaning::UnexpandablePrimitive::ParShape => {
             recorder.record_dependency(ReadDependency::Engine(crate::ReadEngineField::ParShape));
             Ok(ScannedInt::new(hooks.par_shape_len(), token))
+        }
+        primitive @ (UnexpandablePrimitive::InterLinePenalties
+        | UnexpandablePrimitive::ClubPenalties
+        | UnexpandablePrimitive::WidowPenalties
+        | UnexpandablePrimitive::DisplayWidowPenalties) => {
+            let index =
+                scan_int_with_expander_and_hooks(input, stores, recorder, hooks, expander, token)?
+                    .value();
+            recorder.record_dependency(ReadDependency::Engine(ReadEngineField::PenaltyArrays));
+            let kind = match primitive {
+                UnexpandablePrimitive::InterLinePenalties => PenaltyArrayKind::InterLine,
+                UnexpandablePrimitive::ClubPenalties => PenaltyArrayKind::Club,
+                UnexpandablePrimitive::WidowPenalties => PenaltyArrayKind::Widow,
+                UnexpandablePrimitive::DisplayWidowPenalties => PenaltyArrayKind::DisplayWidow,
+                _ => unreachable!("outer match restricts primitive"),
+            };
+            Ok(ScannedInt::new(
+                stores.penalty_array_value(kind, index),
+                token,
+            ))
         }
         tex_state::meaning::UnexpandablePrimitive::LastPenalty => {
             Ok(ScannedInt::new(hooks.last_penalty(), token))

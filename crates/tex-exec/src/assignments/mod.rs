@@ -680,6 +680,10 @@ where
             | UnexpandablePrimitive::Indent
             | UnexpandablePrimitive::NoIndent
             | UnexpandablePrimitive::ParShape
+            | UnexpandablePrimitive::InterLinePenalties
+            | UnexpandablePrimitive::ClubPenalties
+            | UnexpandablePrimitive::WidowPenalties
+            | UnexpandablePrimitive::DisplayWidowPenalties
             | UnexpandablePrimitive::PrevDepth
             | UnexpandablePrimitive::PrevGraf
             | UnexpandablePrimitive::NoInterlineSkip => {
@@ -708,6 +712,13 @@ where
                 )?;
                 Ok(CommandOutcome::assigned_if(
                     primitive == UnexpandablePrimitive::ParShape
+                        || matches!(
+                            primitive,
+                            UnexpandablePrimitive::InterLinePenalties
+                                | UnexpandablePrimitive::ClubPenalties
+                                | UnexpandablePrimitive::WidowPenalties
+                                | UnexpandablePrimitive::DisplayWidowPenalties
+                        )
                         || primitive == UnexpandablePrimitive::PrevDepth
                         || primitive == UnexpandablePrimitive::PrevGraf,
                 ))

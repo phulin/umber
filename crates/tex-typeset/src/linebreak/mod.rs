@@ -36,6 +36,10 @@ pub struct PostLineBreakParams {
     pub club_penalty: i32,
     pub widow_penalty: i32,
     pub broken_penalty: i32,
+    pub prev_graf: i32,
+    pub interline_penalties: Vec<i32>,
+    pub club_penalties: Vec<i32>,
+    pub widow_penalties: Vec<i32>,
     pub shape: LineShape,
 }
 

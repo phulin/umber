@@ -3,7 +3,7 @@ use crate::ids::TokenListId;
 use crate::page::PageMark;
 use crate::scaled::Scaled;
 use crate::token::{Catcode, Token};
-use crate::{ParagraphShapeLine, Universe, World};
+use crate::{ParagraphShapeLine, PenaltyArrayKind, Universe, World};
 
 mod handle_matrix;
 mod live_boundary;
@@ -44,6 +44,38 @@ fn paragraph_shape_is_grouped_checkpointed_and_format_stable() {
     let format = universe.dump_format().expect("paragraph shape format");
     let loaded = Universe::from_format(World::default(), &format).expect("load paragraph shape");
     assert_eq!(loaded.paragraph_shape(), outer);
+}
+
+#[test]
+fn penalty_arrays_are_grouped_checkpointed_and_repeat_their_last_value() {
+    let mut universe = Universe::new();
+    universe.set_penalty_array(PenaltyArrayKind::Club, &[200, 100], false);
+    let snapshot = universe.snapshot();
+
+    assert_eq!(universe.penalty_array_value(PenaltyArrayKind::Club, -1), 0);
+    assert_eq!(universe.penalty_array_value(PenaltyArrayKind::Club, 0), 2);
+    assert_eq!(universe.penalty_array_value(PenaltyArrayKind::Club, 1), 200);
+    assert_eq!(universe.penalty_array_value(PenaltyArrayKind::Club, 5), 100);
+
+    universe.enter_group();
+    universe.set_penalty_array(PenaltyArrayKind::Club, &[7], false);
+    assert_eq!(universe.penalty_array(PenaltyArrayKind::Club), vec![7]);
+    let _ = universe.leave_group();
+    assert_eq!(
+        universe.penalty_array(PenaltyArrayKind::Club),
+        vec![200, 100]
+    );
+
+    universe.set_penalty_array(PenaltyArrayKind::Club, &[], false);
+    universe.rollback(&snapshot);
+    assert_eq!(
+        universe.penalty_array(PenaltyArrayKind::Club),
+        vec![200, 100]
+    );
+
+    let format = universe.dump_format().expect("penalty array format");
+    let loaded = Universe::from_format(World::default(), &format).expect("load penalty array");
+    assert_eq!(loaded.penalty_array(PenaltyArrayKind::Club), vec![200, 100]);
 }
 
 #[test]

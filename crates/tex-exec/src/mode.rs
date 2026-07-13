@@ -37,6 +37,10 @@ pub struct ParagraphParams {
     pub club_penalty: i32,
     pub widow_penalty: i32,
     pub broken_penalty: i32,
+    pub interline_penalties: Vec<i32>,
+    pub club_penalties: Vec<i32>,
+    pub widow_penalties: Vec<i32>,
+    pub display_widow_penalties: Vec<i32>,
 }
 
 /// One of TeX's six semantic modes.

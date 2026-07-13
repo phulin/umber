@@ -460,6 +460,10 @@ pub enum UnexpandablePrimitive {
     ParShapeLength,
     ParShapeIndent,
     ParShapeDimen,
+    InterLinePenalties,
+    ClubPenalties,
+    WidowPenalties,
+    DisplayWidowPenalties,
     InteractionMode,
     NumExpr,
     DimExpr,
@@ -750,6 +754,10 @@ impl UnexpandablePrimitive {
             Self::ParShapeLength => 200,
             Self::ParShapeIndent => 201,
             Self::ParShapeDimen => 202,
+            Self::InterLinePenalties => 203,
+            Self::ClubPenalties => 204,
+            Self::WidowPenalties => 205,
+            Self::DisplayWidowPenalties => 206,
         }
     }
 
@@ -959,6 +967,10 @@ impl UnexpandablePrimitive {
             200 => Some(Self::ParShapeLength),
             201 => Some(Self::ParShapeIndent),
             202 => Some(Self::ParShapeDimen),
+            203 => Some(Self::InterLinePenalties),
+            204 => Some(Self::ClubPenalties),
+            205 => Some(Self::WidowPenalties),
+            206 => Some(Self::DisplayWidowPenalties),
             _ => None,
         }
     }

@@ -46,7 +46,7 @@ pub use stores::{FontParameterError, GroupKind, GroupMismatch, PrepareMagDiagnos
 pub use universe::{
     BoxBuildTransaction, BoxDimension, ExpansionContext, ExpansionState, FormatError,
     InputOpenContext, InputOpenState, InputReadState, InteractionMode, ParagraphShapeLine,
-    ShipoutTransaction, Snapshot, Universe,
+    PenaltyArrayKind, ShipoutTransaction, Snapshot, Universe,
 };
 pub use world::{
     ContentDomain, ContentHash, ContentIdentity, EffectPos, EffectRecord, EffectRetrySafety,

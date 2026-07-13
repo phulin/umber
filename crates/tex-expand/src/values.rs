@@ -8,7 +8,7 @@ use tex_state::meaning::{InternalInteger, Meaning, MeaningFlags};
 use tex_state::provenance::SynthesizedOriginKind;
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
-use tex_state::{BoxDimension, ExpansionState};
+use tex_state::{BoxDimension, ExpansionState, PenaltyArrayKind};
 
 use crate::{
     Dispatch, ExpandError, ExpandNext, ExpandableOpcode, ExpansionHooks, ExpansionReplayKind,
@@ -261,6 +261,37 @@ where
                     stores,
                     ExpansionReplayKind::TheOutput,
                     &format_scaled(value),
+                    cause_origin,
+                ))
+            }
+            primitive @ (tex_state::meaning::UnexpandablePrimitive::InterLinePenalties
+            | tex_state::meaning::UnexpandablePrimitive::ClubPenalties
+            | tex_state::meaning::UnexpandablePrimitive::WidowPenalties
+            | tex_state::meaning::UnexpandablePrimitive::DisplayWidowPenalties) => {
+                let index = scan_int::scan_int_with_expander_and_hooks(
+                    input, stores, recorder, hooks, expander, token,
+                )?
+                .value();
+                recorder.record_dependency(ReadDependency::Engine(ReadEngineField::PenaltyArrays));
+                let kind = match primitive {
+                    tex_state::meaning::UnexpandablePrimitive::InterLinePenalties => {
+                        PenaltyArrayKind::InterLine
+                    }
+                    tex_state::meaning::UnexpandablePrimitive::ClubPenalties => {
+                        PenaltyArrayKind::Club
+                    }
+                    tex_state::meaning::UnexpandablePrimitive::WidowPenalties => {
+                        PenaltyArrayKind::Widow
+                    }
+                    tex_state::meaning::UnexpandablePrimitive::DisplayWidowPenalties => {
+                        PenaltyArrayKind::DisplayWidow
+                    }
+                    _ => unreachable!("outer match restricts primitive"),
+                };
+                Ok(push_rendered_text(
+                    stores,
+                    ExpansionReplayKind::TheOutput,
+                    &stores.penalty_array_value(kind, index).to_string(),
                     cause_origin,
                 ))
             }

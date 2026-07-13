@@ -3330,6 +3330,29 @@ fn etex_parshape_enquiries_return_explicit_and_repeated_components() {
     );
 }
 
+#[test]
+fn etex_penalty_arrays_assign_query_restore_and_reset_interline_at_par() {
+    let mut stores = Universe::new();
+    tex_expand::install_expandable_primitives(&mut stores);
+    tex_expand::install_etex_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    install_etex_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\clubpenalties=2 200 100 \
+         {\\clubpenalties=1 7} \
+         \\interlinepenalties=2 8 7 \
+         \\edef\\before{\\number\\clubpenalties0/\\the\\clubpenalties1/\\the\\clubpenalties8/\\the\\interlinepenalties0} \
+         \\noindent\\par \
+         \\edef\\after{\\the\\interlinepenalties0}\\end",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("penalty array assignments and enquiries execute");
+    assert_eq!(macro_text(&stores, "before"), "2/200/100/2");
+    assert_eq!(macro_text(&stores, "after"), "0");
+}
+
 fn macro_text(stores: &Universe, name: &str) -> String {
     let symbol = stores.symbol(name).expect("macro control sequence");
     let meaning = stores.macro_meaning(symbol).expect("macro meaning");

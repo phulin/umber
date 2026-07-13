@@ -275,6 +275,7 @@ pub enum ReadEngineField {
     ConditionStack,
     LastNodeType,
     ParShape,
+    PenaltyArrays,
     InteractionMode,
 }
 
