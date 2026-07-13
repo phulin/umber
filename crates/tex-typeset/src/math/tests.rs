@@ -59,6 +59,44 @@ fn deeply_nested_math_choices_use_an_explicit_work_stack() {
 }
 
 #[test]
+fn deeply_nested_sub_mlists_use_an_explicit_work_stack() {
+    let mut universe = Universe::new();
+    let mut nested = universe.freeze_node_list(&[]);
+    for _ in 0..20_000 {
+        nested = universe.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+            NoadKind::Normal(NoadClass::Ord),
+            MathField::SubMlist(nested),
+        ))]);
+    }
+    let params = MathParams::read(&universe);
+
+    let layout = mlist_to_hlist(&universe, nested, Style::TEXT, false, &params);
+
+    assert!(!layout.root().is_empty());
+}
+
+#[test]
+fn math_choice_preserves_the_full_cramped_style() {
+    let mut universe = setup_universe();
+    let mut scripted = noad(NoadClass::Ord, 'b');
+    scripted.superscript = MathField::MathChar(math_char('c'));
+    let selected = universe.freeze_node_list(&[Node::MathNoad(scripted)]);
+    let choice = universe.freeze_node_list(&[Node::MathChoice(MathChoice {
+        display: selected,
+        text: selected,
+        script: selected,
+        script_script: selected,
+    })]);
+    let params = MathParams::read(&universe);
+    let cramped = Style::new(StyleFamily::Text, true);
+
+    let direct = mlist_to_hlist(&universe, selected, cramped, false, &params);
+    let through_choice = mlist_to_hlist(&universe, choice, cramped, false, &params);
+
+    assert_eq!(through_choice, direct);
+}
+
+#[test]
 fn math_glue_converts_mu_dimensions_with_current_math_quad() {
     let mu = sc(60);
     let glue = GlueSpec {
