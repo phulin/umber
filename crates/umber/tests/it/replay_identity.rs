@@ -181,7 +181,6 @@ enum CaseKind {
 enum DiagnosticKind {
     Message,
     ShowThe,
-    ShowTokens,
     ShowLists,
     ShowHyphens,
 }
@@ -540,7 +539,6 @@ impl DiagnosticKind {
         match self {
             Self::Message => r"\message{m:\the\count0}".to_owned(),
             Self::ShowThe => r"\showthe\count0".to_owned(),
-            Self::ShowTokens => r"\showtokens{\count0=1}".to_owned(),
             Self::ShowLists => r"\showlists".to_owned(),
             Self::ShowHyphens => r"\patterns{a1ba}\showhyphens{aba}".to_owned(),
         }
@@ -793,7 +791,6 @@ fn diagnostic_kind() -> impl Strategy<Value = DiagnosticKind> {
     prop_oneof![
         Just(DiagnosticKind::Message),
         Just(DiagnosticKind::ShowThe),
-        Just(DiagnosticKind::ShowTokens),
         Just(DiagnosticKind::ShowLists),
         Just(DiagnosticKind::ShowHyphens),
     ]

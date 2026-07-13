@@ -242,6 +242,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "tex-content"
+version = "0.1.0"
+
+[[package]]
 name = "tex-fonts"
 version = "0.1.0"
 dependencies = [
@@ -264,6 +268,7 @@ dependencies = [
  "bincode",
  "serde",
  "tex-arith",
+ "tex-content",
  "tex-fonts",
  "unicode-width",
 ]
