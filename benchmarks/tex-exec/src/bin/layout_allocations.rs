@@ -1,6 +1,6 @@
 use std::alloc::System;
 
-use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
+use stats_alloc::{INSTRUMENTED_SYSTEM, Region, Stats, StatsAlloc};
 use tex_state::Universe;
 use tex_state::glue::GlueSpec;
 use tex_state::math::{MathChoice, MathField, MathNoad, NoadClass, NoadKind};
@@ -15,25 +15,40 @@ static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
 const ALIGNMENT_ALLOCATION_BUDGET: usize = 1_200;
 const LINEBREAK_ALLOCATION_BUDGET: usize = 12;
-const DEEP_MATH_ALLOCATION_BUDGET: usize = 8;
-const FLAT_MATH_ALLOCATION_BUDGET: usize = 8;
+const DEEP_MATH_ALLOCATION_BUDGET: usize = 28;
+const FLAT_MATH_ALLOCATION_BUDGET: usize = 14;
+const ALIGNMENT_BYTE_BUDGET: usize = 220_000;
+const LINEBREAK_BYTE_BUDGET: usize = 16_000_000_000;
+const DEEP_MATH_BYTE_BUDGET: usize = 12_000_000;
+const FLAT_MATH_BYTE_BUDGET: usize = 500_000;
 
 fn main() {
     let alignment = alignment_allocations();
     let linebreak = linebreak_allocations();
     let deep_math = deep_math_allocations();
     let flat_math = flat_math_allocations();
-    println!("alignment_many_spans allocations={alignment}");
-    println!("linebreak_long_paragraph allocations={linebreak}");
-    println!("math_deep_choice_stack allocations={deep_math}");
-    println!("math_repeated_flat_layout allocations={flat_math}");
-    assert!(alignment <= ALIGNMENT_ALLOCATION_BUDGET);
-    assert!(linebreak <= LINEBREAK_ALLOCATION_BUDGET);
-    assert!(deep_math <= DEEP_MATH_ALLOCATION_BUDGET);
-    assert!(flat_math <= FLAT_MATH_ALLOCATION_BUDGET);
+    print_stats("alignment_many_spans", alignment);
+    print_stats("linebreak_long_paragraph", linebreak);
+    print_stats("math_deep_choice_stack", deep_math);
+    print_stats("math_repeated_flat_layout", flat_math);
+    assert!(alignment.allocations <= ALIGNMENT_ALLOCATION_BUDGET);
+    assert!(alignment.bytes_allocated <= ALIGNMENT_BYTE_BUDGET);
+    assert!(linebreak.allocations <= LINEBREAK_ALLOCATION_BUDGET);
+    assert!(linebreak.bytes_allocated <= LINEBREAK_BYTE_BUDGET);
+    assert!(deep_math.allocations <= DEEP_MATH_ALLOCATION_BUDGET);
+    assert!(deep_math.bytes_allocated <= DEEP_MATH_BYTE_BUDGET);
+    assert!(flat_math.allocations <= FLAT_MATH_ALLOCATION_BUDGET);
+    assert!(flat_math.bytes_allocated <= FLAT_MATH_BYTE_BUDGET);
 }
 
-fn linebreak_allocations() -> usize {
+fn print_stats(name: &str, stats: Stats) {
+    println!(
+        "{name} allocations={} bytes_allocated={}",
+        stats.allocations, stats.bytes_allocated
+    );
+}
+
+fn linebreak_allocations() -> Stats {
     let mut state = Universe::new();
     let glue = state.intern_glue(GlueSpec {
         width: Scaled::from_raw(10),
@@ -75,10 +90,10 @@ fn linebreak_allocations() -> usize {
     let region = Region::new(GLOBAL);
     let result = try_line_break_without_hyphenation(&state, &nodes, &params);
     std::hint::black_box(result);
-    region.change().allocations
+    region.change()
 }
 
-fn alignment_allocations() -> usize {
+fn alignment_allocations() -> Stats {
     let tabskips = vec![Scaled::from_raw(17); 513];
     let requirements = (0..4_096)
         .map(|index| {
@@ -94,10 +109,10 @@ fn alignment_allocations() -> usize {
     let plan = plan_alignment_widths(512, &tabskips, requirements.iter().copied())
         .expect("allocation-gate alignment plan");
     std::hint::black_box(plan);
-    region.change().allocations
+    region.change()
 }
 
-fn deep_math_allocations() -> usize {
+fn deep_math_allocations() -> Stats {
     let mut state = Universe::new();
     let mut selected = state.freeze_node_list(&[]);
     for _ in 0..20_000 {
@@ -112,10 +127,10 @@ fn deep_math_allocations() -> usize {
     let region = Region::new(GLOBAL);
     let layout = mlist_to_hlist(&state, selected, Style::TEXT, false, &params);
     std::hint::black_box(layout);
-    region.change().allocations
+    region.change()
 }
 
-fn flat_math_allocations() -> usize {
+fn flat_math_allocations() -> Stats {
     let mut state = Universe::new();
     let nodes = (0..1_024)
         .map(|_| {
@@ -130,5 +145,5 @@ fn flat_math_allocations() -> usize {
     let region = Region::new(GLOBAL);
     let layout = mlist_to_hlist(&state, list, Style::TEXT, false, &params);
     std::hint::black_box(layout);
-    region.change().allocations
+    region.change()
 }

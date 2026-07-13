@@ -31,4 +31,5 @@ and rebuilt revision.
 paragraph, 20,000 nested math choices (which also acts as the stack-safety
 gate), and repeated 1,024-noad conversion. `layout_allocations` measures the
 same pure alignment/math kernels outside workload setup and enforces committed
-allocation ceilings; it remains outside the ordinary unit-test tier.
+ceilings for allocation count and total allocated bytes; it remains outside
+the ordinary unit-test tier.
