@@ -85,9 +85,10 @@ where
     H: ExpansionHooks<S>,
 {
     // TeX's main-control table first starts a paragraph and retries a math
-    // shift seen in vertical mode. In internal vertical mode that produces
-    // restricted horizontal mode, where a doubled `$` is two ordinary math
-    // shifts rather than a display opener (tex.web §§1090, 1138).
+    // shift seen in either vertical mode. `new_graf` always enters ordinary
+    // horizontal mode, so the lookahead must happen after that transition;
+    // a doubled `$` in an internal vertical list still opens a display
+    // (tex.web §§1090, 1092, and 1138).
     if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
         assignments::ensure_horizontal_for_character(nest, input, stores)?;
     }
