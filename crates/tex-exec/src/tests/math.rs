@@ -1072,7 +1072,7 @@ fn doubled_math_shift_in_internal_vertical_mode_is_a_display() {
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
-        r"\setbox0=\vbox{$$\ifinner\message{INNER}\else\message{OUTER}\fi$$}",
+        r"\everypar{\message{PAR}}\setbox0=\vbox{$$\ifinner\message{INNER}\else\message{OUTER}\fi$$}",
     ));
     Executor::new()
         .run(&mut input, &mut stores)
@@ -1081,6 +1081,7 @@ fn doubled_math_shift_in_internal_vertical_mode_is_a_display() {
     let output = terminal_effect_text(&stores);
     assert!(!output.contains("INNER"));
     assert!(output.contains("OUTER"));
+    assert!(output.contains("PAR"));
 }
 
 #[test]

@@ -71,12 +71,11 @@ where
             ..
         }
     ) {
-        stores.world_mut().write_text(
-            tex_state::PrintSink::TerminalAndLog,
-            "\n! Missing $ inserted.\nI've inserted a begin-math/end-math symbol since I think\nyou left one out. Proceed, with fingers crossed.\n",
-        );
-        push_traced_tokens(input, stores, [traced]);
-        return crate::math::enter_math(nest, input, stores, hooks);
+        crate::math::insert_dollar_sign(traced, input, stores);
+        if matches!(mode, Mode::Vertical | Mode::InternalVertical) {
+            assignments::ensure_horizontal_for_character(nest, input, stores)?;
+        }
+        return Ok(DispatchAction::Continue);
     }
     if matches!(
         token,
@@ -85,6 +84,14 @@ where
             ..
         }
     ) {
+        if matches!(mode, Mode::Vertical | Mode::InternalVertical) {
+            // tex.web §1090 backs up the math shift before `new_graf`, so
+            // \everypar must run before main control retries the `$` and
+            // performs the doubled-shift lookahead in horizontal mode.
+            push_traced_tokens(input, stores, [traced]);
+            assignments::ensure_horizontal_for_character(nest, input, stores)?;
+            return Ok(DispatchAction::Continue);
+        }
         return crate::math::enter_math(nest, input, stores, hooks);
     }
     let meaning = match token {
@@ -260,7 +267,15 @@ where
         Token::Char {
             cat: Catcode::MathShift,
             ..
-        } => crate::math::enter_math(nest, input, stores, hooks),
+        } => {
+            if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
+                push_traced_tokens(input, stores, [traced]);
+                assignments::ensure_horizontal_for_character(nest, input, stores)?;
+                Ok(DispatchAction::Continue)
+            } else {
+                crate::math::enter_math(nest, input, stores, hooks)
+            }
+        }
         Token::Char {
             cat: Catcode::Space,
             ..

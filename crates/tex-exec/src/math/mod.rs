@@ -84,14 +84,10 @@ where
     S: InputSource,
     H: ExpansionHooks<S>,
 {
-    // TeX's main-control table first starts a paragraph and retries a math
-    // shift seen in either vertical mode. `new_graf` always enters ordinary
-    // horizontal mode, so the lookahead must happen after that transition;
-    // a doubled `$` in an internal vertical list still opens a display
-    // (tex.web §§1090, 1092, and 1138).
-    if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
-        assignments::ensure_horizontal_for_character(nest, input, stores)?;
-    }
+    debug_assert!(!matches!(
+        nest.current_mode(),
+        Mode::Vertical | Mode::InternalVertical
+    ));
     let opening_mode = nest.current_mode();
     let can_display = !matches!(opening_mode, Mode::RestrictedHorizontal);
     let display = match input.next_traced_token(stores)? {
