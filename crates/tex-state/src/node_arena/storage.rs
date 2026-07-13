@@ -103,6 +103,7 @@ impl SidecarNeeds {
             | Node::Penalty(_)
             | Node::MathOn(_)
             | Node::MathOff(_)
+            | Node::Direction(_)
             | Node::MathStyle(_)
             | Node::Nonscript => None,
         };
@@ -331,6 +332,7 @@ impl NodeStorage {
             Node::Penalty(value) => NodeWord::new(4, *value as u32 as u64),
             Node::MathOn(value) => NodeWord::new(5, value.raw() as u32 as u64),
             Node::MathOff(value) => NodeWord::new(6, value.raw() as u32 as u64),
+            Node::Direction(direction) => NodeWord::new(23, *direction as u64),
             Node::MathStyle(style) => NodeWord::new(7, style_code(*style) as u64),
             Node::Nonscript => NodeWord::new(8, 0),
             Node::HList(value) => NodeWord::sidecar(9, self.boxes.push(*value)),

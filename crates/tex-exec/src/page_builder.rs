@@ -89,6 +89,7 @@ pub(crate) fn build_page(stores: &mut Universe) -> Result<(), ExecError> {
             | Node::Disc { .. }
             | Node::MathOn(_)
             | Node::MathOff(_)
+            | Node::Direction(_)
             | Node::MathNoad(_)
             | Node::FractionNoad(_)
             | Node::MathStyle(_)

@@ -58,6 +58,7 @@ fn debug_assert_no_unset_node(node: &Node, stack: &mut Vec<NodeListId>) {
         | Node::Whatsit(_)
         | Node::MathOn(_)
         | Node::MathOff(_)
+        | Node::Direction(_)
         | Node::MathStyle(_)
         | Node::Nonscript => {}
     }

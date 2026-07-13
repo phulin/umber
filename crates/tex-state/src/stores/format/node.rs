@@ -67,6 +67,7 @@ pub(super) enum FormatNode {
     Whatsit(FormatWhatsit),
     MathOn(Scaled),
     MathOff(Scaled),
+    Direction(crate::node::Direction),
     MathNoad(FormatMathNoad),
     FractionNoad(FormatMathFraction),
     MathStyle(MathStyle),
@@ -242,6 +243,7 @@ impl FormatNode {
             Node::Whatsit(whatsit) => Self::Whatsit(FormatWhatsit::capture(whatsit)),
             Node::MathOn(value) => Self::MathOn(value),
             Node::MathOff(value) => Self::MathOff(value),
+            Node::Direction(direction) => Self::Direction(direction),
             Node::MathNoad(noad) => Self::MathNoad(FormatMathNoad::capture(stores, noad, roots)),
             Node::FractionNoad(fraction) => {
                 Self::FractionNoad(FormatMathFraction::capture(stores, fraction, roots))
@@ -321,6 +323,7 @@ impl FormatNode {
             Self::Whatsit(whatsit) => Node::Whatsit(whatsit.restore(stores)?),
             Self::MathOn(value) => Node::MathOn(value),
             Self::MathOff(value) => Node::MathOff(value),
+            Self::Direction(direction) => Node::Direction(direction),
             Self::MathNoad(noad) => Node::MathNoad(noad.restore(ids)?),
             Self::FractionNoad(fraction) => Node::FractionNoad(fraction.restore(ids)?),
             Self::MathStyle(style) => Node::MathStyle(style),

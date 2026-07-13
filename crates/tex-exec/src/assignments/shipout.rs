@@ -210,6 +210,7 @@ enum FrozenShipoutNode {
     Whatsit(Whatsit),
     MathOn(tex_state::scaled::Scaled),
     MathOff(tex_state::scaled::Scaled),
+    Direction,
     MathList(tex_state::math::MathListNode),
     UnsupportedMath,
     Adjust(NodeListId),
@@ -255,6 +256,7 @@ impl FrozenShipoutNode {
             NodeRef::Whatsit(v) => Self::Whatsit(v.clone()),
             NodeRef::MathOn(v) => Self::MathOn(v),
             NodeRef::MathOff(v) => Self::MathOff(v),
+            NodeRef::Direction(_) => Self::Direction,
             NodeRef::MathList(v) => Self::MathList(v),
             NodeRef::Adjust(v) => Self::Adjust(v),
             NodeRef::MathNoad(_)
@@ -320,6 +322,7 @@ where
             Node::Whatsit(whatsit) => return self.lower_whatsit(whatsit),
             Node::MathOn(width) => PageNode::MathOn(width),
             Node::MathOff(width) => PageNode::MathOff(width),
+            Node::Direction(_) => return Ok(None),
             Node::Disc {
                 kind,
                 pre,
@@ -484,6 +487,7 @@ where
             FrozenShipoutNode::Whatsit(v) => return self.lower_whatsit(v),
             FrozenShipoutNode::MathOn(v) => PageNode::MathOn(v),
             FrozenShipoutNode::MathOff(v) => PageNode::MathOff(v),
+            FrozenShipoutNode::Direction => return Ok(None),
             FrozenShipoutNode::Adjust(v) => PageNode::Adjust(self.lower_node_list(v)?),
             FrozenShipoutNode::UnsupportedMath | FrozenShipoutNode::MathList(_) => {
                 return Err(ExecError::UnsupportedShipoutNode { node: "math" });

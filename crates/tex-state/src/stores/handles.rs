@@ -363,6 +363,7 @@ impl Stores {
             | Node::Rule { .. }
             | Node::MathOn(_)
             | Node::MathOff(_)
+            | Node::Direction(_)
             | Node::MathStyle(_)
             | Node::Nonscript => {}
         }

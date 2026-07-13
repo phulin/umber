@@ -167,6 +167,7 @@ fn remap_owned_node(node: &mut Node, states: &CloneMap) {
         | Node::Whatsit(_)
         | Node::MathOn(_)
         | Node::MathOff(_)
+        | Node::Direction(_)
         | Node::MathStyle(_)
         | Node::Nonscript => {}
     }

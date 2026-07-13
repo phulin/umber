@@ -59,6 +59,7 @@ pub enum Node {
     Whatsit(Whatsit),
     MathOn(Scaled),
     MathOff(Scaled),
+    Direction(Direction),
     MathNoad(MathNoad),
     FractionNoad(MathFraction),
     MathStyle(MathStyle),
@@ -312,6 +313,15 @@ pub enum DiscKind {
     AutomaticHyphen,
 }
 
+/// An e-TeX text-direction boundary (manual section 3.5, TeX--XeT).
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
+pub enum Direction {
+    BeginL,
+    EndL,
+    BeginR,
+    EndR,
+}
+
 /// The sign of box glue adjustment.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum Sign {
@@ -360,7 +370,7 @@ impl Node {
             Self::Lig { .. } => 7,
             Self::Disc { .. } => 8,
             Self::Whatsit(_) => 9,
-            Self::MathOn(_) | Self::MathOff(_) => 10,
+            Self::MathOn(_) | Self::MathOff(_) | Self::Direction(_) => 10,
             Self::Glue { .. } | Self::Nonscript => 11,
             Self::Kern { .. } => 12,
             Self::Penalty(_) => 13,
@@ -415,6 +425,7 @@ impl Node {
             | Self::Whatsit(_)
             | Self::MathOn(_)
             | Self::MathOff(_)
+            | Self::Direction(_)
             | Self::MathStyle(_)
             | Self::Nonscript => {}
         }

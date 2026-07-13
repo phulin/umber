@@ -80,6 +80,7 @@ pub fn vert_break(
                 | Node::Disc { .. }
                 | Node::MathOn(_)
                 | Node::MathOff(_)
+                | Node::Direction(_)
                 | Node::MathNoad(_)
                 | Node::FractionNoad(_)
                 | Node::MathStyle(_)

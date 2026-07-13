@@ -2,7 +2,8 @@ use super::storage::{NodeStorage, NodeWord, decode_glue, decode_kern, decode_sty
 use crate::ids::{GlueId, NodeListId};
 use crate::math::MathStyle;
 use crate::node::{
-    BoxNode, BoxNodeFields, DiscKind, GlueKind, KernKind, Node, UnsetNode, UnsetNodeFields,
+    BoxNode, BoxNodeFields, Direction, DiscKind, GlueKind, KernKind, Node, UnsetNode,
+    UnsetNodeFields,
 };
 use crate::scaled::Scaled;
 
@@ -57,6 +58,7 @@ pub enum NodeRef<'a> {
     Whatsit(&'a crate::node::Whatsit),
     MathOn(Scaled),
     MathOff(Scaled),
+    Direction(Direction),
     MathNoad(crate::math::MathNoad),
     FractionNoad(&'a crate::math::MathFraction),
     MathStyle(MathStyle),
@@ -135,6 +137,7 @@ impl NodeRef<'_> {
             Self::Whatsit(v) => Node::Whatsit((*v).clone()),
             Self::MathOn(v) => Node::MathOn(*v),
             Self::MathOff(v) => Node::MathOff(*v),
+            Self::Direction(v) => Node::Direction(*v),
             Self::MathNoad(v) => Node::MathNoad(v.clone()),
             Self::FractionNoad(v) => Node::FractionNoad((*v).clone()),
             Self::MathStyle(v) => Node::MathStyle(*v),
@@ -400,6 +403,13 @@ impl NodeStorage {
             4 => NodeRef::Penalty(payload as u32 as i32),
             5 => NodeRef::MathOn(Scaled::from_raw(payload as u32 as i32)),
             6 => NodeRef::MathOff(Scaled::from_raw(payload as u32 as i32)),
+            23 => NodeRef::Direction(match payload {
+                0 => Direction::BeginL,
+                1 => Direction::EndL,
+                2 => Direction::BeginR,
+                3 => Direction::EndR,
+                _ => unreachable!("stored direction code is valid"),
+            }),
             7 => NodeRef::MathStyle(decode_style(payload as u8)),
             8 => NodeRef::Nonscript,
             9 | 10 => {

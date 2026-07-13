@@ -16,6 +16,7 @@ use tex_state::ids::GlueId;
 use tex_state::interner::Symbol;
 use tex_state::math::MathFontSize;
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
+use tex_state::node::Node;
 use tex_state::provenance::InsertedOriginKind;
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
@@ -1038,6 +1039,47 @@ where
                 };
                 stores.set_interaction_mode(mode);
                 Ok(CommandOutcome::assigned())
+            }
+            UnexpandablePrimitive::BeginL
+            | UnexpandablePrimitive::EndL
+            | UnexpandablePrimitive::BeginR
+            | UnexpandablePrimitive::EndR => {
+                reject_all_prefixes(prefixes)?;
+                if stores.int_param(IntParam::TEX_XET_STATE) <= 0 {
+                    let name = match primitive {
+                        UnexpandablePrimitive::BeginL => "beginL",
+                        UnexpandablePrimitive::EndL => "endL",
+                        UnexpandablePrimitive::BeginR => "beginR",
+                        UnexpandablePrimitive::EndR => "endR",
+                        _ => unreachable!(),
+                    };
+                    stores.world_mut().write_text(
+                        tex_state::PrintSink::TerminalAndLog,
+                        &format!("\n! Improper \\{name}.\nSorry, this \\{name} will be ignored.\n"),
+                    );
+                    return Ok(CommandOutcome::continue_only());
+                }
+                if !matches!(
+                    nest.current_mode(),
+                    crate::Mode::Horizontal | crate::Mode::RestrictedHorizontal
+                ) {
+                    crate::diagnostics::report_illegal_case(
+                        stores,
+                        command.token,
+                        nest.current_mode(),
+                    );
+                    return Ok(CommandOutcome::continue_only());
+                }
+                flush_pending_hchars(nest, stores)?;
+                let direction = match primitive {
+                    UnexpandablePrimitive::BeginL => tex_state::node::Direction::BeginL,
+                    UnexpandablePrimitive::EndL => tex_state::node::Direction::EndL,
+                    UnexpandablePrimitive::BeginR => tex_state::node::Direction::BeginR,
+                    UnexpandablePrimitive::EndR => tex_state::node::Direction::EndR,
+                    _ => unreachable!(),
+                };
+                nest.current_list_mut().push(Node::Direction(direction));
+                Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::BatchMode
             | UnexpandablePrimitive::NonstopMode

@@ -248,6 +248,10 @@ pub fn install_etex_unexpandable_primitives(stores: &mut Universe) {
         ("showgroups", UnexpandablePrimitive::ShowGroups),
         ("showifs", UnexpandablePrimitive::ShowIfs),
         ("showtokens", UnexpandablePrimitive::ShowTokens),
+        ("beginL", UnexpandablePrimitive::BeginL),
+        ("endL", UnexpandablePrimitive::EndL),
+        ("beginR", UnexpandablePrimitive::BeginR),
+        ("endR", UnexpandablePrimitive::EndR),
     ] {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));

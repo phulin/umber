@@ -368,6 +368,7 @@ fn measure_hlist(state: &impl TypesetState, nodes: NodeList<'_>) -> Measurement 
             | NodeRef::MathChoice(_)
             | NodeRef::MathList(_)
             | NodeRef::Nonscript
+            | NodeRef::Direction(_)
             | NodeRef::Adjust(_) => {}
             NodeRef::MathOn(width) | NodeRef::MathOff(width) => {
                 meas.width = add(meas.width, width);
@@ -422,6 +423,7 @@ fn measure_vlist(state: &impl TypesetState, nodes: NodeList<'_>) -> Measurement 
             | NodeRef::Whatsit(_)
             | NodeRef::MathOn(_)
             | NodeRef::MathOff(_)
+            | NodeRef::Direction(_)
             | NodeRef::MathNoad(_)
             | NodeRef::FractionNoad(_)
             | NodeRef::MathStyle(_)

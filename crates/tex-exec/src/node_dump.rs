@@ -174,6 +174,15 @@ fn dump_node(
         Node::MathOff(width) => {
             dump_math_marker("\\mathoff", *width, out);
         }
+        Node::Direction(direction) => {
+            let name = match direction {
+                tex_state::node::Direction::BeginL => "beginL",
+                tex_state::node::Direction::EndL => "endL",
+                tex_state::node::Direction::BeginR => "beginR",
+                tex_state::node::Direction::EndR => "endR",
+            };
+            let _ = writeln!(out, "\\{name}");
+        }
         Node::MathNoad(noad) => dump_math_noad(stores, noad, config, depth, out),
         Node::FractionNoad(fraction) => dump_fraction(stores, fraction, config, depth, out),
         Node::MathStyle(style) => {

@@ -708,6 +708,10 @@ impl Stores {
                 hasher.tag(14);
                 hasher.i32(width.raw());
             }
+            NodeRef::Direction(direction) => {
+                hasher.tag(22);
+                hasher.u8(direction as u8);
+            }
             NodeRef::Adjust(content) => {
                 hasher.tag(15);
                 stack.push(NodeFrame::List(content));
@@ -854,6 +858,10 @@ impl Stores {
             Node::MathOff(width) => {
                 hasher.tag(14);
                 hasher.i32(width.raw());
+            }
+            Node::Direction(direction) => {
+                hasher.tag(22);
+                hasher.u8(direction as u8);
             }
             Node::Adjust(content) => {
                 hasher.tag(15);

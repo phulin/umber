@@ -473,6 +473,10 @@ mod primitive_mode_tests {
             ("showgroups", UnexpandablePrimitive::ShowGroups),
             ("showifs", UnexpandablePrimitive::ShowIfs),
             ("interactionmode", UnexpandablePrimitive::InteractionMode),
+            ("beginL", UnexpandablePrimitive::BeginL),
+            ("endL", UnexpandablePrimitive::EndL),
+            ("beginR", UnexpandablePrimitive::BeginR),
+            ("endR", UnexpandablePrimitive::EndR),
         ] {
             let symbol = extended.intern(name);
             assert_eq!(

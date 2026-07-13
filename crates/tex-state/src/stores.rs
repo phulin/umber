@@ -1823,6 +1823,7 @@ impl Stores {
             }
             Node::MathOn(_)
             | Node::MathOff(_)
+            | Node::Direction(_)
             | Node::MathNoad(_)
             | Node::FractionNoad(_)
             | Node::MathStyle(_)

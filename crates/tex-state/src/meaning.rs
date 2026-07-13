@@ -454,6 +454,10 @@ pub enum UnexpandablePrimitive {
     MuToGlue,
     ShowGroups,
     ShowIfs,
+    BeginL,
+    EndL,
+    BeginR,
+    EndR,
     Shipout,
     BeginGroup,
     EndGroup,
@@ -717,6 +721,10 @@ impl UnexpandablePrimitive {
             Self::MuToGlue => 191,
             Self::ShowGroups => 192,
             Self::ShowIfs => 193,
+            Self::BeginL => 194,
+            Self::EndL => 195,
+            Self::BeginR => 196,
+            Self::EndR => 197,
         }
     }
 
@@ -917,6 +925,10 @@ impl UnexpandablePrimitive {
             191 => Some(Self::MuToGlue),
             192 => Some(Self::ShowGroups),
             193 => Some(Self::ShowIfs),
+            194 => Some(Self::BeginL),
+            195 => Some(Self::EndL),
+            196 => Some(Self::BeginR),
+            197 => Some(Self::EndR),
             _ => None,
         }
     }
