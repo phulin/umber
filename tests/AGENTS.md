@@ -169,16 +169,18 @@ DVI SHA-256 after the same banner-only normalization used by `tools/refexec`.
 `FORCE_SOURCE_DATE=1` by default before running the reference engine because
 external documents may write date primitives into the DVI body.
 
-Run the full live-reference end-to-end parity tier explicitly with:
+Run the ignored end-to-end DVI conformance tests explicitly with:
 
 ```bash
+cargo test -p umber --test it e2e_conformance -- --ignored --nocapture
 scripts/parity.sh e2e
 scripts/parity.sh e2e --offline
 scripts/parity.sh e2e --doc story.tex
 ```
 
-The e2e mode first performs the same acquisition verification, then builds
-`tools/parity-harness` and `umber`. For each document it stages the selected
+The e2e mode first performs the same acquisition verification, then selects
+the ignored `e2e_conformance_story` and `e2e_conformance_gentle` Cargo
+integration tests. For each document the shared Rust harness stages the selected
 real `format_source`, document, `third_party/hyphen/hyphen.tex`, and all TFM
 files loaded by Plain. Both engines receive the same wrapper that inputs the
 format source before the document; reference TeX runs in INITEX mode, while
@@ -186,10 +188,10 @@ Umber runs the wrapper directly through its ordinary input path. The harness
 verifies `expected_ref_dvi_sha256` against the normalized reference DVI
 produced with the script-pinned job clock and byte-compares normalized output.
 Reference drift, Umber failures, and byte mismatches
-write automatic triage bundles under `target/parity-triage/<doc-name>/`
+write automatic triage bundles under `target/conformance-triage/<doc-name>/`
 containing byte context, page-limited dvitype-style disassemblies and diff,
 tracing-output logs, and a summary naming the divergent page and opcode when
-available. `scripts/parity.sh self-test` runs a synthetic fast bundle check
+available. `scripts/parity.sh self-test` runs the Rust harness's synthetic fast bundle check
 that intentionally changes one DVI movement opcode and verifies the summary
 pinpoints page/opcode; it does not run the external corpus.
 
@@ -199,9 +201,14 @@ only by `scripts/trip.sh`; do not commit the fetched CTAN files or fold this
 gate into `cargo test --workspace --tests`. The TRIP harness requires the
 special INITEX build documented by `tripman.tex` Appendix A and writes
 comparison work products under `target/trip/`.
+The ignored `e2e_conformance_trip` Cargo integration test runs the specialized
+TRIP artifact producer and then applies the same preamble-comment-only,
+byte-identical final-DVI assertion used by Story and Gentle. Run it with
+`cargo test -p umber --test it e2e_conformance_trip -- --ignored --nocapture`.
 `scripts/trip.sh self-test` stays fetch-free and uses synthetic DVI and DVItype
-streams to executable-test Umber's exact 64sp movement policy plus rejection of
-representative structural and semantic differences with actionable context.
+streams to exercise the special-reference phase's exact 64sp reconciliation
+boundary plus rejection of representative structural and semantic differences
+with actionable context. Umber's final-DVI oracle does not use that allowance.
 
 ## Proptest Budgets
 

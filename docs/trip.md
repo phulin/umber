@@ -1,27 +1,34 @@
 # Knuth TRIP Harness
 
-Status: explicit conformance gate, outside `cargo test --workspace --tests`.
+Status: ignored end-to-end conformance test, outside the default
+`cargo test --workspace --tests` gate.
 
 The original TeX82 TRIP test is pinned separately from the external document
-corpus and from any later e-TRIP work. Run it with:
+corpus and from any later e-TRIP work, but shares the same strict final-DVI
+oracle as Story and Gentle. Run it with:
 
 ```bash
 scripts/trip.sh
 scripts/trip.sh --offline
 scripts/trip.sh self-test
 scripts/build-trip-initex.sh
+cargo test -p umber --test it e2e_conformance_trip -- --ignored --nocapture
 ```
 
 `scripts/trip.sh` fetches official CTAN bytes into gitignored
 `third_party/trip/`, verifies SHA-256 hashes, rebuilds `trip.tfm` through
 PLtoTF and TFtoPL, runs the INITEX transcript phase, runs the format-loaded
-TRIP phase, runs DVItype, and gates on the official DVItype and DVI artifacts.
+TRIP phase and runs DVItype. The ignored Cargo integration test uses
+`scripts/trip.sh umber-artifacts --offline` for specialized preparation, then
+uses the shared Rust conformance library to gate on byte-identical final DVI
+after normalizing only the preamble comment. DVItype is diagnostic for Umber.
 The generated `tripin.log`, `trip.log`, `trip.fot`, and `tripos.tex` remain in
 `target/trip/` for diagnosis, but their parity belongs to the diagnostic tier
 and does not affect this DVI milestone. The self-test does not fetch or run
 TeX. It uses deterministic synthetic DVI and DVItype streams to prove both
-signs of Umber's exact 64sp movement policy, reject 65sp and structural or
-semantic changes across the DVI command classes, and verify that each
+signs of the special-reference phase's exact 64sp reconciliation boundary,
+reject 65sp and structural or semantic changes across the DVI command classes,
+and verify that each
 rejection reports byte, page, opcode, and surrounding context as appropriate.
 It also seeds retained format, DVI, and DVItype outputs and proves that failing
 producers cannot reuse them.
@@ -108,7 +115,7 @@ conservative project policy: corresponding movement operands may differ by at
 most 64 scaled points under the structural checks below. The numeric bound is
 Umber's policy, not a threshold quoted from Knuth.
 
-The harness applies only these normalizations:
+The standalone special-reference validation applies only these normalizations:
 
 - `trip.typ`: DVItype packaging text on line 1 and the quoted rendering of the
   DVI preamble comment. Movement operands may be reconciled only when opcode,
@@ -120,8 +127,11 @@ The harness applies only these normalizations:
   structure and exact identity for characters, rules, specials, fonts, page
   structure, dimensions, and every non-movement operand.
 
-No other DVItype or DVI bytes may change. Any mismatch writes a diff or
-byte/page/opcode context under `target/trip/diffs/`. `scripts/trip.sh
+These Appendix A allowances validate the pinned reference toolchain only. The
+Umber end-to-end oracle does not apply movement reconciliation: after the DVI
+preamble comment is normalized, every byte must match the official
+`trip.dvi`. Any mismatch writes strict byte/page/opcode and disassembly context
+under `target/conformance-triage/trip/`. `scripts/trip.sh
 self-test` exercises the allowance boundary and adversarially changes movement
 encoding, characters, rules, specials, fonts, page
 structure/pointers/dimensions, and non-movement operands. Parallel DVItype

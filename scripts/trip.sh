@@ -12,7 +12,7 @@ if [[ "$target_dir" != /* ]]; then
 fi
 work_root="${target_dir}/trip"
 diff_dir="${work_root}/diffs"
-umber_bin="${target_dir}/debug/umber"
+umber_bin="${UMBER_BIN:-${target_dir}/debug/umber}"
 
 mode="all"
 offline=0
@@ -21,7 +21,7 @@ keep_work=0
 usage() {
   cat <<'EOF'
 usage:
-  scripts/trip.sh [all|fetch|reference|umber|self-test] [--offline] [--keep-work]
+  scripts/trip.sh [all|fetch|reference|umber|umber-artifacts|self-test] [--offline] [--keep-work]
 
 Runs the official Knuth TeX82 TRIP conformance harness outside cargo tests.
 The harness fetches the pinned CTAN TRIP materials into third_party/trip/,
@@ -46,7 +46,7 @@ EOF
 
 if [[ "$#" -gt 0 ]]; then
   case "$1" in
-    all|fetch|reference|umber|self-test)
+    all|fetch|reference|umber|umber-artifacts|self-test)
       mode="$1"
       shift
       ;;
@@ -655,8 +655,10 @@ run_reference_phase() {
 run_umber_phase() {
   local dvitype
   dvitype="$(tool_path UMBER_REF_DVITYPE dvitype)"
-  printf '%s\n' 'Building umber' >&2
-  cargo build -p umber
+  if [[ ! -x "$umber_bin" ]]; then
+    printf '%s\n' 'Building umber' >&2
+    cargo build -p umber
+  fi
   local dir="${work_root}/umber"
   copy_trip_inputs "$dir"
   rm -f "${dir}/fixture-trip.fmt" "${dir}/trip.fmt" "${dir}/trip.dvi" \
@@ -699,16 +701,13 @@ run_umber_phase() {
 
   local norm="${work_root}/normalized"
   mkdir -p "$norm"
-  rm -f "${norm}/actual-umber-trip.typ.raw" "${norm}/actual-umber-trip.typ" \
-    "${norm}/actual-umber-trip.dvi.raw" "${norm}/actual-umber-trip.dvi"
-  if [[ -s "${dir}/trip.dvi" && -s "${dir}/trip.typ" ]]; then
-    normalize_trip_typ "${download_dir}/trip.typ" "${norm}/expected-umber-trip.typ"
-    normalize_trip_typ "${dir}/trip.typ" "${norm}/actual-umber-trip.typ.raw" || true
-    reconcile_trip_typ_rounding "${norm}/expected-umber-trip.typ" "${norm}/actual-umber-trip.typ.raw" "${norm}/actual-umber-trip.typ" || true
+  if [[ "${mode}" == "umber-artifacts" ]]; then
+    return "$ok"
+  fi
+  rm -f "${norm}/actual-umber-trip.dvi"
+  if [[ -s "${dir}/trip.dvi" ]]; then
     normalize_dvi "${download_dir}/trip.dvi" "${norm}/expected-umber-trip.dvi"
-    normalize_dvi "${dir}/trip.dvi" "${norm}/actual-umber-trip.dvi.raw"
-    reconcile_dvi_rounding "${norm}/expected-umber-trip.dvi" "${norm}/actual-umber-trip.dvi.raw" "${norm}/actual-umber-trip.dvi"
-    compare_text "umber-trip-typ" "${norm}/expected-umber-trip.typ" "${norm}/actual-umber-trip.typ" || ok=1
+    normalize_dvi "${dir}/trip.dvi" "${norm}/actual-umber-trip.dvi"
     compare_dvi "umber-trip-dvi" "${norm}/expected-umber-trip.dvi" "${norm}/actual-umber-trip.dvi" || ok=1
   else
     printf 'Umber did not produce trip.dvi\n' > "${diff_dir}/umber-trip-dvi.diff"
@@ -939,6 +938,12 @@ case "$mode" in
     run_reference_phase
     ;;
   umber)
+    fetch_materials
+    prepare_work
+    run_font_phase
+    run_umber_phase
+    ;;
+  umber-artifacts)
     fetch_materials
     prepare_work
     run_font_phase

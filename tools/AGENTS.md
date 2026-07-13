@@ -10,11 +10,12 @@
 
 `tools/texlive-wasm-publish` is a standalone release tool for browser TeX Live assets. It verifies every configured TEXMF root against a pinned tree digest, flattens lookup precedence deterministically, and writes an immutable manifest plus content-addressed objects. Build and test it explicitly with `cargo test --manifest-path tools/texlive-wasm-publish/Cargo.toml`; it must not join the root workspace or make ordinary tests scan a TeX Live installation.
 
-`tools/parity-harness` is the script-owned end-to-end corpus parity runner used by `scripts/parity.sh e2e`. For each document it stages the manifest-selected real format source, document, hyphenation input, and required TFMs, then runs one engine-agnostic wrapper through reference TeX in INITEX mode and through `umber` without a format shim. It verifies the manifest-pinned normalized reference DVI hash, byte-compares normalized DVI output, and writes automatic bundles under `target/parity-triage/` for reference drift, Umber failures, or DVI mismatches. Keep this long-running live-reference workflow out of default cargo tests; its fast synthetic `--self-test` exists only to validate bundle summary/disassembly behavior.
+`tools/parity-harness` is the shared Rust library and compatibility CLI for end-to-end DVI conformance. The ignored Umber integration tests use it for Story and Gentle execution and for TRIP's final artifact comparison. It stages manifest-selected external documents, verifies manifest-pinned reference hashes, normalizes only DVI preamble comments, requires byte-identical final DVI, and writes automatic bundles under `target/conformance-triage/` or the CLI-selected triage directory. Keep external runs ignored; the library's synthetic tests validate strict comparison and bundle diagnostics in the default gate.
 
-`scripts/trip.sh` owns the official Knuth TeX82 TRIP conformance tier directly
-with shell plus ambient TeXware tools; it does not currently have a Rust tool
-crate under `tools/`. Keep it outside default cargo tests. It fetches the
+`scripts/trip.sh` owns specialized official Knuth TeX82 TRIP preparation and
+standalone compatibility orchestration with shell plus ambient TeXware tools.
+Its `umber-artifacts` mode is used by the ignored Cargo integration test,
+which applies `parity-harness`'s shared strict final-DVI oracle. It fetches the
 pinned CTAN files in `tests/trip-manifest.txt`, requires PLtoTF/TFtoPL/DVItype,
 and requires `UMBER_TRIP_INITEX` to point at Knuth's special TRIP INITEX build
 for a passing reference phase.

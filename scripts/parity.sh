@@ -9,8 +9,6 @@ if [[ "$target_dir" != /* ]]; then
   target_dir="${repo_root}/${target_dir}"
 fi
 corpus_sync_bin="${target_dir}/debug/corpus-sync"
-parity_harness_bin="${target_dir}/debug/parity-harness"
-umber_bin="${target_dir}/debug/umber"
 export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-1783604160}"
 export FORCE_SOURCE_DATE="${FORCE_SOURCE_DATE:-1}"
 
@@ -32,8 +30,7 @@ EOF
 
 mode="fetch"
 offline=0
-doc_args=()
-keep_triage=0
+doc_filter=""
 
 if [[ "$#" -gt 0 ]]; then
   case "$1" in
@@ -55,11 +52,12 @@ while [[ "$#" -gt 0 ]]; do
         printf '%s\n' 'parity.sh: missing value after --doc' >&2
         exit 2
       fi
-      doc_args+=(--doc "$2")
+      doc_filter="$2"
       shift 2
       ;;
     --keep-triage)
-      keep_triage=1
+      # Compatibility flag: individually selected Cargo tests preserve triage
+      # for the other conformance cases automatically.
       shift
       ;;
     --help|-h)
@@ -75,9 +73,7 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 if [[ "$mode" == "self-test" ]]; then
-  printf '%s\n' 'Building parity-harness' >&2
-  cargo build -p parity-harness
-  "$parity_harness_bin" --self-test
+  cargo test -p parity-harness self_test_bundle_pinpoints_page_and_opcode
   exit 0
 fi
 
@@ -94,14 +90,20 @@ fi
 printf '%s\n' 'External corpus acquisition complete.' >&2
 
 if [[ "$mode" == "e2e" ]]; then
-  printf '%s\n' 'Building e2e parity harness and umber' >&2
-  cargo build -p parity-harness -p umber
-  harness_args=(--umber-bin "$umber_bin")
-  if [[ "$keep_triage" -eq 1 ]]; then
-    harness_args+=(--keep-triage)
+  test_names=()
+  if [[ -z "$doc_filter" ]]; then
+    test_names=(e2e_conformance_story e2e_conformance_gentle)
+  else
+    case "$doc_filter" in
+      story.tex) test_names=(e2e_conformance_story) ;;
+      gentle.tex) test_names=(e2e_conformance_gentle) ;;
+      *)
+        printf 'parity.sh: no Cargo conformance test for %s\n' "$doc_filter" >&2
+        exit 2
+        ;;
+    esac
   fi
-  if [[ "${#doc_args[@]}" -gt 0 ]]; then
-    harness_args+=("${doc_args[@]}")
-  fi
-  "$parity_harness_bin" "${harness_args[@]}"
+  for test_name in "${test_names[@]}"; do
+    cargo test -p umber --test it "$test_name" -- --ignored --nocapture
+  done
 fi

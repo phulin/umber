@@ -133,6 +133,7 @@ mod imp {
                 command.arg("-ini");
             }
             command.env("SOURCE_DATE_EPOCH", source_date_epoch());
+            command.env("FORCE_SOURCE_DATE", force_source_date());
             command.arg(job_name);
 
             let output = command.output().with_context(|| {
@@ -239,6 +240,12 @@ mod imp {
         env::var_os("SOURCE_DATE_EPOCH")
             .filter(|value| !value.is_empty())
             .unwrap_or_else(|| DEFAULT_SOURCE_DATE_EPOCH.into())
+    }
+
+    fn force_source_date() -> std::ffi::OsString {
+        env::var_os("FORCE_SOURCE_DATE")
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "1".into())
     }
 
     pub fn compare_dvi_bytes(expected: &[u8], actual: &[u8]) -> Result<DviComparison> {

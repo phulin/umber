@@ -16,6 +16,7 @@ tex-out = { path = "../tex-out" }
 tex-state = { path = "../tex-state" }
 
 [dev-dependencies]
+parity-harness = { path = "../../tools/parity-harness" }
 proptest.workspace = true
 tempfile.workspace = true
 test-support = { path = "../test-support" }

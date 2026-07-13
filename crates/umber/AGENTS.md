@@ -30,8 +30,9 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `src/virtual_compile/hooks.rs`: World-backed execution hooks with ordered typed missing-file side state.
 - `src/virtual_compile/tests.rs`: native retry, path, precedence, limits, format, effect-isolation, font batching, and DVI coverage.
 - `src/main.rs`: `umber` binary entry point, CLI argument parsing, `lex-dump`/`expand-dump`/`run` dispatch, token formatting, and real-run file hooks.
-- `tests/it.rs`: integration-test module root wiring the CLI, replay identity, and effectful replay test suites.
+- `tests/it.rs`: integration-test module root wiring CLI, replay identity, effectful replay, and ignored end-to-end conformance suites.
 - `tests/it/cli.rs`: integration tests for CLI success, usage errors, corpus dump output, and committed diagnostic/DVI fixture parity.
+- `tests/it/e2e_conformance.rs`: individually selectable ignored Story, Gentle, and TRIP tests that exercise the complete pipeline and require strict final DVI identity through `parity-harness`.
 - `tests/it/effectful_replay.rs`: property tests for rollback and commit identity across terminal, log, stream, input, read, and shipout effects.
 - `tests/it/replay_identity.rs`: property and regression tests that generated primitive programs rollback to identical state.
 

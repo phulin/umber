@@ -180,15 +180,19 @@ date-sensitive documents have stable DVI body bytes. Do not commit fetched
 corpus documents unless a later issue explicitly changes the redistribution
 policy.
 
-Full external-document DVI parity is an explicit script tier, not a cargo-test
-tier:
+Full external-document DVI parity is exposed as ignored Cargo integration
+tests, with a script retained for acquisition and convenient selection:
 
 ```bash
+cargo test -p umber --test it e2e_conformance_story -- --ignored --nocapture
+cargo test -p umber --test it e2e_conformance_gentle -- --ignored --nocapture
 scripts/parity.sh e2e
 scripts/parity.sh e2e --offline
 ```
 
-This mode verifies acquisition, runs reference TeX through `tools/refexec`,
+This mode verifies acquisition, then selects `e2e_conformance_story` and
+`e2e_conformance_gentle` in Umber's single integration-test binary. The shared
+`parity-harness` library runs reference TeX through `tools/refexec`,
 checks the manifest-pinned normalized reference DVI hash for environment
 drift under the script-pinned job clock, and byte-compares the normalized DVI
 files. Each document names a manifest-pinned `format_source`; the harness
@@ -202,7 +206,7 @@ continue into the document. The pinned modern `plain.tex` source contains no
 `\\dump`, so the unmodified file can be loaded directly. On reference drift,
 Umber failure, or mismatch it writes a
 triage bundle under
-`target/parity-triage/<doc-name>/` with byte context, page-limited
+`target/conformance-triage/<doc-name>/` with byte context, page-limited
 dvitype-style disassemblies, a unified disassembly diff, tracing-output logs,
 and a summary that names the divergent page and opcode when a page can be
 recovered from DVI backpointers. `scripts/parity.sh self-test` exercises the
@@ -210,14 +214,16 @@ bundle writer with synthetic DVI and remains fast enough for local tooling
 checks, but the external corpus itself must stay outside
 `cargo test --workspace --tests`.
 
-The original Knuth TeX82 TRIP test is a separate explicit conformance tier,
-not part of the default Rust test tier and not part of the later e-TRIP work:
+The original Knuth TeX82 TRIP workload is part of the same ignored end-to-end
+DVI conformance suite, while remaining separate from the default Rust test
+tier and from later e-TRIP work:
 
 ```bash
 scripts/trip.sh
 scripts/trip.sh --offline
 scripts/trip.sh self-test
 scripts/build-trip-initex.sh
+cargo test -p umber --test it e2e_conformance_trip -- --ignored --nocapture
 ```
 
 `scripts/trip.sh` reads `tests/trip-manifest.txt`, fetches exact official
@@ -236,20 +242,16 @@ automatically uses `target/trip-initex/bin`, or `UMBER_TRIP_TOOLS` can select
 another pinned build. It also uses `UMBER_REF_PLTOTF`, `UMBER_REF_TFTOPL`, and
 `UMBER_REF_DVITYPE` overrides when the TeXware tools are not on `PATH`.
 
-This milestone gates only `trip.dvi` and its derived `trip.typ`; generated
+The Umber integration test gates only `trip.dvi`; generated
 logs, terminal photo, and `tripos.tex` remain diagnostic outputs owned by the
-separate diagnostic parity tier. Allowed normalization is executable and
-narrowly bounded: the DVI preamble comment, DVItype's packaging/comment
-rendering, and DVI movement deltas no larger than 64 scaled points with
-identical structure. That numeric bound is Umber's conservative executable
-policy for the nonnumeric latitude in `tripman.tex` Appendix A item 6, not a
-threshold stated by Knuth. Characters, rules, specials, box dimensions,
-page/font structure, non-movement DVI operands, and all other DVItype text must
-match exactly. Failures write byte/page/opcode context or unified diffs under
-`target/trip/diffs/`; `scripts/trip.sh self-test` uses synthetic DVI and
-DVItype streams to prove the exact 64sp boundary and reject representative
-opcode/width, character, rule, special, font, page/pointer/dimension, and
-non-movement changes actionably without fetching or running TeX.
+separate diagnostic parity tier. Its oracle normalizes only the DVI preamble
+comment and otherwise requires byte identity with the pinned official
+`trip.dvi`, exactly like Story and Gentle. DVItype remains diagnostic. The
+standalone reference-engine validation retains the narrowly bounded Appendix A
+movement reconciliation needed to validate the special reference toolchain;
+that allowance is never applied to Umber's final DVI. Failures write
+byte/page/opcode context and disassembly diffs under
+`target/conformance-triage/trip/`.
 See [trip.md](trip.md) for the exact source pins and normalization policy.
 
 `tex-out` also owns the cross-crate page-output float guard. Its unit tests
